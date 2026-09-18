@@ -1,0 +1,48 @@
+# App-side istmo.toml — declarative overrides consumed by `istmo-build`.
+# Every entry is optional; delete this file entirely if you don't need any
+# of them.
+
+# ---------------------------------------------------------------------------
+# [app] — control the Kotlin/Swift codegen `istmo_build::emit()` performs.
+# ---------------------------------------------------------------------------
+# Defaults if this section is absent:
+#   android         = true                     (skipped if no ./android dir)
+#   ios             = true                     (skipped if no ./ios dir)
+#   android_package = "<gradle namespace>.gen" (auto-detected)
+#   ios_app_dir     = <single ./ios/* subdir>  (auto-detected)
+#
+# [app]
+# android         = true
+# android_package = "rs.sergioribera.notinplus.gen"
+# ios             = true
+# ios_app_dir     = "NotinplusApp"
+
+# Per-plugin role / platform overrides. Default role is `host` (Rust calls
+# the plugin, native side implements the backend). Set `role = "client"` for
+# Rust-hosted plugins the native side needs to call.
+#
+# [[app.plugin]]
+# id        = "istmo.echo"
+# role      = "client"
+# platforms = ["android"]
+
+# Force a specific plugin to run in the `:remote` process instead of its
+# default deployment. Match the plugin's declared `id` from its own
+# istmo.toml (usually `<org>.<name>`).
+#
+# [[remote_override]]
+# plugin     = "acme.example_plugin"
+# deployment = "remote"
+
+# Extra Gradle / Swift-package dependencies for the app itself (rare —
+# plugins normally carry their own via their `istmo.toml`).
+#
+# [[gradle]]
+# group    = "androidx.security"
+# artifact = "security-crypto"
+# version  = "1.1.0-alpha06"
+#
+# [[swift_package]]
+# url          = "https://github.com/siteline/SwiftUI-Introspect"
+# product      = "SwiftUIIntrospect"
+# from_version = "1.1.4"
