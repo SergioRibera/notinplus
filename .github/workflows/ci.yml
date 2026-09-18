@@ -1,0 +1,93 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: cargo test (${{"{{"}} matrix.os {{"}}"}})
+    runs-on: ${{"{{"}} matrix.os {{"}}"}}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest{% if has_ios %}, macos-latest{% endif %}]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --all-targets
+
+{% if has_android and is_app %}
+  android:
+    name: android build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@v3
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: 'aarch64-linux-android' }
+      - uses: Swatinem/rust-cache@v2
+      - name: assemble debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug
+        env:
+          GITHUB_ACTOR: ${{"{{"}} github.actor {{"}}"}}
+          GITHUB_TOKEN: ${{"{{"}} secrets.GITHUB_TOKEN {{"}}"}}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-debug.apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+{% endif %}
+
+{% if has_ios and is_app %}
+  ios:
+    name: ios build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: 'aarch64-apple-ios-sim' }
+      - uses: Swatinem/rust-cache@v2
+      - name: install xcodegen
+        run: brew install xcodegen
+      - name: generate xcodeproj
+        working-directory: ios
+        run: xcodegen generate
+      - name: xcodebuild
+        working-directory: ios
+        run: |
+          xcodebuild \
+            -project {{project-name | pascal_case}}App.xcodeproj \
+            -scheme  {{project-name | pascal_case}}App \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            build
+{% endif %}
+
+{% if has_desktop and bundle_desktop %}
+  nix-bundle:
+    name: nix bundle desktop
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v27
+        with: { nix_path: nixpkgs=channel:nixos-unstable }
+      - run: nix flake check
+      - run: nix build .#bundle
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-bundle
+          path: result/
+{% endif %}

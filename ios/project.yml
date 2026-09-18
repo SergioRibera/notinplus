@@ -1,0 +1,52 @@
+# xcodegen spec. Generate the .xcodeproj with:
+#
+#     cd ios && xcodegen generate
+#
+# `.xcodeproj` is not checked in — regen is deterministic.
+
+name: NotinplusApp
+
+options:
+  bundleIdPrefix: rs.sergioribera.notinplus
+  deploymentTarget:
+    iOS: 14.0
+  createIntermediateGroups: true
+  defaultConfig: Debug
+
+packages:
+  IstmoRuntime:
+    url: https://github.com/SergioRibera/istmo
+    from: "0.1.1-alpha.1.0"
+
+settings:
+  base:
+    SWIFT_VERSION: 5.9
+    IPHONEOS_DEPLOYMENT_TARGET: 14.0
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    LIBRARY_SEARCH_PATHS:
+      - $(inherited)
+      - $(PROJECT_DIR)/build/rust/$(PLATFORM_NAME)/$(CURRENT_ARCH)
+    OTHER_LDFLAGS:
+      - $(inherited)
+      - -lnotinplus
+
+targets:
+  NotinplusApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: NotinplusApp
+    info:
+      path: NotinplusApp/Info.plist
+    dependencies:
+      - package: IstmoRuntime
+        product: IstmoRuntime
+    preBuildScripts:
+      - name: cargo build notinplus (staticlib per arch)
+        path: build-rust.sh
+        runOnlyWhenInstalling: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: rs.sergioribera.notinplus
+        TARGETED_DEVICE_FAMILY: "1"
+        ENABLE_USER_SCRIPT_SANDBOXING: NO

@@ -1,0 +1,33 @@
+target/
+Cargo.lock
+*.swp
+*.swo
+.DS_Store
+
+# Android
+
+app/android/.gradle/
+app/android/build/
+app/android/app/build/
+app/android/local.properties
+app/android/**/*.iml
+
+
+# iOS
+
+app/ios/*.xcodeproj/
+app/ios/build/
+app/ios/DerivedData/
+
+
+# Nix / result symlinks
+result
+result-*
+
+# generated codegen sources
+app/android/app/src/main/java/**/gen/
+app/ios/**/Generated/
+
+# JetBrains / VS Code
+.idea/
+.vscode/
