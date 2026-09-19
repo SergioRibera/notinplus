@@ -10,12 +10,9 @@ do {
     fatalError("IstmoRuntime.start() failed: \(error)")
 }
 
-// TODO: register your plugin dispatchers here. Generated Swift classes
-// land under `NotinplusApp/Plugins/<Name>/Generated/`.
-//
-// IstmoRuntime.shared.registerHandler(
-//     DataStoreDispatcher.PLUGIN_ID,
-//     DataStoreDispatcher(backend: DataStoreBackendImpl(), codecs: DataStoreCodecsImpl())
-// )
+// Registers every plugin whose `istmo.toml` declares
+// `auto_register = true` (the default). Plugins with a bespoke
+// constructor opt out and are registered manually here.
+IstmoPluginRegistry.registerAll()
 
 _ = istmo_run_ios()
