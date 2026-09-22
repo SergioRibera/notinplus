@@ -64,22 +64,24 @@ impl SpatialIndex {
 
     /// All stroke ids in any bucket the `(cx, cy, r)` circle overlaps.
     /// Broad-phase only — caller does the actual segment-vs-circle
-    /// hit test.
+    /// hit test. The eraser fires this per input sample, so we skip
+    /// `HashSet` here and dedupe via sort — for the handful of ids a
+    /// bucket-cell union produces, sort + dedup beats a hash-set alloc.
     #[must_use]
     pub fn query_circle(&self, cx: f32, cy: f32, r: f32) -> Vec<StrokeId> {
         let (min_x, min_y) = bucket_of(cx - r, cy - r);
         let (max_x, max_y) = bucket_of(cx + r, cy + r);
-        let mut out = HashSet::new();
+        let mut out: Vec<StrokeId> = Vec::new();
         for by in min_y..=max_y {
             for bx in min_x..=max_x {
                 if let Some(v) = self.buckets.get(&(bx, by)) {
-                    for id in v {
-                        out.insert(*id);
-                    }
+                    out.extend_from_slice(v);
                 }
             }
         }
-        out.into_iter().collect()
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 }
 

@@ -109,13 +109,27 @@ fn root() -> impl IntoElement {
     });
 
     let selected = use_state(|| 0usize);
+    let scale = {
+        let board = Arc::clone(&board);
+        use_state(move || {
+            // Align the board with the initial palette entry so the
+            // scale label reads the tool the user actually sees
+            // highlighted, not whatever `Board::default` picked.
+            let mut g = lock(&board);
+            let initial = PALETTE[0]();
+            if g.current_kind() != initial.kind {
+                g.set_current_preset(initial);
+            }
+            g.current_size()
+        })
+    };
     let pad = *insets.read();
 
     rect()
         .width(Size::fill())
         .height(Size::fill())
         .child(drawing_surface(&board))
-        .child(palette_overlay(&board, selected, pad))
+        .child(palette_overlay(&board, selected, scale, pad))
 }
 
 // Fold platform-published `SafeAreaInsets` (system bars + display
@@ -135,6 +149,7 @@ const fn fold_insets(insets: SafeAreaInsets) -> EdgeInsets {
 fn palette_overlay(
     board: &Arc<Mutex<Board>>,
     selected: State<usize>,
+    scale: State<f32>,
     pad: EdgeInsets,
 ) -> impl IntoElement {
     // Global-positioned so the palette floats above the fullscreen
@@ -154,15 +169,15 @@ fn palette_overlay(
         .with_corner_radius(10.0);
 
     for (idx, make) in PALETTE.iter().enumerate() {
-        row = row.child(palette_button(idx, make(), board, selected));
+        row = row.child(palette_button(idx, make(), board, selected, scale));
     }
-    row = row.child(size_control(board)).child(undo_button(board));
+    row = row.child(size_control(board, scale)).child(undo_button(board));
     row
 }
 
-fn size_control(board: &Arc<Mutex<Board>>) -> impl IntoElement {
-    let scale = lock(board).current_size();
-    let label_text = format!("{scale:.2}\u{00d7}");
+fn size_control(board: &Arc<Mutex<Board>>, mut scale: State<f32>) -> impl IntoElement {
+    let cur = *scale.read();
+    let label_text = format!("{cur:.2}\u{00d7}");
 
     let dec_board = Arc::clone(board);
     let inc_board = Arc::clone(board);
@@ -172,9 +187,9 @@ fn size_control(board: &Arc<Mutex<Board>>) -> impl IntoElement {
         .background(Color::from_rgb(70, 70, 78))
         .with_corner_radius(4.0)
         .on_press(move |_| {
-            let mut g = lock(&dec_board);
-            let next = (g.current_size() - 0.25).max(0.25);
-            g.set_current_size(next);
+            let next = (*scale.read() - 0.25).max(0.25);
+            *scale.write() = next;
+            lock(&dec_board).set_current_size(next);
         })
         .child(label().color(Color::WHITE).font_size(14.0).text("\u{2212}"));
 
@@ -183,9 +198,9 @@ fn size_control(board: &Arc<Mutex<Board>>) -> impl IntoElement {
         .background(Color::from_rgb(70, 70, 78))
         .with_corner_radius(4.0)
         .on_press(move |_| {
-            let mut g = lock(&inc_board);
-            let next = (g.current_size() + 0.25).min(4.0);
-            g.set_current_size(next);
+            let next = (*scale.read() + 0.25).min(4.0);
+            *scale.write() = next;
+            lock(&inc_board).set_current_size(next);
         })
         .child(label().color(Color::WHITE).font_size(14.0).text("+"));
 
@@ -217,6 +232,7 @@ fn palette_button(
     preset: BrushPreset,
     board: &Arc<Mutex<Board>>,
     mut selected: State<usize>,
+    mut scale: State<f32>,
 ) -> impl IntoElement {
     let is_active = *selected.read() == idx;
     let swatch_color = preset
@@ -238,6 +254,7 @@ fn palette_button(
         (Color::from_rgb(50, 50, 55), Color::from_rgb(210, 210, 214))
     };
 
+    let press_board = Arc::clone(board);
     rect()
         .horizontal()
         .spacing(6.0)
@@ -245,6 +262,19 @@ fn palette_button(
         .background(bg)
         .with_corner_radius(6.0)
         .on_press(move |_| {
+            // Apply the preset now so `Board::set_current_preset`
+            // folds in this tool's remembered `size_scale`; propagate
+            // the resulting size into the shared `scale` state so the
+            // label refreshes immediately instead of drifting until
+            // the next explicit resize.
+            let new_size = {
+                let mut g = lock(&press_board);
+                if g.current_kind() != preset.kind {
+                    g.set_current_preset(preset);
+                }
+                g.current_size()
+            };
+            *scale.write() = new_size;
             *selected.write() = idx;
         })
         .child(

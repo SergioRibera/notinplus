@@ -57,7 +57,7 @@ bundle-desktop:
     nix build .#bundle
 
 # Run the desktop shell (uses the mock runtime + emulator thread).
-android: (build-android) (install-android)
+android: (clean) (build-android) (install-android)
 
 # Run the desktop shell (uses the mock runtime + emulator thread).
 run:
