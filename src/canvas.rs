@@ -391,6 +391,26 @@ impl Board {
         self.notify();
     }
 
+    /// Screen-space entrypoint mirroring [`Board::begin`]. Projects the
+    /// incoming surface-pixel sample through the current [`Viewport`]
+    /// so pen and pointer inputs land in the same world coordinates the
+    /// stroke buffer stores.
+    pub fn begin_screen(&mut self, mut point: InkPoint) {
+        let (wx, wy) = self.viewport.screen_to_world(point.x, point.y);
+        point.x = wx;
+        point.y = wy;
+        self.begin(point);
+    }
+
+    /// Screen-space entrypoint mirroring [`Board::extend`]. See
+    /// [`Board::begin_screen`] for the projection rationale.
+    pub fn extend_screen(&mut self, mut point: InkPoint) {
+        let (wx, wy) = self.viewport.screen_to_world(point.x, point.y);
+        point.x = wx;
+        point.y = wy;
+        self.extend(point);
+    }
+
     pub fn end(&mut self) {
         if let Some(session) = self.erase_session.take() {
             if !session.is_empty() {

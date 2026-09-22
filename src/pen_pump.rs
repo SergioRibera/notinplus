@@ -108,7 +108,7 @@ fn apply(event: PenEvent, board: &Arc<Mutex<Board>>, dt: &mut DtTracker) {
             let d = dt.reset(sample.timestamp_us);
             let point = point_from_sample(&sample, d);
             let mut guard = lock_board(board);
-            guard.begin(point);
+            guard.begin_screen(point);
         }
         PenEvent::Move(m) => {
             let mut points = Vec::with_capacity(m.coalesced.len() + 1);
@@ -120,7 +120,7 @@ fn apply(event: PenEvent, board: &Arc<Mutex<Board>>, dt: &mut DtTracker) {
             points.push(point_from_sample(&m.sample, d));
             let mut guard = lock_board(board);
             for p in points {
-                guard.extend(p);
+                guard.extend_screen(p);
             }
         }
         PenEvent::Up(sample) => {
@@ -128,7 +128,7 @@ fn apply(event: PenEvent, board: &Arc<Mutex<Board>>, dt: &mut DtTracker) {
             let point = point_from_sample(&sample, d);
             {
                 let mut guard = lock_board(board);
-                guard.extend(point);
+                guard.extend_screen(point);
                 guard.end();
             }
             dt.clear();
