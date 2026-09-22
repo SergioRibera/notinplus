@@ -36,6 +36,47 @@ use crate::spatial::SpatialIndex;
 const SIZE_SCALE_MIN: f32 = 0.25;
 const SIZE_SCALE_MAX: f32 = 4.0;
 
+/// Minimum and maximum canvas zoom. Outside these the viewport clamps —
+/// below 5% the strokes become unhittable, above 32× the cached Skia
+/// paths' sub-pixel accuracy stops being meaningful.
+const VIEWPORT_SCALE_MIN: f32 = 0.05;
+const VIEWPORT_SCALE_MAX: f32 = 32.0;
+
+/// 2D affine viewport: translate then uniform scale, mapping world
+/// coordinates (what strokes are stored in) to surface-local pixels
+/// (what the pen backend and pointer events deliver).
+///
+/// `screen = world * scale + translation`. Inverse is
+/// `world = (screen - translation) / scale`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Viewport {
+    pub tx: f32,
+    pub ty: f32,
+    pub scale: f32,
+}
+
+impl Default for Viewport {
+    fn default() -> Self {
+        Self {
+            tx: 0.0,
+            ty: 0.0,
+            scale: 1.0,
+        }
+    }
+}
+
+impl Viewport {
+    #[must_use]
+    pub fn screen_to_world(&self, x: f32, y: f32) -> (f32, f32) {
+        ((x - self.tx) / self.scale, (y - self.ty) / self.scale)
+    }
+
+    #[must_use]
+    pub fn world_to_screen(&self, x: f32, y: f32) -> (f32, f32) {
+        (x.mul_add(self.scale, self.tx), y.mul_add(self.scale, self.ty))
+    }
+}
+
 /// Coalescing wakeup handle.
 ///
 /// Board mutations `ping` it; the root component drains the receiver
@@ -115,6 +156,7 @@ pub struct Board {
     history: Vec<HistoryOp>,
     erase_session: Option<EraseSession>,
     notifier: Option<RedrawNotifier>,
+    viewport: Viewport,
 }
 
 impl Default for Board {
@@ -135,6 +177,7 @@ impl Default for Board {
             history: Vec::new(),
             erase_session: None,
             notifier: None,
+            viewport: Viewport::default(),
         }
     }
 }
@@ -211,6 +254,46 @@ impl Board {
     #[must_use]
     pub const fn doc(&self) -> &Doc {
         &self.doc
+    }
+
+    #[must_use]
+    pub const fn viewport(&self) -> Viewport {
+        self.viewport
+    }
+
+    /// Adopt `viewport` wholesale. Scale is clamped to
+    /// `[VIEWPORT_SCALE_MIN, VIEWPORT_SCALE_MAX]`; translation is left
+    /// unrestricted (canvas is truly infinite).
+    pub fn set_viewport(&mut self, mut viewport: Viewport) {
+        viewport.scale = viewport.scale.clamp(VIEWPORT_SCALE_MIN, VIEWPORT_SCALE_MAX);
+        if !viewport.scale.is_finite() {
+            viewport.scale = 1.0;
+        }
+        if !viewport.tx.is_finite() {
+            viewport.tx = 0.0;
+        }
+        if !viewport.ty.is_finite() {
+            viewport.ty = 0.0;
+        }
+        self.viewport = viewport;
+        self.notify();
+    }
+
+    pub fn reset_viewport(&mut self) {
+        self.set_viewport(Viewport::default());
+    }
+
+    /// Project a surface-local point (as delivered by the pen backend
+    /// and by freya pointer events) into world coordinates — the space
+    /// strokes are stored in and the spatial index is keyed by.
+    #[must_use]
+    pub fn screen_to_world(&self, x: f32, y: f32) -> (f32, f32) {
+        self.viewport.screen_to_world(x, y)
+    }
+
+    #[must_use]
+    pub fn world_to_screen(&self, x: f32, y: f32) -> (f32, f32) {
+        self.viewport.world_to_screen(x, y)
     }
 
     /// Replace the doc wholesale — used by load-from-disk. Rebuilds the
@@ -603,6 +686,12 @@ impl Board {
     /// their Catmull-Rom `p3` neighbour stays live (mirror while the
     /// user is still drawing, actual once the next sample arrives).
     pub fn paint(&self, canvas: &freya_engine::prelude::Canvas) {
+        // Everything below draws in world coordinates. Wrapping in a
+        // save/restore lets viewport pan+zoom compose freely with any
+        // future overlay pass that wants to draw in screen space.
+        canvas.save();
+        canvas.translate((self.viewport.tx, self.viewport.ty));
+        canvas.scale((self.viewport.scale, self.viewport.scale));
         for layer in &self.doc.layers {
             if !layer.visible {
                 continue;
@@ -644,6 +733,7 @@ impl Board {
             let tail = build_active_tail(preset, &active.points, self.active_next_segment);
             canvas.draw_path(&tail, &paint);
         }
+        canvas.restore();
     }
 }
 
