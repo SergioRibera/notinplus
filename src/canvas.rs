@@ -161,6 +161,27 @@ pub struct Board {
     /// in flight. `Some` gates every `on_global_pointer_move` sample as
     /// a pan step; `None` means no pan currently active.
     pan_anchor: Option<(f32, f32)>,
+    /// Live surface-pixel positions of every finger currently in
+    /// contact. Populated from `on_touch_start` / `on_touch_move` and
+    /// pruned by `on_touch_end` / `on_touch_cancel`. Two entries or
+    /// more flips [`Self::gesture_active`] on and drives pinch/pan of
+    /// the viewport; single-finger contacts are ignored here so pen
+    /// input keeps its usual path.
+    finger_positions: HashMap<u64, (f32, f32)>,
+    gesture_baseline: Option<GestureBaseline>,
+    /// True while two or more fingers are down. Suppresses stroke
+    /// input coming through the `_screen` entrypoints so the viewport
+    /// gesture doesn't share the pen path.
+    gesture_active: bool,
+}
+
+/// Anchor snapshot for a pinch gesture — centroid + pair-distance of
+/// the two lowest finger ids. Rebuilt after every touch sample so pan
+/// and zoom accumulate incrementally.
+#[derive(Debug, Clone, Copy)]
+struct GestureBaseline {
+    centroid: (f32, f32),
+    distance: f32,
 }
 
 impl Default for Board {
@@ -183,6 +204,9 @@ impl Default for Board {
             notifier: None,
             viewport: Viewport::default(),
             pan_anchor: None,
+            finger_positions: HashMap::new(),
+            gesture_baseline: None,
+            gesture_active: false,
         }
     }
 }
@@ -345,6 +369,82 @@ impl Board {
         self.pan_anchor.is_some()
     }
 
+    #[must_use]
+    pub const fn is_gesture_active(&self) -> bool {
+        self.gesture_active
+    }
+
+    /// Register a new touch point. Entering multi-finger mode (`>= 2`
+    /// fingers) rolls back any in-flight stroke so a two-finger gesture
+    /// never lands as ink on the doc.
+    pub fn touch_down(&mut self, id: u64, sx: f32, sy: f32) {
+        self.finger_positions.insert(id, (sx, sy));
+        if self.finger_positions.len() >= 2 && !self.gesture_active {
+            self.gesture_active = true;
+            self.cancel();
+        }
+        self.gesture_baseline = self.compute_gesture_baseline();
+    }
+
+    /// Update a tracked finger. Pans + zooms the viewport by the delta
+    /// against the previous baseline whenever a gesture is active.
+    pub fn touch_move(&mut self, id: u64, sx: f32, sy: f32) {
+        if !self.finger_positions.contains_key(&id) {
+            return;
+        }
+        self.finger_positions.insert(id, (sx, sy));
+        if !self.gesture_active {
+            return;
+        }
+        let Some(new) = self.compute_gesture_baseline() else {
+            return;
+        };
+        if let Some(prev) = self.gesture_baseline {
+            let dx = new.centroid.0 - prev.centroid.0;
+            let dy = new.centroid.1 - prev.centroid.1;
+            if dx != 0.0 || dy != 0.0 {
+                self.viewport_pan(dx, dy);
+            }
+            // Distances below one surface pixel are numerically noisy
+            // — a pair that near-collides would produce factor blowups.
+            if prev.distance > 1.0 && new.distance > 1.0 {
+                let factor = new.distance / prev.distance;
+                if (factor - 1.0).abs() > 1e-4 {
+                    self.viewport_zoom_at(new.centroid.0, new.centroid.1, factor);
+                }
+            }
+        }
+        self.gesture_baseline = Some(new);
+    }
+
+    /// Drop a finger from the tracker. Leaving multi-finger mode clears
+    /// gesture state so the next single-finger contact resumes the
+    /// normal pen/input path.
+    pub fn touch_up(&mut self, id: u64) {
+        self.finger_positions.remove(&id);
+        if self.finger_positions.len() < 2 {
+            self.gesture_active = false;
+            self.gesture_baseline = None;
+        } else {
+            self.gesture_baseline = self.compute_gesture_baseline();
+        }
+    }
+
+    fn compute_gesture_baseline(&self) -> Option<GestureBaseline> {
+        if self.finger_positions.len() < 2 {
+            return None;
+        }
+        // Deterministic pair choice keeps the baseline stable across
+        // frames — freya doesn't order finger ids for us.
+        let mut ids: Vec<u64> = self.finger_positions.keys().copied().collect();
+        ids.sort_unstable();
+        let (ax, ay) = *self.finger_positions.get(&ids[0])?;
+        let (bx, by) = *self.finger_positions.get(&ids[1])?;
+        let centroid = ((ax + bx) * 0.5, (ay + by) * 0.5);
+        let distance = (bx - ax).hypot(by - ay);
+        Some(GestureBaseline { centroid, distance })
+    }
+
     /// Project a surface-local point (as delivered by the pen backend
     /// and by freya pointer events) into world coordinates — the space
     /// strokes are stored in and the spatial index is keyed by.
@@ -458,6 +558,9 @@ impl Board {
     /// so pen and pointer inputs land in the same world coordinates the
     /// stroke buffer stores.
     pub fn begin_screen(&mut self, mut point: InkPoint) {
+        if self.gesture_active {
+            return;
+        }
         let (wx, wy) = self.viewport.screen_to_world(point.x, point.y);
         point.x = wx;
         point.y = wy;
@@ -467,6 +570,9 @@ impl Board {
     /// Screen-space entrypoint mirroring [`Board::extend`]. See
     /// [`Board::begin_screen`] for the projection rationale.
     pub fn extend_screen(&mut self, mut point: InkPoint) {
+        if self.gesture_active {
+            return;
+        }
         let (wx, wy) = self.viewport.screen_to_world(point.x, point.y);
         point.x = wx;
         point.y = wy;
@@ -1059,6 +1165,10 @@ pub fn drawing_surface(board: &Arc<Mutex<Board>>) -> impl IntoElement {
     let down_board = Arc::clone(board);
     let move_board = Arc::clone(board);
     let up_board = Arc::clone(board);
+    let touch_start_board = Arc::clone(board);
+    let touch_move_board = Arc::clone(board);
+    let touch_end_board = Arc::clone(board);
+    let touch_cancel_board = Arc::clone(board);
 
     rect()
         .width(Size::fill())
@@ -1101,6 +1211,26 @@ pub fn drawing_surface(board: &Arc<Mutex<Board>>) -> impl IntoElement {
         })
         .on_global_pointer_press(move |_: Event<PointerEventData>| {
             lock(&up_board).pan_end();
+        })
+        .on_touch_start(move |e: Event<TouchEventData>| {
+            #[allow(clippy::cast_possible_truncation)]
+            let x = e.element_location.x as f32;
+            #[allow(clippy::cast_possible_truncation)]
+            let y = e.element_location.y as f32;
+            lock(&touch_start_board).touch_down(e.finger_id, x, y);
+        })
+        .on_touch_move(move |e: Event<TouchEventData>| {
+            #[allow(clippy::cast_possible_truncation)]
+            let x = e.element_location.x as f32;
+            #[allow(clippy::cast_possible_truncation)]
+            let y = e.element_location.y as f32;
+            lock(&touch_move_board).touch_move(e.finger_id, x, y);
+        })
+        .on_touch_end(move |e: Event<TouchEventData>| {
+            lock(&touch_end_board).touch_up(e.finger_id);
+        })
+        .on_touch_cancel(move |e: Event<TouchEventData>| {
+            lock(&touch_cancel_board).touch_up(e.finger_id);
         })
         .child(inner)
 }
