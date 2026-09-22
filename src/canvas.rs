@@ -157,6 +157,10 @@ pub struct Board {
     erase_session: Option<EraseSession>,
     notifier: Option<RedrawNotifier>,
     viewport: Viewport,
+    /// Last surface-pixel cursor observed while a middle-drag pan is
+    /// in flight. `Some` gates every `on_global_pointer_move` sample as
+    /// a pan step; `None` means no pan currently active.
+    pan_anchor: Option<(f32, f32)>,
 }
 
 impl Default for Board {
@@ -178,6 +182,7 @@ impl Default for Board {
             erase_session: None,
             notifier: None,
             viewport: Viewport::default(),
+            pan_anchor: None,
         }
     }
 }
@@ -281,6 +286,63 @@ impl Board {
 
     pub fn reset_viewport(&mut self) {
         self.set_viewport(Viewport::default());
+    }
+
+    /// Translate the viewport by `(dx, dy)` in surface pixels.
+    pub fn viewport_pan(&mut self, dx: f32, dy: f32) {
+        if !dx.is_finite() || !dy.is_finite() {
+            return;
+        }
+        self.viewport.tx += dx;
+        self.viewport.ty += dy;
+        self.notify();
+    }
+
+    /// Multiply the current zoom by `factor`, keeping the world point
+    /// currently under the surface-pixel cursor `(cx, cy)` pinned.
+    /// Scale clamps to `[VIEWPORT_SCALE_MIN, VIEWPORT_SCALE_MAX]`; a
+    /// no-op factor (already at the clamp boundary) skips the notify.
+    pub fn viewport_zoom_at(&mut self, cx: f32, cy: f32, factor: f32) {
+        if !factor.is_finite() || factor <= 0.0 {
+            return;
+        }
+        let old_scale = self.viewport.scale;
+        let new_scale = (old_scale * factor).clamp(VIEWPORT_SCALE_MIN, VIEWPORT_SCALE_MAX);
+        if (new_scale - old_scale).abs() < f32::EPSILON {
+            return;
+        }
+        let world_x = (cx - self.viewport.tx) / old_scale;
+        let world_y = (cy - self.viewport.ty) / old_scale;
+        self.viewport.scale = new_scale;
+        self.viewport.tx = world_x.mul_add(-new_scale, cx);
+        self.viewport.ty = world_y.mul_add(-new_scale, cy);
+        self.notify();
+    }
+
+    /// Latch the pan anchor at the current surface cursor. Called on
+    /// middle-button press; the matching `pan_move` / `pan_end` pair
+    /// unpacks the drag.
+    pub const fn pan_begin(&mut self, sx: f32, sy: f32) {
+        self.pan_anchor = Some((sx, sy));
+    }
+
+    /// Consume one drag sample: pan the viewport by the delta from the
+    /// last anchor, then rebase the anchor. No-op when no pan is active.
+    pub fn pan_move(&mut self, sx: f32, sy: f32) {
+        let Some((ax, ay)) = self.pan_anchor else {
+            return;
+        };
+        self.pan_anchor = Some((sx, sy));
+        self.viewport_pan(sx - ax, sy - ay);
+    }
+
+    pub const fn pan_end(&mut self) {
+        self.pan_anchor = None;
+    }
+
+    #[must_use]
+    pub const fn is_panning(&self) -> bool {
+        self.pan_anchor.is_some()
     }
 
     /// Project a surface-local point (as delivered by the pen backend
@@ -975,6 +1037,11 @@ fn configure_fill_paint(paint: &mut Paint, style: &StrokeStyle) {
 }
 
 /// Freya canvas element wired to a shared [`Board`].
+///
+/// The outer rect owns viewport gestures (wheel zoom + middle-button
+/// drag pan). Pen and stylus input still land on the [`Board`] through
+/// [`crate::pen_pump`] — the freya handlers here operate on the
+/// [`Viewport`] only, so simultaneous pen strokes are untouched.
 pub fn drawing_surface(board: &Arc<Mutex<Board>>) -> impl IntoElement {
     let render_board = Arc::clone(board);
 
@@ -988,10 +1055,53 @@ pub fn drawing_surface(board: &Arc<Mutex<Board>>) -> impl IntoElement {
     .width(Size::fill())
     .height(Size::fill());
 
+    let wheel_board = Arc::clone(board);
+    let down_board = Arc::clone(board);
+    let move_board = Arc::clone(board);
+    let up_board = Arc::clone(board);
+
     rect()
         .width(Size::fill())
         .height(Size::fill())
         .background(Color::from_rgb(250, 250, 248))
+        .on_wheel(move |e: Event<WheelEventData>| {
+            #[allow(clippy::cast_possible_truncation)]
+            let x = e.element_location.x as f32;
+            #[allow(clippy::cast_possible_truncation)]
+            let y = e.element_location.y as f32;
+            // Scroll up (dy < 0) zooms in. Empirical exponent — good
+            // feel on a standard mouse wheel and on a laptop trackpad;
+            // revisit if pinch-zoom-emulation trackpads land here too.
+            #[allow(clippy::cast_possible_truncation)]
+            let dy = e.delta_y as f32;
+            let factor = (-dy * 0.0015).exp();
+            lock(&wheel_board).viewport_zoom_at(x, y, factor);
+        })
+        .on_mouse_down(move |e: Event<MouseEventData>| {
+            if e.button != Some(MouseButton::Middle) {
+                return;
+            }
+            #[allow(clippy::cast_possible_truncation)]
+            let x = e.global_location.x as f32;
+            #[allow(clippy::cast_possible_truncation)]
+            let y = e.global_location.y as f32;
+            lock(&down_board).pan_begin(x, y);
+        })
+        .on_global_pointer_move(move |e: Event<PointerEventData>| {
+            let mut guard = lock(&move_board);
+            if !guard.is_panning() {
+                return;
+            }
+            let loc = e.global_location();
+            #[allow(clippy::cast_possible_truncation)]
+            let x = loc.x as f32;
+            #[allow(clippy::cast_possible_truncation)]
+            let y = loc.y as f32;
+            guard.pan_move(x, y);
+        })
+        .on_global_pointer_press(move |_: Event<PointerEventData>| {
+            lock(&up_board).pan_end();
+        })
         .child(inner)
 }
 
