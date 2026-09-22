@@ -63,14 +63,24 @@ pub fn run_mobile() {
 }
 
 fn root() -> impl IntoElement {
+    let mut zoom = use_state(|| 1.0_f32);
     let board = use_hook(|| {
         let board = Board::shared();
         let platform = Platform::get();
         let (notifier, rx) = RedrawNotifier::new();
         lock(&board).set_notifier(notifier);
+        let zoom_board = Arc::clone(&board);
         spawn(async move {
             while rx.recv_async().await.is_ok() {
                 platform.send(UserEvent::RequestRedraw);
+                // Piggyback the redraw wakeup: sync the reactive zoom
+                // signal off the freshest viewport so the HUD label
+                // stays in step with pinch / wheel gestures without
+                // needing its own notifier plumbing.
+                let s = lock(&zoom_board).viewport().scale;
+                if (s - *zoom.read()).abs() > f32::EPSILON {
+                    zoom.set(s);
+                }
             }
         });
         board
@@ -136,6 +146,41 @@ fn root() -> impl IntoElement {
         .child(drawing_surface(&board))
         .child(palette_overlay(&board, selected, scale, pad))
         .child(layers_panel(&board, layers_ver, pad))
+        .child(zoom_overlay(&board, zoom, pad))
+}
+
+fn zoom_overlay(
+    board: &Arc<Mutex<Board>>,
+    zoom: State<f32>,
+    pad: EdgeInsets,
+) -> impl IntoElement {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let pct = (*zoom.read() * 100.0).round() as i32;
+    let text = format!("{pct}%");
+
+    let reset_board = Arc::clone(board);
+    let reset = rect()
+        .padding((4.0, 8.0))
+        .background(Color::from_rgb(70, 70, 78))
+        .with_corner_radius(4.0)
+        .on_press(move |_| {
+            lock(&reset_board).reset_viewport();
+        })
+        .child(label().color(Color::WHITE).font_size(12.0).text("Reset"));
+
+    rect()
+        .position(
+            Position::new_global()
+                .bottom(pad.bottom + 8.0)
+                .right(pad.right + 8.0),
+        )
+        .horizontal()
+        .spacing(6.0)
+        .padding((6.0, 8.0))
+        .background(Color::from_argb(220, 30, 30, 34))
+        .with_corner_radius(8.0)
+        .child(label().color(Color::WHITE).font_size(12.0).text(text))
+        .child(reset)
 }
 
 // Fold platform-published `SafeAreaInsets` (system bars + display

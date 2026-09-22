@@ -331,7 +331,15 @@ impl Board {
             return;
         }
         let old_scale = self.viewport.scale;
-        let new_scale = (old_scale * factor).clamp(VIEWPORT_SCALE_MIN, VIEWPORT_SCALE_MAX);
+        let raw_new = (old_scale * factor).clamp(VIEWPORT_SCALE_MIN, VIEWPORT_SCALE_MAX);
+        // Snap to exactly 1.0 whenever the target lands within a 2%
+        // band — gives wheel + pinch a satisfying detent at native
+        // scale and keeps text rendering from drifting off pixel grid.
+        let new_scale = if (raw_new - 1.0).abs() < 0.02 {
+            1.0
+        } else {
+            raw_new
+        };
         if (new_scale - old_scale).abs() < f32::EPSILON {
             return;
         }
