@@ -14,6 +14,20 @@ fmt:
     cargo fmt --all
     cargo clippy --all-targets -- -D warnings
 
+# Nuke every `libnotinplus.so` cargo/gradle keeps around.
+#
+# `gradle clean` alone only wipes `android/*/build/`; the cargo `target/`
+# still holds stale `.so`s that Gradle then repackages into the next APK
+# (its stage tasks stay up-to-date when the cargo output timestamp
+# hasn't moved). Explicit `find … -delete` for the `.so`s so a bare
+# `just clean` guarantees the next build re-links from scratch.
+clean:
+    sudo find . -type f -name "libnotinplus.so" -delete
+    docker run --rm -it {{mount}} \
+        -w /src/notinplus/android \
+        --entrypoint bash {{image}} \
+        -c 'gradle clean --no-daemon'
+
 # Android — assemble debug APK via Gradle, which drives cargo for every ABI.
 build-android:
     docker run --rm -it {{mount}} \
