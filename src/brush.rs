@@ -1,67 +1,254 @@
 //! Brush type system.
 //!
-//! Every drawing tool is a variant of [`Brush`]. Each variant owns its
-//! calibration (width envelope, opacity, pressure response) as a
-//! dedicated struct — the enum's shape encodes which parameters exist
-//! for which tool, so a marker cannot accidentally borrow eraser fields
-//! and vice versa.
+//! A [`BrushPreset`] fully describes a drawing tool (kind + default
+//! color + width envelope + opacity + spacing). Each stroke references
+//! a preset via a compact [`BrushId`] into the document's shared
+//! registry and carries its own instance-specific color override —
+//! authoring an "orange marker" does not fork the marker preset.
 //!
-//! Sample colouring, opacity, and width all flow through [`Brush::plan`]
-//! which returns a [`SegmentPlan`] describing how a single segment
-//! between two [`InkPoint`]s should be painted. Callers hand the plan to
-//! their renderer — the brushes themselves are backend-agnostic.
+//! All wire types (`BrushId`, `BrushKind`, `BrushPreset`, `InkPoint`,
+//! `Stroke`) are `#[istmo::message]` so a document round-trips through
+//! `bincode` without an intermediate DTO layer.
 
 use freya::prelude::Color;
 
-/// Normalised pressure sample. Zero when the input device reports no
-/// pressure signal; consumers still receive a value so downstream code
-/// never has to branch on presence.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Pressure(f32);
+/// Zero-based index into [`crate::doc::Doc::brushes`]. `u16` caps
+/// per-document presets at 65 535 — orders of magnitude past any
+/// realistic ceiling — and keeps every [`Stroke`] header at two bytes.
+#[istmo::message]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
+pub struct BrushId(pub u16);
 
-impl Pressure {
-    #[must_use]
-    pub const fn new(raw: f32) -> Self {
-        Self(raw.clamp(0.0, 1.0))
-    }
-
-    #[must_use]
-    pub const fn get(self) -> f32 {
-        self.0
-    }
+/// Which drawing tool family a preset belongs to. Determines rendering
+/// mode (draw / multiply) and — post-Phase-3 — whether input is routed
+/// to the paint path or the vector eraser.
+#[istmo::message]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum BrushKind {
+    Pencil,
+    Marker,
+    Eraser,
+    Pen,
+    Highlighter,
 }
 
-impl Default for Pressure {
+/// Full calibration of a drawing tool. Everything the renderer needs to
+/// paint a segment lives here; nothing tool-specific lives elsewhere.
+///
+/// `color` is the preset default (used to seed the swatch when a
+/// palette entry is first picked). Actual stroke colour comes from
+/// [`Stroke::color`], so a user can tint the same preset without
+/// mutating the shared entry.
+#[istmo::message]
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct BrushPreset {
+    pub kind: BrushKind,
+    pub color: [u8; 4],
+    pub min_width: f32,
+    pub max_width: f32,
+    pub tilt_gain: f32,
+    pub opacity: f32,
+    pub spacing: f32,
+    /// User-tunable size multiplier. Applied on top of the width
+    /// envelope so a Pencil at scale 2.0 draws twice as thick without
+    /// forking the preset. Persisted with the doc so a reopened file
+    /// re-renders identically.
+    pub size_scale: f32,
+}
+
+impl Default for BrushPreset {
     fn default() -> Self {
-        Self(0.5)
+        Self::pen()
     }
 }
 
-impl From<f32> for Pressure {
-    fn from(value: f32) -> Self {
-        Self::new(value)
+impl BrushPreset {
+    #[must_use]
+    pub const fn pencil() -> Self {
+        Self {
+            kind: BrushKind::Pencil,
+            color: [60, 60, 60, 255],
+            min_width: 0.8,
+            max_width: 2.2,
+            tilt_gain: 0.6,
+            opacity: 0.78,
+            spacing: 0.05,
+            size_scale: 1.0,
+        }
+    }
+
+    #[must_use]
+    pub const fn marker() -> Self {
+        Self {
+            kind: BrushKind::Marker,
+            color: [20, 20, 20, 255],
+            min_width: 3.0,
+            max_width: 14.0,
+            tilt_gain: 4.0,
+            opacity: 1.0,
+            spacing: 0.08,
+            size_scale: 1.0,
+        }
+    }
+
+    #[must_use]
+    pub const fn eraser() -> Self {
+        Self {
+            kind: BrushKind::Eraser,
+            color: [0, 0, 0, 0],
+            min_width: 6.0,
+            max_width: 24.0,
+            tilt_gain: 0.0,
+            opacity: 1.0,
+            spacing: 0.1,
+            size_scale: 1.0,
+        }
+    }
+
+    #[must_use]
+    pub const fn pen() -> Self {
+        Self {
+            kind: BrushKind::Pen,
+            color: [10, 15, 40, 255],
+            min_width: 1.4,
+            max_width: 2.6,
+            tilt_gain: 0.0,
+            opacity: 1.0,
+            spacing: 0.05,
+            size_scale: 1.0,
+        }
+    }
+
+    #[must_use]
+    pub const fn highlighter() -> Self {
+        Self {
+            kind: BrushKind::Highlighter,
+            color: [255, 220, 60, 90],
+            min_width: 16.0,
+            max_width: 16.0,
+            tilt_gain: 0.0,
+            opacity: 0.35,
+            spacing: 0.05,
+            size_scale: 1.0,
+        }
+    }
+
+    #[must_use]
+    pub const fn label(&self) -> &'static str {
+        match self.kind {
+            BrushKind::Pencil => "Pencil",
+            BrushKind::Marker => "Marker",
+            BrushKind::Eraser => "Eraser",
+            BrushKind::Pen => "Pen",
+            BrushKind::Highlighter => "Highlighter",
+        }
+    }
+
+    /// Erasers have no drawn colour — palette greys out the swatch.
+    #[must_use]
+    pub const fn palette_color(&self) -> Option<[u8; 4]> {
+        match self.kind {
+            BrushKind::Eraser => None,
+            _ => Some(self.color),
+        }
+    }
+
+    /// Width at a given normalised pressure/tilt pair. Multiplied by
+    /// [`Self::size_scale`] so a user-tuned brush thickness applies
+    /// uniformly across the pressure envelope. Used by the ribbon
+    /// renderer per vertex and by the vector eraser (radius = width/2).
+    #[must_use]
+    pub fn width(&self, pressure: f32, tilt: f32) -> f32 {
+        let base = self
+            .tilt_gain
+            .mul_add(tilt, lerp(self.min_width, self.max_width, pressure));
+        base * self.size_scale.max(0.01)
+    }
+
+    /// Blend mode a stroke painted with this preset uses. Erasers get
+    /// [`SegmentMode::Draw`] as a fallback — the ribbon renderer never
+    /// sees an eraser preset (they're intercepted upstream).
+    #[must_use]
+    pub const fn segment_mode(&self) -> SegmentMode {
+        match self.kind {
+            BrushKind::Highlighter => SegmentMode::Multiply,
+            BrushKind::Eraser | BrushKind::Pencil | BrushKind::Marker | BrushKind::Pen => {
+                SegmentMode::Draw
+            }
+        }
+    }
+
+    /// Render style for a full stroke — one paint config reused for
+    /// every vertex circle and connecting trapezoid.
+    #[must_use]
+    pub const fn stroke_style(&self, stroke_color: [u8; 4]) -> StrokeStyle {
+        StrokeStyle {
+            color: color_from_rgba(stroke_color),
+            opacity: self.opacity,
+            mode: self.segment_mode(),
+        }
+    }
+
+    /// Plan the segment from `from` to `to` using this preset. Retained
+    /// for callers that still want a per-segment width (currently only
+    /// tests).
+    #[must_use]
+    pub fn plan(&self, stroke_color: [u8; 4], from: InkPoint, to: InkPoint) -> SegmentPlan {
+        let pressure = (from.pressure_f32() + to.pressure_f32()) * 0.5;
+        let tilt = (from.tilt_f32() + to.tilt_f32()) * 0.5;
+        let width = self.width(pressure, tilt);
+        SegmentPlan {
+            color: color_from_rgba(stroke_color),
+            width,
+            opacity: self.opacity,
+            mode: match self.kind {
+                BrushKind::Highlighter => SegmentMode::Multiply,
+                BrushKind::Eraser | BrushKind::Pencil | BrushKind::Marker | BrushKind::Pen => {
+                    SegmentMode::Draw
+                }
+            },
+        }
     }
 }
 
-/// A single point in an ink stroke. Coordinates are in Freya logical
-/// space (points / dp), matching what the canvas widget receives from
-/// mouse and pen events.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// One quantised ink sample.
+///
+/// Coordinates stay in Freya logical units (`f32` points/dp);
+/// pressure/tilt collapse to `u8` (0..=255) and the per-sample time
+/// delta to `u16` µs, matching the ~7-byte target in `PLAN.md`. Phase 1
+/// lands the wire shape; `dt_us` populates as timing surfaces from the
+/// pen backend.
+#[istmo::message]
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct InkPoint {
     pub x: f32,
     pub y: f32,
-    pub pressure: Pressure,
-    pub tilt: f32,
+    pub pressure: u8,
+    pub tilt: u8,
+    pub dt_us: u16,
 }
 
 impl InkPoint {
     #[must_use]
-    pub const fn new(x: f32, y: f32, pressure: Pressure, tilt: f32) -> Self {
+    pub const fn new(x: f32, y: f32, pressure: u8, tilt: u8, dt_us: u16) -> Self {
         Self {
             x,
             y,
             pressure,
             tilt,
+            dt_us,
+        }
+    }
+
+    /// Build from unclamped `f32` pressure / tilt (`0.0..=1.0`).
+    #[must_use]
+    pub fn from_normalized(x: f32, y: f32, pressure: f32, tilt: f32, dt_us: u16) -> Self {
+        Self {
+            x,
+            y,
+            pressure: quantize_unit(pressure),
+            tilt: quantize_unit(tilt),
+            dt_us,
         }
     }
 
@@ -71,14 +258,46 @@ impl InkPoint {
         let dy = self.y - other.y;
         dx.hypot(dy)
     }
+
+    #[must_use]
+    pub fn pressure_f32(self) -> f32 {
+        f32::from(self.pressure) / 255.0
+    }
+
+    #[must_use]
+    pub fn tilt_f32(self) -> f32 {
+        f32::from(self.tilt) / 255.0
+    }
+}
+
+/// One drawn stroke. `points` are raw samples — every re-render walks
+/// them through [`BrushPreset::plan`] so zoom/resolution changes never
+/// bake into the geometry.
+#[istmo::message]
+#[derive(Clone, PartialEq, Debug)]
+pub struct Stroke {
+    pub id: u32,
+    pub brush: BrushId,
+    pub color: [u8; 4],
+    pub points: Vec<InkPoint>,
+}
+
+impl Stroke {
+    #[must_use]
+    pub fn new(id: u32, brush: BrushId, color: [u8; 4], first: InkPoint) -> Self {
+        Self {
+            id,
+            brush,
+            color,
+            points: vec![first],
+        }
+    }
 }
 
 /// Instructions for rendering one segment of a stroke.
 ///
-/// Produced by [`Brush::plan`]. The canvas layer turns this into skia
-/// paint calls; keeping the plan renderer-agnostic lets tests and
-/// non-skia targets exercise brush logic without pulling in the whole
-/// rendering stack.
+/// Renderer-side type — carries a freya `Color` (not the wire
+/// `[u8; 4]`) so paint calls skip a per-segment conversion.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SegmentPlan {
     pub color: Color,
@@ -87,257 +306,36 @@ pub struct SegmentPlan {
     pub mode: SegmentMode,
 }
 
+/// One-per-stroke render style shared by every vertex circle and
+/// trapezoid the ribbon renderer emits.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StrokeStyle {
+    pub color: Color,
+    pub opacity: f32,
+    pub mode: SegmentMode,
+}
+
 /// How a segment interacts with what is already on the canvas.
+///
+/// The `Erase` variant is intentionally absent — Phase 3 replaced
+/// alpha-clear erasure with a vector eraser that mutates the stroke
+/// list directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SegmentMode {
-    /// Standard source-over paint.
     Draw,
-    /// Multiply-style paint so overlapping colours darken naturally —
-    /// the highlighter effect.
     Multiply,
-    /// Clear pixels underneath. Consumers translate this to the
-    /// backend's cleanest erase primitive (skia `BlendMode::Clear` or a
-    /// destination-out paint).
-    Erase,
-}
-
-/// A drawing tool. Each variant carries its own calibration.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Brush {
-    /// Thin, grainy line with light pressure sensitivity. The go-to for
-    /// sketching before committing to ink.
-    Pencil(PencilStyle),
-    /// Broad, opaque strokes with strong pressure and tilt response.
-    /// The traditional "pincel" of a paint app.
-    Marker(MarkerStyle),
-    /// Removes ink. Width follows pressure directly so the user can
-    /// scrub finer or broader without switching tools.
-    Eraser(EraserStyle),
-    /// Constant-weight ink line — the fountain pen / bolígrafo. Pressure
-    /// modulates a narrow band; tilt is ignored so signature-style
-    /// strokes stay predictable.
-    Pen(PenStyle),
-    /// Semi-transparent, wide multiplicative stroke. Overlaps darken;
-    /// pressure does not change opacity so the user can lay down flat
-    /// blocks of colour.
-    Highlighter(HighlighterStyle),
-}
-
-impl Default for Brush {
-    fn default() -> Self {
-        Self::Pen(PenStyle::default())
-    }
-}
-
-/// Human-readable name — for palette buttons and debug output.
-impl Brush {
-    #[must_use]
-    pub const fn label(&self) -> &'static str {
-        match self {
-            Self::Pencil(_) => "Pencil",
-            Self::Marker(_) => "Marker",
-            Self::Eraser(_) => "Eraser",
-            Self::Pen(_) => "Pen",
-            Self::Highlighter(_) => "Highlighter",
-        }
-    }
-
-    /// Return the tool's active colour. Eraser has none — it clears
-    /// pixels — so the palette can grey out the colour picker.
-    #[must_use]
-    pub const fn color(&self) -> Option<Color> {
-        match self {
-            Self::Pencil(s) => Some(s.color),
-            Self::Marker(s) => Some(s.color),
-            Self::Pen(s) => Some(s.color),
-            Self::Highlighter(s) => Some(s.color),
-            Self::Eraser(_) => None,
-        }
-    }
-
-    /// Replace the tool's colour if it has one. Eraser calls are no-ops.
-    pub const fn set_color(&mut self, color: Color) {
-        match self {
-            Self::Pencil(s) => s.color = color,
-            Self::Marker(s) => s.color = color,
-            Self::Pen(s) => s.color = color,
-            Self::Highlighter(s) => s.color = color,
-            Self::Eraser(_) => {}
-        }
-    }
-
-    /// Plan how to paint the segment from `from` to `to`. The pressure
-    /// used for width interpolation is the average of both endpoints —
-    /// smoother than picking one endpoint arbitrarily.
-    #[must_use]
-    pub fn plan(&self, from: InkPoint, to: InkPoint) -> SegmentPlan {
-        let pressure = (from.pressure.get() + to.pressure.get()) * 0.5;
-        let tilt = (from.tilt + to.tilt) * 0.5;
-        match *self {
-            Self::Pencil(style) => style.plan(pressure, tilt),
-            Self::Marker(style) => style.plan(pressure, tilt),
-            Self::Eraser(style) => style.plan(pressure),
-            Self::Pen(style) => style.plan(pressure),
-            Self::Highlighter(style) => style.plan(),
-        }
-    }
 }
 
 fn lerp(min: f32, max: f32, t: f32) -> f32 {
     max.mul_add(t, min * (1.0 - t))
 }
 
-/// Calibration for [`Brush::Pencil`].
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PencilStyle {
-    pub color: Color,
-    pub min_width: f32,
-    pub max_width: f32,
-    pub tilt_gain: f32,
-    pub base_opacity: f32,
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn quantize_unit(v: f32) -> u8 {
+    (v.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
-impl Default for PencilStyle {
-    fn default() -> Self {
-        Self {
-            color: Color::from_rgb(60, 60, 60),
-            min_width: 0.8,
-            max_width: 2.2,
-            tilt_gain: 0.6,
-            base_opacity: 0.78,
-        }
-    }
-}
-
-impl PencilStyle {
-    fn plan(self, pressure: f32, tilt: f32) -> SegmentPlan {
-        let width = self
-            .tilt_gain
-            .mul_add(tilt, lerp(self.min_width, self.max_width, pressure));
-        SegmentPlan {
-            color: self.color,
-            width,
-            opacity: self.base_opacity,
-            mode: SegmentMode::Draw,
-        }
-    }
-}
-
-/// Calibration for [`Brush::Marker`].
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MarkerStyle {
-    pub color: Color,
-    pub min_width: f32,
-    pub max_width: f32,
-    pub tilt_gain: f32,
-}
-
-impl Default for MarkerStyle {
-    fn default() -> Self {
-        Self {
-            color: Color::from_rgb(20, 20, 20),
-            min_width: 3.0,
-            max_width: 14.0,
-            tilt_gain: 4.0,
-        }
-    }
-}
-
-impl MarkerStyle {
-    fn plan(self, pressure: f32, tilt: f32) -> SegmentPlan {
-        let width = self
-            .tilt_gain
-            .mul_add(tilt, lerp(self.min_width, self.max_width, pressure));
-        SegmentPlan {
-            color: self.color,
-            width,
-            opacity: 1.0,
-            mode: SegmentMode::Draw,
-        }
-    }
-}
-
-/// Calibration for [`Brush::Eraser`].
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct EraserStyle {
-    pub min_width: f32,
-    pub max_width: f32,
-}
-
-impl Default for EraserStyle {
-    fn default() -> Self {
-        Self {
-            min_width: 6.0,
-            max_width: 24.0,
-        }
-    }
-}
-
-impl EraserStyle {
-    fn plan(self, pressure: f32) -> SegmentPlan {
-        SegmentPlan {
-            color: Color::TRANSPARENT,
-            width: lerp(self.min_width, self.max_width, pressure),
-            opacity: 1.0,
-            mode: SegmentMode::Erase,
-        }
-    }
-}
-
-/// Calibration for [`Brush::Pen`].
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PenStyle {
-    pub color: Color,
-    pub min_width: f32,
-    pub max_width: f32,
-}
-
-impl Default for PenStyle {
-    fn default() -> Self {
-        Self {
-            color: Color::from_rgb(10, 15, 40),
-            min_width: 1.4,
-            max_width: 2.6,
-        }
-    }
-}
-
-impl PenStyle {
-    fn plan(self, pressure: f32) -> SegmentPlan {
-        SegmentPlan {
-            color: self.color,
-            width: lerp(self.min_width, self.max_width, pressure),
-            opacity: 1.0,
-            mode: SegmentMode::Draw,
-        }
-    }
-}
-
-/// Calibration for [`Brush::Highlighter`].
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct HighlighterStyle {
-    pub color: Color,
-    pub width: f32,
-    pub opacity: f32,
-}
-
-impl Default for HighlighterStyle {
-    fn default() -> Self {
-        Self {
-            color: Color::from_rgb(255, 220, 60),
-            width: 16.0,
-            opacity: 0.35,
-        }
-    }
-}
-
-impl HighlighterStyle {
-    const fn plan(self) -> SegmentPlan {
-        SegmentPlan {
-            color: self.color,
-            width: self.width,
-            opacity: self.opacity,
-            mode: SegmentMode::Multiply,
-        }
-    }
+const fn color_from_rgba(rgba: [u8; 4]) -> Color {
+    let [r, g, b, a] = rgba;
+    Color::from_argb(a, r, g, b)
 }

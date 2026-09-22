@@ -12,7 +12,10 @@
 pub mod app;
 pub mod brush;
 pub mod canvas;
+pub mod doc;
+pub mod history;
 pub mod pen_pump;
+pub mod spatial;
 
 #[cfg(not(any(
     target_os = "android",

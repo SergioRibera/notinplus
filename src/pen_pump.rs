@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use istmo::{StreamItem, TypedStream};
 use istmo_pen::{PenClient, PenConfig, PenEvent, PenHoverEvent, PenSample};
 
-use crate::brush::{InkPoint, Pressure};
+use crate::brush::InkPoint;
 use crate::canvas::Board;
 
 /// Kick off the pen pump for `window_id`.
@@ -47,9 +47,10 @@ pub fn spawn(window_id: u64, board: Arc<Mutex<Board>>) {
 }
 
 fn pump_events(stream: &TypedStream<PenEvent, ()>, board: &Arc<Mutex<Board>>) {
+    let mut dt = DtTracker::default();
     loop {
         match stream.recv() {
-            Ok(StreamItem::Event(event)) => apply(event, board),
+            Ok(StreamItem::Event(event)) => apply(event, board, &mut dt),
             Ok(StreamItem::Completed | StreamItem::Cancelled) => break,
             Ok(StreamItem::Failed(err)) => {
                 log::warn!("pen event stream failed: {err:?}");
@@ -70,29 +71,89 @@ fn pump_hover(stream: &TypedStream<PenHoverEvent, ()>) {
     while let Ok(StreamItem::Event(_)) = stream.recv() {}
 }
 
-fn apply(event: PenEvent, board: &Arc<Mutex<Board>>) {
-    let mut guard = match board.lock() {
-        Ok(g) => g,
-        Err(poisoned) => poisoned.into_inner(),
-    };
+/// Per-stroke previous-sample timestamp. `Down` resets it; each
+/// subsequent sample computes `dt_us = ts - prev` and advances `prev`.
+/// Deltas exceeding `u16::MAX` (65 ms) clamp — a gap that large is
+/// almost always a lift-off recovery, and downstream velocity code
+/// treats saturated deltas as "no meaningful continuity" anyway.
+#[derive(Default)]
+struct DtTracker {
+    prev_us: Option<u64>,
+}
+
+impl DtTracker {
+    const fn reset(&mut self, ts_us: u64) -> u16 {
+        self.prev_us = Some(ts_us);
+        0
+    }
+
+    fn advance(&mut self, ts_us: u64) -> u16 {
+        let dt = self.prev_us.map_or(0, |p| ts_us.saturating_sub(p));
+        self.prev_us = Some(ts_us);
+        u16::try_from(dt).unwrap_or(u16::MAX)
+    }
+
+    const fn clear(&mut self) {
+        self.prev_us = None;
+    }
+}
+
+fn apply(event: PenEvent, board: &Arc<Mutex<Board>>, dt: &mut DtTracker) {
+    // Compute the InkPoint(s) before touching the mutex, then take the
+    // lock only for the actual board mutation. Keeps the guard's live
+    // scope tight so the pump thread doesn't hold it during quantise +
+    // trig work.
     match event {
-        PenEvent::Down(sample) => guard.begin(point_from_sample(&sample)),
+        PenEvent::Down(sample) => {
+            let d = dt.reset(sample.timestamp_us);
+            let point = point_from_sample(&sample, d);
+            let mut guard = lock_board(board);
+            guard.begin(point);
+        }
         PenEvent::Move(m) => {
+            let mut points = Vec::with_capacity(m.coalesced.len() + 1);
             for c in &m.coalesced {
-                guard.extend(point_from_sample(c));
+                let d = dt.advance(c.timestamp_us);
+                points.push(point_from_sample(c, d));
             }
-            guard.extend(point_from_sample(&m.sample));
+            let d = dt.advance(m.sample.timestamp_us);
+            points.push(point_from_sample(&m.sample, d));
+            let mut guard = lock_board(board);
+            for p in points {
+                guard.extend(p);
+            }
         }
         PenEvent::Up(sample) => {
-            guard.extend(point_from_sample(&sample));
-            guard.end();
+            let d = dt.advance(sample.timestamp_us);
+            let point = point_from_sample(&sample, d);
+            {
+                let mut guard = lock_board(board);
+                guard.extend(point);
+                guard.end();
+            }
+            dt.clear();
         }
-        PenEvent::Cancel(_) => guard.cancel(),
+        PenEvent::Cancel(_) => {
+            {
+                let mut guard = lock_board(board);
+                guard.cancel();
+            }
+            dt.clear();
+        }
         PenEvent::ButtonChanged(_) => {}
     }
 }
 
-fn point_from_sample(sample: &PenSample) -> InkPoint {
+fn lock_board(board: &Arc<Mutex<Board>>) -> std::sync::MutexGuard<'_, Board> {
+    match board.lock() {
+        Ok(g) => g,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn point_from_sample(sample: &PenSample, dt_us: u16) -> InkPoint {
+    // Tilt vector magnitude — already normalised on the backend side to
+    // 0.0..=1.0, but clamp defensively before quantising.
     let tilt = sample.tilt_x.hypot(sample.tilt_y);
-    InkPoint::new(sample.x, sample.y, Pressure::new(sample.pressure), tilt)
+    InkPoint::from_normalized(sample.x, sample.y, sample.pressure, tilt, dt_us)
 }

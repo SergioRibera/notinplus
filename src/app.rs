@@ -15,15 +15,15 @@ use std::sync::{Arc, Mutex};
 use freya::prelude::*;
 use istmo::plugins::{EdgeInsets, SafeArea, SafeAreaInsets};
 
-use crate::brush::{Brush, EraserStyle, HighlighterStyle, MarkerStyle, PenStyle, PencilStyle};
+use crate::brush::BrushPreset;
 use crate::canvas::{Board, RedrawNotifier, drawing_surface, lock};
 
-const PALETTE: &[fn() -> Brush] = &[
-    || Brush::Pencil(PencilStyle::default()),
-    || Brush::Marker(MarkerStyle::default()),
-    || Brush::Pen(PenStyle::default()),
-    || Brush::Highlighter(HighlighterStyle::default()),
-    || Brush::Eraser(EraserStyle::default()),
+const PALETTE: &[fn() -> BrushPreset] = &[
+    BrushPreset::pencil,
+    BrushPreset::marker,
+    BrushPreset::pen,
+    BrushPreset::highlighter,
+    BrushPreset::eraser,
 ];
 
 /// Launch the app in a desktop window.
@@ -142,7 +142,11 @@ fn palette_overlay(
     // flow layout, which is what lets the canvas sit under the status
     // bar / notch on Android and iOS.
     let mut row = rect()
-        .position(Position::new_global().top(pad.top + 8.0).left(pad.left + 8.0))
+        .position(
+            Position::new_global()
+                .top(pad.top + 8.0)
+                .left(pad.left + 8.0),
+        )
         .horizontal()
         .spacing(8.0)
         .padding(10.0)
@@ -152,25 +156,80 @@ fn palette_overlay(
     for (idx, make) in PALETTE.iter().enumerate() {
         row = row.child(palette_button(idx, make(), board, selected));
     }
+    row = row.child(size_control(board)).child(undo_button(board));
     row
+}
+
+fn size_control(board: &Arc<Mutex<Board>>) -> impl IntoElement {
+    let scale = lock(board).current_size();
+    let label_text = format!("{scale:.2}\u{00d7}");
+
+    let dec_board = Arc::clone(board);
+    let inc_board = Arc::clone(board);
+
+    let minus = rect()
+        .padding((4.0, 8.0))
+        .background(Color::from_rgb(70, 70, 78))
+        .with_corner_radius(4.0)
+        .on_press(move |_| {
+            let mut g = lock(&dec_board);
+            let next = (g.current_size() - 0.25).max(0.25);
+            g.set_current_size(next);
+        })
+        .child(label().color(Color::WHITE).font_size(14.0).text("\u{2212}"));
+
+    let plus = rect()
+        .padding((4.0, 8.0))
+        .background(Color::from_rgb(70, 70, 78))
+        .with_corner_radius(4.0)
+        .on_press(move |_| {
+            let mut g = lock(&inc_board);
+            let next = (g.current_size() + 0.25).min(4.0);
+            g.set_current_size(next);
+        })
+        .child(label().color(Color::WHITE).font_size(14.0).text("+"));
+
+    rect()
+        .horizontal()
+        .spacing(4.0)
+        .padding((8.0, 6.0))
+        .background(Color::from_rgb(50, 50, 55))
+        .with_corner_radius(6.0)
+        .child(minus)
+        .child(label().color(Color::WHITE).font_size(13.0).text(label_text))
+        .child(plus)
+}
+
+fn undo_button(board: &Arc<Mutex<Board>>) -> impl IntoElement {
+    let handle = Arc::clone(board);
+    rect()
+        .padding((6.0, 10.0))
+        .background(Color::from_rgb(80, 60, 60))
+        .with_corner_radius(6.0)
+        .on_press(move |_| {
+            lock(&handle).undo();
+        })
+        .child(label().color(Color::WHITE).font_size(14.0).text("Undo"))
 }
 
 fn palette_button(
     idx: usize,
-    brush: Brush,
+    preset: BrushPreset,
     board: &Arc<Mutex<Board>>,
     mut selected: State<usize>,
 ) -> impl IntoElement {
     let is_active = *selected.read() == idx;
-    let swatch_color = brush
-        .color()
-        .unwrap_or_else(|| Color::from_rgb(220, 220, 220));
+    let swatch_color = preset
+        .palette_color()
+        .map_or(Color::from_rgb(220, 220, 220), |[r, g, b, _]| {
+            Color::from_rgb(r, g, b)
+        });
 
-    // Commit the currently-selected brush to the board every render —
+    // Commit the currently-selected preset to the board every render —
     // cheap, and keeps the board's active brush in lock-step with the
     // palette without needing a dedicated effect.
     if is_active {
-        commit_brush(board, brush);
+        commit_preset(board, preset);
     }
 
     let (bg, fg) = if is_active {
@@ -195,15 +254,15 @@ fn palette_button(
                 .background(swatch_color)
                 .with_corner_radius(3.0),
         )
-        .child(label().color(fg).font_size(14.0).text(brush.label()))
+        .child(label().color(fg).font_size(14.0).text(preset.label()))
 }
 
-fn commit_brush(board: &Arc<Mutex<Board>>, brush: Brush) {
-    let mut guard = match board.lock() {
-        Ok(g) => g,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    if guard.brush() != brush {
-        guard.set_brush(brush);
+fn commit_preset(board: &Arc<Mutex<Board>>, preset: BrushPreset) {
+    let mut guard = lock(board);
+    // Compare on kind alone. `set_current_preset` folds in the
+    // remembered size_scale for that kind, so a full-preset compare
+    // would spuriously re-fire whenever the user tunes the slider.
+    if guard.current_kind() != preset.kind {
+        guard.set_current_preset(preset);
     }
 }
