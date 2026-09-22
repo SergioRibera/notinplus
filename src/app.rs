@@ -16,7 +16,7 @@ use freya::prelude::*;
 use istmo::plugins::{EdgeInsets, SafeArea, SafeAreaInsets};
 
 use crate::brush::BrushPreset;
-use crate::canvas::{Board, RedrawNotifier, drawing_surface, lock};
+use crate::canvas::{Board, LayerSnapshot, RedrawNotifier, drawing_surface, lock};
 
 const PALETTE: &[fn() -> BrushPreset] = &[
     BrushPreset::pencil,
@@ -109,6 +109,11 @@ fn root() -> impl IntoElement {
     });
 
     let selected = use_state(|| 0usize);
+    // Ticks once per layer mutation. Every layer-panel `on_press`
+    // bumps it after mutating the board, which is what wakes freya's
+    // reactive re-run for the panel (the canvas has its own
+    // `RedrawNotifier` path).
+    let layers_ver = use_state(|| 0u32);
     let scale = {
         let board = Arc::clone(&board);
         use_state(move || {
@@ -130,6 +135,7 @@ fn root() -> impl IntoElement {
         .height(Size::fill())
         .child(drawing_surface(&board))
         .child(palette_overlay(&board, selected, scale, pad))
+        .child(layers_panel(&board, layers_ver, pad))
 }
 
 // Fold platform-published `SafeAreaInsets` (system bars + display
@@ -171,7 +177,9 @@ fn palette_overlay(
     for (idx, make) in PALETTE.iter().enumerate() {
         row = row.child(palette_button(idx, make(), board, selected, scale));
     }
-    row = row.child(size_control(board, scale)).child(undo_button(board));
+    row = row
+        .child(size_control(board, scale))
+        .child(undo_button(board));
     row
 }
 
@@ -295,4 +303,149 @@ fn commit_preset(board: &Arc<Mutex<Board>>, preset: BrushPreset) {
     if guard.current_kind() != preset.kind {
         guard.set_current_preset(preset);
     }
+}
+
+// Right-side floating layer stack. Displays layers top-of-stack first
+// so the visual matches Procreate / Photoshop conventions (topmost
+// paint order = topmost row), with `+` add / `-` remove buttons
+// beneath. Every mutation bumps `layers_ver` so freya re-runs this
+// component and picks up the new snapshot.
+fn layers_panel(
+    board: &Arc<Mutex<Board>>,
+    layers_ver: State<u32>,
+    pad: EdgeInsets,
+) -> impl IntoElement {
+    // Subscribe to `layers_ver` so mutations elsewhere reactively
+    // re-run this component.
+    let _tick = *layers_ver.read();
+
+    let (layers, active_id) = {
+        let g = lock(board);
+        (g.layers_snapshot(), g.active_layer_id())
+    };
+
+    let mut col = rect()
+        .position(
+            Position::new_global()
+                .top(pad.top + 8.0)
+                .right(pad.right + 8.0),
+        )
+        .vertical()
+        .spacing(6.0)
+        .padding(10.0)
+        .background(Color::from_argb(220, 30, 30, 34))
+        .with_corner_radius(10.0);
+
+    // Header — plain label, no interaction.
+    col = col.child(
+        label()
+            .color(Color::from_rgb(210, 210, 214))
+            .font_size(12.0)
+            .text("Layers"),
+    );
+
+    // Doc stores layers bottom-to-top; UI shows top-to-bottom.
+    for snap in layers.iter().rev() {
+        let is_active = snap.id == active_id;
+        col = col.child(layer_row(snap, is_active, board, layers_ver));
+    }
+
+    col = col.child(layer_action_row(board, layers_ver));
+    col
+}
+
+fn layer_row(
+    snap: &LayerSnapshot,
+    is_active: bool,
+    board: &Arc<Mutex<Board>>,
+    layers_ver: State<u32>,
+) -> impl IntoElement {
+    let (bg, fg) = if is_active {
+        (Color::from_rgb(70, 70, 78), Color::WHITE)
+    } else {
+        (Color::from_rgb(50, 50, 55), Color::from_rgb(210, 210, 214))
+    };
+
+    // Filled disc = visible, hollow disc = hidden. Tap toggles.
+    let eye_symbol = if snap.visible { "\u{25c9}" } else { "\u{25cb}" };
+    let vis_board = Arc::clone(board);
+    let vis_id = snap.id;
+    let vis_now = snap.visible;
+    let mut ver_vis = layers_ver;
+    let eye = rect()
+        .padding((4.0, 6.0))
+        .background(Color::from_rgb(60, 60, 66))
+        .with_corner_radius(4.0)
+        .on_press(move |_| {
+            lock(&vis_board).set_layer_visible(vis_id, !vis_now);
+            *ver_vis.write() = ver_vis.read().wrapping_add(1);
+        })
+        .child(label().color(fg).font_size(13.0).text(eye_symbol));
+
+    // Padlock symbol reflects state; tap toggles.
+    let lock_symbol = if snap.locked {
+        "\u{1f512}"
+    } else {
+        "\u{1f513}"
+    };
+    let lock_board = Arc::clone(board);
+    let lock_id = snap.id;
+    let lock_now = snap.locked;
+    let mut ver_lock = layers_ver;
+    let padlock = rect()
+        .padding((4.0, 6.0))
+        .background(Color::from_rgb(60, 60, 66))
+        .with_corner_radius(4.0)
+        .on_press(move |_| {
+            lock(&lock_board).set_layer_locked(lock_id, !lock_now);
+            *ver_lock.write() = ver_lock.read().wrapping_add(1);
+        })
+        .child(label().color(fg).font_size(12.0).text(lock_symbol));
+
+    let sel_board = Arc::clone(board);
+    let sel_id = snap.id;
+    let mut ver_sel = layers_ver;
+    let count_text = format!("{}  ({})", snap.name, snap.stroke_count);
+
+    rect()
+        .horizontal()
+        .spacing(6.0)
+        .padding((6.0, 8.0))
+        .background(bg)
+        .with_corner_radius(6.0)
+        .on_press(move |_| {
+            lock(&sel_board).set_active_layer(sel_id);
+            *ver_sel.write() = ver_sel.read().wrapping_add(1);
+        })
+        .child(eye)
+        .child(padlock)
+        .child(label().color(fg).font_size(13.0).text(count_text))
+}
+
+fn layer_action_row(board: &Arc<Mutex<Board>>, layers_ver: State<u32>) -> impl IntoElement {
+    let add_board = Arc::clone(board);
+    let mut ver_add = layers_ver;
+    let add = rect()
+        .padding((4.0, 8.0))
+        .background(Color::from_rgb(60, 90, 60))
+        .with_corner_radius(4.0)
+        .on_press(move |_| {
+            lock(&add_board).add_layer();
+            *ver_add.write() = ver_add.read().wrapping_add(1);
+        })
+        .child(label().color(Color::WHITE).font_size(14.0).text("+"));
+
+    let del_board = Arc::clone(board);
+    let mut ver_del = layers_ver;
+    let del = rect()
+        .padding((4.0, 8.0))
+        .background(Color::from_rgb(90, 60, 60))
+        .with_corner_radius(4.0)
+        .on_press(move |_| {
+            lock(&del_board).remove_active_layer();
+            *ver_del.write() = ver_del.read().wrapping_add(1);
+        })
+        .child(label().color(Color::WHITE).font_size(14.0).text("\u{2212}"));
+
+    rect().horizontal().spacing(4.0).child(add).child(del)
 }

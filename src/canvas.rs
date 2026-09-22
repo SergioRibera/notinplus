@@ -57,6 +57,21 @@ impl RedrawNotifier {
     }
 }
 
+/// Immutable, UI-friendly summary of a layer.
+///
+/// Snapshotting keeps the UI code lock-free between reads — the panel
+/// copies these once per render pass instead of holding a `Board`
+/// guard across a layout traversal.
+#[derive(Clone, Debug)]
+pub struct LayerSnapshot {
+    pub id: u32,
+    pub name: String,
+    pub visible: bool,
+    pub locked: bool,
+    pub opacity: f32,
+    pub stroke_count: usize,
+}
+
 /// Shared drawing state. Cheap to clone the [`Arc`] into any handler.
 ///
 /// `current_preset` is a **draft** — the palette owns it, the UI can
@@ -81,17 +96,22 @@ pub struct Board {
     /// emitted into `active_builder`. Advances by one for every new
     /// sample that pushes `points.len() >= active_next_segment + 4`.
     active_next_segment: usize,
+    /// Id of the layer the in-flight stroke will commit into. Captured
+    /// at [`Board::begin`] so mid-stroke `set_active_layer` calls don't
+    /// redirect the commit to an unexpected layer.
+    active_layer_at_begin: Option<u32>,
     current_preset: BrushPreset,
     current_color: [u8; 4],
     size_scales: HashMap<BrushKind, f32>,
     spatial: SpatialIndex,
     /// Pre-tessellated Skia path per committed stroke. Rebuilt only on
-    /// commit / erase / load — repainting is a HashMap lookup plus a
+    /// commit / erase / load — repainting is a `HashMap` lookup plus a
     /// single `draw_path` call.
     cached_paths: HashMap<u32, Path>,
-    /// `stroke_id → index in doc.strokes`. Kills the O(N) `position`
-    /// scan the eraser used to run per candidate hit.
-    stroke_index: HashMap<u32, usize>,
+    /// `stroke_id → (layer_id, within-layer stroke index)`. Kills the
+    /// O(N) `position` scan the eraser used to run per candidate hit
+    /// and localises index shifting to the affected layer.
+    stroke_index: HashMap<u32, (u32, usize)>,
     history: Vec<HistoryOp>,
     erase_session: Option<EraseSession>,
     notifier: Option<RedrawNotifier>,
@@ -105,6 +125,7 @@ impl Default for Board {
             active: None,
             active_builder: None,
             active_next_segment: 0,
+            active_layer_at_begin: None,
             current_preset: default_preset,
             current_color: default_preset.color,
             size_scales: HashMap::new(),
@@ -200,17 +221,20 @@ impl Board {
         self.active = None;
         self.active_builder = None;
         self.active_next_segment = 0;
+        self.active_layer_at_begin = None;
         self.erase_session = None;
         self.history.clear();
         self.spatial.clear();
         self.cached_paths.clear();
         self.stroke_index.clear();
-        for (idx, stroke) in self.doc.strokes.iter().enumerate() {
-            self.spatial.insert(stroke.id, &stroke.points);
-            self.stroke_index.insert(stroke.id, idx);
-            if let Some(preset) = self.doc.preset(stroke.brush) {
-                self.cached_paths
-                    .insert(stroke.id, build_stroke_path(preset, stroke));
+        for layer in &self.doc.layers {
+            for (idx, stroke) in layer.strokes.iter().enumerate() {
+                self.spatial.insert(stroke.id, &stroke.points);
+                self.stroke_index.insert(stroke.id, (layer.id, idx));
+                if let Some(preset) = self.doc.preset(stroke.brush) {
+                    self.cached_paths
+                        .insert(stroke.id, build_stroke_path(preset, stroke));
+                }
             }
         }
         self.notify();
@@ -222,12 +246,25 @@ impl Board {
         }
         self.active_builder = None;
         self.active_next_segment = 0;
+        self.active_layer_at_begin = None;
         if self.current_kind() == BrushKind::Eraser {
+            // Erase gestures don't own a target layer — they always
+            // fan out across every visible+unlocked layer via the
+            // spatial index.
             self.erase_session = Some(EraseSession::default());
             self.apply_erase(point);
             self.notify();
             return;
         }
+        // Refuse to start a paint stroke when the active layer is
+        // missing or locked. Silent — the UI already renders the lock
+        // affordance, so nothing further to communicate here.
+        let target = self.doc.active_layer;
+        match self.doc.layer(target) {
+            Some(layer) if !layer.locked => {}
+            _ => return,
+        }
+        self.active_layer_at_begin = Some(target);
         let brush = self.doc.register_brush(self.current_preset);
         let id = self.doc.allocate_stroke_id();
         // Geometry for the first sample is drawn by the per-paint tail
@@ -258,11 +295,7 @@ impl Board {
             self.notify();
             return;
         };
-        let points: &[InkPoint] = &self
-            .active
-            .as_ref()
-            .expect("just pushed to active")
-            .points;
+        let points: &[InkPoint] = &self.active.as_ref().expect("just pushed to active").points;
         // Freeze a segment only after we have BOTH its neighbouring
         // control points and one more sample past that — the tail
         // always keeps the last two segments so `p3` never has to
@@ -298,6 +331,7 @@ impl Board {
         if self.active.take().is_some() {
             self.active_builder = None;
             self.active_next_segment = 0;
+            self.active_layer_at_begin = None;
             self.notify();
         }
     }
@@ -307,6 +341,7 @@ impl Board {
         self.active = None;
         self.active_builder = None;
         self.active_next_segment = 0;
+        self.active_layer_at_begin = None;
         self.erase_session = None;
         self.history.clear();
         self.spatial.clear();
@@ -326,9 +361,98 @@ impl Board {
         true
     }
 
+    /// Snapshot every layer's UI-visible state (id, name, visible,
+    /// locked, opacity). Returned bottom-to-top; caller reverses for
+    /// a top-of-stack-first display.
+    #[must_use]
+    pub fn layers_snapshot(&self) -> Vec<LayerSnapshot> {
+        self.doc
+            .layers
+            .iter()
+            .map(|l| LayerSnapshot {
+                id: l.id,
+                name: l.name.clone(),
+                visible: l.visible,
+                locked: l.locked,
+                opacity: l.opacity,
+                stroke_count: l.strokes.len(),
+            })
+            .collect()
+    }
+
+    #[must_use]
+    pub const fn active_layer_id(&self) -> u32 {
+        self.doc.active_layer
+    }
+
+    /// Add a new empty layer, name it "Layer N" where N is one past
+    /// the current count, and adopt it as the active layer. Returns
+    /// the new id.
+    pub fn add_layer(&mut self) -> u32 {
+        let n = self.doc.layers.len() + 1;
+        let id = self.doc.add_layer(format!("Layer {n}"));
+        self.doc.active_layer = id;
+        self.notify();
+        id
+    }
+
+    /// Remove the currently active layer. No-op if it's the only
+    /// layer. Purges every derived index entry for strokes that
+    /// belonged to the removed layer, and cancels any in-flight
+    /// stroke that was aimed at it.
+    pub fn remove_active_layer(&mut self) {
+        let id = self.doc.active_layer;
+        let Some(removed) = self.doc.remove_layer(id) else {
+            return;
+        };
+        for stroke in &removed.strokes {
+            self.stroke_index.remove(&stroke.id);
+            self.cached_paths.remove(&stroke.id);
+            self.spatial.remove(stroke.id, &stroke.points);
+        }
+        if self.active_layer_at_begin == Some(id) {
+            self.active = None;
+            self.active_builder = None;
+            self.active_next_segment = 0;
+            self.active_layer_at_begin = None;
+        }
+        self.notify();
+    }
+
+    pub fn set_active_layer(&mut self, id: u32) {
+        if self.doc.set_active_layer(id) {
+            self.notify();
+        }
+    }
+
+    pub fn set_layer_visible(&mut self, id: u32, visible: bool) {
+        if let Some(layer) = self.doc.layer_mut(id) {
+            layer.visible = visible;
+            self.notify();
+        }
+    }
+
+    pub fn set_layer_locked(&mut self, id: u32, locked: bool) {
+        if let Some(layer) = self.doc.layer_mut(id) {
+            layer.locked = locked;
+            self.notify();
+        }
+    }
+
+    pub fn set_layer_opacity(&mut self, id: u32, opacity: f32) {
+        if let Some(layer) = self.doc.layer_mut(id) {
+            layer.opacity = opacity.clamp(0.0, 1.0);
+            self.notify();
+        }
+    }
+
     fn commit_stroke(&mut self, stroke: Stroke) {
         self.active_builder = None;
         self.active_next_segment = 0;
+        let layer_id = self
+            .active_layer_at_begin
+            .take()
+            .unwrap_or(self.doc.active_layer);
         if stroke.points.is_empty() {
             return;
         }
@@ -338,9 +462,13 @@ impl Board {
         let path = build_stroke_path(&preset, &stroke);
         self.spatial.insert(stroke.id, &stroke.points);
         let id = stroke.id;
-        let idx = self.doc.strokes.len();
-        self.doc.insert_stroke(stroke);
-        self.stroke_index.insert(id, idx);
+        let Some(layer) = self.doc.layer_mut(layer_id) else {
+            self.spatial.remove(id, &stroke.points);
+            return;
+        };
+        let within = layer.strokes.len();
+        layer.strokes.push(stroke);
+        self.stroke_index.insert(id, (layer_id, within));
         self.cached_paths.insert(id, path);
     }
 
@@ -352,15 +480,30 @@ impl Board {
         }
         let candidates = self.spatial.query_circle(sample.x, sample.y, radius);
         for id in candidates {
-            self.erase_stroke(id, sample.x, sample.y, radius);
+            // Skip strokes that live in an invisible or locked layer —
+            // the user can't see them, and locking is a hard "leave
+            // this layer alone" contract.
+            let Some(&(layer_id, _)) = self.stroke_index.get(&id) else {
+                continue;
+            };
+            let Some(layer) = self.doc.layer(layer_id) else {
+                continue;
+            };
+            if !layer.visible || layer.locked {
+                continue;
+            }
+            self.erase_stroke(id, layer_id, sample.x, sample.y, radius);
         }
     }
 
-    fn erase_stroke(&mut self, id: u32, cx: f32, cy: f32, r: f32) {
-        let Some(&idx) = self.stroke_index.get(&id) else {
+    fn erase_stroke(&mut self, id: u32, layer_id: u32, cx: f32, cy: f32, r: f32) {
+        let Some(&(_, idx)) = self.stroke_index.get(&id) else {
             return;
         };
-        let stroke = &self.doc.strokes[idx];
+        let Some(layer) = self.doc.layer(layer_id) else {
+            return;
+        };
+        let stroke = &layer.strokes[idx];
         let outcome = split_polyline(&stroke.points, cx, cy, r);
         if !outcome.touched {
             return;
@@ -393,24 +536,34 @@ impl Board {
                     .insert(frag_id, build_stroke_path(preset, &new_stroke));
             }
             self.spatial.insert(new_stroke.id, &new_stroke.points);
-            let new_idx = self.doc.strokes.len();
-            self.doc.insert_stroke(new_stroke);
-            self.stroke_index.insert(frag_id, new_idx);
+            let Some(layer) = self.doc.layer_mut(layer_id) else {
+                continue;
+            };
+            let new_idx = layer.strokes.len();
+            layer.strokes.push(new_stroke);
+            self.stroke_index.insert(frag_id, (layer_id, new_idx));
         }
 
         if let Some(session) = self.erase_session.as_mut() {
-            session.record(original, &fragment_ids);
+            session.record(layer_id, original, &fragment_ids);
         }
     }
 
     /// Remove a stroke by id, keeping `stroke_index` and `cached_paths`
-    /// in sync. Preserves z-order.
+    /// in sync. Preserves within-layer z-order and only shifts
+    /// indices for strokes that share the affected layer.
     fn remove_stroke_indexed(&mut self, id: u32) -> Option<Stroke> {
-        let idx = self.stroke_index.remove(&id)?;
-        let removed = self.doc.strokes.remove(idx);
-        for v in self.stroke_index.values_mut() {
-            if *v > idx {
-                *v -= 1;
+        let (layer_id, idx) = self.stroke_index.remove(&id)?;
+        let removed = {
+            let layer = self
+                .doc
+                .layer_mut(layer_id)
+                .expect("stroke_index points at a layer that no longer exists");
+            layer.strokes.remove(idx)
+        };
+        for entry in self.stroke_index.values_mut() {
+            if entry.0 == layer_id && entry.1 > idx {
+                entry.1 -= 1;
             }
         }
         self.cached_paths.remove(&id);
@@ -423,7 +576,9 @@ impl Board {
                 self.spatial.remove(removed.id, &removed.points);
             }
         }
-        for original in &session.originals {
+        for entry in &session.originals {
+            let layer_id = entry.layer_id;
+            let original = &entry.stroke;
             let id = original.id;
             let preset = self.doc.preset(original.brush).copied();
             if let Some(preset) = preset.as_ref() {
@@ -431,9 +586,11 @@ impl Board {
                     .insert(id, build_stroke_path(preset, original));
             }
             self.spatial.insert(id, &original.points);
-            let idx = self.doc.strokes.len();
-            self.doc.insert_stroke(original.clone());
-            self.stroke_index.insert(id, idx);
+            if let Some(layer) = self.doc.layer_mut(layer_id) {
+                let idx = layer.strokes.len();
+                layer.strokes.push(original.clone());
+                self.stroke_index.insert(id, (layer_id, idx));
+            }
         }
     }
 
@@ -446,21 +603,43 @@ impl Board {
     /// their Catmull-Rom `p3` neighbour stays live (mirror while the
     /// user is still drawing, actual once the next sample arrives).
     pub fn paint(&self, canvas: &freya_engine::prelude::Canvas) {
-        for stroke in &self.doc.strokes {
-            let Some(cached) = self.cached_paths.get(&stroke.id) else {
+        for layer in &self.doc.layers {
+            if !layer.visible {
                 continue;
-            };
-            let Some(preset) = self.doc.preset(stroke.brush) else {
-                continue;
-            };
-            let paint = stroke_paint(preset, stroke.color);
-            canvas.draw_path(cached, &paint);
+            }
+            let opacity = layer.opacity.clamp(0.0, 1.0);
+            for stroke in &layer.strokes {
+                let Some(cached) = self.cached_paths.get(&stroke.id) else {
+                    continue;
+                };
+                let Some(preset) = self.doc.preset(stroke.brush) else {
+                    continue;
+                };
+                let mut paint = stroke_paint(preset, stroke.color);
+                if opacity < 0.999 {
+                    let base = paint.color();
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    let scaled = (f32::from(base.a()) * opacity).clamp(0.0, 255.0) as u8;
+                    paint.set_color(base.with_a(scaled));
+                }
+                canvas.draw_path(cached, &paint);
+            }
         }
         if let (Some(active), Some(builder)) = (&self.active, &self.active_builder) {
             let Some(preset) = self.doc.preset(active.brush) else {
                 return;
             };
-            let paint = stroke_paint(preset, active.color);
+            let layer_opacity = self
+                .active_layer_at_begin
+                .and_then(|id| self.doc.layer(id))
+                .map_or(1.0, |l| l.opacity.clamp(0.0, 1.0));
+            let mut paint = stroke_paint(preset, active.color);
+            if layer_opacity < 0.999 {
+                let base = paint.color();
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let scaled = (f32::from(base.a()) * layer_opacity).clamp(0.0, 255.0) as u8;
+                paint.set_color(base.with_a(scaled));
+            }
             canvas.draw_path(&builder.snapshot(), &paint);
             let tail = build_active_tail(preset, &active.points, self.active_next_segment);
             canvas.draw_path(&tail, &paint);
@@ -536,12 +715,12 @@ fn emit_segment(builder: &mut PathBuilder, preset: &BrushPreset, points: &[InkPo
     let p0 = if k > 0 {
         (points[k - 1].x, points[k - 1].y)
     } else {
-        (2.0 * p1.x - p2.x, 2.0 * p1.y - p2.y)
+        (2.0f32.mul_add(p1.x, -p2.x), 2.0f32.mul_add(p1.y, -p2.y))
     };
     let p3 = if k + 2 < n {
         (points[k + 2].x, points[k + 2].y)
     } else {
-        (2.0 * p2.x - p1.x, 2.0 * p2.y - p1.y)
+        (2.0f32.mul_add(p2.x, -p1.x), 2.0f32.mul_add(p2.y, -p1.y))
     };
     let p1_xy = (p1.x, p1.y);
     let p2_xy = (p2.x, p2.y);
@@ -554,8 +733,9 @@ fn emit_segment(builder: &mut PathBuilder, preset: &BrushPreset, points: &[InkPo
 
     let steps = subdivision_count(p1_xy, p2_xy);
     let mut prev: Option<((f32, f32), f32)> = None;
+    let steps_f = f32_from_usize(steps);
     for j in 0..=steps {
-        let t = j as f32 / steps as f32;
+        let t = f32_from_usize(j) / steps_f;
         let q = catmull_rom_centripetal(p0, p1_xy, p2_xy, p3, t);
         let half = lerp(half_1, half_2, t);
         if let Some((prev_q, prev_half)) = prev {
@@ -588,7 +768,7 @@ fn catmull_rom_centripetal(
     let t1 = t0 + dist_sq(p0, p1).sqrt().sqrt().max(1e-4);
     let t2 = t1 + dist_sq(p1, p2).sqrt().sqrt().max(1e-4);
     let t3 = t2 + dist_sq(p2, p3).sqrt().sqrt().max(1e-4);
-    let tt = t1 + t * (t2 - t1);
+    let tt = t.mul_add(t2 - t1, t1);
     // Barry-Goldman recursion (three levels of linear interp — the
     // canonical evaluation form that stays numerically stable when
     // consecutive knots are near-equal).
@@ -607,11 +787,20 @@ fn dist_sq(a: (f32, f32), b: (f32, f32)) -> f32 {
 }
 
 fn lerp2d(a: (f32, f32), b: (f32, f32), t: f32) -> (f32, f32) {
-    (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t)
+    (t.mul_add(b.0 - a.0, a.0), t.mul_add(b.1 - a.1, a.1))
 }
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
-    a + (b - a) * t
+    t.mul_add(b - a, a)
+}
+
+// `subdivision_count` returns tiny usizes (< 128 in practice — see the
+// clamp inside it), so an f32 cast can't actually lose precision.
+// Explicit helper keeps the cast localised and lets clippy see the
+// suppression at one site instead of scattering `allow` on every use.
+#[allow(clippy::cast_precision_loss)]
+const fn f32_from_usize(n: usize) -> f32 {
+    n as f32
 }
 
 /// Subdivisions per Catmull-Rom segment. Roughly one step per 6 dp of
@@ -643,10 +832,7 @@ fn append_trapezoid(
     let nx = -dy / len;
     let ny = dx / len;
     builder
-        .move_to((
-            nx.mul_add(half_from, from.0),
-            ny.mul_add(half_from, from.1),
-        ))
+        .move_to((nx.mul_add(half_from, from.0), ny.mul_add(half_from, from.1)))
         .line_to((nx.mul_add(half_to, to.0), ny.mul_add(half_to, to.1)))
         .line_to((nx.mul_add(-half_to, to.0), ny.mul_add(-half_to, to.1)))
         .line_to((
@@ -905,10 +1091,51 @@ mod tests {
         b.set_current_preset(BrushPreset::eraser());
         b.begin(pt(50.0, 0.0));
         b.end();
-        assert_ne!(b.doc().strokes.len(), 1, "erase should have split");
+        let stroke_count = |d: &Doc| d.layers.iter().map(|l| l.strokes.len()).sum::<usize>();
+        assert_ne!(stroke_count(b.doc()), 1, "erase should have split");
 
         assert!(b.undo());
-        assert_eq!(b.doc().strokes.len(), 1);
-        assert_eq!(b.doc().strokes[0].points, doc_before.strokes[0].points);
+        assert_eq!(stroke_count(b.doc()), 1);
+        let restored = b.doc().layers[0].strokes[0].points.clone();
+        assert_eq!(restored, doc_before.layers[0].strokes[0].points);
+    }
+
+    #[test]
+    fn stroke_commits_into_active_layer() {
+        let mut b = Board::default();
+        let l2 = b.add_layer();
+        b.set_active_layer(l2);
+        b.set_current_preset(BrushPreset::pen());
+        b.begin(pt(0.0, 0.0));
+        b.extend(pt(10.0, 0.0));
+        b.end();
+        assert_eq!(b.doc().layer(l2).unwrap().strokes.len(), 1);
+        assert_eq!(b.doc().layer(0).unwrap().strokes.len(), 0);
+    }
+
+    #[test]
+    fn locked_layer_refuses_new_stroke() {
+        let mut b = Board::default();
+        b.set_layer_locked(0, true);
+        b.set_current_preset(BrushPreset::pen());
+        b.begin(pt(0.0, 0.0));
+        b.extend(pt(10.0, 0.0));
+        b.end();
+        assert!(b.doc().layer(0).unwrap().strokes.is_empty());
+    }
+
+    #[test]
+    fn erase_skips_invisible_layer() {
+        let mut b = Board::default();
+        b.set_current_preset(BrushPreset::pen());
+        b.begin(pt(0.0, 0.0));
+        b.extend(pt(100.0, 0.0));
+        b.end();
+        b.set_layer_visible(0, false);
+        b.set_current_preset(BrushPreset::eraser());
+        b.begin(pt(50.0, 0.0));
+        b.end();
+        // Layer hidden → eraser is a no-op there; original survives.
+        assert_eq!(b.doc().layer(0).unwrap().strokes.len(), 1);
     }
 }
