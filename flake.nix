@@ -7,7 +7,7 @@
     nix-bundle-app.url = "github:SergioRibera/nix-bundle-app";
   };
 
-  outputs = { self, nixpkgs, flake-utils, nix-bundle-app, ... }:
+  outputs = { nixpkgs, flake-utils, nix-bundle-app, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
@@ -17,11 +17,17 @@
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             just
+            dioxus-cli
             pkg-config
             libGL
             wayland
             libxkbcommon
-            xorg.libX11 xorg.libXcursor xorg.libXrandr xorg.libXi
+
+            libX11
+            libXcursor
+            libXrandr
+            libXi
+
             # istmo-pen's Linux backend pulls `input` + `libudev-sys`
             # unconditionally on this target — provide both so cargo
             # can link the plugin without hunting for system libs.
@@ -35,10 +41,17 @@
             # iOS builds require Xcode + xcodegen on a macOS host.
           ];
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (with pkgs; [
-            libGL wayland libxkbcommon
-            xorg.libX11 xorg.libXcursor xorg.libXrandr xorg.libXi
-            libinput udev
-            freetype fontconfig
+            libGL
+            wayland
+            libxkbcommon
+            libX11
+            libXcursor
+            libXrandr
+            libXi
+            libinput
+            udev
+            freetype
+            fontconfig
           ]);
         };
 
