@@ -1,12 +1,19 @@
-//! Freya app shell — brush palette + drawing surface.
+//! Freya app shell — brush palette overlay + fullscreen drawing surface.
 //!
 //! The same `root` component drives desktop (`launch`) and mobile
 //! (`#[istmo::mobile_app]`) entry points; only the launcher wrapper
 //! differs.
+//!
+//! Layout is Procreate-shaped: the canvas fills the entire window at
+//! `(0, 0)` so pen samples (which arrive in decor-view / fullscreen
+//! coordinates from `PenCaptureView`) line up 1:1 with what the freya
+//! canvas paints. The palette floats on top as an absolutely-positioned
+//! overlay, offset by the safe-area insets published by the platform.
 
 use std::sync::{Arc, Mutex};
 
 use freya::prelude::*;
+use istmo::plugins::{EdgeInsets, SafeArea, SafeAreaInsets};
 
 use crate::brush::{Brush, EraserStyle, HighlighterStyle, MarkerStyle, PenStyle, PencilStyle};
 use crate::canvas::{Board, RedrawNotifier, drawing_surface, lock};
@@ -56,12 +63,6 @@ pub fn run_mobile() {
 }
 
 fn root() -> impl IntoElement {
-    // Freya's canvas widget only repaints when the window is asked to
-    // redraw — the `RenderCallback` closure has `eq == true`, so the
-    // diff never marks it dirty on its own. We wire a bounded flume
-    // channel: every `Board` mutation pings it (from both the pointer
-    // handlers and the pen_pump thread), and this drain task translates
-    // pings into `UserEvent::RequestRedraw`.
     let board = use_hook(|| {
         let board = Board::shared();
         let platform = Platform::get();
@@ -74,24 +75,84 @@ fn root() -> impl IntoElement {
         });
         board
     });
+
+    let mut insets = use_state(EdgeInsets::default);
+    use_hook(move || {
+        // Bridge the SafeArea early-event stream (which lives on a
+        // helper OS thread) into the freya reactive world through a
+        // flume channel. `State` is `!Send`, so we can't touch it from
+        // the recv thread; the async drain runs inside freya's
+        // executor where `insets.set(..)` is safe.
+        let sa = match SafeArea::acquire() {
+            Ok(sa) => sa,
+            Err(err) => {
+                log::debug!("safe_area not ready: {err:?}");
+                return;
+            }
+        };
+        let initial = fold_insets(sa.current_or_zero());
+        insets.set(initial);
+        let (tx, rx) = flume::unbounded::<EdgeInsets>();
+        let stream = sa.stream();
+        std::thread::spawn(move || {
+            while let Ok(next) = stream.recv() {
+                if tx.send(fold_insets(next)).is_err() {
+                    break;
+                }
+            }
+        });
+        spawn(async move {
+            while let Ok(next) = rx.recv_async().await {
+                insets.set(next);
+            }
+        });
+    });
+
     let selected = use_state(|| 0usize);
-
-    let mut palette = rect()
-        .horizontal()
-        .spacing(8.0)
-        .padding(10.0)
-        .background(Color::from_rgb(30, 30, 34));
-
-    for (idx, make) in PALETTE.iter().enumerate() {
-        palette = palette.child(palette_button(idx, make(), &board, selected));
-    }
+    let pad = *insets.read();
 
     rect()
         .width(Size::fill())
         .height(Size::fill())
-        .vertical()
-        .child(palette)
         .child(drawing_surface(&board))
+        .child(palette_overlay(&board, selected, pad))
+}
+
+// Fold platform-published `SafeAreaInsets` (system bars + display
+// cutout + IME) into a single set of edge padding the app applies. IME
+// only pushes bottom padding — top/left/right ignore it so the palette
+// doesn't jump when the keyboard opens.
+const fn fold_insets(insets: SafeAreaInsets) -> EdgeInsets {
+    let base = insets.system_bars.max(insets.display_cutout);
+    EdgeInsets {
+        top: base.top,
+        right: base.right,
+        bottom: base.bottom.max(insets.ime.bottom),
+        left: base.left,
+    }
+}
+
+fn palette_overlay(
+    board: &Arc<Mutex<Board>>,
+    selected: State<usize>,
+    pad: EdgeInsets,
+) -> impl IntoElement {
+    // Global-positioned so the palette floats above the fullscreen
+    // canvas at `(pad.left, pad.top)` — no room reserved by the parent's
+    // flow layout, which is what lets the canvas sit under the status
+    // bar / notch on Android and iOS.
+    let mut row = rect()
+        .position(Position::new_global().top(pad.top + 8.0).left(pad.left + 8.0))
+        .horizontal()
+        .spacing(8.0)
+        .padding(10.0)
+        .background(Color::from_argb(220, 30, 30, 34))
+        .with_corner_radius(10.0);
+
+    for (idx, make) in PALETTE.iter().enumerate() {
+        row = row.child(palette_button(idx, make(), board, selected));
+    }
+    row
 }
 
 fn palette_button(

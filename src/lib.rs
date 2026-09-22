@@ -27,7 +27,12 @@ pub mod desktop;
 /// Matches [`istmo_pen::PenConfig::window_id`].
 pub const WINDOW_ID: u64 = 1;
 
-istmo::runtime!();
+use istmo::plugins::SafeArea;
+use istmo_pen::PenClient;
+
+istmo::runtime!(
+    plugins: [PenClient, SafeArea],
+);
 
 #[cfg(any(
     target_os = "android",

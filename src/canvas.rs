@@ -2,8 +2,17 @@
 //!
 //! [`Board`] is the process-wide state — a list of committed strokes
 //! plus the one under construction. It is `Arc<Mutex<Board>>` so the
-//! Freya render closure, mouse handlers, and the [`crate::pen_pump`]
-//! background thread all touch the same buffer.
+//! Freya render closure and the [`crate::pen_pump`] background thread
+//! both touch the same buffer.
+//!
+//! Input is single-sourced from `istmo-pen` — freya mouse / touch
+//! handlers are intentionally NOT wired here. Every sample comes from
+//! [`crate::pen_pump`], which drains the platform pen backend (Android
+//! `PenCaptureView`, iOS `PenCaptureView`, Linux libinput) and pushes
+//! into [`Board`]. Canvas paints in element-local coordinates; the
+//! layout keeps the drawing surface fullscreen at `(0, 0)` so pen
+//! samples in decor-view / fullscreen coordinates land on the same
+//! pixels the finger / stylus touched.
 
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -11,7 +20,7 @@ use flume::{Receiver, Sender};
 use freya::prelude::*;
 use freya_engine::prelude::{BlendMode, Color as SkColor, Paint, PaintStyle};
 
-use crate::brush::{Brush, InkPoint, Pressure, SegmentMode, SegmentPlan};
+use crate::brush::{Brush, InkPoint, SegmentMode, SegmentPlan};
 
 /// Coalescing wakeup handle.
 ///
@@ -64,9 +73,9 @@ pub struct Board {
 static SHARED: OnceLock<Arc<Mutex<Board>>> = OnceLock::new();
 
 impl Board {
-    /// Process-wide board. Freya's root component, the mouse handlers,
-    /// and [`crate::pen_pump`] all share this same instance so pen and
-    /// pointer input land in the same stroke buffer.
+    /// Process-wide board. Freya's root component and [`crate::pen_pump`]
+    /// share this same instance so pen input and the render callback
+    /// touch the same stroke buffer.
     #[must_use]
     pub fn shared() -> Arc<Mutex<Self>> {
         Arc::clone(SHARED.get_or_init(|| Arc::new(Mutex::new(Self::default()))))
@@ -196,26 +205,19 @@ fn configure_paint(paint: &mut Paint, plan: &SegmentPlan) {
     });
 }
 
-/// Convert a Freya mouse coordinate (`element_location`) into an
-/// [`InkPoint`] with default pressure and no tilt. Pen samples arrive
-/// through [`crate::pen_pump`] and already carry richer data.
-#[must_use]
-pub fn point_from_cursor(cursor: torin::prelude::CursorPoint) -> InkPoint {
-    #[allow(clippy::cast_possible_truncation)]
-    InkPoint::new(cursor.x as f32, cursor.y as f32, Pressure::default(), 0.0)
-}
-
 /// Freya canvas element wired to a shared [`Board`].
 ///
 /// The render closure captures the [`Arc`] and re-locks it every frame
 /// — since `RenderCallback::eq` always returns `true`, we cannot rely
 /// on Freya noticing state changes any other way.
+///
+/// No pointer / touch handlers here on purpose: every stroke sample
+/// comes from `istmo-pen` via [`crate::pen_pump`]. That keeps a single
+/// coordinate system in play (decor-view / fullscreen dp) and avoids
+/// double-injecting a stroke when the OS also delivers touch to the
+/// freya widget tree.
 pub fn drawing_surface(board: &Arc<Mutex<Board>>) -> impl IntoElement {
     let render_board = Arc::clone(board);
-    let down_board = Arc::clone(board);
-    let move_board = Arc::clone(board);
-    let up_board = Arc::clone(board);
-    let global_up_board = Arc::clone(board);
 
     let inner = canvas(RenderCallback::new(move |ctx| {
         let guard = match render_board.lock() {
@@ -225,26 +227,7 @@ pub fn drawing_surface(board: &Arc<Mutex<Board>>) -> impl IntoElement {
         guard.paint(ctx.canvas);
     }))
     .width(Size::fill())
-    .height(Size::fill())
-    .on_mouse_down(move |e: Event<MouseEventData>| {
-        let mut guard = lock(&down_board);
-        guard.begin(point_from_cursor(e.element_location));
-    })
-    .on_mouse_move(move |e: Event<MouseEventData>| {
-        let mut guard = lock(&move_board);
-        guard.extend(point_from_cursor(e.element_location));
-    })
-    .on_mouse_up(move |e: Event<MouseEventData>| {
-        let mut guard = lock(&up_board);
-        guard.extend(point_from_cursor(e.element_location));
-        guard.end();
-    })
-    .on_global_pointer_press(move |_e: Event<PointerEventData>| {
-        // Catch releases that happen outside the canvas so a stroke
-        // never stays "active" between drags.
-        let mut guard = lock(&global_up_board);
-        guard.end();
-    });
+    .height(Size::fill());
 
     rect()
         .width(Size::fill())
@@ -254,8 +237,8 @@ pub fn drawing_surface(board: &Arc<Mutex<Board>>) -> impl IntoElement {
 }
 
 /// Lock the shared board, recovering transparently from mutex
-/// poisoning. Every mutation site is a short hash-map / vec push with
-/// no panic-prone code — forward progress beats an unactionable error.
+/// poisoning. Every mutation site is a short vec push with no
+/// panic-prone code — forward progress beats an unactionable error.
 pub fn lock(board: &Arc<Mutex<Board>>) -> std::sync::MutexGuard<'_, Board> {
     match board.lock() {
         Ok(g) => g,
