@@ -4,7 +4,14 @@
         android:allowBackup="true"
         android:label="@string/app_name"
         android:hasCode="true"
-        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+        android:theme="@style/Theme.AppCompat.NoActionBar">
+        <!-- GameActivity (androidx.games:games-activity) so
+             `dispatchTouchEvent` runs on the Java side — the Kotlin
+             `NotinplusActivity` intercepts stylus samples and forwards
+             them into `PenCaptureView` before delegating to super for
+             winit / freya (via `android_main`). `NativeActivity` was
+             unusable because it takes the raw `InputQueue`, bypassing
+             the view hierarchy. -->
         <activity
             android:name="rs.sergioribera.notinplus.NotinplusActivity"
             android:exported="true"

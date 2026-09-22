@@ -22,6 +22,14 @@
             wayland
             libxkbcommon
             xorg.libX11 xorg.libXcursor xorg.libXrandr xorg.libXi
+            # istmo-pen's Linux backend pulls `input` + `libudev-sys`
+            # unconditionally on this target — provide both so cargo
+            # can link the plugin without hunting for system libs.
+            libinput
+            udev
+            # freya-skia links against system freetype/fontconfig.
+            freetype
+            fontconfig
             # Android tooling normally comes from Android Studio / a Docker image;
             # keep this shell focused on desktop dev + cargo.
             # iOS builds require Xcode + xcodegen on a macOS host.
@@ -29,6 +37,8 @@
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (with pkgs; [
             libGL wayland libxkbcommon
             xorg.libX11 xorg.libXcursor xorg.libXrandr xorg.libXi
+            libinput udev
+            freetype fontconfig
           ]);
         };
 

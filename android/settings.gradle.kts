@@ -4,6 +4,10 @@ pluginManagement {
         mavenCentral()
         gradlePluginPortal()
     }
+    // Local checkout of the istmo repo provides the plugin loader
+    // (`dev.istmo.plugin-loader`) that auto-injects every declared
+    // plugin's `native/android/` sources into this app's source set.
+    includeBuild("../../istmo/runtime/gradle-plugin")
 }
 
 dependencyResolutionManagement {
@@ -11,19 +15,17 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        // istmo-runtime is published to GitHub Packages. Provide creds via
-        // env vars (CI: GITHUB_ACTOR / GITHUB_TOKEN) or gradle.properties.
-        maven {
-            url = uri("https://maven.pkg.github.com/SergioRibera/istmo")
-            credentials {
-                username = System.getenv("GITHUB_ACTOR")
-                    ?: providers.gradleProperty("gpr.user").orNull
-                password = System.getenv("GITHUB_TOKEN")
-                    ?: providers.gradleProperty("gpr.key").orNull
-            }
-        }
     }
 }
 
 rootProject.name = "notinplus"
 include(":app")
+
+// Runtime AAR pulled from the same istmo checkout — no maven creds
+// required. Swap this for a maven coordinate once a release is tagged.
+includeBuild("../../istmo/runtime/android") {
+    dependencySubstitution {
+        substitute(module("dev.istmo:istmo-runtime"))
+            .using(project(":"))
+    }
+}

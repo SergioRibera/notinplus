@@ -3,6 +3,17 @@ import org.gradle.api.tasks.Exec
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    // Auto-discovers `native/android/` from every istmo plugin the
+    // notinplus crate depends on and injects the directory into this
+    // module's main Kotlin source set — no manual copy, no `srcDirs`.
+    id("dev.istmo.plugin-loader")
+}
+
+// The plugin loader walks up from `project.rootDir` looking for a
+// Cargo workspace; notinplus is a single-crate repo so we point it at
+// the sibling istmo checkout explicitly.
+istmo {
+    workspaceRoot.set(file("../../../istmo"))
 }
 
 android {
@@ -100,8 +111,17 @@ afterEvaluate {
 cargoLib("notinplus")
 
 dependencies {
-    implementation("dev.istmo:istmo-runtime:0.1.1-alpha.1.0")
+    // Runtime substitution wired in `settings.gradle.kts` — the
+    // includeBuild call replaces this coordinate with the local
+    // `runtime/android` project. Version is a placeholder.
+    implementation("dev.istmo:istmo-runtime")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // GameActivity dispatches MotionEvents through Java first, so the
+    // Kotlin `dispatchTouchEvent` override in NotinplusActivity can
+    // spy on stylus samples before winit's native side consumes the
+    // raw InputQueue. Required by the `android-game-activity` feature
+    // enabled on winit in Cargo.toml.
+    implementation("androidx.games:games-activity:4.4.0")
 }

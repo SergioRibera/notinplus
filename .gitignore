@@ -31,3 +31,6 @@ app/ios/**/Generated/
 # JetBrains / VS Code
 .idea/
 .vscode/
+
+# Claude Code local settings
+.claude/

@@ -8,19 +8,16 @@
     target_os = "watchos",
     target_os = "visionos",
 )))]
-fn main()  {
-    use istmo::core::{Runtime, RuntimeInit};
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use notinplus::{WINDOW_ID, app, canvas, pen_pump};
 
-    let RuntimeInit { runtime, outbound } = Runtime::mock();
-    notinplus::desktop::spawn(std::sync::Arc::clone(&runtime), outbound);
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    // TODO: acquire your plugin clients through the mock runtime so the
-    // desktop build can exercise the same code path the mobile shell uses.
+    notinplus::desktop::install()?;
 
-    
-    // TODO: replace with your `freya` runner.
-    notinplus::app::App::run_desktop();
-    
+    pen_pump::spawn(WINDOW_ID, canvas::Board::shared());
+    app::run_desktop();
+    Ok(())
 }
 
 #[cfg(any(

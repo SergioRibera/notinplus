@@ -19,18 +19,29 @@ path = "src/main.rs"
 
 
 [dependencies]
-istmo   = "0.1.1-alpha.1"
-bincode = { version = "2", features = ["derive", "std"] }
-flume   = { version = "0.11", features = ["async"] }
+# The istmo facade's default feature enables `native-activity`; the pen
+# plugin needs Kotlin-side `MotionEvent` interception, which only fires
+# under `GameActivity`. Switch the activity flavor at the facade level.
+istmo     = { path = "../istmo", default-features = false, features = ["game-activity"] }
+istmo-pen = { path = "../istmo/plugins/istmo-pen" }
+freya        = "0.4"
+freya-engine = "0.4"
+torin        = "0.4"
+bincode  = { version = "2", features = ["derive", "std"] }
+flume    = { version = "0.11", features = ["async"] }
 pollster = "0.4"
 log      = "0.4"
-
-# Initial plugin clients (only the ones you ticked at generation time).
-istmo-google-sign-in = "0.1"
 
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.14"
+# Freya-winit doesn't pin an Android activity backend on winit, so we
+# opt in additively. Cargo feature unification propagates the feature
+# to freya-winit's own winit dep — both crates end up compiled against
+# the GameActivity backend and hand out matching `AndroidApp` types.
+# Keeping the default features preserves rwh_06 / x11 / wayland for the
+# desktop side of the workspace.
+winit = { version = "0.30", features = ["android-game-activity"] }
 
 
 [target.'cfg(any(target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos"))'.dependencies]
@@ -38,14 +49,12 @@ android_logger = "0.14"
 
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos")))'.dependencies]
+env_logger = "0.11"
 
 
 
 [build-dependencies]
-# `istmo-build` reads `istmo.toml` + walks every `DEP_*_ISTMO_MANIFEST`
-# / `DEP_*_ISTMO_CONTRACT` env var emitted by upstream plugin build
-# scripts, so build.rs doesn't need per-plugin `codegen` features.
-istmo-build = "0.1.1-alpha.1"
+istmo-build = { path = "../istmo/crates/build" }
 
 [lints.rust]
 missing_debug_implementations = "warn"

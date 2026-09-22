@@ -5,17 +5,11 @@
 # ---------------------------------------------------------------------------
 # [app] — control the Kotlin/Swift codegen `istmo_build::emit()` performs.
 # ---------------------------------------------------------------------------
-# Defaults if this section is absent:
-#   android         = true                     (skipped if no ./android dir)
-#   ios             = true                     (skipped if no ./ios dir)
-#   android_package = "<gradle namespace>.gen" (auto-detected)
-#   ios_app_dir     = <single ./ios/* subdir>  (auto-detected)
-#
-# [app]
-# android         = true
-# android_package = "rs.sergioribera.notinplus.gen"
-# ios             = true
-# ios_app_dir     = "NotinplusApp"
+# The pen plugin's native Kotlin sources import `dev.istmo.runtime.PenBackend`
+# / `PenEvent` / … directly, so the generated dispatcher + types must land in
+# that same package. Override the default `<namespace>.gen` accordingly.
+[app]
+android_package = "dev.istmo.runtime"
 
 # Per-plugin role / platform overrides. Default role is `host` (Rust calls
 # the plugin, native side implements the backend). Set `role = "client"` for
