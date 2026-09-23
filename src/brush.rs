@@ -30,6 +30,12 @@ pub enum BrushKind {
     Eraser,
     Pen,
     Highlighter,
+    /// Third-party brush identity. External crates register a
+    /// [`crate::render::BrushRenderer`] at this id in the
+    /// [`crate::render::BrushRegistry`]; unknown ids fall back to the
+    /// default ribbon renderer so an old doc with a plugin no longer
+    /// loaded still opens.
+    Custom(u16),
 }
 
 /// Full calibration of a drawing tool. Everything the renderer needs to
@@ -141,6 +147,7 @@ impl BrushPreset {
             BrushKind::Eraser => "Eraser",
             BrushKind::Pen => "Pen",
             BrushKind::Highlighter => "Highlighter",
+            BrushKind::Custom(_) => "Custom",
         }
     }
 
@@ -172,9 +179,11 @@ impl BrushPreset {
     pub const fn segment_mode(&self) -> SegmentMode {
         match self.kind {
             BrushKind::Highlighter => SegmentMode::Multiply,
-            BrushKind::Eraser | BrushKind::Pencil | BrushKind::Marker | BrushKind::Pen => {
-                SegmentMode::Draw
-            }
+            BrushKind::Eraser
+            | BrushKind::Pencil
+            | BrushKind::Marker
+            | BrushKind::Pen
+            | BrushKind::Custom(_) => SegmentMode::Draw,
         }
     }
 
@@ -201,12 +210,7 @@ impl BrushPreset {
             color: color_from_rgba(stroke_color),
             width,
             opacity: self.opacity,
-            mode: match self.kind {
-                BrushKind::Highlighter => SegmentMode::Multiply,
-                BrushKind::Eraser | BrushKind::Pencil | BrushKind::Marker | BrushKind::Pen => {
-                    SegmentMode::Draw
-                }
-            },
+            mode: self.segment_mode(),
         }
     }
 }
@@ -270,6 +274,26 @@ impl InkPoint {
     }
 }
 
+/// Endpoint style.
+///
+/// `Round` is the default for user-drawn strokes; `Flat` marks
+/// endpoints produced by the vector eraser (splitting an existing
+/// stroke at a circle boundary) so the renderer terminates the ribbon
+/// perpendicular to the local tangent instead of bulging a semicircle
+/// past the cut.
+#[istmo::message]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub enum CapStyle {
+    #[default]
+    Round,
+    Flat,
+    /// Third-party cap identity. External crates register a
+    /// [`crate::render::CapRenderer`] at this id in the
+    /// [`crate::render::CapRegistry`]; unknown ids fall back to
+    /// [`Self::Round`].
+    Custom(u16),
+}
+
 /// One drawn stroke. `points` are raw samples — every re-render walks
 /// them through [`BrushPreset::plan`] so zoom/resolution changes never
 /// bake into the geometry.
@@ -279,6 +303,8 @@ pub struct Stroke {
     pub id: u32,
     pub brush: BrushId,
     pub color: [u8; 4],
+    pub cap_start: CapStyle,
+    pub cap_end: CapStyle,
     pub points: Vec<InkPoint>,
 }
 
@@ -289,6 +315,8 @@ impl Stroke {
             id,
             brush,
             color,
+            cap_start: CapStyle::Round,
+            cap_end: CapStyle::Round,
             points: vec![first],
         }
     }

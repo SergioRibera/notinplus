@@ -15,6 +15,7 @@ pub mod canvas;
 pub mod doc;
 pub mod history;
 pub mod pen_pump;
+pub mod render;
 pub mod spatial;
 
 #[cfg(not(any(

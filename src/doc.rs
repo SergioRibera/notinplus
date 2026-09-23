@@ -119,6 +119,8 @@ impl Doc {
             id,
             brush,
             color,
+            cap_start: crate::brush::CapStyle::Round,
+            cap_end: crate::brush::CapStyle::Round,
             points,
         });
         id

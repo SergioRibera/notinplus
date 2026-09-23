@@ -24,14 +24,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use flume::{Receiver, Sender};
 use freya::prelude::*;
-use freya_engine::prelude::{
-    BlendMode, Color as SkColor, Paint, PaintStyle, Path, PathBuilder, PathDirection,
-    SaveLayerRec,
-};
+use freya_engine::prelude::{BlendMode, Color as SkColor, Paint, Path, SaveLayerRec};
 
-use crate::brush::{BrushKind, BrushPreset, InkPoint, SegmentMode, Stroke, StrokeStyle};
+use crate::brush::{BrushKind, BrushPreset, CapStyle, InkPoint, Stroke};
 use crate::doc::Doc;
 use crate::history::{EraseOriginal, EraseSession, HistoryOp};
+use crate::render::BrushRegistry;
 use crate::spatial::SpatialIndex;
 
 const SIZE_SCALE_MIN: f32 = 0.25;
@@ -126,18 +124,12 @@ pub struct LayerSnapshot {
 #[derive(Debug)]
 pub struct Board {
     doc: Doc,
+    /// In-flight stroke. Its Skia path is rebuilt from scratch every
+    /// paint tick via [`build_stroke_path`] — the ribbon renderer emits
+    /// a single closed polygon per stroke, which cannot be composed
+    /// incrementally without reintroducing the between-slab seams that
+    /// used to show at high zoom.
     active: Option<Stroke>,
-    /// Skia path holding the "frozen" prefix of the active stroke —
-    /// every segment whose four Catmull-Rom control points are known
-    /// and no longer subject to mirror extrapolation. The trailing two
-    /// segments (last two samples) always live in a fresh per-paint
-    /// tail path so their shape never pops between the mirror-based
-    /// approximation and the eventual actual-neighbour rendering.
-    active_builder: Option<PathBuilder>,
-    /// Index of the next segment (`points[k] → points[k+1]`) yet to be
-    /// emitted into `active_builder`. Advances by one for every new
-    /// sample that pushes `points.len() >= active_next_segment + 4`.
-    active_next_segment: usize,
     /// Id of the layer the in-flight stroke will commit into. Captured
     /// at [`Board::begin`] so mid-stroke `set_active_layer` calls don't
     /// redirect the commit to an unexpected layer.
@@ -174,6 +166,12 @@ pub struct Board {
     /// input coming through the `_screen` entrypoints so the viewport
     /// gesture doesn't share the pen path.
     gesture_active: bool,
+    /// Brush + cap renderer lookup. Built-in kinds resolve to
+    /// [`crate::render::RibbonBrush`]; external crates install custom
+    /// renderers here (see [`Board::brush_registry_mut`]) so
+    /// `BrushKind::Custom(id)` / `CapStyle::Custom(id)` strokes route
+    /// through user code without patching the canvas.
+    brush_registry: Arc<BrushRegistry>,
 }
 
 /// Anchor snapshot for a pinch gesture — centroid + pair-distance of
@@ -191,8 +189,6 @@ impl Default for Board {
         Self {
             doc: Doc::default(),
             active: None,
-            active_builder: None,
-            active_next_segment: 0,
             active_layer_at_begin: None,
             current_preset: default_preset,
             current_color: default_preset.color,
@@ -208,6 +204,7 @@ impl Default for Board {
             finger_positions: HashMap::new(),
             gesture_baseline: None,
             gesture_active: false,
+            brush_registry: Arc::new(BrushRegistry::new()),
         }
     }
 }
@@ -284,6 +281,23 @@ impl Board {
     #[must_use]
     pub const fn doc(&self) -> &Doc {
         &self.doc
+    }
+
+    /// Shared registry driving [`crate::render::BrushRenderer`] +
+    /// [`crate::render::CapRenderer`] dispatch. External code that
+    /// wants to plug in a custom brush or cap grabs this before
+    /// touching the canvas.
+    #[must_use]
+    pub fn brush_registry(&self) -> &BrushRegistry {
+        &self.brush_registry
+    }
+
+    /// Mutable handle to the brush registry. Rewires every cached
+    /// path? No — cached paths stay as-is until a stroke is committed
+    /// again or the doc is reloaded. Register renderers before
+    /// painting starts to keep the cache consistent.
+    pub fn brush_registry_mut(&mut self) -> &mut BrushRegistry {
+        Arc::make_mut(&mut self.brush_registry)
     }
 
     #[must_use]
@@ -473,21 +487,25 @@ impl Board {
     pub fn replace_doc(&mut self, doc: Doc) {
         self.doc = doc;
         self.active = None;
-        self.active_builder = None;
-        self.active_next_segment = 0;
         self.active_layer_at_begin = None;
         self.erase_session = None;
         self.history.clear();
         self.spatial.clear();
         self.cached_paths.clear();
         self.stroke_index.clear();
+        // Clone the Arc so the loop body can call renderer methods
+        // without holding a borrow to `self.brush_registry` — the mut
+        // borrows on `self.cached_paths` below would otherwise clash.
+        let registry = Arc::clone(&self.brush_registry);
         for layer in &self.doc.layers {
             for (idx, stroke) in layer.strokes.iter().enumerate() {
                 self.spatial.insert(stroke.id, &stroke.points);
                 self.stroke_index.insert(stroke.id, (layer.id, idx));
                 if let Some(preset) = self.doc.preset(stroke.brush) {
-                    self.cached_paths
-                        .insert(stroke.id, build_stroke_path(preset, stroke));
+                    let path = registry
+                        .brush(preset.kind)
+                        .build_path(preset, stroke, registry.caps());
+                    self.cached_paths.insert(stroke.id, path);
                 }
             }
         }
@@ -498,8 +516,6 @@ impl Board {
         if let Some(active) = self.active.take() {
             self.commit_stroke(active);
         }
-        self.active_builder = None;
-        self.active_next_segment = 0;
         self.active_layer_at_begin = None;
         if self.current_kind() == BrushKind::Eraser {
             // Erase gestures target the active layer only. Strokes on
@@ -522,10 +538,6 @@ impl Board {
         self.active_layer_at_begin = Some(target);
         let brush = self.doc.register_brush(self.current_preset);
         let id = self.doc.allocate_stroke_id();
-        // Geometry for the first sample is drawn by the per-paint tail
-        // path (a single circle at n=1). Stable builder starts empty
-        // and only grows once `points.len() >= active_next_segment + 4`.
-        self.active_builder = Some(PathBuilder::new());
         self.active = Some(Stroke::new(id, brush, self.current_color, point));
         self.notify();
     }
@@ -540,26 +552,6 @@ impl Board {
             return;
         };
         active.points.push(point);
-        let brush = active.brush;
-        let n = active.points.len();
-        let Some(preset) = self.doc.preset(brush).copied() else {
-            self.notify();
-            return;
-        };
-        let Some(builder) = self.active_builder.as_mut() else {
-            self.notify();
-            return;
-        };
-        let points: &[InkPoint] = &self.active.as_ref().expect("just pushed to active").points;
-        // Freeze a segment only after we have BOTH its neighbouring
-        // control points and one more sample past that — the tail
-        // always keeps the last two segments so `p3` never has to
-        // transition from mirror to actual once a segment is stable.
-        while self.active_next_segment + 4 <= n {
-            let k = self.active_next_segment;
-            emit_segment(builder, &preset, points, k);
-            self.active_next_segment += 1;
-        }
         self.notify();
     }
 
@@ -612,8 +604,6 @@ impl Board {
             return;
         }
         if self.active.take().is_some() {
-            self.active_builder = None;
-            self.active_next_segment = 0;
             self.active_layer_at_begin = None;
             self.notify();
         }
@@ -622,8 +612,6 @@ impl Board {
     pub fn clear(&mut self) {
         self.doc.clear();
         self.active = None;
-        self.active_builder = None;
-        self.active_next_segment = 0;
         self.active_layer_at_begin = None;
         self.erase_session = None;
         self.history.clear();
@@ -695,8 +683,6 @@ impl Board {
         }
         if self.active_layer_at_begin == Some(id) {
             self.active = None;
-            self.active_builder = None;
-            self.active_next_segment = 0;
             self.active_layer_at_begin = None;
         }
         self.notify();
@@ -730,8 +716,6 @@ impl Board {
     }
 
     fn commit_stroke(&mut self, stroke: Stroke) {
-        self.active_builder = None;
-        self.active_next_segment = 0;
         let layer_id = self
             .active_layer_at_begin
             .take()
@@ -742,7 +726,11 @@ impl Board {
         let Some(preset) = self.doc.preset(stroke.brush).copied() else {
             return;
         };
-        let path = build_stroke_path(&preset, &stroke);
+        let path = self.brush_registry.brush(preset.kind).build_path(
+            &preset,
+            &stroke,
+            self.brush_registry.caps(),
+        );
         self.spatial.insert(stroke.id, &stroke.points);
         let id = stroke.id;
         let Some(layer) = self.doc.layer_mut(layer_id) else {
@@ -803,7 +791,16 @@ impl Board {
                 let stroke = &layer.strokes[idx];
                 // Spatial query is bbox-only — confirm actual
                 // intersection before snapshotting.
-                if !split_polyline(&stroke.points, sample.x, sample.y, radius).touched {
+                if !split_polyline(
+                    &stroke.points,
+                    stroke.cap_start,
+                    stroke.cap_end,
+                    sample.x,
+                    sample.y,
+                    radius,
+                )
+                .touched
+                {
                     continue;
                 }
                 fresh.push((layer_id, stroke.clone()));
@@ -839,7 +836,12 @@ impl Board {
         for entry in originals {
             let layer_id = entry.layer_id;
             let original = entry.stroke;
-            let fragments = cumulative_split(&original.points, &circles);
+            let fragments = cumulative_split(
+                &original.points,
+                original.cap_start,
+                original.cap_end,
+                &circles,
+            );
 
             let Some(removed) = self.remove_stroke_indexed(original.id) else {
                 // Original vanished between snapshot and commit
@@ -855,7 +857,7 @@ impl Board {
 
             let preset = self.doc.preset(original.brush).copied();
             for fragment in fragments {
-                if fragment.len() < 2 {
+                if fragment.points.len() < 2 {
                     // Solitary points are hard to see and easy to
                     // accidentally leave behind; drop them so the
                     // eraser fully clears where the user gestured.
@@ -867,11 +869,17 @@ impl Board {
                     id: frag_id,
                     brush: original.brush,
                     color: original.color,
-                    points: fragment,
+                    cap_start: fragment.cap_start,
+                    cap_end: fragment.cap_end,
+                    points: fragment.points,
                 };
                 if let Some(preset) = preset.as_ref() {
-                    self.cached_paths
-                        .insert(frag_id, build_stroke_path(preset, &new_stroke));
+                    let path = self.brush_registry.brush(preset.kind).build_path(
+                        preset,
+                        &new_stroke,
+                        self.brush_registry.caps(),
+                    );
+                    self.cached_paths.insert(frag_id, path);
                 }
                 self.spatial.insert(new_stroke.id, &new_stroke.points);
                 if let Some(layer) = self.doc.layer_mut(layer_id) {
@@ -921,8 +929,12 @@ impl Board {
             let id = original.id;
             let preset = self.doc.preset(original.brush).copied();
             if let Some(preset) = preset.as_ref() {
-                self.cached_paths
-                    .insert(id, build_stroke_path(preset, original));
+                let path = self.brush_registry.brush(preset.kind).build_path(
+                    preset,
+                    original,
+                    self.brush_registry.caps(),
+                );
+                self.cached_paths.insert(id, path);
             }
             self.spatial.insert(id, &original.points);
             if let Some(layer) = self.doc.layer_mut(layer_id) {
@@ -936,11 +948,11 @@ impl Board {
     /// Paint every committed stroke plus the active one onto `canvas`.
     ///
     /// Committed strokes: cached Skia path per stroke, one `draw_path`
-    /// each. Active stroke: the frozen prefix is snapshotted from
-    /// `active_builder` (non-consuming, cheap) and the trailing two
-    /// segments are rebuilt every frame into a fresh tail path so
-    /// their Catmull-Rom `p3` neighbour stays live (mirror while the
-    /// user is still drawing, actual once the next sample arrives).
+    /// each. Active stroke: rebuilt from scratch every frame via
+    /// [`build_stroke_path`] — the unified-polygon ribbon renderer
+    /// cannot be composed incrementally without reintroducing seams,
+    /// and the per-frame cost is negligible for realistic sample
+    /// counts.
     pub fn paint(&self, canvas: &freya_engine::prelude::Canvas, surface: SurfaceBounds) {
         // Everything below draws in world coordinates. Wrapping in a
         // save/restore lets viewport pan+zoom compose freely with any
@@ -990,7 +1002,10 @@ impl Board {
                 let Some(preset) = self.doc.preset(stroke.brush) else {
                     continue;
                 };
-                let mut paint = stroke_paint(preset, stroke.color);
+                let mut paint = self
+                    .brush_registry
+                    .brush(preset.kind)
+                    .paint(preset, stroke.color);
                 if opacity < 0.999 {
                     let base = paint.color();
                     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -1012,13 +1027,14 @@ impl Board {
                 canvas.restore();
             }
         }
-        if let (Some(active), Some(builder)) = (&self.active, &self.active_builder) {
+        if let Some(active) = &self.active {
             if let Some(preset) = self.doc.preset(active.brush) {
                 let layer_opacity = self
                     .active_layer_at_begin
                     .and_then(|id| self.doc.layer(id))
                     .map_or(1.0, |l| l.opacity.clamp(0.0, 1.0));
-                let mut paint = stroke_paint(preset, active.color);
+                let renderer = self.brush_registry.brush(preset.kind);
+                let mut paint = renderer.paint(preset, active.color);
                 if layer_opacity < 0.999 {
                     let base = paint.color();
                     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -1026,9 +1042,8 @@ impl Board {
                         (f32::from(base.a()) * layer_opacity).clamp(0.0, 255.0) as u8;
                     paint.set_color(base.with_a(scaled));
                 }
-                canvas.draw_path(&builder.snapshot(), &paint);
-                let tail = build_active_tail(preset, &active.points, self.active_next_segment);
-                canvas.draw_path(&tail, &paint);
+                let path = renderer.build_path(preset, active, self.brush_registry.caps());
+                canvas.draw_path(&path, &paint);
             }
         }
         canvas.restore();
@@ -1071,223 +1086,6 @@ pub struct SurfaceBounds {
     pub min_y: f32,
     pub max_x: f32,
     pub max_y: f32,
-}
-
-/// Build the full ribbon path for a stroke in one pass.
-///
-/// Each pair of adjacent samples `points[k], points[k+1]` becomes one
-/// Catmull-Rom segment: neighbours `points[k-1]` and `points[k+2]`
-/// (mirror-extrapolated at the ends) drive the tangents, and the
-/// segment's ribbon is approximated by a chain of straight-line
-/// trapezoids over `subdivision_count` interpolated points. A circle
-/// caps every sample vertex and the last sample; every contour is CCW
-/// so Skia's non-zero fill accumulates overlaps instead of cancelling
-/// them (fast strokes produced dotted seams under mixed windings).
-fn build_stroke_path(preset: &BrushPreset, stroke: &Stroke) -> Path {
-    let mut builder = PathBuilder::new();
-    let n = stroke.points.len();
-    if n == 0 {
-        return builder.detach();
-    }
-    if n == 1 {
-        emit_end_cap(&mut builder, preset, stroke.points[0]);
-        return builder.detach();
-    }
-    for k in 0..(n - 1) {
-        emit_segment(&mut builder, preset, &stroke.points, k);
-    }
-    emit_end_cap(&mut builder, preset, stroke.points[n - 1]);
-    builder.detach()
-}
-
-/// Rebuild the trailing tail of the active stroke each frame: every
-/// segment from `next_segment` to the last sample, plus the end cap.
-/// Segment shape is a live function of the current control points, so
-/// the tail can freely use `p3 = mirror(p1, p2)` while the user is
-/// still drawing and swap to the actual sample as soon as one more
-/// point arrives — the pop that would otherwise appear at freeze time
-/// is avoided by keeping the last two segments here rather than in
-/// `active_builder`.
-fn build_active_tail(preset: &BrushPreset, points: &[InkPoint], next_segment: usize) -> Path {
-    let mut builder = PathBuilder::new();
-    let n = points.len();
-    if n == 0 {
-        return builder.detach();
-    }
-    if n == 1 {
-        emit_end_cap(&mut builder, preset, points[0]);
-        return builder.detach();
-    }
-    for k in next_segment..(n - 1) {
-        emit_segment(&mut builder, preset, points, k);
-    }
-    emit_end_cap(&mut builder, preset, points[n - 1]);
-    builder.detach()
-}
-
-/// Emit one Catmull-Rom segment (`points[k] → points[k+1]`) into
-/// `builder`: a CCW circle at the segment's start sample and a chain
-/// of trapezoids along the curve. The final sample of the stroke is
-/// capped separately by [`emit_end_cap`] — every internal sample gets
-/// its cap here as the `p1` circle of the segment it starts.
-fn emit_segment(builder: &mut PathBuilder, preset: &BrushPreset, points: &[InkPoint], k: usize) {
-    let n = points.len();
-    let p1 = points[k];
-    let p2 = points[k + 1];
-    // Mirror the missing neighbour at the endpoints (`p0 = 2·p1 - p2`
-    // at the start, `p3 = 2·p2 - p1` at the end). This is the standard
-    // linear extrapolation used to give the boundary segments a natural
-    // tangent without asking the user for phantom control points.
-    let p0 = if k > 0 {
-        (points[k - 1].x, points[k - 1].y)
-    } else {
-        (2.0f32.mul_add(p1.x, -p2.x), 2.0f32.mul_add(p1.y, -p2.y))
-    };
-    let p3 = if k + 2 < n {
-        (points[k + 2].x, points[k + 2].y)
-    } else {
-        (2.0f32.mul_add(p2.x, -p1.x), 2.0f32.mul_add(p2.y, -p1.y))
-    };
-    let p1_xy = (p1.x, p1.y);
-    let p2_xy = (p2.x, p2.y);
-    let half_1 = 0.5 * preset.width(p1.pressure_f32(), p1.tilt_f32());
-    let half_2 = 0.5 * preset.width(p2.pressure_f32(), p2.tilt_f32());
-
-    if half_1 > 0.0 {
-        builder.add_circle(p1_xy, half_1, PathDirection::CCW);
-    }
-
-    let steps = subdivision_count(p1_xy, p2_xy);
-    let mut prev: Option<((f32, f32), f32)> = None;
-    let steps_f = f32_from_usize(steps);
-    for j in 0..=steps {
-        let t = f32_from_usize(j) / steps_f;
-        let q = catmull_rom_centripetal(p0, p1_xy, p2_xy, p3, t);
-        let half = lerp(half_1, half_2, t);
-        if let Some((prev_q, prev_half)) = prev {
-            append_trapezoid(builder, prev_q, q, prev_half, half);
-        }
-        prev = Some((q, half));
-    }
-}
-
-fn emit_end_cap(builder: &mut PathBuilder, preset: &BrushPreset, p: InkPoint) {
-    let half = 0.5 * preset.width(p.pressure_f32(), p.tilt_f32());
-    if half > 0.0 {
-        builder.add_circle((p.x, p.y), half, PathDirection::CCW);
-    }
-}
-
-/// Centripetal Catmull-Rom: parameterised so knot spacing goes as the
-/// square root of chord length. Suppresses the self-intersections and
-/// cusps the uniform (`α = 0`) variant produces on tight loops or
-/// non-uniform sample spacing — exactly the failure modes a
-/// pen-capture stream feeds into an interpolator.
-fn catmull_rom_centripetal(
-    p0: (f32, f32),
-    p1: (f32, f32),
-    p2: (f32, f32),
-    p3: (f32, f32),
-    t: f32,
-) -> (f32, f32) {
-    let t0 = 0.0f32;
-    let t1 = t0 + dist_sq(p0, p1).sqrt().sqrt().max(1e-4);
-    let t2 = t1 + dist_sq(p1, p2).sqrt().sqrt().max(1e-4);
-    let t3 = t2 + dist_sq(p2, p3).sqrt().sqrt().max(1e-4);
-    let tt = t.mul_add(t2 - t1, t1);
-    // Barry-Goldman recursion (three levels of linear interp — the
-    // canonical evaluation form that stays numerically stable when
-    // consecutive knots are near-equal).
-    let a1 = lerp2d(p0, p1, (tt - t0) / (t1 - t0));
-    let a2 = lerp2d(p1, p2, (tt - t1) / (t2 - t1));
-    let a3 = lerp2d(p2, p3, (tt - t2) / (t3 - t2));
-    let b1 = lerp2d(a1, a2, (tt - t0) / (t2 - t0));
-    let b2 = lerp2d(a2, a3, (tt - t1) / (t3 - t1));
-    lerp2d(b1, b2, (tt - t1) / (t2 - t1))
-}
-
-fn dist_sq(a: (f32, f32), b: (f32, f32)) -> f32 {
-    let dx = b.0 - a.0;
-    let dy = b.1 - a.1;
-    dx.mul_add(dx, dy * dy)
-}
-
-fn lerp2d(a: (f32, f32), b: (f32, f32), t: f32) -> (f32, f32) {
-    (t.mul_add(b.0 - a.0, a.0), t.mul_add(b.1 - a.1, a.1))
-}
-
-fn lerp(a: f32, b: f32, t: f32) -> f32 {
-    t.mul_add(b - a, a)
-}
-
-// `subdivision_count` returns tiny usizes (< 128 in practice — see the
-// clamp inside it), so an f32 cast can't actually lose precision.
-// Explicit helper keeps the cast localised and lets clippy see the
-// suppression at one site instead of scattering `allow` on every use.
-#[allow(clippy::cast_precision_loss)]
-const fn f32_from_usize(n: usize) -> f32 {
-    n as f32
-}
-
-/// Subdivisions per Catmull-Rom segment. Roughly one step per 6 dp of
-/// chord length, clamped so tight-sample slow strokes still stay
-/// visibly smooth and fast wide strokes don't blow up the vertex
-/// count — the trapezoid + circle count per stroke stays bounded by
-/// `samples × 12` in the worst case.
-fn subdivision_count(a: (f32, f32), b: (f32, f32)) -> usize {
-    let d = dist_sq(a, b).sqrt();
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let raw = (d / 6.0).ceil() as usize;
-    raw.clamp(3, 12)
-}
-
-fn append_trapezoid(
-    builder: &mut PathBuilder,
-    from: (f32, f32),
-    to: (f32, f32),
-    half_from: f32,
-    half_to: f32,
-) {
-    let dx = to.0 - from.0;
-    let dy = to.1 - from.1;
-    let len = dx.hypot(dy);
-    if len < 1e-3 {
-        return;
-    }
-    // Left-hand perpendicular unit vector.
-    let nx = -dy / len;
-    let ny = dx / len;
-    builder
-        .move_to((nx.mul_add(half_from, from.0), ny.mul_add(half_from, from.1)))
-        .line_to((nx.mul_add(half_to, to.0), ny.mul_add(half_to, to.1)))
-        .line_to((nx.mul_add(-half_to, to.0), ny.mul_add(-half_to, to.1)))
-        .line_to((
-            nx.mul_add(-half_from, from.0),
-            ny.mul_add(-half_from, from.1),
-        ))
-        .close();
-}
-
-fn stroke_paint(preset: &BrushPreset, color: [u8; 4]) -> Paint {
-    let style = preset.stroke_style(color);
-    let mut paint = Paint::default();
-    configure_fill_paint(&mut paint, &style);
-    paint
-}
-
-fn configure_fill_paint(paint: &mut Paint, style: &StrokeStyle) {
-    paint.set_anti_alias(true);
-    paint.set_style(PaintStyle::Fill);
-
-    let sk_color: SkColor = style.color.into();
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let alpha = (style.opacity.clamp(0.0, 1.0) * 255.0) as u8;
-    paint.set_color(sk_color.with_a(alpha));
-
-    paint.set_blend_mode(match style.mode {
-        SegmentMode::Draw => BlendMode::SrcOver,
-        SegmentMode::Multiply => BlendMode::Multiply,
-    });
 }
 
 /// Freya canvas element wired to a shared [`Board`].
@@ -1404,15 +1202,35 @@ pub fn lock(board: &Arc<Mutex<Board>>) -> std::sync::MutexGuard<'_, Board> {
 }
 
 #[derive(Debug)]
+struct Fragment {
+    points: Vec<InkPoint>,
+    cap_start: CapStyle,
+    cap_end: CapStyle,
+}
+
+#[derive(Debug)]
 struct SplitOutcome {
     touched: bool,
-    fragments: Vec<Vec<InkPoint>>,
+    fragments: Vec<Fragment>,
 }
 
 /// Clip `points` against a circle. Fragments outside the circle are
 /// preserved; parts inside are dropped, with fresh interpolated
-/// vertices inserted at every circle-boundary crossing.
-fn split_polyline(points: &[InkPoint], cx: f32, cy: f32, r: f32) -> SplitOutcome {
+/// vertices inserted at every circle-boundary crossing. Cap style at
+/// each endpoint tracks whether the point survived from the input
+/// polyline (inherits the input cap) or was produced by a cut
+/// (`CapStyle::Flat`) — the renderer terminates the ribbon
+/// perpendicular to the local tangent at every cut, avoiding the
+/// unwanted round bulge that used to appear where the eraser bit
+/// the stroke.
+fn split_polyline(
+    points: &[InkPoint],
+    stroke_cap_start: CapStyle,
+    stroke_cap_end: CapStyle,
+    cx: f32,
+    cy: f32,
+    r: f32,
+) -> SplitOutcome {
     let mut out = SplitOutcome {
         touched: false,
         fragments: Vec::new(),
@@ -1429,8 +1247,11 @@ fn split_polyline(points: &[InkPoint], cx: f32, cy: f32, r: f32) -> SplitOutcome
     let inside = |p: &InkPoint| dist2(p) <= r2;
 
     let mut cur: Vec<InkPoint> = Vec::new();
+    let mut cur_cap: CapStyle = stroke_cap_start;
+
     if inside(&points[0]) {
         out.touched = true;
+        // First sample dropped; next fragment opens at a cut.
     } else {
         cur.push(points[0]);
     }
@@ -1447,13 +1268,16 @@ fn split_polyline(points: &[InkPoint], cx: f32, cy: f32, r: f32) -> SplitOutcome
                     out.touched = true;
                     let clip0 = t0.clamp(0.0, 1.0);
                     let clip1 = t1.clamp(0.0, 1.0);
-                    let p0 = interp(&a, &b, clip0);
-                    let p1 = interp(&a, &b, clip1);
-                    cur.push(p0);
-                    if !cur.is_empty() {
-                        out.fragments.push(std::mem::take(&mut cur));
-                    }
-                    cur.push(p1);
+                    let p_enter = interp(&a, &b, clip0);
+                    let p_exit = interp(&a, &b, clip1);
+                    cur.push(p_enter);
+                    out.fragments.push(Fragment {
+                        points: std::mem::take(&mut cur),
+                        cap_start: cur_cap,
+                        cap_end: CapStyle::Flat,
+                    });
+                    cur_cap = CapStyle::Flat;
+                    cur.push(p_exit);
                 }
                 cur.push(b);
             }
@@ -1463,11 +1287,17 @@ fn split_polyline(points: &[InkPoint], cx: f32, cy: f32, r: f32) -> SplitOutcome
                     cur.push(interp(&a, &b, t));
                 }
                 if !cur.is_empty() {
-                    out.fragments.push(std::mem::take(&mut cur));
+                    out.fragments.push(Fragment {
+                        points: std::mem::take(&mut cur),
+                        cap_start: cur_cap,
+                        cap_end: CapStyle::Flat,
+                    });
                 }
+                cur_cap = CapStyle::Flat;
             }
             (true, false) => {
                 out.touched = true;
+                cur_cap = CapStyle::Flat;
                 if let Some(t) = exit_t(&a, &b, cx, cy, r) {
                     cur.push(interp(&a, &b, t));
                 }
@@ -1480,7 +1310,11 @@ fn split_polyline(points: &[InkPoint], cx: f32, cy: f32, r: f32) -> SplitOutcome
     }
 
     if !cur.is_empty() {
-        out.fragments.push(cur);
+        out.fragments.push(Fragment {
+            points: cur,
+            cap_start: cur_cap,
+            cap_end: stroke_cap_end,
+        });
     }
     out
 }
@@ -1491,15 +1325,24 @@ fn split_polyline(points: &[InkPoint], cx: f32, cy: f32, r: f32) -> SplitOutcome
 /// mutation cascade: each intermediate polyline stays local to this
 /// call. Fragments shorter than two points are pruned (nothing to
 /// render, easy to leave behind accidentally).
-fn cumulative_split(points: &[InkPoint], circles: &[(f32, f32, f32)]) -> Vec<Vec<InkPoint>> {
-    let mut fragments: Vec<Vec<InkPoint>> = vec![points.to_vec()];
+fn cumulative_split(
+    points: &[InkPoint],
+    stroke_cap_start: CapStyle,
+    stroke_cap_end: CapStyle,
+    circles: &[(f32, f32, f32)],
+) -> Vec<Fragment> {
+    let mut fragments: Vec<Fragment> = vec![Fragment {
+        points: points.to_vec(),
+        cap_start: stroke_cap_start,
+        cap_end: stroke_cap_end,
+    }];
     for &(cx, cy, r) in circles {
-        let mut next: Vec<Vec<InkPoint>> = Vec::with_capacity(fragments.len());
+        let mut next: Vec<Fragment> = Vec::with_capacity(fragments.len());
         for frag in fragments {
-            let out = split_polyline(&frag, cx, cy, r);
+            let out = split_polyline(&frag.points, frag.cap_start, frag.cap_end, cx, cy, r);
             if out.touched {
                 for f in out.fragments {
-                    if f.len() >= 2 {
+                    if f.points.len() >= 2 {
                         next.push(f);
                     }
                 }
@@ -1599,17 +1442,22 @@ mod tests {
     #[test]
     fn split_hits_middle_of_line() {
         let pts = vec![pt(0.0, 0.0), pt(100.0, 0.0)];
-        let out = split_polyline(&pts, 50.0, 0.0, 10.0);
+        let out = split_polyline(&pts, CapStyle::Round, CapStyle::Round, 50.0, 0.0, 10.0);
         assert!(out.touched);
         assert_eq!(out.fragments.len(), 2);
-        assert!(out.fragments[0].last().unwrap().x <= 40.0 + 1e-3);
-        assert!(out.fragments[1].first().unwrap().x >= 60.0 - 1e-3);
+        assert!(out.fragments[0].points.last().unwrap().x <= 40.0 + 1e-3);
+        assert!(out.fragments[1].points.first().unwrap().x >= 60.0 - 1e-3);
+        // Original endpoints keep their round cap; cut endpoints are flat.
+        assert_eq!(out.fragments[0].cap_start, CapStyle::Round);
+        assert_eq!(out.fragments[0].cap_end, CapStyle::Flat);
+        assert_eq!(out.fragments[1].cap_start, CapStyle::Flat);
+        assert_eq!(out.fragments[1].cap_end, CapStyle::Round);
     }
 
     #[test]
     fn split_leaves_untouched_alone() {
         let pts = vec![pt(0.0, 0.0), pt(100.0, 0.0)];
-        let out = split_polyline(&pts, 50.0, 500.0, 10.0);
+        let out = split_polyline(&pts, CapStyle::Round, CapStyle::Round, 50.0, 500.0, 10.0);
         assert!(!out.touched);
     }
 
