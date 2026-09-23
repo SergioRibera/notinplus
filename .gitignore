@@ -6,27 +6,32 @@ Cargo.lock
 
 # Android
 
-app/android/.gradle/
-app/android/build/
-app/android/app/build/
-app/android/local.properties
-app/android/**/*.iml
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/**/*.iml
 
 
 # iOS
 
-app/ios/*.xcodeproj/
-app/ios/build/
-app/ios/DerivedData/
+ios/*.xcodeproj/
+ios/build/
+ios/DerivedData/
 
 
 # Nix / result symlinks
 result
 result-*
 
-# generated codegen sources
-app/android/app/src/main/java/**/gen/
-app/ios/**/Generated/
+# generated codegen sources (`istmo_build::emit()` regenerates on every build)
+android/app/src/main/java/**/gen/
+android/app/src/main/java/dev/istmo/runtime/*Codecs*.kt
+android/app/src/main/java/dev/istmo/runtime/*Types.kt
+android/app/src/main/java/dev/istmo/runtime/*Dispatcher.kt
+android/app/src/main/java/dev/istmo/runtime/IstmoPluginRegistry.kt
+ios/**/Generated/
+ios/NotinplusApp/Plugins/IstmoPluginRegistry.swift
 
 # JetBrains / VS Code
 .idea/
