@@ -389,6 +389,16 @@ impl InkPoint {
     pub fn tilt_f32(self) -> f32 {
         f32::from(self.tilt) / 255.0
     }
+
+    /// Replace the quantised pressure with a fresh normalised value.
+    /// Used by [`crate::canvas::Board`] to bake a
+    /// [`PressureCurve`] into incoming pen samples so the renderer
+    /// stays curve-agnostic.
+    #[must_use]
+    pub fn with_pressure_f32(mut self, pressure: f32) -> Self {
+        self.pressure = quantize_unit(pressure);
+        self
+    }
 }
 
 /// Endpoint style.

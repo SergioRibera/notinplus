@@ -555,6 +555,7 @@ impl Board {
     }
 
     pub fn begin(&mut self, point: InkPoint) {
+        let point = self.shape_sample(point);
         if let Some(active) = self.active.take() {
             self.commit_stroke(active);
         }
@@ -595,6 +596,7 @@ impl Board {
     }
 
     pub fn extend(&mut self, point: InkPoint) {
+        let point = self.shape_sample(point);
         if self.erase_session.is_some() {
             self.apply_erase(point);
             self.notify();
@@ -970,6 +972,17 @@ impl Board {
         match self.current_config() {
             BrushConfig::Eraser { mode } => mode,
             _ => EraserMode::Point,
+        }
+    }
+
+    /// Fold the current per-kind [`BrushConfig`] into a raw pen sample
+    /// so downstream renderers stay unaware of user-facing knobs.
+    /// Currently only [`BrushConfig::Pen`] transforms samples (via
+    /// [`PressureCurve`]); every other kind returns `point` unchanged.
+    fn shape_sample(&self, point: InkPoint) -> InkPoint {
+        match self.current_config() {
+            BrushConfig::Pen { curve } => point.with_pressure_f32(curve.apply(point.pressure_f32())),
+            _ => point,
         }
     }
 
