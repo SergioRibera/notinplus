@@ -26,7 +26,7 @@ use flume::{Receiver, Sender};
 use freya::prelude::*;
 use freya_engine::prelude::{BlendMode, Color as SkColor, Paint, Path, SaveLayerRec};
 
-use crate::brush::{BrushConfig, BrushKind, BrushPreset, CapStyle, InkPoint, Stroke};
+use crate::brush::{BrushConfig, BrushKind, BrushPreset, CapStyle, EraserMode, InkPoint, Stroke};
 use crate::doc::Doc;
 use crate::history::{EraseOriginal, EraseSession, HistoryOp};
 use crate::render::BrushRegistry;
@@ -152,6 +152,11 @@ pub struct Board {
     stroke_index: HashMap<u32, (u32, usize)>,
     history: Vec<HistoryOp>,
     erase_session: Option<EraseSession>,
+    /// Active [`EraserMode::SelectionRect`] drag, expressed as
+    /// `(anchor_x, anchor_y, cursor_x, cursor_y)` in world coords.
+    /// `Some` while the pen is down; `None` between drags. The paint
+    /// pass reads this to overlay the marquee preview.
+    selection_rect: Option<(f32, f32, f32, f32)>,
     notifier: Option<RedrawNotifier>,
     viewport: Viewport,
     /// Last surface-pixel cursor observed while a middle-drag pan is
@@ -203,6 +208,7 @@ impl Default for Board {
             stroke_index: HashMap::new(),
             history: Vec::new(),
             erase_session: None,
+            selection_rect: None,
             notifier: None,
             viewport: Viewport::default(),
             pan_anchor: None,
@@ -558,8 +564,18 @@ impl Board {
             // other layers stay untouched even if the eraser sweeps
             // over them — see `apply_erase` for the active-layer
             // filter.
-            self.erase_session = Some(EraseSession::default());
-            self.apply_erase(point);
+            match self.eraser_mode() {
+                EraserMode::Point => {
+                    self.erase_session = Some(EraseSession::default());
+                    self.apply_erase(point);
+                }
+                EraserMode::Stroke => {
+                    self.erase_stroke_at(point.x, point.y);
+                }
+                EraserMode::SelectionRect => {
+                    self.selection_rect = Some((point.x, point.y, point.x, point.y));
+                }
+            }
             self.notify();
             return;
         }
@@ -581,6 +597,11 @@ impl Board {
     pub fn extend(&mut self, point: InkPoint) {
         if self.erase_session.is_some() {
             self.apply_erase(point);
+            self.notify();
+            return;
+        }
+        if let Some((ax, ay, _, _)) = self.selection_rect {
+            self.selection_rect = Some((ax, ay, point.x, point.y));
             self.notify();
             return;
         }
@@ -626,6 +647,11 @@ impl Board {
             self.notify();
             return;
         }
+        if let Some((ax, ay, cx, cy)) = self.selection_rect.take() {
+            self.erase_strokes_in_rect(ax.min(cx), ay.min(cy), ax.max(cx), ay.max(cy));
+            self.notify();
+            return;
+        }
         if let Some(active) = self.active.take() {
             self.commit_stroke(active);
             self.notify();
@@ -636,6 +662,10 @@ impl Board {
         if self.erase_session.take().is_some() {
             // Deferred model: accumulation never mutates the doc, so
             // dropping the session is a full rollback.
+            self.notify();
+            return;
+        }
+        if self.selection_rect.take().is_some() {
             self.notify();
             return;
         }
@@ -650,6 +680,7 @@ impl Board {
         self.active = None;
         self.active_layer_at_begin = None;
         self.erase_session = None;
+        self.selection_rect = None;
         self.history.clear();
         self.spatial.clear();
         self.cached_paths.clear();
@@ -932,6 +963,143 @@ impl Board {
         session.originals = restored;
     }
 
+    /// Current eraser mode. Reads through [`Board::brush_config`] so an
+    /// unset config resolves to [`EraserMode::Point`] — matches the
+    /// pre-config default.
+    fn eraser_mode(&self) -> EraserMode {
+        match self.current_config() {
+            BrushConfig::Eraser { mode } => mode,
+            _ => EraserMode::Point,
+        }
+    }
+
+    /// Half-width of the eraser tip at the currently-active preset's
+    /// mid-pressure sample. Used as the tap radius for the `Stroke`
+    /// eraser mode so the hit test scales with the size slider.
+    fn eraser_tap_radius(&self) -> f32 {
+        let r = 0.5 * self.current_preset.width(0.5, 0.0);
+        r.max(4.0)
+    }
+
+    /// Delete the topmost stroke intersecting a tap at `(x, y)` in the
+    /// active layer. No-op when no stroke is hit. Records the removal
+    /// as a single-original [`EraseSession`] so [`Board::undo`] restores
+    /// it exactly.
+    fn erase_stroke_at(&mut self, x: f32, y: f32) {
+        let radius = self.eraser_tap_radius();
+        let active_layer = self.doc.active_layer;
+        let candidates = self.spatial.query_circle(x, y, radius);
+        let mut best: Option<(usize, u32)> = None;
+        for id in candidates {
+            let Some(&(layer_id, idx)) = self.stroke_index.get(&id) else {
+                continue;
+            };
+            if layer_id != active_layer {
+                continue;
+            }
+            let Some(layer) = self.doc.layer(layer_id) else {
+                continue;
+            };
+            if !layer.visible || layer.locked {
+                continue;
+            }
+            let stroke = &layer.strokes[idx];
+            if !split_polyline(
+                &stroke.points,
+                stroke.cap_start,
+                stroke.cap_end,
+                x,
+                y,
+                radius,
+            )
+            .touched
+            {
+                continue;
+            }
+            if best.is_none_or(|(bidx, _)| idx > bidx) {
+                best = Some((idx, id));
+            }
+        }
+        let Some((_, id)) = best else {
+            return;
+        };
+        self.snapshot_and_remove_whole(id, active_layer);
+    }
+
+    /// Delete every stroke on the active layer whose polyline
+    /// intersects the world-space rect. Empty selection is a no-op —
+    /// no history entry is pushed.
+    fn erase_strokes_in_rect(&mut self, min_x: f32, min_y: f32, max_x: f32, max_y: f32) {
+        if (max_x - min_x).abs() < f32::EPSILON || (max_y - min_y).abs() < f32::EPSILON {
+            return;
+        }
+        let active_layer = self.doc.active_layer;
+        let candidates = self.spatial.query_rect(min_x, min_y, max_x, max_y);
+        let mut targets: Vec<u32> = Vec::new();
+        for id in candidates {
+            let Some(&(layer_id, idx)) = self.stroke_index.get(&id) else {
+                continue;
+            };
+            if layer_id != active_layer {
+                continue;
+            }
+            let Some(layer) = self.doc.layer(layer_id) else {
+                continue;
+            };
+            if !layer.visible || layer.locked {
+                continue;
+            }
+            let stroke = &layer.strokes[idx];
+            if polyline_intersects_rect(&stroke.points, min_x, min_y, max_x, max_y) {
+                targets.push(id);
+            }
+        }
+        if targets.is_empty() {
+            return;
+        }
+        let mut session = EraseSession::default();
+        for id in targets {
+            let Some(&(layer_id, _)) = self.stroke_index.get(&id) else {
+                continue;
+            };
+            let Some(layer) = self.doc.layer(layer_id) else {
+                continue;
+            };
+            let Some(&(_, idx)) = self.stroke_index.get(&id) else {
+                continue;
+            };
+            let snapshot = layer.strokes[idx].clone();
+            session.snapshot(layer_id, snapshot);
+            if let Some(removed) = self.remove_stroke_indexed(id) {
+                self.spatial.remove(removed.id, &removed.points);
+            }
+        }
+        if !session.is_empty() {
+            self.history.push(HistoryOp::Erase(session));
+        }
+    }
+
+    /// Snapshot a single stroke into a fresh session, remove it from
+    /// the doc, and push the session onto the history. Shared by the
+    /// `Stroke` mode tap path.
+    fn snapshot_and_remove_whole(&mut self, id: u32, layer_id: u32) {
+        let Some(layer) = self.doc.layer(layer_id) else {
+            return;
+        };
+        let Some(&(_, idx)) = self.stroke_index.get(&id) else {
+            return;
+        };
+        let snapshot = layer.strokes[idx].clone();
+        let mut session = EraseSession::default();
+        session.snapshot(layer_id, snapshot);
+        if let Some(removed) = self.remove_stroke_indexed(id) {
+            self.spatial.remove(removed.id, &removed.points);
+        }
+        if !session.is_empty() {
+            self.history.push(HistoryOp::Erase(session));
+        }
+    }
+
     /// Remove a stroke by id, keeping `stroke_index` and `cached_paths`
     /// in sync. Preserves within-layer z-order and only shifts
     /// indices for strokes that share the affected layer.
@@ -1081,6 +1249,9 @@ impl Board {
                 let path = renderer.build_path(preset, active, self.brush_registry.caps());
                 canvas.draw_path(&path, &paint);
             }
+        }
+        if let Some((ax, ay, cx, cy)) = self.selection_rect {
+            draw_selection_rect(canvas, ax, ay, cx, cy);
         }
         canvas.restore();
     }
@@ -1248,6 +1419,101 @@ struct Fragment {
 struct SplitOutcome {
     touched: bool,
     fragments: Vec<Fragment>,
+}
+
+/// Marquee preview for an in-flight [`EraserMode::SelectionRect`]
+/// drag. Fills the rect with a low-alpha wash and outlines it with a
+/// solid stroke so the user can see exactly which strokes will be
+/// erased on pen-up.
+fn draw_selection_rect(canvas: &freya_engine::prelude::Canvas, ax: f32, ay: f32, cx: f32, cy: f32) {
+    use freya_engine::prelude::{PaintStyle, Rect};
+    let min_x = ax.min(cx);
+    let min_y = ay.min(cy);
+    let max_x = ax.max(cx);
+    let max_y = ay.max(cy);
+    let rect = Rect::from_ltrb(min_x, min_y, max_x, max_y);
+    let mut fill = Paint::default();
+    fill.set_color(SkColor::from_argb(40, 90, 130, 220));
+    fill.set_anti_alias(true);
+    canvas.draw_rect(rect, &fill);
+    let mut outline = Paint::default();
+    outline.set_color(SkColor::from_argb(200, 90, 130, 220));
+    outline.set_style(PaintStyle::Stroke);
+    outline.set_stroke_width(1.5);
+    outline.set_anti_alias(true);
+    canvas.draw_rect(rect, &outline);
+}
+
+/// Does any sample or connecting segment of `points` intersect the
+/// axis-aligned rectangle `[min_x, max_x] × [min_y, max_y]`? Used by
+/// the [`EraserMode::SelectionRect`] path to filter spatial-broad
+/// candidates down to true hits. Two consecutive points that both lie
+/// outside the rect can still cross it — Liang-Barsky clip handles
+/// that case.
+fn polyline_intersects_rect(
+    points: &[InkPoint],
+    min_x: f32,
+    min_y: f32,
+    max_x: f32,
+    max_y: f32,
+) -> bool {
+    let inside = |p: &InkPoint| p.x >= min_x && p.x <= max_x && p.y >= min_y && p.y <= max_y;
+    if points.iter().any(inside) {
+        return true;
+    }
+    let rect = (min_x, min_y, max_x, max_y);
+    for pair in points.windows(2) {
+        let a = pair[0];
+        let b = pair[1];
+        if segment_hits_rect((a.x, a.y), (b.x, b.y), rect) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Liang-Barsky segment vs axis-aligned rectangle. Returns `true` when
+/// any portion of segment `AB` lies inside the rect. Endpoints already
+/// tested for containment upstream — this fires only when both are
+/// outside, so the clip only needs to detect a non-empty intersection.
+fn segment_hits_rect(
+    a: (f32, f32),
+    b: (f32, f32),
+    (min_x, min_y, max_x, max_y): (f32, f32, f32, f32),
+) -> bool {
+    let (ax, ay) = a;
+    let (bx, by) = b;
+    let dx = bx - ax;
+    let dy = by - ay;
+    let mut t0: f32 = 0.0;
+    let mut t1: f32 = 1.0;
+    let clip = |p: f32, q: f32, t0: &mut f32, t1: &mut f32| -> bool {
+        if p == 0.0 {
+            return q >= 0.0;
+        }
+        let r = q / p;
+        if p < 0.0 {
+            if r > *t1 {
+                return false;
+            }
+            if r > *t0 {
+                *t0 = r;
+            }
+        } else {
+            if r < *t0 {
+                return false;
+            }
+            if r < *t1 {
+                *t1 = r;
+            }
+        }
+        true
+    };
+    clip(-dx, ax - min_x, &mut t0, &mut t1)
+        && clip(dx, max_x - ax, &mut t0, &mut t1)
+        && clip(-dy, ay - min_y, &mut t0, &mut t1)
+        && clip(dy, max_y - ay, &mut t0, &mut t1)
+        && t0 < t1
 }
 
 /// Clip `points` against a circle. Fragments outside the circle are
