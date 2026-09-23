@@ -19,7 +19,7 @@ use std::time::Duration;
 use freya::prelude::*;
 
 use crate::brush::{
-    BrushConfig, BrushKind, BrushPreset, EraserMode, HighlighterTip, PressureCurve,
+    BrushConfig, BrushKind, BrushPreset, EraserMode, HighlighterTip, PressureCurve, ShapeMode,
 };
 use crate::canvas::{Board, lock};
 
@@ -80,6 +80,7 @@ pub fn brush_popup(
         BrushKind::Highlighter => body
             .child(highlighter_tip_row(board))
             .child(highlighter_straight_row(board)),
+        BrushKind::Shape(mode) => body.child(shape_mode_row(board, mode)),
         BrushKind::Pencil | BrushKind::Marker | BrushKind::Custom(_) => body,
     };
     body
@@ -295,6 +296,27 @@ fn highlighter_straight_row(board: &Arc<Mutex<Board>>) -> impl IntoElement {
                     straight,
                 },
             );
+        }));
+    }
+    row
+}
+
+fn shape_mode_row(board: &Arc<Mutex<Board>>, current: ShapeMode) -> impl IntoElement {
+    let mut row = rect()
+        .horizontal()
+        .spacing(6.0)
+        .child(label().color(Color::WHITE).font_size(13.0).text("Shape"));
+    for (mode, name) in [
+        (ShapeMode::Line, "Line"),
+        (ShapeMode::Dashed, "Dashed"),
+        (ShapeMode::Arrow, "Arrow"),
+        (ShapeMode::Rect, "Rect"),
+        (ShapeMode::Circle, "Circle"),
+    ] {
+        let selected = mode == current;
+        let press_board = Arc::clone(board);
+        row = row.child(mode_button(name, selected, move |_| {
+            lock(&press_board).set_current_shape_mode(mode);
         }));
     }
     row

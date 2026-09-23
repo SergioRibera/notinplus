@@ -36,6 +36,36 @@ pub enum BrushKind {
     /// default ribbon renderer so an old doc with a plugin no longer
     /// loaded still opens.
     Custom(u16),
+    /// Geometric primitive drawn from a small set of anchor points
+    /// rather than a continuous polyline. The paired [`ShapeMode`]
+    /// picks which primitive; every shape shares the same paint
+    /// (stroke width + colour from the preset) but a different
+    /// geometry builder in [`crate::render::ShapeBrush`].
+    Shape(ShapeMode),
+}
+
+/// Geometric family selected when the brush kind is
+/// [`BrushKind::Shape`].
+///
+/// Every mode consumes exactly two anchor samples: the pen-down
+/// position (anchor A) and the current cursor (anchor B, updated
+/// live during drag). Extending post-commit editing to N-point
+/// polygons lives on a separate follow-up — the two-anchor rubber
+/// band is enough for the primitives in this list.
+#[istmo::message]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub enum ShapeMode {
+    /// Straight solid segment A→B.
+    #[default]
+    Line,
+    /// Straight dashed segment A→B.
+    Dashed,
+    /// Solid segment A→B terminating in an arrowhead at B.
+    Arrow,
+    /// Axis-aligned outline rectangle with corners at A and B.
+    Rect,
+    /// Outline circle centred at A with radius `|AB|`.
+    Circle,
 }
 
 /// Pressure→width shaping applied on top of the linear width envelope.
@@ -138,7 +168,9 @@ impl BrushConfig {
                 tip: HighlighterTip::Round,
                 straight: false,
             },
-            BrushKind::Pencil | BrushKind::Marker | BrushKind::Custom(_) => Self::None,
+            BrushKind::Pencil | BrushKind::Marker | BrushKind::Custom(_) | BrushKind::Shape(_) => {
+                Self::None
+            }
         }
     }
 
@@ -256,6 +288,24 @@ impl BrushPreset {
         }
     }
 
+    /// Baseline preset for the shape brush family. The width envelope
+    /// stays flat — geometric primitives ignore pressure — and the
+    /// colour matches the pen default so shapes drawn from the same
+    /// palette entry read as annotation over freehand ink.
+    #[must_use]
+    pub const fn shape(mode: ShapeMode) -> Self {
+        Self {
+            kind: BrushKind::Shape(mode),
+            color: [10, 15, 40, 255],
+            min_width: 2.0,
+            max_width: 2.0,
+            tilt_gain: 0.0,
+            opacity: 1.0,
+            spacing: 0.0,
+            size_scale: 1.0,
+        }
+    }
+
     #[must_use]
     pub const fn label(&self) -> &'static str {
         match self.kind {
@@ -265,6 +315,7 @@ impl BrushPreset {
             BrushKind::Pen => "Pen",
             BrushKind::Highlighter => "Highlighter",
             BrushKind::Custom(_) => "Custom",
+            BrushKind::Shape(_) => "Shape",
         }
     }
 
@@ -300,7 +351,8 @@ impl BrushPreset {
             | BrushKind::Pencil
             | BrushKind::Marker
             | BrushKind::Pen
-            | BrushKind::Custom(_) => SegmentMode::Draw,
+            | BrushKind::Custom(_)
+            | BrushKind::Shape(_) => SegmentMode::Draw,
         }
     }
 

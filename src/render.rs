@@ -24,7 +24,8 @@ use freya_engine::prelude::{
 };
 
 use crate::brush::{
-    BrushKind, BrushPreset, CapStyle, HighlighterTip, InkPoint, SegmentMode, Stroke, StrokeStyle,
+    BrushKind, BrushPreset, CapStyle, HighlighterTip, InkPoint, SegmentMode, ShapeMode, Stroke,
+    StrokeStyle,
 };
 
 /// Ribbon vertex: position, local half-width, left-hand unit normal.
@@ -293,6 +294,121 @@ fn build_bevel_path(preset: &BrushPreset, stroke: &Stroke, angle_deg: f32) -> Pa
     builder.detach()
 }
 
+/// Geometric-primitive renderer for [`BrushKind::Shape`].
+///
+/// Each stroke stores exactly two anchor points (`points[0]` = A,
+/// `points.last()` = B) captured by the two-anchor rubber-band path
+/// in [`crate::canvas::Board`]. `build_path` interprets that pair
+/// via the [`ShapeMode`] carried in the preset kind; `paint` returns
+/// a stroked (not filled) paint at the preset's width.
+///
+/// Round caps + round joins so short-segment shapes (small arrows,
+/// dashed segments) don't render with visible mitre spikes at high
+/// zoom.
+#[derive(Debug, Default)]
+pub struct ShapeBrush;
+
+impl BrushRenderer for ShapeBrush {
+    fn build_path(&self, preset: &BrushPreset, stroke: &Stroke, _caps: &CapRegistry) -> Path {
+        let mut b = PathBuilder::new();
+        let BrushKind::Shape(mode) = preset.kind else {
+            return b.detach();
+        };
+        let pts = &stroke.points;
+        if pts.len() < 2 {
+            return b.detach();
+        }
+        let a = pts[0];
+        let z = pts[pts.len() - 1];
+        match mode {
+            ShapeMode::Line => {
+                b.move_to((a.x, a.y));
+                b.line_to((z.x, z.y));
+            }
+            ShapeMode::Dashed => emit_dashed_line(&mut b, (a.x, a.y), (z.x, z.y), 10.0, 6.0),
+            ShapeMode::Arrow => {
+                b.move_to((a.x, a.y));
+                b.line_to((z.x, z.y));
+                let width = preset.width(0.5, 0.0);
+                emit_arrow_head(&mut b, (a.x, a.y), (z.x, z.y), (width * 5.0).max(10.0));
+            }
+            ShapeMode::Rect => {
+                b.move_to((a.x, a.y));
+                b.line_to((z.x, a.y));
+                b.line_to((z.x, z.y));
+                b.line_to((a.x, z.y));
+                b.close();
+            }
+            ShapeMode::Circle => {
+                let dx = z.x - a.x;
+                let dy = z.y - a.y;
+                let r = dx.hypot(dy);
+                if r > 0.0 {
+                    b.add_circle((a.x, a.y), r, PathDirection::CW);
+                }
+            }
+        }
+        b.detach()
+    }
+
+    fn paint(&self, preset: &BrushPreset, stroke_color: [u8; 4]) -> Paint {
+        let mut paint = Paint::default();
+        let [r, g, b_, a] = stroke_color;
+        paint.set_anti_alias(true);
+        paint.set_style(PaintStyle::Stroke);
+        paint.set_stroke_width(preset.width(0.5, 0.0).max(1.0));
+        paint.set_color(SkColor::from_argb(a, r, g, b_));
+        paint
+    }
+}
+
+fn emit_dashed_line(b: &mut PathBuilder, from: (f32, f32), to: (f32, f32), dash: f32, gap: f32) {
+    let (ax, ay) = from;
+    let (bx, by) = to;
+    let dx = bx - ax;
+    let dy = by - ay;
+    let len = dx.hypot(dy);
+    if len <= 0.0 {
+        return;
+    }
+    let ux = dx / len;
+    let uy = dy / len;
+    let step = dash + gap;
+    // Integer stride avoids the accumulated-float `while` clippy flags
+    // and keeps a stable dash count under viewport zoom.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let count = ((len / step).ceil() as usize).max(1);
+    for i in 0..count {
+        #[allow(clippy::cast_precision_loss)]
+        let start = (i as f32) * step;
+        let end = (start + dash).min(len);
+        b.move_to((ux.mul_add(start, ax), uy.mul_add(start, ay)));
+        b.line_to((ux.mul_add(end, ax), uy.mul_add(end, ay)));
+    }
+}
+
+fn emit_arrow_head(b: &mut PathBuilder, from: (f32, f32), to: (f32, f32), size: f32) {
+    let (ax, ay) = from;
+    let (bx, by) = to;
+    let dx = bx - ax;
+    let dy = by - ay;
+    let len = dx.hypot(dy);
+    if len <= 0.0 {
+        return;
+    }
+    let ux = dx / len;
+    let uy = dy / len;
+    // Wings sweep back from the tip at ±25° off the line direction.
+    let (sin_a, cos_a) = 25f32.to_radians().sin_cos();
+    let wing1_x = (-ux).mul_add(cos_a, -(uy * sin_a));
+    let wing1_y = (-uy).mul_add(cos_a, ux * sin_a);
+    let wing2_x = (-ux).mul_add(cos_a, uy * sin_a);
+    let wing2_y = (-uy).mul_add(cos_a, -(ux * sin_a));
+    b.move_to((wing1_x.mul_add(size, bx), wing1_y.mul_add(size, by)));
+    b.line_to((bx, by));
+    b.line_to((wing2_x.mul_add(size, bx), wing2_y.mul_add(size, by)));
+}
+
 /// Registry mapping [`CapStyle`] → [`CapRenderer`]. Cloneable via
 /// `Arc` so a snapshot can be handed to renderers without contention.
 #[derive(Clone, Debug)]
@@ -358,6 +474,16 @@ impl BrushRegistry {
             BrushKind::Highlighter,
         ] {
             brushes.insert(k, Arc::clone(&ribbon));
+        }
+        let shape: Arc<dyn BrushRenderer> = Arc::new(ShapeBrush);
+        for mode in [
+            ShapeMode::Line,
+            ShapeMode::Dashed,
+            ShapeMode::Arrow,
+            ShapeMode::Rect,
+            ShapeMode::Circle,
+        ] {
+            brushes.insert(BrushKind::Shape(mode), Arc::clone(&shape));
         }
         Self {
             brushes,

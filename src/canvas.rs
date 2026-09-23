@@ -27,7 +27,7 @@ use freya::prelude::*;
 use freya_engine::prelude::{BlendMode, Color as SkColor, Paint, Path, SaveLayerRec};
 
 use crate::brush::{
-    BrushConfig, BrushKind, BrushPreset, CapStyle, EraserMode, InkPoint, Stroke,
+    BrushConfig, BrushKind, BrushPreset, CapStyle, EraserMode, InkPoint, ShapeMode, Stroke,
 };
 use crate::doc::Doc;
 use crate::history::{EraseOriginal, EraseSession, HistoryOp};
@@ -194,10 +194,11 @@ pub struct Board {
     /// stroke buffer.
     highlighter_state: Arc<HighlighterState>,
     /// `true` between [`Board::begin`] and [`Board::end`] when the
-    /// current tool is a highlighter with `straight = true`. Flips
+    /// active brush uses a two-anchor rubber-band gesture (highlighter
+    /// `straight = true` or any [`BrushKind::Shape`] variant). Flips
     /// [`Board::extend`] into "replace last point" mode so the live
-    /// preview follows the cursor as a rubber-band line.
-    straight_active: bool,
+    /// preview follows the cursor.
+    two_point_active: bool,
 }
 
 /// Anchor snapshot for a pinch gesture — centroid + pair-distance of
@@ -240,7 +241,7 @@ impl Default for Board {
             gesture_active: false,
             brush_registry: Arc::new(brush_registry),
             highlighter_state,
-            straight_active: false,
+            two_point_active: false,
         }
     }
 }
@@ -629,7 +630,7 @@ impl Board {
         // Latch straight-mode at gesture start so an in-flight tip
         // toggle does not switch a live stroke between rubber-band and
         // freehand halfway through.
-        self.straight_active = self.is_straight_stroke_mode();
+        self.two_point_active = self.is_two_point_stroke_mode();
         self.notify();
     }
 
@@ -648,7 +649,7 @@ impl Board {
         let Some(active) = self.active.as_mut() else {
             return;
         };
-        if self.straight_active {
+        if self.two_point_active {
             // Rubber-band: keep exactly the anchor + cursor pair so
             // the ribbon renderer paints a live A→B line.
             if active.points.len() < 2 {
@@ -705,7 +706,7 @@ impl Board {
         }
         if let Some(active) = self.active.take() {
             self.commit_stroke(active);
-            self.straight_active = false;
+            self.two_point_active = false;
             self.notify();
         }
     }
@@ -723,7 +724,7 @@ impl Board {
         }
         if self.active.take().is_some() {
             self.active_layer_at_begin = None;
-            self.straight_active = false;
+            self.two_point_active = false;
             self.notify();
         }
     }
@@ -734,7 +735,7 @@ impl Board {
         self.active_layer_at_begin = None;
         self.erase_session = None;
         self.selection_rect = None;
-        self.straight_active = false;
+        self.two_point_active = false;
         self.history.clear();
         self.spatial.clear();
         self.cached_paths.clear();
@@ -1027,15 +1028,31 @@ impl Board {
         }
     }
 
-    /// True when the current brush is a highlighter opted into
-    /// straight-line mode. Rubber-band gesture: [`Board::begin`]
-    /// anchors, [`Board::extend`] replaces the second endpoint,
-    /// [`Board::end`] commits the two-point stroke.
-    fn is_straight_stroke_mode(&self) -> bool {
+    /// True when the current brush uses a two-anchor rubber-band
+    /// gesture rather than continuous freehand sampling. Covers the
+    /// highlighter `straight = true` config and every geometric
+    /// [`BrushKind::Shape`] variant. [`Board::begin`] anchors,
+    /// [`Board::extend`] replaces the second endpoint, [`Board::end`]
+    /// commits the two-point stroke.
+    fn is_two_point_stroke_mode(&self) -> bool {
+        if matches!(self.current_kind(), BrushKind::Shape(_)) {
+            return true;
+        }
         matches!(
             self.current_config(),
             BrushConfig::Highlighter { straight: true, .. }
         )
+    }
+
+    /// Swap the mode of the currently-active shape brush. No-op when
+    /// the current brush is not a shape — callers should only invoke
+    /// this from a UI path that already scoped the brush.
+    pub fn set_current_shape_mode(&mut self, mode: ShapeMode) {
+        if !matches!(self.current_preset.kind, BrushKind::Shape(_)) {
+            return;
+        }
+        self.current_preset.kind = BrushKind::Shape(mode);
+        self.notify();
     }
 
     /// Fold the current per-kind [`BrushConfig`] into a raw pen sample

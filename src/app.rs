@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use freya::prelude::*;
 use istmo::plugins::{EdgeInsets, SafeArea, SafeAreaInsets};
 
-use crate::brush::BrushPreset;
+use crate::brush::{BrushKind, BrushPreset, ShapeMode};
 use crate::canvas::{Board, LayerSnapshot, RedrawNotifier, drawing_surface, lock};
 use crate::palette_popup::{HOVER_DELAY, brush_popup};
 
@@ -35,7 +35,12 @@ const PALETTE: &[fn() -> BrushPreset] = &[
     BrushPreset::pen,
     BrushPreset::highlighter,
     BrushPreset::eraser,
+    default_shape,
 ];
+
+const fn default_shape() -> BrushPreset {
+    BrushPreset::shape(ShapeMode::Line)
+}
 
 /// Launch the app in a desktop window.
 pub fn run_desktop() {
@@ -396,7 +401,7 @@ fn palette_button(
             // the next explicit resize.
             let new_size = {
                 let mut g = lock(&press_board);
-                if g.current_kind() != preset.kind {
+                if !same_brush_family(g.current_kind(), preset.kind) {
                     g.set_current_preset(preset);
                 }
                 g.current_size()
@@ -438,8 +443,27 @@ fn commit_preset(board: &Arc<Mutex<Board>>, preset: BrushPreset) {
     // Compare on kind alone. `set_current_preset` folds in the
     // remembered size_scale for that kind, so a full-preset compare
     // would spuriously re-fire whenever the user tunes the slider.
-    if guard.current_kind() != preset.kind {
+    if !same_brush_family(guard.current_kind(), preset.kind) {
         guard.set_current_preset(preset);
+    }
+}
+
+/// Are two [`BrushKind`]s the same "palette family"?
+///
+/// Every [`BrushKind::Shape`] mode collapses to the single shape
+/// family so switching mode via the popup does not reset the current
+/// preset back to the palette default. Non-Shape kinds compare equal
+/// only by exact value.
+const fn same_brush_family(a: BrushKind, b: BrushKind) -> bool {
+    match (a, b) {
+        (BrushKind::Shape(_), BrushKind::Shape(_))
+        | (BrushKind::Pencil, BrushKind::Pencil)
+        | (BrushKind::Marker, BrushKind::Marker)
+        | (BrushKind::Eraser, BrushKind::Eraser)
+        | (BrushKind::Pen, BrushKind::Pen)
+        | (BrushKind::Highlighter, BrushKind::Highlighter) => true,
+        (BrushKind::Custom(x), BrushKind::Custom(y)) => x == y,
+        _ => false,
     }
 }
 
