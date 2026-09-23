@@ -18,7 +18,9 @@ use std::time::Duration;
 
 use freya::prelude::*;
 
-use crate::brush::{BrushConfig, BrushKind, BrushPreset, EraserMode, PressureCurve};
+use crate::brush::{
+    BrushConfig, BrushKind, BrushPreset, EraserMode, HighlighterTip, PressureCurve,
+};
 use crate::canvas::{Board, lock};
 
 /// How long the pointer must sit inside a palette button before the
@@ -75,9 +77,10 @@ pub fn brush_popup(
     body = match preset.kind {
         BrushKind::Pen => body.child(pen_curve_row(board)),
         BrushKind::Eraser => body.child(eraser_mode_row(board)),
-        BrushKind::Pencil | BrushKind::Marker | BrushKind::Highlighter | BrushKind::Custom(_) => {
-            body
-        }
+        BrushKind::Highlighter => body
+            .child(highlighter_tip_row(board))
+            .child(highlighter_straight_row(board)),
+        BrushKind::Pencil | BrushKind::Marker | BrushKind::Custom(_) => body,
     };
     body
 }
@@ -181,6 +184,117 @@ fn eraser_mode_row(board: &Arc<Mutex<Board>>) -> impl IntoElement {
         let press_board = Arc::clone(board);
         row = row.child(mode_button(name, selected, move |_| {
             lock(&press_board).set_brush_config(BrushKind::Eraser, BrushConfig::Eraser { mode });
+        }));
+    }
+    row
+}
+
+fn highlighter_tip_row(board: &Arc<Mutex<Board>>) -> impl IntoElement {
+    let cfg = lock(board).brush_config(BrushKind::Highlighter);
+    let (current_tip, current_straight) = match cfg {
+        BrushConfig::Highlighter { tip, straight } => (tip, straight),
+        _ => (HighlighterTip::Round, false),
+    };
+    let mut row = rect()
+        .horizontal()
+        .spacing(6.0)
+        .child(label().color(Color::WHITE).font_size(13.0).text("Tip"));
+
+    let round_selected = matches!(current_tip, HighlighterTip::Round);
+    let bevel_selected = matches!(current_tip, HighlighterTip::Bevel { .. });
+
+    let round_board = Arc::clone(board);
+    row = row.child(mode_button("Round", round_selected, move |_| {
+        lock(&round_board).set_brush_config(
+            BrushKind::Highlighter,
+            BrushConfig::Highlighter {
+                tip: HighlighterTip::Round,
+                straight: current_straight,
+            },
+        );
+    }));
+
+    let bevel_current_angle = match current_tip {
+        HighlighterTip::Bevel { angle_deg } => angle_deg,
+        HighlighterTip::Round => 45.0,
+    };
+    let bevel_board = Arc::clone(board);
+    row = row.child(mode_button("Bevel", bevel_selected, move |_| {
+        lock(&bevel_board).set_brush_config(
+            BrushKind::Highlighter,
+            BrushConfig::Highlighter {
+                tip: HighlighterTip::Bevel {
+                    angle_deg: bevel_current_angle,
+                },
+                straight: current_straight,
+            },
+        );
+    }));
+
+    if let HighlighterTip::Bevel { angle_deg } = current_tip {
+        let dec_board = Arc::clone(board);
+        let inc_board = Arc::clone(board);
+        let text = format!("{angle_deg:.0}\u{00b0}");
+        row = row
+            .child(pill_button("\u{2212}", move |_| {
+                bump_bevel_angle(&dec_board, current_straight, -15.0);
+            }))
+            .child(label().color(Color::WHITE).font_size(13.0).text(text))
+            .child(pill_button("+", move |_| {
+                bump_bevel_angle(&inc_board, current_straight, 15.0);
+            }));
+    }
+    row
+}
+
+/// Rotate the current bevel angle by `delta_deg`, wrapping into
+/// `[0, 360)`. No-op when the current tip is `Round` — the popup only
+/// wires the ± controls into view when Bevel is already active, but
+/// the guard keeps the API total.
+fn bump_bevel_angle(board: &Arc<Mutex<Board>>, straight: bool, delta_deg: f32) {
+    let mut g = lock(board);
+    let cfg = g.brush_config(BrushKind::Highlighter);
+    let BrushConfig::Highlighter {
+        tip: HighlighterTip::Bevel { angle_deg },
+        ..
+    } = cfg
+    else {
+        return;
+    };
+    let next = (angle_deg + delta_deg).rem_euclid(360.0);
+    g.set_brush_config(
+        BrushKind::Highlighter,
+        BrushConfig::Highlighter {
+            tip: HighlighterTip::Bevel { angle_deg: next },
+            straight,
+        },
+    );
+}
+
+fn highlighter_straight_row(board: &Arc<Mutex<Board>>) -> impl IntoElement {
+    let cfg = lock(board).brush_config(BrushKind::Highlighter);
+    let (current_tip, current_straight) = match cfg {
+        BrushConfig::Highlighter { tip, straight } => (tip, straight),
+        _ => (HighlighterTip::Round, false),
+    };
+
+    let mut row = rect()
+        .horizontal()
+        .spacing(6.0)
+        .child(label().color(Color::WHITE).font_size(13.0).text("Line"));
+
+    for (straight, name) in [(false, "Freehand"), (true, "Straight")] {
+        let press_board = Arc::clone(board);
+        let selected = current_straight == straight;
+        let tip_snapshot = current_tip;
+        row = row.child(mode_button(name, selected, move |_| {
+            lock(&press_board).set_brush_config(
+                BrushKind::Highlighter,
+                BrushConfig::Highlighter {
+                    tip: tip_snapshot,
+                    straight,
+                },
+            );
         }));
     }
     row
