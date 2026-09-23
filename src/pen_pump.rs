@@ -6,13 +6,55 @@
 //! to the board on a dedicated thread. Failure to acquire logs and
 //! returns — the app still runs, driven by mouse events.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
+use flume::{Receiver, Sender};
 use istmo::{StreamItem, TypedStream};
 use istmo_pen::{PenClient, PenConfig, PenEvent, PenHoverEvent, PenSample};
 
 use crate::brush::InkPoint;
 use crate::canvas::Board;
+
+/// Latest known pen-hover sample published by the backend.
+///
+/// `None` on [`PenHoverEvent::ProximityLeave`]; `Some(...)` after any
+/// enter / move. Coordinates are in surface-logical units (points /
+/// dp) relative to the tracked window origin — the same space palette
+/// button areas resolve to.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HoverPoint {
+    pub x: f32,
+    pub y: f32,
+    /// Distance above the surface reported by the platform. Zero on
+    /// backends that do not surface height; growing values indicate
+    /// the tool pulling away.
+    pub z_offset: f32,
+}
+
+/// Broadcast-shaped bridge between [`pump_hover`] and any UI thread
+/// that wants a reactive view on pen proximity. Bounded so a stalled
+/// consumer cannot back-pressure the pen event pump.
+#[derive(Debug)]
+struct HoverBridge {
+    tx: Sender<Option<HoverPoint>>,
+    rx: Receiver<Option<HoverPoint>>,
+}
+
+static HOVER_BRIDGE: OnceLock<HoverBridge> = OnceLock::new();
+
+fn hover_bridge() -> &'static HoverBridge {
+    HOVER_BRIDGE.get_or_init(|| {
+        let (tx, rx) = flume::bounded(32);
+        HoverBridge { tx, rx }
+    })
+}
+
+/// Subscribe to pen-hover updates. Every call returns a clone of the
+/// same receiver — the UI drains this from a single async task.
+#[must_use]
+pub fn hover_receiver() -> Receiver<Option<HoverPoint>> {
+    hover_bridge().rx.clone()
+}
 
 /// Kick off the pen pump for `window_id`.
 ///
@@ -65,10 +107,25 @@ fn pump_events(stream: &TypedStream<PenEvent, ()>, board: &Arc<Mutex<Board>>) {
 }
 
 fn pump_hover(stream: &TypedStream<PenHoverEvent, ()>) {
-    // Hover isn't drawn yet, but the receiver must be drained so the
-    // publisher's channel doesn't back up on platforms that emit hover
-    // frequently.
-    while let Ok(StreamItem::Event(_)) = stream.recv() {}
+    let bridge = hover_bridge();
+    while let Ok(StreamItem::Event(event)) = stream.recv() {
+        let payload = match event {
+            PenHoverEvent::ProximityEnter(sample) | PenHoverEvent::Move(sample) => Some(HoverPoint {
+                x: sample.x,
+                y: sample.y,
+                z_offset: sample.z_offset,
+            }),
+            PenHoverEvent::ProximityLeave => None,
+        };
+        // Bounded channel: drop-oldest on full so a stalled consumer
+        // never back-pressures the pen backend. Hover samples are
+        // idempotent (only the latest matters), so a dropped
+        // intermediate is invisible in the UI.
+        if bridge.tx.try_send(payload).is_err() {
+            let _ = bridge.rx.try_recv();
+            let _ = bridge.tx.try_send(payload);
+        }
+    }
 }
 
 /// Per-stroke previous-sample timestamp. `Down` resets it; each

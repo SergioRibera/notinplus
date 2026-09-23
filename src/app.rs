@@ -18,6 +18,7 @@ use istmo::plugins::{EdgeInsets, SafeArea, SafeAreaInsets};
 use crate::brush::{BrushKind, BrushPreset, ShapeMode};
 use crate::canvas::{Board, LayerSnapshot, RedrawNotifier, drawing_surface, lock};
 use crate::palette_popup::{HOVER_DELAY, brush_popup};
+use crate::pen_pump;
 
 /// Bundle of reactive signals every palette button shares to
 /// coordinate the popup overlay. Grouped so [`palette_button`] does
@@ -27,6 +28,16 @@ struct PopupCoords {
     open_idx: State<Option<usize>>,
     hovered_idx: State<Option<usize>>,
     button_areas: State<Vec<Option<Area>>>,
+    /// Latest pen-hover surface position from
+    /// [`crate::pen_pump::hover_receiver`], or `None` when the tool is
+    /// out of proximity. `palette_overlay` translates this into a
+    /// synthetic hover target so the popup opens under a stylus that
+    /// never touches the screen.
+    pen_hover: State<Option<pen_pump::HoverPoint>>,
+    /// Palette index the pen last hovered over. Used to detect
+    /// transitions so timers / leave events fire exactly once per
+    /// boundary crossing.
+    pen_last_target: State<Option<usize>>,
 }
 
 const PALETTE: &[fn() -> BrushPreset] = &[
@@ -170,6 +181,19 @@ fn root() -> impl IntoElement {
         open_idx: use_state(|| Option::<usize>::None),
         hovered_idx: use_state(|| Option::<usize>::None),
         button_areas: use_state(|| vec![None::<Area>; PALETTE.len()]),
+        pen_hover: {
+            let mut cell = use_state(|| Option::<pen_pump::HoverPoint>::None);
+            use_hook(move || {
+                let rx = pen_pump::hover_receiver();
+                spawn(async move {
+                    while let Ok(sample) = rx.recv_async().await {
+                        cell.set(sample);
+                    }
+                });
+            });
+            cell
+        },
+        pen_last_target: use_state(|| Option::<usize>::None),
     };
 
     rect()
@@ -232,6 +256,7 @@ fn palette_overlay(
     pad: EdgeInsets,
     coords: PopupCoords,
 ) -> impl IntoElement {
+    dispatch_pen_hover(coords);
     // Global-positioned so the palette floats above the fullscreen
     // canvas at `(pad.left, pad.top)` — no room reserved by the parent's
     // flow layout, which is what lets the canvas sit under the status
@@ -446,6 +471,52 @@ fn commit_preset(board: &Arc<Mutex<Board>>, preset: BrushPreset) {
     if !same_brush_family(guard.current_kind(), preset.kind) {
         guard.set_current_preset(preset);
     }
+}
+
+/// React to pen-hover updates: find which palette button the tool is
+/// over, and drive `hovered_idx` / the open-popup timer the same way
+/// [`palette_button`]'s Freya `on_pointer_enter` handler does for
+/// mouse input. No-op when the pen has not moved between palette
+/// buttons since the last call — a `pen_last_target` state guards
+/// against re-firing the same timer every render.
+fn dispatch_pen_hover(coords: PopupCoords) {
+    let mut hovered_idx = coords.hovered_idx;
+    let mut open_idx = coords.open_idx;
+    let mut pen_last_target = coords.pen_last_target;
+    let pen = *coords.pen_hover.read();
+    let areas = coords.button_areas.read();
+    let cur = pen.and_then(|hp| find_button_under(&areas, hp.x, hp.y));
+    if *pen_last_target.peek() == cur {
+        return;
+    }
+    pen_last_target.set(cur);
+    match cur {
+        Some(idx) => {
+            hovered_idx.set(Some(idx));
+            spawn(async move {
+                async_io::Timer::after(HOVER_DELAY).await;
+                if *hovered_idx.peek() == Some(idx) {
+                    open_idx.set(Some(idx));
+                }
+            });
+        }
+        None => {
+            if hovered_idx.peek().is_some() {
+                hovered_idx.set(None);
+            }
+        }
+    }
+}
+
+/// Linear scan across `areas` returning the first index whose stored
+/// rect contains `(x, y)`. Cheap enough at PALETTE-length list sizes;
+/// the alternative bucket / spatial cache is not worth the memory.
+fn find_button_under(areas: &[Option<Area>], x: f32, y: f32) -> Option<usize> {
+    areas.iter().enumerate().find_map(|(idx, slot)| {
+        slot.and_then(|a| {
+            (x >= a.min_x() && x <= a.max_x() && y >= a.min_y() && y <= a.max_y()).then_some(idx)
+        })
+    })
 }
 
 /// Are two [`BrushKind`]s the same "palette family"?
