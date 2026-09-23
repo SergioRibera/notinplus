@@ -34,3 +34,6 @@ app/ios/**/Generated/
 
 # Claude Code local settings
 .claude/
+
+# Working notes not tracked in-repo
+BRUSH_PLAN.md
