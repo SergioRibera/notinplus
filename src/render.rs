@@ -316,8 +316,17 @@ fn build_ribbon_path(
 /// positions + half-widths, dedup shared knots between adjacent
 /// segments, then compute per-vertex left-hand normals via central
 /// differences over the joined polyline.
+///
+/// Half-width per sample is pre-smoothed with a binomial 5-tap kernel
+/// so isolated pressure spikes from the digitiser stop propagating
+/// straight into stroke thickness. Along each segment the width is
+/// interpolated with a 1D Catmull-Rom in the same knot topology as the
+/// position curve (C1 across knots) — linear interpolation used to
+/// pinch sharply at every sample when pressure changed, producing the
+/// visible funnel/wedge on soft→hard transitions.
 fn build_ribbon_vertices(preset: &BrushPreset, points: &[InkPoint]) -> Vec<RibbonVert> {
     let n = points.len();
+    let halves = smoothed_halves(preset, points);
     let mut positions: Vec<(f32, f32, f32)> = Vec::with_capacity(n * 6);
     for k in 0..(n - 1) {
         let p1 = points[k];
@@ -334,15 +343,29 @@ fn build_ribbon_vertices(preset: &BrushPreset, points: &[InkPoint]) -> Vec<Ribbo
         };
         let p1_xy = (p1.x, p1.y);
         let p2_xy = (p2.x, p2.y);
-        let half_1 = 0.5 * preset.width(p1.pressure_f32(), p1.tilt_f32());
-        let half_2 = 0.5 * preset.width(p2.pressure_f32(), p2.tilt_f32());
+        // Width knots mirror the position knots — reflect at boundaries
+        // so the endpoint segment has a natural tangent instead of
+        // clamping (which would flat-line the width over the first/last
+        // step and reintroduce a visible shoulder).
+        let h1 = halves[k];
+        let h2 = halves[k + 1];
+        let h0 = if k > 0 {
+            halves[k - 1]
+        } else {
+            2.0f32.mul_add(h1, -h2)
+        };
+        let h3 = if k + 2 < n {
+            halves[k + 2]
+        } else {
+            2.0f32.mul_add(h2, -h1)
+        };
         let steps = subdivision_count(p1_xy, p2_xy);
         let steps_f = f32_from_usize(steps);
         let start_j = usize::from(k != 0);
         for j in start_j..=steps {
             let t = f32_from_usize(j) / steps_f;
             let q = catmull_rom_centripetal(p0, p1_xy, p2_xy, p3, t);
-            let half = lerp(half_1, half_2, t);
+            let half = catmull_rom_1d(h0, h1, h2, h3, t).max(0.0);
             positions.push((q.0, q.1, half));
         }
     }
@@ -443,8 +466,45 @@ fn lerp2d(a: (f32, f32), b: (f32, f32), t: f32) -> (f32, f32) {
     (t.mul_add(b.0 - a.0, a.0), t.mul_add(b.1 - a.1, a.1))
 }
 
-fn lerp(a: f32, b: f32, t: f32) -> f32 {
-    t.mul_add(b - a, a)
+/// Uniform 1D Catmull-Rom on scalar knots. Wraps `catmull_rom_centripetal`
+/// by embedding scalars as x-coordinates and reading the interpolated
+/// x back; centripetal parameterisation degenerates to uniform when
+/// consecutive knot differences match, and the endpoint-reflection
+/// caller already keeps `h0..h3` well-conditioned.
+fn catmull_rom_1d(h0: f32, h1: f32, h2: f32, h3: f32, t: f32) -> f32 {
+    let (h, _) = catmull_rom_centripetal((h0, 0.0), (h1, 1.0), (h2, 2.0), (h3, 3.0), t);
+    h
+}
+
+/// Binomial 5-tap low-pass over per-sample half-widths. Kernel
+/// `[1, 4, 6, 4, 1] / 16` — kills isolated single-sample pressure
+/// spikes without noticeably lagging genuine soft→hard→soft envelopes
+/// (a 5-sample transition is still ~40ms at typical digitiser rates).
+/// Endpoints reflect neighbours so the last visible width does not get
+/// pulled toward 0 by an implicit zero-padded tap.
+fn smoothed_halves(preset: &BrushPreset, points: &[InkPoint]) -> Vec<f32> {
+    let n = points.len();
+    let raw: Vec<f32> = points
+        .iter()
+        .map(|p| 0.5 * preset.width(p.pressure_f32(), p.tilt_f32()))
+        .collect();
+    if n < 3 {
+        return raw;
+    }
+    let last = n - 1;
+    let idx_lo = |i: usize, off: usize| -> usize { i.saturating_sub(off) };
+    let idx_hi = |i: usize, off: usize| -> usize { (i + off).min(last) };
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let i0 = raw[idx_lo(i, 2)];
+        let i1 = raw[idx_lo(i, 1)];
+        let i2 = raw[i];
+        let i3 = raw[idx_hi(i, 1)];
+        let i4 = raw[idx_hi(i, 2)];
+        let sum = 6.0f32.mul_add(i2, 4.0f32.mul_add(i1 + i3, i0 + i4));
+        out.push(sum / 16.0);
+    }
+    out
 }
 
 #[allow(clippy::cast_precision_loss)]
