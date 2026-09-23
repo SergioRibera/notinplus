@@ -17,13 +17,15 @@
 
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use freya_engine::prelude::{
     BlendMode, Color as SkColor, Paint, PaintStyle, Path, PathBuilder, PathDirection,
 };
 
-use crate::brush::{BrushKind, BrushPreset, CapStyle, InkPoint, SegmentMode, Stroke, StrokeStyle};
+use crate::brush::{
+    BrushKind, BrushPreset, CapStyle, HighlighterTip, InkPoint, SegmentMode, Stroke, StrokeStyle,
+};
 
 /// Ribbon vertex: position, local half-width, left-hand unit normal.
 /// Cap renderers consume one of these to know where to bulge past.
@@ -172,6 +174,123 @@ impl BrushRenderer for RibbonBrush {
         configure_fill_paint(&mut paint, &style);
         paint
     }
+}
+
+/// Shared tip-shape state for the highlighter kind.
+///
+/// Owned by [`crate::canvas::Board`] and read by [`HighlighterBrush`]
+/// each `build_path`. `RwLock` because reads happen on every paint
+/// and writes only on popup toggles — reader-heavy access pattern.
+/// Kept off the wire: it is a UI-level knob whose default matches
+/// the pre-Phase-3 behaviour ([`HighlighterTip::Round`]).
+#[derive(Debug)]
+pub struct HighlighterState {
+    inner: RwLock<HighlighterTip>,
+}
+
+impl HighlighterState {
+    #[must_use]
+    pub const fn new(tip: HighlighterTip) -> Self {
+        Self {
+            inner: RwLock::new(tip),
+        }
+    }
+
+    /// Overwrite the current tip. Silently ignores mutex poisoning —
+    /// the only writer is a brief popup callback and the read side
+    /// recovers by defaulting to `Round`.
+    pub fn set(&self, tip: HighlighterTip) {
+        if let Ok(mut g) = self.inner.write() {
+            *g = tip;
+        }
+    }
+
+    /// Snapshot the current tip. Poisoned lock falls back to
+    /// [`HighlighterTip::Round`] so a corrupted state never bricks
+    /// paint.
+    #[must_use]
+    pub fn get(&self) -> HighlighterTip {
+        self.inner
+            .read()
+            .map_or(HighlighterTip::Round, |g| *g)
+    }
+}
+
+impl Default for HighlighterState {
+    fn default() -> Self {
+        Self::new(HighlighterTip::Round)
+    }
+}
+
+/// Highlighter renderer that dispatches between the default ribbon
+/// path (for [`HighlighterTip::Round`]) and a fixed-angle offset
+/// polygon (for [`HighlighterTip::Bevel`]).
+///
+/// Angle is expressed in degrees, measured counter-clockwise from the
+/// positive x-axis, and interpreted as the direction of the "height"
+/// vector of the flat tip (perpendicular to the tip's flat edge).
+/// A `Bevel { angle_deg: 0.0 }` stripe therefore has the tip's flat
+/// edge along the y-axis, so a stroke drawn horizontally shows full
+/// width and a vertical stroke collapses to a thin line.
+#[derive(Debug)]
+pub struct HighlighterBrush {
+    round: RibbonBrush,
+    state: Arc<HighlighterState>,
+}
+
+impl HighlighterBrush {
+    #[must_use]
+    pub const fn new(state: Arc<HighlighterState>) -> Self {
+        Self {
+            round: RibbonBrush,
+            state,
+        }
+    }
+}
+
+impl BrushRenderer for HighlighterBrush {
+    fn build_path(&self, preset: &BrushPreset, stroke: &Stroke, caps: &CapRegistry) -> Path {
+        match self.state.get() {
+            HighlighterTip::Round => self.round.build_path(preset, stroke, caps),
+            HighlighterTip::Bevel { angle_deg } => build_bevel_path(preset, stroke, angle_deg),
+        }
+    }
+
+    fn paint(&self, preset: &BrushPreset, stroke_color: [u8; 4]) -> Paint {
+        // Blend mode + colour do not depend on tip shape — highlighter
+        // is always Multiply.
+        self.round.paint(preset, stroke_color)
+    }
+}
+
+/// Constant-width stripe swept along the polyline, offset perpendicular
+/// to the fixed bevel-tip axis (not the local tangent). Zero caps —
+/// bevel tips terminate flat by construction.
+fn build_bevel_path(preset: &BrushPreset, stroke: &Stroke, angle_deg: f32) -> Path {
+    let mut builder = PathBuilder::new();
+    let points = &stroke.points;
+    if points.len() < 2 {
+        return builder.detach();
+    }
+    let half = 0.5 * preset.width(0.5, 0.0);
+    if half <= 0.0 {
+        return builder.detach();
+    }
+    let angle_rad = angle_deg.to_radians();
+    let (sin_a, cos_a) = angle_rad.sin_cos();
+    let nx = cos_a * half;
+    let ny = sin_a * half;
+    // Top edge forward.
+    builder.move_to((points[0].x + nx, points[0].y + ny));
+    for p in &points[1..] {
+        builder.line_to((p.x + nx, p.y + ny));
+    }
+    // Bottom edge backward.
+    for p in points.iter().rev() {
+        builder.line_to((p.x - nx, p.y - ny));
+    }
+    builder.close();
+    builder.detach()
 }
 
 /// Registry mapping [`CapStyle`] → [`CapRenderer`]. Cloneable via

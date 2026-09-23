@@ -26,10 +26,12 @@ use flume::{Receiver, Sender};
 use freya::prelude::*;
 use freya_engine::prelude::{BlendMode, Color as SkColor, Paint, Path, SaveLayerRec};
 
-use crate::brush::{BrushConfig, BrushKind, BrushPreset, CapStyle, EraserMode, InkPoint, Stroke};
+use crate::brush::{
+    BrushConfig, BrushKind, BrushPreset, CapStyle, EraserMode, InkPoint, Stroke,
+};
 use crate::doc::Doc;
 use crate::history::{EraseOriginal, EraseSession, HistoryOp};
-use crate::render::BrushRegistry;
+use crate::render::{BrushRegistry, HighlighterBrush, HighlighterState};
 use crate::spatial::SpatialIndex;
 
 const SIZE_SCALE_MIN: f32 = 0.25;
@@ -184,6 +186,18 @@ pub struct Board {
     /// `BrushKind::Custom(id)` / `CapStyle::Custom(id)` strokes route
     /// through user code without patching the canvas.
     brush_registry: Arc<BrushRegistry>,
+    /// Highlighter tip state shared with the
+    /// [`crate::render::HighlighterBrush`] renderer registered against
+    /// [`BrushKind::Highlighter`]. Mutating the config via
+    /// [`Board::set_brush_config`] mirrors the tip into this handle so
+    /// subsequent repaints pick up the change without touching the
+    /// stroke buffer.
+    highlighter_state: Arc<HighlighterState>,
+    /// `true` between [`Board::begin`] and [`Board::end`] when the
+    /// current tool is a highlighter with `straight = true`. Flips
+    /// [`Board::extend`] into "replace last point" mode so the live
+    /// preview follows the cursor as a rubber-band line.
+    straight_active: bool,
 }
 
 /// Anchor snapshot for a pinch gesture — centroid + pair-distance of
@@ -198,6 +212,12 @@ struct GestureBaseline {
 impl Default for Board {
     fn default() -> Self {
         let default_preset = BrushPreset::pen();
+        let highlighter_state = Arc::new(HighlighterState::default());
+        let mut brush_registry = BrushRegistry::new();
+        brush_registry.set_brush(
+            BrushKind::Highlighter,
+            Arc::new(HighlighterBrush::new(Arc::clone(&highlighter_state))),
+        );
         Self {
             doc: Doc::default(),
             active: None,
@@ -218,7 +238,9 @@ impl Default for Board {
             finger_positions: HashMap::new(),
             gesture_baseline: None,
             gesture_active: false,
-            brush_registry: Arc::new(BrushRegistry::new()),
+            brush_registry: Arc::new(brush_registry),
+            highlighter_state,
+            straight_active: false,
         }
     }
 }
@@ -287,6 +309,14 @@ impl Board {
             return;
         }
         self.brush_configs.insert(kind, config);
+        if let BrushConfig::Highlighter { tip, .. } = config {
+            // Mirror into the shared handle the renderer reads at
+            // every `build_path`. Committed strokes carry the tip
+            // they were built with (cached path); toggling `tip`
+            // affects the in-flight active stroke plus every
+            // subsequently committed highlighter.
+            self.highlighter_state.set(tip);
+        }
         self.notify();
     }
 
@@ -596,6 +626,10 @@ impl Board {
         let brush = self.doc.register_brush(self.current_preset);
         let id = self.doc.allocate_stroke_id();
         self.active = Some(Stroke::new(id, brush, self.current_color, point));
+        // Latch straight-mode at gesture start so an in-flight tip
+        // toggle does not switch a live stroke between rubber-band and
+        // freehand halfway through.
+        self.straight_active = self.is_straight_stroke_mode();
         self.notify();
     }
 
@@ -614,7 +648,18 @@ impl Board {
         let Some(active) = self.active.as_mut() else {
             return;
         };
-        active.points.push(point);
+        if self.straight_active {
+            // Rubber-band: keep exactly the anchor + cursor pair so
+            // the ribbon renderer paints a live A→B line.
+            if active.points.len() < 2 {
+                active.points.push(point);
+            } else {
+                let last = active.points.len() - 1;
+                active.points[last] = point;
+            }
+        } else {
+            active.points.push(point);
+        }
         self.notify();
     }
 
@@ -660,6 +705,7 @@ impl Board {
         }
         if let Some(active) = self.active.take() {
             self.commit_stroke(active);
+            self.straight_active = false;
             self.notify();
         }
     }
@@ -677,6 +723,7 @@ impl Board {
         }
         if self.active.take().is_some() {
             self.active_layer_at_begin = None;
+            self.straight_active = false;
             self.notify();
         }
     }
@@ -687,6 +734,7 @@ impl Board {
         self.active_layer_at_begin = None;
         self.erase_session = None;
         self.selection_rect = None;
+        self.straight_active = false;
         self.history.clear();
         self.spatial.clear();
         self.cached_paths.clear();
@@ -977,6 +1025,17 @@ impl Board {
             BrushConfig::Eraser { mode } => mode,
             _ => EraserMode::Point,
         }
+    }
+
+    /// True when the current brush is a highlighter opted into
+    /// straight-line mode. Rubber-band gesture: [`Board::begin`]
+    /// anchors, [`Board::extend`] replaces the second endpoint,
+    /// [`Board::end`] commits the two-point stroke.
+    fn is_straight_stroke_mode(&self) -> bool {
+        matches!(
+            self.current_config(),
+            BrushConfig::Highlighter { straight: true, .. }
+        )
     }
 
     /// Fold the current per-kind [`BrushConfig`] into a raw pen sample
