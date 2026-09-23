@@ -83,6 +83,29 @@ impl SpatialIndex {
         out.dedup();
         out
     }
+
+    /// All stroke ids whose bucket overlaps the axis-aligned world
+    /// rect. Broad-phase only — a stroke id here may still lie outside
+    /// the rect if it lives in a bucket the rect grazes. Callers that
+    /// need pixel-tight culling must intersect against the stroke's
+    /// own geometry. Used by the paint pass to skip cached strokes
+    /// far outside the viewport at high zoom.
+    #[must_use]
+    pub fn query_rect(&self, min_x: f32, min_y: f32, max_x: f32, max_y: f32) -> Vec<StrokeId> {
+        let (bmin_x, bmin_y) = bucket_of(min_x, min_y);
+        let (bmax_x, bmax_y) = bucket_of(max_x, max_y);
+        let mut out: Vec<StrokeId> = Vec::new();
+        for by in bmin_y..=bmax_y {
+            for bx in bmin_x..=bmax_x {
+                if let Some(v) = self.buckets.get(&(bx, by)) {
+                    out.extend_from_slice(v);
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
 }
 
 #[allow(clippy::cast_possible_truncation)]

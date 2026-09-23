@@ -19,7 +19,7 @@
 //! [`SpatialIndex`], and intersecting strokes are split at the circle
 //! boundary. See [`Board::erase_at`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use flume::{Receiver, Sender};
@@ -881,19 +881,32 @@ impl Board {
     /// segments are rebuilt every frame into a fresh tail path so
     /// their Catmull-Rom `p3` neighbour stays live (mirror while the
     /// user is still drawing, actual once the next sample arrives).
-    pub fn paint(&self, canvas: &freya_engine::prelude::Canvas) {
+    pub fn paint(&self, canvas: &freya_engine::prelude::Canvas, surface: SurfaceBounds) {
         // Everything below draws in world coordinates. Wrapping in a
         // save/restore lets viewport pan+zoom compose freely with any
         // future overlay pass that wants to draw in screen space.
         canvas.save();
         canvas.translate((self.viewport.tx, self.viewport.ty));
         canvas.scale((self.viewport.scale, self.viewport.scale));
+
+        // Cull committed strokes to the visible world rect via the
+        // spatial index. Skia culls per primitive anyway, but skipping
+        // the Paint construction + `draw_path` bookkeeping for
+        // off-screen strokes is what actually saves cycles at high
+        // zoom — that's the "500 strokes, only 20 visible" regime.
+        let visible = self.visible_stroke_set(surface);
+
         for layer in &self.doc.layers {
             if !layer.visible {
                 continue;
             }
             let opacity = layer.opacity.clamp(0.0, 1.0);
             for stroke in &layer.strokes {
+                if let Some(set) = visible.as_ref() {
+                    if !set.contains(&stroke.id) {
+                        continue;
+                    }
+                }
                 let Some(cached) = self.cached_paths.get(&stroke.id) else {
                     continue;
                 };
@@ -911,26 +924,64 @@ impl Board {
             }
         }
         if let (Some(active), Some(builder)) = (&self.active, &self.active_builder) {
-            let Some(preset) = self.doc.preset(active.brush) else {
-                return;
-            };
-            let layer_opacity = self
-                .active_layer_at_begin
-                .and_then(|id| self.doc.layer(id))
-                .map_or(1.0, |l| l.opacity.clamp(0.0, 1.0));
-            let mut paint = stroke_paint(preset, active.color);
-            if layer_opacity < 0.999 {
-                let base = paint.color();
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                let scaled = (f32::from(base.a()) * layer_opacity).clamp(0.0, 255.0) as u8;
-                paint.set_color(base.with_a(scaled));
+            if let Some(preset) = self.doc.preset(active.brush) {
+                let layer_opacity = self
+                    .active_layer_at_begin
+                    .and_then(|id| self.doc.layer(id))
+                    .map_or(1.0, |l| l.opacity.clamp(0.0, 1.0));
+                let mut paint = stroke_paint(preset, active.color);
+                if layer_opacity < 0.999 {
+                    let base = paint.color();
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    let scaled =
+                        (f32::from(base.a()) * layer_opacity).clamp(0.0, 255.0) as u8;
+                    paint.set_color(base.with_a(scaled));
+                }
+                canvas.draw_path(&builder.snapshot(), &paint);
+                let tail = build_active_tail(preset, &active.points, self.active_next_segment);
+                canvas.draw_path(&tail, &paint);
             }
-            canvas.draw_path(&builder.snapshot(), &paint);
-            let tail = build_active_tail(preset, &active.points, self.active_next_segment);
-            canvas.draw_path(&tail, &paint);
         }
         canvas.restore();
     }
+
+    /// Compute the visible stroke set for the current viewport. Returns
+    /// `None` when culling is not beneficial (very small doc or 100%
+    /// zoom showing "most of it") — the caller then paints every
+    /// stroke, matching pre-culling behaviour and skipping the
+    /// per-frame hash-set build.
+    fn visible_stroke_set(&self, surface: SurfaceBounds) -> Option<HashSet<u32>> {
+        // Total committed strokes across every layer. Below this
+        // threshold the per-frame `HashSet` build costs more than the
+        // draws it saves — full-doc paint is faster.
+        //
+        // `PAD` widens the query by one spatial bucket on every side so
+        // strokes whose sample points lie just outside the viewport
+        // still register when their ribbon geometry bleeds in.
+        const CULL_MIN_STROKES: usize = 64;
+        const PAD: f32 = 128.0;
+        let total: usize = self.doc.layers.iter().map(|l| l.strokes.len()).sum();
+        if total < CULL_MIN_STROKES {
+            return None;
+        }
+        let (min_x, min_y) = self.viewport.screen_to_world(surface.min_x, surface.min_y);
+        let (max_x, max_y) = self.viewport.screen_to_world(surface.max_x, surface.max_y);
+        let ids = self
+            .spatial
+            .query_rect(min_x - PAD, min_y - PAD, max_x + PAD, max_y + PAD);
+        Some(ids.into_iter().collect())
+    }
+}
+
+/// Axis-aligned surface-pixel bounds handed to [`Board::paint`]. The
+/// rect is projected into world coordinates via the current
+/// [`Viewport`] to drive stroke culling.
+#[derive(Debug, Clone, Copy)]
+pub struct SurfaceBounds {
+    pub min_x: f32,
+    pub min_y: f32,
+    pub max_x: f32,
+    pub max_y: f32,
 }
 
 /// Build the full ribbon path for a stroke in one pass.
@@ -1164,7 +1215,17 @@ pub fn drawing_surface(board: &Arc<Mutex<Board>>) -> impl IntoElement {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
         };
-        guard.paint(ctx.canvas);
+        // Canvas paints in element-local coordinates — origin at
+        // (0, 0), extent given by `ctx.size` in logical pixels. This
+        // matches the surface space our pen samples arrive in, so the
+        // culling rect projects cleanly through the viewport.
+        let bounds = SurfaceBounds {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: ctx.size.width,
+            max_y: ctx.size.height,
+        };
+        guard.paint(ctx.canvas, bounds);
     }))
     .width(Size::fill())
     .height(Size::fill());

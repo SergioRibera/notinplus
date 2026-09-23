@@ -78,7 +78,11 @@ fn root() -> impl IntoElement {
                 // stays in step with pinch / wheel gestures without
                 // needing its own notifier plumbing.
                 let s = lock(&zoom_board).viewport().scale;
-                if (s - *zoom.read()).abs() > f32::EPSILON {
+                // 0.1% threshold — the HUD label rounds to whole
+                // percent, so a stricter epsilon would push zoom.set
+                // (and the reactive root re-render it triggers) far
+                // more often than the label actually changes.
+                if (s - *zoom.read()).abs() > 0.001 {
                     zoom.set(s);
                 }
             }
