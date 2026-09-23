@@ -502,9 +502,10 @@ impl Board {
         self.active_next_segment = 0;
         self.active_layer_at_begin = None;
         if self.current_kind() == BrushKind::Eraser {
-            // Erase gestures don't own a target layer — they always
-            // fan out across every visible+unlocked layer via the
-            // spatial index.
+            // Erase gestures target the active layer only. Strokes on
+            // other layers stay untouched even if the eraser sweeps
+            // over them — see `apply_erase` for the active-layer
+            // filter.
             self.erase_session = Some(EraseSession::default());
             self.apply_erase(point);
             self.notify();
@@ -769,6 +770,11 @@ impl Board {
             return;
         }
         let candidates = self.spatial.query_circle(sample.x, sample.y, radius);
+        // Erase gestures are scoped to the active layer only. Strokes
+        // on other layers (even overlapping the eraser circle) stay
+        // untouched — layer isolation is what users expect from a
+        // layered raster tool.
+        let active_layer = self.doc.active_layer;
 
         // Two-phase: collect fresh snapshots under immutable self
         // borrows, then hand them to the session under a mutable one.
@@ -785,6 +791,9 @@ impl Board {
                 let Some(&(layer_id, idx)) = self.stroke_index.get(&id) else {
                     continue;
                 };
+                if layer_id != active_layer {
+                    continue;
+                }
                 let Some(layer) = self.doc.layer(layer_id) else {
                     continue;
                 };
@@ -949,22 +958,24 @@ impl Board {
 
         // Live eraser preview. During an in-flight erase gesture the
         // doc is not mutated (see `finalize_erase_session`) — instead
-        // we composite a `DstOut` mask over the strokes so the user
-        // sees the cut immediately. `save_layer` scopes the mask to
-        // this frame's stroke draws; anything painted after `restore`
-        // (active pen stroke, overlays) is unaffected.
+        // we composite a `DstOut` mask over the active layer so the
+        // user sees the cut immediately. The mask is scoped to that
+        // one layer via `save_layer`: other layers keep their strokes
+        // intact, matching the active-layer-only erase semantics.
         let mask_circles = self
             .erase_session
             .as_ref()
             .map(|s| s.circles.as_slice())
             .filter(|c| !c.is_empty());
-        if mask_circles.is_some() {
-            canvas.save_layer(&SaveLayerRec::default());
-        }
+        let active_layer = self.doc.active_layer;
 
         for layer in &self.doc.layers {
             if !layer.visible {
                 continue;
+            }
+            let mask_this = mask_circles.is_some() && layer.id == active_layer;
+            if mask_this {
+                canvas.save_layer(&SaveLayerRec::default());
             }
             let opacity = layer.opacity.clamp(0.0, 1.0);
             for stroke in &layer.strokes {
@@ -988,16 +999,18 @@ impl Board {
                 }
                 canvas.draw_path(cached, &paint);
             }
-        }
-        if let Some(circles) = mask_circles {
-            let mut mask = Paint::default();
-            mask.set_blend_mode(BlendMode::DstOut);
-            mask.set_color(SkColor::from_argb(255, 0, 0, 0));
-            mask.set_anti_alias(true);
-            for &(cx, cy, r) in circles {
-                canvas.draw_circle((cx, cy), r, &mask);
+            if mask_this {
+                if let Some(circles) = mask_circles {
+                    let mut mask = Paint::default();
+                    mask.set_blend_mode(BlendMode::DstOut);
+                    mask.set_color(SkColor::from_argb(255, 0, 0, 0));
+                    mask.set_anti_alias(true);
+                    for &(cx, cy, r) in circles {
+                        canvas.draw_circle((cx, cy), r, &mask);
+                    }
+                }
+                canvas.restore();
             }
-            canvas.restore();
         }
         if let (Some(active), Some(builder)) = (&self.active, &self.active_builder) {
             if let Some(preset) = self.doc.preset(active.brush) {
@@ -1620,6 +1633,41 @@ mod tests {
         assert_eq!(stroke_count(b.doc()), 1);
         let restored = b.doc().layers[0].strokes[0].points.clone();
         assert_eq!(restored, doc_before.layers[0].strokes[0].points);
+    }
+
+    #[test]
+    fn erase_scoped_to_active_layer_only() {
+        // Two overlapping strokes on distinct layers. Eraser passes
+        // through both spatially but must only cut the stroke on the
+        // active layer — the other layer's stroke stays intact.
+        let mut b = Board::default();
+        b.set_current_preset(BrushPreset::pen());
+        b.begin(pt(0.0, 0.0));
+        b.extend(pt(200.0, 0.0));
+        b.end();
+        let l0 = b.active_layer_id();
+
+        let l1 = b.add_layer();
+        b.set_active_layer(l1);
+        b.begin(pt(0.0, 0.0));
+        b.extend(pt(200.0, 0.0));
+        b.end();
+        assert_eq!(b.doc().layer(l0).unwrap().strokes.len(), 1);
+        assert_eq!(b.doc().layer(l1).unwrap().strokes.len(), 1);
+
+        // Active layer is l1 — eraser must only touch l1.
+        b.set_current_preset(BrushPreset::eraser());
+        b.begin(pt(100.0, 0.0));
+        b.end();
+        assert_eq!(
+            b.doc().layer(l0).unwrap().strokes.len(),
+            1,
+            "non-active layer must stay untouched"
+        );
+        assert!(
+            b.doc().layer(l1).unwrap().strokes.len() >= 2,
+            "active layer must have been split"
+        );
     }
 
     #[test]
