@@ -282,9 +282,11 @@ fn build_ribbon_path(
     if n == 0 {
         return builder.detach();
     }
+    let mut halves = smoothed_halves(preset, points);
+    apply_flat_cap_taper(&mut halves, cap_start, cap_end);
     if n == 1 {
         let p = points[0];
-        let half = 0.5 * preset.width(p.pressure_f32(), p.tilt_f32());
+        let half = halves[0];
         if half > 0.0
             && (matches!(cap_start, CapStyle::Round) || matches!(cap_end, CapStyle::Round))
         {
@@ -292,19 +294,20 @@ fn build_ribbon_path(
         }
         return builder.detach();
     }
-    let verts = build_ribbon_vertices(preset, points);
+    let verts = build_ribbon_vertices(points, &halves);
     if verts.len() < 2 {
         return builder.detach();
     }
     emit_ribbon_polygon(&mut builder, &verts, cap_start, cap_end, caps);
-    // Sample-knot join reinforcement. Every original sample gets a
+    // Sample-knot join reinforcement. Every interior sample gets a
     // filled circle at its position; nonzero winding accumulates the
     // circle with the ribbon polygon, so on tight turns the inner
     // fold that the offset polygon produces gets covered without
-    // punching a hole. Cheap: N circles vs an already-N-subdivided
-    // polygon.
-    for p in &points[1..(n - 1)] {
-        let half = 0.5 * preset.width(p.pressure_f32(), p.tilt_f32());
+    // punching a hole. Uses the same smoothed + tapered widths as the
+    // polygon walk, so no raw-pressure spike sticks out as a lump nor
+    // does a full-width knot punch through the tapered cut end.
+    for (i, p) in points[1..(n - 1)].iter().enumerate() {
+        let half = halves[i + 1];
         if half > 0.0 {
             builder.add_circle((p.x, p.y), half, PathDirection::CCW);
         }
@@ -312,21 +315,46 @@ fn build_ribbon_path(
     builder.detach()
 }
 
+/// Progressive width taper on samples adjacent to a [`CapStyle::Flat`]
+/// terminator. Flat caps otherwise render as a perpendicular line at
+/// full local half-width — visually a square wall at eraser cuts. The
+/// taper shrinks the terminal vertex to `TAPER_TIP` of its smoothed
+/// width, and the neighbour behind it to `TAPER_SHOULDER`, so the
+/// ribbon narrows smoothly into the cut and the flat closing line is
+/// a small stub rather than a full-width perpendicular slab.
+fn apply_flat_cap_taper(halves: &mut [f32], cap_start: CapStyle, cap_end: CapStyle) {
+    const TAPER_TIP: f32 = 0.3;
+    const TAPER_SHOULDER: f32 = 0.7;
+    let n = halves.len();
+    if n == 0 {
+        return;
+    }
+    if matches!(cap_end, CapStyle::Flat) {
+        halves[n - 1] *= TAPER_TIP;
+        if n >= 3 {
+            halves[n - 2] *= TAPER_SHOULDER;
+        }
+    }
+    if matches!(cap_start, CapStyle::Flat) {
+        halves[0] *= TAPER_TIP;
+        if n >= 3 {
+            halves[1] *= TAPER_SHOULDER;
+        }
+    }
+}
+
 /// Walk every Catmull-Rom segment in order, collect interpolated
 /// positions + half-widths, dedup shared knots between adjacent
 /// segments, then compute per-vertex left-hand normals via central
 /// differences over the joined polyline.
 ///
-/// Half-width per sample is pre-smoothed with a binomial 5-tap kernel
-/// so isolated pressure spikes from the digitiser stop propagating
-/// straight into stroke thickness. Along each segment the width is
-/// interpolated with a 1D Catmull-Rom in the same knot topology as the
-/// position curve (C1 across knots) — linear interpolation used to
-/// pinch sharply at every sample when pressure changed, producing the
-/// visible funnel/wedge on soft→hard transitions.
-fn build_ribbon_vertices(preset: &BrushPreset, points: &[InkPoint]) -> Vec<RibbonVert> {
+/// `halves` is the per-sample half-width array computed upstream —
+/// pre-smoothed via [`smoothed_halves`] and, at flat cap terminators,
+/// tapered via [`apply_flat_cap_taper`] so the caller can share the
+/// same values with sample-knot reinforcement circles (raw pressure
+/// used to spike a lump through the tapered ribbon polygon).
+fn build_ribbon_vertices(points: &[InkPoint], halves: &[f32]) -> Vec<RibbonVert> {
     let n = points.len();
-    let halves = smoothed_halves(preset, points);
     let mut positions: Vec<(f32, f32, f32)> = Vec::with_capacity(n * 6);
     for k in 0..(n - 1) {
         let p1 = points[k];
