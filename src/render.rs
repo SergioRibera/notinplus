@@ -548,5 +548,5 @@ fn subdivision_count(a: (f32, f32), b: (f32, f32)) -> usize {
     let d = dist_sq(a, b).sqrt();
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let raw = (d / 6.0).ceil() as usize;
-    raw.clamp(3, 12)
+    raw.clamp(6, 12)
 }
