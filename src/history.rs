@@ -8,6 +8,8 @@
 //!
 //! Regular stroke undo is future work (not in PLAN Phase 3 scope).
 
+use std::collections::HashSet;
+
 use crate::brush::Stroke;
 
 /// Stroke snapshot captured before an erase touched it.
@@ -32,20 +34,33 @@ pub struct EraseSession {
     /// Ids of fragment strokes introduced during the session; removed
     /// on undo.
     pub added_fragments: Vec<u32>,
+    /// Same ids as `added_fragments`, in a set for O(1) intermediate
+    /// detection. Skipped by rollback (the vec drives that).
+    added_set: HashSet<u32>,
 }
 
 impl EraseSession {
     /// Record `original` (from `layer_id`) iff its id hasn't been
     /// captured yet. `added` lists the fragment ids that replaced it
     /// (may be empty when the stroke was fully consumed).
+    ///
+    /// When `original.id` was itself introduced earlier in this
+    /// session (an intermediate fragment being re-split by a later
+    /// eraser sample), skip the `originals` push — restoring it on
+    /// undo would resurrect a stroke that never existed at pen-down
+    /// and inflate the layer's stroke count.
     pub fn record(&mut self, layer_id: u32, original: Stroke, added: &[u32]) {
-        if !self.originals.iter().any(|o| o.stroke.id == original.id) {
+        let is_intermediate = self.added_set.contains(&original.id);
+        if !is_intermediate && !self.originals.iter().any(|o| o.stroke.id == original.id) {
             self.originals.push(EraseOriginal {
                 layer_id,
                 stroke: original,
             });
         }
-        self.added_fragments.extend_from_slice(added);
+        for &id in added {
+            self.added_fragments.push(id);
+            self.added_set.insert(id);
+        }
     }
 
     #[must_use]

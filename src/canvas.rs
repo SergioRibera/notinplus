@@ -1520,6 +1520,32 @@ mod tests {
     }
 
     #[test]
+    fn multi_sample_erase_undo_restores_original_count() {
+        // Erase gesture crossing a long stroke re-splits its own
+        // intermediate fragments. Undo must land back at the exact
+        // pre-gesture stroke count — not accumulate ghosts of the
+        // intermediates as if they had existed at pen-down.
+        let mut b = Board::default();
+        b.set_current_preset(BrushPreset::pen());
+        b.begin(pt(0.0, 0.0));
+        b.extend(pt(400.0, 0.0));
+        b.end();
+        let stroke_count = |d: &Doc| d.layers.iter().map(|l| l.strokes.len()).sum::<usize>();
+        assert_eq!(stroke_count(b.doc()), 1);
+
+        b.set_current_preset(BrushPreset::eraser());
+        b.begin(pt(50.0, 0.0));
+        b.extend(pt(150.0, 0.0));
+        b.extend(pt(250.0, 0.0));
+        b.extend(pt(350.0, 0.0));
+        b.end();
+        assert!(stroke_count(b.doc()) >= 2, "erase should have split");
+
+        assert!(b.undo());
+        assert_eq!(stroke_count(b.doc()), 1);
+    }
+
+    #[test]
     fn stroke_commits_into_active_layer() {
         let mut b = Board::default();
         let l2 = b.add_layer();
