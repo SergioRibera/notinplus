@@ -111,12 +111,10 @@ impl CapRenderer for RoundCap {
             let theta = f32_from_usize(step) * std::f32::consts::PI / steps_f;
             let cos_t = theta.cos();
             let sin_t = theta.sin();
-            let x = v
-                .nx
-                .mul_add(cos_t * v.half, tx.mul_add(sign * sin_t * v.half, v.x));
-            let y = v
-                .ny
-                .mul_add(cos_t * v.half, ty.mul_add(sign * sin_t * v.half, v.y));
+            let x =
+                v.nx.mul_add(cos_t * v.half, tx.mul_add(sign * sin_t * v.half, v.x));
+            let y =
+                v.ny.mul_add(cos_t * v.half, ty.mul_add(sign * sin_t * v.half, v.y));
             builder.line_to((x, y));
         }
     }
@@ -159,7 +157,13 @@ pub struct RibbonBrush;
 
 impl BrushRenderer for RibbonBrush {
     fn build_path(&self, preset: &BrushPreset, stroke: &Stroke, caps: &CapRegistry) -> Path {
-        build_ribbon_path(preset, &stroke.points, stroke.cap_start, stroke.cap_end, caps)
+        build_ribbon_path(
+            preset,
+            &stroke.points,
+            stroke.cap_start,
+            stroke.cap_end,
+            caps,
+        )
     }
 
     fn paint(&self, preset: &BrushPreset, stroke_color: [u8; 4]) -> Paint {

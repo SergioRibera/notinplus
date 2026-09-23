@@ -62,10 +62,7 @@ impl EraseSession {
         if !self.touched_ids.insert(stroke.id) {
             return false;
         }
-        self.originals.push(EraseOriginal {
-            layer_id,
-            stroke,
-        });
+        self.originals.push(EraseOriginal { layer_id, stroke });
         true
     }
 

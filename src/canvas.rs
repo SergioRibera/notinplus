@@ -72,7 +72,10 @@ impl Viewport {
 
     #[must_use]
     pub fn world_to_screen(&self, x: f32, y: f32) -> (f32, f32) {
-        (x.mul_add(self.scale, self.tx), y.mul_add(self.scale, self.ty))
+        (
+            x.mul_add(self.scale, self.tx),
+            y.mul_add(self.scale, self.ty),
+        )
     }
 }
 
@@ -544,9 +547,10 @@ impl Board {
                 self.spatial.insert(stroke.id, &stroke.points);
                 self.stroke_index.insert(stroke.id, (layer.id, idx));
                 if let Some(preset) = self.doc.preset(stroke.brush) {
-                    let path = registry
-                        .brush(preset.kind)
-                        .build_path(preset, stroke, registry.caps());
+                    let path =
+                        registry
+                            .brush(preset.kind)
+                            .build_path(preset, stroke, registry.caps());
                     self.cached_paths.insert(stroke.id, path);
                 }
             }
@@ -981,7 +985,9 @@ impl Board {
     /// [`PressureCurve`]); every other kind returns `point` unchanged.
     fn shape_sample(&self, point: InkPoint) -> InkPoint {
         match self.current_config() {
-            BrushConfig::Pen { curve } => point.with_pressure_f32(curve.apply(point.pressure_f32())),
+            BrushConfig::Pen { curve } => {
+                point.with_pressure_f32(curve.apply(point.pressure_f32()))
+            }
             _ => point,
         }
     }
@@ -1255,8 +1261,7 @@ impl Board {
                 if layer_opacity < 0.999 {
                     let base = paint.color();
                     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    let scaled =
-                        (f32::from(base.a()) * layer_opacity).clamp(0.0, 255.0) as u8;
+                    let scaled = (f32::from(base.a()) * layer_opacity).clamp(0.0, 255.0) as u8;
                     paint.set_color(base.with_a(scaled));
                 }
                 let path = renderer.build_path(preset, active, self.brush_registry.caps());
