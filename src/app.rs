@@ -19,6 +19,24 @@ use crate::brush::{BrushKind, BrushPreset, ShapeMode};
 use crate::canvas::{Board, LayerSnapshot, RedrawNotifier, drawing_surface, lock};
 use crate::palette_popup::{HOVER_DELAY, brush_popup};
 use crate::pen_pump;
+use crate::ui_mask::{self, UiRegion};
+
+/// Translate a Freya `on_sized` event area into the surface-pixel
+/// tuple [`crate::ui_mask`] expects. Skips writing when the resolved
+/// area collapses to zero — a still-laying-out element publishing an
+/// empty rect would leave a phantom hole in the mask.
+fn publish_mask(region: UiRegion, area: Area) {
+    let w = area.max_x() - area.min_x();
+    let h = area.max_y() - area.min_y();
+    if w <= 0.0 || h <= 0.0 {
+        ui_mask::set(region, None);
+        return;
+    }
+    ui_mask::set(
+        region,
+        Some((area.min_x(), area.min_y(), area.max_x(), area.max_y())),
+    );
+}
 
 /// Bundle of reactive signals every palette button shares to
 /// coordinate the popup overlay. Grouped so [`palette_button`] does
@@ -231,6 +249,7 @@ fn zoom_overlay(board: &Arc<Mutex<Board>>, zoom: State<f32>, pad: EdgeInsets) ->
         .padding((6.0, 8.0))
         .background(Color::from_argb(220, 30, 30, 34))
         .with_corner_radius(8.0)
+        .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Zoom, e.area))
         .child(label().color(Color::WHITE).font_size(12.0).text(text))
         .child(reset)
 }
@@ -271,7 +290,8 @@ fn palette_overlay(
         .spacing(8.0)
         .padding(10.0)
         .background(Color::from_argb(220, 30, 30, 34))
-        .with_corner_radius(10.0);
+        .with_corner_radius(10.0)
+        .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Palette, e.area));
 
     for (idx, make) in PALETTE.iter().enumerate() {
         row = row.child(palette_button(idx, make(), board, selected, scale, coords));
@@ -294,6 +314,10 @@ fn palette_overlay(
             idx,
             PALETTE[idx](),
         ));
+    } else {
+        // Popup hidden — clear the mask slot so a stale rect from the
+        // previous popup does not keep swallowing pen input.
+        ui_mask::set(UiRegion::Popup, None);
     }
     row
 }
@@ -567,7 +591,8 @@ fn layers_panel(
         .spacing(6.0)
         .padding(10.0)
         .background(Color::from_argb(220, 30, 30, 34))
-        .with_corner_radius(10.0);
+        .with_corner_radius(10.0)
+        .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Layers, e.area));
 
     // Header — plain label, no interaction.
     col = col.child(

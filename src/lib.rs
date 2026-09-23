@@ -18,6 +18,7 @@ pub mod palette_popup;
 pub mod pen_pump;
 pub mod render;
 pub mod spatial;
+pub mod ui_mask;
 
 #[cfg(not(any(
     target_os = "android",

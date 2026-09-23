@@ -668,8 +668,17 @@ impl Board {
     /// incoming surface-pixel sample through the current [`Viewport`]
     /// so pen and pointer inputs land in the same world coordinates the
     /// stroke buffer stores.
+    ///
+    /// Silently drops samples that land inside any overlay rect
+    /// published to [`crate::ui_mask`] — a pen tap on the palette
+    /// should trigger the button, not the canvas. Gate lives at
+    /// `begin` only: once a stroke starts on the canvas, subsequent
+    /// samples belong to it even if the pen sweeps over an overlay.
     pub fn begin_screen(&mut self, mut point: InkPoint) {
         if self.gesture_active {
+            return;
+        }
+        if crate::ui_mask::contains(point.x, point.y) {
             return;
         }
         let (wx, wy) = self.viewport.screen_to_world(point.x, point.y);

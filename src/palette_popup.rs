@@ -22,6 +22,7 @@ use crate::brush::{
     BrushConfig, BrushKind, BrushPreset, EraserMode, HighlighterTip, PressureCurve, ShapeMode,
 };
 use crate::canvas::{Board, lock};
+use crate::ui_mask::{self, UiRegion};
 
 /// How long the pointer must sit inside a palette button before the
 /// popup opens. Matches Procreate's tool inspector delay closely
@@ -61,12 +62,27 @@ pub fn brush_popup(
         .spacing(8.0)
         .padding(10.0)
         .background(Color::from_argb(240, 40, 40, 46))
-        .with_corner_radius(10.0);
+        .with_corner_radius(10.0)
+        .on_sized(|e: Event<SizedEventData>| {
+            let a = e.area;
+            let w = a.max_x() - a.min_x();
+            let h = a.max_y() - a.min_y();
+            if w <= 0.0 || h <= 0.0 {
+                ui_mask::set(UiRegion::Popup, None);
+            } else {
+                ui_mask::set(
+                    UiRegion::Popup,
+                    Some((a.min_x(), a.min_y(), a.max_x(), a.max_y())),
+                );
+            }
+        });
 
     if !show || anchor.is_none() {
         // Zero-size hidden stub keeps both branches of `impl
         // IntoElement` in the same concrete type without a Left/Right
-        // wrapper.
+        // wrapper. `palette_overlay` clears the popup mask slot when
+        // no popup is open — see `ui_mask::set(UiRegion::Popup, None)`
+        // in the else branch there.
         return body.width(Size::px(0.0)).height(Size::px(0.0));
     }
 
