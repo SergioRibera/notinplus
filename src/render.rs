@@ -47,13 +47,18 @@ pub enum EndSide {
 
 /// Contract for terminating one side of a ribbon polygon.
 ///
-/// On entry the builder's cursor sits at the top-edge vertex
-/// (`vert + n * half`); the implementation must line/arc to the
-/// bottom-edge vertex (`vert - n * half`). The polygon `close()` at
-/// the very end of the ribbon walk connects back to the start;
-/// implementations that model a `Flat` cap therefore only need to
-/// `line_to` the bottom vertex directly, while `Round` sweeps a
-/// semicircle bulging along the tangent (away from the stroke body).
+/// The cursor position on entry depends on `side`:
+///
+/// - [`EndSide::End`]: cursor at top-edge (`vert + n*half`), must
+///   line/arc to bottom-edge (`vert - n*half`).
+/// - [`EndSide::Start`]: cursor at bottom-edge (`vert - n*half`), must
+///   line/arc to top-edge (`vert + n*half`) so the polygon `close()`
+///   connects at zero length.
+///
+/// `Flat` therefore emits a single `line_to` the opposite edge; `Round`
+/// sweeps a semicircle bulging along the tangent away from the stroke
+/// body (forward past the tip on `End`, backward past the head on
+/// `Start`).
 pub trait CapRenderer: Send + Sync + Debug {
     fn emit(&self, builder: &mut PathBuilder, vert: RibbonVert, side: EndSide);
 }
@@ -85,13 +90,25 @@ impl CapRenderer for RoundCap {
         // normal: `n = (-uy, ux)` implies `u = (ny, -nx)`.
         let tx = v.ny;
         let ty = -v.nx;
+        // Bulge direction: forward (+u) at End, backward (-u) at Start.
         let sign = match side {
             EndSide::End => 1.0,
             EndSide::Start => -1.0,
         };
         let steps_f = f32_from_usize(CAP_ARC_STEPS);
+        // θ traversal must match cursor origin. End enters at top-edge
+        // (θ=0 gives +n*half) and finishes at bottom-edge (θ=π). Start
+        // enters at bottom-edge (θ=π) and finishes at top-edge (θ=0).
+        // Reversing the step index for Start avoids drawing a diagonal
+        // line straight across the stroke width on the very first
+        // `line_to`, which used to produce a visible cut/notch at the
+        // start of every user-drawn stroke.
         for k in 1..=CAP_ARC_STEPS {
-            let theta = f32_from_usize(k) * std::f32::consts::PI / steps_f;
+            let step = match side {
+                EndSide::End => k,
+                EndSide::Start => CAP_ARC_STEPS - k,
+            };
+            let theta = f32_from_usize(step) * std::f32::consts::PI / steps_f;
             let cos_t = theta.cos();
             let sin_t = theta.sin();
             let x = v
@@ -112,8 +129,17 @@ impl CapRenderer for RoundCap {
 pub struct FlatCap;
 
 impl CapRenderer for FlatCap {
-    fn emit(&self, builder: &mut PathBuilder, v: RibbonVert, _side: EndSide) {
-        builder.line_to(((-v.nx).mul_add(v.half, v.x), (-v.ny).mul_add(v.half, v.y)));
+    fn emit(&self, builder: &mut PathBuilder, v: RibbonVert, side: EndSide) {
+        // Opposite-edge endpoint depends on which side we terminate:
+        // End cursor at top → line to bottom; Start cursor at bottom →
+        // line to top. Zero-length line at Start when the previous
+        // `close()` would have connected anyway, but keeps the cap
+        // contract uniform for custom renderers.
+        let (x, y) = match side {
+            EndSide::End => ((-v.nx).mul_add(v.half, v.x), (-v.ny).mul_add(v.half, v.y)),
+            EndSide::Start => (v.nx.mul_add(v.half, v.x), v.ny.mul_add(v.half, v.y)),
+        };
+        builder.line_to((x, y));
     }
 }
 
@@ -367,12 +393,7 @@ fn emit_ribbon_polygon(
         let v = verts[i];
         builder.line_to(((-v.nx).mul_add(v.half, v.x), (-v.ny).mul_add(v.half, v.y)));
     }
-    // `close()` alone gives the flat variant (straight line back to
-    // the first top vertex). Round dispatches to a cap that overwrites
-    // it with a semicircle bulging backward past the head.
-    if !matches!(cap_start, CapStyle::Flat) {
-        caps.get(cap_start).emit(builder, v0, EndSide::Start);
-    }
+    caps.get(cap_start).emit(builder, v0, EndSide::Start);
     builder.close();
 }
 
