@@ -38,6 +38,123 @@ pub enum BrushKind {
     Custom(u16),
 }
 
+/// Pressure→width shaping applied on top of the linear width envelope.
+/// Kept on [`BrushConfig::Pen`] so a user can tune stylus feel without
+/// mutating the shared preset.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum PressureCurve {
+    #[default]
+    Linear,
+    Soft,
+    Hard,
+}
+
+impl PressureCurve {
+    /// Reshape a normalised pressure sample. `Soft` bulges the mid-range
+    /// up (γ<1), `Hard` bulges it down (γ>1). Input outside `[0, 1]` is
+    /// clamped before shaping.
+    #[must_use]
+    pub fn apply(self, pressure: f32) -> f32 {
+        let p = pressure.clamp(0.0, 1.0);
+        match self {
+            Self::Linear => p,
+            Self::Soft => p.sqrt(),
+            Self::Hard => p * p,
+        }
+    }
+}
+
+/// How the eraser consumes input samples. Governs whether a gesture
+/// clips per-sample, selects a whole stroke on tap, or drags a
+/// selection rectangle.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum EraserMode {
+    /// Vector-erase circles at every sample; touched strokes split at
+    /// the boundary. Default; matches the pre-config behaviour.
+    #[default]
+    Point,
+    /// Tap → remove the topmost stroke under the cursor whole.
+    Stroke,
+    /// Drag a rectangle → remove every stroke intersecting it. The
+    /// selection primitive is intentionally isolated so free-form
+    /// selection can slot in later without touching call sites.
+    SelectionRect,
+}
+
+/// Highlighter tip shape. `Bevel` picks the perpendicular offset from a
+/// user-configured angle so a stroke drawn along the bevel direction
+/// stays thin.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum HighlighterTip {
+    Round,
+    Bevel { angle_deg: f32 },
+}
+
+impl Default for HighlighterTip {
+    fn default() -> Self {
+        Self::Bevel { angle_deg: 45.0 }
+    }
+}
+
+/// Per-variant tunables paired with a [`BrushKind`].
+///
+/// Intentionally outside the [`BrushPreset`] wire shape: presets travel
+/// on disk (see [`crate::doc::Doc::save`]) and adding variant-scoped
+/// fields there would churn the doc format every time the popup grows
+/// a control. [`crate::canvas::Board`] owns a `BrushKind → BrushConfig`
+/// map; UI writes through [`crate::canvas::Board::set_brush_config`],
+/// renderers read via [`crate::canvas::Board::brush_config`].
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum BrushConfig {
+    /// Kinds with no per-variant knobs beyond colour/size.
+    None,
+    Pen {
+        curve: PressureCurve,
+    },
+    Eraser {
+        mode: EraserMode,
+    },
+    Highlighter {
+        tip: HighlighterTip,
+        straight: bool,
+    },
+}
+
+impl BrushConfig {
+    /// Baseline config for a kind. Every unset entry in
+    /// [`crate::canvas::Board::brush_config`] resolves through this so
+    /// callers never see an implicit "no config" that means different
+    /// things per kind.
+    #[must_use]
+    pub const fn default_for(kind: BrushKind) -> Self {
+        match kind {
+            BrushKind::Pen => Self::Pen {
+                curve: PressureCurve::Linear,
+            },
+            BrushKind::Eraser => Self::Eraser {
+                mode: EraserMode::Point,
+            },
+            BrushKind::Highlighter => Self::Highlighter {
+                tip: HighlighterTip::Round,
+                straight: false,
+            },
+            BrushKind::Pencil | BrushKind::Marker | BrushKind::Custom(_) => Self::None,
+        }
+    }
+
+    /// Which [`BrushKind`] this config's variant belongs to, or `None`
+    /// for [`Self::None`] which is valid for every "no knobs" kind.
+    #[must_use]
+    pub const fn kind(&self) -> Option<BrushKind> {
+        match self {
+            Self::None => None,
+            Self::Pen { .. } => Some(BrushKind::Pen),
+            Self::Eraser { .. } => Some(BrushKind::Eraser),
+            Self::Highlighter { .. } => Some(BrushKind::Highlighter),
+        }
+    }
+}
+
 /// Full calibration of a drawing tool. Everything the renderer needs to
 /// paint a segment lives here; nothing tool-specific lives elsewhere.
 ///

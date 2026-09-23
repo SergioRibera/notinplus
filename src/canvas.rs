@@ -26,7 +26,7 @@ use flume::{Receiver, Sender};
 use freya::prelude::*;
 use freya_engine::prelude::{BlendMode, Color as SkColor, Paint, Path, SaveLayerRec};
 
-use crate::brush::{BrushKind, BrushPreset, CapStyle, InkPoint, Stroke};
+use crate::brush::{BrushConfig, BrushKind, BrushPreset, CapStyle, InkPoint, Stroke};
 use crate::doc::Doc;
 use crate::history::{EraseOriginal, EraseSession, HistoryOp};
 use crate::render::BrushRegistry;
@@ -137,6 +137,10 @@ pub struct Board {
     current_preset: BrushPreset,
     current_color: [u8; 4],
     size_scales: HashMap<BrushKind, f32>,
+    /// Per-kind popup-configurable settings. Lookups fall back to
+    /// [`BrushConfig::default_for`] so callers never juggle an "unset"
+    /// state. Not persisted with the doc — see [`BrushConfig`].
+    brush_configs: HashMap<BrushKind, BrushConfig>,
     spatial: SpatialIndex,
     /// Pre-tessellated Skia path per committed stroke. Rebuilt only on
     /// commit / erase / load — repainting is a `HashMap` lookup plus a
@@ -193,6 +197,7 @@ impl Default for Board {
             current_preset: default_preset,
             current_color: default_preset.color,
             size_scales: HashMap::new(),
+            brush_configs: HashMap::new(),
             spatial: SpatialIndex::new(),
             cached_paths: HashMap::new(),
             stroke_index: HashMap::new(),
@@ -261,6 +266,37 @@ impl Board {
     #[must_use]
     pub const fn current_size(&self) -> f32 {
         self.current_preset.size_scale
+    }
+
+    /// Overwrite the per-kind popup config. Silently drops a config
+    /// whose variant does not match `kind` — the type-level guarantee
+    /// makes this a bug, not a runtime error worth surfacing.
+    pub fn set_brush_config(&mut self, kind: BrushKind, config: BrushConfig) {
+        if let Some(cfg_kind) = config.kind()
+            && cfg_kind != kind
+        {
+            return;
+        }
+        self.brush_configs.insert(kind, config);
+        self.notify();
+    }
+
+    /// Read the popup config for `kind`, falling back to
+    /// [`BrushConfig::default_for`] when unset.
+    #[must_use]
+    pub fn brush_config(&self, kind: BrushKind) -> BrushConfig {
+        self.brush_configs
+            .get(&kind)
+            .copied()
+            .unwrap_or_else(|| BrushConfig::default_for(kind))
+    }
+
+    /// Shorthand for `brush_config(current_kind())`. Useful in the
+    /// paint / erase entry points so a call site does not have to
+    /// re-thread the kind.
+    #[must_use]
+    pub fn current_config(&self) -> BrushConfig {
+        self.brush_config(self.current_preset.kind)
     }
 
     #[must_use]
