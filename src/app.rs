@@ -17,6 +17,17 @@ use istmo::plugins::{EdgeInsets, SafeArea, SafeAreaInsets};
 
 use crate::brush::BrushPreset;
 use crate::canvas::{Board, LayerSnapshot, RedrawNotifier, drawing_surface, lock};
+use crate::palette_popup::{HOVER_DELAY, brush_popup};
+
+/// Bundle of reactive signals every palette button shares to
+/// coordinate the popup overlay. Grouped so [`palette_button`] does
+/// not spread a wide parameter list across every caller.
+#[derive(Clone, Copy)]
+struct PopupCoords {
+    open_idx: State<Option<usize>>,
+    hovered_idx: State<Option<usize>>,
+    button_areas: State<Vec<Option<Area>>>,
+}
 
 const PALETTE: &[fn() -> BrushPreset] = &[
     BrushPreset::pencil,
@@ -144,20 +155,28 @@ fn root() -> impl IntoElement {
     };
     let pad = *insets.read();
 
+    // Popup coordination shared across every palette button. `open_idx`
+    // drives which popup is visible; `hovered_idx` is the current
+    // hover target (used by the delay timer to detect cancellation);
+    // `button_areas` receives every button's `on_sized` update so the
+    // popup can anchor beneath the correct button on desktop layouts
+    // whose widths vary with label length.
+    let coords = PopupCoords {
+        open_idx: use_state(|| Option::<usize>::None),
+        hovered_idx: use_state(|| Option::<usize>::None),
+        button_areas: use_state(|| vec![None::<Area>; PALETTE.len()]),
+    };
+
     rect()
         .width(Size::fill())
         .height(Size::fill())
         .child(drawing_surface(&board))
-        .child(palette_overlay(&board, selected, scale, pad))
+        .child(palette_overlay(&board, selected, scale, pad, coords))
         .child(layers_panel(&board, layers_ver, pad))
         .child(zoom_overlay(&board, zoom, pad))
 }
 
-fn zoom_overlay(
-    board: &Arc<Mutex<Board>>,
-    zoom: State<f32>,
-    pad: EdgeInsets,
-) -> impl IntoElement {
+fn zoom_overlay(board: &Arc<Mutex<Board>>, zoom: State<f32>, pad: EdgeInsets) -> impl IntoElement {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let pct = (*zoom.read() * 100.0).round() as i32;
     let text = format!("{pct}%");
@@ -206,6 +225,7 @@ fn palette_overlay(
     selected: State<usize>,
     scale: State<f32>,
     pad: EdgeInsets,
+    coords: PopupCoords,
 ) -> impl IntoElement {
     // Global-positioned so the palette floats above the fullscreen
     // canvas at `(pad.left, pad.top)` — no room reserved by the parent's
@@ -224,11 +244,27 @@ fn palette_overlay(
         .with_corner_radius(10.0);
 
     for (idx, make) in PALETTE.iter().enumerate() {
-        row = row.child(palette_button(idx, make(), board, selected, scale));
+        row = row.child(palette_button(idx, make(), board, selected, scale, coords));
     }
     row = row
         .child(size_control(board, scale))
         .child(undo_button(board));
+
+    // Anchor popup at the currently-open button. Rendered as a
+    // sibling so the popup escapes the row's horizontal layout and
+    // sits beneath the correct button in global coords.
+    let popup_idx = *coords.open_idx.read();
+    if let Some(idx) = popup_idx
+        && let Some(area) = coords.button_areas.read().get(idx).copied().flatten()
+    {
+        row = row.child(brush_popup(
+            board,
+            coords.open_idx,
+            Some(area),
+            idx,
+            PALETTE[idx](),
+        ));
+    }
     row
 }
 
@@ -290,7 +326,11 @@ fn palette_button(
     board: &Arc<Mutex<Board>>,
     mut selected: State<usize>,
     mut scale: State<f32>,
+    coords: PopupCoords,
 ) -> impl IntoElement {
+    let mut open_idx = coords.open_idx;
+    let mut hovered_idx = coords.hovered_idx;
+    let mut button_areas = coords.button_areas;
     let is_active = *selected.read() == idx;
     let swatch_color = preset
         .palette_color()
@@ -318,7 +358,37 @@ fn palette_button(
         .padding((8.0, 10.0))
         .background(bg)
         .with_corner_radius(6.0)
-        .on_press(move |_| {
+        .on_sized(move |e: Event<SizedEventData>| {
+            // Publish the layout-resolved rect so `palette_overlay`
+            // can anchor the popup beneath this specific button. The
+            // event fires every layout pass — cheap to write through
+            // an equality guard on the slot below.
+            let area = e.area;
+            let mut slots = button_areas.write();
+            if slots.get(idx).copied().flatten() != Some(area) {
+                slots[idx] = Some(area);
+            }
+        })
+        .on_pointer_enter(move |_| {
+            hovered_idx.set(Some(idx));
+            // Fire-and-forget hover timer. If the pointer leaves
+            // before `HOVER_DELAY` elapses, `hovered_idx` no longer
+            // points at `idx` and the open never fires.
+            spawn(async move {
+                async_io::Timer::after(HOVER_DELAY).await;
+                if *hovered_idx.peek() == Some(idx) {
+                    open_idx.set(Some(idx));
+                }
+            });
+        })
+        .on_pointer_leave(move |_| {
+            if *hovered_idx.peek() == Some(idx) {
+                hovered_idx.set(None);
+            }
+        })
+        .on_press(move |e: Event<PressEventData>| {
+            let is_touch = matches!(*e.data(), PressEventData::Touch(_));
+            let was_active = *selected.peek() == idx;
             // Apply the preset now so `Board::set_current_preset`
             // folds in this tool's remembered `size_scale`; propagate
             // the resulting size into the shared `scale` state so the
@@ -333,6 +403,25 @@ fn palette_button(
             };
             *scale.write() = new_size;
             *selected.write() = idx;
+            if is_touch && was_active {
+                // Second tap on the already-selected brush toggles
+                // the popup — the touch equivalent of hover-delay.
+                let next = if *open_idx.peek() == Some(idx) {
+                    None
+                } else {
+                    Some(idx)
+                };
+                open_idx.set(next);
+            } else if !is_touch && *open_idx.peek() == Some(idx) {
+                // Pointer / keyboard select on the currently-open
+                // popup dismisses it — user is committing the choice.
+                open_idx.set(None);
+            } else if is_touch {
+                // First tap on a different brush — always close any
+                // previously-open popup so the two selections stay
+                // in sync.
+                open_idx.set(None);
+            }
         })
         .child(
             rect()

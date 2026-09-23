@@ -31,6 +31,7 @@ bincode  = { version = "2", features = ["derive", "std"] }
 flume    = { version = "0.11", features = ["async"] }
 pollster = "0.4"
 log      = "0.4"
+async-io = "2"
 
 
 [target.'cfg(target_os = "android")'.dependencies]
