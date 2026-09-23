@@ -423,7 +423,7 @@ fn layer_row(
         .with_corner_radius(4.0)
         .on_press(move |_| {
             lock(&vis_board).set_layer_visible(vis_id, !vis_now);
-            *ver_vis.write() = ver_vis.read().wrapping_add(1);
+            *ver_vis.write() += 1;
         })
         .child(label().color(fg).font_size(13.0).text(eye_symbol));
 
@@ -443,7 +443,7 @@ fn layer_row(
         .with_corner_radius(4.0)
         .on_press(move |_| {
             lock(&lock_board).set_layer_locked(lock_id, !lock_now);
-            *ver_lock.write() = ver_lock.read().wrapping_add(1);
+            *ver_lock.write() += 1;
         })
         .child(label().color(fg).font_size(12.0).text(lock_symbol));
 
@@ -460,7 +460,7 @@ fn layer_row(
         .with_corner_radius(6.0)
         .on_press(move |_| {
             lock(&sel_board).set_active_layer(sel_id);
-            *ver_sel.write() = ver_sel.read().wrapping_add(1);
+            *ver_sel.write() += 1;
         })
         .child(eye)
         .child(padlock)
@@ -476,7 +476,7 @@ fn layer_action_row(board: &Arc<Mutex<Board>>, layers_ver: State<u32>) -> impl I
         .with_corner_radius(4.0)
         .on_press(move |_| {
             lock(&add_board).add_layer();
-            *ver_add.write() = ver_add.read().wrapping_add(1);
+            *ver_add.write() += 1;
         })
         .child(label().color(Color::WHITE).font_size(14.0).text("+"));
 
@@ -488,7 +488,7 @@ fn layer_action_row(board: &Arc<Mutex<Board>>, layers_ver: State<u32>) -> impl I
         .with_corner_radius(4.0)
         .on_press(move |_| {
             lock(&del_board).remove_active_layer();
-            *ver_del.write() = ver_del.read().wrapping_add(1);
+            *ver_del.write() += 1;
         })
         .child(label().color(Color::WHITE).font_size(14.0).text("\u{2212}"));
 
