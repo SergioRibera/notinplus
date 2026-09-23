@@ -26,11 +26,12 @@ use flume::{Receiver, Sender};
 use freya::prelude::*;
 use freya_engine::prelude::{
     BlendMode, Color as SkColor, Paint, PaintStyle, Path, PathBuilder, PathDirection,
+    SaveLayerRec,
 };
 
 use crate::brush::{BrushKind, BrushPreset, InkPoint, SegmentMode, Stroke, StrokeStyle};
 use crate::doc::Doc;
-use crate::history::{EraseSession, HistoryOp};
+use crate::history::{EraseOriginal, EraseSession, HistoryOp};
 use crate::spatial::SpatialIndex;
 
 const SIZE_SCALE_MIN: f32 = 0.25;
@@ -588,7 +589,8 @@ impl Board {
     }
 
     pub fn end(&mut self) {
-        if let Some(session) = self.erase_session.take() {
+        if let Some(mut session) = self.erase_session.take() {
+            self.finalize_erase_session(&mut session);
             if !session.is_empty() {
                 self.history.push(HistoryOp::Erase(session));
             }
@@ -602,8 +604,9 @@ impl Board {
     }
 
     pub fn cancel(&mut self) {
-        if let Some(session) = self.erase_session.take() {
-            self.rollback_session(&session);
+        if self.erase_session.take().is_some() {
+            // Deferred model: accumulation never mutates the doc, so
+            // dropping the session is a full rollback.
             self.notify();
             return;
         }
@@ -751,81 +754,129 @@ impl Board {
         self.cached_paths.insert(id, path);
     }
 
+    /// Accumulate one eraser sample. Snapshots any touched original
+    /// stroke into the active session and records the clip circle —
+    /// the doc itself is not mutated here. The final split runs once
+    /// at pen-up in [`Board::finalize_erase_session`], keeping the
+    /// stroke count minimal and letting cancel be a true no-op.
     fn apply_erase(&mut self, sample: InkPoint) {
+        if self.erase_session.is_none() {
+            return;
+        }
         let preset = self.current_preset;
         let radius = 0.5 * preset.width(sample.pressure_f32(), sample.tilt_f32());
         if radius <= 0.0 {
             return;
         }
         let candidates = self.spatial.query_circle(sample.x, sample.y, radius);
-        for id in candidates {
-            // Skip strokes that live in an invisible or locked layer —
-            // the user can't see them, and locking is a hard "leave
-            // this layer alone" contract.
-            let Some(&(layer_id, _)) = self.stroke_index.get(&id) else {
-                continue;
-            };
-            let Some(layer) = self.doc.layer(layer_id) else {
-                continue;
-            };
-            if !layer.visible || layer.locked {
-                continue;
+
+        // Two-phase: collect fresh snapshots under immutable self
+        // borrows, then hand them to the session under a mutable one.
+        let mut fresh: Vec<(u32, Stroke)> = Vec::new();
+        {
+            let session = self
+                .erase_session
+                .as_ref()
+                .expect("erase_session presence checked at fn entry");
+            for id in candidates {
+                if session.contains(id) {
+                    continue;
+                }
+                let Some(&(layer_id, idx)) = self.stroke_index.get(&id) else {
+                    continue;
+                };
+                let Some(layer) = self.doc.layer(layer_id) else {
+                    continue;
+                };
+                if !layer.visible || layer.locked {
+                    continue;
+                }
+                let stroke = &layer.strokes[idx];
+                // Spatial query is bbox-only — confirm actual
+                // intersection before snapshotting.
+                if !split_polyline(&stroke.points, sample.x, sample.y, radius).touched {
+                    continue;
+                }
+                fresh.push((layer_id, stroke.clone()));
             }
-            self.erase_stroke(id, layer_id, sample.x, sample.y, radius);
+        }
+
+        let session = self
+            .erase_session
+            .as_mut()
+            .expect("erase_session presence checked at fn entry");
+        session.push_circle(sample.x, sample.y, radius);
+        for (layer_id, stroke) in fresh {
+            session.snapshot(layer_id, stroke);
         }
     }
 
-    fn erase_stroke(&mut self, id: u32, layer_id: u32, cx: f32, cy: f32, r: f32) {
-        let Some(&(_, idx)) = self.stroke_index.get(&id) else {
-            return;
-        };
-        let Some(layer) = self.doc.layer(layer_id) else {
-            return;
-        };
-        let stroke = &layer.strokes[idx];
-        let outcome = split_polyline(&stroke.points, cx, cy, r);
-        if !outcome.touched {
+    /// Materialize the deferred split for every snapshotted original:
+    /// remove the original from the doc and insert the final fragments
+    /// derived from cumulatively clipping against every collected
+    /// circle. Fragment ids are recorded on the session so
+    /// [`Board::rollback_session`] can undo the commit.
+    fn finalize_erase_session(&mut self, session: &mut EraseSession) {
+        if session.originals.is_empty() {
             return;
         }
+        // Circles are Copy-typed tuples, clone is trivial. Owning them
+        // locally frees `session` for `added_fragments` pushes below.
+        let circles = session.circles.clone();
+        // Take originals so we can push to `added_fragments` while
+        // iterating. We reinstate the vec at the end — undo needs it.
+        let originals = std::mem::take(&mut session.originals);
+        let mut restored: Vec<EraseOriginal> = Vec::with_capacity(originals.len());
+        for entry in originals {
+            let layer_id = entry.layer_id;
+            let original = entry.stroke;
+            let fragments = cumulative_split(&original.points, &circles);
 
-        let Some(original) = self.remove_stroke_indexed(id) else {
-            return;
-        };
-        self.spatial.remove(original.id, &original.points);
-
-        let preset = self.doc.preset(original.brush).copied();
-        let mut fragment_ids = Vec::with_capacity(outcome.fragments.len());
-        for fragment in outcome.fragments {
-            if fragment.len() < 2 {
-                // Solitary points are hard to see and easy to
-                // accidentally leave behind; drop them so the eraser
-                // fully clears where the user gestured.
-                continue;
-            }
-            let frag_id = self.doc.allocate_stroke_id();
-            fragment_ids.push(frag_id);
-            let new_stroke = Stroke {
-                id: frag_id,
-                brush: original.brush,
-                color: original.color,
-                points: fragment,
-            };
-            if let Some(preset) = preset.as_ref() {
-                self.cached_paths
-                    .insert(frag_id, build_stroke_path(preset, &new_stroke));
-            }
-            self.spatial.insert(new_stroke.id, &new_stroke.points);
-            let Some(layer) = self.doc.layer_mut(layer_id) else {
+            let Some(removed) = self.remove_stroke_indexed(original.id) else {
+                // Original vanished between snapshot and commit
+                // (shouldn't happen — snapshot is under doc borrow).
+                // Still track it for undo symmetry.
+                restored.push(EraseOriginal {
+                    layer_id,
+                    stroke: original,
+                });
                 continue;
             };
-            let new_idx = layer.strokes.len();
-            layer.strokes.push(new_stroke);
-            self.stroke_index.insert(frag_id, (layer_id, new_idx));
-        }
+            self.spatial.remove(removed.id, &removed.points);
 
-        if let Some(session) = self.erase_session.as_mut() {
-            session.record(layer_id, original, &fragment_ids);
+            let preset = self.doc.preset(original.brush).copied();
+            for fragment in fragments {
+                if fragment.len() < 2 {
+                    // Solitary points are hard to see and easy to
+                    // accidentally leave behind; drop them so the
+                    // eraser fully clears where the user gestured.
+                    continue;
+                }
+                let frag_id = self.doc.allocate_stroke_id();
+                session.added_fragments.push(frag_id);
+                let new_stroke = Stroke {
+                    id: frag_id,
+                    brush: original.brush,
+                    color: original.color,
+                    points: fragment,
+                };
+                if let Some(preset) = preset.as_ref() {
+                    self.cached_paths
+                        .insert(frag_id, build_stroke_path(preset, &new_stroke));
+                }
+                self.spatial.insert(new_stroke.id, &new_stroke.points);
+                if let Some(layer) = self.doc.layer_mut(layer_id) {
+                    let new_idx = layer.strokes.len();
+                    layer.strokes.push(new_stroke);
+                    self.stroke_index.insert(frag_id, (layer_id, new_idx));
+                }
+            }
+            restored.push(EraseOriginal {
+                layer_id,
+                stroke: original,
+            });
         }
+        session.originals = restored;
     }
 
     /// Remove a stroke by id, keeping `stroke_index` and `cached_paths`
@@ -896,6 +947,21 @@ impl Board {
         // zoom — that's the "500 strokes, only 20 visible" regime.
         let visible = self.visible_stroke_set(surface);
 
+        // Live eraser preview. During an in-flight erase gesture the
+        // doc is not mutated (see `finalize_erase_session`) — instead
+        // we composite a `DstOut` mask over the strokes so the user
+        // sees the cut immediately. `save_layer` scopes the mask to
+        // this frame's stroke draws; anything painted after `restore`
+        // (active pen stroke, overlays) is unaffected.
+        let mask_circles = self
+            .erase_session
+            .as_ref()
+            .map(|s| s.circles.as_slice())
+            .filter(|c| !c.is_empty());
+        if mask_circles.is_some() {
+            canvas.save_layer(&SaveLayerRec::default());
+        }
+
         for layer in &self.doc.layers {
             if !layer.visible {
                 continue;
@@ -922,6 +988,16 @@ impl Board {
                 }
                 canvas.draw_path(cached, &paint);
             }
+        }
+        if let Some(circles) = mask_circles {
+            let mut mask = Paint::default();
+            mask.set_blend_mode(BlendMode::DstOut);
+            mask.set_color(SkColor::from_argb(255, 0, 0, 0));
+            mask.set_anti_alias(true);
+            for &(cx, cy, r) in circles {
+                canvas.draw_circle((cx, cy), r, &mask);
+            }
+            canvas.restore();
         }
         if let (Some(active), Some(builder)) = (&self.active, &self.active_builder) {
             if let Some(preset) = self.doc.preset(active.brush) {
@@ -1396,6 +1472,33 @@ fn split_polyline(points: &[InkPoint], cx: f32, cy: f32, r: f32) -> SplitOutcome
     out
 }
 
+/// Iteratively clip `points` against every circle in `circles`,
+/// returning the final surviving fragments. Semantically equivalent to
+/// applying `split_polyline` per-circle in order, but skips the doc
+/// mutation cascade: each intermediate polyline stays local to this
+/// call. Fragments shorter than two points are pruned (nothing to
+/// render, easy to leave behind accidentally).
+fn cumulative_split(points: &[InkPoint], circles: &[(f32, f32, f32)]) -> Vec<Vec<InkPoint>> {
+    let mut fragments: Vec<Vec<InkPoint>> = vec![points.to_vec()];
+    for &(cx, cy, r) in circles {
+        let mut next: Vec<Vec<InkPoint>> = Vec::with_capacity(fragments.len());
+        for frag in fragments {
+            let out = split_polyline(&frag, cx, cy, r);
+            if out.touched {
+                for f in out.fragments {
+                    if f.len() >= 2 {
+                        next.push(f);
+                    }
+                }
+            } else {
+                next.push(frag);
+            }
+        }
+        fragments = next;
+    }
+    fragments
+}
+
 /// Ordered `(t0, t1)` roots where the parameterised segment
 /// `a + t(b - a)` crosses the circle. Both must lie in `0.0..=1.0` for
 /// a chord-style clip to apply.
@@ -1517,6 +1620,35 @@ mod tests {
         assert_eq!(stroke_count(b.doc()), 1);
         let restored = b.doc().layers[0].strokes[0].points.clone();
         assert_eq!(restored, doc_before.layers[0].strokes[0].points);
+    }
+
+    #[test]
+    fn erase_accumulation_defers_doc_mutation_and_cancel_is_noop() {
+        // Deferred model: the doc is untouched until pen-up.
+        // begin+extend on an eraser gesture must leave the stroke
+        // list identical, and cancel must drop it wholesale without
+        // needing to roll anything back.
+        let mut b = Board::default();
+        b.set_current_preset(BrushPreset::pen());
+        b.begin(pt(0.0, 0.0));
+        b.extend(pt(400.0, 0.0));
+        b.end();
+        let stroke_count = |d: &Doc| d.layers.iter().map(|l| l.strokes.len()).sum::<usize>();
+        assert_eq!(stroke_count(b.doc()), 1);
+
+        b.set_current_preset(BrushPreset::eraser());
+        b.begin(pt(100.0, 0.0));
+        b.extend(pt(200.0, 0.0));
+        b.extend(pt(300.0, 0.0));
+        assert_eq!(
+            stroke_count(b.doc()),
+            1,
+            "accumulation must not mutate the doc"
+        );
+
+        b.cancel();
+        assert_eq!(stroke_count(b.doc()), 1);
+        assert!(!b.undo(), "cancel must not push a history op");
     }
 
     #[test]

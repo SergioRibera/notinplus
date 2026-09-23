@@ -1,10 +1,13 @@
 //! Undo log — currently scoped to erase sessions per PLAN Phase 3.
 //!
-//! A [`EraseSession`] snapshots the originals of every stroke the
-//! session mutated (fully removed OR split) plus the fresh fragment
-//! ids it introduced. Undo drops the fragments, restores the originals
-//! back into their source layer, and lets the spatial index
-//! re-populate from the restored state.
+//! An [`EraseSession`] tracks every stroke a single eraser gesture
+//! touched (originals snapshot at first hit) plus the union of every
+//! sample's clip circle. Doc mutation is deferred until pen-up: the
+//! canvas paints an in-flight `DstOut` mask so the user sees the cut
+//! immediately, but the actual per-stroke split runs once against the
+//! accumulated circles when the session commits. This keeps the layer
+//! stroke count minimal (one final split per touched stroke instead of
+//! a cascade of per-sample intermediates) and makes cancel a no-op.
 //!
 //! Regular stroke undo is future work (not in PLAN Phase 3 scope).
 
@@ -27,40 +30,50 @@ pub struct EraseOriginal {
 /// Undoing it puts the doc back exactly as it was at pen-down.
 #[derive(Debug, Default, Clone)]
 pub struct EraseSession {
-    /// Snapshots of every stroke the session mutated. A stroke that
-    /// gets clipped twice inside the same session records only its
-    /// very first snapshot.
+    /// Snapshots of every stroke the gesture will replace on commit.
+    /// Populated at first-hit during accumulation; each id appears at
+    /// most once.
     pub originals: Vec<EraseOriginal>,
-    /// Ids of fragment strokes introduced during the session; removed
-    /// on undo.
+    /// Ids of fragment strokes introduced when the session commits;
+    /// removed on undo. Empty during accumulation — populated by the
+    /// canvas at pen-up.
     pub added_fragments: Vec<u32>,
-    /// Same ids as `added_fragments`, in a set for O(1) intermediate
-    /// detection. Skipped by rollback (the vec drives that).
-    added_set: HashSet<u32>,
+    /// Clip circles collected across every sample of the gesture
+    /// (world coordinates). The commit-time split derives final
+    /// fragments by folding these in order against each snapshotted
+    /// original.
+    pub circles: Vec<(f32, f32, f32)>,
+    /// Ids already snapshotted into `originals` — O(1) dedup so a
+    /// stroke that gets grazed by many consecutive samples isn't
+    /// snapshotted twice.
+    touched_ids: HashSet<u32>,
 }
 
 impl EraseSession {
-    /// Record `original` (from `layer_id`) iff its id hasn't been
-    /// captured yet. `added` lists the fragment ids that replaced it
-    /// (may be empty when the stroke was fully consumed).
-    ///
-    /// When `original.id` was itself introduced earlier in this
-    /// session (an intermediate fragment being re-split by a later
-    /// eraser sample), skip the `originals` push — restoring it on
-    /// undo would resurrect a stroke that never existed at pen-down
-    /// and inflate the layer's stroke count.
-    pub fn record(&mut self, layer_id: u32, original: Stroke, added: &[u32]) {
-        let is_intermediate = self.added_set.contains(&original.id);
-        if !is_intermediate && !self.originals.iter().any(|o| o.stroke.id == original.id) {
-            self.originals.push(EraseOriginal {
-                layer_id,
-                stroke: original,
-            });
+    /// Record a clip circle (world coords, radius) sampled at pen-down
+    /// or extend.
+    pub fn push_circle(&mut self, cx: f32, cy: f32, r: f32) {
+        self.circles.push((cx, cy, r));
+    }
+
+    /// Snapshot `stroke` iff its id hasn't been captured yet. Returns
+    /// `true` when a fresh snapshot was taken.
+    pub fn snapshot(&mut self, layer_id: u32, stroke: Stroke) -> bool {
+        if !self.touched_ids.insert(stroke.id) {
+            return false;
         }
-        for &id in added {
-            self.added_fragments.push(id);
-            self.added_set.insert(id);
-        }
+        self.originals.push(EraseOriginal {
+            layer_id,
+            stroke,
+        });
+        true
+    }
+
+    /// Ask whether `id` has already been snapshotted — cheap early-out
+    /// so callers can skip the split-touched probe entirely.
+    #[must_use]
+    pub fn contains(&self, id: u32) -> bool {
+        self.touched_ids.contains(&id)
     }
 
     #[must_use]
