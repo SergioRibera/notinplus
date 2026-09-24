@@ -8,13 +8,20 @@ authors     = ["Sergio Ribera <contact@sergioribera.rs>"]
 description = "PDF rendering backend for Freya canvases: async worker pool, LRU tile cache, virtualised page stack. Integrates via freya-canvas-bg."
 repository  = "https://github.com/SergioRibera/notinplus"
 
-# pdfium-render + hashlink land in M3 when the render pipeline / LRU
-# cache are actually implemented. M0 ships the skeleton against
-# freya-canvas-bg only so downstream apps can start wiring the
-# abstraction without pulling PDFium binaries yet.
+# hashlink lands in M4 alongside the LRU tile cache. M3 uses
+# pdfium-render synchronously (one page per paint call) — enough to
+# prove the round-trip without an async pool yet.
 [dependencies]
 freya-canvas-bg = { path = "../freya-canvas-bg" }
 freya-engine    = "0.4"
+# Default features pick a PDFium API version (`pdfium_latest` →
+# 7543-shaped bindings) and enable `thread_safe`; `sync` layers a
+# `Send + Sync` Mutex over the bindings so multiple threads can drive
+# Pdfium once the M4 worker pool lands. Pdfium's shared library is
+# resolved at runtime via `Pdfium::bind_to_system_library` — apps
+# ship the binary through their platform packaging (nix devshell,
+# APK jniLibs, iOS xcframework, etc.).
+pdfium-render   = { version = "0.8", features = ["sync"] }
 log             = "0.4"
 
 [lints.rust]

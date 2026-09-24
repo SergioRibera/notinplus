@@ -36,6 +36,11 @@
             # freya-skia links against system freetype/fontconfig.
             freetype
             fontconfig
+            # freya-pdf loads libpdfium at runtime via
+            # `Pdfium::bind_to_system_library`. The upstream
+            # `pdfium` derivation ships the prebuilt shared
+            # library that pdfium-render expects.
+            pdfium
             # Android tooling normally comes from Android Studio / a Docker image;
             # keep this shell focused on desktop dev + cargo.
             # iOS builds require Xcode + xcodegen on a macOS host.
@@ -52,6 +57,7 @@
             udev
             freetype
             fontconfig
+            pdfium
           ]);
         };
 
