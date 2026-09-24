@@ -24,6 +24,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use flume::{Receiver, Sender};
 use freya::prelude::*;
+use freya_canvas_bg::{
+    BgPaintCtx, CanvasBackground, RedrawHandle, Rect as BgRect, SolidColorBackground,
+};
 use freya_engine::prelude::{BlendMode, Color as SkColor, Paint, Path, SaveLayerRec};
 
 use crate::brush::{
@@ -199,6 +202,16 @@ pub struct Board {
     /// [`Board::extend`] into "replace last point" mode so the live
     /// preview follows the cursor.
     two_point_active: bool,
+    /// Background layer painted underneath every stroke. Default is a
+    /// [`SolidColorBackground`] matching the historical off-white fill;
+    /// swap via [`Board::set_background`] to plug in PDF pages, image
+    /// stacks, blank paper, etc.
+    background: Arc<dyn CanvasBackground>,
+    /// Redraw wakeup handed to async background pipelines so a
+    /// freshly-rendered page bitmap can request a repaint from any
+    /// thread. Rebuilt whenever [`Board::set_notifier`] runs; noop
+    /// until the root component installs the notifier.
+    redraw_handle: RedrawHandle,
 }
 
 /// Anchor snapshot for a pinch gesture — centroid + pair-distance of
@@ -242,6 +255,8 @@ impl Default for Board {
             brush_registry: Arc::new(brush_registry),
             highlighter_state,
             two_point_active: false,
+            background: Arc::new(SolidColorBackground::new(SkColor::from_rgb(250, 250, 248))),
+            redraw_handle: RedrawHandle::noop(),
         }
     }
 }
@@ -259,9 +274,29 @@ impl Board {
 
     /// Install the wakeup handle used to request repaints after each
     /// mutation. Called once at startup by the root component. Safe to
-    /// re-install (replaces the previous notifier).
+    /// re-install (replaces the previous notifier). Also rebuilds
+    /// [`Self::redraw_handle`] so async background pipelines route
+    /// their wakeups through the same channel.
     pub fn set_notifier(&mut self, notifier: RedrawNotifier) {
+        let mirror = notifier.clone();
+        self.redraw_handle = RedrawHandle::new(move || mirror.ping());
         self.notifier = Some(notifier);
+    }
+
+    /// Swap the background layer painted underneath every stroke.
+    /// Triggers a redraw so the new backdrop / pages appear on the
+    /// next frame.
+    pub fn set_background(&mut self, background: Arc<dyn CanvasBackground>) {
+        self.background = background;
+        self.notify();
+    }
+
+    /// Currently installed background. Callers (e.g. the freya
+    /// [`drawing_surface`]) read this to source the viewport backdrop
+    /// color and page metadata.
+    #[must_use]
+    pub fn background(&self) -> &Arc<dyn CanvasBackground> {
+        &self.background
     }
 
     fn notify(&self) {
@@ -1269,6 +1304,27 @@ impl Board {
         canvas.translate((self.viewport.tx, self.viewport.ty));
         canvas.scale((self.viewport.scale, self.viewport.scale));
 
+        // Background layer (PDF pages, blank paper, image, solid
+        // color, etc.) paints first — under the strokes but inside the
+        // world transform so page rectangles live in the same
+        // coordinate space as the ink.
+        let (v_min_x, v_min_y) = self.viewport.screen_to_world(surface.min_x, surface.min_y);
+        let (v_max_x, v_max_y) = self.viewport.screen_to_world(surface.max_x, surface.max_y);
+        let bg_visible = BgRect {
+            min_x: v_min_x,
+            min_y: v_min_y,
+            max_x: v_max_x,
+            max_y: v_max_y,
+        };
+        let mut bg_ctx = BgPaintCtx {
+            canvas,
+            visible: bg_visible,
+            scale: self.viewport.scale,
+            redraw: self.redraw_handle.clone(),
+        };
+        self.background.paint(&mut bg_ctx);
+        self.background.tick(bg_visible, self.viewport.scale);
+
         // Cull committed strokes to the visible world rect via the
         // spatial index. Skia culls per primitive anyway, but skipping
         // the Paint construction + `draw_path` bookkeeping for
@@ -1406,6 +1462,24 @@ pub struct SurfaceBounds {
 /// [`Viewport`] only, so simultaneous pen strokes are untouched.
 pub fn drawing_surface(board: &Arc<Mutex<Board>>) -> impl IntoElement {
     let render_board = Arc::clone(board);
+    // Read the current background's surface backdrop once at element
+    // construction. Swapping backgrounds at runtime requires re-mounting
+    // this element for the backdrop color to refresh — acceptable while
+    // background swaps happen from an app-level open/close action that
+    // already forces a top-level re-render. The trait returns a Skia
+    // color (paints inside `Board::paint` use that space); freya's
+    // element attribute takes freya-core's own `Color`, so we round-trip
+    // via ARGB components at the boundary.
+    let backdrop_sk = lock(board)
+        .background()
+        .viewport_backdrop()
+        .unwrap_or_else(|| SkColor::from_rgb(250, 250, 248));
+    let backdrop = Color::from_argb(
+        backdrop_sk.a(),
+        backdrop_sk.r(),
+        backdrop_sk.g(),
+        backdrop_sk.b(),
+    );
 
     let inner = canvas(RenderCallback::new(move |ctx| {
         let guard = match render_board.lock() {
@@ -1439,7 +1513,7 @@ pub fn drawing_surface(board: &Arc<Mutex<Board>>) -> impl IntoElement {
     rect()
         .width(Size::fill())
         .height(Size::fill())
-        .background(Color::from_rgb(250, 250, 248))
+        .background(backdrop)
         .on_wheel(move |e: Event<WheelEventData>| {
             #[allow(clippy::cast_possible_truncation)]
             let x = e.element_location.x as f32;

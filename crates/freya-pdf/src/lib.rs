@@ -3,7 +3,7 @@
 //! Ships a [`CanvasBackground`](freya_canvas_bg::CanvasBackground)
 //! implementation ([`PdfBackground`]) that virtualises page rendering
 //! for arbitrarily large documents: only visible pages request bitmaps,
-//! a worker pool drives PDFium off the UI thread, and an LRU cache
+//! a worker pool drives `PDFium` off the UI thread, and an LRU cache
 //! keyed by (page, zoom bucket, tile) keeps memory bounded on mobile.
 //!
 //! The crate is framework-neutral above `freya-engine` and executor-

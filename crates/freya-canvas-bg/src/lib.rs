@@ -59,7 +59,7 @@ pub struct Rect {
 impl Rect {
     /// Build from corners; auto-normalises so `min ≤ max` per axis.
     #[must_use]
-    pub fn from_corners(a: (f32, f32), b: (f32, f32)) -> Self {
+    pub const fn from_corners(a: (f32, f32), b: (f32, f32)) -> Self {
         Self {
             min_x: a.0.min(b.0),
             min_y: a.1.min(b.1),

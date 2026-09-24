@@ -22,13 +22,13 @@ impl PdfBackground {
     /// Wrap a document. Layout is computed lazily on the first paint
     /// pass; the returned background reports zero pages until then.
     #[must_use]
-    pub fn new(doc: PdfDocument) -> Self {
+    pub const fn new(doc: PdfDocument) -> Self {
         Self { doc, pages: Vec::new() }
     }
 
     /// Access the underlying document (for text extraction, etc.).
     #[must_use]
-    pub fn document(&self) -> &PdfDocument {
+    pub const fn document(&self) -> &PdfDocument {
         &self.doc
     }
 }

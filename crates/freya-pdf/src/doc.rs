@@ -27,7 +27,7 @@ impl PdfDocument {
     ///
     /// # Errors
     ///
-    /// Returns [`PdfError::PdfiumUnavailable`] if the PDFium library
+    /// Returns [`PdfError::PdfiumUnavailable`] if the `PDFium` library
     /// cannot be loaded and [`PdfError::Open`] if the file itself
     /// cannot be read or parsed.
     pub fn open(_path: &Path) -> Result<Self, PdfError> {
@@ -46,7 +46,7 @@ impl PdfDocument {
 
     /// Total number of pages.
     #[must_use]
-    pub fn page_count(&self) -> usize {
+    pub const fn page_count(&self) -> usize {
         let _ = &self.inner;
         0
     }
@@ -56,7 +56,7 @@ impl PdfDocument {
     /// # Errors
     ///
     /// Returns [`PdfError::PageOutOfRange`] when `page >= page_count`.
-    pub fn page_size(&self, page: usize) -> Result<(f32, f32), PdfError> {
+    pub const fn page_size(&self, page: usize) -> Result<(f32, f32), PdfError> {
         Err(PdfError::PageOutOfRange { requested: page, page_count: self.page_count() })
     }
 }

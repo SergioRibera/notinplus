@@ -6,7 +6,7 @@ use std::fmt;
 /// Errors produced by the PDF backend.
 #[derive(Debug)]
 pub enum PdfError {
-    /// Failed to locate or initialise the PDFium shared library.
+    /// Failed to locate or initialise the `PDFium` shared library.
     /// Enable the `bundled` cargo feature to have `pdfium-render`
     /// ship a prebuilt binary.
     PdfiumUnavailable(String),
@@ -19,7 +19,7 @@ pub enum PdfError {
         /// Actual number of pages in the document.
         page_count: usize,
     },
-    /// PDFium reported a runtime error while executing a request.
+    /// `PDFium` reported a runtime error while executing a request.
     Backend(String),
 }
 
