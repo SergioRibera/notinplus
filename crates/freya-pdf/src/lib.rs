@@ -20,6 +20,7 @@ pub mod cancel;
 pub mod doc;
 pub mod error;
 pub mod render;
+pub mod search;
 pub mod tiles;
 
 pub use backend::PdfBackground;
@@ -28,6 +29,7 @@ pub use cancel::CancelToken;
 pub use doc::PdfDocument;
 pub use error::PdfError;
 pub use render::RenderPool;
+pub use search::{PdfSearchIndex, SearchHit, SearchOptions};
 pub use tiles::{
     CacheKey, TILE_PIXELS, TILE_THRESHOLD, TileCoord, TileGrid, bucket_for, bucket_scale,
 };

@@ -140,6 +140,36 @@ impl PdfDocument {
         &self.inner.page_sizes
     }
 
+    /// Extract the plain-text content of a single page.
+    ///
+    /// Runs synchronously through pdfium; the cost is far below
+    /// rasterisation and matches user expectations for search
+    /// latency. Callers that want an index across the whole
+    /// document should wrap the doc in a
+    /// [`crate::search::PdfSearchIndex`] which caches per-page text.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PdfError::PageOutOfRange`] when `page` is out of
+    /// range, [`PdfError::Backend`] on pdfium failure.
+    pub fn extract_page_text(&self, page: usize) -> Result<String, PdfError> {
+        let count = self.page_count();
+        if page >= count {
+            return Err(PdfError::PageOutOfRange {
+                requested: page,
+                page_count: count,
+            });
+        }
+        #[allow(clippy::cast_possible_truncation)]
+        let idx = page as u16;
+        let pages = self.inner.doc.pages();
+        let pdf_page = pages.get(idx).map_err(|e| PdfError::Backend(e.to_string()))?;
+        let text = pdf_page
+            .text()
+            .map_err(|e| PdfError::Backend(e.to_string()))?;
+        Ok(text.all())
+    }
+
     /// Access the underlying pdfium document. Crate-internal — the
     /// backend rasterises through this handle without exposing the
     /// pdfium types on the public surface.
