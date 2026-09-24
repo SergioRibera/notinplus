@@ -26,6 +26,7 @@ use flume::{Receiver, Sender};
 use freya::prelude::*;
 use freya_canvas_bg::{
     BgPaintCtx, CanvasBackground, RedrawHandle, Rect as BgRect, SolidColorBackground,
+    clamp_translation,
 };
 use freya_engine::prelude::{BlendMode, Color as SkColor, Paint, Path, SaveLayerRec};
 
@@ -212,6 +213,12 @@ pub struct Board {
     /// thread. Rebuilt whenever [`Board::set_notifier`] runs; noop
     /// until the root component installs the notifier.
     redraw_handle: RedrawHandle,
+    /// Last `(width, height)` of the paint surface. Updated once per
+    /// frame at the top of [`Board::paint`] so viewport-clamping code
+    /// (which runs off the paint path, e.g. from `pan_move`) has a
+    /// stable reference — a zero pair means "no paint has landed yet"
+    /// and disables clamping entirely.
+    last_surface_size: (f32, f32),
 }
 
 /// Anchor snapshot for a pinch gesture — centroid + pair-distance of
@@ -257,6 +264,7 @@ impl Default for Board {
             two_point_active: false,
             background: Arc::new(SolidColorBackground::new(SkColor::from_rgb(250, 250, 248))),
             redraw_handle: RedrawHandle::noop(),
+            last_surface_size: (0.0, 0.0),
         }
     }
 }
@@ -417,8 +425,9 @@ impl Board {
     }
 
     /// Adopt `viewport` wholesale. Scale is clamped to
-    /// `[VIEWPORT_SCALE_MIN, VIEWPORT_SCALE_MAX]`; translation is left
-    /// unrestricted (canvas is truly infinite).
+    /// `[VIEWPORT_SCALE_MIN, VIEWPORT_SCALE_MAX]`; translation is
+    /// additionally clamped against the current background's content
+    /// bounds when one is exposed (see [`Self::clamp_viewport_to_background`]).
     pub fn set_viewport(&mut self, mut viewport: Viewport) {
         viewport.scale = viewport.scale.clamp(VIEWPORT_SCALE_MIN, VIEWPORT_SCALE_MAX);
         if !viewport.scale.is_finite() {
@@ -431,7 +440,38 @@ impl Board {
             viewport.ty = 0.0;
         }
         self.viewport = viewport;
+        self.clamp_viewport_to_background();
         self.notify();
+    }
+
+    /// Pin viewport translation to the current background's content
+    /// bounds. No-op when the background is unbounded
+    /// ([`SolidColorBackground`] and any custom `content_bounds()`-of-
+    /// `None` impl) or when no paint has landed yet — the surface
+    /// dimensions are only known post-first-frame.
+    ///
+    /// Called at the top of [`Self::paint`] and at the end of every
+    /// viewport-mutating method so drift correction happens both under
+    /// user gestures and under background swaps.
+    pub fn clamp_viewport_to_background(&mut self) {
+        let Some(bounds) = self.background.content_bounds() else {
+            return;
+        };
+        let (sw, sh) = self.last_surface_size;
+        if sw <= 0.0 || sh <= 0.0 {
+            return;
+        }
+        let bg_bounds = bounds;
+        let (tx, ty) = clamp_translation(
+            self.viewport.tx,
+            self.viewport.ty,
+            self.viewport.scale,
+            bg_bounds,
+            sw,
+            sh,
+        );
+        self.viewport.tx = tx;
+        self.viewport.ty = ty;
     }
 
     pub fn reset_viewport(&mut self) {
@@ -445,6 +485,7 @@ impl Board {
         }
         self.viewport.tx += dx;
         self.viewport.ty += dy;
+        self.clamp_viewport_to_background();
         self.notify();
     }
 
@@ -474,6 +515,7 @@ impl Board {
         self.viewport.scale = new_scale;
         self.viewport.tx = world_x.mul_add(-new_scale, cx);
         self.viewport.ty = world_y.mul_add(-new_scale, cy);
+        self.clamp_viewport_to_background();
         self.notify();
     }
 
@@ -1296,7 +1338,17 @@ impl Board {
     /// cannot be composed incrementally without reintroducing seams,
     /// and the per-frame cost is negligible for realistic sample
     /// counts.
-    pub fn paint(&self, canvas: &freya_engine::prelude::Canvas, surface: SurfaceBounds) {
+    pub fn paint(&mut self, canvas: &freya_engine::prelude::Canvas, surface: SurfaceBounds) {
+        // Cache surface size so off-paint mutators (`pan_move`,
+        // `viewport_zoom_at`, `viewport_zoom_by`) can consult it when
+        // clamping against the current background's content bounds.
+        self.last_surface_size = (surface.max_x - surface.min_x, surface.max_y - surface.min_y);
+        // Correct any drift accumulated since the last frame — the
+        // background may have swapped, the surface may have resized, or
+        // an off-path mutator may have pushed the viewport past bounds
+        // before the surface size was known.
+        self.clamp_viewport_to_background();
+
         // Everything below draws in world coordinates. Wrapping in a
         // save/restore lets viewport pan+zoom compose freely with any
         // future overlay pass that wants to draw in screen space.
@@ -1482,7 +1534,7 @@ pub fn drawing_surface(board: &Arc<Mutex<Board>>) -> impl IntoElement {
     );
 
     let inner = canvas(RenderCallback::new(move |ctx| {
-        let guard = match render_board.lock() {
+        let mut guard = match render_board.lock() {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
         };

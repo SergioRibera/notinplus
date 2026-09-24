@@ -34,6 +34,14 @@ use std::sync::Arc;
 
 pub use freya_engine::prelude::{Canvas, Color};
 
+pub mod clamp;
+pub mod page;
+pub mod stacked;
+
+pub use clamp::clamp_translation;
+pub use page::{Grid, PageBorder, PageProvider, SolidPageProvider, paper};
+pub use stacked::StackedPagesBackground;
+
 /// Stable identifier for a page inside a [`CanvasBackground`].
 ///
 /// Backends pick their own numbering; the host must treat these as
