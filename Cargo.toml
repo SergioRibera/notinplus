@@ -31,16 +31,12 @@ freya        = "0.4"
 freya-engine = "0.4"
 torin        = "0.4"
 freya-canvas-bg = { path = "crates/freya-canvas-bg" }
-freya-pdf       = { path = "crates/freya-pdf", optional = true }
+freya-pdf       = { path = "crates/freya-pdf" }
 bincode  = { version = "2", features = ["derive", "std"] }
 flume    = { version = "0.11", features = ["async"] }
 pollster = "0.4"
 log      = "0.4"
 async-io = "2"
-
-[features]
-default = []
-pdf     = ["dep:freya-pdf"]
 
 
 [target.'cfg(target_os = "android")'.dependencies]
