@@ -28,4 +28,6 @@ pub use cancel::CancelToken;
 pub use doc::PdfDocument;
 pub use error::PdfError;
 pub use render::RenderPool;
-pub use tiles::{CacheKey, bucket_for, bucket_scale};
+pub use tiles::{
+    CacheKey, TILE_PIXELS, TILE_THRESHOLD, TileCoord, TileGrid, bucket_for, bucket_scale,
+};

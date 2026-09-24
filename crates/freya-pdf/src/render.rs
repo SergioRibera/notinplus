@@ -1,12 +1,21 @@
 //! Async worker pool driving pdfium off the UI thread.
 //!
 //! The pool owns N OS threads pulling [`RenderRequest`]s from a
-//! `flume` channel. Each worker rasterises one page → bucket at a
-//! time, stores raw RGBA bytes into the shared [`Cache`], and pings
-//! the installed [`RedrawHandle`] so freya re-paints on the next
-//! frame. Cancellation is cooperative — workers check the request's
-//! [`CancelToken`] before entering pdfium and skip cache insertion if
-//! the flag flipped while the job was queued.
+//! `flume` channel. Each worker rasterises one tile (or, for small
+//! pages, the whole page) via pdfium, stores raw RGBA bytes into the
+//! shared [`Cache`], and pings the installed [`RedrawHandle`] so
+//! freya re-paints on the next frame. Cancellation is cooperative —
+//! workers check the request's [`CancelToken`] before entering
+//! pdfium and skip cache insertion if the flag flipped while the
+//! job was queued.
+//!
+//! # Tiling
+//!
+//! Pages whose rasterised dimensions exceed [`TILE_THRESHOLD`] are
+//! sliced into [`TILE_PIXELS`]-sized cells via a `translate + clip`
+//! pdfium render config. Each cell renders into a bitmap sized to
+//! its actual coverage (edge cells shrink to the leftover pixels)
+//! so the cache holds exactly the pixel data it needs — no padding.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -14,19 +23,19 @@ use std::thread::JoinHandle;
 
 use flume::{Receiver, Sender};
 use freya_canvas_bg::{PageId, RedrawHandle};
-use pdfium_render::prelude::{PdfRenderConfig, Pixels};
+use pdfium_render::prelude::{
+    PdfBitmap, PdfBitmapFormat, PdfPoints, PdfRenderConfig, Pixels,
+};
 
 use crate::cache::{Cache, CachedTile};
 use crate::cancel::CancelToken;
 use crate::doc::PdfDocument;
-use crate::tiles::CacheKey;
+use crate::tiles::{CacheKey, TILE_PIXELS, TileCoord, bucket_scale};
 
-/// Request to render one page at a specific bucket.
+/// Request to render one cache entry.
 #[derive(Debug)]
 struct RenderRequest {
     key: CacheKey,
-    target_w: u32,
-    target_h: u32,
     cancel: CancelToken,
 }
 
@@ -92,10 +101,7 @@ impl RenderPool {
 
     /// Queue a render for `key`. No-op if an active (non-cancelled)
     /// request for the same key is already in flight.
-    pub fn request(&self, key: CacheKey, target_w: u32, target_h: u32) {
-        if target_w == 0 || target_h == 0 {
-            return;
-        }
+    pub fn request(&self, key: CacheKey) {
         let mut pending = lock(&self.pending);
         if let Some(existing) = pending.get(&key) {
             if !existing.is_cancelled() {
@@ -107,7 +113,7 @@ impl RenderPool {
         drop(pending);
         let tx = lock(&self.tx);
         if let Some(tx) = tx.as_ref() {
-            let _ = tx.send(RenderRequest { key, target_w, target_h, cancel });
+            let _ = tx.send(RenderRequest { key, cancel });
         }
     }
 
@@ -161,7 +167,7 @@ fn worker_loop(
             forget_pending(pending, key);
             continue;
         }
-        if let Some(tile) = render_page(doc, key.page, req.target_w, req.target_h) {
+        if let Some(tile) = render_entry(doc, key) {
             cache.insert(key, Arc::new(tile));
             lock(redraw).ping();
         }
@@ -173,28 +179,86 @@ fn forget_pending(pending: &Mutex<HashMap<CacheKey, CancelToken>>, key: CacheKey
     lock(pending).remove(&key);
 }
 
-/// Rasterise one page synchronously. Called from worker threads only.
-/// Returns raw RGBA bytes so the result can cross the worker → paint
-/// boundary — Skia `Image` handles are only conditionally `Send`
-/// (unique-refcount) which is too fragile for a general cache.
-fn render_page(doc: &PdfDocument, page: PageId, target_w: u32, target_h: u32) -> Option<CachedTile> {
+/// Rasterise one cache entry. `TileCoord::Full` renders the whole
+/// page; `TileCoord::Cell` renders one grid slice via a
+/// `translate + clip` render config so pdfium only rasterises pixels
+/// that land in the tile bitmap.
+#[allow(clippy::cast_possible_wrap)] // pdfium pixel counts fit i32 for any realistic zoom
+fn render_entry(doc: &PdfDocument, key: CacheKey) -> Option<CachedTile> {
+    let page_slot = usize::try_from(key.page.0).ok()?;
+    let (width_points, height_points) = doc.page_size(page_slot).ok()?;
+    let scale = bucket_scale(key.bucket);
+    let pdf_doc = doc.pdfium_doc();
+    let pages = pdf_doc.pages();
     #[allow(clippy::cast_possible_truncation)]
-    let page_idx = page.0 as u16;
-    let pages = doc.pdfium_doc().pages();
-    let pdf_page = pages.get(page_idx).ok()?;
-    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-    let config = PdfRenderConfig::new().set_target_size(target_w as Pixels, target_h as Pixels);
-    let bitmap = pdf_page.render_with_config(&config).ok()?;
+    let pdf_page = pages.get(key.page.0 as u16).ok()?;
+    let bindings = pdf_doc.bindings();
+
+    match key.tile {
+        TileCoord::Full => {
+            let target_w = pixel_dim(width_points * scale)? as Pixels;
+            let target_h = pixel_dim(height_points * scale)? as Pixels;
+            let config = PdfRenderConfig::new().set_target_size(target_w, target_h);
+            let bitmap = pdf_page.render_with_config(&config).ok()?;
+            Some(cache_tile_from_bitmap(&bitmap))
+        }
+        TileCoord::Cell { x, y } => {
+            let full_w = pixel_dim(width_points * scale)? as Pixels;
+            let full_h = pixel_dim(height_points * scale)? as Pixels;
+            let start_x = Pixels::from(x).checked_mul(TILE_PIXELS as Pixels)?;
+            let start_y = Pixels::from(y).checked_mul(TILE_PIXELS as Pixels)?;
+            let tile_w = (full_w - start_x).min(TILE_PIXELS as Pixels);
+            let tile_h = (full_h - start_y).min(TILE_PIXELS as Pixels);
+            if tile_w <= 0 || tile_h <= 0 {
+                return None;
+            }
+            let mut bitmap =
+                PdfBitmap::empty(tile_w, tile_h, PdfBitmapFormat::BGRA, bindings).ok()?;
+            // Matrix: scale points → pixels, then translate so the
+            // tile's origin lands at bitmap (0, 0). `clip` guards
+            // against pdfium overshooting into pixels outside the
+            // tile buffer. `.scale` / `.translate` return
+            // `Result<PdfRenderConfig>` (they reject degenerate
+            // matrices with `determinant == 0`); propagate with `ok()?`.
+            #[allow(clippy::cast_precision_loss)]
+            let config = PdfRenderConfig::new()
+                .scale(scale, scale)
+                .ok()?
+                .translate(
+                    PdfPoints::new(-(start_x as f32)),
+                    PdfPoints::new(-(start_y as f32)),
+                )
+                .ok()?
+                .clip(0, 0, tile_w, tile_h);
+            pdf_page
+                .render_into_bitmap_with_config(&mut bitmap, &config)
+                .ok()?;
+            Some(cache_tile_from_bitmap(&bitmap))
+        }
+    }
+}
+
+fn cache_tile_from_bitmap(bitmap: &PdfBitmap) -> CachedTile {
     let bytes = bitmap.as_rgba_bytes();
     #[allow(clippy::cast_sign_loss)]
     let width = bitmap.width() as u32;
     #[allow(clippy::cast_sign_loss)]
     let height = bitmap.height() as u32;
-    Some(CachedTile {
+    CachedTile {
         bytes: Arc::new(bytes),
         width,
         height,
-    })
+    }
+}
+
+#[allow(clippy::unnecessary_wraps)] // callers propagate with `?`; None path is real
+fn pixel_dim(v: f32) -> Option<u32> {
+    if !v.is_finite() || v <= 0.0 {
+        return None;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let n = v.round() as u32;
+    Some(n)
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {

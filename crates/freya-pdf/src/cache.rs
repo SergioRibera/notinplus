@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use freya_canvas_bg::PageId;
 use hashlink::LruCache;
 
-use crate::tiles::CacheKey;
+use crate::tiles::{CacheKey, TileCoord};
 
 /// One cached page render at a specific zoom bucket.
 ///
@@ -68,11 +68,33 @@ impl Cache {
     /// placeholder while the target-bucket render is in flight.
     #[must_use]
     pub fn nearest_at_or_below(&self, page: PageId, max_bucket: i32) -> Option<Arc<CachedTile>> {
+        self.nearest_with(page, max_bucket, |_| true)
+    }
+
+    /// Best full-page render (i.e. [`TileCoord::Full`]) for `page` at
+    /// bucket `<= max_bucket`. Right for placeholder rendering on
+    /// tiled pages — a full-page tile at a lower bucket can be
+    /// upscaled to cover every sub-tile of the same page.
+    #[must_use]
+    pub fn nearest_full_at_or_below(
+        &self,
+        page: PageId,
+        max_bucket: i32,
+    ) -> Option<Arc<CachedTile>> {
+        self.nearest_with(page, max_bucket, |k| matches!(k.tile, TileCoord::Full))
+    }
+
+    fn nearest_with(
+        &self,
+        page: PageId,
+        max_bucket: i32,
+        pred: impl Fn(&CacheKey) -> bool,
+    ) -> Option<Arc<CachedTile>> {
         let mut best: Option<(i32, Arc<CachedTile>)> = None;
         {
             let guard = self.lock();
             for (k, v) in guard.iter() {
-                if k.page != page || k.bucket > max_bucket {
+                if k.page != page || k.bucket > max_bucket || !pred(k) {
                     continue;
                 }
                 match &best {
