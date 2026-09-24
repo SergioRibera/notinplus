@@ -1,0 +1,30 @@
+[package]
+name        = "freya-pdf"
+version     = "0.1.0"
+edition     = "2024"
+rust-version = "1.85"
+license     = "MIT OR Apache-2.0"
+authors     = ["Sergio Ribera <contact@sergioribera.rs>"]
+description = "PDF rendering backend for Freya canvases: async worker pool, LRU tile cache, virtualised page stack. Integrates via freya-canvas-bg."
+repository  = "https://github.com/SergioRibera/notinplus"
+
+# pdfium-render + hashlink land in M3 when the render pipeline / LRU
+# cache are actually implemented. M0 ships the skeleton against
+# freya-canvas-bg only so downstream apps can start wiring the
+# abstraction without pulling PDFium binaries yet.
+[dependencies]
+freya-canvas-bg = { path = "../freya-canvas-bg" }
+freya-engine    = "0.4"
+log             = "0.4"
+
+[lints.rust]
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery  = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

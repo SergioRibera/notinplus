@@ -1,0 +1,24 @@
+[package]
+name        = "freya-canvas-bg"
+version     = "0.1.0"
+edition     = "2024"
+rust-version = "1.85"
+license     = "MIT OR Apache-2.0"
+authors     = ["Sergio Ribera <contact@sergioribera.rs>"]
+description = "Pluggable background abstraction for Freya canvas widgets: infinite color fill, images, paginated documents, PDF."
+repository  = "https://github.com/SergioRibera/notinplus"
+
+[dependencies]
+freya-engine = "0.4"
+
+[lints.rust]
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery  = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
