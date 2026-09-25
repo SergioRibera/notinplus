@@ -18,6 +18,8 @@ android/**/*.iml
 ios/*.xcodeproj/
 ios/build/
 ios/DerivedData/
+# Fetched by ios/fetch-pdfium.sh; not source, regenerated on demand.
+ios/Vendor/
 
 
 # Nix / result symlinks

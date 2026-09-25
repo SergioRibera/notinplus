@@ -1,4 +1,5 @@
 import org.gradle.api.tasks.Exec
+import java.net.URI
 
 plugins {
     id("com.android.application")
@@ -103,9 +104,83 @@ fun cargoLib(crate: String, libName: String = crate.replace('-', '_')) {
     }
 }
 
+// -----------------------------------------------------------------
+// pdfium shipping. `freya-pdf` loads pdfium at runtime via
+// `Pdfium::bind_to_system_library`, which delegates to `dlopen` on
+// `libpdfium.so`. Android's dynamic linker searches the app's
+// `nativeLibraryDir` before the system paths, so dropping the
+// prebuilt `libpdfium.so` alongside our Rust `.so`s is enough for the
+// runtime to pick it up.
+//
+// Binaries come from `bblanchon/pdfium-binaries` (BSD-3-Clause,
+// matches Chromium's pdfium license). Pin a specific release so the
+// checksum stays reproducible; bump when needed.
+// -----------------------------------------------------------------
+val pdfiumRelease   = "chromium/8066"
+val pdfiumBaseUrl   = "https://github.com/bblanchon/pdfium-binaries/releases/download/$pdfiumRelease"
+val pdfiumAbiSuffix = mapOf(
+    "arm64-v8a"   to "arm64",
+    "armeabi-v7a" to "arm",
+    "x86_64"      to "x64",
+    "x86"         to "x86",
+)
+val pdfiumCacheDir  = layout.buildDirectory.dir("pdfium-cache")
+val pdfiumStageTaskNames = mutableListOf<String>()
+
+for (abi in android.defaultConfig.ndk.abiFilters) {
+    val suffix   = pdfiumAbiSuffix[abi] ?: continue
+    val tgzName  = "pdfium-android-$suffix.tgz"
+    val tgzUrl   = "$pdfiumBaseUrl/$tgzName"
+    val tgzFile  = pdfiumCacheDir.map { it.file(tgzName) }
+    val unpacked = pdfiumCacheDir.map { it.dir("pdfium-android-$suffix") }
+    val stagedSo = rustJniLibsDir.map { it.dir(abi).file("libpdfium.so") }
+
+    val downloadTask = tasks.register("downloadPdfium_$suffix") {
+        group   = "istmo"
+        outputs.file(tgzFile)
+        doLast {
+            val dst = tgzFile.get().asFile
+            if (dst.exists() && dst.length() > 0) return@doLast
+            dst.parentFile.mkdirs()
+            logger.lifecycle("Fetching $tgzUrl")
+            URI(tgzUrl).toURL().openStream().use { input ->
+                dst.outputStream().use { output -> input.copyTo(output) }
+            }
+        }
+    }
+
+    val extractTask = tasks.register("extractPdfium_$suffix", Exec::class) {
+        group      = "istmo"
+        dependsOn(downloadTask)
+        inputs.file(tgzFile)
+        outputs.dir(unpacked)
+        doFirst { unpacked.get().asFile.mkdirs() }
+        workingDir = pdfiumCacheDir.get().asFile
+        commandLine("tar", "-xzf", tgzFile.get().asFile.absolutePath,
+                    "-C", unpacked.get().asFile.absolutePath)
+    }
+
+    val stageTask = tasks.register("stagePdfium_$suffix") {
+        group      = "istmo"
+        dependsOn(extractTask)
+        outputs.file(stagedSo)
+        doLast {
+            val src = unpacked.get().asFile.resolve("lib/libpdfium.so")
+            require(src.exists()) { "libpdfium.so not found under ${src.parentFile}" }
+            val dst = stagedSo.get().asFile
+            dst.parentFile.mkdirs()
+            src.copyTo(dst, overwrite = true)
+        }
+    }
+    pdfiumStageTaskNames.add(stageTask.name)
+}
+
 afterEvaluate {
     tasks.matching { it.name.matches(Regex("merge.*JniLibFolders")) }
-        .configureEach { cargoStageTaskNames.forEach { dependsOn(it) } }
+        .configureEach {
+            cargoStageTaskNames.forEach { dependsOn(it) }
+            pdfiumStageTaskNames.forEach { dependsOn(it) }
+        }
 }
 
 cargoLib("notinplus")

@@ -49,7 +49,17 @@ targets:
     dependencies:
       - package: IstmoRuntime
         product: IstmoRuntime
+      # `freya-pdf` loads pdfium at runtime via `dlopen`. Embedding
+      # the framework with `Embed & Sign` puts `pdfium` inside
+      # `Frameworks/`, which lands on `@rpath` so the loader finds it
+      # without extra `DYLD_*` plumbing. The xcframework is fetched
+      # by `fetch-pdfium.sh` as part of the preBuild phase.
+      - framework: Vendor/pdfium.xcframework
+        embed: true
     preBuildScripts:
+      - name: fetch pdfium.xcframework (bblanchon prebuilts)
+        path: fetch-pdfium.sh
+        runOnlyWhenInstalling: false
       - name: cargo build notinplus (staticlib per arch)
         path: build-rust.sh
         runOnlyWhenInstalling: false
@@ -58,3 +68,6 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: rs.sergioribera.notinplus
         TARGETED_DEVICE_FAMILY: "1"
         ENABLE_USER_SCRIPT_SANDBOXING: NO
+        FRAMEWORK_SEARCH_PATHS:
+          - $(inherited)
+          - $(PROJECT_DIR)/Vendor

@@ -19,15 +19,42 @@ use crate::error::PdfError;
 /// (slow) library binding every open.
 static PDFIUM: OnceLock<Result<Pdfium, String>> = OnceLock::new();
 
+/// Environment variable checked before falling back to the system
+/// library search. Points at a directory containing the platform
+/// pdfium shared library (`libpdfium.so` / `.dylib` / `pdfium.dll`).
+/// Right for desktop dev where the binary lives in a devshell path
+/// that isn't on the default loader path.
+const ENV_PDFIUM_LIB_DIR: &str = "PDFIUM_LIB_PATH";
+
 fn pdfium() -> Result<&'static Pdfium, PdfError> {
-    match PDFIUM.get_or_init(|| {
-        Pdfium::bind_to_system_library()
-            .map(Pdfium::new)
-            .map_err(|e| e.to_string())
-    }) {
+    match PDFIUM.get_or_init(load_pdfium) {
         Ok(p) => Ok(p),
         Err(msg) => Err(PdfError::PdfiumUnavailable(msg.clone())),
     }
+}
+
+fn load_pdfium() -> Result<Pdfium, String> {
+    // 1. Explicit override — devshell-friendly and gives packagers a
+    //    knob when the library lives outside the default loader path.
+    if let Some(dir) = std::env::var_os(ENV_PDFIUM_LIB_DIR) {
+        let path = Pdfium::pdfium_platform_library_name_at_path(Path::new(&dir));
+        match Pdfium::bind_to_library(&path) {
+            Ok(b) => return Ok(Pdfium::new(b)),
+            Err(e) => {
+                log::warn!(
+                    "PDFIUM_LIB_PATH set to {:?} but binding failed: {e}; falling back to system loader",
+                    path.display()
+                );
+            }
+        }
+    }
+    // 2. Default: let dlopen search the process' loader path. Works
+    //    on Android (nativeLibraryDir), Linux with pdfium on
+    //    LD_LIBRARY_PATH (see the nix devshell), macOS with
+    //    DYLD_FALLBACK_LIBRARY_PATH, Windows with pdfium.dll on PATH.
+    Pdfium::bind_to_system_library()
+        .map(Pdfium::new)
+        .map_err(|e| e.to_string())
 }
 
 /// An open PDF document. Cheap to clone (`Arc` shared internally),
