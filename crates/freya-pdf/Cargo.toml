@@ -11,6 +11,10 @@ repository  = "https://github.com/SergioRibera/notinplus"
 [dependencies]
 freya-canvas-bg = { path = "../freya-canvas-bg" }
 freya-engine    = "0.4"
+# Direct dep for `skia_safe::canvas::SrcRectConstraint`, which
+# `freya-engine` doesn't re-export. Version matches the one
+# `freya-engine 0.4` pulls in, so cargo dedups.
+freya-skia-safe = { version = "0.98", default-features = false }
 flume           = "0.11"
 hashlink        = "0.10"
 # Default features pick a PDFium API version (`pdfium_latest` →

@@ -25,6 +25,7 @@ use freya_canvas_bg::{
 use freya_engine::prelude::{
     AlphaType, ColorType, Data, Image, ImageInfo, Paint, Rect as SkRect, raster_from_data,
 };
+use skia_safe::canvas::SrcRectConstraint;
 
 use crate::cache::{Cache, CachedTile};
 use crate::doc::PdfDocument;
@@ -188,6 +189,7 @@ impl CanvasBackground for PdfBackground {
                         &image_paint,
                         CacheKey { page: pl.id, bucket, tile: TileCoord::Full },
                         pl.rect,
+                        pl.rect,
                     );
                 }
                 Some(grid) => {
@@ -203,7 +205,7 @@ impl CanvasBackground for PdfBackground {
                                 bucket,
                                 tile: TileCoord::Cell { x: col, y: row },
                             };
-                            self.draw_or_request(cx, &image_paint, key, tile_rect);
+                            self.draw_or_request(cx, &image_paint, key, tile_rect, pl.rect);
                         }
                     }
                 }
@@ -268,6 +270,7 @@ impl PdfBackground {
         image_paint: &Paint,
         key: CacheKey,
         dst_world: Rect,
+        page_rect: Rect,
     ) {
         let dst = SkRect::from_ltrb(
             dst_world.min_x,
@@ -283,18 +286,19 @@ impl PdfBackground {
         }
         // Miss: upscale the best lower-bucket full-page render if we
         // have one, then queue the target-bucket render. Placeholder
-        // uses the full-page tile so a single lookup covers every
-        // sub-tile of the same page. When the current key is a tile
-        // (not a full render), the placeholder gets stretched across
-        // the sub-tile — visually cheap and better than blank fill;
-        // proper sub-region src sampling is a follow-up once the
-        // layout carries page rects to `nearest_full_at_or_below`.
+        // is always a full-page tile so a single lookup covers every
+        // sub-tile of the same page. For a `TileCoord::Cell`, we sample
+        // only the corresponding sub-rect out of the placeholder so
+        // the sub-tile paints the *matching* region rather than a
+        // stretched copy of the whole page.
         let placeholder_key_bucket = key.bucket - 1;
         if let Some(placeholder) =
             self.cache.nearest_full_at_or_below(key.page, placeholder_key_bucket)
         {
             if let Some(img) = tile_to_image(&placeholder) {
-                cx.canvas.draw_image_rect(&img, None, dst, image_paint);
+                let src = placeholder_src_rect(page_rect, dst_world, &placeholder);
+                let src_pair = src.as_ref().map(|r| (r, SrcRectConstraint::Fast));
+                cx.canvas.draw_image_rect(&img, src_pair, dst, image_paint);
             }
         }
         self.pool.request(key);
@@ -340,6 +344,43 @@ fn compute_layout(doc: &PdfDocument, gap: f32) -> (Vec<PageLayout>, Rect) {
     (pages, bounds)
 }
 
+/// Sub-rect of the placeholder bitmap covering `dst_world`'s slice of
+/// `page_rect`. Returns `None` when `dst_world` matches `page_rect` —
+/// the caller should paint the whole placeholder in that case, which
+/// is both cheaper and avoids sub-pixel bleeding on the seams.
+///
+/// The mapping is a straightforward proportional scale: the fraction
+/// of the page covered by `dst_world` on each axis is multiplied by
+/// the placeholder's pixel dimensions. Edge sub-tiles land on
+/// fractional pixels; Skia's sampler handles that fine given
+/// [`SrcRectConstraint::Fast`].
+fn placeholder_src_rect(page_rect: Rect, dst_world: Rect, placeholder: &CachedTile) -> Option<SkRect> {
+    let page_w = page_rect.width();
+    let page_h = page_rect.height();
+    if page_w <= 0.0 || page_h <= 0.0 {
+        return None;
+    }
+    if dst_world.min_x <= page_rect.min_x
+        && dst_world.min_y <= page_rect.min_y
+        && dst_world.max_x >= page_rect.max_x
+        && dst_world.max_y >= page_rect.max_y
+    {
+        return None;
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let (pw, ph) = (placeholder.width as f32, placeholder.height as f32);
+    let sx0 = (dst_world.min_x - page_rect.min_x) / page_w * pw;
+    let sy0 = (dst_world.min_y - page_rect.min_y) / page_h * ph;
+    let sx1 = (dst_world.max_x - page_rect.min_x) / page_w * pw;
+    let sy1 = (dst_world.max_y - page_rect.min_y) / page_h * ph;
+    Some(SkRect::from_ltrb(
+        sx0.max(0.0),
+        sy0.max(0.0),
+        sx1.min(pw),
+        sy1.min(ph),
+    ))
+}
+
 /// Wraps `tile`'s RGBA buffer as a Skia [`Image`] without copying.
 ///
 /// # Safety invariant
@@ -383,3 +424,54 @@ const EMPTY_RECT: Rect = Rect {
     max_x: 0.0,
     max_y: 0.0,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::{CachedTile, Rect, placeholder_src_rect};
+    use std::sync::Arc;
+
+    fn tile(w: u32, h: u32) -> CachedTile {
+        CachedTile {
+            bytes: Arc::new(Vec::new()),
+            width: w,
+            height: h,
+        }
+    }
+
+    #[test]
+    fn placeholder_src_rect_none_for_full_page_dst() {
+        let page = Rect { min_x: 0.0, min_y: 0.0, max_x: 100.0, max_y: 200.0 };
+        assert!(placeholder_src_rect(page, page, &tile(64, 128)).is_none());
+    }
+
+    #[test]
+    fn placeholder_src_rect_top_left_quadrant() {
+        let page = Rect { min_x: 0.0, min_y: 0.0, max_x: 100.0, max_y: 200.0 };
+        let quad = Rect { min_x: 0.0, min_y: 0.0, max_x: 50.0, max_y: 100.0 };
+        let src = placeholder_src_rect(page, quad, &tile(64, 128)).expect("sub-rect");
+        assert!((src.left - 0.0).abs() < 1e-4);
+        assert!((src.top - 0.0).abs() < 1e-4);
+        assert!((src.right - 32.0).abs() < 1e-4);
+        assert!((src.bottom - 64.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn placeholder_src_rect_bottom_right_cell_with_translated_page() {
+        // Page origin at (-50, 300) — mirrors the layout produced by
+        // `compute_layout` for a page that stacks below its neighbour.
+        let page = Rect { min_x: -50.0, min_y: 300.0, max_x: 50.0, max_y: 500.0 };
+        let cell = Rect { min_x: 0.0, min_y: 400.0, max_x: 50.0, max_y: 500.0 };
+        let src = placeholder_src_rect(page, cell, &tile(64, 128)).expect("sub-rect");
+        assert!((src.left - 32.0).abs() < 1e-4);
+        assert!((src.top - 64.0).abs() < 1e-4);
+        assert!((src.right - 64.0).abs() < 1e-4);
+        assert!((src.bottom - 128.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn placeholder_src_rect_none_when_page_degenerate() {
+        let page = Rect { min_x: 0.0, min_y: 0.0, max_x: 0.0, max_y: 0.0 };
+        let dst = Rect { min_x: 0.0, min_y: 0.0, max_x: 10.0, max_y: 10.0 };
+        assert!(placeholder_src_rect(page, dst, &tile(64, 64)).is_none());
+    }
+}
