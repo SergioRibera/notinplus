@@ -90,6 +90,46 @@ impl PdfBackground {
     pub const fn gap(&self) -> f32 {
         self.gap
     }
+
+    /// World-space bounding rects for a search hit — the same rects
+    /// returned by [`crate::PdfSearchIndex::hit_rects`] translated by
+    /// the hit page's layout offset. The result feeds directly into a
+    /// paint overlay drawn on top of the tile.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::PdfError::PageOutOfRange`] when the hit
+    /// references a page missing from this backend's layout;
+    /// propagates any pdfium failure surfaced by
+    /// [`crate::PdfSearchIndex::hit_rects`].
+    pub fn world_hit_rects(
+        &self,
+        hit: crate::search::SearchHit,
+        index: &crate::search::PdfSearchIndex,
+    ) -> Result<Vec<Rect>, crate::error::PdfError> {
+        let page = self
+            .pages
+            .iter()
+            .find(|p| p.id == hit.page)
+            .ok_or_else(|| {
+                let requested = usize::try_from(hit.page.0).unwrap_or(usize::MAX);
+                crate::error::PdfError::PageOutOfRange {
+                    requested,
+                    page_count: self.pages.len(),
+                }
+            })?;
+        let (ox, oy) = (page.rect.min_x, page.rect.min_y);
+        let rects = index.hit_rects(hit)?;
+        Ok(rects
+            .into_iter()
+            .map(|r| Rect {
+                min_x: r.min_x + ox,
+                min_y: r.min_y + oy,
+                max_x: r.max_x + ox,
+                max_y: r.max_y + oy,
+            })
+            .collect())
+    }
 }
 
 impl CanvasBackground for PdfBackground {
@@ -300,17 +340,30 @@ fn compute_layout(doc: &PdfDocument, gap: f32) -> (Vec<PageLayout>, Rect) {
     (pages, bounds)
 }
 
+/// Wraps `tile`'s RGBA buffer as a Skia [`Image`] without copying.
+///
+/// # Safety invariant
+///
+/// The caller MUST keep `tile` (and therefore the underlying
+/// `Arc<Vec<u8>>`) alive for the entire draw call that consumes the
+/// returned `Image`. Every call site in this module holds an
+/// `Arc<CachedTile>` on the stack across `Canvas::draw_image_rect`, so
+/// the buffer stays live until the paint pipeline is done reading it.
 fn tile_to_image(tile: &CachedTile) -> Option<Image> {
     #[allow(clippy::cast_possible_wrap)]
     let (w, h) = (tile.width as i32, tile.height as i32);
     let info = ImageInfo::new((w, h), ColorType::RGBA8888, AlphaType::Unpremul, None);
-    // `Data::new_copy` allocates + memcpys; acceptable while we
-    // convert once per visible tile per frame. Zero-copy via
-    // `Data::new_bytes` requires proving the `Arc<Vec<u8>>` outlives
-    // the returned `Image`; deferred until a profile shows the
-    // memcpy dominates.
-    let data = Data::new_copy(&tile.bytes);
     let row_bytes = tile.width as usize * 4;
+    // SAFETY: `tile.bytes` is an `Arc<Vec<u8>>` owned by the caller
+    // (see fn-level invariant). `Data::new_bytes` produces an
+    // `SkData` that references the slice without copying; the
+    // `SkImage` returned by `raster_from_data` keeps that `SkData`
+    // refcounted and its raster backend reads from it synchronously
+    // during `Canvas::draw_image_rect`. Both the image and the data
+    // drop at end-of-frame, well before the caller releases its
+    // `Arc<CachedTile>`.
+    #[allow(unsafe_code)]
+    let data = unsafe { Data::new_bytes(&tile.bytes) };
     raster_from_data(&info, data, row_bytes)
 }
 

@@ -9,6 +9,7 @@
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
+use freya_canvas_bg::Rect;
 use pdfium_render::prelude::{PdfDocument as PdfiumDoc, Pdfium};
 
 use crate::error::PdfError;
@@ -153,6 +154,113 @@ impl PdfDocument {
     /// Returns [`PdfError::PageOutOfRange`] when `page` is out of
     /// range, [`PdfError::Backend`] on pdfium failure.
     pub fn extract_page_text(&self, page: usize) -> Result<String, PdfError> {
+        Ok(self.extract_page_text_indexed(page)?.0)
+    }
+
+    /// Extract page text plus a per-char byte-offset table.
+    ///
+    /// The returned `Vec<usize>` has length `char_count + 1`: entry
+    /// `i` is the byte offset in the text where pdfium char index
+    /// `i` starts; the trailing entry is `text.len()` as a sentinel.
+    /// This is what [`crate::PdfSearchIndex::hit_rects`] uses to map
+    /// a `SearchHit`'s byte span back to the pdfium char range it
+    /// covers.
+    ///
+    /// Text is built by iterating pdfium's `chars()` in document
+    /// order and appending each `unicode_char()`; chars whose
+    /// codepoint decodes to `None` (control glyphs, non-BMP without
+    /// surrogate pair reconstruction, etc.) contribute a zero-byte
+    /// span so the mapping stays aligned with pdfium's char indexing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PdfError::PageOutOfRange`] when `page` is out of
+    /// range, [`PdfError::Backend`] on pdfium failure.
+    pub fn extract_page_text_indexed(
+        &self,
+        page: usize,
+    ) -> Result<(String, Vec<usize>), PdfError> {
+        let pdf_page = self.pdf_page(page)?;
+        let text = pdf_page
+            .text()
+            .map_err(|e| PdfError::Backend(e.to_string()))?;
+        let char_count = usize::try_from(text.len()).unwrap_or(0);
+        let mut out = String::with_capacity(char_count);
+        let mut starts = Vec::with_capacity(char_count + 1);
+        let chars = text.chars();
+        for ch in chars.iter() {
+            starts.push(out.len());
+            if let Some(c) = ch.unicode_char() {
+                out.push(c);
+            }
+        }
+        starts.push(out.len());
+        Ok((out, starts))
+    }
+
+    /// Tight bounding rects for pdfium char indices `start..end` on
+    /// `page`, expressed in page-local top-left coordinates (PDF
+    /// points, y grows down). Adjacent chars on the same line are
+    /// unioned so a run of glyphs collapses into a single rect;
+    /// line breaks emit new rects.
+    ///
+    /// Returns an empty vec when `end <= start` or the range is empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PdfError::PageOutOfRange`] when `page` is out of
+    /// range, [`PdfError::Backend`] on pdfium failure.
+    pub fn char_rects(
+        &self,
+        page: usize,
+        start: usize,
+        end: usize,
+    ) -> Result<Vec<Rect>, PdfError> {
+        if end <= start {
+            return Ok(Vec::new());
+        }
+        let (_, page_height) = self.page_size(page)?;
+        let pdf_page = self.pdf_page(page)?;
+        let text = pdf_page
+            .text()
+            .map_err(|e| PdfError::Backend(e.to_string()))?;
+        let char_count = usize::try_from(text.len()).unwrap_or(0);
+        let clamped_end = end.min(char_count);
+        if start >= clamped_end {
+            return Ok(Vec::new());
+        }
+        let chars = text.chars();
+        let mut merged: Vec<Rect> = Vec::new();
+        for idx in start..clamped_end {
+            let Ok(ch) = chars.get(idx) else {
+                continue;
+            };
+            let Ok(bounds) = ch.tight_bounds() else {
+                continue;
+            };
+            let rect = Rect {
+                min_x: bounds.left().value,
+                min_y: page_height - bounds.top().value,
+                max_x: bounds.right().value,
+                max_y: page_height - bounds.bottom().value,
+            };
+            match merged.last_mut() {
+                Some(last) if same_line(last, &rect) => {
+                    last.min_x = last.min_x.min(rect.min_x);
+                    last.max_x = last.max_x.max(rect.max_x);
+                    last.min_y = last.min_y.min(rect.min_y);
+                    last.max_y = last.max_y.max(rect.max_y);
+                }
+                _ => merged.push(rect),
+            }
+        }
+        Ok(merged)
+    }
+
+    fn pdf_page(
+        &self,
+        page: usize,
+    ) -> Result<pdfium_render::prelude::PdfPage<'_>, PdfError> {
         let count = self.page_count();
         if page >= count {
             return Err(PdfError::PageOutOfRange {
@@ -162,12 +270,11 @@ impl PdfDocument {
         }
         #[allow(clippy::cast_possible_truncation)]
         let idx = page as u16;
-        let pages = self.inner.doc.pages();
-        let pdf_page = pages.get(idx).map_err(|e| PdfError::Backend(e.to_string()))?;
-        let text = pdf_page
-            .text()
-            .map_err(|e| PdfError::Backend(e.to_string()))?;
-        Ok(text.all())
+        self.inner
+            .doc
+            .pages()
+            .get(idx)
+            .map_err(|e| PdfError::Backend(e.to_string()))
     }
 
     /// Access the underlying pdfium document. Crate-internal — the
@@ -183,4 +290,50 @@ fn collect_page_sizes(doc: &PdfiumDoc<'_>) -> Vec<(f32, f32)> {
         .iter()
         .map(|p| (p.width().value, p.height().value))
         .collect()
+}
+
+/// Same-line heuristic used by [`PdfDocument::char_rects`] to fold
+/// adjacent glyphs into one highlight rect. Two rects share a line
+/// when their vertical extents overlap by at least half the shorter
+/// rect's height — tolerant enough for baseline jitter, tight enough
+/// that a soft line break breaks the run.
+fn same_line(a: &Rect, b: &Rect) -> bool {
+    let overlap = a.max_y.min(b.max_y) - a.min_y.max(b.min_y);
+    if overlap <= 0.0 {
+        return false;
+    }
+    let shorter = (a.max_y - a.min_y).min(b.max_y - b.min_y);
+    shorter > 0.0 && overlap >= shorter * 0.5
+}
+
+#[cfg(test)]
+mod tests {
+    use super::same_line;
+    use freya_canvas_bg::Rect;
+
+    fn line(y: f32, h: f32) -> Rect {
+        Rect { min_x: 0.0, min_y: y, max_x: 10.0, max_y: y + h }
+    }
+
+    #[test]
+    fn same_line_true_for_aligned_baselines() {
+        assert!(same_line(&line(100.0, 12.0), &line(100.0, 12.0)));
+    }
+
+    #[test]
+    fn same_line_true_with_small_baseline_drift() {
+        // Ascender + descender neighbour with 90% overlap.
+        assert!(same_line(&line(100.0, 12.0), &line(101.0, 12.0)));
+    }
+
+    #[test]
+    fn same_line_false_for_next_line() {
+        // Two visually-separated lines (leading > glyph height).
+        assert!(!same_line(&line(100.0, 12.0), &line(120.0, 12.0)));
+    }
+
+    #[test]
+    fn same_line_false_for_touching_but_non_overlapping_rects() {
+        assert!(!same_line(&line(100.0, 12.0), &line(112.0, 12.0)));
+    }
 }

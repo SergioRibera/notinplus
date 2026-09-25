@@ -26,7 +26,7 @@ log             = "0.4"
 [lints.rust]
 missing_debug_implementations = "warn"
 unreachable_pub = "warn"
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }

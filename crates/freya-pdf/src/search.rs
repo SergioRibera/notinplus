@@ -16,14 +16,17 @@
 //!
 //! # Highlight geometry
 //!
-//! The M6 API returns character offsets only. Bounding rects for
-//! rendering highlight overlays land in a follow-up (needs per-char
-//! `tight_bounds` calls against pdfium and world-space projection).
+//! Each [`SearchHit`] carries character offsets; call
+//! [`PdfSearchIndex::hit_rects`] to resolve them into page-local
+//! bounding rects (top-left origin, PDF points) suitable for
+//! overlaying a highlight during paint. World-space rects — already
+//! translated by the page's layout offset — come from
+//! [`crate::PdfBackground::world_hit_rects`].
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use freya_canvas_bg::PageId;
+use freya_canvas_bg::{PageId, Rect};
 
 use crate::doc::PdfDocument;
 use crate::error::PdfError;
@@ -66,7 +69,17 @@ pub struct PdfSearchIndex {
 #[derive(Debug)]
 struct Inner {
     doc: PdfDocument,
-    cache: RwLock<HashMap<u64, Arc<String>>>,
+    cache: RwLock<HashMap<u64, PageIndex>>,
+}
+
+/// Cached per-page text plus the byte-offset table needed to map a
+/// [`SearchHit`] back to a pdfium char range. Byte-offset table has
+/// length `char_count + 1`: entry `i` is the byte offset of pdfium
+/// char index `i` in `text`; the trailing entry is `text.len()`.
+#[derive(Debug, Clone)]
+struct PageIndex {
+    text: Arc<String>,
+    char_byte_starts: Arc<Vec<usize>>,
 }
 
 impl PdfSearchIndex {
@@ -94,16 +107,24 @@ impl PdfSearchIndex {
     /// Propagates any [`PdfError`] from pdfium (e.g. page out of
     /// range, decode failure).
     pub fn page_text(&self, page: PageId) -> Result<Arc<String>, PdfError> {
-        if let Some(text) = self.read_cache(page.0) {
-            return Ok(text);
+        Ok(self.page_index(page)?.text)
+    }
+
+    fn page_index(&self, page: PageId) -> Result<PageIndex, PdfError> {
+        if let Some(entry) = self.read_cache(page.0) {
+            return Ok(entry);
         }
         let idx = usize::try_from(page.0).map_err(|_| PdfError::PageOutOfRange {
             requested: usize::MAX,
             page_count: self.inner.doc.page_count(),
         })?;
-        let text = Arc::new(self.inner.doc.extract_page_text(idx)?);
-        self.write_cache(page.0, Arc::clone(&text));
-        Ok(text)
+        let (text, starts) = self.inner.doc.extract_page_text_indexed(idx)?;
+        let entry = PageIndex {
+            text: Arc::new(text),
+            char_byte_starts: Arc::new(starts),
+        };
+        self.write_cache(page.0, entry.clone());
+        Ok(entry)
     }
 
     /// Drop every cached page text. Right after a document swap or
@@ -153,27 +174,79 @@ impl PdfSearchIndex {
         Ok(all)
     }
 
-    fn read_cache(&self, page: u64) -> Option<Arc<String>> {
+    /// Bounding rects for a search hit, in page-local top-left
+    /// coordinates (PDF points, y grows down).
+    ///
+    /// Multiple rects are returned when the match wraps across
+    /// lines — each rect covers one contiguous line run of the
+    /// matched glyphs. Callers stacking the rects into a paint
+    /// overlay should translate by the page's world offset (see
+    /// [`crate::PdfBackground::world_hit_rects`]).
+    ///
+    /// # Errors
+    ///
+    /// Propagates any [`PdfError`] from pdfium (e.g. page out of
+    /// range, tight-bounds failure).
+    pub fn hit_rects(&self, hit: SearchHit) -> Result<Vec<Rect>, PdfError> {
+        if hit.match_len == 0 {
+            return Ok(Vec::new());
+        }
+        let entry = self.page_index(hit.page)?;
+        let starts = entry.char_byte_starts.as_slice();
+        let start_byte = hit.char_offset;
+        let end_byte = hit.char_offset.saturating_add(hit.match_len);
+        let (start_char, end_char) = char_range_for_bytes(starts, start_byte, end_byte);
+        let idx = usize::try_from(hit.page.0).map_err(|_| PdfError::PageOutOfRange {
+            requested: usize::MAX,
+            page_count: self.inner.doc.page_count(),
+        })?;
+        self.inner.doc.char_rects(idx, start_char, end_char)
+    }
+
+    fn read_cache(&self, page: u64) -> Option<PageIndex> {
         self.read_lock().get(&page).cloned()
     }
 
-    fn write_cache(&self, page: u64, text: Arc<String>) {
-        self.write_lock().insert(page, text);
+    fn write_cache(&self, page: u64, entry: PageIndex) {
+        self.write_lock().insert(page, entry);
     }
 
-    fn read_lock(&self) -> std::sync::RwLockReadGuard<'_, HashMap<u64, Arc<String>>> {
+    fn read_lock(&self) -> std::sync::RwLockReadGuard<'_, HashMap<u64, PageIndex>> {
         match self.inner.cache.read() {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
         }
     }
 
-    fn write_lock(&self) -> std::sync::RwLockWriteGuard<'_, HashMap<u64, Arc<String>>> {
+    fn write_lock(&self) -> std::sync::RwLockWriteGuard<'_, HashMap<u64, PageIndex>> {
         match self.inner.cache.write() {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
         }
     }
+}
+
+/// Map a `[start_byte, end_byte)` slice of a page's extracted text
+/// back to the pdfium char range covering it.
+///
+/// `starts` is the byte-offset table produced by
+/// [`crate::doc::PdfDocument::extract_page_text_indexed`]: entry `i`
+/// is the byte offset of pdfium char `i`, with a trailing sentinel at
+/// `text.len()`. The returned `(start_char, end_char)` half-open range
+/// always satisfies `start_char <= end_char <= chars.len()`; an empty
+/// range signals no chars fall within the requested byte span.
+fn char_range_for_bytes(starts: &[usize], start_byte: usize, end_byte: usize) -> (usize, usize) {
+    let char_count = starts.len().saturating_sub(1);
+    let start_char = match starts.binary_search(&start_byte) {
+        Ok(i) => i,
+        Err(i) => i.saturating_sub(1),
+    }
+    .min(char_count);
+    let end_char = match starts.binary_search(&end_byte) {
+        Ok(i) | Err(i) => i,
+    }
+    .min(char_count);
+    (start_char, end_char.max(start_char))
 }
 
 fn scan(text: &str, query: &str, page: PageId, opts: SearchOptions) -> Vec<SearchHit> {
@@ -239,6 +312,39 @@ mod tests {
         );
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].char_offset, 9);
+    }
+
+    #[test]
+    fn char_range_ascii_span_matches_exact_bytes() {
+        // Text "abcd" — one byte per char, starts = [0,1,2,3,4].
+        let starts = [0, 1, 2, 3, 4];
+        assert_eq!(char_range_for_bytes(&starts, 1, 3), (1, 3));
+        assert_eq!(char_range_for_bytes(&starts, 0, 4), (0, 4));
+        assert_eq!(char_range_for_bytes(&starts, 2, 2), (2, 2));
+    }
+
+    #[test]
+    fn char_range_multibyte_start_snaps_back_to_char_boundary() {
+        // "aéb": bytes a=1, é=2, b=1 → starts = [0, 1, 3, 4].
+        let starts = [0, 1, 3, 4];
+        // Query byte offset 2 (mid-é) → should snap to char index 1.
+        assert_eq!(char_range_for_bytes(&starts, 2, 3), (1, 2));
+        // Range covering all three chars.
+        assert_eq!(char_range_for_bytes(&starts, 0, 4), (0, 3));
+    }
+
+    #[test]
+    fn char_range_end_past_sentinel_clamps() {
+        let starts = [0, 1, 2, 3];
+        // end_byte beyond the sentinel — end_char stays at sentinel.
+        assert_eq!(char_range_for_bytes(&starts, 0, 99), (0, 3));
+    }
+
+    #[test]
+    fn char_range_empty_span_is_empty() {
+        let starts = [0, 1, 2, 3];
+        let (a, b) = char_range_for_bytes(&starts, 1, 1);
+        assert_eq!(a, b);
     }
 
     #[test]
