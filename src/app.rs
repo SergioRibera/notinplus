@@ -13,7 +13,10 @@
 use std::sync::{Arc, Mutex};
 
 use freya::prelude::*;
+use freya::router::*;
 use istmo::plugins::{EdgeInsets, SafeArea, SafeAreaInsets};
+
+use crate::route::Route;
 
 use crate::brush::{BrushKind, BrushPreset, ShapeMode};
 use crate::canvas::{Board, LayerSnapshot, RedrawNotifier, drawing_surface, lock};
@@ -77,7 +80,9 @@ pub fn run_desktop() {
 }
 
 /// Launch the app inside the mobile shell (Android `GameActivity` /
-/// iOS `SwiftUI` container). Same `root` component as desktop.
+/// iOS `SwiftUI` container). Mobile mounts the router-driven shell so
+/// the user lands on a home page and picks between a blank canvas and
+/// a PDF-backed one; desktop stays on the flat `root` for now.
 pub fn run_mobile() {
     #[cfg(target_os = "android")]
     {
@@ -99,15 +104,19 @@ pub fn run_mobile() {
         launch(
             LaunchConfig::new()
                 .with_event_loop(event_loop)
-                .with_window(WindowConfig::new(root).with_title("notinplus")),
+                .with_window(WindowConfig::new(mobile_root).with_title("notinplus")),
         );
     }
 
     #[cfg(not(target_os = "android"))]
-    launch(LaunchConfig::new().with_window(WindowConfig::new(root).with_title("notinplus")));
+    launch(LaunchConfig::new().with_window(WindowConfig::new(mobile_root).with_title("notinplus")));
 }
 
-fn root() -> impl IntoElement {
+fn mobile_root() -> impl IntoElement {
+    Router::<Route>::new(|| RouterConfig::default().with_initial_path(Route::Home))
+}
+
+pub(crate) fn root() -> impl IntoElement {
     let mut zoom = use_state(|| 1.0_f32);
     let board = use_hook(|| {
         let board = Board::shared();

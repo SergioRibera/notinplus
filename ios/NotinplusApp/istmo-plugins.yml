@@ -6,6 +6,10 @@
 targets:
   NotinplusApp:
     sources:
+      - path: "../../../istmo/plugins/file-picker/native/ios"
+        name: ISTMO_FILE_PICKER
+        type: group
+        createIntermediateGroups: true
       - path: "../../../istmo/plugins/istmo-pen/native/ios"
         name: ISTMO_PEN
         type: group

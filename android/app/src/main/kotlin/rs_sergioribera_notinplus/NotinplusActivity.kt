@@ -7,8 +7,11 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.google.androidgamesdk.GameActivity
+import dev.istmo.plugins.filepicker.FilePickerBackendImpl
 import dev.istmo.plugins.pen.PenCaptureView
 import dev.istmo.plugins.pen.PenFactoryImpl
+import dev.istmo.runtime.FilePickerCodecsImpl
+import dev.istmo.runtime.FilePickerDispatcher
 import dev.istmo.runtime.IstmoPluginRegistry
 import dev.istmo.runtime.IstmoRuntime
 import dev.istmo.runtime.PenCodecsImpl
@@ -47,6 +50,17 @@ class NotinplusActivity : GameActivity() {
         IstmoRuntime.registerHandler(
             PenDispatcher.PLUGIN_ID,
             PenDispatcher(PenFactoryImpl(penView), PenCodecsImpl()),
+        )
+
+        // SAF file picker. `FilePickerBackendImpl` registers
+        // `ActivityResultLauncher`s in its ctor, so it MUST be
+        // constructed here (before super.onCreate → onStart) — otherwise
+        // Android throws `LifecycleOwners must call register before they
+        // are STARTED`.
+        val filePicker = FilePickerBackendImpl(this)
+        IstmoRuntime.registerHandler(
+            FilePickerDispatcher.PLUGIN_ID,
+            FilePickerDispatcher(filePicker, FilePickerCodecsImpl()),
         )
 
         super.onCreate(savedInstanceState)

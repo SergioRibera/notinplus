@@ -14,9 +14,11 @@ pub mod brush;
 pub mod canvas;
 pub mod doc;
 pub mod history;
+pub mod home;
 pub mod palette_popup;
 pub mod pen_pump;
 pub mod render;
+pub mod route;
 pub mod spatial;
 pub mod ui_mask;
 
@@ -34,10 +36,11 @@ pub mod desktop;
 pub const WINDOW_ID: u64 = 1;
 
 use istmo::plugins::SafeArea;
+use istmo_file_picker::FilePickerClient;
 use istmo_pen::PenClient;
 
 istmo::runtime!(
-    plugins: [PenClient, SafeArea],
+    plugins: [PenClient, SafeArea, FilePickerClient],
 );
 
 #[cfg(any(

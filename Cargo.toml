@@ -27,7 +27,8 @@ path = "src/main.rs"
 # under `GameActivity`. Switch the activity flavor at the facade level.
 istmo     = { path = "../istmo", default-features = false, features = ["game-activity"] }
 istmo-pen = { path = "../istmo/plugins/istmo-pen" }
-freya        = "0.4"
+istmo-file-picker = { path = "../istmo/plugins/file-picker" }
+freya        = { version = "0.4", features = ["router"] }
 freya-engine = "0.4"
 torin        = "0.4"
 freya-canvas-bg = { path = "crates/freya-canvas-bg" }
