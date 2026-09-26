@@ -20,8 +20,20 @@ pub const TILE_PIXELS: u32 = 512;
 /// render as one bitmap.
 pub const TILE_THRESHOLD: u32 = 1_024;
 
+/// Lower bucket bound. `1.5^-4 ≈ 0.2` — anything below that is a
+/// glorified page thumbnail and the cache would waste entries on
+/// per-tile granularity that no one can read.
+pub const MIN_BUCKET: i32 = -4;
+/// Upper bucket bound. `1.5^5 ≈ 7.6` — capping here keeps a US-Letter
+/// page (612×792pt) under `4650×6000` px = ~110 MB when rasterised
+/// tile-by-tile. Higher zoom levels reuse this bucket's tiles via
+/// Skia's linear upscale, which trades a hint of blur for stable
+/// memory and no pdfium bitmap-alloc explosion.
+pub const MAX_BUCKET: i32 = 5;
+
 /// Quantize a raw viewport scale into a discrete bucket index. Bucket
-/// `n` covers scales in `[1.5^(n-0.5), 1.5^(n+0.5))`.
+/// `n` covers scales in `[1.5^(n-0.5), 1.5^(n+0.5))`, clamped to
+/// [`MIN_BUCKET`]..=[`MAX_BUCKET`].
 #[must_use]
 pub fn bucket_for(scale: f32) -> i32 {
     if !scale.is_finite() || scale <= 0.0 {
@@ -29,7 +41,7 @@ pub fn bucket_for(scale: f32) -> i32 {
     }
     #[allow(clippy::cast_possible_truncation)]
     let b = scale.log(BUCKET_BASE).round() as i32;
-    b
+    b.clamp(MIN_BUCKET, MAX_BUCKET)
 }
 
 /// Effective scale represented by a given bucket. Used to size the
@@ -178,6 +190,20 @@ mod tests {
         assert_eq!(bucket_for(0.0), 0);
         assert_eq!(bucket_for(-1.0), 0);
         assert_eq!(bucket_for(f32::NAN), 0);
+    }
+
+    #[test]
+    fn bucket_clamped_to_max_at_extreme_zoom() {
+        // 100× zoom would suggest bucket 12; clamp holds at MAX_BUCKET
+        // so pdfium never receives a rasterisation request whose bitmap
+        // would exceed the alloc ceiling.
+        assert_eq!(bucket_for(100.0), MAX_BUCKET);
+        assert_eq!(bucket_for(f32::MAX), MAX_BUCKET);
+    }
+
+    #[test]
+    fn bucket_clamped_to_min_at_extreme_zoom_out() {
+        assert_eq!(bucket_for(0.001), MIN_BUCKET);
     }
 
     #[test]

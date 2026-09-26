@@ -23,9 +23,7 @@ use std::thread::JoinHandle;
 
 use flume::{Receiver, Sender};
 use freya_canvas_bg::{PageId, RedrawHandle};
-use pdfium_render::prelude::{
-    PdfBitmap, PdfBitmapFormat, PdfPoints, PdfRenderConfig, Pixels,
-};
+use pdfium_render::prelude::{PdfBitmap, PdfBitmapFormat, PdfRenderConfig, Pixels};
 
 use crate::cache::{Cache, CachedTile};
 use crate::cancel::CancelToken;
@@ -190,9 +188,8 @@ fn render_entry(doc: &PdfDocument, key: CacheKey) -> Option<CachedTile> {
     let scale = bucket_scale(key.bucket);
     let pdf_doc = doc.pdfium_doc();
     let pages = pdf_doc.pages();
-    #[allow(clippy::cast_possible_truncation)]
-    let pdf_page = pages.get(key.page.0 as u16).ok()?;
-    let bindings = pdf_doc.bindings();
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    let pdf_page = pages.get(key.page.0 as i32).ok()?;
 
     match key.tile {
         TileCoord::Full => {
@@ -213,23 +210,21 @@ fn render_entry(doc: &PdfDocument, key: CacheKey) -> Option<CachedTile> {
                 return None;
             }
             let mut bitmap =
-                PdfBitmap::empty(tile_w, tile_h, PdfBitmapFormat::BGRA, bindings).ok()?;
-            // Matrix: scale points → pixels, then translate so the
-            // tile's origin lands at bitmap (0, 0). `clip` guards
-            // against pdfium overshooting into pixels outside the
-            // tile buffer. `.scale` / `.translate` return
-            // `Result<PdfRenderConfig>` (they reject degenerate
-            // matrices with `determinant == 0`); propagate with `ok()?`.
-            #[allow(clippy::cast_precision_loss)]
+                PdfBitmap::empty(tile_w, tile_h, PdfBitmapFormat::BGRA).ok()?;
+            // Sub-tile trick: ask pdfium to render the WHOLE page at
+            // `full_w × full_h`, but with the page's top-left at
+            // `(-start_x, -start_y)` inside a `tile_w × tile_h` bitmap.
+            // Pdfium clips to the destination bitmap's own size, so we
+            // get exactly the cell we want. This deliberately avoids
+            // `FPDF_RenderPageBitmapWithMatrix` (the transform+clip
+            // path), which throws `std::bad_variant_access` inside
+            // pdfium 7881 and abort()s the process because pdfium is
+            // built with `-fno-exceptions`. `set_target_size` +
+            // `set_origin` stays on the form-data path
+            // (`FPDF_RenderPageBitmap`), which is stable.
             let config = PdfRenderConfig::new()
-                .scale(scale, scale)
-                .ok()?
-                .translate(
-                    PdfPoints::new(-(start_x as f32)),
-                    PdfPoints::new(-(start_y as f32)),
-                )
-                .ok()?
-                .clip(0, 0, tile_w, tile_h);
+                .set_target_size(full_w, full_h)
+                .set_origin(-start_x, -start_y);
             pdf_page
                 .render_into_bitmap_with_config(&mut bitmap, &config)
                 .ok()?;

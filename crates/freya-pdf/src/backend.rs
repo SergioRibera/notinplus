@@ -15,15 +15,17 @@
 //!   viewport and cancels pending requests for pages that scrolled
 //!   out of range.
 
-use std::collections::HashSet;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 
 use freya_canvas_bg::{
     AttributionMode, BgPaintCtx, CanvasBackground, Color, PageAttachment, PageId, PageLayout,
     Rect,
 };
 use freya_engine::prelude::{
-    AlphaType, ColorType, Data, Image, ImageInfo, Paint, Rect as SkRect, raster_from_data,
+    AlphaType, ColorType, Data, FilterMode, Image, ImageInfo, MipmapMode, Paint, Rect as SkRect,
+    SamplingOptions, raster_from_data,
 };
 use skia_safe::canvas::SrcRectConstraint;
 
@@ -44,6 +46,21 @@ const PREFETCH_BUFFER: usize = 3;
 /// Cache capacity. Bumped from M4 to accommodate multi-tile pages —
 /// a tiled page at bucket 3 can easily contribute a dozen entries.
 const CACHE_CAPACITY: usize = 256;
+/// Sampling for the `draw_image_rect` calls that blit cached tiles.
+/// The default `SamplingOptions` is `Nearest` filter with no mipmap —
+/// visibly pixelated whenever the viewport zoom lands between the
+/// bucket's native rasterisation and the target dst rect (which is
+/// most of the time). `Linear` costs a hair of GPU work per pixel and
+/// makes text at intermediate zooms look like a rendered PDF instead
+/// of a screenshot of one. Mipmapping stays off — we already ship
+/// per-bucket LODs, so a mip chain would double-sample the same data.
+const TILE_SAMPLING: SamplingOptions = SamplingOptions {
+    max_aniso: 0,
+    use_cubic: false,
+    cubic: freya_engine::prelude::CubicResampler { b: 0.0, c: 0.0 },
+    filter: FilterMode::Linear,
+    mipmap: MipmapMode::None,
+};
 /// Number of worker threads. Two is enough — pdfium serialises heavy
 /// operations behind an internal mutex so extra threads mostly buy
 /// prefetch parallelism.
@@ -60,6 +77,23 @@ pub struct PdfBackground {
     bounds: Rect,
     cache: Arc<Cache>,
     pool: Arc<RenderPool>,
+    /// Per-page thumbnail (lowest-bucket `TileCoord::Full` render).
+    /// Lives outside the LRU so a placeholder is always available on
+    /// zoom transitions even when the cache has churned through many
+    /// higher-bucket tiles. Populated opportunistically when a worker
+    /// completes a bucket 0 Full render for the page.
+    thumbs: Mutex<HashMap<PageId, Arc<CachedTile>>>,
+    /// Tiles pinned for the duration of the current paint frame. The
+    /// zero-copy `Data::new_bytes` path hands Skia a raw pointer into
+    /// each tile's `Arc<Vec<u8>>`; those pointers stay valid as long
+    /// as we hold an owning `Arc` here. Cleared at the start of every
+    /// paint so previous-frame pins drop after Skia has flushed the
+    /// frame that referenced them.
+    frame_pins: Mutex<Vec<Arc<CachedTile>>>,
+    /// Bits of the effective render scale (viewport × device pixel
+    /// ratio) captured on the last `paint` call. Read by `tick` so
+    /// prefetch queues match the resolution paint just requested.
+    last_effective_scale_bits: AtomicU32,
 }
 
 impl PdfBackground {
@@ -77,7 +111,18 @@ impl PdfBackground {
         let (pages, bounds) = compute_layout(&doc, gap);
         let cache = Arc::new(Cache::new(CACHE_CAPACITY));
         let pool = RenderPool::new(&doc, &cache, DEFAULT_WORKERS);
-        Self { doc, gap, backdrop, pages, bounds, cache, pool }
+        Self {
+            doc,
+            gap,
+            backdrop,
+            pages,
+            bounds,
+            cache,
+            pool,
+            thumbs: Mutex::new(HashMap::new()),
+            frame_pins: Mutex::new(Vec::new()),
+            last_effective_scale_bits: AtomicU32::new(1.0_f32.to_bits()),
+        }
     }
 
     /// Underlying document — text extraction, page counts, etc.
@@ -173,7 +218,18 @@ impl CanvasBackground for PdfBackground {
         // internal `Arc<Mutex<RedrawHandle>>`.
         self.pool.set_redraw(cx.redraw.clone());
 
-        let bucket = bucket_for(cx.scale);
+        // Drop last frame's pinned tiles now that Skia has flushed the
+        // frame that referenced them, then reserve for this frame's.
+        lock(&self.frame_pins).clear();
+
+        // Bucket picks based on the *effective* device-pixel scale, not
+        // the viewport zoom in isolation. `total_matrix().scale_x()`
+        // folds in freya's DPI transform, so bucket 0 no longer means
+        // "render at 1 pt = 1 physical pixel" on hi-DPI screens.
+        let effective_scale = canvas_scale_x(cx.canvas).max(cx.scale);
+        self.last_effective_scale_bits
+            .store(effective_scale.to_bits(), Ordering::Relaxed);
+        let bucket = bucket_for(effective_scale);
         let image_paint = Paint::default();
 
         for pl in &self.pages {
@@ -181,6 +237,17 @@ impl CanvasBackground for PdfBackground {
                 continue;
             }
             draw_page_fill(cx.canvas, pl.rect);
+            // Kick off the persistent thumbnail render if we don't have
+            // one yet. Bucket 0 Full tiles cost pennies and give every
+            // higher-bucket miss a guaranteed placeholder — that's the
+            // fix for "screen goes white on zoom until you wiggle it".
+            if !self.has_thumb(pl.id) {
+                self.pool.request(CacheKey {
+                    page: pl.id,
+                    bucket: 0,
+                    tile: TileCoord::Full,
+                });
+            }
             match TileGrid::for_page(pl.natural_size, bucket) {
                 None => {
                     // Small page: single full-bitmap render.
@@ -210,10 +277,28 @@ impl CanvasBackground for PdfBackground {
                     }
                 }
             }
+            // Harvest the persistent bucket-0 Full tile the moment it
+            // lands. `draw_or_request` only sees it when the current
+            // bucket also is 0 (small-page path); for larger buckets
+            // the tile arrives via the explicit `pool.request` above
+            // and would otherwise sit in the LRU until eviction.
+            if !self.has_thumb(pl.id) {
+                if let Some(thumb) = self.cache.peek(CacheKey {
+                    page: pl.id,
+                    bucket: 0,
+                    tile: TileCoord::Full,
+                }) {
+                    self.remember_thumb(pl.id, &thumb);
+                }
+            }
         }
     }
 
-    fn tick(&self, visible: Rect, scale: f32) {
+    fn tick(&self, visible: Rect, _scale: f32) {
+        // Use paint's captured effective scale so prefetch buckets
+        // match the visible resolution. Falls back to 1.0 before the
+        // first paint call has landed.
+        let scale = f32::from_bits(self.last_effective_scale_bits.load(Ordering::Relaxed));
         let bucket = bucket_for(scale);
         let visible_indices: Vec<usize> = self
             .pages
@@ -279,26 +364,42 @@ impl PdfBackground {
             dst_world.max_y,
         );
         if let Some(tile) = self.cache.get(key) {
-            if let Some(img) = tile_to_image(&tile) {
-                cx.canvas.draw_image_rect(&img, None, dst, image_paint);
+            if key.bucket == 0 && matches!(key.tile, TileCoord::Full) {
+                self.remember_thumb(key.page, &tile);
+            }
+            if let Some(img) = self.tile_to_image_pinned(&tile) {
+                cx.canvas.draw_image_rect_with_sampling_options(
+                    &img,
+                    None,
+                    dst,
+                    TILE_SAMPLING,
+                    image_paint,
+                );
             }
             return;
         }
-        // Miss: upscale the best lower-bucket full-page render if we
-        // have one, then queue the target-bucket render. Placeholder
-        // is always a full-page tile so a single lookup covers every
-        // sub-tile of the same page. For a `TileCoord::Cell`, we sample
-        // only the corresponding sub-rect out of the placeholder so
-        // the sub-tile paints the *matching* region rather than a
-        // stretched copy of the whole page.
-        let placeholder_key_bucket = key.bucket - 1;
-        if let Some(placeholder) =
-            self.cache.nearest_full_at_or_below(key.page, placeholder_key_bucket)
-        {
-            if let Some(img) = tile_to_image(&placeholder) {
+        // Miss: prefer the highest cached full-page render below the
+        // target bucket, then fall back to the persistent thumbnail
+        // (bucket 0) so a placeholder is always available even after
+        // heavy LRU churn. For a `TileCoord::Cell`, we sample only the
+        // corresponding sub-rect out of the placeholder so the sub-tile
+        // paints the *matching* region rather than a stretched copy of
+        // the whole page.
+        let placeholder = self
+            .cache
+            .nearest_full_at_or_below(key.page, key.bucket - 1)
+            .or_else(|| self.thumb_for(key.page));
+        if let Some(placeholder) = placeholder {
+            if let Some(img) = self.tile_to_image_pinned(&placeholder) {
                 let src = placeholder_src_rect(page_rect, dst_world, &placeholder);
                 let src_pair = src.as_ref().map(|r| (r, SrcRectConstraint::Fast));
-                cx.canvas.draw_image_rect(&img, src_pair, dst, image_paint);
+                cx.canvas.draw_image_rect_with_sampling_options(
+                    &img,
+                    src_pair,
+                    dst,
+                    TILE_SAMPLING,
+                    image_paint,
+                );
             }
         }
         self.pool.request(key);
@@ -309,6 +410,46 @@ impl PdfBackground {
             return;
         }
         self.pool.request(key);
+    }
+
+    /// Wraps `tile` as a Skia `Image` without copying and pins the
+    /// owning `Arc<CachedTile>` for the current paint frame. See
+    /// [`Self::frame_pins`] for the lifetime contract.
+    fn tile_to_image_pinned(&self, tile: &Arc<CachedTile>) -> Option<Image> {
+        let img = tile_to_image_zero_copy(tile)?;
+        lock(&self.frame_pins).push(Arc::clone(tile));
+        Some(img)
+    }
+
+    fn has_thumb(&self, page: PageId) -> bool {
+        lock(&self.thumbs).contains_key(&page)
+    }
+
+    fn thumb_for(&self, page: PageId) -> Option<Arc<CachedTile>> {
+        lock(&self.thumbs).get(&page).cloned()
+    }
+
+    fn remember_thumb(&self, page: PageId, tile: &Arc<CachedTile>) {
+        let mut thumbs = lock(&self.thumbs);
+        thumbs.entry(page).or_insert_with(|| Arc::clone(tile));
+    }
+}
+
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    match m.lock() {
+        Ok(g) => g,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn canvas_scale_x(canvas: &freya_engine::prelude::Canvas) -> f32 {
+    let m = canvas.local_to_device_as_3x3();
+    let sx = m.scale_x().abs();
+    let sy = m.scale_y().abs();
+    if sx.is_finite() && sy.is_finite() && sx > 0.0 && sy > 0.0 {
+        sx.max(sy)
+    } else {
+        1.0
     }
 }
 
@@ -381,28 +522,31 @@ fn placeholder_src_rect(page_rect: Rect, dst_world: Rect, placeholder: &CachedTi
     ))
 }
 
-/// Wraps `tile`'s RGBA buffer as a Skia [`Image`] without copying.
+/// Zero-copy wrapper around `tile`'s RGBA buffer as a Skia [`Image`].
 ///
-/// # Safety invariant
+/// # Safety contract
 ///
-/// The caller MUST keep `tile` (and therefore the underlying
-/// `Arc<Vec<u8>>`) alive for the entire draw call that consumes the
-/// returned `Image`. Every call site in this module holds an
-/// `Arc<CachedTile>` on the stack across `Canvas::draw_image_rect`, so
-/// the buffer stays live until the paint pipeline is done reading it.
-fn tile_to_image(tile: &CachedTile) -> Option<Image> {
+/// The returned `Image` holds an `SkData` referencing the tile's
+/// `Arc<Vec<u8>>` without copying it. The caller MUST keep the owning
+/// `Arc<CachedTile>` alive for the entire lifetime of every Skia
+/// command that reads the image — Skia flushes deferred draw ops
+/// **after** [`CanvasBackground::paint`] returns, so a locally-scoped
+/// `Arc` is not enough. [`PdfBackground::tile_to_image_pinned`] is the
+/// only sound caller: it pushes an `Arc<CachedTile>` clone into
+/// [`PdfBackground::frame_pins`], which drops the pin at the start of
+/// the next paint (well after this frame's flush has happened).
+fn tile_to_image_zero_copy(tile: &CachedTile) -> Option<Image> {
     #[allow(clippy::cast_possible_wrap)]
     let (w, h) = (tile.width as i32, tile.height as i32);
     let info = ImageInfo::new((w, h), ColorType::RGBA8888, AlphaType::Unpremul, None);
     let row_bytes = tile.width as usize * 4;
-    // SAFETY: `tile.bytes` is an `Arc<Vec<u8>>` owned by the caller
-    // (see fn-level invariant). `Data::new_bytes` produces an
-    // `SkData` that references the slice without copying; the
-    // `SkImage` returned by `raster_from_data` keeps that `SkData`
-    // refcounted and its raster backend reads from it synchronously
-    // during `Canvas::draw_image_rect`. Both the image and the data
-    // drop at end-of-frame, well before the caller releases its
-    // `Arc<CachedTile>`.
+    // SAFETY: pin contract — see fn-level doc. `tile.bytes` is an
+    // `Arc<Vec<u8>>`; `Data::new_bytes` produces an `SkData` that
+    // references the slice without copying it, and the returned
+    // `SkImage`'s raster backend reads through that pointer during
+    // every subsequent `Canvas::draw_image_rect` call. The pin held
+    // in `PdfBackground::frame_pins` keeps the `Arc` alive across the
+    // frame flush that consumes those draw commands.
     #[allow(unsafe_code)]
     let data = unsafe { Data::new_bytes(&tile.bytes) };
     raster_from_data(&info, data, row_bytes)

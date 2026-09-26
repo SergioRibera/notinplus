@@ -116,7 +116,12 @@ fun cargoLib(crate: String, libName: String = crate.replace('-', '_')) {
 // matches Chromium's pdfium license). Pin a specific release so the
 // checksum stays reproducible; bump when needed.
 // -----------------------------------------------------------------
-val pdfiumRelease   = "chromium/8066"
+// Pinned to match the ABI baseline `pdfium-render 0.9` binds against
+// (`pdfium_latest = pdfium_7881`). Bump this in lock-step with any
+// `pdfium-render` upgrade — the bindgen'd struct layouts and function
+// signatures must match the shipped binary or FPDF_* calls corrupt
+// allocator state.
+val pdfiumRelease   = "chromium/7881"
 val pdfiumBaseUrl   = "https://github.com/bblanchon/pdfium-binaries/releases/download/$pdfiumRelease"
 val pdfiumAbiSuffix = mapOf(
     "arm64-v8a"   to "arm64",

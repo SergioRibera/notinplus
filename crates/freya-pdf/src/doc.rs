@@ -4,7 +4,9 @@
 //! open. The binding lives in a static `OnceLock` so every document
 //! borrows from `&'static Pdfium` and can therefore hold a
 //! `PdfDocument<'static>` payload without carrying lifetime parameters
-//! into the public API.
+//! into the public API. Concurrency is delegated to pdfium-render 0.9's
+//! `thread_safe` feature (default-on) which mutex-wraps every FPDF_*
+//! call, so worker threads can call into the shared document safely.
 
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
@@ -295,8 +297,8 @@ impl PdfDocument {
                 page_count: count,
             });
         }
-        #[allow(clippy::cast_possible_truncation)]
-        let idx = page as u16;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+        let idx = page as i32;
         self.inner
             .doc
             .pages()

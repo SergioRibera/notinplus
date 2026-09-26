@@ -11,7 +11,7 @@
 # platforms.
 set -euo pipefail
 
-PDFIUM_RELEASE="${PDFIUM_RELEASE:-chromium/8066}"
+PDFIUM_RELEASE="${PDFIUM_RELEASE:-chromium/7881}"
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "$0")" && pwd)}"
 VENDOR_DIR="${PROJECT_DIR}/Vendor"
 XCFRAMEWORK_DIR="${VENDOR_DIR}/pdfium.xcframework"

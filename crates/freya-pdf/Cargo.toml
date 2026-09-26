@@ -18,18 +18,28 @@ freya-skia-safe = { version = "0.98", default-features = false }
 flume           = "0.11"
 hashlink        = "0.10"
 # Default features pick a PDFium API version (`pdfium_latest` →
-# 7543-shaped bindings) and enable `thread_safe`; `sync` layers a
-# `Send + Sync` Mutex over the bindings so multiple threads can drive
-# Pdfium once the M4 worker pool lands. Pdfium's shared library is
-# resolved at runtime via `Pdfium::bind_to_system_library` — apps
-# ship the binary through their platform packaging (nix devshell,
-# APK jniLibs, iOS xcframework, etc.).
-pdfium-render   = { version = "0.8", features = ["sync"] }
+# 7881-shaped bindings) and enable `thread_safe`. In 0.9 `thread_safe`
+# actually wraps every FPDF_* call in a global mutex AND provides the
+# `Send + Sync` markers, so the worker pool can drive Pdfium off the
+# UI thread safely. (0.8's `sync` feature only added the markers and
+# left per-call FPDF_* unsynchronised — concurrent `FPDF_LoadPage`
+# from the worker + main thread corrupted pdfium's allocator state
+# and Android crashed with `SIGBUS BUS_ADRALN` on a misaligned
+# function pointer.) Pdfium's shared library is resolved at runtime
+# via `Pdfium::bind_to_system_library` — apps ship the binary through
+# their platform packaging (nix devshell, APK jniLibs, iOS xcframework,
+# etc.).
+pdfium-render   = "0.9"
 log             = "0.4"
 
 [lints.rust]
 missing_debug_implementations = "warn"
 unreachable_pub = "warn"
+# `deny` (not `forbid`) so `tile_to_image_zero_copy` can locally
+# `#[allow(unsafe_code)]` on the one `Data::new_bytes` call it needs.
+# The zero-copy tile → Skia handoff is guarded by `frame_pins` (see
+# backend.rs); banning unsafe outright would force back to `Data::new_copy`,
+# which pays a full RGBA memcpy per visible tile per frame.
 unsafe_code = "deny"
 
 [lints.clippy]
