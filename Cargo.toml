@@ -28,6 +28,7 @@ path = "src/main.rs"
 istmo     = { path = "../istmo", default-features = false, features = ["game-activity"] }
 istmo-pen = { path = "../istmo/plugins/istmo-pen" }
 istmo-file-picker = { path = "../istmo/plugins/file-picker" }
+istmo-data-store  = { path = "../istmo/plugins/data-store" }
 freya        = { version = "0.4", features = ["router"] }
 freya-engine = "0.4"
 torin        = "0.4"

@@ -7,12 +7,9 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.google.androidgamesdk.GameActivity
-import dev.istmo.plugins.filepicker.FilePickerBackendImpl
 import dev.istmo.plugins.pen.PenCaptureView
 import dev.istmo.plugins.pen.PenFactoryImpl
-import dev.istmo.runtime.FilePickerCodecsImpl
-import dev.istmo.runtime.FilePickerDispatcher
-import dev.istmo.runtime.IstmoPluginRegistry
+import dev.istmo.runtime.IstmoHost
 import dev.istmo.runtime.IstmoRuntime
 import dev.istmo.runtime.PenCodecsImpl
 import dev.istmo.runtime.PenDispatcher
@@ -30,37 +27,23 @@ import dev.istmo.runtime.PenDispatcher
  * directly from the dispatch overrides, then delegate to super so
  * GameActivity's native forwarding still delivers the same events to
  * winit / freya on the Rust side.
+ *
+ * `IstmoHost.onCreate` starts the runtime, loads `libnotinplus.so` and
+ * runs the generated `IstmoPluginRegistry` — which auto-registers
+ * data-store and file-picker. Pen opts out (`auto_register = false`)
+ * because its factory needs the capture view; we wire it manually.
  */
 class NotinplusActivity : GameActivity() {
 
     private lateinit var penView: PenCaptureView
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Load the `notinplus` cdylib and start the istmo runtime before
-        // GameActivity's super.onCreate spawns android_main — otherwise
-        // Rust code could try to talk to a runtime that isn't up yet.
-        check(IstmoRuntime.start("notinplus")) { "IstmoRuntime.start() failed" }
-
-        // Auto-register every plugin whose `istmo.toml` declares
-        // `auto_register = true`. Pen opts out (bespoke construction);
-        // wire it manually below.
-        IstmoPluginRegistry.registerAll(applicationContext)
+        IstmoHost.onCreate(this)
 
         penView = PenCaptureView(this)
         IstmoRuntime.registerHandler(
             PenDispatcher.PLUGIN_ID,
             PenDispatcher(PenFactoryImpl(penView), PenCodecsImpl()),
-        )
-
-        // SAF file picker. `FilePickerBackendImpl` registers
-        // `ActivityResultLauncher`s in its ctor, so it MUST be
-        // constructed here (before super.onCreate → onStart) — otherwise
-        // Android throws `LifecycleOwners must call register before they
-        // are STARTED`.
-        val filePicker = FilePickerBackendImpl(this)
-        IstmoRuntime.registerHandler(
-            FilePickerDispatcher.PLUGIN_ID,
-            FilePickerDispatcher(filePicker, FilePickerCodecsImpl()),
         )
 
         super.onCreate(savedInstanceState)
@@ -102,6 +85,6 @@ class NotinplusActivity : GameActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        IstmoRuntime.shutdown()
+        IstmoHost.onDestroy(this)
     }
 }

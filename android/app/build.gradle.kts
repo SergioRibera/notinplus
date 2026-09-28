@@ -4,17 +4,11 @@ import java.net.URI
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    // Auto-discovers `native/android/` from every istmo plugin the
-    // notinplus crate depends on and injects the directory into this
-    // module's main Kotlin source set — no manual copy, no `srcDirs`.
-    id("dev.istmo.plugin-loader")
-}
-
-// The plugin loader walks up from `project.rootDir` looking for a
-// Cargo workspace; notinplus is a single-crate repo so we point it at
-// the sibling istmo checkout explicitly.
-istmo {
-    workspaceRoot.set(file("../../../istmo"))
+    // Builds the Rust crate for every ABI, links every istmo plugin's
+    // `native/android/` sources + AndroidManifest fragments, and applies
+    // `[app]` identity (id / version / minSdk / label / icon) from
+    // `istmo.toml`. Fetched from Maven Central via `pluginManagement`.
+    id("io.github.sergioribera.istmo")
 }
 
 android {
@@ -22,11 +16,10 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "rs.sergioribera.notinplus"
-        minSdk        = 26
-        targetSdk     = 36
-        versionCode   = 1
-        versionName   = "0.1.0"
+        // `applicationId`, `versionCode`, `versionName` and `minSdk`
+        // come from `istmo.toml` `[app]` + `[min_versions]` — the
+        // gradle plugin injects them and warns on manual overrides.
+        targetSdk = 36
         ndk { abiFilters += setOf("arm64-v8a") }
     }
 
@@ -38,15 +31,11 @@ android {
             keyAlias      = "androiddebugkey"
             keyPassword   = "android"
         }
-        
     }
 
     buildTypes {
         getByName("debug")   { signingConfig = signingConfigs.getByName("debug") }
-        getByName("release") {
-            isMinifyEnabled = false
-            
-        }
+        getByName("release") { isMinifyEnabled = false }
     }
 
     compileOptions {
@@ -57,53 +46,6 @@ android {
     packaging { jniLibs { useLegacyPackaging = false } }
 }
 
-android.sourceSets["main"].jniLibs.setSrcDirs(
-    listOf(layout.buildDirectory.dir("rustJniLibs").get().asFile),
-)
-
-val abiToRustTarget = mapOf(
-    "arm64-v8a"    to "aarch64-linux-android",
-    "armeabi-v7a"  to "armv7-linux-androideabi",
-    "x86_64"       to "x86_64-linux-android",
-    "x86"          to "i686-linux-android",
-)
-
-val cargoRoot: File = project.rootDir.resolve("..").normalize()
-val rustJniLibsDir = layout.buildDirectory.dir("rustJniLibs")
-
-val cargoStageTaskNames = mutableListOf<String>()
-
-fun cargoLib(crate: String, libName: String = crate.replace('-', '_')) {
-    val soName = "lib$libName.so"
-    val abis = android.defaultConfig.ndk.abiFilters
-    for (abi in abis) {
-        val rustTarget = abiToRustTarget[abi] ?: error("no rust target for '$abi'")
-        val suffix     = "${libName}_${abi.replace('-', '_')}"
-        val cargoSo    = cargoRoot.resolve("target/$rustTarget/release/$soName")
-        val stagedSo   = rustJniLibsDir.map { it.dir(abi).file(soName) }
-
-        val cargoTask = tasks.register("cargoBuild_$suffix", Exec::class) {
-            group       = "istmo"
-            workingDir  = cargoRoot
-            commandLine("cargo", "build", "--release",
-                        "--target", rustTarget, "-p", crate)
-            outputs.file(cargoSo)
-        }
-        val stageTask = tasks.register("stageRustLib_$suffix") {
-            group      = "istmo"
-            dependsOn(cargoTask)
-            inputs.file(cargoSo)
-            outputs.file(stagedSo)
-            doLast {
-                val dst = stagedSo.get().asFile
-                dst.parentFile.mkdirs()
-                cargoSo.copyTo(dst, overwrite = true)
-            }
-        }
-        cargoStageTaskNames.add(stageTask.name)
-    }
-}
-
 // -----------------------------------------------------------------
 // pdfium shipping. `freya-pdf` loads pdfium at runtime via
 // `Pdfium::bind_to_system_library`, which delegates to `dlopen` on
@@ -112,9 +54,9 @@ fun cargoLib(crate: String, libName: String = crate.replace('-', '_')) {
 // prebuilt `libpdfium.so` alongside our Rust `.so`s is enough for the
 // runtime to pick it up.
 //
-// Binaries come from `bblanchon/pdfium-binaries` (BSD-3-Clause,
-// matches Chromium's pdfium license). Pin a specific release so the
-// checksum stays reproducible; bump when needed.
+// The istmo gradle plugin registers `build/istmo/jniLibs/<buildType>/<abi>`
+// as a jniLibs srcDir for the compiled Rust cdylib; we add our own
+// build-type-agnostic staging dir alongside it for pdfium.
 // -----------------------------------------------------------------
 // Pinned to match the ABI baseline `pdfium-render 0.9` binds against
 // (`pdfium_latest = pdfium_7881`). Bump this in lock-step with any
@@ -129,7 +71,8 @@ val pdfiumAbiSuffix = mapOf(
     "x86_64"      to "x64",
     "x86"         to "x86",
 )
-val pdfiumCacheDir  = layout.buildDirectory.dir("pdfium-cache")
+val pdfiumCacheDir       = layout.buildDirectory.dir("pdfium-cache")
+val pdfiumJniLibsDir     = layout.buildDirectory.dir("pdfium-jniLibs")
 val pdfiumStageTaskNames = mutableListOf<String>()
 
 for (abi in android.defaultConfig.ndk.abiFilters) {
@@ -138,7 +81,7 @@ for (abi in android.defaultConfig.ndk.abiFilters) {
     val tgzUrl   = "$pdfiumBaseUrl/$tgzName"
     val tgzFile  = pdfiumCacheDir.map { it.file(tgzName) }
     val unpacked = pdfiumCacheDir.map { it.dir("pdfium-android-$suffix") }
-    val stagedSo = rustJniLibsDir.map { it.dir(abi).file("libpdfium.so") }
+    val stagedSo = pdfiumJniLibsDir.map { it.dir(abi).file("libpdfium.so") }
 
     val downloadTask = tasks.register("downloadPdfium_$suffix") {
         group   = "istmo"
@@ -180,21 +123,17 @@ for (abi in android.defaultConfig.ndk.abiFilters) {
     pdfiumStageTaskNames.add(stageTask.name)
 }
 
+android.sourceSets["main"].jniLibs.srcDir(pdfiumJniLibsDir)
+
 afterEvaluate {
     tasks.matching { it.name.matches(Regex("merge.*JniLibFolders")) }
-        .configureEach {
-            cargoStageTaskNames.forEach { dependsOn(it) }
-            pdfiumStageTaskNames.forEach { dependsOn(it) }
-        }
+        .configureEach { pdfiumStageTaskNames.forEach { dependsOn(it) } }
 }
 
-cargoLib("notinplus")
-
 dependencies {
-    // Runtime substitution wired in `settings.gradle.kts` — the
-    // includeBuild call replaces this coordinate with the local
-    // `runtime/android` project. Version is a placeholder.
-    implementation("dev.istmo:istmo-runtime")
+    // Runtime AAR published to Maven Central. Version tracks the
+    // gradle plugin above — bump in lock-step.
+    implementation("io.github.sergioribera:istmo-runtime:0.1.0")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")

@@ -1,15 +1,25 @@
 # App-side istmo.toml — declarative overrides consumed by `istmo-build`.
-# Every entry is optional; delete this file entirely if you don't need any
-# of them.
 
 # ---------------------------------------------------------------------------
-# [app] — control the Kotlin/Swift codegen `istmo_build::emit()` performs.
+# [app] — app identity + Kotlin/Swift codegen controls.
 # ---------------------------------------------------------------------------
+# `id`/`name` flow into Gradle (via `io.github.sergioribera.istmo`) and Xcode
+# (through the generated `ios/.istmo/Istmo.xcconfig`). Version comes from
+# Cargo.toml.
+#
 # The pen plugin's native Kotlin sources import `dev.istmo.runtime.PenBackend`
 # / `PenEvent` / … directly, so the generated dispatcher + types must land in
 # that same package. Override the default `<namespace>.gen` accordingly.
 [app]
+id              = "rs.sergioribera.notinplus"
+name            = "notinplus"
 android_package = "dev.istmo.runtime"
+
+# Oldest OS releases we ship to. Android 26 = Oreo (first ART-only + first
+# storage-scoped SDK); iOS 14 matches the rest of the workspace examples.
+[min_versions]
+android = 26
+ios     = "14.0"
 
 # Per-plugin role / platform overrides. Default role is `host` (Rust calls
 # the plugin, native side implements the backend). Set `role = "client"` for

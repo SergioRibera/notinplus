@@ -2,7 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
         android:allowBackup="true"
-        android:label="@string/app_name"
+        android:label="${istmoLabel}"
+        android:icon="${istmoIcon}"
         android:hasCode="true"
         android:theme="@style/Theme.AppCompat.NoActionBar">
         <!-- GameActivity (androidx.games:games-activity) so

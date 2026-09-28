@@ -2,15 +2,45 @@
 # Include this file from your app's `project.yml`:
 #   include:
 #     - path: NotinplusApp/istmo-plugins.yml
-# xcodegen merges the entries below into your app target.
+# xcodegen merges the entries below into your app target; values set
+# in project.yml take precedence over the ones here.
 targets:
   NotinplusApp:
     sources:
+      - path: "../../../istmo/plugins/data-store/native/ios"
+        name: ISTMO_DATA_STORE
+        type: group
+        createIntermediateGroups: true
+        excludes:
+          - "*.fragment"
       - path: "../../../istmo/plugins/file-picker/native/ios"
         name: ISTMO_FILE_PICKER
         type: group
         createIntermediateGroups: true
+        excludes:
+          - "*.fragment"
       - path: "../../../istmo/plugins/istmo-pen/native/ios"
         name: ISTMO_PEN
         type: group
         createIntermediateGroups: true
+        excludes:
+          - "*.fragment"
+    settings:
+      base:
+        ISTMO_LIB_NAME: "notinplus"
+        LIBRARY_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(PROJECT_DIR)/build/rust/$(PLATFORM_NAME)/$(CURRENT_ARCH)"
+        OTHER_LDFLAGS:
+          - "$(inherited)"
+          - "-lnotinplus"
+        ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ISTMO_DISPLAY_NAME: "notinplus"
+        PRODUCT_BUNDLE_IDENTIFIER: "rs.sergioribera.notinplus"
+        IPHONEOS_DEPLOYMENT_TARGET: "14.0"
+    preBuildScripts:
+      - name: istmo cargo build
+        basedOnDependencyAnalysis: false
+        script: '"${PROJECT_DIR}/.istmo/build-rust.sh"'

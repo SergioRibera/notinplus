@@ -32,8 +32,12 @@ android/app/src/main/java/dev/istmo/runtime/*Codecs*.kt
 android/app/src/main/java/dev/istmo/runtime/*Types.kt
 android/app/src/main/java/dev/istmo/runtime/*Dispatcher.kt
 android/app/src/main/java/dev/istmo/runtime/IstmoPluginRegistry.kt
+android/app/src/main/java/dev/istmo/generated/
+android/.istmo/
 ios/**/Generated/
+ios/.istmo/
 ios/NotinplusApp/Plugins/IstmoPluginRegistry.swift
+ios/NotinplusApp/Plugins/IstmoMain.swift
 
 # JetBrains / VS Code
 .idea/
