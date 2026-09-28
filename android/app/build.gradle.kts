@@ -133,7 +133,7 @@ afterEvaluate {
 dependencies {
     // Runtime AAR published to Maven Central. Version tracks the
     // gradle plugin above — bump in lock-step.
-    implementation("io.github.sergioribera:istmo-runtime:0.1.0")
+    implementation("io.github.sergioribera:istmo-runtime:0.1.1-alpha.3")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")

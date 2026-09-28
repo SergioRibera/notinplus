@@ -74,16 +74,7 @@ const fn default_shape() -> BrushPreset {
     BrushPreset::shape(ShapeMode::Line)
 }
 
-/// Launch the app in a desktop window.
-pub fn run_desktop() {
-    launch(LaunchConfig::new().with_window(WindowConfig::new(root).with_title("notinplus")));
-}
-
-/// Launch the app inside the mobile shell (Android `GameActivity` /
-/// iOS `SwiftUI` container). Mobile mounts the router-driven shell so
-/// the user lands on a home page and picks between a blank canvas and
-/// a PDF-backed one; desktop stays on the flat `root` for now.
-pub fn run_mobile() {
+pub fn run() {
     #[cfg(target_os = "android")]
     {
         use freya::prelude::NativeEvent;
@@ -104,15 +95,20 @@ pub fn run_mobile() {
         launch(
             LaunchConfig::new()
                 .with_event_loop(event_loop)
-                .with_window(WindowConfig::new(mobile_root).with_title("notinplus")),
+                .with_window(WindowConfig::new(router).with_title("notinplus")),
         );
     }
 
     #[cfg(not(target_os = "android"))]
-    launch(LaunchConfig::new().with_window(WindowConfig::new(mobile_root).with_title("notinplus")));
+    launch(
+        LaunchConfig::new().with_window(
+            WindowConfig::new(router)
+            .with_title("notinplus"),
+        ),
+    );
 }
 
-fn mobile_root() -> impl IntoElement {
+fn router() -> impl IntoElement {
     Router::<Route>::new(|| RouterConfig::default().with_initial_path(Route::Home))
 }
 

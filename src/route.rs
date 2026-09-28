@@ -18,7 +18,7 @@ use freya_engine::prelude::Color as SkColor;
 
 use crate::app::root as canvas_root;
 use crate::canvas::{Board, lock};
-use crate::home;
+use crate::home::Home;
 
 /// Mobile app router. `Home` is the initial route; the two buttons on
 /// the landing page push either [`Route::CanvasView`] (blank infinite
@@ -35,15 +35,6 @@ pub enum Route {
     CanvasPdfView,
 }
 
-/// Landing page.
-#[derive(Debug, PartialEq)]
-pub struct Home;
-
-impl Component for Home {
-    fn render(&self) -> impl IntoElement {
-        home::render()
-    }
-}
 
 /// Infinite canvas — resets the board background to the default solid
 /// fill on mount so navigating back from a PDF view starts fresh.
