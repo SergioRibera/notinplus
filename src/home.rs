@@ -1,76 +1,40 @@
-//! Landing page rendered by [`crate::route::Route::Home`].
+//! Home / library grid rendered by [`crate::route::Route::Home`].
 //!
-//! Wires two entry points side by side:
+//! Layout mirrors Noteshelf's landing page:
 //!
-//! * The original **picker-based** buttons that open a blank canvas
-//!   or import a PDF (still standalone — they do not touch the
-//!   library).
-//! * A minimal **library** panel used during bring-up to exercise the
-//!   [`crate::library::Library`] plumbing end to end. The panel lists
-//!   root-level folders, items, and tags and exposes buttons for the
-//!   basic mutations. It is intentionally rough — real UI lands later.
+//! * top action bar (menu / notifications / sync on the left, home crest
+//!   in the middle, multiselect / search / settings on the right),
+//! * breadcrumb + toolbar row (`Inicio > Folder > …` on the left, view
+//!   / sort affordances on the right),
+//! * a wrapping grid of tinted "notebook" cards — folders and items
+//!   sit side by side and sort by most-recently-touched first,
+//! * a floating FAB stack (pen = new blank canvas, `+` = new folder)
+//!   anchored bottom-right.
 //!
-//! State surfaced back to the UI:
-//!
-//! * `status` — coarse label for the picker pipeline.
-//! * `lib_state` — one of Loading / Ready / Error, populated by an
-//!   on-mount async task that opens the library.
-//! * `snap` — cloned [`LibraryIndex`] snapshot, refreshed after every
-//!   mutation so the reactive tree re-renders without re-locking the
-//!   library on every read.
-//!
-//! Every mutation runs inside the freya async executor via `spawn`
-//! since event handlers are synchronous.
+//! Navigation is single-view: a `nav` [`Vec<FolderId>`] tracks the
+//! stack of entered folders. Tapping a folder pushes it; a breadcrumb
+//! crumb truncates the stack to that depth. Tapping an item pushes
+//! [`Route::CanvasView`] (both canvas and PDF-backed items go there
+//! for now — per-item body loading is a follow-up).
 
-use std::io::Read;
 use std::sync::Arc;
 
 use async_lock::Mutex as AsyncMutex;
 use freya::prelude::*;
 use freya::router::*;
-use freya_pdf::{PdfBackground, PdfDocument};
-use istmo::{IstmoError, Runtime};
-use istmo_file_picker::{
-    FileFilter, FilePickerClient, FilePickerError, OwnedPickedFile, PickConfig, PickedFileReader,
-};
 
-use crate::canvas::{Board, lock};
-use crate::library::{FolderId, ItemKind, Library, LibraryIndex, ROOT_FOLDER, Rgba, Tag};
+use crate::library::{
+    Folder, FolderId, Item, ItemKind, Library, LibraryIndex, ROOT_FOLDER, Rgba,
+};
 use crate::route::Route;
 
-/// Shared library handle. Wrapped in an async-aware mutex so any
-/// number of `spawn`ed handlers can await it without holding a
-/// blocking lock across `.await`.
+/// Shared library handle. Wrapped in an async-aware mutex so every
+/// `spawn`ed handler can `.await` the lock without blocking the freya
+/// executor.
 type LibHandle = Arc<AsyncMutex<Library>>;
 
-/// UI status broadcast by the picker pipeline. Kept intentionally
-/// coarse — the label reads well on a single line and matches the
-/// error variants users can actually act on.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum PickerStatus {
-    Idle,
-    Picking,
-    Reading,
-    Error(String),
-}
-
-impl PickerStatus {
-    fn text(&self) -> Option<String> {
-        match self {
-            Self::Idle => None,
-            Self::Picking => Some("waiting for file picker…".into()),
-            Self::Reading => Some("reading PDF…".into()),
-            Self::Error(msg) => Some(msg.clone()),
-        }
-    }
-
-    fn is_error(&self) -> bool {
-        matches!(self, Self::Error(_))
-    }
-}
-
-/// Library bring-up state. Split from the loaded [`LibHandle`] so
-/// error / loading branches do not need to hold a dummy Arc.
+/// Bring-up state for the async library open. Split from the loaded
+/// handle so `Loading` / `Error` branches don't need a dummy Arc.
 #[derive(Clone)]
 enum LibState {
     Loading,
@@ -84,14 +48,10 @@ pub struct Home;
 
 impl Component for Home {
     fn render(&self) -> impl IntoElement {
-        let status = use_state(|| PickerStatus::Idle);
-        let status_display = status.read().clone();
-
         let lib_state = use_state(|| LibState::Loading);
         let snap = use_state(|| Option::<LibraryIndex>::None);
+        let nav = use_state(Vec::<FolderId>::new);
 
-        // Kick the library open exactly once. `use_hook` fires per
-        // component instance; the returned unit is discarded.
         use_hook({
             let mut lib_state = lib_state;
             let mut snap = snap;
@@ -112,497 +72,413 @@ impl Component for Home {
             }
         });
 
-        let lib_snapshot = snap.read().clone();
-        let mut body = rect()
-            .vertical()
-            .spacing(10.0)
-            .padding(14.0)
-            .background(Color::from_rgb(34, 34, 42))
-            .with_corner_radius(12.0)
-            .width(Size::px(420.0))
-            .child(
-                label()
-                    .color(Color::WHITE)
-                    .font_size(16.0)
-                    .text("Library (bring-up)"),
-            );
+        let bg = Color::from_rgb(15, 15, 18);
+        let state_val = lib_state.read().clone();
+        let snapshot = snap.read().clone();
+        let nav_stack = nav.read().clone();
+        let current = nav_stack.last().copied().unwrap_or(ROOT_FOLDER);
 
-        match (&lib_state.read().clone(), lib_snapshot) {
+        let mut column = rect().vertical().expanded().background(bg).child(top_bar());
+        let mut fab_slot: Option<Rect> = None;
+
+        match (state_val, snapshot) {
             (LibState::Loading, _) => {
-                body = body.child(muted_label("loading library…"));
+                column = column.child(centered("Cargando biblioteca…"));
             }
             (LibState::Error(msg), _) => {
-                body = body.child(error_label(msg));
+                column = column.child(centered(&format!("No pude abrir la biblioteca: {msg}")));
             }
             (LibState::Ready(handle), Some(index)) => {
-                body = body
-                    .child(action_row(handle.clone(), snap))
-                    .child(divider())
-                    .child(tags_row(&index, handle.clone(), snap))
-                    .child(divider())
-                    .child(folders_list(&index, handle.clone(), snap))
-                    .child(divider())
-                    .child(items_list(&index, handle.clone(), snap));
+                column = column
+                    .child(breadcrumb_bar(&index, &nav_stack, nav))
+                    .child(grid(&index, current, snap, nav));
+                fab_slot = Some(fab_stack(handle, snap, current));
             }
             (LibState::Ready(_), None) => {
-                body = body.child(muted_label("library ready, snapshot pending…"));
+                column = column.child(centered("Preparando…"));
             }
         }
 
-        rect()
-            .width(Size::fill())
-            .height(Size::fill())
-            .background(Color::from_rgb(24, 24, 30))
-            .center()
-            .child(body)
+        let mut root = rect().expanded().child(column);
+        if let Some(fab) = fab_slot {
+            root = root.child(fab);
+        }
+        root
     }
 }
 
-fn action_row(handle: LibHandle, snap: State<Option<LibraryIndex>>) -> impl IntoElement {
+// ---------------------------------------------------------------------------
+// Top bar
+// ---------------------------------------------------------------------------
+
+fn top_bar() -> impl IntoElement {
+    let bg = Color::from_rgb(15, 15, 18);
     rect()
         .horizontal()
-        .spacing(8.0)
-        .child(mini_button("+ Folder", Color::from_rgb(80, 140, 220), {
-            let handle = handle.clone();
-            move |_| {
-                let handle = handle.clone();
-                let mut snap = snap;
-                spawn(async move {
-                    let mut lib = handle.lock().await;
-                    if let Err(err) = lib.create_folder(ROOT_FOLDER, "New folder").await {
-                        log::error!("create_folder: {err}");
-                        return;
-                    }
-                    refresh_snapshot(&lib, &mut snap);
-                });
-            }
-        }))
-        .child(mini_button("+ Canvas", Color::from_rgb(90, 180, 130), {
-            let handle = handle.clone();
-            move |_| {
-                let handle = handle.clone();
-                let mut snap = snap;
-                spawn(async move {
-                    let mut lib = handle.lock().await;
-                    if let Err(err) = lib
-                        .create_item(ROOT_FOLDER, ItemKind::Canvas, "Untitled canvas")
-                        .await
-                    {
-                        log::error!("create_item: {err}");
-                        return;
-                    }
-                    refresh_snapshot(&lib, &mut snap);
-                });
-            }
-        }))
-        .child(mini_button("+ Tag", Color::from_rgb(230, 170, 90), {
-            let handle = handle.clone();
-            move |_| {
-                let handle = handle.clone();
-                let mut snap = snap;
-                let color = pick_tag_color();
-                spawn(async move {
-                    let mut lib = handle.lock().await;
-                    if let Err(err) = lib.create_tag("tag", color).await {
-                        log::error!("create_tag: {err}");
-                        return;
-                    }
-                    refresh_snapshot(&lib, &mut snap);
-                });
-            }
-        }))
-        .child(mini_button("Reload", Color::from_rgb(120, 120, 140), {
-            let handle = handle;
-            move |_| {
-                spawn_snapshot(handle.clone(), snap);
-            }
-        }))
-}
-
-fn tags_row(
-    index: &LibraryIndex,
-    handle: LibHandle,
-    snap: State<Option<LibraryIndex>>,
-) -> impl IntoElement {
-    let mut row = rect().vertical().spacing(4.0).child(section_label("Tags"));
-    if index.tags.is_empty() {
-        row = row.child(muted_label("no tags yet"));
-        return row;
-    }
-    let mut chips = rect().horizontal().spacing(6.0);
-    for tag in &index.tags {
-        chips = chips.child(tag_chip(tag.clone(), handle.clone(), snap));
-    }
-    row.child(chips)
-}
-
-fn tag_chip(tag: Tag, handle: LibHandle, snap: State<Option<LibraryIndex>>) -> impl IntoElement {
-    let tag_id = tag.id;
-    let bg = rgba_to_color(tag.color);
-    rect()
-        .horizontal()
-        .spacing(6.0)
-        .padding((4.0, 8.0))
+        .width(Size::fill())
+        .height(Size::px(56.0))
+        .padding((10.0, 16.0))
         .background(bg)
-        .with_corner_radius(8.0)
-        .child(label().color(Color::WHITE).font_size(12.0).text(tag.name))
+        .cross_align(Alignment::Center)
+        .child(icon_button("☰"))
+        .child(spacer_px(6.0))
+        .child(icon_button("🔔"))
+        .child(spacer_px(6.0))
+        .child(icon_button("☁"))
+        .child(flexible_spacer())
+        .child(icon_button("🏠"))
+        .child(flexible_spacer())
+        .child(icon_button("✔"))
+        .child(spacer_px(6.0))
+        .child(icon_button("🔍"))
+        .child(spacer_px(6.0))
+        .child(icon_button("⚙"))
+}
+
+fn icon_button(glyph: &'static str) -> impl IntoElement {
+    rect()
+        .width(Size::px(32.0))
+        .height(Size::px(32.0))
+        .center()
         .child(
-            rect()
-                .padding((2.0, 6.0))
-                .background(Color::from_argb(90, 0, 0, 0))
-                .with_corner_radius(6.0)
-                .child(label().color(Color::WHITE).font_size(11.0).text("×"))
-                .on_press(move |_| {
-                    let handle = handle.clone();
-                    let mut snap = snap;
-                    spawn(async move {
-                        let mut lib = handle.lock().await;
-                        if let Err(err) = lib.delete_tag(tag_id).await {
-                            log::error!("delete_tag: {err}");
-                            return;
-                        }
-                        refresh_snapshot(&lib, &mut snap);
-                    });
-                }),
+            label()
+                .color(Color::from_rgb(210, 210, 220))
+                .font_size(16.0)
+                .text(glyph),
         )
 }
 
-fn folders_list(
+fn flexible_spacer() -> impl IntoElement {
+    rect().width(Size::fill()).height(Size::px(1.0))
+}
+
+fn spacer_px(px: f32) -> impl IntoElement {
+    rect().width(Size::px(px)).height(Size::px(1.0))
+}
+
+// ---------------------------------------------------------------------------
+// Breadcrumb + view toolbar
+// ---------------------------------------------------------------------------
+
+fn breadcrumb_bar(
     index: &LibraryIndex,
-    handle: LibHandle,
-    snap: State<Option<LibraryIndex>>,
+    nav_stack: &[FolderId],
+    nav: State<Vec<FolderId>>,
 ) -> impl IntoElement {
-    let mut column = rect()
-        .vertical()
-        .spacing(4.0)
-        .child(section_label("Folders"));
-    let mut count = 0;
-    for folder in &index.folders {
-        if folder.parent != ROOT_FOLDER {
-            continue;
-        }
-        count += 1;
-        column = column.child(folder_row(
-            folder.id,
-            folder.name.clone(),
-            handle.clone(),
-            snap,
-        ));
+    let mut row = rect()
+        .horizontal()
+        .width(Size::fill())
+        .height(Size::px(44.0))
+        .padding((6.0, 20.0))
+        .cross_align(Alignment::Center);
+
+    row = row.child(crumb("Inicio", nav_stack.is_empty(), move |()| {
+        let mut nav = nav;
+        nav.set(Vec::new());
+    }));
+
+    for (i, folder_id) in nav_stack.iter().enumerate() {
+        let name = index
+            .folder(*folder_id)
+            .map(|f| f.name.clone())
+            .unwrap_or_else(|| "?".to_owned());
+        let is_last = i + 1 == nav_stack.len();
+        let depth = i + 1;
+        row = row.child(crumb_separator());
+        row = row.child(crumb(&name, is_last, move |()| {
+            let mut nav = nav;
+            nav.write().truncate(depth);
+        }));
     }
-    if count == 0 {
-        column = column.child(muted_label("no folders at root"));
-    }
-    column
+
+    row.child(flexible_spacer())
+        .child(icon_button("🎨"))
+        .child(spacer_px(6.0))
+        .child(icon_button("≡"))
+        .child(spacer_px(6.0))
+        .child(sort_pill())
 }
 
-fn folder_row(
-    id: FolderId,
-    name: String,
-    handle: LibHandle,
-    snap: State<Option<LibraryIndex>>,
-) -> impl IntoElement {
-    row_scaffold(&format!("📁  {}  (id={})", name, id.0)).child(delete_button(move |()| {
-        let handle = handle.clone();
-        let mut snap = snap;
-        spawn(async move {
-            let mut lib = handle.lock().await;
-            if let Err(err) = lib.delete_folder(id).await {
-                log::error!("delete_folder: {err}");
-                return;
-            }
-            refresh_snapshot(&lib, &mut snap);
-        });
-    }))
+fn crumb<F: Fn(()) + 'static>(text: &str, active: bool, handler: F) -> impl IntoElement {
+    let color = if active {
+        Color::from_rgb(240, 240, 245)
+    } else {
+        Color::from_rgb(150, 150, 165)
+    };
+    rect()
+        .padding((4.0, 6.0))
+        .child(label().color(color).font_size(13.0).text(text.to_owned()))
+        .on_press(move |_| handler(()))
 }
 
-fn items_list(
-    index: &LibraryIndex,
-    handle: LibHandle,
-    snap: State<Option<LibraryIndex>>,
-) -> impl IntoElement {
-    let mut column = rect().vertical().spacing(4.0).child(section_label("Items"));
-    let mut count = 0;
-    for item in &index.items {
-        if item.folder != ROOT_FOLDER {
-            continue;
-        }
-        count += 1;
-        let id = item.id;
-        let name = item.name.clone();
-        let kind_icon = match item.kind {
-            ItemKind::Canvas => "🖌",
-            ItemKind::PdfCanvas => "📄",
-        };
-        let tag_suffix = if item.tags.is_empty() {
-            String::new()
-        } else {
-            format!("  [{} tag(s)]", item.tags.len())
-        };
-        let text = format!("{kind_icon}  {name}  (id={}){}", id.0, tag_suffix);
-        column = column.child(row_scaffold(&text).child(delete_button({
-            let handle = handle.clone();
-            move |()| {
-                let handle = handle.clone();
-                let mut snap = snap;
-                spawn(async move {
-                    let mut lib = handle.lock().await;
-                    if let Err(err) = lib.delete_item(id).await {
-                        log::error!("delete_item: {err}");
-                        return;
-                    }
-                    refresh_snapshot(&lib, &mut snap);
-                });
-            }
-        })));
-    }
-    if count == 0 {
-        column = column.child(muted_label("no items at root"));
-    }
-    column
+fn crumb_separator() -> impl IntoElement {
+    rect().padding((4.0, 4.0)).child(
+        label()
+            .color(Color::from_rgb(90, 90, 100))
+            .font_size(13.0)
+            .text("›"),
+    )
 }
 
-fn row_scaffold(text: &str) -> Rect {
+fn sort_pill() -> impl IntoElement {
     rect()
         .horizontal()
-        .spacing(8.0)
-        .padding((6.0, 8.0))
-        .background(Color::from_rgb(44, 44, 54))
-        .with_corner_radius(6.0)
+        .padding((6.0, 12.0))
+        .background(Color::from_rgb(30, 30, 36))
+        .with_corner_radius(14.0)
+        .cross_align(Alignment::Center)
         .child(
             label()
-                .color(Color::WHITE)
+                .color(Color::from_rgb(210, 210, 220))
+                .font_size(12.0)
+                .text("⇅  Clasificar"),
+        )
+}
+
+// ---------------------------------------------------------------------------
+// Grid
+// ---------------------------------------------------------------------------
+
+fn grid(
+    index: &LibraryIndex,
+    current: FolderId,
+    snap: State<Option<LibraryIndex>>,
+    nav: State<Vec<FolderId>>,
+) -> impl IntoElement {
+    let mut folders: Vec<&Folder> = index.folders.iter().filter(|f| f.parent == current).collect();
+    let mut items: Vec<&Item> = index.items.iter().filter(|i| i.folder == current).collect();
+    folders.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
+    if folders.is_empty() && items.is_empty() {
+        return rect()
+            .width(Size::fill())
+            .height(Size::fill())
+            .center()
+            .child(
+                label()
+                    .color(Color::from_rgb(120, 120, 135))
+                    .font_size(13.0)
+                    .text("Esta carpeta está vacía. Usa el botón + para crear una nota."),
+            );
+    }
+
+    let mut wrap = rect()
+        .width(Size::fill())
+        .height(Size::fill())
+        .padding((12.0, 24.0))
+        .spacing(20.0)
+        .content(Content::wrap());
+
+    for folder in folders {
+        let folder_id = folder.id;
+        let child_count = index.items.iter().filter(|i| i.folder == folder_id).count()
+            + index.folders.iter().filter(|f| f.parent == folder_id).count();
+        let subtitle = format!("{} notas · {}", child_count, format_date(folder.updated_at));
+        wrap = wrap.child(card(
+            folder.name.clone(),
+            subtitle,
+            folder.color.unwrap_or_else(|| default_tint(folder.id.0)),
+            true,
+            move |()| {
+                let mut nav = nav;
+                nav.write().push(folder_id);
+            },
+        ));
+    }
+
+    for item in items {
+        let kind_label = match item.kind {
+            ItemKind::Canvas => "Lienzo",
+            ItemKind::PdfCanvas => "PDF",
+        };
+        let subtitle = format!("{} · {}", kind_label, format_date(item.updated_at));
+        wrap = wrap.child(card(
+            item.name.clone(),
+            subtitle,
+            item.color.unwrap_or_else(|| default_tint(item.id.0)),
+            false,
+            move |_| {
+                let _ = RouterContext::get().push(Route::CanvasView);
+            },
+        ));
+    }
+
+    let _ = snap;
+    wrap
+}
+
+fn card<F: Fn(()) + 'static>(
+    title: String,
+    subtitle: String,
+    tint: Rgba,
+    is_folder: bool,
+    handler: F,
+) -> impl IntoElement {
+    let cover = rect()
+        .width(Size::px(130.0))
+        .height(Size::px(160.0))
+        .background(rgba_to_color(tint))
+        .with_corner_radius(8.0)
+        .center()
+        .child(
+            label()
+                .color(Color::from_argb(180, 20, 20, 20))
+                .font_size(32.0)
+                .text(if is_folder { "📁" } else { "📓" }),
+        );
+
+    rect()
+        .vertical()
+        .width(Size::px(140.0))
+        .padding((4.0, 4.0))
+        .spacing(6.0)
+        .child(cover)
+        .child(
+            label()
+                .color(Color::from_rgb(230, 230, 235))
+                .font_size(12.0)
+                .text(title),
+        )
+        .child(
+            label()
+                .color(Color::from_rgb(130, 130, 145))
+                .font_size(10.0)
+                .text(subtitle),
+        )
+        .on_press(move |_| handler(()))
+}
+
+fn centered(text: &str) -> impl IntoElement {
+    rect()
+        .width(Size::fill())
+        .height(Size::fill())
+        .center()
+        .child(
+            label()
+                .color(Color::from_rgb(180, 180, 195))
                 .font_size(13.0)
                 .text(text.to_owned()),
         )
 }
 
-fn delete_button<F: Fn(()) + 'static>(handler: F) -> Rect {
+// ---------------------------------------------------------------------------
+// FAB overlay
+// ---------------------------------------------------------------------------
+
+fn fab_stack(handle: LibHandle, snap: State<Option<LibraryIndex>>, current: FolderId) -> Rect {
+    let pen_bg = Color::from_rgb(80, 130, 175);
+    let plus_bg = Color::from_rgb(65, 105, 220);
+
+    let pen = fab_button("✎", pen_bg, {
+        let handle = handle.clone();
+        move |_| {
+            let handle = handle.clone();
+            let mut snap = snap;
+            spawn(async move {
+                let mut lib = handle.lock().await;
+                match lib
+                    .create_item(current, ItemKind::Canvas, "Nueva nota")
+                    .await
+                {
+                    Ok(_) => {
+                        snap.set(Some(lib.index().clone()));
+                        let _ = RouterContext::get().push(Route::CanvasView);
+                    }
+                    Err(err) => log::error!("create_item: {err}"),
+                }
+            });
+        }
+    });
+
+    let plus = fab_button("+", plus_bg, {
+        move |_| {
+            let handle = handle.clone();
+            let mut snap = snap;
+            spawn(async move {
+                let mut lib = handle.lock().await;
+                match lib.create_folder(current, "Nueva carpeta").await {
+                    Ok(_) => snap.set(Some(lib.index().clone())),
+                    Err(err) => log::error!("create_folder: {err}"),
+                }
+            });
+        }
+    });
+
     rect()
-        .padding((2.0, 8.0))
-        .background(Color::from_rgb(180, 60, 60))
-        .with_corner_radius(6.0)
-        .child(label().color(Color::WHITE).font_size(12.0).text("del"))
-        .on_press(move |_| handler(()))
+        .vertical()
+        .spacing(12.0)
+        .position(Position::new_absolute().right(24.0).bottom(24.0))
+        .child(pen)
+        .child(plus)
 }
 
-fn mini_button<F: Fn(()) + 'static>(text: &'static str, bg: Color, handler: F) -> Rect {
+fn fab_button<F: Fn(()) + 'static>(glyph: &'static str, bg: Color, handler: F) -> impl IntoElement {
     rect()
-        .padding((6.0, 10.0))
+        .width(Size::px(52.0))
+        .height(Size::px(52.0))
         .background(bg)
-        .with_corner_radius(8.0)
-        .child(label().color(Color::WHITE).font_size(12.0).text(text))
+        .with_corner_radius(26.0)
+        .center()
+        .child(label().color(Color::WHITE).font_size(22.0).text(glyph))
         .on_press(move |_| handler(()))
-}
-
-fn section_label(text: &'static str) -> impl IntoElement {
-    label()
-        .color(Color::from_rgb(160, 160, 180))
-        .font_size(11.0)
-        .text(text)
-}
-
-fn muted_label(text: &'static str) -> impl IntoElement {
-    label()
-        .color(Color::from_rgb(140, 140, 160))
-        .font_size(12.0)
-        .text(text)
-}
-
-fn error_label(text: &str) -> impl IntoElement {
-    label()
-        .color(Color::from_rgb(240, 120, 120))
-        .font_size(12.0)
-        .text(text.to_owned())
-}
-
-fn divider() -> impl IntoElement {
-    rect()
-        .width(Size::fill())
-        .height(Size::px(1.0))
-        .background(Color::from_rgb(60, 60, 72))
 }
 
 // ---------------------------------------------------------------------------
-// Library plumbing helpers
+// Library plumbing
 // ---------------------------------------------------------------------------
 
 async fn open_library() -> Result<LibHandle, String> {
-    let runtime = Runtime::global().map_err(|e| format!("runtime not started: {e}"))?;
+    let runtime = istmo::Runtime::global().map_err(|e| format!("runtime not started: {e}"))?;
     let lib = Library::open(&runtime)
         .await
         .map_err(|e| format!("open library: {e}"))?;
     Ok(Arc::new(AsyncMutex::new(lib)))
 }
 
-/// Push the current in-memory index into the reactive snapshot slot
-/// so the panel re-renders.
-fn refresh_snapshot(lib: &Library, snap: &mut State<Option<LibraryIndex>>) {
-    snap.set(Some(lib.index().clone()));
-}
-
-fn spawn_snapshot(handle: LibHandle, mut snap: State<Option<LibraryIndex>>) {
-    spawn(async move {
-        let index = handle.lock().await.index().clone();
-        snap.set(Some(index));
-    });
-}
-
 // ---------------------------------------------------------------------------
-// Colour helpers
+// Formatting helpers
 // ---------------------------------------------------------------------------
 
 fn rgba_to_color(rgba: Rgba) -> Color {
     Color::from_argb(rgba[3], rgba[0], rgba[1], rgba[2])
 }
 
-/// Cycle through a small preset palette for tag creation so a demo
-/// user gets visible colour variety without a colour picker UI yet.
-fn pick_tag_color() -> Rgba {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    static IDX: AtomicUsize = AtomicUsize::new(0);
-    const PALETTE: [Rgba; 6] = [
-        [230, 110, 110, 255],
-        [110, 200, 130, 255],
-        [110, 160, 230, 255],
-        [230, 200, 90, 255],
-        [200, 130, 230, 255],
-        [110, 210, 210, 255],
+/// Deterministic tint per id so freshly-created folders / items pick
+/// up a stable palette entry without a colour picker UI yet.
+fn default_tint(seed: u64) -> Rgba {
+    const PALETTE: [Rgba; 8] = [
+        [240, 240, 240, 255], // paper white
+        [190, 205, 230, 255], // slate blue
+        [90, 110, 155, 255],  // navy
+        [240, 210, 105, 255], // yellow
+        [230, 170, 130, 255], // salmon
+        [150, 205, 200, 255], // teal
+        [200, 180, 220, 255], // lavender
+        [230, 180, 175, 255], // dusty rose
     ];
-    let i = IDX.fetch_add(1, Ordering::Relaxed) % PALETTE.len();
-    PALETTE[i]
+    PALETTE[(seed as usize) % PALETTE.len()]
 }
 
-// ---------------------------------------------------------------------------
-// Existing picker flow (unchanged)
-// ---------------------------------------------------------------------------
-
-fn canvas_button() -> impl IntoElement {
-    action_button("New infinite canvas", Color::from_rgb(80, 140, 220)).on_press(|_| {
-        let _ = RouterContext::get().push(Route::CanvasView);
-    })
+/// Format a millisecond epoch as `dd/mm/yy` (Spanish convention) using
+/// the civil-from-days algorithm — no chrono dep just for one label.
+fn format_date(ms: u64) -> String {
+    let days = (ms / 86_400_000) as i64;
+    let (y, m, d) = civil_from_days(days);
+    format!("{:02}/{:02}/{:02}", d, m, (y.rem_euclid(100)) as u32)
 }
 
-fn pdf_button(mut status: State<PickerStatus>) -> impl IntoElement {
-    action_button("Open a PDF", Color::from_rgb(120, 90, 200)).on_press(move |_| {
-        if matches!(
-            *status.read(),
-            PickerStatus::Picking | PickerStatus::Reading
-        ) {
-            return;
-        }
-        status.set(PickerStatus::Picking);
-        spawn(async move {
-            match load_pdf_via_picker(&mut status).await {
-                Ok(PickerOutcome::Loaded) => {
-                    status.set(PickerStatus::Idle);
-                    let _ = RouterContext::get().push(Route::CanvasPdfView);
-                }
-                Ok(PickerOutcome::Cancelled) => {
-                    status.set(PickerStatus::Idle);
-                }
-                Err(msg) => {
-                    log::error!("file-picker flow: {msg}");
-                    status.set(PickerStatus::Error(msg));
-                }
-            }
-        });
-    })
-}
-
-enum PickerOutcome {
-    Loaded,
-    Cancelled,
-}
-
-async fn load_pdf_via_picker(status: &mut State<PickerStatus>) -> Result<PickerOutcome, String> {
-    let runtime = Runtime::global().map_err(|e| format!("runtime not started: {e}"))?;
-    let picker = FilePickerClient::from_runtime(&runtime)
-        .map_err(|e| format!("file-picker plugin unavailable: {e}"))?;
-
-    let config = PickConfig {
-        dialog_title: Some("Open a PDF".into()),
-        filter: FileFilter {
-            mime_types: vec!["application/pdf".into()],
-            extensions: vec!["pdf".into()],
-            uti_types: vec!["com.adobe.pdf".into()],
-        },
-        start_directory_hint: None,
-        allow_multiple: false,
-    };
-
-    let Some(picked) = pick_file(&picker, config)
-        .await
-        .map_err(|e| picker_error_message(&e))?
-    else {
-        return Ok(PickerOutcome::Cancelled);
-    };
-    let picked = Arc::new(picked);
-
-    status.set(PickerStatus::Reading);
-    let mut reader = picked
-        .open_reader(&picker)
-        .await
-        .map_err(|e| format!("open: {e}"))?;
-    let bytes = read_all(&mut reader).map_err(|e| format!("read: {e}"))?;
-
-    let doc = PdfDocument::open_bytes(bytes).map_err(|e| format!("parse PDF: {e}"))?;
-    let background: Arc<dyn freya_canvas_bg::CanvasBackground> = Arc::new(PdfBackground::new(doc));
-    let board = Board::shared();
-    lock(&board).set_background(background);
-    log::info!("loaded PDF background: {}", picked.display_name);
-    Ok(PickerOutcome::Loaded)
-}
-
-fn read_all(reader: &mut PickedFileReader) -> std::io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    reader.read_to_end(&mut bytes)?;
-    Ok(bytes)
-}
-
-async fn pick_file(
-    picker: &FilePickerClient,
-    config: PickConfig,
-) -> Result<Option<OwnedPickedFile>, FilePickerError> {
-    match picker.pick_file_owned(config).await {
-        Ok(v) => Ok(v),
-        Err(IstmoError::PluginError { bytes }) => {
-            let (err, _) = bincode::decode_from_slice::<FilePickerError, _>(
-                &bytes,
-                bincode::config::standard(),
-            )
-            .map_err(|e| FilePickerError::Io(format!("decode plugin error payload: {e}")))?;
-            Err(err)
-        }
-        Err(other) => Err(FilePickerError::Backend(other.to_string())),
-    }
-}
-
-fn picker_error_message(err: &FilePickerError) -> String {
-    match err {
-        FilePickerError::UserCancelled => "cancelled".into(),
-        other => other.to_string(),
-    }
-}
-
-fn action_button(text: &'static str, background: Color) -> Rect {
-    rect()
-        .width(Size::px(260.0))
-        .padding((14.0, 20.0))
-        .background(background)
-        .with_corner_radius(10.0)
-        .center()
-        .child(label().color(Color::WHITE).font_size(16.0).text(text))
-}
-
-fn status_label(status: &PickerStatus, text: String) -> impl IntoElement {
-    let color = if status.is_error() {
-        Color::from_rgb(240, 120, 120)
-    } else {
-        Color::from_rgb(180, 180, 190)
-    };
-    label().color(color).font_size(13.0).text(text)
-}
-
-fn spacer(px: f32) -> impl IntoElement {
-    rect().width(Size::px(1.0)).height(Size::px(px))
+fn civil_from_days(z: i64) -> (i32, u32, u32) {
+    // Howard Hinnant, "chrono-Compatible Low-Level Date Algorithms".
+    let z = z + 719_468;
+    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let y = if m <= 2 { y + 1 } else { y };
+    (y as i32, m, d)
 }
