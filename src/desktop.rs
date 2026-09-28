@@ -41,6 +41,8 @@ pub fn install() -> Result<(), Box<dyn std::error::Error>> {
         &publisher,
     ))));
 
+    runtime.register_host(crate::desktop_data_store::host());
+
     // Local-hosted plugin calls short-circuit into dispatch_inbound, so
     // outbound only carries fire-and-forget frames the app doesn't emit
     // today. Drain defensively so a full channel never stalls dispatch.
