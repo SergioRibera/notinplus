@@ -44,6 +44,23 @@ pub enum ItemKind {
     PdfCanvas,
 }
 
+/// Paper pattern rendered underneath the canvas strokes. Only the
+/// selection lives here — the renderer in `freya-canvas-bg` decides
+/// how each variant is drawn.
+#[istmo::message]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
+pub enum BackgroundStyle {
+    /// No pattern, solid background color.
+    #[default]
+    Blank,
+    /// Horizontal ruled lines.
+    Line,
+    /// Square grid.
+    Grid,
+    /// Dotted grid.
+    DotGrid,
+}
+
 /// User-defined tag. Colour is chosen at creation time and can be
 /// updated independently of the name.
 #[istmo::message]
@@ -80,6 +97,7 @@ pub struct Item {
     pub name: String,
     pub color: Option<Rgba>,
     pub tags: Vec<TagId>,
+    pub background: BackgroundStyle,
     pub created_at: u64,
     pub updated_at: u64,
     /// Optional PNG thumbnail bytes. Populated by the UI layer when it

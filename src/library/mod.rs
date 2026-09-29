@@ -30,8 +30,8 @@ use istmo_data_store::{DataStoreClient, DataStoreConfig};
 
 pub use self::error::{LibraryError, NotFoundKind, Result};
 pub use self::model::{
-    Folder, FolderId, INDEX_VERSION, Item, ItemId, ItemKind, LibraryIndex, ROOT_FOLDER, Rgba, Tag,
-    TagId,
+    BackgroundStyle, Folder, FolderId, INDEX_VERSION, Item, ItemId, ItemKind, LibraryIndex,
+    ROOT_FOLDER, Rgba, Tag, TagId,
 };
 
 use crate::doc::Doc;
@@ -310,8 +310,18 @@ impl Library {
         folder: FolderId,
         kind: ItemKind,
         name: &str,
+        color: Option<Rgba>,
+        mut tags: Vec<TagId>,
+        background: BackgroundStyle,
     ) -> Result<ItemId> {
         self.ensure_folder_target(folder)?;
+        for t in &tags {
+            if self.index.tag(*t).is_none() {
+                return Err(LibraryError::NotFound(NotFoundKind::Tag(*t)));
+            }
+        }
+        tags.sort_unstable_by_key(|t| t.0);
+        tags.dedup();
         let now = now_millis();
         let id = self.index.alloc_item_id();
         self.index.items.push(Item {
@@ -319,8 +329,9 @@ impl Library {
             folder,
             kind,
             name: name.to_owned(),
-            color: None,
-            tags: Vec::new(),
+            color,
+            tags,
+            background,
             created_at: now,
             updated_at: now,
             thumbnail: None,
@@ -390,6 +401,25 @@ impl Library {
             .item_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
         item.tags = tags;
+        item.updated_at = now;
+        self.persist().await
+    }
+
+    /// Swap the item's paper pattern.
+    ///
+    /// # Errors
+    /// [`LibraryError::NotFound`].
+    pub async fn set_item_background(
+        &mut self,
+        id: ItemId,
+        background: BackgroundStyle,
+    ) -> Result<()> {
+        let now = now_millis();
+        let item = self
+            .index
+            .item_mut(id)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
+        item.background = background;
         item.updated_at = now;
         self.persist().await
     }

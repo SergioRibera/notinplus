@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use istmo::{Runtime, RuntimeConfig, RuntimeInit};
+use istmo_file_picker::{DesktopFilePicker, FilePickerHost};
 use istmo_pen::PenHost;
 use istmo_pen::backend::PenPublisherFactory;
 use istmo_pen::publisher::PenPublisher;
@@ -42,6 +43,10 @@ pub fn install() -> Result<(), Box<dyn std::error::Error>> {
     ))));
 
     runtime.register_host(crate::desktop_data_store::host());
+
+    let picker = DesktopFilePicker::new();
+    picker.install_release_hook(&runtime);
+    runtime.register_host(FilePickerHost::new(picker));
 
     // Local-hosted plugin calls short-circuit into dispatch_inbound, so
     // outbound only carries fire-and-forget frames the app doesn't emit

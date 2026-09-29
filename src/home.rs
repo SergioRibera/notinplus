@@ -24,9 +24,10 @@ use freya::prelude::*;
 use freya::router::*;
 use istmo::plugins::EdgeInsets;
 
+use crate::components::{auto_color, CanvasCreateSheet, CreateCanvasRequest};
 use crate::hooks::use_safe_area_insets;
 use crate::library::{
-    Folder, FolderId, Item, ItemKind, Library, LibraryIndex, ROOT_FOLDER, Rgba,
+    BackgroundStyle, Folder, FolderId, Item, ItemKind, Library, LibraryIndex, ROOT_FOLDER, Rgba,
 };
 use crate::route::Route;
 
@@ -285,7 +286,9 @@ fn grid(
         wrap = wrap.child(card(
             folder.name.clone(),
             subtitle,
-            folder.color.unwrap_or_else(|| default_tint(folder.id.0)),
+            folder
+                .color
+                .unwrap_or_else(|| color_to_rgba(auto_color(&folder.name))),
             true,
             move |()| {
                 let mut nav = nav;
@@ -303,7 +306,8 @@ fn grid(
         wrap = wrap.child(card(
             item.name.clone(),
             subtitle,
-            item.color.unwrap_or_else(|| default_tint(item.id.0)),
+            item.color
+                .unwrap_or_else(|| color_to_rgba(auto_color(&item.name))),
             false,
             move |_| {
                 let _ = RouterContext::get().push(Route::CanvasView);
@@ -380,7 +384,8 @@ fn fab_stack(
     pad: EdgeInsets,
 ) -> Rect {
     use crate::components::{
-        CreateFolderRequest, FabMenu, FabMenuEntry, FolderCreateSheet,
+        CanvasCreateSheet, CreateCanvasRequest, CreateFolderRequest, FabMenu, FabMenuEntry,
+        FolderCreateSheet,
     };
 
     let pen_bg = Color::from_rgb(80, 130, 175);
@@ -393,7 +398,17 @@ fn fab_stack(
             let mut snap = snap;
             spawn(async move {
                 let mut lib = handle.lock().await;
-                match lib.create_item(current, ItemKind::Canvas, "Borrador").await {
+                match lib
+                    .create_item(
+                        current,
+                        ItemKind::Canvas,
+                        "Borrador",
+                        None,
+                        Vec::new(),
+                        BackgroundStyle::default(),
+                    )
+                    .await
+                {
                     Ok(_) => {
                         snap.set(Some(lib.index().clone()));
                         let _ = RouterContext::get().push(Route::CanvasView);
@@ -419,20 +434,32 @@ fn fab_stack(
                 let handle = handle.clone();
                 move || {
                     let handle = handle.clone();
-                    let mut snap = snap;
-                    spawn(async move {
-                        let mut lib = handle.lock().await;
-                        match lib
-                            .create_item(current, ItemKind::Canvas, "Sin título")
-                            .await
-                        {
-                            Ok(_) => {
-                                snap.set(Some(lib.index().clone()));
-                                let _ = RouterContext::get().push(Route::CanvasView);
+                    CanvasCreateSheet::new(move |req: CreateCanvasRequest| {
+                        let handle = handle.clone();
+                        let mut snap = snap;
+                        spawn(async move {
+                            let mut lib = handle.lock().await;
+                            match lib
+                                .create_item(
+                                    current,
+                                    req.kind,
+                                    &req.name,
+                                    Some(color_to_rgba(req.color)),
+                                    req.tags,
+                                    req.background,
+                                )
+                                .await
+                            {
+                                Ok(_) => {
+                                    snap.set(Some(lib.index().clone()));
+                                    let _ = RouterContext::get().push(Route::CanvasView);
+                                }
+                                Err(err) => log::error!("create_item: {err}"),
                             }
-                            Err(err) => log::error!("create_item: {err}"),
-                        }
-                    });
+                        });
+                    })
+                    .kind(ItemKind::Canvas)
+                    .open();
                 }
             }))
             .entry(FabMenuEntry::new("🗂", "Crear nueva carpeta", {
@@ -462,8 +489,12 @@ fn fab_stack(
                 }
             }))
             .entry(
-                FabMenuEntry::new("📄", "Importar PDF", move || {
-                    log::info!("FAB: import PDF (TODO — wire file picker)");
+                FabMenuEntry::new("📄", "Importar PDF", {
+                    let handle = handle.clone();
+                    move || {
+                        let handle = handle.clone();
+                        spawn(pick_and_open_pdf(handle, snap, current));
+                    }
                 })
                 .with_divider_above(),
             )
@@ -505,6 +536,101 @@ async fn open_library() -> Result<LibHandle, String> {
     Ok(Arc::new(AsyncMutex::new(lib)))
 }
 
+/// Launch the platform file-picker, read the picked PDF into memory,
+/// and open the canvas-create sheet pre-filled with its name.
+async fn pick_and_open_pdf(
+    handle: LibHandle,
+    snap: State<Option<LibraryIndex>>,
+    parent: FolderId,
+) {
+    use std::io::Read;
+    use std::sync::Arc as StdArc;
+
+    use istmo_file_picker::{FileFilter, FilePickerClient, PickConfig};
+
+    let picker = match FilePickerClient::acquire() {
+        Ok(p) => p,
+        Err(err) => {
+            log::error!("file picker unavailable: {err:?}");
+            return;
+        }
+    };
+    let config = PickConfig {
+        dialog_title: Some("Elegí un PDF".into()),
+        filter: FileFilter {
+            mime_types: vec!["application/pdf".into()],
+            extensions: vec!["pdf".into()],
+            uti_types: vec!["com.adobe.pdf".into()],
+        },
+        start_directory_hint: None,
+        allow_multiple: false,
+    };
+    let picked = match picker.pick_file_owned(config).await {
+        Ok(Some(f)) => f,
+        Ok(None) => return,
+        Err(err) => {
+            log::error!("picker call error: {err:?}");
+            return;
+        }
+    };
+    let display = picked.display_name.clone();
+    let owned = StdArc::new(picked);
+    let mut reader = match owned.open_reader(&picker).await {
+        Ok(r) => r,
+        Err(err) => {
+            log::error!("open reader: {err:?}");
+            return;
+        }
+    };
+    let mut bytes = Vec::new();
+    if let Err(err) = reader.read_to_end(&mut bytes) {
+        log::error!("read pdf: {err}");
+        return;
+    }
+    drop(reader);
+    drop(owned);
+
+    let default_name = strip_pdf_ext(&display);
+    let bytes = StdArc::new(bytes);
+    CanvasCreateSheet::new(move |req: CreateCanvasRequest| {
+        let bytes = StdArc::clone(&bytes);
+        let handle = handle.clone();
+        let mut snap = snap;
+        spawn(async move {
+            let mut lib = handle.lock().await;
+            match lib
+                .create_item(
+                    parent,
+                    ItemKind::PdfCanvas,
+                    &req.name,
+                    Some(color_to_rgba(req.color)),
+                    req.tags,
+                    req.background,
+                )
+                .await
+            {
+                Ok(id) => {
+                    if let Err(err) = lib.attach_pdf(id, &bytes).await {
+                        log::error!("attach_pdf: {err}");
+                    }
+                    snap.set(Some(lib.index().clone()));
+                    let _ = RouterContext::get().push(Route::CanvasPdfView);
+                }
+                Err(err) => log::error!("create_item: {err}"),
+            }
+        });
+    })
+    .kind(ItemKind::PdfCanvas)
+    .default_name(default_name)
+    .open();
+}
+
+fn strip_pdf_ext(name: &str) -> String {
+    name.rsplit_once('.')
+        .filter(|(_, ext)| ext.eq_ignore_ascii_case("pdf"))
+        .map_or_else(|| name.to_owned(), |(stem, _)| stem.to_owned())
+}
+
 // ---------------------------------------------------------------------------
 // Formatting helpers
 // ---------------------------------------------------------------------------
@@ -517,21 +643,6 @@ fn color_to_rgba(color: Color) -> Rgba {
     [color.r(), color.g(), color.b(), color.a()]
 }
 
-/// Deterministic tint per id so freshly-created folders / items pick
-/// up a stable palette entry without a colour picker UI yet.
-fn default_tint(seed: u64) -> Rgba {
-    const PALETTE: [Rgba; 8] = [
-        [240, 240, 240, 255], // paper white
-        [190, 205, 230, 255], // slate blue
-        [90, 110, 155, 255],  // navy
-        [240, 210, 105, 255], // yellow
-        [230, 170, 130, 255], // salmon
-        [150, 205, 200, 255], // teal
-        [200, 180, 220, 255], // lavender
-        [230, 180, 175, 255], // dusty rose
-    ];
-    PALETTE[(seed as usize) % PALETTE.len()]
-}
 
 /// Format a millisecond epoch as `dd/mm/yy` (Spanish convention) using
 /// the civil-from-days algorithm — no chrono dep just for one label.
