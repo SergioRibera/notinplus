@@ -110,7 +110,29 @@ pub fn run() {
 }
 
 fn router() -> impl IntoElement {
-    Router::<Route>::new(|| RouterConfig::default().with_initial_path(Route::Home))
+    AppShell
+}
+
+/// Root layout that measures its own area and hosts the shared
+/// [`ModalPortal`] as the last child of every route. Every dialog /
+/// sheet / popover the app opens lands here on top of the router.
+#[derive(Debug, PartialEq)]
+struct AppShell;
+
+impl Component for AppShell {
+    fn render(&self) -> impl IntoElement {
+        let area = use_state(Area::default);
+        rect()
+            .expanded()
+            .on_sized({
+                let mut area = area;
+                move |e: Event<SizedEventData>| area.set(e.area)
+            })
+            .child(Router::<Route>::new(|| {
+                RouterConfig::default().with_initial_path(Route::Home)
+            }))
+            .child(crate::components::ModalPortal::new(area))
+    }
 }
 
 pub(crate) fn root() -> impl IntoElement {

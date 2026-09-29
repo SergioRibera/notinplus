@@ -379,6 +379,8 @@ fn fab_stack(
     current: FolderId,
     pad: EdgeInsets,
 ) -> Rect {
+    use crate::components::{FabMenu, FabMenuEntry};
+
     let pen_bg = Color::from_rgb(80, 130, 175);
     let plus_bg = Color::from_rgb(65, 105, 220);
 
@@ -389,10 +391,7 @@ fn fab_stack(
             let mut snap = snap;
             spawn(async move {
                 let mut lib = handle.lock().await;
-                match lib
-                    .create_item(current, ItemKind::Canvas, "Nueva nota")
-                    .await
-                {
+                match lib.create_item(current, ItemKind::Canvas, "Borrador").await {
                     Ok(_) => {
                         snap.set(Some(lib.index().clone()));
                         let _ = RouterContext::get().push(Route::CanvasView);
@@ -403,21 +402,61 @@ fn fab_stack(
         }
     });
 
-    let plus = fab_button("+", plus_bg, {
-        move |_| {
-            let handle = handle.clone();
-            let mut snap = snap;
-            spawn(async move {
-                let mut lib = handle.lock().await;
-                match lib
-                    .create_folder(current, "Nueva carpeta", None, Vec::new())
-                    .await
-                {
-                    Ok(_) => snap.set(Some(lib.index().clone())),
-                    Err(err) => log::error!("create_folder: {err}"),
+    // Anchor of the FAB stack, reused when placing the popup above it.
+    let anchor_right = 24.0 + pad.right;
+    let anchor_bottom = 24.0 + pad.bottom;
+    // Pen + plus each 52px tall, 12px stack spacing, 12px extra breathing
+    // room between the stack and the menu card.
+    let menu_bottom = anchor_bottom + 52.0 + 12.0 + 52.0 + 12.0;
+
+    let plus = fab_button("+", plus_bg, move |_| {
+        let handle = handle.clone();
+        FabMenu::new()
+            .anchor(anchor_right, menu_bottom)
+            .entry(FabMenuEntry::new("▢", "Lienzo infinito", {
+                let handle = handle.clone();
+                move || {
+                    let handle = handle.clone();
+                    let mut snap = snap;
+                    spawn(async move {
+                        let mut lib = handle.lock().await;
+                        match lib
+                            .create_item(current, ItemKind::Canvas, "Sin título")
+                            .await
+                        {
+                            Ok(_) => {
+                                snap.set(Some(lib.index().clone()));
+                                let _ = RouterContext::get().push(Route::CanvasView);
+                            }
+                            Err(err) => log::error!("create_item: {err}"),
+                        }
+                    });
                 }
-            });
-        }
+            }))
+            .entry(FabMenuEntry::new("🗂", "Crear nueva carpeta", {
+                let handle = handle.clone();
+                move || {
+                    let handle = handle.clone();
+                    let mut snap = snap;
+                    spawn(async move {
+                        let mut lib = handle.lock().await;
+                        match lib
+                            .create_folder(current, "Nueva carpeta", None, Vec::new())
+                            .await
+                        {
+                            Ok(_) => snap.set(Some(lib.index().clone())),
+                            Err(err) => log::error!("create_folder: {err}"),
+                        }
+                    });
+                }
+            }))
+            .entry(
+                FabMenuEntry::new("📄", "Importar PDF", move || {
+                    log::info!("FAB: import PDF (TODO — wire file picker)");
+                })
+                .with_divider_above(),
+            )
+            .open();
     });
 
     rect()
@@ -425,8 +464,8 @@ fn fab_stack(
         .spacing(12.0)
         .position(
             Position::new_absolute()
-                .right(24.0 + pad.right)
-                .bottom(24.0 + pad.bottom),
+                .right(anchor_right)
+                .bottom(anchor_bottom),
         )
         .child(pen)
         .child(plus)

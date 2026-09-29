@@ -12,6 +12,7 @@
 pub mod app;
 pub mod brush;
 pub mod canvas;
+pub mod components;
 pub mod doc;
 pub mod history;
 pub mod home;
