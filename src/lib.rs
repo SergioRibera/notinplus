@@ -15,6 +15,7 @@ pub mod canvas;
 pub mod doc;
 pub mod history;
 pub mod home;
+pub mod hooks;
 pub mod library;
 pub mod palette_popup;
 pub mod pen_pump;

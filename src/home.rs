@@ -22,7 +22,9 @@ use std::sync::Arc;
 use async_lock::Mutex as AsyncMutex;
 use freya::prelude::*;
 use freya::router::*;
+use istmo::plugins::EdgeInsets;
 
+use crate::hooks::use_safe_area_insets;
 use crate::library::{
     Folder, FolderId, Item, ItemKind, Library, LibraryIndex, ROOT_FOLDER, Rgba,
 };
@@ -51,6 +53,7 @@ impl Component for Home {
         let lib_state = use_state(|| LibState::Loading);
         let snap = use_state(|| Option::<LibraryIndex>::None);
         let nav = use_state(Vec::<FolderId>::new);
+        let pad = *use_safe_area_insets().read();
 
         use_hook({
             let mut lib_state = lib_state;
@@ -78,7 +81,11 @@ impl Component for Home {
         let nav_stack = nav.read().clone();
         let current = nav_stack.last().copied().unwrap_or(ROOT_FOLDER);
 
-        let mut column = rect().vertical().expanded().background(bg).child(top_bar());
+        let mut column = rect()
+            .vertical()
+            .expanded()
+            .padding((pad.top, pad.right, 0.0, pad.left))
+            .child(top_bar());
         let mut fab_slot: Option<Rect> = None;
 
         match (state_val, snapshot) {
@@ -92,14 +99,14 @@ impl Component for Home {
                 column = column
                     .child(breadcrumb_bar(&index, &nav_stack, nav))
                     .child(grid(&index, current, snap, nav));
-                fab_slot = Some(fab_stack(handle, snap, current));
+                fab_slot = Some(fab_stack(handle, snap, current, pad));
             }
             (LibState::Ready(_), None) => {
                 column = column.child(centered("Preparando…"));
             }
         }
 
-        let mut root = rect().expanded().child(column);
+        let mut root = rect().expanded().background(bg).child(column);
         if let Some(fab) = fab_slot {
             root = root.child(fab);
         }
@@ -366,7 +373,12 @@ fn centered(text: &str) -> impl IntoElement {
 // FAB overlay
 // ---------------------------------------------------------------------------
 
-fn fab_stack(handle: LibHandle, snap: State<Option<LibraryIndex>>, current: FolderId) -> Rect {
+fn fab_stack(
+    handle: LibHandle,
+    snap: State<Option<LibraryIndex>>,
+    current: FolderId,
+    pad: EdgeInsets,
+) -> Rect {
     let pen_bg = Color::from_rgb(80, 130, 175);
     let plus_bg = Color::from_rgb(65, 105, 220);
 
@@ -408,7 +420,11 @@ fn fab_stack(handle: LibHandle, snap: State<Option<LibraryIndex>>, current: Fold
     rect()
         .vertical()
         .spacing(12.0)
-        .position(Position::new_absolute().right(24.0).bottom(24.0))
+        .position(
+            Position::new_absolute()
+                .right(24.0 + pad.right)
+                .bottom(24.0 + pad.bottom),
+        )
         .child(pen)
         .child(plus)
 }

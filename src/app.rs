@@ -14,12 +14,13 @@ use std::sync::{Arc, Mutex};
 
 use freya::prelude::*;
 use freya::router::*;
-use istmo::plugins::{EdgeInsets, SafeArea, SafeAreaInsets};
+use istmo::plugins::EdgeInsets;
 
 use crate::route::Route;
 
 use crate::brush::{BrushKind, BrushPreset, ShapeMode};
 use crate::canvas::{Board, LayerSnapshot, RedrawNotifier, drawing_surface, lock};
+use crate::hooks::use_safe_area_insets;
 use crate::palette_popup::{HOVER_DELAY, brush_popup};
 use crate::pen_pump;
 use crate::ui_mask::{self, UiRegion};
@@ -140,37 +141,7 @@ pub(crate) fn root() -> impl IntoElement {
         board
     });
 
-    let mut insets = use_state(EdgeInsets::default);
-    use_hook(move || {
-        // Bridge the SafeArea early-event stream (which lives on a
-        // helper OS thread) into the freya reactive world through a
-        // flume channel. `State` is `!Send`, so we can't touch it from
-        // the recv thread; the async drain runs inside freya's
-        // executor where `insets.set(..)` is safe.
-        let sa = match SafeArea::acquire() {
-            Ok(sa) => sa,
-            Err(err) => {
-                log::debug!("safe_area not ready: {err:?}");
-                return;
-            }
-        };
-        let initial = fold_insets(sa.current_or_zero());
-        insets.set(initial);
-        let (tx, rx) = flume::unbounded::<EdgeInsets>();
-        let stream = sa.stream();
-        std::thread::spawn(move || {
-            while let Ok(next) = stream.recv() {
-                if tx.send(fold_insets(next)).is_err() {
-                    break;
-                }
-            }
-        });
-        spawn(async move {
-            while let Ok(next) = rx.recv_async().await {
-                insets.set(next);
-            }
-        });
-    });
+    let insets = use_safe_area_insets();
 
     let selected = use_state(|| 0usize);
     // Ticks once per layer mutation. Every layer-panel `on_press`
@@ -257,20 +228,6 @@ fn zoom_overlay(board: &Arc<Mutex<Board>>, zoom: State<f32>, pad: EdgeInsets) ->
         .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Zoom, e.area))
         .child(label().color(Color::WHITE).font_size(12.0).text(text))
         .child(reset)
-}
-
-// Fold platform-published `SafeAreaInsets` (system bars + display
-// cutout + IME) into a single set of edge padding the app applies. IME
-// only pushes bottom padding — top/left/right ignore it so the palette
-// doesn't jump when the keyboard opens.
-const fn fold_insets(insets: SafeAreaInsets) -> EdgeInsets {
-    let base = insets.system_bars.max(insets.display_cutout);
-    EdgeInsets {
-        top: base.top,
-        right: base.right,
-        bottom: base.bottom.max(insets.ime.bottom),
-        left: base.left,
-    }
 }
 
 fn palette_overlay(
