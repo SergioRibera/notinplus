@@ -5,8 +5,10 @@
 //! implements [`Component`] (or `Into<Element>`) so it drops into
 //! `.child(...)` positions unchanged.
 
+pub mod color_wheel;
 pub mod fab_menu;
 pub mod modal;
 
+pub use color_wheel::{ColorWheel, DEFAULT_SWATCHES};
 pub use fab_menu::{FabMenu, FabMenuEntry};
 pub use modal::{Modal, ModalController, ModalPlacement, ModalPortal};
