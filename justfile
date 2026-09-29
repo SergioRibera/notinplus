@@ -14,6 +14,12 @@ fmt:
     cargo fmt --all
     cargo clippy --all-targets -- -D warnings
 
+remove-freya:
+  docker run --rm -it -v cargo-cache:/root/.cargo --entrypoint bash
+  sergioribera/rust-android:1.98-sdk-36 \
+    -c 'find /root/.cargo -path "*freya-skia-bindings*" -name "skia-binaries-*" -print -delete; \
+        find / -name "skia-binaries-*.tar.gz" 2>/dev/null -print -delete'
+
 # Nuke every `libnotinplus.so` cargo/gradle keeps around.
 #
 # `gradle clean` alone only wipes `android/*/build/`; the cargo `target/`
