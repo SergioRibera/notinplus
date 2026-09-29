@@ -379,7 +379,9 @@ fn fab_stack(
     current: FolderId,
     pad: EdgeInsets,
 ) -> Rect {
-    use crate::components::{FabMenu, FabMenuEntry};
+    use crate::components::{
+        CreateFolderRequest, FabMenu, FabMenuEntry, FolderCreateSheet,
+    };
 
     let pen_bg = Color::from_rgb(80, 130, 175);
     let plus_bg = Color::from_rgb(65, 105, 220);
@@ -437,17 +439,26 @@ fn fab_stack(
                 let handle = handle.clone();
                 move || {
                     let handle = handle.clone();
-                    let mut snap = snap;
-                    spawn(async move {
-                        let mut lib = handle.lock().await;
-                        match lib
-                            .create_folder(current, "Nueva carpeta", None, Vec::new())
-                            .await
-                        {
-                            Ok(_) => snap.set(Some(lib.index().clone())),
-                            Err(err) => log::error!("create_folder: {err}"),
-                        }
-                    });
+                    FolderCreateSheet::new(move |req: CreateFolderRequest| {
+                        let handle = handle.clone();
+                        let mut snap = snap;
+                        spawn(async move {
+                            let mut lib = handle.lock().await;
+                            match lib
+                                .create_folder(
+                                    current,
+                                    &req.name,
+                                    Some(color_to_rgba(req.color)),
+                                    req.tags,
+                                )
+                                .await
+                            {
+                                Ok(_) => snap.set(Some(lib.index().clone())),
+                                Err(err) => log::error!("create_folder: {err}"),
+                            }
+                        });
+                    })
+                    .open();
                 }
             }))
             .entry(
@@ -500,6 +511,10 @@ async fn open_library() -> Result<LibHandle, String> {
 
 fn rgba_to_color(rgba: Rgba) -> Color {
     Color::from_argb(rgba[3], rgba[0], rgba[1], rgba[2])
+}
+
+fn color_to_rgba(color: Color) -> Rgba {
+    [color.r(), color.g(), color.b(), color.a()]
 }
 
 /// Deterministic tint per id so freshly-created folders / items pick

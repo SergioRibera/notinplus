@@ -15,6 +15,19 @@
 use freya::prelude::*;
 use freya_engine::prelude::{Color as SkColor, Paint, PaintStyle, Point as SkPoint, Shader, TileMode};
 
+/// Deterministically pick a swatch for `name`. Two callers passing
+/// the same string always get the same color, so the folder / item
+/// grid stays visually stable while the user types.
+#[must_use]
+pub fn auto_color(name: &str) -> Color {
+    let mut hash: u32 = 2_166_136_261;
+    for byte in name.trim().bytes() {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(16_777_619);
+    }
+    DEFAULT_SWATCHES[(hash as usize) % DEFAULT_SWATCHES.len()]
+}
+
 /// Canonical folder / item swatch strip — matches the seven presets
 /// in the Nebo/Noteshelf-style folder dialog. Also used as the input
 /// space for auto-color derivation (name hash → index).
