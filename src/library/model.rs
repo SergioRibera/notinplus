@@ -63,6 +63,7 @@ pub struct Folder {
     pub name: String,
     pub color: Option<Rgba>,
     pub icon: Option<String>,
+    pub tags: Vec<TagId>,
     pub created_at: u64,
     pub updated_at: u64,
 }

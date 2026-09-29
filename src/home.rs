@@ -409,7 +409,10 @@ fn fab_stack(
             let mut snap = snap;
             spawn(async move {
                 let mut lib = handle.lock().await;
-                match lib.create_folder(current, "Nueva carpeta").await {
+                match lib
+                    .create_folder(current, "Nueva carpeta", None, Vec::new())
+                    .await
+                {
                     Ok(_) => snap.set(Some(lib.index().clone())),
                     Err(err) => log::error!("create_folder: {err}"),
                 }

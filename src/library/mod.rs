@@ -109,6 +109,16 @@ impl Library {
             .collect()
     }
 
+    /// Folders carrying `tag` in their tag list.
+    #[must_use]
+    pub fn folders_with_tag(&self, tag: TagId) -> Vec<&Folder> {
+        self.index
+            .folders
+            .iter()
+            .filter(|f| f.tags.contains(&tag))
+            .collect()
+    }
+
     /// Every tag the user has defined.
     #[must_use]
     pub fn tags(&self) -> &[Tag] {
@@ -141,16 +151,30 @@ impl Library {
     /// # Errors
     /// [`LibraryError::NotFound`] when `parent` is neither the root
     /// nor a known folder id.
-    pub async fn create_folder(&mut self, parent: FolderId, name: &str) -> Result<FolderId> {
+    pub async fn create_folder(
+        &mut self,
+        parent: FolderId,
+        name: &str,
+        color: Option<Rgba>,
+        mut tags: Vec<TagId>,
+    ) -> Result<FolderId> {
         self.ensure_folder_target(parent)?;
+        for t in &tags {
+            if self.index.tag(*t).is_none() {
+                return Err(LibraryError::NotFound(NotFoundKind::Tag(*t)));
+            }
+        }
+        tags.sort_unstable_by_key(|t| t.0);
+        tags.dedup();
         let now = now_millis();
         let id = self.index.alloc_folder_id();
         self.index.folders.push(Folder {
             id,
             parent,
             name: name.to_owned(),
-            color: None,
+            color,
             icon: None,
+            tags,
             created_at: now,
             updated_at: now,
         });
@@ -216,6 +240,33 @@ impl Library {
             .folder_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Folder(id)))?;
         folder.icon = icon;
+        folder.updated_at = now;
+        self.persist().await
+    }
+
+    /// Replace the folder's tag list. Same semantics as
+    /// [`Library::set_item_tags`] — unknown tag ids error out,
+    /// duplicates are deduplicated.
+    ///
+    /// # Errors
+    /// [`LibraryError::NotFound`] when any referenced tag / the folder
+    /// itself is unknown, or [`LibraryError::RootImmutable`] when `id`
+    /// is the root.
+    pub async fn set_folder_tags(&mut self, id: FolderId, mut tags: Vec<TagId>) -> Result<()> {
+        Self::reject_root(id)?;
+        for t in &tags {
+            if self.index.tag(*t).is_none() {
+                return Err(LibraryError::NotFound(NotFoundKind::Tag(*t)));
+            }
+        }
+        tags.sort_unstable_by_key(|t| t.0);
+        tags.dedup();
+        let now = now_millis();
+        let folder = self
+            .index
+            .folder_mut(id)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Folder(id)))?;
+        folder.tags = tags;
         folder.updated_at = now;
         self.persist().await
     }
