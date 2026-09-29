@@ -48,10 +48,36 @@ pub fn install() -> Result<(), Box<dyn std::error::Error>> {
     picker.install_release_hook(&runtime);
     runtime.register_host(FilePickerHost::new(picker));
 
+    log_storage_paths();
+
     // Local-hosted plugin calls short-circuit into dispatch_inbound, so
     // outbound only carries fire-and-forget frames the app doesn't emit
     // today. Drain defensively so a full channel never stalls dispatch.
     std::thread::spawn(move || while outbound.recv().is_ok() {});
 
     Ok(())
+}
+
+/// Dump the resolved on-disk locations to stdout + tracing so we can
+/// find the persisted state without guessing. Runs once at boot.
+///
+/// The `istmo::path::data_dir` root is derived from
+/// `ISTMO_APP_BUNDLE_ID` (baked by the app-side `istmo-build::emit`)
+/// with a `CARGO_PKG_NAME` fallback that resolves to `istmo-core`
+/// when the env var is not visible during path-crate compilation —
+/// which is why the folder may currently read `istmo-core` instead
+/// of `notinplus`. Logging the effective path avoids the mystery.
+fn log_storage_paths() {
+    let data_root = istmo::path::data_dir();
+    let library_root = crate::library::bodies::root_dir();
+    let data_store_file = data_root
+        .join("data_store")
+        .join(format!("{}.bin", crate::library::index::NAMESPACE));
+
+    log::info!("istmo data_dir       : {}", data_root.display());
+    log::info!("library docs / pdfs  : {}", library_root.display());
+    log::info!("library index blob   : {}", data_store_file.display());
+    println!("[notinplus] data_dir       : {}", data_root.display());
+    println!("[notinplus] library bodies : {}", library_root.display());
+    println!("[notinplus] index blob     : {}", data_store_file.display());
 }
