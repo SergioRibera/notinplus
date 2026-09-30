@@ -1,23 +1,16 @@
-//! HSV color-wheel picker with a canonical swatch strip.
+//! HSVA color picker: draggable SV square, hue bar, alpha bar, plus hex
+//! and alpha percentage inputs. Optional swatch strip on top.
 //!
-//! Built for two-hop reuse:
-//!
-//! * folder / item creation flows drop it into a modal alongside a name
-//!   input to let the user override the auto-derived color;
-//! * the drawing canvas will consume the same widget for brush color
-//!   selection later.
-//!
-//! MVP wheel is single-tap; drag-to-hue and a value slider will land
-//! once the folder-create modal wants them. The value channel is
-//! currently pinned at `1.0` (max brightness) so tapping the wheel
-//! always lands on a punchy hue.
+//! The public builder keeps the `ColorWheel` name for backwards
+//! compatibility. `.allow_custom(true)` toggles the full HSVA panel;
+//! `.allow_custom(false)` leaves only the swatch strip.
 
 use freya::prelude::*;
-use freya_engine::prelude::{Color as SkColor, Paint, PaintStyle, Point as SkPoint, Shader, TileMode};
 
-/// Deterministically pick a swatch for `name`. Two callers passing
-/// the same string always get the same color, so the folder / item
-/// grid stays visually stable while the user types.
+use super::theme::{BORDER, SURFACE_TERTIARY, TEXT_PRIMARY, TEXT_SECONDARY};
+
+/// Deterministically pick a swatch for `name`. Two callers passing the
+/// same string always get the same color.
 #[must_use]
 pub fn auto_color(name: &str) -> Color {
     let mut hash: u32 = 2_166_136_261;
@@ -28,9 +21,7 @@ pub fn auto_color(name: &str) -> Color {
     DEFAULT_SWATCHES[(hash as usize) % DEFAULT_SWATCHES.len()]
 }
 
-/// Canonical folder / item swatch strip — matches the seven presets
-/// in the Nebo/Noteshelf-style folder dialog. Also used as the input
-/// space for auto-color derivation (name hash → index).
+/// Canonical folder / item swatch strip.
 pub const DEFAULT_SWATCHES: [Color; 7] = [
     Color::from_rgb(245, 240, 235),
     Color::from_rgb(55, 65, 80),
@@ -41,15 +32,101 @@ pub const DEFAULT_SWATCHES: [Color; 7] = [
     Color::from_rgb(230, 190, 105),
 ];
 
-/// Builder for the picker. Follows the freya-widget convention — no
-/// `.build()`, chain setters, embed as `.child(ColorWheel::new()...)`
-/// wherever an [`IntoElement`] is expected.
+const SV_HEIGHT: f32 = 200.0;
+const BAR_HEIGHT: f32 = 18.0;
+const MARKER_SIZE: f32 = 14.0;
+const DEFAULT_WIDTH: f32 = 240.0;
+
+/// Internal HSVA state — keeping hue/sat/val separate avoids drift when
+/// converting through RGB (loses hue at S=0 or V=0).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Hsva {
+    h: f32,
+    s: f32,
+    v: f32,
+    a: f32,
+}
+
+impl Hsva {
+    fn from_color(c: Color) -> Self {
+        let hsv = c.to_hsv();
+        Self {
+            h: hsv.h,
+            s: hsv.s,
+            v: hsv.v,
+            a: f32::from(c.a()) / 255.0,
+        }
+    }
+
+    fn to_color(self) -> Color {
+        let rgb = Color::from_hsv(self.h, self.s, self.v);
+        with_alpha(rgb, self.a)
+    }
+
+    fn to_rgb_opaque(self) -> Color {
+        Color::from_hsv(self.h, self.s, self.v)
+    }
+}
+
+fn with_alpha(c: Color, a: f32) -> Color {
+    let a_u8 = (a * 255.0).round().clamp(0.0, 255.0) as u8;
+    Color::from_argb(a_u8, c.r(), c.g(), c.b())
+}
+
+fn parse_hex_rgb(input: &str) -> Option<(u8, u8, u8)> {
+    let trimmed = input.trim().trim_start_matches('#');
+    if trimmed.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&trimmed[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&trimmed[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&trimmed[4..6], 16).ok()?;
+    Some((r, g, b))
+}
+
+fn format_hex_rgb(c: Color) -> String {
+    format!("{:02X}{:02X}{:02X}", c.r(), c.g(), c.b())
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn format_alpha_pct(a: f32) -> String {
+    let pct = (a * 100.0).round().clamp(0.0, 100.0) as u32;
+    pct.to_string()
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn to_f32(v: f64) -> f32 {
+    v as f32
+}
+
+/// Convert a "cursor position" (marker center coord) into a top-left
+/// offset for a `MARKER_SIZE` marker, clamped so the marker never
+/// overshoots the track bounds.
+fn center_to_topleft(center: f32, track: f32) -> f32 {
+    let max = (track - MARKER_SIZE).max(0.0);
+    (center - MARKER_SIZE / 2.0).clamp(0.0, max)
+}
+
+fn nonzero_or(value: f32, fallback: f32) -> f32 {
+    if value > 0.0 { value } else { fallback }
+}
+
+#[derive(Clone, Copy, Default, PartialEq)]
+enum DragTarget {
+    #[default]
+    None,
+    Sv,
+    Hue,
+    Alpha,
+}
+
+/// Builder for the color picker.
 #[derive(Clone)]
 pub struct ColorWheel {
     swatches: Vec<Color>,
     initial: Color,
     allow_custom: bool,
-    diameter: f32,
+    width: f32,
     on_change: Option<Callback<Color, ()>>,
 }
 
@@ -65,7 +142,7 @@ impl std::fmt::Debug for ColorWheel {
             .field("swatches", &self.swatches)
             .field("initial", &self.initial)
             .field("allow_custom", &self.allow_custom)
-            .field("diameter", &self.diameter)
+            .field("width", &self.width)
             .finish_non_exhaustive()
     }
 }
@@ -76,7 +153,7 @@ impl Default for ColorWheel {
             swatches: DEFAULT_SWATCHES.to_vec(),
             initial: DEFAULT_SWATCHES[0],
             allow_custom: true,
-            diameter: 200.0,
+            width: DEFAULT_WIDTH,
             on_change: None,
         }
     }
@@ -88,38 +165,41 @@ impl ColorWheel {
         Self::default()
     }
 
-    /// Replace the swatch strip.
+    /// Replace the swatch strip. Empty vec hides the strip.
     #[must_use]
     pub fn swatches(mut self, swatches: impl Into<Vec<Color>>) -> Self {
         self.swatches = swatches.into();
         self
     }
 
-    /// Initially-selected color. Only consulted on mount — later
-    /// `on_change` firings drive the selection.
+    /// Initially-selected color.
     #[must_use]
     pub const fn initial(mut self, color: Color) -> Self {
         self.initial = color;
         self
     }
 
-    /// Show the HSV wheel below the swatches. Defaults to `true`; set
-    /// to `false` for a swatch-only picker.
+    /// Show the HSVA panel below the swatches.
     #[must_use]
     pub const fn allow_custom(mut self, allow: bool) -> Self {
         self.allow_custom = allow;
         self
     }
 
-    /// Wheel diameter in pixels.
+    /// Panel width in pixels.
     #[must_use]
-    pub const fn diameter(mut self, diameter: f32) -> Self {
-        self.diameter = diameter;
+    pub const fn width(mut self, width: f32) -> Self {
+        self.width = width;
         self
     }
 
-    /// Fired every time the selection changes — swatch tap or wheel
-    /// tap.
+    /// Alias kept for callers still using the old wheel API.
+    #[must_use]
+    pub const fn diameter(self, diameter: f32) -> Self {
+        self.width(diameter)
+    }
+
+    /// Fires on every commit — swatch pick, drag, or valid input submit.
     #[must_use]
     pub fn on_change(mut self, cb: impl Into<Callback<Color, ()>>) -> Self {
         self.on_change = Some(cb.into());
@@ -130,36 +210,331 @@ impl ColorWheel {
 impl Component for ColorWheel {
     fn render(&self) -> impl IntoElement {
         let initial = self.initial;
-        let mut selected = use_state(move || initial);
-        let cur = *selected.read();
+        let mut hsva = use_state(move || Hsva::from_color(initial));
+        let mut dragging = use_state(DragTarget::default);
+        let mut sv_area = use_state(Area::default);
+        let mut hue_area = use_state(Area::default);
+        let mut alpha_area = use_state(Area::default);
+        let mut hex_input = use_state(move || format_hex_rgb(initial));
+        let mut alpha_input = use_state(move || format_alpha_pct(f32::from(initial.a()) / 255.0));
 
-        let on_change = self.on_change.clone();
-        let fire = Callback::<Color, ()>::new(move |c| {
-            selected.set(c);
-            if let Some(cb) = on_change.clone() {
-                cb.call(c);
+        // Keep input strings in sync when the sliders drive changes.
+        use_side_effect(move || {
+            let cur = *hsva.read();
+            hex_input.set_if_modified(format_hex_rgb(cur.to_color()));
+            alpha_input.set_if_modified(format_alpha_pct(cur.a));
+        });
+
+        let current = *hsva.read();
+        let current_color = current.to_color();
+        let base_hue = Color::from_hsv(current.h, 1.0, 1.0);
+        let opaque_rgb = current.to_rgb_opaque();
+        let transparent_rgb = Color::from_argb(0, opaque_rgb.r(), opaque_rgb.g(), opaque_rgb.b());
+
+        let on_change_field = self.on_change.clone();
+        let commit = Callback::<Hsva, ()>::new(move |new_hsva: Hsva| {
+            hsva.set_if_modified(new_hsva);
+            if let Some(cb) = &on_change_field {
+                cb.call(new_hsva.to_color());
             }
         });
 
-        let strip = swatch_strip(&self.swatches, cur, fire.clone());
+        let update_sv = {
+            let commit = commit.clone();
+            move |coords: CursorPoint| {
+                let area = sv_area.read().to_f64();
+                if area.width() <= 0.0 || area.height() <= 0.0 {
+                    return;
+                }
+                let s = to_f32(((coords.x - area.min_x()) / area.width()).clamp(0.0, 1.0));
+                let ry = to_f32(((coords.y - area.min_y()) / area.height()).clamp(0.0, 1.0));
+                let cur = *hsva.peek();
+                commit.call(Hsva {
+                    s,
+                    v: 1.0 - ry,
+                    ..cur
+                });
+            }
+        };
+        let update_hue = {
+            let commit = commit.clone();
+            move |coords: CursorPoint| {
+                let area = hue_area.read().to_f64();
+                if area.width() <= 0.0 {
+                    return;
+                }
+                let rx = to_f32(((coords.x - area.min_x()) / area.width()).clamp(0.0, 1.0));
+                let cur = *hsva.peek();
+                commit.call(Hsva {
+                    h: rx * 360.0,
+                    ..cur
+                });
+            }
+        };
+        let update_alpha = {
+            let commit = commit.clone();
+            move |coords: CursorPoint| {
+                let area = alpha_area.read().to_f64();
+                if area.width() <= 0.0 {
+                    return;
+                }
+                let rx = to_f32(((coords.x - area.min_x()) / area.width()).clamp(0.0, 1.0));
+                let cur = *hsva.peek();
+                commit.call(Hsva { a: rx, ..cur });
+            }
+        };
+
+        let on_sv_pointer_down = {
+            let update_sv = update_sv.clone();
+            move |e: Event<PointerEventData>| {
+                if !e.data().is_primary() {
+                    return;
+                }
+                dragging.set(DragTarget::Sv);
+                update_sv(e.global_location());
+                e.stop_propagation();
+                e.prevent_default();
+            }
+        };
+        let on_hue_pointer_down = {
+            let update_hue = update_hue.clone();
+            move |e: Event<PointerEventData>| {
+                if !e.data().is_primary() {
+                    return;
+                }
+                dragging.set(DragTarget::Hue);
+                update_hue(e.global_location());
+                e.stop_propagation();
+                e.prevent_default();
+            }
+        };
+        let on_alpha_pointer_down = {
+            let update_alpha = update_alpha.clone();
+            move |e: Event<PointerEventData>| {
+                if !e.data().is_primary() {
+                    return;
+                }
+                dragging.set(DragTarget::Alpha);
+                update_alpha(e.global_location());
+                e.stop_propagation();
+                e.prevent_default();
+            }
+        };
+
+        let on_global_pointer_move = move |e: Event<PointerEventData>| match *dragging.read() {
+            DragTarget::Sv => update_sv(e.global_location()),
+            DragTarget::Hue => update_hue(e.global_location()),
+            DragTarget::Alpha => update_alpha(e.global_location()),
+            DragTarget::None => {}
+        };
+        let on_global_pointer_press = move |_: Event<PointerEventData>| {
+            if *dragging.read() != DragTarget::None {
+                dragging.set(DragTarget::None);
+            }
+        };
+
+        // Hex + alpha inputs
+        let hex_submit = {
+            let commit = commit.clone();
+            move |value: String| {
+                if let Some((r, g, b)) = parse_hex_rgb(&value) {
+                    let hsv = Color::from_rgb(r, g, b).to_hsv();
+                    let cur = *hsva.peek();
+                    commit.call(Hsva {
+                        h: hsv.h,
+                        s: hsv.s,
+                        v: hsv.v,
+                        ..cur
+                    });
+                }
+            }
+        };
+
+        let swatch_fire = {
+            let commit = commit.clone();
+            Callback::<Color, ()>::new(move |c: Color| {
+                let hsv = c.to_hsv();
+                let cur = *hsva.peek();
+                commit.call(Hsva {
+                    h: hsv.h,
+                    s: hsv.s,
+                    v: hsv.v,
+                    a: if c.a() == 255 {
+                        cur.a
+                    } else {
+                        f32::from(c.a()) / 255.0
+                    },
+                });
+            })
+        };
+
+        // -- element tree --
+        let picker_width = self.width;
+        let inner_width = picker_width - 2.0 * PANEL_PADDING;
+
+        // Marker positions ride on the *measured* track (from on_sized) so
+        // they stay under the cursor even when the parent hands the picker
+        // a width that differs from `self.width`. Fall back to inner_width
+        // on the first frame before on_sized has fired.
+        let sv_track_w = nonzero_or(sv_area.read().width(), inner_width);
+        let sv_track_h = nonzero_or(sv_area.read().height(), SV_HEIGHT);
+        let hue_track_w = nonzero_or(hue_area.read().width(), inner_width);
+        let alpha_track_w = nonzero_or(alpha_area.read().width(), inner_width);
+
+        let sv_marker_left = center_to_topleft(current.s * sv_track_w, sv_track_w);
+        let sv_marker_top = center_to_topleft((1.0 - current.v) * sv_track_h, sv_track_h);
+        let hue_marker_left = center_to_topleft((current.h / 360.0) * hue_track_w, hue_track_w);
+        let alpha_marker_left = center_to_topleft(current.a * alpha_track_w, alpha_track_w);
+
+        let sv_pane = rect()
+            .width(Size::fill())
+            .height(Size::px(SV_HEIGHT))
+            .with_corner_radius(8.0)
+            .overflow(Overflow::Clip)
+            .on_sized(move |e: Event<SizedEventData>| sv_area.set(e.area))
+            .on_pointer_down(on_sv_pointer_down)
+            .child(
+                rect()
+                    .width(Size::fill())
+                    .height(Size::fill())
+                    .background(
+                        LinearGradient::new()
+                            .angle(-90.0)
+                            .stop((Color::from_rgb(255, 255, 255), 0.0))
+                            .stop((base_hue, 100.0)),
+                    )
+                    .child(
+                        rect()
+                            .position(Position::new_absolute())
+                            .width(Size::fill())
+                            .height(Size::fill())
+                            .background(
+                                LinearGradient::new()
+                                    .angle(0.0)
+                                    .stop((Color::from_argb(0, 0, 0, 0), 0.0))
+                                    .stop((Color::from_rgb(0, 0, 0), 100.0)),
+                            ),
+                    ),
+            )
+            .child(marker_dot(sv_marker_left, sv_marker_top, current_color));
+
+        let hue_bar = rect()
+            .width(Size::fill())
+            .height(Size::px(BAR_HEIGHT))
+            .on_sized(move |e: Event<SizedEventData>| hue_area.set(e.area))
+            .on_pointer_down(on_hue_pointer_down)
+            .child(
+                rect()
+                    .expanded()
+                    .with_corner_radius(BAR_HEIGHT / 2.0)
+                    .background(
+                        LinearGradient::new()
+                            .angle(-90.0)
+                            .stop((Color::from_rgb(255, 0, 0), 0.0))
+                            .stop((Color::from_rgb(255, 255, 0), 16.0))
+                            .stop((Color::from_rgb(0, 255, 0), 33.0))
+                            .stop((Color::from_rgb(0, 255, 255), 50.0))
+                            .stop((Color::from_rgb(0, 0, 255), 66.0))
+                            .stop((Color::from_rgb(255, 0, 255), 83.0))
+                            .stop((Color::from_rgb(255, 0, 0), 100.0)),
+                    ),
+            )
+            .child(marker_dot(
+                hue_marker_left,
+                (BAR_HEIGHT - MARKER_SIZE) / 2.0,
+                base_hue,
+            ));
+
+        let alpha_bar = rect()
+            .width(Size::fill())
+            .height(Size::px(BAR_HEIGHT))
+            .on_sized(move |e: Event<SizedEventData>| alpha_area.set(e.area))
+            .on_pointer_down(on_alpha_pointer_down)
+            .child(
+                rect()
+                    .expanded()
+                    .with_corner_radius(BAR_HEIGHT / 2.0)
+                    .background(
+                        LinearGradient::new()
+                            .angle(-90.0)
+                            .stop((transparent_rgb, 0.0))
+                            .stop((opaque_rgb, 100.0)),
+                    ),
+            )
+            .child(marker_dot(
+                alpha_marker_left,
+                (BAR_HEIGHT - MARKER_SIZE) / 2.0,
+                current_color,
+            ));
+
+        let hex_field = Input::new(hex_input)
+            .width(Size::px(90.0))
+            .compact()
+            .flat()
+            .text_align(TextAlign::Center)
+            .on_submit(hex_submit);
+
+        let inputs_row = rect()
+            .horizontal()
+            .spacing(8.0)
+            .cross_align(Alignment::Center)
+            .child(
+                rect()
+                    .width(Size::px(32.0))
+                    .height(Size::px(28.0))
+                    .with_corner_radius(6.0)
+                    .background(current_color)
+                    .border(
+                        Border::new()
+                            .fill(BORDER)
+                            .width(1.0)
+                            .alignment(BorderAlignment::Inner),
+                    ),
+            )
+            .child(label().color(TEXT_SECONDARY).font_size(12.0).text("Hex"))
+            .child(hex_field);
 
         let mut root = rect()
             .vertical()
-            .spacing(16.0)
-            .cross_align(Alignment::Center)
-            .child(strip);
+            .width(Size::px(picker_width))
+            .spacing(12.0)
+            .padding(PANEL_PADDING)
+            .background(SURFACE_TERTIARY)
+            .with_corner_radius(12.0)
+            .color(TEXT_PRIMARY)
+            .on_global_pointer_move(on_global_pointer_move)
+            .on_global_pointer_press(on_global_pointer_press);
 
-        if self.allow_custom {
-            root = root.child(wheel_canvas(self.diameter, cur, fire));
+        if !self.swatches.is_empty() {
+            root = root.child(swatch_strip(&self.swatches, current_color, swatch_fire));
         }
-
+        if self.allow_custom {
+            root = root
+                .child(sv_pane)
+                .child(hue_bar)
+                .child(alpha_bar)
+                .child(inputs_row);
+        }
         root
     }
 }
 
-// ---------------------------------------------------------------------------
-// Swatch strip
-// ---------------------------------------------------------------------------
+const PANEL_PADDING: f32 = 12.0;
+
+fn marker_dot(left: f32, top: f32, fill: Color) -> Rect {
+    rect()
+        .position(Position::new_absolute().top(top).left(left))
+        .layer(2_i16)
+        .width(Size::px(MARKER_SIZE))
+        .height(Size::px(MARKER_SIZE))
+        .with_corner_radius(MARKER_SIZE / 2.0)
+        .background(fill)
+        .border(
+            Border::new()
+                .fill(Color::from_rgb(255, 255, 255))
+                .width(2.0),
+        )
+}
 
 fn swatch_strip(
     swatches: &[Color],
@@ -192,144 +567,7 @@ where
         .border(
             Border::new()
                 .width(if selected { 2.0 } else { 1.0 })
-                .alignment(BorderAlignment::Outer)
                 .fill(ring),
         )
         .on_press(move |_| handler(()))
-}
-
-// ---------------------------------------------------------------------------
-// HSV wheel
-// ---------------------------------------------------------------------------
-
-fn wheel_canvas(diameter: f32, selected: Color, fire: Callback<Color, ()>) -> impl IntoElement {
-    let radius = diameter / 2.0;
-
-    let painter = canvas(RenderCallback::new(move |ctx| {
-        let canvas = &ctx.canvas;
-        let (w, h) = (ctx.size.width, ctx.size.height);
-        let center = SkPoint::new(w / 2.0, h / 2.0);
-        let r = (w.min(h) / 2.0) - 1.0;
-
-        draw_hue_ring(canvas, center, r);
-        draw_saturation_overlay(canvas, center, r);
-        draw_selection_marker(canvas, selected, hsv_position_in(selected, r));
-    }))
-    .width(Size::px(diameter))
-    .height(Size::px(diameter));
-
-    rect()
-        .width(Size::px(diameter))
-        .height(Size::px(diameter))
-        .child(painter)
-        .on_press(move |e: Event<PressEventData>| {
-            let loc = match &*e {
-                PressEventData::Mouse(m) => m.element_location,
-                PressEventData::Touch(t) => t.element_location,
-                PressEventData::Keyboard(_) => return,
-            };
-            #[allow(clippy::cast_possible_truncation)]
-            let x = loc.x as f32;
-            #[allow(clippy::cast_possible_truncation)]
-            let y = loc.y as f32;
-            if let Some(c) = wheel_pick(x, y, radius) {
-                fire.call(c);
-            }
-        })
-}
-
-fn draw_hue_ring(canvas: &freya_engine::prelude::Canvas, center: SkPoint, r: f32) {
-    let hues: [SkColor; 7] = [
-        SkColor::from_argb(255, 255, 0, 0),
-        SkColor::from_argb(255, 255, 255, 0),
-        SkColor::from_argb(255, 0, 255, 0),
-        SkColor::from_argb(255, 0, 255, 255),
-        SkColor::from_argb(255, 0, 0, 255),
-        SkColor::from_argb(255, 255, 0, 255),
-        SkColor::from_argb(255, 255, 0, 0),
-    ];
-    #[allow(deprecated)]
-    let sweep = Shader::sweep_gradient(center, hues.as_slice(), None, TileMode::Clamp, None, None, None);
-    let mut paint = Paint::default();
-    paint.set_anti_alias(true);
-    paint.set_style(PaintStyle::Fill);
-    if let Some(s) = sweep {
-        paint.set_shader(s);
-    }
-    canvas.draw_circle(center, r, &paint);
-}
-
-fn draw_saturation_overlay(canvas: &freya_engine::prelude::Canvas, center: SkPoint, r: f32) {
-    let colors: [SkColor; 2] = [
-        SkColor::from_argb(255, 255, 255, 255),
-        SkColor::from_argb(0, 255, 255, 255),
-    ];
-    #[allow(deprecated)]
-    let radial = Shader::radial_gradient(center, r, colors.as_slice(), None, TileMode::Clamp, None, None);
-    let mut paint = Paint::default();
-    paint.set_anti_alias(true);
-    paint.set_style(PaintStyle::Fill);
-    if let Some(s) = radial {
-        paint.set_shader(s);
-    }
-    canvas.draw_circle(center, r, &paint);
-}
-
-fn draw_selection_marker(canvas: &freya_engine::prelude::Canvas, selected: Color, (x, y): (f32, f32)) {
-    let mut fill = Paint::default();
-    fill.set_anti_alias(true);
-    fill.set_style(PaintStyle::Fill);
-    fill.set_color(SkColor::from_argb(selected.a(), selected.r(), selected.g(), selected.b()));
-    canvas.draw_circle(SkPoint::new(x, y), 8.0, &fill);
-
-    let mut ring = Paint::default();
-    ring.set_anti_alias(true);
-    ring.set_style(PaintStyle::Stroke);
-    ring.set_stroke_width(2.0);
-    ring.set_color(SkColor::from_argb(255, 255, 255, 255));
-    canvas.draw_circle(SkPoint::new(x, y), 8.0, &ring);
-}
-
-fn hsv_position_in(color: Color, radius: f32) -> (f32, f32) {
-    // Same math as `hsv_position`, but the caller passes the paint-time
-    // radius (which accounts for the 1-px inset draw_hue_ring uses).
-    let (h, s, _v) = rgb_to_hsv(color);
-    let angle = h.to_radians();
-    let dist = s * radius;
-    (radius + angle.cos() * dist, radius + angle.sin() * dist)
-}
-
-fn wheel_pick(x: f32, y: f32, radius: f32) -> Option<Color> {
-    let dx = x - radius;
-    let dy = y - radius;
-    let dist = (dx * dx + dy * dy).sqrt();
-    if dist > radius {
-        return None;
-    }
-    let angle = dy.atan2(dx).to_degrees();
-    let hue = (angle + 360.0) % 360.0;
-    let sat = (dist / radius).clamp(0.0, 1.0);
-    Some(Color::from_hsv(hue, sat, 1.0))
-}
-
-fn rgb_to_hsv(color: Color) -> (f32, f32, f32) {
-    let r = f32::from(color.r()) / 255.0;
-    let g = f32::from(color.g()) / 255.0;
-    let b = f32::from(color.b()) / 255.0;
-    let max = r.max(g).max(b);
-    let min = r.min(g).min(b);
-    let d = max - min;
-    let v = max;
-    let s = if max == 0.0 { 0.0 } else { d / max };
-    let h = if d == 0.0 {
-        0.0
-    } else if max == r {
-        60.0 * (((g - b) / d) % 6.0)
-    } else if max == g {
-        60.0 * (((b - r) / d) + 2.0)
-    } else {
-        60.0 * (((r - g) / d) + 4.0)
-    };
-    let h = if h < 0.0 { h + 360.0 } else { h };
-    (h, s, v)
 }

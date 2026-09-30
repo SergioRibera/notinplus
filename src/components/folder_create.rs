@@ -7,12 +7,13 @@
 //!
 //! Color starts auto-derived from the current name (see
 //! [`super::color_wheel::auto_color`]) and swaps to whatever the user
-//! last tapped in the swatch strip. Tapping "Más colores" expands the
-//! inline [`ColorWheel`] for a free-form HSV pick.
+//! last tapped. Beyond the seven presets, an eighth "rainbow" slot
+//! opens the advanced [`ColorWheel`] picker as an in-modal popup; the
+//! slot then displays the chosen custom color in place of the rainbow.
 
 use freya::prelude::*;
 
-use super::color_wheel::{auto_color, ColorWheel, DEFAULT_SWATCHES};
+use super::color_wheel::{ColorWheel, DEFAULT_SWATCHES, auto_color};
 use super::form_input::FormInput;
 use super::modal::{Modal, ModalController};
 use super::tag_picker::TagPicker;
@@ -72,10 +73,7 @@ impl FolderCreateSheet {
 
     /// Existing tag names to offer as suggestions in the tag picker.
     #[must_use]
-    pub fn available_tags(
-        mut self,
-        tags: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
+    pub fn available_tags(mut self, tags: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.available_tags = tags.into_iter().map(Into::into).collect();
         self
     }
@@ -134,37 +132,48 @@ impl Component for FolderCreateSheet {
 
         let cancel = move |_| ModalController::get().close();
 
-        let swatches = {
-            let mut custom_color = custom_color;
+        let mut special_color = use_state(|| Option::<Color>::None);
+        let mut picker_open = use_state(|| false);
+        let picker_is_open = *picker_open.read();
+        let special = *special_color.read();
+        let current_custom = *custom_color.read();
+
+        let mut custom_for_preset = custom_color;
+        let mut special_for_preset = special_color;
+        let on_preset_pick = move |c: Color| {
+            special_for_preset.set(None);
+            custom_for_preset.set(Some(c));
+        };
+
+        let toggle_picker = move |_| {
+            let cur = *picker_open.read();
+            picker_open.set(!cur);
+        };
+
+        let mut custom_for_picker = custom_color;
+        let picker_on_change = move |c: Color| {
+            special_color.set(Some(c));
+            custom_for_picker.set(Some(c));
+        };
+
+        let selected_is_special = matches!((special, current_custom), (Some(s), Some(c)) if s == c);
+        let dropdown = picker_is_open.then(|| {
             ColorWheel::new()
-                .swatches(DEFAULT_SWATCHES.to_vec())
-                .initial(effective_color)
-                .allow_custom(false)
-                .on_change(move |c: Color| custom_color.set(Some(c)))
-        };
-
-        let wheel_toggle = use_state(|| false);
-        let show_wheel = *wheel_toggle.read();
-        let toggle_wheel = {
-            let mut wheel_toggle = wheel_toggle;
-            move |_| {
-                let cur = *wheel_toggle.read();
-                wheel_toggle.set(!cur);
-            }
-        };
-
-        let wheel = if show_wheel {
-            let mut custom_color = custom_color;
-            Some(
-                ColorWheel::new()
-                    .initial(effective_color)
-                    .allow_custom(true)
-                    .diameter(200.0)
-                    .on_change(move |c: Color| custom_color.set(Some(c))),
-            )
-        } else {
-            None
-        };
+                .initial(special.unwrap_or(effective_color))
+                .swatches(Vec::<Color>::new())
+                .allow_custom(true)
+                .width(260.0)
+                .on_change(picker_on_change)
+        });
+        let strip = swatch_strip_with_special(
+            current_custom,
+            special,
+            selected_is_special,
+            picker_is_open,
+            on_preset_pick,
+            toggle_picker,
+            dropdown,
+        );
 
         rect()
             .vertical()
@@ -186,7 +195,7 @@ impl Component for FolderCreateSheet {
                     .placeholder("Nombre de la carpeta")
                     .width(Size::fill()),
             )
-            .child(swatches)
+            .child(strip)
             .child(
                 TagPicker::new(tag_names)
                     .label("Etiquetas")
@@ -195,51 +204,133 @@ impl Component for FolderCreateSheet {
             .child(
                 rect()
                     .horizontal()
-                    .spacing(6.0)
-                    .cross_align(Alignment::Center)
-                    .child(
-                        label()
-                            .color(Color::from_rgb(120, 170, 255))
-                            .font_size(13.0)
-                            .text(if show_wheel { "Ocultar rueda" } else { "Más colores" }),
-                    )
-                    .on_press(toggle_wheel),
-            )
-            .map(wheel, |r, w| r.child(w))
-            .child(
-                rect()
-                    .horizontal()
                     .width(Size::fill())
                     .main_align(Alignment::End)
                     .spacing(20.0)
                     .padding((6.0, 0.0))
                     .child(
-                        rect()
-                            .padding((8.0, 14.0))
-                            .on_press(cancel)
-                            .child(
-                                label()
-                                    .color(Color::from_rgb(120, 170, 255))
-                                    .font_size(15.0)
-                                    .text("Cancelar"),
-                            ),
+                        rect().padding((8.0, 14.0)).on_press(cancel).child(
+                            label()
+                                .color(Color::from_rgb(120, 170, 255))
+                                .font_size(15.0)
+                                .text("Cancelar"),
+                        ),
                     )
                     .child(
-                        rect()
-                            .padding((8.0, 14.0))
-                            .on_press(submit)
-                            .child(
-                                label()
-                                    .color(if submit_disabled {
-                                        Color::from_rgb(90, 100, 130)
-                                    } else {
-                                        Color::from_rgb(120, 170, 255)
-                                    })
-                                    .font_size(15.0)
-                                    .text("Confirmar"),
-                            ),
+                        rect().padding((8.0, 14.0)).on_press(submit).child(
+                            label()
+                                .color(if submit_disabled {
+                                    Color::from_rgb(90, 100, 130)
+                                } else {
+                                    Color::from_rgb(120, 170, 255)
+                                })
+                                .font_size(15.0)
+                                .text("Confirmar"),
+                        ),
                     ),
             )
+    }
+}
+
+fn swatch_strip_with_special<PresetCb, SpecialCb, Picker>(
+    selected: Option<Color>,
+    special: Option<Color>,
+    special_is_selected: bool,
+    picker_open: bool,
+    on_preset: PresetCb,
+    on_special: SpecialCb,
+    picker: Option<Picker>,
+) -> impl IntoElement
+where
+    PresetCb: FnMut(Color) + Clone + 'static,
+    SpecialCb: FnMut(Event<PressEventData>) + 'static,
+    Picker: IntoElement + 'static,
+{
+    let mut row = rect()
+        .horizontal()
+        .spacing(10.0)
+        .cross_align(Alignment::Center);
+
+    for &color in &DEFAULT_SWATCHES {
+        let mut cb = on_preset.clone();
+        let is_sel = selected == Some(color) && !special_is_selected;
+        row = row.child(swatch_dot(color, is_sel, move |_| cb(color)));
+    }
+    // Rainbow slot lives inside an `Attached` overlay so the picker can
+    // float below it instead of pushing the modal content around.
+    row = row.child(
+        Attached::new(special_slot(
+            special,
+            special_is_selected,
+            picker_open,
+            on_special,
+        ))
+        .bottom()
+        .maybe_child(picker),
+    );
+    row
+}
+
+fn swatch_dot<F>(color: Color, selected: bool, on_press: F) -> impl IntoElement
+where
+    F: FnMut(Event<PressEventData>) + 'static,
+{
+    let ring = if selected {
+        Color::from_rgb(70, 140, 250)
+    } else {
+        Color::from_rgb(70, 70, 78)
+    };
+    rect()
+        .width(Size::px(30.0))
+        .height(Size::px(30.0))
+        .background(color)
+        .with_corner_radius(15.0)
+        .border(
+            Border::new()
+                .width(if selected { 2.0 } else { 1.0 })
+                .fill(ring),
+        )
+        .on_press(on_press)
+}
+
+fn special_slot<F>(
+    special: Option<Color>,
+    selected: bool,
+    picker_open: bool,
+    on_press: F,
+) -> impl IntoElement
+where
+    F: FnMut(Event<PressEventData>) + 'static,
+{
+    let ring = if selected || picker_open {
+        Color::from_rgb(70, 140, 250)
+    } else {
+        Color::from_rgb(70, 70, 78)
+    };
+    let base = rect()
+        .width(Size::px(30.0))
+        .height(Size::px(30.0))
+        .with_corner_radius(15.0)
+        .border(
+            Border::new()
+                .width(if selected || picker_open { 2.0 } else { 1.0 })
+                .fill(ring),
+        )
+        .on_press(on_press);
+
+    match special {
+        Some(c) => base.background(c),
+        None => base.background(
+            LinearGradient::new()
+                .angle(-90.0)
+                .stop((Color::from_rgb(255, 0, 0), 0.0))
+                .stop((Color::from_rgb(255, 255, 0), 16.0))
+                .stop((Color::from_rgb(0, 255, 0), 33.0))
+                .stop((Color::from_rgb(0, 255, 255), 50.0))
+                .stop((Color::from_rgb(0, 0, 255), 66.0))
+                .stop((Color::from_rgb(255, 0, 255), 83.0))
+                .stop((Color::from_rgb(255, 0, 0), 100.0)),
+        ),
     }
 }
 
@@ -251,10 +342,5 @@ fn preview_card(color: Color) -> impl IntoElement {
         .height(Size::px(170.0))
         .background(color)
         .with_corner_radius(10.0)
-        .border(
-            Border::new()
-                .width(1.0)
-                .alignment(BorderAlignment::Inner)
-                .fill(Color::from_rgb(70, 70, 80)),
-        )
+        .border(Border::new().width(1.0).fill(Color::from_rgb(70, 70, 80)))
 }

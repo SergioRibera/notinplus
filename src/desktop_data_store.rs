@@ -18,7 +18,9 @@ use std::sync::Mutex;
 
 use bincode::config::standard;
 use bincode::{Decode, Encode};
-use istmo_data_store::{DataStore, DataStoreConfig, DataStoreError, DataStoreFactory, DataStoreHost};
+use istmo_data_store::{
+    DataStore, DataStoreConfig, DataStoreError, DataStoreFactory, DataStoreHost,
+};
 
 /// Register the desktop backend on `runtime`. Returns the host so
 /// the caller can hand it to `runtime.register_host(...)`.
@@ -90,7 +92,8 @@ impl DesktopStore {
 
 fn load(path: &std::path::Path) -> Option<HashMap<String, Value>> {
     let bytes = std::fs::read(path).ok()?;
-    let (map, _) = bincode::decode_from_slice::<HashMap<String, Value>, _>(&bytes, standard()).ok()?;
+    let (map, _) =
+        bincode::decode_from_slice::<HashMap<String, Value>, _>(&bytes, standard()).ok()?;
     Some(map)
 }
 

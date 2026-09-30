@@ -10,8 +10,7 @@
 use std::sync::Arc;
 
 use crate::{
-    AttributionMode, BgPaintCtx, CanvasBackground, Color, PageAttachment, PageId, PageLayout,
-    Rect,
+    AttributionMode, BgPaintCtx, CanvasBackground, Color, PageAttachment, PageId, PageLayout, Rect,
     page::PageProvider,
 };
 
@@ -145,7 +144,11 @@ impl StackedPagesBackground {
 
 impl CanvasBackground for StackedPagesBackground {
     fn content_bounds(&self) -> Option<Rect> {
-        if self.layout.is_empty() { None } else { Some(self.bounds) }
+        if self.layout.is_empty() {
+            None
+        } else {
+            Some(self.bounds)
+        }
     }
 
     fn pages(&self) -> &[PageLayout] {

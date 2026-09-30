@@ -35,7 +35,6 @@ pub enum Route {
     CanvasPdfView,
 }
 
-
 /// Infinite canvas — resets the board background to the default solid
 /// fill on mount so navigating back from a PDF view starts fresh.
 #[derive(Debug, PartialEq)]

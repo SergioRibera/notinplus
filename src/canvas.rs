@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use flume::{Receiver, Sender};
 use freya::prelude::*;
 use freya_canvas_bg::{
-    BgPaintCtx, CanvasBackground, RedrawHandle, Rect as BgRect, SolidColorBackground,
+    BgPaintCtx, CanvasBackground, Rect as BgRect, RedrawHandle, SolidColorBackground,
     clamp_translation,
 };
 use freya_engine::prelude::{BlendMode, Color as SkColor, Paint, Path, SaveLayerRec};

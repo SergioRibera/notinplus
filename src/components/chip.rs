@@ -104,9 +104,9 @@ impl Component for Chip {
 }
 
 fn auto_accent(label: &str) -> Color {
-    let hash = label
-        .bytes()
-        .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(u32::from(b)));
+    let hash = label.bytes().fold(0u32, |acc, b| {
+        acc.wrapping_mul(31).wrapping_add(u32::from(b))
+    });
     let hue = (hash % 360) as f32;
     Color::from_hsv(hue, 0.65, 0.85)
 }

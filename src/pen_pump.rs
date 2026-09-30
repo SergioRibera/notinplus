@@ -110,11 +110,13 @@ fn pump_hover(stream: &TypedStream<PenHoverEvent, ()>) {
     let bridge = hover_bridge();
     while let Ok(StreamItem::Event(event)) = stream.recv() {
         let payload = match event {
-            PenHoverEvent::ProximityEnter(sample) | PenHoverEvent::Move(sample) => Some(HoverPoint {
-                x: sample.x,
-                y: sample.y,
-                z_offset: sample.z_offset,
-            }),
+            PenHoverEvent::ProximityEnter(sample) | PenHoverEvent::Move(sample) => {
+                Some(HoverPoint {
+                    x: sample.x,
+                    y: sample.y,
+                    z_offset: sample.z_offset,
+                })
+            }
             PenHoverEvent::ProximityLeave => None,
         };
         // Bounded channel: drop-oldest on full so a stalled consumer

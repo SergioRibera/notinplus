@@ -20,8 +20,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use freya_canvas_bg::{
-    AttributionMode, BgPaintCtx, CanvasBackground, Color, PageAttachment, PageId, PageLayout,
-    Rect,
+    AttributionMode, BgPaintCtx, CanvasBackground, Color, PageAttachment, PageId, PageLayout, Rect,
 };
 use freya_engine::prelude::{
     AlphaType, ColorType, Data, FilterMode, Image, ImageInfo, MipmapMode, Paint, Rect as SkRect,
@@ -254,7 +253,11 @@ impl CanvasBackground for PdfBackground {
                     self.draw_or_request(
                         cx,
                         &image_paint,
-                        CacheKey { page: pl.id, bucket, tile: TileCoord::Full },
+                        CacheKey {
+                            page: pl.id,
+                            bucket,
+                            tile: TileCoord::Full,
+                        },
                         pl.rect,
                         pl.rect,
                     );
@@ -481,7 +484,12 @@ fn compute_layout(doc: &PdfDocument, gap: f32) -> (Vec<PageLayout>, Rect) {
         y += h + gap;
     }
     let bottom = y - gap;
-    let bounds = Rect { min_x, min_y: 0.0, max_x, max_y: bottom };
+    let bounds = Rect {
+        min_x,
+        min_y: 0.0,
+        max_x,
+        max_y: bottom,
+    };
     (pages, bounds)
 }
 
@@ -495,7 +503,11 @@ fn compute_layout(doc: &PdfDocument, gap: f32) -> (Vec<PageLayout>, Rect) {
 /// the placeholder's pixel dimensions. Edge sub-tiles land on
 /// fractional pixels; Skia's sampler handles that fine given
 /// [`SrcRectConstraint::Fast`].
-fn placeholder_src_rect(page_rect: Rect, dst_world: Rect, placeholder: &CachedTile) -> Option<SkRect> {
+fn placeholder_src_rect(
+    page_rect: Rect,
+    dst_world: Rect,
+    placeholder: &CachedTile,
+) -> Option<SkRect> {
     let page_w = page_rect.width();
     let page_h = page_rect.height();
     if page_w <= 0.0 || page_h <= 0.0 {
@@ -584,14 +596,29 @@ mod tests {
 
     #[test]
     fn placeholder_src_rect_none_for_full_page_dst() {
-        let page = Rect { min_x: 0.0, min_y: 0.0, max_x: 100.0, max_y: 200.0 };
+        let page = Rect {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 100.0,
+            max_y: 200.0,
+        };
         assert!(placeholder_src_rect(page, page, &tile(64, 128)).is_none());
     }
 
     #[test]
     fn placeholder_src_rect_top_left_quadrant() {
-        let page = Rect { min_x: 0.0, min_y: 0.0, max_x: 100.0, max_y: 200.0 };
-        let quad = Rect { min_x: 0.0, min_y: 0.0, max_x: 50.0, max_y: 100.0 };
+        let page = Rect {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 100.0,
+            max_y: 200.0,
+        };
+        let quad = Rect {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 50.0,
+            max_y: 100.0,
+        };
         let src = placeholder_src_rect(page, quad, &tile(64, 128)).expect("sub-rect");
         assert!((src.left - 0.0).abs() < 1e-4);
         assert!((src.top - 0.0).abs() < 1e-4);
@@ -603,8 +630,18 @@ mod tests {
     fn placeholder_src_rect_bottom_right_cell_with_translated_page() {
         // Page origin at (-50, 300) — mirrors the layout produced by
         // `compute_layout` for a page that stacks below its neighbour.
-        let page = Rect { min_x: -50.0, min_y: 300.0, max_x: 50.0, max_y: 500.0 };
-        let cell = Rect { min_x: 0.0, min_y: 400.0, max_x: 50.0, max_y: 500.0 };
+        let page = Rect {
+            min_x: -50.0,
+            min_y: 300.0,
+            max_x: 50.0,
+            max_y: 500.0,
+        };
+        let cell = Rect {
+            min_x: 0.0,
+            min_y: 400.0,
+            max_x: 50.0,
+            max_y: 500.0,
+        };
         let src = placeholder_src_rect(page, cell, &tile(64, 128)).expect("sub-rect");
         assert!((src.left - 32.0).abs() < 1e-4);
         assert!((src.top - 64.0).abs() < 1e-4);
@@ -614,8 +651,18 @@ mod tests {
 
     #[test]
     fn placeholder_src_rect_none_when_page_degenerate() {
-        let page = Rect { min_x: 0.0, min_y: 0.0, max_x: 0.0, max_y: 0.0 };
-        let dst = Rect { min_x: 0.0, min_y: 0.0, max_x: 10.0, max_y: 10.0 };
+        let page = Rect {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 0.0,
+            max_y: 0.0,
+        };
+        let dst = Rect {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 10.0,
+            max_y: 10.0,
+        };
         assert!(placeholder_src_rect(page, dst, &tile(64, 64)).is_none());
     }
 }

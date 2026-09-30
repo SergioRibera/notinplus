@@ -11,7 +11,11 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use notinplus::{WINDOW_ID, app, canvas, pen_pump};
 
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,freya_winit=off,freya_core=off,torin=off,ragnarok=off,")).init();
+    env_logger::Builder::from_env(
+        env_logger::Env::default()
+            .default_filter_or("info,freya_winit=off,freya_core=off,torin=off,ragnarok=off,"),
+    )
+    .init();
 
     notinplus::desktop::install()?;
 

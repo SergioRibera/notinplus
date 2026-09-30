@@ -12,7 +12,7 @@ use freya::prelude::*;
 use crate::hooks::use_safe_area_insets;
 use crate::library::{BackgroundStyle, ItemKind};
 
-use super::color_wheel::{auto_color, DEFAULT_SWATCHES};
+use super::color_wheel::{DEFAULT_SWATCHES, auto_color};
 use super::modal::{Modal, ModalController};
 use super::tag_picker::TagPicker;
 
@@ -81,10 +81,7 @@ impl CanvasCreateSheet {
 
     /// Existing tag names to surface as suggestions in the tag picker.
     #[must_use]
-    pub fn available_tags(
-        mut self,
-        tags: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
+    pub fn available_tags(mut self, tags: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.available_tags = tags.into_iter().map(Into::into).collect();
         self
     }
@@ -174,7 +171,11 @@ impl Component for CanvasCreateSheet {
             .child(tab_row())
             .child(preview_card(effective_color, cur_background))
             .child(swatch_row(effective_color, custom_color))
-            .child(pattern_grid(cur_background, background, matches!(kind, ItemKind::PdfCanvas)))
+            .child(pattern_grid(
+                cur_background,
+                background,
+                matches!(kind, ItemKind::PdfCanvas),
+            ))
             .child(
                 TagPicker::new(tag_names)
                     .label("Etiquetas")
@@ -289,7 +290,9 @@ fn swatch_row(effective: Color, custom: State<Option<Color>>) -> impl IntoElemen
     for &color in &BASIC_SWATCHES {
         let selected = color == effective;
         let mut custom = custom;
-        row = row.child(swatch_dot(color, selected, move |()| custom.set(Some(color))));
+        row = row.child(swatch_dot(color, selected, move |()| {
+            custom.set(Some(color))
+        }));
     }
     row
 }

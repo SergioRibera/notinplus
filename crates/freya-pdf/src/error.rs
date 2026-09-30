@@ -30,7 +30,10 @@ impl fmt::Display for PdfError {
                 write!(f, "pdfium unavailable: {msg}")
             }
             Self::Open(msg) => write!(f, "failed to open pdf: {msg}"),
-            Self::PageOutOfRange { requested, page_count } => write!(
+            Self::PageOutOfRange {
+                requested,
+                page_count,
+            } => write!(
                 f,
                 "page {requested} out of range (document has {page_count})"
             ),

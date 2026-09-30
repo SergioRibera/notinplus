@@ -286,9 +286,24 @@ mod tests {
 
     #[test]
     fn rect_intersects_and_contains() {
-        let a = Rect { min_x: 0.0, min_y: 0.0, max_x: 10.0, max_y: 10.0 };
-        let b = Rect { min_x: 5.0, min_y: 5.0, max_x: 20.0, max_y: 20.0 };
-        let c = Rect { min_x: 20.0, min_y: 20.0, max_x: 30.0, max_y: 30.0 };
+        let a = Rect {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 10.0,
+            max_y: 10.0,
+        };
+        let b = Rect {
+            min_x: 5.0,
+            min_y: 5.0,
+            max_x: 20.0,
+            max_y: 20.0,
+        };
+        let c = Rect {
+            min_x: 20.0,
+            min_y: 20.0,
+            max_x: 30.0,
+            max_y: 30.0,
+        };
         assert!(a.intersects(&b));
         assert!(!a.intersects(&c));
         assert!(a.contains(1.0, 1.0));

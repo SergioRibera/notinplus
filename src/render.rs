@@ -211,9 +211,7 @@ impl HighlighterState {
     /// paint.
     #[must_use]
     pub fn get(&self) -> HighlighterTip {
-        self.inner
-            .read()
-            .map_or(HighlighterTip::Round, |g| *g)
+        self.inner.read().map_or(HighlighterTip::Round, |g| *g)
     }
 }
 

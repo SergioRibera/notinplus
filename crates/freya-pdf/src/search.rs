@@ -293,7 +293,9 @@ mod tests {
             "The quick Brown fox jumps over the brown dog",
             "brown",
             PageId(0),
-            SearchOptions { case_sensitive: false },
+            SearchOptions {
+                case_sensitive: false,
+            },
         );
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].char_offset, 10);
@@ -308,7 +310,9 @@ mod tests {
             "Brown vs brown",
             "brown",
             PageId(1),
-            SearchOptions { case_sensitive: true },
+            SearchOptions {
+                case_sensitive: true,
+            },
         );
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].char_offset, 9);

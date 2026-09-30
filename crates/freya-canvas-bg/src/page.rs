@@ -60,7 +60,12 @@ impl SolidPageProvider {
     /// New provider with the given world-space size and fill color.
     #[must_use]
     pub const fn new(size: (f32, f32), fill: Color) -> Self {
-        Self { size, fill, border: None, grid: None }
+        Self {
+            size,
+            fill,
+            border: None,
+            grid: None,
+        }
     }
 
     /// Attach a border overlay.
@@ -106,7 +111,9 @@ impl PageProvider for SolidPageProvider {
         let sk_rect = SkRect::from_ltrb(rect.min_x, rect.min_y, rect.max_x, rect.max_y);
 
         let mut fill = Paint::default();
-        fill.set_color(self.fill).set_style(PaintStyle::Fill).set_anti_alias(true);
+        fill.set_color(self.fill)
+            .set_style(PaintStyle::Fill)
+            .set_anti_alias(true);
         canvas.draw_rect(sk_rect, &fill);
 
         if let Some(grid) = self.grid {
@@ -131,7 +138,11 @@ impl PageProvider for SolidPageProvider {
 #[allow(clippy::cast_precision_loss)] // grid indices never approach f32 mantissa limit
 fn paint_grid(canvas: &Canvas, rect: Rect, grid: Grid) {
     match grid {
-        Grid::Lines { spacing, color, width } => {
+        Grid::Lines {
+            spacing,
+            color,
+            width,
+        } => {
             if spacing <= 0.0 || width <= 0.0 {
                 return;
             }
@@ -152,12 +163,19 @@ fn paint_grid(canvas: &Canvas, rect: Rect, grid: Grid) {
                 canvas.draw_line((rect.min_x, y), (rect.max_x, y), &paint);
             }
         }
-        Grid::Dots { spacing, color, radius } => {
+        Grid::Dots {
+            spacing,
+            color,
+            radius,
+        } => {
             if spacing <= 0.0 || radius <= 0.0 {
                 return;
             }
             let mut paint = Paint::default();
-            paint.set_color(color).set_style(PaintStyle::Fill).set_anti_alias(true);
+            paint
+                .set_color(color)
+                .set_style(PaintStyle::Fill)
+                .set_anti_alias(true);
             let (start_x, count_x) = grid_axis(rect.min_x, rect.max_x, spacing);
             let (start_y, count_y) = grid_axis(rect.min_y, rect.max_y, spacing);
             for j in 0..count_y {
@@ -205,7 +223,10 @@ pub mod paper {
     pub const A5: (f32, f32) = (420.0, 595.0);
 
     const fn default_border() -> PageBorder {
-        PageBorder { color: Color::from_argb(60, 0, 0, 0), width: 1.0 }
+        PageBorder {
+            color: Color::from_argb(60, 0, 0, 0),
+            width: 1.0,
+        }
     }
 
     /// White A4 page with a subtle border.
@@ -217,15 +238,13 @@ pub mod paper {
     /// White US Letter page with a subtle border.
     #[must_use]
     pub const fn letter() -> SolidPageProvider {
-        SolidPageProvider::new(LETTER, Color::from_rgb(255, 255, 255))
-            .with_border(default_border())
+        SolidPageProvider::new(LETTER, Color::from_rgb(255, 255, 255)).with_border(default_border())
     }
 
     /// White US Legal page with a subtle border.
     #[must_use]
     pub const fn legal() -> SolidPageProvider {
-        SolidPageProvider::new(LEGAL, Color::from_rgb(255, 255, 255))
-            .with_border(default_border())
+        SolidPageProvider::new(LEGAL, Color::from_rgb(255, 255, 255)).with_border(default_border())
     }
 
     /// White A5 page with a subtle border.

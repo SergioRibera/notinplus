@@ -223,7 +223,12 @@ mod tests {
 
     #[test]
     fn edge_tile_smaller_than_tile_pixels() {
-        let g = TileGrid { cols: 3, rows: 4, full_width_pixels: 1339, full_height_pixels: 1895 };
+        let g = TileGrid {
+            cols: 3,
+            rows: 4,
+            full_width_pixels: 1339,
+            full_height_pixels: 1895,
+        };
         // Top-left interior tile = full 512×512.
         assert_eq!(g.tile_pixel_size(0, 0), (512, 512));
         // Rightmost column at col 2: 1339 - 2*512 = 315.
@@ -235,11 +240,24 @@ mod tests {
     #[test]
     fn tile_world_rect_partitions_page() {
         use freya_canvas_bg::Rect;
-        let g = TileGrid { cols: 3, rows: 4, full_width_pixels: 1339, full_height_pixels: 1895 };
-        let page = Rect { min_x: -297.5, min_y: 0.0, max_x: 297.5, max_y: 842.0 };
+        let g = TileGrid {
+            cols: 3,
+            rows: 4,
+            full_width_pixels: 1339,
+            full_height_pixels: 1895,
+        };
+        let page = Rect {
+            min_x: -297.5,
+            min_y: 0.0,
+            max_x: 297.5,
+            max_y: 842.0,
+        };
         let t0 = g.tile_world_rect(page, 0, 0);
         let t2 = g.tile_world_rect(page, 2, 0); // rightmost, partial
         assert!((t0.min_x - page.min_x).abs() < 1e-4);
-        assert!((t2.max_x - page.max_x).abs() < 1e-3, "rightmost tile reaches page edge");
+        assert!(
+            (t2.max_x - page.max_x).abs() < 1e-3,
+            "rightmost tile reaches page edge"
+        );
     }
 }

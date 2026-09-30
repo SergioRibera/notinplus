@@ -24,7 +24,7 @@ use freya::prelude::*;
 use freya::router::*;
 use istmo::plugins::EdgeInsets;
 
-use crate::components::{auto_color, CanvasCreateSheet, CreateCanvasRequest};
+use crate::components::{CanvasCreateSheet, CreateCanvasRequest, auto_color};
 use crate::hooks::use_safe_area_insets;
 use crate::library::{
     BackgroundStyle, Folder, FolderId, Item, ItemKind, Library, LibraryIndex, ROOT_FOLDER, Rgba,
@@ -128,17 +128,11 @@ fn top_bar() -> impl IntoElement {
         .height(Size::px(56.0))
         .padding((10.0, 16.0))
         .background(bg)
+        .content(Content::Flex)
         .cross_align(Alignment::Center)
         .child(icon_button("☰"))
         .child(spacer_px(6.0))
-        .child(icon_button("🔔"))
-        .child(spacer_px(6.0))
-        .child(icon_button("☁"))
         .child(flexible_spacer())
-        .child(icon_button("🏠"))
-        .child(flexible_spacer())
-        .child(icon_button("✔"))
-        .child(spacer_px(6.0))
         .child(icon_button("🔍"))
         .child(spacer_px(6.0))
         .child(icon_button("⚙"))
@@ -158,7 +152,7 @@ fn icon_button(glyph: &'static str) -> impl IntoElement {
 }
 
 fn flexible_spacer() -> impl IntoElement {
-    rect().width(Size::fill()).height(Size::px(1.0))
+    rect().width(Size::flex(1.)).height(Size::px(1.0))
 }
 
 fn spacer_px(px: f32) -> impl IntoElement {
@@ -179,7 +173,10 @@ fn breadcrumb_bar(
         .width(Size::fill())
         .height(Size::px(44.0))
         .padding((6.0, 20.0))
-        .cross_align(Alignment::Center);
+        .content(Content::Flex)
+        .cross_align(Alignment::Center)
+        .child(sort_pill())
+        .child(spacer_px(15.));
 
     row = row.child(crumb("Inicio", nav_stack.is_empty(), move |()| {
         let mut nav = nav;
@@ -193,19 +190,15 @@ fn breadcrumb_bar(
             .unwrap_or_else(|| "?".to_owned());
         let is_last = i + 1 == nav_stack.len();
         let depth = i + 1;
-        row = row.child(crumb_separator());
-        row = row.child(crumb(&name, is_last, move |()| {
-            let mut nav = nav;
-            nav.write().truncate(depth);
-        }));
+        row = row
+            .child(crumb_separator())
+            .child(crumb(&name, is_last, move |()| {
+                let mut nav = nav;
+                nav.write().truncate(depth);
+            }));
     }
 
-    row.child(flexible_spacer())
-        .child(icon_button("🎨"))
-        .child(spacer_px(6.0))
-        .child(icon_button("≡"))
-        .child(spacer_px(6.0))
-        .child(sort_pill())
+    row
 }
 
 fn crumb<F: Fn(()) + 'static>(text: &str, active: bool, handler: F) -> impl IntoElement {
@@ -251,10 +244,14 @@ fn sort_pill() -> impl IntoElement {
 fn grid(
     index: &LibraryIndex,
     current: FolderId,
-    snap: State<Option<LibraryIndex>>,
+    _snap: State<Option<LibraryIndex>>,
     nav: State<Vec<FolderId>>,
 ) -> impl IntoElement {
-    let mut folders: Vec<&Folder> = index.folders.iter().filter(|f| f.parent == current).collect();
+    let mut folders: Vec<&Folder> = index
+        .folders
+        .iter()
+        .filter(|f| f.parent == current)
+        .collect();
     let mut items: Vec<&Item> = index.items.iter().filter(|i| i.folder == current).collect();
     folders.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
@@ -277,12 +274,17 @@ fn grid(
         .height(Size::fill())
         .padding((12.0, 24.0))
         .spacing(20.0)
+        .horizontal()
         .content(Content::wrap());
 
     for folder in folders {
         let folder_id = folder.id;
         let child_count = index.items.iter().filter(|i| i.folder == folder_id).count()
-            + index.folders.iter().filter(|f| f.parent == folder_id).count();
+            + index
+                .folders
+                .iter()
+                .filter(|f| f.parent == folder_id)
+                .count();
         let subtitle = format!("{} notas · {}", child_count, format_date(folder.updated_at));
         wrap = wrap.child(card(
             folder.name.clone(),
@@ -316,7 +318,6 @@ fn grid(
         ));
     }
 
-    let _ = snap;
     wrap
 }
 
@@ -562,11 +563,7 @@ async fn open_library() -> Result<LibHandle, String> {
 
 /// Launch the platform file-picker, read the picked PDF into memory,
 /// and open the canvas-create sheet pre-filled with its name.
-async fn pick_and_open_pdf(
-    handle: LibHandle,
-    snap: State<Option<LibraryIndex>>,
-    parent: FolderId,
-) {
+async fn pick_and_open_pdf(handle: LibHandle, snap: State<Option<LibraryIndex>>, parent: FolderId) {
     use std::io::Read;
     use std::sync::Arc as StdArc;
 
@@ -714,7 +711,6 @@ async fn resolve_tag_names(lib: &mut Library, names: &[String]) -> Vec<TagId> {
     }
     ids
 }
-
 
 /// Format a millisecond epoch as `dd/mm/yy` (Spanish convention) using
 /// the civil-from-days algorithm — no chrono dep just for one label.

@@ -161,7 +161,10 @@ impl PdfDocument {
             .page_sizes
             .get(page)
             .copied()
-            .ok_or(PdfError::PageOutOfRange { requested: page, page_count: count })
+            .ok_or(PdfError::PageOutOfRange {
+                requested: page,
+                page_count: count,
+            })
     }
 
     /// Snapshot of every page's natural size, in insertion order.
@@ -205,10 +208,7 @@ impl PdfDocument {
     ///
     /// Returns [`PdfError::PageOutOfRange`] when `page` is out of
     /// range, [`PdfError::Backend`] on pdfium failure.
-    pub fn extract_page_text_indexed(
-        &self,
-        page: usize,
-    ) -> Result<(String, Vec<usize>), PdfError> {
+    pub fn extract_page_text_indexed(&self, page: usize) -> Result<(String, Vec<usize>), PdfError> {
         let pdf_page = self.pdf_page(page)?;
         let text = pdf_page
             .text()
@@ -239,12 +239,7 @@ impl PdfDocument {
     ///
     /// Returns [`PdfError::PageOutOfRange`] when `page` is out of
     /// range, [`PdfError::Backend`] on pdfium failure.
-    pub fn char_rects(
-        &self,
-        page: usize,
-        start: usize,
-        end: usize,
-    ) -> Result<Vec<Rect>, PdfError> {
+    pub fn char_rects(&self, page: usize, start: usize, end: usize) -> Result<Vec<Rect>, PdfError> {
         if end <= start {
             return Ok(Vec::new());
         }
@@ -286,10 +281,7 @@ impl PdfDocument {
         Ok(merged)
     }
 
-    fn pdf_page(
-        &self,
-        page: usize,
-    ) -> Result<pdfium_render::prelude::PdfPage<'_>, PdfError> {
+    fn pdf_page(&self, page: usize) -> Result<pdfium_render::prelude::PdfPage<'_>, PdfError> {
         let count = self.page_count();
         if page >= count {
             return Err(PdfError::PageOutOfRange {
@@ -341,7 +333,12 @@ mod tests {
     use freya_canvas_bg::Rect;
 
     fn line(y: f32, h: f32) -> Rect {
-        Rect { min_x: 0.0, min_y: y, max_x: 10.0, max_y: y + h }
+        Rect {
+            min_x: 0.0,
+            min_y: y,
+            max_x: 10.0,
+            max_y: y + h,
+        }
     }
 
     #[test]

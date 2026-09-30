@@ -267,7 +267,8 @@ impl Component for FormInput {
             focus_border_fill: Some(Color::TRANSPARENT.into()),
             background: Some(Color::TRANSPARENT.into()),
             focus_background: Some(Color::TRANSPARENT.into()),
-            ..Default::default()
+            color: Some(TEXT_SECONDARY.into()),
+            placeholder_color: Some(TEXT_PLACEHOLDER.into()),
         });
 
         let mut paste_value = self.value.clone();
@@ -424,12 +425,10 @@ impl Component for FormInput {
                     )
                 },
             )
-            .maybe_child(active_error.map(|error| {
-                label()
-                    .font_size(12.)
-                    .color(ERROR)
-                    .text(error.to_string())
-            }))
+            .maybe_child(
+                active_error
+                    .map(|error| label().font_size(12.).color(ERROR).text(error.to_string())),
+            )
     }
 }
 

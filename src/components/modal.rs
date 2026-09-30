@@ -371,9 +371,7 @@ impl Component for ModalOverlay {
                     .height(Size::px(height))
                     .background(Color::from_argb(backdrop_alpha, 0, 0, 0))
                     .blur(blur as f32)
-                    .maybe(dismiss, |r| {
-                        r.on_press(|_| ModalController::get().close())
-                    }),
+                    .maybe(dismiss, |r| r.on_press(|_| ModalController::get().close())),
             )
             .child(card_layer)
     }

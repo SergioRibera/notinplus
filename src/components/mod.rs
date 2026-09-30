@@ -18,7 +18,7 @@ pub mod theme;
 
 pub use canvas_create::{CanvasCreateSheet, CreateCanvasRequest};
 pub use chip::Chip;
-pub use color_wheel::{auto_color, ColorWheel, DEFAULT_SWATCHES};
+pub use color_wheel::{ColorWheel, DEFAULT_SWATCHES, auto_color};
 pub use fab_menu::{FabMenu, FabMenuEntry};
 pub use folder_create::{CreateFolderRequest, FolderCreateSheet};
 pub use form_input::FormInput;

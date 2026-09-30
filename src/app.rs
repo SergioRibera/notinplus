@@ -101,12 +101,7 @@ pub fn run() {
     }
 
     #[cfg(not(target_os = "android"))]
-    launch(
-        LaunchConfig::new().with_window(
-            WindowConfig::new(router)
-            .with_title("notinplus"),
-        ),
-    );
+    launch(LaunchConfig::new().with_window(WindowConfig::new(router).with_title("notinplus")));
 }
 
 fn router() -> impl IntoElement {

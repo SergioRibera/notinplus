@@ -65,7 +65,12 @@ mod tests {
     use super::*;
 
     fn rect(min_x: f32, min_y: f32, max_x: f32, max_y: f32) -> Rect {
-        Rect { min_x, min_y, max_x, max_y }
+        Rect {
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+        }
     }
 
     #[test]
@@ -81,9 +86,23 @@ mod tests {
     fn pins_edges_when_content_wider_than_surface() {
         // 1000-wide bounds inside 400-wide surface at scale 1.0 →
         // valid tx range is [400 - 1000, 0] = [-600, 0].
-        let (tx_hi, _) = clamp_translation(1_000.0, 0.0, 1.0, rect(0.0, 0.0, 1_000.0, 500.0), 400.0, 500.0);
+        let (tx_hi, _) = clamp_translation(
+            1_000.0,
+            0.0,
+            1.0,
+            rect(0.0, 0.0, 1_000.0, 500.0),
+            400.0,
+            500.0,
+        );
         assert!((tx_hi - 0.0).abs() < 1e-4);
-        let (tx_lo, _) = clamp_translation(-9_999.0, 0.0, 1.0, rect(0.0, 0.0, 1_000.0, 500.0), 400.0, 500.0);
+        let (tx_lo, _) = clamp_translation(
+            -9_999.0,
+            0.0,
+            1.0,
+            rect(0.0, 0.0, 1_000.0, 500.0),
+            400.0,
+            500.0,
+        );
         assert!((tx_lo + 600.0).abs() < 1e-4);
     }
 
@@ -91,7 +110,14 @@ mod tests {
     fn scale_shrinks_effective_extent() {
         // 1000-wide bounds at scale 0.2 → 200 on screen, fits in 400
         // surface → centres.
-        let (tx, _) = clamp_translation(0.0, 0.0, 0.2, rect(0.0, 0.0, 1_000.0, 1_000.0), 400.0, 400.0);
+        let (tx, _) = clamp_translation(
+            0.0,
+            0.0,
+            0.2,
+            rect(0.0, 0.0, 1_000.0, 1_000.0),
+            400.0,
+            400.0,
+        );
         // centre_world = 500; 400*0.5 - 500*0.2 = 200 - 100 = 100.
         assert!((tx - 100.0).abs() < 1e-4);
     }

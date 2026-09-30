@@ -123,7 +123,10 @@ fn write_blob(dest: &std::path::Path, bytes: &[u8]) -> Result<()> {
     let mut tmp = dest.to_path_buf();
     // Append `.tmp` to the file name so `.rename` stays within the
     // same directory (cross-directory renames are not atomic).
-    let file_name = tmp.file_name().map(std::ffi::OsStr::to_os_string).unwrap_or_default();
+    let file_name = tmp
+        .file_name()
+        .map(std::ffi::OsStr::to_os_string)
+        .unwrap_or_default();
     let mut with_ext = file_name;
     with_ext.push(".tmp");
     tmp.set_file_name(with_ext);

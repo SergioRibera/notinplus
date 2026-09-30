@@ -11,8 +11,8 @@ use std::borrow::Cow;
 
 use freya::prelude::*;
 
-use crate::components::{FormInput, Tag};
 use crate::components::theme::TEXT_SECONDARY;
+use crate::components::{FormInput, Tag};
 
 #[derive(Clone, PartialEq)]
 pub struct TagPicker {
@@ -36,10 +36,7 @@ impl TagPicker {
     }
 
     #[must_use]
-    pub fn available(
-        mut self,
-        available: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
+    pub fn available(mut self, available: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.available = available.into_iter().map(Into::into).collect();
         self
     }
@@ -74,10 +71,7 @@ impl Component for TagPicker {
         // Available tags minus the ones already selected (the FormInput
         // dropdown filters again by substring — this pass just hides
         // names the user already picked).
-        let already: Vec<String> = selected_snapshot
-            .iter()
-            .map(|s| s.to_lowercase())
-            .collect();
+        let already: Vec<String> = selected_snapshot.iter().map(|s| s.to_lowercase()).collect();
         let suggestions: Vec<Cow<'static, str>> = self
             .available
             .iter()

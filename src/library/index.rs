@@ -45,8 +45,8 @@ pub async fn load(client: &DataStoreClient) -> Result<LibraryIndex> {
 /// # Errors
 /// Runtime / data-store / codec failures.
 pub async fn save(client: &DataStoreClient, snapshot: &LibraryIndex) -> Result<()> {
-    let bytes = bincode::encode_to_vec(snapshot, CODEC)
-        .map_err(|e| LibraryError::Codec(e.to_string()))?;
+    let bytes =
+        bincode::encode_to_vec(snapshot, CODEC).map_err(|e| LibraryError::Codec(e.to_string()))?;
     client.set_bytes(INDEX_KEY.to_owned(), bytes).await?;
     Ok(())
 }

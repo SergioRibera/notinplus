@@ -209,8 +209,7 @@ fn render_entry(doc: &PdfDocument, key: CacheKey) -> Option<CachedTile> {
             if tile_w <= 0 || tile_h <= 0 {
                 return None;
             }
-            let mut bitmap =
-                PdfBitmap::empty(tile_w, tile_h, PdfBitmapFormat::BGRA).ok()?;
+            let mut bitmap = PdfBitmap::empty(tile_w, tile_h, PdfBitmapFormat::BGRA).ok()?;
             // Sub-tile trick: ask pdfium to render the WHOLE page at
             // `full_w × full_h`, but with the page's top-left at
             // `(-start_x, -start_y)` inside a `tile_w × tile_h` bitmap.
