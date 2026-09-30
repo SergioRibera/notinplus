@@ -397,7 +397,7 @@ fn fab_stack(
         move |_| {
             let handle = handle.clone();
             let mut snap = snap;
-            spawn(async move {
+            spawn_forever(async move {
                 let mut lib = handle.lock().await;
                 match lib
                     .create_item(
@@ -445,7 +445,7 @@ fn fab_stack(
                         );
                         let handle = handle.clone();
                         let mut snap = snap;
-                        spawn(async move {
+                        spawn_forever(async move {
                             let mut lib = handle.lock().await;
                             let tag_ids = resolve_tag_names(&mut lib, &req.tag_names).await;
                             log::info!("canvas create → parent={current:?} tag_ids={tag_ids:?}");
@@ -487,7 +487,7 @@ fn fab_stack(
                         );
                         let handle = handle.clone();
                         let mut snap = snap;
-                        spawn(async move {
+                        spawn_forever(async move {
                             let mut lib = handle.lock().await;
                             let tag_ids = resolve_tag_names(&mut lib, &req.tag_names).await;
                             log::info!("folder create → parent={current:?} tag_ids={tag_ids:?}");
@@ -517,7 +517,7 @@ fn fab_stack(
                     let handle = handle.clone();
                     move || {
                         let handle = handle.clone();
-                        spawn(pick_and_open_pdf(handle, snap, current));
+                        spawn_forever(pick_and_open_pdf(handle, snap, current));
                     }
                 })
                 .with_divider_above(),
@@ -627,7 +627,7 @@ async fn pick_and_open_pdf(
         let bytes = StdArc::clone(&bytes);
         let handle = handle.clone();
         let mut snap = snap;
-        spawn(async move {
+        spawn_forever(async move {
             let mut lib = handle.lock().await;
             let tag_ids = resolve_tag_names(&mut lib, &req.tag_names).await;
             log::info!("pdf create → parent={parent:?} tag_ids={tag_ids:?}");
