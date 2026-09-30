@@ -49,6 +49,7 @@ pub struct Modal {
     placement: ModalPlacement,
     width: Option<f32>,
     dismiss_on_backdrop: bool,
+    dismiss_on_escape: bool,
     backdrop_alpha: u8,
     on_close: Option<NoArgCallback<()>>,
 }
@@ -59,6 +60,7 @@ impl std::fmt::Debug for Modal {
             .field("placement", &self.placement)
             .field("width", &self.width)
             .field("dismiss_on_backdrop", &self.dismiss_on_backdrop)
+            .field("dismiss_on_escape", &self.dismiss_on_escape)
             .field("backdrop_alpha", &self.backdrop_alpha)
             .finish_non_exhaustive()
     }
@@ -83,6 +85,7 @@ impl Modal {
             placement: ModalPlacement::default(),
             width: None,
             dismiss_on_backdrop: true,
+            dismiss_on_escape: true,
             backdrop_alpha: 160,
             on_close: None,
         }
@@ -123,6 +126,15 @@ impl Modal {
     #[must_use]
     pub const fn dismiss_on_backdrop(mut self, dismiss: bool) -> Self {
         self.dismiss_on_backdrop = dismiss;
+        self
+    }
+
+    /// Whether pressing `Escape` (desktop) or the Android back button
+    /// dismisses the modal. Defaults to `true`. Android's hardware /
+    /// gesture back arrives via winit as `NamedKey::BrowserBack`.
+    #[must_use]
+    pub const fn dismiss_on_escape(mut self, dismiss: bool) -> Self {
+        self.dismiss_on_escape = dismiss;
         self
     }
 
@@ -298,6 +310,7 @@ impl Component for ModalOverlay {
         let height = area.height();
         let placement = model.placement;
         let dismiss = model.dismiss_on_backdrop;
+        let dismiss_on_escape = model.dismiss_on_escape;
         let backdrop_alpha = model.backdrop_alpha;
         let body_width = model.width;
         let body = model.body.clone();
@@ -340,6 +353,17 @@ impl Component for ModalOverlay {
             .position(Position::new_absolute().top(0.0).left(0.0))
             .width(Size::px(width))
             .height(Size::px(height))
+            .maybe(dismiss_on_escape, |r| {
+                r.on_global_key_down(|e: Event<KeyboardEventData>| {
+                    if matches!(
+                        e.key,
+                        Key::Named(NamedKey::Escape) | Key::Named(NamedKey::BrowserBack)
+                    ) {
+                        e.stop_propagation();
+                        ModalController::get().close();
+                    }
+                })
+            })
             .child(
                 rect()
                     .position(Position::new_absolute().top(0.0).left(0.0))
