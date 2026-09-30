@@ -211,9 +211,51 @@ pub(crate) fn root() -> impl IntoElement {
         .width(Size::fill())
         .height(Size::fill())
         .child(drawing_surface(&board))
+        .child(back_overlay(&board, pad))
         .child(palette_overlay(&board, selected, scale, pad, coords))
         .child(layers_panel(&board, layers_ver, pad))
         .child(zoom_overlay(&board, zoom, pad))
+}
+
+/// Top-left "back to home" pill. Snapshots the current doc, spawns a
+/// save task, then routes to `Route::Home`. The navigation kicks off
+/// before the save resolves so the UI feels snappy — the async writer
+/// finishes in the background and reports errors via `log`.
+fn back_overlay(board: &Arc<Mutex<Board>>, pad: EdgeInsets) -> impl IntoElement {
+    let board = Arc::clone(board);
+    rect()
+        .position(
+            Position::new_global()
+                .top(pad.top + 8.0)
+                .left(pad.left + 8.0),
+        )
+        .padding((6.0, 10.0))
+        .background(Color::from_argb(220, 30, 30, 34))
+        .with_corner_radius(8.0)
+        .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Back, e.area))
+        .on_press(move |_| {
+            let doc_snapshot = {
+                let guard = lock(&board);
+                guard.doc().clone()
+            };
+            let item_id = crate::route::current_canvas_item();
+            spawn(async move {
+                if let Some(id) = item_id {
+                    match crate::home::open_library().await {
+                        Ok(handle) => {
+                            let mut lib = handle.lock().await;
+                            if let Err(err) = lib.save_doc(id, &doc_snapshot).await {
+                                log::error!("save_doc: {err}");
+                            }
+                        }
+                        Err(err) => log::error!("open library on back: {err}"),
+                    }
+                }
+                crate::route::set_current_canvas_item(None);
+                let _ = RouterContext::get().push(crate::route::Route::Home);
+            });
+        })
+        .child(label().color(Color::WHITE).font_size(13.0).text("‹  Inicio"))
 }
 
 fn zoom_overlay(board: &Arc<Mutex<Board>>, zoom: State<f32>, pad: EdgeInsets) -> impl IntoElement {

@@ -58,7 +58,7 @@ const LONG_PRESS: Duration = Duration::from_millis(550);
 /// Shared library handle. Wrapped in an async-aware mutex so every
 /// `spawn`ed handler can `.await` the lock without blocking the freya
 /// executor.
-type LibHandle = Arc<AsyncMutex<Library>>;
+pub(crate) type LibHandle = Arc<AsyncMutex<Library>>;
 
 /// Bring-up state for the async library open. Split from the loaded
 /// handle so `Loading` / `Error` branches don't need a dummy Arc.
@@ -498,6 +498,7 @@ impl Component for ItemCard {
 
         let open = move || {
             crate::route::queue_canvas_background(bg_style, rgba_to_color(tint).into());
+            crate::route::set_current_canvas_item(Some(id));
             let route = match kind {
                 ItemKind::Canvas => Route::CanvasView,
                 ItemKind::PdfCanvas => Route::CanvasPdfView,
@@ -1064,12 +1065,13 @@ fn fab_stack(
                     )
                     .await
                 {
-                    Ok(_) => {
+                    Ok(id) => {
                         snap.set(Some(lib.index().clone()));
                         crate::route::queue_canvas_background(
                             BackgroundStyle::default(),
                             crate::route::DEFAULT_PAPER,
                         );
+                        crate::route::set_current_canvas_item(Some(id));
                         let _ = RouterContext::get().push(Route::CanvasView);
                     }
                     Err(err) => log::error!("create_item: {err}"),
@@ -1124,6 +1126,7 @@ fn fab_stack(
                                     log::info!("canvas created id={id:?}");
                                     snap.set(Some(lib.index().clone()));
                                     crate::route::queue_canvas_background(bg_style, surface.into());
+                                    crate::route::set_current_canvas_item(Some(id));
                                     let _ = RouterContext::get().push(Route::CanvasView);
                                 }
                                 Err(err) => log::error!("create_item: {err}"),
@@ -1213,7 +1216,7 @@ fn fab_button<F: Fn(()) + 'static>(glyph: &'static str, bg: Color, handler: F) -
 // Library plumbing
 // ---------------------------------------------------------------------------
 
-async fn open_library() -> Result<LibHandle, String> {
+pub(crate) async fn open_library() -> Result<LibHandle, String> {
     let runtime = istmo::Runtime::global().map_err(|e| format!("runtime not started: {e}"))?;
     let lib = Library::open(&runtime)
         .await
@@ -1305,6 +1308,7 @@ async fn pick_and_open_pdf(handle: LibHandle, snap: State<Option<LibraryIndex>>,
                         log::error!("attach_pdf: {err}");
                     }
                     snap.set(Some(lib.index().clone()));
+                    crate::route::set_current_canvas_item(Some(id));
                     let _ = RouterContext::get().push(Route::CanvasPdfView);
                 }
                 Err(err) => log::error!("create_item: {err}"),

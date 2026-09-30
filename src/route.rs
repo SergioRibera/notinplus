@@ -29,7 +29,7 @@ use freya_engine::prelude::Color as SkColor;
 use crate::app::root as canvas_root;
 use crate::canvas::{Board, lock};
 use crate::home::Home;
-use crate::library::BackgroundStyle;
+use crate::library::{BackgroundStyle, ItemId};
 
 /// Off-white paper used when the caller does not override the surface.
 pub const DEFAULT_PAPER: SkColor = SkColor::from_rgb(250, 250, 248);
@@ -83,6 +83,22 @@ pub fn queue_canvas_background(style: BackgroundStyle, surface: SkColor) {
     }
 }
 
+/// Record which `Item` the canvas view is currently editing. `home.rs`
+/// sets this before `router.push(Route::CanvasView)` so the canvas back
+/// button knows where to save the doc on exit. `None` for the "blank
+/// canvas" quick flow that doesn't have a persistent item yet.
+pub fn set_current_canvas_item(item: Option<ItemId>) {
+    if let Ok(mut slot) = current_item().lock() {
+        *slot = item;
+    }
+}
+
+/// Which item is currently open in the canvas view, if any.
+#[must_use]
+pub fn current_canvas_item() -> Option<ItemId> {
+    current_item().lock().ok().and_then(|slot| *slot)
+}
+
 #[derive(Clone, Copy)]
 struct PendingBackground {
     style: BackgroundStyle,
@@ -91,6 +107,11 @@ struct PendingBackground {
 
 fn pending() -> &'static Mutex<Option<PendingBackground>> {
     static SLOT: std::sync::OnceLock<Mutex<Option<PendingBackground>>> = std::sync::OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
+
+fn current_item() -> &'static Mutex<Option<ItemId>> {
+    static SLOT: std::sync::OnceLock<Mutex<Option<ItemId>>> = std::sync::OnceLock::new();
     SLOT.get_or_init(|| Mutex::new(None))
 }
 
