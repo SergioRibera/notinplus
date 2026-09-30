@@ -33,7 +33,7 @@ istmo = { path = "../istmo", default-features = false, features = [
 istmo-pen = { path = "../istmo/plugins/istmo-pen" }
 istmo-file-picker = { path = "../istmo/plugins/file-picker" }
 istmo-data-store = { path = "../istmo/plugins/data-store" }
-freya = { version = "0.4", features = ["router"] }
+freya = { version = "0.4", features = ["router", "icons", "icons-lucide"] }
 freya-engine = "0.4"
 torin = "0.4"
 freya-canvas-bg = { path = "crates/freya-canvas-bg" }
