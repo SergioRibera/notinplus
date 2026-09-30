@@ -9,16 +9,30 @@
 //! each variant by constructing a struct of the same name — so
 //! `Route::Home` builds `Home { }`, `Route::CanvasView` builds
 //! `CanvasView { }`, etc. All three component structs live below.
+//!
+//! Background handoff: routes carry no arguments, so per-item background
+//! selection travels through [`queue_canvas_background`]. `home` sets it
+//! immediately before pushing `Route::CanvasView` and the mount hook on
+//! [`CanvasView`] drains the slot and installs the matching background.
+//! Falls back to a blank off-white surface when nothing is queued (fresh
+//! start / cold URL entry).
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use freya::prelude::*;
 use freya::router::*;
+use freya_canvas_bg::{
+    CanvasBackground, DotGridBackground, GridBackground, LinedBackground, SolidColorBackground,
+};
 use freya_engine::prelude::Color as SkColor;
 
 use crate::app::root as canvas_root;
 use crate::canvas::{Board, lock};
 use crate::home::Home;
+use crate::library::BackgroundStyle;
+
+/// Off-white paper used when the caller does not override the surface.
+pub const DEFAULT_PAPER: SkColor = SkColor::from_rgb(250, 250, 248);
 
 /// Mobile app router. `Home` is the initial route; the two buttons on
 /// the landing page push either [`Route::CanvasView`] (blank infinite
@@ -35,14 +49,15 @@ pub enum Route {
     CanvasPdfView,
 }
 
-/// Infinite canvas — resets the board background to the default solid
-/// fill on mount so navigating back from a PDF view starts fresh.
+/// Infinite canvas — installs whichever background was queued by the
+/// caller (or the default off-white when nothing was queued) so freshly
+/// opened items pick up their persisted pattern.
 #[derive(Debug, PartialEq)]
 pub struct CanvasView;
 
 impl Component for CanvasView {
     fn render(&self) -> impl IntoElement {
-        use_hook(reset_to_solid_background);
+        use_hook(apply_pending_canvas_background);
         canvas_root()
     }
 }
@@ -59,10 +74,36 @@ impl Component for CanvasPdfView {
     }
 }
 
-fn reset_to_solid_background() {
-    use freya_canvas_bg::SolidColorBackground;
-    let board = Board::shared();
-    lock(&board).set_background(Arc::new(SolidColorBackground::new(SkColor::from_rgb(
-        250, 250, 248,
-    ))));
+/// Queue a background for the next [`Route::CanvasView`] mount. Callers
+/// invoke this immediately before `router.push(Route::CanvasView)` — the
+/// mount hook drains the queue and installs the matching backend.
+pub fn queue_canvas_background(style: BackgroundStyle, surface: SkColor) {
+    if let Ok(mut slot) = pending().lock() {
+        *slot = Some(PendingBackground { style, surface });
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PendingBackground {
+    style: BackgroundStyle,
+    surface: SkColor,
+}
+
+fn pending() -> &'static Mutex<Option<PendingBackground>> {
+    static SLOT: std::sync::OnceLock<Mutex<Option<PendingBackground>>> = std::sync::OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
+
+fn apply_pending_canvas_background() {
+    let queued = pending().lock().ok().and_then(|mut slot| slot.take());
+    let (style, surface) = queued.map_or((BackgroundStyle::default(), DEFAULT_PAPER), |p| {
+        (p.style, p.surface)
+    });
+    let bg: Arc<dyn CanvasBackground> = match style {
+        BackgroundStyle::Blank => Arc::new(SolidColorBackground::new(surface)),
+        BackgroundStyle::Line => Arc::new(LinedBackground::new(surface)),
+        BackgroundStyle::Grid => Arc::new(GridBackground::new(surface)),
+        BackgroundStyle::DotGrid => Arc::new(DotGridBackground::new(surface)),
+    };
+    lock(&Board::shared()).set_background(bg);
 }

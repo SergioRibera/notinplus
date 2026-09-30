@@ -36,10 +36,15 @@ pub use freya_engine::prelude::{Canvas, Color};
 
 pub mod clamp;
 pub mod page;
+pub mod pattern;
 pub mod stacked;
 
 pub use clamp::clamp_translation;
 pub use page::{Grid, PageBorder, PageProvider, SolidPageProvider, paper};
+pub use pattern::{
+    DEFAULT_INK, DEFAULT_PAPER, DEFAULT_SPACING, DotGridBackground, GridBackground,
+    LinedBackground, PatternKind, paint_preview,
+};
 pub use stacked::StackedPagesBackground;
 
 /// Stable identifier for a page inside a [`CanvasBackground`].

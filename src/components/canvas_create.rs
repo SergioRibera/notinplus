@@ -8,6 +8,10 @@
 //! generic across the "new canvas" and "imported PDF" flows.
 
 use freya::prelude::*;
+use freya_canvas_bg::{
+    PatternKind, Rect as BgRect, paint_preview, pattern::DEFAULT_INK,
+};
+use freya_engine::prelude::Color as SkColor;
 
 use crate::hooks::use_safe_area_insets;
 use crate::library::{BackgroundStyle, ItemKind};
@@ -262,18 +266,37 @@ fn tab_row() -> impl IntoElement {
 }
 
 fn preview_card(color: Color, background: BackgroundStyle) -> impl IntoElement {
-    let _ = background; // pattern preview lands with the real renderer
+    let kind = match background {
+        BackgroundStyle::Blank => PatternKind::Blank,
+        BackgroundStyle::Line => PatternKind::Line,
+        BackgroundStyle::Grid => PatternKind::Grid,
+        BackgroundStyle::DotGrid => PatternKind::DotGrid,
+    };
+    let surface: SkColor = color.into();
+    let inner = canvas(RenderCallback::new(move |ctx| {
+        let rect = BgRect {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: ctx.size.width,
+            max_y: ctx.size.height,
+        };
+        paint_preview(ctx.canvas, rect, surface, DEFAULT_INK, kind, 14.0);
+    }))
+    .width(Size::fill())
+    .height(Size::fill());
+
     rect()
         .width(Size::px(150.0))
         .height(Size::px(200.0))
-        .background(color)
         .with_corner_radius(6.0)
+        .overflow(Overflow::Clip)
         .border(
             Border::new()
                 .width(1.0)
                 .alignment(BorderAlignment::Inner)
                 .fill(Color::from_rgb(70, 70, 80)),
         )
+        .child(inner)
 }
 
 fn swatch_row(effective: Color, custom: State<Option<Color>>) -> impl IntoElement {
