@@ -28,6 +28,7 @@ use crate::components::{auto_color, CanvasCreateSheet, CreateCanvasRequest};
 use crate::hooks::use_safe_area_insets;
 use crate::library::{
     BackgroundStyle, Folder, FolderId, Item, ItemKind, Library, LibraryIndex, ROOT_FOLDER, Rgba,
+    TagId,
 };
 use crate::route::Route;
 
@@ -434,18 +435,20 @@ fn fab_stack(
                 let handle = handle.clone();
                 move || {
                     let handle = handle.clone();
+                    let available = current_tag_names(snap);
                     CanvasCreateSheet::new(move |req: CreateCanvasRequest| {
                         let handle = handle.clone();
                         let mut snap = snap;
                         spawn(async move {
                             let mut lib = handle.lock().await;
+                            let tag_ids = resolve_tag_names(&mut lib, &req.tag_names).await;
                             match lib
                                 .create_item(
                                     current,
                                     req.kind,
                                     &req.name,
                                     Some(color_to_rgba(req.color)),
-                                    req.tags,
+                                    tag_ids,
                                     req.background,
                                 )
                                 .await
@@ -459,6 +462,7 @@ fn fab_stack(
                         });
                     })
                     .kind(ItemKind::Canvas)
+                    .available_tags(available)
                     .open();
                 }
             }))
@@ -466,17 +470,19 @@ fn fab_stack(
                 let handle = handle.clone();
                 move || {
                     let handle = handle.clone();
+                    let available = current_tag_names(snap);
                     FolderCreateSheet::new(move |req: CreateFolderRequest| {
                         let handle = handle.clone();
                         let mut snap = snap;
                         spawn(async move {
                             let mut lib = handle.lock().await;
+                            let tag_ids = resolve_tag_names(&mut lib, &req.tag_names).await;
                             match lib
                                 .create_folder(
                                     current,
                                     &req.name,
                                     Some(color_to_rgba(req.color)),
-                                    req.tags,
+                                    tag_ids,
                                 )
                                 .await
                             {
@@ -485,6 +491,7 @@ fn fab_stack(
                             }
                         });
                     })
+                    .available_tags(available)
                     .open();
                 }
             }))
@@ -592,19 +599,21 @@ async fn pick_and_open_pdf(
 
     let default_name = strip_pdf_ext(&display);
     let bytes = StdArc::new(bytes);
+    let available = current_tag_names(snap);
     CanvasCreateSheet::new(move |req: CreateCanvasRequest| {
         let bytes = StdArc::clone(&bytes);
         let handle = handle.clone();
         let mut snap = snap;
         spawn(async move {
             let mut lib = handle.lock().await;
+            let tag_ids = resolve_tag_names(&mut lib, &req.tag_names).await;
             match lib
                 .create_item(
                     parent,
                     ItemKind::PdfCanvas,
                     &req.name,
                     Some(color_to_rgba(req.color)),
-                    req.tags,
+                    tag_ids,
                     req.background,
                 )
                 .await
@@ -622,6 +631,7 @@ async fn pick_and_open_pdf(
     })
     .kind(ItemKind::PdfCanvas)
     .default_name(default_name)
+    .available_tags(available)
     .open();
 }
 
@@ -641,6 +651,43 @@ fn rgba_to_color(rgba: Rgba) -> Color {
 
 fn color_to_rgba(color: Color) -> Rgba {
     [color.r(), color.g(), color.b(), color.a()]
+}
+
+/// Snapshot the current library tag names for the picker's suggestion
+/// list. Empty when the library hasn't loaded yet.
+fn current_tag_names(snap: State<Option<LibraryIndex>>) -> Vec<String> {
+    snap.read()
+        .as_ref()
+        .map(|idx| idx.tags.iter().map(|t| t.name.clone()).collect())
+        .unwrap_or_default()
+}
+
+/// Resolve raw tag names emitted by the picker into `TagId`s, creating
+/// any tag whose name isn't present yet. Names are compared
+/// case-insensitively; empty entries are dropped silently. New tags
+/// receive a color auto-derived from their name.
+async fn resolve_tag_names(lib: &mut Library, names: &[String]) -> Vec<TagId> {
+    let mut ids = Vec::with_capacity(names.len());
+    for name in names {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(existing) = lib
+            .tags()
+            .iter()
+            .find(|t| t.name.eq_ignore_ascii_case(trimmed))
+        {
+            ids.push(existing.id);
+            continue;
+        }
+        let color = color_to_rgba(auto_color(trimmed));
+        match lib.create_tag(trimmed, color).await {
+            Ok(id) => ids.push(id),
+            Err(err) => log::error!("create_tag({trimmed:?}): {err}"),
+        }
+    }
+    ids
 }
 
 

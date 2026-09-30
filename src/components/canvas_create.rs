@@ -10,10 +10,11 @@
 use freya::prelude::*;
 
 use crate::hooks::use_safe_area_insets;
-use crate::library::{BackgroundStyle, ItemKind, TagId};
+use crate::library::{BackgroundStyle, ItemKind};
 
 use super::color_wheel::{auto_color, DEFAULT_SWATCHES};
 use super::modal::{Modal, ModalController};
+use super::tag_picker::TagPicker;
 
 const BASIC_SWATCHES: [Color; 5] = [
     DEFAULT_SWATCHES[0],
@@ -38,7 +39,7 @@ pub struct CreateCanvasRequest {
     pub name: String,
     pub color: Color,
     pub background: BackgroundStyle,
-    pub tags: Vec<TagId>,
+    pub tag_names: Vec<String>,
 }
 
 /// Builder for the sheet.
@@ -46,6 +47,7 @@ pub struct CreateCanvasRequest {
 pub struct CanvasCreateSheet {
     kind: ItemKind,
     default_name: String,
+    available_tags: Vec<String>,
     on_confirm: Callback<CreateCanvasRequest, ()>,
     on_cancel: Option<NoArgCallback<()>>,
 }
@@ -71,9 +73,20 @@ impl CanvasCreateSheet {
         Self {
             kind: ItemKind::Canvas,
             default_name: "Sin título".to_owned(),
+            available_tags: Vec::new(),
             on_confirm: on_confirm.into(),
             on_cancel: None,
         }
+    }
+
+    /// Existing tag names to surface as suggestions in the tag picker.
+    #[must_use]
+    pub fn available_tags(
+        mut self,
+        tags: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.available_tags = tags.into_iter().map(Into::into).collect();
+        self
     }
 
     /// Distinguish the "new canvas" flow from the "imported PDF" flow.
@@ -119,6 +132,7 @@ impl Component for CanvasCreateSheet {
         let name = use_state(move || default_name);
         let custom_color = use_state(|| Option::<Color>::None);
         let background = use_state(BackgroundStyle::default);
+        let tag_names = use_state(Vec::<String>::new);
 
         let pad = *use_safe_area_insets().read();
         let cur_name = name.read().clone();
@@ -139,7 +153,7 @@ impl Component for CanvasCreateSheet {
                     name: cur_name.trim().to_owned(),
                     color: effective_color,
                     background: cur_background,
-                    tags: Vec::new(),
+                    tag_names: tag_names.read().clone(),
                 });
                 ModalController::get().close();
             }
@@ -161,6 +175,11 @@ impl Component for CanvasCreateSheet {
             .child(preview_card(effective_color, cur_background))
             .child(swatch_row(effective_color, custom_color))
             .child(pattern_grid(cur_background, background, matches!(kind, ItemKind::PdfCanvas)))
+            .child(
+                TagPicker::new(tag_names)
+                    .label("Etiquetas")
+                    .available(self.available_tags.clone()),
+            )
     }
 }
 

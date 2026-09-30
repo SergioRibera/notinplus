@@ -13,6 +13,7 @@ pub mod folder_create;
 pub mod form_input;
 pub mod modal;
 pub mod tag;
+pub mod tag_picker;
 pub mod theme;
 
 pub use canvas_create::{CanvasCreateSheet, CreateCanvasRequest};
@@ -23,3 +24,4 @@ pub use folder_create::{CreateFolderRequest, FolderCreateSheet};
 pub use form_input::FormInput;
 pub use modal::{Modal, ModalController, ModalPlacement, ModalPortal};
 pub use tag::Tag;
+pub use tag_picker::TagPicker;

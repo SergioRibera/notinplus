@@ -12,18 +12,19 @@
 
 use freya::prelude::*;
 
-use crate::library::TagId;
-
 use super::color_wheel::{auto_color, ColorWheel, DEFAULT_SWATCHES};
+use super::form_input::FormInput;
 use super::modal::{Modal, ModalController};
+use super::tag_picker::TagPicker;
 
-/// Payload the sheet emits when the user hits `Confirmar`. `tags` is
-/// currently always empty — the tag-picker chip lands in a follow-up.
+/// Payload the sheet emits when the user hits `Confirmar`. Tag names
+/// are raw strings — the caller resolves them into `TagId`s (creating
+/// missing ones) before persisting.
 #[derive(Clone, Debug)]
 pub struct CreateFolderRequest {
     pub name: String,
     pub color: Color,
-    pub tags: Vec<TagId>,
+    pub tag_names: Vec<String>,
 }
 
 /// Builder for the folder-creation sheet. Consumers configure it and
@@ -32,6 +33,7 @@ pub struct CreateFolderRequest {
 #[derive(Clone)]
 pub struct FolderCreateSheet {
     default_name: String,
+    available_tags: Vec<String>,
     on_confirm: Callback<CreateFolderRequest, ()>,
     on_cancel: Option<NoArgCallback<()>>,
 }
@@ -55,6 +57,7 @@ impl FolderCreateSheet {
     pub fn new(on_confirm: impl Into<Callback<CreateFolderRequest, ()>>) -> Self {
         Self {
             default_name: "Nueva carpeta".to_owned(),
+            available_tags: Vec::new(),
             on_confirm: on_confirm.into(),
             on_cancel: None,
         }
@@ -64,6 +67,16 @@ impl FolderCreateSheet {
     #[must_use]
     pub fn default_name(mut self, name: impl Into<String>) -> Self {
         self.default_name = name.into();
+        self
+    }
+
+    /// Existing tag names to offer as suggestions in the tag picker.
+    #[must_use]
+    pub fn available_tags(
+        mut self,
+        tags: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.available_tags = tags.into_iter().map(Into::into).collect();
         self
     }
 
@@ -96,6 +109,7 @@ impl Component for FolderCreateSheet {
         let default_name = self.default_name.clone();
         let name = use_state(move || default_name);
         let custom_color = use_state(|| Option::<Color>::None);
+        let tag_names = use_state(Vec::<String>::new);
 
         let cur_name = name.read().clone();
         let effective_color = custom_color.read().unwrap_or_else(|| auto_color(&cur_name));
@@ -111,7 +125,7 @@ impl Component for FolderCreateSheet {
                 let req = CreateFolderRequest {
                     name: cur_name.trim().to_owned(),
                     color: effective_color,
-                    tags: Vec::new(),
+                    tag_names: tag_names.read().clone(),
                 };
                 submit_cb.call(req);
                 ModalController::get().close();
@@ -167,8 +181,17 @@ impl Component for FolderCreateSheet {
                     .font_size(15.0)
                     .text("Crear nueva carpeta"),
             )
-            .child(Input::new(name).placeholder("Nombre de la carpeta"))
+            .child(
+                FormInput::new(name)
+                    .placeholder("Nombre de la carpeta")
+                    .width(Size::fill()),
+            )
             .child(swatches)
+            .child(
+                TagPicker::new(tag_names)
+                    .label("Etiquetas")
+                    .available(self.available_tags.clone()),
+            )
             .child(
                 rect()
                     .horizontal()
