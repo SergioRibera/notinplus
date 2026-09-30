@@ -437,11 +437,18 @@ fn fab_stack(
                     let handle = handle.clone();
                     let available = current_tag_names(snap);
                     CanvasCreateSheet::new(move |req: CreateCanvasRequest| {
+                        log::info!(
+                            "canvas confirm: name={:?} kind={:?} tags={:?}",
+                            req.name,
+                            req.kind,
+                            req.tag_names
+                        );
                         let handle = handle.clone();
                         let mut snap = snap;
                         spawn(async move {
                             let mut lib = handle.lock().await;
                             let tag_ids = resolve_tag_names(&mut lib, &req.tag_names).await;
+                            log::info!("canvas create → parent={current:?} tag_ids={tag_ids:?}");
                             match lib
                                 .create_item(
                                     current,
@@ -453,7 +460,8 @@ fn fab_stack(
                                 )
                                 .await
                             {
-                                Ok(_) => {
+                                Ok(id) => {
+                                    log::info!("canvas created id={id:?}");
                                     snap.set(Some(lib.index().clone()));
                                     let _ = RouterContext::get().push(Route::CanvasView);
                                 }
@@ -472,11 +480,17 @@ fn fab_stack(
                     let handle = handle.clone();
                     let available = current_tag_names(snap);
                     FolderCreateSheet::new(move |req: CreateFolderRequest| {
+                        log::info!(
+                            "folder confirm: name={:?} tags={:?}",
+                            req.name,
+                            req.tag_names
+                        );
                         let handle = handle.clone();
                         let mut snap = snap;
                         spawn(async move {
                             let mut lib = handle.lock().await;
                             let tag_ids = resolve_tag_names(&mut lib, &req.tag_names).await;
+                            log::info!("folder create → parent={current:?} tag_ids={tag_ids:?}");
                             match lib
                                 .create_folder(
                                     current,
@@ -486,7 +500,10 @@ fn fab_stack(
                                 )
                                 .await
                             {
-                                Ok(_) => snap.set(Some(lib.index().clone())),
+                                Ok(id) => {
+                                    log::info!("folder created id={id:?}");
+                                    snap.set(Some(lib.index().clone()));
+                                }
                                 Err(err) => log::error!("create_folder: {err}"),
                             }
                         });
@@ -601,12 +618,19 @@ async fn pick_and_open_pdf(
     let bytes = StdArc::new(bytes);
     let available = current_tag_names(snap);
     CanvasCreateSheet::new(move |req: CreateCanvasRequest| {
+        log::info!(
+            "pdf confirm: name={:?} kind={:?} tags={:?}",
+            req.name,
+            req.kind,
+            req.tag_names
+        );
         let bytes = StdArc::clone(&bytes);
         let handle = handle.clone();
         let mut snap = snap;
         spawn(async move {
             let mut lib = handle.lock().await;
             let tag_ids = resolve_tag_names(&mut lib, &req.tag_names).await;
+            log::info!("pdf create → parent={parent:?} tag_ids={tag_ids:?}");
             match lib
                 .create_item(
                     parent,
@@ -619,6 +643,7 @@ async fn pick_and_open_pdf(
                 .await
             {
                 Ok(id) => {
+                    log::info!("pdf item created id={id:?}");
                     if let Err(err) = lib.attach_pdf(id, &bytes).await {
                         log::error!("attach_pdf: {err}");
                     }

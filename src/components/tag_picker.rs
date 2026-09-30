@@ -107,6 +107,20 @@ impl Component for TagPicker {
         };
 
         let chip_selected = self.selected.clone();
+        let browse_selected = self.selected.clone();
+        let browse_on_change = on_change.clone();
+        // When the user hasn't typed anything, surface every existing
+        // library tag as an outlined chip they can tap to add — makes
+        // the "these come from your library" story obvious even before
+        // typing triggers the suggestion dropdown.
+        let search_empty = search.read().is_empty();
+        let browse_names: Vec<String> = self
+            .available
+            .iter()
+            .filter(|name| !already.contains(&name.to_lowercase()))
+            .cloned()
+            .collect();
+        let show_browse = search_empty && !browse_names.is_empty();
 
         rect()
             .vertical()
@@ -126,10 +140,44 @@ impl Component for TagPicker {
                     .suggestions(suggestions)
                     .on_change(add_on_change),
             )
+            .maybe(show_browse, move |r| {
+                r.child(browse_row(browse_names, browse_selected, browse_on_change))
+            })
             .maybe(!selected_snapshot.is_empty(), move |r| {
                 r.child(chip_wrap(selected_snapshot, chip_selected, on_change))
             })
     }
+}
+
+/// Row of tap-to-add chips for library tags not yet in the selection.
+/// Only rendered when the user hasn't typed anything.
+fn browse_row(
+    names: Vec<String>,
+    selected: Writable<Vec<String>>,
+    on_change: Option<EventHandler<Vec<String>>>,
+) -> impl IntoElement {
+    rect()
+        .horizontal()
+        .width(Size::fill())
+        .spacing(6.)
+        .content(Content::wrap())
+        .children(names.into_iter().enumerate().map(move |(i, name)| {
+            let add_name = name.clone();
+            let mut sel = selected.clone();
+            let on_change = on_change.clone();
+            Tag::new(name)
+                .selectable(false)
+                .on_press(move |_| {
+                    if !sel.read().iter().any(|x| x == &add_name) {
+                        sel.write().push(add_name.clone());
+                        if let Some(cb) = &on_change {
+                            cb.call(sel.read().clone());
+                        }
+                    }
+                })
+                .key(i)
+                .into_element()
+        }))
 }
 
 fn chip_wrap(
