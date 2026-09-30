@@ -165,7 +165,8 @@ fn row(entry: &FabMenuEntry) -> impl IntoElement {
         .cross_align(Alignment::Center)
         .padding((10.0, 12.0))
         .spacing(14.0)
-        .on_press(move |_| {
+        .on_press(move |e: Event<PressEventData>| {
+            e.stop_propagation();
             let mut controller = ModalController::get();
             controller.close();
             cb.call();

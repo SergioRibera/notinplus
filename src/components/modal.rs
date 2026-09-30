@@ -315,7 +315,12 @@ impl Component for ModalOverlay {
             .child(
                 container_for(placement, width, height).child(
                     rect()
-                        .on_press(|_| ())
+                        // Swallow every press on the body so it can't
+                        // bubble up to the backdrop's `on_press` and
+                        // re-close the modal the body just installed
+                        // (FabMenu → FolderCreateSheet transition
+                        // regressed here without the stop_propagation).
+                        .on_press(|e: Event<PressEventData>| e.stop_propagation())
                         .maybe(body_width.is_some(), |r| {
                             r.width(Size::px(body_width.unwrap_or_default()))
                         })
