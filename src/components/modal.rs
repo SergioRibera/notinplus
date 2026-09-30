@@ -302,47 +302,78 @@ impl Component for ModalOverlay {
         let body_width = model.width;
         let body = model.body.clone();
 
+        // Backdrop and card are rendered as **siblings** under the
+        // top-level layer-overlay rect. Freya bubbles press events up
+        // the ancestor chain of the hit element, never across siblings
+        // — so a click on the card can never trigger the backdrop's
+        // dismiss handler, and nested `Modal::open` calls from inside
+        // a card body install the new modal without the previous
+        // card's backdrop re-closing it. Empty-space clicks still
+        // land directly on the backdrop, which fires `close` when
+        // `dismiss_on_backdrop` is set.
+        //
+        // Manual placement is a special case: the body positions
+        // itself absolutely (e.g. FabMenu anchors its card to the
+        // bottom-right), so we skip the card_container wrapper and
+        // paint the body directly as backdrop's sibling. A wrapper
+        // rect would cover the full area and swallow empty-space
+        // clicks that should have dismissed the popover.
+        let body_node = rect()
+            .maybe(body_width.is_some(), |r| {
+                r.width(Size::px(body_width.unwrap_or_default()))
+            })
+            .opacity(opacity as f32)
+            .scale((scale as f32, scale as f32))
+            .child(body);
+
+        let card_layer = match placement {
+            ModalPlacement::Manual => body_node.into_element(),
+            ModalPlacement::Center | ModalPlacement::BottomSheet => {
+                card_container(placement, width, height)
+                    .child(body_node)
+                    .into_element()
+            }
+        };
+
         rect()
             .layer(Layer::Overlay)
             .position(Position::new_absolute().top(0.0).left(0.0))
             .width(Size::px(width))
             .height(Size::px(height))
-            .background(Color::from_argb(backdrop_alpha, 0, 0, 0))
-            .blur(blur as f32)
-            .maybe(dismiss, |r| {
-                r.on_press(|_| ModalController::get().close())
-            })
             .child(
-                container_for(placement, width, height).child(
-                    rect()
-                        // Swallow every press on the body so it can't
-                        // bubble up to the backdrop's `on_press` and
-                        // re-close the modal the body just installed
-                        // (FabMenu → FolderCreateSheet transition
-                        // regressed here without the stop_propagation).
-                        .on_press(|e: Event<PressEventData>| e.stop_propagation())
-                        .maybe(body_width.is_some(), |r| {
-                            r.width(Size::px(body_width.unwrap_or_default()))
-                        })
-                        .opacity(opacity as f32)
-                        .scale((scale as f32, scale as f32))
-                        .child(body),
-                ),
+                rect()
+                    .position(Position::new_absolute().top(0.0).left(0.0))
+                    .width(Size::px(width))
+                    .height(Size::px(height))
+                    .background(Color::from_argb(backdrop_alpha, 0, 0, 0))
+                    .blur(blur as f32)
+                    .maybe(dismiss, |r| {
+                        r.on_press(|_| ModalController::get().close())
+                    }),
             )
+            .child(card_layer)
     }
 }
 
-fn container_for(placement: ModalPlacement, width: f32, height: f32) -> Rect {
-    let base = rect()
-        .position(Position::new_absolute().top(0.0).left(0.0))
-        .width(Size::px(width))
-        .height(Size::px(height));
+/// Placement-aware wrapper that positions the card without covering
+/// the full backdrop area — the wrapper hugs the card so empty-space
+/// clicks pass through to the backdrop sibling underneath.
+fn card_container(placement: ModalPlacement, width: f32, height: f32) -> Rect {
     match placement {
-        ModalPlacement::Center => base.center(),
-        ModalPlacement::BottomSheet => base
-            .vertical()
-            .main_align(Alignment::End)
+        ModalPlacement::Center => rect()
+            .position(Position::new_absolute().top(0.0).left(0.0))
+            .width(Size::px(width))
+            .height(Size::px(height))
+            .center(),
+        // Bottom sheet spans the full width by convention — a click on
+        // the sheet area is a click "on the card". Above the sheet is
+        // still empty backdrop and dismisses when configured.
+        ModalPlacement::BottomSheet => rect()
+            .position(Position::new_absolute().bottom(0.0).left(0.0))
+            .width(Size::px(width))
             .cross_align(Alignment::Center),
-        ModalPlacement::Manual => base,
+        // Manual: body owns positioning, wrapper unused (handled by
+        // caller emitting `body_node` directly as backdrop sibling).
+        ModalPlacement::Manual => rect(),
     }
 }
