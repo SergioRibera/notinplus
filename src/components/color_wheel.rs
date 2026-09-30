@@ -7,6 +7,7 @@
 
 use freya::prelude::*;
 
+use super::FormInput;
 use super::theme::{BORDER, SURFACE_TERTIARY, TEXT_PRIMARY, TEXT_SECONDARY};
 
 /// Deterministically pick a swatch for `name`. Two callers passing the
@@ -467,12 +468,10 @@ impl Component for ColorWheel {
                 current_color,
             ));
 
-        let hex_field = Input::new(hex_input)
-            .width(Size::px(90.0))
-            .compact()
+        let hex_field = FormInput::new(hex_input)
+            .width(Size::flex(1.))
             .flat()
-            .text_align(TextAlign::Center)
-            .on_submit(hex_submit);
+            .on_change(hex_submit);
 
         let inputs_row = rect()
             .horizontal()

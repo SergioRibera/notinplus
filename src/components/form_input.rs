@@ -267,7 +267,7 @@ impl Component for FormInput {
             focus_border_fill: Some(Color::TRANSPARENT.into()),
             background: Some(Color::TRANSPARENT.into()),
             focus_background: Some(Color::TRANSPARENT.into()),
-            color: Some(TEXT_SECONDARY.into()),
+            color: Some(TEXT_PRIMARY.into()),
             placeholder_color: Some(TEXT_PLACEHOLDER.into()),
         });
 
