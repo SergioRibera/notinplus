@@ -29,8 +29,9 @@ use freya_pdf::{PdfBackground, PdfDocument};
 
 use crate::app::root as canvas_root;
 use crate::canvas::{Board, lock};
+use crate::doc::Doc;
 use crate::home::Home;
-use crate::library::{BackgroundStyle, ItemId, bodies};
+use crate::library::{BackgroundStyle, ItemId, LibraryError, bodies};
 
 /// Off-white paper used when the caller does not override the surface.
 pub const DEFAULT_PAPER: SkColor = SkColor::from_rgb(250, 250, 248);
@@ -59,6 +60,7 @@ pub struct CanvasView;
 impl Component for CanvasView {
     fn render(&self) -> impl IntoElement {
         use_hook(apply_pending_canvas_background);
+        use_hook(load_current_doc_into_board);
         canvas_root()
     }
 }
@@ -72,6 +74,7 @@ pub struct CanvasPdfView;
 
 impl Component for CanvasPdfView {
     fn render(&self) -> impl IntoElement {
+        use_hook(load_current_doc_into_board);
         use_hook(|| {
             let Some(id) = current_canvas_item() else {
                 log::warn!("CanvasPdfView mounted without current_canvas_item");
@@ -137,6 +140,45 @@ fn pending() -> &'static Mutex<Option<PendingBackground>> {
 fn current_item() -> &'static Mutex<Option<ItemId>> {
     static SLOT: std::sync::OnceLock<Mutex<Option<ItemId>>> = std::sync::OnceLock::new();
     SLOT.get_or_init(|| Mutex::new(None))
+}
+
+/// Swap the shared [`Board`]'s doc for the one belonging to the mounting
+/// view. Without this the process-wide `Board` keeps the previous doc's
+/// strokes — a cross-document leak that also masks the lack of load on
+/// cold start. `None` (quick blank-canvas flow) resets to [`Doc::default`]
+/// so a fresh scratch surface never inherits the last doc's strokes.
+fn load_current_doc_into_board() {
+    let id = current_canvas_item();
+    spawn(async move {
+        let doc = match id {
+            Some(id) => match crate::home::open_library().await {
+                Ok(handle) => {
+                    let lib = handle.lock().await;
+                    match lib.load_doc(id).await {
+                        Ok(doc) => doc,
+                        // First open of a freshly-created item has no body
+                        // on disk yet — start from a blank doc instead of
+                        // leaving the previous view's strokes in place.
+                        Err(LibraryError::Io(ref e))
+                            if e.kind() == std::io::ErrorKind::NotFound =>
+                        {
+                            Doc::default()
+                        }
+                        Err(err) => {
+                            log::error!("load_doc id={id:?}: {err}");
+                            return;
+                        }
+                    }
+                }
+                Err(err) => {
+                    log::error!("open library on canvas enter: {err}");
+                    return;
+                }
+            },
+            None => Doc::default(),
+        };
+        lock(&Board::shared()).replace_doc(doc);
+    });
 }
 
 fn apply_pending_canvas_background() {
