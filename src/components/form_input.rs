@@ -189,6 +189,16 @@ impl Component for FormInput {
         let collapsible = self.collapsible;
         let mut is_expanded = use_state(|| false);
 
+        // Resolve the expanded width in pixels from the caller's `.width(..)`.
+        // Collapsible mode needs a px target so the animation and the final
+        // outer size match exactly — before this, the animation ended at a
+        // hardcoded 300 and the outer rect then snapped to `self.width`,
+        // producing a visible jump. Non-Pixels widths fall back to 300.
+        let expanded_width_px = match &self.width {
+            Size::Pixels(len) => len.get(),
+            _ => 300.0,
+        };
+
         let mut animation_content = use_animation(move |_| {
             AnimNum::new(0., 100.)
                 .time(250)
@@ -196,7 +206,7 @@ impl Component for FormInput {
                 .ease(Ease::Out)
         });
         let mut animation_width = use_animation(move |_| {
-            AnimNum::new(36., 300.)
+            AnimNum::new(36., expanded_width_px)
                 .time(250)
                 .function(Function::Expo)
                 .ease(Ease::Out)
@@ -206,9 +216,55 @@ impl Component for FormInput {
         let expand_percent = animation_content.get().value();
         let outer_width = animation_width.get().value();
 
+        // Watches collapsible lifecycle:
+        //   * Auto-focus runs ONCE right after the expand animation
+        //     settles — otherwise re-firing on every blur would trap
+        //     focus in the field and block the user from clicking
+        //     another input while this one still holds text.
+        //   * Collapse triggers on focus-loss when the value is empty.
+        //     It explicitly `request_unfocus()`es: without this the
+        //     node keeps its focused flag, and the blue border stays
+        //     drawn on the chip even after the width animation ran
+        //     backwards.
+        let mut was_focused = use_state(|| false);
+        let mut has_been_focused = use_state(|| false);
+        let value_watch = self.value.clone();
+        let mut collapse_width = animation_width;
+        let mut collapse_content = animation_content;
         use_side_effect(move || {
-            if collapsible && is_expanded() && !*is_running.read() && expand_percent >= 100. {
+            let focused_now = focus_status().is_focused();
+            let running = *is_running.read();
+            let expanded = is_expanded();
+
+            if focused_now && !*has_been_focused.peek() {
+                has_been_focused.set(true);
+            }
+
+            if collapsible
+                && expanded
+                && !running
+                && !focused_now
+                && !*has_been_focused.peek()
+            {
                 focus.request_focus();
+            }
+
+            let was = *was_focused.peek();
+            if collapsible
+                && expanded
+                && was
+                && !focused_now
+                && value_watch.peek().trim().is_empty()
+            {
+                collapse_content.reverse();
+                collapse_width.reverse();
+                is_expanded.set(false);
+                has_been_focused.set(false);
+                focus.request_unfocus();
+            }
+
+            if was != focused_now {
+                was_focused.set(focused_now);
             }
         });
 
@@ -299,12 +355,15 @@ impl Component for FormInput {
                     }
                 }
             })
+            // Collapsible mode locks the outer width to the animated
+            // value (36 → `expanded_width_px`) throughout — including
+            // after the animation settles. The previous code switched
+            // back to `self.width` once `expand_percent >= 100.`, which
+            // caused a visible snap whenever `self.width` differed from
+            // the hardcoded animation end. With `expanded_width_px`
+            // derived from `self.width` the two now agree.
             .width(if collapsible {
-                if !*is_running.read() && expand_percent >= 100. {
-                    self.width.clone()
-                } else {
-                    Size::px(outer_width)
-                }
+                Size::px(outer_width)
             } else {
                 self.width.clone()
             })
@@ -333,6 +392,16 @@ impl Component for FormInput {
                     .map(self.corner_radius, |r, corner| r.corner_radius(corner))
                     .maybe(self.corner_radius.is_none(), |r| r.rounded_lg())
                     .maybe(collapsible, |r| r.overflow(Overflow::Clip))
+                    // Lock the card height when collapsible so the chip
+                    // stays as tall as the expanded input. Without
+                    // this, unmounting the real `Input` while collapsed
+                    // let the card shrink to just the left-icon's
+                    // bounds — then stretch back on expand. 36 px
+                    // matches the default `Input`'s inner_margin (8)
+                    // + font height (~16) + border, and keeps the
+                    // collapsed chip a square (36×36 with the pill
+                    // corner radius callers set).
+                    .maybe(collapsible, |r| r.height(Size::px(36.)))
                     .background(self.background.unwrap_or(SURFACE_TERTIARY))
                     .maybe(!self.flat, |r| {
                         r.border(
@@ -356,7 +425,16 @@ impl Component for FormInput {
                             .width(Size::px(14.))
                             .height(Size::px(14.))
                     }))
-                    .child(
+                    // Only mount the real `Input` once the field is
+                    // expanded (or when non-collapsible). While
+                    // collapsed, a stray tap on the inner `Input` used
+                    // to hand it focus and start a text-input session
+                    // behind a zero-width visible area — the component
+                    // ended up stuck in a half-focused state. Keeping
+                    // the chip as a pure visual while collapsed makes
+                    // the outer `on_press` the only path into the
+                    // field.
+                    .maybe_child((!collapsible || is_expanded()).then(|| {
                         rect()
                             .horizontal()
                             .cross_align(Alignment::center())
@@ -364,8 +442,8 @@ impl Component for FormInput {
                             .maybe(collapsible, |r| {
                                 r.visible_width(VisibleSize::inner_percent(expand_percent))
                             })
-                            .child(input),
-                    ),
+                            .child(input)
+                    })),
             )
             .maybe(
                 has_suggestions && show_suggestions() && !current_value.read().is_empty(),
