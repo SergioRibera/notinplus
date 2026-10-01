@@ -22,10 +22,12 @@ use std::time::Duration;
 
 use async_lock::Mutex as AsyncMutex;
 use freya::animation::*;
+use freya::icons::lucide::search;
 use freya::prelude::*;
 use freya::router::*;
 use istmo::plugins::EdgeInsets;
 
+use crate::components::FormInput;
 use crate::components::{
     CanvasCreateSheet, CreateCanvasRequest, Modal, ModalController, auto_color,
 };
@@ -55,6 +57,12 @@ enum MoveTarget {
 /// menu on platforms without a right mouse button.
 const LONG_PRESS: Duration = Duration::from_millis(550);
 
+/// Movement tolerance before a pending long-press is cancelled. Touch
+/// and stylus emit tiny `PointerMove`s during a static hold; a strict
+/// "any move cancels" rule meant the context menu never opened for
+/// finger/pen input.
+const LONG_PRESS_SLOP_PX: f64 = 10.0;
+
 /// Shared library handle. Wrapped in an async-aware mutex so every
 /// `spawn`ed handler can `.await` the lock without blocking the freya
 /// executor.
@@ -81,6 +89,13 @@ impl Component for Home {
         let renaming = use_state(|| Option::<CardId>::None);
         let rename_buffer = use_state(String::new);
         let pad = *use_safe_area_insets().read();
+        // Capture the `RouterContext` from Home's render scope (which
+        // lives inside `Router`). Modal / FabMenu bodies render under
+        // `ModalPortal`, a *sibling* of the Router in `AppShell` — any
+        // `RouterContext::get()` call from those scopes panics. The
+        // captured handle is `Copy`, so cloning it into every downstream
+        // closure is free.
+        let router = RouterContext::get();
 
         use_hook({
             let mut lib_state = lib_state;
@@ -124,7 +139,13 @@ impl Component for Home {
             }
             (LibState::Ready(handle), Some(index)) => {
                 column = column
-                    .child(breadcrumb_bar(&index, &nav_stack, nav, handle.clone(), snap))
+                    .child(breadcrumb_bar(
+                        &index,
+                        &nav_stack,
+                        nav,
+                        handle.clone(),
+                        snap,
+                    ))
                     .child(grid(
                         &index,
                         current,
@@ -134,7 +155,7 @@ impl Component for Home {
                         renaming,
                         rename_buffer,
                     ));
-                fab_slot = Some(fab_stack(handle, snap, current, pad));
+                fab_slot = Some(fab_stack(handle, snap, current, pad, router));
             }
             (LibState::Ready(_), None) => {
                 column = column.child(centered("Preparando…"));
@@ -159,6 +180,7 @@ impl Component for Home {
 
 fn top_bar() -> impl IntoElement {
     let bg = Color::from_rgb(15, 15, 18);
+    let search_value = use_state(String::default);
     rect()
         .horizontal()
         .width(Size::fill())
@@ -170,7 +192,15 @@ fn top_bar() -> impl IntoElement {
         .child(icon_button("☰"))
         .child(spacer_px(6.0))
         .child(flexible_spacer())
-        .child(icon_button("🔍"))
+        .child(
+            FormInput::new(search_value)
+                .left_icon(search())
+                .collapsible()
+                .corner_radius(99.)
+                .width(Size::px(400.))
+                .min_width(Size::px(40.))
+                .placeholder("Search"),
+        )
         .child(spacer_px(6.0))
         .child(icon_button("⚙"))
 }
@@ -438,7 +468,6 @@ fn grid(
     wrap
 }
 
-
 // ---------------------------------------------------------------------------
 // Card impls (folder / item share gesture wiring but differ in menu actions)
 // ---------------------------------------------------------------------------
@@ -484,6 +513,7 @@ impl Component for ItemCard {
 
         let press_token = use_state(|| 0u64);
         let long_fired = use_state(|| false);
+        let press_start = use_state(|| Option::<CursorPoint>::None);
 
         let id = self.id;
         let kind = self.kind;
@@ -495,6 +525,11 @@ impl Component for ItemCard {
         let snap = self.snap;
         let renaming = self.renaming;
         let rename_buffer = self.rename_buffer;
+        // Capture at render time: on_press fires in-scope here, but
+        // long-press opens a `ContextMenu` whose entries run under the
+        // menu overlay — outside Router. Pre-captured handle sidesteps
+        // the ambiguity.
+        let router = RouterContext::get();
 
         let open = move || {
             crate::route::queue_canvas_background(bg_style, rgba_to_color(tint).into());
@@ -503,7 +538,7 @@ impl Component for ItemCard {
                 ItemKind::Canvas => Route::CanvasView,
                 ItemKind::PdfCanvas => Route::CanvasPdfView,
             };
-            let _ = RouterContext::get().push(route);
+            let _ = router.push(route);
         };
 
         let menu_builder = {
@@ -571,6 +606,7 @@ impl Component for ItemCard {
             menu_builder,
             press_token,
             long_fired,
+            press_start,
         );
 
         DragZone::new(MoveTarget::Item(id), body.into_element())
@@ -623,6 +659,7 @@ impl Component for FolderCard {
 
         let press_token = use_state(|| 0u64);
         let long_fired = use_state(|| false);
+        let press_start = use_state(|| Option::<CursorPoint>::None);
 
         let id = self.id;
         let tint = self.tint;
@@ -672,11 +709,7 @@ impl Component for FolderCard {
                         });
                     }
                 };
-                build_card_menu(
-                    start_rename,
-                    || log::info!("edit folder: TODO"),
-                    ask_delete,
-                )
+                build_card_menu(start_rename, || log::info!("edit folder: TODO"), ask_delete)
             }
         };
 
@@ -708,6 +741,7 @@ impl Component for FolderCard {
             menu_builder,
             press_token,
             long_fired,
+            press_start,
         );
 
         let drop = DropZone::new(body.into_element(), {
@@ -751,6 +785,7 @@ fn card_body_view<Open, Commit, MenuFn>(
     menu_builder: MenuFn,
     press_token: State<u64>,
     long_fired: State<bool>,
+    press_start: State<Option<CursorPoint>>,
 ) -> impl IntoElement
 where
     Open: Fn() + Clone + 'static,
@@ -779,10 +814,10 @@ where
 
     if is_editing {
         column = column.child(
-            Input::new(rename_buffer)
+            crate::components::FormInput::new(rename_buffer)
                 .auto_focus(true)
                 .width(Size::px(132.0))
-                .on_submit({
+                .on_change({
                     let mut renaming = renaming;
                     let commit = on_commit_rename.clone();
                     move |value: String| {
@@ -819,8 +854,10 @@ where
     let column = column.on_pointer_down({
         let mut long_fired = long_fired;
         let mut press_token = press_token;
-        move |_: Event<PointerEventData>| {
+        let mut press_start = press_start;
+        move |e: Event<PointerEventData>| {
             long_fired.set(false);
+            press_start.set(Some(e.global_location()));
             let token = press_token.peek().wrapping_add(1);
             press_token.set(token);
             let menu = menu_for_long.clone();
@@ -837,10 +874,12 @@ where
     let column = column.on_press({
         let open = open.clone();
         let mut press_token = press_token;
+        let mut press_start = press_start;
         let long_fired = long_fired;
         let editing_now = is_editing;
         move |_e: Event<PressEventData>| {
             press_token.set(0);
+            press_start.set(None);
             if editing_now || *long_fired.peek() {
                 return;
             }
@@ -849,13 +888,25 @@ where
     });
 
     let mut press_token_move = press_token;
+    let mut press_start_move = press_start;
     let mut press_token_leave = press_token;
+    let mut press_start_leave = press_start;
     column
-        .on_pointer_move(move |_| {
-            press_token_move.set(0);
+        .on_pointer_move(move |e: Event<PointerEventData>| {
+            let Some(start) = *press_start_move.peek() else {
+                return;
+            };
+            let current = e.global_location();
+            let dx = current.x - start.x;
+            let dy = current.y - start.y;
+            if (dx * dx + dy * dy).sqrt() >= LONG_PRESS_SLOP_PX {
+                press_token_move.set(0);
+                press_start_move.set(None);
+            }
         })
         .on_pointer_leave(move |_| {
             press_token_leave.set(0);
+            press_start_leave.set(None);
         })
 }
 
@@ -1038,6 +1089,7 @@ fn fab_stack(
     snap: State<Option<LibraryIndex>>,
     current: FolderId,
     pad: EdgeInsets,
+    router: RouterContext,
 ) -> Rect {
     use crate::components::{
         CanvasCreateSheet, CreateCanvasRequest, CreateFolderRequest, FabMenu, FabMenuEntry,
@@ -1072,7 +1124,7 @@ fn fab_stack(
                             crate::route::DEFAULT_PAPER,
                         );
                         crate::route::set_current_canvas_item(Some(id));
-                        let _ = RouterContext::get().push(Route::CanvasView);
+                        let _ = router.push(Route::CanvasView);
                     }
                     Err(err) => log::error!("create_item: {err}"),
                 }
@@ -1096,6 +1148,10 @@ fn fab_stack(
                 move || {
                     let handle = handle.clone();
                     let available = current_tag_names(snap);
+                    // `router` is the Home-scope handle captured at
+                    // `fab_stack` entry; the entry closure runs under
+                    // `ModalPortal`'s scope (a sibling of Router) and
+                    // couldn't look it up itself.
                     CanvasCreateSheet::new(move |req: CreateCanvasRequest| {
                         log::info!(
                             "canvas confirm: name={:?} kind={:?} tags={:?}",
@@ -1127,7 +1183,7 @@ fn fab_stack(
                                     snap.set(Some(lib.index().clone()));
                                     crate::route::queue_canvas_background(bg_style, surface.into());
                                     crate::route::set_current_canvas_item(Some(id));
-                                    let _ = RouterContext::get().push(Route::CanvasView);
+                                    let _ = router.push(Route::CanvasView);
                                 }
                                 Err(err) => log::error!("create_item: {err}"),
                             }
@@ -1181,7 +1237,12 @@ fn fab_stack(
                     let handle = handle.clone();
                     move || {
                         let handle = handle.clone();
-                        spawn_forever(pick_and_open_pdf(handle, snap, current));
+                        // `router` is the Home-scope handle; passing it
+                        // down means neither the entry closure (lives
+                        // under `ModalPortal`) nor the async body
+                        // (lives under `ScopeId::ROOT`) needs to look
+                        // it up.
+                        spawn_forever(pick_and_open_pdf(handle, snap, current, router));
                     }
                 })
                 .with_divider_above(),
@@ -1225,8 +1286,15 @@ pub(crate) async fn open_library() -> Result<LibHandle, String> {
 }
 
 /// Launch the platform file-picker, read the picked PDF into memory,
-/// and open the canvas-create sheet pre-filled with its name.
-async fn pick_and_open_pdf(handle: LibHandle, snap: State<Option<LibraryIndex>>, parent: FolderId) {
+/// and open the canvas-create sheet pre-filled with its name. `router`
+/// must be captured in the caller's component scope — this async body
+/// runs on the root task scope and cannot look it up itself.
+async fn pick_and_open_pdf(
+    handle: LibHandle,
+    snap: State<Option<LibraryIndex>>,
+    parent: FolderId,
+    router: RouterContext,
+) {
     use std::io::Read;
     use std::sync::Arc as StdArc;
 
@@ -1309,7 +1377,7 @@ async fn pick_and_open_pdf(handle: LibHandle, snap: State<Option<LibraryIndex>>,
                     }
                     snap.set(Some(lib.index().clone()));
                     crate::route::set_current_canvas_item(Some(id));
-                    let _ = RouterContext::get().push(Route::CanvasPdfView);
+                    let _ = router.push(Route::CanvasPdfView);
                 }
                 Err(err) => log::error!("create_item: {err}"),
             }
