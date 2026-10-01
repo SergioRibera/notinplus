@@ -12,6 +12,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use freya::icons::lucide::arrow_left;
 use freya::prelude::*;
 use freya::router::*;
 use istmo::plugins::EdgeInsets;
@@ -230,7 +231,8 @@ fn back_overlay(board: &Arc<Mutex<Board>>, pad: EdgeInsets) -> impl IntoElement 
                 .left(pad.left + 8.0),
         )
         .padding((6.0, 10.0))
-        .background(Color::from_argb(220, 30, 30, 34))
+        .layer(Layer::Overlay)
+        .background(Color::from_rgb(30, 30, 34))
         .with_corner_radius(8.0)
         .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Back, e.area))
         .on_press(move |_| {
@@ -255,7 +257,12 @@ fn back_overlay(board: &Arc<Mutex<Board>>, pad: EdgeInsets) -> impl IntoElement 
                 let _ = RouterContext::get().push(crate::route::Route::Home);
             });
         })
-        .child(label().color(Color::WHITE).font_size(13.0).text("‹  Inicio"))
+        .child(
+            SvgViewer::new(arrow_left())
+                .fill(Color::WHITE)
+                .width(Size::px(13.))
+                .height(Size::px(13.)),
+        )
 }
 
 fn zoom_overlay(board: &Arc<Mutex<Board>>, zoom: State<f32>, pad: EdgeInsets) -> impl IntoElement {
@@ -280,9 +287,11 @@ fn zoom_overlay(board: &Arc<Mutex<Board>>, zoom: State<f32>, pad: EdgeInsets) ->
                 .right(pad.right + 8.0),
         )
         .horizontal()
+        .center()
         .spacing(6.0)
         .padding((6.0, 8.0))
-        .background(Color::from_argb(220, 30, 30, 34))
+        .layer(Layer::Overlay)
+        .background(Color::from_rgb(30, 30, 34))
         .with_corner_radius(8.0)
         .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Zoom, e.area))
         .child(label().color(Color::WHITE).font_size(12.0).text(text))
@@ -305,12 +314,13 @@ fn palette_overlay(
         .position(
             Position::new_global()
                 .top(pad.top + 8.0)
-                .left(pad.left + 8.0),
+                .left(pad.left + 48.0),
         )
         .horizontal()
         .spacing(8.0)
         .padding(10.0)
-        .background(Color::from_argb(220, 30, 30, 34))
+        .layer(Layer::Overlay)
+        .background(Color::from_rgb(30, 30, 34))
         .with_corner_radius(10.0)
         .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Palette, e.area));
 
@@ -611,7 +621,8 @@ fn layers_panel(
         .vertical()
         .spacing(6.0)
         .padding(10.0)
-        .background(Color::from_argb(220, 30, 30, 34))
+        .layer(Layer::Overlay)
+        .background(Color::from_rgb(30, 30, 34))
         .with_corner_radius(10.0)
         .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Layers, e.area));
 
