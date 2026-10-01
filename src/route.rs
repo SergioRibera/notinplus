@@ -25,11 +25,12 @@ use freya_canvas_bg::{
     CanvasBackground, DotGridBackground, GridBackground, LinedBackground, SolidColorBackground,
 };
 use freya_engine::prelude::Color as SkColor;
+use freya_pdf::{PdfBackground, PdfDocument};
 
 use crate::app::root as canvas_root;
 use crate::canvas::{Board, lock};
 use crate::home::Home;
-use crate::library::{BackgroundStyle, ItemId};
+use crate::library::{BackgroundStyle, ItemId, bodies};
 
 /// Off-white paper used when the caller does not override the surface.
 pub const DEFAULT_PAPER: SkColor = SkColor::from_rgb(250, 250, 248);
@@ -62,16 +63,39 @@ impl Component for CanvasView {
     }
 }
 
-/// PDF-backed canvas. The picker flow in [`home`] already sets the
-/// board background before pushing this route, so the component's
-/// only job is to render the canvas over it.
+/// PDF-backed canvas. Reads the attached PDF for
+/// [`current_canvas_item`], builds a [`PdfBackground`] from it, and
+/// installs that as the board's background so strokes drawn on top of
+/// the pages share the same world coordinates as the PDF geometry.
 #[derive(Debug, PartialEq)]
 pub struct CanvasPdfView;
 
 impl Component for CanvasPdfView {
     fn render(&self) -> impl IntoElement {
+        use_hook(|| {
+            let Some(id) = current_canvas_item() else {
+                log::warn!("CanvasPdfView mounted without current_canvas_item");
+                return;
+            };
+            // Spawn so pdfium init + file read run off the UI thread
+            // — the paint pass can start on the solid-color placeholder
+            // the caller queued, then swap to the real pages once the
+            // document is ready.
+            spawn(async move {
+                match load_pdf_background(id) {
+                    Ok(bg) => lock(&Board::shared()).set_background(bg),
+                    Err(err) => log::error!("load pdf id={id:?}: {err}"),
+                }
+            });
+        });
         canvas_root()
     }
+}
+
+fn load_pdf_background(id: ItemId) -> Result<Arc<dyn CanvasBackground>, String> {
+    let bytes = bodies::read_pdf(id).map_err(|e| format!("read pdf: {e}"))?;
+    let doc = PdfDocument::open_bytes(bytes).map_err(|e| format!("open pdf: {e:?}"))?;
+    Ok(Arc::new(PdfBackground::new(doc)))
 }
 
 /// Queue a background for the next [`Route::CanvasView`] mount. Callers
