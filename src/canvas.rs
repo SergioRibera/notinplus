@@ -173,6 +173,10 @@ pub struct Board {
     /// `None` outside the canvas views so palette-only sessions never
     /// touch disk.
     commit_tx: Option<flume::Sender<()>>,
+    /// Interprets single-point pen samples (`pen_pump`) as either drawing
+    /// strokes or panning the viewport. Multi-touch gestures are not
+    /// affected — two-finger pinch keeps the same semantics in both modes.
+    input_mode: InputMode,
     viewport: Viewport,
     /// Last surface-pixel cursor observed while a middle-drag pan is
     /// in flight. `Some` gates every `on_global_pointer_move` sample as
@@ -236,6 +240,18 @@ struct GestureBaseline {
     distance: f32,
 }
 
+/// How single-point pen input maps onto the board. Toggled from the UI;
+/// multi-touch gestures ignore this and always pinch-zoom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputMode {
+    /// Pen samples build strokes (current workflow).
+    Draw,
+    /// Pen samples drive the viewport — down/move/up translate into
+    /// `pan_begin` / `pan_move` / `pan_end`. Useful on touchscreens where
+    /// the user wants to drag the canvas with a single finger.
+    Pan,
+}
+
 impl Default for Board {
     fn default() -> Self {
         let default_preset = BrushPreset::pen();
@@ -261,6 +277,7 @@ impl Default for Board {
             selection_rect: None,
             notifier: None,
             commit_tx: None,
+            input_mode: InputMode::Draw,
             viewport: Viewport::default(),
             pan_anchor: None,
             finger_positions: HashMap::new(),
@@ -344,6 +361,24 @@ impl Board {
     fn notify_commit(&self) {
         self.notify();
         self.ping_commit();
+    }
+
+    #[must_use]
+    pub const fn input_mode(&self) -> InputMode {
+        self.input_mode
+    }
+
+    /// Flip between [`InputMode::Draw`] and [`InputMode::Pan`]. Cancels
+    /// any in-flight stroke / pan so the next pen sample starts fresh
+    /// under the new interpretation.
+    pub fn set_input_mode(&mut self, mode: InputMode) {
+        if self.input_mode == mode {
+            return;
+        }
+        self.input_mode = mode;
+        self.cancel();
+        self.pan_end();
+        self.notify();
     }
 
     /// Adopt `preset` as the current tool. The remembered per-kind
@@ -591,12 +626,18 @@ impl Board {
         if self.finger_positions.len() >= 2 && !self.gesture_active {
             self.gesture_active = true;
             self.cancel();
+            // In `InputMode::Pan` the first touch latched a pan anchor
+            // via the pen pump — ditch it so the second finger lands a
+            // clean pinch-zoom instead of fighting a stale translate.
+            self.pan_end();
         }
         self.gesture_baseline = self.compute_gesture_baseline();
     }
 
-    /// Update a tracked finger. Pans + zooms the viewport by the delta
-    /// against the previous baseline whenever a gesture is active.
+    /// Update a tracked finger. Two-finger gestures pinch-zoom only — pan
+    /// is reserved for the single-touch pen pump (gated by [`InputMode`])
+    /// so users don't accidentally drift the viewport while trying to
+    /// zoom.
     pub fn touch_move(&mut self, id: u64, sx: f32, sy: f32) {
         if !self.finger_positions.contains_key(&id) {
             return;
@@ -609,11 +650,6 @@ impl Board {
             return;
         };
         if let Some(prev) = self.gesture_baseline {
-            let dx = new.centroid.0 - prev.centroid.0;
-            let dy = new.centroid.1 - prev.centroid.1;
-            if dx != 0.0 || dy != 0.0 {
-                self.viewport_pan(dx, dy);
-            }
             // Distances below one surface pixel are numerically noisy
             // — a pair that near-collides would produce factor blowups.
             if prev.distance > 1.0 && new.distance > 1.0 {

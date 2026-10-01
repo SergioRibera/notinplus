@@ -37,6 +37,7 @@ pub enum UiRegion {
     Zoom,
     Layers,
     Back,
+    Mode,
 }
 
 impl UiRegion {
@@ -45,7 +46,7 @@ impl UiRegion {
     }
 }
 
-const N_REGIONS: usize = 5;
+const N_REGIONS: usize = 6;
 
 /// Axis-aligned rectangle in surface-logical pixels: `(min_x, min_y,
 /// max_x, max_y)`. Kept as a tuple so [`crate::canvas::Board`] does

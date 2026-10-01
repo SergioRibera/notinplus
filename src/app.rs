@@ -12,7 +12,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use freya::icons::lucide::arrow_left;
+use freya::icons::lucide::{arrow_left, hand, pencil};
 use freya::prelude::*;
 use freya::router::*;
 use istmo::plugins::EdgeInsets;
@@ -20,7 +20,7 @@ use istmo::plugins::EdgeInsets;
 use crate::route::Route;
 
 use crate::brush::{BrushKind, BrushPreset, ShapeMode};
-use crate::canvas::{Board, LayerSnapshot, RedrawNotifier, drawing_surface, lock};
+use crate::canvas::{Board, InputMode, LayerSnapshot, RedrawNotifier, drawing_surface, lock};
 use crate::hooks::use_safe_area_insets;
 use crate::palette_popup::{HOVER_DELAY, brush_popup};
 use crate::pen_pump;
@@ -208,6 +208,11 @@ pub(crate) fn root() -> impl IntoElement {
         pen_last_target: use_state(|| Option::<usize>::None),
     };
 
+    let mode = {
+        let board = Arc::clone(&board);
+        use_state(move || lock(&board).input_mode())
+    };
+
     rect()
         .width(Size::fill())
         .height(Size::fill())
@@ -215,6 +220,7 @@ pub(crate) fn root() -> impl IntoElement {
         .child(back_overlay(&board, pad))
         .child(palette_overlay(&board, selected, scale, pad, coords))
         .child(layers_panel(&board, layers_ver, pad))
+        .child(mode_overlay(&board, mode, pad))
         .child(zoom_overlay(&board, zoom, pad))
 }
 
@@ -262,6 +268,48 @@ fn back_overlay(board: &Arc<Mutex<Board>>, pad: EdgeInsets) -> impl IntoElement 
                 .fill(Color::WHITE)
                 .width(Size::px(13.))
                 .height(Size::px(13.)),
+        )
+}
+
+/// Toggle between [`InputMode::Draw`] and [`InputMode::Pan`]. Single
+/// icon-only button that mirrors the current mode so the glyph itself
+/// communicates the *active* interpretation (pencil = drawing, hand =
+/// panning).
+fn mode_overlay(
+    board: &Arc<Mutex<Board>>,
+    mut mode: State<InputMode>,
+    pad: EdgeInsets,
+) -> impl IntoElement {
+    let current = *mode.read();
+    let press_board = Arc::clone(board);
+    let icon = match current {
+        InputMode::Draw => pencil(),
+        InputMode::Pan => hand(),
+    };
+    rect()
+        .position(
+            Position::new_global()
+                .bottom(pad.bottom + 8.0)
+                .left(pad.left + 8.0),
+        )
+        .padding((6.0, 10.0))
+        .layer(Layer::Overlay)
+        .background(Color::from_rgb(30, 30, 34))
+        .with_corner_radius(8.0)
+        .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Mode, e.area))
+        .on_press(move |_| {
+            let next = match current {
+                InputMode::Draw => InputMode::Pan,
+                InputMode::Pan => InputMode::Draw,
+            };
+            lock(&press_board).set_input_mode(next);
+            mode.set(next);
+        })
+        .child(
+            SvgViewer::new(icon)
+                .fill(Color::WHITE)
+                .width(Size::px(16.))
+                .height(Size::px(16.)),
         )
 }
 

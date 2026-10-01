@@ -13,7 +13,7 @@ use istmo::{StreamItem, TypedStream};
 use istmo_pen::{PenClient, PenConfig, PenEvent, PenHoverEvent, PenSample};
 
 use crate::brush::InkPoint;
-use crate::canvas::Board;
+use crate::canvas::{Board, InputMode};
 
 /// Latest known pen-hover sample published by the backend.
 ///
@@ -161,41 +161,67 @@ fn apply(event: PenEvent, board: &Arc<Mutex<Board>>, dt: &mut DtTracker) {
     // Compute the InkPoint(s) before touching the mutex, then take the
     // lock only for the actual board mutation. Keeps the guard's live
     // scope tight so the pump thread doesn't hold it during quantise +
-    // trig work.
+    // trig work. Dispatch flips at the top on `InputMode` so Pan reuses
+    // the same event stream to drive the viewport instead of a stroke.
     match event {
         PenEvent::Down(sample) => {
             let d = dt.reset(sample.timestamp_us);
             let point = point_from_sample(&sample, d);
             let mut guard = lock_board(board);
-            guard.begin_screen(point);
+            match guard.input_mode() {
+                InputMode::Draw => guard.begin_screen(point),
+                InputMode::Pan => guard.pan_begin(sample.x, sample.y),
+            }
         }
         PenEvent::Move(m) => {
-            let mut points = Vec::with_capacity(m.coalesced.len() + 1);
-            for c in &m.coalesced {
-                let d = dt.advance(c.timestamp_us);
-                points.push(point_from_sample(c, d));
-            }
-            let d = dt.advance(m.sample.timestamp_us);
-            points.push(point_from_sample(&m.sample, d));
             let mut guard = lock_board(board);
-            for p in points {
-                guard.extend_screen(p);
+            match guard.input_mode() {
+                InputMode::Draw => {
+                    let mut points = Vec::with_capacity(m.coalesced.len() + 1);
+                    for c in &m.coalesced {
+                        let d = dt.advance(c.timestamp_us);
+                        points.push(point_from_sample(c, d));
+                    }
+                    let d = dt.advance(m.sample.timestamp_us);
+                    points.push(point_from_sample(&m.sample, d));
+                    for p in points {
+                        guard.extend_screen(p);
+                    }
+                }
+                InputMode::Pan => {
+                    // Only the final sample's screen position matters —
+                    // intermediate coalesced samples would thrash the
+                    // anchor without changing the net viewport delta.
+                    let _ = dt.advance(m.sample.timestamp_us);
+                    guard.pan_move(m.sample.x, m.sample.y);
+                }
             }
         }
         PenEvent::Up(sample) => {
             let d = dt.advance(sample.timestamp_us);
-            let point = point_from_sample(&sample, d);
             {
                 let mut guard = lock_board(board);
-                guard.extend_screen(point);
-                guard.end();
+                match guard.input_mode() {
+                    InputMode::Draw => {
+                        let point = point_from_sample(&sample, d);
+                        guard.extend_screen(point);
+                        guard.end();
+                    }
+                    InputMode::Pan => {
+                        guard.pan_move(sample.x, sample.y);
+                        guard.pan_end();
+                    }
+                }
             }
             dt.clear();
         }
         PenEvent::Cancel(_) => {
             {
                 let mut guard = lock_board(board);
-                guard.cancel();
+                match guard.input_mode() {
+                    InputMode::Draw => guard.cancel(),
+                    InputMode::Pan => guard.pan_end(),
+                }
             }
             dt.clear();
         }
