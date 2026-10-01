@@ -167,6 +167,12 @@ pub struct Board {
     /// pass reads this to overlay the marquee preview.
     selection_rect: Option<(f32, f32, f32, f32)>,
     notifier: Option<RedrawNotifier>,
+    /// Fires once per doc-mutating commit (stroke end, erase finalize,
+    /// undo apply, layer attr change, clear). The autosave worker owns
+    /// the receiver and coalesces bursts into a single `save_doc`.
+    /// `None` outside the canvas views so palette-only sessions never
+    /// touch disk.
+    commit_tx: Option<flume::Sender<()>>,
     viewport: Viewport,
     /// Last surface-pixel cursor observed while a middle-drag pan is
     /// in flight. `Some` gates every `on_global_pointer_move` sample as
@@ -254,6 +260,7 @@ impl Default for Board {
             erase_session: None,
             selection_rect: None,
             notifier: None,
+            commit_tx: None,
             viewport: Viewport::default(),
             pan_anchor: None,
             finger_positions: HashMap::new(),
@@ -311,6 +318,32 @@ impl Board {
         if let Some(n) = &self.notifier {
             n.ping();
         }
+    }
+
+    /// Install (or replace) the autosave sink. Called by the canvas-view
+    /// mount hook; the matching receiver drives a worker that snapshots
+    /// `doc()` and persists it after every commit. Dropping the old
+    /// sender wakes the previous worker with `Disconnected` so it exits
+    /// cleanly on the next remount.
+    pub fn set_commit_sink(&mut self, tx: flume::Sender<()>) {
+        self.commit_tx = Some(tx);
+    }
+
+    /// Fired at the end of every doc-mutating public method after the
+    /// in-memory state is consistent — see [`Self::notify`] for the
+    /// repaint half.
+    fn ping_commit(&self) {
+        if let Some(tx) = &self.commit_tx {
+            // `try_send` on unbounded can only fail on Disconnected,
+            // which just means the autosave worker has already torn
+            // down. The next mount reinstalls the sink.
+            let _ = tx.try_send(());
+        }
+    }
+
+    fn notify_commit(&self) {
+        self.notify();
+        self.ping_commit();
     }
 
     /// Adopt `preset` as the current tool. The remembered per-kind
@@ -782,18 +815,18 @@ impl Board {
             if !session.is_empty() {
                 self.history.push(HistoryOp::Erase(session));
             }
-            self.notify();
+            self.notify_commit();
             return;
         }
         if let Some((ax, ay, cx, cy)) = self.selection_rect.take() {
             self.erase_strokes_in_rect(ax.min(cx), ay.min(cy), ax.max(cx), ay.max(cy));
-            self.notify();
+            self.notify_commit();
             return;
         }
         if let Some(active) = self.active.take() {
             self.commit_stroke(active);
             self.two_point_active = false;
-            self.notify();
+            self.notify_commit();
         }
     }
 
@@ -826,7 +859,7 @@ impl Board {
         self.spatial.clear();
         self.cached_paths.clear();
         self.stroke_index.clear();
-        self.notify();
+        self.notify_commit();
     }
 
     /// Undo the most recent recorded op — currently just erase
@@ -836,7 +869,7 @@ impl Board {
             return false;
         };
         self.rollback_session(&session);
-        self.notify();
+        self.notify_commit();
         true
     }
 
@@ -871,7 +904,7 @@ impl Board {
         let n = self.doc.layers.len() + 1;
         let id = self.doc.add_layer(format!("Layer {n}"));
         self.doc.active_layer = id;
-        self.notify();
+        self.notify_commit();
         id
     }
 
@@ -893,33 +926,33 @@ impl Board {
             self.active = None;
             self.active_layer_at_begin = None;
         }
-        self.notify();
+        self.notify_commit();
     }
 
     pub fn set_active_layer(&mut self, id: u32) {
         if self.doc.set_active_layer(id) {
-            self.notify();
+            self.notify_commit();
         }
     }
 
     pub fn set_layer_visible(&mut self, id: u32, visible: bool) {
         if let Some(layer) = self.doc.layer_mut(id) {
             layer.visible = visible;
-            self.notify();
+            self.notify_commit();
         }
     }
 
     pub fn set_layer_locked(&mut self, id: u32, locked: bool) {
         if let Some(layer) = self.doc.layer_mut(id) {
             layer.locked = locked;
-            self.notify();
+            self.notify_commit();
         }
     }
 
     pub fn set_layer_opacity(&mut self, id: u32, opacity: f32) {
         if let Some(layer) = self.doc.layer_mut(id) {
             layer.opacity = opacity.clamp(0.0, 1.0);
-            self.notify();
+            self.notify_commit();
         }
     }
 

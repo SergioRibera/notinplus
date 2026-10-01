@@ -147,6 +147,12 @@ fn current_item() -> &'static Mutex<Option<ItemId>> {
 /// strokes — a cross-document leak that also masks the lack of load on
 /// cold start. `None` (quick blank-canvas flow) resets to [`Doc::default`]
 /// so a fresh scratch surface never inherits the last doc's strokes.
+///
+/// Also wires the autosave worker: a bounded channel ping fires at every
+/// doc-mutating commit (stroke end, erase finalize, undo, layer ops) and
+/// the worker drains any burst into a single `save_doc`. Blank-canvas
+/// flows (`current_canvas_item() == None`) skip the write; there is no
+/// persistent item to target yet.
 fn load_current_doc_into_board() {
     let id = current_canvas_item();
     spawn(async move {
@@ -177,7 +183,47 @@ fn load_current_doc_into_board() {
             },
             None => Doc::default(),
         };
-        lock(&Board::shared()).replace_doc(doc);
+        let (tx, rx) = flume::unbounded::<()>();
+        {
+            let board = Board::shared();
+            let mut guard = lock(&board);
+            guard.replace_doc(doc);
+            // Installing after `replace_doc` is deliberate — `replace_doc`
+            // itself does not ping the commit sink, but any prior sender
+            // (from an earlier mount) is dropped here. Its worker's
+            // receiver sees `Disconnected` on the next recv and exits.
+            guard.set_commit_sink(tx);
+        }
+        spawn_autosave_worker(rx);
+    });
+}
+
+/// Drive one autosave iteration per ping. `recv_async` blocks until a
+/// commit fires, then `try_recv` drains any additional pings that landed
+/// while this worker was awaiting the library mutex — a tight pen-up /
+/// pen-down burst collapses into one write instead of several.
+fn spawn_autosave_worker(rx: flume::Receiver<()>) {
+    spawn(async move {
+        while rx.recv_async().await.is_ok() {
+            while rx.try_recv().is_ok() {}
+            let Some(id) = current_canvas_item() else {
+                continue;
+            };
+            let doc_snapshot = {
+                let board = Board::shared();
+                let guard = lock(&board);
+                guard.doc().clone()
+            };
+            match crate::home::open_library().await {
+                Ok(handle) => {
+                    let mut lib = handle.lock().await;
+                    if let Err(err) = lib.save_doc(id, &doc_snapshot).await {
+                        log::error!("autosave save_doc id={id:?}: {err}");
+                    }
+                }
+                Err(err) => log::error!("autosave open library: {err}"),
+            }
+        }
     });
 }
 
