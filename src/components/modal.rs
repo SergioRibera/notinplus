@@ -23,6 +23,8 @@
 use freya::animation::*;
 use freya::prelude::*;
 
+use crate::hooks::use_safe_area_insets;
+
 /// Where the modal card sits inside the covered area.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ModalPlacement {
@@ -286,6 +288,11 @@ impl Component for ModalOverlay {
     fn render(&self) -> impl IntoElement {
         let area = *self.area.read();
         let model = self.model.clone();
+        // Subscribe to safe-area / IME insets so the card stays visible
+        // when the soft keyboard pushes up. `fold_insets` already rolls
+        // `ime.bottom` into `insets.bottom`, so this one read covers
+        // both the system-bar gutter and the keyboard gutter.
+        let insets = *use_safe_area_insets().read();
 
         let animations = use_animation(|conf| {
             conf.on_creation(OnCreation::Run);
@@ -308,6 +315,10 @@ impl Component for ModalOverlay {
 
         let width = area.width();
         let height = area.height();
+        // Height the card may actually occupy, after reserving the
+        // bottom gutter (system bars + IME). The backdrop still covers
+        // the full window so taps on the gutter dismiss the modal.
+        let safe_height = (height - insets.bottom).max(0.0);
         let placement = model.placement;
         let dismiss = model.dismiss_on_backdrop;
         let dismiss_on_escape = model.dismiss_on_escape;
@@ -342,7 +353,7 @@ impl Component for ModalOverlay {
         let card_layer = match placement {
             ModalPlacement::Manual => body_node.into_element(),
             ModalPlacement::Center | ModalPlacement::BottomSheet => {
-                card_container(placement, width, height)
+                card_container(placement, width, safe_height, insets.bottom)
                     .child(body_node)
                     .into_element()
             }
@@ -379,8 +390,16 @@ impl Component for ModalOverlay {
 
 /// Placement-aware wrapper that positions the card without covering
 /// the full backdrop area — the wrapper hugs the card so empty-space
-/// clicks pass through to the backdrop sibling underneath.
-fn card_container(placement: ModalPlacement, width: f32, height: f32) -> Rect {
+/// clicks pass through to the backdrop sibling underneath. `height` is
+/// the IME-aware safe area height; `bottom_offset` pushes bottom-anchored
+/// placements above the keyboard gutter so inputs stay visible while
+/// typing.
+fn card_container(
+    placement: ModalPlacement,
+    width: f32,
+    height: f32,
+    bottom_offset: f32,
+) -> Rect {
     match placement {
         ModalPlacement::Center => rect()
             .position(Position::new_absolute().top(0.0).left(0.0))
@@ -391,7 +410,7 @@ fn card_container(placement: ModalPlacement, width: f32, height: f32) -> Rect {
         // the sheet area is a click "on the card". Above the sheet is
         // still empty backdrop and dismisses when configured.
         ModalPlacement::BottomSheet => rect()
-            .position(Position::new_absolute().bottom(0.0).left(0.0))
+            .position(Position::new_absolute().bottom(bottom_offset).left(0.0))
             .width(Size::px(width))
             .cross_align(Alignment::Center),
         // Manual: body owns positioning, wrapper unused (handled by
