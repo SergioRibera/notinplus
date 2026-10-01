@@ -6,7 +6,7 @@
 //! generated `PenClient::acquire_with` call afterwards resolves against
 //! the host installed here.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use istmo::{Runtime, RuntimeConfig, RuntimeInit};
 use istmo_file_picker::{DesktopFilePicker, FilePickerHost};
@@ -15,6 +15,12 @@ use istmo_pen::backend::PenPublisherFactory;
 use istmo_pen::publisher::PenPublisher;
 
 use crate::WINDOW_ID;
+
+/// Set by [`install`]; read by the freya `with_window_handle` hook on
+/// desktop to upgrade the symbolic registration into a real
+/// `HasWindowHandle` attach so the Wayland `zwp_tablet_v2` / X11
+/// `XInput2` backends start delivering samples.
+pub(crate) static PEN_PUBLISHER: OnceLock<Arc<PenPublisher>> = OnceLock::new();
 
 /// Install the process-global runtime and the pen backend. Idempotent
 /// callers should still invoke this exactly once — a second call fails
@@ -28,15 +34,11 @@ pub fn install() -> Result<(), Box<dyn std::error::Error>> {
     let RuntimeInit { runtime, outbound } = Runtime::init(RuntimeConfig::inline())?;
 
     let publisher = PenPublisher::install(&runtime);
+    // Symbolic fallback — the real `register_window` upgrade happens
+    // once freya hands us the live winit `Window` via the
+    // `with_window_handle` hook wired in [`crate::app::run`].
     publisher.register_window_id(WINDOW_ID);
-
-    #[cfg(target_os = "linux")]
-    if let Err(err) = publisher.install_libinput() {
-        log::warn!(
-            "libinput backend unavailable ({err}); the canvas still \
-             accepts mouse input via freya event handlers"
-        );
-    }
+    let _ = PEN_PUBLISHER.set(Arc::clone(&publisher));
 
     runtime.register_host(PenHost::new(PenPublisherFactory::new(Arc::clone(
         &publisher,
