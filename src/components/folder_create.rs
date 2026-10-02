@@ -192,6 +192,7 @@ impl Component for FolderCreateSheet {
             )
             .child(
                 FormInput::new(name)
+                    .auto_focus(true)
                     .placeholder("Nombre de la carpeta")
                     .width(Size::fill()),
             )

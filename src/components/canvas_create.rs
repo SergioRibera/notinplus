@@ -176,6 +176,7 @@ impl Component for CanvasCreateSheet {
             )
             .child(
                 FormInput::new(name)
+                    .auto_focus(true)
                     .placeholder("Nombre del lienzo")
                     .width(Size::fill()),
             )
