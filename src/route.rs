@@ -32,6 +32,7 @@ use crate::canvas::{Board, Viewport, lock};
 use crate::doc::Doc;
 use crate::home::Home;
 use crate::library::{BackgroundStyle, ItemId, LibraryError, bodies};
+use crate::pen_pump;
 use crate::prefs;
 
 /// Off-white paper used when the caller does not override the surface.
@@ -62,6 +63,8 @@ impl Component for CanvasView {
     fn render(&self) -> impl IntoElement {
         use_hook(apply_pending_canvas_background);
         use_hook(load_current_doc_into_board);
+        use_hook(enable_pen_capture);
+        use_drop(disable_pen_capture);
         canvas_root()
     }
 }
@@ -76,6 +79,8 @@ pub struct CanvasPdfView;
 impl Component for CanvasPdfView {
     fn render(&self) -> impl IntoElement {
         use_hook(load_current_doc_into_board);
+        use_hook(enable_pen_capture);
+        use_drop(disable_pen_capture);
         use_hook(|| {
             let Some(id) = current_canvas_item() else {
                 log::warn!("CanvasPdfView mounted without current_canvas_item");
@@ -263,6 +268,19 @@ fn spawn_view_worker(rx: flume::Receiver<()>) {
             }
         }
     });
+}
+
+/// Open the pen capture gate so contact samples reach the board.
+fn enable_pen_capture() {
+    pen_pump::set_capture_enabled(true);
+}
+
+/// Close the pen capture gate and drop any in-flight stroke. Called on
+/// canvas unmount so a tap on Home that lands on a doc card never
+/// delivers a pending Up back into the board after navigation.
+fn disable_pen_capture() {
+    pen_pump::set_capture_enabled(false);
+    lock(&Board::shared()).cancel();
 }
 
 fn apply_pending_canvas_background() {

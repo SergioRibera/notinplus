@@ -6,6 +6,7 @@
 //! to the board on a dedicated thread. Failure to acquire logs and
 //! returns — the app still runs, driven by mouse events.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -60,6 +61,27 @@ const PEN_POS_FRESHNESS: Duration = Duration::from_millis(300);
 /// Radius (surface px) around a fresh pen position within which an
 /// incoming touch_down is treated as a pen artifact and dropped.
 pub const PEN_TOUCH_FILTER_RADIUS: f32 = 48.0;
+
+/// `true` while a canvas view is mounted and willing to accept pen
+/// contact events. Default `false` so a tap on the Home route cannot
+/// start a stroke on the shared [`Board`] — the pen pump otherwise
+/// delivers Down / Up to the board regardless of which route owns the
+/// current frame, which would phantom a single-point stroke the next
+/// time a canvas view opens.
+static CAPTURE_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Toggle whether pen contact events reach the shared board. Call with
+/// `true` on canvas mount, `false` on canvas unmount (via freya's
+/// `use_drop`). Hover events stay unaffected — proximity reporting is
+/// harmless outside the canvas.
+pub fn set_capture_enabled(enabled: bool) {
+    CAPTURE_ENABLED.store(enabled, Ordering::Release);
+}
+
+#[must_use]
+pub fn is_capture_enabled() -> bool {
+    CAPTURE_ENABLED.load(Ordering::Acquire)
+}
 
 fn record_pen_pos(x: f32, y: f32) {
     if let Ok(mut g) = PEN_SURFACE_POS.lock() {
@@ -215,6 +237,16 @@ impl DtTracker {
 }
 
 fn apply(event: PenEvent, board: &Arc<Mutex<Board>>, dt: &mut DtTracker) {
+    // Drop every contact sample while no canvas view is mounted. Hover
+    // still records pen position (useful for the touch-filter heuristic
+    // and the palette hover indicator), but Down / Move / Up / Cancel
+    // all no-op so a Home-route tap cannot leak a stroke into the
+    // Board. `dt` resets on each Down so a dropped sequence will not
+    // corrupt the next stroke's timing baseline.
+    if !is_capture_enabled() {
+        dt.clear();
+        return;
+    }
     // Compute the InkPoint(s) before touching the mutex, then take the
     // lock only for the actual board mutation. Keeps the guard's live
     // scope tight so the pump thread doesn't hold it during quantise +
