@@ -502,7 +502,7 @@ impl Component for ColorWheel {
             .with_corner_radius(12.0)
             .color(TEXT_PRIMARY)
             .on_global_pointer_move(on_global_pointer_move)
-            .on_global_pointer_press(on_global_pointer_press);
+            .on_global_pointer_up(on_global_pointer_press);
 
         if !self.swatches.is_empty() {
             root = root.child(swatch_strip(&self.swatches, current_color, swatch_fire));

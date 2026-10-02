@@ -381,7 +381,7 @@ impl Component for ModalOverlay {
                     .width(Size::px(width))
                     .height(Size::px(height))
                     .background(Color::from_argb(backdrop_alpha, 0, 0, 0))
-                    .blur(blur as f32)
+                    .backdrop_blur(blur)
                     .maybe(dismiss, |r| r.on_press(|_| ModalController::get().close())),
             )
             .child(card_layer)
@@ -394,12 +394,7 @@ impl Component for ModalOverlay {
 /// the IME-aware safe area height; `bottom_offset` pushes bottom-anchored
 /// placements above the keyboard gutter so inputs stay visible while
 /// typing.
-fn card_container(
-    placement: ModalPlacement,
-    width: f32,
-    height: f32,
-    bottom_offset: f32,
-) -> Rect {
+fn card_container(placement: ModalPlacement, width: f32, height: f32, bottom_offset: f32) -> Rect {
     match placement {
         ModalPlacement::Center => rect()
             .position(Position::new_absolute().top(0.0).left(0.0))

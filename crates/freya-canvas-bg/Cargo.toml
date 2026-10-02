@@ -9,7 +9,7 @@ description = "Pluggable background abstraction for Freya canvas widgets: infini
 repository  = "https://github.com/SergioRibera/notinplus"
 
 [dependencies]
-freya-engine = "0.4"
+freya-engine = "0.5.0-rc.8"
 
 [lints.rust]
 missing_debug_implementations = "warn"

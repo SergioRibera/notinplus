@@ -28,7 +28,9 @@ use freya_canvas_bg::{
     BgPaintCtx, CanvasBackground, Rect as BgRect, RedrawHandle, SolidColorBackground,
     clamp_translation,
 };
-use freya_engine::prelude::{BlendMode, Color as SkColor, Paint, Path, SaveLayerRec};
+use freya_engine::prelude::{
+    BlendMode, Color as SkColor, Paint, PaintStyle, Path, PathBuilder, SaveLayerRec,
+};
 
 use crate::brush::{
     BrushConfig, BrushKind, BrushPreset, CapStyle, EraserMode, InkPoint, ShapeMode, Stroke,
@@ -490,10 +492,7 @@ impl Board {
     /// mutability.
     #[must_use]
     pub fn size_scales_snapshot(&self) -> Vec<(BrushKind, f32)> {
-        self.size_scales
-            .iter()
-            .map(|(k, v)| (*k, *v))
-            .collect()
+        self.size_scales.iter().map(|(k, v)| (*k, *v)).collect()
     }
 
     #[must_use]
@@ -1817,7 +1816,7 @@ pub fn drawing_surface(board: &Arc<Mutex<Board>>) -> impl IntoElement {
             let y = loc.y as f32;
             guard.pan_move(x, y);
         })
-        .on_global_pointer_press(move |_: Event<PointerEventData>| {
+        .on_global_pointer_up(move |_: Event<PointerEventData>| {
             lock(&up_board).pan_end();
         })
         .on_touch_start(move |e: Event<TouchEventData>| {
@@ -1893,7 +1892,6 @@ fn draw_pointer_overlay(
     scale: f32,
     style: PointerStyle,
 ) {
-    use freya_engine::prelude::PaintStyle;
     const MIN_RADIUS: f32 = 2.0;
     const MAX_RADIUS: f32 = 400.0;
     let (radius_world, color, dashed) = match style {
@@ -1930,7 +1928,6 @@ fn draw_pointer_overlay(
 /// every other one. Avoids depending on Skia's `PathEffect::dash`,
 /// which freya-engine's prelude does not re-export.
 fn pointer_dash_path(cx: f32, cy: f32, radius: f32) -> freya_engine::prelude::Path {
-    use freya_engine::prelude::PathBuilder;
     const SEGMENTS: u32 = 24;
     const SUBSTEPS: u32 = 4;
     let mut b = PathBuilder::new();

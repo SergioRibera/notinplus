@@ -156,7 +156,7 @@ impl<T: Clone + PartialEq> Component for DragZone<T> {
         };
 
         rect()
-            .on_global_pointer_press(on_global_pointer_press)
+            .on_global_pointer_up(on_global_pointer_press)
             .on_global_pointer_move(on_global_pointer_move)
             .maybe(self.enabled, |rect| rect.on_pointer_down(on_pointer_down))
             .maybe_child((dragging.zip(self.drag_element.clone())).map(
