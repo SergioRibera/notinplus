@@ -35,7 +35,7 @@ use crate::brush::{
 };
 use crate::doc::Doc;
 use crate::history::{EraseOriginal, EraseSession, HistoryOp};
-use crate::render::{BrushRegistry, HighlighterBrush, HighlighterState};
+use crate::render::{BrushRegistry, HighlighterBrush, HighlighterState, PointerStyle};
 use crate::spatial::SpatialIndex;
 
 const SIZE_SCALE_MIN: f32 = 0.25;
@@ -183,6 +183,13 @@ pub struct Board {
     /// by a per-doc worker that writes the view sidecar. Separate from
     /// `commit_tx` so pan/zoom churn does not rewrite the whole doc.
     view_tx: Option<flume::Sender<()>>,
+    /// Live pointer position in surface pixels — pen hover, pen
+    /// contact, or mouse move. Drives the overlay disc rendered in the
+    /// paint pass so the user can gauge brush / eraser radius against
+    /// the stroke they're about to lay down. `None` outside hover
+    /// range (pen pulled away, mouse left the canvas, finger-only
+    /// gesture).
+    pointer: Option<(f32, f32)>,
     /// Interprets single-point pen samples (`pen_pump`) as either drawing
     /// strokes or panning the viewport. Multi-touch gestures are not
     /// affected — two-finger pinch keeps the same semantics in both modes.
@@ -295,6 +302,7 @@ impl Default for Board {
             commit_tx: None,
             prefs_tx: None,
             view_tx: None,
+            pointer: None,
             input_mode: InputMode::Draw,
             viewport: Viewport::default(),
             pan_anchor: None,
@@ -373,6 +381,23 @@ impl Board {
     /// Install (or replace) the per-doc viewport sink.
     pub fn set_view_sink(&mut self, tx: flume::Sender<()>) {
         self.view_tx = Some(tx);
+    }
+
+    /// Update the live pointer position in surface pixels. `None`
+    /// hides the overlay. Fires `notify` so the paint pass sees the
+    /// new position on the next frame — the pump threads and the
+    /// freya pointer handlers all route through this one setter.
+    pub fn set_pointer(&mut self, pos: Option<(f32, f32)>) {
+        if self.pointer == pos {
+            return;
+        }
+        self.pointer = pos;
+        self.notify();
+    }
+
+    #[must_use]
+    pub const fn pointer(&self) -> Option<(f32, f32)> {
+        self.pointer
     }
 
     /// Fired at the end of every doc-mutating public method after the
@@ -1631,6 +1656,25 @@ impl Board {
             draw_selection_rect(canvas, ax, ay, cx, cy);
         }
         canvas.restore();
+
+        // Pointer overlay paints in surface-pixel space — the brush's
+        // world-unit radius multiplied by the current zoom matches the
+        // on-screen stroke width exactly. Suppressed during multi-touch
+        // gestures (pinch is not a drawing intent) and during a middle-
+        // drag pan (the mouse is anchoring the viewport, not hovering a
+        // target).
+        if let Some((px, py)) = self.pointer
+            && !self.gesture_active
+            && !self.is_panning()
+        {
+            let preset = self.current_preset;
+            let color = self.current_color;
+            let style = self
+                .brush_registry
+                .brush(preset.kind)
+                .pointer_style(&preset, color);
+            draw_pointer_overlay(canvas, px, py, self.viewport.scale, style);
+        }
     }
 
     /// Compute the visible stroke set for the current viewport. Returns
@@ -1727,6 +1771,8 @@ pub fn drawing_surface(board: &Arc<Mutex<Board>>) -> impl IntoElement {
     let touch_move_board = Arc::clone(board);
     let touch_end_board = Arc::clone(board);
     let touch_cancel_board = Arc::clone(board);
+    let pointer_move_board = Arc::clone(board);
+    let pointer_leave_board = Arc::clone(board);
 
     rect()
         .width(Size::fill())
@@ -1794,6 +1840,22 @@ pub fn drawing_surface(board: &Arc<Mutex<Board>>) -> impl IntoElement {
         .on_touch_cancel(move |e: Event<TouchEventData>| {
             lock(&touch_cancel_board).touch_up(e.finger_id);
         })
+        .on_pointer_move(move |e: Event<PointerEventData>| {
+            // Mouse / trackpad cursor feeds the overlay the same way
+            // pen hover does. Pen contact overrides via `pen_pump`
+            // (which locks the same board); whichever source fires
+            // last wins — fine, since the stylus never shares a
+            // surface pixel with the mouse pointer in practice.
+            let loc = e.element_location();
+            #[allow(clippy::cast_possible_truncation)]
+            let x = loc.x as f32;
+            #[allow(clippy::cast_possible_truncation)]
+            let y = loc.y as f32;
+            lock(&pointer_move_board).set_pointer(Some((x, y)));
+        })
+        .on_pointer_leave(move |_: Event<PointerEventData>| {
+            lock(&pointer_leave_board).set_pointer(None);
+        })
         .child(inner)
 }
 
@@ -1818,6 +1880,82 @@ struct Fragment {
 struct SplitOutcome {
     touched: bool,
     fragments: Vec<Fragment>,
+}
+
+/// Pointer indicator (hover disc). Projects a brush's world-unit
+/// radius through the current viewport scale so the on-screen circle
+/// matches the stroke width the user would commit. Halo + inner ring
+/// keep the outline legible on both light and dark backgrounds.
+fn draw_pointer_overlay(
+    canvas: &freya_engine::prelude::Canvas,
+    cx: f32,
+    cy: f32,
+    scale: f32,
+    style: PointerStyle,
+) {
+    use freya_engine::prelude::PaintStyle;
+    const MIN_RADIUS: f32 = 2.0;
+    const MAX_RADIUS: f32 = 400.0;
+    let (radius_world, color, dashed) = match style {
+        PointerStyle::Hidden => return,
+        PointerStyle::Outline { radius, color } => (radius, color, false),
+        PointerStyle::Dashed { radius, color } => (radius, color, true),
+    };
+    let radius = (radius_world * scale).clamp(MIN_RADIUS, MAX_RADIUS);
+    // White halo first, slightly thicker so it reads as a soft outline
+    // when the overlay sits on a dark colour or busy background.
+    let mut halo = Paint::default();
+    halo.set_color(SkColor::from_argb(140, 255, 255, 255));
+    halo.set_style(PaintStyle::Stroke);
+    halo.set_stroke_width(2.5);
+    halo.set_anti_alias(true);
+    if dashed {
+        canvas.draw_path(&pointer_dash_path(cx, cy, radius), &halo);
+    } else {
+        canvas.draw_circle((cx, cy), radius, &halo);
+    }
+    let mut ring = Paint::default();
+    ring.set_color(SkColor::from_argb(color[3], color[0], color[1], color[2]));
+    ring.set_style(PaintStyle::Stroke);
+    ring.set_stroke_width(1.2);
+    ring.set_anti_alias(true);
+    if dashed {
+        canvas.draw_path(&pointer_dash_path(cx, cy, radius), &ring);
+    } else {
+        canvas.draw_circle((cx, cy), radius, &ring);
+    }
+}
+
+/// Build a dashed-circle path by sampling 24 arc segments and keeping
+/// every other one. Avoids depending on Skia's `PathEffect::dash`,
+/// which freya-engine's prelude does not re-export.
+fn pointer_dash_path(cx: f32, cy: f32, radius: f32) -> freya_engine::prelude::Path {
+    use freya_engine::prelude::PathBuilder;
+    const SEGMENTS: u32 = 24;
+    const SUBSTEPS: u32 = 4;
+    let mut b = PathBuilder::new();
+    #[allow(clippy::cast_precision_loss)]
+    let seg = std::f32::consts::TAU / SEGMENTS as f32;
+    for i in 0..SEGMENTS {
+        if i & 1 == 1 {
+            continue;
+        }
+        #[allow(clippy::cast_precision_loss)]
+        let a0 = seg * i as f32;
+        for k in 0..=SUBSTEPS {
+            #[allow(clippy::cast_precision_loss)]
+            let t = k as f32 / SUBSTEPS as f32;
+            let a = t.mul_add(seg, a0);
+            let x = radius.mul_add(a.cos(), cx);
+            let y = radius.mul_add(a.sin(), cy);
+            if k == 0 {
+                b.move_to((x, y));
+            } else {
+                b.line_to((x, y));
+            }
+        }
+    }
+    b.detach()
 }
 
 /// Marquee preview for an in-flight [`EraserMode::SelectionRect`]

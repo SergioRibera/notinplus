@@ -154,7 +154,8 @@ pub fn spawn(window_id: u64, board: Arc<Mutex<Board>>) {
         // Drain hover on a helper thread; the event pump keeps this
         // thread (and therefore the client) alive until the runtime
         // closes the stream.
-        std::thread::spawn(move || pump_hover(&hover));
+        let hover_board = Arc::clone(&board);
+        std::thread::spawn(move || pump_hover(&hover, &hover_board));
         pump_events(&events, &board);
         drop(client);
     });
@@ -178,26 +179,36 @@ fn pump_events(stream: &TypedStream<PenEvent, ()>, board: &Arc<Mutex<Board>>) {
     }
 }
 
-fn pump_hover(stream: &TypedStream<PenHoverEvent, ()>) {
+fn pump_hover(stream: &TypedStream<PenHoverEvent, ()>, board: &Arc<Mutex<Board>>) {
     let bridge = hover_bridge();
     while let Ok(StreamItem::Event(event)) = stream.recv() {
-        let payload = match event {
+        let (payload, pointer) = match event {
             PenHoverEvent::ProximityEnter(sample) | PenHoverEvent::Move(sample) => {
                 // Hover often precedes contact — record so the first
                 // touch_down after proximity enters already has a
                 // fresh pen position to compare against.
                 record_pen_pos(sample.x, sample.y);
-                Some(HoverPoint {
-                    x: sample.x,
-                    y: sample.y,
-                    z_offset: sample.z_offset,
-                })
+                (
+                    Some(HoverPoint {
+                        x: sample.x,
+                        y: sample.y,
+                        z_offset: sample.z_offset,
+                    }),
+                    Some((sample.x, sample.y)),
+                )
             }
             PenHoverEvent::ProximityLeave => {
                 clear_pen_pos();
-                None
+                (None, None)
             }
         };
+        // Pointer overlay follows hover regardless of whether the UI
+        // task on the other side of `hover_bridge` picked up this
+        // sample — pump_hover is the one place every proximity event
+        // flows through.
+        if is_capture_enabled() {
+            lock_board(board).set_pointer(pointer);
+        }
         // Bounded channel: drop-oldest on full so a stalled consumer
         // never back-pressures the pen backend. Hover samples are
         // idempotent (only the latest matters), so a dropped
@@ -258,6 +269,7 @@ fn apply(event: PenEvent, board: &Arc<Mutex<Board>>, dt: &mut DtTracker) {
             let d = dt.reset(sample.timestamp_us);
             let point = point_from_sample(&sample, d);
             let mut guard = lock_board(board);
+            guard.set_pointer(Some((sample.x, sample.y)));
             match guard.input_mode() {
                 InputMode::Draw => guard.begin_screen(point),
                 InputMode::Pan => guard.pan_begin(sample.x, sample.y),
@@ -266,6 +278,7 @@ fn apply(event: PenEvent, board: &Arc<Mutex<Board>>, dt: &mut DtTracker) {
         PenEvent::Move(m) => {
             record_pen_pos(m.sample.x, m.sample.y);
             let mut guard = lock_board(board);
+            guard.set_pointer(Some((m.sample.x, m.sample.y)));
             match guard.input_mode() {
                 InputMode::Draw => {
                     let mut points = Vec::with_capacity(m.coalesced.len() + 1);
@@ -293,6 +306,7 @@ fn apply(event: PenEvent, board: &Arc<Mutex<Board>>, dt: &mut DtTracker) {
             let d = dt.advance(sample.timestamp_us);
             {
                 let mut guard = lock_board(board);
+                guard.set_pointer(Some((sample.x, sample.y)));
                 match guard.input_mode() {
                     InputMode::Draw => {
                         let point = point_from_sample(&sample, d);
@@ -311,6 +325,7 @@ fn apply(event: PenEvent, board: &Arc<Mutex<Board>>, dt: &mut DtTracker) {
             clear_pen_pos();
             {
                 let mut guard = lock_board(board);
+                guard.set_pointer(None);
                 match guard.input_mode() {
                     InputMode::Draw => guard.cancel(),
                     InputMode::Pan => guard.pan_end(),

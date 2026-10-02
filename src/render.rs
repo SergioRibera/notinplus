@@ -74,6 +74,48 @@ pub trait CapRenderer: Send + Sync + Debug {
 pub trait BrushRenderer: Send + Sync + Debug {
     fn build_path(&self, preset: &BrushPreset, stroke: &Stroke, caps: &CapRegistry) -> Path;
     fn paint(&self, preset: &BrushPreset, stroke_color: [u8; 4]) -> Paint;
+
+    /// Visual cue for the pointer indicator — a floating circle (or
+    /// nothing) painted at the current pen / mouse surface position so
+    /// the user can gauge how much they're about to paint or erase.
+    ///
+    /// Default: a thin outlined disc sized to the brush's mid-pressure
+    /// width in [`preset.color`]. Returned radius is in **world units**
+    /// — the canvas scales by the current viewport so a 2× zoom shows
+    /// a 2× pointer. Return [`PointerStyle::Hidden`] to opt a brush
+    /// out entirely.
+    fn pointer_style(&self, preset: &BrushPreset, stroke_color: [u8; 4]) -> PointerStyle {
+        let radius = preset.width(0.5, 0.0) * 0.5;
+        match preset.kind {
+            BrushKind::Eraser => PointerStyle::Dashed {
+                radius,
+                color: [60, 60, 60, 220],
+            },
+            BrushKind::Shape(_) => PointerStyle::Hidden,
+            _ => PointerStyle::Outline {
+                radius,
+                color: stroke_color,
+            },
+        }
+    }
+}
+
+/// How the live pointer indicator paints. Variants expose enough knob
+/// surface for the renderer to style the overlay without the paint
+/// pass hard-coding each brush family. Position + viewport-scaled
+/// radius come from the caller; the style only picks colour / stroke
+/// treatment.
+#[derive(Clone, Copy, Debug)]
+pub enum PointerStyle {
+    /// Suppress the overlay entirely for this brush.
+    Hidden,
+    /// Thin outlined circle. The default — matches the brush size and
+    /// borrows the stroke colour so the user sees exactly where ink
+    /// will land.
+    Outline { radius: f32, color: [u8; 4] },
+    /// Dashed outline. Reserved for destructive tools (eraser) so the
+    /// cursor reads differently from a "place ink here" indicator.
+    Dashed { radius: f32, color: [u8; 4] },
 }
 
 /// Rounded semicircle cap. Bulges 180° past the tip along the
