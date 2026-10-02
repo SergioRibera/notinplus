@@ -25,6 +25,7 @@ use crate::components::theme::{
 
 #[derive(Clone, PartialEq)]
 pub struct FormInput {
+    node_id: Option<AccessibilityId>,
     value: Writable<String>,
     label: Option<Cow<'static, str>>,
     label_size: f32,
@@ -35,6 +36,7 @@ pub struct FormInput {
     on_change: Option<EventHandler<String>>,
     on_validation: Option<Callback<String, Option<Cow<'static, str>>>>,
     left_icon: Option<Bytes>,
+    padding: Gaps,
     width: Size,
     min_width: Size,
     corner_radius: Option<CornerRadius>,
@@ -44,12 +46,38 @@ pub struct FormInput {
     background: Option<Color>,
 }
 
+impl std::fmt::Debug for FormInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FormInput")
+            .field("value", &self.value.read_unchecked())
+            .field("label", &self.label)
+            .field("label_size", &self.label_size)
+            .field("label_weight", &self.label_weight)
+            .field("placeholder", &self.placeholder)
+            .field("error_message", &self.error_message)
+            .field("suggestions", &self.suggestions)
+            .field("on_change", &self.on_change)
+            .field("on_validation", &self.on_validation)
+            .field("left_icon", &self.left_icon)
+            .field("width", &self.width)
+            .field("min_width", &self.min_width)
+            .field("corner_radius", &self.corner_radius)
+            .field("auto_focus", &self.auto_focus)
+            .field("collapsible", &self.collapsible)
+            .field("flat", &self.flat)
+            .field("background", &self.background)
+            .finish()
+    }
+}
+
 impl FormInput {
     #[must_use]
     pub fn new(value: impl Into<Writable<String>>) -> Self {
         Self {
+            node_id: None,
             value: value.into(),
             label: None,
+            padding: (6., 12.).into(),
             label_size: 14.,
             label_weight: FontWeight::MEDIUM,
             placeholder: None,
@@ -66,6 +94,12 @@ impl FormInput {
             collapsible: false,
             flat: false,
         }
+    }
+
+    #[must_use]
+    pub fn a11y_id(mut self, id: AccessibilityId) -> Self {
+        self.node_id = Some(id);
+        self
     }
 
     #[must_use]
@@ -138,12 +172,6 @@ impl FormInput {
     }
 
     #[must_use]
-    pub fn corner_radius(mut self, radius: impl Into<CornerRadius>) -> Self {
-        self.corner_radius = Some(radius.into());
-        self
-    }
-
-    #[must_use]
     pub const fn flat(mut self) -> Self {
         self.flat = true;
         self
@@ -171,6 +199,25 @@ impl FormInput {
     }
 }
 
+impl InputLayoutThemePartialExt for FormInput {
+    fn corner_radius(
+        self,
+        corner_radius: freya_components::theme_setter_param!(CornerRadius),
+    ) -> Self {
+        Self {
+            corner_radius: Some(corner_radius.into()),
+            ..self
+        }
+    }
+
+    fn padding(self, padding: freya_components::theme_setter_param!(Gaps)) -> Self {
+        Self {
+            padding: padding.into(),
+            ..self
+        }
+    }
+}
+
 impl Component for FormInput {
     fn render(&self) -> impl IntoElement {
         let left_icon = self.left_icon.clone();
@@ -182,18 +229,13 @@ impl Component for FormInput {
             .or_else(|| self.error_message.as_ref().map(|e| Cow::Owned(e.clone())));
         let has_error = active_error.is_some();
 
-        let focus = use_a11y();
+        let focus = self.node_id.unwrap_or_else(use_a11y);
         let focus_status = use_focus(focus);
         let is_focused = focus_status().is_focused();
 
         let collapsible = self.collapsible;
         let mut is_expanded = use_state(|| false);
 
-        // Resolve the expanded width in pixels from the caller's `.width(..)`.
-        // Collapsible mode needs a px target so the animation and the final
-        // outer size match exactly — before this, the animation ended at a
-        // hardcoded 300 and the outer rect then snapped to `self.width`,
-        // producing a visible jump. Non-Pixels widths fall back to 300.
         let expanded_width_px = match &self.width {
             Size::Pixels(len) => len.get(),
             _ => 300.0,
@@ -216,16 +258,6 @@ impl Component for FormInput {
         let expand_percent = animation_content.get().value();
         let outer_width = animation_width.get().value();
 
-        // Watches collapsible lifecycle:
-        //   * Auto-focus runs ONCE right after the expand animation
-        //     settles — otherwise re-firing on every blur would trap
-        //     focus in the field and block the user from clicking
-        //     another input while this one still holds text.
-        //   * Collapse triggers on focus-loss when the value is empty.
-        //     It explicitly `request_unfocus()`es: without this the
-        //     node keeps its focused flag, and the blue border stays
-        //     drawn on the chip even after the width animation ran
-        //     backwards.
         let mut was_focused = use_state(|| false);
         let mut has_been_focused = use_state(|| false);
         let value_watch = self.value.clone();
@@ -240,12 +272,7 @@ impl Component for FormInput {
                 has_been_focused.set(true);
             }
 
-            if collapsible
-                && expanded
-                && !running
-                && !focused_now
-                && !*has_been_focused.peek()
-            {
+            if collapsible && expanded && !running && !focused_now && !*has_been_focused.peek() {
                 focus.request_focus();
             }
 
@@ -283,6 +310,7 @@ impl Component for FormInput {
         let border_width = if is_focused { 2. } else { 1. };
 
         let mut input = Input::new(self.value.clone())
+            .padding(Gaps::new_all(0.))
             .auto_focus(self.auto_focus)
             .a11y_id(focus)
             .width(Size::flex(1.))
@@ -355,13 +383,6 @@ impl Component for FormInput {
                     }
                 }
             })
-            // Collapsible mode locks the outer width to the animated
-            // value (36 → `expanded_width_px`) throughout — including
-            // after the animation settles. The previous code switched
-            // back to `self.width` once `expand_percent >= 100.`, which
-            // caused a visible snap whenever `self.width` differed from
-            // the hardcoded animation end. With `expanded_width_px`
-            // derived from `self.width` the two now agree.
             .width(if collapsible {
                 Size::px(outer_width)
             } else {
@@ -386,22 +407,15 @@ impl Component for FormInput {
             .child(
                 rect()
                     .horizontal()
+                    .spacing(12.)
                     .cross_align(Alignment::center())
                     .width(Size::fill())
                     .content(Content::Flex)
                     .map(self.corner_radius, |r, corner| r.corner_radius(corner))
                     .maybe(self.corner_radius.is_none(), |r| r.rounded_lg())
-                    .maybe(collapsible, |r| r.overflow(Overflow::Clip))
-                    // Lock the card height when collapsible so the chip
-                    // stays as tall as the expanded input. Without
-                    // this, unmounting the real `Input` while collapsed
-                    // let the card shrink to just the left-icon's
-                    // bounds — then stretch back on expand. 36 px
-                    // matches the default `Input`'s inner_margin (8)
-                    // + font height (~16) + border, and keeps the
-                    // collapsed chip a square (36×36 with the pill
-                    // corner radius callers set).
-                    .maybe(collapsible, |r| r.height(Size::px(36.)))
+                    .maybe(collapsible, |r| {
+                        r.overflow(Overflow::Clip).height(Size::px(36.))
+                    })
                     .background(self.background.unwrap_or(SURFACE_TERTIARY))
                     .maybe(!self.flat, |r| {
                         r.border(
@@ -411,7 +425,7 @@ impl Component for FormInput {
                                 .fill(border_color),
                         )
                     })
-                    .padding((0., 12.))
+                    .padding(self.padding)
                     .maybe(collapsible && !is_expanded(), |r| {
                         r.on_press(move |_| {
                             is_expanded.set(true);
@@ -425,15 +439,6 @@ impl Component for FormInput {
                             .width(Size::px(14.))
                             .height(Size::px(14.))
                     }))
-                    // Only mount the real `Input` once the field is
-                    // expanded (or when non-collapsible). While
-                    // collapsed, a stray tap on the inner `Input` used
-                    // to hand it focus and start a text-input session
-                    // behind a zero-width visible area — the component
-                    // ended up stuck in a half-focused state. Keeping
-                    // the chip as a pure visual while collapsed makes
-                    // the outer `on_press` the only path into the
-                    // field.
                     .maybe_child((!collapsible || is_expanded()).then(|| {
                         rect()
                             .horizontal()
