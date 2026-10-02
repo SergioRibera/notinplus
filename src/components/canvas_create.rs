@@ -14,18 +14,10 @@ use freya_engine::prelude::Color as SkColor;
 
 use crate::library::{BackgroundStyle, ItemKind};
 
-use super::color_wheel::{DEFAULT_SWATCHES, auto_color};
+use super::color_wheel::{ColorWheel, DEFAULT_SWATCHES, auto_color, color_swatch_strip};
 use super::form_input::FormInput;
 use super::modal::{Modal, ModalController};
 use super::tag_picker::TagPicker;
-
-const BASIC_SWATCHES: [Color; 5] = [
-    DEFAULT_SWATCHES[0],
-    DEFAULT_SWATCHES[6], // mustard
-    DEFAULT_SWATCHES[5], // teal
-    DEFAULT_SWATCHES[2], // salmon
-    Color::from_rgb(30, 30, 34),
-];
 
 const PATTERN_OPTIONS: [(BackgroundStyle, &str); 4] = [
     (BackgroundStyle::Blank, "Blanco"),
@@ -132,6 +124,8 @@ impl Component for CanvasCreateSheet {
         let default_name = self.default_name.clone();
         let name = use_state(move || default_name);
         let custom_color = use_state(|| Option::<Color>::None);
+        let special_color = use_state(|| Option::<Color>::None);
+        let picker_open = use_state(|| false);
         let background = use_state(BackgroundStyle::default);
         let tag_names = use_state(Vec::<String>::new);
 
@@ -185,7 +179,12 @@ impl Component for CanvasCreateSheet {
                     .placeholder("Nombre del lienzo")
                     .width(Size::fill()),
             )
-            .child(swatch_row(effective_color, custom_color))
+            .child(color_strip(
+                effective_color,
+                custom_color,
+                special_color,
+                picker_open,
+            ))
             .child(pattern_grid(
                 effective_color,
                 cur_background,
@@ -245,7 +244,7 @@ const fn to_pattern_kind(bg: BackgroundStyle) -> PatternKind {
 /// line spacing so the pattern reads at the swatch size (big preview
 /// uses the full 14.0; the mini pattern grid shrinks to 7.0 so the
 /// strokes stay dense inside an 88×112 card).
-fn pattern_canvas(surface: Color, kind: PatternKind, pattern_scale: f32) -> impl IntoElement {
+fn pattern_canvas(surface: Color, kind: PatternKind, pattern_scale: f32) -> Canvas {
     let surface: SkColor = surface.into();
     canvas(RenderCallback::new(move |ctx| {
         let r = BgRect {
@@ -273,11 +272,82 @@ fn preview_card(color: Color, background: BackgroundStyle) -> impl IntoElement {
                 .alignment(BorderAlignment::Inner)
                 .fill(Color::from_rgb(70, 70, 80)),
         )
-        .child(pattern_canvas(color, to_pattern_kind(background), 14.0))
+        .child(keyed_pattern_canvas(color, to_pattern_kind(background), 14.0))
 }
 
-fn swatch_row(effective: Color, custom: State<Option<Color>>) -> impl IntoElement {
-    let mut row = rect()
+/// Hash a `(Color, PatternKind)` pair into a canvas diff key so the
+/// render callback is replaced instead of frozen on the first mount.
+/// Freya's canvas element diff treats every `RenderCallback` as equal
+/// (`PartialEq` always `true`), so swapping surface colour / pattern
+/// otherwise never repaints the preview — a new key forces a fresh
+/// element with the current closure baked in.
+fn canvas_key(color: Color, kind: PatternKind) -> u64 {
+    let kind_byte: u8 = match kind {
+        PatternKind::Blank => 0,
+        PatternKind::Line => 1,
+        PatternKind::Grid => 2,
+        PatternKind::DotGrid => 3,
+    };
+    (u64::from(color.r()) << 24)
+        | (u64::from(color.g()) << 16)
+        | (u64::from(color.b()) << 8)
+        | u64::from(color.a())
+        | (u64::from(kind_byte) << 56)
+}
+
+fn keyed_pattern_canvas(
+    color: Color,
+    kind: PatternKind,
+    pattern_scale: f32,
+) -> impl IntoElement {
+    pattern_canvas(color, kind, pattern_scale).key(canvas_key(color, kind))
+}
+
+fn color_strip(
+    effective: Color,
+    custom_color: State<Option<Color>>,
+    special_color: State<Option<Color>>,
+    picker_open: State<bool>,
+) -> impl IntoElement {
+    let stored_special = *special_color.read();
+    let is_open = *picker_open.read();
+    let matches_preset = DEFAULT_SWATCHES.iter().any(|c| *c == effective);
+    let display_special = stored_special.or_else(|| (!matches_preset).then_some(effective));
+    let selected_is_special = !matches_preset;
+    let selected_preset = matches_preset.then_some(effective);
+
+    let mut custom_preset = custom_color;
+    let mut special_preset = special_color;
+    let mut picker_preset = picker_open;
+    let on_preset = move |c: Color| {
+        custom_preset.set(Some(c));
+        special_preset.set(None);
+        picker_preset.set(false);
+    };
+
+    let mut picker_toggle = picker_open;
+    let on_special = move |_: Event<PressEventData>| {
+        let cur = *picker_toggle.read();
+        picker_toggle.set(!cur);
+    };
+
+    let mut custom_picker = custom_color;
+    let mut special_picker = special_color;
+    let picker_on_change = move |c: Color| {
+        custom_picker.set(Some(c));
+        special_picker.set(Some(c));
+    };
+
+    let dropdown = is_open.then(|| {
+        ColorWheel::new()
+            .initial(display_special.unwrap_or(effective))
+            .swatches(Vec::<Color>::new())
+            .allow_custom(true)
+            .width(240.0)
+            .on_change(picker_on_change)
+    });
+
+    rect()
         .horizontal()
         .spacing(10.0)
         .cross_align(Alignment::Center)
@@ -286,37 +356,16 @@ fn swatch_row(effective: Color, custom: State<Option<Color>>) -> impl IntoElemen
                 .color(Color::from_rgb(200, 200, 210))
                 .font_size(13.0)
                 .text("Básico"),
-        );
-    for &color in &BASIC_SWATCHES {
-        let selected = color == effective;
-        let mut custom = custom;
-        row = row.child(swatch_dot(color, selected, move |()| {
-            custom.set(Some(color))
-        }));
-    }
-    row
-}
-
-fn swatch_dot<F>(color: Color, selected: bool, mut handler: F) -> impl IntoElement
-where
-    F: FnMut(()) + 'static,
-{
-    let ring = if selected {
-        Color::from_rgb(70, 140, 250)
-    } else {
-        Color::from_rgb(70, 70, 80)
-    };
-    rect()
-        .width(Size::px(26.0))
-        .height(Size::px(26.0))
-        .background(color)
-        .with_corner_radius(6.0)
-        .border(
-            Border::new()
-                .width(if selected { 2.0 } else { 1.0 })
-                .fill(ring),
         )
-        .on_press(move |_| handler(()))
+        .child(color_swatch_strip(
+            selected_preset,
+            display_special,
+            selected_is_special,
+            is_open,
+            on_preset,
+            on_special,
+            dropdown,
+        ))
 }
 
 fn pattern_grid(
@@ -372,7 +421,7 @@ where
                 .height(Size::px(112.0))
                 .with_corner_radius(8.0)
                 .overflow(Overflow::Clip)
-                .child(pattern_canvas(
+                .child(keyed_pattern_canvas(
                     effective_color,
                     to_pattern_kind(bg_style),
                     7.0,
