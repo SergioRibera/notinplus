@@ -62,6 +62,15 @@ struct PopupCoords {
     /// transitions so timers / leave events fire exactly once per
     /// boundary crossing.
     pen_last_target: State<Option<usize>>,
+    /// Last colour the user picked from the brush popup's advanced
+    /// picker. Lives up here (vs. inside the popup) because
+    /// `brush_popup` is only mounted while the popup is open — hooks
+    /// declared there would thrash on open/close cycles.
+    color_special: State<Option<Color>>,
+    /// Whether the advanced picker dropdown under the special swatch
+    /// is currently expanded. Same lifting rationale as
+    /// `color_special`.
+    color_picker_open: State<bool>,
 }
 
 const PALETTE: &[fn() -> BrushPreset] = &[
@@ -279,6 +288,8 @@ pub(crate) fn root() -> impl IntoElement {
             cell
         },
         pen_last_target: use_state(|| Option::<usize>::None),
+        color_special: use_state(|| Option::<Color>::None),
+        color_picker_open: use_state(|| false),
     };
 
     let mode = {
@@ -465,6 +476,8 @@ fn palette_overlay(
             Some(area),
             idx,
             PALETTE[idx](),
+            coords.color_special,
+            coords.color_picker_open,
         ));
     } else {
         // Popup hidden — clear the mask slot so a stale rect from the

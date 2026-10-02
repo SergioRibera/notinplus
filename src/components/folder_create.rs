@@ -13,7 +13,7 @@
 
 use freya::prelude::*;
 
-use super::color_wheel::{ColorWheel, DEFAULT_SWATCHES, auto_color};
+use super::color_wheel::{ColorWheel, auto_color, color_swatch_strip};
 use super::form_input::FormInput;
 use super::modal::{Modal, ModalController};
 use super::tag_picker::TagPicker;
@@ -165,7 +165,7 @@ impl Component for FolderCreateSheet {
                 .width(260.0)
                 .on_change(picker_on_change)
         });
-        let strip = swatch_strip_with_special(
+        let strip = color_swatch_strip(
             current_custom,
             special,
             selected_is_special,
@@ -229,108 +229,6 @@ impl Component for FolderCreateSheet {
                         ),
                     ),
             )
-    }
-}
-
-fn swatch_strip_with_special<PresetCb, SpecialCb, Picker>(
-    selected: Option<Color>,
-    special: Option<Color>,
-    special_is_selected: bool,
-    picker_open: bool,
-    on_preset: PresetCb,
-    on_special: SpecialCb,
-    picker: Option<Picker>,
-) -> impl IntoElement
-where
-    PresetCb: FnMut(Color) + Clone + 'static,
-    SpecialCb: FnMut(Event<PressEventData>) + 'static,
-    Picker: IntoElement + 'static,
-{
-    let mut row = rect()
-        .horizontal()
-        .spacing(10.0)
-        .cross_align(Alignment::Center);
-
-    for &color in &DEFAULT_SWATCHES {
-        let mut cb = on_preset.clone();
-        let is_sel = selected == Some(color) && !special_is_selected;
-        row = row.child(swatch_dot(color, is_sel, move |_| cb(color)));
-    }
-    // Rainbow slot lives inside an `Attached` overlay so the picker can
-    // float below it instead of pushing the modal content around.
-    row = row.child(
-        Attached::new(special_slot(
-            special,
-            special_is_selected,
-            picker_open,
-            on_special,
-        ))
-        .bottom()
-        .maybe_child(picker),
-    );
-    row
-}
-
-fn swatch_dot<F>(color: Color, selected: bool, on_press: F) -> impl IntoElement
-where
-    F: FnMut(Event<PressEventData>) + 'static,
-{
-    let ring = if selected {
-        Color::from_rgb(70, 140, 250)
-    } else {
-        Color::from_rgb(70, 70, 78)
-    };
-    rect()
-        .width(Size::px(30.0))
-        .height(Size::px(30.0))
-        .background(color)
-        .with_corner_radius(15.0)
-        .border(
-            Border::new()
-                .width(if selected { 2.0 } else { 1.0 })
-                .fill(ring),
-        )
-        .on_press(on_press)
-}
-
-fn special_slot<F>(
-    special: Option<Color>,
-    selected: bool,
-    picker_open: bool,
-    on_press: F,
-) -> impl IntoElement
-where
-    F: FnMut(Event<PressEventData>) + 'static,
-{
-    let ring = if selected || picker_open {
-        Color::from_rgb(70, 140, 250)
-    } else {
-        Color::from_rgb(70, 70, 78)
-    };
-    let base = rect()
-        .width(Size::px(30.0))
-        .height(Size::px(30.0))
-        .with_corner_radius(15.0)
-        .border(
-            Border::new()
-                .width(if selected || picker_open { 2.0 } else { 1.0 })
-                .fill(ring),
-        )
-        .on_press(on_press);
-
-    match special {
-        Some(c) => base.background(c),
-        None => base.background(
-            LinearGradient::new()
-                .angle(-90.0)
-                .stop((Color::from_rgb(255, 0, 0), 0.0))
-                .stop((Color::from_rgb(255, 255, 0), 16.0))
-                .stop((Color::from_rgb(0, 255, 0), 33.0))
-                .stop((Color::from_rgb(0, 255, 255), 50.0))
-                .stop((Color::from_rgb(0, 0, 255), 66.0))
-                .stop((Color::from_rgb(255, 0, 255), 83.0))
-                .stop((Color::from_rgb(255, 0, 0), 100.0)),
-        ),
     }
 }
 

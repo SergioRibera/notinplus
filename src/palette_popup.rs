@@ -22,6 +22,7 @@ use crate::brush::{
     BrushConfig, BrushKind, BrushPreset, EraserMode, HighlighterTip, PressureCurve, ShapeMode,
 };
 use crate::canvas::{Board, lock};
+use crate::components::color_wheel::{ColorWheel, DEFAULT_SWATCHES, color_swatch_strip};
 use crate::ui_mask::{self, UiRegion};
 
 /// How long the pointer must sit inside a palette button before the
@@ -29,29 +30,25 @@ use crate::ui_mask::{self, UiRegion};
 /// enough to feel deliberate without being sluggish.
 pub const HOVER_DELAY: Duration = Duration::from_millis(500);
 
-const SWATCHES: &[[u8; 4]] = &[
-    [20, 20, 20, 255],
-    [230, 230, 230, 255],
-    [200, 60, 60, 255],
-    [230, 130, 40, 255],
-    [230, 205, 60, 255],
-    [80, 170, 80, 255],
-    [60, 130, 220, 255],
-    [140, 90, 200, 255],
-];
-
 /// Render the popup for the palette entry at `idx`.
 ///
 /// Positioned directly below `anchor`. Returns an element the caller
 /// stacks into the palette overlay unconditionally — hides itself as
 /// a zero-size stub when `open_idx` is not `Some(idx)` or `anchor` is
 /// unknown.
+///
+/// `color_special` + `color_picker_open` are threaded in rather than
+/// declared via `use_state` here because `brush_popup` is only mounted
+/// while a popup is open — hooks declared inside would thrash on every
+/// open / close cycle. Caller (root scope) owns them.
 pub fn brush_popup(
     board: &Arc<Mutex<Board>>,
     open_idx: State<Option<usize>>,
     anchor: Option<Area>,
     idx: usize,
     preset: BrushPreset,
+    color_special: State<Option<Color>>,
+    color_picker_open: State<bool>,
 ) -> impl IntoElement {
     let show = *open_idx.read() == Some(idx);
     let (top, left) = anchor.map_or((0.0, 0.0), |a| (a.max_y() + 6.0, a.min_x()));
@@ -87,7 +84,7 @@ pub fn brush_popup(
     }
 
     if preset.kind != BrushKind::Eraser {
-        body = body.child(color_row(board));
+        body = body.child(color_row(board, color_special, color_picker_open));
     }
     body = body.child(size_row(board));
     body = match preset.kind {
@@ -102,36 +99,70 @@ pub fn brush_popup(
     body
 }
 
-fn color_row(board: &Arc<Mutex<Board>>) -> impl IntoElement {
-    let current = lock(board).current_color();
-    let mut row = rect().horizontal().spacing(6.0);
-    for swatch in SWATCHES {
-        let is_active = *swatch == current;
-        let press_board = Arc::clone(board);
-        let colour = *swatch;
-        let outline: Option<Border> = if is_active {
-            Some(
-                Border::new()
-                    .fill(Color::WHITE)
-                    .width(2.0)
-                    .alignment(BorderAlignment::Inner),
-            )
-        } else {
-            None
-        };
-        row = row.child(
-            rect()
-                .width(Size::px(20.0))
-                .height(Size::px(20.0))
-                .background(Color::from_rgb(colour[0], colour[1], colour[2]))
-                .with_corner_radius(4.0)
-                .border(outline)
-                .on_press(move |_| {
-                    lock(&press_board).set_current_color(colour);
-                }),
-        );
-    }
-    row
+fn color_row(
+    board: &Arc<Mutex<Board>>,
+    mut color_special: State<Option<Color>>,
+    mut color_picker_open: State<bool>,
+) -> impl IntoElement {
+    let current_rgba = lock(board).current_color();
+    let current_color = rgba_to_color(current_rgba);
+    let stored_special = *color_special.read();
+    let picker_open = *color_picker_open.read();
+
+    // If the current board colour doesn't match any preset, display it
+    // under the rainbow slot regardless of what `color_special`
+    // happens to hold — covers the cold-start path where Prefs
+    // restored a custom colour before the picker ever opened, and
+    // keeps the ring on the correct swatch.
+    let matches_preset = DEFAULT_SWATCHES.iter().any(|c| *c == current_color);
+    let display_special = stored_special.or_else(|| (!matches_preset).then_some(current_color));
+    let selected_is_special = !matches_preset;
+    let selected_preset = matches_preset.then_some(current_color);
+
+    let preset_board = Arc::clone(board);
+    let on_preset = move |c: Color| {
+        lock(&preset_board).set_current_color(color_to_rgba(c));
+        color_special.set(None);
+        color_picker_open.set(false);
+    };
+
+    let on_special = move |_: Event<PressEventData>| {
+        let cur = *color_picker_open.read();
+        color_picker_open.set(!cur);
+    };
+
+    let picker_board = Arc::clone(board);
+    let picker_on_change = move |c: Color| {
+        lock(&picker_board).set_current_color(color_to_rgba(c));
+        color_special.set(Some(c));
+    };
+
+    let dropdown = picker_open.then(|| {
+        ColorWheel::new()
+            .initial(display_special.unwrap_or(current_color))
+            .swatches(Vec::<Color>::new())
+            .allow_custom(true)
+            .width(240.0)
+            .on_change(picker_on_change)
+    });
+
+    color_swatch_strip(
+        selected_preset,
+        display_special,
+        selected_is_special,
+        picker_open,
+        on_preset,
+        on_special,
+        dropdown,
+    )
+}
+
+fn rgba_to_color(c: [u8; 4]) -> Color {
+    Color::from_argb(c[3], c[0], c[1], c[2])
+}
+
+fn color_to_rgba(c: Color) -> [u8; 4] {
+    [c.r(), c.g(), c.b(), c.a()]
 }
 
 fn size_row(board: &Arc<Mutex<Board>>) -> impl IntoElement {

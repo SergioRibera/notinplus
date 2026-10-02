@@ -570,3 +570,111 @@ where
         )
         .on_press(move |_| handler(()))
 }
+
+/// Canonical palette strip reused across folder creation and the brush
+/// popup: seven [`DEFAULT_SWATCHES`] followed by a rainbow "special"
+/// slot that opens a floating [`ColorWheel`] picker.
+///
+/// `selected` + `special_is_selected` paint the ring around whichever
+/// swatch (or the special slot) matches the current colour. `picker`
+/// is an already-built [`ColorWheel`] element — pass `Some(...)` when
+/// `picker_open` is `true`, `None` otherwise; the strip anchors it
+/// beneath the special slot so it floats instead of pushing content.
+pub fn color_swatch_strip<PresetCb, SpecialCb, Picker>(
+    selected: Option<Color>,
+    special: Option<Color>,
+    special_is_selected: bool,
+    picker_open: bool,
+    on_preset: PresetCb,
+    on_special: SpecialCb,
+    picker: Option<Picker>,
+) -> impl IntoElement
+where
+    PresetCb: FnMut(Color) + Clone + 'static,
+    SpecialCb: FnMut(Event<PressEventData>) + 'static,
+    Picker: IntoElement + 'static,
+{
+    let mut row = rect()
+        .horizontal()
+        .spacing(10.0)
+        .cross_align(Alignment::Center);
+    for &color in &DEFAULT_SWATCHES {
+        let mut cb = on_preset.clone();
+        let is_sel = selected == Some(color) && !special_is_selected;
+        row = row.child(preset_swatch(color, is_sel, move |_| cb(color)));
+    }
+    row = row.child(
+        Attached::new(special_swatch(
+            special,
+            special_is_selected,
+            picker_open,
+            on_special,
+        ))
+        .bottom()
+        .maybe_child(picker),
+    );
+    row
+}
+
+fn preset_swatch<F>(color: Color, selected: bool, on_press: F) -> impl IntoElement
+where
+    F: FnMut(Event<PressEventData>) + 'static,
+{
+    let ring = if selected {
+        Color::from_rgb(70, 140, 250)
+    } else {
+        Color::from_rgb(70, 70, 78)
+    };
+    rect()
+        .width(Size::px(30.0))
+        .height(Size::px(30.0))
+        .background(color)
+        .with_corner_radius(15.0)
+        .border(
+            Border::new()
+                .width(if selected { 2.0 } else { 1.0 })
+                .fill(ring),
+        )
+        .on_press(on_press)
+}
+
+fn special_swatch<F>(
+    special: Option<Color>,
+    selected: bool,
+    picker_open: bool,
+    on_press: F,
+) -> impl IntoElement
+where
+    F: FnMut(Event<PressEventData>) + 'static,
+{
+    let ring = if selected || picker_open {
+        Color::from_rgb(70, 140, 250)
+    } else {
+        Color::from_rgb(70, 70, 78)
+    };
+    let base = rect()
+        .width(Size::px(30.0))
+        .height(Size::px(30.0))
+        .with_corner_radius(15.0)
+        .border(
+            Border::new()
+                .width(if selected || picker_open { 2.0 } else { 1.0 })
+                .fill(ring),
+        )
+        .on_press(on_press);
+
+    match special {
+        Some(c) => base.background(c),
+        None => base.background(
+            LinearGradient::new()
+                .angle(-90.0)
+                .stop((Color::from_rgb(255, 0, 0), 0.0))
+                .stop((Color::from_rgb(255, 255, 0), 16.0))
+                .stop((Color::from_rgb(0, 255, 0), 33.0))
+                .stop((Color::from_rgb(0, 255, 255), 50.0))
+                .stop((Color::from_rgb(0, 0, 255), 66.0))
+                .stop((Color::from_rgb(255, 0, 255), 83.0))
+                .stop((Color::from_rgb(255, 0, 0), 100.0)),
+        ),
+    }
+}
