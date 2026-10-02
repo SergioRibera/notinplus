@@ -24,6 +24,7 @@ use crate::canvas::{Board, InputMode, LayerSnapshot, RedrawNotifier, drawing_sur
 use crate::hooks::use_safe_area_insets;
 use crate::palette_popup::{HOVER_DELAY, brush_popup};
 use crate::pen_pump;
+use crate::prefs;
 use crate::ui_mask::{self, UiRegion};
 
 /// Translate a Freya `on_sized` event area into the surface-pixel
@@ -74,6 +75,47 @@ const PALETTE: &[fn() -> BrushPreset] = &[
 
 const fn default_shape() -> BrushPreset {
     BrushPreset::shape(ShapeMode::Line)
+}
+
+/// Which palette slot (if any) matches `kind`. `BrushKind::Shape(_)`
+/// collapses onto the single shape slot regardless of mode so the UI
+/// still highlights the shape tool when the user left the session on
+/// e.g. an arrow.
+fn palette_index_for(kind: BrushKind) -> Option<usize> {
+    PALETTE
+        .iter()
+        .position(|make| match (make().kind, kind) {
+            (BrushKind::Shape(_), BrushKind::Shape(_)) => true,
+            (a, b) => a == b,
+        })
+}
+
+/// Debounced writer for global toolbar prefs. One worker per app process
+/// — the sink installed in `root()` wakes it on every preset / size /
+/// colour / input-mode mutation, and the drain-loop collapses bursts
+/// into a single disk write.
+fn spawn_prefs_worker(board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
+    spawn(async move {
+        while rx.recv_async().await.is_ok() {
+            while rx.try_recv().is_ok() {}
+            let snapshot = {
+                let g = lock(&board);
+                let preset = *g.current_preset();
+                let color = g.current_color();
+                let mode = g.input_mode();
+                let scales: Vec<(BrushKind, f32)> = g.size_scales_snapshot();
+                prefs::Prefs {
+                    current_preset: Some(preset),
+                    current_color: Some(color),
+                    size_scales: scales,
+                    input_mode_pan: matches!(mode, InputMode::Pan),
+                }
+            };
+            if let Err(err) = prefs::save_prefs(&snapshot) {
+                log::error!("save_prefs: {err}");
+            }
+        }
+    });
 }
 
 pub fn run() {
@@ -152,7 +194,27 @@ pub(crate) fn root() -> impl IntoElement {
         let board = Board::shared();
         let platform = Platform::get();
         let (notifier, rx) = RedrawNotifier::new();
-        lock(&board).set_notifier(notifier);
+        let (prefs_tx, prefs_rx) = flume::unbounded::<()>();
+        {
+            let mut g = lock(&board);
+            g.set_notifier(notifier);
+            // Restore global toolbar prefs before any UI reads
+            // `current_preset`. Sink is installed after the apply so the
+            // restore itself does not re-ping and churn disk at launch.
+            let saved = prefs::load_prefs();
+            for (kind, scale) in &saved.size_scales {
+                g.set_size_scale(*kind, *scale);
+            }
+            if let Some(preset) = saved.current_preset {
+                g.set_current_preset(preset);
+            }
+            if let Some(color) = saved.current_color {
+                g.set_current_color(color);
+            }
+            g.set_input_mode(saved.input_mode());
+            g.set_prefs_sink(prefs_tx);
+        }
+        spawn_prefs_worker(Arc::clone(&board), prefs_rx);
         let zoom_board = Arc::clone(&board);
         spawn(async move {
             while rx.recv_async().await.is_ok() {
@@ -176,7 +238,10 @@ pub(crate) fn root() -> impl IntoElement {
 
     let insets = use_safe_area_insets();
 
-    let selected = use_state(|| 0usize);
+    let selected = {
+        let board = Arc::clone(&board);
+        use_state(move || palette_index_for(lock(&board).current_kind()).unwrap_or(0))
+    };
     // Ticks once per layer mutation. Every layer-panel `on_press`
     // bumps it after mutating the board, which is what wakes freya's
     // reactive re-run for the panel (the canvas has its own
@@ -184,17 +249,10 @@ pub(crate) fn root() -> impl IntoElement {
     let layers_ver = use_state(|| 0u32);
     let scale = {
         let board = Arc::clone(&board);
-        use_state(move || {
-            // Align the board with the initial palette entry so the
-            // scale label reads the tool the user actually sees
-            // highlighted, not whatever `Board::default` picked.
-            let mut g = lock(&board);
-            let initial = PALETTE[0]();
-            if g.current_kind() != initial.kind {
-                g.set_current_preset(initial);
-            }
-            g.current_size()
-        })
+        // Board already carries the restored preset (prefs load above
+        // ran in `use_hook`). Read the live size so the HUD lines up
+        // with whichever tool survived from the previous session.
+        use_state(move || lock(&board).current_size())
     };
     let pad = *insets.read();
 

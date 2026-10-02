@@ -173,6 +173,16 @@ pub struct Board {
     /// `None` outside the canvas views so palette-only sessions never
     /// touch disk.
     commit_tx: Option<flume::Sender<()>>,
+    /// Fires on every toolbar-pref mutation (preset / size / colour /
+    /// input mode). Drained by a global worker that bincode-encodes
+    /// [`crate::prefs::Prefs`] to disk. Independent of `commit_tx` so a
+    /// pen-up never also triggers a doc save when only the preset
+    /// changed.
+    prefs_tx: Option<flume::Sender<()>>,
+    /// Fires on every viewport mutation (pan / zoom / reset). Drained
+    /// by a per-doc worker that writes the view sidecar. Separate from
+    /// `commit_tx` so pan/zoom churn does not rewrite the whole doc.
+    view_tx: Option<flume::Sender<()>>,
     /// Interprets single-point pen samples (`pen_pump`) as either drawing
     /// strokes or panning the viewport. Multi-touch gestures are not
     /// affected — two-finger pinch keeps the same semantics in both modes.
@@ -184,16 +194,22 @@ pub struct Board {
     pan_anchor: Option<(f32, f32)>,
     /// Live surface-pixel positions of every finger currently in
     /// contact. Populated from `on_touch_start` / `on_touch_move` and
-    /// pruned by `on_touch_end` / `on_touch_cancel`. Two entries or
-    /// more flips [`Self::gesture_active`] on and drives pinch/pan of
-    /// the viewport; single-finger contacts are ignored here so pen
-    /// input keeps its usual path.
+    /// pruned by `on_touch_end` / `on_touch_cancel`. One finger drives
+    /// a viewport pan (see [`Self::touch_pan_finger`]); two or more
+    /// flip [`Self::gesture_active`] on and drive pinch-zoom instead.
+    /// Pen input stays on its own channel either way.
     finger_positions: HashMap<u64, (f32, f32)>,
     gesture_baseline: Option<GestureBaseline>,
     /// True while two or more fingers are down. Suppresses stroke
     /// input coming through the `_screen` entrypoints so the viewport
     /// gesture doesn't share the pen path.
     gesture_active: bool,
+    /// Finger id currently driving a single-touch viewport pan. `Some`
+    /// between the first finger landing and either its lift or a
+    /// second finger arriving (which promotes to pinch). Lets the user
+    /// drag the canvas with a finger while the pen keeps drawing — the
+    /// pen pump owns stroke state, this field owns viewport state.
+    touch_pan_finger: Option<u64>,
     /// Brush + cap renderer lookup. Built-in kinds resolve to
     /// [`crate::render::RibbonBrush`]; external crates install custom
     /// renderers here (see [`Board::brush_registry_mut`]) so
@@ -277,12 +293,15 @@ impl Default for Board {
             selection_rect: None,
             notifier: None,
             commit_tx: None,
+            prefs_tx: None,
+            view_tx: None,
             input_mode: InputMode::Draw,
             viewport: Viewport::default(),
             pan_anchor: None,
             finger_positions: HashMap::new(),
             gesture_baseline: None,
             gesture_active: false,
+            touch_pan_finger: None,
             brush_registry: Arc::new(brush_registry),
             highlighter_state,
             two_point_active: false,
@@ -346,6 +365,16 @@ impl Board {
         self.commit_tx = Some(tx);
     }
 
+    /// Install (or replace) the global toolbar-prefs sink.
+    pub fn set_prefs_sink(&mut self, tx: flume::Sender<()>) {
+        self.prefs_tx = Some(tx);
+    }
+
+    /// Install (or replace) the per-doc viewport sink.
+    pub fn set_view_sink(&mut self, tx: flume::Sender<()>) {
+        self.view_tx = Some(tx);
+    }
+
     /// Fired at the end of every doc-mutating public method after the
     /// in-memory state is consistent — see [`Self::notify`] for the
     /// repaint half.
@@ -354,6 +383,18 @@ impl Board {
             // `try_send` on unbounded can only fail on Disconnected,
             // which just means the autosave worker has already torn
             // down. The next mount reinstalls the sink.
+            let _ = tx.try_send(());
+        }
+    }
+
+    fn ping_prefs(&self) {
+        if let Some(tx) = &self.prefs_tx {
+            let _ = tx.try_send(());
+        }
+    }
+
+    fn ping_view(&self) {
+        if let Some(tx) = &self.view_tx {
             let _ = tx.try_send(());
         }
     }
@@ -379,6 +420,7 @@ impl Board {
         self.cancel();
         self.pan_end();
         self.notify();
+        self.ping_prefs();
     }
 
     /// Adopt `preset` as the current tool. The remembered per-kind
@@ -391,10 +433,12 @@ impl Board {
         }
         self.current_color = preset.color;
         self.current_preset = preset;
+        self.ping_prefs();
     }
 
-    pub const fn set_current_color(&mut self, color: [u8; 4]) {
+    pub fn set_current_color(&mut self, color: [u8; 4]) {
         self.current_color = color;
+        self.ping_prefs();
     }
 
     /// Update the active tool's size multiplier (clamped to a sane
@@ -404,6 +448,27 @@ impl Board {
         let clamped = scale.clamp(SIZE_SCALE_MIN, SIZE_SCALE_MAX);
         self.current_preset.size_scale = clamped;
         self.size_scales.insert(self.current_preset.kind, clamped);
+        self.ping_prefs();
+    }
+
+    /// Prime the per-kind size memory without changing the active
+    /// preset. Used by the prefs-restore path to repopulate every
+    /// remembered size before `set_current_preset` folds the matching
+    /// one into the live tool.
+    pub fn set_size_scale(&mut self, kind: BrushKind, scale: f32) {
+        let clamped = scale.clamp(SIZE_SCALE_MIN, SIZE_SCALE_MAX);
+        self.size_scales.insert(kind, clamped);
+    }
+
+    /// Snapshot of every remembered per-kind size. Used by the prefs
+    /// save path to persist the full map without exposing interior
+    /// mutability.
+    #[must_use]
+    pub fn size_scales_snapshot(&self) -> Vec<(BrushKind, f32)> {
+        self.size_scales
+            .iter()
+            .map(|(k, v)| (*k, *v))
+            .collect()
     }
 
     #[must_use]
@@ -510,6 +575,7 @@ impl Board {
         self.viewport = viewport;
         self.clamp_viewport_to_background();
         self.notify();
+        self.ping_view();
     }
 
     /// Pin viewport translation to the current background's content
@@ -555,6 +621,7 @@ impl Board {
         self.viewport.ty += dy;
         self.clamp_viewport_to_background();
         self.notify();
+        self.ping_view();
     }
 
     /// Multiply the current zoom by `factor`, keeping the world point
@@ -585,6 +652,7 @@ impl Board {
         self.viewport.ty = world_y.mul_add(-new_scale, cy);
         self.clamp_viewport_to_background();
         self.notify();
+        self.ping_view();
     }
 
     /// Latch the pan anchor at the current surface cursor. Called on
@@ -618,58 +686,87 @@ impl Board {
         self.gesture_active
     }
 
-    /// Register a new touch point. Entering multi-finger mode (`>= 2`
-    /// fingers) rolls back any in-flight stroke so a two-finger gesture
-    /// never lands as ink on the doc.
+    /// Register a new touch point. The first finger latches a
+    /// single-touch viewport pan so the user can drag the canvas while
+    /// the pen keeps drawing on its own channel. A second finger
+    /// promotes to pinch-zoom and rolls back any in-flight stroke.
+    ///
+    /// Touches landing within [`crate::pen_pump::PEN_TOUCH_FILTER_RADIUS`]
+    /// of a recent pen sample are dropped — some platforms deliver
+    /// stylus contact as both an istmo-pen event AND a freya touch
+    /// event, which would otherwise fire a spurious finger-pan on
+    /// every stroke.
     pub fn touch_down(&mut self, id: u64, sx: f32, sy: f32) {
+        if crate::pen_pump::is_pen_near(sx, sy, crate::pen_pump::PEN_TOUCH_FILTER_RADIUS) {
+            return;
+        }
         self.finger_positions.insert(id, (sx, sy));
-        if self.finger_positions.len() >= 2 && !self.gesture_active {
+        let n = self.finger_positions.len();
+        if n == 1 {
+            // Pen stays on the pen pump; this just moves the viewport.
+            self.touch_pan_finger = Some(id);
+            self.pan_begin(sx, sy);
+        } else if n >= 2 && !self.gesture_active {
             self.gesture_active = true;
             self.cancel();
-            // In `InputMode::Pan` the first touch latched a pan anchor
-            // via the pen pump — ditch it so the second finger lands a
-            // clean pinch-zoom instead of fighting a stale translate.
+            // Drop any pan anchor so the second finger lands a clean
+            // pinch-zoom instead of fighting a stale translate (either
+            // from our own single-finger pan above or from the pen
+            // pump in `InputMode::Pan`).
             self.pan_end();
+            self.touch_pan_finger = None;
         }
         self.gesture_baseline = self.compute_gesture_baseline();
     }
 
-    /// Update a tracked finger. Two-finger gestures pinch-zoom only — pan
-    /// is reserved for the single-touch pen pump (gated by [`InputMode`])
-    /// so users don't accidentally drift the viewport while trying to
-    /// zoom.
+    /// Update a tracked finger. Single-finger moves pan the viewport;
+    /// two-finger moves pinch-zoom around the centroid.
     pub fn touch_move(&mut self, id: u64, sx: f32, sy: f32) {
         if !self.finger_positions.contains_key(&id) {
             return;
         }
         self.finger_positions.insert(id, (sx, sy));
-        if !self.gesture_active {
-            return;
-        }
-        let Some(new) = self.compute_gesture_baseline() else {
-            return;
-        };
-        if let Some(prev) = self.gesture_baseline {
-            // Distances below one surface pixel are numerically noisy
-            // — a pair that near-collides would produce factor blowups.
-            if prev.distance > 1.0 && new.distance > 1.0 {
-                let factor = new.distance / prev.distance;
-                if (factor - 1.0).abs() > 1e-4 {
-                    self.viewport_zoom_at(new.centroid.0, new.centroid.1, factor);
+        if self.gesture_active {
+            let Some(new) = self.compute_gesture_baseline() else {
+                return;
+            };
+            if let Some(prev) = self.gesture_baseline {
+                // Distances below one surface pixel are numerically noisy
+                // — a pair that near-collides would produce factor blowups.
+                if prev.distance > 1.0 && new.distance > 1.0 {
+                    let factor = new.distance / prev.distance;
+                    if (factor - 1.0).abs() > 1e-4 {
+                        self.viewport_zoom_at(new.centroid.0, new.centroid.1, factor);
+                    }
                 }
             }
+            self.gesture_baseline = Some(new);
+            return;
         }
-        self.gesture_baseline = Some(new);
+        if self.touch_pan_finger == Some(id) {
+            self.pan_move(sx, sy);
+        }
     }
 
     /// Drop a finger from the tracker. Leaving multi-finger mode clears
-    /// gesture state so the next single-finger contact resumes the
-    /// normal pen/input path.
+    /// pinch state and re-latches the pan onto whichever finger is
+    /// still down, so a 2→1 lift transitions seamlessly from pinch
+    /// back to drag.
     pub fn touch_up(&mut self, id: u64) {
         self.finger_positions.remove(&id);
+        if self.touch_pan_finger == Some(id) {
+            self.touch_pan_finger = None;
+            self.pan_end();
+        }
         if self.finger_positions.len() < 2 {
             self.gesture_active = false;
             self.gesture_baseline = None;
+            if self.touch_pan_finger.is_none() {
+                if let Some((&remaining_id, &(sx, sy))) = self.finger_positions.iter().next() {
+                    self.touch_pan_finger = Some(remaining_id);
+                    self.pan_begin(sx, sy);
+                }
+            }
         } else {
             self.gesture_baseline = self.compute_gesture_baseline();
         }
@@ -1649,6 +1746,10 @@ pub fn drawing_surface(board: &Arc<Mutex<Board>>) -> impl IntoElement {
             lock(&wheel_board).viewport_zoom_at(x, y, factor);
         })
         .on_mouse_down(move |e: Event<MouseEventData>| {
+            // Middle only. Left is reserved: pen tablets (Wacom et al.)
+            // deliver pen-tip contact as a left-button press through
+            // libinput, so panning on left would hijack every drawing
+            // stroke. Finger pan runs through `on_touch_*` instead.
             if e.button != Some(MouseButton::Middle) {
                 return;
             }

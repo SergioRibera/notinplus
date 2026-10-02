@@ -28,10 +28,11 @@ use freya_engine::prelude::Color as SkColor;
 use freya_pdf::{PdfBackground, PdfDocument};
 
 use crate::app::root as canvas_root;
-use crate::canvas::{Board, lock};
+use crate::canvas::{Board, Viewport, lock};
 use crate::doc::Doc;
 use crate::home::Home;
 use crate::library::{BackgroundStyle, ItemId, LibraryError, bodies};
+use crate::prefs;
 
 /// Off-white paper used when the caller does not override the surface.
 pub const DEFAULT_PAPER: SkColor = SkColor::from_rgb(250, 250, 248);
@@ -183,18 +184,34 @@ fn load_current_doc_into_board() {
             },
             None => Doc::default(),
         };
+        let saved_view = id.and_then(prefs::load_view);
         let (tx, rx) = flume::unbounded::<()>();
+        let (view_tx, view_rx) = flume::unbounded::<()>();
         {
             let board = Board::shared();
             let mut guard = lock(&board);
             guard.replace_doc(doc);
+            // Reset viewport first so a blank-canvas / fresh-doc flow
+            // never inherits the previous doc's pan/zoom. Then apply
+            // the saved view when present. Both run before the sink is
+            // installed so the restore does not re-ping disk at mount.
+            let next_view = saved_view
+                .map(|v| Viewport {
+                    tx: v.tx,
+                    ty: v.ty,
+                    scale: v.scale,
+                })
+                .unwrap_or_default();
+            guard.set_viewport(next_view);
             // Installing after `replace_doc` is deliberate — `replace_doc`
             // itself does not ping the commit sink, but any prior sender
             // (from an earlier mount) is dropped here. Its worker's
             // receiver sees `Disconnected` on the next recv and exits.
             guard.set_commit_sink(tx);
+            guard.set_view_sink(view_tx);
         }
         spawn_autosave_worker(rx);
+        spawn_view_worker(view_rx);
     });
 }
 
@@ -222,6 +239,27 @@ fn spawn_autosave_worker(rx: flume::Receiver<()>) {
                     }
                 }
                 Err(err) => log::error!("autosave open library: {err}"),
+            }
+        }
+    });
+}
+
+/// Drive one view-sidecar write per ping. Same drain pattern as the doc
+/// autosave worker — a pan burst collapses into a single write.
+fn spawn_view_worker(rx: flume::Receiver<()>) {
+    spawn(async move {
+        while rx.recv_async().await.is_ok() {
+            while rx.try_recv().is_ok() {}
+            let Some(id) = current_canvas_item() else {
+                continue;
+            };
+            let view = {
+                let board = Board::shared();
+                let guard = lock(&board);
+                prefs::DocView::from_viewport(guard.viewport())
+            };
+            if let Err(err) = prefs::save_view(id, view) {
+                log::error!("save_view id={id:?}: {err}");
             }
         }
     });

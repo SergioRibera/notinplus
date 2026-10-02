@@ -20,6 +20,7 @@ pub mod hooks;
 pub mod library;
 pub mod palette_popup;
 pub mod pen_pump;
+pub mod prefs;
 pub mod render;
 pub mod route;
 pub mod spatial;

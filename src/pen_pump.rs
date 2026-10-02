@@ -7,6 +7,7 @@
 //! returns — the app still runs, driven by mouse events.
 
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use flume::{Receiver, Sender};
 use istmo::{StreamItem, TypedStream};
@@ -41,6 +42,55 @@ struct HoverBridge {
 }
 
 static HOVER_BRIDGE: OnceLock<HoverBridge> = OnceLock::new();
+
+/// Last surface-pixel position the pen was observed at (contact or
+/// hover), timestamped. Read by `canvas.rs` to drop freya touch events
+/// that are really pen artifacts — some platforms deliver stylus
+/// contact as both an istmo-pen sample AND a `TouchEventData` with the
+/// same coords, which would otherwise fire the finger-pan path and
+/// steal the stroke.
+static PEN_SURFACE_POS: Mutex<Option<(f32, f32, Instant)>> = Mutex::new(None);
+
+/// Freshness window for [`pen_screen_pos_fresh`]. Comfortably covers
+/// the gap between a pen sample dispatch and the matching freya touch
+/// event on the UI thread; short enough that a lifted pen stops
+/// swallowing real finger taps within a frame or two.
+const PEN_POS_FRESHNESS: Duration = Duration::from_millis(300);
+
+/// Radius (surface px) around a fresh pen position within which an
+/// incoming touch_down is treated as a pen artifact and dropped.
+pub const PEN_TOUCH_FILTER_RADIUS: f32 = 48.0;
+
+fn record_pen_pos(x: f32, y: f32) {
+    if let Ok(mut g) = PEN_SURFACE_POS.lock() {
+        *g = Some((x, y, Instant::now()));
+    }
+}
+
+fn clear_pen_pos() {
+    if let Ok(mut g) = PEN_SURFACE_POS.lock() {
+        *g = None;
+    }
+}
+
+/// Most recent pen position, if observed within the freshness window.
+/// Returns `None` once the pen has been lifted / idle long enough that
+/// a touch at the same coord is unlikely to be a stylus artifact.
+#[must_use]
+pub fn pen_screen_pos_fresh() -> Option<(f32, f32)> {
+    let g = PEN_SURFACE_POS.lock().ok()?;
+    let (x, y, t) = (*g)?;
+    (t.elapsed() < PEN_POS_FRESHNESS).then_some((x, y))
+}
+
+/// `true` when a fresh pen sample sits within `radius` surface pixels
+/// of `(sx, sy)` — the heuristic the canvas uses to drop stylus events
+/// that leak through as touch on platforms without native tool-type
+/// disambiguation.
+#[must_use]
+pub fn is_pen_near(sx: f32, sy: f32, radius: f32) -> bool {
+    pen_screen_pos_fresh().is_some_and(|(px, py)| (px - sx).hypot(py - sy) < radius)
+}
 
 fn hover_bridge() -> &'static HoverBridge {
     HOVER_BRIDGE.get_or_init(|| {
@@ -111,13 +161,20 @@ fn pump_hover(stream: &TypedStream<PenHoverEvent, ()>) {
     while let Ok(StreamItem::Event(event)) = stream.recv() {
         let payload = match event {
             PenHoverEvent::ProximityEnter(sample) | PenHoverEvent::Move(sample) => {
+                // Hover often precedes contact — record so the first
+                // touch_down after proximity enters already has a
+                // fresh pen position to compare against.
+                record_pen_pos(sample.x, sample.y);
                 Some(HoverPoint {
                     x: sample.x,
                     y: sample.y,
                     z_offset: sample.z_offset,
                 })
             }
-            PenHoverEvent::ProximityLeave => None,
+            PenHoverEvent::ProximityLeave => {
+                clear_pen_pos();
+                None
+            }
         };
         // Bounded channel: drop-oldest on full so a stalled consumer
         // never back-pressures the pen backend. Hover samples are
@@ -165,6 +222,7 @@ fn apply(event: PenEvent, board: &Arc<Mutex<Board>>, dt: &mut DtTracker) {
     // the same event stream to drive the viewport instead of a stroke.
     match event {
         PenEvent::Down(sample) => {
+            record_pen_pos(sample.x, sample.y);
             let d = dt.reset(sample.timestamp_us);
             let point = point_from_sample(&sample, d);
             let mut guard = lock_board(board);
@@ -174,6 +232,7 @@ fn apply(event: PenEvent, board: &Arc<Mutex<Board>>, dt: &mut DtTracker) {
             }
         }
         PenEvent::Move(m) => {
+            record_pen_pos(m.sample.x, m.sample.y);
             let mut guard = lock_board(board);
             match guard.input_mode() {
                 InputMode::Draw => {
@@ -198,6 +257,7 @@ fn apply(event: PenEvent, board: &Arc<Mutex<Board>>, dt: &mut DtTracker) {
             }
         }
         PenEvent::Up(sample) => {
+            record_pen_pos(sample.x, sample.y);
             let d = dt.advance(sample.timestamp_us);
             {
                 let mut guard = lock_board(board);
@@ -216,6 +276,7 @@ fn apply(event: PenEvent, board: &Arc<Mutex<Board>>, dt: &mut DtTracker) {
             dt.clear();
         }
         PenEvent::Cancel(_) => {
+            clear_pen_pos();
             {
                 let mut guard = lock_board(board);
                 match guard.input_mode() {
