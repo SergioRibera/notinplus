@@ -28,6 +28,7 @@ use freya::router::*;
 use istmo::plugins::EdgeInsets;
 
 use crate::components::FormInput;
+use crate::components::drag_drop::{DragZone, DropZone};
 use crate::components::{
     CanvasCreateSheet, CreateCanvasRequest, Modal, ModalController, auto_color,
 };
