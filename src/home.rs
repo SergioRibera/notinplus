@@ -532,6 +532,19 @@ impl Component for ItemCard {
         // the ambiguity.
         let router = RouterContext::get();
 
+        let focus = use_a11y();
+        let focus_status = use_focus(focus);
+
+        use_side_effect({
+            let mut editing = self.renaming.clone();
+            move || {
+                if !focus_status().is_focused() {
+                    editing.set(None);
+                    focus.request_unfocus();
+                }
+            }
+        });
+
         let open = move || {
             crate::route::queue_canvas_background(bg_style, rgba_to_color(tint).into());
             crate::route::set_current_canvas_item(Some(id));
@@ -545,38 +558,36 @@ impl Component for ItemCard {
         let menu_builder = {
             let handle = handle.clone();
             let title = title.clone();
-            move || {
-                let start_rename = {
-                    let mut renaming = renaming;
-                    let mut rename_buffer = rename_buffer;
-                    let name = title.clone();
-                    move || {
-                        rename_buffer.set(name.clone());
-                        renaming.set(Some(card_id));
-                    }
-                };
-                let ask_delete = {
-                    let handle = handle.clone();
-                    let mut snap = snap;
-                    let name = title.clone();
-                    move || {
-                        confirm_delete_modal(name.clone(), {
+            let start_rename = {
+                let mut renaming = renaming;
+                let mut rename_buffer = rename_buffer;
+                let name = title.clone();
+                move || {
+                    rename_buffer.set(name.clone());
+                    renaming.set(Some(card_id));
+                }
+            };
+            let ask_delete = {
+                let handle = handle.clone();
+                let mut snap = snap;
+                let name = title.clone();
+                move || {
+                    confirm_delete_modal(name.clone(), {
+                        let handle = handle.clone();
+                        move || {
                             let handle = handle.clone();
-                            move || {
-                                let handle = handle.clone();
-                                spawn_forever(async move {
-                                    let mut lib = handle.lock().await;
-                                    if let Err(err) = lib.delete_item(id).await {
-                                        log::error!("delete_item: {err}");
-                                    }
-                                    snap.set(Some(lib.index().clone()));
-                                });
-                            }
-                        });
-                    }
-                };
-                build_card_menu(start_rename, || log::info!("edit item: TODO"), ask_delete)
-            }
+                            spawn_forever(async move {
+                                let mut lib = handle.lock().await;
+                                if let Err(err) = lib.delete_item(id).await {
+                                    log::error!("delete_item: {err}");
+                                }
+                                snap.set(Some(lib.index().clone()));
+                            });
+                        }
+                    });
+                }
+            };
+            build_card_menu(start_rename, || log::info!("edit item: TODO"), ask_delete)
         };
 
         let on_commit_rename = {
@@ -600,6 +611,7 @@ impl Component for ItemCard {
             tint,
             false,
             is_editing,
+            focus,
             rename_buffer,
             renaming,
             on_commit_rename,
@@ -672,6 +684,20 @@ impl Component for FolderCard {
         let renaming = self.renaming;
         let rename_buffer = self.rename_buffer;
 
+        let focus = use_a11y();
+        let focus_status = use_focus(focus);
+
+        use_side_effect({
+            let mut editing = self.renaming.clone();
+            move || {
+                if !focus_status().is_focused() {
+                    editing.set(None);
+                    println!("Unfocus input");
+                    focus.request_unfocus();
+                }
+            }
+        });
+
         let open = move || {
             let mut nav = nav;
             nav.write().push(id);
@@ -680,38 +706,36 @@ impl Component for FolderCard {
         let menu_builder = {
             let handle = handle.clone();
             let title = title.clone();
-            move || {
-                let start_rename = {
-                    let mut renaming = renaming;
-                    let mut rename_buffer = rename_buffer;
-                    let name = title.clone();
-                    move || {
-                        rename_buffer.set(name.clone());
-                        renaming.set(Some(card_id));
-                    }
-                };
-                let ask_delete = {
-                    let handle = handle.clone();
-                    let mut snap = snap;
-                    let name = title.clone();
-                    move || {
-                        confirm_delete_modal(name.clone(), {
+            let start_rename = {
+                let mut renaming = renaming;
+                let mut rename_buffer = rename_buffer;
+                let name = title.clone();
+                move || {
+                    rename_buffer.set(name.clone());
+                    renaming.set(Some(card_id));
+                }
+            };
+            let ask_delete = {
+                let handle = handle.clone();
+                let mut snap = snap;
+                let name = title.clone();
+                move || {
+                    confirm_delete_modal(name.clone(), {
+                        let handle = handle.clone();
+                        move || {
                             let handle = handle.clone();
-                            move || {
-                                let handle = handle.clone();
-                                spawn_forever(async move {
-                                    let mut lib = handle.lock().await;
-                                    if let Err(err) = lib.delete_folder(id).await {
-                                        log::error!("delete_folder: {err}");
-                                    }
-                                    snap.set(Some(lib.index().clone()));
-                                });
-                            }
-                        });
-                    }
-                };
-                build_card_menu(start_rename, || log::info!("edit folder: TODO"), ask_delete)
-            }
+                            spawn_forever(async move {
+                                let mut lib = handle.lock().await;
+                                if let Err(err) = lib.delete_folder(id).await {
+                                    log::error!("delete_folder: {err}");
+                                }
+                                snap.set(Some(lib.index().clone()));
+                            });
+                        }
+                    });
+                }
+            };
+            build_card_menu(start_rename, || log::info!("edit folder: TODO"), ask_delete)
         };
 
         let on_commit_rename = {
@@ -735,6 +759,7 @@ impl Component for FolderCard {
             tint,
             true,
             is_editing,
+            focus,
             rename_buffer,
             renaming,
             on_commit_rename,
@@ -773,17 +798,18 @@ impl Component for FolderCard {
 /// takes the per-card hook slots (`press_token`, `long_fired`) by
 /// argument so the calling `Component::render` owns their scoping.
 #[allow(clippy::too_many_arguments)]
-fn card_body_view<Open, Commit, MenuFn>(
+fn card_body_view<Open, Commit>(
     title: String,
     subtitle: String,
     tint: Rgba,
     is_folder: bool,
     is_editing: bool,
+    focus: AccessibilityId,
     rename_buffer: State<String>,
     renaming: State<Option<CardId>>,
     on_commit_rename: Commit,
     open: Open,
-    menu_builder: MenuFn,
+    menu_builder: Menu,
     press_token: State<u64>,
     long_fired: State<bool>,
     press_start: State<Option<CursorPoint>>,
@@ -791,7 +817,6 @@ fn card_body_view<Open, Commit, MenuFn>(
 where
     Open: Fn() + Clone + 'static,
     Commit: Fn(String) + Clone + 'static,
-    MenuFn: Fn() -> Menu + Clone + 'static,
 {
     let cover = rect()
         .width(Size::px(130.0))
@@ -816,6 +841,8 @@ where
     if is_editing {
         column = column.child(
             crate::components::FormInput::new(rename_buffer)
+                .flat()
+                .a11y_id(focus)
                 .auto_focus(true)
                 .width(Size::px(132.0))
                 .on_change({
@@ -831,11 +858,33 @@ where
                 }),
         );
     } else {
+        let menu_for_secondary = menu_builder.clone();
         column = column.child(
-            label()
-                .color(Color::from_rgb(230, 230, 235))
-                .font_size(12.0)
-                .text(title),
+            rect()
+                .spacing(5.)
+                .horizontal()
+                .content(Content::Flex)
+                .child(
+                    label()
+                        .width(Size::flex(1.))
+                        .text_overflow(TextOverflow::Ellipsis)
+                        .color(Color::from_rgb(230, 230, 235))
+                        .font_size(12.0)
+                        .text(title),
+                )
+                .child(
+                    rect()
+                        .on_press(move |e: Event<PressEventData>| {
+                            e.stop_propagation();
+                            ContextMenu::open(menu_for_secondary.clone());
+                        })
+                        .child(
+                            SvgViewer::new(freya::icons::lucide::ellipsis_vertical())
+                                .color(Color::WHITE)
+                                .width(Size::px(16.))
+                                .height(Size::px(16.)),
+                        ),
+                ),
         );
     }
 
@@ -847,8 +896,8 @@ where
     );
 
     let menu_for_secondary = menu_builder.clone();
-    let column = column.on_secondary_down(move |e: Event<PressEventData>| {
-        ContextMenu::open_from_event(&e, menu_for_secondary());
+    let column = column.on_secondary_down(move |_: Event<PressEventData>| {
+        ContextMenu::open(menu_for_secondary.clone());
     });
 
     let menu_for_long = menu_builder.clone();
@@ -866,7 +915,7 @@ where
                 async_io::Timer::after(LONG_PRESS).await;
                 if *press_token.peek() == token {
                     long_fired.set(true);
-                    ContextMenu::open(menu());
+                    ContextMenu::open(menu);
                 }
             });
         }
