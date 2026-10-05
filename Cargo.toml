@@ -33,10 +33,10 @@ istmo = { path = "../istmo", default-features = false, features = [
 istmo-pen = { path = "../istmo/plugins/istmo-pen" }
 istmo-file-picker = { path = "../istmo/plugins/file-picker" }
 istmo-data-store = { path = "../istmo/plugins/data-store" }
-freya = { version = "0.5.0-rc.8", features = ["router", "icons", "icons-lucide"] }
-freya-engine = "0.5.0-rc.8"
-freya-components = "0.5.0-rc.8"
-torin = "0.5.0-rc.8"
+freya = { version = "=0.5.0-rc.8", features = ["router", "icons", "icons-lucide"] }
+freya-engine = "=0.5.0-rc.8"
+freya-components = "=0.5.0-rc.8"
+torin = "=0.5.0-rc.8"
 freya-canvas-bg = { path = "crates/freya-canvas-bg" }
 freya-pdf = { path = "crates/freya-pdf" }
 bincode = { version = "2", features = ["derive", "std"] }
@@ -63,6 +63,9 @@ env_logger = "0.11"
 
 [build-dependencies]
 istmo-build = { path = "../istmo/crates/build" }
+
+[patch.crates-io]
+winit = { git = "https://github.com/SergioRibera/winit", branch = "android-ime-events" }
 
 [lints.rust]
 missing_debug_implementations = "warn"
