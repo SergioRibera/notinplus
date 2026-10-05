@@ -547,10 +547,9 @@ impl Component for ItemCard {
 
         let open = move || {
             crate::route::queue_canvas_background(bg_style, rgba_to_color(tint).into());
-            crate::route::set_current_canvas_item(Some(id));
             let route = match kind {
-                ItemKind::Canvas => Route::CanvasView,
-                ItemKind::PdfCanvas => Route::CanvasPdfView,
+                ItemKind::Canvas => Route::CanvasView { id: id.0 },
+                ItemKind::PdfCanvas => Route::CanvasPdfView { id: id.0 },
             };
             let _ = router.push(route);
         };
@@ -1148,6 +1147,18 @@ fn fab_stack(
 
     let pen_bg = Color::from_rgb(80, 130, 175);
     let plus_bg = Color::from_rgb(65, 105, 220);
+    let incognito_bg = Color::from_rgb(45, 45, 52);
+
+    // Ephemeral canvas: no library item, no autosave, no view sidecar.
+    // `Route::CanvasEphemeral` has no id and `mount_canvas(None)` in
+    // `route.rs` skips sink installation entirely — nothing hits disk.
+    let incognito = fab_button("🕶", incognito_bg, move |_| {
+        crate::route::queue_canvas_background(
+            BackgroundStyle::default(),
+            crate::route::DEFAULT_PAPER,
+        );
+        let _ = router.push(Route::CanvasEphemeral);
+    });
 
     let pen = fab_button("✎", pen_bg, {
         let handle = handle.clone();
@@ -1173,8 +1184,7 @@ fn fab_stack(
                             BackgroundStyle::default(),
                             crate::route::DEFAULT_PAPER,
                         );
-                        crate::route::set_current_canvas_item(Some(id));
-                        let _ = router.push(Route::CanvasView);
+                        let _ = router.push(Route::CanvasView { id: id.0 });
                     }
                     Err(err) => log::error!("create_item: {err}"),
                 }
@@ -1185,9 +1195,9 @@ fn fab_stack(
     // Anchor of the FAB stack, reused when placing the popup above it.
     let anchor_right = 24.0 + pad.right;
     let anchor_bottom = 24.0 + pad.bottom;
-    // Pen + plus each 52px tall, 12px stack spacing, 12px extra breathing
-    // room between the stack and the menu card.
-    let menu_bottom = anchor_bottom + 52.0 + 12.0 + 52.0 + 12.0;
+    // Incognito + pen + plus each 52px tall, 12px stack spacing, 12px
+    // extra breathing room between the stack and the menu card.
+    let menu_bottom = anchor_bottom + 52.0 + 12.0 + 52.0 + 12.0 + 52.0 + 12.0;
 
     let plus = fab_button("+", plus_bg, move |_| {
         let handle = handle.clone();
@@ -1232,8 +1242,7 @@ fn fab_stack(
                                     log::info!("canvas created id={id:?}");
                                     snap.set(Some(lib.index().clone()));
                                     crate::route::queue_canvas_background(bg_style, surface.into());
-                                    crate::route::set_current_canvas_item(Some(id));
-                                    let _ = router.push(Route::CanvasView);
+                                    let _ = router.push(Route::CanvasView { id: id.0 });
                                 }
                                 Err(err) => log::error!("create_item: {err}"),
                             }
@@ -1308,6 +1317,7 @@ fn fab_stack(
                 .right(anchor_right)
                 .bottom(anchor_bottom),
         )
+        .child(incognito)
         .child(pen)
         .child(plus)
 }
@@ -1426,8 +1436,7 @@ async fn pick_and_open_pdf(
                         log::error!("attach_pdf: {err}");
                     }
                     snap.set(Some(lib.index().clone()));
-                    crate::route::set_current_canvas_item(Some(id));
-                    let _ = router.push(Route::CanvasPdfView);
+                    let _ = router.push(Route::CanvasPdfView { id: id.0 });
                 }
                 Err(err) => log::error!("create_item: {err}"),
             }

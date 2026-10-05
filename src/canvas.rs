@@ -375,6 +375,14 @@ impl Board {
         self.commit_tx = Some(tx);
     }
 
+    /// Drop the current commit sink. Any worker holding the matching
+    /// receiver wakes on `Disconnected` and exits. Used by ephemeral
+    /// canvas flows that must not autosave onto the previous mount's
+    /// item.
+    pub fn clear_commit_sink(&mut self) {
+        self.commit_tx = None;
+    }
+
     /// Install (or replace) the global toolbar-prefs sink.
     pub fn set_prefs_sink(&mut self, tx: flume::Sender<()>) {
         self.prefs_tx = Some(tx);
@@ -383,6 +391,12 @@ impl Board {
     /// Install (or replace) the per-doc viewport sink.
     pub fn set_view_sink(&mut self, tx: flume::Sender<()>) {
         self.view_tx = Some(tx);
+    }
+
+    /// Drop the current viewport sink. Mirror of
+    /// [`Self::clear_commit_sink`] for the ephemeral flow.
+    pub fn clear_view_sink(&mut self) {
+        self.view_tx = None;
     }
 
     /// Update the live pointer position in surface pixels. `None`

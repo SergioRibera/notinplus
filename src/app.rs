@@ -330,7 +330,9 @@ fn back_overlay(board: &Arc<Mutex<Board>>, pad: EdgeInsets) -> impl IntoElement 
                 let guard = lock(&board);
                 guard.doc().clone()
             };
-            let item_id = crate::route::current_canvas_item();
+            let item_id = RouterContext::get()
+                .current::<crate::route::Route>()
+                .canvas_item();
             spawn(async move {
                 if let Some(id) = item_id {
                     match crate::home::open_library().await {
@@ -343,7 +345,6 @@ fn back_overlay(board: &Arc<Mutex<Board>>, pad: EdgeInsets) -> impl IntoElement 
                         Err(err) => log::error!("open library on back: {err}"),
                     }
                 }
-                crate::route::set_current_canvas_item(None);
                 let _ = RouterContext::get().push(crate::route::Route::Home);
             });
         })
