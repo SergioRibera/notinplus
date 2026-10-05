@@ -56,6 +56,17 @@ pub struct DragZone<T: Clone + 'static + PartialEq> {
     key: DiffKey,
 }
 
+impl<T: Clone + PartialEq + 'static> std::fmt::Debug for DragZone<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DragZone")
+            .field("show_while_dragging", &self.show_while_dragging)
+            .field("drag_threshold", &self.drag_threshold)
+            .field("enabled", &self.enabled)
+            .field("key", &self.key)
+            .finish_non_exhaustive()
+    }
+}
+
 impl<T: Clone + PartialEq + 'static> KeyExt for DragZone<T> {
     fn write_key(&mut self) -> &mut DiffKey {
         &mut self.key
@@ -199,6 +210,16 @@ pub struct DropZone<T: 'static + PartialEq + Clone> {
     width: Size,
     height: Size,
     key: DiffKey,
+}
+
+impl<T: Clone + PartialEq + 'static> std::fmt::Debug for DropZone<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DropZone")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("key", &self.key)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<T: Clone + PartialEq + 'static> KeyExt for DropZone<T> {

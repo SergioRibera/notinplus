@@ -13,13 +13,13 @@ use freya::prelude::*;
 
 use crate::components::theme::{BORDER, TEXT_PRIMARY};
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 enum ChipVariant {
     Accent(Color),
     Outline,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Chip {
     label: String,
     variant: ChipVariant,

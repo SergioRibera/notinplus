@@ -16,7 +16,7 @@ use crate::components::theme::{
     TEXT_SECONDARY,
 };
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Tag {
     label: String,
     closable: bool,

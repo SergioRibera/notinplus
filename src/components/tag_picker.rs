@@ -23,6 +23,16 @@ pub struct TagPicker {
     on_change: Option<EventHandler<Vec<String>>>,
 }
 
+impl std::fmt::Debug for TagPicker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TagPicker")
+            .field("available", &self.available)
+            .field("label", &self.label)
+            .field("placeholder", &self.placeholder)
+            .finish_non_exhaustive()
+    }
+}
+
 impl TagPicker {
     #[must_use]
     pub fn new(selected: impl Into<Writable<Vec<String>>>) -> Self {
