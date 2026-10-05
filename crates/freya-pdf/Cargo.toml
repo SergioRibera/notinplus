@@ -17,9 +17,17 @@ freya-engine    = "0.5.0-rc.8"
 freya-skia-safe = { version = "=0.100.0-beta.1", default-features = false }
 flume           = "0.11"
 hashlink        = "0.10"
-# Default features pick a PDFium API version (`pdfium_latest` →
-# 7881-shaped bindings) and enable `thread_safe`. In 0.9 `thread_safe`
-# actually wraps every FPDF_* call in a global mutex AND provides the
+# Default features pick `pdfium_latest` (currently → 7881-shaped
+# bindings), which tries to resolve newer FPDF_* symbols (e.g.
+# `FPDFTextObj_SetFontSize`) at `bind_to_system_library` time. The
+# nix devshell and the APK jniLibs we ship bundle an older pdfium
+# (nixpkgs `pdfium` is 7749 as of 2026-10) that does not export those
+# symbols, so defaults crash at startup with `DlSym { desc: "...
+# undefined symbol: FPDFTextObj_SetFontSize" }`. Pin to the nearest
+# feature flag that matches our runtime ABI; bump when platform
+# packaging catches up.
+#
+# `thread_safe` wraps every FPDF_* call in a global mutex AND provides
 # `Send + Sync` markers, so the worker pool can drive Pdfium off the
 # UI thread safely. (0.8's `sync` feature only added the markers and
 # left per-call FPDF_* unsynchronised — concurrent `FPDF_LoadPage`
@@ -29,7 +37,11 @@ hashlink        = "0.10"
 # via `Pdfium::bind_to_system_library` — apps ship the binary through
 # their platform packaging (nix devshell, APK jniLibs, iOS xcframework,
 # etc.).
-pdfium-render   = "0.9"
+pdfium-render = { version = "0.9", default-features = false, features = [
+    "pdfium_7543",
+    "image_latest",
+    "thread_safe",
+] }
 log             = "0.4"
 
 [lints.rust]
