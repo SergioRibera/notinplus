@@ -14,6 +14,7 @@ pub mod brush;
 pub mod canvas;
 pub mod components;
 pub mod doc;
+pub mod doc_op;
 pub mod history;
 pub mod home;
 pub mod hooks;

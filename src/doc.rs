@@ -13,6 +13,7 @@ use std::path::Path;
 use bincode::config::{self, Configuration};
 
 use crate::brush::{BrushId, BrushPreset, Stroke};
+use crate::doc_op::OpRecord;
 use crate::ids::StrokeId;
 
 const CODEC: Configuration = config::standard();
@@ -60,6 +61,14 @@ pub struct Doc {
     /// Id of the layer new strokes commit into.
     pub active_layer: u32,
     pub next_layer_id: u32,
+    /// Highest Lamport observed on this doc. Local emission in
+    /// Phase 1.2 bumps this before stamping an `OpId`; Phase 10
+    /// `observe_remote` fast-forwards it past an incoming op.
+    pub lamport: u64,
+    /// Append-only CRDT op record log. Empty until Phase 1.2 wires
+    /// mutations to emit; shape is fixed now so persisted docs don't
+    /// need another breaking migration mid-phase.
+    pub log: Vec<OpRecord>,
 }
 
 impl Default for Doc {
@@ -69,6 +78,8 @@ impl Default for Doc {
             layers: vec![Layer::new(0, "Layer 1")],
             active_layer: 0,
             next_layer_id: 1,
+            lamport: 0,
+            log: Vec::new(),
         }
     }
 }
@@ -219,6 +230,31 @@ impl Doc {
         }
     }
 
+    /// Flat iterator over every committed stroke across all layers in
+    /// paint order (bottom layer first, then insertion order within).
+    /// Materialised view intended for read-only consumers (render,
+    /// search). Mutations stay on dedicated methods so Phase 1.2 can
+    /// make every one of them emit a [`DocOp`](crate::doc_op::DocOp).
+    pub fn strokes(&self) -> impl Iterator<Item = &Stroke> {
+        self.layers.iter().flat_map(|l| l.strokes.iter())
+    }
+
+    /// Count of committed strokes across every layer.
+    #[must_use]
+    pub fn stroke_count(&self) -> usize {
+        self.layers.iter().map(|l| l.strokes.len()).sum()
+    }
+
+    #[must_use]
+    pub fn log(&self) -> &[OpRecord] {
+        &self.log
+    }
+
+    #[must_use]
+    pub const fn lamport(&self) -> u64 {
+        self.lamport
+    }
+
     /// # Errors
     /// I/O or bincode encode failures.
     pub fn save(&self, path: impl AsRef<Path>) -> io::Result<()> {
@@ -249,6 +285,42 @@ mod tests {
         let b = d.register_brush(BrushPreset::pen());
         assert_eq!(a, b);
         assert_eq!(d.brushes.len(), 1);
+    }
+
+    #[test]
+    fn strokes_iterator_flattens_layers() {
+        let mut d = Doc::default();
+        let bid = d.register_brush(BrushPreset::pen());
+        d.push_stroke(bid, [0; 4], vec![InkPoint::new(0.0, 0.0, 0, 0, 0)]);
+        let l2 = d.add_layer("Layer 2");
+        d.set_active_layer(l2);
+        d.push_stroke(bid, [0; 4], vec![InkPoint::new(1.0, 1.0, 0, 0, 0)]);
+        assert_eq!(d.strokes().count(), 2);
+        assert_eq!(d.stroke_count(), 2);
+    }
+
+    #[test]
+    fn roundtrip_preserves_log_and_lamport() {
+        use crate::doc_op::{DocOp, OpRecord};
+        use crate::identity::{ActorId, DeviceId, UserId};
+        use crate::op::OpId;
+        let mut d = Doc::default();
+        d.lamport = 7;
+        d.log.push(OpRecord {
+            id: OpId {
+                lamport: 7,
+                actor: ActorId {
+                    user: UserId::new_v4(),
+                    device: DeviceId::new_v4(),
+                },
+            },
+            op: DocOp::Clear,
+        });
+        let bytes = bincode::encode_to_vec(&d, CODEC).unwrap();
+        let (d2, _) = bincode::decode_from_slice::<Doc, _>(&bytes, CODEC).unwrap();
+        assert_eq!(d, d2);
+        assert_eq!(d2.lamport(), 7);
+        assert_eq!(d2.log().len(), 1);
     }
 
     #[test]

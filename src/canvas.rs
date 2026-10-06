@@ -1075,7 +1075,7 @@ impl Board {
     pub fn add_layer(&mut self) -> u32 {
         let n = self.doc.layers.len() + 1;
         let id = self.doc.add_layer(format!("Layer {n}"));
-        self.doc.active_layer = id;
+        self.doc.set_active_layer(id);
         self.notify_commit();
         id
     }
