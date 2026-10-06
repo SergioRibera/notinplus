@@ -10,8 +10,12 @@ use std::sync::Arc;
 
 use notein_plugin::PluginRegistry;
 
+pub mod pdf_canvas;
+pub mod pdf_source;
 pub mod stroke_canvas;
 
+pub use pdf_canvas::PdfCanvasPlugin;
+pub use pdf_source::PdfSourcePlugin;
 pub use stroke_canvas::StrokeCanvasPlugin;
 
 /// Register every in-process builtin into `reg`. Idempotent: duplicate
@@ -19,5 +23,11 @@ pub use stroke_canvas::StrokeCanvasPlugin;
 pub fn register_all(reg: &mut PluginRegistry) {
     if let Err(err) = reg.register_canvas(Arc::new(StrokeCanvasPlugin::default())) {
         log::warn!("register StrokeCanvasPlugin: {err}");
+    }
+    if let Err(err) = reg.register_canvas(Arc::new(PdfCanvasPlugin::default())) {
+        log::warn!("register PdfCanvasPlugin: {err}");
+    }
+    if let Err(err) = reg.register_source(Arc::new(PdfSourcePlugin::default())) {
+        log::warn!("register PdfSourcePlugin: {err}");
     }
 }
