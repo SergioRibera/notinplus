@@ -5,20 +5,21 @@
 //!
 //! * **Account** — placeholder, pending auth plumbing.
 //! * **General** — app-wide prefs (input mode toggle for now).
-//! * **Plugins** — one collapsible card per registered plugin with an
-//!   enable toggle + a form rendered from the plugin's
-//!   [`notein_plugin::ConfigSchema`]. A header-level `Instalar plugin`
-//!   button stubs the dynamic-load entry point that lands in Phase 3.
+//! * **Plugins** — one card per registered plugin with an origin badge
+//!   (built-in or dynamic + library path), an enable toggle, and a
+//!   form rendered from the plugin's [`notein_plugin::ConfigSchema`].
+//!   A header-level `Instalar plugin` row points at the scan directory
+//!   where dynamic `.so` / `.dll` / `.dylib` bundles can be dropped.
 //!
-//! The Plugins section is the Phase 2.4 payload: forms render from
-//! schemas without the shell knowing any plugin's domain, so adding a
-//! plugin in later phases automatically grows the settings surface.
+//! Forms render from schemas without the shell knowing any plugin's
+//! domain, so adding a plugin automatically grows the settings surface.
 
 use std::sync::{Arc, Mutex};
 
 use freya::prelude::*;
 use notein_plugin::{
-    ConfigField, ConfigFieldKind, ConfigValue, PluginRegistry, PluginRole, RegistrySchemaEntry,
+    ConfigField, ConfigFieldKind, ConfigValue, PluginOrigin, PluginRegistry, PluginRole,
+    RegistrySchemaEntry,
 };
 
 use crate::canvas::{Board, InputMode};
@@ -414,13 +415,16 @@ fn option_row(
 }
 
 fn plugins_section(tick: State<u64>, registry: Arc<Mutex<PluginRegistry>>) -> impl IntoElement {
-    let schemas: Vec<RegistrySchemaEntry> = {
+    let (schemas, disabled_ids, origins): (
+        Vec<RegistrySchemaEntry>,
+        Vec<String>,
+        Vec<PluginOrigin>,
+    ) = {
         let g = plugins::lock(&registry);
-        g.all_schemas()
-    };
-    let disabled_ids: Vec<String> = {
-        let g = plugins::lock(&registry);
-        g.disabled_ids().map(ToOwned::to_owned).collect()
+        let schemas = g.all_schemas();
+        let disabled = g.disabled_ids().map(ToOwned::to_owned).collect();
+        let origins = schemas.iter().map(|s| g.origin(&s.plugin_id)).collect();
+        (schemas, disabled, origins)
     };
 
     let mut col = rect().vertical().spacing(14.0).child(install_row());
@@ -430,14 +434,15 @@ fn plugins_section(tick: State<u64>, registry: Arc<Mutex<PluginRegistry>>) -> im
         return col;
     }
 
-    for entry in schemas {
+    for (entry, origin) in schemas.into_iter().zip(origins) {
         let enabled = !disabled_ids.contains(&entry.plugin_id);
-        col = col.child(plugin_card(entry, enabled, tick, registry.clone()));
+        col = col.child(plugin_card(entry, origin, enabled, tick, registry.clone()));
     }
     col
 }
 
 fn install_row() -> impl IntoElement {
+    let scan_dir = crate::dynamic_plugins::scan_root().display().to_string();
     rect()
         .horizontal()
         .width(Size::fill())
@@ -459,7 +464,9 @@ fn install_row() -> impl IntoElement {
                     label()
                         .color(TEXT_MUTED)
                         .font_size(12.0)
-                        .text("Carga dinámica `.so` / `.dll` llega en Phase 3."),
+                        .text(format!(
+                            "Colocá `<id>/plugin.ntp.kdl` + .so/.dll/.dylib en {scan_dir} y reiniciá."
+                        )),
                 ),
         )
         .child(flex_spacer())
@@ -536,6 +543,7 @@ fn empty_state() -> impl IntoElement {
 
 fn plugin_card(
     entry: RegistrySchemaEntry,
+    origin: PluginOrigin,
     enabled: bool,
     tick: State<u64>,
     registry: Arc<Mutex<PluginRegistry>>,
@@ -545,6 +553,13 @@ fn plugin_card(
     let role_label = match entry.plugin_role {
         PluginRole::Source => "Source",
         PluginRole::Canvas => "Canvas",
+    };
+    let (origin_badge, origin_detail) = match &origin {
+        PluginOrigin::Builtin => ("Built-in".to_owned(), None),
+        PluginOrigin::Dynamic(d) => (
+            format!("Dynamic · v{}", d.manifest.version),
+            Some(d.library_path.display().to_string()),
+        ),
     };
     let toggle_cb = {
         let plugin_id = plugin_id.clone();
@@ -573,8 +588,8 @@ fn plugin_card(
                 .horizontal()
                 .width(Size::fill())
                 .cross_align(Alignment::Center)
-                .child(
-                    rect()
+                .child({
+                    let mut meta = rect()
                         .vertical()
                         .child(
                             label()
@@ -587,9 +602,15 @@ fn plugin_card(
                             label()
                                 .color(TEXT_MUTED)
                                 .font_size(11.0)
-                                .text(format!("{role_label} · {plugin_id}")),
-                        ),
-                )
+                                .text(format!("{role_label} · {origin_badge} · {plugin_id}")),
+                        );
+                    if let Some(path) = origin_detail {
+                        meta = meta.child(
+                            label().color(TEXT_MUTED).font_size(10.0).text(path),
+                        );
+                    }
+                    meta
+                })
                 .child(flex_spacer())
                 .child(toggle_switch(enabled, toggle_cb)),
         );
