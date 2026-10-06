@@ -30,12 +30,13 @@ use istmo::plugins::EdgeInsets;
 use crate::components::FormInput;
 use crate::components::drag_drop::{DragZone, DropZone};
 use crate::components::{
-    CanvasCreateSheet, CreateCanvasRequest, Modal, ModalController, SettingsModal, auto_color,
+    CanvasCreateSheet, CreateCanvasRequest, Modal, ModalController, SettingsModal, WorkspaceSwitcher,
+    WorkspaceSwitcherEntry, auto_color,
 };
 use crate::hooks::use_safe_area_insets;
 use crate::library::{
     BackgroundStyle, Folder, FolderId, Item, ItemId, ItemKind, Library, LibraryIndex, ROOT_FOLDER,
-    Rgba, TagId,
+    Rgba, TagId, Workspace, WorkspaceId,
 };
 use crate::route::Route;
 
@@ -78,6 +79,23 @@ enum LibState {
     Error(String),
 }
 
+/// Snapshot of the persisted workspace list consumed by the switcher
+/// pill. Cloned onto the UI side so dropdown renders don't need to
+/// re-lock the library.
+#[derive(Clone, PartialEq, Debug)]
+struct WorkspaceSnapshot {
+    active: Option<WorkspaceId>,
+    workspaces: Vec<Workspace>,
+}
+
+impl WorkspaceSnapshot {
+    fn active_name(&self) -> Option<&str> {
+        self.active
+            .and_then(|id| self.workspaces.iter().find(|w| w.id == id))
+            .map(|w| w.name.as_str())
+    }
+}
+
 /// Landing page.
 #[derive(Debug, PartialEq)]
 pub struct Home;
@@ -86,6 +104,7 @@ impl Component for Home {
     fn render(&self) -> impl IntoElement {
         let lib_state = use_state(|| LibState::Loading);
         let snap = use_state(|| Option::<LibraryIndex>::None);
+        let ws_snap = use_state(|| Option::<WorkspaceSnapshot>::None);
         let nav = use_state(Vec::<FolderId>::new);
         let renaming = use_state(|| Option::<CardId>::None);
         let rename_buffer = use_state(String::new);
@@ -101,12 +120,15 @@ impl Component for Home {
         use_hook({
             let mut lib_state = lib_state;
             let mut snap = snap;
+            let mut ws_snap = ws_snap;
             move || {
                 spawn(async move {
                     match open_library().await {
                         Ok(handle) => {
-                            let index = handle.lock().await.index().clone();
-                            snap.set(Some(index));
+                            let lib = handle.lock().await;
+                            snap.set(Some(lib.index().clone()));
+                            ws_snap.set(Some(snapshot_workspaces(&lib)));
+                            drop(lib);
                             lib_state.set(LibState::Ready(handle));
                         }
                         Err(msg) => {
@@ -121,14 +143,19 @@ impl Component for Home {
         let bg = Color::from_rgb(15, 15, 18);
         let state_val = lib_state.read().clone();
         let snapshot = snap.read().clone();
+        let ws_snapshot = ws_snap.read().clone();
         let nav_stack = nav.read().clone();
         let current = nav_stack.last().copied().unwrap_or(ROOT_FOLDER);
 
+        let ws_pill_target = match (&state_val, ws_snapshot.as_ref()) {
+            (LibState::Ready(handle), Some(snap)) => Some((handle.clone(), snap.clone())),
+            _ => None,
+        };
         let mut column = rect()
             .vertical()
             .expanded()
             .padding((pad.top, pad.right, 0.0, pad.left))
-            .child(top_bar());
+            .child(top_bar(ws_pill_target, ws_snap));
         let mut fab_slot: Option<Rect> = None;
 
         match (state_val, snapshot) {
@@ -179,9 +206,16 @@ impl Component for Home {
 // Top bar
 // ---------------------------------------------------------------------------
 
-fn top_bar() -> impl IntoElement {
+fn top_bar(
+    workspace_pill: Option<(LibHandle, WorkspaceSnapshot)>,
+    ws_snap: State<Option<WorkspaceSnapshot>>,
+) -> impl IntoElement {
     let bg = Color::from_rgb(15, 15, 18);
     let search_value = use_state(String::default);
+    let left = match workspace_pill {
+        Some((handle, ws)) => workspace_pill_button(handle, ws, ws_snap).into_element(),
+        None => icon_button("☰").into_element(),
+    };
     rect()
         .horizontal()
         .width(Size::fill())
@@ -190,7 +224,7 @@ fn top_bar() -> impl IntoElement {
         .background(bg)
         .content(Content::Flex)
         .cross_align(Alignment::Center)
-        .child(icon_button("☰"))
+        .child(left)
         .child(spacer_px(6.0))
         .child(flexible_spacer())
         .child(
@@ -204,6 +238,94 @@ fn top_bar() -> impl IntoElement {
         )
         .child(spacer_px(6.0))
         .child(icon_button("⚙").on_press(|_| SettingsModal::open()))
+}
+
+/// Pill rendered where the hamburger lived: shows the active workspace
+/// name and opens the switcher dropdown on press.
+fn workspace_pill_button(
+    handle: LibHandle,
+    ws: WorkspaceSnapshot,
+    ws_snap: State<Option<WorkspaceSnapshot>>,
+) -> Rect {
+    let name = ws.active_name().unwrap_or("Sin workspace").to_owned();
+    let entries: Vec<WorkspaceSwitcherEntry> = ws
+        .workspaces
+        .iter()
+        .map(|w| WorkspaceSwitcherEntry {
+            id: w.id,
+            label: w.name.clone().into(),
+            swatch: w.color.map(|c| Color::from_rgb(c[0], c[1], c[2])),
+            is_active: ws.active == Some(w.id),
+        })
+        .collect();
+    let handle_for_pick = handle.clone();
+    let handle_for_create = handle;
+    rect()
+        .horizontal()
+        .cross_align(Alignment::Center)
+        .height(Size::px(32.0))
+        .padding((0.0, 12.0))
+        .with_corner_radius(16.0)
+        .background(Color::from_rgb(28, 28, 32))
+        .spacing(6.0)
+        .on_press(move |_| {
+            let entries = entries.clone();
+            let pick_handle = handle_for_pick.clone();
+            let create_handle = handle_for_create.clone();
+            let ws_snap_pick = ws_snap;
+            let ws_snap_create = ws_snap;
+            WorkspaceSwitcher::new(
+                entries,
+                Callback::new(move |id: WorkspaceId| {
+                    let handle = pick_handle.clone();
+                    let mut ws_snap = ws_snap_pick;
+                    spawn(async move {
+                        let mut lib = handle.lock().await;
+                        if let Err(err) = lib.set_active_workspace(Some(id)).await {
+                            log::error!("set active workspace: {err}");
+                            return;
+                        }
+                        ws_snap.set(Some(snapshot_workspaces(&lib)));
+                    });
+                }),
+                NoArgCallback::new(move || {
+                    let handle = create_handle.clone();
+                    let mut ws_snap = ws_snap_create;
+                    spawn(async move {
+                        let mut lib = handle.lock().await;
+                        let count = lib.workspaces().len();
+                        let name = format!("Workspace {}", count + 1);
+                        if let Err(err) = lib.create_workspace(&name, None).await {
+                            log::error!("create workspace: {err}");
+                            return;
+                        }
+                        ws_snap.set(Some(snapshot_workspaces(&lib)));
+                    });
+                }),
+            )
+            .open();
+        })
+        .child(
+            label()
+                .color(Color::from_rgb(230, 230, 240))
+                .font_size(13.0)
+                .text(name),
+        )
+        .child(
+            label()
+                .color(Color::from_rgb(170, 170, 180))
+                .font_size(12.0)
+                .text("▾"),
+        )
+}
+
+/// Snapshot the library's workspace index into a UI-side struct. Keeps
+/// the switcher independent of the async-locked [`Library`].
+fn snapshot_workspaces(lib: &Library) -> WorkspaceSnapshot {
+    WorkspaceSnapshot {
+        active: lib.active_workspace(),
+        workspaces: lib.workspaces().to_vec(),
+    }
 }
 
 fn icon_button(glyph: &'static str) -> Rect {

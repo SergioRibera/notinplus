@@ -17,6 +17,7 @@ pub mod settings_modal;
 pub mod tag;
 pub mod tag_picker;
 pub mod theme;
+pub mod workspace_switcher;
 
 pub use canvas_create::{CanvasCreateSheet, CreateCanvasRequest};
 pub use chip::Chip;
@@ -29,3 +30,4 @@ pub use modal::{Modal, ModalController, ModalPlacement, ModalPortal};
 pub use settings_modal::SettingsModal;
 pub use tag::Tag;
 pub use tag_picker::TagPicker;
+pub use workspace_switcher::{WorkspaceSwitcher, WorkspaceSwitcherEntry};
