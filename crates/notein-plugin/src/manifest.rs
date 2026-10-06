@@ -141,17 +141,14 @@ impl PluginManifest {
 }
 
 fn strip_comment(line: &str) -> &str {
-    match line.find("//") {
-        Some(idx) => &line[..idx],
-        None => line,
-    }
+    line.find("//").map_or(line, |idx| &line[..idx])
 }
 
 fn split_node(line: &str) -> (&str, &str) {
     let bytes = line.as_bytes();
     let split = bytes
         .iter()
-        .position(|b| b.is_ascii_whitespace())
+        .position(u8::is_ascii_whitespace)
         .unwrap_or(bytes.len());
     let (node, rest) = line.split_at(split);
     (node, rest.trim_start())

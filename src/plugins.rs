@@ -88,6 +88,13 @@ pub fn registry() -> Arc<Mutex<PluginRegistry>> {
     Arc::clone(SHARED.get_or_init(|| {
         let mut reg = PluginRegistry::new();
         crate::builtin::register_all(&mut reg);
+        let report = crate::dynamic_plugins::scan_default(&mut reg);
+        log::info!(
+            "dynamic plugin scan: {} loaded, {} failed, root={}",
+            report.loaded.len(),
+            report.failed.len(),
+            report.scanned_root.display(),
+        );
         Arc::new(Mutex::new(reg))
     }))
 }

@@ -49,7 +49,7 @@ pub use error::{CanvasError, ConfigError, CreationError, SourceError};
 pub use ids::{BookmarkId, StrokeId};
 pub use manifest::{ManifestError, ManifestRequirement, PluginManifest};
 pub use registry::{
-    InstalledPlugin, PluginOrigin, PluginRegistry, PluginRole, RegistryCreationEntry,
-    RegistryError, RegistrySchemaEntry,
+    DynamicOrigin, InstalledPlugin, PluginOrigin, PluginRegistry, PluginRole,
+    RegistryCreationEntry, RegistryError, RegistrySchemaEntry,
 };
 pub use source::{AnchorView, SearchHit, Selection, Source, Tile, TileRequest};

@@ -156,7 +156,7 @@ impl std::fmt::Debug for LoadedPlugin {
             .field("manifest_id", &self.manifest.id)
             .field("library_path", &self.library_path)
             .field("registrations", &self.registrations)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

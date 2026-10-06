@@ -58,12 +58,16 @@ impl std::error::Error for RegistryError {}
 pub enum PluginOrigin {
     /// Compiled into the host binary.
     Builtin,
-    /// Loaded at runtime from a shared library on disk.
-    Dynamic {
-        manifest_path: PathBuf,
-        library_path: PathBuf,
-        manifest: PluginManifest,
-    },
+    /// Loaded at runtime from a shared library on disk. Boxed to
+    /// keep the enum size close to [`PluginOrigin::Builtin`]'s.
+    Dynamic(Box<DynamicOrigin>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DynamicOrigin {
+    pub manifest_path: PathBuf,
+    pub library_path: PathBuf,
+    pub manifest: PluginManifest,
 }
 
 /// One row of [`PluginRegistry::installed_plugins`] — the Phase 3
@@ -127,7 +131,7 @@ impl std::fmt::Debug for PluginRegistry {
             .field("canvases", &self.canvases.keys().collect::<Vec<_>>())
             .field("disabled", &self.disabled.keys().collect::<Vec<_>>())
             .field("dynamic", &self.dynamic.len())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -309,12 +313,12 @@ impl PluginRegistry {
     /// and the library is dropped. The caller sees a single
     /// [`RegistryError::DuplicateKindId`] without side effects.
     pub fn register_dynamic(&mut self, loaded: LoadedPlugin) -> Result<(), RegistryError> {
-        let origin = PluginOrigin::Dynamic {
+        let origin = PluginOrigin::Dynamic(Box::new(DynamicOrigin {
             manifest_path: loaded.manifest_path.clone(),
             library_path: loaded.library_path.clone(),
             manifest: loaded.manifest.clone(),
-        };
-        self.register_with_origin(&loaded.registrations, origin)?;
+        }));
+        self.register_with_origin(&loaded.registrations, &origin)?;
         self.dynamic.push(loaded);
         Ok(())
     }
@@ -326,7 +330,7 @@ impl PluginRegistry {
     fn register_with_origin(
         &mut self,
         regs: &Registrations,
-        origin: PluginOrigin,
+        origin: &PluginOrigin,
     ) -> Result<(), RegistryError> {
         let mut inserted_sources = Vec::new();
         let mut inserted_canvases = Vec::new();
@@ -366,18 +370,18 @@ impl PluginRegistry {
     #[cfg(test)]
     pub(crate) fn register_dynamic_for_test(
         &mut self,
-        regs: Registrations,
+        regs: &Registrations,
         manifest: PluginManifest,
         manifest_path: PathBuf,
         library_path: PathBuf,
     ) -> Result<(), RegistryError> {
         self.register_with_origin(
-            &regs,
-            PluginOrigin::Dynamic {
+            regs,
+            &PluginOrigin::Dynamic(Box::new(DynamicOrigin {
                 manifest_path,
                 library_path,
                 manifest,
-            },
+            })),
         )
     }
 
@@ -791,7 +795,7 @@ mod tests {
             sources: Vec::new(),
         };
         reg.register_dynamic_for_test(
-            regs,
+            &regs,
             dummy_manifest("org.user.mindmap"),
             PathBuf::from("/opt/plugins/mindmap/plugin.ntp.kdl"),
             PathBuf::from("/opt/plugins/mindmap/libmindmap.so"),
@@ -813,9 +817,12 @@ mod tests {
             .find(|p| p.plugin_id == "org.user.mindmap")
             .unwrap();
         match &mindmap.origin {
-            PluginOrigin::Dynamic { library_path, manifest, .. } => {
-                assert_eq!(library_path, &PathBuf::from("/opt/plugins/mindmap/libmindmap.so"));
-                assert_eq!(manifest.id, "org.user.mindmap");
+            PluginOrigin::Dynamic(d) => {
+                assert_eq!(
+                    d.library_path,
+                    PathBuf::from("/opt/plugins/mindmap/libmindmap.so")
+                );
+                assert_eq!(d.manifest.id, "org.user.mindmap");
             }
             PluginOrigin::Builtin => panic!("expected Dynamic origin"),
         }
@@ -836,7 +843,7 @@ mod tests {
         };
         let err = reg
             .register_dynamic_for_test(
-                regs,
+                &regs,
                 dummy_manifest("org.user.bundle"),
                 PathBuf::from("/opt/plugins/bundle/plugin.ntp.kdl"),
                 PathBuf::from("/opt/plugins/bundle/libbundle.so"),

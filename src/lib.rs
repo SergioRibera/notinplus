@@ -18,6 +18,7 @@ pub mod canvas;
 pub mod components;
 pub mod doc;
 pub mod doc_op;
+pub mod dynamic_plugins;
 pub mod home;
 pub mod hooks;
 pub mod identity;
