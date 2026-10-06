@@ -33,6 +33,18 @@ pub struct TagId(pub u32);
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct WorkspaceId(pub u32);
 
+/// Stable identifier for a pane within a single workspace. Scoped per
+/// workspace — a `PaneId` from workspace A has no meaning in B. Ids
+/// never alias within a workspace (allocator is monotonic + append-
+/// only, same discipline as [`ItemId`]).
+///
+/// `PaneId(0)` is the reserved "unallocated" sentinel used by the
+/// default [`Pane`] shape; the workspace allocator always hands out
+/// values ≥ 1.
+#[istmo::message]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+pub struct PaneId(pub u32);
+
 /// sRGB colour swatch. Alpha included so future themes can honour
 /// user-defined translucency.
 pub type Rgba = [u8; 4];
@@ -120,9 +132,15 @@ pub struct PaneTab {
 
 /// Leaf of a [`PaneLayout`] — carries its tab strip plus the index of
 /// the currently-visible tab.
+///
+/// `id` is unique within its owning [`Workspace`]. The default
+/// constructor yields `PaneId(0)` so transient layout snapshots that
+/// never persist stay cheap; the [`Workspace`] allocator rewrites it
+/// on insertion.
 #[istmo::message]
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Default)]
 pub struct Pane {
+    pub id: PaneId,
     pub tabs: Vec<PaneTab>,
     /// Index into `tabs`. Out-of-range → the UI falls back to 0; the
     /// shell clamps when it reads so an older build cannot wedge on a
@@ -167,8 +185,19 @@ pub enum PaneLayout {
 }
 
 impl PaneLayout {
-    /// Convenience: wrap an empty pane as the layout root. Default for
-    /// freshly minted workspaces.
+    /// Convenience: wrap a leaf with the given id. Used by
+    /// [`Workspace::new_leaf`] when minting a fresh layout.
+    #[must_use]
+    pub fn leaf(id: PaneId) -> Self {
+        Self::Leaf(Pane {
+            id,
+            tabs: Vec::new(),
+            active_tab: 0,
+        })
+    }
+
+    /// Empty leaf whose id is `PaneId(0)`. The workspace allocator is
+    /// expected to rewrite the id before persisting.
     #[must_use]
     pub fn empty() -> Self {
         Self::Leaf(Pane::default())
@@ -192,6 +221,118 @@ impl PaneLayout {
             }
         }
     }
+
+    /// Look up a leaf by id.
+    #[must_use]
+    pub fn find_leaf(&self, id: PaneId) -> Option<&Pane> {
+        match self {
+            Self::Leaf(p) if p.id == id => Some(p),
+            Self::Leaf(_) => None,
+            Self::Split { first, second, .. } => first.find_leaf(id).or_else(|| second.find_leaf(id)),
+        }
+    }
+
+    /// Look up a leaf by id (mut).
+    pub fn find_leaf_mut(&mut self, id: PaneId) -> Option<&mut Pane> {
+        match self {
+            Self::Leaf(p) if p.id == id => Some(p),
+            Self::Leaf(_) => None,
+            Self::Split { first, second, .. } => {
+                if let Some(p) = first.find_leaf_mut(id) {
+                    Some(p)
+                } else {
+                    second.find_leaf_mut(id)
+                }
+            }
+        }
+    }
+
+    /// Split the leaf with id `target` in two: the existing leaf
+    /// becomes the `first` child, a fresh empty leaf (id `new_id`)
+    /// becomes the `second` child, under a `Split` with the given
+    /// `orientation` and ratio `0.5`.
+    ///
+    /// Returns `true` if the split happened. `false` means no leaf
+    /// carried that id — the caller may show a warning or ignore.
+    pub fn split_leaf(
+        &mut self,
+        target: PaneId,
+        orientation: SplitOrientation,
+        new_id: PaneId,
+    ) -> bool {
+        match self {
+            Self::Leaf(p) if p.id == target => {
+                let first = Self::Leaf(p.clone());
+                let second = Self::leaf(new_id);
+                *self = Self::Split {
+                    orientation,
+                    ratio: 0.5,
+                    first: Box::new(first),
+                    second: Box::new(second),
+                };
+                true
+            }
+            Self::Leaf(_) => false,
+            Self::Split { first, second, .. } => {
+                first.split_leaf(target, orientation, new_id)
+                    || second.split_leaf(target, orientation, new_id)
+            }
+        }
+    }
+
+    /// Remove the leaf with id `target`. The sibling collapses into
+    /// the parent slot — a `Split` with only one leaf is nonsense, so
+    /// the pair is replaced by whichever child survived.
+    ///
+    /// Returns `true` if the removal happened. `false` means the id
+    /// did not match any leaf **or** the target was the root (the
+    /// shell always keeps at least one leaf; use workspace delete to
+    /// get rid of the last pane).
+    pub fn remove_leaf(&mut self, target: PaneId) -> bool {
+        // Root leaf cannot be removed from here — handled by caller.
+        if let Self::Leaf(p) = self {
+            if p.id == target {
+                return false;
+            }
+            return false;
+        }
+
+        // Walk the tree; when we land on a Split whose immediate child
+        // is the target, replace the Split with the surviving sibling.
+        let mut replacement: Option<Self> = None;
+        let found = if let Self::Split { first, second, .. } = self {
+            match (&**first, &**second) {
+                (Self::Leaf(p), _) if p.id == target => {
+                    replacement = Some((**second).clone());
+                    true
+                }
+                (_, Self::Leaf(p)) if p.id == target => {
+                    replacement = Some((**first).clone());
+                    true
+                }
+                _ => first.remove_leaf(target) || second.remove_leaf(target),
+            }
+        } else {
+            false
+        };
+        if let Some(child) = replacement {
+            *self = child;
+        }
+        found
+    }
+
+    /// Clamp every split ratio into `0.05..=0.95` in-place so a bogus
+    /// payload cannot drive the divider off-screen.
+    pub fn clamp_ratios(&mut self) {
+        if let Self::Split {
+            ratio, first, second, ..
+        } = self
+        {
+            *ratio = ratio.clamp(0.05, 0.95);
+            first.clamp_ratios();
+            second.clamp_ratios();
+        }
+    }
 }
 
 impl Default for PaneLayout {
@@ -212,8 +353,40 @@ pub struct Workspace {
     pub name: String,
     pub color: Option<Rgba>,
     pub layout: PaneLayout,
+    /// Monotonic counter the workspace hands out when a new leaf is
+    /// minted (e.g. on split). Starts at `1` so `PaneId(0)` reads as
+    /// "unallocated" everywhere.
+    pub next_pane_id: u32,
+    /// Which leaf has keyboard / input focus. The shell clamps on
+    /// read when the pane disappears (close / delete).
+    pub focused_pane: Option<PaneId>,
     pub created_at: u64,
     pub updated_at: u64,
+}
+
+impl Workspace {
+    /// Fresh single-leaf workspace with id `PaneId(1)` focused.
+    #[must_use]
+    pub fn fresh(id: WorkspaceId, name: String, color: Option<Rgba>, now: u64) -> Self {
+        let root = PaneId(1);
+        Self {
+            id,
+            name,
+            color,
+            layout: PaneLayout::leaf(root),
+            next_pane_id: 2,
+            focused_pane: Some(root),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    /// Allocate the next [`PaneId`] for this workspace.
+    pub fn alloc_pane_id(&mut self) -> PaneId {
+        let id = PaneId(self.next_pane_id);
+        self.next_pane_id = self.next_pane_id.saturating_add(1);
+        id
+    }
 }
 
 /// Blob persisted under `library.workspaces.v2`. Kept out of the main

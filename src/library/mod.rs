@@ -31,7 +31,7 @@ use istmo_data_store::{DataStoreClient, DataStoreConfig};
 pub use self::error::{LibraryError, NotFoundKind, Result};
 pub use self::model::{
     BackgroundStyle, Folder, FolderId, INDEX_VERSION, Item, ItemId, ItemKind, LibraryIndex, Pane,
-    PaneLayout, PaneTab, ROOT_FOLDER, Rgba, SplitOrientation, Tag, TagId,
+    PaneId, PaneLayout, PaneTab, ROOT_FOLDER, Rgba, SplitOrientation, Tag, TagId,
     WORKSPACE_INDEX_VERSION, Workspace, WorkspaceId, WorkspaceIndex,
 };
 
@@ -644,14 +644,9 @@ impl Library {
     ) -> Result<WorkspaceId> {
         let now = now_millis();
         let id = self.workspaces.alloc_workspace_id();
-        self.workspaces.workspaces.push(Workspace {
-            id,
-            name: name.to_owned(),
-            color,
-            layout: PaneLayout::empty(),
-            created_at: now,
-            updated_at: now,
-        });
+        self.workspaces
+            .workspaces
+            .push(Workspace::fresh(id, name.to_owned(), color, now));
         if self.workspaces.active.is_none() {
             self.workspaces.active = Some(id);
         }
@@ -707,6 +702,93 @@ impl Library {
             .workspace_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(id)))?;
         w.layout = layout;
+        w.updated_at = now;
+        self.persist_workspaces().await
+    }
+
+    /// Split the pane with id `target` inside workspace `workspace`.
+    /// The existing pane becomes the `first` child of the new split;
+    /// a brand-new empty pane takes the `second` slot and becomes
+    /// focused.
+    ///
+    /// # Errors
+    /// * [`LibraryError::NotFound`] when the workspace or target pane
+    ///   is unknown.
+    pub async fn split_workspace_pane(
+        &mut self,
+        workspace: WorkspaceId,
+        target: PaneId,
+        orientation: SplitOrientation,
+    ) -> Result<PaneId> {
+        let now = now_millis();
+        let w = self
+            .workspaces
+            .workspace_mut(workspace)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
+        if w.layout.find_leaf(target).is_none() {
+            return Err(LibraryError::NotFound(NotFoundKind::Workspace(workspace)));
+        }
+        let new_id = w.alloc_pane_id();
+        if !w.layout.split_leaf(target, orientation, new_id) {
+            return Err(LibraryError::NotFound(NotFoundKind::Workspace(workspace)));
+        }
+        w.focused_pane = Some(new_id);
+        w.updated_at = now;
+        self.persist_workspaces().await?;
+        Ok(new_id)
+    }
+
+    /// Close the pane with id `target`. The sibling collapses up to
+    /// take its place. The last pane in a workspace cannot be closed
+    /// through this call — the user deletes the workspace instead.
+    ///
+    /// # Errors
+    /// * [`LibraryError::NotFound`] when the workspace is unknown or
+    ///   `target` is not a leaf.
+    pub async fn close_workspace_pane(
+        &mut self,
+        workspace: WorkspaceId,
+        target: PaneId,
+    ) -> Result<()> {
+        let now = now_millis();
+        let w = self
+            .workspaces
+            .workspace_mut(workspace)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
+        if !w.layout.remove_leaf(target) {
+            return Err(LibraryError::NotFound(NotFoundKind::Workspace(workspace)));
+        }
+        // Focus a surviving leaf — the sibling that absorbed the slot
+        // is the natural follow-up.
+        if w.focused_pane == Some(target) {
+            w.focused_pane = w.layout.leaves().first().map(|p| p.id);
+        }
+        w.updated_at = now;
+        self.persist_workspaces().await
+    }
+
+    /// Focus the given pane. `None` clears focus (the shell routes
+    /// input to no pane in particular — rare, mostly a test seam).
+    ///
+    /// # Errors
+    /// * [`LibraryError::NotFound`] when the workspace is unknown or
+    ///   `pane` is given but not present in the layout.
+    pub async fn focus_workspace_pane(
+        &mut self,
+        workspace: WorkspaceId,
+        pane: Option<PaneId>,
+    ) -> Result<()> {
+        let now = now_millis();
+        let w = self
+            .workspaces
+            .workspace_mut(workspace)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
+        if let Some(id) = pane
+            && w.layout.find_leaf(id).is_none()
+        {
+            return Err(LibraryError::NotFound(NotFoundKind::Workspace(workspace)));
+        }
+        w.focused_pane = pane;
         w.updated_at = now;
         self.persist_workspaces().await
     }
@@ -891,24 +973,29 @@ mod tests {
         use bincode::config;
         let mut idx = WorkspaceIndex::default();
         let a = idx.alloc_workspace_id();
-        let leaf = PaneLayout::Leaf(Pane {
-            tabs: vec![PaneTab { item: ItemId(42) }, PaneTab { item: ItemId(7) }],
-            active_tab: 1,
-        });
-        let right = PaneLayout::Leaf(Pane {
-            tabs: vec![PaneTab { item: ItemId(99) }],
-            active_tab: 0,
-        });
+        let left = PaneId(1);
+        let right = PaneId(2);
+        let layout = PaneLayout::Split {
+            orientation: SplitOrientation::Horizontal,
+            ratio: 0.6,
+            first: Box::new(PaneLayout::Leaf(Pane {
+                id: left,
+                tabs: vec![PaneTab { item: ItemId(42) }, PaneTab { item: ItemId(7) }],
+                active_tab: 1,
+            })),
+            second: Box::new(PaneLayout::Leaf(Pane {
+                id: right,
+                tabs: vec![PaneTab { item: ItemId(99) }],
+                active_tab: 0,
+            })),
+        };
         idx.workspaces.push(Workspace {
             id: a,
             name: "Draft".into(),
             color: Some([200, 50, 50, 255]),
-            layout: PaneLayout::Split {
-                orientation: SplitOrientation::Horizontal,
-                ratio: 0.6,
-                first: Box::new(leaf),
-                second: Box::new(right),
-            },
+            layout,
+            next_pane_id: 3,
+            focused_pane: Some(right),
             created_at: 10,
             updated_at: 20,
         });
@@ -918,6 +1005,46 @@ mod tests {
             bincode::decode_from_slice::<WorkspaceIndex, _>(&bytes, config::standard()).unwrap();
         assert_eq!(idx, decoded);
         assert_eq!(decoded.workspaces[0].layout.leaves().len(), 2);
+    }
+
+    #[test]
+    fn split_leaf_adds_sibling_and_remove_leaf_collapses() {
+        let root = PaneId(1);
+        let mut layout = PaneLayout::leaf(root);
+        let new_id = PaneId(2);
+        assert!(layout.split_leaf(root, SplitOrientation::Horizontal, new_id));
+        assert_eq!(layout.leaves().len(), 2);
+        assert!(layout.find_leaf(root).is_some());
+        assert!(layout.find_leaf(new_id).is_some());
+
+        // Removing one leaf collapses the Split to the sibling.
+        assert!(layout.remove_leaf(new_id));
+        assert!(matches!(layout, PaneLayout::Leaf(ref p) if p.id == root));
+    }
+
+    #[test]
+    fn remove_leaf_refuses_root_single_leaf() {
+        let root = PaneId(1);
+        let mut layout = PaneLayout::leaf(root);
+        // Nothing to collapse into — refusal keeps the workspace with
+        // at least one leaf for the shell to render.
+        assert!(!layout.remove_leaf(root));
+    }
+
+    #[test]
+    fn clamp_ratios_bounds_divider() {
+        let mut layout = PaneLayout::Split {
+            orientation: SplitOrientation::Vertical,
+            ratio: 1.5,
+            first: Box::new(PaneLayout::leaf(PaneId(1))),
+            second: Box::new(PaneLayout::leaf(PaneId(2))),
+        };
+        layout.clamp_ratios();
+        if let PaneLayout::Split { ratio, .. } = layout {
+            assert!((ratio - 0.95).abs() < 1e-6);
+        } else {
+            panic!("expected Split")
+        }
     }
 
     #[test]
