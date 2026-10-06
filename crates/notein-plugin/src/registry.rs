@@ -78,10 +78,15 @@ pub struct RegistrySchemaEntry {
 /// Not internally synchronised — the caller wraps the whole registry
 /// in whatever locking they want (startup-only mutation on a single
 /// thread needs none; hot-reload wants an `RwLock`).
+///
+/// Each plugin carries a per-process enabled flag. Absent from the map
+/// means enabled; the shell persists only the user-toggled disabled
+/// entries so a brand-new install starts with everything on.
 #[derive(Default)]
 pub struct PluginRegistry {
     sources: HashMap<String, Arc<dyn Source>>,
     canvases: HashMap<String, Arc<dyn CanvasKind>>,
+    disabled: HashMap<String, ()>,
 }
 
 impl std::fmt::Debug for PluginRegistry {
@@ -89,6 +94,7 @@ impl std::fmt::Debug for PluginRegistry {
         f.debug_struct("PluginRegistry")
             .field("sources", &self.sources.keys().collect::<Vec<_>>())
             .field("canvases", &self.canvases.keys().collect::<Vec<_>>())
+            .field("disabled", &self.disabled.keys().collect::<Vec<_>>())
             .finish()
     }
 }
@@ -155,27 +161,57 @@ impl PluginRegistry {
         self.canvases.len()
     }
 
-    /// First source plugin whose `file_extensions` include `ext`
-    /// (case-insensitive, leading dot stripped). `None` = no plugin
-    /// claims the extension.
+    /// Whether `plugin_id` is currently enabled. Unknown ids answer
+    /// `true` — the shell may ask about a plugin before it registers.
+    #[must_use]
+    pub fn is_enabled(&self, plugin_id: &str) -> bool {
+        !self.disabled.contains_key(plugin_id)
+    }
+
+    /// Flip the enabled bit for `plugin_id`. The plugin stays
+    /// registered either way; disabled plugins are hidden from
+    /// `find_source_for_extension` and the home FAB's creation menu.
+    pub fn set_enabled(&mut self, plugin_id: &str, enabled: bool) {
+        if enabled {
+            self.disabled.remove(plugin_id);
+        } else {
+            self.disabled.insert(plugin_id.to_owned(), ());
+        }
+    }
+
+    /// Plugin ids the user has explicitly disabled. Used by the
+    /// settings store to persist only the deviations from the default.
+    pub fn disabled_ids(&self) -> impl Iterator<Item = &str> {
+        self.disabled.keys().map(String::as_str)
+    }
+
+    /// First enabled source plugin whose `file_extensions` include
+    /// `ext` (case-insensitive, leading dot stripped). `None` = no
+    /// enabled plugin claims the extension.
     #[must_use]
     pub fn find_source_for_extension(&self, ext: &str) -> Option<&Arc<dyn Source>> {
         let needle = ext.trim_start_matches('.').to_ascii_lowercase();
         self.sources.values().find(|p| {
-            p.file_extensions()
-                .iter()
-                .any(|e| e.eq_ignore_ascii_case(&needle))
+            self.is_enabled(p.kind_id())
+                && p.file_extensions()
+                    .iter()
+                    .any(|e| e.eq_ignore_ascii_case(&needle))
         })
     }
 
-    /// All creation entries from every registered plugin, each wrapped
+    /// Creation entries from every **enabled** plugin, each wrapped
     /// with its owning plugin's id + label + role so the home FAB can
-    /// route the pick without a second lookup.
+    /// route the pick without a second lookup. Disabled plugins are
+    /// filtered — a user who turned a plugin off should not see its
+    /// `+` menu entries.
     #[must_use]
     pub fn list_creation_entries(&self) -> Vec<RegistryCreationEntry> {
         let mut out = Vec::new();
         for plugin in self.sources.values() {
             let plugin_id = plugin.kind_id().to_owned();
+            if !self.is_enabled(&plugin_id) {
+                continue;
+            }
             let plugin_label = plugin.kind_label().to_owned();
             for entry in plugin.creation_entries() {
                 out.push(RegistryCreationEntry {
@@ -188,6 +224,9 @@ impl PluginRegistry {
         }
         for plugin in self.canvases.values() {
             let plugin_id = plugin.kind_id().to_owned();
+            if !self.is_enabled(&plugin_id) {
+                continue;
+            }
             let plugin_label = plugin.kind_label().to_owned();
             for entry in plugin.creation_entries() {
                 out.push(RegistryCreationEntry {
@@ -502,6 +541,44 @@ mod tests {
         assert!(labels.contains(&"Import PDF"));
         assert!(labels.contains(&"Import EPUB"));
         assert!(entries.iter().all(|e| e.plugin_role == PluginRole::Source));
+    }
+
+    #[test]
+    fn disabled_plugin_is_filtered_from_extension_lookup_and_creation_entries() {
+        let mut reg = PluginRegistry::new();
+        reg.register_source(Arc::new(
+            StubSource::new("io.notein.pdf", "PDF", &["pdf"])
+                .with_entry(import_entry("import-pdf", "Import PDF")),
+        ))
+        .unwrap();
+        reg.register_source(Arc::new(
+            StubSource::new("io.notein.epub", "EPUB", &["epub"])
+                .with_entry(import_entry("import-epub", "Import EPUB")),
+        ))
+        .unwrap();
+
+        assert!(reg.is_enabled("io.notein.pdf"));
+        reg.set_enabled("io.notein.pdf", false);
+        assert!(!reg.is_enabled("io.notein.pdf"));
+
+        assert!(reg.find_source_for_extension("pdf").is_none());
+        assert!(reg.find_source_for_extension("epub").is_some());
+
+        let entries = reg.list_creation_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].entry.label, "Import EPUB");
+
+        // `all_schemas` still shows the disabled plugin so the user can
+        // find it in the settings panel and flip it back on.
+        assert_eq!(reg.all_schemas().len(), 2);
+
+        // Disabled set exposes just the user-flipped ids.
+        let dis: Vec<_> = reg.disabled_ids().collect();
+        assert_eq!(dis, vec!["io.notein.pdf"]);
+
+        reg.set_enabled("io.notein.pdf", true);
+        assert!(reg.is_enabled("io.notein.pdf"));
+        assert!(reg.find_source_for_extension("pdf").is_some());
     }
 
     #[test]
