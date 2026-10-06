@@ -1119,22 +1119,19 @@ impl Board {
     }
 
     pub fn set_layer_visible(&mut self, id: u32, visible: bool) {
-        if let Some(layer) = self.doc.layer_mut(id) {
-            layer.visible = visible;
+        if self.doc.set_layer_visible(id, visible) {
             self.notify_commit();
         }
     }
 
     pub fn set_layer_locked(&mut self, id: u32, locked: bool) {
-        if let Some(layer) = self.doc.layer_mut(id) {
-            layer.locked = locked;
+        if self.doc.set_layer_locked(id, locked) {
             self.notify_commit();
         }
     }
 
     pub fn set_layer_opacity(&mut self, id: u32, opacity: f32) {
-        if let Some(layer) = self.doc.layer_mut(id) {
-            layer.opacity = opacity.clamp(0.0, 1.0);
+        if self.doc.set_layer_opacity(id, opacity) {
             self.notify_commit();
         }
     }
@@ -1150,19 +1147,17 @@ impl Board {
         let Some(preset) = self.doc.preset(stroke.brush).copied() else {
             return;
         };
+        let Some(within) = self.doc.layer(layer_id).map(|l| l.strokes.len()) else {
+            return;
+        };
         let path = self.brush_registry.brush(preset.kind).build_path(
             &preset,
             &stroke,
             self.brush_registry.caps(),
         );
-        self.spatial.insert(stroke.id, &stroke.points);
         let id = stroke.id;
-        let Some(layer) = self.doc.layer_mut(layer_id) else {
-            self.spatial.remove(id, &stroke.points);
-            return;
-        };
-        let within = layer.strokes.len();
-        layer.strokes.push(stroke);
+        self.spatial.insert(id, &stroke.points);
+        self.doc.insert_stroke_into(layer_id, stroke);
         self.stroke_index.insert(id, (layer_id, within));
         self.cached_paths.insert(id, path);
     }
@@ -1305,10 +1300,11 @@ impl Board {
                     );
                     self.cached_paths.insert(frag_id, path);
                 }
+                let Some(new_idx) = self.doc.layer(layer_id).map(|l| l.strokes.len()) else {
+                    continue;
+                };
                 self.spatial.insert(new_stroke.id, &new_stroke.points);
-                if let Some(layer) = self.doc.layer_mut(layer_id) {
-                    let new_idx = layer.strokes.len();
-                    layer.strokes.push(new_stroke);
+                if self.doc.insert_stroke_into(layer_id, new_stroke) {
                     self.stroke_index.insert(frag_id, (layer_id, new_idx));
                 }
             }
@@ -1502,13 +1498,10 @@ impl Board {
     /// indices for strokes that share the affected layer.
     fn remove_stroke_indexed(&mut self, id: StrokeId) -> Option<Stroke> {
         let (layer_id, idx) = self.stroke_index.remove(&id)?;
-        let removed = {
-            let layer = self
-                .doc
-                .layer_mut(layer_id)
-                .expect("stroke_index points at a layer that no longer exists");
-            layer.strokes.remove(idx)
-        };
+        let removed = self
+            .doc
+            .remove_stroke(id)
+            .expect("stroke_index points at a stroke the doc no longer holds");
         for entry in self.stroke_index.values_mut() {
             if entry.0 == layer_id && entry.1 > idx {
                 entry.1 -= 1;
@@ -1537,10 +1530,11 @@ impl Board {
                 );
                 self.cached_paths.insert(id, path);
             }
+            let Some(idx) = self.doc.layer(layer_id).map(|l| l.strokes.len()) else {
+                continue;
+            };
             self.spatial.insert(id, &original.points);
-            if let Some(layer) = self.doc.layer_mut(layer_id) {
-                let idx = layer.strokes.len();
-                layer.strokes.push(original.clone());
+            if self.doc.insert_stroke_into(layer_id, original.clone()) {
                 self.stroke_index.insert(id, (layer_id, idx));
             }
         }
