@@ -45,6 +45,7 @@ pollster = "0.4"
 log = "0.4"
 async-io = "2"
 async-lock = "3"
+uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.14"
