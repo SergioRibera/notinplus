@@ -1133,6 +1133,14 @@ fn centered(text: &str) -> impl IntoElement {
 // FAB overlay
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
+struct FabCtx {
+    handle: LibHandle,
+    snap: State<Option<LibraryIndex>>,
+    current: FolderId,
+    router: RouterContext,
+}
+
 fn fab_stack(
     handle: LibHandle,
     snap: State<Option<LibraryIndex>>,
@@ -1140,174 +1148,32 @@ fn fab_stack(
     pad: EdgeInsets,
     router: RouterContext,
 ) -> Rect {
-    use crate::components::{
-        CanvasCreateSheet, CreateCanvasRequest, CreateFolderRequest, FabMenu, FabMenuEntry,
-        FolderCreateSheet,
+    let ctx = FabCtx {
+        handle,
+        snap,
+        current,
+        router,
     };
 
-    let pen_bg = Color::from_rgb(80, 130, 175);
     let plus_bg = Color::from_rgb(65, 105, 220);
-    let incognito_bg = Color::from_rgb(45, 45, 52);
-
-    // Ephemeral canvas: no library item, no autosave, no view sidecar.
-    // `Route::CanvasEphemeral` has no id and `mount_canvas(None)` in
-    // `route.rs` skips sink installation entirely — nothing hits disk.
-    let incognito = fab_button("🕶", incognito_bg, move |_| {
-        crate::route::queue_canvas_background(
-            BackgroundStyle::default(),
-            crate::route::DEFAULT_PAPER,
-        );
-        let _ = router.push(Route::CanvasEphemeral);
-    });
-
-    let pen = fab_button("✎", pen_bg, {
-        let handle = handle.clone();
-        move |_| {
-            let handle = handle.clone();
-            let mut snap = snap;
-            spawn_forever(async move {
-                let mut lib = handle.lock().await;
-                match lib
-                    .create_item(
-                        current,
-                        ItemKind::Canvas,
-                        "Borrador",
-                        None,
-                        Vec::new(),
-                        BackgroundStyle::default(),
-                    )
-                    .await
-                {
-                    Ok(id) => {
-                        snap.set(Some(lib.index().clone()));
-                        crate::route::queue_canvas_background(
-                            BackgroundStyle::default(),
-                            crate::route::DEFAULT_PAPER,
-                        );
-                        let _ = router.push(Route::CanvasView { id: id.0 });
-                    }
-                    Err(err) => log::error!("create_item: {err}"),
-                }
-            });
-        }
-    });
+    let shortcut_slots = crate::plugins::fab_shortcut_slots();
 
     // Anchor of the FAB stack, reused when placing the popup above it.
     let anchor_right = 24.0 + pad.right;
     let anchor_bottom = 24.0 + pad.bottom;
-    // Incognito + pen + plus each 52px tall, 12px stack spacing, 12px
-    // extra breathing room between the stack and the menu card.
+    // Two shortcut bubbles + plus = 3 × 52px with 12px gaps, plus 12px
+    // breathing room between the stack and the menu card.
     let menu_bottom = anchor_bottom + 52.0 + 12.0 + 52.0 + 12.0 + 52.0 + 12.0;
 
-    let plus = fab_button("+", plus_bg, move |_| {
-        let handle = handle.clone();
-        FabMenu::new()
-            .anchor(anchor_right, menu_bottom)
-            .entry(FabMenuEntry::new("▢", "Lienzo infinito", {
-                let handle = handle.clone();
-                move || {
-                    let handle = handle.clone();
-                    let available = current_tag_names(snap);
-                    // `router` is the Home-scope handle captured at
-                    // `fab_stack` entry; the entry closure runs under
-                    // `ModalPortal`'s scope (a sibling of Router) and
-                    // couldn't look it up itself.
-                    CanvasCreateSheet::new(move |req: CreateCanvasRequest| {
-                        log::info!(
-                            "canvas confirm: name={:?} kind={:?} tags={:?}",
-                            req.name,
-                            req.kind,
-                            req.tag_names
-                        );
-                        let handle = handle.clone();
-                        let mut snap = snap;
-                        let bg_style = req.background;
-                        let surface = req.color;
-                        spawn_forever(async move {
-                            let mut lib = handle.lock().await;
-                            let tag_ids = resolve_tag_names(&mut lib, &req.tag_names).await;
-                            log::info!("canvas create → parent={current:?} tag_ids={tag_ids:?}");
-                            match lib
-                                .create_item(
-                                    current,
-                                    req.kind,
-                                    &req.name,
-                                    Some(color_to_rgba(req.color)),
-                                    tag_ids,
-                                    req.background,
-                                )
-                                .await
-                            {
-                                Ok(id) => {
-                                    log::info!("canvas created id={id:?}");
-                                    snap.set(Some(lib.index().clone()));
-                                    crate::route::queue_canvas_background(bg_style, surface.into());
-                                    let _ = router.push(Route::CanvasView { id: id.0 });
-                                }
-                                Err(err) => log::error!("create_item: {err}"),
-                            }
-                        });
-                    })
-                    .kind(ItemKind::Canvas)
-                    .available_tags(available)
-                    .open();
-                }
-            }))
-            .entry(FabMenuEntry::new("🗂", "Crear nueva carpeta", {
-                let handle = handle.clone();
-                move || {
-                    let handle = handle.clone();
-                    let available = current_tag_names(snap);
-                    FolderCreateSheet::new(move |req: CreateFolderRequest| {
-                        log::info!(
-                            "folder confirm: name={:?} tags={:?}",
-                            req.name,
-                            req.tag_names
-                        );
-                        let handle = handle.clone();
-                        let mut snap = snap;
-                        spawn_forever(async move {
-                            let mut lib = handle.lock().await;
-                            let tag_ids = resolve_tag_names(&mut lib, &req.tag_names).await;
-                            log::info!("folder create → parent={current:?} tag_ids={tag_ids:?}");
-                            match lib
-                                .create_folder(
-                                    current,
-                                    &req.name,
-                                    Some(color_to_rgba(req.color)),
-                                    tag_ids,
-                                )
-                                .await
-                            {
-                                Ok(id) => {
-                                    log::info!("folder created id={id:?}");
-                                    snap.set(Some(lib.index().clone()));
-                                }
-                                Err(err) => log::error!("create_folder: {err}"),
-                            }
-                        });
-                    })
-                    .available_tags(available)
-                    .open();
-                }
-            }))
-            .entry(
-                FabMenuEntry::new("📄", "Importar PDF", {
-                    let handle = handle.clone();
-                    move || {
-                        let handle = handle.clone();
-                        // `router` is the Home-scope handle; passing it
-                        // down means neither the entry closure (lives
-                        // under `ModalPortal`) nor the async body
-                        // (lives under `ScopeId::ROOT`) needs to look
-                        // it up.
-                        spawn_forever(pick_and_open_pdf(handle, snap, current, router));
-                    }
-                })
-                .with_divider_above(),
-            )
-            .open();
-    });
+    let shortcut_top = shortcut_button(shortcut_slots[0].as_ref(), ctx.clone());
+    let shortcut_bottom = shortcut_button(shortcut_slots[1].as_ref(), ctx.clone());
+
+    let plus = {
+        let ctx = ctx.clone();
+        fab_button("+", plus_bg, move |_| {
+            open_create_menu(ctx.clone(), anchor_right, menu_bottom);
+        })
+    };
 
     rect()
         .vertical()
@@ -1317,12 +1183,260 @@ fn fab_stack(
                 .right(anchor_right)
                 .bottom(anchor_bottom),
         )
-        .child(incognito)
-        .child(pen)
+        .child(shortcut_top)
+        .child(shortcut_bottom)
         .child(plus)
 }
 
-fn fab_button<F: Fn(()) + 'static>(glyph: &'static str, bg: Color, handler: F) -> impl IntoElement {
+fn shortcut_button(
+    slot: Option<&crate::plugin_settings::FabShortcut>,
+    ctx: FabCtx,
+) -> Rect {
+    let resolved = slot.and_then(crate::plugins::resolve_shortcut);
+    match resolved {
+        Some(entry) => {
+            let bg = shortcut_color(&entry);
+            let icon = entry.entry.icon.clone();
+            fab_button_owned(icon, bg, move |_| {
+                trigger_entry(&entry, &ctx);
+            })
+        }
+        None => {
+            // Empty slot: subdued bubble that opens settings so the
+            // user can pick what sits here.
+            let bg = Color::from_rgb(38, 38, 44);
+            fab_button("＋", bg, |_| {
+                crate::components::SettingsModal::open();
+            })
+        }
+    }
+}
+
+fn shortcut_color(entry: &crate::plugins::AvailableEntry) -> Color {
+    use notein_plugin::CreationCategory;
+    match entry.entry.category {
+        CreationCategory::Canvas => Color::from_rgb(80, 130, 175),
+        CreationCategory::Source => Color::from_rgb(90, 110, 85),
+        CreationCategory::Other => Color::from_rgb(45, 45, 52),
+    }
+}
+
+fn open_create_menu(ctx: FabCtx, anchor_right: f32, menu_bottom: f32) {
+    use crate::components::{FabMenu, FabMenuEntry};
+
+    let grouped = crate::plugins::group_by_category(crate::plugins::available_entries());
+    let mut menu = FabMenu::new().anchor(anchor_right, menu_bottom);
+
+    for (gi, (_cat, group)) in grouped.iter().enumerate() {
+        for (ei, entry) in group.iter().enumerate() {
+            let entry = entry.clone();
+            let ctx = ctx.clone();
+            let icon = entry.entry.icon.clone();
+            let label = menu_label(&entry);
+            let mut row = FabMenuEntry::new(icon, label, move || {
+                trigger_entry(&entry, &ctx);
+            });
+            // Divider between category groups (first entry of each
+            // non-first group).
+            if gi > 0 && ei == 0 {
+                row = row.with_divider_above();
+            }
+            menu = menu.entry(row);
+        }
+    }
+    menu.open();
+}
+
+fn menu_label(entry: &crate::plugins::AvailableEntry) -> String {
+    use crate::plugins::EntrySource;
+    match entry.source {
+        EntrySource::ShellBuiltin => entry.entry.label.clone(),
+        EntrySource::Plugin(_) => {
+            // Suffix third-party entries with the owning plugin's label
+            // so the user can tell duplicates apart.
+            format!("{}  ·  {}", entry.entry.label, entry.plugin_label)
+        }
+    }
+}
+
+fn trigger_entry(entry: &crate::plugins::AvailableEntry, ctx: &FabCtx) {
+    use crate::plugins::EntrySource;
+    use crate::shell_builtins::{BUILTIN_PLUGIN_ID, IMPORT_PDF, NEW_CANVAS, NEW_EPHEMERAL, NEW_FOLDER, QUICK_SKETCH};
+    match entry.source {
+        EntrySource::ShellBuiltin if entry.plugin_id == BUILTIN_PLUGIN_ID => {
+            match entry.entry.id.as_str() {
+                NEW_CANVAS => flow_new_canvas(ctx.clone()),
+                NEW_EPHEMERAL => flow_new_ephemeral(ctx.clone()),
+                QUICK_SKETCH => flow_quick_sketch(ctx.clone()),
+                NEW_FOLDER => flow_new_folder(ctx.clone()),
+                IMPORT_PDF => flow_import_pdf(ctx.clone()),
+                other => log::warn!("unknown shell builtin entry: {other}"),
+            }
+        }
+        EntrySource::ShellBuiltin => {
+            log::warn!("mismatched shell builtin plugin_id: {}", entry.plugin_id);
+        }
+        EntrySource::Plugin(_) => {
+            log::info!(
+                "plugin creation entry {}/{} — execute_creation wiring lands with Phase 2.6+",
+                entry.plugin_id,
+                entry.entry.id
+            );
+        }
+    }
+}
+
+fn flow_new_ephemeral(ctx: FabCtx) {
+    crate::route::queue_canvas_background(
+        BackgroundStyle::default(),
+        crate::route::DEFAULT_PAPER,
+    );
+    let _ = ctx.router.push(Route::CanvasEphemeral);
+}
+
+fn flow_quick_sketch(ctx: FabCtx) {
+    let FabCtx {
+        handle,
+        snap,
+        current,
+        router,
+    } = ctx;
+    let mut snap = snap;
+    spawn_forever(async move {
+        let mut lib = handle.lock().await;
+        match lib
+            .create_item(
+                current,
+                ItemKind::Canvas,
+                "Borrador",
+                None,
+                Vec::new(),
+                BackgroundStyle::default(),
+            )
+            .await
+        {
+            Ok(id) => {
+                snap.set(Some(lib.index().clone()));
+                crate::route::queue_canvas_background(
+                    BackgroundStyle::default(),
+                    crate::route::DEFAULT_PAPER,
+                );
+                let _ = router.push(Route::CanvasView { id: id.0 });
+            }
+            Err(err) => log::error!("create_item: {err}"),
+        }
+    });
+}
+
+fn flow_new_canvas(ctx: FabCtx) {
+    use crate::components::{CanvasCreateSheet, CreateCanvasRequest};
+    let FabCtx {
+        handle,
+        snap,
+        current,
+        router,
+    } = ctx;
+    let available = current_tag_names(snap);
+    CanvasCreateSheet::new(move |req: CreateCanvasRequest| {
+        log::info!(
+            "canvas confirm: name={:?} kind={:?} tags={:?}",
+            req.name,
+            req.kind,
+            req.tag_names
+        );
+        let handle = handle.clone();
+        let mut snap = snap;
+        let bg_style = req.background;
+        let surface = req.color;
+        spawn_forever(async move {
+            let mut lib = handle.lock().await;
+            let tag_ids = resolve_tag_names(&mut lib, &req.tag_names).await;
+            log::info!("canvas create → parent={current:?} tag_ids={tag_ids:?}");
+            match lib
+                .create_item(
+                    current,
+                    req.kind,
+                    &req.name,
+                    Some(color_to_rgba(req.color)),
+                    tag_ids,
+                    req.background,
+                )
+                .await
+            {
+                Ok(id) => {
+                    log::info!("canvas created id={id:?}");
+                    snap.set(Some(lib.index().clone()));
+                    crate::route::queue_canvas_background(bg_style, surface.into());
+                    let _ = router.push(Route::CanvasView { id: id.0 });
+                }
+                Err(err) => log::error!("create_item: {err}"),
+            }
+        });
+    })
+    .kind(ItemKind::Canvas)
+    .available_tags(available)
+    .open();
+}
+
+fn flow_new_folder(ctx: FabCtx) {
+    use crate::components::{CreateFolderRequest, FolderCreateSheet};
+    let FabCtx {
+        handle,
+        snap,
+        current,
+        router: _,
+    } = ctx;
+    let available = current_tag_names(snap);
+    FolderCreateSheet::new(move |req: CreateFolderRequest| {
+        log::info!(
+            "folder confirm: name={:?} tags={:?}",
+            req.name,
+            req.tag_names
+        );
+        let handle = handle.clone();
+        let mut snap = snap;
+        spawn_forever(async move {
+            let mut lib = handle.lock().await;
+            let tag_ids = resolve_tag_names(&mut lib, &req.tag_names).await;
+            log::info!("folder create → parent={current:?} tag_ids={tag_ids:?}");
+            match lib
+                .create_folder(current, &req.name, Some(color_to_rgba(req.color)), tag_ids)
+                .await
+            {
+                Ok(id) => {
+                    log::info!("folder created id={id:?}");
+                    snap.set(Some(lib.index().clone()));
+                }
+                Err(err) => log::error!("create_folder: {err}"),
+            }
+        });
+    })
+    .available_tags(available)
+    .open();
+}
+
+fn flow_import_pdf(ctx: FabCtx) {
+    let FabCtx {
+        handle,
+        snap,
+        current,
+        router,
+    } = ctx;
+    spawn_forever(pick_and_open_pdf(handle, snap, current, router));
+}
+
+fn fab_button<F: Fn(()) + 'static>(glyph: &'static str, bg: Color, handler: F) -> Rect {
+    rect()
+        .width(Size::px(52.0))
+        .height(Size::px(52.0))
+        .background(bg)
+        .with_corner_radius(26.0)
+        .center()
+        .child(label().color(Color::WHITE).font_size(22.0).text(glyph))
+        .on_press(move |_| handler(()))
+}
+
+fn fab_button_owned<F: Fn(()) + 'static>(glyph: String, bg: Color, handler: F) -> Rect {
     rect()
         .width(Size::px(52.0))
         .height(Size::px(52.0))
