@@ -15,15 +15,18 @@
 //! domain.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::canvas::CanvasKind;
 use crate::config::ConfigSchema;
 use crate::creation::CreationEntry;
+use crate::dynamic::{LoadedPlugin, Registrations};
+use crate::manifest::PluginManifest;
 use crate::source::Source;
 
 /// Which trait a plugin implements.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum PluginRole {
     Source,
     Canvas,
@@ -48,6 +51,31 @@ impl std::fmt::Display for RegistryError {
 }
 
 impl std::error::Error for RegistryError {}
+
+/// Where a registered plugin came from. Missing from the origin map =
+/// built-in (default).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PluginOrigin {
+    /// Compiled into the host binary.
+    Builtin,
+    /// Loaded at runtime from a shared library on disk.
+    Dynamic {
+        manifest_path: PathBuf,
+        library_path: PathBuf,
+        manifest: PluginManifest,
+    },
+}
+
+/// One row of [`PluginRegistry::installed_plugins`] — the Phase 3
+/// settings panel renders one of these per plugin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstalledPlugin {
+    pub plugin_role: PluginRole,
+    pub plugin_id: String,
+    pub plugin_label: String,
+    pub origin: PluginOrigin,
+    pub enabled: bool,
+}
 
 /// One creation entry with the plugin that owns it attached, as
 /// returned by [`PluginRegistry::list_creation_entries`]. The host
@@ -84,6 +112,12 @@ pub struct PluginRegistry {
     sources: HashMap<String, Arc<dyn Source>>,
     canvases: HashMap<String, Arc<dyn CanvasKind>>,
     disabled: HashMap<String, ()>,
+    /// Non-default origins (built-ins stay absent from this map).
+    origins: HashMap<String, PluginOrigin>,
+    /// Dynamic plugin containers kept alive for Drop ordering: each
+    /// entry owns its `libloading::Library`, which must outlive every
+    /// `Arc<dyn Trait>` registered from it.
+    dynamic: Vec<LoadedPlugin>,
 }
 
 impl std::fmt::Debug for PluginRegistry {
@@ -92,6 +126,7 @@ impl std::fmt::Debug for PluginRegistry {
             .field("sources", &self.sources.keys().collect::<Vec<_>>())
             .field("canvases", &self.canvases.keys().collect::<Vec<_>>())
             .field("disabled", &self.disabled.keys().collect::<Vec<_>>())
+            .field("dynamic", &self.dynamic.len())
             .finish()
     }
 }
@@ -258,6 +293,149 @@ impl PluginRegistry {
                 schema: plugin.config_schema(),
             });
         }
+        out
+    }
+
+    /// Register every trait object from a [`LoadedPlugin`]. All
+    /// registrations share the same [`PluginOrigin::Dynamic`] origin
+    /// so the settings panel can tag them with the manifest they came
+    /// from. The `LoadedPlugin` (and the `libloading::Library` it
+    /// owns) is retained for the lifetime of the registry — see
+    /// [`crate::dynamic::LoadedPlugin`] for the Drop-order
+    /// invariant.
+    ///
+    /// On a duplicate `kind_id`, the whole load is rolled back: any
+    /// trait objects already inserted from this bundle are removed
+    /// and the library is dropped. The caller sees a single
+    /// [`RegistryError::DuplicateKindId`] without side effects.
+    pub fn register_dynamic(&mut self, loaded: LoadedPlugin) -> Result<(), RegistryError> {
+        let origin = PluginOrigin::Dynamic {
+            manifest_path: loaded.manifest_path.clone(),
+            library_path: loaded.library_path.clone(),
+            manifest: loaded.manifest.clone(),
+        };
+        self.register_with_origin(&loaded.registrations, origin)?;
+        self.dynamic.push(loaded);
+        Ok(())
+    }
+
+    /// Insert every trait object in `regs` with `origin` tagged on
+    /// each. Rolls back on the first duplicate so partial state never
+    /// leaks. Shared between [`register_dynamic`] and the test seam
+    /// below.
+    fn register_with_origin(
+        &mut self,
+        regs: &Registrations,
+        origin: PluginOrigin,
+    ) -> Result<(), RegistryError> {
+        let mut inserted_sources = Vec::new();
+        let mut inserted_canvases = Vec::new();
+        for plugin in &regs.canvases {
+            let kind_id = plugin.kind_id().to_owned();
+            if self.canvases.contains_key(&kind_id) {
+                self.rollback(&inserted_sources, &inserted_canvases);
+                return Err(RegistryError::DuplicateKindId {
+                    role: PluginRole::Canvas,
+                    kind_id,
+                });
+            }
+            self.canvases.insert(kind_id.clone(), Arc::clone(plugin));
+            self.origins.insert(kind_id.clone(), origin.clone());
+            inserted_canvases.push(kind_id);
+        }
+        for plugin in &regs.sources {
+            let kind_id = plugin.kind_id().to_owned();
+            if self.sources.contains_key(&kind_id) {
+                self.rollback(&inserted_sources, &inserted_canvases);
+                return Err(RegistryError::DuplicateKindId {
+                    role: PluginRole::Source,
+                    kind_id,
+                });
+            }
+            self.sources.insert(kind_id.clone(), Arc::clone(plugin));
+            self.origins.insert(kind_id.clone(), origin.clone());
+            inserted_sources.push(kind_id);
+        }
+        Ok(())
+    }
+
+    /// Test-only seam: register trait objects as if loaded from a
+    /// `.so` without actually opening a library. The caller supplies
+    /// the manifest + paths so [`PluginOrigin::Dynamic`] carries real
+    /// data for the settings panel assertions.
+    #[cfg(test)]
+    pub(crate) fn register_dynamic_for_test(
+        &mut self,
+        regs: Registrations,
+        manifest: PluginManifest,
+        manifest_path: PathBuf,
+        library_path: PathBuf,
+    ) -> Result<(), RegistryError> {
+        self.register_with_origin(
+            &regs,
+            PluginOrigin::Dynamic {
+                manifest_path,
+                library_path,
+                manifest,
+            },
+        )
+    }
+
+    fn rollback(&mut self, sources: &[String], canvases: &[String]) {
+        for id in sources {
+            self.sources.remove(id);
+            self.origins.remove(id);
+        }
+        for id in canvases {
+            self.canvases.remove(id);
+            self.origins.remove(id);
+        }
+    }
+
+    /// Origin of `plugin_id`. Returns `PluginOrigin::Builtin` for any
+    /// id not explicitly tagged — the default for built-in
+    /// registrations.
+    #[must_use]
+    pub fn origin(&self, plugin_id: &str) -> PluginOrigin {
+        self.origins
+            .get(plugin_id)
+            .cloned()
+            .unwrap_or(PluginOrigin::Builtin)
+    }
+
+    /// Every registered plugin, with its role, label, origin and
+    /// enabled flag. Powers the settings panel's "installed plugins"
+    /// section. Sorted by `(role, plugin_id)` for stable UI order.
+    #[must_use]
+    pub fn installed_plugins(&self) -> Vec<InstalledPlugin> {
+        let mut out = Vec::with_capacity(self.sources.len() + self.canvases.len());
+        for plugin in self.sources.values() {
+            let plugin_id = plugin.kind_id().to_owned();
+            let enabled = self.is_enabled(&plugin_id);
+            out.push(InstalledPlugin {
+                plugin_role: PluginRole::Source,
+                plugin_label: plugin.kind_label().to_owned(),
+                origin: self.origin(&plugin_id),
+                plugin_id,
+                enabled,
+            });
+        }
+        for plugin in self.canvases.values() {
+            let plugin_id = plugin.kind_id().to_owned();
+            let enabled = self.is_enabled(&plugin_id);
+            out.push(InstalledPlugin {
+                plugin_role: PluginRole::Canvas,
+                plugin_label: plugin.kind_label().to_owned(),
+                origin: self.origin(&plugin_id),
+                plugin_id,
+                enabled,
+            });
+        }
+        out.sort_by(|a, b| {
+            a.plugin_role
+                .cmp(&b.plugin_role)
+                .then_with(|| a.plugin_id.cmp(&b.plugin_id))
+        });
         out
     }
 }
@@ -588,5 +766,90 @@ mod tests {
         let ids: Vec<_> = schemas.iter().map(|s| s.plugin_id.as_str()).collect();
         assert!(ids.contains(&"io.notein.pdf"));
         assert!(ids.contains(&"io.notein.canvas.stroke"));
+    }
+
+    fn dummy_manifest(id: &str) -> PluginManifest {
+        PluginManifest {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            version: "1.0.0".into(),
+            author: None,
+            library: Some(format!("{id}.so")),
+            provides: Vec::new(),
+            requires: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn installed_plugins_tags_builtins_and_dynamic() {
+        let mut reg = PluginRegistry::new();
+        reg.register_source(Arc::new(StubSource::new("io.notein.pdf", "PDF", &["pdf"])))
+            .unwrap();
+
+        let regs = Registrations {
+            canvases: vec![Arc::new(StubCanvas::new("org.user.mindmap", "Mind Map"))],
+            sources: Vec::new(),
+        };
+        reg.register_dynamic_for_test(
+            regs,
+            dummy_manifest("org.user.mindmap"),
+            PathBuf::from("/opt/plugins/mindmap/plugin.ntp.kdl"),
+            PathBuf::from("/opt/plugins/mindmap/libmindmap.so"),
+        )
+        .unwrap();
+
+        let installed = reg.installed_plugins();
+        assert_eq!(installed.len(), 2);
+
+        let pdf = installed
+            .iter()
+            .find(|p| p.plugin_id == "io.notein.pdf")
+            .unwrap();
+        assert_eq!(pdf.origin, PluginOrigin::Builtin);
+        assert!(pdf.enabled);
+
+        let mindmap = installed
+            .iter()
+            .find(|p| p.plugin_id == "org.user.mindmap")
+            .unwrap();
+        match &mindmap.origin {
+            PluginOrigin::Dynamic { library_path, manifest, .. } => {
+                assert_eq!(library_path, &PathBuf::from("/opt/plugins/mindmap/libmindmap.so"));
+                assert_eq!(manifest.id, "org.user.mindmap");
+            }
+            PluginOrigin::Builtin => panic!("expected Dynamic origin"),
+        }
+    }
+
+    #[test]
+    fn dynamic_duplicate_rolls_back_whole_bundle() {
+        let mut reg = PluginRegistry::new();
+        reg.register_source(Arc::new(StubSource::new("io.notein.pdf", "PDF", &["pdf"])))
+            .unwrap();
+
+        // Bundle registers one brand-new canvas, then collides on a
+        // source already present. The whole bundle must roll back —
+        // the brand-new canvas must not stay registered.
+        let regs = Registrations {
+            canvases: vec![Arc::new(StubCanvas::new("org.user.good", "Good"))],
+            sources: vec![Arc::new(StubSource::new("io.notein.pdf", "PDF Dupe", &["pdf"]))],
+        };
+        let err = reg
+            .register_dynamic_for_test(
+                regs,
+                dummy_manifest("org.user.bundle"),
+                PathBuf::from("/opt/plugins/bundle/plugin.ntp.kdl"),
+                PathBuf::from("/opt/plugins/bundle/libbundle.so"),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            RegistryError::DuplicateKindId {
+                role: PluginRole::Source,
+                ..
+            }
+        ));
+        assert!(reg.get_canvas("org.user.good").is_none());
+        assert_eq!(reg.origin("org.user.good"), PluginOrigin::Builtin);
     }
 }

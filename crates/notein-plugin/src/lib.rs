@@ -30,8 +30,10 @@ pub mod bookmark;
 pub mod canvas;
 pub mod config;
 pub mod creation;
+pub mod dynamic;
 pub mod error;
 pub mod ids;
+pub mod manifest;
 pub mod registry;
 pub mod source;
 
@@ -39,9 +41,15 @@ pub use bookmark::{Bookmark, Rgba, SourceRef, StrokeAnchor, TimestampMs, WorldPo
 pub use canvas::{CanvasKind, FrameCtxHandle, InputEvent, PointerKind};
 pub use config::{ConfigEnumOption, ConfigField, ConfigFieldKind, ConfigSchema, ConfigValue};
 pub use creation::{CreationCategory, CreationEntry, CreationKind, ItemCreationResult};
+pub use dynamic::{
+    ENTRY_SYMBOL, LoadedPlugin, LoaderError, PluginBundle, PluginEntryFn, Registrations,
+    SDK_ABI_VERSION, load_from_manifest,
+};
 pub use error::{CanvasError, ConfigError, CreationError, SourceError};
 pub use ids::{BookmarkId, StrokeId};
+pub use manifest::{ManifestError, ManifestRequirement, PluginManifest};
 pub use registry::{
-    PluginRegistry, PluginRole, RegistryCreationEntry, RegistryError, RegistrySchemaEntry,
+    InstalledPlugin, PluginOrigin, PluginRegistry, PluginRole, RegistryCreationEntry,
+    RegistryError, RegistrySchemaEntry,
 };
 pub use source::{AnchorView, SearchHit, Selection, Source, Tile, TileRequest};
