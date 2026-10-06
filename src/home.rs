@@ -1188,10 +1188,7 @@ fn fab_stack(
         .child(plus)
 }
 
-fn shortcut_button(
-    slot: Option<&crate::plugin_settings::FabShortcut>,
-    ctx: FabCtx,
-) -> Rect {
+fn shortcut_button(slot: Option<&crate::plugin_settings::FabShortcut>, ctx: FabCtx) -> Rect {
     let resolved = slot.and_then(crate::plugins::resolve_shortcut);
     match resolved {
         Some(entry) => {
@@ -1260,14 +1257,12 @@ fn menu_label(entry: &crate::plugins::AvailableEntry) -> String {
 }
 
 fn trigger_entry(entry: &crate::plugins::AvailableEntry, ctx: &FabCtx) {
+    use crate::builtin::stroke_canvas;
     use crate::plugins::EntrySource;
-    use crate::shell_builtins::{BUILTIN_PLUGIN_ID, IMPORT_PDF, NEW_CANVAS, NEW_EPHEMERAL, NEW_FOLDER, QUICK_SKETCH};
+    use crate::shell_builtins::{BUILTIN_PLUGIN_ID, IMPORT_PDF, NEW_FOLDER};
     match entry.source {
         EntrySource::ShellBuiltin if entry.plugin_id == BUILTIN_PLUGIN_ID => {
             match entry.entry.id.as_str() {
-                NEW_CANVAS => flow_new_canvas(ctx.clone()),
-                NEW_EPHEMERAL => flow_new_ephemeral(ctx.clone()),
-                QUICK_SKETCH => flow_quick_sketch(ctx.clone()),
                 NEW_FOLDER => flow_new_folder(ctx.clone()),
                 IMPORT_PDF => flow_import_pdf(ctx.clone()),
                 other => log::warn!("unknown shell builtin entry: {other}"),
@@ -1275,6 +1270,14 @@ fn trigger_entry(entry: &crate::plugins::AvailableEntry, ctx: &FabCtx) {
         }
         EntrySource::ShellBuiltin => {
             log::warn!("mismatched shell builtin plugin_id: {}", entry.plugin_id);
+        }
+        EntrySource::Plugin(_) if entry.plugin_id == stroke_canvas::KIND_ID => {
+            match entry.entry.id.as_str() {
+                stroke_canvas::NEW_CANVAS => flow_new_canvas(ctx.clone()),
+                stroke_canvas::NEW_EPHEMERAL => flow_new_ephemeral(ctx.clone()),
+                stroke_canvas::QUICK_SKETCH => flow_quick_sketch(ctx.clone()),
+                other => log::warn!("unknown stroke canvas entry: {other}"),
+            }
         }
         EntrySource::Plugin(_) => {
             log::info!(
@@ -1287,10 +1290,7 @@ fn trigger_entry(entry: &crate::plugins::AvailableEntry, ctx: &FabCtx) {
 }
 
 fn flow_new_ephemeral(ctx: FabCtx) {
-    crate::route::queue_canvas_background(
-        BackgroundStyle::default(),
-        crate::route::DEFAULT_PAPER,
-    );
+    crate::route::queue_canvas_background(BackgroundStyle::default(), crate::route::DEFAULT_PAPER);
     let _ = ctx.router.push(Route::CanvasEphemeral);
 }
 

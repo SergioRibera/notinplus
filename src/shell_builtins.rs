@@ -1,14 +1,11 @@
-//! Shell-owned creation entries — the four flows the home has shipped
-//! since v1 (new canvas / incognito / quick sketch / new folder /
-//! import PDF).
+//! Shell-owned creation entries that have no plugin home yet
+//! (`new-folder`, `import-pdf`).
 //!
-//! These behave *like* plugin-provided [`CreationEntry`] values —
-//! same shape, same ids, same `(plugin_id, entry_id)` referencing — so
-//! the FAB `+` menu, the shortcut picker, and the settings surface can
-//! treat them uniformly with real plugin entries. Phase 2.6 / 2.7
-//! promote the canvas and PDF ones into real plugins; the entries move
-//! verbatim with their ids intact, so persisted shortcut references
-//! survive the refactor.
+//! The three canvas entries (`new-canvas`, `new-ephemeral`,
+//! `quick-sketch`) migrated to [`crate::builtin::stroke_canvas`]; their
+//! stable entry ids are re-exported here so persisted FAB shortcuts and
+//! `home.rs` dispatch can keep referencing one source of truth. PDF
+//! import moves next.
 //!
 //! Dispatch (what each entry actually *does*) lives in `home.rs`
 //! because it needs the live `LibHandle` + `RouterContext` — the shell
@@ -21,41 +18,20 @@ use notein_plugin::{CreationCategory, CreationEntry, CreationKind};
 /// separate "source" tag.
 pub const BUILTIN_PLUGIN_ID: &str = "io.notein.builtin";
 
-/// Static shell builtins. Entry ids are stable across releases so
-/// persisted shortcut picks keep resolving.
-pub const NEW_CANVAS: &str = "new-canvas";
-pub const NEW_EPHEMERAL: &str = "new-ephemeral";
-pub const QUICK_SKETCH: &str = "quick-sketch";
+/// Entry ids owned by the stroke canvas plugin — re-exported so
+/// `home.rs` dispatch and the shortcut migration can refer to one
+/// source of truth.
+pub use crate::builtin::stroke_canvas::{NEW_CANVAS, NEW_EPHEMERAL, QUICK_SKETCH};
+
 pub const NEW_FOLDER: &str = "new-folder";
 pub const IMPORT_PDF: &str = "import-pdf";
 
 /// Every shell-owned entry. Ordered by the natural menu grouping
-/// (canvases first, then sources, then other) so a caller that drops
-/// the `category` grouping still sees a sensible order.
+/// (sources, then other) so a caller that drops the `category`
+/// grouping still sees a sensible order.
 #[must_use]
 pub fn entries() -> Vec<CreationEntry> {
     vec![
-        CreationEntry {
-            id: NEW_CANVAS.to_owned(),
-            label: "Lienzo infinito".to_owned(),
-            icon: "▢".to_owned(),
-            category: CreationCategory::Canvas,
-            kind: CreationKind::Blank { prompt_name: true },
-        },
-        CreationEntry {
-            id: NEW_EPHEMERAL.to_owned(),
-            label: "Lienzo incógnito".to_owned(),
-            icon: "🕶".to_owned(),
-            category: CreationCategory::Canvas,
-            kind: CreationKind::Blank { prompt_name: false },
-        },
-        CreationEntry {
-            id: QUICK_SKETCH.to_owned(),
-            label: "Borrador rápido".to_owned(),
-            icon: "✎".to_owned(),
-            category: CreationCategory::Canvas,
-            kind: CreationKind::Blank { prompt_name: false },
-        },
         CreationEntry {
             id: IMPORT_PDF.to_owned(),
             label: "Importar PDF".to_owned(),

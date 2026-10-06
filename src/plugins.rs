@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use notein_plugin::{CreationCategory, CreationEntry, PluginRegistry, PluginRole};
 
+use crate::builtin::stroke_canvas;
 use crate::plugin_settings::{FabShortcut, FabShortcutSlot};
 use crate::shell_builtins;
 
@@ -44,14 +45,33 @@ impl Default for FabShortcutState {
 fn default_slots() -> [Option<FabShortcut>; 2] {
     [
         Some(FabShortcut {
-            plugin_id: shell_builtins::BUILTIN_PLUGIN_ID.to_owned(),
-            entry_id: shell_builtins::NEW_EPHEMERAL.to_owned(),
+            plugin_id: stroke_canvas::KIND_ID.to_owned(),
+            entry_id: stroke_canvas::NEW_EPHEMERAL.to_owned(),
         }),
         Some(FabShortcut {
-            plugin_id: shell_builtins::BUILTIN_PLUGIN_ID.to_owned(),
-            entry_id: shell_builtins::QUICK_SKETCH.to_owned(),
+            plugin_id: stroke_canvas::KIND_ID.to_owned(),
+            entry_id: stroke_canvas::QUICK_SKETCH.to_owned(),
         }),
     ]
+}
+
+/// Rewrite legacy persisted shortcuts that reference entries which
+/// migrated out of the shell-builtin bucket. Keeps shortcuts resolving
+/// after Phase 2.6 moved the canvas entries into
+/// [`stroke_canvas`].
+fn migrate_legacy_plugin_id(sc: &FabShortcut) -> FabShortcut {
+    if sc.plugin_id == shell_builtins::BUILTIN_PLUGIN_ID
+        && matches!(
+            sc.entry_id.as_str(),
+            stroke_canvas::NEW_CANVAS | stroke_canvas::NEW_EPHEMERAL | stroke_canvas::QUICK_SKETCH,
+        )
+    {
+        return FabShortcut {
+            plugin_id: stroke_canvas::KIND_ID.to_owned(),
+            entry_id: sc.entry_id.clone(),
+        };
+    }
+    sc.clone()
 }
 
 /// Process-wide registry handle. Lazily constructed on first call —
@@ -133,17 +153,14 @@ fn hydrate_shortcuts(persisted: &[FabShortcutSlot]) {
         g.touched = false;
         return;
     }
-    g.slots = [
-        slot_to_option(&persisted[0]),
-        slot_to_option(&persisted[1]),
-    ];
+    g.slots = [slot_to_option(&persisted[0]), slot_to_option(&persisted[1])];
     g.touched = true;
 }
 
 fn slot_to_option(s: &FabShortcutSlot) -> Option<FabShortcut> {
     match s {
         FabShortcutSlot::Empty => None,
-        FabShortcutSlot::Entry(e) => Some(e.clone()),
+        FabShortcutSlot::Entry(e) => Some(migrate_legacy_plugin_id(e)),
     }
 }
 
@@ -233,7 +250,9 @@ pub fn resolve_shortcut(sc: &FabShortcut) -> Option<AvailableEntry> {
 /// Group `entries` by [`CreationCategory`] in menu order
 /// (Canvas / Source / Other).
 #[must_use]
-pub fn group_by_category(entries: Vec<AvailableEntry>) -> Vec<(CreationCategory, Vec<AvailableEntry>)> {
+pub fn group_by_category(
+    entries: Vec<AvailableEntry>,
+) -> Vec<(CreationCategory, Vec<AvailableEntry>)> {
     let mut canvases = Vec::new();
     let mut sources = Vec::new();
     let mut other = Vec::new();

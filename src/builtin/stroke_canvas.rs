@@ -168,9 +168,7 @@ impl CanvasKind for StrokeCanvasPlugin {
             QUICK_SKETCH => "Borrador rápido",
             other => return Err(CreationError::UnknownEntry(other.to_owned())),
         };
-        let suggested_name = name_hint
-            .map(str::to_owned)
-            .unwrap_or_else(|| default_name.to_owned());
+        let suggested_name = name_hint.map_or_else(|| default_name.to_owned(), str::to_owned);
         let doc = Doc::default();
         let item_bytes = bincode::encode_to_vec(&doc, standard())
             .map_err(|e| CreationError::BackendFailed(e.to_string()))?;
