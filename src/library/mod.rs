@@ -645,6 +645,7 @@ mod tests {
             name: "A".into(),
             color: None,
             icon: None,
+            tags: Vec::new(),
             created_at: 0,
             updated_at: 0,
         });
@@ -655,6 +656,7 @@ mod tests {
             name: "B".into(),
             color: None,
             icon: None,
+            tags: Vec::new(),
             created_at: 0,
             updated_at: 0,
         });
@@ -680,6 +682,7 @@ mod tests {
             name: "Sketches".into(),
             color: Some([12, 34, 56, 255]),
             icon: None,
+            tags: Vec::new(),
             created_at: 1,
             updated_at: 2,
         });
@@ -691,6 +694,7 @@ mod tests {
             name: "Untitled".into(),
             color: None,
             tags: vec![tag],
+            background: BackgroundStyle::default(),
             created_at: 3,
             updated_at: 4,
             thumbnail: None,
