@@ -120,10 +120,19 @@ mod tests {
     fn opid_order_lexicographic() {
         let a = actor();
         let b = actor();
-        let lo = OpId { lamport: 5, actor: a };
-        let hi_lamport = OpId { lamport: 6, actor: a };
+        let lo = OpId {
+            lamport: 5,
+            actor: a,
+        };
+        let hi_lamport = OpId {
+            lamport: 6,
+            actor: a,
+        };
         assert!(hi_lamport > lo);
-        let same_lamport_b = OpId { lamport: 5, actor: b };
+        let same_lamport_b = OpId {
+            lamport: 5,
+            actor: b,
+        };
         // tie-break deterministic — one of (a,b) is strictly greater.
         assert_ne!(lo.cmp(&same_lamport_b), std::cmp::Ordering::Equal);
     }

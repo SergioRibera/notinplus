@@ -273,7 +273,11 @@ fn preview_card(color: Color, background: BackgroundStyle) -> impl IntoElement {
                 .alignment(BorderAlignment::Inner)
                 .fill(Color::from_rgb(70, 70, 80)),
         )
-        .child(keyed_pattern_canvas(color, to_pattern_kind(background), 14.0))
+        .child(keyed_pattern_canvas(
+            color,
+            to_pattern_kind(background),
+            14.0,
+        ))
 }
 
 /// Hash a `(Color, PatternKind)` pair into a canvas diff key so the
@@ -296,11 +300,7 @@ fn canvas_key(color: Color, kind: PatternKind) -> u64 {
         | (u64::from(kind_byte) << 56)
 }
 
-fn keyed_pattern_canvas(
-    color: Color,
-    kind: PatternKind,
-    pattern_scale: f32,
-) -> impl IntoElement {
+fn keyed_pattern_canvas(color: Color, kind: PatternKind, pattern_scale: f32) -> impl IntoElement {
     pattern_canvas(color, kind, pattern_scale).key(canvas_key(color, kind))
 }
 

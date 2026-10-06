@@ -1951,7 +1951,9 @@ impl Board {
         for bm in self.doc.bookmarks() {
             let world = self.bookmark_world_position(bm);
             let (sx, sy) = self.viewport.world_to_screen(world.x, world.y);
-            let broken = bm.stuck_to.is_some_and(|a| self.doc.find_stroke(a.stroke).is_none());
+            let broken = bm
+                .stuck_to
+                .is_some_and(|a| self.doc.find_stroke(a.stroke).is_none());
             draw_bookmark_pin(canvas, sx, sy, bm.color, broken);
         }
     }
@@ -2239,11 +2241,8 @@ pub fn drawing_surface(
                     };
                     let _ = now;
                     let created_at = crate::bookmark_ui::now_ms();
-                    let id = lock(&timer_board).add_bookmark(
-                        world,
-                        PIN_STICKY_WORLD_RADIUS,
-                        created_at,
-                    );
+                    let id =
+                        lock(&timer_board).add_bookmark(world, PIN_STICKY_WORLD_RADIUS, created_at);
                     timer_body.set(String::new());
                     timer_selected.set(Some(id));
                     // Consume the pending press so a sibling pointer_up
@@ -2984,11 +2983,7 @@ mod tests {
         );
         assert!(b.undo());
         assert!(b.doc().layer(new_id).is_none(), "layer removed on undo");
-        assert_eq!(
-            b.active_layer_id(),
-            before_active,
-            "active layer restored"
-        );
+        assert_eq!(b.active_layer_id(), before_active, "active layer restored");
     }
 
     #[test]
@@ -3025,13 +3020,7 @@ mod tests {
         assert_eq!(b.bookmarks().len(), 1);
         assert_eq!(b.undo_depth(), 1);
 
-        b.update_bookmark(
-            bm_id,
-            "nota".into(),
-            vec![],
-            Some([10, 20, 30, 255]),
-            2_000,
-        );
+        b.update_bookmark(bm_id, "nota".into(), vec![], Some([10, 20, 30, 255]), 2_000);
         assert_eq!(b.doc().bookmark(bm_id).unwrap().body, "nota");
         assert_eq!(b.undo_depth(), 2);
 

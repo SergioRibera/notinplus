@@ -25,10 +25,10 @@
 
 use bincode::{Decode, Encode};
 
+use crate::bookmark::{Bookmark, WorldPoint};
 use crate::config::{ConfigSchema, ConfigValue};
 use crate::creation::{CreationEntry, ItemCreationResult};
 use crate::error::{CanvasError, ConfigError, CreationError};
-use crate::bookmark::{Bookmark, WorldPoint};
 use crate::ids::BookmarkId;
 
 /// Opaque handle to the host's current draw context.

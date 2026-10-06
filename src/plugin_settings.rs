@@ -24,9 +24,7 @@ use std::io;
 use std::path::PathBuf;
 
 use bincode::config::{self, Configuration};
-use notein_plugin::{
-    ConfigField, ConfigValue, PluginRegistry, PluginRole, RegistrySchemaEntry,
-};
+use notein_plugin::{ConfigField, ConfigValue, PluginRegistry, PluginRole, RegistrySchemaEntry};
 
 use crate::library::bodies;
 
@@ -188,8 +186,12 @@ fn collect_schema_entry(
     let plugin_id = schema_entry.plugin_id.as_str();
     for field in &schema_entry.schema.fields {
         let current = match schema_entry.plugin_role {
-            PluginRole::Source => registry.get_source(plugin_id).and_then(|p| p.get_config(&field.key)),
-            PluginRole::Canvas => registry.get_canvas(plugin_id).and_then(|p| p.get_config(&field.key)),
+            PluginRole::Source => registry
+                .get_source(plugin_id)
+                .and_then(|p| p.get_config(&field.key)),
+            PluginRole::Canvas => registry
+                .get_canvas(plugin_id)
+                .and_then(|p| p.get_config(&field.key)),
         };
         let Some(value) = current else {
             continue;

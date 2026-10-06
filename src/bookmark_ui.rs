@@ -189,10 +189,7 @@ impl BookmarkSort {
 /// so the user sees at a glance that a side pane is already taking
 /// screen space.
 #[must_use]
-pub fn bookmark_toggle_button(
-    mut open: State<bool>,
-    pad: EdgeInsets,
-) -> impl IntoElement {
+pub fn bookmark_toggle_button(mut open: State<bool>, pad: EdgeInsets) -> impl IntoElement {
     let is_open = *open.read();
     let bg = if is_open {
         Color::from_rgb(60, 90, 160)
@@ -336,11 +333,7 @@ pub fn bookmark_sidebar(
         .spacing(6.0);
 
     if entries.is_empty() {
-        list = list.child(
-            rect()
-                .padding((12.0, 12.0))
-                .child(empty_label),
-        );
+        list = list.child(rect().padding((12.0, 12.0)).child(empty_label));
     } else {
         for entry in entries {
             let row_board = Arc::clone(board);

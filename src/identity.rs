@@ -184,10 +184,7 @@ mod tests {
             user: UserId::new_v4(),
             device: DeviceId::new_v4(),
         };
-        let text = format!(
-            "# notein identity\n\n{}\n# trailing\n",
-            serialize(a).trim()
-        );
+        let text = format!("# notein identity\n\n{}\n# trailing\n", serialize(a).trim());
         let b = parse(&text).unwrap();
         assert_eq!(a, b);
     }

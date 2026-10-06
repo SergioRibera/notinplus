@@ -203,30 +203,27 @@ fn header_row(sec: Section) -> impl IntoElement {
 // ---------------------------------------------------------------------------
 
 fn account_section() -> impl IntoElement {
-    rect()
-        .vertical()
-        .spacing(12.0)
-        .child(
-            rect()
-                .vertical()
-                .width(Size::fill())
-                .padding((20.0, 20.0))
-                .spacing(10.0)
-                .background(CARD_BG)
-                .with_corner_radius(14.0)
-                .child(
-                    label()
-                        .color(TEXT_PRIMARY)
-                        .font_size(16.0)
-                        .text("Cuenta — próximamente"),
-                )
-                .child(
-                    label()
-                        .color(TEXT_MUTED)
-                        .font_size(13.0)
-                        .text("Sign-in, sincronización y colaboración llegarán en una fase posterior."),
-                ),
-        )
+    rect().vertical().spacing(12.0).child(
+        rect()
+            .vertical()
+            .width(Size::fill())
+            .padding((20.0, 20.0))
+            .spacing(10.0)
+            .background(CARD_BG)
+            .with_corner_radius(14.0)
+            .child(
+                label()
+                    .color(TEXT_PRIMARY)
+                    .font_size(16.0)
+                    .text("Cuenta — próximamente"),
+            )
+            .child(
+                label()
+                    .color(TEXT_MUTED)
+                    .font_size(13.0)
+                    .text("Sign-in, sincronización y colaboración llegarán en una fase posterior."),
+            ),
+    )
 }
 
 fn general_section(tick: State<u64>) -> impl IntoElement {
@@ -240,7 +237,11 @@ fn general_section(tick: State<u64>) -> impl IntoElement {
         let board = board.clone();
         move |_: Event<PressEventData>| {
             let mut g = crate::canvas::lock(&board);
-            let next = if is_pan { InputMode::Draw } else { InputMode::Pan };
+            let next = if is_pan {
+                InputMode::Draw
+            } else {
+                InputMode::Pan
+            };
             g.set_input_mode(next);
         }
     };
@@ -279,12 +280,9 @@ fn shortcut_picker_card(tick: State<u64>) -> impl IntoElement {
                 .font_size(14.0)
                 .text("Accesos directos del lienzo"),
         )
-        .child(
-            label()
-                .color(TEXT_MUTED)
-                .font_size(12.0)
-                .text("Los dos botones arriba del `+` disparan la acción que elijas de cualquier plugin."),
-        )
+        .child(label().color(TEXT_MUTED).font_size(12.0).text(
+            "Los dos botones arriba del `+` disparan la acción que elijas de cualquier plugin.",
+        ))
         .child(shortcut_slot_row(0, slots[0].as_ref(), open, tick))
         .child(shortcut_slot_row(1, slots[1].as_ref(), open, tick))
 }
@@ -304,45 +302,39 @@ fn shortcut_slot_row(
         .as_ref()
         .map_or_else(|| "·".to_owned(), |e| e.entry.icon.clone());
 
-    let mut col = rect()
-        .vertical()
-        .width(Size::fill())
-        .spacing(6.0)
-        .child(
-            rect()
-                .horizontal()
-                .width(Size::fill())
-                .padding((10.0, 12.0))
-                .spacing(10.0)
-                .background(Color::from_rgb(46, 46, 56))
-                .with_corner_radius(10.0)
-                .cross_align(Alignment::Center)
-                .child(label().color(TEXT_PRIMARY).font_size(16.0).text(icon))
-                .child(
-                    label()
-                        .color(TEXT_PRIMARY)
-                        .font_size(13.0)
-                        .text(format!("Slot {}: {}", index + 1, label_text)),
-                )
-                .child(flex_spacer())
-                .child({
-                    let mut open = open;
-                    rect()
-                        .padding((6.0, 12.0))
-                        .background(Color::from_rgb(60, 60, 72))
-                        .with_corner_radius(8.0)
-                        .on_press(move |_| {
-                            let next = if is_open { None } else { Some(index) };
-                            open.set(next);
-                        })
-                        .child(
-                            label()
-                                .color(ACCENT)
-                                .font_size(12.0)
-                                .text(if is_open { "Cerrar" } else { "Cambiar" }),
-                        )
-                }),
-        );
+    let mut col = rect().vertical().width(Size::fill()).spacing(6.0).child(
+        rect()
+            .horizontal()
+            .width(Size::fill())
+            .padding((10.0, 12.0))
+            .spacing(10.0)
+            .background(Color::from_rgb(46, 46, 56))
+            .with_corner_radius(10.0)
+            .cross_align(Alignment::Center)
+            .child(label().color(TEXT_PRIMARY).font_size(16.0).text(icon))
+            .child(label().color(TEXT_PRIMARY).font_size(13.0).text(format!(
+                "Slot {}: {}",
+                index + 1,
+                label_text
+            )))
+            .child(flex_spacer())
+            .child({
+                let mut open = open;
+                rect()
+                    .padding((6.0, 12.0))
+                    .background(Color::from_rgb(60, 60, 72))
+                    .with_corner_radius(8.0)
+                    .on_press(move |_| {
+                        let next = if is_open { None } else { Some(index) };
+                        open.set(next);
+                    })
+                    .child(label().color(ACCENT).font_size(12.0).text(if is_open {
+                        "Cerrar"
+                    } else {
+                        "Cambiar"
+                    }))
+            }),
+    );
 
     if is_open {
         col = col.child(shortcut_options(index, open, tick));
@@ -421,10 +413,7 @@ fn option_row(
         .child(label().color(TEXT_PRIMARY).font_size(13.0).text(text))
 }
 
-fn plugins_section(
-    tick: State<u64>,
-    registry: Arc<Mutex<PluginRegistry>>,
-) -> impl IntoElement {
+fn plugins_section(tick: State<u64>, registry: Arc<Mutex<PluginRegistry>>) -> impl IntoElement {
     let schemas: Vec<RegistrySchemaEntry> = {
         let g = plugins::lock(&registry);
         g.all_schemas()
@@ -434,10 +423,7 @@ fn plugins_section(
         g.disabled_ids().map(ToOwned::to_owned).collect()
     };
 
-    let mut col = rect()
-        .vertical()
-        .spacing(14.0)
-        .child(install_row());
+    let mut col = rect().vertical().spacing(14.0).child(install_row());
 
     if schemas.is_empty() {
         col = col.child(empty_state());
@@ -609,12 +595,10 @@ fn plugin_card(
         );
 
     if !enabled {
-        col = col.child(
-            label()
-                .color(TEXT_MUTED)
-                .font_size(12.0)
-                .text("Plugin deshabilitado — los campos siguen editables para no perder cambios."),
-        );
+        col =
+            col.child(label().color(TEXT_MUTED).font_size(12.0).text(
+                "Plugin deshabilitado — los campos siguen editables para no perder cambios.",
+            ));
     }
 
     if entry.schema.fields.is_empty() {
@@ -704,9 +688,18 @@ fn render_control(
 ) -> Element {
     match field.kind.clone() {
         ConfigFieldKind::Bool => bool_control(plugin_id, role, field, current, tick, registry),
-        ConfigFieldKind::Int { min, max } => {
-            text_control(plugin_id, role, field, current, min, max, 0.0, tick, registry, FieldNumeric::Int)
-        }
+        ConfigFieldKind::Int { min, max } => text_control(
+            plugin_id,
+            role,
+            field,
+            current,
+            min,
+            max,
+            0.0,
+            tick,
+            registry,
+            FieldNumeric::Int,
+        ),
         ConfigFieldKind::Float { min, max, step } => text_control(
             plugin_id,
             role,
@@ -719,9 +712,15 @@ fn render_control(
             registry,
             FieldNumeric::Float,
         ),
-        ConfigFieldKind::String { max_len } => {
-            string_control(plugin_id, role, field, current, max_len as usize, tick, registry)
-        }
+        ConfigFieldKind::String { max_len } => string_control(
+            plugin_id,
+            role,
+            field,
+            current,
+            max_len as usize,
+            tick,
+            registry,
+        ),
         ConfigFieldKind::Enum { options } => {
             enum_control(plugin_id, role, field, current, options, tick, registry)
         }
@@ -790,11 +789,12 @@ fn text_control(
         let registry = registry.clone();
         move |next: String| {
             let value = match kind {
-                FieldNumeric::Int => next.parse::<i64>().ok().map(|n| n.clamp(min, max)).map(ConfigValue::Int),
-                FieldNumeric::Float => next
-                    .parse::<f64>()
+                FieldNumeric::Int => next
+                    .parse::<i64>()
                     .ok()
-                    .map(ConfigValue::Float),
+                    .map(|n| n.clamp(min, max))
+                    .map(ConfigValue::Int),
+                FieldNumeric::Float => next.parse::<f64>().ok().map(ConfigValue::Float),
             };
             if let Some(v) = value {
                 write_value(&registry, &plugin_id, role, &field_key, v, tick);
@@ -872,7 +872,11 @@ fn enum_control(
         } else {
             Color::from_rgb(50, 50, 60)
         };
-        let text_color = if is_selected { TEXT_PRIMARY } else { TEXT_MUTED };
+        let text_color = if is_selected {
+            TEXT_PRIMARY
+        } else {
+            TEXT_MUTED
+        };
         let pick_value = opt.value.clone();
         let plugin_id = plugin_id.clone();
         let field_key = field.key.clone();
@@ -948,7 +952,11 @@ fn color_control(
                 .with_corner_radius(6.0)
                 .border(Border::new().width(1.0).fill(BORDER)),
         )
-        .child(FormInput::new(hex).width(Size::px(140.0)).on_change(on_change))
+        .child(
+            FormInput::new(hex)
+                .width(Size::px(140.0))
+                .on_change(on_change),
+        )
         .into_element()
 }
 
@@ -964,8 +972,12 @@ fn read_value(
 ) -> ConfigValue {
     let g = plugins::lock(registry);
     let v = match role {
-        PluginRole::Source => g.get_source(plugin_id).and_then(|p| p.get_config(&field.key)),
-        PluginRole::Canvas => g.get_canvas(plugin_id).and_then(|p| p.get_config(&field.key)),
+        PluginRole::Source => g
+            .get_source(plugin_id)
+            .and_then(|p| p.get_config(&field.key)),
+        PluginRole::Canvas => g
+            .get_canvas(plugin_id)
+            .and_then(|p| p.get_config(&field.key)),
     };
     v.unwrap_or_else(|| field.default.clone())
 }
@@ -1049,7 +1061,10 @@ fn settings_row(
 }
 
 fn divider() -> impl IntoElement {
-    rect().width(Size::fill()).height(Size::px(1.0)).background(BORDER)
+    rect()
+        .width(Size::fill())
+        .height(Size::px(1.0))
+        .background(BORDER)
 }
 
 fn spacer(h: f32) -> impl IntoElement {

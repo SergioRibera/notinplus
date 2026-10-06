@@ -34,10 +34,7 @@ pub enum PluginRole {
 pub enum RegistryError {
     /// A plugin with the same `kind_id` is already registered under
     /// the same role.
-    DuplicateKindId {
-        role: PluginRole,
-        kind_id: String,
-    },
+    DuplicateKindId { role: PluginRole, kind_id: String },
 }
 
 impl std::fmt::Display for RegistryError {
@@ -284,11 +281,7 @@ mod tests {
     }
 
     impl StubSource {
-        fn new(
-            kind_id: &'static str,
-            label: &'static str,
-            extensions: &[&'static str],
-        ) -> Self {
+        fn new(kind_id: &'static str, label: &'static str, extensions: &[&'static str]) -> Self {
             Self {
                 kind_id,
                 label,
@@ -348,11 +341,7 @@ mod tests {
         fn get_config(&self, _: &str) -> Option<crate::config::ConfigValue> {
             None
         }
-        fn set_config(
-            &self,
-            _: &str,
-            _: crate::config::ConfigValue,
-        ) -> Result<(), ConfigError> {
+        fn set_config(&self, _: &str, _: crate::config::ConfigValue) -> Result<(), ConfigError> {
             Ok(())
         }
         fn creation_entries(&self) -> Vec<CreationEntry> {
@@ -420,11 +409,7 @@ mod tests {
         fn get_config(&self, _: &str) -> Option<crate::config::ConfigValue> {
             None
         }
-        fn set_config(
-            &self,
-            _: &str,
-            _: crate::config::ConfigValue,
-        ) -> Result<(), ConfigError> {
+        fn set_config(&self, _: &str, _: crate::config::ConfigValue) -> Result<(), ConfigError> {
             Ok(())
         }
         fn creation_entries(&self) -> Vec<CreationEntry> {
@@ -459,8 +444,11 @@ mod tests {
         let mut reg = PluginRegistry::new();
         reg.register_source(Arc::new(StubSource::new("io.notein.pdf", "PDF", &["pdf"])))
             .unwrap();
-        reg.register_canvas(Arc::new(StubCanvas::new("io.notein.canvas.stroke", "Stroke")))
-            .unwrap();
+        reg.register_canvas(Arc::new(StubCanvas::new(
+            "io.notein.canvas.stroke",
+            "Stroke",
+        )))
+        .unwrap();
         assert!(reg.get_source("io.notein.pdf").is_some());
         assert!(reg.get_canvas("io.notein.canvas.stroke").is_some());
         assert_eq!(reg.source_count(), 1);
@@ -487,8 +475,11 @@ mod tests {
     #[test]
     fn duplicate_canvas_kind_id_rejected() {
         let mut reg = PluginRegistry::new();
-        reg.register_canvas(Arc::new(StubCanvas::new("io.notein.canvas.stroke", "Stroke")))
-            .unwrap();
+        reg.register_canvas(Arc::new(StubCanvas::new(
+            "io.notein.canvas.stroke",
+            "Stroke",
+        )))
+        .unwrap();
         assert!(
             reg.register_canvas(Arc::new(StubCanvas::new(
                 "io.notein.canvas.stroke",
@@ -586,8 +577,11 @@ mod tests {
         let mut reg = PluginRegistry::new();
         reg.register_source(Arc::new(StubSource::new("io.notein.pdf", "PDF", &["pdf"])))
             .unwrap();
-        reg.register_canvas(Arc::new(StubCanvas::new("io.notein.canvas.stroke", "Stroke")))
-            .unwrap();
+        reg.register_canvas(Arc::new(StubCanvas::new(
+            "io.notein.canvas.stroke",
+            "Stroke",
+        )))
+        .unwrap();
 
         let schemas = reg.all_schemas();
         assert_eq!(schemas.len(), 2);

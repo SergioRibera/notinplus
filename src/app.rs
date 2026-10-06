@@ -92,12 +92,10 @@ const fn default_shape() -> BrushPreset {
 /// still highlights the shape tool when the user left the session on
 /// e.g. an arrow.
 fn palette_index_for(kind: BrushKind) -> Option<usize> {
-    PALETTE
-        .iter()
-        .position(|make| match (make().kind, kind) {
-            (BrushKind::Shape(_), BrushKind::Shape(_)) => true,
-            (a, b) => a == b,
-        })
+    PALETTE.iter().position(|make| match (make().kind, kind) {
+        (BrushKind::Shape(_), BrushKind::Shape(_)) => true,
+        (a, b) => a == b,
+    })
 }
 
 /// Debounced writer for global toolbar prefs. One worker per app process
@@ -156,22 +154,24 @@ pub fn run() {
     }
 
     #[cfg(not(target_os = "android"))]
-    launch(LaunchConfig::new().with_window(
-        WindowConfig::new(router)
-            .with_title("notinplus")
-            .with_window_handle(|window| {
-                // Freya hands us the live winit `Window` exactly once at
-                // creation. Upgrade the symbolic pen registration to a
-                // real handle attach so the Linux Wayland / XInput2
-                // backends can bind to the compositor; macOS / Windows
-                // find their native view through the same call.
-                if let Some(publisher) = crate::desktop::PEN_PUBLISHER.get() {
-                    if let Err(err) = publisher.register_window(crate::WINDOW_ID, &*window) {
-                        log::warn!("pen register_window failed: {err}");
+    launch(
+        LaunchConfig::new().with_window(
+            WindowConfig::new(router)
+                .with_title("notinplus")
+                .with_window_handle(|window| {
+                    // Freya hands us the live winit `Window` exactly once at
+                    // creation. Upgrade the symbolic pen registration to a
+                    // real handle attach so the Linux Wayland / XInput2
+                    // backends can bind to the compositor; macOS / Windows
+                    // find their native view through the same call.
+                    if let Some(publisher) = crate::desktop::PEN_PUBLISHER.get() {
+                        if let Err(err) = publisher.register_window(crate::WINDOW_ID, &*window) {
+                            log::warn!("pen register_window failed: {err}");
+                        }
                     }
-                }
-            }),
-    ));
+                }),
+        ),
+    );
 }
 
 fn router() -> impl IntoElement {
