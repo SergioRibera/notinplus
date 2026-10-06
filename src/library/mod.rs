@@ -767,6 +767,99 @@ impl Library {
         self.persist_workspaces().await
     }
 
+    /// Append a tab to the given pane and mark it active.
+    ///
+    /// # Errors
+    /// * [`LibraryError::NotFound`] when the workspace or pane is
+    ///   unknown.
+    pub async fn add_pane_tab(
+        &mut self,
+        workspace: WorkspaceId,
+        pane: PaneId,
+        item: ItemId,
+    ) -> Result<()> {
+        let now = now_millis();
+        let w = self
+            .workspaces
+            .workspace_mut(workspace)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
+        let leaf = w
+            .layout
+            .find_leaf_mut(pane)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
+        leaf.tabs.push(PaneTab { item });
+        leaf.active_tab = u32::try_from(leaf.tabs.len().saturating_sub(1)).unwrap_or(u32::MAX);
+        w.updated_at = now;
+        self.persist_workspaces().await
+    }
+
+    /// Close the tab at `index` within the given pane. The next tab
+    /// up (or down when the removed one was last) takes focus. A pane
+    /// with no tabs stays alive — close the pane itself to drop it.
+    ///
+    /// # Errors
+    /// * [`LibraryError::NotFound`] when the workspace or pane is
+    ///   unknown, or `index` is out of range.
+    pub async fn close_pane_tab(
+        &mut self,
+        workspace: WorkspaceId,
+        pane: PaneId,
+        index: usize,
+    ) -> Result<()> {
+        let now = now_millis();
+        let w = self
+            .workspaces
+            .workspace_mut(workspace)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
+        let leaf = w
+            .layout
+            .find_leaf_mut(pane)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
+        if index >= leaf.tabs.len() {
+            return Err(LibraryError::NotFound(NotFoundKind::Workspace(workspace)));
+        }
+        leaf.tabs.remove(index);
+        let new_len = leaf.tabs.len();
+        let active = leaf.active_tab as usize;
+        leaf.active_tab = if new_len == 0 {
+            0
+        } else if active >= new_len {
+            u32::try_from(new_len.saturating_sub(1)).unwrap_or(u32::MAX)
+        } else {
+            leaf.active_tab
+        };
+        w.updated_at = now;
+        self.persist_workspaces().await
+    }
+
+    /// Flip the active tab inside `pane`. Out-of-range `index` is
+    /// clamped to the last valid tab.
+    ///
+    /// # Errors
+    /// * [`LibraryError::NotFound`] when the workspace or pane is
+    ///   unknown.
+    pub async fn focus_pane_tab(
+        &mut self,
+        workspace: WorkspaceId,
+        pane: PaneId,
+        index: usize,
+    ) -> Result<()> {
+        let now = now_millis();
+        let w = self
+            .workspaces
+            .workspace_mut(workspace)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
+        let leaf = w
+            .layout
+            .find_leaf_mut(pane)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
+        let max = leaf.tabs.len().saturating_sub(1);
+        leaf.active_tab = u32::try_from(index.min(max)).unwrap_or(u32::MAX);
+        w.focused_pane = Some(pane);
+        w.updated_at = now;
+        self.persist_workspaces().await
+    }
+
     /// Focus the given pane. `None` clears focus (the shell routes
     /// input to no pane in particular — rare, mostly a test seam).
     ///
@@ -1029,6 +1122,41 @@ mod tests {
         // Nothing to collapse into — refusal keeps the workspace with
         // at least one leaf for the shell to render.
         assert!(!layout.remove_leaf(root));
+    }
+
+    #[test]
+    fn pane_add_close_focus_tab_direct() {
+        // Direct in-memory tab mutation mirrors the Library::*_pane_tab
+        // helpers without going through DataStoreClient.
+        let mut w = Workspace::fresh(WorkspaceId(1), "W".into(), None, 0);
+        let root = w.focused_pane.unwrap();
+
+        {
+            let leaf = w.layout.find_leaf_mut(root).unwrap();
+            leaf.tabs.push(PaneTab { item: ItemId(10) });
+            leaf.tabs.push(PaneTab { item: ItemId(11) });
+            leaf.active_tab = 1;
+        }
+
+        // Focus tab 0.
+        {
+            let leaf = w.layout.find_leaf_mut(root).unwrap();
+            leaf.active_tab = 0;
+            assert_eq!(leaf.active_tab, 0);
+        }
+
+        // Close tab 0 — the shift leaves one tab with index 0 active.
+        {
+            let leaf = w.layout.find_leaf_mut(root).unwrap();
+            leaf.tabs.remove(0);
+            let new_len = leaf.tabs.len();
+            if leaf.active_tab as usize >= new_len {
+                leaf.active_tab = u32::try_from(new_len.saturating_sub(1)).unwrap_or(0);
+            }
+            assert_eq!(leaf.tabs.len(), 1);
+            assert_eq!(leaf.tabs[0].item, ItemId(11));
+            assert_eq!(leaf.active_tab, 0);
+        }
     }
 
     #[test]
