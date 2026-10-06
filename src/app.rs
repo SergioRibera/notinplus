@@ -304,6 +304,10 @@ pub(crate) fn root() -> impl IntoElement {
     // need to see / write the same state.
     let selected_bookmark = use_state(|| Option::<crate::ids::BookmarkId>::None);
     let bookmark_body = use_state(String::new);
+    // Sidebar state: open flag + search query buffer + sort mode.
+    let sidebar_open = use_state(|| false);
+    let sidebar_query = use_state(String::new);
+    let sidebar_sort = use_state(|| crate::bookmark_ui::BookmarkSort::Recent);
 
     rect()
         .width(Size::fill())
@@ -314,6 +318,19 @@ pub(crate) fn root() -> impl IntoElement {
         .child(layers_panel(&board, layers_ver, pad))
         .child(mode_overlay(&board, mode, pad))
         .child(zoom_overlay(&board, zoom, pad))
+        .child(crate::bookmark_ui::bookmark_toggle_button(
+            sidebar_open,
+            pad,
+        ))
+        .child(crate::bookmark_ui::bookmark_sidebar(
+            &board,
+            sidebar_open,
+            selected_bookmark,
+            bookmark_body,
+            sidebar_query,
+            sidebar_sort,
+            pad,
+        ))
         .child(crate::bookmark_ui::bookmark_card_overlay(
             &board,
             selected_bookmark,
