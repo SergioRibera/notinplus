@@ -256,7 +256,7 @@ fn spawn_autosave_worker(id: ItemId, rx: flume::Receiver<()>) {
     spawn(async move {
         while rx.recv_async().await.is_ok() {
             while rx.try_recv().is_ok() {}
-            let doc_snapshot = {
+            let mut doc_snapshot = {
                 let board = Board::shared();
                 let guard = lock(&board);
                 guard.doc().clone()
@@ -264,7 +264,7 @@ fn spawn_autosave_worker(id: ItemId, rx: flume::Receiver<()>) {
             match crate::home::open_library().await {
                 Ok(handle) => {
                     let mut lib = handle.lock().await;
-                    if let Err(err) = lib.save_doc(id, &doc_snapshot).await {
+                    if let Err(err) = lib.save_doc(id, &mut doc_snapshot).await {
                         log::error!("autosave save_doc id={id:?}: {err}");
                     }
                 }

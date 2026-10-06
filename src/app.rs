@@ -326,7 +326,7 @@ fn back_overlay(board: &Arc<Mutex<Board>>, pad: EdgeInsets) -> impl IntoElement 
         .with_corner_radius(8.0)
         .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Back, e.area))
         .on_press(move |_| {
-            let doc_snapshot = {
+            let mut doc_snapshot = {
                 let guard = lock(&board);
                 guard.doc().clone()
             };
@@ -338,7 +338,7 @@ fn back_overlay(board: &Arc<Mutex<Board>>, pad: EdgeInsets) -> impl IntoElement 
                     match crate::home::open_library().await {
                         Ok(handle) => {
                             let mut lib = handle.lock().await;
-                            if let Err(err) = lib.save_doc(id, &doc_snapshot).await {
+                            if let Err(err) = lib.save_doc(id, &mut doc_snapshot).await {
                                 log::error!("save_doc: {err}");
                             }
                         }

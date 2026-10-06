@@ -74,9 +74,10 @@ fn ensure_dir(path: &std::path::Path) -> io::Result<()> {
 /// # Errors
 /// Bubbles up bincode encode errors as [`LibraryError::Codec`] and
 /// filesystem failures as [`LibraryError::Io`].
-pub fn write_doc(id: ItemId, doc: &Doc) -> Result<()> {
+pub fn write_doc(id: ItemId, doc: &mut Doc) -> Result<()> {
+    doc.maybe_compact_log();
     let bytes =
-        bincode::encode_to_vec(doc, CODEC).map_err(|e| LibraryError::Codec(e.to_string()))?;
+        bincode::encode_to_vec(&*doc, CODEC).map_err(|e| LibraryError::Codec(e.to_string()))?;
     write_blob(&doc_path(id), &bytes)
 }
 

@@ -534,7 +534,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`] / body I/O.
-    pub async fn save_doc(&mut self, id: ItemId, doc: &Doc) -> Result<()> {
+    pub async fn save_doc(&mut self, id: ItemId, doc: &mut Doc) -> Result<()> {
         if self.index.item(id).is_none() {
             return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
         }
