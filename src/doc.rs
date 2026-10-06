@@ -13,8 +13,10 @@ use std::path::Path;
 use bincode::config::{self, Configuration};
 
 use crate::brush::{BrushId, BrushPreset, Stroke};
-use crate::doc_op::OpRecord;
+use crate::doc_op::{DocOp, OpRecord};
+use crate::identity::global_actor;
 use crate::ids::StrokeId;
+use crate::op::OpId;
 
 const CODEC: Configuration = config::standard();
 
@@ -84,7 +86,120 @@ impl Default for Doc {
     }
 }
 
+/// Compact the log into the materialised snapshot once it crosses
+/// this threshold. Peers that are more than `SNAPSHOT_EVERY` ops
+/// behind cannot catch up from a diff after a compaction — Phase 10
+/// will formalise a sync-aware policy that only trims up to the
+/// slowest known peer's `OpId`.
+const SNAPSHOT_EVERY: usize = 512;
+
 impl Doc {
+    /// Stamp an `OpId`, mutate the materialised state via [`apply`],
+    /// and append the record to the log. Returns the stamped `OpId`
+    /// so callers that need to tag follow-up work (undo-stack entries
+    /// in Phase 1.3, bookmark backrefs in Phase 1.5) can keep the
+    /// identifier without a second lookup.
+    pub fn emit(&mut self, op: DocOp) -> OpId {
+        self.lamport = self.lamport.saturating_add(1);
+        let id = OpId {
+            lamport: self.lamport,
+            actor: global_actor(),
+        };
+        self.apply(&op);
+        self.log.push(OpRecord { id, op });
+        id
+    }
+
+    /// Apply a single op to the materialised state. Idempotent on the
+    /// shapes that matter (duplicate `PushStroke`, duplicate
+    /// `RegisterBrush`, repeated `SetActiveLayer` on the same id) so
+    /// Phase 10 replay from a shared log converges.
+    fn apply(&mut self, op: &DocOp) {
+        match op {
+            DocOp::RegisterBrush { preset } => {
+                if !self.brushes.iter().any(|b| b == preset) {
+                    self.brushes.push(preset.clone());
+                }
+            }
+            DocOp::PushStroke { layer_id, stroke } => {
+                if let Some(layer) = self.layers.iter_mut().find(|l| l.id == *layer_id)
+                    && !layer.strokes.iter().any(|s| s.id == stroke.id)
+                {
+                    layer.strokes.push(stroke.clone());
+                }
+            }
+            DocOp::RemoveStroke { id } => {
+                for layer in &mut self.layers {
+                    if let Some(pos) = layer.strokes.iter().position(|s| s.id == *id) {
+                        layer.strokes.remove(pos);
+                        return;
+                    }
+                }
+            }
+            DocOp::Clear => {
+                self.layers.clear();
+                self.layers.push(Layer::new(0, "Layer 1"));
+                self.active_layer = 0;
+                self.next_layer_id = 1;
+            }
+            DocOp::AddLayer { id, name } => {
+                if !self.layers.iter().any(|l| l.id == *id) {
+                    self.layers.push(Layer::new(*id, name.clone()));
+                }
+                self.next_layer_id = self.next_layer_id.max(id.saturating_add(1));
+            }
+            DocOp::RemoveLayer { id } => {
+                if self.layers.len() <= 1 {
+                    return;
+                }
+                let Some(idx) = self.layers.iter().position(|l| l.id == *id) else {
+                    return;
+                };
+                self.layers.remove(idx);
+                if self.active_layer == *id {
+                    let fallback = idx.min(self.layers.len().saturating_sub(1));
+                    self.active_layer = self.layers[fallback].id;
+                }
+            }
+            DocOp::SetActiveLayer { id } => {
+                if self.layers.iter().any(|l| l.id == *id) {
+                    self.active_layer = *id;
+                }
+            }
+            DocOp::SetLayerVisible { id, visible } => {
+                if let Some(l) = self.layers.iter_mut().find(|l| l.id == *id) {
+                    l.visible = *visible;
+                }
+            }
+            DocOp::SetLayerLocked { id, locked } => {
+                if let Some(l) = self.layers.iter_mut().find(|l| l.id == *id) {
+                    l.locked = *locked;
+                }
+            }
+            DocOp::SetLayerOpacity { id, opacity } => {
+                if let Some(l) = self.layers.iter_mut().find(|l| l.id == *id) {
+                    l.opacity = opacity.clamp(0.0, 1.0);
+                }
+            }
+        }
+    }
+
+    /// Drop the op log while keeping the materialised state and the
+    /// lamport counter. Future ops continue past the retained lamport
+    /// so causal ordering survives compaction.
+    pub fn compact_log(&mut self) {
+        self.log.clear();
+    }
+
+    /// Trim the log if it has grown past [`SNAPSHOT_EVERY`]. Invoked
+    /// before every persist so disk files never grow unbounded. Pure
+    /// in-memory — writes happen elsewhere.
+    pub fn maybe_compact_log(&mut self) {
+        if self.log.len() >= SNAPSHOT_EVERY {
+            self.compact_log();
+        }
+    }
+
     /// Insert `preset` if not already registered and return its
     /// [`BrushId`]. Deduping by structural equality keeps identical
     /// palette entries from bloating the registry when a doc is loaded
@@ -98,7 +213,7 @@ impl Doc {
             return BrushId(u16::try_from(idx).expect("brush registry overflow"));
         }
         let id = BrushId(u16::try_from(self.brushes.len()).expect("brush registry overflow"));
-        self.brushes.push(preset);
+        self.emit(DocOp::RegisterBrush { preset });
         id
     }
 
@@ -121,27 +236,29 @@ impl Doc {
     ) -> StrokeId {
         let id = StrokeId::new_v4();
         let layer_id = self.active_layer;
-        let layer = self
-            .layer_mut(layer_id)
-            .expect("active_layer must refer to an existing layer");
-        layer.strokes.push(Stroke {
+        assert!(
+            self.layer(layer_id).is_some(),
+            "active_layer must refer to an existing layer"
+        );
+        let stroke = Stroke {
             id,
             brush,
             color,
             cap_start: crate::brush::CapStyle::Round,
             cap_end: crate::brush::CapStyle::Round,
             points,
-        });
+        };
+        self.emit(DocOp::PushStroke { layer_id, stroke });
         id
     }
 
     /// Re-insert a pre-built stroke into `layer_id`, respecting its
     /// `id`. Returns `false` if the layer is missing.
     pub fn insert_stroke_into(&mut self, layer_id: u32, stroke: Stroke) -> bool {
-        let Some(layer) = self.layer_mut(layer_id) else {
+        if self.layer(layer_id).is_none() {
             return false;
-        };
-        layer.strokes.push(stroke);
+        }
+        self.emit(DocOp::PushStroke { layer_id, stroke });
         true
     }
 
@@ -168,28 +285,24 @@ impl Doc {
     /// Remove the stroke with `id` from whichever layer holds it.
     /// Preserves within-layer ordering.
     pub fn remove_stroke(&mut self, id: StrokeId) -> Option<Stroke> {
-        for layer in &mut self.layers {
-            if let Some(pos) = layer.strokes.iter().position(|s| s.id == id) {
-                return Some(layer.strokes.remove(pos));
-            }
-        }
-        None
+        let snapshot = self.find_stroke(id)?.clone();
+        self.emit(DocOp::RemoveStroke { id });
+        Some(snapshot)
     }
 
     /// Reset to a single empty layer.
     pub fn clear(&mut self) {
-        self.layers.clear();
-        self.layers.push(Layer::new(0, "Layer 1"));
-        self.active_layer = 0;
-        self.next_layer_id = 1;
+        self.emit(DocOp::Clear);
     }
 
     /// Add a new empty layer at the top of the paint order (topmost)
     /// and return its id.
     pub fn add_layer(&mut self, name: impl Into<String>) -> u32 {
         let id = self.next_layer_id;
-        self.next_layer_id = self.next_layer_id.wrapping_add(1);
-        self.layers.push(Layer::new(id, name));
+        self.emit(DocOp::AddLayer {
+            id,
+            name: name.into(),
+        });
         id
     }
 
@@ -201,13 +314,9 @@ impl Doc {
         if self.layers.len() <= 1 {
             return None;
         }
-        let idx = self.layers.iter().position(|l| l.id == id)?;
-        let removed = self.layers.remove(idx);
-        if self.active_layer == id {
-            let fallback = idx.min(self.layers.len().saturating_sub(1));
-            self.active_layer = self.layers[fallback].id;
-        }
-        Some(removed)
+        let snapshot = self.layer(id)?.clone();
+        self.emit(DocOp::RemoveLayer { id });
+        Some(snapshot)
     }
 
     #[must_use]
@@ -222,12 +331,39 @@ impl Doc {
     /// Set the active layer if `id` refers to an existing layer.
     /// Returns `true` on success.
     pub fn set_active_layer(&mut self, id: u32) -> bool {
-        if self.layer(id).is_some() {
-            self.active_layer = id;
-            true
-        } else {
-            false
+        if self.layer(id).is_none() {
+            return false;
         }
+        self.emit(DocOp::SetActiveLayer { id });
+        true
+    }
+
+    /// Toggle layer visibility. Returns `false` if `id` is unknown.
+    pub fn set_layer_visible(&mut self, id: u32, visible: bool) -> bool {
+        if self.layer(id).is_none() {
+            return false;
+        }
+        self.emit(DocOp::SetLayerVisible { id, visible });
+        true
+    }
+
+    /// Toggle layer edit lock. Returns `false` if `id` is unknown.
+    pub fn set_layer_locked(&mut self, id: u32, locked: bool) -> bool {
+        if self.layer(id).is_none() {
+            return false;
+        }
+        self.emit(DocOp::SetLayerLocked { id, locked });
+        true
+    }
+
+    /// Set layer paint-time opacity (clamped `[0.0, 1.0]`). Returns
+    /// `false` if `id` is unknown.
+    pub fn set_layer_opacity(&mut self, id: u32, opacity: f32) -> bool {
+        if self.layer(id).is_none() {
+            return false;
+        }
+        self.emit(DocOp::SetLayerOpacity { id, opacity });
+        true
     }
 
     /// Flat iterator over every committed stroke across all layers in
@@ -257,8 +393,9 @@ impl Doc {
 
     /// # Errors
     /// I/O or bincode encode failures.
-    pub fn save(&self, path: impl AsRef<Path>) -> io::Result<()> {
-        let bytes = bincode::encode_to_vec(self, CODEC)
+    pub fn save(&mut self, path: impl AsRef<Path>) -> io::Result<()> {
+        self.maybe_compact_log();
+        let bytes = bincode::encode_to_vec(&*self, CODEC)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         std::fs::write(path, bytes)
     }
@@ -277,6 +414,63 @@ impl Doc {
 mod tests {
     use super::*;
     use crate::brush::InkPoint;
+
+    #[test]
+    fn every_mutation_appends_an_op_with_monotonic_lamport() {
+        let mut d = Doc::default();
+        let before = d.lamport();
+        let bid = d.register_brush(BrushPreset::pen());
+        let sid = d.push_stroke(bid, [1, 2, 3, 4], vec![InkPoint::new(0.0, 0.0, 0, 0, 0)]);
+        let l2 = d.add_layer("L2");
+        d.set_active_layer(l2);
+        d.set_layer_visible(l2, false);
+        d.set_layer_locked(l2, true);
+        d.set_layer_opacity(l2, 0.5);
+        d.remove_stroke(sid);
+        d.remove_layer(l2);
+        d.clear();
+        // 9 ops: RegisterBrush, PushStroke, AddLayer, SetActiveLayer,
+        // SetLayerVisible, SetLayerLocked, SetLayerOpacity,
+        // RemoveStroke, RemoveLayer, Clear = 10. Count:
+        assert_eq!(d.log().len(), 10);
+        assert_eq!(d.lamport(), before + 10);
+        let lamports: Vec<u64> = d.log().iter().map(|r| r.id.lamport).collect();
+        assert!(lamports.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn apply_replay_rebuilds_state() {
+        use crate::doc_op::OpRecord;
+        let mut d = Doc::default();
+        let bid = d.register_brush(BrushPreset::marker());
+        d.push_stroke(bid, [10; 4], vec![InkPoint::new(0.0, 0.0, 0, 0, 0)]);
+        let l2 = d.add_layer("Layer 2");
+        d.set_active_layer(l2);
+        d.push_stroke(bid, [20; 4], vec![InkPoint::new(1.0, 2.0, 0, 0, 0)]);
+        d.set_layer_opacity(l2, 0.3);
+
+        let log: Vec<OpRecord> = d.log().to_vec();
+        let mut replay = Doc::default();
+        for record in &log {
+            replay.apply(&record.op);
+        }
+        assert_eq!(replay.brushes, d.brushes);
+        assert_eq!(replay.layers, d.layers);
+        assert_eq!(replay.active_layer, d.active_layer);
+    }
+
+    #[test]
+    fn compact_log_preserves_state_and_lamport() {
+        let mut d = Doc::default();
+        let bid = d.register_brush(BrushPreset::pen());
+        d.push_stroke(bid, [0; 4], vec![InkPoint::new(0.0, 0.0, 0, 0, 0)]);
+        let lamport_before = d.lamport();
+        let layers_before = d.layers.clone();
+        d.compact_log();
+        assert!(d.log().is_empty());
+        assert_eq!(d.lamport(), lamport_before);
+        assert_eq!(d.layers, layers_before);
+    }
 
     #[test]
     fn register_dedupes() {
