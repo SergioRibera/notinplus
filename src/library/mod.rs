@@ -68,11 +68,29 @@ impl Library {
         .await?;
         let index = index::load(&client).await?;
         let workspaces = index::load_workspaces(&client).await?;
-        Ok(Self {
+        let mut lib = Self {
             client,
             index,
             workspaces,
-        })
+        };
+        lib.ensure_default_workspace().await?;
+        Ok(lib)
+    }
+
+    /// Guarantee a non-empty [`WorkspaceIndex`]: the switcher assumes
+    /// at least one workspace exists and that `active` points at it.
+    /// Idempotent — a fresh install mints "Workspace 1" exactly once;
+    /// subsequent opens pass through.
+    async fn ensure_default_workspace(&mut self) -> Result<()> {
+        if !self.workspaces.workspaces.is_empty() {
+            if self.workspaces.active.is_none() {
+                self.workspaces.active = Some(self.workspaces.workspaces[0].id);
+                self.persist_workspaces().await?;
+            }
+            return Ok(());
+        }
+        self.create_workspace("Workspace 1", None).await?;
+        Ok(())
     }
 
     /// Borrow the raw index — convenient for UIs that render the full
