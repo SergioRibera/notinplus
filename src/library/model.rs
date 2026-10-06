@@ -118,11 +118,8 @@ pub struct PaneTab {
     pub item: ItemId,
 }
 
-/// Leaf-only pane for Phase 4.1 — carries its tab strip plus the index
-/// of the currently-visible tab. Phase 4.2 will swap the single
-/// `Workspace::pane` field for a recursive split tree whose leaves are
-/// this exact shape, so the on-disk encoding of a `Pane` will survive
-/// that migration unchanged.
+/// Leaf of a [`PaneLayout`] — carries its tab strip plus the index of
+/// the currently-visible tab.
 #[istmo::message]
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Default)]
 pub struct Pane {
@@ -133,24 +130,97 @@ pub struct Pane {
     pub active_tab: u32,
 }
 
+/// Direction the divider inside a [`PaneLayout::Split`] runs.
+///
+/// * `Horizontal` → the two children sit side-by-side; the divider is
+///   a vertical bar the user drags left/right.
+/// * `Vertical` → the two children stack top/bottom; the divider is a
+///   horizontal bar the user drags up/down.
+#[istmo::message]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum SplitOrientation {
+    Horizontal,
+    Vertical,
+}
+
+/// Recursive binary tree describing a workspace's pane layout. Every
+/// leaf is a [`Pane`]; every internal node is a split along one axis
+/// with the drag position stored as `ratio` (fraction of the parent's
+/// extent allocated to the first child, clamped to `0.05..=0.95` by
+/// the shell).
+///
+/// Not `Eq` / `Hash` because the `ratio` field is `f32`; the layout is
+/// compared structurally only via `PartialEq`.
+#[istmo::message]
+#[derive(Clone, PartialEq, Debug)]
+pub enum PaneLayout {
+    Leaf(Pane),
+    Split {
+        orientation: SplitOrientation,
+        /// Fraction of the parent extent given to `first` — the shell
+        /// clamps on load so a corrupted ratio cannot push the handle
+        /// off-screen.
+        ratio: f32,
+        first: Box<PaneLayout>,
+        second: Box<PaneLayout>,
+    },
+}
+
+impl PaneLayout {
+    /// Convenience: wrap an empty pane as the layout root. Default for
+    /// freshly minted workspaces.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self::Leaf(Pane::default())
+    }
+
+    /// Walk every leaf, yielding a reference to each pane in a stable
+    /// depth-first (first-then-second) order. The shell uses this to
+    /// hand ids to the renderer / event router.
+    pub fn leaves(&self) -> Vec<&Pane> {
+        let mut out = Vec::new();
+        self.collect_leaves(&mut out);
+        out
+    }
+
+    fn collect_leaves<'a>(&'a self, out: &mut Vec<&'a Pane>) {
+        match self {
+            Self::Leaf(p) => out.push(p),
+            Self::Split { first, second, .. } => {
+                first.collect_leaves(out);
+                second.collect_leaves(out);
+            }
+        }
+    }
+}
+
+impl Default for PaneLayout {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
 /// Persisted workspace. The user flips between workspaces from the
 /// shell switcher — each one keeps its own pane layout and tab set.
+///
+/// Not `Eq` / `Hash` because [`PaneLayout`] carries an `f32` ratio;
+/// comparisons through `PartialEq` only.
 #[istmo::message]
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Workspace {
     pub id: WorkspaceId,
     pub name: String,
     pub color: Option<Rgba>,
-    pub pane: Pane,
+    pub layout: PaneLayout,
     pub created_at: u64,
     pub updated_at: u64,
 }
 
-/// Blob persisted under `library.workspaces.v1`. Kept out of the main
+/// Blob persisted under `library.workspaces.v2`. Kept out of the main
 /// `LibraryIndex` so adding workspaces does not break the v1 index
 /// decode path on upgrading installs.
 #[istmo::message]
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct WorkspaceIndex {
     pub version: u32,
     pub next_workspace_id: u32,

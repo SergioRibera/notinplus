@@ -31,8 +31,8 @@ use istmo_data_store::{DataStoreClient, DataStoreConfig};
 pub use self::error::{LibraryError, NotFoundKind, Result};
 pub use self::model::{
     BackgroundStyle, Folder, FolderId, INDEX_VERSION, Item, ItemId, ItemKind, LibraryIndex, Pane,
-    PaneTab, ROOT_FOLDER, Rgba, Tag, TagId, WORKSPACE_INDEX_VERSION, Workspace, WorkspaceId,
-    WorkspaceIndex,
+    PaneLayout, PaneTab, ROOT_FOLDER, Rgba, SplitOrientation, Tag, TagId,
+    WORKSPACE_INDEX_VERSION, Workspace, WorkspaceId, WorkspaceIndex,
 };
 
 use crate::doc::Doc;
@@ -648,7 +648,7 @@ impl Library {
             id,
             name: name.to_owned(),
             color,
-            pane: Pane::default(),
+            layout: PaneLayout::empty(),
             created_at: now,
             updated_at: now,
         });
@@ -689,21 +689,24 @@ impl Library {
         self.persist_workspaces().await
     }
 
-    /// Replace the workspace's pane layout + tab set wholesale. The
-    /// shell calls this when the user opens / closes a tab or reorders
-    /// the layout — Phase 4.1 serialises the whole leaf pane each time
-    /// since the shape is small; 4.2 will revisit once the split tree
-    /// grows deeper.
+    /// Replace the workspace's pane layout wholesale. The shell calls
+    /// this on every tab / split change — the tree is small enough that
+    /// serialising the whole thing per edit stays cheap and avoids a
+    /// patch protocol until CRDT sync lands.
     ///
     /// # Errors
     /// [`LibraryError::NotFound`].
-    pub async fn set_workspace_pane(&mut self, id: WorkspaceId, pane: Pane) -> Result<()> {
+    pub async fn set_workspace_layout(
+        &mut self,
+        id: WorkspaceId,
+        layout: PaneLayout,
+    ) -> Result<()> {
         let now = now_millis();
         let w = self
             .workspaces
             .workspace_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(id)))?;
-        w.pane = pane;
+        w.layout = layout;
         w.updated_at = now;
         self.persist_workspaces().await
     }
@@ -888,13 +891,23 @@ mod tests {
         use bincode::config;
         let mut idx = WorkspaceIndex::default();
         let a = idx.alloc_workspace_id();
+        let leaf = PaneLayout::Leaf(Pane {
+            tabs: vec![PaneTab { item: ItemId(42) }, PaneTab { item: ItemId(7) }],
+            active_tab: 1,
+        });
+        let right = PaneLayout::Leaf(Pane {
+            tabs: vec![PaneTab { item: ItemId(99) }],
+            active_tab: 0,
+        });
         idx.workspaces.push(Workspace {
             id: a,
             name: "Draft".into(),
             color: Some([200, 50, 50, 255]),
-            pane: Pane {
-                tabs: vec![PaneTab { item: ItemId(42) }, PaneTab { item: ItemId(7) }],
-                active_tab: 1,
+            layout: PaneLayout::Split {
+                orientation: SplitOrientation::Horizontal,
+                ratio: 0.6,
+                first: Box::new(leaf),
+                second: Box::new(right),
             },
             created_at: 10,
             updated_at: 20,
@@ -904,6 +917,7 @@ mod tests {
         let (decoded, _) =
             bincode::decode_from_slice::<WorkspaceIndex, _>(&bytes, config::standard()).unwrap();
         assert_eq!(idx, decoded);
+        assert_eq!(decoded.workspaces[0].layout.leaves().len(), 2);
     }
 
     #[test]
