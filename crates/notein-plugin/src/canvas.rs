@@ -5,23 +5,30 @@
 //! plugin may run concurrently — the host disambiguates by instance
 //! handle.
 //!
-//! Bookmark payloads cross as bincode-encoded `Vec<u8>` so the plugin
-//! surface stays independent of the concrete `Bookmark` struct that
-//! lives in the host crate today. The sdk crate (Phase 2.2) re-exports
-//! the shared bookmark model so plugin authors can decode / encode
-//! these payloads without rolling their own.
+//! Shared types ([`Bookmark`], [`crate::BookmarkId`], [`InputEvent`])
+//! cross the trait boundary as typed Rust values — zero encode /
+//! decode on the hot path. Payloads that only the plugin itself
+//! understands (CRDT op bytes in [`CanvasKind::apply_remote_op`],
+//! snapshot bytes from [`CanvasKind::serialize_snapshot`], the item's
+//! stored bytes in [`CanvasKind::open`]) stay opaque `Vec<u8>` /
+//! `&[u8]` — the shell is pure transport for those.
+//!
+//! Phase 3 adds a stabby wrapper layer for dynamic plugins that need
+//! ABI stability across dylib boundaries. That layer serializes the
+//! typed values at the FFI crossing only — the in-process trait kept
+//! here never pays that cost.
 //!
 //! [`FrameCtxHandle`] is an opaque pointer to the host's active draw
-//! surface. The host side wraps a Skia canvas handle; downstream
-//! plugins unwrap it via a surface-API trait the sdk will expose.
-//! Keep the ABI side thin: raw ptr + length only.
+//! surface bundled with its physical dimensions and scale factor. The
+//! host side wraps a Skia canvas handle; downstream plugins unwrap it
+//! via a surface-API trait the sdk will expose.
 
 use bincode::{Decode, Encode};
 
 use crate::config::{ConfigSchema, ConfigValue};
 use crate::creation::{CreationEntry, ItemCreationResult};
 use crate::error::{CanvasError, ConfigError, CreationError};
-use crate::bookmark::WorldPoint;
+use crate::bookmark::{Bookmark, WorldPoint};
 use crate::ids::BookmarkId;
 
 /// Opaque handle to the host's current draw context.
@@ -121,18 +128,16 @@ pub trait CanvasKind: Send + Sync + std::fmt::Debug {
     /// Create a bookmark at `at`. Returns the new id, or `None` if the
     /// canvas does not support bookmarks.
     fn create_bookmark(&self, instance: u64, at: WorldPoint) -> Option<BookmarkId>;
-    /// Bincoded `Vec<Bookmark>` — opaque to the shell; decoded via sdk
-    /// helpers on the host side.
-    fn list_bookmarks(&self, instance: u64) -> Vec<u8>;
-    /// Replace the bookmark whose id matches the payload. Payload is a
-    /// bincoded `Bookmark`.
-    fn update_bookmark(&self, instance: u64, bookmark_bytes: &[u8]);
+    fn list_bookmarks(&self, instance: u64) -> Vec<Bookmark>;
+    fn update_bookmark(&self, instance: u64, bookmark: Bookmark);
     fn delete_bookmark(&self, instance: u64, id: BookmarkId);
     fn navigate_to_bookmark(&self, instance: u64, id: BookmarkId);
 
-    /// CRDT snapshot of the instance state (plugin-private encoding).
+    /// CRDT snapshot of the instance state. Plugin-private encoding —
+    /// the shell stores + ships the bytes but never decodes them.
     fn serialize_snapshot(&self, instance: u64) -> Vec<u8>;
-    /// Apply one remote op. Op bytes are plugin-private.
+    /// Apply one remote op. Op bytes are plugin-private; the shell is
+    /// pure CRDT transport.
     fn apply_remote_op(&self, instance: u64, op: &[u8]);
 
     fn config_schema(&self) -> ConfigSchema;

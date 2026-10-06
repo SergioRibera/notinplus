@@ -13,12 +13,18 @@
 //! the shell: [`ConfigSchema`] for the generic settings panel and
 //! [`CreationEntry`] for the home FAB `+` menu.
 //!
-//! Bookmark payloads cross the trait boundary as opaque bincode blobs
-//! (`Vec<u8>` arguments / returns) encoded from the shared
-//! [`Bookmark`] / [`bookmark::SourceRef`] types defined here — only
-//! identifiers and primitives appear in the ABI surface. Plugin
-//! authors should pull `notein-sdk` and use its codec helpers rather
-//! than hand-rolling the bincode calls.
+//! Shared types ([`Bookmark`], [`BookmarkId`], [`InputEvent`],
+//! `ConfigSchema`, …) cross the trait boundary as typed Rust values —
+//! no bincode encode / decode on the hot path. Only payloads whose
+//! shape is private to the plugin (CRDT op bytes, snapshots, stored
+//! item bytes, source anchors) stay opaque `Vec<u8>` / `&[u8]`; the
+//! shell is pure transport for those.
+//!
+//! Phase 3 adds a stabby wrapper around this trait for dynamic
+//! plugins loaded via dlopen — the wrapper serializes the typed
+//! values at the FFI boundary only. In-process built-in plugins
+//! (Phase 2.3–2.7) consume the trait directly through `Arc<dyn
+//! CanvasKind>` with zero codec overhead.
 
 pub mod bookmark;
 pub mod canvas;

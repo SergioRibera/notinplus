@@ -1,11 +1,18 @@
-//! Bincode codec for the opaque `Vec<u8>` payloads that cross the
-//! plugin trait boundary.
+//! Bincode codec with a fixed config shared between the shell and
+//! every plugin.
 //!
-//! The shell and plugin must agree exactly on which encoder config
-//! they use. This module pins
-//! [`bincode::config::standard()`] on both sides and exposes short
-//! helpers so neither side has to repeat the choice at every call
-//! site.
+//! Not used on the trait boundary itself — shared types travel typed
+//! (see `notein_plugin::CanvasKind::list_bookmarks` etc). These
+//! helpers are for:
+//!
+//! - **Persistence** — plugins that store their own state on disk.
+//! - **Bundle export** — `.notein` packaging in Phase 9.
+//! - **Phase 3 FFI adapter** — the dylib wrapper serializes typed
+//!   values here just before the stabby boundary.
+//! - **Phase 10 CRDT op shipping** — `apply_remote_op` payloads.
+//!
+//! The config is pinned to [`bincode::config::standard()`] once so
+//! neither side has to repeat the choice at every call site.
 
 use bincode::config::{Configuration, standard};
 use bincode::error::{DecodeError, EncodeError};
