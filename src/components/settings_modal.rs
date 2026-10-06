@@ -157,7 +157,7 @@ fn content(
     let current = *section.read();
     let body = match current {
         Section::Account => account_section().into_element(),
-        Section::General => general_section().into_element(),
+        Section::General => general_section(tick).into_element(),
         Section::Plugins => plugins_section(tick, registry).into_element(),
     };
     rect()
@@ -229,11 +229,11 @@ fn account_section() -> impl IntoElement {
         )
 }
 
-fn general_section() -> impl IntoElement {
+fn general_section(tick: State<u64>) -> impl IntoElement {
     let board = Board::shared();
-    let (mode, _) = {
+    let mode = {
         let g = crate::canvas::lock(&board);
-        (g.input_mode(), ())
+        g.input_mode()
     };
     let is_pan = matches!(mode, InputMode::Pan);
     let toggle = {
@@ -256,6 +256,169 @@ fn general_section() -> impl IntoElement {
             },
             toggle_switch(is_pan, toggle),
         ))
+        .child(shortcut_picker_card(tick))
+}
+
+// ---------------------------------------------------------------------------
+// FAB shortcut picker (General)
+// ---------------------------------------------------------------------------
+
+fn shortcut_picker_card(tick: State<u64>) -> impl IntoElement {
+    let open = use_state(|| Option::<usize>::None);
+    let slots = crate::plugins::fab_shortcut_slots();
+    rect()
+        .vertical()
+        .width(Size::fill())
+        .padding((18.0, 20.0))
+        .spacing(10.0)
+        .background(CARD_BG)
+        .with_corner_radius(14.0)
+        .child(
+            label()
+                .color(TEXT_PRIMARY)
+                .font_size(14.0)
+                .text("Accesos directos del lienzo"),
+        )
+        .child(
+            label()
+                .color(TEXT_MUTED)
+                .font_size(12.0)
+                .text("Los dos botones arriba del `+` disparan la acción que elijas de cualquier plugin."),
+        )
+        .child(shortcut_slot_row(0, slots[0].as_ref(), open, tick))
+        .child(shortcut_slot_row(1, slots[1].as_ref(), open, tick))
+}
+
+fn shortcut_slot_row(
+    index: usize,
+    slot: Option<&crate::plugin_settings::FabShortcut>,
+    open: State<Option<usize>>,
+    tick: State<u64>,
+) -> impl IntoElement {
+    let resolved = slot.and_then(crate::plugins::resolve_shortcut);
+    let is_open = *open.read() == Some(index);
+    let label_text = resolved
+        .as_ref()
+        .map_or_else(|| "(vacío)".to_owned(), |e| e.entry.label.clone());
+    let icon = resolved
+        .as_ref()
+        .map_or_else(|| "·".to_owned(), |e| e.entry.icon.clone());
+
+    let mut col = rect()
+        .vertical()
+        .width(Size::fill())
+        .spacing(6.0)
+        .child(
+            rect()
+                .horizontal()
+                .width(Size::fill())
+                .padding((10.0, 12.0))
+                .spacing(10.0)
+                .background(Color::from_rgb(46, 46, 56))
+                .with_corner_radius(10.0)
+                .cross_align(Alignment::Center)
+                .child(label().color(TEXT_PRIMARY).font_size(16.0).text(icon))
+                .child(
+                    label()
+                        .color(TEXT_PRIMARY)
+                        .font_size(13.0)
+                        .text(format!("Slot {}: {}", index + 1, label_text)),
+                )
+                .child(flex_spacer())
+                .child({
+                    let mut open = open;
+                    rect()
+                        .padding((6.0, 12.0))
+                        .background(Color::from_rgb(60, 60, 72))
+                        .with_corner_radius(8.0)
+                        .on_press(move |_| {
+                            let next = if is_open { None } else { Some(index) };
+                            open.set(next);
+                        })
+                        .child(
+                            label()
+                                .color(ACCENT)
+                                .font_size(12.0)
+                                .text(if is_open { "Cerrar" } else { "Cambiar" }),
+                        )
+                }),
+        );
+
+    if is_open {
+        col = col.child(shortcut_options(index, open, tick));
+    }
+    col
+}
+
+fn shortcut_options(
+    index: usize,
+    open: State<Option<usize>>,
+    tick: State<u64>,
+) -> impl IntoElement {
+    let mut options = rect()
+        .vertical()
+        .width(Size::fill())
+        .padding((8.0, 10.0))
+        .spacing(4.0)
+        .background(Color::from_rgb(26, 26, 32))
+        .with_corner_radius(10.0);
+
+    // "Vacío" (clear) first.
+    options = options.child(option_row(
+        "·".to_owned(),
+        "(vacío — mostrar bubble gris)".to_owned(),
+        {
+            let mut open = open;
+            let mut tick = tick;
+            move |_: Event<PressEventData>| {
+                crate::plugins::set_fab_shortcut(index, None);
+                open.set(None);
+                let next = *tick.read() + 1;
+                tick.set(next);
+            }
+        },
+    ));
+
+    for entry in crate::plugins::available_entries() {
+        let shortcut = crate::plugin_settings::FabShortcut {
+            plugin_id: entry.plugin_id.clone(),
+            entry_id: entry.entry.id.clone(),
+        };
+        let label_text = match entry.source {
+            crate::plugins::EntrySource::ShellBuiltin => entry.entry.label.clone(),
+            crate::plugins::EntrySource::Plugin(_) => {
+                format!("{}  ·  {}", entry.entry.label, entry.plugin_label)
+            }
+        };
+        let icon = entry.entry.icon.clone();
+        options = options.child(option_row(icon, label_text, {
+            let mut open = open;
+            let mut tick = tick;
+            move |_: Event<PressEventData>| {
+                crate::plugins::set_fab_shortcut(index, Some(shortcut.clone()));
+                open.set(None);
+                let next = *tick.read() + 1;
+                tick.set(next);
+            }
+        }));
+    }
+    options
+}
+
+fn option_row(
+    icon: String,
+    text: String,
+    on_press: impl FnMut(Event<PressEventData>) + 'static,
+) -> impl IntoElement {
+    rect()
+        .horizontal()
+        .width(Size::fill())
+        .padding((6.0, 10.0))
+        .spacing(10.0)
+        .cross_align(Alignment::Center)
+        .on_press(on_press)
+        .child(label().color(TEXT_PRIMARY).font_size(14.0).text(icon))
+        .child(label().color(TEXT_PRIMARY).font_size(13.0).text(text))
 }
 
 fn plugins_section(
