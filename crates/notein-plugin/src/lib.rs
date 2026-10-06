@@ -32,6 +32,7 @@ pub mod config;
 pub mod creation;
 pub mod error;
 pub mod ids;
+pub mod registry;
 pub mod source;
 
 pub use bookmark::{Bookmark, Rgba, SourceRef, StrokeAnchor, TimestampMs, WorldPoint};
@@ -40,4 +41,7 @@ pub use config::{ConfigEnumOption, ConfigField, ConfigFieldKind, ConfigSchema, C
 pub use creation::{CreationCategory, CreationEntry, CreationKind, ItemCreationResult};
 pub use error::{CanvasError, ConfigError, CreationError, SourceError};
 pub use ids::{BookmarkId, StrokeId};
+pub use registry::{
+    PluginRegistry, PluginRole, RegistryCreationEntry, RegistryError, RegistrySchemaEntry,
+};
 pub use source::{AnchorView, SearchHit, Selection, Source, Tile, TileRequest};
