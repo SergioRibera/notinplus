@@ -30,6 +30,7 @@ pub mod plugins;
 pub mod prefs;
 pub mod render;
 pub mod route;
+pub mod shell_builtins;
 pub mod spatial;
 pub mod ui_mask;
 pub mod undo;

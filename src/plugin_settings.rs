@@ -46,6 +46,31 @@ pub struct PluginSettings {
     /// Last schema version observed when the plugin's settings were
     /// written. The loader uses it to drive alias migrations.
     pub schema_versions: Vec<PluginSchemaVersion>,
+    /// Home FAB shortcut buttons (the two bubbles above `+`). Empty =
+    /// never touched → shell applies defaults. Length 2 = honor
+    /// verbatim; `FabShortcutSlot::Empty` is an explicit "no shortcut
+    /// here", distinct from "user never configured".
+    pub fab_shortcuts: Vec<FabShortcutSlot>,
+}
+
+/// A home-FAB shortcut: references one creation entry by its
+/// `(plugin_id, entry_id)` pair. `plugin_id` can be a real plugin or
+/// the pseudo [`crate::shell_builtins::BUILTIN_PLUGIN_ID`].
+#[istmo::message]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FabShortcut {
+    pub plugin_id: String,
+    pub entry_id: String,
+}
+
+/// Slot shape for persisted shortcut picks.
+#[istmo::message]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FabShortcutSlot {
+    /// User explicitly cleared this slot — render an empty circle.
+    Empty,
+    /// User picked a specific entry.
+    Entry(FabShortcut),
 }
 
 #[istmo::message]
@@ -143,6 +168,7 @@ pub fn collect(registry: &PluginRegistry) -> PluginSettings {
         disabled: registry.disabled_ids().map(ToOwned::to_owned).collect(),
         values: Vec::new(),
         schema_versions: Vec::new(),
+        fab_shortcuts: Vec::new(),
     };
     for schema_entry in registry.all_schemas() {
         out.schema_versions.push(PluginSchemaVersion {
