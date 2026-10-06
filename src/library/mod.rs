@@ -30,8 +30,9 @@ use istmo_data_store::{DataStoreClient, DataStoreConfig};
 
 pub use self::error::{LibraryError, NotFoundKind, Result};
 pub use self::model::{
-    BackgroundStyle, Folder, FolderId, INDEX_VERSION, Item, ItemId, ItemKind, LibraryIndex,
-    ROOT_FOLDER, Rgba, Tag, TagId,
+    BackgroundStyle, Folder, FolderId, INDEX_VERSION, Item, ItemId, ItemKind, LibraryIndex, Pane,
+    PaneTab, ROOT_FOLDER, Rgba, Tag, TagId, WORKSPACE_INDEX_VERSION, Workspace, WorkspaceId,
+    WorkspaceIndex,
 };
 
 use crate::doc::Doc;
@@ -49,6 +50,7 @@ use crate::doc::Doc;
 pub struct Library {
     client: DataStoreClient,
     index: LibraryIndex,
+    workspaces: WorkspaceIndex,
 }
 
 impl Library {
@@ -65,7 +67,12 @@ impl Library {
         )
         .await?;
         let index = index::load(&client).await?;
-        Ok(Self { client, index })
+        let workspaces = index::load_workspaces(&client).await?;
+        Ok(Self {
+            client,
+            index,
+            workspaces,
+        })
     }
 
     /// Borrow the raw index — convenient for UIs that render the full
@@ -579,10 +586,154 @@ impl Library {
         bodies::read_pdf(id)
     }
 
+    // ---------- Workspaces ---------------------------------------------
+
+    /// Borrow the raw workspace index.
+    #[must_use]
+    pub const fn workspaces_index(&self) -> &WorkspaceIndex {
+        &self.workspaces
+    }
+
+    /// Every persisted workspace, creation order.
+    #[must_use]
+    pub fn workspaces(&self) -> &[Workspace] {
+        &self.workspaces.workspaces
+    }
+
+    /// Look up a workspace by id.
+    #[must_use]
+    pub fn workspace(&self, id: WorkspaceId) -> Option<&Workspace> {
+        self.workspaces.workspace(id)
+    }
+
+    /// The workspace the user last had focus on, or `None` when the
+    /// index is empty.
+    #[must_use]
+    pub fn active_workspace(&self) -> Option<WorkspaceId> {
+        self.workspaces.active
+    }
+
+    /// Create a new empty workspace. Becomes active automatically when
+    /// the index previously had no active entry.
+    ///
+    /// # Errors
+    /// Runtime / data-store / codec failures surfacing through
+    /// [`LibraryError`].
+    pub async fn create_workspace(
+        &mut self,
+        name: &str,
+        color: Option<Rgba>,
+    ) -> Result<WorkspaceId> {
+        let now = now_millis();
+        let id = self.workspaces.alloc_workspace_id();
+        self.workspaces.workspaces.push(Workspace {
+            id,
+            name: name.to_owned(),
+            color,
+            pane: Pane::default(),
+            created_at: now,
+            updated_at: now,
+        });
+        if self.workspaces.active.is_none() {
+            self.workspaces.active = Some(id);
+        }
+        self.persist_workspaces().await?;
+        Ok(id)
+    }
+
+    /// # Errors
+    /// [`LibraryError::NotFound`].
+    pub async fn rename_workspace(&mut self, id: WorkspaceId, name: &str) -> Result<()> {
+        let now = now_millis();
+        let w = self
+            .workspaces
+            .workspace_mut(id)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(id)))?;
+        name.clone_into(&mut w.name);
+        w.updated_at = now;
+        self.persist_workspaces().await
+    }
+
+    /// # Errors
+    /// [`LibraryError::NotFound`].
+    pub async fn set_workspace_color(
+        &mut self,
+        id: WorkspaceId,
+        color: Option<Rgba>,
+    ) -> Result<()> {
+        let now = now_millis();
+        let w = self
+            .workspaces
+            .workspace_mut(id)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(id)))?;
+        w.color = color;
+        w.updated_at = now;
+        self.persist_workspaces().await
+    }
+
+    /// Replace the workspace's pane layout + tab set wholesale. The
+    /// shell calls this when the user opens / closes a tab or reorders
+    /// the layout — Phase 4.1 serialises the whole leaf pane each time
+    /// since the shape is small; 4.2 will revisit once the split tree
+    /// grows deeper.
+    ///
+    /// # Errors
+    /// [`LibraryError::NotFound`].
+    pub async fn set_workspace_pane(&mut self, id: WorkspaceId, pane: Pane) -> Result<()> {
+        let now = now_millis();
+        let w = self
+            .workspaces
+            .workspace_mut(id)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(id)))?;
+        w.pane = pane;
+        w.updated_at = now;
+        self.persist_workspaces().await
+    }
+
+    /// Flip the active workspace. `None` clears the selection — the
+    /// shell uses that to force the switcher to its empty state after
+    /// deleting the last workspace.
+    ///
+    /// # Errors
+    /// [`LibraryError::NotFound`] when `id` is not in the index.
+    pub async fn set_active_workspace(&mut self, id: Option<WorkspaceId>) -> Result<()> {
+        if let Some(wid) = id
+            && self.workspaces.workspace(wid).is_none()
+        {
+            return Err(LibraryError::NotFound(NotFoundKind::Workspace(wid)));
+        }
+        self.workspaces.active = id;
+        self.persist_workspaces().await
+    }
+
+    /// Remove a workspace. If it was the active one, the active
+    /// pointer falls back to the first remaining workspace (or `None`
+    /// when the list is now empty).
+    ///
+    /// # Errors
+    /// [`LibraryError::NotFound`].
+    pub async fn delete_workspace(&mut self, id: WorkspaceId) -> Result<()> {
+        let pos = self
+            .workspaces
+            .workspaces
+            .iter()
+            .position(|w| w.id == id)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(id)))?;
+        self.workspaces.workspaces.remove(pos);
+        if self.workspaces.active == Some(id) {
+            self.workspaces.active = self.workspaces.workspaces.first().map(|w| w.id);
+        }
+        self.persist_workspaces().await
+    }
+
     // ---------- Internal helpers ---------------------------------------
 
     async fn persist(&self) -> Result<()> {
         index::save(&self.client, &self.index).await
+    }
+
+    async fn persist_workspaces(&self) -> Result<()> {
+        index::save_workspaces(&self.client, &self.workspaces).await
     }
 
     fn ensure_folder_target(&self, id: FolderId) -> Result<()> {
@@ -710,6 +861,38 @@ mod tests {
         let mut idx = LibraryIndex::default();
         let a = idx.alloc_item_id();
         let b = idx.alloc_item_id();
+        assert_ne!(a, b);
+        assert!(b.0 > a.0);
+    }
+
+    #[test]
+    fn workspace_index_round_trip() {
+        use bincode::config;
+        let mut idx = WorkspaceIndex::default();
+        let a = idx.alloc_workspace_id();
+        idx.workspaces.push(Workspace {
+            id: a,
+            name: "Draft".into(),
+            color: Some([200, 50, 50, 255]),
+            pane: Pane {
+                tabs: vec![PaneTab { item: ItemId(42) }, PaneTab { item: ItemId(7) }],
+                active_tab: 1,
+            },
+            created_at: 10,
+            updated_at: 20,
+        });
+        idx.active = Some(a);
+        let bytes = bincode::encode_to_vec(&idx, config::standard()).unwrap();
+        let (decoded, _) =
+            bincode::decode_from_slice::<WorkspaceIndex, _>(&bytes, config::standard()).unwrap();
+        assert_eq!(idx, decoded);
+    }
+
+    #[test]
+    fn workspace_ids_never_reuse() {
+        let mut idx = WorkspaceIndex::default();
+        let a = idx.alloc_workspace_id();
+        let b = idx.alloc_workspace_id();
         assert_ne!(a, b);
         assert!(b.0 > a.0);
     }

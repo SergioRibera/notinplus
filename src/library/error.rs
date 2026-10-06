@@ -8,7 +8,7 @@ use std::io;
 use istmo::IstmoError;
 use istmo_data_store::DataStoreError;
 
-use super::model::{FolderId, ItemId, TagId};
+use super::model::{FolderId, ItemId, TagId, WorkspaceId};
 
 /// One-off result alias so call sites don't have to spell the error
 /// type on every method.
@@ -46,6 +46,7 @@ pub enum NotFoundKind {
     Folder(FolderId),
     Item(ItemId),
     Tag(TagId),
+    Workspace(WorkspaceId),
 }
 
 impl fmt::Display for LibraryError {
@@ -59,6 +60,7 @@ impl fmt::Display for LibraryError {
                 NotFoundKind::Folder(id) => write!(f, "folder {} not found", id.0),
                 NotFoundKind::Item(id) => write!(f, "item {} not found", id.0),
                 NotFoundKind::Tag(id) => write!(f, "tag {} not found", id.0),
+                NotFoundKind::Workspace(id) => write!(f, "workspace {} not found", id.0),
             },
             Self::Cycle => f.write_str("folder move would form a cycle"),
             Self::RootImmutable => f.write_str("root folder is read-only"),

@@ -10,7 +10,7 @@ use bincode::config::{self, Configuration};
 use istmo_data_store::DataStoreClient;
 
 use super::error::{LibraryError, Result};
-use super::model::LibraryIndex;
+use super::model::{LibraryIndex, WorkspaceIndex};
 
 const CODEC: Configuration = config::standard();
 
@@ -18,6 +18,10 @@ const CODEC: Configuration = config::standard();
 /// track breaking schema changes so a stale key can be detected /
 /// migrated instead of silently misread.
 pub const INDEX_KEY: &str = "library.index.v1";
+
+/// data-store key for the [`WorkspaceIndex`] blob. Kept on its own key
+/// so introducing workspaces does not force a bump of [`INDEX_KEY`].
+pub const WORKSPACES_KEY: &str = "library.workspaces.v1";
 
 /// data-store namespace used for the library. Matches the app id
 /// declared in `istmo.toml` so backends can partition per-app data
@@ -48,5 +52,33 @@ pub async fn save(client: &DataStoreClient, snapshot: &LibraryIndex) -> Result<(
     let bytes =
         bincode::encode_to_vec(snapshot, CODEC).map_err(|e| LibraryError::Codec(e.to_string()))?;
     client.set_bytes(INDEX_KEY.to_owned(), bytes).await?;
+    Ok(())
+}
+
+/// Fetch the persisted workspace index or return a fresh default.
+///
+/// # Errors
+/// Runtime / data-store / codec failures.
+pub async fn load_workspaces(client: &DataStoreClient) -> Result<WorkspaceIndex> {
+    let raw = client.get_bytes(WORKSPACES_KEY.to_owned()).await?;
+    let Some(bytes) = raw else {
+        return Ok(WorkspaceIndex::default());
+    };
+    let (index, _) = bincode::decode_from_slice::<WorkspaceIndex, _>(&bytes, CODEC)
+        .map_err(|e| LibraryError::Codec(e.to_string()))?;
+    Ok(index)
+}
+
+/// Overwrite the persisted workspace index.
+///
+/// # Errors
+/// Runtime / data-store / codec failures.
+pub async fn save_workspaces(
+    client: &DataStoreClient,
+    snapshot: &WorkspaceIndex,
+) -> Result<()> {
+    let bytes =
+        bincode::encode_to_vec(snapshot, CODEC).map_err(|e| LibraryError::Codec(e.to_string()))?;
+    client.set_bytes(WORKSPACES_KEY.to_owned(), bytes).await?;
     Ok(())
 }

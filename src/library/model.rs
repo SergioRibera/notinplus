@@ -28,6 +28,11 @@ pub struct FolderId(pub u64);
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct TagId(pub u32);
 
+/// Stable identifier for a persisted workspace session.
+#[istmo::message]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct WorkspaceId(pub u32);
+
 /// sRGB colour swatch. Alpha included so future themes can honour
 /// user-defined translucency.
 pub type Rgba = [u8; 4];
@@ -104,6 +109,86 @@ pub struct Item {
     /// re-renders a preview; the library never generates one itself.
     pub thumbnail: Option<Vec<u8>>,
 }
+
+/// One open tab inside a pane. References the underlying item by id;
+/// per-tab viewport state continues to live in `prefs::DocView`.
+#[istmo::message]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct PaneTab {
+    pub item: ItemId,
+}
+
+/// Leaf-only pane for Phase 4.1 — carries its tab strip plus the index
+/// of the currently-visible tab. Phase 4.2 will swap the single
+/// `Workspace::pane` field for a recursive split tree whose leaves are
+/// this exact shape, so the on-disk encoding of a `Pane` will survive
+/// that migration unchanged.
+#[istmo::message]
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Default)]
+pub struct Pane {
+    pub tabs: Vec<PaneTab>,
+    /// Index into `tabs`. Out-of-range → the UI falls back to 0; the
+    /// shell clamps when it reads so an older build cannot wedge on a
+    /// stale value.
+    pub active_tab: u32,
+}
+
+/// Persisted workspace. The user flips between workspaces from the
+/// shell switcher — each one keeps its own pane layout and tab set.
+#[istmo::message]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Workspace {
+    pub id: WorkspaceId,
+    pub name: String,
+    pub color: Option<Rgba>,
+    pub pane: Pane,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
+/// Blob persisted under `library.workspaces.v1`. Kept out of the main
+/// `LibraryIndex` so adding workspaces does not break the v1 index
+/// decode path on upgrading installs.
+#[istmo::message]
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct WorkspaceIndex {
+    pub version: u32,
+    pub next_workspace_id: u32,
+    pub active: Option<WorkspaceId>,
+    pub workspaces: Vec<Workspace>,
+}
+
+impl Default for WorkspaceIndex {
+    fn default() -> Self {
+        Self {
+            version: WORKSPACE_INDEX_VERSION,
+            next_workspace_id: 1,
+            active: None,
+            workspaces: Vec::new(),
+        }
+    }
+}
+
+impl WorkspaceIndex {
+    #[must_use]
+    pub fn workspace(&self, id: WorkspaceId) -> Option<&Workspace> {
+        self.workspaces.iter().find(|w| w.id == id)
+    }
+
+    pub fn workspace_mut(&mut self, id: WorkspaceId) -> Option<&mut Workspace> {
+        self.workspaces.iter_mut().find(|w| w.id == id)
+    }
+
+    pub(super) const fn alloc_workspace_id(&mut self) -> WorkspaceId {
+        let id = WorkspaceId(self.next_workspace_id);
+        self.next_workspace_id = self.next_workspace_id.saturating_add(1);
+        id
+    }
+}
+
+/// Schema version for [`WorkspaceIndex`]. Bump on any breaking change
+/// to the surrounding types.
+pub const WORKSPACE_INDEX_VERSION: u32 = 1;
 
 /// The single blob persisted under `library.index.v1` in data-store.
 ///
