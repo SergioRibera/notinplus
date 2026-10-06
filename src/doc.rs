@@ -191,6 +191,155 @@ impl Doc {
         self.log.clear();
     }
 
+    /// Produce the op list that undoes `op` when applied in order.
+    /// Must be called *before* `op` lands in [`Self::emit`] — LWW
+    /// variants read the previous value from the current state.
+    ///
+    /// Empty vec = non-invertible in isolation. `RegisterBrush` is the
+    /// canonical case: `BrushId` is positional and removing an entry
+    /// would renumber every later stroke's brush pointer. Callers
+    /// that need to undo a palette registration must snapshot the
+    /// whole doc instead; here we treat it as additive forever.
+    #[must_use]
+    pub fn inverse_before_apply(&self, op: &DocOp) -> Vec<DocOp> {
+        match op {
+            DocOp::RegisterBrush { .. } => Vec::new(),
+            DocOp::PushStroke { stroke, .. } => vec![DocOp::RemoveStroke { id: stroke.id }],
+            DocOp::RemoveStroke { id } => self
+                .locate_stroke(*id)
+                .map(|(layer_id, stroke)| vec![DocOp::PushStroke { layer_id, stroke }])
+                .unwrap_or_default(),
+            DocOp::Clear => {
+                let mut ops: Vec<DocOp> = Vec::new();
+                let had_zero = self.layers.iter().any(|l| l.id == 0);
+                for layer in &self.layers {
+                    // Clear re-seeds a lone `Layer { id: 0, "Layer 1" }`.
+                    // Skip adding id==0 when the prior state also had
+                    // it — the apply arm is a no-op on duplicate ids
+                    // but, more importantly, we must not rely on
+                    // AddLayer resetting the name back to the prior
+                    // value (no rename op exists yet).
+                    if layer.id != 0 {
+                        ops.push(DocOp::AddLayer {
+                            id: layer.id,
+                            name: layer.name.clone(),
+                        });
+                    }
+                    ops.push(DocOp::SetLayerVisible {
+                        id: layer.id,
+                        visible: layer.visible,
+                    });
+                    ops.push(DocOp::SetLayerLocked {
+                        id: layer.id,
+                        locked: layer.locked,
+                    });
+                    ops.push(DocOp::SetLayerOpacity {
+                        id: layer.id,
+                        opacity: layer.opacity,
+                    });
+                    for stroke in &layer.strokes {
+                        ops.push(DocOp::PushStroke {
+                            layer_id: layer.id,
+                            stroke: stroke.clone(),
+                        });
+                    }
+                }
+                if !had_zero {
+                    // The clear-seeded default layer was not in the
+                    // prior state — strip it after rebuilding so the
+                    // post-undo layer list matches exactly.
+                    ops.push(DocOp::RemoveLayer { id: 0 });
+                }
+                ops.push(DocOp::SetActiveLayer {
+                    id: self.active_layer,
+                });
+                // `next_layer_id` cannot be fully restored — no op
+                // targets it directly. Future AddLayer calls will
+                // reuse higher ids than before, which is harmless
+                // because layer ids are not user-visible identifiers.
+                ops
+            }
+            DocOp::AddLayer { id, .. } => vec![DocOp::RemoveLayer { id: *id }],
+            DocOp::RemoveLayer { id } => {
+                let Some(layer) = self.layer(*id) else {
+                    return Vec::new();
+                };
+                let mut ops = vec![
+                    DocOp::AddLayer {
+                        id: *id,
+                        name: layer.name.clone(),
+                    },
+                    DocOp::SetLayerVisible {
+                        id: *id,
+                        visible: layer.visible,
+                    },
+                    DocOp::SetLayerLocked {
+                        id: *id,
+                        locked: layer.locked,
+                    },
+                    DocOp::SetLayerOpacity {
+                        id: *id,
+                        opacity: layer.opacity,
+                    },
+                ];
+                for stroke in &layer.strokes {
+                    ops.push(DocOp::PushStroke {
+                        layer_id: *id,
+                        stroke: stroke.clone(),
+                    });
+                }
+                if self.active_layer == *id {
+                    // RemoveLayer's apply arm moves `active_layer` to
+                    // a neighbour. Restoring the removed layer must
+                    // also restore the active pointer.
+                    ops.push(DocOp::SetActiveLayer { id: *id });
+                }
+                ops
+            }
+            DocOp::SetActiveLayer { .. } => vec![DocOp::SetActiveLayer {
+                id: self.active_layer,
+            }],
+            DocOp::SetLayerVisible { id, .. } => self
+                .layer(*id)
+                .map(|l| {
+                    vec![DocOp::SetLayerVisible {
+                        id: *id,
+                        visible: l.visible,
+                    }]
+                })
+                .unwrap_or_default(),
+            DocOp::SetLayerLocked { id, .. } => self
+                .layer(*id)
+                .map(|l| {
+                    vec![DocOp::SetLayerLocked {
+                        id: *id,
+                        locked: l.locked,
+                    }]
+                })
+                .unwrap_or_default(),
+            DocOp::SetLayerOpacity { id, .. } => self
+                .layer(*id)
+                .map(|l| {
+                    vec![DocOp::SetLayerOpacity {
+                        id: *id,
+                        opacity: l.opacity,
+                    }]
+                })
+                .unwrap_or_default(),
+        }
+    }
+
+    /// `(layer_id, cloned_stroke)` for the stroke carrying `id`.
+    #[must_use]
+    pub fn locate_stroke(&self, id: StrokeId) -> Option<(u32, Stroke)> {
+        for layer in &self.layers {
+            if let Some(stroke) = layer.strokes.iter().find(|s| s.id == id) {
+                return Some((layer.id, stroke.clone()));
+            }
+        }
+        None
+    }
+
     /// Trim the log if it has grown past [`SNAPSHOT_EVERY`]. Invoked
     /// before every persist so disk files never grow unbounded. Pure
     /// in-memory — writes happen elsewhere.

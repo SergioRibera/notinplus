@@ -36,10 +36,11 @@ use crate::brush::{
     BrushConfig, BrushKind, BrushPreset, CapStyle, EraserMode, InkPoint, ShapeMode, Stroke,
 };
 use crate::doc::Doc;
-use crate::history::{EraseOriginal, EraseSession, HistoryOp};
+use crate::doc_op::DocOp;
 use crate::ids::StrokeId;
 use crate::render::{BrushRegistry, HighlighterBrush, HighlighterState, PointerStyle};
 use crate::spatial::SpatialIndex;
+use crate::undo::UndoStack;
 
 const SIZE_SCALE_MIN: f32 = 0.25;
 const SIZE_SCALE_MAX: f32 = 4.0;
@@ -162,8 +163,8 @@ pub struct Board {
     /// O(N) `position` scan the eraser used to run per candidate hit
     /// and localises index shifting to the affected layer.
     stroke_index: HashMap<StrokeId, (u32, usize)>,
-    history: Vec<HistoryOp>,
-    erase_session: Option<EraseSession>,
+    undo: UndoStack,
+    erase_session: Option<EraseAccum>,
     /// Active [`EraserMode::SelectionRect`] drag, expressed as
     /// `(anchor_x, anchor_y, cursor_x, cursor_y)` in world coords.
     /// `Some` while the pen is down; `None` between drags. The paint
@@ -266,6 +267,39 @@ struct GestureBaseline {
     distance: f32,
 }
 
+/// Deferred-split accumulator for an eraser gesture. Collects every
+/// clip circle and a one-shot snapshot per touched stroke; the actual
+/// `RemoveStroke` + `PushStroke` ops fire once at pen-up inside a
+/// single [`UndoStack`] transaction so the whole gesture undoes as
+/// one entry.
+#[derive(Debug, Default)]
+struct EraseAccum {
+    /// `(layer_id, stroke)` captured the first time each stroke was
+    /// grazed. Kept so finalize can clip each original against the
+    /// cumulative circle set in one pass.
+    originals: Vec<(u32, Stroke)>,
+    circles: Vec<(f32, f32, f32)>,
+    touched: HashSet<StrokeId>,
+}
+
+impl EraseAccum {
+    fn push_circle(&mut self, cx: f32, cy: f32, r: f32) {
+        self.circles.push((cx, cy, r));
+    }
+
+    fn snapshot(&mut self, layer_id: u32, stroke: Stroke) -> bool {
+        if !self.touched.insert(stroke.id) {
+            return false;
+        }
+        self.originals.push((layer_id, stroke));
+        true
+    }
+
+    fn contains(&self, id: StrokeId) -> bool {
+        self.touched.contains(&id)
+    }
+}
+
 /// How single-point pen input maps onto the board. Toggled from the UI;
 /// multi-touch gestures ignore this and always pinch-zoom.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -298,7 +332,7 @@ impl Default for Board {
             spatial: SpatialIndex::new(),
             cached_paths: HashMap::new(),
             stroke_index: HashMap::new(),
-            history: Vec::new(),
+            undo: UndoStack::default(),
             erase_session: None,
             selection_rect: None,
             notifier: None,
@@ -847,7 +881,7 @@ impl Board {
         self.active = None;
         self.active_layer_at_begin = None;
         self.erase_session = None;
-        self.history.clear();
+        self.undo.clear();
         self.spatial.clear();
         self.cached_paths.clear();
         self.stroke_index.clear();
@@ -884,7 +918,7 @@ impl Board {
             // filter.
             match self.eraser_mode() {
                 EraserMode::Point => {
-                    self.erase_session = Some(EraseSession::default());
+                    self.erase_session = Some(EraseAccum::default());
                     self.apply_erase(point);
                 }
                 EraserMode::Stroke => {
@@ -983,10 +1017,9 @@ impl Board {
 
     pub fn end(&mut self) {
         if let Some(mut session) = self.erase_session.take() {
+            self.undo.begin();
             self.finalize_erase_session(&mut session);
-            if !session.is_empty() {
-                self.history.push(HistoryOp::Erase(session));
-            }
+            self.undo.commit();
             self.notify_commit();
             return;
         }
@@ -1005,7 +1038,9 @@ impl Board {
     pub fn cancel(&mut self) {
         if self.erase_session.take().is_some() {
             // Deferred model: accumulation never mutates the doc, so
-            // dropping the session is a full rollback.
+            // dropping the accumulator is a full rollback. No undo
+            // transaction was opened (we only begin one at pen-up
+            // inside `end`), so nothing to abort.
             self.notify();
             return;
         }
@@ -1021,26 +1056,61 @@ impl Board {
     }
 
     pub fn clear(&mut self) {
-        self.doc.clear();
+        // Single op with a snapshot inverse — undo rebuilds every
+        // layer + stroke the clear removed. UI-only state (in-flight
+        // stroke, erase accumulator, selection marquee) resets around
+        // the op since those are not part of the doc.
         self.active = None;
         self.active_layer_at_begin = None;
         self.erase_session = None;
         self.selection_rect = None;
         self.two_point_active = false;
-        self.history.clear();
-        self.spatial.clear();
-        self.cached_paths.clear();
-        self.stroke_index.clear();
+        self.apply_op(DocOp::Clear);
         self.notify_commit();
     }
 
-    /// Undo the most recent recorded op — currently just erase
-    /// sessions. Returns `true` if anything was undone.
+    /// Undo the most recent user action. Pops the top transaction,
+    /// re-emits every pre-captured inverse op through `Doc::emit`
+    /// so the log stays append-only (CRDT contract), and parks the
+    /// forward ops on the redo stack. Returns `true` iff something
+    /// was undone.
     pub fn undo(&mut self) -> bool {
-        let Some(HistoryOp::Erase(session)) = self.history.pop() else {
+        let Some(entry) = self.undo.pop_undo() else {
             return false;
         };
-        self.rollback_session(&session);
+        for op in entry.inverse.iter().cloned() {
+            self.apply_op_untracked(op);
+        }
+        self.undo.push_redo(entry);
+        self.notify_commit();
+        true
+    }
+
+    /// Count of pending undo entries. For UI gates ("Undo" button
+    /// enabled / disabled) and for tests.
+    #[must_use]
+    pub fn undo_depth(&self) -> usize {
+        self.undo.undo_len()
+    }
+
+    /// Count of pending redo entries. Mirror of [`Self::undo_depth`].
+    #[must_use]
+    pub fn redo_depth(&self) -> usize {
+        self.undo.redo_len()
+    }
+
+    /// Re-apply the most recently undone transaction. Mirror of
+    /// [`Self::undo`] — pops redo, re-emits every forward op through
+    /// `Doc::emit`, parks the entry back on the undo stack. Returns
+    /// `true` iff something was redone.
+    pub fn redo(&mut self) -> bool {
+        let Some(entry) = self.undo.pop_redo() else {
+            return false;
+        };
+        for op in entry.forward.iter().cloned() {
+            self.apply_op_untracked(op);
+        }
+        self.undo.push_undo_raw(entry);
         self.notify_commit();
         true
     }
@@ -1071,40 +1141,44 @@ impl Board {
 
     /// Add a new empty layer, name it "Layer N" where N is one past
     /// the current count, and adopt it as the active layer. Returns
-    /// the new id.
+    /// the new id. `AddLayer` + `SetActiveLayer` group into a single
+    /// undo entry so the pair rolls back together.
     pub fn add_layer(&mut self) -> u32 {
         let n = self.doc.layers.len() + 1;
-        let id = self.doc.add_layer(format!("Layer {n}"));
-        self.doc.set_active_layer(id);
+        let id = self.doc.next_layer_id;
+        self.undo.begin();
+        self.apply_op(DocOp::AddLayer {
+            id,
+            name: format!("Layer {n}"),
+        });
+        self.apply_op(DocOp::SetActiveLayer { id });
+        self.undo.commit();
         self.notify_commit();
         id
     }
 
     /// Remove the currently active layer. No-op if it's the only
-    /// layer. Purges every derived index entry for strokes that
-    /// belonged to the removed layer, and cancels any in-flight
-    /// stroke that was aimed at it.
+    /// layer. Derived index entries + the in-flight stroke (if its
+    /// target layer vanished) are cleaned up by [`Self::apply_op`].
     pub fn remove_active_layer(&mut self) {
         let id = self.doc.active_layer;
-        let Some(removed) = self.doc.remove_layer(id) else {
+        if self.doc.layers.len() <= 1 || self.doc.layer(id).is_none() {
             return;
-        };
-        for stroke in &removed.strokes {
-            self.stroke_index.remove(&stroke.id);
-            self.cached_paths.remove(&stroke.id);
-            self.spatial.remove(stroke.id, &stroke.points);
         }
         if self.active_layer_at_begin == Some(id) {
             self.active = None;
             self.active_layer_at_begin = None;
         }
+        self.apply_op(DocOp::RemoveLayer { id });
         self.notify_commit();
     }
 
     pub fn set_active_layer(&mut self, id: u32) {
-        if self.doc.set_active_layer(id) {
-            self.notify_commit();
+        if self.doc.active_layer == id || self.doc.layer(id).is_none() {
+            return;
         }
+        self.apply_op(DocOp::SetActiveLayer { id });
+        self.notify_commit();
     }
 
     /// All committed stroke ids within `radius` world-units of
@@ -1119,21 +1193,40 @@ impl Board {
     }
 
     pub fn set_layer_visible(&mut self, id: u32, visible: bool) {
-        if self.doc.set_layer_visible(id, visible) {
-            self.notify_commit();
+        let Some(layer) = self.doc.layer(id) else {
+            return;
+        };
+        if layer.visible == visible {
+            return;
         }
+        self.apply_op(DocOp::SetLayerVisible { id, visible });
+        self.notify_commit();
     }
 
     pub fn set_layer_locked(&mut self, id: u32, locked: bool) {
-        if self.doc.set_layer_locked(id, locked) {
-            self.notify_commit();
+        let Some(layer) = self.doc.layer(id) else {
+            return;
+        };
+        if layer.locked == locked {
+            return;
         }
+        self.apply_op(DocOp::SetLayerLocked { id, locked });
+        self.notify_commit();
     }
 
     pub fn set_layer_opacity(&mut self, id: u32, opacity: f32) {
-        if self.doc.set_layer_opacity(id, opacity) {
-            self.notify_commit();
+        let Some(layer) = self.doc.layer(id) else {
+            return;
+        };
+        let clamped = opacity.clamp(0.0, 1.0);
+        if (layer.opacity - clamped).abs() < f32::EPSILON {
+            return;
         }
+        self.apply_op(DocOp::SetLayerOpacity {
+            id,
+            opacity: clamped,
+        });
+        self.notify_commit();
     }
 
     fn commit_stroke(&mut self, stroke: Stroke) {
@@ -1144,22 +1237,122 @@ impl Board {
         if stroke.points.is_empty() {
             return;
         }
-        let Some(preset) = self.doc.preset(stroke.brush).copied() else {
+        if self.doc.preset(stroke.brush).is_none() {
             return;
-        };
-        let Some(within) = self.doc.layer(layer_id).map(|l| l.strokes.len()) else {
+        }
+        if self.doc.layer(layer_id).is_none() {
             return;
-        };
-        let path = self.brush_registry.brush(preset.kind).build_path(
-            &preset,
-            &stroke,
-            self.brush_registry.caps(),
-        );
-        let id = stroke.id;
-        self.spatial.insert(id, &stroke.points);
-        self.doc.insert_stroke_into(layer_id, stroke);
-        self.stroke_index.insert(id, (layer_id, within));
-        self.cached_paths.insert(id, path);
+        }
+        self.apply_op(DocOp::PushStroke { layer_id, stroke });
+    }
+
+    /// Record one op in the undo stack and apply it to the doc + the
+    /// derived indices. The transaction grouping (if any) is implied
+    /// by the surrounding `undo.begin` / `undo.commit` pair.
+    ///
+    /// Every user-driven mutation that produces a `DocOp` flows
+    /// through this method. Undo and redo use [`Self::apply_op_untracked`]
+    /// so re-applying a pre-captured inverse / forward op does not
+    /// append another entry.
+    fn apply_op(&mut self, op: DocOp) {
+        let inverse = self.doc.inverse_before_apply(&op);
+        self.apply_op_untracked(op.clone());
+        self.undo.record(op, inverse);
+    }
+
+    /// Apply a `DocOp` through `Doc::emit` and reconcile the derived
+    /// state (spatial index, cached paths, `stroke_index`). No undo
+    /// recording — used by both the forward path (indirectly via
+    /// [`Self::apply_op`]) and the undo / redo replays.
+    fn apply_op_untracked(&mut self, op: DocOp) {
+        match op {
+            DocOp::RemoveStroke { id } => {
+                // Capture spatial payload + index position before the
+                // doc drops the stroke — SpatialIndex is a reverse
+                // index keyed by (bucket, id) and needs the point set
+                // to prune every bucket cheaply.
+                let Some((layer_id, points, idx)) = self.capture_stroke_derived(id) else {
+                    self.doc.emit(DocOp::RemoveStroke { id });
+                    return;
+                };
+                self.doc.emit(DocOp::RemoveStroke { id });
+                self.spatial.remove(id, &points);
+                self.stroke_index.remove(&id);
+                for entry in self.stroke_index.values_mut() {
+                    if entry.0 == layer_id && entry.1 > idx {
+                        entry.1 -= 1;
+                    }
+                }
+                self.cached_paths.remove(&id);
+            }
+            DocOp::RemoveLayer { id } => {
+                let snapshot: Vec<(StrokeId, Vec<InkPoint>)> = self
+                    .doc
+                    .layer(id)
+                    .map(|l| l.strokes.iter().map(|s| (s.id, s.points.clone())).collect())
+                    .unwrap_or_default();
+                self.doc.emit(DocOp::RemoveLayer { id });
+                for (sid, pts) in snapshot {
+                    self.spatial.remove(sid, &pts);
+                    self.stroke_index.remove(&sid);
+                    self.cached_paths.remove(&sid);
+                }
+            }
+            DocOp::Clear => {
+                self.doc.emit(DocOp::Clear);
+                self.spatial.clear();
+                self.cached_paths.clear();
+                self.stroke_index.clear();
+            }
+            DocOp::PushStroke { layer_id, stroke } => {
+                let id = stroke.id;
+                let preset = self.doc.preset(stroke.brush).copied();
+                self.doc.emit(DocOp::PushStroke {
+                    layer_id,
+                    stroke: stroke.clone(),
+                });
+                if let Some(preset) = preset {
+                    let path = self.brush_registry.brush(preset.kind).build_path(
+                        &preset,
+                        &stroke,
+                        self.brush_registry.caps(),
+                    );
+                    self.cached_paths.insert(id, path);
+                }
+                self.spatial.insert(id, &stroke.points);
+                if let Some(layer) = self.doc.layer(layer_id) {
+                    let idx = layer
+                        .strokes
+                        .iter()
+                        .rposition(|s| s.id == id)
+                        .unwrap_or(layer.strokes.len().saturating_sub(1));
+                    self.stroke_index.insert(id, (layer_id, idx));
+                }
+            }
+            // Layer attr + brush registry ops don't touch derived state.
+            op @ (DocOp::RegisterBrush { .. }
+            | DocOp::AddLayer { .. }
+            | DocOp::SetActiveLayer { .. }
+            | DocOp::SetLayerVisible { .. }
+            | DocOp::SetLayerLocked { .. }
+            | DocOp::SetLayerOpacity { .. }) => {
+                self.doc.emit(op);
+            }
+        }
+    }
+
+    /// Snapshot the derived-state keys for `id`: `(layer, points, idx)`.
+    /// `None` when the stroke lives in the doc but has no derived
+    /// state (shouldn't happen under invariant — doc + indices stay
+    /// in sync) OR when the stroke has already been removed.
+    fn capture_stroke_derived(&self, id: StrokeId) -> Option<(u32, Vec<InkPoint>, usize)> {
+        let &(layer_id, idx) = self.stroke_index.get(&id)?;
+        let layer = self.doc.layer(layer_id)?;
+        let stroke = layer.strokes.get(idx)?;
+        if stroke.id != id {
+            return None;
+        }
+        Some((layer_id, stroke.points.clone(), idx))
     }
 
     /// Accumulate one eraser sample. Snapshots any touched original
@@ -1237,44 +1430,24 @@ impl Board {
     }
 
     /// Materialize the deferred split for every snapshotted original:
-    /// remove the original from the doc and insert the final fragments
-    /// derived from cumulatively clipping against every collected
-    /// circle. Fragment ids are recorded on the session so
-    /// [`Board::rollback_session`] can undo the commit.
-    fn finalize_erase_session(&mut self, session: &mut EraseSession) {
+    /// emit a `RemoveStroke` for the original + a `PushStroke` for
+    /// each resulting fragment. The caller wraps this in a single
+    /// [`UndoStack`] transaction, so the whole gesture rolls back as
+    /// one undo entry.
+    fn finalize_erase_session(&mut self, session: &mut EraseAccum) {
         if session.originals.is_empty() {
             return;
         }
-        // Circles are Copy-typed tuples, clone is trivial. Owning them
-        // locally frees `session` for `added_fragments` pushes below.
-        let circles = session.circles.clone();
-        // Take originals so we can push to `added_fragments` while
-        // iterating. We reinstate the vec at the end — undo needs it.
+        let circles = std::mem::take(&mut session.circles);
         let originals = std::mem::take(&mut session.originals);
-        let mut restored: Vec<EraseOriginal> = Vec::with_capacity(originals.len());
-        for entry in originals {
-            let layer_id = entry.layer_id;
-            let original = entry.stroke;
+        for (layer_id, original) in originals {
             let fragments = cumulative_split(
                 &original.points,
                 original.cap_start,
                 original.cap_end,
                 &circles,
             );
-
-            let Some(removed) = self.remove_stroke_indexed(original.id) else {
-                // Original vanished between snapshot and commit
-                // (shouldn't happen — snapshot is under doc borrow).
-                // Still track it for undo symmetry.
-                restored.push(EraseOriginal {
-                    layer_id,
-                    stroke: original,
-                });
-                continue;
-            };
-            self.spatial.remove(removed.id, &removed.points);
-
-            let preset = self.doc.preset(original.brush).copied();
+            self.apply_op(DocOp::RemoveStroke { id: original.id });
             for fragment in fragments {
                 if fragment.points.len() < 2 {
                     // Solitary points are hard to see and easy to
@@ -1282,38 +1455,20 @@ impl Board {
                     // eraser fully clears where the user gestured.
                     continue;
                 }
-                let frag_id = self.doc.allocate_stroke_id();
-                session.added_fragments.push(frag_id);
-                let new_stroke = Stroke {
-                    id: frag_id,
+                let frag = Stroke {
+                    id: self.doc.allocate_stroke_id(),
                     brush: original.brush,
                     color: original.color,
                     cap_start: fragment.cap_start,
                     cap_end: fragment.cap_end,
                     points: fragment.points,
                 };
-                if let Some(preset) = preset.as_ref() {
-                    let path = self.brush_registry.brush(preset.kind).build_path(
-                        preset,
-                        &new_stroke,
-                        self.brush_registry.caps(),
-                    );
-                    self.cached_paths.insert(frag_id, path);
-                }
-                let Some(new_idx) = self.doc.layer(layer_id).map(|l| l.strokes.len()) else {
-                    continue;
-                };
-                self.spatial.insert(new_stroke.id, &new_stroke.points);
-                if self.doc.insert_stroke_into(layer_id, new_stroke) {
-                    self.stroke_index.insert(frag_id, (layer_id, new_idx));
-                }
+                self.apply_op(DocOp::PushStroke {
+                    layer_id,
+                    stroke: frag,
+                });
             }
-            restored.push(EraseOriginal {
-                layer_id,
-                stroke: original,
-            });
         }
-        session.originals = restored;
     }
 
     /// Current eraser mode. Reads through [`Board::brush_config`] so an
@@ -1375,9 +1530,8 @@ impl Board {
     }
 
     /// Delete the topmost stroke intersecting a tap at `(x, y)` in the
-    /// active layer. No-op when no stroke is hit. Records the removal
-    /// as a single-original [`EraseSession`] so [`Board::undo`] restores
-    /// it exactly.
+    /// active layer. No-op when no stroke is hit. Emits a single
+    /// `RemoveStroke` op so [`Board::undo`] restores it exactly.
     fn erase_stroke_at(&mut self, x: f32, y: f32) {
         let radius = self.eraser_tap_radius();
         let active_layer = self.doc.active_layer;
@@ -1416,12 +1570,14 @@ impl Board {
         let Some((_, id)) = best else {
             return;
         };
-        self.snapshot_and_remove_whole(id, active_layer);
+        let _ = active_layer;
+        self.apply_op(DocOp::RemoveStroke { id });
     }
 
     /// Delete every stroke on the active layer whose polyline
     /// intersects the world-space rect. Empty selection is a no-op —
-    /// no history entry is pushed.
+    /// no undo entry is pushed. All removals fall under one transaction
+    /// so a marquee erase undoes in a single step.
     fn erase_strokes_in_rect(&mut self, min_x: f32, min_y: f32, max_x: f32, max_y: f32) {
         if (max_x - min_x).abs() < f32::EPSILON || (max_y - min_y).abs() < f32::EPSILON {
             return;
@@ -1450,94 +1606,11 @@ impl Board {
         if targets.is_empty() {
             return;
         }
-        let mut session = EraseSession::default();
+        self.undo.begin();
         for id in targets {
-            let Some(&(layer_id, _)) = self.stroke_index.get(&id) else {
-                continue;
-            };
-            let Some(layer) = self.doc.layer(layer_id) else {
-                continue;
-            };
-            let Some(&(_, idx)) = self.stroke_index.get(&id) else {
-                continue;
-            };
-            let snapshot = layer.strokes[idx].clone();
-            session.snapshot(layer_id, snapshot);
-            if let Some(removed) = self.remove_stroke_indexed(id) {
-                self.spatial.remove(removed.id, &removed.points);
-            }
+            self.apply_op(DocOp::RemoveStroke { id });
         }
-        if !session.is_empty() {
-            self.history.push(HistoryOp::Erase(session));
-        }
-    }
-
-    /// Snapshot a single stroke into a fresh session, remove it from
-    /// the doc, and push the session onto the history. Shared by the
-    /// `Stroke` mode tap path.
-    fn snapshot_and_remove_whole(&mut self, id: StrokeId, layer_id: u32) {
-        let Some(layer) = self.doc.layer(layer_id) else {
-            return;
-        };
-        let Some(&(_, idx)) = self.stroke_index.get(&id) else {
-            return;
-        };
-        let snapshot = layer.strokes[idx].clone();
-        let mut session = EraseSession::default();
-        session.snapshot(layer_id, snapshot);
-        if let Some(removed) = self.remove_stroke_indexed(id) {
-            self.spatial.remove(removed.id, &removed.points);
-        }
-        if !session.is_empty() {
-            self.history.push(HistoryOp::Erase(session));
-        }
-    }
-
-    /// Remove a stroke by id, keeping `stroke_index` and `cached_paths`
-    /// in sync. Preserves within-layer z-order and only shifts
-    /// indices for strokes that share the affected layer.
-    fn remove_stroke_indexed(&mut self, id: StrokeId) -> Option<Stroke> {
-        let (layer_id, idx) = self.stroke_index.remove(&id)?;
-        let removed = self
-            .doc
-            .remove_stroke(id)
-            .expect("stroke_index points at a stroke the doc no longer holds");
-        for entry in self.stroke_index.values_mut() {
-            if entry.0 == layer_id && entry.1 > idx {
-                entry.1 -= 1;
-            }
-        }
-        self.cached_paths.remove(&id);
-        Some(removed)
-    }
-
-    fn rollback_session(&mut self, session: &EraseSession) {
-        for frag_id in &session.added_fragments {
-            if let Some(removed) = self.remove_stroke_indexed(*frag_id) {
-                self.spatial.remove(removed.id, &removed.points);
-            }
-        }
-        for entry in &session.originals {
-            let layer_id = entry.layer_id;
-            let original = &entry.stroke;
-            let id = original.id;
-            let preset = self.doc.preset(original.brush).copied();
-            if let Some(preset) = preset.as_ref() {
-                let path = self.brush_registry.brush(preset.kind).build_path(
-                    preset,
-                    original,
-                    self.brush_registry.caps(),
-                );
-                self.cached_paths.insert(id, path);
-            }
-            let Some(idx) = self.doc.layer(layer_id).map(|l| l.strokes.len()) else {
-                continue;
-            };
-            self.spatial.insert(id, &original.points);
-            if self.doc.insert_stroke_into(layer_id, original.clone()) {
-                self.stroke_index.insert(id, (layer_id, idx));
-            }
-        }
+        self.undo.commit();
     }
 
     /// Paint every committed stroke plus the active one onto `canvas`.
@@ -2379,7 +2452,7 @@ mod tests {
         // Deferred model: the doc is untouched until pen-up.
         // begin+extend on an eraser gesture must leave the stroke
         // list identical, and cancel must drop it wholesale without
-        // needing to roll anything back.
+        // pushing a redundant undo entry.
         let mut b = Board::default();
         b.set_current_preset(BrushPreset::pen());
         b.begin(pt(0.0, 0.0));
@@ -2387,6 +2460,8 @@ mod tests {
         b.end();
         let stroke_count = |d: &Doc| d.layers.iter().map(|l| l.strokes.len()).sum::<usize>();
         assert_eq!(stroke_count(b.doc()), 1);
+        let undo_depth_after_stroke = b.undo_depth();
+        assert_eq!(undo_depth_after_stroke, 1, "one stroke commit = one undo");
 
         b.set_current_preset(BrushPreset::eraser());
         b.begin(pt(100.0, 0.0));
@@ -2400,7 +2475,11 @@ mod tests {
 
         b.cancel();
         assert_eq!(stroke_count(b.doc()), 1);
-        assert!(!b.undo(), "cancel must not push a history op");
+        assert_eq!(
+            b.undo_depth(),
+            undo_depth_after_stroke,
+            "cancel must not push an undo entry"
+        );
     }
 
     #[test]
@@ -2427,6 +2506,153 @@ mod tests {
 
         assert!(b.undo());
         assert_eq!(stroke_count(b.doc()), 1);
+    }
+
+    #[test]
+    fn pen_stroke_commits_as_single_undo_entry() {
+        // One stroke gesture (register brush + many samples + commit)
+        // must land as exactly one undo entry — the "transaction
+        // grouping" promise of Phase 1.3.
+        let mut b = Board::default();
+        b.set_current_preset(BrushPreset::pen());
+        b.begin(pt(0.0, 0.0));
+        for i in 1..=10 {
+            b.extend(pt(i as f32 * 10.0, 0.0));
+        }
+        b.end();
+        let stroke_count = |d: &Doc| d.layers.iter().map(|l| l.strokes.len()).sum::<usize>();
+        assert_eq!(stroke_count(b.doc()), 1);
+        assert_eq!(b.undo_depth(), 1, "one gesture = one undo entry");
+
+        assert!(b.undo());
+        assert_eq!(stroke_count(b.doc()), 0);
+        assert_eq!(b.undo_depth(), 0);
+        assert_eq!(b.redo_depth(), 1);
+    }
+
+    #[test]
+    fn redo_after_undo_restores_stroke() {
+        let mut b = Board::default();
+        b.set_current_preset(BrushPreset::pen());
+        b.begin(pt(0.0, 0.0));
+        b.extend(pt(50.0, 0.0));
+        b.end();
+        let stroke_count = |d: &Doc| d.layers.iter().map(|l| l.strokes.len()).sum::<usize>();
+        assert_eq!(stroke_count(b.doc()), 1);
+
+        assert!(b.undo());
+        assert_eq!(stroke_count(b.doc()), 0);
+
+        assert!(b.redo());
+        assert_eq!(stroke_count(b.doc()), 1);
+        assert_eq!(b.undo_depth(), 1);
+        assert_eq!(b.redo_depth(), 0);
+    }
+
+    #[test]
+    fn new_action_after_undo_clears_redo_stack() {
+        let mut b = Board::default();
+        b.set_current_preset(BrushPreset::pen());
+        b.begin(pt(0.0, 0.0));
+        b.extend(pt(50.0, 0.0));
+        b.end();
+        assert!(b.undo());
+        assert_eq!(b.redo_depth(), 1);
+
+        // A fresh action invalidates the redo branch — standard
+        // editor semantics, no "y-branch" of history.
+        b.begin(pt(10.0, 10.0));
+        b.extend(pt(60.0, 10.0));
+        b.end();
+        assert_eq!(b.redo_depth(), 0);
+        assert_eq!(b.undo_depth(), 1);
+    }
+
+    #[test]
+    fn marquee_erase_undoes_as_single_entry() {
+        // Two strokes removed by a selection-rect erase must restore
+        // in one undo — SOURCES_PLAN §1.3 transaction grouping.
+        let mut b = Board::default();
+        b.set_current_preset(BrushPreset::pen());
+        b.begin(pt(0.0, 0.0));
+        b.extend(pt(100.0, 0.0));
+        b.end();
+        b.begin(pt(0.0, 50.0));
+        b.extend(pt(100.0, 50.0));
+        b.end();
+        let stroke_count = |d: &Doc| d.layers.iter().map(|l| l.strokes.len()).sum::<usize>();
+        assert_eq!(stroke_count(b.doc()), 2);
+        let undo_depth = b.undo_depth();
+
+        // Simulate selection-rect erase via the end() path:
+        // b.set_current_preset(BrushPreset::eraser()); drives through
+        // eraser mode but SelectionRect mode needs explicit config.
+        // Easier: call erase_strokes_in_rect directly to isolate the
+        // transaction behaviour from eraser-mode plumbing.
+        b.erase_strokes_in_rect(-10.0, -10.0, 200.0, 100.0);
+        assert_eq!(stroke_count(b.doc()), 0);
+        assert_eq!(b.undo_depth(), undo_depth + 1, "one erase = one entry");
+
+        assert!(b.undo());
+        assert_eq!(stroke_count(b.doc()), 2);
+    }
+
+    #[test]
+    fn layer_opacity_undo_restores_prev_value() {
+        let mut b = Board::default();
+        assert!((b.doc().layer(0).unwrap().opacity - 1.0).abs() < f32::EPSILON);
+        b.set_layer_opacity(0, 0.25);
+        assert!((b.doc().layer(0).unwrap().opacity - 0.25).abs() < f32::EPSILON);
+        assert!(b.undo());
+        assert!((b.doc().layer(0).unwrap().opacity - 1.0).abs() < f32::EPSILON);
+        assert!(b.redo());
+        assert!((b.doc().layer(0).unwrap().opacity - 0.25).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn add_layer_and_set_active_undo_as_one_entry() {
+        let mut b = Board::default();
+        let before_active = b.active_layer_id();
+        let before_depth = b.undo_depth();
+        let new_id = b.add_layer();
+        assert_eq!(b.active_layer_id(), new_id);
+        assert_eq!(
+            b.undo_depth(),
+            before_depth + 1,
+            "AddLayer + SetActiveLayer group into one undo entry"
+        );
+        assert!(b.undo());
+        assert!(b.doc().layer(new_id).is_none(), "layer removed on undo");
+        assert_eq!(
+            b.active_layer_id(),
+            before_active,
+            "active layer restored"
+        );
+    }
+
+    #[test]
+    fn clear_undo_restores_layers_and_strokes() {
+        let mut b = Board::default();
+        b.set_current_preset(BrushPreset::pen());
+        b.begin(pt(0.0, 0.0));
+        b.extend(pt(50.0, 0.0));
+        b.end();
+        let l2 = b.add_layer();
+        b.begin(pt(0.0, 10.0));
+        b.extend(pt(50.0, 10.0));
+        b.end();
+        let stroke_count = |d: &Doc| d.layers.iter().map(|l| l.strokes.len()).sum::<usize>();
+        assert_eq!(stroke_count(b.doc()), 2);
+        assert_eq!(b.doc().layers.len(), 2);
+
+        b.clear();
+        assert_eq!(stroke_count(b.doc()), 0);
+        assert_eq!(b.doc().layers.len(), 1);
+
+        assert!(b.undo());
+        assert_eq!(stroke_count(b.doc()), 2);
+        assert_eq!(b.doc().layers.len(), 2);
+        assert!(b.doc().layer(l2).is_some(), "layer id preserved on undo");
     }
 
     #[test]

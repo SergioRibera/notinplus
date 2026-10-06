@@ -15,7 +15,6 @@ pub mod canvas;
 pub mod components;
 pub mod doc;
 pub mod doc_op;
-pub mod history;
 pub mod home;
 pub mod hooks;
 pub mod identity;
@@ -29,6 +28,7 @@ pub mod render;
 pub mod route;
 pub mod spatial;
 pub mod ui_mask;
+pub mod undo;
 
 #[cfg(not(any(
     target_os = "android",
