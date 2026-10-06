@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use notein_plugin::{CreationCategory, CreationEntry, PluginRegistry, PluginRole};
 
-use crate::builtin::stroke_canvas;
+use crate::builtin::{pdf_source, stroke_canvas};
 use crate::plugin_settings::{FabShortcut, FabShortcutSlot};
 use crate::shell_builtins;
 
@@ -60,16 +60,22 @@ fn default_slots() -> [Option<FabShortcut>; 2] {
 /// after Phase 2.6 moved the canvas entries into
 /// [`stroke_canvas`].
 fn migrate_legacy_plugin_id(sc: &FabShortcut) -> FabShortcut {
-    if sc.plugin_id == shell_builtins::BUILTIN_PLUGIN_ID
-        && matches!(
+    if sc.plugin_id == shell_builtins::BUILTIN_PLUGIN_ID {
+        if matches!(
             sc.entry_id.as_str(),
             stroke_canvas::NEW_CANVAS | stroke_canvas::NEW_EPHEMERAL | stroke_canvas::QUICK_SKETCH,
-        )
-    {
-        return FabShortcut {
-            plugin_id: stroke_canvas::KIND_ID.to_owned(),
-            entry_id: sc.entry_id.clone(),
-        };
+        ) {
+            return FabShortcut {
+                plugin_id: stroke_canvas::KIND_ID.to_owned(),
+                entry_id: sc.entry_id.clone(),
+            };
+        }
+        if sc.entry_id == pdf_source::IMPORT_PDF {
+            return FabShortcut {
+                plugin_id: pdf_source::KIND_ID.to_owned(),
+                entry_id: sc.entry_id.clone(),
+            };
+        }
     }
     sc.clone()
 }

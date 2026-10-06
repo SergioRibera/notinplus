@@ -1257,14 +1257,13 @@ fn menu_label(entry: &crate::plugins::AvailableEntry) -> String {
 }
 
 fn trigger_entry(entry: &crate::plugins::AvailableEntry, ctx: &FabCtx) {
-    use crate::builtin::stroke_canvas;
+    use crate::builtin::{pdf_source, stroke_canvas};
     use crate::plugins::EntrySource;
-    use crate::shell_builtins::{BUILTIN_PLUGIN_ID, IMPORT_PDF, NEW_FOLDER};
+    use crate::shell_builtins::{BUILTIN_PLUGIN_ID, NEW_FOLDER};
     match entry.source {
         EntrySource::ShellBuiltin if entry.plugin_id == BUILTIN_PLUGIN_ID => {
             match entry.entry.id.as_str() {
                 NEW_FOLDER => flow_new_folder(ctx.clone()),
-                IMPORT_PDF => flow_import_pdf(ctx.clone()),
                 other => log::warn!("unknown shell builtin entry: {other}"),
             }
         }
@@ -1277,6 +1276,12 @@ fn trigger_entry(entry: &crate::plugins::AvailableEntry, ctx: &FabCtx) {
                 stroke_canvas::NEW_EPHEMERAL => flow_new_ephemeral(ctx.clone()),
                 stroke_canvas::QUICK_SKETCH => flow_quick_sketch(ctx.clone()),
                 other => log::warn!("unknown stroke canvas entry: {other}"),
+            }
+        }
+        EntrySource::Plugin(_) if entry.plugin_id == pdf_source::KIND_ID => {
+            match entry.entry.id.as_str() {
+                pdf_source::IMPORT_PDF => flow_import_pdf(ctx.clone()),
+                other => log::warn!("unknown pdf source entry: {other}"),
             }
         }
         EntrySource::Plugin(_) => {
