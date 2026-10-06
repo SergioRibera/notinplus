@@ -54,10 +54,16 @@ fn default_slots() -> [Option<FabShortcut>; 2] {
     ]
 }
 
-/// Process-wide registry handle. Lazily constructed on first call.
+/// Process-wide registry handle. Lazily constructed on first call —
+/// also registers every in-process builtin so the first consumer never
+/// sees an empty registry.
 #[must_use]
 pub fn registry() -> Arc<Mutex<PluginRegistry>> {
-    Arc::clone(SHARED.get_or_init(|| Arc::new(Mutex::new(PluginRegistry::new()))))
+    Arc::clone(SHARED.get_or_init(|| {
+        let mut reg = PluginRegistry::new();
+        crate::builtin::register_all(&mut reg);
+        Arc::new(Mutex::new(reg))
+    }))
 }
 
 /// Process-wide FAB shortcut handle. Lazily constructed on first call.
