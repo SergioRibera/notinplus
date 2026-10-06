@@ -1300,6 +1300,59 @@ impl Board {
         self.doc.bookmarks()
     }
 
+    /// Live world-space position of a bookmark. When `stuck_to` is
+    /// `Some` and the target stroke still exists, the position tracks
+    /// `stroke.bbox.origin + offset_in_bbox` so the pin follows later
+    /// `MoveStroke` ops. Falls back to the stored `anchor` when the
+    /// sticky target is missing (chip ⚠ "ancla rota" will indicate it
+    /// at the render layer).
+    #[must_use]
+    pub fn bookmark_world_position(&self, bm: &Bookmark) -> WorldPoint {
+        let Some(anchor) = bm.stuck_to else {
+            return bm.anchor;
+        };
+        let Some(stroke) = self.doc.find_stroke(anchor.stroke) else {
+            return bm.anchor;
+        };
+        let Some(first) = stroke.points.first() else {
+            return bm.anchor;
+        };
+        let (min_x, min_y) = stroke
+            .points
+            .iter()
+            .fold((first.x, first.y), |(ax, ay), p| (ax.min(p.x), ay.min(p.y)));
+        WorldPoint::new(
+            min_x + anchor.offset_in_bbox.0,
+            min_y + anchor.offset_in_bbox.1,
+        )
+    }
+
+    /// Topmost bookmark whose live screen position lies within
+    /// `radius_px` of `(screen_x, screen_y)`. Hit-tested in screen
+    /// space so the tap target stays constant across zoom levels.
+    /// `None` when no pin is within range.
+    #[must_use]
+    pub fn bookmark_near_screen(
+        &self,
+        screen_x: f32,
+        screen_y: f32,
+        radius_px: f32,
+    ) -> Option<BookmarkId> {
+        let mut best: Option<(f32, BookmarkId)> = None;
+        for bm in self.doc.bookmarks() {
+            let world = self.bookmark_world_position(bm);
+            let (sx, sy) = self.viewport.world_to_screen(world.x, world.y);
+            let dist = (screen_x - sx).hypot(screen_y - sy);
+            if dist > radius_px {
+                continue;
+            }
+            if best.is_none_or(|(d, _)| dist < d) {
+                best = Some((dist, bm.id));
+            }
+        }
+        best.map(|(_, id)| id)
+    }
+
     /// Nearest stroke within `radius` of `world`, expressed as a
     /// [`StrokeAnchor`] whose `offset_in_bbox` lets the pin follow the
     /// stroke under later `MoveStroke` ops (Phase 2+). `None` when no
@@ -1882,6 +1935,25 @@ impl Board {
                 .pointer_style(&preset, color);
             draw_pointer_overlay(canvas, px, py, self.viewport.scale, style);
         }
+
+        // Bookmark pins. Rendered after the overlay so pins sit on
+        // top of the in-flight pointer disc; drawn in screen space so
+        // the tap target stays a constant 16 px regardless of zoom.
+        // Stuck pins track their stroke's current AABB — see
+        // `bookmark_world_position` for the fallback / broken-anchor
+        // rules.
+        //
+        // Pins are collected first so the immutable borrow of
+        // `self.doc.bookmarks()` is released before the (immutable
+        // again, but adjacent) viewport projection — keeps the
+        // iteration ergonomic without needing a `.collect()` on the
+        // whole bookmark list.
+        for bm in self.doc.bookmarks() {
+            let world = self.bookmark_world_position(bm);
+            let (sx, sy) = self.viewport.world_to_screen(world.x, world.y);
+            let broken = bm.stuck_to.is_some_and(|a| self.doc.find_stroke(a.stroke).is_none());
+            draw_bookmark_pin(canvas, sx, sy, bm.color, broken);
+        }
     }
 
     /// Compute the visible stroke set for the current viewport. Returns
@@ -1929,7 +2001,30 @@ pub struct SurfaceBounds {
 /// drag pan). Pen and stylus input still land on the [`Board`] through
 /// [`crate::pen_pump`] — the freya handlers here operate on the
 /// [`Viewport`] only, so simultaneous pen strokes are untouched.
-pub fn drawing_surface(board: &Arc<Mutex<Board>>) -> impl IntoElement {
+/// Long-press dwell before the gesture promotes to "create bookmark".
+/// Matches the home-page long-press feel so touch users get consistent
+/// timing across routes.
+const PIN_LONG_PRESS: std::time::Duration = std::time::Duration::from_millis(550);
+/// Movement slack (surface pixels) before a pending long-press
+/// cancels. Finger / stylus holds emit sub-pixel jitter even when the
+/// user intends a static hold; a strict "any move cancels" rule
+/// would make the pin never land.
+const PIN_LONG_PRESS_SLOP_PX: f32 = 12.0;
+/// Tap radius used to decide whether an initial pointer_down lands
+/// on an existing pin — matches `PIN_RADIUS_PX` plus a small comfort
+/// margin so slightly imprecise taps still select the pin.
+const PIN_TAP_RADIUS_PX: f32 = 20.0;
+/// World-space sticky radius used when a new pin is dropped — the
+/// `Board::add_bookmark` resolver snaps to a stroke within this
+/// radius. 40 world units ≈ a thick stroke's half-width at default
+/// zoom; keeps the sticky link forgiving but not grabby.
+const PIN_STICKY_WORLD_RADIUS: f32 = 40.0;
+
+pub fn drawing_surface(
+    board: &Arc<Mutex<Board>>,
+    selected_bookmark: freya::prelude::State<Option<crate::ids::BookmarkId>>,
+    body_buffer: freya::prelude::State<String>,
+) -> impl IntoElement {
     let render_board = Arc::clone(board);
     // Read the current background's surface backdrop once at element
     // construction. Swapping backgrounds at runtime requires re-mounting
@@ -1980,6 +2075,13 @@ pub fn drawing_surface(board: &Arc<Mutex<Board>>) -> impl IntoElement {
     let touch_cancel_board = Arc::clone(board);
     let pointer_move_board = Arc::clone(board);
     let pointer_leave_board = Arc::clone(board);
+    // Shared long-press state: token invalidates when the pointer
+    // moves far enough or leaves the surface; press_start records the
+    // down-event location so the timer can create the pin at the
+    // right world coord even if the pointer drifts a few pixels.
+    let press_token = freya::prelude::use_state(|| 0u64);
+    let press_start = freya::prelude::use_state(|| Option::<(f32, f32)>::None);
+    let press_down_board = Arc::clone(board);
 
     rect()
         .width(Size::fill())
@@ -2047,21 +2149,109 @@ pub fn drawing_surface(board: &Arc<Mutex<Board>>) -> impl IntoElement {
         .on_touch_cancel(move |e: Event<TouchEventData>| {
             lock(&touch_cancel_board).touch_up(e.finger_id);
         })
-        .on_pointer_move(move |e: Event<PointerEventData>| {
-            // Mouse / trackpad cursor feeds the overlay the same way
-            // pen hover does. Pen contact overrides via `pen_pump`
-            // (which locks the same board); whichever source fires
-            // last wins — fine, since the stylus never shares a
-            // surface pixel with the mouse pointer in practice.
-            let loc = e.element_location();
-            #[allow(clippy::cast_possible_truncation)]
-            let x = loc.x as f32;
-            #[allow(clippy::cast_possible_truncation)]
-            let y = loc.y as f32;
-            lock(&pointer_move_board).set_pointer(Some((x, y)));
+        .on_pointer_move({
+            let mut press_token_move = press_token;
+            let mut press_start_move = press_start;
+            move |e: Event<PointerEventData>| {
+                // Mouse / trackpad cursor feeds the overlay the same
+                // way pen hover does. Pen contact overrides via
+                // `pen_pump` (which locks the same board); whichever
+                // source fires last wins — fine, since the stylus
+                // never shares a surface pixel with the mouse pointer
+                // in practice.
+                let loc = e.element_location();
+                #[allow(clippy::cast_possible_truncation)]
+                let x = loc.x as f32;
+                #[allow(clippy::cast_possible_truncation)]
+                let y = loc.y as f32;
+                lock(&pointer_move_board).set_pointer(Some((x, y)));
+                // Invalidate the long-press timer if the pointer has
+                // drifted past the slop — static hold is the whole
+                // point, a dragging gesture should not create a pin.
+                let start = *press_start_move.peek();
+                if let Some((sx, sy)) = start {
+                    let dx = x - sx;
+                    let dy = y - sy;
+                    if dx.hypot(dy) >= PIN_LONG_PRESS_SLOP_PX {
+                        press_token_move.set(0);
+                        press_start_move.set(None);
+                    }
+                }
+            }
         })
         .on_pointer_leave(move |_: Event<PointerEventData>| {
             lock(&pointer_leave_board).set_pointer(None);
+        })
+        .on_pointer_down({
+            let mut press_token = press_token;
+            let mut press_start = press_start;
+            let mut selected = selected_bookmark;
+            let mut body_buffer = body_buffer;
+            move |e: Event<PointerEventData>| {
+                let loc = e.element_location();
+                #[allow(clippy::cast_possible_truncation)]
+                let x = loc.x as f32;
+                #[allow(clippy::cast_possible_truncation)]
+                let y = loc.y as f32;
+                // Immediate hit test — a tap on an existing pin
+                // selects it without waiting for the long-press
+                // dwell so the card feels responsive.
+                let hit = {
+                    let guard = lock(&press_down_board);
+                    guard.bookmark_near_screen(x, y, PIN_TAP_RADIUS_PX)
+                };
+                if let Some(id) = hit {
+                    let body = lock(&press_down_board)
+                        .doc()
+                        .bookmark(id)
+                        .map(|bm| bm.body.clone())
+                        .unwrap_or_default();
+                    body_buffer.set(body);
+                    selected.set(Some(id));
+                    // Short-circuit: don't schedule a long-press timer
+                    // on top of an existing-pin tap.
+                    let prev = *press_token.peek();
+                    press_token.set(prev.wrapping_add(1));
+                    press_start.set(None);
+                    return;
+                }
+                let prev = *press_token.peek();
+                let token = prev.wrapping_add(1);
+                press_token.set(token);
+                press_start.set(Some((x, y)));
+                let timer_board = Arc::clone(&press_down_board);
+                let mut timer_token = press_token;
+                let mut timer_start = press_start;
+                let mut timer_selected = selected;
+                let mut timer_body = body_buffer;
+                freya::prelude::spawn(async move {
+                    async_io::Timer::after(PIN_LONG_PRESS).await;
+                    if *timer_token.peek() != token {
+                        return;
+                    }
+                    let Some((px, py)) = *timer_start.peek() else {
+                        return;
+                    };
+                    let (world, now) = {
+                        let guard = lock(&timer_board);
+                        let (wx, wy) = guard.viewport().screen_to_world(px, py);
+                        (crate::bookmark::WorldPoint::new(wx, wy), 0u64)
+                    };
+                    let _ = now;
+                    let created_at = crate::bookmark_ui::now_ms();
+                    let id = lock(&timer_board).add_bookmark(
+                        world,
+                        PIN_STICKY_WORLD_RADIUS,
+                        created_at,
+                    );
+                    timer_body.set(String::new());
+                    timer_selected.set(Some(id));
+                    // Consume the pending press so a sibling pointer_up
+                    // doesn't try to re-trigger anything.
+                    timer_token.set(0);
+                    timer_start.set(None);
+                });
+            }
         })
         .child(inner)
 }
@@ -2087,6 +2277,62 @@ struct Fragment {
 struct SplitOutcome {
     touched: bool,
     fragments: Vec<Fragment>,
+}
+
+/// Default pin tint when a bookmark carries no custom color.
+/// Warm amber reads as "attention mark" on both light and dark
+/// canvases without clashing with the usual stroke palette.
+const PIN_DEFAULT_COLOR: [u8; 4] = [245, 158, 11, 255];
+/// Pin outer radius in surface pixels. Matches the SOURCES_PLAN §7
+/// spec (16 px disc). Independent of zoom so the tap target stays
+/// constant.
+const PIN_RADIUS_PX: f32 = 8.0;
+
+/// Draw one bookmark pin at the given surface-pixel position. White
+/// halo keeps the disc legible on busy backgrounds; a dashed ring is
+/// overlaid when `broken` is true to signal a stale sticky anchor.
+fn draw_bookmark_pin(
+    canvas: &freya_engine::prelude::Canvas,
+    cx: f32,
+    cy: f32,
+    color: Option<[u8; 4]>,
+    broken: bool,
+) {
+    let rgba = color.unwrap_or(PIN_DEFAULT_COLOR);
+    let fill_color = SkColor::from_argb(rgba[3], rgba[0], rgba[1], rgba[2]);
+
+    // White halo under the pin for contrast against dark strokes.
+    let mut halo = Paint::default();
+    halo.set_color(SkColor::from_argb(220, 255, 255, 255));
+    halo.set_style(PaintStyle::Fill);
+    halo.set_anti_alias(true);
+    canvas.draw_circle((cx, cy), PIN_RADIUS_PX + 2.0, &halo);
+
+    // Tinted fill.
+    let mut fill = Paint::default();
+    fill.set_color(fill_color);
+    fill.set_style(PaintStyle::Fill);
+    fill.set_anti_alias(true);
+    canvas.draw_circle((cx, cy), PIN_RADIUS_PX, &fill);
+
+    // Thin dark border — reads cleanly on light pin colors too.
+    let mut border = Paint::default();
+    border.set_color(SkColor::from_argb(180, 30, 30, 30));
+    border.set_style(PaintStyle::Stroke);
+    border.set_stroke_width(1.5);
+    border.set_anti_alias(true);
+    canvas.draw_circle((cx, cy), PIN_RADIUS_PX, &border);
+
+    if broken {
+        // Dashed red outer ring = sticky-anchor target disappeared.
+        // Matches the "⚠ ancla rota" chip language in SOURCES_PLAN §7.
+        let mut warn = Paint::default();
+        warn.set_color(SkColor::from_argb(255, 220, 38, 38));
+        warn.set_style(PaintStyle::Stroke);
+        warn.set_stroke_width(2.0);
+        warn.set_anti_alias(true);
+        canvas.draw_circle((cx, cy), PIN_RADIUS_PX + 4.0, &warn);
+    }
 }
 
 /// Pointer indicator (hover disc). Projects a brush's world-unit

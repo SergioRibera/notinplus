@@ -297,15 +297,28 @@ pub(crate) fn root() -> impl IntoElement {
         use_state(move || lock(&board).input_mode())
     };
 
+    // Bookmark selection state. `selected_bookmark` drives the card
+    // overlay; `bookmark_body` is the textarea buffer. Both live at
+    // this level because the long-press gesture (inside
+    // `drawing_surface`) and the card renderer (in `bookmark_ui`)
+    // need to see / write the same state.
+    let selected_bookmark = use_state(|| Option::<crate::ids::BookmarkId>::None);
+    let bookmark_body = use_state(String::new);
+
     rect()
         .width(Size::fill())
         .height(Size::fill())
-        .child(drawing_surface(&board))
+        .child(drawing_surface(&board, selected_bookmark, bookmark_body))
         .child(back_overlay(&board, pad))
         .child(palette_overlay(&board, selected, scale, pad, coords))
         .child(layers_panel(&board, layers_ver, pad))
         .child(mode_overlay(&board, mode, pad))
         .child(zoom_overlay(&board, zoom, pad))
+        .child(crate::bookmark_ui::bookmark_card_overlay(
+            &board,
+            selected_bookmark,
+            bookmark_body,
+        ))
 }
 
 /// Top-left "back to home" pill. Snapshots the current doc, spawns a

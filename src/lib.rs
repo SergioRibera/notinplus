@@ -11,6 +11,7 @@
 
 pub mod app;
 pub mod bookmark;
+pub mod bookmark_ui;
 pub mod brush;
 pub mod canvas;
 pub mod components;
