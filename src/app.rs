@@ -24,6 +24,7 @@ use crate::canvas::{Board, InputMode, LayerSnapshot, RedrawNotifier, drawing_sur
 use crate::hooks::use_safe_area_insets;
 use crate::palette_popup::{HOVER_DELAY, brush_popup};
 use crate::pen_pump;
+use crate::plugins;
 use crate::prefs;
 use crate::ui_mask::{self, UiRegion};
 
@@ -128,6 +129,8 @@ fn spawn_prefs_worker(board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
 }
 
 pub fn run() {
+    plugins::hydrate_from_disk();
+
     #[cfg(target_os = "android")]
     {
         use freya::prelude::NativeEvent;

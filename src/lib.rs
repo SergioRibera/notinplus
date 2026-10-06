@@ -25,6 +25,8 @@ pub mod library;
 pub mod op;
 pub mod palette_popup;
 pub mod pen_pump;
+pub mod plugin_settings;
+pub mod plugins;
 pub mod prefs;
 pub mod render;
 pub mod route;
