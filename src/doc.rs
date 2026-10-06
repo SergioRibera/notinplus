@@ -13,6 +13,7 @@ use std::path::Path;
 use bincode::config::{self, Configuration};
 
 use crate::brush::{BrushId, BrushPreset, Stroke};
+use crate::ids::StrokeId;
 
 const CODEC: Configuration = config::standard();
 
@@ -58,7 +59,6 @@ pub struct Doc {
     pub layers: Vec<Layer>,
     /// Id of the layer new strokes commit into.
     pub active_layer: u32,
-    pub next_stroke_id: u32,
     pub next_layer_id: u32,
 }
 
@@ -68,7 +68,6 @@ impl Default for Doc {
             brushes: Vec::new(),
             layers: vec![Layer::new(0, "Layer 1")],
             active_layer: 0,
-            next_stroke_id: 0,
             next_layer_id: 1,
         }
     }
@@ -98,8 +97,8 @@ impl Doc {
     }
 
     /// Append a fully-formed stroke into the active layer, assigning
-    /// it the next monotonic id. Returns the assigned id so callers
-    /// can update the spatial index.
+    /// it a fresh UUID. Returns the assigned id so callers can update
+    /// the spatial index.
     /// # Panics
     /// If `active_layer` doesn't refer to an existing layer — invariant
     /// upheld by [`Self::set_active_layer`] and [`Self::remove_layer`].
@@ -108,9 +107,8 @@ impl Doc {
         brush: BrushId,
         color: [u8; 4],
         points: Vec<crate::brush::InkPoint>,
-    ) -> u32 {
-        let id = self.next_stroke_id;
-        self.next_stroke_id = self.next_stroke_id.wrapping_add(1);
+    ) -> StrokeId {
+        let id = StrokeId::new_v4();
         let layer_id = self.active_layer;
         let layer = self
             .layer_mut(layer_id)
@@ -136,15 +134,16 @@ impl Doc {
         true
     }
 
-    /// Reserve the next monotonic stroke id without pushing anything.
-    pub const fn allocate_stroke_id(&mut self) -> u32 {
-        let id = self.next_stroke_id;
-        self.next_stroke_id = self.next_stroke_id.wrapping_add(1);
-        id
+    /// Mint a fresh stroke id without pushing anything. Replaces the
+    /// pre-UUID monotonic counter — UUID v4 is globally unique, so no
+    /// per-doc state is needed.
+    #[must_use]
+    pub fn allocate_stroke_id(&self) -> StrokeId {
+        StrokeId::new_v4()
     }
 
     #[must_use]
-    pub fn find_stroke(&self, id: u32) -> Option<&Stroke> {
+    pub fn find_stroke(&self, id: StrokeId) -> Option<&Stroke> {
         for layer in &self.layers {
             for stroke in &layer.strokes {
                 if stroke.id == id {
@@ -157,7 +156,7 @@ impl Doc {
 
     /// Remove the stroke with `id` from whichever layer holds it.
     /// Preserves within-layer ordering.
-    pub fn remove_stroke(&mut self, id: u32) -> Option<Stroke> {
+    pub fn remove_stroke(&mut self, id: StrokeId) -> Option<Stroke> {
         for layer in &mut self.layers {
             if let Some(pos) = layer.strokes.iter().position(|s| s.id == id) {
                 return Some(layer.strokes.remove(pos));
@@ -166,12 +165,11 @@ impl Doc {
         None
     }
 
-    /// Reset to a single empty layer, clear stroke id counter.
+    /// Reset to a single empty layer.
     pub fn clear(&mut self) {
         self.layers.clear();
         self.layers.push(Layer::new(0, "Layer 1"));
         self.active_layer = 0;
-        self.next_stroke_id = 0;
         self.next_layer_id = 1;
     }
 

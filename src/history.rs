@@ -14,6 +14,7 @@
 use std::collections::HashSet;
 
 use crate::brush::Stroke;
+use crate::ids::StrokeId;
 
 /// Stroke snapshot captured before an erase touched it.
 ///
@@ -37,7 +38,7 @@ pub struct EraseSession {
     /// Ids of fragment strokes introduced when the session commits;
     /// removed on undo. Empty during accumulation — populated by the
     /// canvas at pen-up.
-    pub added_fragments: Vec<u32>,
+    pub added_fragments: Vec<StrokeId>,
     /// Clip circles collected across every sample of the gesture
     /// (world coordinates). The commit-time split derives final
     /// fragments by folding these in order against each snapshotted
@@ -46,7 +47,7 @@ pub struct EraseSession {
     /// Ids already snapshotted into `originals` — O(1) dedup so a
     /// stroke that gets grazed by many consecutive samples isn't
     /// snapshotted twice.
-    touched_ids: HashSet<u32>,
+    touched_ids: HashSet<StrokeId>,
 }
 
 impl EraseSession {
@@ -69,7 +70,7 @@ impl EraseSession {
     /// Ask whether `id` has already been snapshotted — cheap early-out
     /// so callers can skip the split-touched probe entirely.
     #[must_use]
-    pub fn contains(&self, id: u32) -> bool {
+    pub fn contains(&self, id: StrokeId) -> bool {
         self.touched_ids.contains(&id)
     }
 

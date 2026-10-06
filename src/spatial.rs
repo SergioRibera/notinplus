@@ -12,10 +12,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::brush::InkPoint;
+pub use crate::ids::StrokeId;
 
 const BUCKET_DP: f32 = 128.0;
 
-pub type StrokeId = u32;
 type BucketKey = (i32, i32);
 
 #[derive(Debug, Default)]
@@ -126,19 +126,22 @@ mod tests {
 
     #[test]
     fn query_finds_nearby() {
+        let a = StrokeId::new_v4();
+        let b = StrokeId::new_v4();
         let mut idx = SpatialIndex::new();
-        idx.insert(1, &[pt(10.0, 10.0), pt(20.0, 20.0)]);
-        idx.insert(2, &[pt(500.0, 500.0)]);
+        idx.insert(a, &[pt(10.0, 10.0), pt(20.0, 20.0)]);
+        idx.insert(b, &[pt(500.0, 500.0)]);
         let hits = idx.query_circle(15.0, 15.0, 20.0);
-        assert!(hits.contains(&1));
-        assert!(!hits.contains(&2));
+        assert!(hits.contains(&a));
+        assert!(!hits.contains(&b));
     }
 
     #[test]
     fn remove_evicts() {
+        let a = StrokeId::new_v4();
         let mut idx = SpatialIndex::new();
-        idx.insert(1, &[pt(10.0, 10.0)]);
-        idx.remove(1, &[pt(10.0, 10.0)]);
+        idx.insert(a, &[pt(10.0, 10.0)]);
+        idx.remove(a, &[pt(10.0, 10.0)]);
         assert!(idx.query_circle(10.0, 10.0, 5.0).is_empty());
     }
 }

@@ -37,6 +37,7 @@ use crate::brush::{
 };
 use crate::doc::Doc;
 use crate::history::{EraseOriginal, EraseSession, HistoryOp};
+use crate::ids::StrokeId;
 use crate::render::{BrushRegistry, HighlighterBrush, HighlighterState, PointerStyle};
 use crate::spatial::SpatialIndex;
 
@@ -156,11 +157,11 @@ pub struct Board {
     /// Pre-tessellated Skia path per committed stroke. Rebuilt only on
     /// commit / erase / load — repainting is a `HashMap` lookup plus a
     /// single `draw_path` call.
-    cached_paths: HashMap<u32, Path>,
+    cached_paths: HashMap<StrokeId, Path>,
     /// `stroke_id → (layer_id, within-layer stroke index)`. Kills the
     /// O(N) `position` scan the eraser used to run per candidate hit
     /// and localises index shifting to the affected layer.
-    stroke_index: HashMap<u32, (u32, usize)>,
+    stroke_index: HashMap<StrokeId, (u32, usize)>,
     history: Vec<HistoryOp>,
     erase_session: Option<EraseSession>,
     /// Active [`EraserMode::SelectionRect`] drag, expressed as
@@ -1106,6 +1107,17 @@ impl Board {
         }
     }
 
+    /// All committed stroke ids within `radius` world-units of
+    /// `(world_x, world_y)`. Broad-phase via [`SpatialIndex`] only —
+    /// callers that need pixel-tight filtering do their own hit test
+    /// against each stroke's polyline. Used by the bookmark pin
+    /// "sticky anchor" lookup (Phase 1+); exposed on `Board` so plugin
+    /// code never reaches into the private spatial index.
+    #[must_use]
+    pub fn strokes_near(&self, world_x: f32, world_y: f32, radius: f32) -> Vec<StrokeId> {
+        self.spatial.query_circle(world_x, world_y, radius)
+    }
+
     pub fn set_layer_visible(&mut self, id: u32, visible: bool) {
         if let Some(layer) = self.doc.layer_mut(id) {
             layer.visible = visible;
@@ -1374,7 +1386,7 @@ impl Board {
         let radius = self.eraser_tap_radius();
         let active_layer = self.doc.active_layer;
         let candidates = self.spatial.query_circle(x, y, radius);
-        let mut best: Option<(usize, u32)> = None;
+        let mut best: Option<(usize, StrokeId)> = None;
         for id in candidates {
             let Some(&(layer_id, idx)) = self.stroke_index.get(&id) else {
                 continue;
@@ -1420,7 +1432,7 @@ impl Board {
         }
         let active_layer = self.doc.active_layer;
         let candidates = self.spatial.query_rect(min_x, min_y, max_x, max_y);
-        let mut targets: Vec<u32> = Vec::new();
+        let mut targets: Vec<StrokeId> = Vec::new();
         for id in candidates {
             let Some(&(layer_id, idx)) = self.stroke_index.get(&id) else {
                 continue;
@@ -1467,7 +1479,7 @@ impl Board {
     /// Snapshot a single stroke into a fresh session, remove it from
     /// the doc, and push the session onto the history. Shared by the
     /// `Stroke` mode tap path.
-    fn snapshot_and_remove_whole(&mut self, id: u32, layer_id: u32) {
+    fn snapshot_and_remove_whole(&mut self, id: StrokeId, layer_id: u32) {
         let Some(layer) = self.doc.layer(layer_id) else {
             return;
         };
@@ -1488,7 +1500,7 @@ impl Board {
     /// Remove a stroke by id, keeping `stroke_index` and `cached_paths`
     /// in sync. Preserves within-layer z-order and only shifts
     /// indices for strokes that share the affected layer.
-    fn remove_stroke_indexed(&mut self, id: u32) -> Option<Stroke> {
+    fn remove_stroke_indexed(&mut self, id: StrokeId) -> Option<Stroke> {
         let (layer_id, idx) = self.stroke_index.remove(&id)?;
         let removed = {
             let layer = self
@@ -1695,7 +1707,7 @@ impl Board {
     /// zoom showing "most of it") — the caller then paints every
     /// stroke, matching pre-culling behaviour and skipping the
     /// per-frame hash-set build.
-    fn visible_stroke_set(&self, surface: SurfaceBounds) -> Option<HashSet<u32>> {
+    fn visible_stroke_set(&self, surface: SurfaceBounds) -> Option<HashSet<StrokeId>> {
         // Total committed strokes across every layer. Below this
         // threshold the per-frame `HashSet` build costs more than the
         // draws it saves — full-doc paint is faster.

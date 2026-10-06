@@ -12,6 +12,8 @@
 
 use freya::prelude::Color;
 
+use crate::ids::StrokeId;
+
 /// Zero-based index into [`crate::doc::Doc::brushes`]. `u16` caps
 /// per-document presets at 65 535 — orders of magnitude past any
 /// realistic ceiling — and keeps every [`Stroke`] header at two bytes.
@@ -479,7 +481,7 @@ pub enum CapStyle {
 #[istmo::message]
 #[derive(Clone, PartialEq, Debug)]
 pub struct Stroke {
-    pub id: u32,
+    pub id: StrokeId,
     pub brush: BrushId,
     pub color: [u8; 4],
     pub cap_start: CapStyle,
@@ -489,7 +491,7 @@ pub struct Stroke {
 
 impl Stroke {
     #[must_use]
-    pub fn new(id: u32, brush: BrushId, color: [u8; 4], first: InkPoint) -> Self {
+    pub fn new(id: StrokeId, brush: BrushId, color: [u8; 4], first: InkPoint) -> Self {
         Self {
             id,
             brush,
