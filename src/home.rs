@@ -30,7 +30,7 @@ use istmo::plugins::EdgeInsets;
 use crate::components::FormInput;
 use crate::components::drag_drop::{DragZone, DropZone};
 use crate::components::{
-    CanvasCreateSheet, CreateCanvasRequest, Modal, ModalController, auto_color,
+    CanvasCreateSheet, CreateCanvasRequest, Modal, ModalController, SettingsModal, auto_color,
 };
 use crate::hooks::use_safe_area_insets;
 use crate::library::{
@@ -203,10 +203,10 @@ fn top_bar() -> impl IntoElement {
                 .placeholder("Search"),
         )
         .child(spacer_px(6.0))
-        .child(icon_button("⚙"))
+        .child(icon_button("⚙").on_press(|_| SettingsModal::open()))
 }
 
-fn icon_button(glyph: &'static str) -> impl IntoElement {
+fn icon_button(glyph: &'static str) -> Rect {
     rect()
         .width(Size::px(32.0))
         .height(Size::px(32.0))
