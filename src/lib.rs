@@ -10,6 +10,7 @@
 //! manifests every dep's `build.rs` emits.
 
 pub mod app;
+pub mod bookmark;
 pub mod brush;
 pub mod canvas;
 pub mod components;

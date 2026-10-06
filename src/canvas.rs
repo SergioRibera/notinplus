@@ -32,12 +32,13 @@ use freya_engine::prelude::{
     BlendMode, Color as SkColor, Paint, PaintStyle, Path, PathBuilder, SaveLayerRec,
 };
 
+use crate::bookmark::{Bookmark, Rgba, SourceRef, StrokeAnchor, TimestampMs, WorldPoint};
 use crate::brush::{
     BrushConfig, BrushKind, BrushPreset, CapStyle, EraserMode, InkPoint, ShapeMode, Stroke,
 };
 use crate::doc::Doc;
 use crate::doc_op::DocOp;
-use crate::ids::StrokeId;
+use crate::ids::{BookmarkId, StrokeId};
 use crate::render::{BrushRegistry, HighlighterBrush, HighlighterState, PointerStyle};
 use crate::spatial::SpatialIndex;
 use crate::undo::UndoStack;
@@ -1229,6 +1230,115 @@ impl Board {
         self.notify_commit();
     }
 
+    /// Add a bookmark at `world` in world coordinates. If a stroke
+    /// lies within `sticky_radius` world-units of the point, the pin
+    /// adopts a [`StrokeAnchor`] pointing at the nearest one so later
+    /// stroke moves drag it along. Returns the fresh id so callers
+    /// can route it into UI focus / inline refs.
+    pub fn add_bookmark(
+        &mut self,
+        world: WorldPoint,
+        sticky_radius: f32,
+        timestamp_ms: TimestampMs,
+    ) -> BookmarkId {
+        let id = BookmarkId::new_v4();
+        let mut bm = Bookmark::new(id, world, timestamp_ms);
+        bm.stuck_to = self.resolve_sticky(world, sticky_radius);
+        self.apply_op(DocOp::AddBookmark { bookmark: bm });
+        self.notify_commit();
+        id
+    }
+
+    /// LWW update of the mutable body / refs / color trio. Pass
+    /// `updated_at` from a monotonic clock so the undo entry preserves
+    /// the user-facing timestamp.
+    pub fn update_bookmark(
+        &mut self,
+        id: BookmarkId,
+        body: String,
+        refs: Vec<SourceRef>,
+        color: Option<Rgba>,
+        updated_at: TimestampMs,
+    ) -> bool {
+        if self.doc.bookmark(id).is_none() {
+            return false;
+        }
+        self.apply_op(DocOp::UpdateBookmark {
+            id,
+            body,
+            refs,
+            color,
+            updated_at,
+        });
+        self.notify_commit();
+        true
+    }
+
+    pub fn delete_bookmark(&mut self, id: BookmarkId) -> bool {
+        if self.doc.bookmark(id).is_none() {
+            return false;
+        }
+        self.apply_op(DocOp::DeleteBookmark { id });
+        self.notify_commit();
+        true
+    }
+
+    /// Re-peg a bookmark to a stroke (or clear the link). The world
+    /// anchor stays in the stored `Bookmark::anchor` as a fallback for
+    /// when the sticky target disappears later.
+    pub fn stick_bookmark(&mut self, id: BookmarkId, to: Option<StrokeAnchor>) -> bool {
+        if self.doc.bookmark(id).is_none() {
+            return false;
+        }
+        self.apply_op(DocOp::StickBookmark { id, to });
+        self.notify_commit();
+        true
+    }
+
+    #[must_use]
+    pub fn bookmarks(&self) -> &[Bookmark] {
+        self.doc.bookmarks()
+    }
+
+    /// Nearest stroke within `radius` of `world`, expressed as a
+    /// [`StrokeAnchor`] whose `offset_in_bbox` lets the pin follow the
+    /// stroke under later `MoveStroke` ops (Phase 2+). `None` when no
+    /// stroke lies in range — caller stores the pin as a free world
+    /// position.
+    fn resolve_sticky(&self, world: WorldPoint, radius: f32) -> Option<StrokeAnchor> {
+        if radius <= 0.0 {
+            return None;
+        }
+        let candidates = self.spatial.query_circle(world.x, world.y, radius);
+        let mut best: Option<(f32, StrokeId, (f32, f32))> = None;
+        for id in candidates {
+            let Some(stroke) = self.doc.find_stroke(id) else {
+                continue;
+            };
+            let Some((bbx, bby)) = stroke.points.first().map(|p| (p.x, p.y)) else {
+                continue;
+            };
+            let (min_x, min_y) = stroke
+                .points
+                .iter()
+                .fold((bbx, bby), |(ax, ay), p| (ax.min(p.x), ay.min(p.y)));
+            let dx = world.x - min_x;
+            let dy = world.y - min_y;
+            // Distance metric: Euclidean from world to AABB origin.
+            // The spatial query already pruned by bbox radius, so this
+            // is just a tie-breaker when several strokes share the
+            // bucket.
+            let dist = dx.hypot(dy);
+            if best.is_none_or(|(d, _, _)| dist < d) {
+                best = Some((dist, id, (dx, dy)));
+            }
+        }
+        best.map(|(_, stroke, offset_in_bbox)| StrokeAnchor {
+            stroke,
+            offset_in_bbox,
+        })
+    }
+
     fn commit_stroke(&mut self, stroke: Stroke) {
         let layer_id = self
             .active_layer_at_begin
@@ -1329,13 +1439,18 @@ impl Board {
                     self.stroke_index.insert(id, (layer_id, idx));
                 }
             }
-            // Layer attr + brush registry ops don't touch derived state.
+            // Layer attr, brush registry and bookmark ops don't touch
+            // the stroke-derived indices.
             op @ (DocOp::RegisterBrush { .. }
             | DocOp::AddLayer { .. }
             | DocOp::SetActiveLayer { .. }
             | DocOp::SetLayerVisible { .. }
             | DocOp::SetLayerLocked { .. }
-            | DocOp::SetLayerOpacity { .. }) => {
+            | DocOp::SetLayerOpacity { .. }
+            | DocOp::AddBookmark { .. }
+            | DocOp::UpdateBookmark { .. }
+            | DocOp::DeleteBookmark { .. }
+            | DocOp::StickBookmark { .. }) => {
                 self.doc.emit(op);
             }
         }
@@ -2628,6 +2743,75 @@ mod tests {
             before_active,
             "active layer restored"
         );
+    }
+
+    #[test]
+    fn bookmark_create_sticks_to_nearby_stroke() {
+        let mut b = Board::default();
+        b.set_current_preset(BrushPreset::pen());
+        b.begin(pt(0.0, 0.0));
+        b.extend(pt(100.0, 0.0));
+        b.end();
+        let stroke_id = b
+            .doc()
+            .strokes()
+            .next()
+            .map(|s| s.id)
+            .expect("stroke committed");
+
+        let bm_id = b.add_bookmark(WorldPoint::new(5.0, 2.0), 50.0, 1000);
+        let bm = b.doc().bookmark(bm_id).unwrap();
+        let anchor = bm.stuck_to.expect("pin should stick to nearby stroke");
+        assert_eq!(anchor.stroke, stroke_id);
+    }
+
+    #[test]
+    fn bookmark_create_with_no_stroke_in_range_is_free() {
+        let mut b = Board::default();
+        let bm_id = b.add_bookmark(WorldPoint::new(0.0, 0.0), 10.0, 1000);
+        assert!(b.doc().bookmark(bm_id).unwrap().stuck_to.is_none());
+    }
+
+    #[test]
+    fn bookmark_add_update_delete_round_through_undo_redo() {
+        let mut b = Board::default();
+        let bm_id = b.add_bookmark(WorldPoint::new(0.0, 0.0), 0.0, 1_000);
+        assert_eq!(b.bookmarks().len(), 1);
+        assert_eq!(b.undo_depth(), 1);
+
+        b.update_bookmark(
+            bm_id,
+            "nota".into(),
+            vec![],
+            Some([10, 20, 30, 255]),
+            2_000,
+        );
+        assert_eq!(b.doc().bookmark(bm_id).unwrap().body, "nota");
+        assert_eq!(b.undo_depth(), 2);
+
+        assert!(b.undo(), "undo update");
+        assert_eq!(b.doc().bookmark(bm_id).unwrap().body, "");
+        assert!(b.redo(), "redo update");
+        assert_eq!(b.doc().bookmark(bm_id).unwrap().body, "nota");
+
+        assert!(b.delete_bookmark(bm_id));
+        assert!(b.doc().bookmark(bm_id).is_none());
+        assert!(b.undo(), "undo delete");
+        assert!(b.doc().bookmark(bm_id).is_some());
+    }
+
+    #[test]
+    fn stick_bookmark_undo_restores_previous_anchor() {
+        let mut b = Board::default();
+        let bm_id = b.add_bookmark(WorldPoint::new(0.0, 0.0), 0.0, 0);
+        let anchor = StrokeAnchor {
+            stroke: StrokeId::new_v4(),
+            offset_in_bbox: (1.0, 2.0),
+        };
+        assert!(b.stick_bookmark(bm_id, Some(anchor)));
+        assert_eq!(b.doc().bookmark(bm_id).unwrap().stuck_to, Some(anchor));
+        assert!(b.undo());
+        assert!(b.doc().bookmark(bm_id).unwrap().stuck_to.is_none());
     }
 
     #[test]

@@ -12,10 +12,11 @@ use std::path::Path;
 
 use bincode::config::{self, Configuration};
 
+use crate::bookmark::Bookmark;
 use crate::brush::{BrushId, BrushPreset, Stroke};
 use crate::doc_op::{DocOp, OpRecord};
 use crate::identity::global_actor;
-use crate::ids::StrokeId;
+use crate::ids::{BookmarkId, StrokeId};
 use crate::op::OpId;
 
 const CODEC: Configuration = config::standard();
@@ -63,6 +64,10 @@ pub struct Doc {
     /// Id of the layer new strokes commit into.
     pub active_layer: u32,
     pub next_layer_id: u32,
+    /// Bookmarks pinned to this canvas. Flat list, order is insertion
+    /// order (not z-sorted) — the pin overlay sorts by position / age
+    /// at paint time. UUID ids mean cross-device merges never collide.
+    pub bookmarks: Vec<Bookmark>,
     /// Highest Lamport observed on this doc. Local emission in
     /// Phase 1.2 bumps this before stamping an `OpId`; Phase 10
     /// `observe_remote` fast-forwards it past an incoming op.
@@ -80,6 +85,7 @@ impl Default for Doc {
             layers: vec![Layer::new(0, "Layer 1")],
             active_layer: 0,
             next_layer_id: 1,
+            bookmarks: Vec::new(),
             lamport: 0,
             log: Vec::new(),
         }
@@ -179,6 +185,39 @@ impl Doc {
             DocOp::SetLayerOpacity { id, opacity } => {
                 if let Some(l) = self.layers.iter_mut().find(|l| l.id == *id) {
                     l.opacity = opacity.clamp(0.0, 1.0);
+                }
+            }
+            DocOp::AddBookmark { bookmark } => {
+                if !self.bookmarks.iter().any(|b| b.id == bookmark.id) {
+                    let mut copy = bookmark.clone();
+                    copy.lamport = copy.lamport.max(self.lamport);
+                    self.bookmarks.push(copy);
+                }
+            }
+            DocOp::UpdateBookmark {
+                id,
+                body,
+                refs,
+                color,
+                updated_at,
+            } => {
+                if let Some(bm) = self.bookmarks.iter_mut().find(|b| b.id == *id) {
+                    bm.body.clone_from(body);
+                    bm.refs.clone_from(refs);
+                    bm.color = *color;
+                    bm.updated_at = *updated_at;
+                    bm.lamport = bm.lamport.max(self.lamport);
+                }
+            }
+            DocOp::DeleteBookmark { id } => {
+                if let Some(pos) = self.bookmarks.iter().position(|b| b.id == *id) {
+                    self.bookmarks.remove(pos);
+                }
+            }
+            DocOp::StickBookmark { id, to } => {
+                if let Some(bm) = self.bookmarks.iter_mut().find(|b| b.id == *id) {
+                    bm.stuck_to = *to;
+                    bm.lamport = bm.lamport.max(self.lamport);
                 }
             }
         }
@@ -326,7 +365,51 @@ impl Doc {
                     }]
                 })
                 .unwrap_or_default(),
+            DocOp::AddBookmark { bookmark } => {
+                vec![DocOp::DeleteBookmark { id: bookmark.id }]
+            }
+            DocOp::DeleteBookmark { id } => self
+                .bookmark(*id)
+                .map(|bm| {
+                    vec![DocOp::AddBookmark {
+                        bookmark: bm.clone(),
+                    }]
+                })
+                .unwrap_or_default(),
+            DocOp::UpdateBookmark { id, .. } => self
+                .bookmark(*id)
+                .map(|bm| {
+                    vec![DocOp::UpdateBookmark {
+                        id: *id,
+                        body: bm.body.clone(),
+                        refs: bm.refs.clone(),
+                        color: bm.color,
+                        updated_at: bm.updated_at,
+                    }]
+                })
+                .unwrap_or_default(),
+            DocOp::StickBookmark { id, .. } => self
+                .bookmark(*id)
+                .map(|bm| {
+                    vec![DocOp::StickBookmark {
+                        id: *id,
+                        to: bm.stuck_to,
+                    }]
+                })
+                .unwrap_or_default(),
         }
+    }
+
+    /// Immutable lookup of a bookmark by id.
+    #[must_use]
+    pub fn bookmark(&self, id: BookmarkId) -> Option<&Bookmark> {
+        self.bookmarks.iter().find(|b| b.id == id)
+    }
+
+    /// Bookmarks pinned to this doc, flat list in insertion order.
+    #[must_use]
+    pub fn bookmarks(&self) -> &[Bookmark] {
+        &self.bookmarks
     }
 
     /// `(layer_id, cloned_stroke)` for the stroke carrying `id`.
@@ -701,5 +784,91 @@ mod tests {
         let l2 = d.add_layer("Layer 2");
         assert!(d.remove_layer(l2).is_some());
         assert_eq!(d.layers.len(), 1);
+    }
+
+    #[test]
+    fn bookmark_add_update_delete_roundtrip() {
+        use crate::bookmark::{Bookmark, SourceRef, WorldPoint};
+        use crate::ids::BookmarkId;
+        let mut d = Doc::default();
+        let bid = BookmarkId::new_v4();
+        let bm = Bookmark::new(bid, WorldPoint::new(10.0, 20.0), 1000);
+        d.emit(DocOp::AddBookmark {
+            bookmark: bm.clone(),
+        });
+        assert_eq!(d.bookmarks().len(), 1);
+        assert_eq!(d.bookmark(bid).unwrap().anchor, WorldPoint::new(10.0, 20.0));
+
+        d.emit(DocOp::UpdateBookmark {
+            id: bid,
+            body: "hola".into(),
+            refs: vec![SourceRef::External {
+                url: "https://e.x".into(),
+            }],
+            color: Some([255, 0, 0, 255]),
+            updated_at: 2000,
+        });
+        let after = d.bookmark(bid).unwrap();
+        assert_eq!(after.body, "hola");
+        assert_eq!(after.refs.len(), 1);
+        assert_eq!(after.updated_at, 2000);
+
+        d.emit(DocOp::DeleteBookmark { id: bid });
+        assert!(d.bookmark(bid).is_none());
+    }
+
+    #[test]
+    fn bookmark_add_delete_inverses_roundtrip() {
+        use crate::bookmark::{Bookmark, WorldPoint};
+        use crate::ids::BookmarkId;
+        let mut d = Doc::default();
+        let bid = BookmarkId::new_v4();
+        let bm = Bookmark::new(bid, WorldPoint::new(1.0, 2.0), 0);
+        let add = DocOp::AddBookmark {
+            bookmark: bm.clone(),
+        };
+        let inv_add = d.inverse_before_apply(&add);
+        d.emit(add);
+        assert_eq!(inv_add, vec![DocOp::DeleteBookmark { id: bid }]);
+
+        let del = DocOp::DeleteBookmark { id: bid };
+        let inv_del = d.inverse_before_apply(&del);
+        assert_eq!(
+            inv_del,
+            vec![DocOp::AddBookmark {
+                bookmark: d.bookmark(bid).unwrap().clone()
+            }]
+        );
+        d.emit(del);
+        for op in inv_del {
+            d.emit(op);
+        }
+        assert_eq!(d.bookmark(bid).unwrap().id, bid);
+    }
+
+    #[test]
+    fn stick_bookmark_inverse_restores_previous_target() {
+        use crate::bookmark::{Bookmark, StrokeAnchor, WorldPoint};
+        use crate::ids::{BookmarkId, StrokeId};
+        let mut d = Doc::default();
+        let bid = BookmarkId::new_v4();
+        d.emit(DocOp::AddBookmark {
+            bookmark: Bookmark::new(bid, WorldPoint::new(0.0, 0.0), 0),
+        });
+        let anchor = StrokeAnchor {
+            stroke: StrokeId::new_v4(),
+            offset_in_bbox: (3.0, 4.0),
+        };
+        let stick = DocOp::StickBookmark {
+            id: bid,
+            to: Some(anchor),
+        };
+        let inv = d.inverse_before_apply(&stick);
+        d.emit(stick);
+        assert_eq!(d.bookmark(bid).unwrap().stuck_to, Some(anchor));
+        for op in inv {
+            d.emit(op);
+        }
+        assert!(d.bookmark(bid).unwrap().stuck_to.is_none());
     }
 }
