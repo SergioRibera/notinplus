@@ -14,21 +14,24 @@
 //! [`CreationEntry`] for the home FAB `+` menu.
 //!
 //! Bookmark payloads cross the trait boundary as opaque bincode blobs
-//! (`Vec<u8>` arguments / returns) — only identifiers and primitives
-//! appear in the ABI surface. This keeps the layer thin and avoids
-//! pinning the bookmark model as a stable wire type.
+//! (`Vec<u8>` arguments / returns) encoded from the shared
+//! [`Bookmark`] / [`bookmark::SourceRef`] types defined here — only
+//! identifiers and primitives appear in the ABI surface. Plugin
+//! authors should pull `notein-sdk` and use its codec helpers rather
+//! than hand-rolling the bincode calls.
 
-
+pub mod bookmark;
+pub mod canvas;
 pub mod config;
 pub mod creation;
 pub mod error;
 pub mod ids;
 pub mod source;
-pub mod canvas;
 
+pub use bookmark::{Bookmark, Rgba, SourceRef, StrokeAnchor, TimestampMs, WorldPoint};
 pub use canvas::{CanvasKind, FrameCtxHandle, InputEvent, PointerKind};
 pub use config::{ConfigEnumOption, ConfigField, ConfigFieldKind, ConfigSchema, ConfigValue};
 pub use creation::{CreationCategory, CreationEntry, CreationKind, ItemCreationResult};
 pub use error::{CanvasError, ConfigError, CreationError, SourceError};
-pub use ids::{BookmarkId, WorldPoint};
+pub use ids::{BookmarkId, StrokeId};
 pub use source::{AnchorView, SearchHit, Selection, Source, Tile, TileRequest};
