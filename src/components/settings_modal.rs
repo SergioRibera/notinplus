@@ -156,10 +156,14 @@ fn content(
     registry: Arc<Mutex<PluginRegistry>>,
 ) -> impl IntoElement {
     let current = *section.read();
-    let body = match current {
-        Section::Account => account_section().into_element(),
-        Section::General => general_section(tick).into_element(),
-        Section::Plugins => plugins_section(tick, registry).into_element(),
+    // Each section lives in its own Component so the hook table is
+    // scoped to that section — switching tabs swaps the child entirely
+    // rather than growing/shrinking the parent's hook list, which
+    // would violate freya's "same number of hooks per render" rule.
+    let body: Element = match current {
+        Section::Account => AccountSection.into_element(),
+        Section::General => GeneralSection { tick }.into_element(),
+        Section::Plugins => PluginsSection { tick, registry }.into_element(),
     };
     rect()
         .vertical()
@@ -174,6 +178,62 @@ fn content(
                 .width(Size::fill())
                 .height(Size::fill()),
         )
+}
+
+#[derive(Debug, PartialEq)]
+struct AccountSection;
+
+impl Component for AccountSection {
+    fn render(&self) -> impl IntoElement {
+        account_section()
+    }
+}
+
+#[derive(Clone)]
+struct GeneralSection {
+    tick: State<u64>,
+}
+
+impl std::fmt::Debug for GeneralSection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GeneralSection").finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for GeneralSection {
+    fn eq(&self, _other: &Self) -> bool {
+        false
+    }
+}
+
+impl Component for GeneralSection {
+    fn render(&self) -> impl IntoElement {
+        general_section(self.tick)
+    }
+}
+
+#[derive(Clone)]
+struct PluginsSection {
+    tick: State<u64>,
+    registry: Arc<Mutex<PluginRegistry>>,
+}
+
+impl std::fmt::Debug for PluginsSection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PluginsSection").finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for PluginsSection {
+    fn eq(&self, _other: &Self) -> bool {
+        false
+    }
+}
+
+impl Component for PluginsSection {
+    fn render(&self) -> impl IntoElement {
+        plugins_section(self.tick, self.registry.clone())
+    }
 }
 
 fn header_row(sec: Section) -> impl IntoElement {
