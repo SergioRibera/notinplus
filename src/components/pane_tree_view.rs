@@ -9,8 +9,40 @@
 
 use freya::prelude::*;
 
+use super::drag_drop::{DropZone, use_drag};
 use super::tab_bar::{TabBar, TabBarEntry, TabDragPayload};
 use crate::library::{Pane, PaneId, PaneLayout, SplitOrientation, SplitSide};
+
+/// Which edge of a leaf a dragged tab was dropped on. Determines both
+/// the split orientation and which child the newly-created pane takes
+/// in the resulting split.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SplitEdge {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl SplitEdge {
+    #[must_use]
+    pub const fn orientation(self) -> SplitOrientation {
+        match self {
+            Self::Left | Self::Right => SplitOrientation::Horizontal,
+            Self::Top | Self::Bottom => SplitOrientation::Vertical,
+        }
+    }
+
+    /// Which side of the new split the fresh pane carrying the dropped
+    /// tab lives on.
+    #[must_use]
+    pub const fn new_side(self) -> SplitSide {
+        match self {
+            Self::Left | Self::Top => SplitSide::First,
+            Self::Right | Self::Bottom => SplitSide::Second,
+        }
+    }
+}
 
 /// Minimum fraction either child of a split is allowed to shrink to.
 /// Mirrors [`PaneLayout::clamp_ratios`] so what the user sees matches
@@ -40,6 +72,10 @@ pub struct PaneTreeCallbacks {
     /// Tab dropped onto another pane. `(src_pane, src_index, dst_pane)`.
     /// Same-pane drops are filtered out before this fires.
     pub on_tab_move: Callback<(PaneId, usize, PaneId), ()>,
+    /// Tab dropped on an *edge* of a leaf. The shell splits the target
+    /// leaf along [`SplitEdge::orientation`] and moves the tab into
+    /// the fresh pane sitting on [`SplitEdge::new_side`].
+    pub on_tab_split: Callback<(PaneId, usize, PaneId, SplitEdge), ()>,
 }
 
 impl std::fmt::Debug for PaneTreeCallbacks {
@@ -103,7 +139,12 @@ fn render_node(
     tab_labels: &Callback<PaneTab, String>,
 ) -> Element {
     match node {
-        PaneLayout::Leaf(pane) => leaf_view(pane, callbacks, tab_labels).into_element(),
+        PaneLayout::Leaf(pane) => LeafNode {
+            pane: pane.clone(),
+            callbacks: callbacks.clone(),
+            tab_labels: tab_labels.clone(),
+        }
+        .into_element(),
         PaneLayout::Split {
             orientation,
             ratio,
@@ -286,60 +327,166 @@ fn divider_bar(
         .child(visible)
 }
 
-fn leaf_view(
-    pane: &Pane,
-    callbacks: &PaneTreeCallbacks,
-    tab_labels: &Callback<PaneTab, String>,
-) -> Rect {
-    let pane_id = pane.id;
-    let entries: Vec<TabBarEntry> = pane
-        .tabs
-        .iter()
-        .enumerate()
-        .map(|(i, tab)| TabBarEntry {
-            label: tab_labels.call(*tab).into(),
-            icon: None,
-            is_active: i == pane.active_tab as usize,
-        })
-        .collect();
-    let select = callbacks.on_tab_select.clone();
-    let close = callbacks.on_tab_close.clone();
-    let new = callbacks.on_tab_new.clone();
-    let move_cb = callbacks.on_tab_move.clone();
-    let bar = TabBar::new(
-        pane_id,
-        entries,
-        Callback::new(move |i: usize| select.call((pane_id, i))),
-        Callback::new(move |i: usize| close.call((pane_id, i))),
-        NoArgCallback::new(move || new.call(pane_id)),
-    )
-    .on_tab_drop(Callback::new(move |payload: TabDragPayload| {
-        move_cb.call((payload.source_pane, payload.source_index, pane_id));
-    }));
-    let active_label = pane
-        .tabs
-        .get(pane.active_tab as usize)
-        .map_or_else(|| format!("Pane {} (vacío)", pane.id.0), |t| tab_labels.call(*t));
-    rect()
-        .vertical()
-        .width(Size::fill())
-        .height(Size::fill())
-        .background(Color::from_rgb(22, 22, 28))
-        .child(bar)
-        .child(leaf_body(&active_label))
+/// Pixel size of each edge drop zone — thick enough for touch but
+/// still leaves most of the body as a plain tab-bar drop target.
+const EDGE_DROP_PX: f32 = 56.0;
+
+/// Internal leaf renderer. Owns the live drag peek so edge drop
+/// overlays only appear while a tab is being dragged.
+#[derive(Clone)]
+struct LeafNode {
+    pane: Pane,
+    callbacks: PaneTreeCallbacks,
+    tab_labels: Callback<PaneTab, String>,
 }
 
-fn leaf_body(text: &str) -> Rect {
-    rect()
+impl std::fmt::Debug for LeafNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LeafNode")
+            .field("pane", &self.pane.id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for LeafNode {
+    fn eq(&self, _other: &Self) -> bool {
+        false
+    }
+}
+
+impl Component for LeafNode {
+    fn render(&self) -> impl IntoElement {
+        let drag = use_drag::<TabDragPayload>();
+        let drag_active = drag.read().is_some();
+
+        let pane_id = self.pane.id;
+        let entries: Vec<TabBarEntry> = self
+            .pane
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(i, tab)| TabBarEntry {
+                label: self.tab_labels.call(*tab).into(),
+                icon: None,
+                is_active: i == self.pane.active_tab as usize,
+            })
+            .collect();
+        let select = self.callbacks.on_tab_select.clone();
+        let close = self.callbacks.on_tab_close.clone();
+        let new = self.callbacks.on_tab_new.clone();
+        let move_cb = self.callbacks.on_tab_move.clone();
+        let bar = TabBar::new(
+            pane_id,
+            entries,
+            Callback::new(move |i: usize| select.call((pane_id, i))),
+            Callback::new(move |i: usize| close.call((pane_id, i))),
+            NoArgCallback::new(move || new.call(pane_id)),
+        )
+        .on_tab_drop(Callback::new(move |payload: TabDragPayload| {
+            move_cb.call((payload.source_pane, payload.source_index, pane_id));
+        }));
+
+        let active_label = self
+            .pane
+            .tabs
+            .get(self.pane.active_tab as usize)
+            .map_or_else(
+                || format!("Pane {} (vacío)", self.pane.id.0),
+                |t| self.tab_labels.call(*t),
+            );
+
+        let mut body = rect()
+            .width(Size::fill())
+            .height(Size::flex(1.0))
+            .padding((16.0, 16.0))
+            .child(
+                label()
+                    .color(Color::from_rgb(170, 170, 180))
+                    .font_size(14.0)
+                    .text(active_label),
+            );
+
+        if drag_active {
+            let split_cb = self.callbacks.on_tab_split.clone();
+            body = body
+                .child(edge_drop_zone(pane_id, SplitEdge::Top, split_cb.clone()))
+                .child(edge_drop_zone(pane_id, SplitEdge::Bottom, split_cb.clone()))
+                .child(edge_drop_zone(pane_id, SplitEdge::Left, split_cb.clone()))
+                .child(edge_drop_zone(pane_id, SplitEdge::Right, split_cb));
+        }
+
+        rect()
+            .vertical()
+            .width(Size::fill())
+            .height(Size::fill())
+            .background(Color::from_rgb(22, 22, 28))
+            .child(bar)
+            .child(body)
+    }
+}
+
+fn edge_drop_zone(
+    dst_pane: PaneId,
+    edge: SplitEdge,
+    on_split: Callback<(PaneId, usize, PaneId, SplitEdge), ()>,
+) -> Rect {
+    let position = match edge {
+        SplitEdge::Top => Position::new_absolute()
+            .top(0.0)
+            .left(EDGE_DROP_PX)
+            .right(EDGE_DROP_PX),
+        SplitEdge::Bottom => Position::new_absolute()
+            .bottom(0.0)
+            .left(EDGE_DROP_PX)
+            .right(EDGE_DROP_PX),
+        SplitEdge::Left => Position::new_absolute().top(0.0).bottom(0.0).left(0.0),
+        SplitEdge::Right => Position::new_absolute().top(0.0).bottom(0.0).right(0.0),
+    };
+    let (w, h) = match edge {
+        SplitEdge::Top | SplitEdge::Bottom => (Size::auto(), Size::px(EDGE_DROP_PX)),
+        SplitEdge::Left | SplitEdge::Right => (Size::px(EDGE_DROP_PX), Size::auto()),
+    };
+    let hovered = use_state(|| false);
+    let highlight = if *hovered.read() {
+        Color::from_argb(140, 90, 140, 220)
+    } else {
+        Color::from_argb(60, 60, 90, 140)
+    };
+    let on_drag_over = {
+        let mut hovered = hovered;
+        EventHandler::new(move |over: bool| hovered.set(over))
+    };
+    let zone_body = rect()
         .width(Size::fill())
         .height(Size::fill())
-        .padding((16.0, 16.0))
-        .child(
-            label()
-                .color(Color::from_rgb(170, 170, 180))
-                .font_size(14.0)
-                .text(text.to_owned()),
-        )
+        .background(highlight);
+    DropZone::new(
+        zone_body,
+        EventHandler::new(move |payload: TabDragPayload| {
+            on_split.call((payload.source_pane, payload.source_index, dst_pane, edge));
+        }),
+    )
+    .on_drag_over(on_drag_over)
+    .wrap_positioned(position, w, h)
+}
+
+/// Convenience wrapper so a [`DropZone`] can live inside an absolutely
+/// positioned slot without the caller re-stating width/height every
+/// time. Not a method on `DropZone` itself because it is specific to
+/// this edge-overlay use case.
+trait PositionedDropZone {
+    fn wrap_positioned(self, position: Position, width: Size, height: Size) -> Rect;
+}
+
+impl<T: 'static + PartialEq + Clone> PositionedDropZone for DropZone<T> {
+    fn wrap_positioned(self, position: Position, width: Size, height: Size) -> Rect {
+        rect()
+            .position(position)
+            .width(width)
+            .height(height)
+            .layer(Layer::Overlay)
+            .child(self)
+    }
 }
 
 #[cfg(test)]
@@ -358,7 +505,17 @@ mod tests {
             on_tab_new: Callback::new(|_| {}),
             on_split_resize: Callback::new(|_| {}),
             on_tab_move: Callback::new(|_| {}),
+            on_tab_split: Callback::new(|_| {}),
         }
+    }
+
+    #[test]
+    fn split_edge_encodes_orientation_and_side() {
+        assert_eq!(SplitEdge::Right.orientation(), SplitOrientation::Horizontal);
+        assert_eq!(SplitEdge::Right.new_side(), SplitSide::Second);
+        assert_eq!(SplitEdge::Left.new_side(), SplitSide::First);
+        assert_eq!(SplitEdge::Bottom.orientation(), SplitOrientation::Vertical);
+        assert_eq!(SplitEdge::Top.new_side(), SplitSide::First);
     }
 
     #[test]

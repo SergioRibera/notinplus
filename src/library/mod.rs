@@ -707,9 +707,9 @@ impl Library {
     }
 
     /// Split the pane with id `target` inside workspace `workspace`.
-    /// The existing pane becomes the `first` child of the new split;
-    /// a brand-new empty pane takes the `second` slot and becomes
-    /// focused.
+    /// The existing pane keeps whichever side `new_side` does not
+    /// address; a brand-new empty pane takes the `new_side` slot and
+    /// becomes focused.
     ///
     /// # Errors
     /// * [`LibraryError::NotFound`] when the workspace or target pane
@@ -719,6 +719,7 @@ impl Library {
         workspace: WorkspaceId,
         target: PaneId,
         orientation: SplitOrientation,
+        new_side: SplitSide,
     ) -> Result<PaneId> {
         let now = now_millis();
         let w = self
@@ -729,7 +730,7 @@ impl Library {
             return Err(LibraryError::NotFound(NotFoundKind::Workspace(workspace)));
         }
         let new_id = w.alloc_pane_id();
-        if !w.layout.split_leaf(target, orientation, new_id) {
+        if !w.layout.split_leaf(target, orientation, new_id, new_side) {
             return Err(LibraryError::NotFound(NotFoundKind::Workspace(workspace)));
         }
         w.focused_pane = Some(new_id);
@@ -1156,7 +1157,7 @@ mod tests {
         let root = PaneId(1);
         let mut layout = PaneLayout::leaf(root);
         let new_id = PaneId(2);
-        assert!(layout.split_leaf(root, SplitOrientation::Horizontal, new_id));
+        assert!(layout.split_leaf(root, SplitOrientation::Horizontal, new_id, SplitSide::Second));
         assert_eq!(layout.leaves().len(), 2);
         assert!(layout.find_leaf(root).is_some());
         assert!(layout.find_leaf(new_id).is_some());

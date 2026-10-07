@@ -13,6 +13,7 @@ use freya::prelude::*;
 use freya::router::*;
 
 use crate::components::{PaneTreeCallbacks, PaneTreeView};
+use crate::components::pane_tree_view::SplitEdge;
 use crate::home::{LibHandle, open_library};
 use crate::library::{
     BackgroundStyle, ItemId, ItemKind, Library, PaneId, PaneTab, SplitOrientation, SplitSide,
@@ -352,7 +353,7 @@ fn schedule_split(
     spawn(async move {
         let mut lib = handle.lock().await;
         if let Err(err) = lib
-            .split_workspace_pane(workspace_id, target, orientation)
+            .split_workspace_pane(workspace_id, target, orientation, SplitSide::Second)
             .await
         {
             log::error!("split_workspace_pane: {err}");
@@ -395,7 +396,8 @@ fn pane_tree(
         on_tab_close: tab_close_cb(workspace_id, handle.clone(), load_state),
         on_tab_new: tab_new_cb(workspace_id, handle.clone(), load_state),
         on_split_resize: split_resize_cb(workspace_id, handle.clone(), load_state),
-        on_tab_move: tab_move_cb(workspace_id, handle, load_state),
+        on_tab_move: tab_move_cb(workspace_id, handle.clone(), load_state),
+        on_tab_split: tab_split_cb(workspace_id, handle, load_state),
     };
     let label_cb = Callback::<PaneTab, String>::new(move |tab: PaneTab| {
         titles
@@ -530,4 +532,39 @@ fn tab_move_cb(
             }
         });
     })
+}
+
+fn tab_split_cb(
+    workspace_id: WorkspaceId,
+    handle: LibHandle,
+    mut load_state: State<LoadState>,
+) -> Callback<(PaneId, usize, PaneId, SplitEdge), ()> {
+    Callback::new(
+        move |(src, idx, dst, edge): (PaneId, usize, PaneId, SplitEdge)| {
+            let handle = handle.clone();
+            spawn(async move {
+                let mut lib = handle.lock().await;
+                let new_pane = match lib
+                    .split_workspace_pane(workspace_id, dst, edge.orientation(), edge.new_side())
+                    .await
+                {
+                    Ok(id) => id,
+                    Err(err) => {
+                        log::error!("split_workspace_pane (edge drop): {err}");
+                        return;
+                    }
+                };
+                if let Err(err) = lib
+                    .move_workspace_tab(workspace_id, src, idx, new_pane)
+                    .await
+                {
+                    log::error!("move_workspace_tab (edge drop): {err}");
+                    return;
+                }
+                if let Some(snap) = snapshot_workspace(&lib, workspace_id) {
+                    load_state.set(LoadState::Ready(handle.clone(), snap));
+                }
+            });
+        },
+    )
 }

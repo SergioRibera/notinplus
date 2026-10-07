@@ -257,10 +257,10 @@ impl PaneLayout {
         }
     }
 
-    /// Split the leaf with id `target` in two: the existing leaf
-    /// becomes the `first` child, a fresh empty leaf (id `new_id`)
-    /// becomes the `second` child, under a `Split` with the given
-    /// `orientation` and ratio `0.5`.
+    /// Split the leaf with id `target` in two under a new split node
+    /// of the given `orientation`. `new_side` says which child the
+    /// fresh empty leaf (id `new_id`) takes — the existing leaf fills
+    /// the other slot. Ratio starts at `0.5`.
     ///
     /// Returns `true` if the split happened. `false` means no leaf
     /// carried that id — the caller may show a warning or ignore.
@@ -269,11 +269,16 @@ impl PaneLayout {
         target: PaneId,
         orientation: SplitOrientation,
         new_id: PaneId,
+        new_side: SplitSide,
     ) -> bool {
         match self {
             Self::Leaf(p) if p.id == target => {
-                let first = Self::Leaf(p.clone());
-                let second = Self::leaf(new_id);
+                let existing = Self::Leaf(p.clone());
+                let fresh = Self::leaf(new_id);
+                let (first, second) = match new_side {
+                    SplitSide::First => (fresh, existing),
+                    SplitSide::Second => (existing, fresh),
+                };
                 *self = Self::Split {
                     orientation,
                     ratio: 0.5,
@@ -284,8 +289,8 @@ impl PaneLayout {
             }
             Self::Leaf(_) => false,
             Self::Split { first, second, .. } => {
-                first.split_leaf(target, orientation, new_id)
-                    || second.split_leaf(target, orientation, new_id)
+                first.split_leaf(target, orientation, new_id, new_side)
+                    || second.split_leaf(target, orientation, new_id, new_side)
             }
         }
     }
