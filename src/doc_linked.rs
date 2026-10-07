@@ -223,6 +223,7 @@ async fn create_pdf_bookmark(bundle: ItemId, page: usize) -> Result<(), String> 
     bm.body = format!("Página {} del PDF", page + 1);
     bm.refs = vec![SourceRef::Plugin {
         plugin_id: PDF_PLUGIN_ID.to_owned(),
+        item: bundle.0,
         anchor: encode_pdf_anchor(PdfAnchor {
             source: bundle,
             page: page_u32,

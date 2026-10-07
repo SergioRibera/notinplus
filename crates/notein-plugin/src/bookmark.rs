@@ -69,8 +69,14 @@ pub enum SourceRef {
     /// Another bookmark in the library.
     Canvas { bookmark: BookmarkId },
     /// An anchor inside a source plugin.
+    ///
+    /// `item` is the 16-byte UUID of the library item the anchor
+    /// targets. The host converts it to a typed `ItemId` on dispatch —
+    /// kept as raw bytes here so this crate stays free of the library
+    /// id newtypes.
     Plugin {
         plugin_id: String,
+        item: [u8; 16],
         anchor: Vec<u8>,
         selection: Option<String>,
     },
