@@ -76,6 +76,10 @@ pub struct PaneTreeCallbacks {
     /// leaf along [`SplitEdge::orientation`] and moves the tab into
     /// the fresh pane sitting on [`SplitEdge::new_side`].
     pub on_tab_split: Callback<(PaneId, usize, PaneId, SplitEdge), ()>,
+    /// User asked to open the given tab in full-screen (push the
+    /// matching Canvas / PdfCanvas route). Fired from the leaf body
+    /// "Abrir" button.
+    pub on_tab_open: Callback<PaneTab, ()>,
 }
 
 impl std::fmt::Debug for PaneTreeCallbacks {
@@ -386,25 +390,19 @@ impl Component for LeafNode {
             move_cb.call((payload.source_pane, payload.source_index, pane_id));
         }));
 
-        let active_label = self
-            .pane
-            .tabs
-            .get(self.pane.active_tab as usize)
-            .map_or_else(
-                || format!("Pane {} (vacío)", self.pane.id.0),
-                |t| self.tab_labels.call(*t),
-            );
-
+        let active_tab = self.pane.tabs.get(self.pane.active_tab as usize).copied();
+        let body_inner = match active_tab {
+            Some(tab) => leaf_body_filled(
+                self.tab_labels.call(tab),
+                tab,
+                self.callbacks.on_tab_open.clone(),
+            ),
+            None => leaf_body_empty(self.pane.id),
+        };
         let mut body = rect()
             .width(Size::fill())
             .height(Size::flex(1.0))
-            .padding((16.0, 16.0))
-            .child(
-                label()
-                    .color(Color::from_rgb(170, 170, 180))
-                    .font_size(14.0)
-                    .text(active_label),
-            );
+            .child(body_inner);
 
         if drag_active {
             let split_cb = self.callbacks.on_tab_split.clone();
@@ -423,6 +421,69 @@ impl Component for LeafNode {
             .child(bar)
             .child(body)
     }
+}
+
+/// Centered card describing the active tab plus an "Abrir" button
+/// that pushes the matching full-screen route. Rendered as the leaf
+/// body until Phase 5 brings a per-pane canvas / source viewer.
+fn leaf_body_filled(name: String, tab: PaneTab, on_open: Callback<PaneTab, ()>) -> Rect {
+    let card = rect()
+        .vertical()
+        .cross_align(Alignment::Center)
+        .padding((24.0, 24.0))
+        .spacing(16.0)
+        .background(Color::from_rgb(28, 28, 34))
+        .with_corner_radius(16.0)
+        .child(
+            label()
+                .color(Color::from_rgb(190, 190, 200))
+                .font_size(28.0)
+                .text("📄"),
+        )
+        .child(
+            label()
+                .color(Color::from_rgb(235, 235, 245))
+                .font_size(16.0)
+                .text(name),
+        )
+        .child(
+            rect()
+                .height(Size::px(36.0))
+                .padding((0.0, 16.0))
+                .center()
+                .with_corner_radius(18.0)
+                .background(Color::from_rgb(55, 90, 180))
+                .on_press(move |_| on_open.call(tab))
+                .child(
+                    label()
+                        .color(Color::from_rgb(240, 245, 255))
+                        .font_size(13.0)
+                        .text("Abrir en pantalla completa"),
+                ),
+        );
+    rect()
+        .width(Size::fill())
+        .height(Size::fill())
+        .center()
+        .child(card)
+}
+
+/// Shown when the active pane has no tabs — explains the tab bar's
+/// `+` button is the way out.
+fn leaf_body_empty(id: PaneId) -> Rect {
+    rect()
+        .width(Size::fill())
+        .height(Size::fill())
+        .center()
+        .child(
+            label()
+                .color(Color::from_rgb(150, 150, 160))
+                .font_size(13.0)
+                .text(format!(
+                    "Pane {} vacío — usá + para abrir un item.",
+                    id.0
+                )),
+        )
 }
 
 fn edge_drop_zone(
@@ -506,6 +567,7 @@ mod tests {
             on_split_resize: Callback::new(|_| {}),
             on_tab_move: Callback::new(|_| {}),
             on_tab_split: Callback::new(|_| {}),
+            on_tab_open: Callback::new(|_| {}),
         }
     }
 

@@ -30,6 +30,7 @@ const MISSING_TITLE: &str = "(elemento no disponible)";
 struct WorkspaceSnapshot {
     workspace: Workspace,
     titles: HashMap<ItemId, String>,
+    kinds: HashMap<ItemId, ItemKind>,
 }
 
 #[derive(Clone)]
@@ -112,19 +113,27 @@ fn centered_text(text: &str) -> Rect {
 fn snapshot_workspace(lib: &Library, id: WorkspaceId) -> Option<WorkspaceSnapshot> {
     let ws = lib.workspace(id)?.clone();
     let mut titles = HashMap::new();
+    let mut kinds = HashMap::new();
     for pane in ws.layout.leaves() {
         for tab in &pane.tabs {
-            titles
-                .entry(tab.item)
-                .or_insert_with(|| match lib.index().item(tab.item) {
-                    Some(item) => item.name.clone(),
-                    None => MISSING_TITLE.to_owned(),
-                });
+            if titles.contains_key(&tab.item) {
+                continue;
+            }
+            match lib.index().item(tab.item) {
+                Some(item) => {
+                    titles.insert(tab.item, item.name.clone());
+                    kinds.insert(tab.item, item.kind);
+                }
+                None => {
+                    titles.insert(tab.item, MISSING_TITLE.to_owned());
+                }
+            }
         }
     }
     Some(WorkspaceSnapshot {
         workspace: ws,
         titles,
+        kinds,
     })
 }
 
@@ -137,7 +146,7 @@ fn workspace_shell(
 ) -> Rect {
     let focused = snap.workspace.focused_pane;
     let header = header_bar(workspace_id, handle.clone(), focused, load_state, router, &snap);
-    let body = pane_tree(workspace_id, handle, load_state, &snap);
+    let body = pane_tree(workspace_id, handle, load_state, router, &snap);
     let keyboard = keyboard_shortcuts(workspace_id, handle_clone_for_keys(&snap, &load_state));
     rect()
         .expanded()
@@ -387,10 +396,12 @@ fn pane_tree(
     workspace_id: WorkspaceId,
     handle: LibHandle,
     load_state: State<LoadState>,
+    router: RouterContext,
     snap: &WorkspaceSnapshot,
 ) -> Rect {
     let layout = snap.workspace.layout.clone();
     let titles = snap.titles.clone();
+    let kinds = snap.kinds.clone();
     let callbacks = PaneTreeCallbacks {
         on_tab_select: tab_select_cb(workspace_id, handle.clone(), load_state),
         on_tab_close: tab_close_cb(workspace_id, handle.clone(), load_state),
@@ -398,6 +409,7 @@ fn pane_tree(
         on_split_resize: split_resize_cb(workspace_id, handle.clone(), load_state),
         on_tab_move: tab_move_cb(workspace_id, handle.clone(), load_state),
         on_tab_split: tab_split_cb(workspace_id, handle, load_state),
+        on_tab_open: tab_open_cb(router, kinds),
     };
     let label_cb = Callback::<PaneTab, String>::new(move |tab: PaneTab| {
         titles
@@ -409,6 +421,22 @@ fn pane_tree(
         .width(Size::fill())
         .height(Size::flex(1.0))
         .child(PaneTreeView::new(layout, callbacks, label_cb))
+}
+
+fn tab_open_cb(
+    router: RouterContext,
+    kinds: HashMap<ItemId, ItemKind>,
+) -> Callback<PaneTab, ()> {
+    Callback::new(move |tab: PaneTab| {
+        let route = match kinds.get(&tab.item) {
+            Some(ItemKind::PdfCanvas) => Route::CanvasPdfView { id: tab.item.0 },
+            // Unknown items (e.g. deleted on another device) still open
+            // the canvas route so the user sees the empty-doc fallback
+            // instead of a swallowed click.
+            Some(ItemKind::Canvas) | None => Route::CanvasView { id: tab.item.0 },
+        };
+        let _ = router.push(route);
+    })
 }
 
 fn tab_select_cb(
