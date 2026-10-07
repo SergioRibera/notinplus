@@ -33,6 +33,7 @@ use freya_pdf::{PdfBackground, PdfDocument};
 use crate::app::root as canvas_root;
 use crate::canvas::{Board, Viewport, lock};
 use crate::doc::Doc;
+use crate::doc_linked::{DocLinkedView, SourcePdfView};
 use crate::home::Home;
 use crate::library::{BackgroundStyle, ItemId, LibraryError, bodies};
 use crate::workspace_view::WorkspaceView;
@@ -59,6 +60,10 @@ pub enum Route {
     CanvasView { id: u64 },
     #[route("/pdf/:id")]
     CanvasPdfView { id: u64 },
+    #[route("/source/pdf/:id")]
+    SourcePdfView { id: u64 },
+    #[route("/linked/:id")]
+    DocLinkedView { id: u64 },
     #[route("/workspace/:id")]
     WorkspaceView { id: u32 },
 }
@@ -69,8 +74,13 @@ impl Route {
     #[must_use]
     pub fn canvas_item(&self) -> Option<ItemId> {
         match self {
-            Route::CanvasView { id } | Route::CanvasPdfView { id } => Some(ItemId(*id)),
-            Route::Home | Route::CanvasEphemeral | Route::WorkspaceView { .. } => None,
+            Route::CanvasView { id }
+            | Route::CanvasPdfView { id }
+            | Route::DocLinkedView { id } => Some(ItemId(*id)),
+            Route::Home
+            | Route::CanvasEphemeral
+            | Route::SourcePdfView { .. }
+            | Route::WorkspaceView { .. } => None,
         }
     }
 }

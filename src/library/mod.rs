@@ -574,14 +574,15 @@ impl Library {
     /// Attach raw PDF bytes to `id`. Overwrites any prior attachment.
     ///
     /// # Errors
-    /// [`LibraryError::NotFound`] when the item is unknown or is not
-    /// [`ItemKind::PdfCanvas`], plus body I/O failures.
+    /// [`LibraryError::NotFound`] when the item is unknown or does not
+    /// own a PDF body (currently [`ItemKind::PdfCanvas`] and
+    /// [`ItemKind::SourcePdf`]), plus body I/O failures.
     pub async fn attach_pdf(&mut self, id: ItemId, bytes: &[u8]) -> Result<()> {
         let item = self
             .index
             .item(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
-        if item.kind != ItemKind::PdfCanvas {
+        if !matches!(item.kind, ItemKind::PdfCanvas | ItemKind::SourcePdf) {
             return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
         }
         bodies::write_pdf(id, bytes)?;
@@ -590,6 +591,48 @@ impl Library {
             m.updated_at = now;
         }
         self.persist().await
+    }
+
+    /// Create a [`ItemKind::DocLinked`] pair in one shot: imports a PDF
+    /// as a fresh [`ItemKind::SourcePdf`] item and spawns a sibling
+    /// canvas item pointing at it. Both items share `folder` so a
+    /// future "mover a carpeta" moves them together.
+    ///
+    /// Returns `(doc_linked_id, source_id)` so the caller can push the
+    /// linked route and know which source id to render in the right
+    /// pane.
+    ///
+    /// # Errors
+    /// [`LibraryError::NotFound`] when `folder` is unknown; body I/O
+    /// failures when the PDF cannot be written.
+    pub async fn create_doc_linked_pdf(
+        &mut self,
+        folder: FolderId,
+        name: &str,
+        pdf_bytes: &[u8],
+    ) -> Result<(ItemId, ItemId)> {
+        let source = self
+            .create_item(
+                folder,
+                ItemKind::SourcePdf,
+                &format!("{name} (PDF)"),
+                None,
+                Vec::new(),
+                BackgroundStyle::default(),
+            )
+            .await?;
+        bodies::write_pdf(source, pdf_bytes)?;
+        let linked = self
+            .create_item(
+                folder,
+                ItemKind::DocLinked { source },
+                name,
+                None,
+                Vec::new(),
+                BackgroundStyle::default(),
+            )
+            .await?;
+        Ok((linked, source))
     }
 
     /// Read the PDF attachment as raw bytes.

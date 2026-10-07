@@ -577,6 +577,8 @@ fn grid(
         let kind_label = match item.kind {
             ItemKind::Canvas => "Lienzo",
             ItemKind::PdfCanvas => "PDF",
+            ItemKind::SourcePdf => "Fuente PDF",
+            ItemKind::DocLinked { .. } => "Documento ligado",
         };
         let subtitle = format!("{} · {}", kind_label, format_date(item.updated_at));
         let tint = item
@@ -680,6 +682,8 @@ impl Component for ItemCard {
             let route = match kind {
                 ItemKind::Canvas => Route::CanvasView { id: id.0 },
                 ItemKind::PdfCanvas => Route::CanvasPdfView { id: id.0 },
+                ItemKind::SourcePdf => Route::SourcePdfView { id: id.0 },
+                ItemKind::DocLinked { .. } => Route::DocLinkedView { id: id.0 },
             };
             let _ = router.push(route);
         };

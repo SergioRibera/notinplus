@@ -139,6 +139,8 @@ impl Component for CanvasCreateSheet {
         let title_label = match kind {
             ItemKind::Canvas => "Nuevo lienzo",
             ItemKind::PdfCanvas => "Importar PDF",
+            ItemKind::SourcePdf => "Agregar fuente PDF",
+            ItemKind::DocLinked { .. } => "Nuevo documento ligado",
         };
         let submit = {
             let cur_name = cur_name.clone();
@@ -190,7 +192,7 @@ impl Component for CanvasCreateSheet {
                 effective_color,
                 cur_background,
                 background,
-                matches!(kind, ItemKind::PdfCanvas),
+                matches!(kind, ItemKind::PdfCanvas | ItemKind::SourcePdf | ItemKind::DocLinked { .. }),
             ))
             .child(
                 TagPicker::new(tag_names)
