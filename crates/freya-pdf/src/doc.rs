@@ -304,6 +304,36 @@ impl PdfDocument {
     pub(crate) fn pdfium_doc(&self) -> &PdfiumDoc<'static> {
         &self.inner.doc
     }
+
+    /// Rasterise one page to an RGBA pixel buffer of the requested
+    /// size. Returns `(bytes, actual_width, actual_height)` — pdfium
+    /// may round the pixel dims to its internal multiples, so callers
+    /// that build a Skia image must use the returned dims.
+    ///
+    /// Synchronous; call off the UI thread for large documents.
+    ///
+    /// # Errors
+    /// [`PdfError::PageOutOfRange`] / [`PdfError::Backend`].
+    pub fn render_page_rgba(
+        &self,
+        page: usize,
+        target_width_px: u32,
+        target_height_px: u32,
+    ) -> Result<(Vec<u8>, u32, u32), PdfError> {
+        use pdfium_render::prelude::{PdfRenderConfig, Pixels};
+        let pdf_page = self.pdf_page(page)?;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+        let config = PdfRenderConfig::new()
+            .set_target_size(target_width_px as Pixels, target_height_px as Pixels);
+        let bitmap = pdf_page
+            .render_with_config(&config)
+            .map_err(|e| PdfError::Backend(e.to_string()))?;
+        #[allow(clippy::cast_sign_loss)]
+        let w = bitmap.width() as u32;
+        #[allow(clippy::cast_sign_loss)]
+        let h = bitmap.height() as u32;
+        Ok((bitmap.as_rgba_bytes(), w, h))
+    }
 }
 
 fn collect_page_sizes(doc: &PdfiumDoc<'_>) -> Vec<(f32, f32)> {

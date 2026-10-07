@@ -27,6 +27,7 @@ pub mod ids;
 pub mod library;
 pub mod op;
 pub mod palette_popup;
+pub mod pdf_viewer;
 pub mod pen_pump;
 pub mod plugin_settings;
 pub mod plugins;

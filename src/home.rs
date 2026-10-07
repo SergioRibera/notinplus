@@ -1415,6 +1415,7 @@ fn trigger_entry(entry: &crate::plugins::AvailableEntry, ctx: &FabCtx) {
         EntrySource::Plugin(_) if entry.plugin_id == pdf_source::KIND_ID => {
             match entry.entry.id.as_str() {
                 pdf_source::IMPORT_PDF => flow_import_pdf(ctx.clone()),
+                pdf_source::IMPORT_PDF_LINKED => flow_import_pdf_linked(ctx.clone()),
                 other => log::warn!("unknown pdf source entry: {other}"),
             }
         }
@@ -1564,6 +1565,16 @@ fn flow_import_pdf(ctx: FabCtx) {
     spawn_forever(pick_and_open_pdf(handle, snap, current, router));
 }
 
+fn flow_import_pdf_linked(ctx: FabCtx) {
+    let FabCtx {
+        handle,
+        snap,
+        current,
+        router,
+    } = ctx;
+    spawn_forever(pick_and_open_pdf_linked(handle, snap, current, router));
+}
+
 fn fab_button<F: Fn(()) + 'static>(glyph: &'static str, bg: Color, handler: F) -> Rect {
     rect()
         .width(Size::px(52.0))
@@ -1699,6 +1710,77 @@ async fn pick_and_open_pdf(
     .default_name(default_name)
     .available_tags(available)
     .open();
+}
+
+/// Modo B counterpart to [`pick_and_open_pdf`]. Imports the picked PDF
+/// into a fresh [`ItemKind::SourcePdf`] item and spawns a sibling
+/// [`ItemKind::DocLinked`] canvas pointing at it, then jumps straight
+/// into the linked-view route — no `CanvasCreateSheet` since the
+/// user already picked the file and the pair always lands at root.
+async fn pick_and_open_pdf_linked(
+    handle: LibHandle,
+    snap: State<Option<LibraryIndex>>,
+    parent: FolderId,
+    router: RouterContext,
+) {
+    use std::io::Read;
+    use std::sync::Arc as StdArc;
+
+    use istmo_file_picker::{FileFilter, FilePickerClient, PickConfig};
+
+    let picker = match FilePickerClient::acquire() {
+        Ok(p) => p,
+        Err(err) => {
+            log::error!("file picker unavailable: {err:?}");
+            return;
+        }
+    };
+    let config = PickConfig {
+        dialog_title: Some("Elegí un PDF para ligar a un lienzo".into()),
+        filter: FileFilter {
+            mime_types: vec!["application/pdf".into()],
+            extensions: vec!["pdf".into()],
+            uti_types: vec!["com.adobe.pdf".into()],
+        },
+        start_directory_hint: None,
+        allow_multiple: false,
+    };
+    let picked = match picker.pick_file_owned(config).await {
+        Ok(Some(f)) => f,
+        Ok(None) => return,
+        Err(err) => {
+            log::error!("picker call error: {err:?}");
+            return;
+        }
+    };
+    let display = picked.display_name.clone();
+    let owned = StdArc::new(picked);
+    let mut reader = match owned.open_reader(&picker).await {
+        Ok(r) => r,
+        Err(err) => {
+            log::error!("open reader: {err:?}");
+            return;
+        }
+    };
+    let mut bytes = Vec::new();
+    if let Err(err) = reader.read_to_end(&mut bytes) {
+        log::error!("read pdf: {err}");
+        return;
+    }
+    drop(reader);
+    drop(owned);
+
+    let default_name = strip_pdf_ext(&display);
+    let mut snap = snap;
+    let mut lib = handle.lock().await;
+    match lib.create_doc_linked_pdf(parent, &default_name, &bytes).await {
+        Ok((linked, _source)) => {
+            log::info!("doc-linked pair created linked={linked:?}");
+            snap.set(Some(lib.index().clone()));
+            let _ = router.push(Route::DocLinkedView { id: linked.0 });
+        }
+        Err(err) => log::error!("create_doc_linked_pdf: {err}"),
+    }
 }
 
 fn strip_pdf_ext(name: &str) -> String {
