@@ -31,7 +31,7 @@ use istmo_data_store::{DataStoreClient, DataStoreConfig};
 pub use self::error::{LibraryError, NotFoundKind, Result};
 pub use self::model::{
     BackgroundStyle, Folder, FolderId, INDEX_VERSION, Item, ItemId, ItemKind, LibraryIndex, Pane,
-    PaneId, PaneLayout, PaneTab, ROOT_FOLDER, Rgba, SplitOrientation, Tag, TagId,
+    PaneId, PaneLayout, PaneTab, ROOT_FOLDER, Rgba, SplitOrientation, SplitSide, Tag, TagId,
     WORKSPACE_INDEX_VERSION, Workspace, WorkspaceId, WorkspaceIndex,
 };
 
@@ -738,6 +738,57 @@ impl Library {
         Ok(new_id)
     }
 
+    /// Update the ratio of the split node addressed by `path` inside
+    /// `workspace`. Ratio is clamped into `0.05..=0.95` by the layout.
+    ///
+    /// # Errors
+    /// * [`LibraryError::NotFound`] when the workspace is unknown or
+    ///   `path` does not land on a split node.
+    pub async fn set_workspace_split_ratio(
+        &mut self,
+        workspace: WorkspaceId,
+        path: &[SplitSide],
+        ratio: f32,
+    ) -> Result<()> {
+        let now = now_millis();
+        let w = self
+            .workspaces
+            .workspace_mut(workspace)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
+        if !w.layout.set_ratio_at(path, ratio) {
+            return Err(LibraryError::NotFound(NotFoundKind::Workspace(workspace)));
+        }
+        w.updated_at = now;
+        self.persist_workspaces().await
+    }
+
+    /// Move the tab at `src_index` in pane `src` to the end of pane
+    /// `dst`, flipping focus to that pane. Same-pane and missing-pane
+    /// hits are rejected as [`LibraryError::NotFound`].
+    ///
+    /// # Errors
+    /// * [`LibraryError::NotFound`] when the workspace / either pane /
+    ///   source index is unknown, or `src == dst`.
+    pub async fn move_workspace_tab(
+        &mut self,
+        workspace: WorkspaceId,
+        src: PaneId,
+        src_index: usize,
+        dst: PaneId,
+    ) -> Result<()> {
+        let now = now_millis();
+        let w = self
+            .workspaces
+            .workspace_mut(workspace)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
+        if !w.layout.move_tab(src, src_index, dst) {
+            return Err(LibraryError::NotFound(NotFoundKind::Workspace(workspace)));
+        }
+        w.focused_pane = Some(dst);
+        w.updated_at = now;
+        self.persist_workspaces().await
+    }
+
     /// Close the pane with id `target`. The sibling collapses up to
     /// take its place. The last pane in a workspace cannot be closed
     /// through this call — the user deletes the workspace instead.
@@ -1182,5 +1233,108 @@ mod tests {
         let b = idx.alloc_workspace_id();
         assert_ne!(a, b);
         assert!(b.0 > a.0);
+    }
+
+    #[test]
+    fn set_ratio_at_updates_nested_split() {
+        let mut layout = PaneLayout::Split {
+            orientation: SplitOrientation::Horizontal,
+            ratio: 0.5,
+            first: Box::new(PaneLayout::leaf(PaneId(1))),
+            second: Box::new(PaneLayout::Split {
+                orientation: SplitOrientation::Vertical,
+                ratio: 0.5,
+                first: Box::new(PaneLayout::leaf(PaneId(2))),
+                second: Box::new(PaneLayout::leaf(PaneId(3))),
+            }),
+        };
+        // Root ratio.
+        assert!(layout.set_ratio_at(&[], 0.3));
+        // Nested right-side split.
+        assert!(layout.set_ratio_at(&[SplitSide::Second], 0.7));
+        // Walking into a leaf fails.
+        assert!(!layout.set_ratio_at(&[SplitSide::First], 0.4));
+        // Walking off the bottom of a nested tree fails.
+        assert!(!layout.set_ratio_at(
+            &[SplitSide::Second, SplitSide::First, SplitSide::First],
+            0.4,
+        ));
+
+        let PaneLayout::Split {
+            ratio, second, ..
+        } = layout
+        else {
+            panic!("root collapsed")
+        };
+        assert!((ratio - 0.3).abs() < 1e-6);
+        if let PaneLayout::Split { ratio, .. } = *second {
+            assert!((ratio - 0.7).abs() < 1e-6);
+        } else {
+            panic!("nested collapsed");
+        }
+    }
+
+    #[test]
+    fn set_ratio_at_clamps_out_of_range_input() {
+        let mut layout = PaneLayout::Split {
+            orientation: SplitOrientation::Horizontal,
+            ratio: 0.5,
+            first: Box::new(PaneLayout::leaf(PaneId(1))),
+            second: Box::new(PaneLayout::leaf(PaneId(2))),
+        };
+        assert!(layout.set_ratio_at(&[], 1.5));
+        let PaneLayout::Split { ratio, .. } = layout else {
+            panic!("collapsed")
+        };
+        assert!((ratio - 0.95).abs() < 1e-6);
+    }
+
+    #[test]
+    fn move_tab_moves_between_leaves_and_clamps_active_index() {
+        let left = PaneId(1);
+        let right = PaneId(2);
+        let mut layout = PaneLayout::Split {
+            orientation: SplitOrientation::Horizontal,
+            ratio: 0.5,
+            first: Box::new(PaneLayout::Leaf(Pane {
+                id: left,
+                tabs: vec![PaneTab { item: ItemId(10) }, PaneTab { item: ItemId(11) }],
+                active_tab: 1,
+            })),
+            second: Box::new(PaneLayout::Leaf(Pane {
+                id: right,
+                tabs: vec![PaneTab { item: ItemId(99) }],
+                active_tab: 0,
+            })),
+        };
+        assert!(layout.move_tab(left, 1, right));
+        let src = layout.find_leaf(left).unwrap();
+        assert_eq!(src.tabs.len(), 1);
+        assert_eq!(src.tabs[0].item, ItemId(10));
+        // The removed tab was the active one; clamp drops to the only
+        // remaining tab.
+        assert_eq!(src.active_tab, 0);
+        let dst = layout.find_leaf(right).unwrap();
+        assert_eq!(dst.tabs.len(), 2);
+        assert_eq!(dst.tabs[1].item, ItemId(11));
+        // Destination focuses the just-arrived tab.
+        assert_eq!(dst.active_tab, 1);
+    }
+
+    #[test]
+    fn move_tab_rejects_same_pane_and_missing_targets() {
+        let only = PaneId(1);
+        let mut layout = PaneLayout::Leaf(Pane {
+            id: only,
+            tabs: vec![PaneTab { item: ItemId(10) }],
+            active_tab: 0,
+        });
+        // Same pane is a no-op reject (ordering is a different op).
+        assert!(!layout.move_tab(only, 0, only));
+        // Missing destination keeps the source intact.
+        assert!(!layout.move_tab(only, 0, PaneId(99)));
+        let src = layout.find_leaf(only).unwrap();
+        assert_eq!(src.tabs.len(), 1);
+        assert_eq!(src.tabs[0].item, ItemId(10));
     }
 }

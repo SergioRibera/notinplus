@@ -161,6 +161,16 @@ pub enum SplitOrientation {
     Vertical,
 }
 
+/// Which child of a [`PaneLayout::Split`] a traversal step walks into.
+/// Together with the orientation (implicit, read from the node itself)
+/// this is enough to address any split node in the tree.
+#[istmo::message]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum SplitSide {
+    First,
+    Second,
+}
+
 /// Recursive binary tree describing a workspace's pane layout. Every
 /// leaf is a [`Pane`]; every internal node is a split along one axis
 /// with the drag position stored as `ratio` (fraction of the parent's
@@ -319,6 +329,89 @@ impl PaneLayout {
             *self = child;
         }
         found
+    }
+
+    /// Overwrite the `ratio` of the split node addressed by `path`.
+    /// Each entry in `path` says which child to descend into; the final
+    /// node reached must be a [`PaneLayout::Split`]. Ratio is clamped
+    /// into `0.05..=0.95` to match [`Self::clamp_ratios`].
+    ///
+    /// Returns `true` on a hit. `false` means the path either walked
+    /// off a leaf early or landed on something that was not a split.
+    pub fn set_ratio_at(&mut self, path: &[SplitSide], ratio: f32) -> bool {
+        let clamped = ratio.clamp(0.05, 0.95);
+        let mut cursor: &mut Self = self;
+        for step in path {
+            match cursor {
+                Self::Leaf(_) => return false,
+                Self::Split { first, second, .. } => {
+                    cursor = match step {
+                        SplitSide::First => first.as_mut(),
+                        SplitSide::Second => second.as_mut(),
+                    };
+                }
+            }
+        }
+        match cursor {
+            Self::Split { ratio: r, .. } => {
+                *r = clamped;
+                true
+            }
+            Self::Leaf(_) => false,
+        }
+    }
+
+    /// Move the tab at `src_index` within pane `src` to the end of
+    /// pane `dst` and mark it active there. No-op when `src == dst`
+    /// (ordering within a single pane is a separate op) or when either
+    /// pane / index is missing.
+    ///
+    /// Returns `true` on a hit so the caller can decide whether to
+    /// persist. `src` keeps the usual active-index clamp after removal.
+    pub fn move_tab(&mut self, src: PaneId, src_index: usize, dst: PaneId) -> bool {
+        if src == dst {
+            return false;
+        }
+        let tab = {
+            let leaf = match self.find_leaf_mut(src) {
+                Some(leaf) => leaf,
+                None => return false,
+            };
+            if src_index >= leaf.tabs.len() {
+                return false;
+            }
+            let tab = leaf.tabs.remove(src_index);
+            let new_len = leaf.tabs.len();
+            let active = leaf.active_tab as usize;
+            leaf.active_tab = if new_len == 0 {
+                0
+            } else if active >= new_len {
+                u32::try_from(new_len.saturating_sub(1)).unwrap_or(u32::MAX)
+            } else {
+                leaf.active_tab
+            };
+            tab
+        };
+        let Some(dst_leaf) = self.find_leaf_mut(dst) else {
+            // Reinsert at the original slot so a missing destination is
+            // observable but not destructive. Index may have shifted
+            // past the end — push instead of insert in that case.
+            if let Some(src_leaf) = self.find_leaf_mut(src) {
+                if src_index <= src_leaf.tabs.len() {
+                    src_leaf.tabs.insert(src_index, tab);
+                } else {
+                    src_leaf.tabs.push(tab);
+                }
+                src_leaf.active_tab =
+                    u32::try_from(src_index.min(src_leaf.tabs.len().saturating_sub(1)))
+                        .unwrap_or(u32::MAX);
+            }
+            return false;
+        };
+        dst_leaf.tabs.push(tab);
+        dst_leaf.active_tab =
+            u32::try_from(dst_leaf.tabs.len().saturating_sub(1)).unwrap_or(u32::MAX);
+        true
     }
 
     /// Clamp every split ratio into `0.05..=0.95` in-place so a bogus
