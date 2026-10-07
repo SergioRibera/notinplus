@@ -5,10 +5,18 @@
 //! [`crate::library::PaneTab`]) to [`TabBarEntry`] and route the
 //! `on_select` / `on_close` / `on_new` callbacks back to whatever
 //! owns the pane's layout state.
+//!
+//! Each cell is wrapped in a [`DragZone`] so tabs can be dragged
+//! between panes. The whole bar doubles as a [`DropZone`] accepting
+//! incoming [`TabDragPayload`]s — on drop, `on_tab_drop` fires with
+//! the payload so the shell can mutate the layout.
 
 use std::borrow::Cow;
 
 use freya::prelude::*;
+
+use super::drag_drop::{DragZone, DropZone};
+use crate::library::PaneId;
 
 /// A single tab row entry rendered by [`TabBar`].
 #[derive(Clone)]
@@ -28,6 +36,15 @@ impl std::fmt::Debug for TabBarEntry {
     }
 }
 
+/// Payload carried while a tab is being dragged. Produced by the
+/// source [`TabBar`] and consumed by whichever [`TabBar`] it is
+/// dropped onto.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct TabDragPayload {
+    pub source_pane: PaneId,
+    pub source_index: usize,
+}
+
 /// Tab strip anchored above a pane's content.
 ///
 /// Equality intentionally returns `false` so pushing a mutated entry
@@ -35,15 +52,18 @@ impl std::fmt::Debug for TabBarEntry {
 /// closures.
 #[derive(Clone)]
 pub struct TabBar {
+    pane_id: PaneId,
     entries: Vec<TabBarEntry>,
     on_select: Callback<usize, ()>,
     on_close: Callback<usize, ()>,
     on_new: NoArgCallback<()>,
+    on_tab_drop: Option<Callback<TabDragPayload, ()>>,
 }
 
 impl std::fmt::Debug for TabBar {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TabBar")
+            .field("pane_id", &self.pane_id)
             .field("entries", &self.entries.len())
             .finish_non_exhaustive()
     }
@@ -58,17 +78,29 @@ impl PartialEq for TabBar {
 impl TabBar {
     #[must_use]
     pub fn new(
+        pane_id: PaneId,
         entries: Vec<TabBarEntry>,
         on_select: impl Into<Callback<usize, ()>>,
         on_close: impl Into<Callback<usize, ()>>,
         on_new: impl Into<NoArgCallback<()>>,
     ) -> Self {
         Self {
+            pane_id,
             entries,
             on_select: on_select.into(),
             on_close: on_close.into(),
             on_new: on_new.into(),
+            on_tab_drop: None,
         }
+    }
+
+    /// Install a drop handler so tabs dragged from another pane can
+    /// land on this bar. Without this the bar still renders but drops
+    /// are swallowed.
+    #[must_use]
+    pub fn on_tab_drop(mut self, cb: impl Into<Callback<TabDragPayload, ()>>) -> Self {
+        self.on_tab_drop = Some(cb.into());
+        self
     }
 }
 
@@ -85,15 +117,35 @@ impl Component for TabBar {
             .spacing(2.0);
 
         for (i, entry) in self.entries.iter().enumerate() {
-            row = row.child(tab_cell(
+            let cell = tab_cell(
                 i,
                 entry,
                 self.on_select.clone(),
                 self.on_close.clone(),
+            );
+            row = row.child(DragZone::new(
+                TabDragPayload {
+                    source_pane: self.pane_id,
+                    source_index: i,
+                },
+                cell,
             ));
         }
         row = row.child(new_tab_button(self.on_new.clone()));
-        row
+
+        let pane_id = self.pane_id;
+        let on_tab_drop = self.on_tab_drop.clone();
+        DropZone::new(
+            row,
+            EventHandler::new(move |payload: TabDragPayload| {
+                if payload.source_pane == pane_id {
+                    return;
+                }
+                if let Some(cb) = &on_tab_drop {
+                    cb.call(payload);
+                }
+            }),
+        )
     }
 }
 

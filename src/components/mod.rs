@@ -31,7 +31,7 @@ pub use form_input::FormInput;
 pub use modal::{Modal, ModalController, ModalPlacement, ModalPortal};
 pub use pane_tree_view::PaneTreeView;
 pub use settings_modal::SettingsModal;
-pub use tab_bar::{TabBar, TabBarEntry};
+pub use tab_bar::{TabBar, TabBarEntry, TabDragPayload};
 pub use tag::Tag;
 pub use tag_picker::TagPicker;
 pub use workspace_switcher::{WorkspaceSwitcher, WorkspaceSwitcherEntry};

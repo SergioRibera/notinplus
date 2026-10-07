@@ -9,7 +9,7 @@
 
 use freya::prelude::*;
 
-use super::tab_bar::{TabBar, TabBarEntry};
+use super::tab_bar::{TabBar, TabBarEntry, TabDragPayload};
 use crate::library::{Pane, PaneId, PaneLayout, SplitOrientation, SplitSide};
 
 /// Minimum fraction either child of a split is allowed to shrink to.
@@ -37,6 +37,9 @@ pub struct PaneTreeCallbacks {
     /// = root split); second is the final ratio in `[MIN_RATIO,
     /// 1.0 - MIN_RATIO]`.
     pub on_split_resize: Callback<(Vec<SplitSide>, f32), ()>,
+    /// Tab dropped onto another pane. `(src_pane, src_index, dst_pane)`.
+    /// Same-pane drops are filtered out before this fires.
+    pub on_tab_move: Callback<(PaneId, usize, PaneId), ()>,
 }
 
 impl std::fmt::Debug for PaneTreeCallbacks {
@@ -297,12 +300,17 @@ fn leaf_view(
     let select = callbacks.on_tab_select.clone();
     let close = callbacks.on_tab_close.clone();
     let new = callbacks.on_tab_new.clone();
+    let move_cb = callbacks.on_tab_move.clone();
     let bar = TabBar::new(
+        pane_id,
         entries,
         Callback::new(move |i: usize| select.call((pane_id, i))),
         Callback::new(move |i: usize| close.call((pane_id, i))),
         NoArgCallback::new(move || new.call(pane_id)),
-    );
+    )
+    .on_tab_drop(Callback::new(move |payload: TabDragPayload| {
+        move_cb.call((payload.source_pane, payload.source_index, pane_id));
+    }));
     let active_label = pane
         .tabs
         .get(pane.active_tab as usize)
@@ -344,6 +352,7 @@ mod tests {
             on_tab_close: Callback::new(|_| {}),
             on_tab_new: Callback::new(|_| {}),
             on_split_resize: Callback::new(|_| {}),
+            on_tab_move: Callback::new(|_| {}),
         }
     }
 
