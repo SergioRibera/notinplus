@@ -1,15 +1,16 @@
-//! Modo B shell — mounts the canvas on the left of a horizontal split
-//! and a readonly PDF viewer on the right.
+//! Modo B shell for a [`crate::library::ItemKind::DocLinked`] bundle.
 //!
-//! [`DocLinkedView`] is the route component the home card pushes for a
-//! [`crate::library::ItemKind::DocLinked`] item; [`SourcePdfView`] opens
-//! a bare [`crate::library::ItemKind::SourcePdf`] without a paired
-//! canvas. The PDF side renders through [`crate::pdf_viewer::PdfPaneView`].
+//! A DocLinked item owns both a canvas doc and a PDF attachment under
+//! the same [`ItemId`] — no second library item, no `source` indirection.
+//! [`DocLinkedView`] renders the PDF viewer front-and-center and offers
+//! a header toggle to reveal the paired canvas side in a split layout.
+//! [`SourcePdfView`] stays available for standalone
+//! [`crate::library::ItemKind::SourcePdf`] items (future flows).
 //!
-//! Phase 5.3 adds the bidirectional bookmark bridge: tapping a PDF page
-//! writes a canvas bookmark whose [`SourceRef::Plugin`] ref points at
-//! the source item + page, and the side bookmark panel chips scroll
-//! the PDF pane back to the referenced page.
+//! Phase 5.3 bookmark bridge: tapping a PDF page writes a canvas
+//! bookmark whose [`SourceRef::Plugin`] ref points back at the same
+//! item id + page, and the chip strip at the bottom scrolls the PDF
+//! back to the referenced page.
 
 use std::rc::Rc;
 use std::time::Duration;
@@ -19,16 +20,16 @@ use freya::router::*;
 
 use crate::bookmark::{Bookmark, SourceRef, WorldPoint};
 use crate::doc_op::DocOp;
-use crate::home::{LibHandle, open_library};
+use crate::home::open_library;
 use crate::ids::BookmarkId;
-use crate::library::{ItemId, ItemKind};
+use crate::library::ItemId;
 use crate::pdf_viewer::{
     PDF_PLUGIN_ID, PdfAnchor, PdfPaneView, decode_pdf_anchor, encode_pdf_anchor,
     scroll_offset_for_page,
 };
 use crate::route::Route;
 
-/// Canvas + source split for a persisted
+/// Canvas + PDF bundle route backed by a
 /// [`crate::library::ItemKind::DocLinked`] item.
 #[derive(Debug, PartialEq)]
 pub struct DocLinkedView {
@@ -37,36 +38,22 @@ pub struct DocLinkedView {
 
 impl Component for DocLinkedView {
     fn render(&self) -> impl IntoElement {
-        let linked = ItemId(self.id);
-        let state = use_state(|| LinkedState::Loading);
+        let bundle = ItemId(self.id);
         let bookmarks = use_state(Vec::<BookmarkChip>::new);
         let toast = use_state(|| Option::<String>::None);
         let refresh = use_state(|| 0u64);
         let scroll_ctrl = use_scroll_controller(ScrollConfig::default);
         let page_heights = use_state(Vec::<u32>::new);
+        let show_canvas = use_state(|| false);
         let router = RouterContext::get();
 
-        use_hook({
-            let mut state = state;
-            move || {
-                spawn(async move {
-                    match resolve_linked_source(linked).await {
-                        Ok(source) => state.set(LinkedState::Ready { source }),
-                        Err(err) => state.set(LinkedState::Error(err)),
-                    }
-                });
-            }
-        });
-
-        // Reload bookmarks whenever `refresh` ticks (first mount + every
-        // successful page-tap write).
         use_hook({
             let mut bookmarks = bookmarks;
             let refresh = refresh;
             move || {
                 let _tick = *refresh.read();
                 spawn(async move {
-                    match load_bookmark_chips(linked).await {
+                    match load_bookmark_chips(bundle).await {
                         Ok(list) => bookmarks.set(list),
                         Err(err) => log::warn!("load bookmarks: {err}"),
                     }
@@ -74,27 +61,24 @@ impl Component for DocLinkedView {
             }
         });
 
-        let back_router = router;
-        let header = header_bar(move || {
-            let _ = back_router.push(Route::Home);
-        });
+        let on_tap = page_tap_cb(bundle, toast, refresh);
+        let heights_setter = page_heights;
+        let viewer = PdfPaneView::new(bundle)
+            .on_page_tap(on_tap)
+            .scroll_controller(scroll_ctrl)
+            .on_pages_loaded(Callback::new(move |heights: Vec<u32>| {
+                let mut h = heights_setter;
+                h.set(heights);
+            }));
+        let chip_cb = chip_tap_cb(scroll_ctrl, page_heights);
 
-        let body: Element = match state.read().clone() {
-            LinkedState::Loading => centered("Cargando documento ligado…").into_element(),
-            LinkedState::Error(msg) => centered(&msg).into_element(),
-            LinkedState::Ready { source } => {
-                let on_tap = page_tap_cb(linked, source, toast, refresh);
-                let heights_setter = page_heights;
-                let viewer = PdfPaneView::new(source)
-                    .on_page_tap(on_tap)
-                    .scroll_controller(scroll_ctrl)
-                    .on_pages_loaded(Callback::new(move |heights: Vec<u32>| {
-                        let mut h = heights_setter;
-                        h.set(heights);
-                    }));
-                let chip_cb = chip_tap_cb(scroll_ctrl, page_heights);
-                split_body(linked, viewer, bookmarks, chip_cb).into_element()
-            }
+        let header = header_bar(bundle, router, show_canvas);
+        let strip = bookmark_strip(bookmarks, chip_cb);
+
+        let main = if *show_canvas.read() {
+            split_body(bundle, viewer, strip, router)
+        } else {
+            viewer_only(viewer, strip)
         };
 
         let overlay = toast_overlay(toast);
@@ -104,7 +88,7 @@ impl Component for DocLinkedView {
             .background(Color::from_rgb(15, 15, 18))
             .vertical()
             .child(header)
-            .child(body)
+            .child(main)
             .child(overlay)
     }
 }
@@ -120,7 +104,7 @@ impl Component for SourcePdfView {
     fn render(&self) -> impl IntoElement {
         let router = RouterContext::get();
         let back_router = router;
-        let header = header_bar(move || {
+        let header = plain_header(move || {
             let _ = back_router.push(Route::Home);
         });
         rect()
@@ -132,43 +116,19 @@ impl Component for SourcePdfView {
     }
 }
 
-#[derive(Clone)]
-enum LinkedState {
-    Loading,
-    Ready { source: ItemId },
-    Error(String),
-}
-
 #[derive(Clone, Debug)]
 struct BookmarkChip {
     body: String,
     page: Option<u32>,
 }
 
-async fn resolve_linked_source(linked: ItemId) -> Result<ItemId, String> {
-    let handle: LibHandle = open_library()
-        .await
-        .map_err(|e| format!("open library: {e}"))?;
-    let lib = handle.lock().await;
-    let Some(item) = lib.index().item(linked) else {
-        return Err(format!("item {} no existe", linked.0));
-    };
-    match item.kind {
-        ItemKind::DocLinked { source } => Ok(source),
-        other => Err(format!(
-            "item {} no es DocLinked (kind={other:?})",
-            linked.0
-        )),
-    }
-}
-
-async fn load_bookmark_chips(canvas: ItemId) -> Result<Vec<BookmarkChip>, String> {
+async fn load_bookmark_chips(bundle: ItemId) -> Result<Vec<BookmarkChip>, String> {
     use crate::library::LibraryError;
     let handle = open_library()
         .await
         .map_err(|e| format!("open library: {e}"))?;
     let lib = handle.lock().await;
-    let doc = match lib.load_doc(canvas).await {
+    let doc = match lib.load_doc(bundle).await {
         Ok(d) => d,
         Err(LibraryError::Io(ref e)) if e.kind() == std::io::ErrorKind::NotFound => {
             return Ok(Vec::new());
@@ -199,8 +159,7 @@ fn pdf_ref(bm: &Bookmark) -> Option<PdfAnchor> {
 }
 
 fn page_tap_cb(
-    canvas: ItemId,
-    source: ItemId,
+    bundle: ItemId,
     toast: State<Option<String>>,
     refresh: State<u64>,
 ) -> Callback<usize, ()> {
@@ -208,7 +167,7 @@ fn page_tap_cb(
         let mut toast = toast;
         let mut refresh = refresh;
         spawn(async move {
-            match create_pdf_bookmark(canvas, source, page).await {
+            match create_pdf_bookmark(bundle, page).await {
                 Ok(()) => {
                     toast.set(Some(format!("Marcador creado en página {}", page + 1)));
                     let next = refresh.peek().saturating_add(1);
@@ -219,17 +178,13 @@ fn page_tap_cb(
                     toast.set(Some(format!("No se pudo crear marcador: {err}")));
                 }
             }
-            // Auto-clear toast after a short delay.
             freya::prelude::timer(Duration::from_millis(2500)).await;
             toast.set(None);
         });
     })
 }
 
-fn chip_tap_cb(
-    ctrl: ScrollController,
-    page_heights: State<Vec<u32>>,
-) -> Callback<usize, ()> {
+fn chip_tap_cb(ctrl: ScrollController, page_heights: State<Vec<u32>>) -> Callback<usize, ()> {
     Callback::new(move |page: usize| {
         let heights = page_heights.read().clone();
         let entries: Vec<_> = heights
@@ -242,17 +197,13 @@ fn chip_tap_cb(
     })
 }
 
-async fn create_pdf_bookmark(
-    canvas: ItemId,
-    source: ItemId,
-    page: usize,
-) -> Result<(), String> {
+async fn create_pdf_bookmark(bundle: ItemId, page: usize) -> Result<(), String> {
     use crate::library::LibraryError;
     let handle = open_library()
         .await
         .map_err(|e| format!("open library: {e}"))?;
     let mut lib = handle.lock().await;
-    let mut doc = match lib.load_doc(canvas).await {
+    let mut doc = match lib.load_doc(bundle).await {
         Ok(d) => d,
         Err(LibraryError::Io(ref e)) if e.kind() == std::io::ErrorKind::NotFound => {
             crate::doc::Doc::default()
@@ -273,29 +224,43 @@ async fn create_pdf_bookmark(
     bm.refs = vec![SourceRef::Plugin {
         plugin_id: PDF_PLUGIN_ID.to_owned(),
         anchor: encode_pdf_anchor(PdfAnchor {
-            source,
+            source: bundle,
             page: page_u32,
         }),
         selection: Some(format!("Página {}", page + 1)),
     }];
     doc.emit(DocOp::AddBookmark { bookmark: bm });
-    lib.save_doc(canvas, &mut doc)
+    lib.save_doc(bundle, &mut doc)
         .await
         .map_err(|err| format!("save doc: {err}"))?;
     Ok(())
 }
 
+fn viewer_only(viewer: PdfPaneView, strip: Rect) -> Rect {
+    rect()
+        .width(Size::fill())
+        .height(Size::flex(1.0))
+        .vertical()
+        .child(
+            rect()
+                .width(Size::fill())
+                .height(Size::flex(1.0))
+                .child(viewer),
+        )
+        .child(strip)
+}
+
 fn split_body(
-    canvas: ItemId,
+    bundle: ItemId,
     viewer: PdfPaneView,
-    bookmarks: State<Vec<BookmarkChip>>,
-    chip_cb: Callback<usize, ()>,
+    strip: Rect,
+    router: RouterContext,
 ) -> Rect {
     rect()
         .width(Size::fill())
         .height(Size::flex(1.0))
         .horizontal()
-        .child(canvas_placeholder(canvas))
+        .child(canvas_placeholder(bundle, router))
         .child(divider())
         .child(
             rect()
@@ -308,7 +273,7 @@ fn split_body(
                         .height(Size::flex(1.0))
                         .child(viewer),
                 )
-                .child(bookmark_strip(bookmarks, chip_cb)),
+                .child(strip),
         )
 }
 
@@ -374,8 +339,7 @@ fn bookmark_chip(chip: BookmarkChip, chip_cb: Callback<usize, ()>) -> Rect {
     node
 }
 
-fn canvas_placeholder(canvas: ItemId) -> Rect {
-    let router = RouterContext::get();
+fn canvas_placeholder(bundle: ItemId, router: RouterContext) -> Rect {
     let open_router = router;
     rect()
         .width(Size::flex(1.0))
@@ -388,7 +352,13 @@ fn canvas_placeholder(canvas: ItemId) -> Rect {
             label()
                 .color(Color::from_rgb(230, 230, 240))
                 .font_size(14.0)
-                .text(format!("Lienzo del documento ligado #{}", canvas.0)),
+                .text("Lienzo del documento ligado"),
+        )
+        .child(
+            label()
+                .color(Color::from_rgb(150, 150, 160))
+                .font_size(11.0)
+                .text("Toca Abrir lienzo para dibujar en pantalla completa"),
         )
         .child(
             rect()
@@ -398,7 +368,7 @@ fn canvas_placeholder(canvas: ItemId) -> Rect {
                 .with_corner_radius(18.0)
                 .background(Color::from_rgb(55, 90, 180))
                 .on_press(move |_| {
-                    let _ = open_router.push(Route::CanvasView { id: canvas.0 });
+                    let _ = open_router.push(Route::CanvasView { id: bundle.0 });
                 })
                 .child(
                     label()
@@ -416,7 +386,96 @@ fn divider() -> Rect {
         .background(Color::from_rgb(40, 40, 48))
 }
 
-fn header_bar(on_back: impl Fn() + 'static) -> Rect {
+fn header_bar(
+    bundle: ItemId,
+    router: RouterContext,
+    mut show_canvas: State<bool>,
+) -> Rect {
+    let open_canvas_router = router;
+    let open_full = move || {
+        let _ = open_canvas_router.push(Route::CanvasView { id: bundle.0 });
+    };
+    let open_full = Rc::new(open_full);
+    let open_full_cb = Rc::clone(&open_full);
+
+    let back_router = router;
+    let on_back = Rc::new(move || {
+        let _ = back_router.push(Route::Home);
+    });
+    let back_cb = Rc::clone(&on_back);
+
+    let currently_showing = *show_canvas.read();
+    let toggle_label = if currently_showing {
+        "Ocultar lienzo"
+    } else {
+        "Mostrar lienzo"
+    };
+    let toggle_bg = if currently_showing {
+        Color::from_rgb(55, 90, 180)
+    } else {
+        Color::from_rgb(28, 28, 32)
+    };
+
+    rect()
+        .horizontal()
+        .width(Size::fill())
+        .height(Size::px(44.0))
+        .padding((0.0, 12.0))
+        .background(Color::from_rgb(18, 18, 22))
+        .cross_align(Alignment::Center)
+        .spacing(8.0)
+        .child(
+            rect()
+                .height(Size::px(32.0))
+                .padding((0.0, 12.0))
+                .center()
+                .with_corner_radius(8.0)
+                .background(Color::from_rgb(28, 28, 32))
+                .on_press(move |_| back_cb())
+                .child(
+                    label()
+                        .color(Color::from_rgb(220, 220, 230))
+                        .font_size(13.0)
+                        .text("← Home"),
+                ),
+        )
+        .child(rect().width(Size::flex(1.0)).height(Size::px(1.0)))
+        .child(
+            rect()
+                .height(Size::px(32.0))
+                .padding((0.0, 12.0))
+                .center()
+                .with_corner_radius(8.0)
+                .background(toggle_bg)
+                .on_press(move |_| {
+                    let next = !*show_canvas.peek();
+                    show_canvas.set(next);
+                })
+                .child(
+                    label()
+                        .color(Color::from_rgb(240, 245, 255))
+                        .font_size(13.0)
+                        .text(toggle_label.to_owned()),
+                ),
+        )
+        .child(
+            rect()
+                .height(Size::px(32.0))
+                .padding((0.0, 12.0))
+                .center()
+                .with_corner_radius(8.0)
+                .background(Color::from_rgb(28, 28, 32))
+                .on_press(move |_| open_full_cb())
+                .child(
+                    label()
+                        .color(Color::from_rgb(220, 220, 230))
+                        .font_size(13.0)
+                        .text("Abrir lienzo"),
+                ),
+        )
+}
+
+fn plain_header(on_back: impl Fn() + 'static) -> Rect {
     let on_back = Rc::new(on_back);
     let back_cb = Rc::clone(&on_back);
     rect()
@@ -473,13 +532,4 @@ fn toast_overlay(toast: State<Option<String>>) -> Rect {
                     ),
             ),
     }
-}
-
-fn centered(text: &str) -> Rect {
-    rect().expanded().center().child(
-        label()
-            .color(Color::from_rgb(200, 200, 210))
-            .font_size(14.0)
-            .text(text.to_owned()),
-    )
 }

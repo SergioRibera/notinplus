@@ -59,18 +59,17 @@ pub enum ItemKind {
     /// Canvas overlaid on a PDF; the PDF blob lives at
     /// [`super::bodies::pdf_path`].
     PdfCanvas,
-    /// Readonly source item. Phase 5 ships this as the PDF side of a
-    /// [`ItemKind::DocLinked`] pair. The body file lives at
-    /// [`super::bodies::pdf_path`]; later source plugins will carve
-    /// their own body paths off the item id.
+    /// Readonly PDF-source item (standalone viewer, no linked canvas).
+    /// Reserved for future flows that import a bare PDF without the
+    /// Modo B canvas pairing.
     SourcePdf,
-    /// Modo B: canvas doc paired with a separate source item. Strokes
-    /// / bookmarks live on this item; the referenced `source` carries
-    /// the PDF (or future viewer blob) rendered next to the canvas.
-    DocLinked {
-        /// Source item whose body supplies the right-pane viewer.
-        source: ItemId,
-    },
+    /// Modo B bundle: one item owns both a canvas doc (strokes +
+    /// bookmarks at [`super::bodies::doc_path`]) AND the paired PDF
+    /// blob ([`super::bodies::pdf_path`]). The viewer renders both
+    /// sides from this single id — persistence stays as a single
+    /// `.notein` bundle, which lines up with the share flow in
+    /// SOURCES_PLAN §8.
+    DocLinked,
 }
 
 /// Paper pattern rendered underneath the canvas strokes. Only the

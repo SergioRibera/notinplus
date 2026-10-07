@@ -578,7 +578,7 @@ fn grid(
             ItemKind::Canvas => "Lienzo",
             ItemKind::PdfCanvas => "PDF",
             ItemKind::SourcePdf => "Fuente PDF",
-            ItemKind::DocLinked { .. } => "Documento ligado",
+            ItemKind::DocLinked => "Documento ligado",
         };
         let subtitle = format!("{} · {}", kind_label, format_date(item.updated_at));
         let tint = item
@@ -683,7 +683,7 @@ impl Component for ItemCard {
                 ItemKind::Canvas => Route::CanvasView { id: id.0 },
                 ItemKind::PdfCanvas => Route::CanvasPdfView { id: id.0 },
                 ItemKind::SourcePdf => Route::SourcePdfView { id: id.0 },
-                ItemKind::DocLinked { .. } => Route::DocLinkedView { id: id.0 },
+                ItemKind::DocLinked => Route::DocLinkedView { id: id.0 },
             };
             let _ = router.push(route);
         };
@@ -1774,8 +1774,8 @@ async fn pick_and_open_pdf_linked(
     let mut snap = snap;
     let mut lib = handle.lock().await;
     match lib.create_doc_linked_pdf(parent, &default_name, &bytes).await {
-        Ok((linked, _source)) => {
-            log::info!("doc-linked pair created linked={linked:?}");
+        Ok(linked) => {
+            log::info!("doc-linked bundle created id={linked:?}");
             snap.set(Some(lib.index().clone()));
             let _ = router.push(Route::DocLinkedView { id: linked.0 });
         }

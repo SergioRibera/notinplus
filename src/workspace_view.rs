@@ -431,7 +431,7 @@ fn tab_open_cb(
         let route = match kinds.get(&tab.item) {
             Some(ItemKind::PdfCanvas) => Route::CanvasPdfView { id: tab.item.0 },
             Some(ItemKind::SourcePdf) => Route::SourcePdfView { id: tab.item.0 },
-            Some(ItemKind::DocLinked { .. }) => Route::DocLinkedView { id: tab.item.0 },
+            Some(ItemKind::DocLinked) => Route::DocLinkedView { id: tab.item.0 },
             // Unknown items (e.g. deleted on another device) still open
             // the canvas route so the user sees the empty-doc fallback
             // instead of a swallowed click.
