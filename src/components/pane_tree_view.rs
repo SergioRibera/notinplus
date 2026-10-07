@@ -1,14 +1,16 @@
-//! Read-only renderer for a [`PaneLayout`] tree.
+//! Renderer for a [`PaneLayout`] tree.
 //!
-//! Each leaf currently gets a placeholder card (pane id + tab count).
-//! Phase 4.3 swaps the stub for a real pane view (tab bar + content).
-//! The divider is drawn as a thin bar between splits; drag handling
-//! lands in a follow-up so this commit stays read-only.
+//! Each leaf gets a [`TabBar`] atop a stub body (real content lands
+//! with Phase 4.3+). Internal split nodes render as [`SplitNode`] —
+//! two children flanking a draggable divider. During a drag the
+//! divider commits its new ratio to the shell via
+//! [`PaneTreeCallbacks::on_split_resize`] on release only, so the
+//! persistence worker is not thrashed with per-pointer-move writes.
 
 use freya::prelude::*;
 
 use super::tab_bar::{TabBar, TabBarEntry};
-use crate::library::{Pane, PaneId, PaneLayout, SplitOrientation};
+use crate::library::{Pane, PaneId, PaneLayout, SplitOrientation, SplitSide};
 
 /// Minimum fraction either child of a split is allowed to shrink to.
 /// Mirrors [`PaneLayout::clamp_ratios`] so what the user sees matches
@@ -18,16 +20,23 @@ pub const MIN_RATIO: f32 = 0.05;
 /// Thickness of the visual divider between two split children.
 pub const DIVIDER_PX: f32 = 4.0;
 
-/// Callback shape fired when the user interacts with a leaf's tab bar.
+/// Interactive hit-area around the divider — larger than the painted
+/// strip so touch / mouse pointers do not need pixel-perfect aim.
+pub const DIVIDER_HIT_PX: f32 = 10.0;
+
+/// Callback shape fired when the user interacts with the pane tree.
 ///
-/// The shell plumbs these into [`crate::library::Library::set_workspace_layout`]
-/// (or the tab-aware helpers that come with Phase 4.3+) to persist the
-/// change back to disk.
+/// The shell plumbs these into the library async helpers to persist
+/// the change back to disk.
 #[derive(Clone)]
 pub struct PaneTreeCallbacks {
     pub on_tab_select: Callback<(PaneId, usize), ()>,
     pub on_tab_close: Callback<(PaneId, usize), ()>,
     pub on_tab_new: Callback<PaneId, ()>,
+    /// Divider released. First argument addresses the split node (empty
+    /// = root split); second is the final ratio in `[MIN_RATIO,
+    /// 1.0 - MIN_RATIO]`.
+    pub on_split_resize: Callback<(Vec<SplitSide>, f32), ()>,
 }
 
 impl std::fmt::Debug for PaneTreeCallbacks {
@@ -36,12 +45,9 @@ impl std::fmt::Debug for PaneTreeCallbacks {
     }
 }
 
-/// Component rendering a [`PaneLayout`]. Each leaf gets a [`TabBar`]
-/// and a stub content body (real content lands with Phase 4.3+).
-///
-/// Equality always returns `false`: the callbacks carried in
-/// [`PaneTreeCallbacks`] are opaque closures, so pushing a new
-/// instance must always re-render.
+/// Component rendering a [`PaneLayout`]. Equality always returns
+/// `false`: the callbacks carried in [`PaneTreeCallbacks`] are opaque
+/// closures, so pushing a new instance must always re-render.
 #[derive(Clone, Debug)]
 pub struct PaneTreeView {
     layout: PaneLayout,
@@ -78,12 +84,13 @@ impl PaneTreeView {
 
 impl Component for PaneTreeView {
     fn render(&self) -> impl IntoElement {
-        render_node(&self.layout, &self.callbacks, self.tab_labels)
+        render_node(&self.layout, Vec::new(), &self.callbacks, self.tab_labels)
     }
 }
 
 fn render_node(
     node: &PaneLayout,
+    path: Vec<SplitSide>,
     callbacks: &PaneTreeCallbacks,
     tab_labels: fn(&PaneTab) -> String,
 ) -> Element {
@@ -94,46 +101,162 @@ fn render_node(
             ratio,
             first,
             second,
-        } => split_container(*orientation, *ratio, first, second, callbacks, tab_labels)
-            .into_element(),
+        } => SplitNode {
+            path,
+            orientation: *orientation,
+            ratio: *ratio,
+            first: (**first).clone(),
+            second: (**second).clone(),
+            callbacks: callbacks.clone(),
+            tab_labels,
+        }
+        .into_element(),
     }
 }
 
-fn split_container(
+/// Internal split node. Owns the area measurement + drag state so a
+/// divider release can translate the final pointer position into a
+/// ratio commit.
+#[derive(Clone)]
+struct SplitNode {
+    path: Vec<SplitSide>,
     orientation: SplitOrientation,
-    raw_ratio: f32,
-    first: &PaneLayout,
-    second: &PaneLayout,
-    callbacks: &PaneTreeCallbacks,
+    ratio: f32,
+    first: PaneLayout,
+    second: PaneLayout,
+    callbacks: PaneTreeCallbacks,
     tab_labels: fn(&PaneTab) -> String,
-) -> Rect {
-    let ratio = raw_ratio.clamp(MIN_RATIO, 1.0 - MIN_RATIO);
-    let first_el = render_node(first, callbacks, tab_labels);
-    let second_el = render_node(second, callbacks, tab_labels);
-    let divider = divider_bar(orientation);
-    let (container, first_wrap, second_wrap) = match orientation {
-        SplitOrientation::Horizontal => (
-            rect().horizontal(),
-            rect().width(Size::flex(ratio)).height(Size::fill()),
-            rect().width(Size::flex(1.0 - ratio)).height(Size::fill()),
-        ),
-        SplitOrientation::Vertical => (
-            rect().vertical(),
-            rect().width(Size::fill()).height(Size::flex(ratio)),
-            rect().width(Size::fill()).height(Size::flex(1.0 - ratio)),
-        ),
-    };
-    container
-        .width(Size::fill())
-        .height(Size::fill())
-        .child(first_wrap.child(first_el))
-        .child(divider)
-        .child(second_wrap.child(second_el))
 }
 
-fn divider_bar(orientation: SplitOrientation) -> Rect {
+impl std::fmt::Debug for SplitNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SplitNode")
+            .field("path", &self.path)
+            .field("orientation", &self.orientation)
+            .field("ratio", &self.ratio)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for SplitNode {
+    fn eq(&self, _other: &Self) -> bool {
+        false
+    }
+}
+
+impl Component for SplitNode {
+    fn render(&self) -> impl IntoElement {
+        let mut area = use_state(Area::default);
+        // While `Some`, overrides the persisted ratio during a drag.
+        // Cleared on release so the next render reads the fresh prop.
+        let mut drag_ratio = use_state(|| None::<f32>);
+        let persisted = self.ratio.clamp(MIN_RATIO, 1.0 - MIN_RATIO);
+        let shown = drag_ratio.read().unwrap_or(persisted);
+
+        let orientation = self.orientation;
+        let path_on_commit = self.path.clone();
+        let on_split_resize = self.callbacks.on_split_resize.clone();
+
+        let compute_ratio = move |cursor: CursorPoint, area: Area| -> f32 {
+            let a = area.to_f64();
+            match orientation {
+                SplitOrientation::Horizontal => {
+                    let w = a.width();
+                    if w <= 0.0 {
+                        return 0.5;
+                    }
+                    ((cursor.x - a.min_x()) / w).clamp(f64::from(MIN_RATIO), 1.0 - f64::from(MIN_RATIO)) as f32
+                }
+                SplitOrientation::Vertical => {
+                    let h = a.height();
+                    if h <= 0.0 {
+                        return 0.5;
+                    }
+                    ((cursor.y - a.min_y()) / h).clamp(f64::from(MIN_RATIO), 1.0 - f64::from(MIN_RATIO)) as f32
+                }
+            }
+        };
+
+        let on_divider_down = move |e: Event<PointerEventData>| {
+            if !e.data().is_primary() {
+                return;
+            }
+            let new_ratio = compute_ratio(e.global_location(), *area.read());
+            drag_ratio.set(Some(new_ratio));
+            e.stop_propagation();
+            e.prevent_default();
+        };
+
+        let on_global_pointer_move = move |e: Event<PointerEventData>| {
+            if drag_ratio.read().is_some() {
+                let new_ratio = compute_ratio(e.global_location(), *area.read());
+                drag_ratio.set(Some(new_ratio));
+            }
+        };
+
+        let on_global_pointer_up = move |_: Event<PointerEventData>| {
+            let final_ratio = *drag_ratio.read();
+            if let Some(final_ratio) = final_ratio {
+                on_split_resize.call((path_on_commit.clone(), final_ratio));
+                drag_ratio.set(None);
+            }
+        };
+
+        let first_el = render_node(
+            &self.first,
+            {
+                let mut p = self.path.clone();
+                p.push(SplitSide::First);
+                p
+            },
+            &self.callbacks,
+            self.tab_labels,
+        );
+        let second_el = render_node(
+            &self.second,
+            {
+                let mut p = self.path.clone();
+                p.push(SplitSide::Second);
+                p
+            },
+            &self.callbacks,
+            self.tab_labels,
+        );
+
+        let (container, first_wrap, second_wrap) = match orientation {
+            SplitOrientation::Horizontal => (
+                rect().horizontal(),
+                rect().width(Size::flex(shown)).height(Size::fill()),
+                rect().width(Size::flex(1.0 - shown)).height(Size::fill()),
+            ),
+            SplitOrientation::Vertical => (
+                rect().vertical(),
+                rect().width(Size::fill()).height(Size::flex(shown)),
+                rect().width(Size::fill()).height(Size::flex(1.0 - shown)),
+            ),
+        };
+
+        container
+            .width(Size::fill())
+            .height(Size::fill())
+            .on_sized(move |e: Event<SizedEventData>| area.set_if_modified(e.area))
+            .on_global_pointer_move(on_global_pointer_move)
+            .on_global_pointer_up(on_global_pointer_up)
+            .child(first_wrap.child(first_el))
+            .child(divider_bar(orientation, on_divider_down))
+            .child(second_wrap.child(second_el))
+    }
+}
+
+fn divider_bar(
+    orientation: SplitOrientation,
+    on_pointer_down: impl FnMut(Event<PointerEventData>) + 'static,
+) -> Rect {
     let bg = Color::from_rgb(45, 45, 52);
-    match orientation {
+    // The hit area is a larger invisible track so touch / mouse
+    // pointers do not need pixel-perfect aim; the visible strip sits
+    // centered inside it.
+    let visible = match orientation {
         SplitOrientation::Horizontal => rect()
             .width(Size::px(DIVIDER_PX))
             .height(Size::fill())
@@ -142,7 +265,17 @@ fn divider_bar(orientation: SplitOrientation) -> Rect {
             .width(Size::fill())
             .height(Size::px(DIVIDER_PX))
             .background(bg),
-    }
+    };
+    let (hit_w, hit_h) = match orientation {
+        SplitOrientation::Horizontal => (Size::px(DIVIDER_HIT_PX), Size::fill()),
+        SplitOrientation::Vertical => (Size::fill(), Size::px(DIVIDER_HIT_PX)),
+    };
+    rect()
+        .width(hit_w)
+        .height(hit_h)
+        .center()
+        .on_pointer_down(on_pointer_down)
+        .child(visible)
 }
 
 fn leaf_view(
@@ -210,6 +343,7 @@ mod tests {
             on_tab_select: Callback::new(|_| {}),
             on_tab_close: Callback::new(|_| {}),
             on_tab_new: Callback::new(|_| {}),
+            on_split_resize: Callback::new(|_| {}),
         }
     }
 
