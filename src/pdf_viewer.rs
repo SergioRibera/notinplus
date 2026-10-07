@@ -286,7 +286,7 @@ fn page_list(
     };
     rect()
         .width(Size::fill())
-        .height(Size::flex(1.0))
+        .height(Size::fill())
         .background(Color::from_rgb(22, 22, 28))
         .child(
             sv.direction(Direction::Vertical)
@@ -338,7 +338,7 @@ fn placeholder_text(text: &str) -> Rect {
 fn wrap_centered(child: Rect) -> Element {
     rect()
         .width(Size::fill())
-        .height(Size::flex(1.0))
+        .height(Size::fill())
         .center()
         .background(Color::from_rgb(22, 22, 28))
         .child(child)

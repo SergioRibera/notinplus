@@ -300,7 +300,7 @@ fn split_body(
         .child(
             rect()
                 .width(Size::flex(1.0))
-                .height(Size::flex(1.0))
+                .height(Size::fill())
                 .vertical()
                 .child(
                     rect()
@@ -379,7 +379,7 @@ fn canvas_placeholder(canvas: ItemId) -> Rect {
     let open_router = router;
     rect()
         .width(Size::flex(1.0))
-        .height(Size::flex(1.0))
+        .height(Size::fill())
         .background(Color::from_rgb(26, 26, 32))
         .vertical()
         .center()
