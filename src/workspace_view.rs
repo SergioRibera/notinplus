@@ -314,6 +314,23 @@ fn header_bar(
             schedule_close_pane(workspace_id, target, close_handle.clone(), load_state);
         }
     });
+    let export_handle = handle.clone();
+    let export_name = snap.workspace.name.clone();
+    let export_btn = text_button("Exportar").on_press(move |_| {
+        let handle = export_handle.clone();
+        let stem = export_name.clone();
+        spawn_forever(async move {
+            crate::home::export_selection_via_picker(
+                handle,
+                crate::bundle::ExportSelection {
+                    workspaces: vec![workspace_id],
+                    ..Default::default()
+                },
+                stem,
+            )
+            .await;
+        });
+    });
 
     rect()
         .horizontal()
@@ -334,6 +351,7 @@ fn header_bar(
         .child(split_h)
         .child(split_v)
         .child(close_pane)
+        .child(export_btn)
 }
 
 fn text_button(text: &str) -> Rect {

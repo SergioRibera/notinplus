@@ -720,7 +720,31 @@ impl Component for ItemCard {
                     });
                 }
             };
-            build_card_menu(start_rename, || log::info!("edit item: TODO"), ask_delete)
+            let on_export = {
+                let handle = handle.clone();
+                let name = title.clone();
+                move || {
+                    let handle = handle.clone();
+                    let name = name.clone();
+                    spawn_forever(async move {
+                        export_selection_via_picker(
+                            handle,
+                            crate::bundle::ExportSelection {
+                                items: vec![id],
+                                ..Default::default()
+                            },
+                            name,
+                        )
+                        .await;
+                    });
+                }
+            };
+            build_card_menu(
+                start_rename,
+                || log::info!("edit item: TODO"),
+                on_export,
+                ask_delete,
+            )
         };
 
         let on_commit_rename = {
@@ -868,7 +892,31 @@ impl Component for FolderCard {
                     });
                 }
             };
-            build_card_menu(start_rename, || log::info!("edit folder: TODO"), ask_delete)
+            let on_export = {
+                let handle = handle.clone();
+                let name = title.clone();
+                move || {
+                    let handle = handle.clone();
+                    let name = name.clone();
+                    spawn_forever(async move {
+                        export_selection_via_picker(
+                            handle,
+                            crate::bundle::ExportSelection {
+                                folders: vec![id],
+                                ..Default::default()
+                            },
+                            name,
+                        )
+                        .await;
+                    });
+                }
+            };
+            build_card_menu(
+                start_rename,
+                || log::info!("edit folder: TODO"),
+                on_export,
+                ask_delete,
+            )
         };
 
         let on_commit_rename = {
@@ -1093,9 +1141,85 @@ where
         })
 }
 
+/// Prompt the user for a destination `.notein` file via the file
+/// picker, then stream a bundle of `selection` into it. Logs on
+/// failure; no toast infra on home yet.
+pub(crate) async fn export_selection_via_picker(
+    handle: LibHandle,
+    selection: crate::bundle::ExportSelection,
+    suggested_stem: String,
+) {
+    use istmo_file_picker::{FileFilter, FilePickerClient, SaveConfig};
+
+    let picker = match FilePickerClient::acquire() {
+        Ok(p) => p,
+        Err(err) => {
+            log::error!("file picker unavailable: {err:?}");
+            return;
+        }
+    };
+    let suggested = format!("{}.notein", sanitize_filename(&suggested_stem));
+    let config = SaveConfig {
+        dialog_title: Some("Exportar bundle".into()),
+        suggested_name: Some(suggested),
+        mime_type: Some("application/octet-stream".into()),
+        filter: FileFilter {
+            mime_types: vec!["application/octet-stream".into()],
+            extensions: vec!["notein".into()],
+            uti_types: Vec::new(),
+        },
+        start_directory_hint: None,
+        overwrite_prompt: true,
+    };
+    let picked = match picker.save_file_owned(config).await {
+        Ok(Some(f)) => f,
+        Ok(None) => return,
+        Err(err) => {
+            log::error!("save picker: {err:?}");
+            return;
+        }
+    };
+    let owned = std::sync::Arc::new(picked);
+    let writer = match owned.open_writer(&picker).await {
+        Ok(w) => w,
+        Err(err) => {
+            log::error!("open writer: {err:?}");
+            return;
+        }
+    };
+    let lib = handle.lock().await;
+    if let Err(err) = crate::bundle::write_bundle(writer, &lib, &selection) {
+        log::error!("export bundle: {err}");
+    } else {
+        log::info!("bundle exported to {}", owned.display_name);
+    }
+    drop(lib);
+    drop(owned);
+}
+
+fn sanitize_filename(stem: &str) -> String {
+    let trimmed = stem.trim();
+    let cleaned: String = trimmed
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, '-' | '_' | ' ') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if cleaned.is_empty() {
+        "bundle".into()
+    } else {
+        cleaned
+    }
+}
+
 fn build_card_menu(
     mut on_rename: impl FnMut() + Clone + 'static,
     mut on_edit: impl FnMut() + Clone + 'static,
+    mut on_export: impl FnMut() + Clone + 'static,
     mut on_delete: impl FnMut() + Clone + 'static,
 ) -> Menu {
     Menu::new()
@@ -1108,6 +1232,11 @@ fn build_card_menu(
             MenuButton::new()
                 .on_press(move |_: Event<PressEventData>| on_edit())
                 .child("Editar"),
+        )
+        .child(
+            MenuButton::new()
+                .on_press(move |_: Event<PressEventData>| on_export())
+                .child("Exportar"),
         )
         .child(
             MenuButton::new()

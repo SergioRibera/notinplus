@@ -155,21 +155,28 @@ impl From<LibraryError> for BundleError {
 
 type Result<T> = core::result::Result<T, BundleError>;
 
-/// Build a `.notein` bundle at `dest` carrying the given selection.
+/// Build a `.notein` bundle streamed into `sink`.
 ///
 /// `selection` axes are unioned; subfolders of a listed folder are
 /// walked recursively; workspace exports pull in every item referenced
 /// by any pane tab.
 ///
+/// Writers backed by native file-picker handles satisfy
+/// [`std::io::Write`] already; call sites that want to drop a bundle
+/// at a known filesystem path use [`write_bundle_to_path`].
+///
 /// # Errors
 /// Filesystem / codec / library failures surface through
 /// [`BundleError`].
-pub fn write_bundle(dest: &Path, lib: &Library, selection: &ExportSelection) -> Result<()> {
+pub fn write_bundle<W: Write>(
+    sink: W,
+    lib: &Library,
+    selection: &ExportSelection,
+) -> Result<()> {
     let plan = plan_export(lib, selection)?;
     let manifest = build_manifest(lib, &plan)?;
 
-    let file = File::create(dest)?;
-    let encoder = zstd::stream::write::Encoder::new(file, ZSTD_LEVEL)?.auto_finish();
+    let encoder = zstd::stream::write::Encoder::new(sink, ZSTD_LEVEL)?.auto_finish();
     let mut tar = tar::Builder::new(encoder);
     tar.mode(tar::HeaderMode::Deterministic);
 
@@ -192,6 +199,20 @@ pub fn write_bundle(dest: &Path, lib: &Library, selection: &ExportSelection) -> 
 
     tar.into_inner()?.flush()?;
     Ok(())
+}
+
+/// Convenience wrapper that opens `dest` as a fresh file and streams a
+/// bundle into it.
+///
+/// # Errors
+/// See [`write_bundle`].
+pub fn write_bundle_to_path(
+    dest: &Path,
+    lib: &Library,
+    selection: &ExportSelection,
+) -> Result<()> {
+    let file = File::create(dest)?;
+    write_bundle(file, lib, selection)
 }
 
 /// Decoded bundle payload. Lives entirely in memory — the on-disk
@@ -224,13 +245,13 @@ impl Preflight {
     }
 }
 
-/// Decode `src` into memory.
+/// Decode a bundle from any [`Read`] source into memory. Callers with
+/// a filesystem path should use [`parse_bundle_from_path`].
 ///
 /// # Errors
 /// Filesystem / codec / unknown-version failures.
-pub fn parse_bundle(src: &Path) -> Result<ParsedBundle> {
-    let file = File::open(src)?;
-    let decoder = zstd::stream::read::Decoder::new(file)?;
+pub fn parse_bundle<R: Read>(src: R) -> Result<ParsedBundle> {
+    let decoder = zstd::stream::read::Decoder::new(src)?;
     let mut archive = tar::Archive::new(decoder);
 
     let mut manifest: Option<BundleManifest> = None;
@@ -270,6 +291,15 @@ pub fn parse_bundle(src: &Path) -> Result<ParsedBundle> {
         docs,
         pdfs,
     })
+}
+
+/// Convenience wrapper that opens `src` and parses it.
+///
+/// # Errors
+/// See [`parse_bundle`].
+pub fn parse_bundle_from_path(src: &Path) -> Result<ParsedBundle> {
+    let file = File::open(src)?;
+    parse_bundle(file)
 }
 
 impl ParsedBundle {
@@ -545,5 +575,33 @@ mod tests {
         let (back, _) =
             bincode::decode_from_slice::<BundleManifest, _>(&bytes, CODEC).expect("decode");
         assert_eq!(manifest, back);
+    }
+
+    #[test]
+    fn bundle_tar_zst_round_trips_manifest_through_stream() {
+        let manifest = BundleManifest {
+            version: BUNDLE_VERSION,
+            exported_at_ms: 7,
+            requires_plugins: vec!["io.notein.pdf".into()],
+            folders: Vec::new(),
+            items: Vec::new(),
+            tags: Vec::new(),
+            workspaces: Vec::new(),
+        };
+        let mut buf = Vec::<u8>::new();
+        {
+            let encoder = zstd::stream::write::Encoder::new(&mut buf, ZSTD_LEVEL)
+                .expect("zstd encoder")
+                .auto_finish();
+            let mut tar = tar::Builder::new(encoder);
+            tar.mode(tar::HeaderMode::Deterministic);
+            let bytes = bincode::encode_to_vec(&manifest, CODEC).expect("encode");
+            super::append_file(&mut tar, MANIFEST_ENTRY, &bytes).expect("append");
+            tar.into_inner().expect("tar finish").flush().expect("flush");
+        }
+        let parsed = parse_bundle(Cursor::new(buf)).expect("parse");
+        assert_eq!(parsed.manifest, manifest);
+        assert!(parsed.docs.is_empty());
+        assert!(parsed.pdfs.is_empty());
     }
 }
