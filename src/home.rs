@@ -1522,11 +1522,12 @@ fn menu_label(entry: &crate::plugins::AvailableEntry) -> String {
 fn trigger_entry(entry: &crate::plugins::AvailableEntry, ctx: &FabCtx) {
     use crate::builtin::{pdf_source, stroke_canvas};
     use crate::plugins::EntrySource;
-    use crate::shell_builtins::{BUILTIN_PLUGIN_ID, NEW_FOLDER};
+    use crate::shell_builtins::{BUILTIN_PLUGIN_ID, IMPORT_BUNDLE, NEW_FOLDER};
     match entry.source {
         EntrySource::ShellBuiltin if entry.plugin_id == BUILTIN_PLUGIN_ID => {
             match entry.entry.id.as_str() {
                 NEW_FOLDER => flow_new_folder(ctx.clone()),
+                IMPORT_BUNDLE => flow_import_bundle(ctx.clone()),
                 other => log::warn!("unknown shell builtin entry: {other}"),
             }
         }
@@ -1702,6 +1703,233 @@ fn flow_import_pdf_linked(ctx: FabCtx) {
         router,
     } = ctx;
     spawn_forever(pick_and_open_pdf_linked(handle, snap, current, router));
+}
+
+fn flow_import_bundle(ctx: FabCtx) {
+    let FabCtx { handle, snap, .. } = ctx;
+    spawn_forever(pick_and_import_bundle(handle, snap));
+}
+
+async fn pick_and_import_bundle(handle: LibHandle, snap: State<Option<LibraryIndex>>) {
+    use std::io::Read;
+    use std::sync::Arc as StdArc;
+
+    use istmo_file_picker::{FileFilter, FilePickerClient, PickConfig};
+
+    let picker = match FilePickerClient::acquire() {
+        Ok(p) => p,
+        Err(err) => {
+            log::error!("file picker unavailable: {err:?}");
+            return;
+        }
+    };
+    let config = PickConfig {
+        dialog_title: Some("Importar bundle .notein".into()),
+        filter: FileFilter {
+            mime_types: vec!["application/octet-stream".into()],
+            extensions: vec!["notein".into()],
+            uti_types: Vec::new(),
+        },
+        start_directory_hint: None,
+        allow_multiple: false,
+    };
+    let picked = match picker.pick_file_owned(config).await {
+        Ok(Some(f)) => f,
+        Ok(None) => return,
+        Err(err) => {
+            log::error!("pick bundle: {err:?}");
+            return;
+        }
+    };
+    let owned = StdArc::new(picked);
+    let mut reader = match owned.open_reader(&picker).await {
+        Ok(r) => r,
+        Err(err) => {
+            log::error!("open bundle reader: {err:?}");
+            return;
+        }
+    };
+    let mut bytes = Vec::new();
+    if let Err(err) = reader.read_to_end(&mut bytes) {
+        log::error!("read bundle: {err}");
+        return;
+    }
+    drop(reader);
+    drop(owned);
+
+    let parsed = match crate::bundle::parse_bundle(std::io::Cursor::new(bytes)) {
+        Ok(p) => p,
+        Err(err) => {
+            show_import_error_modal(format!("No se pudo leer el bundle: {err}"));
+            return;
+        }
+    };
+
+    let registry_arc = crate::plugins::registry();
+    let (collisions, missing_plugins) = {
+        let lib = handle.lock().await;
+        let registry = crate::plugins::lock(&registry_arc);
+        let preflight = parsed.preflight(&lib, &registry);
+        (preflight.clone(), preflight.missing_plugins.clone())
+    };
+    drop(registry_arc);
+
+    if collisions.has_collisions() {
+        show_import_collision_modal(&collisions);
+        return;
+    }
+
+    let parsed = StdArc::new(parsed);
+    let on_confirm = {
+        let handle = handle.clone();
+        let parsed = parsed.clone();
+        move || {
+            let handle = handle.clone();
+            let parsed = parsed.clone();
+            let mut snap = snap;
+            spawn_forever(async move {
+                let mut lib = handle.lock().await;
+                match parsed.merge(&mut lib).await {
+                    Ok(()) => snap.set(Some(lib.index().clone())),
+                    Err(err) => {
+                        drop(lib);
+                        show_import_error_modal(format!("Error al importar: {err}"));
+                    }
+                }
+            });
+        }
+    };
+
+    if missing_plugins.is_empty() {
+        on_confirm();
+    } else {
+        show_import_warning_modal(missing_plugins, on_confirm);
+    }
+}
+
+fn show_import_error_modal(message: String) {
+    use crate::components::{Modal, ModalController};
+    let body = rect()
+        .vertical()
+        .width(Size::px(320.0))
+        .padding((20.0, 20.0))
+        .background(Color::from_rgb(30, 30, 34))
+        .with_corner_radius(14.0)
+        .spacing(14.0)
+        .child(
+            label()
+                .color(Color::from_rgb(240, 240, 245))
+                .font_size(14.0)
+                .text("Importar bundle"),
+        )
+        .child(
+            label()
+                .color(Color::from_rgb(190, 190, 200))
+                .font_size(13.0)
+                .text(message),
+        )
+        .child(
+            rect()
+                .horizontal()
+                .content(Content::Flex)
+                .cross_align(Alignment::Center)
+                .child(flexible_spacer())
+                .child(
+                    text_button_card("Cerrar", Color::from_rgb(55, 55, 62))
+                        .on_press(|_: Event<PressEventData>| ModalController::get().close()),
+                ),
+        );
+    ModalController::get().open(Modal::new(body).center());
+}
+
+fn show_import_collision_modal(preflight: &crate::bundle::Preflight) {
+    let mut lines = Vec::new();
+    if !preflight.colliding_items.is_empty() {
+        lines.push(format!("Items en conflicto: {}", preflight.colliding_items.len()));
+    }
+    if !preflight.colliding_folders.is_empty() {
+        lines.push(format!(
+            "Carpetas en conflicto: {}",
+            preflight.colliding_folders.len()
+        ));
+    }
+    if !preflight.colliding_tags.is_empty() {
+        lines.push(format!("Tags en conflicto: {}", preflight.colliding_tags.len()));
+    }
+    if !preflight.colliding_workspaces.is_empty() {
+        lines.push(format!(
+            "Workspaces en conflicto: {}",
+            preflight.colliding_workspaces.len()
+        ));
+    }
+    let body = lines.join("\n");
+    show_import_error_modal(format!(
+        "El bundle contiene ids que ya existen en tu biblioteca. Importar fue cancelado para evitar sobreescribir contenido.\n\n{body}"
+    ));
+}
+
+fn show_import_warning_modal(
+    missing_plugins: Vec<String>,
+    mut on_confirm: impl FnMut() + Clone + 'static,
+) {
+    use crate::components::{Modal, ModalController};
+    let listing = missing_plugins.join(", ");
+    let body = rect()
+        .vertical()
+        .width(Size::px(360.0))
+        .padding((20.0, 20.0))
+        .background(Color::from_rgb(30, 30, 34))
+        .with_corner_radius(14.0)
+        .spacing(14.0)
+        .child(
+            label()
+                .color(Color::from_rgb(240, 240, 245))
+                .font_size(14.0)
+                .text("Plugins faltantes"),
+        )
+        .child(
+            label()
+                .color(Color::from_rgb(190, 190, 200))
+                .font_size(13.0)
+                .text(format!(
+                    "Este bundle referencia plugins no instalados. Los chips quedarán con advertencia hasta que instales:\n\n{listing}"
+                )),
+        )
+        .child(
+            rect()
+                .horizontal()
+                .spacing(10.0)
+                .content(Content::Flex)
+                .cross_align(Alignment::Center)
+                .child(flexible_spacer())
+                .child(
+                    text_button_card("Cancelar", Color::from_rgb(55, 55, 62))
+                        .on_press(|_: Event<PressEventData>| ModalController::get().close()),
+                )
+                .child(
+                    text_button_card("Importar igual", Color::from_rgb(65, 105, 220))
+                        .on_press(move |_: Event<PressEventData>| {
+                            ModalController::get().close();
+                            on_confirm();
+                        }),
+                ),
+        );
+    ModalController::get().open(Modal::new(body).center());
+}
+
+fn text_button_card(text: &str, bg: Color) -> Rect {
+    rect()
+        .height(Size::px(34.0))
+        .padding((0.0, 14.0))
+        .center()
+        .with_corner_radius(8.0)
+        .background(bg)
+        .child(
+            label()
+                .color(Color::from_rgb(240, 240, 245))
+                .font_size(13.0)
+                .text(text.to_owned()),
+        )
 }
 
 fn fab_button<F: Fn(()) + 'static>(glyph: &'static str, bg: Color, handler: F) -> Rect {

@@ -27,19 +27,33 @@ pub use crate::builtin::pdf_source::IMPORT_PDF;
 pub use crate::builtin::stroke_canvas::{NEW_CANVAS, NEW_EPHEMERAL, QUICK_SKETCH};
 
 pub const NEW_FOLDER: &str = "new-folder";
+pub const IMPORT_BUNDLE: &str = "import-bundle";
 
 /// Every shell-owned entry. Ordered by the natural menu grouping
 /// (sources, then other) so a caller that drops the `category`
 /// grouping still sees a sensible order.
 #[must_use]
 pub fn entries() -> Vec<CreationEntry> {
-    vec![CreationEntry {
-        id: NEW_FOLDER.to_owned(),
-        label: "Nueva carpeta".to_owned(),
-        icon: "🗂".to_owned(),
-        category: CreationCategory::Other,
-        kind: CreationKind::Blank { prompt_name: true },
-    }]
+    vec![
+        CreationEntry {
+            id: NEW_FOLDER.to_owned(),
+            label: "Nueva carpeta".to_owned(),
+            icon: "🗂".to_owned(),
+            category: CreationCategory::Other,
+            kind: CreationKind::Blank { prompt_name: true },
+        },
+        CreationEntry {
+            id: IMPORT_BUNDLE.to_owned(),
+            label: "Importar bundle".to_owned(),
+            icon: "📦".to_owned(),
+            category: CreationCategory::Other,
+            kind: CreationKind::Import {
+                dialog_title: "Importar bundle .notein".to_owned(),
+                extensions: vec!["notein".to_owned()],
+                mime_types: vec!["application/octet-stream".to_owned()],
+            },
+        },
+    ]
 }
 
 /// Look up a shell builtin by id. `None` if the id is not one of the
