@@ -51,7 +51,7 @@ pub fn root_dir() -> PathBuf {
 pub fn doc_path(id: ItemId) -> PathBuf {
     root_dir()
         .join(DOCS_SUBDIR)
-        .join(format!("{}.{DOC_EXT}", id.0))
+        .join(format!("{id}.{DOC_EXT}"))
 }
 
 /// Absolute path of the PDF attachment for `id`.
@@ -59,7 +59,7 @@ pub fn doc_path(id: ItemId) -> PathBuf {
 pub fn pdf_path(id: ItemId) -> PathBuf {
     root_dir()
         .join(PDFS_SUBDIR)
-        .join(format!("{}.{PDF_EXT}", id.0))
+        .join(format!("{id}.{PDF_EXT}"))
 }
 
 fn ensure_dir(path: &std::path::Path) -> io::Result<()> {

@@ -220,7 +220,7 @@ fn top_bar(
     let router = RouterContext::get();
     let open_workspace = active_workspace_id.map(|id| {
         icon_button("⊞").on_press(move |_| {
-            let _ = router.push(crate::route::Route::WorkspaceView { id: id.0 });
+            let _ = router.push(crate::route::Route::WorkspaceView { id });
         })
     });
     rect()
@@ -680,10 +680,10 @@ impl Component for ItemCard {
         let open = move || {
             crate::route::queue_canvas_background(bg_style, rgba_to_color(tint).into());
             let route = match kind {
-                ItemKind::Canvas => Route::CanvasView { id: id.0 },
-                ItemKind::PdfCanvas => Route::CanvasPdfView { id: id.0 },
-                ItemKind::SourcePdf => Route::SourcePdfView { id: id.0 },
-                ItemKind::DocLinked => Route::DocLinkedView { id: id.0 },
+                ItemKind::Canvas => Route::CanvasView { id },
+                ItemKind::PdfCanvas => Route::CanvasPdfView { id },
+                ItemKind::SourcePdf => Route::SourcePdfView { id },
+                ItemKind::DocLinked => Route::DocLinkedView { id },
             };
             let _ = router.push(route);
         };
@@ -1461,7 +1461,7 @@ fn flow_quick_sketch(ctx: FabCtx) {
                     BackgroundStyle::default(),
                     crate::route::DEFAULT_PAPER,
                 );
-                let _ = router.push(Route::CanvasView { id: id.0 });
+                let _ = router.push(Route::CanvasView { id });
             }
             Err(err) => log::error!("create_item: {err}"),
         }
@@ -1507,7 +1507,7 @@ fn flow_new_canvas(ctx: FabCtx) {
                     log::info!("canvas created id={id:?}");
                     snap.set(Some(lib.index().clone()));
                     crate::route::queue_canvas_background(bg_style, surface.into());
-                    let _ = router.push(Route::CanvasView { id: id.0 });
+                    let _ = router.push(Route::CanvasView { id });
                 }
                 Err(err) => log::error!("create_item: {err}"),
             }
@@ -1700,7 +1700,7 @@ async fn pick_and_open_pdf(
                         log::error!("attach_pdf: {err}");
                     }
                     snap.set(Some(lib.index().clone()));
-                    let _ = router.push(Route::CanvasPdfView { id: id.0 });
+                    let _ = router.push(Route::CanvasPdfView { id });
                 }
                 Err(err) => log::error!("create_item: {err}"),
             }
@@ -1777,7 +1777,7 @@ async fn pick_and_open_pdf_linked(
         Ok(linked) => {
             log::info!("doc-linked bundle created id={linked:?}");
             snap.set(Some(lib.index().clone()));
-            let _ = router.push(Route::DocLinkedView { id: linked.0 });
+            let _ = router.push(Route::DocLinkedView { id: linked });
         }
         Err(err) => log::error!("create_doc_linked_pdf: {err}"),
     }

@@ -17,7 +17,7 @@ const CODEC: Configuration = config::standard();
 /// data-store key the whole blob lives under. Suffix version bumps
 /// track breaking schema changes so a stale key can be detected /
 /// migrated instead of silently misread.
-pub const INDEX_KEY: &str = "library.index.v1";
+pub const INDEX_KEY: &str = "library.index.v2";
 
 /// data-store key for the [`WorkspaceIndex`] blob. Kept on its own key
 /// so introducing workspaces does not force a bump of [`INDEX_KEY`].
@@ -26,7 +26,7 @@ pub const INDEX_KEY: &str = "library.index.v1";
 /// `PaneLayout` enum. Pre-release dev installs that still carry a v1
 /// payload silently fall back to the default empty index (bincode
 /// decode error → fresh "Workspace 1" minted at startup).
-pub const WORKSPACES_KEY: &str = "library.workspaces.v2";
+pub const WORKSPACES_KEY: &str = "library.workspaces.v3";
 
 /// data-store namespace used for the library. Matches the app id
 /// declared in `istmo.toml` so backends can partition per-app data

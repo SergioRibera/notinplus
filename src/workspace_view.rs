@@ -43,12 +43,12 @@ enum LoadState {
 /// Pane-tree shell for a persisted workspace.
 #[derive(Debug, PartialEq)]
 pub struct WorkspaceView {
-    pub id: u32,
+    pub id: WorkspaceId,
 }
 
 impl Component for WorkspaceView {
     fn render(&self) -> impl IntoElement {
-        let workspace_id = WorkspaceId(self.id);
+        let workspace_id = self.id;
         let load_state = use_state(|| LoadState::Loading);
         let router = RouterContext::get();
 
@@ -65,8 +65,7 @@ impl Component for WorkspaceView {
                             match snap {
                                 Some(snap) => load_state.set(LoadState::Ready(handle, snap)),
                                 None => load_state.set(LoadState::Error(format!(
-                                    "workspace {} no existe",
-                                    workspace_id.0
+                                    "workspace {workspace_id} no existe"
                                 ))),
                             }
                         }
@@ -429,13 +428,13 @@ fn tab_open_cb(
 ) -> Callback<PaneTab, ()> {
     Callback::new(move |tab: PaneTab| {
         let route = match kinds.get(&tab.item) {
-            Some(ItemKind::PdfCanvas) => Route::CanvasPdfView { id: tab.item.0 },
-            Some(ItemKind::SourcePdf) => Route::SourcePdfView { id: tab.item.0 },
-            Some(ItemKind::DocLinked) => Route::DocLinkedView { id: tab.item.0 },
+            Some(ItemKind::PdfCanvas) => Route::CanvasPdfView { id: tab.item },
+            Some(ItemKind::SourcePdf) => Route::SourcePdfView { id: tab.item },
+            Some(ItemKind::DocLinked) => Route::DocLinkedView { id: tab.item },
             // Unknown items (e.g. deleted on another device) still open
             // the canvas route so the user sees the empty-doc fallback
             // instead of a swallowed click.
-            Some(ItemKind::Canvas) | None => Route::CanvasView { id: tab.item.0 },
+            Some(ItemKind::Canvas) | None => Route::CanvasView { id: tab.item },
         };
         let _ = router.push(route);
     })

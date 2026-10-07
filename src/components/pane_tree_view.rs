@@ -509,7 +509,7 @@ fn leaf_body_empty(id: PaneId) -> Rect {
                 .font_size(13.0)
                 .text(format!(
                     "Pane {} vacío — usá + para abrir un item.",
-                    id.0
+                    &id.to_string()[..8]
                 )),
         )
 }
@@ -589,7 +589,7 @@ mod tests {
     use crate::library::{ItemId, Pane, PaneId};
 
     fn stub_label_cb() -> Callback<PaneTab, String> {
-        Callback::new(|tab: PaneTab| format!("Item {}", tab.item.0))
+        Callback::new(|tab: PaneTab| format!("Item {}", tab.item))
     }
 
     fn stub_callbacks() -> PaneTreeCallbacks {
@@ -615,20 +615,25 @@ mod tests {
 
     #[test]
     fn leaf_count_matches_layout() {
+        let pane_a = PaneId::new_v4();
+        let pane_b = PaneId::new_v4();
+        let pane_c = PaneId::new_v4();
         let layout = PaneLayout::Split {
             orientation: SplitOrientation::Horizontal,
             ratio: 0.5,
             first: Box::new(PaneLayout::Leaf(Pane {
-                id: PaneId(1),
-                tabs: vec![PaneTab { item: ItemId(10) }],
+                id: pane_a,
+                tabs: vec![PaneTab {
+                    item: ItemId::new_v4(),
+                }],
                 active_tab: 0,
             })),
             second: Box::new(PaneLayout::Split {
                 orientation: SplitOrientation::Vertical,
                 ratio: 0.5,
-                first: Box::new(PaneLayout::leaf(PaneId(2))),
+                first: Box::new(PaneLayout::leaf(pane_b)),
                 second: Box::new(PaneLayout::Leaf(Pane {
-                    id: PaneId(3),
+                    id: pane_c,
                     tabs: Vec::new(),
                     active_tab: 0,
                 })),

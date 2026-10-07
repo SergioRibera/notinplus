@@ -1136,13 +1136,32 @@ mod tests {
         assert_eq!(idx, decoded);
     }
 
+    fn mk_item(seed: u8) -> ItemId {
+        let mut bytes = [0u8; 16];
+        bytes[0] = seed;
+        ItemId::from_bytes(bytes)
+    }
+
+    fn mk_pane(seed: u8) -> PaneId {
+        let mut bytes = [0u8; 16];
+        bytes[0] = seed;
+        PaneId::from_bytes(bytes)
+    }
+
+    fn mk_workspace(seed: u8) -> WorkspaceId {
+        let mut bytes = [0u8; 16];
+        bytes[0] = seed;
+        WorkspaceId::from_bytes(bytes)
+    }
+
     #[test]
     fn id_counters_never_reuse() {
-        let mut idx = LibraryIndex::default();
+        let idx = LibraryIndex::default();
         let a = idx.alloc_item_id();
         let b = idx.alloc_item_id();
         assert_ne!(a, b);
-        assert!(b.0 > a.0);
+        assert!(!a.is_nil());
+        assert!(!b.is_nil());
     }
 
     #[test]
@@ -1150,19 +1169,22 @@ mod tests {
         use bincode::config;
         let mut idx = WorkspaceIndex::default();
         let a = idx.alloc_workspace_id();
-        let left = PaneId(1);
-        let right = PaneId(2);
+        let left = mk_pane(1);
+        let right = mk_pane(2);
         let layout = PaneLayout::Split {
             orientation: SplitOrientation::Horizontal,
             ratio: 0.6,
             first: Box::new(PaneLayout::Leaf(Pane {
                 id: left,
-                tabs: vec![PaneTab { item: ItemId(42) }, PaneTab { item: ItemId(7) }],
+                tabs: vec![
+                    PaneTab { item: mk_item(42) },
+                    PaneTab { item: mk_item(7) },
+                ],
                 active_tab: 1,
             })),
             second: Box::new(PaneLayout::Leaf(Pane {
                 id: right,
-                tabs: vec![PaneTab { item: ItemId(99) }],
+                tabs: vec![PaneTab { item: mk_item(99) }],
                 active_tab: 0,
             })),
         };
@@ -1171,7 +1193,6 @@ mod tests {
             name: "Draft".into(),
             color: Some([200, 50, 50, 255]),
             layout,
-            next_pane_id: 3,
             focused_pane: Some(right),
             created_at: 10,
             updated_at: 20,
@@ -1186,9 +1207,9 @@ mod tests {
 
     #[test]
     fn split_leaf_adds_sibling_and_remove_leaf_collapses() {
-        let root = PaneId(1);
+        let root = mk_pane(1);
         let mut layout = PaneLayout::leaf(root);
-        let new_id = PaneId(2);
+        let new_id = mk_pane(2);
         assert!(layout.split_leaf(root, SplitOrientation::Horizontal, new_id, SplitSide::Second));
         assert_eq!(layout.leaves().len(), 2);
         assert!(layout.find_leaf(root).is_some());
@@ -1201,7 +1222,7 @@ mod tests {
 
     #[test]
     fn remove_leaf_refuses_root_single_leaf() {
-        let root = PaneId(1);
+        let root = mk_pane(1);
         let mut layout = PaneLayout::leaf(root);
         // Nothing to collapse into — refusal keeps the workspace with
         // at least one leaf for the shell to render.
@@ -1212,13 +1233,13 @@ mod tests {
     fn pane_add_close_focus_tab_direct() {
         // Direct in-memory tab mutation mirrors the Library::*_pane_tab
         // helpers without going through DataStoreClient.
-        let mut w = Workspace::fresh(WorkspaceId(1), "W".into(), None, 0);
+        let mut w = Workspace::fresh(mk_workspace(1), "W".into(), None, 0);
         let root = w.focused_pane.unwrap();
 
         {
             let leaf = w.layout.find_leaf_mut(root).unwrap();
-            leaf.tabs.push(PaneTab { item: ItemId(10) });
-            leaf.tabs.push(PaneTab { item: ItemId(11) });
+            leaf.tabs.push(PaneTab { item: mk_item(10) });
+            leaf.tabs.push(PaneTab { item: mk_item(11) });
             leaf.active_tab = 1;
         }
 
@@ -1238,7 +1259,7 @@ mod tests {
                 leaf.active_tab = u32::try_from(new_len.saturating_sub(1)).unwrap_or(0);
             }
             assert_eq!(leaf.tabs.len(), 1);
-            assert_eq!(leaf.tabs[0].item, ItemId(11));
+            assert_eq!(leaf.tabs[0].item, mk_item(11));
             assert_eq!(leaf.active_tab, 0);
         }
     }
@@ -1248,8 +1269,8 @@ mod tests {
         let mut layout = PaneLayout::Split {
             orientation: SplitOrientation::Vertical,
             ratio: 1.5,
-            first: Box::new(PaneLayout::leaf(PaneId(1))),
-            second: Box::new(PaneLayout::leaf(PaneId(2))),
+            first: Box::new(PaneLayout::leaf(mk_pane(1))),
+            second: Box::new(PaneLayout::leaf(mk_pane(2))),
         };
         layout.clamp_ratios();
         if let PaneLayout::Split { ratio, .. } = layout {
@@ -1261,11 +1282,12 @@ mod tests {
 
     #[test]
     fn workspace_ids_never_reuse() {
-        let mut idx = WorkspaceIndex::default();
+        let idx = WorkspaceIndex::default();
         let a = idx.alloc_workspace_id();
         let b = idx.alloc_workspace_id();
         assert_ne!(a, b);
-        assert!(b.0 > a.0);
+        assert!(!a.is_nil());
+        assert!(!b.is_nil());
     }
 
     #[test]
@@ -1273,12 +1295,12 @@ mod tests {
         let mut layout = PaneLayout::Split {
             orientation: SplitOrientation::Horizontal,
             ratio: 0.5,
-            first: Box::new(PaneLayout::leaf(PaneId(1))),
+            first: Box::new(PaneLayout::leaf(mk_pane(1))),
             second: Box::new(PaneLayout::Split {
                 orientation: SplitOrientation::Vertical,
                 ratio: 0.5,
-                first: Box::new(PaneLayout::leaf(PaneId(2))),
-                second: Box::new(PaneLayout::leaf(PaneId(3))),
+                first: Box::new(PaneLayout::leaf(mk_pane(2))),
+                second: Box::new(PaneLayout::leaf(mk_pane(3))),
             }),
         };
         // Root ratio.
@@ -1312,8 +1334,8 @@ mod tests {
         let mut layout = PaneLayout::Split {
             orientation: SplitOrientation::Horizontal,
             ratio: 0.5,
-            first: Box::new(PaneLayout::leaf(PaneId(1))),
-            second: Box::new(PaneLayout::leaf(PaneId(2))),
+            first: Box::new(PaneLayout::leaf(mk_pane(1))),
+            second: Box::new(PaneLayout::leaf(mk_pane(2))),
         };
         assert!(layout.set_ratio_at(&[], 1.5));
         let PaneLayout::Split { ratio, .. } = layout else {
@@ -1324,50 +1346,50 @@ mod tests {
 
     #[test]
     fn move_tab_moves_between_leaves_and_clamps_active_index() {
-        let left = PaneId(1);
-        let right = PaneId(2);
+        let left = mk_pane(1);
+        let right = mk_pane(2);
         let mut layout = PaneLayout::Split {
             orientation: SplitOrientation::Horizontal,
             ratio: 0.5,
             first: Box::new(PaneLayout::Leaf(Pane {
                 id: left,
-                tabs: vec![PaneTab { item: ItemId(10) }, PaneTab { item: ItemId(11) }],
+                tabs: vec![PaneTab { item: mk_item(10) }, PaneTab { item: mk_item(11) }],
                 active_tab: 1,
             })),
             second: Box::new(PaneLayout::Leaf(Pane {
                 id: right,
-                tabs: vec![PaneTab { item: ItemId(99) }],
+                tabs: vec![PaneTab { item: mk_item(99) }],
                 active_tab: 0,
             })),
         };
         assert!(layout.move_tab(left, 1, right));
         let src = layout.find_leaf(left).unwrap();
         assert_eq!(src.tabs.len(), 1);
-        assert_eq!(src.tabs[0].item, ItemId(10));
+        assert_eq!(src.tabs[0].item, mk_item(10));
         // The removed tab was the active one; clamp drops to the only
         // remaining tab.
         assert_eq!(src.active_tab, 0);
         let dst = layout.find_leaf(right).unwrap();
         assert_eq!(dst.tabs.len(), 2);
-        assert_eq!(dst.tabs[1].item, ItemId(11));
+        assert_eq!(dst.tabs[1].item, mk_item(11));
         // Destination focuses the just-arrived tab.
         assert_eq!(dst.active_tab, 1);
     }
 
     #[test]
     fn move_tab_rejects_same_pane_and_missing_targets() {
-        let only = PaneId(1);
+        let only = mk_pane(1);
         let mut layout = PaneLayout::Leaf(Pane {
             id: only,
-            tabs: vec![PaneTab { item: ItemId(10) }],
+            tabs: vec![PaneTab { item: mk_item(10) }],
             active_tab: 0,
         });
         // Same pane is a no-op reject (ordering is a different op).
         assert!(!layout.move_tab(only, 0, only));
         // Missing destination keeps the source intact.
-        assert!(!layout.move_tab(only, 0, PaneId(99)));
+        assert!(!layout.move_tab(only, 0, mk_pane(99)));
         let src = layout.find_leaf(only).unwrap();
         assert_eq!(src.tabs.len(), 1);
-        assert_eq!(src.tabs[0].item, ItemId(10));
+        assert_eq!(src.tabs[0].item, mk_item(10));
     }
 }

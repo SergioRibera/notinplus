@@ -33,12 +33,12 @@ use crate::route::Route;
 /// [`crate::library::ItemKind::DocLinked`] item.
 #[derive(Debug, PartialEq)]
 pub struct DocLinkedView {
-    pub id: u64,
+    pub id: ItemId,
 }
 
 impl Component for DocLinkedView {
     fn render(&self) -> impl IntoElement {
-        let bundle = ItemId(self.id);
+        let bundle = self.id;
         let bookmarks = use_state(Vec::<BookmarkChip>::new);
         let toast = use_state(|| Option::<String>::None);
         let refresh = use_state(|| 0u64);
@@ -97,7 +97,7 @@ impl Component for DocLinkedView {
 /// [`crate::library::ItemKind::SourcePdf`] item.
 #[derive(Debug, PartialEq)]
 pub struct SourcePdfView {
-    pub id: u64,
+    pub id: ItemId,
 }
 
 impl Component for SourcePdfView {
@@ -112,7 +112,7 @@ impl Component for SourcePdfView {
             .background(Color::from_rgb(15, 15, 18))
             .vertical()
             .child(header)
-            .child(PdfPaneView::new(ItemId(self.id)))
+            .child(PdfPaneView::new(self.id))
     }
 }
 
@@ -368,7 +368,7 @@ fn canvas_placeholder(bundle: ItemId, router: RouterContext) -> Rect {
                 .with_corner_radius(18.0)
                 .background(Color::from_rgb(55, 90, 180))
                 .on_press(move |_| {
-                    let _ = open_router.push(Route::CanvasView { id: bundle.0 });
+                    let _ = open_router.push(Route::CanvasView { id: bundle });
                 })
                 .child(
                     label()
@@ -393,7 +393,7 @@ fn header_bar(
 ) -> Rect {
     let open_canvas_router = router;
     let open_full = move || {
-        let _ = open_canvas_router.push(Route::CanvasView { id: bundle.0 });
+        let _ = open_canvas_router.push(Route::CanvasView { id: bundle });
     };
     let open_full = Rc::new(open_full);
     let open_full_cb = Rc::clone(&open_full);

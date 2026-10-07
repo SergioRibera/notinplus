@@ -110,7 +110,7 @@ fn prefs_path() -> PathBuf {
 fn view_path(id: ItemId) -> PathBuf {
     bodies::root_dir()
         .join(VIEWS_SUBDIR)
-        .join(format!("{}.{VIEW_EXT}", id.0))
+        .join(format!("{id}.{VIEW_EXT}"))
 }
 
 /// Read [`Prefs`] from disk. Missing / corrupt payload → `Prefs::default`

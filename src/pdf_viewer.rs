@@ -352,7 +352,7 @@ mod tests {
     #[test]
     fn pdf_anchor_roundtrips_through_bincode() {
         let a = PdfAnchor {
-            source: ItemId(42),
+            source: ItemId::new_v4(),
             page: 7,
         };
         let bytes = encode_pdf_anchor(a);

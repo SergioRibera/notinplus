@@ -57,15 +57,15 @@ pub enum Route {
     #[route("/canvas")]
     CanvasEphemeral,
     #[route("/canvas/:id")]
-    CanvasView { id: u64 },
+    CanvasView { id: ItemId },
     #[route("/pdf/:id")]
-    CanvasPdfView { id: u64 },
+    CanvasPdfView { id: ItemId },
     #[route("/source/pdf/:id")]
-    SourcePdfView { id: u64 },
+    SourcePdfView { id: ItemId },
     #[route("/linked/:id")]
-    DocLinkedView { id: u64 },
+    DocLinkedView { id: ItemId },
     #[route("/workspace/:id")]
-    WorkspaceView { id: u32 },
+    WorkspaceView { id: crate::library::WorkspaceId },
 }
 
 impl Route {
@@ -76,7 +76,7 @@ impl Route {
         match self {
             Route::CanvasView { id }
             | Route::CanvasPdfView { id }
-            | Route::DocLinkedView { id } => Some(ItemId(*id)),
+            | Route::DocLinkedView { id } => Some(*id),
             Route::Home
             | Route::CanvasEphemeral
             | Route::SourcePdfView { .. }
@@ -90,12 +90,12 @@ impl Route {
 /// freshly opened items pick up their persisted pattern.
 #[derive(Debug, PartialEq)]
 pub struct CanvasView {
-    pub id: u64,
+    pub id: ItemId,
 }
 
 impl Component for CanvasView {
     fn render(&self) -> impl IntoElement {
-        mount_canvas(Some(ItemId(self.id)));
+        mount_canvas(Some(self.id));
         canvas_root()
     }
 }
@@ -119,12 +119,12 @@ impl Component for CanvasEphemeral {
 /// coordinates as the PDF geometry.
 #[derive(Debug, PartialEq)]
 pub struct CanvasPdfView {
-    pub id: u64,
+    pub id: ItemId,
 }
 
 impl Component for CanvasPdfView {
     fn render(&self) -> impl IntoElement {
-        let item = ItemId(self.id);
+        let item = self.id;
         mount_canvas(Some(item));
         use_hook(move || {
             // Spawn so pdfium init + file read run off the UI thread

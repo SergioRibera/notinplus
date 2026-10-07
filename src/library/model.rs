@@ -5,45 +5,93 @@
 //! tags only. Doc bodies live on the filesystem alongside optional PDF
 //! attachments (see [`super::bodies`]).
 
+use core::str::FromStr;
+
 /// Reserved id for the implicit root folder that every fresh index
-/// carries. User-created folders start at `1`.
-pub const ROOT_FOLDER: FolderId = FolderId(0);
+/// carries. User-created folders use random UUID v4 bytes.
+pub const ROOT_FOLDER: FolderId = FolderId([0u8; 16]);
 
 /// Schema version encoded into the index blob. Bump on any breaking
 /// change to the surrounding types.
-pub const INDEX_VERSION: u32 = 1;
+pub const INDEX_VERSION: u32 = 2;
 
-/// Stable identifier for a canvas / PDF-backed doc.
-#[istmo::message]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct ItemId(pub u64);
+macro_rules! uuid_newtype {
+    ($(#[$meta:meta])* $name:ident) => {
+        $(#[$meta])*
+        #[istmo::message]
+        #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+        pub struct $name(pub [u8; 16]);
 
-/// Stable identifier for a folder. `FolderId(0)` is the root.
-#[istmo::message]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct FolderId(pub u64);
+        impl $name {
+            #[must_use]
+            pub fn new_v4() -> Self {
+                Self(*uuid::Uuid::new_v4().as_bytes())
+            }
 
-/// Stable identifier for a user-defined tag.
-#[istmo::message]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct TagId(pub u32);
+            #[must_use]
+            pub const fn nil() -> Self {
+                Self([0u8; 16])
+            }
 
-/// Stable identifier for a persisted workspace session.
-#[istmo::message]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct WorkspaceId(pub u32);
+            #[must_use]
+            pub const fn is_nil(&self) -> bool {
+                let mut i = 0;
+                while i < 16 {
+                    if self.0[i] != 0 {
+                        return false;
+                    }
+                    i += 1;
+                }
+                true
+            }
 
-/// Stable identifier for a pane within a single workspace. Scoped per
-/// workspace — a `PaneId` from workspace A has no meaning in B. Ids
-/// never alias within a workspace (allocator is monotonic + append-
-/// only, same discipline as [`ItemId`]).
-///
-/// `PaneId(0)` is the reserved "unallocated" sentinel used by the
-/// default [`Pane`] shape; the workspace allocator always hands out
-/// values ≥ 1.
-#[istmo::message]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
-pub struct PaneId(pub u32);
+            #[must_use]
+            pub const fn from_bytes(bytes: [u8; 16]) -> Self {
+                Self(bytes)
+            }
+        }
+
+        impl core::fmt::Display for $name {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                uuid::Uuid::from_bytes(self.0).fmt(f)
+            }
+        }
+
+        impl FromStr for $name {
+            type Err = uuid::Error;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                uuid::Uuid::parse_str(s).map(|u| Self(*u.as_bytes()))
+            }
+        }
+    };
+}
+
+uuid_newtype!(
+    /// Stable identifier for a canvas / PDF-backed doc.
+    ItemId
+);
+uuid_newtype!(
+    /// Stable identifier for a folder. [`ROOT_FOLDER`] uses the nil
+    /// UUID; user-created folders carry random UUID v4 bytes.
+    FolderId
+);
+uuid_newtype!(
+    /// Stable identifier for a user-defined tag.
+    TagId
+);
+uuid_newtype!(
+    /// Stable identifier for a persisted workspace session.
+    WorkspaceId
+);
+uuid_newtype!(
+    /// Stable identifier for a pane within a single workspace. Scoped
+    /// per workspace — a [`PaneId`] from workspace A has no meaning in
+    /// B. Default is the nil UUID used by transient layout snapshots
+    /// that never persist; the [`Workspace`] allocator rewrites it on
+    /// insertion.
+    PaneId
+);
 
 /// sRGB colour swatch. Alpha included so future themes can honour
 /// user-defined translucency.
@@ -462,10 +510,6 @@ pub struct Workspace {
     pub name: String,
     pub color: Option<Rgba>,
     pub layout: PaneLayout,
-    /// Monotonic counter the workspace hands out when a new leaf is
-    /// minted (e.g. on split). Starts at `1` so `PaneId(0)` reads as
-    /// "unallocated" everywhere.
-    pub next_pane_id: u32,
     /// Which leaf has keyboard / input focus. The shell clamps on
     /// read when the pane disappears (close / delete).
     pub focused_pane: Option<PaneId>,
@@ -474,27 +518,29 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    /// Fresh single-leaf workspace with id `PaneId(1)` focused.
+    /// Fresh single-leaf workspace with a freshly-minted root pane
+    /// focused.
     #[must_use]
     pub fn fresh(id: WorkspaceId, name: String, color: Option<Rgba>, now: u64) -> Self {
-        let root = PaneId(1);
+        let root = PaneId::new_v4();
         Self {
             id,
             name,
             color,
             layout: PaneLayout::leaf(root),
-            next_pane_id: 2,
             focused_pane: Some(root),
             created_at: now,
             updated_at: now,
         }
     }
 
-    /// Allocate the next [`PaneId`] for this workspace.
-    pub fn alloc_pane_id(&mut self) -> PaneId {
-        let id = PaneId(self.next_pane_id);
-        self.next_pane_id = self.next_pane_id.saturating_add(1);
-        id
+    /// Mint a fresh [`PaneId`]. Kept as a method on [`Workspace`] so
+    /// call sites that split a pane do not need to import
+    /// [`PaneId::new_v4`] directly.
+    #[must_use]
+    #[allow(clippy::unused_self)]
+    pub fn alloc_pane_id(&self) -> PaneId {
+        PaneId::new_v4()
     }
 }
 
@@ -505,7 +551,6 @@ impl Workspace {
 #[derive(Clone, PartialEq, Debug)]
 pub struct WorkspaceIndex {
     pub version: u32,
-    pub next_workspace_id: u32,
     pub active: Option<WorkspaceId>,
     pub workspaces: Vec<Workspace>,
 }
@@ -514,7 +559,6 @@ impl Default for WorkspaceIndex {
     fn default() -> Self {
         Self {
             version: WORKSPACE_INDEX_VERSION,
-            next_workspace_id: 1,
             active: None,
             workspaces: Vec::new(),
         }
@@ -531,30 +575,25 @@ impl WorkspaceIndex {
         self.workspaces.iter_mut().find(|w| w.id == id)
     }
 
-    pub(super) const fn alloc_workspace_id(&mut self) -> WorkspaceId {
-        let id = WorkspaceId(self.next_workspace_id);
-        self.next_workspace_id = self.next_workspace_id.saturating_add(1);
-        id
+    pub(super) fn alloc_workspace_id(&self) -> WorkspaceId {
+        WorkspaceId::new_v4()
     }
 }
 
 /// Schema version for [`WorkspaceIndex`]. Bump on any breaking change
 /// to the surrounding types.
-pub const WORKSPACE_INDEX_VERSION: u32 = 1;
+pub const WORKSPACE_INDEX_VERSION: u32 = 2;
 
-/// The single blob persisted under `library.index.v1` in data-store.
+/// The single blob persisted under `library.index.v2` in data-store.
 ///
-/// Kept append-only for ids — [`Self::next_*`] counters only ever go
-/// up, so a deleted id is never re-used. Simplifies undo / redo and
-/// keeps stale references (e.g. a stashed [`ItemId`] in the UI) from
+/// Every id is a random UUID v4 so creating + deleting items never
+/// re-uses the same byte sequence. Simplifies undo / redo and keeps
+/// stale references (e.g. a stashed [`ItemId`] in the UI) from
 /// silently aliasing a new doc.
 #[istmo::message]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct LibraryIndex {
     pub version: u32,
-    pub next_item_id: u64,
-    pub next_folder_id: u64,
-    pub next_tag_id: u32,
     pub folders: Vec<Folder>,
     pub items: Vec<Item>,
     pub tags: Vec<Tag>,
@@ -564,9 +603,6 @@ impl Default for LibraryIndex {
     fn default() -> Self {
         Self {
             version: INDEX_VERSION,
-            next_item_id: 1,
-            next_folder_id: 1,
-            next_tag_id: 1,
             folders: Vec::new(),
             items: Vec::new(),
             tags: Vec::new(),
@@ -628,21 +664,15 @@ impl LibraryIndex {
         false
     }
 
-    pub(super) const fn alloc_folder_id(&mut self) -> FolderId {
-        let id = FolderId(self.next_folder_id);
-        self.next_folder_id = self.next_folder_id.saturating_add(1);
-        id
+    pub(super) fn alloc_folder_id(&self) -> FolderId {
+        FolderId::new_v4()
     }
 
-    pub(super) const fn alloc_item_id(&mut self) -> ItemId {
-        let id = ItemId(self.next_item_id);
-        self.next_item_id = self.next_item_id.saturating_add(1);
-        id
+    pub(super) fn alloc_item_id(&self) -> ItemId {
+        ItemId::new_v4()
     }
 
-    pub(super) const fn alloc_tag_id(&mut self) -> TagId {
-        let id = TagId(self.next_tag_id);
-        self.next_tag_id = self.next_tag_id.saturating_add(1);
-        id
+    pub(super) fn alloc_tag_id(&self) -> TagId {
+        TagId::new_v4()
     }
 }
