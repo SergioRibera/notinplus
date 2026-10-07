@@ -1006,6 +1006,67 @@ impl Library {
         self.persist_workspaces().await
     }
 
+    // ---------- Bundle import ------------------------------------------
+
+    /// Merge a parsed `.notein` bundle into the library. Caller must
+    /// have confirmed `preflight.has_collisions() == false` upstream;
+    /// this method does not re-check — a UUID clash here would silently
+    /// overwrite the live entry.
+    ///
+    /// Items whose declared `folder` is not in the bundle land under
+    /// [`ROOT_FOLDER`] so an orphaned reference stays visible instead
+    /// of silently disappearing.
+    ///
+    /// # Errors
+    /// Filesystem / persistence failures.
+    pub async fn import_bundle(&mut self, bundle: &crate::bundle::ParsedBundle) -> Result<()> {
+        let known_folders: std::collections::HashSet<FolderId> = bundle
+            .manifest
+            .folders
+            .iter()
+            .map(|f| f.id)
+            .chain(self.index.folders.iter().map(|f| f.id))
+            .chain(std::iter::once(ROOT_FOLDER))
+            .collect();
+
+        for tag in &bundle.manifest.tags {
+            if self.index.tag(tag.id).is_none() {
+                self.index.tags.push(tag.clone());
+            }
+        }
+
+        for folder in &bundle.manifest.folders {
+            let mut f = folder.clone();
+            if !known_folders.contains(&f.parent) {
+                f.parent = ROOT_FOLDER;
+            }
+            self.index.folders.push(f);
+        }
+
+        for item in &bundle.manifest.items {
+            let mut i = item.clone();
+            if !known_folders.contains(&i.folder) {
+                i.folder = ROOT_FOLDER;
+            }
+            self.index.items.push(i);
+        }
+
+        for ws in &bundle.manifest.workspaces {
+            self.workspaces.workspaces.push(ws.clone());
+        }
+
+        for (id, bytes) in &bundle.docs {
+            bodies::write_doc_bytes(*id, bytes)?;
+        }
+        for (id, bytes) in &bundle.pdfs {
+            bodies::write_pdf(*id, bytes)?;
+        }
+
+        self.persist().await?;
+        self.persist_workspaces().await?;
+        Ok(())
+    }
+
     // ---------- Internal helpers ---------------------------------------
 
     async fn persist(&self) -> Result<()> {

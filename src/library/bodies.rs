@@ -94,6 +94,16 @@ pub fn read_doc(id: ItemId) -> Result<Doc> {
     Ok(doc)
 }
 
+/// Persist raw doc bytes verbatim at [`doc_path`]. Used by the bundle
+/// importer so a round-tripped payload bypasses an unnecessary
+/// decode/encode pair.
+///
+/// # Errors
+/// Filesystem failure.
+pub fn write_doc_bytes(id: ItemId, bytes: &[u8]) -> Result<()> {
+    write_blob(&doc_path(id), bytes)
+}
+
 /// Persist raw PDF bytes at [`pdf_path`]. Overwrites any previous
 /// attachment for the same id.
 ///
