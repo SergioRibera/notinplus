@@ -361,6 +361,14 @@ impl PartialEq for LeafNode {
 impl Component for LeafNode {
     fn render(&self) -> impl IntoElement {
         let drag = use_drag::<TabDragPayload>();
+        // Hover-highlight state for every edge drop zone lives at the
+        // top of render so freya's hook ordering stays constant across
+        // renders — the zones themselves are only mounted while a
+        // drag is active.
+        let hover_top = use_state(|| false);
+        let hover_bottom = use_state(|| false);
+        let hover_left = use_state(|| false);
+        let hover_right = use_state(|| false);
         let drag_active = drag.read().is_some();
 
         let pane_id = self.pane.id;
@@ -407,10 +415,30 @@ impl Component for LeafNode {
         if drag_active {
             let split_cb = self.callbacks.on_tab_split.clone();
             body = body
-                .child(edge_drop_zone(pane_id, SplitEdge::Top, split_cb.clone()))
-                .child(edge_drop_zone(pane_id, SplitEdge::Bottom, split_cb.clone()))
-                .child(edge_drop_zone(pane_id, SplitEdge::Left, split_cb.clone()))
-                .child(edge_drop_zone(pane_id, SplitEdge::Right, split_cb));
+                .child(edge_drop_zone(
+                    pane_id,
+                    SplitEdge::Top,
+                    split_cb.clone(),
+                    hover_top,
+                ))
+                .child(edge_drop_zone(
+                    pane_id,
+                    SplitEdge::Bottom,
+                    split_cb.clone(),
+                    hover_bottom,
+                ))
+                .child(edge_drop_zone(
+                    pane_id,
+                    SplitEdge::Left,
+                    split_cb.clone(),
+                    hover_left,
+                ))
+                .child(edge_drop_zone(
+                    pane_id,
+                    SplitEdge::Right,
+                    split_cb,
+                    hover_right,
+                ));
         }
 
         rect()
@@ -486,10 +514,16 @@ fn leaf_body_empty(id: PaneId) -> Rect {
         )
 }
 
+/// Edge overlay drop zone. The hover-highlight state is lifted to the
+/// caller so freya's hook rules (same number of hook calls per render)
+/// stay satisfied — the overlay is conditional on an active drag, so
+/// a `use_state` *inside* this function would be called a different
+/// number of times across renders.
 fn edge_drop_zone(
     dst_pane: PaneId,
     edge: SplitEdge,
     on_split: Callback<(PaneId, usize, PaneId, SplitEdge), ()>,
+    hovered: State<bool>,
 ) -> Rect {
     let position = match edge {
         SplitEdge::Top => Position::new_absolute()
@@ -507,7 +541,6 @@ fn edge_drop_zone(
         SplitEdge::Top | SplitEdge::Bottom => (Size::auto(), Size::px(EDGE_DROP_PX)),
         SplitEdge::Left | SplitEdge::Right => (Size::px(EDGE_DROP_PX), Size::auto()),
     };
-    let hovered = use_state(|| false);
     let highlight = if *hovered.read() {
         Color::from_argb(140, 90, 140, 220)
     } else {
