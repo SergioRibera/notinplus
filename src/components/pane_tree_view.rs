@@ -55,7 +55,7 @@ impl std::fmt::Debug for PaneTreeCallbacks {
 pub struct PaneTreeView {
     layout: PaneLayout,
     callbacks: PaneTreeCallbacks,
-    tab_labels: fn(&PaneTab) -> String,
+    tab_labels: Callback<PaneTab, String>,
 }
 
 impl PartialEq for PaneTreeView {
@@ -72,22 +72,27 @@ impl PaneTreeView {
     /// `tab_labels` renders a human-readable name per tab — the shell
     /// supplies it so this component stays agnostic of the library.
     #[must_use]
-    pub const fn new(
+    pub fn new(
         layout: PaneLayout,
         callbacks: PaneTreeCallbacks,
-        tab_labels: fn(&PaneTab) -> String,
+        tab_labels: impl Into<Callback<PaneTab, String>>,
     ) -> Self {
         Self {
             layout,
             callbacks,
-            tab_labels,
+            tab_labels: tab_labels.into(),
         }
     }
 }
 
 impl Component for PaneTreeView {
     fn render(&self) -> impl IntoElement {
-        render_node(&self.layout, Vec::new(), &self.callbacks, self.tab_labels)
+        render_node(
+            &self.layout,
+            Vec::new(),
+            &self.callbacks,
+            &self.tab_labels,
+        )
     }
 }
 
@@ -95,7 +100,7 @@ fn render_node(
     node: &PaneLayout,
     path: Vec<SplitSide>,
     callbacks: &PaneTreeCallbacks,
-    tab_labels: fn(&PaneTab) -> String,
+    tab_labels: &Callback<PaneTab, String>,
 ) -> Element {
     match node {
         PaneLayout::Leaf(pane) => leaf_view(pane, callbacks, tab_labels).into_element(),
@@ -111,7 +116,7 @@ fn render_node(
             first: (**first).clone(),
             second: (**second).clone(),
             callbacks: callbacks.clone(),
-            tab_labels,
+            tab_labels: tab_labels.clone(),
         }
         .into_element(),
     }
@@ -128,7 +133,7 @@ struct SplitNode {
     first: PaneLayout,
     second: PaneLayout,
     callbacks: PaneTreeCallbacks,
-    tab_labels: fn(&PaneTab) -> String,
+    tab_labels: Callback<PaneTab, String>,
 }
 
 impl std::fmt::Debug for SplitNode {
@@ -213,7 +218,7 @@ impl Component for SplitNode {
                 p
             },
             &self.callbacks,
-            self.tab_labels,
+            &self.tab_labels,
         );
         let second_el = render_node(
             &self.second,
@@ -223,7 +228,7 @@ impl Component for SplitNode {
                 p
             },
             &self.callbacks,
-            self.tab_labels,
+            &self.tab_labels,
         );
 
         let (container, first_wrap, second_wrap) = match orientation {
@@ -284,7 +289,7 @@ fn divider_bar(
 fn leaf_view(
     pane: &Pane,
     callbacks: &PaneTreeCallbacks,
-    tab_labels: fn(&PaneTab) -> String,
+    tab_labels: &Callback<PaneTab, String>,
 ) -> Rect {
     let pane_id = pane.id;
     let entries: Vec<TabBarEntry> = pane
@@ -292,7 +297,7 @@ fn leaf_view(
         .iter()
         .enumerate()
         .map(|(i, tab)| TabBarEntry {
-            label: tab_labels(tab).into(),
+            label: tab_labels.call(*tab).into(),
             icon: None,
             is_active: i == pane.active_tab as usize,
         })
@@ -314,7 +319,7 @@ fn leaf_view(
     let active_label = pane
         .tabs
         .get(pane.active_tab as usize)
-        .map_or_else(|| format!("Pane {} (vacío)", pane.id.0), tab_labels);
+        .map_or_else(|| format!("Pane {} (vacío)", pane.id.0), |t| tab_labels.call(*t));
     rect()
         .vertical()
         .width(Size::fill())
@@ -342,8 +347,8 @@ mod tests {
     use super::*;
     use crate::library::{ItemId, Pane, PaneId};
 
-    fn stub_label(tab: &PaneTab) -> String {
-        format!("Item {}", tab.item.0)
+    fn stub_label_cb() -> Callback<PaneTab, String> {
+        Callback::new(|tab: PaneTab| format!("Item {}", tab.item.0))
     }
 
     fn stub_callbacks() -> PaneTreeCallbacks {
@@ -377,7 +382,7 @@ mod tests {
                 })),
             }),
         };
-        let view = PaneTreeView::new(layout.clone(), stub_callbacks(), stub_label);
+        let view = PaneTreeView::new(layout.clone(), stub_callbacks(), stub_label_cb());
         assert_eq!(view.layout.leaves().len(), 3);
     }
 }

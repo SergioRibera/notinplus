@@ -36,6 +36,7 @@ pub mod shell_builtins;
 pub mod spatial;
 pub mod ui_mask;
 pub mod undo;
+pub mod workspace_view;
 
 #[cfg(not(any(
     target_os = "android",

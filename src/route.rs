@@ -35,6 +35,7 @@ use crate::canvas::{Board, Viewport, lock};
 use crate::doc::Doc;
 use crate::home::Home;
 use crate::library::{BackgroundStyle, ItemId, LibraryError, bodies};
+use crate::workspace_view::WorkspaceView;
 use crate::pen_pump;
 use crate::prefs;
 
@@ -45,7 +46,8 @@ pub const DEFAULT_PAPER: SkColor = SkColor::from_rgb(250, 250, 248);
 /// opens a persisted canvas item; `CanvasEphemeral` opens an in-memory
 /// scratch canvas (no autosave, no view sidecar); `CanvasPdfView { id }`
 /// opens a canvas overlaid on a PDF previously loaded via the
-/// file-picker plugin.
+/// file-picker plugin. `WorkspaceView { id }` opens the pane-tree
+/// shell for a persisted workspace.
 #[derive(Routable, Clone, Debug, PartialEq)]
 #[rustfmt::skip]
 pub enum Route {
@@ -57,6 +59,8 @@ pub enum Route {
     CanvasView { id: u64 },
     #[route("/pdf/:id")]
     CanvasPdfView { id: u64 },
+    #[route("/workspace/:id")]
+    WorkspaceView { id: u32 },
 }
 
 impl Route {
@@ -66,7 +70,7 @@ impl Route {
     pub fn canvas_item(&self) -> Option<ItemId> {
         match self {
             Route::CanvasView { id } | Route::CanvasPdfView { id } => Some(ItemId(*id)),
-            Route::Home | Route::CanvasEphemeral => None,
+            Route::Home | Route::CanvasEphemeral | Route::WorkspaceView { .. } => None,
         }
     }
 }

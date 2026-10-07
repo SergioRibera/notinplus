@@ -212,10 +212,17 @@ fn top_bar(
 ) -> impl IntoElement {
     let bg = Color::from_rgb(15, 15, 18);
     let search_value = use_state(String::default);
+    let active_workspace_id = workspace_pill.as_ref().and_then(|(_, ws)| ws.active);
     let left = match workspace_pill {
         Some((handle, ws)) => workspace_pill_button(handle, ws, ws_snap).into_element(),
         None => icon_button("☰").into_element(),
     };
+    let router = RouterContext::get();
+    let open_workspace = active_workspace_id.map(|id| {
+        icon_button("⊞").on_press(move |_| {
+            let _ = router.push(crate::route::Route::WorkspaceView { id: id.0 });
+        })
+    });
     rect()
         .horizontal()
         .width(Size::fill())
@@ -226,6 +233,7 @@ fn top_bar(
         .cross_align(Alignment::Center)
         .child(left)
         .child(spacer_px(6.0))
+        .maybe_child(open_workspace)
         .child(flexible_spacer())
         .child(
             FormInput::new(search_value)
