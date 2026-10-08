@@ -14,7 +14,7 @@ use super::modal::{Modal, ModalController};
 /// A single row inside a [`FabMenu`].
 #[derive(Clone)]
 pub struct FabMenuEntry {
-    icon: Cow<'static, str>,
+    icon: Bytes,
     text: Cow<'static, str>,
     on_press: NoArgCallback<()>,
     divider_above: bool,
@@ -23,7 +23,6 @@ pub struct FabMenuEntry {
 impl std::fmt::Debug for FabMenuEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FabMenuEntry")
-            .field("icon", &self.icon)
             .field("text", &self.text)
             .field("divider_above", &self.divider_above)
             .finish_non_exhaustive()
@@ -33,12 +32,12 @@ impl std::fmt::Debug for FabMenuEntry {
 impl FabMenuEntry {
     #[must_use]
     pub fn new(
-        icon: impl Into<Cow<'static, str>>,
+        icon: Bytes,
         text: impl Into<Cow<'static, str>>,
         on_press: impl Into<NoArgCallback<()>>,
     ) -> Self {
         Self {
-            icon: icon.into(),
+            icon,
             text: text.into(),
             on_press: on_press.into(),
             divider_above: false,
@@ -159,7 +158,8 @@ impl Component for FabMenu {
 
 fn row(entry: &FabMenuEntry) -> impl IntoElement {
     let cb = entry.on_press.clone();
-    rect()
+    let icon_color = Color::from_rgb(210, 210, 220);
+    let mut r = rect()
         .horizontal()
         .width(Size::fill())
         .cross_align(Alignment::Center)
@@ -169,17 +169,23 @@ fn row(entry: &FabMenuEntry) -> impl IntoElement {
             let mut controller = ModalController::get();
             controller.close();
             cb.call();
-        })
-        .child(
-            label()
-                .color(Color::from_rgb(210, 210, 220))
-                .font_size(16.0)
-                .text(entry.icon.to_string()),
-        )
-        .child(
-            label()
-                .color(Color::from_rgb(230, 230, 240))
-                .font_size(14.0)
-                .text(entry.text.to_string()),
-        )
+        });
+    r = r.child(
+        rect()
+            .width(Size::px(20.0))
+            .height(Size::px(20.0))
+            .center()
+            .child(
+                SvgViewer::new(entry.icon.clone())
+                    .color(icon_color)
+                    .width(Size::px(18.0))
+                    .height(Size::px(18.0)),
+            ),
+    );
+    r.child(
+        label()
+            .color(Color::from_rgb(230, 230, 240))
+            .font_size(14.0)
+            .text(entry.text.to_string()),
+    )
 }

@@ -22,7 +22,7 @@ use crate::library::PaneId;
 #[derive(Clone)]
 pub struct TabBarEntry {
     pub label: Cow<'static, str>,
-    pub icon: Option<Cow<'static, str>>,
+    pub icon: Option<Bytes>,
     pub is_active: bool,
 }
 
@@ -30,7 +30,7 @@ impl std::fmt::Debug for TabBarEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TabBarEntry")
             .field("label", &self.label)
-            .field("icon", &self.icon)
+            .field("icon_present", &self.icon.is_some())
             .field("is_active", &self.is_active)
             .finish()
     }
@@ -178,12 +178,12 @@ fn tab_cell(
         .on_press(move |_| {
             on_select.call(index);
         });
-    if let Some(icon) = &entry.icon {
+    if let Some(icon) = entry.icon.clone() {
         cell = cell.child(
-            label()
+            SvgViewer::new(icon)
                 .color(label_color)
-                .font_size(14.0)
-                .text(icon.to_string()),
+                .width(Size::px(14.0))
+                .height(Size::px(14.0)),
         );
     }
     cell = cell.child(
@@ -207,10 +207,10 @@ fn close_glyph(index: usize, on_close: Callback<usize, ()>) -> Rect {
             on_close.call(index);
         })
         .child(
-            label()
+            SvgViewer::new(crate::icons::x())
                 .color(Color::from_rgb(170, 170, 180))
-                .font_size(12.0)
-                .text("×"),
+                .width(Size::px(12.0))
+                .height(Size::px(12.0)),
         )
 }
 
@@ -222,9 +222,9 @@ fn new_tab_button(on_new: NoArgCallback<()>) -> Rect {
         .with_corner_radius(8.0)
         .on_press(move |_| on_new.call())
         .child(
-            label()
+            SvgViewer::new(crate::icons::plus())
                 .color(Color::from_rgb(190, 190, 200))
-                .font_size(16.0)
-                .text("+"),
+                .width(Size::px(14.0))
+                .height(Size::px(14.0)),
         )
 }

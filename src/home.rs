@@ -22,7 +22,8 @@ use std::time::Duration;
 
 use async_lock::Mutex as AsyncMutex;
 use freya::animation::*;
-use freya::icons::lucide::search;
+use freya::icons::lucide as icons;
+
 use freya::prelude::*;
 use freya::router::*;
 use istmo::plugins::EdgeInsets;
@@ -30,8 +31,8 @@ use istmo::plugins::EdgeInsets;
 use crate::components::FormInput;
 use crate::components::drag_drop::{DragZone, DropZone};
 use crate::components::{
-    CanvasCreateSheet, CreateCanvasRequest, Modal, ModalController, SettingsModal, WorkspaceSwitcher,
-    WorkspaceSwitcherEntry, auto_color,
+    CanvasCreateSheet, CreateCanvasRequest, Modal, ModalController, SettingsModal,
+    WorkspaceSwitcher, WorkspaceSwitcherEntry, auto_color,
 };
 use crate::hooks::use_safe_area_insets;
 use crate::library::{
@@ -215,12 +216,12 @@ fn top_bar(
     let active_workspace_id = workspace_pill.as_ref().and_then(|(_, ws)| ws.active);
     let left = match workspace_pill {
         Some((handle, ws)) => workspace_pill_button(handle, ws, ws_snap).into_element(),
-        None => icon_button("☰").into_element(),
+        None => icon_button(icons::menu()).into_element(),
     };
     let router = RouterContext::get();
     let open_workspace = active_workspace_id.map(|id| {
-        icon_button("⊞").on_press(move |_| {
-            let _ = router.push(crate::route::Route::WorkspaceView { id });
+        icon_button(icons::plus()).on_press(move |_| {
+            _ = router.push(crate::route::Route::WorkspaceView { id });
         })
     });
     rect()
@@ -237,7 +238,7 @@ fn top_bar(
         .child(flexible_spacer())
         .child(
             FormInput::new(search_value)
-                .left_icon(search())
+                .left_icon(icons::search())
                 .collapsible()
                 .corner_radius(99.)
                 .width(Size::px(400.))
@@ -245,7 +246,7 @@ fn top_bar(
                 .placeholder("Search"),
         )
         .child(spacer_px(6.0))
-        .child(icon_button("⚙").on_press(|_| SettingsModal::open()))
+        .child(icon_button(icons::settings()).on_press(|_| SettingsModal::open()))
 }
 
 /// Pill rendered where the hamburger lived: shows the active workspace
@@ -320,10 +321,10 @@ fn workspace_pill_button(
                 .text(name),
         )
         .child(
-            label()
+            SvgViewer::new(freya::icons::lucide::chevron_down())
                 .color(Color::from_rgb(170, 170, 180))
-                .font_size(12.0)
-                .text("▾"),
+                .width(Size::px(12.0))
+                .height(Size::px(12.0)),
         )
 }
 
@@ -336,16 +337,16 @@ fn snapshot_workspaces(lib: &Library) -> WorkspaceSnapshot {
     }
 }
 
-fn icon_button(glyph: &'static str) -> Rect {
+fn icon_button(icon: Bytes) -> Rect {
     rect()
         .width(Size::px(32.0))
         .height(Size::px(32.0))
         .center()
         .child(
-            label()
+            SvgViewer::new(icon)
                 .color(Color::from_rgb(210, 210, 220))
-                .font_size(16.0)
-                .text(glyph),
+                .width(Size::px(18.0))
+                .height(Size::px(18.0)),
         )
 }
 
@@ -1006,10 +1007,14 @@ where
         .with_corner_radius(8.0)
         .center()
         .child(
-            label()
-                .color(Color::from_argb(180, 20, 20, 20))
-                .font_size(32.0)
-                .text(if is_folder { "📁" } else { "📓" }),
+            SvgViewer::new(if is_folder {
+                icons::folder()
+            } else {
+                icons::notebook()
+            })
+            .color(Color::from_argb(180, 20, 20, 20))
+            .width(Size::px(44.0))
+            .height(Size::px(44.0)),
         );
 
     let mut column = rect()
@@ -1348,10 +1353,14 @@ impl Component for DragGhost {
             .rotate(rotation)
             .center()
             .child(
-                label()
-                    .color(Color::from_argb(180, 20, 20, 20))
-                    .font_size(28.0)
-                    .text(if self.is_folder { "📁" } else { "📓" }),
+                SvgViewer::new(if self.is_folder {
+                    icons::folder()
+                } else {
+                    icons::notebook()
+                })
+                .color(Color::from_argb(180, 20, 20, 20))
+                .width(Size::px(40.0))
+                .height(Size::px(40.0)),
             )
             .child(
                 label()
@@ -1433,7 +1442,7 @@ fn fab_stack(
 
     let plus = {
         let ctx = ctx.clone();
-        fab_button("+", plus_bg, move |_| {
+        fab_button(icons::plus(), plus_bg, move |_| {
             open_create_menu(ctx.clone(), anchor_right, menu_bottom);
         })
     };
@@ -1456,8 +1465,7 @@ fn shortcut_button(slot: Option<&crate::plugin_settings::FabShortcut>, ctx: FabC
     match resolved {
         Some(entry) => {
             let bg = shortcut_color(&entry);
-            let icon = entry.entry.icon.clone();
-            fab_button_owned(icon, bg, move |_| {
+            fab_button(entry.entry.icon.clone(), bg, move |_| {
                 trigger_entry(&entry, &ctx);
             })
         }
@@ -1465,7 +1473,7 @@ fn shortcut_button(slot: Option<&crate::plugin_settings::FabShortcut>, ctx: FabC
             // Empty slot: subdued bubble that opens settings so the
             // user can pick what sits here.
             let bg = Color::from_rgb(38, 38, 44);
-            fab_button("＋", bg, |_| {
+            fab_button(icons::plus(), bg, |_| {
                 crate::components::SettingsModal::open();
             })
         }
@@ -1491,9 +1499,8 @@ fn open_create_menu(ctx: FabCtx, anchor_right: f32, menu_bottom: f32) {
         for (ei, entry) in group.iter().enumerate() {
             let entry = entry.clone();
             let ctx = ctx.clone();
-            let icon = entry.entry.icon.clone();
             let label = menu_label(&entry);
-            let mut row = FabMenuEntry::new(icon, label, move || {
+            let mut row = FabMenuEntry::new(entry.entry.icon.clone(), label, move || {
                 trigger_entry(&entry, &ctx);
             });
             // Divider between category groups (first entry of each
@@ -1845,7 +1852,10 @@ fn show_import_error_modal(message: String) {
 fn show_import_collision_modal(preflight: &crate::bundle::Preflight) {
     let mut lines = Vec::new();
     if !preflight.colliding_items.is_empty() {
-        lines.push(format!("Items en conflicto: {}", preflight.colliding_items.len()));
+        lines.push(format!(
+            "Items en conflicto: {}",
+            preflight.colliding_items.len()
+        ));
     }
     if !preflight.colliding_folders.is_empty() {
         lines.push(format!(
@@ -1854,7 +1864,10 @@ fn show_import_collision_modal(preflight: &crate::bundle::Preflight) {
         ));
     }
     if !preflight.colliding_tags.is_empty() {
-        lines.push(format!("Tags en conflicto: {}", preflight.colliding_tags.len()));
+        lines.push(format!(
+            "Tags en conflicto: {}",
+            preflight.colliding_tags.len()
+        ));
     }
     if !preflight.colliding_workspaces.is_empty() {
         lines.push(format!(
@@ -1932,25 +1945,19 @@ fn text_button_card(text: &str, bg: Color) -> Rect {
         )
 }
 
-fn fab_button<F: Fn(()) + 'static>(glyph: &'static str, bg: Color, handler: F) -> Rect {
+fn fab_button<F: Fn(()) + 'static>(icon: Bytes, bg: Color, handler: F) -> Rect {
     rect()
         .width(Size::px(52.0))
         .height(Size::px(52.0))
         .background(bg)
         .with_corner_radius(26.0)
         .center()
-        .child(label().color(Color::WHITE).font_size(22.0).text(glyph))
-        .on_press(move |_| handler(()))
-}
-
-fn fab_button_owned<F: Fn(()) + 'static>(glyph: String, bg: Color, handler: F) -> Rect {
-    rect()
-        .width(Size::px(52.0))
-        .height(Size::px(52.0))
-        .background(bg)
-        .with_corner_radius(26.0)
-        .center()
-        .child(label().color(Color::WHITE).font_size(22.0).text(glyph))
+        .child(
+            SvgViewer::new(icon)
+                .color(Color::WHITE)
+                .width(Size::px(24.0))
+                .height(Size::px(24.0)),
+        )
         .on_press(move |_| handler(()))
 }
 
@@ -2130,7 +2137,10 @@ async fn pick_and_open_pdf_linked(
     let default_name = strip_pdf_ext(&display);
     let mut snap = snap;
     let mut lib = handle.lock().await;
-    match lib.create_doc_linked_pdf(parent, &default_name, &bytes).await {
+    match lib
+        .create_doc_linked_pdf(parent, &default_name, &bytes)
+        .await
+    {
         Ok(linked) => {
             log::info!("doc-linked bundle created id={linked:?}");
             snap.set(Some(lib.index().clone()));

@@ -15,6 +15,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bincode::config::standard;
+use freya::icons::lucide;
 use notein_plugin::{
     Bookmark, BookmarkId, CanvasError, CanvasKind, ConfigError, ConfigSchema, ConfigValue,
     CreationCategory, CreationEntry, CreationError, CreationKind, FrameCtxHandle, InputEvent,
@@ -135,21 +136,21 @@ impl CanvasKind for StrokeCanvasPlugin {
             CreationEntry {
                 id: NEW_CANVAS.to_owned(),
                 label: "Lienzo infinito".to_owned(),
-                icon: "▢".to_owned(),
+                icon: lucide::square_pen(),
                 category: CreationCategory::Canvas,
                 kind: CreationKind::Blank { prompt_name: true },
             },
             CreationEntry {
                 id: NEW_EPHEMERAL.to_owned(),
                 label: "Lienzo incógnito".to_owned(),
-                icon: "🕶".to_owned(),
+                icon: lucide::hat_glasses(),
                 category: CreationCategory::Canvas,
                 kind: CreationKind::Blank { prompt_name: false },
             },
             CreationEntry {
                 id: QUICK_SKETCH.to_owned(),
                 label: "Borrador rápido".to_owned(),
-                icon: "✎".to_owned(),
+                icon: lucide::pencil(),
                 category: CreationCategory::Canvas,
                 kind: CreationKind::Blank { prompt_name: false },
             },

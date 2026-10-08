@@ -38,14 +38,14 @@ pub fn entries() -> Vec<CreationEntry> {
         CreationEntry {
             id: NEW_FOLDER.to_owned(),
             label: "Nueva carpeta".to_owned(),
-            icon: "🗂".to_owned(),
+            icon: "lucide:folder-plus".to_owned(),
             category: CreationCategory::Other,
             kind: CreationKind::Blank { prompt_name: true },
         },
         CreationEntry {
             id: IMPORT_BUNDLE.to_owned(),
             label: "Importar bundle".to_owned(),
-            icon: "📦".to_owned(),
+            icon: "lucide:package".to_owned(),
             category: CreationCategory::Other,
             kind: CreationKind::Import {
                 dialog_title: "Importar bundle .notein".to_owned(),

@@ -11,6 +11,7 @@ use freya::prelude::*;
 
 use super::drag_drop::{DropZone, use_drag};
 use super::tab_bar::{TabBar, TabBarEntry, TabDragPayload};
+use crate::icons;
 use crate::library::{Pane, PaneId, PaneLayout, SplitOrientation, SplitSide};
 
 /// Which edge of a leaf a dragged tab was dropped on. Determines both
@@ -463,10 +464,10 @@ fn leaf_body_filled(name: String, tab: PaneTab, on_open: Callback<PaneTab, ()>) 
         .background(Color::from_rgb(28, 28, 34))
         .with_corner_radius(16.0)
         .child(
-            label()
+            SvgViewer::new(icons::file_text())
                 .color(Color::from_rgb(190, 190, 200))
-                .font_size(28.0)
-                .text("📄"),
+                .width(Size::px(36.0))
+                .height(Size::px(36.0)),
         )
         .child(
             label()

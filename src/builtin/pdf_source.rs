@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use freya::icons::lucide;
 use freya_pdf::PdfDocument;
 use notein_plugin::{
     AnchorView, ConfigError, ConfigField, ConfigFieldKind, ConfigSchema, ConfigValue,
@@ -212,7 +213,7 @@ impl Source for PdfSourcePlugin {
             CreationEntry {
                 id: IMPORT_PDF.to_owned(),
                 label: "Importar PDF".to_owned(),
-                icon: "📄".to_owned(),
+                icon: lucide::file_text(),
                 category: CreationCategory::Source,
                 kind: CreationKind::Import {
                     dialog_title: "Elegí un PDF".to_owned(),
@@ -222,8 +223,8 @@ impl Source for PdfSourcePlugin {
             },
             CreationEntry {
                 id: IMPORT_PDF_LINKED.to_owned(),
-                label: "Importar PDF ligado (Modo B)".to_owned(),
-                icon: "📑".to_owned(),
+                label: "Importar PDF ligado".to_owned(),
+                icon: lucide::file_symlink(),
                 category: CreationCategory::Source,
                 kind: CreationKind::Import {
                     dialog_title: "Elegí un PDF para ligar a un lienzo".to_owned(),

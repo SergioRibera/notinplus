@@ -5,6 +5,7 @@
 //! plugin's `config_schema()` / `creation_entries()` reads like a
 //! declarative manifest instead of boilerplate.
 
+use notein_plugin::bytes::Bytes;
 use notein_plugin::{
     ConfigEnumOption, ConfigField, ConfigFieldKind, ConfigSchema, ConfigValue, CreationCategory,
     CreationEntry, CreationKind,
@@ -193,14 +194,14 @@ impl ConfigSchemaBuilder {
 pub fn blank_entry(
     id: &str,
     label: &str,
-    icon: &str,
+    icon: Bytes,
     category: CreationCategory,
     prompt_name: bool,
 ) -> CreationEntry {
     CreationEntry {
         id: id.into(),
         label: label.into(),
-        icon: icon.into(),
+        icon,
         category,
         kind: CreationKind::Blank { prompt_name },
     }
@@ -211,7 +212,7 @@ pub fn blank_entry(
 pub fn import_entry(
     id: &str,
     label: &str,
-    icon: &str,
+    icon: Bytes,
     category: CreationCategory,
     dialog_title: &str,
     extensions: &[&str],
@@ -220,7 +221,7 @@ pub fn import_entry(
     CreationEntry {
         id: id.into(),
         label: label.into(),
-        icon: icon.into(),
+        icon,
         category,
         kind: CreationKind::Import {
             dialog_title: dialog_title.into(),
@@ -235,13 +236,13 @@ pub fn import_entry(
 pub fn custom_entry(
     id: &str,
     label: &str,
-    icon: &str,
+    icon: Bytes,
     category: CreationCategory,
 ) -> CreationEntry {
     CreationEntry {
         id: id.into(),
         label: label.into(),
-        icon: icon.into(),
+        icon,
         category,
         kind: CreationKind::Custom,
     }

@@ -25,6 +25,7 @@ use notein_plugin::{
 use crate::canvas::{Board, InputMode};
 use crate::components::form_input::FormInput;
 use crate::components::modal::{Modal, ModalController};
+use crate::icons;
 use crate::plugins;
 
 const PANEL_BG: Color = Color::from_rgb(30, 30, 34);
@@ -55,11 +56,11 @@ impl Section {
         }
     }
 
-    const fn icon(self) -> &'static str {
+    fn icon(self) -> Bytes {
         match self {
-            Self::Account => "👤",
-            Self::General => "⚙",
-            Self::Plugins => "🧩",
+            Self::Account => icons::user(),
+            Self::General => icons::settings(),
+            Self::Plugins => icons::puzzle(),
         }
     }
 }
@@ -96,6 +97,7 @@ impl Component for SettingsModal {
             .width(Size::px(MODAL_WIDTH))
             .height(Size::px(MODAL_HEIGHT))
             .background(PANEL_BG)
+            .overflow(Overflow::Clip)
             .with_corner_radius(18.0)
             .child(sidebar(section))
             .child(content(section, tick, registry))
@@ -146,7 +148,12 @@ fn sidebar_row(
         .with_corner_radius(10.0)
         .cross_align(Alignment::Center)
         .on_press(on_press)
-        .child(label().color(text_color).font_size(14.0).text(sec.icon()))
+        .child(
+            SvgViewer::new(sec.icon())
+                .width(Size::px(16.0))
+                .height(Size::px(16.0))
+                .color(text_color),
+        )
         .child(label().color(text_color).font_size(14.0).text(sec.label()))
 }
 
@@ -255,7 +262,12 @@ fn header_row(sec: Section) -> impl IntoElement {
                 .height(Size::px(28.0))
                 .center()
                 .on_press(|_| ModalController::get().close())
-                .child(label().color(TEXT_MUTED).font_size(16.0).text("✕")),
+                .child(
+                    SvgViewer::new(icons::x())
+                        .width(Size::px(16.0))
+                        .height(Size::px(16.0))
+                        .color(TEXT_MUTED),
+                ),
         )
 }
 
@@ -372,7 +384,8 @@ fn shortcut_slot_row(
             .background(Color::from_rgb(46, 46, 56))
             .with_corner_radius(10.0)
             .cross_align(Alignment::Center)
-            .child(label().color(TEXT_PRIMARY).font_size(16.0).text(icon))
+            .content(Content::Flex)
+            .child(icon_slot(icon, TEXT_PRIMARY))
             .child(label().color(TEXT_PRIMARY).font_size(13.0).text(format!(
                 "Slot {}: {}",
                 index + 1,
@@ -418,7 +431,7 @@ fn shortcut_options(
 
     // "Vacío" (clear) first.
     options = options.child(option_row(
-        "·".to_owned(),
+        None,
         "(vacío — mostrar bubble gris)".to_owned(),
         {
             let mut open = open;
@@ -443,7 +456,7 @@ fn shortcut_options(
                 format!("{}  ·  {}", entry.entry.label, entry.plugin_label)
             }
         };
-        let icon = entry.entry.icon.clone();
+        let icon = icons::resolve(&entry.entry.icon);
         options = options.child(option_row(icon, label_text, {
             let mut open = open;
             let mut tick = tick;
@@ -459,7 +472,7 @@ fn shortcut_options(
 }
 
 fn option_row(
-    icon: String,
+    icon: Option<Bytes>,
     text: String,
     on_press: impl FnMut(Event<PressEventData>) + 'static,
 ) -> impl IntoElement {
@@ -470,8 +483,33 @@ fn option_row(
         .spacing(10.0)
         .cross_align(Alignment::Center)
         .on_press(on_press)
-        .child(label().color(TEXT_PRIMARY).font_size(14.0).text(icon))
+        .child(icon_slot(icon, TEXT_PRIMARY))
         .child(label().color(TEXT_PRIMARY).font_size(13.0).text(text))
+}
+
+/// Fixed-size icon slot: renders the SVG when present, otherwise a
+/// small centered dot so rows stay aligned.
+fn icon_slot(icon: Option<Bytes>, color: Color) -> Rect {
+    let mut slot = rect()
+        .width(Size::px(18.0))
+        .height(Size::px(18.0))
+        .center();
+    slot = match icon {
+        Some(bytes) => slot.child(
+            SvgViewer::new(bytes)
+                .width(Size::px(16.0))
+                .height(Size::px(16.0))
+                .color(color),
+        ),
+        None => slot.child(
+            rect()
+                .width(Size::px(4.0))
+                .height(Size::px(4.0))
+                .background(color)
+                .with_corner_radius(2.0),
+        ),
+    };
+    slot
 }
 
 fn plugins_section(tick: State<u64>, registry: Arc<Mutex<PluginRegistry>>) -> impl IntoElement {

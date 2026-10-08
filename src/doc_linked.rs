@@ -21,6 +21,7 @@ use freya::router::*;
 use crate::bookmark::{Bookmark, SourceRef, WorldPoint};
 use crate::doc_op::DocOp;
 use crate::home::open_library;
+use crate::icons;
 use crate::ids::BookmarkId;
 use crate::library::ItemId;
 use crate::pdf_viewer::{
@@ -314,7 +315,7 @@ fn bookmark_strip(
 
 fn bookmark_chip(chip: BookmarkChip, chip_cb: Callback<usize, ()>) -> Rect {
     let (text, page) = match chip.page {
-        Some(p) => (format!("📑 Página {}", p + 1), Some(p as usize)),
+        Some(p) => (format!("Página {}", p + 1), Some(p as usize)),
         None => (chip.body.clone(), None),
     };
     let bg = if page.is_some() {
@@ -322,18 +323,24 @@ fn bookmark_chip(chip: BookmarkChip, chip_cb: Callback<usize, ()>) -> Rect {
     } else {
         Color::from_rgb(40, 40, 48)
     };
+    let text_color = Color::from_rgb(240, 245, 255);
     let mut node = rect()
+        .horizontal()
         .height(Size::px(28.0))
         .padding((0.0, 10.0))
-        .center()
+        .spacing(6.0)
+        .cross_align(Alignment::Center)
         .with_corner_radius(14.0)
-        .background(bg)
-        .child(
-            label()
-                .color(Color::from_rgb(240, 245, 255))
-                .font_size(11.0)
-                .text(text),
+        .background(bg);
+    if page.is_some() {
+        node = node.child(
+            SvgViewer::new(icons::bookmark())
+                .color(text_color)
+                .width(Size::px(12.0))
+                .height(Size::px(12.0)),
         );
+    }
+    node = node.child(label().color(text_color).font_size(11.0).text(text));
     if let Some(p) = page {
         node = node.on_press(move |_| chip_cb.call(p));
     }
