@@ -87,6 +87,6 @@ fn mobile_main() {
     );
     log::info!("notinplus mobile entry point running");
 
-    pen_pump::spawn(WINDOW_ID, canvas::Board::shared());
+    pen_pump::spawn(WINDOW_ID);
     app::run();
 }

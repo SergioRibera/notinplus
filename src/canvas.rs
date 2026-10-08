@@ -20,7 +20,7 @@
 //! boundary. See [`Board::erase_at`].
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use flume::{Receiver, Sender};
 use freya::prelude::*;
@@ -358,17 +358,7 @@ impl Default for Board {
     }
 }
 
-static SHARED: OnceLock<Arc<Mutex<Board>>> = OnceLock::new();
-
 impl Board {
-    /// Process-wide board. Freya's root component and [`crate::pen_pump`]
-    /// share this same instance so pen input and the render callback
-    /// touch the same stroke buffer.
-    #[must_use]
-    pub fn shared() -> Arc<Mutex<Self>> {
-        Arc::clone(SHARED.get_or_init(|| Arc::new(Mutex::new(Self::default()))))
-    }
-
     /// Install the wakeup handle used to request repaints after each
     /// mutation. Called once at startup by the root component. Safe to
     /// re-install (replaces the previous notifier). Also rebuilds

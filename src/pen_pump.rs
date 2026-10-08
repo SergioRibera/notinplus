@@ -6,8 +6,7 @@
 //! to the board on a dedicated thread. Failure to acquire logs and
 //! returns — the app still runs, driven by mouse events.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use flume::{Receiver, Sender};
@@ -62,27 +61,6 @@ const PEN_POS_FRESHNESS: Duration = Duration::from_millis(300);
 /// incoming touch_down is treated as a pen artifact and dropped.
 pub const PEN_TOUCH_FILTER_RADIUS: f32 = 48.0;
 
-/// `true` while a canvas view is mounted and willing to accept pen
-/// contact events. Default `false` so a tap on the Home route cannot
-/// start a stroke on the shared [`Board`] — the pen pump otherwise
-/// delivers Down / Up to the board regardless of which route owns the
-/// current frame, which would phantom a single-point stroke the next
-/// time a canvas view opens.
-static CAPTURE_ENABLED: AtomicBool = AtomicBool::new(false);
-
-/// Toggle whether pen contact events reach the shared board. Call with
-/// `true` on canvas mount, `false` on canvas unmount (via freya's
-/// `use_drop`). Hover events stay unaffected — proximity reporting is
-/// harmless outside the canvas.
-pub fn set_capture_enabled(enabled: bool) {
-    CAPTURE_ENABLED.store(enabled, Ordering::Release);
-}
-
-#[must_use]
-pub fn is_capture_enabled() -> bool {
-    CAPTURE_ENABLED.load(Ordering::Acquire)
-}
-
 fn record_pen_pos(x: f32, y: f32) {
     if let Ok(mut g) = PEN_SURFACE_POS.lock() {
         *g = Some((x, y, Instant::now()));
@@ -128,12 +106,51 @@ pub fn hover_receiver() -> Receiver<Option<HoverPoint>> {
     hover_bridge().rx.clone()
 }
 
+/// Weak handle to whichever canvas-mounted [`Board`] is currently
+/// receiving pen samples. `None` while no canvas is mounted or focused.
+/// Weak so a dropped board auto-deregisters — `apply` skips the sample
+/// if `upgrade` fails.
+static ACTIVE_BOARD: Mutex<Option<Weak<Mutex<Board>>>> = Mutex::new(None);
+
+/// Register `board` as the active target for pen contact events.
+/// Called by every mounted canvas view, either at mount time (so the
+/// most recently mounted canvas wins by default) or on pointer-down /
+/// focus to transfer the pen to a different pane.
+pub fn set_active_board(board: &Arc<Mutex<Board>>) {
+    if let Ok(mut g) = ACTIVE_BOARD.lock() {
+        *g = Some(Arc::downgrade(board));
+    }
+}
+
+/// Clear the active target if it still points at `board`. Call on
+/// unmount so a dropped canvas does not keep the pump pointing at a
+/// soon-to-be-dangling slot. Boards that go out of scope silently
+/// deregister via `Weak::upgrade` returning `None`, but this keeps the
+/// slot tidy and the next sample's early-skip path cheap.
+pub fn clear_active_board_if(board: &Arc<Mutex<Board>>) {
+    if let Ok(mut g) = ACTIVE_BOARD.lock()
+        && let Some(ref weak) = *g
+        && let Some(current) = weak.upgrade()
+        && Arc::ptr_eq(&current, board)
+    {
+        *g = None;
+    }
+}
+
+fn active_board() -> Option<Arc<Mutex<Board>>> {
+    let g = ACTIVE_BOARD.lock().ok()?;
+    g.as_ref()?.upgrade()
+}
+
 /// Kick off the pen pump for `window_id`.
 ///
 /// Spawns a thread that acquires the client and, on success, drains
-/// the event and hover streams into `board`. Client ownership stays on
-/// that thread so its `Drop` runs only when the streams close.
-pub fn spawn(window_id: u64, board: Arc<Mutex<Board>>) {
+/// the event and hover streams. Each sample dispatches to whichever
+/// [`Board`] was most recently registered via [`set_active_board`] —
+/// multiple canvas views can coexist and the pump routes to the one
+/// in focus. Client ownership stays on that thread so its `Drop` runs
+/// only when the streams close.
+pub fn spawn(window_id: u64) {
     std::thread::spawn(move || {
         let client = match pollster::block_on(PenClient::acquire_with(PenConfig::new(window_id))) {
             Ok(c) => c,
@@ -154,18 +171,17 @@ pub fn spawn(window_id: u64, board: Arc<Mutex<Board>>) {
         // Drain hover on a helper thread; the event pump keeps this
         // thread (and therefore the client) alive until the runtime
         // closes the stream.
-        let hover_board = Arc::clone(&board);
-        std::thread::spawn(move || pump_hover(&hover, &hover_board));
-        pump_events(&events, &board);
+        std::thread::spawn(move || pump_hover(&hover));
+        pump_events(&events);
         drop(client);
     });
 }
 
-fn pump_events(stream: &TypedStream<PenEvent, ()>, board: &Arc<Mutex<Board>>) {
+fn pump_events(stream: &TypedStream<PenEvent, ()>) {
     let mut dt = DtTracker::default();
     loop {
         match stream.recv() {
-            Ok(StreamItem::Event(event)) => apply(event, board, &mut dt),
+            Ok(StreamItem::Event(event)) => apply(event, &mut dt),
             Ok(StreamItem::Completed | StreamItem::Cancelled) => break,
             Ok(StreamItem::Failed(err)) => {
                 log::warn!("pen event stream failed: {err:?}");
@@ -179,7 +195,7 @@ fn pump_events(stream: &TypedStream<PenEvent, ()>, board: &Arc<Mutex<Board>>) {
     }
 }
 
-fn pump_hover(stream: &TypedStream<PenHoverEvent, ()>, board: &Arc<Mutex<Board>>) {
+fn pump_hover(stream: &TypedStream<PenHoverEvent, ()>) {
     let bridge = hover_bridge();
     while let Ok(StreamItem::Event(event)) = stream.recv() {
         let (payload, pointer) = match event {
@@ -206,8 +222,8 @@ fn pump_hover(stream: &TypedStream<PenHoverEvent, ()>, board: &Arc<Mutex<Board>>
         // task on the other side of `hover_bridge` picked up this
         // sample — pump_hover is the one place every proximity event
         // flows through.
-        if is_capture_enabled() {
-            lock_board(board).set_pointer(pointer);
+        if let Some(board) = active_board() {
+            lock_board(&board).set_pointer(pointer);
         }
         // Bounded channel: drop-oldest on full so a stalled consumer
         // never back-pressures the pen backend. Hover samples are
@@ -247,17 +263,18 @@ impl DtTracker {
     }
 }
 
-fn apply(event: PenEvent, board: &Arc<Mutex<Board>>, dt: &mut DtTracker) {
-    // Drop every contact sample while no canvas view is mounted. Hover
-    // still records pen position (useful for the touch-filter heuristic
-    // and the palette hover indicator), but Down / Move / Up / Cancel
-    // all no-op so a Home-route tap cannot leak a stroke into the
-    // Board. `dt` resets on each Down so a dropped sequence will not
-    // corrupt the next stroke's timing baseline.
-    if !is_capture_enabled() {
+fn apply(event: PenEvent, dt: &mut DtTracker) {
+    // Resolve the currently-focused board. A tap on Home / any route
+    // without a mounted canvas leaves `ACTIVE_BOARD` empty, so Down /
+    // Move / Up / Cancel all no-op and never phantom a stroke. A
+    // dropped board auto-deregisters via `Weak::upgrade` returning
+    // `None`. `dt` clears on skip so the next real stroke starts with
+    // a fresh baseline.
+    let Some(board) = active_board() else {
         dt.clear();
         return;
-    }
+    };
+    let board = &board;
     // Compute the InkPoint(s) before touching the mutex, then take the
     // lock only for the actual board mutation. Keeps the guard's live
     // scope tight so the pump thread doesn't hold it during quantise +

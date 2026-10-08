@@ -22,11 +22,37 @@ use crate::route::Route;
 use crate::brush::{BrushKind, BrushPreset, ShapeMode};
 use crate::canvas::{Board, InputMode, LayerSnapshot, RedrawNotifier, drawing_surface, lock};
 use crate::hooks::use_safe_area_insets;
+use crate::library::ItemId;
 use crate::palette_popup::{HOVER_DELAY, brush_popup};
 use crate::pen_pump;
 use crate::plugins;
 use crate::prefs;
 use crate::ui_mask::{self, UiRegion};
+
+/// Which flavour of mount the surrounding [`canvas_root`] call represents.
+/// Drives per-mount side effects (doc load, PDF background) without
+/// forcing every caller to re-implement the hook plumbing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CanvasMount {
+    /// Persisted canvas item — doc + viewport sidecar load from
+    /// [`crate::library`] by id; autosave worker spawned on mount.
+    Item(ItemId),
+    /// Scratch surface. No library item, no autosave, no view sidecar.
+    Ephemeral,
+    /// Canvas overlaid on a PDF. Strokes persist against `id`; the PDF
+    /// blob is loaded off the UI thread and installed as background.
+    PdfBacked(ItemId),
+}
+
+impl CanvasMount {
+    /// Item id to drive autosave + viewport sidecar against, if any.
+    pub(crate) const fn item(self) -> Option<ItemId> {
+        match self {
+            Self::Item(id) | Self::PdfBacked(id) => Some(id),
+            Self::Ephemeral => None,
+        }
+    }
+}
 
 /// Translate a Freya `on_sized` event area into the surface-pixel
 /// tuple [`crate::ui_mask`] expects. Skips writing when the resolved
@@ -200,10 +226,10 @@ impl Component for AppShell {
     }
 }
 
-pub(crate) fn root() -> impl IntoElement {
+pub(crate) fn canvas_root(mount: CanvasMount) -> impl IntoElement {
     let mut zoom = use_state(|| 1.0_f32);
     let board = use_hook(|| {
-        let board = Board::shared();
+        let board = Arc::new(Mutex::new(Board::default()));
         let platform = Platform::get();
         let (notifier, rx) = RedrawNotifier::new();
         let (prefs_tx, prefs_rx) = flume::unbounded::<()>();
@@ -245,7 +271,27 @@ pub(crate) fn root() -> impl IntoElement {
                 }
             }
         });
+        // Provide to descendants (settings modal, etc.) so they can
+        // consume via `try_consume_context::<Arc<Mutex<Board>>>()` and
+        // operate on this mount's board — not a sibling pane's.
+        provide_context(Arc::clone(&board));
+        // Register with the pen pump so stylus samples route to this
+        // board. If a sibling pane later gets focus, its own
+        // `canvas_root` call overwrites `ACTIVE_BOARD` and this one
+        // falls silent until it regains focus.
+        pen_pump::set_active_board(&board);
+        crate::route::init_canvas_mount(mount, &board);
         board
+    });
+    use_drop({
+        let board = Arc::clone(&board);
+        move || {
+            pen_pump::clear_active_board_if(&board);
+            // Drop any in-flight stroke so a tap mid-navigation does
+            // not deliver a trailing Up into the mounted board after
+            // its view has already unmounted.
+            lock(&board).cancel();
+        }
     });
 
     let insets = use_safe_area_insets();

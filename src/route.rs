@@ -30,14 +30,13 @@ use freya_canvas_bg::{
 use freya_engine::prelude::Color as SkColor;
 use freya_pdf::{PdfBackground, PdfDocument};
 
-use crate::app::root as canvas_root;
+use crate::app::{CanvasMount, canvas_root};
 use crate::canvas::{Board, Viewport, lock};
 use crate::doc::Doc;
 use crate::doc_linked::{DocLinkedView, SourcePdfView};
 use crate::home::Home;
 use crate::library::{BackgroundStyle, ItemId, LibraryError, bodies};
 use crate::workspace_view::WorkspaceView;
-use crate::pen_pump;
 use crate::prefs;
 
 /// Off-white paper used when the caller does not override the surface.
@@ -95,21 +94,19 @@ pub struct CanvasView {
 
 impl Component for CanvasView {
     fn render(&self) -> impl IntoElement {
-        mount_canvas(Some(self.id));
-        canvas_root()
+        canvas_root(CanvasMount::Item(self.id))
     }
 }
 
 /// Ephemeral ("incognito") infinite canvas. No library item, no
-/// autosave, no view sidecar — strokes and viewport live only in the
-/// shared [`Board`] until the user navigates away.
+/// autosave, no view sidecar — strokes and viewport live only in this
+/// mount's [`Board`] until the user navigates away.
 #[derive(Debug, PartialEq)]
 pub struct CanvasEphemeral;
 
 impl Component for CanvasEphemeral {
     fn render(&self) -> impl IntoElement {
-        mount_canvas(None);
-        canvas_root()
+        canvas_root(CanvasMount::Ephemeral)
     }
 }
 
@@ -124,32 +121,26 @@ pub struct CanvasPdfView {
 
 impl Component for CanvasPdfView {
     fn render(&self) -> impl IntoElement {
-        let item = self.id;
-        mount_canvas(Some(item));
-        use_hook(move || {
-            // Spawn so pdfium init + file read run off the UI thread
-            // — the paint pass can start on the solid-color placeholder
-            // the caller queued, then swap to the real pages once the
-            // document is ready.
-            spawn(async move {
-                match load_pdf_background(item) {
-                    Ok(bg) => lock(&Board::shared()).set_background(bg),
-                    Err(err) => log::error!("load pdf id={item:?}: {err}"),
-                }
-            });
-        });
-        canvas_root()
+        canvas_root(CanvasMount::PdfBacked(self.id))
     }
 }
 
-/// Hooks shared by every canvas-ish route: background apply, doc load,
-/// pen-capture gate. `id = None` is the ephemeral path — no autosave,
-/// no view sidecar.
-fn mount_canvas(id: Option<ItemId>) {
-    use_hook(apply_pending_canvas_background);
-    use_hook(move || load_doc_into_board(id));
-    use_hook(enable_pen_capture);
-    use_drop(disable_pen_capture);
+/// Entry point driven by [`crate::app::canvas_root`] on mount. Runs the
+/// per-board side effects: install queued background, hydrate the doc +
+/// autosave sinks, and (for PDF-backed mounts) load the PDF into the
+/// background slot off the UI thread.
+pub(crate) fn init_canvas_mount(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
+    apply_pending_canvas_background(board);
+    load_doc_into_board(mount.item(), Arc::clone(board));
+    if let CanvasMount::PdfBacked(id) = mount {
+        let board = Arc::clone(board);
+        spawn(async move {
+            match load_pdf_background(id) {
+                Ok(bg) => lock(&board).set_background(bg),
+                Err(err) => log::error!("load pdf id={id:?}: {err}"),
+            }
+        });
+    }
 }
 
 fn load_pdf_background(id: ItemId) -> Result<Arc<dyn CanvasBackground>, String> {
@@ -178,18 +169,13 @@ fn pending() -> &'static Mutex<Option<PendingBackground>> {
     SLOT.get_or_init(|| Mutex::new(None))
 }
 
-/// Swap the shared [`Board`]'s doc for the one belonging to the mounting
-/// view. Without this the process-wide `Board` keeps the previous doc's
-/// strokes — a cross-document leak that also masks the lack of load on
-/// cold start. `id = None` (ephemeral flow) resets to [`Doc::default`]
-/// so a fresh scratch surface never inherits the last doc's strokes.
-///
-/// Also wires the autosave worker when `id` is `Some`: a bounded channel
-/// ping fires at every doc-mutating commit (stroke end, erase finalize,
-/// undo, layer ops) and the worker drains any burst into a single
-/// `save_doc`. Ephemeral flows (`id = None`) skip sink installation
-/// entirely — no persistent item to target.
-fn load_doc_into_board(id: Option<ItemId>) {
+/// Hydrate the mounting canvas's doc from disk (or a blank
+/// [`Doc::default`] for ephemeral / first-open flows), restore its
+/// saved viewport, and wire the autosave + view workers to the per-mount
+/// board. Each mount gets its own worker pair; dropping the previous
+/// sender (via the next `set_commit_sink` / unmount) wakes the old
+/// worker with `Disconnected` so it exits cleanly.
+fn load_doc_into_board(id: Option<ItemId>, board: Arc<Mutex<Board>>) {
     spawn(async move {
         let doc = match id {
             Some(id) => match crate::home::open_library().await {
@@ -220,7 +206,6 @@ fn load_doc_into_board(id: Option<ItemId>) {
         };
         let saved_view = id.and_then(prefs::load_view);
         {
-            let board = Board::shared();
             let mut guard = lock(&board);
             guard.replace_doc(doc);
             // Reset viewport first so a blank-canvas / fresh-doc flow
@@ -239,19 +224,14 @@ fn load_doc_into_board(id: Option<ItemId>) {
                 Some(id) => {
                     let (tx, rx) = flume::unbounded::<()>();
                     let (view_tx, view_rx) = flume::unbounded::<()>();
-                    // Installing after `replace_doc` is deliberate —
-                    // `replace_doc` itself does not ping the commit
-                    // sink, but any prior sender (from an earlier
-                    // mount) is dropped here. Its worker's receiver
-                    // sees `Disconnected` on the next recv and exits.
                     guard.set_commit_sink(tx);
                     guard.set_view_sink(view_tx);
-                    spawn_autosave_worker(id, rx);
-                    spawn_view_worker(id, view_rx);
+                    spawn_autosave_worker(id, Arc::clone(&board), rx);
+                    spawn_view_worker(id, Arc::clone(&board), view_rx);
                 }
                 None => {
-                    // Ephemeral: drop any prior sinks so previous
-                    // mount's workers exit on next recv.
+                    // Ephemeral: no sinks installed; previous mount's
+                    // sinks already dropped with its board.
                     guard.clear_commit_sink();
                     guard.clear_view_sink();
                 }
@@ -264,14 +244,14 @@ fn load_doc_into_board(id: Option<ItemId>) {
 /// commit fires, then `try_recv` drains any additional pings that landed
 /// while this worker was awaiting the library mutex — a tight pen-up /
 /// pen-down burst collapses into one write instead of several. The
-/// worker owns its item id; a remount with a different id drops the
-/// prior sender, waking this worker with `Disconnected` so it exits.
-fn spawn_autosave_worker(id: ItemId, rx: flume::Receiver<()>) {
+/// worker owns its item id + a strong ref to this mount's board; when
+/// the mount unmounts and the matching sender is dropped, the receiver
+/// sees `Disconnected` on the next recv and the worker exits.
+fn spawn_autosave_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
     spawn(async move {
         while rx.recv_async().await.is_ok() {
             while rx.try_recv().is_ok() {}
             let mut doc_snapshot = {
-                let board = Board::shared();
                 let guard = lock(&board);
                 guard.doc().clone()
             };
@@ -290,12 +270,11 @@ fn spawn_autosave_worker(id: ItemId, rx: flume::Receiver<()>) {
 
 /// Drive one view-sidecar write per ping. Same drain pattern as the doc
 /// autosave worker — a pan burst collapses into a single write.
-fn spawn_view_worker(id: ItemId, rx: flume::Receiver<()>) {
+fn spawn_view_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
     spawn(async move {
         while rx.recv_async().await.is_ok() {
             while rx.try_recv().is_ok() {}
             let view = {
-                let board = Board::shared();
                 let guard = lock(&board);
                 prefs::DocView::from_viewport(guard.viewport())
             };
@@ -306,20 +285,7 @@ fn spawn_view_worker(id: ItemId, rx: flume::Receiver<()>) {
     });
 }
 
-/// Open the pen capture gate so contact samples reach the board.
-fn enable_pen_capture() {
-    pen_pump::set_capture_enabled(true);
-}
-
-/// Close the pen capture gate and drop any in-flight stroke. Called on
-/// canvas unmount so a tap on Home that lands on a doc card never
-/// delivers a pending Up back into the board after navigation.
-fn disable_pen_capture() {
-    pen_pump::set_capture_enabled(false);
-    lock(&Board::shared()).cancel();
-}
-
-fn apply_pending_canvas_background() {
+fn apply_pending_canvas_background(board: &Arc<Mutex<Board>>) {
     let queued = pending().lock().ok().and_then(|mut slot| slot.take());
     let (style, surface) = queued.map_or((BackgroundStyle::default(), DEFAULT_PAPER), |p| {
         (p.style, p.surface)
@@ -330,5 +296,5 @@ fn apply_pending_canvas_background() {
         BackgroundStyle::Grid => Arc::new(GridBackground::new(surface)),
         BackgroundStyle::DotGrid => Arc::new(DotGridBackground::new(surface)),
     };
-    lock(&Board::shared()).set_background(bg);
+    lock(board).set_background(bg);
 }

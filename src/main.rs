@@ -9,7 +9,7 @@
     target_os = "visionos",
 )))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use notinplus::{WINDOW_ID, app, canvas, pen_pump};
+    use notinplus::{WINDOW_ID, app, pen_pump};
 
     env_logger::Builder::from_env(
         env_logger::Env::default()
@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     notinplus::desktop::install()?;
 
-    pen_pump::spawn(WINDOW_ID, canvas::Board::shared());
+    pen_pump::spawn(WINDOW_ID);
     app::run();
     Ok(())
 }

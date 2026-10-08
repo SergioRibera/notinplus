@@ -233,22 +233,30 @@ impl PartialEq for GeneralSection {
 
 impl Component for GeneralSection {
     fn render(&self) -> impl IntoElement {
-        let board = Board::shared();
-        let mode = {
-            let g = crate::canvas::lock(&board);
-            g.input_mode()
-        };
+        // Settings can open from Home (no canvas mounted → no board in
+        // context) or from a canvas screen. Mutate the mounted board
+        // when present AND the on-disk prefs so a later canvas mount
+        // picks up the change. Pure prefs read when nothing is mounted.
+        let board = try_consume_context::<Arc<Mutex<Board>>>();
+        let mode = board.as_ref().map_or_else(
+            || crate::prefs::load_prefs().input_mode(),
+            |b| crate::canvas::lock(b).input_mode(),
+        );
         let is_pan = matches!(mode, InputMode::Pan);
-        let toggle = {
-            let board = board.clone();
-            move || {
-                let mut g = crate::canvas::lock(&board);
-                let next = if is_pan {
-                    InputMode::Draw
-                } else {
-                    InputMode::Pan
-                };
-                g.set_input_mode(next);
+        let toggle = move || {
+            let next = if is_pan {
+                InputMode::Draw
+            } else {
+                InputMode::Pan
+            };
+            if let Some(ref b) = board {
+                crate::canvas::lock(b).set_input_mode(next);
+            } else {
+                let mut saved = crate::prefs::load_prefs();
+                saved.input_mode_pan = matches!(next, InputMode::Pan);
+                if let Err(err) = crate::prefs::save_prefs(&saved) {
+                    log::error!("save_prefs: {err}");
+                }
             }
         };
 
