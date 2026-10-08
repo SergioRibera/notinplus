@@ -12,6 +12,7 @@
 //! because it needs the live `LibHandle` + `RouterContext` — the shell
 //! only models the entries here.
 
+use freya::icons::lucide;
 use notein_plugin::{CreationCategory, CreationEntry, CreationKind};
 
 /// Pseudo-plugin id every shell-owned entry carries. Lets persisted
@@ -38,14 +39,14 @@ pub fn entries() -> Vec<CreationEntry> {
         CreationEntry {
             id: NEW_FOLDER.to_owned(),
             label: "Nueva carpeta".to_owned(),
-            icon: "lucide:folder-plus".to_owned(),
+            icon: lucide::folder_plus(),
             category: CreationCategory::Other,
             kind: CreationKind::Blank { prompt_name: true },
         },
         CreationEntry {
             id: IMPORT_BUNDLE.to_owned(),
             label: "Importar bundle".to_owned(),
-            icon: "lucide:package".to_owned(),
+            icon: lucide::package(),
             category: CreationCategory::Other,
             kind: CreationKind::Import {
                 dialog_title: "Importar bundle .notein".to_owned(),

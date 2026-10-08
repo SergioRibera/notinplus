@@ -15,13 +15,13 @@
 use std::rc::Rc;
 use std::time::Duration;
 
+use freya::icons::lucide as icons;
 use freya::prelude::*;
 use freya::router::*;
 
 use crate::bookmark::{Bookmark, SourceRef, WorldPoint};
 use crate::doc_op::DocOp;
 use crate::home::open_library;
-use crate::icons;
 use crate::ids::BookmarkId;
 use crate::library::ItemId;
 use crate::pdf_viewer::{

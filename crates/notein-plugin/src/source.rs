@@ -10,14 +10,15 @@
 //! returns a stream id, [`Source::search_poll`] drains the next batch
 //! of hits, and [`Source::search_end`] releases the stream.
 
-use bincode::{Decode, Encode};
+use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::config::{ConfigSchema, ConfigValue};
 use crate::creation::{CreationEntry, ItemCreationResult};
 use crate::error::{ConfigError, CreationError, SourceError};
 
 /// Request for one rendered tile from a source.
-#[derive(Clone, Copy, Debug, PartialEq, Encode, Decode)]
+#[derive(Clone, Copy, Debug, PartialEq, Archive, Serialize, Deserialize)]
+#[rkyv(compare(PartialEq), derive(Debug))]
 pub struct TileRequest {
     /// Zero-based page index (sources without pagination use `0`).
     pub page_index: u32,
@@ -32,7 +33,8 @@ pub struct TileRequest {
 }
 
 /// A rendered tile, packed as 8-bit per channel RGBA pre-multiplied.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[rkyv(compare(PartialEq), derive(Debug))]
 pub struct Tile {
     pub rgba: Vec<u8>,
     pub width_px: u32,
@@ -40,7 +42,8 @@ pub struct Tile {
 }
 
 /// Human-readable snapshot of an anchor — used to render chips.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[rkyv(compare(PartialEq), derive(Debug))]
 pub struct AnchorView {
     /// Document / section title (e.g. `"Chapter 3"`).
     pub title: String,
@@ -49,7 +52,8 @@ pub struct AnchorView {
 }
 
 /// The user's current selection inside the source viewer, if any.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[rkyv(compare(PartialEq), derive(Debug))]
 pub struct Selection {
     /// Opaque anchor the plugin encoded for this selection.
     pub anchor: Vec<u8>,
@@ -57,7 +61,8 @@ pub struct Selection {
 }
 
 /// One full-text search hit returned by `search_poll`.
-#[derive(Clone, Debug, PartialEq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Archive, Serialize, Deserialize)]
+#[rkyv(compare(PartialEq), derive(Debug))]
 pub struct SearchHit {
     pub anchor: Vec<u8>,
     pub snippet: String,

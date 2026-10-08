@@ -22,4 +22,3 @@ missing_panics_doc = "allow"
 
 [dependencies]
 notein-plugin = { path = "../notein-plugin" }
-bincode = { version = "2", features = ["derive", "std"] }

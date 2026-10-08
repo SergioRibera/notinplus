@@ -4,10 +4,11 @@
 //! the plugin's own explanation without needing a dedicated error
 //! taxonomy per plugin.
 
-use bincode::{Decode, Encode};
+use rkyv::{Archive, Deserialize, Serialize};
 
 /// Error from [`crate::Source`] methods.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[rkyv(compare(PartialEq), derive(Debug))]
 pub enum SourceError {
     OpenFailed(String),
     UnknownInstance,
@@ -33,7 +34,8 @@ impl std::fmt::Display for SourceError {
 impl std::error::Error for SourceError {}
 
 /// Error from [`crate::CanvasKind`] methods.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[rkyv(compare(PartialEq), derive(Debug))]
 pub enum CanvasError {
     OpenFailed(String),
     UnknownInstance,
@@ -57,7 +59,8 @@ impl std::fmt::Display for CanvasError {
 impl std::error::Error for CanvasError {}
 
 /// Error setting a config value.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[rkyv(compare(PartialEq), derive(Debug))]
 pub enum ConfigError {
     UnknownKey(String),
     TypeMismatch,
@@ -79,7 +82,8 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 /// Error executing a [`crate::CreationEntry`].
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[rkyv(compare(PartialEq), derive(Debug))]
 pub enum CreationError {
     UnknownEntry(String),
     MissingImportBytes,

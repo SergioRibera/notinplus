@@ -23,7 +23,7 @@
 //! host side wraps a Skia canvas handle; downstream plugins unwrap it
 //! via a surface-API trait the sdk will expose.
 
-use bincode::{Decode, Encode};
+use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::bookmark::{Bookmark, WorldPoint};
 use crate::config::{ConfigSchema, ConfigValue};
@@ -55,7 +55,8 @@ unsafe impl Send for FrameCtxHandle {}
 unsafe impl Sync for FrameCtxHandle {}
 
 /// Pointer-event kind. Mirrors the host's input abstraction.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[rkyv(compare(PartialEq), derive(Debug))]
 pub enum PointerKind {
     /// Stylus / pen with pressure.
     Pen,
@@ -66,7 +67,8 @@ pub enum PointerKind {
 }
 
 /// User input delivered to the active canvas instance.
-#[derive(Clone, Copy, Debug, PartialEq, Encode, Decode)]
+#[derive(Clone, Copy, Debug, PartialEq, Archive, Serialize, Deserialize)]
+#[rkyv(compare(PartialEq), derive(Debug))]
 pub enum InputEvent {
     PointerDown {
         x: f32,

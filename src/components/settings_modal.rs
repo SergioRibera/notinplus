@@ -25,7 +25,8 @@ use notein_plugin::{
 use crate::canvas::{Board, InputMode};
 use crate::components::form_input::FormInput;
 use crate::components::modal::{Modal, ModalController};
-use crate::icons;
+use freya::icons::lucide as icons;
+
 use crate::plugins;
 
 const PANEL_BG: Color = Color::from_rgb(30, 30, 34);
@@ -192,7 +193,24 @@ struct AccountSection;
 
 impl Component for AccountSection {
     fn render(&self) -> impl IntoElement {
-        account_section()
+        rect().vertical().spacing(12.0).child(
+            rect()
+                .vertical()
+                .width(Size::fill())
+                .padding((20.0, 20.0))
+                .spacing(10.0)
+                .background(CARD_BG)
+                .with_corner_radius(14.0)
+                .child(
+                    label()
+                        .color(TEXT_PRIMARY)
+                        .font_size(16.0)
+                        .text("Cuenta — próximamente"),
+                )
+                .child(label().color(TEXT_MUTED).font_size(13.0).text(
+                    "Sign-in, sincronización y colaboración llegarán en una fase posterior.",
+                )),
+        )
     }
 }
 
@@ -215,7 +233,59 @@ impl PartialEq for GeneralSection {
 
 impl Component for GeneralSection {
     fn render(&self) -> impl IntoElement {
-        general_section(self.tick)
+        let board = Board::shared();
+        let mode = {
+            let g = crate::canvas::lock(&board);
+            g.input_mode()
+        };
+        let is_pan = matches!(mode, InputMode::Pan);
+        let toggle = {
+            let board = board.clone();
+            move || {
+                let mut g = crate::canvas::lock(&board);
+                let next = if is_pan {
+                    InputMode::Draw
+                } else {
+                    InputMode::Pan
+                };
+                g.set_input_mode(next);
+            }
+        };
+
+        let open = use_state(|| Option::<usize>::None);
+        let slots = crate::plugins::fab_shortcut_slots();
+        rect()
+            .vertical()
+            .spacing(12.0)
+            .child(settings_row(
+                "Modo de entrada",
+                if is_pan {
+                    "El lápiz desplaza el lienzo"
+                } else {
+                    "El lápiz dibuja"
+                },
+                toggle_switch(is_pan, self.tick, toggle),
+            ))
+            .child(
+    rect()
+        .vertical()
+        .width(Size::fill())
+        .padding((18.0, 20.0))
+        .spacing(10.0)
+        .background(CARD_BG)
+        .with_corner_radius(14.0)
+        .child(
+            label()
+                .color(TEXT_PRIMARY)
+                .font_size(14.0)
+                .text("Accesos directos del lienzo"),
+        )
+        .child(label().color(TEXT_MUTED).font_size(12.0).text(
+            "Los dos botones arriba del `+` disparan la acción que elijas de cualquier plugin.",
+        ))
+        .child(shortcut_slot_row(0, slots[0].as_ref(), open, self.tick))
+        .child(shortcut_slot_row(1, slots[1].as_ref(), open, self.tick))
+                )
     }
 }
 
@@ -275,90 +345,9 @@ fn header_row(sec: Section) -> impl IntoElement {
 // Sections
 // ---------------------------------------------------------------------------
 
-fn account_section() -> impl IntoElement {
-    rect().vertical().spacing(12.0).child(
-        rect()
-            .vertical()
-            .width(Size::fill())
-            .padding((20.0, 20.0))
-            .spacing(10.0)
-            .background(CARD_BG)
-            .with_corner_radius(14.0)
-            .child(
-                label()
-                    .color(TEXT_PRIMARY)
-                    .font_size(16.0)
-                    .text("Cuenta — próximamente"),
-            )
-            .child(
-                label()
-                    .color(TEXT_MUTED)
-                    .font_size(13.0)
-                    .text("Sign-in, sincronización y colaboración llegarán en una fase posterior."),
-            ),
-    )
-}
-
-fn general_section(tick: State<u64>) -> impl IntoElement {
-    let board = Board::shared();
-    let mode = {
-        let g = crate::canvas::lock(&board);
-        g.input_mode()
-    };
-    let is_pan = matches!(mode, InputMode::Pan);
-    let toggle = {
-        let board = board.clone();
-        move |_: Event<PressEventData>| {
-            let mut g = crate::canvas::lock(&board);
-            let next = if is_pan {
-                InputMode::Draw
-            } else {
-                InputMode::Pan
-            };
-            g.set_input_mode(next);
-        }
-    };
-    rect()
-        .vertical()
-        .spacing(12.0)
-        .child(settings_row(
-            "Modo de entrada",
-            if is_pan {
-                "El lápiz desplaza el lienzo"
-            } else {
-                "El lápiz dibuja"
-            },
-            toggle_switch(is_pan, toggle),
-        ))
-        .child(shortcut_picker_card(tick))
-}
-
 // ---------------------------------------------------------------------------
 // FAB shortcut picker (General)
 // ---------------------------------------------------------------------------
-
-fn shortcut_picker_card(tick: State<u64>) -> impl IntoElement {
-    let open = use_state(|| Option::<usize>::None);
-    let slots = crate::plugins::fab_shortcut_slots();
-    rect()
-        .vertical()
-        .width(Size::fill())
-        .padding((18.0, 20.0))
-        .spacing(10.0)
-        .background(CARD_BG)
-        .with_corner_radius(14.0)
-        .child(
-            label()
-                .color(TEXT_PRIMARY)
-                .font_size(14.0)
-                .text("Accesos directos del lienzo"),
-        )
-        .child(label().color(TEXT_MUTED).font_size(12.0).text(
-            "Los dos botones arriba del `+` disparan la acción que elijas de cualquier plugin.",
-        ))
-        .child(shortcut_slot_row(0, slots[0].as_ref(), open, tick))
-        .child(shortcut_slot_row(1, slots[1].as_ref(), open, tick))
-}
 
 fn shortcut_slot_row(
     index: usize,
@@ -371,9 +360,7 @@ fn shortcut_slot_row(
     let label_text = resolved
         .as_ref()
         .map_or_else(|| "(vacío)".to_owned(), |e| e.entry.label.clone());
-    let icon = resolved
-        .as_ref()
-        .map_or_else(|| "·".to_owned(), |e| e.entry.icon.clone());
+    let icon = resolved.as_ref().map(|e| e.entry.icon.clone());
 
     let mut col = rect().vertical().width(Size::fill()).spacing(6.0).child(
         rect()
@@ -456,7 +443,7 @@ fn shortcut_options(
                 format!("{}  ·  {}", entry.entry.label, entry.plugin_label)
             }
         };
-        let icon = icons::resolve(&entry.entry.icon);
+        let icon = Some(entry.entry.icon.clone());
         options = options.child(option_row(icon, label_text, {
             let mut open = open;
             let mut tick = tick;
@@ -548,26 +535,22 @@ fn install_row() -> impl IntoElement {
         .spacing(10.0)
         .background(CARD_BG)
         .with_corner_radius(12.0)
+        .content(Content::Flex)
         .cross_align(Alignment::Center)
         .child(
             rect()
                 .vertical()
+                .content(Content::Flex)
                 .child(
                     label()
                         .color(TEXT_PRIMARY)
                         .font_size(14.0)
                         .text("Instalar plugin"),
                 )
-                .child(
-                    label()
-                        .color(TEXT_MUTED)
-                        .font_size(12.0)
-                        .text(format!(
-                            "Colocá `<id>/plugin.ntp.kdl` + .so/.dll/.dylib en {scan_dir} y reiniciá."
-                        )),
-                ),
+                .child(label().color(TEXT_MUTED).font_size(12.0).text(format!(
+                    "Colocá `<id>/plugin.ntp.kdl` + .so/.dll/.dylib en {scan_dir} y reiniciá."
+                ))),
         )
-        .child(flex_spacer())
         .child(
             rect()
                 .padding((8.0, 14.0))
@@ -663,7 +646,7 @@ fn plugin_card(
         let plugin_id = plugin_id.clone();
         let registry = registry.clone();
         let mut tick = tick;
-        move |_: Event<PressEventData>| {
+        move || {
             {
                 let mut g = plugins::lock(&registry);
                 g.set_enabled(&plugin_id, !enabled);
@@ -686,6 +669,7 @@ fn plugin_card(
                 .horizontal()
                 .width(Size::fill())
                 .cross_align(Alignment::Center)
+                .content(Content::Flex)
                 .child({
                     let mut meta = rect()
                         .vertical()
@@ -703,14 +687,12 @@ fn plugin_card(
                                 .text(format!("{role_label} · {origin_badge} · {plugin_id}")),
                         );
                     if let Some(path) = origin_detail {
-                        meta = meta.child(
-                            label().color(TEXT_MUTED).font_size(10.0).text(path),
-                        );
+                        meta = meta.child(label().color(TEXT_MUTED).font_size(10.0).text(path));
                     }
                     meta
                 })
                 .child(flex_spacer())
-                .child(toggle_switch(enabled, toggle_cb)),
+                .child(toggle_switch(enabled, tick, toggle_cb)),
         );
 
     if !enabled {
@@ -772,6 +754,7 @@ fn field_row(
                 .horizontal()
                 .width(Size::fill())
                 .cross_align(Alignment::Center)
+                .content(Content::Flex)
                 .child(
                     rect()
                         .vertical()
@@ -862,7 +845,7 @@ fn bool_control(
         ConfigValue::Bool(b) => b,
         _ => matches!(field.default, ConfigValue::Bool(true)),
     };
-    let on_press = move |_: Event<PressEventData>| {
+    let on_press = move || {
         write_value(
             &registry,
             &plugin_id,
@@ -872,7 +855,7 @@ fn bool_control(
             tick,
         );
     };
-    toggle_switch(v, on_press).into_element()
+    toggle_switch(v, tick, on_press).into_element()
 }
 
 #[derive(Clone, Copy)]
@@ -1127,29 +1110,22 @@ fn write_value(
 
 fn toggle_switch(
     on: bool,
-    on_press: impl FnMut(Event<PressEventData>) + 'static,
+    mut tick: State<u64>,
+    mut on_press: impl FnMut() + 'static,
 ) -> impl IntoElement {
     let track = if on {
         Color::from_rgb(80, 140, 240)
     } else {
         Color::from_rgb(70, 70, 80)
     };
-    let knob_pad_left = if on { 20.0 } else { 2.0 };
-    rect()
-        .horizontal()
-        .width(Size::px(44.0))
-        .height(Size::px(24.0))
+    Switch::new()
         .background(track)
-        .with_corner_radius(99.0)
-        .padding((2.0, knob_pad_left, 2.0, 2.0))
-        .on_press(on_press)
-        .child(
-            rect()
-                .width(Size::px(20.0))
-                .height(Size::px(20.0))
-                .background(Color::from_rgb(240, 240, 245))
-                .with_corner_radius(99.0),
-        )
+        .toggled(on)
+        .on_toggle(move |_| {
+            let next = *tick.read() + 1;
+            tick.set(next);
+            on_press()
+        })
 }
 
 fn settings_row(
@@ -1159,6 +1135,7 @@ fn settings_row(
 ) -> impl IntoElement {
     rect()
         .horizontal()
+        .content(Content::Flex)
         .width(Size::fill())
         .padding((14.0, 18.0))
         .background(CARD_BG)

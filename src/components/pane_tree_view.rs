@@ -7,11 +7,11 @@
 //! [`PaneTreeCallbacks::on_split_resize`] on release only, so the
 //! persistence worker is not thrashed with per-pointer-move writes.
 
+use freya::icons::lucide as icons;
 use freya::prelude::*;
 
 use super::drag_drop::{DropZone, use_drag};
 use super::tab_bar::{TabBar, TabBarEntry, TabDragPayload};
-use crate::icons;
 use crate::library::{Pane, PaneId, PaneLayout, SplitOrientation, SplitSide};
 
 /// Which edge of a leaf a dragged tab was dropped on. Determines both

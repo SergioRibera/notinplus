@@ -37,6 +37,9 @@ pub mod manifest;
 pub mod registry;
 pub mod source;
 
+pub use rkyv;
+pub use bytes;
+
 pub use bookmark::{Bookmark, Rgba, SourceRef, StrokeAnchor, TimestampMs, WorldPoint};
 pub use canvas::{CanvasKind, FrameCtxHandle, InputEvent, PointerKind};
 pub use config::{ConfigEnumOption, ConfigField, ConfigFieldKind, ConfigSchema, ConfigValue};

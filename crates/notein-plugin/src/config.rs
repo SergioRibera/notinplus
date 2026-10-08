@@ -12,12 +12,14 @@
 //! than bumping the schema version.
 
 use bincode::{Decode, Encode};
+use rkyv::{Archive, Deserialize, Serialize};
 
 /// A plugin's full settings schema.
 ///
 /// `version` is monotonic: bump on add/remove/type-change. Pure renames
 /// do not require a bump — use [`ConfigField::aliases`].
-#[derive(Clone, Debug, PartialEq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Archive, Serialize, Deserialize)]
+#[rkyv(compare(PartialEq), derive(Debug))]
 pub struct ConfigSchema {
     pub version: u32,
     pub fields: Vec<ConfigField>,
@@ -34,7 +36,8 @@ impl ConfigSchema {
 }
 
 /// One typed setting inside a schema.
-#[derive(Clone, Debug, PartialEq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Archive, Serialize, Deserialize)]
+#[rkyv(compare(PartialEq), derive(Debug))]
 pub struct ConfigField {
     /// Stable, machine-readable key (e.g. `"render_dpi"`).
     pub key: String,
@@ -50,7 +53,8 @@ pub struct ConfigField {
 }
 
 /// The type and constraints of a [`ConfigField`].
-#[derive(Clone, Debug, PartialEq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Archive, Serialize, Deserialize)]
+#[rkyv(compare(PartialEq), derive(Debug))]
 pub enum ConfigFieldKind {
     Bool,
     Int {
@@ -77,7 +81,8 @@ pub enum ConfigFieldKind {
 }
 
 /// One option inside [`ConfigFieldKind::Enum`].
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[rkyv(compare(PartialEq), derive(Debug))]
 pub struct ConfigEnumOption {
     /// Stored value (matches against [`ConfigValue::String`]).
     pub value: String,
@@ -87,7 +92,8 @@ pub struct ConfigEnumOption {
 
 /// A concrete setting value — union of every variant declared in
 /// [`ConfigFieldKind`].
-#[derive(Clone, Debug, PartialEq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Encode, Decode, Archive, Serialize, Deserialize)]
+#[rkyv(compare(PartialEq), derive(Debug))]
 pub enum ConfigValue {
     Bool(bool),
     Int(i64),

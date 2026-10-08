@@ -6,9 +6,26 @@
 //! `HashMap` keys with no custom impls.
 
 use bincode::{Decode, Encode};
+use rkyv::{Archive, Deserialize, Serialize};
 
 /// Globally unique stroke identifier.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Debug, Encode, Decode)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Default,
+    Debug,
+    Encode,
+    Decode,
+    Archive,
+    Serialize,
+    Deserialize,
+)]
+#[rkyv(compare(PartialEq), derive(Debug))]
 pub struct StrokeId(pub [u8; 16]);
 
 impl StrokeId {
@@ -35,7 +52,23 @@ impl std::fmt::Display for StrokeId {
 }
 
 /// Globally unique bookmark identifier.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Debug, Encode, Decode)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Default,
+    Debug,
+    Encode,
+    Decode,
+    Archive,
+    Serialize,
+    Deserialize,
+)]
+#[rkyv(compare(PartialEq), derive(Debug))]
 pub struct BookmarkId(pub [u8; 16]);
 
 impl BookmarkId {

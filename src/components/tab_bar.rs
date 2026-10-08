@@ -207,7 +207,7 @@ fn close_glyph(index: usize, on_close: Callback<usize, ()>) -> Rect {
             on_close.call(index);
         })
         .child(
-            SvgViewer::new(crate::icons::x())
+            SvgViewer::new(freya::icons::lucide::x())
                 .color(Color::from_rgb(170, 170, 180))
                 .width(Size::px(12.0))
                 .height(Size::px(12.0)),
@@ -222,7 +222,7 @@ fn new_tab_button(on_new: NoArgCallback<()>) -> Rect {
         .with_corner_radius(8.0)
         .on_press(move |_| on_new.call())
         .child(
-            SvgViewer::new(crate::icons::plus())
+            SvgViewer::new(freya::icons::lucide::plus())
                 .color(Color::from_rgb(190, 190, 200))
                 .width(Size::px(14.0))
                 .height(Size::px(14.0)),
