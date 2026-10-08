@@ -145,7 +145,7 @@ fn workspace_shell(
 ) -> Rect {
     let focused = snap.workspace.focused_pane;
     let header = header_bar(workspace_id, handle.clone(), focused, load_state, router, &snap);
-    let body = pane_tree(workspace_id, handle, load_state, router, &snap);
+    let body = pane_tree(workspace_id, handle, load_state, &snap);
     let keyboard = keyboard_shortcuts(workspace_id, handle_clone_for_keys(&snap, &load_state));
     rect()
         .expanded()
@@ -341,6 +341,7 @@ fn header_bar(
         .cross_align(Alignment::Center)
         .spacing(8.0)
         .child(back)
+        .content(Content::Flex)
         .child(
             label()
                 .color(Color::from_rgb(230, 230, 240))
@@ -413,7 +414,6 @@ fn pane_tree(
     workspace_id: WorkspaceId,
     handle: LibHandle,
     load_state: State<LoadState>,
-    router: RouterContext,
     snap: &WorkspaceSnapshot,
 ) -> Rect {
     let layout = snap.workspace.layout.clone();
@@ -426,7 +426,6 @@ fn pane_tree(
         on_split_resize: split_resize_cb(workspace_id, handle.clone(), load_state),
         on_tab_move: tab_move_cb(workspace_id, handle.clone(), load_state),
         on_tab_split: tab_split_cb(workspace_id, handle, load_state),
-        on_tab_open: tab_open_cb(router, kinds),
     };
     let label_cb = Callback::<PaneTab, String>::new(move |tab: PaneTab| {
         titles
@@ -434,28 +433,31 @@ fn pane_tree(
             .cloned()
             .unwrap_or_else(|| MISSING_TITLE.to_owned())
     });
+    let body_kinds = kinds;
+    let body_cb = Callback::<PaneTab, Element>::new(move |tab: PaneTab| {
+        tab_body_element(tab.item, body_kinds.get(&tab.item).copied())
+    });
     rect()
         .width(Size::fill())
         .height(Size::flex(1.0))
-        .child(PaneTreeView::new(layout, callbacks, label_cb))
+        .content(Content::Flex)
+        .child(PaneTreeView::new(layout, callbacks, label_cb, body_cb))
 }
 
-fn tab_open_cb(
-    router: RouterContext,
-    kinds: HashMap<ItemId, ItemKind>,
-) -> Callback<PaneTab, ()> {
-    Callback::new(move |tab: PaneTab| {
-        let route = match kinds.get(&tab.item) {
-            Some(ItemKind::PdfCanvas) => Route::CanvasPdfView { id: tab.item },
-            Some(ItemKind::SourcePdf) => Route::SourcePdfView { id: tab.item },
-            Some(ItemKind::DocLinked) => Route::DocLinkedView { id: tab.item },
-            // Unknown items (e.g. deleted on another device) still open
-            // the canvas route so the user sees the empty-doc fallback
-            // instead of a swallowed click.
-            Some(ItemKind::Canvas) | None => Route::CanvasView { id: tab.item },
-        };
-        let _ = router.push(route);
-    })
+/// Dispatch a per-tab body [`Element`] based on the item's kind. Each
+/// variant mounts a fresh subcomponent so hooks fire in the right scope
+/// (new per-pane `Board`, autosave worker, PDF viewer state, etc.).
+/// Unknown kinds fall through to the plain canvas — matches the fallback
+/// the old `tab_open_cb` picked for deleted-on-another-device items.
+fn tab_body_element(id: ItemId, kind: Option<ItemKind>) -> Element {
+    use crate::app::{CanvasMount, canvas_root};
+    use crate::doc_linked::{DocLinkedView, SourcePdfView};
+    match kind {
+        Some(ItemKind::PdfCanvas) => canvas_root(CanvasMount::PdfBacked(id)).into_element(),
+        Some(ItemKind::SourcePdf) => SourcePdfView { id }.into_element(),
+        Some(ItemKind::DocLinked) => DocLinkedView { id }.into_element(),
+        Some(ItemKind::Canvas) | None => canvas_root(CanvasMount::Item(id)).into_element(),
+    }
 }
 
 fn tab_select_cb(

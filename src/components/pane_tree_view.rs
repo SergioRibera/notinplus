@@ -1,13 +1,13 @@
 //! Renderer for a [`PaneLayout`] tree.
 //!
-//! Each leaf gets a [`TabBar`] atop a stub body (real content lands
-//! with Phase 4.3+). Internal split nodes render as [`SplitNode`] —
-//! two children flanking a draggable divider. During a drag the
-//! divider commits its new ratio to the shell via
+//! Each leaf gets a [`TabBar`] atop a body produced by the shell-supplied
+//! `tab_body` callback (so the pane can host any component — canvas,
+//! PDF viewer, mind map, etc.). Internal split nodes render as
+//! [`SplitNode`] — two children flanking a draggable divider. During a
+//! drag the divider commits its new ratio to the shell via
 //! [`PaneTreeCallbacks::on_split_resize`] on release only, so the
 //! persistence worker is not thrashed with per-pointer-move writes.
 
-use freya::icons::lucide as icons;
 use freya::prelude::*;
 
 use super::drag_drop::{DropZone, use_drag};
@@ -77,10 +77,6 @@ pub struct PaneTreeCallbacks {
     /// leaf along [`SplitEdge::orientation`] and moves the tab into
     /// the fresh pane sitting on [`SplitEdge::new_side`].
     pub on_tab_split: Callback<(PaneId, usize, PaneId, SplitEdge), ()>,
-    /// User asked to open the given tab in full-screen (push the
-    /// matching Canvas / PdfCanvas route). Fired from the leaf body
-    /// "Abrir" button.
-    pub on_tab_open: Callback<PaneTab, ()>,
 }
 
 impl std::fmt::Debug for PaneTreeCallbacks {
@@ -97,6 +93,7 @@ pub struct PaneTreeView {
     layout: PaneLayout,
     callbacks: PaneTreeCallbacks,
     tab_labels: Callback<PaneTab, String>,
+    tab_body: Callback<PaneTab, Element>,
 }
 
 impl PartialEq for PaneTreeView {
@@ -112,16 +109,22 @@ pub use crate::library::PaneTab;
 impl PaneTreeView {
     /// `tab_labels` renders a human-readable name per tab — the shell
     /// supplies it so this component stays agnostic of the library.
+    /// `tab_body` renders the active tab's body [`Element`] (canvas,
+    /// PDF viewer, mind map, etc.). Each pane's body is produced lazily
+    /// per render, so switching tabs or splitting mounts a fresh
+    /// component tree in that pane.
     #[must_use]
     pub fn new(
         layout: PaneLayout,
         callbacks: PaneTreeCallbacks,
         tab_labels: impl Into<Callback<PaneTab, String>>,
+        tab_body: impl Into<Callback<PaneTab, Element>>,
     ) -> Self {
         Self {
             layout,
             callbacks,
             tab_labels: tab_labels.into(),
+            tab_body: tab_body.into(),
         }
     }
 }
@@ -133,6 +136,7 @@ impl Component for PaneTreeView {
             Vec::new(),
             &self.callbacks,
             &self.tab_labels,
+            &self.tab_body,
         )
     }
 }
@@ -142,12 +146,14 @@ fn render_node(
     path: Vec<SplitSide>,
     callbacks: &PaneTreeCallbacks,
     tab_labels: &Callback<PaneTab, String>,
+    tab_body: &Callback<PaneTab, Element>,
 ) -> Element {
     match node {
         PaneLayout::Leaf(pane) => LeafNode {
             pane: pane.clone(),
             callbacks: callbacks.clone(),
             tab_labels: tab_labels.clone(),
+            tab_body: tab_body.clone(),
         }
         .into_element(),
         PaneLayout::Split {
@@ -163,6 +169,7 @@ fn render_node(
             second: (**second).clone(),
             callbacks: callbacks.clone(),
             tab_labels: tab_labels.clone(),
+            tab_body: tab_body.clone(),
         }
         .into_element(),
     }
@@ -180,6 +187,7 @@ struct SplitNode {
     second: PaneLayout,
     callbacks: PaneTreeCallbacks,
     tab_labels: Callback<PaneTab, String>,
+    tab_body: Callback<PaneTab, Element>,
 }
 
 impl std::fmt::Debug for SplitNode {
@@ -265,6 +273,7 @@ impl Component for SplitNode {
             },
             &self.callbacks,
             &self.tab_labels,
+            &self.tab_body,
         );
         let second_el = render_node(
             &self.second,
@@ -275,6 +284,7 @@ impl Component for SplitNode {
             },
             &self.callbacks,
             &self.tab_labels,
+            &self.tab_body,
         );
 
         let (container, first_wrap, second_wrap) = match orientation {
@@ -343,6 +353,7 @@ struct LeafNode {
     pane: Pane,
     callbacks: PaneTreeCallbacks,
     tab_labels: Callback<PaneTab, String>,
+    tab_body: Callback<PaneTab, Element>,
 }
 
 impl std::fmt::Debug for LeafNode {
@@ -401,16 +412,13 @@ impl Component for LeafNode {
 
         let active_tab = self.pane.tabs.get(self.pane.active_tab as usize).copied();
         let body_inner = match active_tab {
-            Some(tab) => leaf_body_filled(
-                self.tab_labels.call(tab),
-                tab,
-                self.callbacks.on_tab_open.clone(),
-            ),
-            None => leaf_body_empty(self.pane.id),
+            Some(tab) => self.tab_body.call(tab),
+            None => leaf_body_empty(self.pane.id).into_element(),
         };
         let mut body = rect()
             .width(Size::fill())
             .height(Size::flex(1.0))
+            .content(Content::Flex)
             .child(body_inner);
 
         if drag_active {
@@ -446,55 +454,11 @@ impl Component for LeafNode {
             .vertical()
             .width(Size::fill())
             .height(Size::fill())
+            .content(Content::Flex)
             .background(Color::from_rgb(22, 22, 28))
             .child(bar)
             .child(body)
     }
-}
-
-/// Centered card describing the active tab plus an "Abrir" button
-/// that pushes the matching full-screen route. Rendered as the leaf
-/// body until Phase 5 brings a per-pane canvas / source viewer.
-fn leaf_body_filled(name: String, tab: PaneTab, on_open: Callback<PaneTab, ()>) -> Rect {
-    let card = rect()
-        .vertical()
-        .cross_align(Alignment::Center)
-        .padding((24.0, 24.0))
-        .spacing(16.0)
-        .background(Color::from_rgb(28, 28, 34))
-        .with_corner_radius(16.0)
-        .child(
-            SvgViewer::new(icons::file_text())
-                .color(Color::from_rgb(190, 190, 200))
-                .width(Size::px(36.0))
-                .height(Size::px(36.0)),
-        )
-        .child(
-            label()
-                .color(Color::from_rgb(235, 235, 245))
-                .font_size(16.0)
-                .text(name),
-        )
-        .child(
-            rect()
-                .height(Size::px(36.0))
-                .padding((0.0, 16.0))
-                .center()
-                .with_corner_radius(18.0)
-                .background(Color::from_rgb(55, 90, 180))
-                .on_press(move |_| on_open.call(tab))
-                .child(
-                    label()
-                        .color(Color::from_rgb(240, 245, 255))
-                        .font_size(13.0)
-                        .text("Abrir en pantalla completa"),
-                ),
-        );
-    rect()
-        .width(Size::fill())
-        .height(Size::fill())
-        .center()
-        .child(card)
 }
 
 /// Shown when the active pane has no tabs — explains the tab bar's
@@ -539,8 +503,8 @@ fn edge_drop_zone(
         SplitEdge::Right => Position::new_absolute().top(0.0).bottom(0.0).right(0.0),
     };
     let (w, h) = match edge {
-        SplitEdge::Top | SplitEdge::Bottom => (Size::auto(), Size::px(EDGE_DROP_PX)),
-        SplitEdge::Left | SplitEdge::Right => (Size::px(EDGE_DROP_PX), Size::auto()),
+        SplitEdge::Top | SplitEdge::Bottom => (Size::fill(), Size::px(EDGE_DROP_PX)),
+        SplitEdge::Left | SplitEdge::Right => (Size::px(EDGE_DROP_PX), Size::fill()),
     };
     let highlight = if *hovered.read() {
         Color::from_argb(140, 90, 140, 220)
@@ -555,6 +519,7 @@ fn edge_drop_zone(
         .width(Size::fill())
         .height(Size::fill())
         .background(highlight);
+
     DropZone::new(
         zone_body,
         EventHandler::new(move |payload: TabDragPayload| {
@@ -601,8 +566,11 @@ mod tests {
             on_split_resize: Callback::new(|_| {}),
             on_tab_move: Callback::new(|_| {}),
             on_tab_split: Callback::new(|_| {}),
-            on_tab_open: Callback::new(|_| {}),
         }
+    }
+
+    fn stub_body_cb() -> Callback<PaneTab, Element> {
+        Callback::new(|_: PaneTab| rect().into_element())
     }
 
     #[test]
@@ -640,7 +608,12 @@ mod tests {
                 })),
             }),
         };
-        let view = PaneTreeView::new(layout.clone(), stub_callbacks(), stub_label_cb());
+        let view = PaneTreeView::new(
+            layout.clone(),
+            stub_callbacks(),
+            stub_label_cb(),
+            stub_body_cb(),
+        );
         assert_eq!(view.layout.leaves().len(), 3);
     }
 }
