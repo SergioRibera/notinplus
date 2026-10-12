@@ -392,7 +392,7 @@ impl Component for LeafNode {
             .iter()
             .enumerate()
             .map(|(i, tab)| TabBarEntry {
-                label: self.tab_labels.call(*tab).into(),
+                label: self.tab_labels.call(tab.clone()).into(),
                 icon: None,
                 is_active: i == self.pane.active_tab as usize,
             })
@@ -412,7 +412,7 @@ impl Component for LeafNode {
             move_cb.call((payload.source_pane, payload.source_index, pane_id));
         }));
 
-        let active_tab = self.pane.tabs.get(self.pane.active_tab as usize).copied();
+        let active_tab = self.pane.tabs.get(self.pane.active_tab as usize).cloned();
         let body_inner = match active_tab {
             Some(tab) => self.tab_body.call((self.pane.id, tab)),
             None => leaf_body_empty(self.pane.id).into_element(),
@@ -594,9 +594,7 @@ mod tests {
             ratio: 0.5,
             first: Box::new(PaneLayout::Leaf(Pane {
                 id: pane_a,
-                tabs: vec![PaneTab {
-                    item: ItemId::new_v4(),
-                }],
+                tabs: vec![PaneTab::new(ItemId::new_v4())],
                 active_tab: 0,
             })),
             second: Box::new(PaneLayout::Split {

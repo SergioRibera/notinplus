@@ -21,19 +21,22 @@ use freya::router::*;
 
 use crate::app::{CanvasMount, canvas_root};
 use crate::bookmark::{Bookmark, SourceRef, WorldPoint};
+use crate::builtin::stroke_canvas::KIND_ID as STROKE_CANVAS_KIND_ID;
 use crate::components::pane_tree_view::{PaneTreeCallbacks, PaneTreeView};
-use crate::doc_linked_prefs::{self, DocLinkedPrefs};
 use crate::doc_op::DocOp;
 use crate::home::open_library;
 use crate::ids::BookmarkId;
 use crate::library::{
     ItemId, Pane, PaneId, PaneLayout, PaneTab, SplitOrientation, SplitSide,
 };
+use crate::pane_layout_prefs;
 use crate::pdf_viewer::{
     PDF_PLUGIN_ID, PdfAnchor, PdfPaneView, decode_pdf_anchor, encode_pdf_anchor,
     scroll_offset_for_page,
 };
 use crate::route::Route;
+
+const DEFAULT_SPLIT_RATIO: f32 = 0.55;
 
 /// Canvas + PDF bundle route backed by a
 /// [`crate::library::ItemKind::DocLinked`] item.
@@ -50,28 +53,21 @@ impl Component for DocLinkedView {
         let refresh = use_state(|| 0u64);
         let scroll_ctrl = use_scroll_controller(ScrollConfig::default);
         let page_heights = use_state(Vec::<u32>::new);
-        // Per-item sidecar: show-canvas toggle + split-divider ratio.
-        // Loaded once at mount; subsequent toggles and resize-commits
-        // flow back through `persist`.
-        let loaded = use_hook(move || doc_linked_prefs::load(bundle));
-        let show_canvas = use_state(move || loaded.show_canvas);
-        // Stable ids so the pane tree body callback can discriminate
-        // which role (PDF viewer vs. canvas) owns a given leaf. Minted
-        // once per mount via `use_hook`; subsequent renders reuse them
-        // so the subcomponents keep their state across show/hide
-        // toggles and resize.
-        let pdf_pane_id = use_hook(PaneId::new_v4);
-        let canvas_pane_id = use_hook(PaneId::new_v4);
-        let split_ratio = use_state(move || loaded.split_ratio);
+        // Per-item sidecar: full PaneLayout. Each leaf tags its render
+        // role via `PaneTab::plugin_id` (PDF viewer plugin vs. stroke
+        // canvas plugin — any future plugin that advertises itself as
+        // an opener for this item kind can be swapped in without
+        // touching the shell). Default = single PDF leaf; user toggles
+        // the paired canvas on via the header.
+        let layout = use_state(move || {
+            pane_layout_prefs::load(bundle).unwrap_or_else(|| default_layout(bundle))
+        });
         let router = RouterContext::get();
 
         let persist: Rc<dyn Fn()> = Rc::new(move || {
-            let prefs = DocLinkedPrefs {
-                show_canvas: *show_canvas.peek(),
-                split_ratio: *split_ratio.peek(),
-            };
-            if let Err(err) = doc_linked_prefs::save(bundle, prefs) {
-                log::warn!("save doc_linked prefs id={bundle}: {err}");
+            let snapshot = layout.peek().clone();
+            if let Err(err) = pane_layout_prefs::save(bundle, &snapshot) {
+                log::warn!("save pane_layouts id={bundle}: {err}");
             }
         });
 
@@ -93,25 +89,21 @@ impl Component for DocLinkedView {
         let heights_setter = page_heights;
         let chip_cb = chip_tap_cb(scroll_ctrl, page_heights);
 
-        let header = header_bar(bundle, router, show_canvas, Rc::clone(&persist));
+        let header = header_bar(bundle, router, layout, Rc::clone(&persist));
         let strip = bookmark_strip(bookmarks, chip_cb);
 
-        let layout = build_pane_layout(
-            *show_canvas.read(),
-            pdf_pane_id,
-            canvas_pane_id,
-            *split_ratio.read(),
-            bundle,
-        );
+        let current_layout = layout.read().clone();
         let callbacks = PaneTreeCallbacks {
             on_tab_select: Callback::new(|_| {}),
             on_tab_close: Callback::new({
                 let persist = Rc::clone(&persist);
                 let back_router = router;
-                let mut show_canvas = show_canvas;
+                let mut layout = layout;
                 move |(pane_id, _idx): (PaneId, usize)| {
-                    if pane_id == canvas_pane_id {
-                        show_canvas.set(false);
+                    let current = layout.peek().clone();
+                    let plugin = find_pane_plugin(&current, pane_id);
+                    if plugin.as_deref() == Some(STROKE_CANVAS_KIND_ID) {
+                        layout.set(collapse_canvas(current));
                         persist();
                     } else {
                         let _ = back_router.push(Route::Home);
@@ -121,38 +113,51 @@ impl Component for DocLinkedView {
             on_tab_new: Callback::new(|_| {}),
             on_split_resize: Callback::new({
                 let persist = Rc::clone(&persist);
-                let mut ratio = split_ratio;
-                move |(_, new_ratio): (Vec<SplitSide>, f32)| {
-                    ratio.set(new_ratio);
-                    persist();
+                let mut layout = layout;
+                move |(path, new_ratio): (Vec<SplitSide>, f32)| {
+                    let mut next = layout.peek().clone();
+                    if set_split_ratio(&mut next, &path, new_ratio) {
+                        layout.set(next);
+                        persist();
+                    }
                 }
             }),
             on_tab_move: Callback::new(|_| {}),
             on_tab_split: Callback::new(|_| {}),
         };
         let label_cb = Callback::<PaneTab, String>::new(move |_: PaneTab| String::new());
-        let body_cb =
-            Callback::<(PaneId, PaneTab), Element>::new(move |(pane_id, _): (PaneId, PaneTab)| {
-                if pane_id == pdf_pane_id {
-                    let on_tap = on_tap.clone();
-                    PdfPaneView::new(bundle)
-                        .on_page_tap(on_tap)
-                        .scroll_controller(scroll_ctrl)
-                        .on_pages_loaded(Callback::new(move |heights: Vec<u32>| {
-                            let mut h = heights_setter;
-                            h.set(heights);
-                        }))
-                        .into_element()
-                } else {
-                    canvas_root(CanvasMount::Item(bundle)).into_element()
+        let body_cb = Callback::<(PaneId, PaneTab), Element>::new(
+            move |(_pane_id, tab): (PaneId, PaneTab)| {
+                match tab.plugin_id.as_deref() {
+                    Some(PDF_PLUGIN_ID) => {
+                        let on_tap = on_tap.clone();
+                        PdfPaneView::new(bundle)
+                            .on_page_tap(on_tap)
+                            .scroll_controller(scroll_ctrl)
+                            .on_pages_loaded(Callback::new(move |heights: Vec<u32>| {
+                                let mut h = heights_setter;
+                                h.set(heights);
+                            }))
+                            .into_element()
+                    }
+                    Some(STROKE_CANVAS_KIND_ID) => {
+                        canvas_root(CanvasMount::Item(bundle)).into_element()
+                    }
+                    _ => canvas_root(CanvasMount::Item(bundle)).into_element(),
                 }
-            });
+            },
+        );
 
         let overlay = toast_overlay(toast);
         let tree = rect()
             .width(Size::fill())
             .height(Size::flex(1.0))
-            .child(PaneTreeView::new(layout, callbacks, label_cb, body_cb));
+            .child(PaneTreeView::new(
+                current_layout,
+                callbacks,
+                label_cb,
+                body_cb,
+            ));
 
         rect()
             .expanded()
@@ -166,36 +171,85 @@ impl Component for DocLinkedView {
     }
 }
 
-/// Build the pane-tree layout for the current show/hide toggle state.
-/// `show_canvas = false` → single PDF leaf; `true` → horizontal split
-/// (PDF on the first side, canvas on the second). Both leaves carry a
-/// synthetic [`PaneTab`] pointing at `bundle` so the tree's selection /
-/// tab-count invariants hold even though we never persist this layout.
-fn build_pane_layout(
-    show_canvas: bool,
-    pdf_pane_id: PaneId,
-    canvas_pane_id: PaneId,
-    ratio: f32,
-    bundle: ItemId,
-) -> PaneLayout {
-    let pdf = PaneLayout::Leaf(Pane {
-        id: pdf_pane_id,
-        tabs: vec![PaneTab { item: bundle }],
+/// Default layout: single PDF leaf. User toggles the paired canvas on
+/// via the header button; the layout becomes a horizontal split and
+/// persists in the sidecar on every mutation.
+fn default_layout(bundle: ItemId) -> PaneLayout {
+    PaneLayout::Leaf(Pane {
+        id: PaneId::new_v4(),
+        tabs: vec![PaneTab::with_plugin(bundle, PDF_PLUGIN_ID)],
         active_tab: 0,
-    });
-    if !show_canvas {
-        return pdf;
+    })
+}
+
+/// Whether the current layout has the canvas side mounted — true iff
+/// the root is a split (we only ever split root in this shell).
+fn has_canvas(l: &PaneLayout) -> bool {
+    matches!(l, PaneLayout::Split { .. })
+}
+
+/// Swap between Leaf(PDF) and Split{Leaf(PDF), Leaf(Canvas)}. The
+/// canvas doc body lives on disk (loaded via `canvas_root`); minting a
+/// fresh `PaneId` on each re-show has no cost beyond a remount.
+fn toggle_canvas(current: PaneLayout, bundle: ItemId) -> PaneLayout {
+    match current {
+        PaneLayout::Split { first, .. } => *first,
+        leaf @ PaneLayout::Leaf(_) => PaneLayout::Split {
+            orientation: SplitOrientation::Horizontal,
+            ratio: DEFAULT_SPLIT_RATIO,
+            first: Box::new(leaf),
+            second: Box::new(PaneLayout::Leaf(Pane {
+                id: PaneId::new_v4(),
+                tabs: vec![PaneTab::with_plugin(bundle, STROKE_CANVAS_KIND_ID)],
+                active_tab: 0,
+            })),
+        },
     }
-    let canvas = PaneLayout::Leaf(Pane {
-        id: canvas_pane_id,
-        tabs: vec![PaneTab { item: bundle }],
-        active_tab: 0,
-    });
-    PaneLayout::Split {
-        orientation: SplitOrientation::Horizontal,
-        ratio,
-        first: Box::new(pdf),
-        second: Box::new(canvas),
+}
+
+/// Drop the canvas side, keep the PDF leaf. Fired by `on_tab_close` on
+/// the canvas pane.
+fn collapse_canvas(current: PaneLayout) -> PaneLayout {
+    match current {
+        PaneLayout::Split { first, .. } => *first,
+        other => other,
+    }
+}
+
+/// Update the ratio of the split addressed by `path`. Returns false
+/// when the path misses (layout mutated nothing).
+fn set_split_ratio(layout: &mut PaneLayout, path: &[SplitSide], new_ratio: f32) -> bool {
+    let mut node = layout;
+    for side in path {
+        node = match node {
+            PaneLayout::Split { first, second, .. } => match side {
+                SplitSide::First => first.as_mut(),
+                SplitSide::Second => second.as_mut(),
+            },
+            PaneLayout::Leaf(_) => return false,
+        };
+    }
+    match node {
+        PaneLayout::Split { ratio, .. } => {
+            *ratio = new_ratio;
+            true
+        }
+        PaneLayout::Leaf(_) => false,
+    }
+}
+
+/// Walk `layout` and return the plugin id of the active tab of the
+/// pane with `id`, if any.
+fn find_pane_plugin(layout: &PaneLayout, id: PaneId) -> Option<String> {
+    match layout {
+        PaneLayout::Leaf(pane) if pane.id == id => pane
+            .tabs
+            .get(pane.active_tab as usize)
+            .and_then(|t| t.plugin_id.clone()),
+        PaneLayout::Leaf(_) => None,
+        PaneLayout::Split { first, second, .. } => {
+            find_pane_plugin(first, id).or_else(|| find_pane_plugin(second, id))
+        }
     }
 }
 
@@ -414,7 +468,7 @@ fn bookmark_chip(chip: BookmarkChip, chip_cb: Callback<usize, ()>) -> Rect {
 fn header_bar(
     bundle: ItemId,
     router: RouterContext,
-    mut show_canvas: State<bool>,
+    mut layout: State<PaneLayout>,
     persist: Rc<dyn Fn()>,
 ) -> Rect {
     let open_canvas_router = router;
@@ -430,7 +484,7 @@ fn header_bar(
     });
     let back_cb = Rc::clone(&on_back);
 
-    let currently_showing = *show_canvas.read();
+    let currently_showing = has_canvas(&layout.read());
     let toggle_label = if currently_showing {
         "Ocultar lienzo"
     } else {
@@ -475,8 +529,8 @@ fn header_bar(
                 .with_corner_radius(8.0)
                 .background(toggle_bg)
                 .on_press(move |_| {
-                    let next = !*show_canvas.peek();
-                    show_canvas.set(next);
+                    let current = layout.peek().clone();
+                    layout.set(toggle_canvas(current, bundle));
                     persist();
                 })
                 .child(

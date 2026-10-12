@@ -871,7 +871,7 @@ impl Library {
             .layout
             .find_leaf_mut(pane)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
-        leaf.tabs.push(PaneTab { item });
+        leaf.tabs.push(PaneTab::new(item));
         leaf.active_tab = u32::try_from(leaf.tabs.len().saturating_sub(1)).unwrap_or(u32::MAX);
         w.updated_at = now;
         self.persist_workspaces().await
@@ -1238,14 +1238,14 @@ mod tests {
             first: Box::new(PaneLayout::Leaf(Pane {
                 id: left,
                 tabs: vec![
-                    PaneTab { item: mk_item(42) },
-                    PaneTab { item: mk_item(7) },
+                    PaneTab::new(mk_item(42)),
+                    PaneTab::new(mk_item(7)),
                 ],
                 active_tab: 1,
             })),
             second: Box::new(PaneLayout::Leaf(Pane {
                 id: right,
-                tabs: vec![PaneTab { item: mk_item(99) }],
+                tabs: vec![PaneTab::new(mk_item(99))],
                 active_tab: 0,
             })),
         };
@@ -1299,8 +1299,8 @@ mod tests {
 
         {
             let leaf = w.layout.find_leaf_mut(root).unwrap();
-            leaf.tabs.push(PaneTab { item: mk_item(10) });
-            leaf.tabs.push(PaneTab { item: mk_item(11) });
+            leaf.tabs.push(PaneTab::new(mk_item(10)));
+            leaf.tabs.push(PaneTab::new(mk_item(11)));
             leaf.active_tab = 1;
         }
 
@@ -1414,12 +1414,12 @@ mod tests {
             ratio: 0.5,
             first: Box::new(PaneLayout::Leaf(Pane {
                 id: left,
-                tabs: vec![PaneTab { item: mk_item(10) }, PaneTab { item: mk_item(11) }],
+                tabs: vec![PaneTab::new(mk_item(10)), PaneTab::new(mk_item(11))],
                 active_tab: 1,
             })),
             second: Box::new(PaneLayout::Leaf(Pane {
                 id: right,
-                tabs: vec![PaneTab { item: mk_item(99) }],
+                tabs: vec![PaneTab::new(mk_item(99))],
                 active_tab: 0,
             })),
         };
@@ -1442,7 +1442,7 @@ mod tests {
         let only = mk_pane(1);
         let mut layout = PaneLayout::Leaf(Pane {
             id: only,
-            tabs: vec![PaneTab { item: mk_item(10) }],
+            tabs: vec![PaneTab::new(mk_item(10))],
             active_tab: 0,
         });
         // Same pane is a no-op reject (ordering is a different op).

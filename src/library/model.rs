@@ -183,10 +183,37 @@ pub struct Item {
 
 /// One open tab inside a pane. References the underlying item by id;
 /// per-tab viewport state continues to live in `prefs::DocView`.
+///
+/// `plugin_id` names which plugin renders this leaf when the tab mounts.
+/// `None` → shell falls back to the item's default plugin derived from
+/// its [`ItemKind`] (e.g. `DocLinked` resolves to the stroke-canvas
+/// plugin). `Some(id)` is an explicit override — the same item id can
+/// appear in sibling leaves rendered by different plugins (e.g. a
+/// DocLinked bundle mounting the PDF viewer plugin on one side and the
+/// stroke-canvas plugin on the other).
 #[istmo::message]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct PaneTab {
     pub item: ItemId,
+    pub plugin_id: Option<String>,
+}
+
+impl PaneTab {
+    #[must_use]
+    pub const fn new(item: ItemId) -> Self {
+        Self {
+            item,
+            plugin_id: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_plugin(item: ItemId, plugin_id: impl Into<String>) -> Self {
+        Self {
+            item,
+            plugin_id: Some(plugin_id.into()),
+        }
+    }
 }
 
 /// Leaf of a [`PaneLayout`] — carries its tab strip plus the index of
