@@ -20,7 +20,11 @@ use istmo::plugins::EdgeInsets;
 use crate::route::Route;
 
 use crate::brush::{BrushKind, BrushPreset, ShapeMode};
-use crate::canvas::{Board, InputMode, LayerSnapshot, RedrawNotifier, drawing_surface, lock};
+use crate::bookmark::SourceRef;
+use crate::canvas::{
+    AnchorSourceRef, Board, InputMode, LayerSnapshot, RedrawNotifier, drawing_surface, lock,
+};
+use crate::pdf_viewer::{PDF_PLUGIN_ID, PdfAnchor, encode_pdf_anchor};
 use crate::hooks::use_safe_area_insets;
 use crate::library::ItemId;
 use crate::palette_popup::{HOVER_DELAY, brush_popup};
@@ -44,6 +48,28 @@ pub(crate) enum CanvasMount {
     /// Canvas overlaid on a PDF. Strokes persist against `id`; the PDF
     /// blob is loaded off the UI thread and installed as background.
     PdfBacked(ItemId),
+}
+
+/// Build the anchor-ref closure drawing_surface uses on long-press.
+/// Only [`CanvasMount::PdfBacked`] produces a non-None closure — PDF
+/// pins carry a [`SourceRef::Plugin`] back to the source item + page
+/// so chip strips and cross-pane navigation can resolve the target.
+fn pdf_anchor_source_for(mount: CanvasMount) -> Option<AnchorSourceRef> {
+    let CanvasMount::PdfBacked(item) = mount else {
+        return None;
+    };
+    Some(std::sync::Arc::new(move |att| {
+        let anchor = encode_pdf_anchor(PdfAnchor {
+            source: item,
+            page: att.page.0 as u32,
+        });
+        SourceRef::Plugin {
+            plugin_id: PDF_PLUGIN_ID.to_owned(),
+            item: item.0,
+            anchor,
+            selection: None,
+        }
+    }))
 }
 
 impl CanvasMount {
@@ -360,11 +386,18 @@ pub(crate) fn canvas_root(mount: CanvasMount) -> impl IntoElement {
     let sidebar_query = use_state(String::new);
     let sidebar_sort = use_state(|| crate::bookmark_ui::BookmarkSort::Recent);
 
+    let anchor_source = pdf_anchor_source_for(mount);
+
     rect()
         .width(Size::fill())
         .height(Size::fill())
         .content(Content::Flex)
-        .child(drawing_surface(&board, selected_bookmark, bookmark_body))
+        .child(drawing_surface(
+            &board,
+            selected_bookmark,
+            bookmark_body,
+            anchor_source,
+        ))
         .child(back_overlay(&board, pad))
         .child(palette_overlay(&board, selected, scale, pad, coords))
         .child(layers_panel(&board, layers_ver, pad))

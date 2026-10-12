@@ -25,8 +25,8 @@ use std::sync::{Arc, Mutex};
 use flume::{Receiver, Sender};
 use freya::prelude::*;
 use freya_canvas_bg::{
-    BgPaintCtx, CanvasBackground, Rect as BgRect, RedrawHandle, SolidColorBackground,
-    clamp_translation,
+    AttributionMode, BgPaintCtx, CanvasBackground, PageAttachment, Rect as BgRect, RedrawHandle,
+    SolidColorBackground, clamp_translation,
 };
 use freya_engine::prelude::{
     BlendMode, Color as SkColor, Paint, PaintStyle, Path, PathBuilder, SaveLayerRec,
@@ -1231,9 +1231,24 @@ impl Board {
         sticky_radius: f32,
         timestamp_ms: TimestampMs,
     ) -> BookmarkId {
+        self.add_bookmark_with_refs(world, sticky_radius, timestamp_ms, Vec::new())
+    }
+
+    /// Variant of [`Self::add_bookmark`] that attaches initial source
+    /// refs to the new pin. Used by the long-press handler to carry a
+    /// backend anchor (PDF page, etc.) alongside the world position so
+    /// chip strips can navigate back to the source material.
+    pub fn add_bookmark_with_refs(
+        &mut self,
+        world: WorldPoint,
+        sticky_radius: f32,
+        timestamp_ms: TimestampMs,
+        refs: Vec<SourceRef>,
+    ) -> BookmarkId {
         let id = BookmarkId::new_v4();
         let mut bm = Bookmark::new(id, world, timestamp_ms);
         bm.stuck_to = self.resolve_sticky(world, sticky_radius);
+        bm.refs = refs;
         self.apply_op(DocOp::AddBookmark { bookmark: bm });
         self.notify_commit();
         id
@@ -2012,10 +2027,18 @@ const PIN_TAP_RADIUS_PX: f32 = 20.0;
 /// zoom; keeps the sticky link forgiving but not grabby.
 const PIN_STICKY_WORLD_RADIUS: f32 = 40.0;
 
+/// Builder for the per-page anchor ref emitted when a long-press pin
+/// lands over an attribution-aware background. Takes the surface-level
+/// page attachment reported by [`CanvasBackground::locate`] and returns
+/// the typed [`SourceRef`] the pin should carry.
+pub type AnchorSourceRef =
+    Arc<dyn Fn(PageAttachment) -> SourceRef + Send + Sync + 'static>;
+
 pub fn drawing_surface(
     board: &Arc<Mutex<Board>>,
     selected_bookmark: freya::prelude::State<Option<crate::ids::BookmarkId>>,
     body_buffer: freya::prelude::State<String>,
+    anchor_source: Option<AnchorSourceRef>,
 ) -> impl IntoElement {
     let render_board = Arc::clone(board);
     // Read the current background's surface backdrop once at element
@@ -2216,6 +2239,7 @@ pub fn drawing_surface(
                 let mut timer_start = press_start;
                 let mut timer_selected = selected;
                 let mut timer_body = body_buffer;
+                let timer_anchor = anchor_source.clone();
                 freya::prelude::spawn(async move {
                     async_io::Timer::after(PIN_LONG_PRESS).await;
                     if *timer_token.peek() != token {
@@ -2224,15 +2248,31 @@ pub fn drawing_surface(
                     let Some((px, py)) = *timer_start.peek() else {
                         return;
                     };
-                    let (world, now) = {
+                    let (world, refs) = {
                         let guard = lock(&timer_board);
                         let (wx, wy) = guard.viewport().screen_to_world(px, py);
-                        (crate::bookmark::WorldPoint::new(wx, wy), 0u64)
+                        let refs = match timer_anchor.as_ref() {
+                            Some(builder)
+                                if guard.background().attribution_mode()
+                                    == AttributionMode::PerPage =>
+                            {
+                                guard
+                                    .background()
+                                    .locate(wx, wy)
+                                    .map(|att| vec![builder(att)])
+                                    .unwrap_or_default()
+                            }
+                            _ => Vec::new(),
+                        };
+                        (crate::bookmark::WorldPoint::new(wx, wy), refs)
                     };
-                    let _ = now;
                     let created_at = crate::bookmark_ui::now_ms();
-                    let id =
-                        lock(&timer_board).add_bookmark(world, PIN_STICKY_WORLD_RADIUS, created_at);
+                    let id = lock(&timer_board).add_bookmark_with_refs(
+                        world,
+                        PIN_STICKY_WORLD_RADIUS,
+                        created_at,
+                        refs,
+                    );
                     timer_body.set(String::new());
                     timer_selected.set(Some(id));
                     // Consume the pending press so a sibling pointer_up
