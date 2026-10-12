@@ -21,9 +21,7 @@ use crate::app::{CanvasMount, canvas_root};
 use crate::bookmark::{Bookmark, SourceRef};
 use crate::home::open_library;
 use crate::library::ItemId;
-use crate::pdf_viewer::{
-    PDF_PLUGIN_ID, PdfAnchor, PdfPaneView, decode_pdf_anchor,
-};
+use crate::pdf_viewer::{PDF_PLUGIN_ID, PdfAnchor, decode_pdf_anchor};
 use crate::route::Route;
 
 /// Canvas + PDF bundle route backed by a
@@ -83,17 +81,23 @@ pub struct SourcePdfView {
 
 impl Component for SourcePdfView {
     fn render(&self) -> impl IntoElement {
+        let id = self.id;
         let router = RouterContext::get();
         let back_router = router;
         let header = plain_header(move || {
             let _ = back_router.push(Route::Home);
         });
+        let body = rect()
+            .width(Size::fill())
+            .height(Size::flex(1.0))
+            .child(canvas_root(CanvasMount::PdfBacked(id)));
         rect()
             .expanded()
             .background(Color::from_rgb(15, 15, 18))
             .vertical()
+            .content(Content::Flex)
             .child(header)
-            .child(PdfPaneView::new(self.id))
+            .child(body)
     }
 }
 
