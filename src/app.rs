@@ -254,9 +254,61 @@ impl Component for AppShell {
     }
 }
 
-pub(crate) fn canvas_root(mount: CanvasMount) -> impl IntoElement {
-    let mut zoom = use_state(|| 1.0_f32);
-    let board = use_hook(|| {
+/// Reactive signals the drawing chrome (toolbar, overlays, sidebar)
+/// binds to. Mirrors a Board's live state so the chrome can live above
+/// a split layout and still drive whichever pane is currently active.
+///
+/// All fields are freya [`State`]s — cheap to copy into closures. The
+/// active board slot is populated by [`canvas_body`] on mount and
+/// cleared on unmount; chrome rendering is a no-op while it is `None`
+/// so a transient state (route transition, focus switch) does not
+/// crash the overlays.
+#[derive(Clone, Copy)]
+pub(crate) struct ChromeState {
+    pub(crate) active_board: State<Option<Arc<Mutex<Board>>>>,
+    pub(crate) zoom: State<f32>,
+    pub(crate) selected: State<usize>,
+    pub(crate) scale: State<f32>,
+    pub(crate) layers_ver: State<u32>,
+    pub(crate) mode: State<InputMode>,
+    pub(crate) selected_bookmark: State<Option<crate::ids::BookmarkId>>,
+    pub(crate) bookmark_body: State<String>,
+    pub(crate) sidebar_open: State<bool>,
+    pub(crate) sidebar_query: State<String>,
+    pub(crate) sidebar_sort: State<crate::bookmark_ui::BookmarkSort>,
+}
+
+/// Allocate the chrome signals. Call once per shell that hosts a chrome
+/// instance — a route root for single-pane views, a workspace root
+/// above multiple panes.
+pub(crate) fn use_chrome_state() -> ChromeState {
+    ChromeState {
+        active_board: use_state(|| Option::<Arc<Mutex<Board>>>::None),
+        zoom: use_state(|| 1.0_f32),
+        selected: use_state(|| 0_usize),
+        scale: use_state(|| 1.0_f32),
+        layers_ver: use_state(|| 0_u32),
+        mode: use_state(|| InputMode::Draw),
+        selected_bookmark: use_state(|| Option::<crate::ids::BookmarkId>::None),
+        bookmark_body: use_state(String::new),
+        sidebar_open: use_state(|| true),
+        sidebar_query: use_state(String::new),
+        sidebar_sort: use_state(|| crate::bookmark_ui::BookmarkSort::Recent),
+    }
+}
+
+/// Mount a canvas pane: creates the per-mount [`Board`], wires input,
+/// publishes the handle to `state.active_board` so sibling chrome can
+/// drive it, and returns the Freya drawing surface. Chrome lives at a
+/// parent / workspace level — this fn contributes nothing visible
+/// beyond the strokes + background it paints.
+pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoElement {
+    let mut zoom = state.zoom;
+    let mut selected_setter = state.selected;
+    let mut scale_setter = state.scale;
+    let mut mode_setter = state.mode;
+    let mut active_setter = state.active_board;
+    let board = use_hook(move || {
         let board = Arc::new(Mutex::new(Board::default()));
         let platform = Platform::get();
         let (notifier, rx) = RedrawNotifier::new();
@@ -279,6 +331,15 @@ pub(crate) fn canvas_root(mount: CanvasMount) -> impl IntoElement {
             }
             g.set_input_mode(saved.input_mode());
             g.set_prefs_sink(prefs_tx);
+        }
+        // Seed chrome signals from the restored board state. Done
+        // after the prefs apply so overlays open on the correct
+        // preset / size / mode on first paint.
+        {
+            let g = lock(&board);
+            selected_setter.set(palette_index_for(g.current_kind()).unwrap_or(0));
+            scale_setter.set(g.current_size());
+            mode_setter.set(g.input_mode());
         }
         spawn_prefs_worker(Arc::clone(&board), prefs_rx);
         let zoom_board = Arc::clone(&board);
@@ -305,17 +366,22 @@ pub(crate) fn canvas_root(mount: CanvasMount) -> impl IntoElement {
         provide_context(Arc::clone(&board));
         // Register with the pen pump so stylus samples route to this
         // board. If a sibling pane later gets focus, its own
-        // `canvas_root` call overwrites `ACTIVE_BOARD` and this one
+        // `canvas_body` call overwrites `ACTIVE_BOARD` and this one
         // falls silent until it regains focus.
         pen_pump::set_active_board(&board);
         if let Some(id) = mount.item() {
             crate::active_boards::set(id, Arc::clone(&board));
         }
         crate::route::init_canvas_mount(mount, &board);
+        // Publish for the sibling chrome. Any previously-published
+        // board (a prior mount of the same shell) is overwritten —
+        // last-mount-wins matches the pen pump semantics.
+        active_setter.set(Some(Arc::clone(&board)));
         board
     });
     use_drop({
         let board = Arc::clone(&board);
+        let mut active_setter = state.active_board;
         move || {
             pen_pump::clear_active_board_if(&board);
             if let Some(id) = mount.item() {
@@ -325,29 +391,33 @@ pub(crate) fn canvas_root(mount: CanvasMount) -> impl IntoElement {
             // not deliver a trailing Up into the mounted board after
             // its view has already unmounted.
             lock(&board).cancel();
+            // Pointer-equality guard: a newer mount may already have
+            // claimed the slot during the route transition.
+            let same = active_setter
+                .peek()
+                .as_ref()
+                .map_or(false, |cur| Arc::ptr_eq(cur, &board));
+            if same {
+                active_setter.set(None);
+            }
         }
     });
+    let anchor_source = pdf_anchor_source_for(mount);
+    rect()
+        .width(Size::fill())
+        .height(Size::fill())
+        .child(drawing_surface(
+            &board,
+            state.selected_bookmark,
+            state.bookmark_body,
+            anchor_source,
+        ))
+}
 
-    let insets = use_safe_area_insets();
-
-    let selected = {
-        let board = Arc::clone(&board);
-        use_state(move || palette_index_for(lock(&board).current_kind()).unwrap_or(0))
-    };
-    // Ticks once per layer mutation. Every layer-panel `on_press`
-    // bumps it after mutating the board, which is what wakes freya's
-    // reactive re-run for the panel (the canvas has its own
-    // `RedrawNotifier` path).
-    let layers_ver = use_state(|| 0u32);
-    let scale = {
-        let board = Arc::clone(&board);
-        // Board already carries the restored preset (prefs load above
-        // ran in `use_hook`). Read the live size so the HUD lines up
-        // with whichever tool survived from the previous session.
-        use_state(move || lock(&board).current_size())
-    };
-    let pad = *insets.read();
-
+/// Toolbar + overlays stacked above the active pane. Bound to the
+/// board currently sitting in `state.active_board`; renders an empty
+/// pass-through until a canvas publishes one.
+pub(crate) fn canvas_chrome(state: ChromeState, pad: EdgeInsets) -> impl IntoElement {
     // Popup coordination shared across every palette button. `open_idx`
     // drives which popup is visible; `hovered_idx` is the current
     // hover target (used by the delay timer to detect cancellation);
@@ -374,60 +444,58 @@ pub(crate) fn canvas_root(mount: CanvasMount) -> impl IntoElement {
         color_special: use_state(|| Option::<Color>::None),
         color_picker_open: use_state(|| false),
     };
-
-    let mode = {
-        let board = Arc::clone(&board);
-        use_state(move || lock(&board).input_mode())
+    let Some(board) = state.active_board.read().clone() else {
+        // No pane mounted yet — render a zero-sized container so the
+        // caller's layout slot does not jump when the pane arrives.
+        return rect().width(Size::px(0.0)).height(Size::px(0.0));
     };
-
-    // Bookmark selection state. `selected_bookmark` drives the card
-    // overlay; `bookmark_body` is the textarea buffer. Both live at
-    // this level because the long-press gesture (inside
-    // `drawing_surface`) and the card renderer (in `bookmark_ui`)
-    // need to see / write the same state.
-    let selected_bookmark = use_state(|| Option::<crate::ids::BookmarkId>::None);
-    let bookmark_body = use_state(String::new);
-    // Sidebar state: open flag + search query buffer + sort mode.
-    let sidebar_open = use_state(|| true);
-    let sidebar_query = use_state(String::new);
-    let sidebar_sort = use_state(|| crate::bookmark_ui::BookmarkSort::Recent);
-
-    let anchor_source = pdf_anchor_source_for(mount);
-
     rect()
         .width(Size::fill())
         .height(Size::fill())
-        .content(Content::Flex)
-        .child(drawing_surface(
-            &board,
-            selected_bookmark,
-            bookmark_body,
-            anchor_source,
-        ))
+        .position(
+            Position::new_absolute()
+                .top(0.0)
+                .left(0.0)
+                .right(0.0)
+                .bottom(0.0),
+        )
+        .layer(Layer::Overlay)
         .child(back_overlay(&board, pad))
-        .child(palette_overlay(&board, selected, scale, pad, coords))
-        .child(layers_panel(&board, layers_ver, pad))
-        .child(mode_overlay(&board, mode, pad))
-        .child(zoom_overlay(&board, zoom, pad))
+        .child(palette_overlay(&board, state.selected, state.scale, pad, coords))
+        .child(layers_panel(&board, state.layers_ver, pad))
+        .child(mode_overlay(&board, state.mode, pad))
+        .child(zoom_overlay(&board, state.zoom, pad))
         .child(crate::bookmark_ui::bookmark_toggle_button(
-            sidebar_open,
+            state.sidebar_open,
             pad,
         ))
-        .maybe_child(sidebar_open.read().then(|| {
+        .maybe_child(state.sidebar_open.read().then(|| {
             crate::bookmark_ui::bookmark_sidebar(
                 &board,
-                selected_bookmark,
-                bookmark_body,
-                sidebar_query,
-                sidebar_sort,
+                state.selected_bookmark,
+                state.bookmark_body,
+                state.sidebar_query,
+                state.sidebar_sort,
                 pad,
             )
         }))
         .child(crate::bookmark_ui::bookmark_card_overlay(
             &board,
-            selected_bookmark,
-            bookmark_body,
+            state.selected_bookmark,
+            state.bookmark_body,
         ))
+}
+
+pub(crate) fn canvas_root(mount: CanvasMount) -> impl IntoElement {
+    let state = use_chrome_state();
+    let insets = use_safe_area_insets();
+    let pad = *insets.read();
+    rect()
+        .width(Size::fill())
+        .height(Size::fill())
+        .content(Content::Flex)
+        .child(canvas_body(mount, state))
+        .child(canvas_chrome(state, pad))
 }
 
 /// Top-left "back to home" pill. Snapshots the current doc, spawns a
