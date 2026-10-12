@@ -22,6 +22,7 @@ use freya::router::*;
 use crate::app::{CanvasMount, canvas_root};
 use crate::bookmark::{Bookmark, SourceRef, WorldPoint};
 use crate::components::pane_tree_view::{PaneTreeCallbacks, PaneTreeView};
+use crate::doc_linked_prefs::{self, DocLinkedPrefs};
 use crate::doc_op::DocOp;
 use crate::home::open_library;
 use crate::ids::BookmarkId;
@@ -49,7 +50,11 @@ impl Component for DocLinkedView {
         let refresh = use_state(|| 0u64);
         let scroll_ctrl = use_scroll_controller(ScrollConfig::default);
         let page_heights = use_state(Vec::<u32>::new);
-        let show_canvas = use_state(|| false);
+        // Per-item sidecar: show-canvas toggle + split-divider ratio.
+        // Loaded once at mount; subsequent toggles and resize-commits
+        // flow back through `persist`.
+        let loaded = use_hook(move || doc_linked_prefs::load(bundle));
+        let show_canvas = use_state(move || loaded.show_canvas);
         // Stable ids so the pane tree body callback can discriminate
         // which role (PDF viewer vs. canvas) owns a given leaf. Minted
         // once per mount via `use_hook`; subsequent renders reuse them
@@ -57,8 +62,18 @@ impl Component for DocLinkedView {
         // toggles and resize.
         let pdf_pane_id = use_hook(PaneId::new_v4);
         let canvas_pane_id = use_hook(PaneId::new_v4);
-        let split_ratio = use_state(|| 0.55_f32);
+        let split_ratio = use_state(move || loaded.split_ratio);
         let router = RouterContext::get();
+
+        let persist: Rc<dyn Fn()> = Rc::new(move || {
+            let prefs = DocLinkedPrefs {
+                show_canvas: *show_canvas.peek(),
+                split_ratio: *split_ratio.peek(),
+            };
+            if let Err(err) = doc_linked_prefs::save(bundle, prefs) {
+                log::warn!("save doc_linked prefs id={bundle}: {err}");
+            }
+        });
 
         use_hook({
             let mut bookmarks = bookmarks;
@@ -78,7 +93,7 @@ impl Component for DocLinkedView {
         let heights_setter = page_heights;
         let chip_cb = chip_tap_cb(scroll_ctrl, page_heights);
 
-        let header = header_bar(bundle, router, show_canvas);
+        let header = header_bar(bundle, router, show_canvas, Rc::clone(&persist));
         let strip = bookmark_strip(bookmarks, chip_cb);
 
         let layout = build_pane_layout(
@@ -90,11 +105,27 @@ impl Component for DocLinkedView {
         );
         let callbacks = PaneTreeCallbacks {
             on_tab_select: Callback::new(|_| {}),
-            on_tab_close: Callback::new(|_| {}),
+            on_tab_close: Callback::new({
+                let persist = Rc::clone(&persist);
+                let back_router = router;
+                let mut show_canvas = show_canvas;
+                move |(pane_id, _idx): (PaneId, usize)| {
+                    if pane_id == canvas_pane_id {
+                        show_canvas.set(false);
+                        persist();
+                    } else {
+                        let _ = back_router.push(Route::Home);
+                    }
+                }
+            }),
             on_tab_new: Callback::new(|_| {}),
             on_split_resize: Callback::new({
+                let persist = Rc::clone(&persist);
                 let mut ratio = split_ratio;
-                move |(_, new_ratio): (Vec<SplitSide>, f32)| ratio.set(new_ratio)
+                move |(_, new_ratio): (Vec<SplitSide>, f32)| {
+                    ratio.set(new_ratio);
+                    persist();
+                }
             }),
             on_tab_move: Callback::new(|_| {}),
             on_tab_split: Callback::new(|_| {}),
@@ -384,6 +415,7 @@ fn header_bar(
     bundle: ItemId,
     router: RouterContext,
     mut show_canvas: State<bool>,
+    persist: Rc<dyn Fn()>,
 ) -> Rect {
     let open_canvas_router = router;
     let open_full = move || {
@@ -445,6 +477,7 @@ fn header_bar(
                 .on_press(move |_| {
                     let next = !*show_canvas.peek();
                     show_canvas.set(next);
+                    persist();
                 })
                 .child(
                     label()
