@@ -449,17 +449,13 @@ pub(crate) fn canvas_chrome(state: ChromeState, pad: EdgeInsets) -> impl IntoEle
         // caller's layout slot does not jump when the pane arrives.
         return rect().width(Size::px(0.0)).height(Size::px(0.0));
     };
+    // Zero-sized float container: children carry their own
+    // `Position::new_absolute()` offsets so the chrome never covers
+    // the canvas beneath. A fill-size container at the Overlay layer
+    // would intercept every pointer event over the pane.
     rect()
-        .width(Size::fill())
-        .height(Size::fill())
-        .position(
-            Position::new_absolute()
-                .top(0.0)
-                .left(0.0)
-                .right(0.0)
-                .bottom(0.0),
-        )
-        .layer(Layer::Overlay)
+        .width(Size::px(0.0))
+        .height(Size::px(0.0))
         .child(back_overlay(&board, pad))
         .child(palette_overlay(&board, state.selected, state.scale, pad, coords))
         .child(layers_panel(&board, state.layers_ver, pad))
