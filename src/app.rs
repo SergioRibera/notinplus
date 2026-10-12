@@ -308,6 +308,9 @@ pub(crate) fn canvas_root(mount: CanvasMount) -> impl IntoElement {
         // `canvas_root` call overwrites `ACTIVE_BOARD` and this one
         // falls silent until it regains focus.
         pen_pump::set_active_board(&board);
+        if let Some(id) = mount.item() {
+            crate::active_boards::set(id, Arc::clone(&board));
+        }
         crate::route::init_canvas_mount(mount, &board);
         board
     });
@@ -315,6 +318,9 @@ pub(crate) fn canvas_root(mount: CanvasMount) -> impl IntoElement {
         let board = Arc::clone(&board);
         move || {
             pen_pump::clear_active_board_if(&board);
+            if let Some(id) = mount.item() {
+                crate::active_boards::clear_if(id, &board);
+            }
             // Drop any in-flight stroke so a tap mid-navigation does
             // not deliver a trailing Up into the mounted board after
             // its view has already unmounted.

@@ -9,6 +9,7 @@
 //! The runtime is auto-wired by [`istmo::runtime`] using the plugin
 //! manifests every dep's `build.rs` emits.
 
+pub mod active_boards;
 pub mod app;
 pub mod bookmark;
 pub mod bookmark_ui;

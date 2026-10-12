@@ -55,7 +55,7 @@ impl Component for DocLinkedView {
         let header = plain_header(move || {
             let _ = back_router.push(Route::Home);
         });
-        let chip_cb = chip_tap_cb();
+        let chip_cb = chip_tap_cb(bundle);
         let strip = bookmark_strip(bookmarks, chip_cb);
 
         let body = rect()
@@ -139,10 +139,24 @@ fn pdf_ref(bm: &Bookmark) -> Option<PdfAnchor> {
     })
 }
 
-/// Chip strip pan handler. Receives the target page index. For now a
-/// no-op — the Board viewport pan wiring lands next.
-fn chip_tap_cb() -> Callback<usize, ()> {
-    Callback::new(|_page: usize| {})
+/// Chip strip pan handler — pans the mounted board's viewport so
+/// `page`'s top edge sits near the surface top. Falls back to no-op
+/// when the board is not mounted (route transition) or the background
+/// has no pages (still loading).
+fn chip_tap_cb(bundle: ItemId) -> Callback<usize, ()> {
+    const TOP_PADDING_PX: f32 = 16.0;
+    Callback::new(move |page: usize| {
+        let Some(board) = crate::active_boards::get(bundle) else {
+            return;
+        };
+        let mut guard = crate::canvas::lock(&board);
+        let Some(entry) = guard.background().pages().get(page).copied() else {
+            return;
+        };
+        let mut vp = guard.viewport();
+        vp.ty = (-entry.rect.min_y).mul_add(vp.scale, TOP_PADDING_PX);
+        guard.set_viewport(vp);
+    })
 }
 
 fn bookmark_strip(
