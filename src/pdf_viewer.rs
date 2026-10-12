@@ -285,8 +285,8 @@ fn page_list(
         None => ScrollView::new(),
     };
     rect()
-        .width(Size::fill())
-        .height(Size::fill())
+        .width(Size::flex(1.))
+        .height(Size::flex(1.))
         .background(Color::from_rgb(22, 22, 28))
         .child(
             sv.direction(Direction::Vertical)

@@ -198,7 +198,7 @@ pub fn bookmark_toggle_button(mut open: State<bool>, pad: EdgeInsets) -> impl In
     };
     rect()
         .position(
-            Position::new_global()
+            Position::new_absolute()
                 .top(pad.top + 8.0)
                 .right(pad.right + 8.0),
         )
@@ -229,17 +229,12 @@ pub fn bookmark_toggle_button(mut open: State<bool>, pad: EdgeInsets) -> impl In
 #[must_use]
 pub fn bookmark_sidebar(
     board: &Arc<Mutex<Board>>,
-    open: State<bool>,
     mut selected: State<Option<BookmarkId>>,
     mut body_buffer: State<String>,
     query: State<String>,
     sort: State<BookmarkSort>,
     pad: EdgeInsets,
 ) -> impl IntoElement {
-    if !*open.read() {
-        return rect().width(Size::px(0.0)).height(Size::px(0.0));
-    }
-
     let entries = {
         let guard = lock(board);
         let needle = query.read().trim().to_ascii_lowercase();
@@ -385,13 +380,14 @@ pub fn bookmark_sidebar(
 
     rect()
         .position(
-            Position::new_global()
-                .top(pad.top + 48.0)
-                .right(pad.right + 8.0)
-                .bottom(pad.bottom + 8.0),
+            Position::new_absolute()
+                .top(pad.top)
+                .right(pad.right)
+                .bottom(pad.bottom),
         )
-        .layer(Layer::Overlay)
+        .layer(Layer::OverlayLevel(5))
         .width(Size::px(SIDEBAR_WIDTH))
+        .height(Size::percent(100.))
         .background(Color::from_rgb(28, 28, 32))
         .with_corner_radius(10.0)
         .child(header)

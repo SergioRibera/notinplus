@@ -93,7 +93,7 @@ pub struct PaneTreeView {
     layout: PaneLayout,
     callbacks: PaneTreeCallbacks,
     tab_labels: Callback<PaneTab, String>,
-    tab_body: Callback<PaneTab, Element>,
+    tab_body: Callback<(PaneId, PaneTab), Element>,
 }
 
 impl PartialEq for PaneTreeView {
@@ -110,15 +110,17 @@ impl PaneTreeView {
     /// `tab_labels` renders a human-readable name per tab — the shell
     /// supplies it so this component stays agnostic of the library.
     /// `tab_body` renders the active tab's body [`Element`] (canvas,
-    /// PDF viewer, mind map, etc.). Each pane's body is produced lazily
-    /// per render, so switching tabs or splitting mounts a fresh
-    /// component tree in that pane.
+    /// PDF viewer, mind map, etc.) and receives the pane id alongside
+    /// the tab so shells that mount the same item under different
+    /// roles per pane (e.g. doc-linked's PDF + canvas) can discriminate.
+    /// Each pane's body is produced lazily per render, so switching
+    /// tabs or splitting mounts a fresh component tree in that pane.
     #[must_use]
     pub fn new(
         layout: PaneLayout,
         callbacks: PaneTreeCallbacks,
         tab_labels: impl Into<Callback<PaneTab, String>>,
-        tab_body: impl Into<Callback<PaneTab, Element>>,
+        tab_body: impl Into<Callback<(PaneId, PaneTab), Element>>,
     ) -> Self {
         Self {
             layout,
@@ -146,7 +148,7 @@ fn render_node(
     path: Vec<SplitSide>,
     callbacks: &PaneTreeCallbacks,
     tab_labels: &Callback<PaneTab, String>,
-    tab_body: &Callback<PaneTab, Element>,
+    tab_body: &Callback<(PaneId, PaneTab), Element>,
 ) -> Element {
     match node {
         PaneLayout::Leaf(pane) => LeafNode {
@@ -187,7 +189,7 @@ struct SplitNode {
     second: PaneLayout,
     callbacks: PaneTreeCallbacks,
     tab_labels: Callback<PaneTab, String>,
-    tab_body: Callback<PaneTab, Element>,
+    tab_body: Callback<(PaneId, PaneTab), Element>,
 }
 
 impl std::fmt::Debug for SplitNode {
@@ -353,7 +355,7 @@ struct LeafNode {
     pane: Pane,
     callbacks: PaneTreeCallbacks,
     tab_labels: Callback<PaneTab, String>,
-    tab_body: Callback<PaneTab, Element>,
+    tab_body: Callback<(PaneId, PaneTab), Element>,
 }
 
 impl std::fmt::Debug for LeafNode {
@@ -412,7 +414,7 @@ impl Component for LeafNode {
 
         let active_tab = self.pane.tabs.get(self.pane.active_tab as usize).copied();
         let body_inner = match active_tab {
-            Some(tab) => self.tab_body.call(tab),
+            Some(tab) => self.tab_body.call((self.pane.id, tab)),
             None => leaf_body_empty(self.pane.id).into_element(),
         };
         let mut body = rect()
@@ -569,8 +571,8 @@ mod tests {
         }
     }
 
-    fn stub_body_cb() -> Callback<PaneTab, Element> {
-        Callback::new(|_: PaneTab| rect().into_element())
+    fn stub_body_cb() -> Callback<(PaneId, PaneTab), Element> {
+        Callback::new(|_: (PaneId, PaneTab)| rect().into_element())
     }
 
     #[test]

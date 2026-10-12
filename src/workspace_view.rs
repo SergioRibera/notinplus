@@ -434,9 +434,10 @@ fn pane_tree(
             .unwrap_or_else(|| MISSING_TITLE.to_owned())
     });
     let body_kinds = kinds;
-    let body_cb = Callback::<PaneTab, Element>::new(move |tab: PaneTab| {
-        tab_body_element(tab.item, body_kinds.get(&tab.item).copied())
-    });
+    let body_cb =
+        Callback::<(PaneId, PaneTab), Element>::new(move |(_, tab): (PaneId, PaneTab)| {
+            tab_body_element(tab.item, body_kinds.get(&tab.item).copied())
+        });
     rect()
         .width(Size::fill())
         .height(Size::flex(1.0))

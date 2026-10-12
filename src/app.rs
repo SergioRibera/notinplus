@@ -29,6 +29,8 @@ use crate::plugins;
 use crate::prefs;
 use crate::ui_mask::{self, UiRegion};
 
+const CANVAS_PADDING: f32 = 20.0;
+
 /// Which flavour of mount the surrounding [`canvas_root`] call represents.
 /// Drives per-mount side effects (doc load, PDF background) without
 /// forcing every caller to re-implement the hook plumbing.
@@ -354,13 +356,14 @@ pub(crate) fn canvas_root(mount: CanvasMount) -> impl IntoElement {
     let selected_bookmark = use_state(|| Option::<crate::ids::BookmarkId>::None);
     let bookmark_body = use_state(String::new);
     // Sidebar state: open flag + search query buffer + sort mode.
-    let sidebar_open = use_state(|| false);
+    let sidebar_open = use_state(|| true);
     let sidebar_query = use_state(String::new);
     let sidebar_sort = use_state(|| crate::bookmark_ui::BookmarkSort::Recent);
 
     rect()
         .width(Size::fill())
         .height(Size::fill())
+        .content(Content::Flex)
         .child(drawing_surface(&board, selected_bookmark, bookmark_body))
         .child(back_overlay(&board, pad))
         .child(palette_overlay(&board, selected, scale, pad, coords))
@@ -371,15 +374,16 @@ pub(crate) fn canvas_root(mount: CanvasMount) -> impl IntoElement {
             sidebar_open,
             pad,
         ))
-        .child(crate::bookmark_ui::bookmark_sidebar(
-            &board,
-            sidebar_open,
-            selected_bookmark,
-            bookmark_body,
-            sidebar_query,
-            sidebar_sort,
-            pad,
-        ))
+        .maybe_child(sidebar_open.read().then(|| {
+            crate::bookmark_ui::bookmark_sidebar(
+                &board,
+                selected_bookmark,
+                bookmark_body,
+                sidebar_query,
+                sidebar_sort,
+                pad,
+            )
+        }))
         .child(crate::bookmark_ui::bookmark_card_overlay(
             &board,
             selected_bookmark,
@@ -395,7 +399,7 @@ fn back_overlay(board: &Arc<Mutex<Board>>, pad: EdgeInsets) -> impl IntoElement 
     let board = Arc::clone(board);
     rect()
         .position(
-            Position::new_global()
+            Position::new_absolute()
                 .top(pad.top + 8.0)
                 .left(pad.left + 8.0),
         )
@@ -452,8 +456,8 @@ fn mode_overlay(
     };
     rect()
         .position(
-            Position::new_global()
-                .bottom(pad.bottom + 8.0)
+            Position::new_absolute()
+                .bottom(pad.bottom + CANVAS_PADDING + 8.0)
                 .left(pad.left + 8.0),
         )
         .padding((6.0, 10.0))
@@ -494,8 +498,8 @@ fn zoom_overlay(board: &Arc<Mutex<Board>>, zoom: State<f32>, pad: EdgeInsets) ->
 
     rect()
         .position(
-            Position::new_global()
-                .bottom(pad.bottom + 8.0)
+            Position::new_absolute()
+                .bottom(pad.bottom + CANVAS_PADDING + 8.0)
                 .right(pad.right + 8.0),
         )
         .horizontal()
@@ -524,7 +528,7 @@ fn palette_overlay(
     // bar / notch on Android and iOS.
     let mut row = rect()
         .position(
-            Position::new_global()
+            Position::new_absolute()
                 .top(pad.top + 8.0)
                 .left(pad.left + 48.0),
         )
@@ -828,8 +832,8 @@ fn layers_panel(
 
     let mut col = rect()
         .position(
-            Position::new_global()
-                .top(pad.top + 8.0)
+            Position::new_absolute()
+                .top(pad.top + 24.0 + 8.0)
                 .right(pad.right + 8.0),
         )
         .vertical()

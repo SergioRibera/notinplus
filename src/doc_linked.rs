@@ -19,11 +19,15 @@ use freya::icons::lucide as icons;
 use freya::prelude::*;
 use freya::router::*;
 
+use crate::app::{CanvasMount, canvas_root};
 use crate::bookmark::{Bookmark, SourceRef, WorldPoint};
+use crate::components::pane_tree_view::{PaneTreeCallbacks, PaneTreeView};
 use crate::doc_op::DocOp;
 use crate::home::open_library;
 use crate::ids::BookmarkId;
-use crate::library::ItemId;
+use crate::library::{
+    ItemId, Pane, PaneId, PaneLayout, PaneTab, SplitOrientation, SplitSide,
+};
 use crate::pdf_viewer::{
     PDF_PLUGIN_ID, PdfAnchor, PdfPaneView, decode_pdf_anchor, encode_pdf_anchor,
     scroll_offset_for_page,
@@ -46,6 +50,14 @@ impl Component for DocLinkedView {
         let scroll_ctrl = use_scroll_controller(ScrollConfig::default);
         let page_heights = use_state(Vec::<u32>::new);
         let show_canvas = use_state(|| false);
+        // Stable ids so the pane tree body callback can discriminate
+        // which role (PDF viewer vs. canvas) owns a given leaf. Minted
+        // once per mount via `use_hook`; subsequent renders reuse them
+        // so the subcomponents keep their state across show/hide
+        // toggles and resize.
+        let pdf_pane_id = use_hook(PaneId::new_v4);
+        let canvas_pane_id = use_hook(PaneId::new_v4);
+        let split_ratio = use_state(|| 0.55_f32);
         let router = RouterContext::get();
 
         use_hook({
@@ -64,33 +76,95 @@ impl Component for DocLinkedView {
 
         let on_tap = page_tap_cb(bundle, toast, refresh);
         let heights_setter = page_heights;
-        let viewer = PdfPaneView::new(bundle)
-            .on_page_tap(on_tap)
-            .scroll_controller(scroll_ctrl)
-            .on_pages_loaded(Callback::new(move |heights: Vec<u32>| {
-                let mut h = heights_setter;
-                h.set(heights);
-            }));
         let chip_cb = chip_tap_cb(scroll_ctrl, page_heights);
 
         let header = header_bar(bundle, router, show_canvas);
         let strip = bookmark_strip(bookmarks, chip_cb);
 
-        let main = if *show_canvas.read() {
-            split_body(bundle, viewer, strip, router)
-        } else {
-            viewer_only(viewer, strip)
+        let layout = build_pane_layout(
+            *show_canvas.read(),
+            pdf_pane_id,
+            canvas_pane_id,
+            *split_ratio.read(),
+            bundle,
+        );
+        let callbacks = PaneTreeCallbacks {
+            on_tab_select: Callback::new(|_| {}),
+            on_tab_close: Callback::new(|_| {}),
+            on_tab_new: Callback::new(|_| {}),
+            on_split_resize: Callback::new({
+                let mut ratio = split_ratio;
+                move |(_, new_ratio): (Vec<SplitSide>, f32)| ratio.set(new_ratio)
+            }),
+            on_tab_move: Callback::new(|_| {}),
+            on_tab_split: Callback::new(|_| {}),
         };
+        let label_cb = Callback::<PaneTab, String>::new(move |_: PaneTab| String::new());
+        let body_cb =
+            Callback::<(PaneId, PaneTab), Element>::new(move |(pane_id, _): (PaneId, PaneTab)| {
+                if pane_id == pdf_pane_id {
+                    let on_tap = on_tap.clone();
+                    PdfPaneView::new(bundle)
+                        .on_page_tap(on_tap)
+                        .scroll_controller(scroll_ctrl)
+                        .on_pages_loaded(Callback::new(move |heights: Vec<u32>| {
+                            let mut h = heights_setter;
+                            h.set(heights);
+                        }))
+                        .into_element()
+                } else {
+                    canvas_root(CanvasMount::Item(bundle)).into_element()
+                }
+            });
 
         let overlay = toast_overlay(toast);
+        let tree = rect()
+            .width(Size::fill())
+            .height(Size::flex(1.0))
+            .child(PaneTreeView::new(layout, callbacks, label_cb, body_cb));
 
         rect()
             .expanded()
             .background(Color::from_rgb(15, 15, 18))
             .vertical()
+            .content(Content::Flex)
             .child(header)
-            .child(main)
+            .child(tree)
+            .child(strip)
             .child(overlay)
+    }
+}
+
+/// Build the pane-tree layout for the current show/hide toggle state.
+/// `show_canvas = false` → single PDF leaf; `true` → horizontal split
+/// (PDF on the first side, canvas on the second). Both leaves carry a
+/// synthetic [`PaneTab`] pointing at `bundle` so the tree's selection /
+/// tab-count invariants hold even though we never persist this layout.
+fn build_pane_layout(
+    show_canvas: bool,
+    pdf_pane_id: PaneId,
+    canvas_pane_id: PaneId,
+    ratio: f32,
+    bundle: ItemId,
+) -> PaneLayout {
+    let pdf = PaneLayout::Leaf(Pane {
+        id: pdf_pane_id,
+        tabs: vec![PaneTab { item: bundle }],
+        active_tab: 0,
+    });
+    if !show_canvas {
+        return pdf;
+    }
+    let canvas = PaneLayout::Leaf(Pane {
+        id: canvas_pane_id,
+        tabs: vec![PaneTab { item: bundle }],
+        active_tab: 0,
+    });
+    PaneLayout::Split {
+        orientation: SplitOrientation::Horizontal,
+        ratio,
+        first: Box::new(pdf),
+        second: Box::new(canvas),
     }
 }
 
@@ -238,47 +312,6 @@ async fn create_pdf_bookmark(bundle: ItemId, page: usize) -> Result<(), String> 
     Ok(())
 }
 
-fn viewer_only(viewer: PdfPaneView, strip: Rect) -> Rect {
-    rect()
-        .width(Size::fill())
-        .height(Size::flex(1.0))
-        .vertical()
-        .child(
-            rect()
-                .width(Size::fill())
-                .height(Size::flex(1.0))
-                .child(viewer),
-        )
-        .child(strip)
-}
-
-fn split_body(
-    bundle: ItemId,
-    viewer: PdfPaneView,
-    strip: Rect,
-    router: RouterContext,
-) -> Rect {
-    rect()
-        .width(Size::fill())
-        .height(Size::flex(1.0))
-        .horizontal()
-        .child(canvas_placeholder(bundle, router))
-        .child(divider())
-        .child(
-            rect()
-                .width(Size::flex(1.0))
-                .height(Size::fill())
-                .vertical()
-                .child(
-                    rect()
-                        .width(Size::fill())
-                        .height(Size::flex(1.0))
-                        .child(viewer),
-                )
-                .child(strip),
-        )
-}
-
 fn bookmark_strip(
     bookmarks: State<Vec<BookmarkChip>>,
     chip_cb: Callback<usize, ()>,
@@ -347,53 +380,6 @@ fn bookmark_chip(chip: BookmarkChip, chip_cb: Callback<usize, ()>) -> Rect {
     node
 }
 
-fn canvas_placeholder(bundle: ItemId, router: RouterContext) -> Rect {
-    let open_router = router;
-    rect()
-        .width(Size::flex(1.0))
-        .height(Size::fill())
-        .background(Color::from_rgb(26, 26, 32))
-        .vertical()
-        .center()
-        .spacing(14.0)
-        .child(
-            label()
-                .color(Color::from_rgb(230, 230, 240))
-                .font_size(14.0)
-                .text("Lienzo del documento ligado"),
-        )
-        .child(
-            label()
-                .color(Color::from_rgb(150, 150, 160))
-                .font_size(11.0)
-                .text("Toca Abrir lienzo para dibujar en pantalla completa"),
-        )
-        .child(
-            rect()
-                .height(Size::px(36.0))
-                .padding((0.0, 20.0))
-                .center()
-                .with_corner_radius(18.0)
-                .background(Color::from_rgb(55, 90, 180))
-                .on_press(move |_| {
-                    let _ = open_router.push(Route::CanvasView { id: bundle });
-                })
-                .child(
-                    label()
-                        .color(Color::from_rgb(240, 245, 255))
-                        .font_size(13.0)
-                        .text("Abrir lienzo"),
-                ),
-        )
-}
-
-fn divider() -> Rect {
-    rect()
-        .width(Size::px(1.0))
-        .height(Size::fill())
-        .background(Color::from_rgb(40, 40, 48))
-}
-
 fn header_bar(
     bundle: ItemId,
     router: RouterContext,
@@ -429,6 +415,7 @@ fn header_bar(
         .width(Size::fill())
         .height(Size::px(44.0))
         .padding((0.0, 12.0))
+        .content(Content::Flex)
         .background(Color::from_rgb(18, 18, 22))
         .cross_align(Alignment::Center)
         .spacing(8.0)

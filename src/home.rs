@@ -220,7 +220,7 @@ fn top_bar(
     };
     let router = RouterContext::get();
     let open_workspace = active_workspace_id.map(|id| {
-        icon_button(icons::plus()).on_press(move |_| {
+        icon_button(icons::square_arrow_out_up_right()).on_press(move |_| {
             _ = router.push(crate::route::Route::WorkspaceView { id });
         })
     });
