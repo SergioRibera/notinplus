@@ -1002,9 +1002,7 @@ where
 {
     let cover = rect()
         .width(Size::px(130.0))
-        .height(Size::px(160.0))
-        .background(rgba_to_color(tint))
-        .with_corner_radius(8.0)
+        .height(Size::px(130.0))
         .center()
         .child(
             SvgViewer::new(if is_folder {
@@ -1012,9 +1010,10 @@ where
             } else {
                 icons::notebook()
             })
-            .color(Color::from_argb(180, 20, 20, 20))
-            .width(Size::px(44.0))
-            .height(Size::px(44.0)),
+            .color(rgba_to_color(tint))
+            .fill(rgba_to_color(tint))
+            .width(Size::percent(80.0))
+            .height(Size::percent(80.0)),
         );
 
     let mut column = rect()
