@@ -14,7 +14,11 @@ publish = false
 
 [features]
 default = []
-dev = ["freya/hotreload"]
+# Hot reload is driven by `dx serve --hot-patch --features hotreload`.
+# Freya gates its subsecond wrap-sites + patch handler on this flag, so
+# the feature name must match what the dioxus-cli invocation passes or
+# `dx` applies the patch but the UI never re-renders.
+hotreload = ["freya/hotreload"]
 
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]
