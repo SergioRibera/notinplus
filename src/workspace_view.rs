@@ -144,8 +144,11 @@ fn workspace_shell(
     router: RouterContext,
 ) -> Rect {
     let focused = snap.workspace.focused_pane;
+    let chrome_state = crate::app::use_chrome_state();
+    let insets = crate::hooks::use_safe_area_insets();
+    let pad = *insets.read();
     let header = header_bar(workspace_id, handle.clone(), focused, load_state, router, &snap);
-    let body = pane_tree(workspace_id, handle, load_state, &snap);
+    let body = pane_tree(workspace_id, handle, load_state, &snap, chrome_state);
     let keyboard = keyboard_shortcuts(workspace_id, handle_clone_for_keys(&snap, &load_state));
     rect()
         .expanded()
@@ -154,6 +157,7 @@ fn workspace_shell(
         .on_global_key_down(keyboard)
         .child(header)
         .child(body)
+        .child(crate::app::canvas_chrome(chrome_state, pad))
 }
 
 fn handle_clone_for_keys(
@@ -415,6 +419,7 @@ fn pane_tree(
     handle: LibHandle,
     load_state: State<LoadState>,
     snap: &WorkspaceSnapshot,
+    chrome_state: crate::app::ChromeState,
 ) -> Rect {
     let layout = snap.workspace.layout.clone();
     let titles = snap.titles.clone();
@@ -436,7 +441,11 @@ fn pane_tree(
     let body_kinds = kinds;
     let body_cb =
         Callback::<(PaneId, PaneTab), Element>::new(move |(_, tab): (PaneId, PaneTab)| {
-            tab_body_element(tab.item, body_kinds.get(&tab.item).copied())
+            tab_body_element(
+                tab.item,
+                body_kinds.get(&tab.item).copied(),
+                chrome_state,
+            )
         });
     rect()
         .width(Size::fill())
@@ -450,14 +459,28 @@ fn pane_tree(
 /// (new per-pane `Board`, autosave worker, PDF viewer state, etc.).
 /// Unknown kinds fall through to the plain canvas — matches the fallback
 /// the old `tab_open_cb` picked for deleted-on-another-device items.
-fn tab_body_element(id: ItemId, kind: Option<ItemKind>) -> Element {
-    use crate::app::{CanvasMount, canvas_root};
+///
+/// Canvas-flavoured tabs mount a bare [`canvas_body`](crate::app::canvas_body)
+/// so the workspace-level chrome (toolbar, overlays, bookmark sidebar)
+/// drives whichever pane last became active. DocLinked and SourcePdf
+/// still ship their own self-contained shells pending their own
+/// chrome-decoupling pass.
+fn tab_body_element(
+    id: ItemId,
+    kind: Option<ItemKind>,
+    chrome_state: crate::app::ChromeState,
+) -> Element {
+    use crate::app::{CanvasMount, canvas_body};
     use crate::doc_linked::{DocLinkedView, SourcePdfView};
     match kind {
-        Some(ItemKind::PdfCanvas) => canvas_root(CanvasMount::PdfBacked(id)).into_element(),
+        Some(ItemKind::PdfCanvas) => {
+            canvas_body(CanvasMount::PdfBacked(id), chrome_state).into_element()
+        }
         Some(ItemKind::SourcePdf) => SourcePdfView { id }.into_element(),
         Some(ItemKind::DocLinked) => DocLinkedView { id }.into_element(),
-        Some(ItemKind::Canvas) | None => canvas_root(CanvasMount::Item(id)).into_element(),
+        Some(ItemKind::Canvas) | None => {
+            canvas_body(CanvasMount::Item(id), chrome_state).into_element()
+        }
     }
 }
 
