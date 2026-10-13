@@ -1972,6 +1972,74 @@ pub(crate) async fn open_library() -> Result<LibHandle, String> {
     Ok(Arc::new(AsyncMutex::new(lib)))
 }
 
+/// Open the canvas-config sheet pre-filled with the current state of
+/// `item_id`. Resolves name / color / background / tags from the
+/// library, then opens the same `CanvasCreateSheet` the create flow
+/// uses — the sheet grew `default_*` + `title_override` + `submit_label`
+/// builders so this edit flow reuses it instead of maintaining a
+/// parallel component. On confirm, applies the changes via the
+/// `rename_item` / `set_item_*` setters.
+pub(crate) fn open_canvas_edit_sheet(item_id: ItemId) {
+    use crate::components::{CanvasCreateSheet, CreateCanvasRequest};
+    spawn(async move {
+        let handle = match open_library().await {
+            Ok(h) => h,
+            Err(err) => {
+                log::error!("open library on edit sheet: {err}");
+                return;
+            }
+        };
+        let (item, current_tag_names, available_tag_names) = {
+            let lib = handle.lock().await;
+            let Some(item) = lib.index().item(item_id).cloned() else {
+                log::error!("edit sheet: item {item_id} not found");
+                return;
+            };
+            let current = item
+                .tags
+                .iter()
+                .filter_map(|tid| lib.index().tag(*tid).map(|t| t.name.clone()))
+                .collect::<Vec<_>>();
+            let available = lib.tags().iter().map(|t| t.name.clone()).collect::<Vec<_>>();
+            (item, current, available)
+        };
+        let default_color = item.color.map(rgba_to_color);
+        let kind = item.kind;
+        let apply_handle = handle.clone();
+        CanvasCreateSheet::new(move |req: CreateCanvasRequest| {
+            let handle = apply_handle.clone();
+            spawn(async move {
+                let mut lib = handle.lock().await;
+                let tag_ids = resolve_tag_names(&mut lib, &req.tag_names).await;
+                if let Err(err) = lib.rename_item(item_id, &req.name).await {
+                    log::error!("rename_item: {err}");
+                }
+                if let Err(err) = lib
+                    .set_item_color(item_id, Some(color_to_rgba(req.color)))
+                    .await
+                {
+                    log::error!("set_item_color: {err}");
+                }
+                if let Err(err) = lib.set_item_background(item_id, req.background).await {
+                    log::error!("set_item_background: {err}");
+                }
+                if let Err(err) = lib.set_item_tags(item_id, tag_ids).await {
+                    log::error!("set_item_tags: {err}");
+                }
+            });
+        })
+        .kind(kind)
+        .default_name(item.name.clone())
+        .default_color(default_color)
+        .default_background(item.background)
+        .default_tags(current_tag_names)
+        .available_tags(available_tag_names)
+        .title_override("Editar lienzo")
+        .submit_label("Guardar")
+        .open();
+    });
+}
+
 /// Launch the platform file-picker, read the picked PDF into memory,
 /// and open the canvas-create sheet pre-filled with its name. `router`
 /// must be captured in the caller's component scope — this async body
