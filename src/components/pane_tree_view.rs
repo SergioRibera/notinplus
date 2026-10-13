@@ -229,14 +229,18 @@ impl Component for SplitNode {
                     if w <= 0.0 {
                         return 0.5;
                     }
-                    ((cursor.x - a.min_x()) / w).clamp(f64::from(MIN_RATIO), 1.0 - f64::from(MIN_RATIO)) as f32
+                    ((cursor.x - a.min_x()) / w)
+                        .clamp(f64::from(MIN_RATIO), 1.0 - f64::from(MIN_RATIO))
+                        as f32
                 }
                 SplitOrientation::Vertical => {
                     let h = a.height();
                     if h <= 0.0 {
                         return 0.5;
                     }
-                    ((cursor.y - a.min_y()) / h).clamp(f64::from(MIN_RATIO), 1.0 - f64::from(MIN_RATIO)) as f32
+                    ((cursor.y - a.min_y()) / h)
+                        .clamp(f64::from(MIN_RATIO), 1.0 - f64::from(MIN_RATIO))
+                        as f32
                 }
             }
         };
@@ -418,44 +422,27 @@ impl Component for LeafNode {
             None => leaf_body_empty(self.pane.id).into_element(),
         };
         let mut body = rect()
-            .width(Size::fill())
+            .width(Size::percent(100.))
             .height(Size::flex(1.0))
             .content(Content::Flex)
             .child(body_inner);
 
         if drag_active {
             let split_cb = self.callbacks.on_tab_split.clone();
-            body = body
-                .child(edge_drop_zone(
-                    pane_id,
-                    SplitEdge::Top,
-                    split_cb.clone(),
-                    hover_top,
-                ))
-                .child(edge_drop_zone(
-                    pane_id,
-                    SplitEdge::Bottom,
-                    split_cb.clone(),
-                    hover_bottom,
-                ))
-                .child(edge_drop_zone(
-                    pane_id,
-                    SplitEdge::Left,
-                    split_cb.clone(),
-                    hover_left,
-                ))
-                .child(edge_drop_zone(
-                    pane_id,
-                    SplitEdge::Right,
-                    split_cb,
-                    hover_right,
-                ));
+            body = body.child(edge_drop_overlay(
+                pane_id,
+                split_cb,
+                hover_top,
+                hover_bottom,
+                hover_left,
+                hover_right,
+            ));
         }
 
         rect()
             .vertical()
-            .width(Size::fill())
-            .height(Size::fill())
+            .width(Size::percent(100.))
+            .height(Size::percent(100.))
             .content(Content::Flex)
             .background(Color::from_rgb(22, 22, 28))
             .child(bar)
@@ -481,37 +468,93 @@ fn leaf_body_empty(id: PaneId) -> Rect {
         )
 }
 
-/// Edge overlay drop zone. The hover-highlight state is lifted to the
-/// caller so freya's hook rules (same number of hook calls per render)
-/// stay satisfied — the overlay is conditional on an active drag, so
-/// a `use_state` *inside* this function would be called a different
-/// number of times across renders.
-fn edge_drop_zone(
+/// Single-rect overlay that lays its four edge drop zones out via flex
+/// bands rather than four absolute siblings — mirrors the pattern
+/// `freya-components::docking` uses. One absolute Overlay-layer rect
+/// fills the pane body, split vertically into Top / Middle / Bottom
+/// bands; the middle row carries Left / spacer / Right.
+///
+/// Hover state for each edge is lifted to the caller so freya's hook
+/// rules (same hook count every render) hold — the overlay only mounts
+/// while a drag is active.
+fn edge_drop_overlay(
+    dst_pane: PaneId,
+    on_split: Callback<(PaneId, usize, PaneId, SplitEdge), ()>,
+    hover_top: State<bool>,
+    hover_bottom: State<bool>,
+    hover_left: State<bool>,
+    hover_right: State<bool>,
+) -> Rect {
+    let middle = rect()
+        .width(Size::fill())
+        .height(Size::flex(1.0))
+        .horizontal()
+        .content(Content::Flex)
+        .child(edge_drop_band(
+            dst_pane,
+            SplitEdge::Left,
+            Size::px(EDGE_DROP_PX),
+            Size::fill(),
+            on_split.clone(),
+            hover_left,
+        ))
+        // Transparent pass-through spacer so clicks on the pane body
+        // between the edges still reach the content underneath.
+        .child(
+            rect()
+                .width(Size::flex(1.0))
+                .height(Size::fill())
+                .interactive(false),
+        )
+        .child(edge_drop_band(
+            dst_pane,
+            SplitEdge::Right,
+            Size::px(EDGE_DROP_PX),
+            Size::fill(),
+            on_split.clone(),
+            hover_right,
+        ));
+
+    rect()
+        .position(Position::new_absolute().top(0.0).left(0.0))
+        .layer(Layer::Overlay)
+        .width(Size::percent(100.0))
+        .height(Size::percent(100.0))
+        .vertical()
+        .content(Content::Flex)
+        .child(edge_drop_band(
+            dst_pane,
+            SplitEdge::Top,
+            Size::fill(),
+            Size::px(EDGE_DROP_PX),
+            on_split.clone(),
+            hover_top,
+        ))
+        .child(middle)
+        .child(edge_drop_band(
+            dst_pane,
+            SplitEdge::Bottom,
+            Size::fill(),
+            Size::px(EDGE_DROP_PX),
+            on_split,
+            hover_bottom,
+        ))
+}
+
+/// One band of [`edge_drop_overlay`]: a sized DropZone with its own hover
+/// highlight. Returned as `Rect` so it slots into either flex direction.
+fn edge_drop_band(
     dst_pane: PaneId,
     edge: SplitEdge,
+    width: Size,
+    height: Size,
     on_split: Callback<(PaneId, usize, PaneId, SplitEdge), ()>,
     hovered: State<bool>,
 ) -> Rect {
-    let position = match edge {
-        SplitEdge::Top => Position::new_absolute()
-            .top(0.0)
-            .left(EDGE_DROP_PX)
-            .right(EDGE_DROP_PX),
-        SplitEdge::Bottom => Position::new_absolute()
-            .bottom(0.0)
-            .left(EDGE_DROP_PX)
-            .right(EDGE_DROP_PX),
-        SplitEdge::Left => Position::new_absolute().top(0.0).bottom(0.0).left(0.0),
-        SplitEdge::Right => Position::new_absolute().top(0.0).bottom(0.0).right(0.0),
-    };
-    let (w, h) = match edge {
-        SplitEdge::Top | SplitEdge::Bottom => (Size::fill(), Size::px(EDGE_DROP_PX)),
-        SplitEdge::Left | SplitEdge::Right => (Size::px(EDGE_DROP_PX), Size::fill()),
-    };
     let highlight = if *hovered.read() {
-        Color::from_argb(140, 90, 140, 220)
+        Color::from_argb(170, 110, 160, 240)
     } else {
-        Color::from_argb(60, 60, 90, 140)
+        Color::from_argb(110, 80, 120, 190)
     };
     let on_drag_over = {
         let mut hovered = hovered;
@@ -522,33 +565,17 @@ fn edge_drop_zone(
         .height(Size::fill())
         .background(highlight);
 
-    DropZone::new(
+    let drop = DropZone::new(
         zone_body,
         EventHandler::new(move |payload: TabDragPayload| {
             on_split.call((payload.source_pane, payload.source_index, dst_pane, edge));
         }),
     )
     .on_drag_over(on_drag_over)
-    .wrap_positioned(position, w, h)
-}
+    .width(Size::fill())
+    .height(Size::fill());
 
-/// Convenience wrapper so a [`DropZone`] can live inside an absolutely
-/// positioned slot without the caller re-stating width/height every
-/// time. Not a method on `DropZone` itself because it is specific to
-/// this edge-overlay use case.
-trait PositionedDropZone {
-    fn wrap_positioned(self, position: Position, width: Size, height: Size) -> Rect;
-}
-
-impl<T: 'static + PartialEq + Clone> PositionedDropZone for DropZone<T> {
-    fn wrap_positioned(self, position: Position, width: Size, height: Size) -> Rect {
-        rect()
-            .position(position)
-            .width(width)
-            .height(height)
-            .layer(Layer::Overlay)
-            .child(self)
-    }
+    rect().width(width).height(height).child(drop)
 }
 
 #[cfg(test)]

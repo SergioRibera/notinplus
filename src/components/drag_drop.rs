@@ -244,6 +244,16 @@ impl<T: PartialEq + Clone + 'static> DropZone<T> {
         self.on_drag_over = Some(on_drag_over.into());
         self
     }
+
+    pub fn width(mut self, width: Size) -> Self {
+        self.width = width;
+        self
+    }
+
+    pub fn height(mut self, height: Size) -> Self {
+        self.height = height;
+        self
+    }
 }
 
 impl<T: Clone + PartialEq + 'static> Component for DropZone<T> {
