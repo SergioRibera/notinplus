@@ -26,22 +26,12 @@ pub struct DocLinkedView {
 impl Component for DocLinkedView {
     fn render(&self) -> impl IntoElement {
         let bundle = self.id;
-        // Hook calls must run in a stable order on every render — the
-        // Freya runtime panics when `use_*` is reached conditionally.
-        // Allocate the fallback chrome signals upfront; the render
-        // path below decides whether to mount the local chrome.
-        let local_state = crate::app::use_chrome_state();
-        let local_coords = crate::app::use_chrome_coords();
+        let state = crate::app::use_chrome_state();
+        let coords = crate::app::use_chrome_coords();
         let insets = crate::hooks::use_safe_area_insets();
         let pad = *insets.read();
 
-        let external = try_consume_context::<crate::app::ChromeState>();
-        let state = external.unwrap_or(local_state);
         let canvas_el = canvas_body(CanvasMount::PdfBacked(bundle), state).into_element();
-        let chrome_overlay = external
-            .is_none()
-            .then(|| crate::app::canvas_chrome(local_state, local_coords, pad).into_element());
-
         let body = rect()
             .width(Size::fill())
             .height(Size::flex(1.0))
@@ -53,7 +43,7 @@ impl Component for DocLinkedView {
             .vertical()
             .content(Content::Flex)
             .child(body)
-            .maybe_child(chrome_overlay)
+            .child(crate::app::canvas_chrome(state, coords, pad))
     }
 }
 
@@ -67,19 +57,12 @@ pub struct SourcePdfView {
 impl Component for SourcePdfView {
     fn render(&self) -> impl IntoElement {
         let id = self.id;
-        // Same hook-ordering policy as `DocLinkedView` above.
-        let local_state = crate::app::use_chrome_state();
-        let local_coords = crate::app::use_chrome_coords();
+        let state = crate::app::use_chrome_state();
+        let coords = crate::app::use_chrome_coords();
         let insets = crate::hooks::use_safe_area_insets();
         let pad = *insets.read();
 
-        let external = try_consume_context::<crate::app::ChromeState>();
-        let state = external.unwrap_or(local_state);
         let canvas_el = canvas_body(CanvasMount::PdfBacked(id), state).into_element();
-        let chrome_overlay = external
-            .is_none()
-            .then(|| crate::app::canvas_chrome(local_state, local_coords, pad).into_element());
-
         let body = rect()
             .width(Size::fill())
             .height(Size::flex(1.0))
@@ -90,6 +73,6 @@ impl Component for SourcePdfView {
             .vertical()
             .content(Content::Flex)
             .child(body)
-            .maybe_child(chrome_overlay)
+            .child(crate::app::canvas_chrome(state, coords, pad))
     }
 }

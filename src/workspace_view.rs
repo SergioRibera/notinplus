@@ -11,7 +11,6 @@ use std::collections::HashMap;
 
 use freya::prelude::*;
 use freya::router::*;
-use istmo::plugins::EdgeInsets;
 
 use crate::components::{PaneTreeCallbacks, PaneTreeView};
 use crate::components::pane_tree_view::SplitEdge;
@@ -52,15 +51,6 @@ impl Component for WorkspaceView {
         let workspace_id = self.id;
         let load_state = use_state(|| LoadState::Loading);
         let router = RouterContext::get();
-        // Hook rule: every `use_*` call must run on every render in a
-        // stable order. The chrome signals + safe-area insets have to
-        // be allocated regardless of which `LoadState` branch builds
-        // the view, so they sit above the match.
-        let chrome_state = crate::app::use_chrome_state();
-        let chrome_coords = crate::app::use_chrome_coords();
-        let insets = crate::hooks::use_safe_area_insets();
-        provide_context(chrome_state);
-        let pad = *insets.read();
 
         use_hook({
             let mut load_state = load_state;
@@ -101,17 +91,9 @@ impl Component for WorkspaceView {
                 .center()
                 .child(centered_text(&msg))
                 .into_element(),
-            LoadState::Ready(handle, snap) => workspace_shell(
-                workspace_id,
-                handle,
-                snap,
-                load_state,
-                router,
-                chrome_state,
-                chrome_coords,
-                pad,
-            )
-            .into_element(),
+            LoadState::Ready(handle, snap) => {
+                workspace_shell(workspace_id, handle, snap, load_state, router).into_element()
+            }
         }
     }
 }
@@ -160,22 +142,18 @@ fn workspace_shell(
     snap: WorkspaceSnapshot,
     load_state: State<LoadState>,
     router: RouterContext,
-    chrome_state: crate::app::ChromeState,
-    chrome_coords: crate::app::PopupCoords,
-    pad: EdgeInsets,
 ) -> Rect {
     let focused = snap.workspace.focused_pane;
-    let header = header_bar(workspace_id, handle.clone(), focused, load_state, router, &snap);
-    let body = pane_tree(workspace_id, handle, load_state, &snap, chrome_state);
+    // let header = header_bar(workspace_id, handle.clone(), focused, load_state, router, &snap);
+    let body = pane_tree(workspace_id, handle, load_state, &snap);
     let keyboard = keyboard_shortcuts(workspace_id, handle_clone_for_keys(&snap, &load_state));
     rect()
         .expanded()
         .background(Color::from_rgb(15, 15, 18))
         .vertical()
         .on_global_key_down(keyboard)
-        .child(header)
+        // .child(header)
         .child(body)
-        .child(crate::app::canvas_chrome(chrome_state, chrome_coords, pad))
 }
 
 fn handle_clone_for_keys(
@@ -437,7 +415,6 @@ fn pane_tree(
     handle: LibHandle,
     load_state: State<LoadState>,
     snap: &WorkspaceSnapshot,
-    chrome_state: crate::app::ChromeState,
 ) -> Rect {
     let layout = snap.workspace.layout.clone();
     let titles = snap.titles.clone();
@@ -459,11 +436,7 @@ fn pane_tree(
     let body_kinds = kinds;
     let body_cb =
         Callback::<(PaneId, PaneTab), Element>::new(move |(_, tab): (PaneId, PaneTab)| {
-            tab_body_element(
-                tab.item,
-                body_kinds.get(&tab.item).copied(),
-                chrome_state,
-            )
+            tab_body_element(tab.item, body_kinds.get(&tab.item).copied())
         });
     rect()
         .width(Size::fill())
@@ -478,29 +451,23 @@ fn pane_tree(
 /// Unknown kinds fall through to the plain canvas — matches the fallback
 /// the old `tab_open_cb` picked for deleted-on-another-device items.
 ///
-/// Canvas-flavoured tabs mount a bare [`canvas_body`](crate::app::canvas_body)
-/// so the workspace-level chrome (toolbar, overlays, bookmark sidebar)
-/// drives whichever pane last became active. DocLinked and SourcePdf
-/// still ship their own self-contained shells pending their own
-/// chrome-decoupling pass.
-fn tab_body_element(
-    id: ItemId,
-    kind: Option<ItemKind>,
-    chrome_state: crate::app::ChromeState,
-) -> Element {
+/// Canvas-flavoured tabs mount a self-contained [`CanvasPane`] that
+/// owns its own chrome (toolbar, overlays, bookmark sidebar). Each
+/// pane's chrome is scoped to its own body area — tab bars stay
+/// untouched. DocLinked and SourcePdf ship their own self-contained
+/// shells with the same per-pane scope.
+fn tab_body_element(id: ItemId, kind: Option<ItemKind>) -> Element {
     use crate::app::{CanvasMount, CanvasPane};
     use crate::doc_linked::{DocLinkedView, SourcePdfView};
     match kind {
         Some(ItemKind::PdfCanvas) => CanvasPane {
             mount: CanvasMount::PdfBacked(id),
-            state: chrome_state,
         }
         .into_element(),
         Some(ItemKind::SourcePdf) => SourcePdfView { id }.into_element(),
         Some(ItemKind::DocLinked) => DocLinkedView { id }.into_element(),
         Some(ItemKind::Canvas) | None => CanvasPane {
             mount: CanvasMount::Item(id),
-            state: chrome_state,
         }
         .into_element(),
     }
