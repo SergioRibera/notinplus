@@ -145,6 +145,10 @@ fn workspace_shell(
 ) -> Rect {
     let focused = snap.workspace.focused_pane;
     let chrome_state = crate::app::use_chrome_state();
+    // Expose the shared chrome signals to every pane body so children
+    // like `DocLinkedView` / `SourcePdfView` opt into the workspace
+    // toolbar instead of mounting their own.
+    provide_context(chrome_state);
     let insets = crate::hooks::use_safe_area_insets();
     let pad = *insets.read();
     let header = header_bar(workspace_id, handle.clone(), focused, load_state, router, &snap);

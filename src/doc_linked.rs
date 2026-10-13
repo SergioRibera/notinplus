@@ -17,7 +17,7 @@ use freya::icons::lucide as icons;
 use freya::prelude::*;
 use freya::router::*;
 
-use crate::app::{CanvasMount, canvas_root};
+use crate::app::{CanvasMount, canvas_body, canvas_root};
 use crate::bookmark::{Bookmark, SourceRef};
 use crate::home::open_library;
 use crate::library::ItemId;
@@ -56,10 +56,19 @@ impl Component for DocLinkedView {
         let chip_cb = chip_tap_cb(bundle);
         let strip = bookmark_strip(bookmarks, chip_cb);
 
+        let canvas_el = match try_consume_context::<crate::app::ChromeState>() {
+            // Embedded in a workspace that already renders its own
+            // chrome — reuse the shared state so the toolbar / sidebar
+            // drive this pane.
+            Some(state) => canvas_body(CanvasMount::PdfBacked(bundle), state).into_element(),
+            // Standalone route — bring the full chrome bundle so the
+            // user can still draw / zoom / bookmark on this view.
+            None => canvas_root(CanvasMount::PdfBacked(bundle)).into_element(),
+        };
         let body = rect()
             .width(Size::fill())
             .height(Size::flex(1.0))
-            .child(canvas_root(CanvasMount::PdfBacked(bundle)));
+            .child(canvas_el);
 
         rect()
             .expanded()
@@ -87,10 +96,14 @@ impl Component for SourcePdfView {
         let header = plain_header(move || {
             let _ = back_router.push(Route::Home);
         });
+        let canvas_el = match try_consume_context::<crate::app::ChromeState>() {
+            Some(state) => canvas_body(CanvasMount::PdfBacked(id), state).into_element(),
+            None => canvas_root(CanvasMount::PdfBacked(id)).into_element(),
+        };
         let body = rect()
             .width(Size::fill())
             .height(Size::flex(1.0))
-            .child(canvas_root(CanvasMount::PdfBacked(id)));
+            .child(canvas_el);
         rect()
             .expanded()
             .background(Color::from_rgb(15, 15, 18))
