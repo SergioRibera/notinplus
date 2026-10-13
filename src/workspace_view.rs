@@ -488,17 +488,21 @@ fn tab_body_element(
     kind: Option<ItemKind>,
     chrome_state: crate::app::ChromeState,
 ) -> Element {
-    use crate::app::{CanvasMount, canvas_body};
+    use crate::app::{CanvasMount, CanvasPane};
     use crate::doc_linked::{DocLinkedView, SourcePdfView};
     match kind {
-        Some(ItemKind::PdfCanvas) => {
-            canvas_body(CanvasMount::PdfBacked(id), chrome_state).into_element()
+        Some(ItemKind::PdfCanvas) => CanvasPane {
+            mount: CanvasMount::PdfBacked(id),
+            state: chrome_state,
         }
+        .into_element(),
         Some(ItemKind::SourcePdf) => SourcePdfView { id }.into_element(),
         Some(ItemKind::DocLinked) => DocLinkedView { id }.into_element(),
-        Some(ItemKind::Canvas) | None => {
-            canvas_body(CanvasMount::Item(id), chrome_state).into_element()
+        Some(ItemKind::Canvas) | None => CanvasPane {
+            mount: CanvasMount::Item(id),
+            state: chrome_state,
         }
+        .into_element(),
     }
 }
 

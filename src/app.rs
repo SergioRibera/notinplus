@@ -263,7 +263,7 @@ impl Component for AppShell {
 /// cleared on unmount; chrome rendering is a no-op while it is `None`
 /// so a transient state (route transition, focus switch) does not
 /// crash the overlays.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub(crate) struct ChromeState {
     pub(crate) active_board: State<Option<Arc<Mutex<Board>>>>,
     pub(crate) zoom: State<f32>,
@@ -297,11 +297,33 @@ pub(crate) fn use_chrome_state() -> ChromeState {
     }
 }
 
+/// Component wrapper around [`canvas_body`] — gives each pane its own
+/// hook storage. Required when the body is mounted inside a dynamic
+/// container (workspace pane tree, tabbed shells) that may add or
+/// remove panes between renders: the Freya hook runtime demands that
+/// every `use_*` call appear in a stable order per-component, which
+/// only holds when each dynamic child owns its own component instance.
+#[derive(Clone, PartialEq)]
+pub(crate) struct CanvasPane {
+    pub mount: CanvasMount,
+    pub state: ChromeState,
+}
+
+impl Component for CanvasPane {
+    fn render(&self) -> impl IntoElement {
+        canvas_body(self.mount, self.state)
+    }
+}
+
 /// Mount a canvas pane: creates the per-mount [`Board`], wires input,
 /// publishes the handle to `state.active_board` so sibling chrome can
 /// drive it, and returns the Freya drawing surface. Chrome lives at a
 /// parent / workspace level — this fn contributes nothing visible
 /// beyond the strokes + background it paints.
+///
+/// Prefer wrapping call sites inside [`CanvasPane`] when mounting from
+/// a dynamic container (pane tree, tab bar); the free fn is kept for
+/// single-pane routes that call it exactly once per render.
 pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoElement {
     let mut zoom = state.zoom;
     let mut selected_setter = state.selected;
