@@ -19,15 +19,15 @@ use istmo::plugins::EdgeInsets;
 
 use crate::route::Route;
 
-use crate::brush::{BrushKind, BrushPreset, ShapeMode};
 use crate::bookmark::SourceRef;
+use crate::brush::{BrushKind, BrushPreset, ShapeMode};
 use crate::canvas::{
     AnchorSourceRef, Board, InputMode, LayerSnapshot, RedrawNotifier, drawing_surface, lock,
 };
-use crate::pdf_viewer::{PDF_PLUGIN_ID, PdfAnchor, encode_pdf_anchor};
 use crate::hooks::use_safe_area_insets;
 use crate::library::ItemId;
 use crate::palette_popup::{HOVER_DELAY, brush_popup};
+use crate::pdf_viewer::{PDF_PLUGIN_ID, PdfAnchor, encode_pdf_anchor};
 use crate::pen_pump;
 use crate::plugins;
 use crate::prefs;
@@ -103,7 +103,7 @@ fn publish_mask(region: UiRegion, area: Area) {
 /// coordinate the popup overlay. Grouped so [`palette_button`] does
 /// not spread a wide parameter list across every caller.
 #[derive(Clone, Copy)]
-struct PopupCoords {
+pub(crate) struct PopupCoords {
     open_idx: State<Option<usize>>,
     hovered_idx: State<Option<usize>>,
     button_areas: State<Vec<Option<Area>>>,
@@ -417,14 +417,12 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoEl
 /// Toolbar + overlays stacked above the active pane. Bound to the
 /// board currently sitting in `state.active_board`; renders an empty
 /// pass-through until a canvas publishes one.
-pub(crate) fn canvas_chrome(state: ChromeState, pad: EdgeInsets) -> impl IntoElement {
-    // Popup coordination shared across every palette button. `open_idx`
-    // drives which popup is visible; `hovered_idx` is the current
-    // hover target (used by the delay timer to detect cancellation);
-    // `button_areas` receives every button's `on_sized` update so the
-    // popup can anchor beneath the correct button on desktop layouts
-    // whose widths vary with label length.
-    let coords = PopupCoords {
+/// Allocate the palette popup signals. Must be called once per render
+/// at the top of the owning component — the chrome's rendering body
+/// takes the result in as a parameter so [`canvas_chrome`] stays
+/// hook-free and safe to call conditionally.
+pub(crate) fn use_chrome_coords() -> PopupCoords {
+    PopupCoords {
         open_idx: use_state(|| Option::<usize>::None),
         hovered_idx: use_state(|| Option::<usize>::None),
         button_areas: use_state(|| vec![None::<Area>; PALETTE.len()]),
@@ -443,7 +441,14 @@ pub(crate) fn canvas_chrome(state: ChromeState, pad: EdgeInsets) -> impl IntoEle
         pen_last_target: use_state(|| Option::<usize>::None),
         color_special: use_state(|| Option::<Color>::None),
         color_picker_open: use_state(|| false),
-    };
+    }
+}
+
+pub(crate) fn canvas_chrome(
+    state: ChromeState,
+    coords: PopupCoords,
+    pad: EdgeInsets,
+) -> impl IntoElement {
     let Some(board) = state.active_board.read().clone() else {
         // No pane mounted yet — zero-sized placeholder so parent
         // layout slot does not jump when the pane arrives.
@@ -458,8 +463,8 @@ pub(crate) fn canvas_chrome(state: ChromeState, pad: EdgeInsets) -> impl IntoEle
     // pointer handlers attached so events fall through to the canvas
     // body behind.
     rect()
-        .width(Size::fill())
-        .height(Size::fill())
+        .width(Size::percent(100.))
+        .height(Size::percent(100.))
         .position(
             Position::new_absolute()
                 .top(0.0)
@@ -468,7 +473,13 @@ pub(crate) fn canvas_chrome(state: ChromeState, pad: EdgeInsets) -> impl IntoEle
                 .bottom(0.0),
         )
         .child(back_overlay(&board, pad))
-        .child(palette_overlay(&board, state.selected, state.scale, pad, coords))
+        .child(palette_overlay(
+            &board,
+            state.selected,
+            state.scale,
+            pad,
+            coords,
+        ))
         .child(layers_panel(&board, state.layers_ver, pad))
         .child(mode_overlay(&board, state.mode, pad))
         .child(zoom_overlay(&board, state.zoom, pad))
@@ -495,6 +506,7 @@ pub(crate) fn canvas_chrome(state: ChromeState, pad: EdgeInsets) -> impl IntoEle
 
 pub(crate) fn canvas_root(mount: CanvasMount) -> impl IntoElement {
     let state = use_chrome_state();
+    let coords = use_chrome_coords();
     let insets = use_safe_area_insets();
     let pad = *insets.read();
     rect()
@@ -502,7 +514,7 @@ pub(crate) fn canvas_root(mount: CanvasMount) -> impl IntoElement {
         .height(Size::fill())
         .content(Content::Flex)
         .child(canvas_body(mount, state))
-        .child(canvas_chrome(state, pad))
+        .child(canvas_chrome(state, coords, pad))
 }
 
 /// Top-left "back to home" pill. Snapshots the current doc, spawns a
@@ -518,7 +530,7 @@ fn back_overlay(board: &Arc<Mutex<Board>>, pad: EdgeInsets) -> impl IntoElement 
                 .left(pad.left + 8.0),
         )
         .padding((6.0, 10.0))
-        .layer(Layer::Overlay)
+        .layer(Layer::OverlayLevel(2))
         .background(Color::from_rgb(30, 30, 34))
         .with_corner_radius(8.0)
         .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Back, e.area))

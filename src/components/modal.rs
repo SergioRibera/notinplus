@@ -360,7 +360,7 @@ impl Component for ModalOverlay {
         };
 
         rect()
-            .layer(Layer::Overlay)
+            .layer(Layer::OverlayLevel(255))
             .position(Position::new_absolute().top(0.0).left(0.0))
             .width(Size::px(width))
             .height(Size::px(height))

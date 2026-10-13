@@ -11,6 +11,7 @@ use std::collections::HashMap;
 
 use freya::prelude::*;
 use freya::router::*;
+use istmo::plugins::EdgeInsets;
 
 use crate::components::{PaneTreeCallbacks, PaneTreeView};
 use crate::components::pane_tree_view::SplitEdge;
@@ -51,6 +52,15 @@ impl Component for WorkspaceView {
         let workspace_id = self.id;
         let load_state = use_state(|| LoadState::Loading);
         let router = RouterContext::get();
+        // Hook rule: every `use_*` call must run on every render in a
+        // stable order. The chrome signals + safe-area insets have to
+        // be allocated regardless of which `LoadState` branch builds
+        // the view, so they sit above the match.
+        let chrome_state = crate::app::use_chrome_state();
+        let chrome_coords = crate::app::use_chrome_coords();
+        let insets = crate::hooks::use_safe_area_insets();
+        provide_context(chrome_state);
+        let pad = *insets.read();
 
         use_hook({
             let mut load_state = load_state;
@@ -91,9 +101,17 @@ impl Component for WorkspaceView {
                 .center()
                 .child(centered_text(&msg))
                 .into_element(),
-            LoadState::Ready(handle, snap) => {
-                workspace_shell(workspace_id, handle, snap, load_state, router).into_element()
-            }
+            LoadState::Ready(handle, snap) => workspace_shell(
+                workspace_id,
+                handle,
+                snap,
+                load_state,
+                router,
+                chrome_state,
+                chrome_coords,
+                pad,
+            )
+            .into_element(),
         }
     }
 }
@@ -142,15 +160,11 @@ fn workspace_shell(
     snap: WorkspaceSnapshot,
     load_state: State<LoadState>,
     router: RouterContext,
+    chrome_state: crate::app::ChromeState,
+    chrome_coords: crate::app::PopupCoords,
+    pad: EdgeInsets,
 ) -> Rect {
     let focused = snap.workspace.focused_pane;
-    let chrome_state = crate::app::use_chrome_state();
-    // Expose the shared chrome signals to every pane body so children
-    // like `DocLinkedView` / `SourcePdfView` opt into the workspace
-    // toolbar instead of mounting their own.
-    provide_context(chrome_state);
-    let insets = crate::hooks::use_safe_area_insets();
-    let pad = *insets.read();
     let header = header_bar(workspace_id, handle.clone(), focused, load_state, router, &snap);
     let body = pane_tree(workspace_id, handle, load_state, &snap, chrome_state);
     let keyboard = keyboard_shortcuts(workspace_id, handle_clone_for_keys(&snap, &load_state));
@@ -161,7 +175,7 @@ fn workspace_shell(
         .on_global_key_down(keyboard)
         .child(header)
         .child(body)
-        .child(crate::app::canvas_chrome(chrome_state, pad))
+        .child(crate::app::canvas_chrome(chrome_state, chrome_coords, pad))
 }
 
 fn handle_clone_for_keys(
