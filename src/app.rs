@@ -136,6 +136,15 @@ pub(crate) struct PopupCoords {
     /// (close) from "pointer crossed the gap into the popup" (keep
     /// open).
     popup_hovered: State<bool>,
+    /// Whether the palette row is expanded. `false` renders only the
+    /// currently-selected brush as a single compact button; clicking
+    /// it flips to `true` and reveals every other brush side-by-side.
+    /// A click on the already-selected brush in the expanded state
+    /// collapses back to compact. The same close-timer that dismisses
+    /// the hover popup also drives idle-collapse so the palette falls
+    /// back to compact once the pointer leaves the row + popup for
+    /// `POPUP_CLOSE_DELAY`.
+    expanded: State<bool>,
 }
 
 const PALETTE: &[fn() -> BrushPreset] = &[
@@ -494,6 +503,7 @@ pub(crate) fn use_chrome_coords() -> PopupCoords {
         color_special: use_state(|| Option::<Color>::None),
         color_picker_open: use_state(|| false),
         popup_hovered: use_state(|| false),
+        expanded: use_state(|| false),
     }
 }
 
@@ -687,6 +697,8 @@ fn palette_overlay(
     coords: PopupCoords,
 ) -> impl IntoElement {
     dispatch_pen_hover(board, selected, scale, coords);
+    let expanded = *coords.expanded.read();
+    let selected_idx = *selected.read();
     // Global-positioned so the palette floats above the fullscreen
     // canvas at `(pad.left, pad.top)` — no room reserved by the parent's
     // flow layout, which is what lets the canvas sit under the status
@@ -699,8 +711,18 @@ fn palette_overlay(
         .with_corner_radius(10.0)
         .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Palette, e.area));
 
-    for (idx, make) in PALETTE.iter().enumerate() {
-        row = row.child(palette_button(idx, make(), board, selected, scale, coords));
+    // Compact: only the selected brush is in the row. Expanded: every
+    // brush, selected one highlighted. The compact button carries the
+    // same hover + click handlers, so the first click expands and
+    // subsequent hovers on the newly-revealed siblings swap the popup
+    // anchor as usual.
+    if expanded {
+        for (idx, make) in PALETTE.iter().enumerate() {
+            row = row.child(palette_button(idx, make(), board, selected, scale, coords));
+        }
+    } else {
+        let idx = selected_idx.min(PALETTE.len() - 1);
+        row = row.child(palette_button(idx, PALETTE[idx](), board, selected, scale, coords));
     }
 
     // Anchor popup at the currently-open button. Rendered as a
@@ -720,6 +742,7 @@ fn palette_overlay(
             coords.color_picker_open,
             coords.popup_hovered,
             coords.hovered_idx,
+            coords.expanded,
         ));
     } else {
         // Popup hidden — clear the mask slot so a stale rect from the
@@ -806,9 +829,12 @@ fn palette_button(
 
     let press_board = Arc::clone(board);
     let enter_board = Arc::clone(board);
+    let mut press_expanded = coords.expanded;
+    let mut press_open_idx = open_idx;
     let mut leave_hovered_idx = hovered_idx;
     let leave_open_idx = open_idx;
     let leave_popup_hovered = coords.popup_hovered;
+    let leave_expanded = coords.expanded;
     let (icon, fill_icon) = PALETTE_ICONS[idx].clone();
 
     rect()
@@ -858,11 +884,16 @@ fn palette_button(
             if *leave_hovered_idx.peek() == Some(idx) {
                 leave_hovered_idx.set(None);
             }
-            schedule_popup_close(leave_open_idx, leave_hovered_idx, leave_popup_hovered);
+            schedule_popup_close(
+                leave_open_idx,
+                leave_hovered_idx,
+                leave_popup_hovered,
+                leave_expanded,
+            );
         })
-        .on_press(move |e: Event<PressEventData>| {
-            let is_touch = matches!(*e.data(), PressEventData::Touch(_));
+        .on_press(move |_: Event<PressEventData>| {
             let was_active = *selected.peek() == idx;
+            let is_expanded = *press_expanded.peek();
             // Apply the preset now so `Board::set_current_preset`
             // folds in this tool's remembered `size_scale`; propagate
             // the resulting size into the shared `scale` state so the
@@ -877,24 +908,18 @@ fn palette_button(
             };
             *scale.write() = new_size;
             *selected.write() = idx;
-            if is_touch && was_active {
-                // Second tap on the already-selected brush toggles
-                // the popup — the touch equivalent of hover-delay.
-                let next = if *open_idx.peek() == Some(idx) {
-                    None
-                } else {
-                    Some(idx)
-                };
-                open_idx.set(next);
-            } else if !is_touch && *open_idx.peek() == Some(idx) {
-                // Pointer / keyboard select on the currently-open
-                // popup dismisses it — user is committing the choice.
-                open_idx.set(None);
-            } else if is_touch {
-                // First tap on a different brush — always close any
-                // previously-open popup so the two selections stay
-                // in sync.
-                open_idx.set(None);
+            // Expand / collapse semantics:
+            //   - compact → click selected brush expands the row.
+            //   - expanded + click same brush → collapse back to compact.
+            //   - expanded + click different brush → just select, stays expanded.
+            // Popup is dismissed on every collapse to keep the two
+            // visual affordances in step.
+            if !is_expanded {
+                press_expanded.set(true);
+                press_open_idx.set(None);
+            } else if was_active {
+                press_expanded.set(false);
+                press_open_idx.set(None);
             }
         })
         .child(
@@ -963,17 +988,26 @@ pub(crate) const POPUP_CLOSE_DELAY: Duration = Duration::from_millis(220);
 /// palette button is hovered AND the popup body itself is not under
 /// the pointer. Scheduled from both `palette_button::on_pointer_leave`
 /// and the popup body's own leave handler so either exit path drives
-/// the popup closed.
+/// the popup closed. Also collapses the palette row back to compact
+/// so a hover-driven open never leaves the full row stuck visible
+/// after the pointer walks away.
 pub(crate) fn schedule_popup_close(
     open_idx: State<Option<usize>>,
     hovered_idx: State<Option<usize>>,
     popup_hovered: State<bool>,
+    expanded: State<bool>,
 ) {
     let mut open_idx = open_idx;
+    let mut expanded = expanded;
     spawn(async move {
         async_io::Timer::after(POPUP_CLOSE_DELAY).await;
-        if hovered_idx.peek().is_none() && !*popup_hovered.peek() && open_idx.peek().is_some() {
-            open_idx.set(None);
+        if hovered_idx.peek().is_none() && !*popup_hovered.peek() {
+            if open_idx.peek().is_some() {
+                open_idx.set(None);
+            }
+            if *expanded.peek() {
+                expanded.set(false);
+            }
         }
     });
 }
@@ -1027,7 +1061,7 @@ fn dispatch_pen_hover(
             if hovered_idx.peek().is_some() {
                 hovered_idx.set(None);
             }
-            schedule_popup_close(open_idx, hovered_idx, popup_hovered);
+            schedule_popup_close(open_idx, hovered_idx, popup_hovered, coords.expanded);
         }
     }
 }

@@ -59,6 +59,7 @@ pub fn brush_popup(
     color_picker_open: State<bool>,
     mut popup_hovered: State<bool>,
     hovered_idx: State<Option<usize>>,
+    expanded: State<bool>,
 ) -> impl IntoElement {
     let show = *open_idx.read() == Some(idx);
     let (top, left) = anchor.map_or((0.0, 0.0), |a| (a.max_y() + 6.0, a.min_x()));
@@ -66,6 +67,7 @@ pub fn brush_popup(
     let leave_open_idx = open_idx;
     let leave_hovered_idx = hovered_idx;
     let mut leave_popup_hovered = popup_hovered;
+    let leave_expanded = expanded;
 
     let mut body = rect()
         .position(Position::new_global().top(top).left(left))
@@ -83,7 +85,12 @@ pub fn brush_popup(
             if *leave_popup_hovered.peek() {
                 leave_popup_hovered.set(false);
             }
-            schedule_popup_close(leave_open_idx, leave_hovered_idx, leave_popup_hovered);
+            schedule_popup_close(
+                leave_open_idx,
+                leave_hovered_idx,
+                leave_popup_hovered,
+                leave_expanded,
+            );
         })
         .on_sized(|e: Event<SizedEventData>| {
             let a = e.area;
