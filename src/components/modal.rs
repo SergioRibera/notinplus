@@ -343,6 +343,7 @@ impl Component for ModalOverlay {
         // rect would cover the full area and swallow empty-space
         // clicks that should have dismissed the popover.
         let body_node = rect()
+            .layer(Layer::OverlayLevel(5))
             .maybe(body_width.is_some(), |r| {
                 r.width(Size::px(body_width.unwrap_or_default()))
             })
@@ -354,13 +355,14 @@ impl Component for ModalOverlay {
             ModalPlacement::Manual => body_node.into_element(),
             ModalPlacement::Center | ModalPlacement::BottomSheet => {
                 card_container(placement, width, safe_height, insets.bottom)
+                    .layer(Layer::OverlayLevel(5))
                     .child(body_node)
                     .into_element()
             }
         };
 
         rect()
-            .layer(Layer::OverlayLevel(255))
+            .layer(Layer::OverlayLevel(4))
             .position(Position::new_absolute().top(0.0).left(0.0))
             .width(Size::px(width))
             .height(Size::px(height))
