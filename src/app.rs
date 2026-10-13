@@ -11,6 +11,7 @@
 //! overlay, offset by the safe-area insets published by the platform.
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use freya::icons::lucide::{arrow_left, hand, panel_left, panel_left_close, pencil, redo, undo};
 use freya::prelude::*;
@@ -129,6 +130,12 @@ pub(crate) struct PopupCoords {
     /// is currently expanded. Same lifting rationale as
     /// `color_special`.
     color_picker_open: State<bool>,
+    /// Set while the pointer sits inside the opened `brush_popup` body.
+    /// Lets the close-timer kicked off by `on_pointer_leave` on a
+    /// palette button distinguish "pointer left the palette entirely"
+    /// (close) from "pointer crossed the gap into the popup" (keep
+    /// open).
+    popup_hovered: State<bool>,
 }
 
 const PALETTE: &[fn() -> BrushPreset] = &[
@@ -486,6 +493,7 @@ pub(crate) fn use_chrome_coords() -> PopupCoords {
         pen_last_target: use_state(|| Option::<usize>::None),
         color_special: use_state(|| Option::<Color>::None),
         color_picker_open: use_state(|| false),
+        popup_hovered: use_state(|| false),
     }
 }
 
@@ -678,7 +686,7 @@ fn palette_overlay(
     scale: State<f32>,
     coords: PopupCoords,
 ) -> impl IntoElement {
-    dispatch_pen_hover(coords);
+    dispatch_pen_hover(board, selected, scale, coords);
     // Global-positioned so the palette floats above the fullscreen
     // canvas at `(pad.left, pad.top)` — no room reserved by the parent's
     // flow layout, which is what lets the canvas sit under the status
@@ -710,6 +718,8 @@ fn palette_overlay(
             PALETTE[idx](),
             coords.color_special,
             coords.color_picker_open,
+            coords.popup_hovered,
+            coords.hovered_idx,
         ));
     } else {
         // Popup hidden — clear the mask slot so a stale rect from the
@@ -795,6 +805,10 @@ fn palette_button(
     };
 
     let press_board = Arc::clone(board);
+    let enter_board = Arc::clone(board);
+    let mut leave_hovered_idx = hovered_idx;
+    let leave_open_idx = open_idx;
+    let leave_popup_hovered = coords.popup_hovered;
     let (icon, fill_icon) = PALETTE_ICONS[idx].clone();
 
     rect()
@@ -817,20 +831,34 @@ fn palette_button(
         })
         .on_pointer_enter(move |_| {
             hovered_idx.set(Some(idx));
-            // Fire-and-forget hover timer. If the pointer leaves
-            // before `HOVER_DELAY` elapses, `hovered_idx` no longer
-            // points at `idx` and the open never fires.
+            // Popup already visible on another button: swap anchor
+            // immediately so the inspector mirrors whichever brush
+            // the pointer is sitting on. Also promote the hovered
+            // brush to the active selection so edits inside the
+            // popup (color, size, pressure, …) route to this preset
+            // instead of the previously-selected one.
+            if open_idx.peek().is_some() && *open_idx.peek() != Some(idx) {
+                open_idx.set(Some(idx));
+                focus_palette_entry(&enter_board, preset, idx, selected, scale);
+                return;
+            }
+            // No popup yet: schedule the hover-delay timer. If the
+            // pointer leaves before it elapses, `hovered_idx` no
+            // longer points at `idx` and the open never fires.
+            let board_timer = Arc::clone(&enter_board);
             spawn(async move {
                 async_io::Timer::after(HOVER_DELAY).await;
                 if *hovered_idx.peek() == Some(idx) {
                     open_idx.set(Some(idx));
+                    focus_palette_entry(&board_timer, preset, idx, selected, scale);
                 }
             });
         })
         .on_pointer_leave(move |_| {
-            if *hovered_idx.peek() == Some(idx) {
-                hovered_idx.set(None);
+            if *leave_hovered_idx.peek() == Some(idx) {
+                leave_hovered_idx.set(None);
             }
+            schedule_popup_close(leave_open_idx, leave_hovered_idx, leave_popup_hovered);
         })
         .on_press(move |e: Event<PressEventData>| {
             let is_touch = matches!(*e.data(), PressEventData::Touch(_));
@@ -898,15 +926,73 @@ fn commit_preset(board: &Arc<Mutex<Board>>, preset: BrushPreset) {
     }
 }
 
+/// Promote the palette entry at `idx` to the active selection: commit
+/// its preset onto the board and refresh the reactive `selected` /
+/// `scale` signals so every popup row (color, size, …) reads /
+/// writes against this brush instead of whichever was active before.
+///
+/// Shared by hover-opens, hover-swaps and the stylus-driven pen hover
+/// path so each code path promotes the preset identically.
+fn focus_palette_entry(
+    board: &Arc<Mutex<Board>>,
+    preset: BrushPreset,
+    idx: usize,
+    mut selected: State<usize>,
+    mut scale: State<f32>,
+) {
+    let new_size = {
+        let mut g = lock(board);
+        if !same_brush_family(g.current_kind(), preset.kind) {
+            g.set_current_preset(preset);
+        }
+        g.current_size()
+    };
+    *scale.write() = new_size;
+    if *selected.peek() != idx {
+        *selected.write() = idx;
+    }
+}
+
+/// How long the close-timer waits after the pointer leaves a palette
+/// button / the popup body before dismissing the popup. Long enough
+/// for the pointer to cross the ~6 px gap between palette row and
+/// popup, short enough that an outright exit feels responsive.
+pub(crate) const POPUP_CLOSE_DELAY: Duration = Duration::from_millis(220);
+
+/// Spawn a one-shot close timer. Fires only when, at expiry, no
+/// palette button is hovered AND the popup body itself is not under
+/// the pointer. Scheduled from both `palette_button::on_pointer_leave`
+/// and the popup body's own leave handler so either exit path drives
+/// the popup closed.
+pub(crate) fn schedule_popup_close(
+    open_idx: State<Option<usize>>,
+    hovered_idx: State<Option<usize>>,
+    popup_hovered: State<bool>,
+) {
+    let mut open_idx = open_idx;
+    spawn(async move {
+        async_io::Timer::after(POPUP_CLOSE_DELAY).await;
+        if hovered_idx.peek().is_none() && !*popup_hovered.peek() && open_idx.peek().is_some() {
+            open_idx.set(None);
+        }
+    });
+}
+
 /// React to pen-hover updates: find which palette button the tool is
 /// over, and drive `hovered_idx` / the open-popup timer the same way
 /// [`palette_button`]'s Freya `on_pointer_enter` handler does for
 /// mouse input. No-op when the pen has not moved between palette
 /// buttons since the last call — a `pen_last_target` state guards
 /// against re-firing the same timer every render.
-fn dispatch_pen_hover(coords: PopupCoords) {
+fn dispatch_pen_hover(
+    board: &Arc<Mutex<Board>>,
+    selected: State<usize>,
+    scale: State<f32>,
+    coords: PopupCoords,
+) {
     let mut hovered_idx = coords.hovered_idx;
     let mut open_idx = coords.open_idx;
+    let popup_hovered = coords.popup_hovered;
     let mut pen_last_target = coords.pen_last_target;
     let pen = *coords.pen_hover.read();
     let areas = coords.button_areas.read();
@@ -918,10 +1004,22 @@ fn dispatch_pen_hover(coords: PopupCoords) {
     match cur {
         Some(idx) => {
             hovered_idx.set(Some(idx));
+            // Mirror the mouse-side swap: when the popup is already
+            // open on another button, promote this one immediately
+            // instead of waiting a second `HOVER_DELAY`.
+            if open_idx.peek().is_some() && *open_idx.peek() != Some(idx) {
+                open_idx.set(Some(idx));
+                let preset = PALETTE[idx]();
+                focus_palette_entry(board, preset, idx, selected, scale);
+                return;
+            }
+            let board = Arc::clone(board);
             spawn(async move {
                 async_io::Timer::after(HOVER_DELAY).await;
                 if *hovered_idx.peek() == Some(idx) {
                     open_idx.set(Some(idx));
+                    let preset = PALETTE[idx]();
+                    focus_palette_entry(&board, preset, idx, selected, scale);
                 }
             });
         }
@@ -929,6 +1027,7 @@ fn dispatch_pen_hover(coords: PopupCoords) {
             if hovered_idx.peek().is_some() {
                 hovered_idx.set(None);
             }
+            schedule_popup_close(open_idx, hovered_idx, popup_hovered);
         }
     }
 }

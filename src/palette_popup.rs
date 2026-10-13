@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use freya::prelude::*;
 
+use crate::app::schedule_popup_close;
 use crate::brush::{
     BrushConfig, BrushKind, BrushPreset, EraserMode, HighlighterTip, PressureCurve, ShapeMode,
 };
@@ -41,6 +42,13 @@ pub const HOVER_DELAY: Duration = Duration::from_millis(500);
 /// declared via `use_state` here because `brush_popup` is only mounted
 /// while a popup is open — hooks declared inside would thrash on every
 /// open / close cycle. Caller (root scope) owns them.
+///
+/// `popup_hovered` + `hovered_idx` participate in the shared close
+/// timer: the popup body sets `popup_hovered` while the pointer is
+/// inside, and the leave handler re-arms the same close-timer helper
+/// used by palette buttons so the popup dismisses after the pointer
+/// exits both regions.
+#[allow(clippy::too_many_arguments)]
 pub fn brush_popup(
     board: &Arc<Mutex<Board>>,
     open_idx: State<Option<usize>>,
@@ -49,9 +57,15 @@ pub fn brush_popup(
     preset: BrushPreset,
     color_special: State<Option<Color>>,
     color_picker_open: State<bool>,
+    mut popup_hovered: State<bool>,
+    hovered_idx: State<Option<usize>>,
 ) -> impl IntoElement {
     let show = *open_idx.read() == Some(idx);
     let (top, left) = anchor.map_or((0.0, 0.0), |a| (a.max_y() + 6.0, a.min_x()));
+
+    let leave_open_idx = open_idx;
+    let leave_hovered_idx = hovered_idx;
+    let mut leave_popup_hovered = popup_hovered;
 
     let mut body = rect()
         .position(Position::new_global().top(top).left(left))
@@ -60,6 +74,17 @@ pub fn brush_popup(
         .padding(10.0)
         .background(Color::from_argb(240, 40, 40, 46))
         .with_corner_radius(10.0)
+        .on_pointer_enter(move |_| {
+            if !*popup_hovered.peek() {
+                popup_hovered.set(true);
+            }
+        })
+        .on_pointer_leave(move |_| {
+            if *leave_popup_hovered.peek() {
+                leave_popup_hovered.set(false);
+            }
+            schedule_popup_close(leave_open_idx, leave_hovered_idx, leave_popup_hovered);
+        })
         .on_sized(|e: Event<SizedEventData>| {
             let a = e.area;
             let w = a.max_x() - a.min_x();
