@@ -10,7 +10,7 @@
 //! `Stroke`) are `#[istmo::message]` so a document round-trips through
 //! `bincode` without an intermediate DTO layer.
 
-use freya::prelude::Color;
+use freya::prelude::{Bytes, Color};
 
 use crate::ids::StrokeId;
 
