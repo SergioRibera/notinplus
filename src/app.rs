@@ -13,6 +13,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use freya::animation::{AnimNum, Ease, Function, use_animation_transition};
 use freya::icons::lucide::{arrow_left, hand, panel_left, panel_left_close, pencil, redo, undo};
 use freya::prelude::*;
 use freya::router::*;
@@ -512,6 +513,19 @@ pub(crate) fn canvas_chrome(
     coords: PopupCoords,
     pad: EdgeInsets,
 ) -> impl IntoElement {
+    // Hook runs unconditionally so stable hook order holds across the
+    // early-return branch below. Drives the compact↔expanded animation
+    // of the palette row — non-selected brush buttons read the
+    // progress and modulate their width + opacity accordingly.
+    let palette_anim = use_animation_transition(coords.expanded, |from, to| {
+        let f = if from { 1.0_f32 } else { 0.0_f32 };
+        let t = if to { 1.0_f32 } else { 0.0_f32 };
+        AnimNum::new(f, t)
+            .time(220)
+            .ease(Ease::Out)
+            .function(Function::Cubic)
+    });
+    let palette_progress = palette_anim.get().value();
     let Some(board) = state.active_board.read().clone() else {
         // No pane mounted yet — zero-sized placeholder so parent
         // layout slot does not jump when the pane arrives.
@@ -537,7 +551,7 @@ pub(crate) fn canvas_chrome(
                 .bottom(0.0),
         )
         .child(layers_panel(&board, state.layers_ver, pad))
-        .child(left_top(&board, &state, coords, pad))
+        .child(left_top(&board, &state, coords, pad, palette_progress))
         .child(zoom_overlay(&board, state.zoom, pad))
         .child(crate::bookmark_ui::bookmark_card_overlay(
             &board,
@@ -555,6 +569,7 @@ fn left_top(
     state: &ChromeState,
     coords: PopupCoords,
     pad: EdgeInsets,
+    palette_progress: f32,
 ) -> impl IntoElement {
     let mut current_input_mode = state.mode;
     let input_mode_icon = match *current_input_mode.read() {
@@ -634,7 +649,13 @@ fn left_top(
                     }
                 })),
         )
-        .child(palette_overlay(board, state.selected, state.scale, coords))
+        .child(palette_overlay(
+            board,
+            state.selected,
+            state.scale,
+            coords,
+            palette_progress,
+        ))
 }
 
 fn icon_button(icon: Bytes, cb: impl Into<NoArgCallback<()>>) -> impl IntoElement {
@@ -695,34 +716,40 @@ fn palette_overlay(
     selected: State<usize>,
     scale: State<f32>,
     coords: PopupCoords,
+    progress: f32,
 ) -> impl IntoElement {
     dispatch_pen_hover(board, selected, scale, coords);
-    let expanded = *coords.expanded.read();
-    let selected_idx = *selected.read();
+    let selected_idx = (*selected.read()).min(PALETTE.len() - 1);
     // Global-positioned so the palette floats above the fullscreen
     // canvas at `(pad.left, pad.top)` — no room reserved by the parent's
     // flow layout, which is what lets the canvas sit under the status
     // bar / notch on Android and iOS.
     let mut row = rect()
         .horizontal()
-        .spacing(8.0)
+        .spacing((8.0 * progress).max(0.0))
         .padding(10.0)
         .background(Color::from_rgb(30, 30, 34))
         .with_corner_radius(10.0)
         .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Palette, e.area));
 
-    // Compact: only the selected brush is in the row. Expanded: every
-    // brush, selected one highlighted. The compact button carries the
-    // same hover + click handlers, so the first click expands and
-    // subsequent hovers on the newly-revealed siblings swap the popup
-    // anchor as usual.
-    if expanded {
-        for (idx, make) in PALETTE.iter().enumerate() {
-            row = row.child(palette_button(idx, make(), board, selected, scale, coords));
-        }
-    } else {
-        let idx = selected_idx.min(PALETTE.len() - 1);
-        row = row.child(palette_button(idx, PALETTE[idx](), board, selected, scale, coords));
+    // Always render every brush. The selected one stays at full size;
+    // the rest scale their width + opacity by `progress` so the row
+    // animates smoothly between compact (progress = 0, only selected
+    // visible) and expanded (progress = 1, all brushes side-by-side).
+    // Pointer handlers stay installed on every button regardless of
+    // progress — a zero-width button has no hit area so stray hovers
+    // during the fade cannot swap selection.
+    for (idx, make) in PALETTE.iter().enumerate() {
+        let is_selected = idx == selected_idx;
+        row = row.child(palette_button(
+            idx,
+            make(),
+            board,
+            selected,
+            scale,
+            coords,
+            if is_selected { 1.0 } else { progress },
+        ));
     }
 
     // Anchor popup at the currently-open button. Rendered as a
@@ -799,6 +826,7 @@ fn palette_button(
     mut selected: State<usize>,
     mut scale: State<f32>,
     coords: PopupCoords,
+    reveal: f32,
 ) -> impl IntoElement {
     let mut open_idx = coords.open_idx;
     let mut hovered_idx = coords.hovered_idx;
@@ -837,11 +865,19 @@ fn palette_button(
     let leave_expanded = coords.expanded;
     let (icon, fill_icon) = PALETTE_ICONS[idx].clone();
 
+    // `reveal` goes from 0 (hidden sibling in compact mode) to 1
+    // (fully visible). The selected button is always rendered with
+    // reveal = 1 regardless of mode, so the row collapses to a single
+    // brush while the others fade their width + opacity on and off.
+    let clamp = reveal.clamp(0.0, 1.0);
+    let btn_width = (45.0_f32 * clamp).max(0.0);
+    let opacity = clamp;
     rect()
         .center()
-        .width(Size::px(45.))
+        .width(Size::px(btn_width))
         .height(Size::px(45.))
         .padding(10.)
+        .opacity(opacity)
         .background(bg)
         .with_corner_radius(6.0)
         .on_sized(move |e: Event<SizedEventData>| {
@@ -857,23 +893,20 @@ fn palette_button(
         })
         .on_pointer_enter(move |_| {
             hovered_idx.set(Some(idx));
-            // Popup already visible on another button: swap anchor
-            // immediately so the inspector mirrors whichever brush
-            // the pointer is sitting on. Also promote the hovered
-            // brush to the active selection so edits inside the
-            // popup (color, size, pressure, …) route to this preset
-            // instead of the previously-selected one.
-            if open_idx.peek().is_some() && *open_idx.peek() != Some(idx) {
-                open_idx.set(Some(idx));
-                focus_palette_entry(&enter_board, preset, idx, selected, scale);
-                return;
-            }
-            // No popup yet: schedule the hover-delay timer. If the
-            // pointer leaves before it elapses, `hovered_idx` no
-            // longer points at `idx` and the open never fires.
-            let board_timer = Arc::clone(&enter_board);
+            // Popup already visible on another button: schedule a
+            // short settle delay before swapping so a pointer that
+            // merely passes over this brush on the way elsewhere
+            // does not promote it. The timer no-ops if `hovered_idx`
+            // has moved on by the time it fires.
+            let (delay, board_timer) = if open_idx.peek().is_some()
+                && *open_idx.peek() != Some(idx)
+            {
+                (HOVER_SWAP_DELAY, Arc::clone(&enter_board))
+            } else {
+                (HOVER_DELAY, Arc::clone(&enter_board))
+            };
             spawn(async move {
-                async_io::Timer::after(HOVER_DELAY).await;
+                async_io::Timer::after(delay).await;
                 if *hovered_idx.peek() == Some(idx) {
                     open_idx.set(Some(idx));
                     focus_palette_entry(&board_timer, preset, idx, selected, scale);
@@ -982,7 +1015,13 @@ fn focus_palette_entry(
 /// button / the popup body before dismissing the popup. Long enough
 /// for the pointer to cross the ~6 px gap between palette row and
 /// popup, short enough that an outright exit feels responsive.
-pub(crate) const POPUP_CLOSE_DELAY: Duration = Duration::from_millis(220);
+pub(crate) const POPUP_CLOSE_DELAY: Duration = Duration::from_millis(380);
+
+/// How long a pointer must settle on a palette button before promoting
+/// it to the active brush while the popup is already open on another.
+/// Prevents mid-traversal brushes from being selected when the user
+/// swings the pointer across the row to reach a far one.
+pub(crate) const HOVER_SWAP_DELAY: Duration = Duration::from_millis(180);
 
 /// Spawn a one-shot close timer. Fires only when, at expiry, no
 /// palette button is hovered AND the popup body itself is not under
@@ -1038,18 +1077,18 @@ fn dispatch_pen_hover(
     match cur {
         Some(idx) => {
             hovered_idx.set(Some(idx));
-            // Mirror the mouse-side swap: when the popup is already
-            // open on another button, promote this one immediately
-            // instead of waiting a second `HOVER_DELAY`.
-            if open_idx.peek().is_some() && *open_idx.peek() != Some(idx) {
-                open_idx.set(Some(idx));
-                let preset = PALETTE[idx]();
-                focus_palette_entry(board, preset, idx, selected, scale);
-                return;
-            }
+            // Mirror the mouse-side settle delay: when the popup is
+            // already open on another button, debounce the swap so a
+            // stylus crossing the row quickly does not promote every
+            // brush it passes over.
+            let delay = if open_idx.peek().is_some() && *open_idx.peek() != Some(idx) {
+                HOVER_SWAP_DELAY
+            } else {
+                HOVER_DELAY
+            };
             let board = Arc::clone(board);
             spawn(async move {
-                async_io::Timer::after(HOVER_DELAY).await;
+                async_io::Timer::after(delay).await;
                 if *hovered_idx.peek() == Some(idx) {
                     open_idx.set(Some(idx));
                     let preset = PALETTE[idx]();
