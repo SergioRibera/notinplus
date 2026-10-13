@@ -14,7 +14,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use freya::animation::{AnimNum, Ease, Function, use_animation_transition};
-use freya::icons::lucide::{arrow_left, hand, panel_left, panel_left_close, pencil, redo, undo};
+use freya::icons::lucide::{
+    arrow_left, hand, layers, panel_left, panel_left_close, pencil, redo, settings,
+    sliders_horizontal, undo,
+};
 use freya::prelude::*;
 use freya::router::*;
 use istmo::plugins::EdgeInsets;
@@ -298,6 +301,10 @@ pub(crate) struct ChromeState {
     pub(crate) selected: State<usize>,
     pub(crate) scale: State<f32>,
     pub(crate) layers_ver: State<u32>,
+    /// Whether the floating layers panel is currently rendered. The
+    /// top-right toolbar flips this and the overlay collapses when
+    /// `false`; nothing else is a mounted hook so toggling is cheap.
+    pub(crate) layers_visible: State<bool>,
     pub(crate) mode: State<InputMode>,
     pub(crate) selected_bookmark: State<Option<crate::ids::BookmarkId>>,
     pub(crate) bookmark_body: State<String>,
@@ -316,6 +323,7 @@ pub(crate) fn use_chrome_state() -> ChromeState {
         selected: use_state(|| 0_usize),
         scale: use_state(|| 1.0_f32),
         layers_ver: use_state(|| 0_u32),
+        layers_visible: use_state(|| true),
         mode: use_state(|| InputMode::Draw),
         selected_bookmark: use_state(|| Option::<crate::ids::BookmarkId>::None),
         bookmark_body: use_state(String::new),
@@ -550,7 +558,7 @@ pub(crate) fn canvas_chrome(
                 .right(0.0)
                 .bottom(0.0),
         )
-        .child(layers_panel(&board, state.layers_ver, pad))
+        .child(top_right_stack(&board, &state, pad))
         .child(left_top(&board, &state, coords, pad, palette_progress))
         .child(zoom_overlay(&board, state.zoom, pad))
         .child(crate::bookmark_ui::bookmark_card_overlay(
@@ -1140,11 +1148,71 @@ const fn same_brush_family(a: BrushKind, b: BrushKind) -> bool {
 // paint order = topmost row), with `+` add / `-` remove buttons
 // beneath. Every mutation bumps `layers_ver` so freya re-runs this
 // component and picks up the new snapshot.
-fn layers_panel(
+/// Compose the top-right chrome: a horizontal icon toolbar always
+/// present, and the layers panel body stacked beneath when
+/// `state.layers_visible` is set. Both share one absolute anchor so
+/// the toolbar's layout drives where the panel docks.
+fn top_right_stack(
     board: &Arc<Mutex<Board>>,
-    layers_ver: State<u32>,
+    state: &ChromeState,
     pad: EdgeInsets,
 ) -> impl IntoElement {
+    let layers_visible = *state.layers_visible.read();
+    let mut stack = rect()
+        .position(
+            Position::new_absolute()
+                .top(pad.top + 8.0)
+                .right(pad.right + 8.0),
+        )
+        .vertical()
+        .cross_align(Alignment::End)
+        .spacing(8.0)
+        .layer(Layer::Overlay)
+        .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Layers, e.area))
+        .child(top_right_toolbar(state));
+    if layers_visible {
+        stack = stack.child(layers_panel_body(board, state.layers_ver));
+    }
+    stack
+}
+
+/// Horizontal row of icon buttons that lives above the layers panel.
+/// Current slots: toggle layers panel, open the document-config edit
+/// sheet, placeholder for a generic settings pane.
+fn top_right_toolbar(state: &ChromeState) -> impl IntoElement {
+    let mut layers_vis = state.layers_visible;
+    let toggle_layers: NoArgCallback<()> = NoArgCallback::new(move || {
+        let next = !*layers_vis.peek();
+        layers_vis.set(next);
+    });
+    let open_doc_config: NoArgCallback<()> = NoArgCallback::new(move || {
+        let Some(id) = RouterContext::get()
+            .current::<crate::route::Route>()
+            .canvas_item()
+        else {
+            // Ephemeral / non-item mounts have nothing to edit.
+            return;
+        };
+        crate::home::open_canvas_edit_sheet(id);
+    });
+    let open_app_settings: NoArgCallback<()> = NoArgCallback::new(|| {
+        // Placeholder — this slot gets wired up alongside the global
+        // settings pane. Keeping the button mounted keeps the toolbar
+        // layout stable while the backing modal is built out.
+        log::info!("top-right settings button pressed (not implemented yet)");
+    });
+    rect()
+        .horizontal()
+        .spacing(6.0)
+        .child(icon_button(layers(), toggle_layers))
+        .child(icon_button(sliders_horizontal(), open_doc_config))
+        .child(icon_button(settings(), open_app_settings))
+}
+
+/// Floating layer-stack body — just the card. Positioning now lives in
+/// [`top_right_stack`] so this fn can be composed under any anchor the
+/// shell wants (currently the top-right toolbar's vertical column).
+fn layers_panel_body(board: &Arc<Mutex<Board>>, layers_ver: State<u32>) -> impl IntoElement {
     // Subscribe to `layers_ver` so mutations elsewhere reactively
     // re-run this component.
     let _tick = *layers_ver.read();
@@ -1155,18 +1223,11 @@ fn layers_panel(
     };
 
     let mut col = rect()
-        .position(
-            Position::new_absolute()
-                .top(pad.top + 8.0)
-                .right(pad.right + 8.0),
-        )
         .vertical()
         .spacing(6.0)
         .padding(10.0)
-        .layer(Layer::Overlay)
         .background(Color::from_rgb(30, 30, 34))
-        .with_corner_radius(10.0)
-        .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Layers, e.area));
+        .with_corner_radius(10.0);
 
     // Header — plain label, no interaction.
     col = col.child(
