@@ -445,17 +445,28 @@ pub(crate) fn canvas_chrome(state: ChromeState, pad: EdgeInsets) -> impl IntoEle
         color_picker_open: use_state(|| false),
     };
     let Some(board) = state.active_board.read().clone() else {
-        // No pane mounted yet — render a zero-sized container so the
-        // caller's layout slot does not jump when the pane arrives.
-        return rect().width(Size::px(0.0)).height(Size::px(0.0));
+        // No pane mounted yet — zero-sized placeholder so parent
+        // layout slot does not jump when the pane arrives.
+        return rect();
     };
-    // Zero-sized float container: children carry their own
-    // `Position::new_absolute()` offsets so the chrome never covers
-    // the canvas beneath. A fill-size container at the Overlay layer
-    // would intercept every pointer event over the pane.
+    // Full-viewport float: `Position::new_absolute` with top/left/
+    // right/bottom 0 anchors a container that covers the pane without
+    // participating in flex layout. Children carry their own absolute
+    // offsets referenced to this container, so overlay corners
+    // (top-left back pill, bottom-right zoom HUD, etc.) land on the
+    // real viewport corners — not on a collapsed flex slot. No
+    // pointer handlers attached so events fall through to the canvas
+    // body behind.
     rect()
-        .width(Size::px(0.0))
-        .height(Size::px(0.0))
+        .width(Size::fill())
+        .height(Size::fill())
+        .position(
+            Position::new_absolute()
+                .top(0.0)
+                .left(0.0)
+                .right(0.0)
+                .bottom(0.0),
+        )
         .child(back_overlay(&board, pad))
         .child(palette_overlay(&board, state.selected, state.scale, pad, coords))
         .child(layers_panel(&board, state.layers_ver, pad))
@@ -560,7 +571,7 @@ fn mode_overlay(
     rect()
         .position(
             Position::new_absolute()
-                .bottom(pad.bottom + CANVAS_PADDING + 8.0)
+                .bottom(pad.bottom + 8.0)
                 .left(pad.left + 8.0),
         )
         .padding((6.0, 10.0))
