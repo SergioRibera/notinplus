@@ -15,8 +15,7 @@ use std::time::Duration;
 
 use freya::animation::{AnimNum, Ease, Function, use_animation_transition};
 use freya::icons::lucide::{
-    arrow_left, hand, layers, panel_left, panel_left_close, pencil, redo, settings,
-    sliders_horizontal, undo,
+    arrow_left, hand, layers, panel_left, panel_left_close, pencil, redo, sliders_horizontal, undo,
 };
 use freya::prelude::*;
 use freya::router::*;
@@ -297,6 +296,13 @@ impl Component for AppShell {
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) struct ChromeState {
     pub(crate) active_board: State<Option<Arc<Mutex<Board>>>>,
+    /// Item id backing the active board, if any. Mirrors
+    /// `active_board` so overlays that need to address the mount by
+    /// library id (e.g. "open the edit sheet for this doc") can
+    /// resolve without going through the router — the router points
+    /// at a `WorkspaceView` when panes are nested inside one, so its
+    /// `canvas_item()` would always be `None` for those mounts.
+    pub(crate) active_item: State<Option<ItemId>>,
     pub(crate) zoom: State<f32>,
     pub(crate) selected: State<usize>,
     pub(crate) scale: State<f32>,
@@ -319,11 +325,12 @@ pub(crate) struct ChromeState {
 pub(crate) fn use_chrome_state() -> ChromeState {
     ChromeState {
         active_board: use_state(|| Option::<Arc<Mutex<Board>>>::None),
+        active_item: use_state(|| Option::<ItemId>::None),
         zoom: use_state(|| 1.0_f32),
         selected: use_state(|| 0_usize),
         scale: use_state(|| 1.0_f32),
         layers_ver: use_state(|| 0_u32),
-        layers_visible: use_state(|| true),
+        layers_visible: use_state(|| false),
         mode: use_state(|| InputMode::Draw),
         selected_bookmark: use_state(|| Option::<crate::ids::BookmarkId>::None),
         bookmark_body: use_state(String::new),
@@ -378,6 +385,7 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoEl
     let mut scale_setter = state.scale;
     let mut mode_setter = state.mode;
     let mut active_setter = state.active_board;
+    let mut active_item_setter = state.active_item;
     let board = use_hook(move || {
         let board = Arc::new(Mutex::new(Board::default()));
         let platform = Platform::get();
@@ -447,11 +455,13 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoEl
         // board (a prior mount of the same shell) is overwritten —
         // last-mount-wins matches the pen pump semantics.
         active_setter.set(Some(Arc::clone(&board)));
+        active_item_setter.set(mount.item());
         board
     });
     use_drop({
         let board = Arc::clone(&board);
         let mut active_setter = state.active_board;
+        let mut active_item_setter = state.active_item;
         move || {
             pen_pump::clear_active_board_if(&board);
             if let Some(id) = mount.item() {
@@ -469,6 +479,9 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoEl
                 .map_or(false, |cur| Arc::ptr_eq(cur, &board));
             if same {
                 active_setter.set(None);
+                if *active_item_setter.peek() == mount.item() {
+                    active_item_setter.set(None);
+                }
             }
         }
     });
@@ -1185,28 +1198,25 @@ fn top_right_toolbar(state: &ChromeState) -> impl IntoElement {
         let next = !*layers_vis.peek();
         layers_vis.set(next);
     });
+
+    let active_item = state.active_item;
     let open_doc_config: NoArgCallback<()> = NoArgCallback::new(move || {
-        let Some(id) = RouterContext::get()
-            .current::<crate::route::Route>()
-            .canvas_item()
-        else {
-            // Ephemeral / non-item mounts have nothing to edit.
+        // Route is `WorkspaceView` for every pane inside a workspace,
+        // so `canvas_item()` on the route would always be `None` and
+        // the sheet never opens. Read the per-pane `active_item`
+        // signal that `canvas_body` publishes on mount instead.
+        let Some(id) = *active_item.peek() else {
+            // Ephemeral mounts have no item to edit.
             return;
         };
         crate::home::open_canvas_edit_sheet(id);
     });
-    let open_app_settings: NoArgCallback<()> = NoArgCallback::new(|| {
-        // Placeholder — this slot gets wired up alongside the global
-        // settings pane. Keeping the button mounted keeps the toolbar
-        // layout stable while the backing modal is built out.
-        log::info!("top-right settings button pressed (not implemented yet)");
-    });
+
     rect()
         .horizontal()
         .spacing(6.0)
         .child(icon_button(layers(), toggle_layers))
         .child(icon_button(sliders_horizontal(), open_doc_config))
-        .child(icon_button(settings(), open_app_settings))
 }
 
 /// Floating layer-stack body — just the card. Positioning now lives in
