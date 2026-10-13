@@ -12,11 +12,16 @@
 
 use std::sync::{Arc, Mutex};
 
-use freya::icons::lucide::{arrow_left, hand, pencil};
+use freya::icons::lucide::{arrow_left, hand, panel_left, panel_left_close, pencil, redo, undo};
 use freya::prelude::*;
 use freya::router::*;
 use istmo::plugins::EdgeInsets;
 
+use crate::components::SidebarModal;
+use crate::components::theme::{
+    BALL_PEN, BALL_PEN_FILL, BRUSH_PEN, BRUSH_PEN_FILL, ERASER, FOUNTAIN_PEN, FOUNTAIN_PEN_FILL,
+    HIGHLIGHTER, HIGHLIGHTER_FILL, PENCIL, PENCIL_FILL,
+};
 use crate::route::Route;
 
 use crate::bookmark::SourceRef;
@@ -32,8 +37,6 @@ use crate::pen_pump;
 use crate::plugins;
 use crate::prefs;
 use crate::ui_mask::{self, UiRegion};
-
-const CANVAS_PADDING: f32 = 20.0;
 
 /// Which flavour of mount the surrounding [`canvas_root`] call represents.
 /// Drives per-mount side effects (doc load, PDF background) without
@@ -135,6 +138,14 @@ const PALETTE: &[fn() -> BrushPreset] = &[
     BrushPreset::highlighter,
     BrushPreset::eraser,
     default_shape,
+];
+const PALETTE_ICONS: [(Bytes, Bytes); 6] = [
+    (PENCIL, PENCIL_FILL),
+    (BALL_PEN, BALL_PEN_FILL),
+    (BRUSH_PEN, BRUSH_PEN_FILL),
+    (HIGHLIGHTER, HIGHLIGHTER_FILL),
+    (ERASER, ERASER),
+    (FOUNTAIN_PEN, FOUNTAIN_PEN_FILL),
 ];
 
 const fn default_shape() -> BrushPreset {
@@ -291,27 +302,39 @@ pub(crate) fn use_chrome_state() -> ChromeState {
         mode: use_state(|| InputMode::Draw),
         selected_bookmark: use_state(|| Option::<crate::ids::BookmarkId>::None),
         bookmark_body: use_state(String::new),
-        sidebar_open: use_state(|| true),
+        sidebar_open: use_state(|| false),
         sidebar_query: use_state(String::new),
         sidebar_sort: use_state(|| crate::bookmark_ui::BookmarkSort::Recent),
     }
 }
 
-/// Component wrapper around [`canvas_body`] — gives each pane its own
-/// hook storage. Required when the body is mounted inside a dynamic
-/// container (workspace pane tree, tabbed shells) that may add or
-/// remove panes between renders: the Freya hook runtime demands that
-/// every `use_*` call appear in a stable order per-component, which
-/// only holds when each dynamic child owns its own component instance.
+/// Component wrapper combining [`canvas_body`] and [`canvas_chrome`]
+/// into a single pane-local unit. Each instance owns its own
+/// [`ChromeState`] + [`PopupCoords`], so the chrome (toolbar, overlays,
+/// bookmark sidebar) is scoped to the pane's body area — not the
+/// workspace shell, which would otherwise paint over sibling tab bars.
+///
+/// Required when the body is mounted inside a dynamic container
+/// (workspace pane tree, tabbed shells): the Freya hook runtime demands
+/// stable per-component hook order, which only holds when each dynamic
+/// child owns its own component instance.
 #[derive(Clone, PartialEq)]
 pub(crate) struct CanvasPane {
     pub mount: CanvasMount,
-    pub state: ChromeState,
 }
 
 impl Component for CanvasPane {
     fn render(&self) -> impl IntoElement {
-        canvas_body(self.mount, self.state)
+        let state = use_chrome_state();
+        let coords = use_chrome_coords();
+        let insets = use_safe_area_insets();
+        let pad = *insets.read();
+        rect()
+            .width(Size::fill())
+            .height(Size::fill())
+            .content(Content::Flex)
+            .child(canvas_body(self.mount, state))
+            .child(canvas_chrome(state, coords, pad))
     }
 }
 
@@ -487,6 +510,7 @@ pub(crate) fn canvas_chrome(
     rect()
         .width(Size::percent(100.))
         .height(Size::percent(100.))
+        .layer(Layer::Overlay)
         .position(
             Position::new_absolute()
                 .top(0.0)
@@ -494,31 +518,9 @@ pub(crate) fn canvas_chrome(
                 .right(0.0)
                 .bottom(0.0),
         )
-        .child(back_overlay(&board, pad))
-        .child(palette_overlay(
-            &board,
-            state.selected,
-            state.scale,
-            pad,
-            coords,
-        ))
         .child(layers_panel(&board, state.layers_ver, pad))
-        .child(mode_overlay(&board, state.mode, pad))
+        .child(left_top(&board, &state, coords, pad))
         .child(zoom_overlay(&board, state.zoom, pad))
-        .child(crate::bookmark_ui::bookmark_toggle_button(
-            state.sidebar_open,
-            pad,
-        ))
-        .maybe_child(state.sidebar_open.read().then(|| {
-            crate::bookmark_ui::bookmark_sidebar(
-                &board,
-                state.selected_bookmark,
-                state.bookmark_body,
-                state.sidebar_query,
-                state.sidebar_sort,
-                pad,
-            )
-        }))
         .child(crate::bookmark_ui::bookmark_card_overlay(
             &board,
             state.selected_bookmark,
@@ -527,105 +529,113 @@ pub(crate) fn canvas_chrome(
 }
 
 pub(crate) fn canvas_root(mount: CanvasMount) -> impl IntoElement {
-    let state = use_chrome_state();
-    let coords = use_chrome_coords();
-    let insets = use_safe_area_insets();
-    let pad = *insets.read();
-    rect()
-        .width(Size::fill())
-        .height(Size::fill())
-        .content(Content::Flex)
-        .child(canvas_body(mount, state))
-        .child(canvas_chrome(state, coords, pad))
+    CanvasPane { mount }
 }
 
-/// Top-left "back to home" pill. Snapshots the current doc, spawns a
-/// save task, then routes to `Route::Home`. The navigation kicks off
-/// before the save resolves so the UI feels snappy — the async writer
-/// finishes in the background and reports errors via `log`.
-fn back_overlay(board: &Arc<Mutex<Board>>, pad: EdgeInsets) -> impl IntoElement {
-    let board = Arc::clone(board);
+fn left_top(
+    board: &Arc<Mutex<Board>>,
+    state: &ChromeState,
+    coords: PopupCoords,
+    pad: EdgeInsets,
+) -> impl IntoElement {
+    let mut current_input_mode = state.mode;
+    let input_mode_icon = match *current_input_mode.read() {
+        InputMode::Draw => pencil(),
+        InputMode::Pan => hand(),
+    };
+
     rect()
         .position(
             Position::new_absolute()
                 .top(pad.top + 8.0)
                 .left(pad.left + 8.0),
         )
-        .padding((6.0, 10.0))
-        .layer(Layer::OverlayLevel(2))
-        .background(Color::from_rgb(30, 30, 34))
-        .with_corner_radius(8.0)
+        .vertical()
+        .layer(Layer::Overlay)
+        .spacing(6.)
         .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Back, e.area))
-        .on_press(move |_| {
-            let mut doc_snapshot = {
-                let guard = lock(&board);
-                guard.doc().clone()
-            };
-            let item_id = RouterContext::get()
-                .current::<crate::route::Route>()
-                .canvas_item();
-            spawn(async move {
-                if let Some(id) = item_id {
-                    match crate::home::open_library().await {
-                        Ok(handle) => {
-                            let mut lib = handle.lock().await;
-                            if let Err(err) = lib.save_doc(id, &mut doc_snapshot).await {
-                                log::error!("save_doc: {err}");
-                            }
-                        }
-                        Err(err) => log::error!("open library on back: {err}"),
-                    }
-                }
-                let _ = RouterContext::get().push(crate::route::Route::Home);
-            });
-        })
         .child(
-            SvgViewer::new(arrow_left())
-                .fill(Color::WHITE)
-                .width(Size::px(13.))
-                .height(Size::px(13.)),
+            rect()
+                .spacing(6.)
+                .horizontal()
+                .child(icon_button(arrow_left(), {
+                    let board = Arc::clone(board);
+                    move || {
+                        let mut doc_snapshot = {
+                            let guard = lock(&board);
+                            guard.doc().clone()
+                        };
+                        let item_id = RouterContext::get()
+                            .current::<crate::route::Route>()
+                            .canvas_item();
+                        spawn(async move {
+                            if let Some(id) = item_id {
+                                match crate::home::open_library().await {
+                                    Ok(handle) => {
+                                        let mut lib = handle.lock().await;
+                                        if let Err(err) = lib.save_doc(id, &mut doc_snapshot).await
+                                        {
+                                            log::error!("save_doc: {err}");
+                                        }
+                                    }
+                                    Err(err) => log::error!("open library on back: {err}"),
+                                }
+                            }
+                            let _ = RouterContext::get().push(crate::route::Route::Home);
+                        });
+                    }
+                }))
+                .child(icon_button(panel_left(), {
+                    let board = Arc::clone(board);
+                    let state = state.clone();
+                    move || {
+                        SidebarModal::open(pad, state, board.clone());
+                    }
+                }))
+                .child(icon_button(input_mode_icon, {
+                    let press_board = Arc::clone(board);
+                    move || {
+                        let next = match *current_input_mode.read() {
+                            InputMode::Draw => InputMode::Pan,
+                            InputMode::Pan => InputMode::Draw,
+                        };
+                        lock(&press_board).set_input_mode(next);
+                        current_input_mode.set(next);
+                    }
+                }))
+                .child(icon_button(undo(), {
+                    let board = Arc::clone(board);
+                    move || {
+                        lock(&board).undo();
+                    }
+                }))
+                .child(icon_button(redo(), {
+                    let board = Arc::clone(board);
+                    move || {
+                        lock(&board).redo();
+                    }
+                })),
         )
+        .child(palette_overlay(board, state.selected, state.scale, coords))
 }
 
-/// Toggle between [`InputMode::Draw`] and [`InputMode::Pan`]. Single
-/// icon-only button that mirrors the current mode so the glyph itself
-/// communicates the *active* interpretation (pencil = drawing, hand =
-/// panning).
-fn mode_overlay(
-    board: &Arc<Mutex<Board>>,
-    mut mode: State<InputMode>,
-    pad: EdgeInsets,
-) -> impl IntoElement {
-    let current = *mode.read();
-    let press_board = Arc::clone(board);
-    let icon = match current {
-        InputMode::Draw => pencil(),
-        InputMode::Pan => hand(),
-    };
+fn icon_button(icon: Bytes, cb: impl Into<NoArgCallback<()>>) -> impl IntoElement {
+    let cb = cb.into();
     rect()
-        .position(
-            Position::new_absolute()
-                .bottom(pad.bottom + 8.0)
-                .left(pad.left + 8.0),
-        )
+        .center()
+        .width(Size::px(30.))
+        .height(Size::px(30.))
         .padding((6.0, 10.0))
         .layer(Layer::Overlay)
         .background(Color::from_rgb(30, 30, 34))
         .with_corner_radius(8.0)
-        .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Mode, e.area))
-        .on_press(move |_| {
-            let next = match current {
-                InputMode::Draw => InputMode::Pan,
-                InputMode::Pan => InputMode::Draw,
-            };
-            lock(&press_board).set_input_mode(next);
-            mode.set(next);
-        })
+        .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Back, e.area))
+        .on_press(move |_| cb.call())
         .child(
             SvgViewer::new(icon)
-                .fill(Color::WHITE)
-                .width(Size::px(16.))
-                .height(Size::px(16.)),
+                .color(Color::WHITE)
+                .width(Size::px(13.))
+                .height(Size::px(13.)),
         )
 }
 
@@ -647,7 +657,7 @@ fn zoom_overlay(board: &Arc<Mutex<Board>>, zoom: State<f32>, pad: EdgeInsets) ->
     rect()
         .position(
             Position::new_absolute()
-                .bottom(pad.bottom + CANVAS_PADDING + 8.0)
+                .bottom(pad.bottom + 8.0)
                 .right(pad.right + 8.0),
         )
         .horizontal()
@@ -666,7 +676,6 @@ fn palette_overlay(
     board: &Arc<Mutex<Board>>,
     selected: State<usize>,
     scale: State<f32>,
-    pad: EdgeInsets,
     coords: PopupCoords,
 ) -> impl IntoElement {
     dispatch_pen_hover(coords);
@@ -675,15 +684,9 @@ fn palette_overlay(
     // flow layout, which is what lets the canvas sit under the status
     // bar / notch on Android and iOS.
     let mut row = rect()
-        .position(
-            Position::new_absolute()
-                .top(pad.top + 8.0)
-                .left(pad.left + 48.0),
-        )
         .horizontal()
         .spacing(8.0)
         .padding(10.0)
-        .layer(Layer::Overlay)
         .background(Color::from_rgb(30, 30, 34))
         .with_corner_radius(10.0)
         .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Palette, e.area));
@@ -691,9 +694,6 @@ fn palette_overlay(
     for (idx, make) in PALETTE.iter().enumerate() {
         row = row.child(palette_button(idx, make(), board, selected, scale, coords));
     }
-    row = row
-        .child(size_control(board, scale))
-        .child(undo_button(board));
 
     // Anchor popup at the currently-open button. Rendered as a
     // sibling so the popup escapes the row's horizontal layout and
@@ -759,18 +759,6 @@ fn size_control(board: &Arc<Mutex<Board>>, mut scale: State<f32>) -> impl IntoEl
         .child(plus)
 }
 
-fn undo_button(board: &Arc<Mutex<Board>>) -> impl IntoElement {
-    let handle = Arc::clone(board);
-    rect()
-        .padding((6.0, 10.0))
-        .background(Color::from_rgb(80, 60, 60))
-        .with_corner_radius(6.0)
-        .on_press(move |_| {
-            lock(&handle).undo();
-        })
-        .child(label().color(Color::WHITE).font_size(14.0).text("Undo"))
-}
-
 fn palette_button(
     idx: usize,
     preset: BrushPreset,
@@ -783,11 +771,15 @@ fn palette_button(
     let mut hovered_idx = coords.hovered_idx;
     let mut button_areas = coords.button_areas;
     let is_active = *selected.read() == idx;
-    let swatch_color = preset
-        .palette_color()
-        .map_or(Color::from_rgb(220, 220, 220), |[r, g, b, _]| {
-            Color::from_rgb(r, g, b)
-        });
+    let _subscribe_color = *coords.color_special.read();
+    let swatch_rgba = if is_active && preset.palette_color().is_some() {
+        Some(lock(board).current_color())
+    } else {
+        preset.palette_color()
+    };
+    let swatch_color = swatch_rgba.map_or(Color::from_rgb(220, 220, 220), |[r, g, b, _]| {
+        Color::from_rgb(r, g, b)
+    });
 
     // Commit the currently-selected preset to the board every render —
     // cheap, and keeps the board's active brush in lock-step with the
@@ -796,17 +788,20 @@ fn palette_button(
         commit_preset(board, preset);
     }
 
-    let (bg, fg) = if is_active {
-        (Color::from_rgb(70, 70, 78), Color::WHITE)
+    let bg = if is_active {
+        Color::from_rgb(70, 70, 78)
     } else {
-        (Color::from_rgb(50, 50, 55), Color::from_rgb(210, 210, 214))
+        Color::from_rgb(50, 50, 55)
     };
 
     let press_board = Arc::clone(board);
+    let (icon, fill_icon) = PALETTE_ICONS[idx].clone();
+
     rect()
-        .horizontal()
-        .spacing(6.0)
-        .padding((8.0, 10.0))
+        .center()
+        .width(Size::px(45.))
+        .height(Size::px(45.))
+        .padding(10.)
         .background(bg)
         .with_corner_radius(6.0)
         .on_sized(move |e: Event<SizedEventData>| {
@@ -876,12 +871,21 @@ fn palette_button(
         })
         .child(
             rect()
-                .width(Size::px(14.0))
-                .height(Size::px(14.0))
-                .background(swatch_color)
-                .with_corner_radius(3.0),
+                .position(Position::new_absolute().left(-2.).top(-2.))
+                .child(
+                    SvgViewer::new(fill_icon)
+                        .width(Size::px(30.))
+                        .height(Size::px(30.))
+                        .color(swatch_color),
+                ),
         )
-        .child(label().color(fg).font_size(14.0).text(preset.label()))
+        .child(
+            rect().layer(Layer::Relative(2)).child(
+                SvgViewer::new(icon)
+                    .width(Size::px(30.))
+                    .height(Size::px(30.)),
+            ),
+        )
 }
 
 fn commit_preset(board: &Arc<Mutex<Board>>, preset: BrushPreset) {
@@ -981,7 +985,7 @@ fn layers_panel(
     let mut col = rect()
         .position(
             Position::new_absolute()
-                .top(pad.top + 24.0 + 8.0)
+                .top(pad.top + 8.0)
                 .right(pad.right + 8.0),
         )
         .vertical()
