@@ -169,53 +169,19 @@ pub enum BookmarkSort {
 }
 
 impl BookmarkSort {
-    const fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             Self::Oldest => "Antiguos",
             Self::Recent => "Recientes",
         }
     }
 
-    const fn next(self) -> Self {
+    pub const fn next(self) -> Self {
         match self {
             Self::Oldest => Self::Recent,
             Self::Recent => Self::Oldest,
         }
     }
-}
-
-/// Toolbar button that toggles the bookmark sidebar. Icon-only; the
-/// pressed state (sidebar open) is signalled by a filled background
-/// so the user sees at a glance that a side pane is already taking
-/// screen space.
-#[must_use]
-pub fn bookmark_toggle_button(mut open: State<bool>, pad: EdgeInsets) -> impl IntoElement {
-    let is_open = *open.read();
-    let bg = if is_open {
-        Color::from_rgb(60, 90, 160)
-    } else {
-        Color::from_rgb(30, 30, 34)
-    };
-    rect()
-        .position(
-            Position::new_absolute()
-                .top(pad.top + 8.0)
-                .right(pad.right + 8.0),
-        )
-        .padding((6.0, 8.0))
-        .layer(Layer::Overlay)
-        .background(bg)
-        .with_corner_radius(8.0)
-        .on_press(move |_: Event<PressEventData>| {
-            let next = !*open.peek();
-            open.set(next);
-        })
-        .child(
-            SvgViewer::new(bookmark())
-                .fill(Color::WHITE)
-                .width(Size::px(16.))
-                .height(Size::px(16.)),
-        )
 }
 
 /// Right-anchored overlay listing every bookmark on the current canvas.
