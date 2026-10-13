@@ -28,18 +28,10 @@ use crate::components::modal::{Modal, ModalController};
 use freya::icons::lucide as icons;
 
 use crate::plugins;
-
-const PANEL_BG: Color = Color::from_rgb(30, 30, 34);
-const SIDEBAR_BG: Color = Color::from_rgb(22, 22, 26);
-const CARD_BG: Color = Color::from_rgb(38, 38, 44);
-const TEXT_PRIMARY: Color = Color::from_rgb(230, 230, 240);
-const TEXT_MUTED: Color = Color::from_rgb(160, 160, 175);
-const ACCENT: Color = Color::from_rgb(120, 170, 255);
-const BORDER: Color = Color::from_rgb(60, 60, 70);
+use crate::components::theme::*;
 
 const MODAL_WIDTH: f32 = 820.0;
 const MODAL_HEIGHT: f32 = 580.0;
-const SIDEBAR_WIDTH: f32 = 220.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Section {
