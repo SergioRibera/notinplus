@@ -43,6 +43,11 @@ pub struct CanvasCreateSheet {
     kind: ItemKind,
     default_name: String,
     available_tags: Vec<String>,
+    default_color: Option<Color>,
+    default_background: Option<BackgroundStyle>,
+    default_tags: Vec<String>,
+    title_override: Option<String>,
+    submit_label: Option<String>,
     on_confirm: Callback<CreateCanvasRequest, ()>,
     on_cancel: Option<NoArgCallback<()>>,
 }
@@ -69,9 +74,53 @@ impl CanvasCreateSheet {
             kind: ItemKind::Canvas,
             default_name: "Sin título".to_owned(),
             available_tags: Vec::new(),
+            default_color: None,
+            default_background: None,
+            default_tags: Vec::new(),
+            title_override: None,
+            submit_label: None,
             on_confirm: on_confirm.into(),
             on_cancel: None,
         }
+    }
+
+    /// Pre-seed the custom-color swatch. Used by the edit flow so the
+    /// sheet opens on the item's current color instead of auto-deriving
+    /// one from the name.
+    #[must_use]
+    pub const fn default_color(mut self, color: Option<Color>) -> Self {
+        self.default_color = color;
+        self
+    }
+
+    /// Pre-seed the paper-pattern grid selection.
+    #[must_use]
+    pub const fn default_background(mut self, bg: BackgroundStyle) -> Self {
+        self.default_background = Some(bg);
+        self
+    }
+
+    /// Pre-seed the tag picker with the item's existing tag names.
+    #[must_use]
+    pub fn default_tags(mut self, tags: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.default_tags = tags.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Replace the auto-chosen header ("Nuevo lienzo", "Importar PDF",
+    /// …) with a custom one. The edit flow sets this to "Editar
+    /// lienzo" so the sheet is unambiguous.
+    #[must_use]
+    pub fn title_override(mut self, title: impl Into<String>) -> Self {
+        self.title_override = Some(title.into());
+        self
+    }
+
+    /// Replace the "Confirmar" button text (e.g. "Guardar" in edit).
+    #[must_use]
+    pub fn submit_label(mut self, label: impl Into<String>) -> Self {
+        self.submit_label = Some(label.into());
+        self
     }
 
     /// Existing tag names to surface as suggestions in the tag picker.
@@ -122,12 +171,15 @@ impl CanvasCreateSheet {
 impl Component for CanvasCreateSheet {
     fn render(&self) -> impl IntoElement {
         let default_name = self.default_name.clone();
+        let seed_color = self.default_color;
+        let seed_background = self.default_background.unwrap_or_default();
+        let seed_tags = self.default_tags.clone();
         let name = use_state(move || default_name);
-        let custom_color = use_state(|| Option::<Color>::None);
+        let custom_color = use_state(move || seed_color);
         let special_color = use_state(|| Option::<Color>::None);
         let picker_open = use_state(|| false);
-        let background = use_state(BackgroundStyle::default);
-        let tag_names = use_state(Vec::<String>::new);
+        let background = use_state(move || seed_background);
+        let tag_names = use_state(move || seed_tags);
 
         let cur_name = name.read().clone();
         let effective_color = custom_color.read().unwrap_or_else(|| auto_color(&cur_name));
@@ -136,12 +188,19 @@ impl Component for CanvasCreateSheet {
         let submit_disabled = cur_name.trim().is_empty();
         let submit_cb = self.on_confirm.clone();
         let kind = self.kind;
-        let title_label = match kind {
-            ItemKind::Canvas => "Nuevo lienzo",
-            ItemKind::PdfCanvas => "Importar PDF",
-            ItemKind::SourcePdf => "Agregar fuente PDF",
-            ItemKind::DocLinked => "Nuevo documento ligado",
-        };
+        let title_label: String = self.title_override.clone().unwrap_or_else(|| {
+            match kind {
+                ItemKind::Canvas => "Nuevo lienzo",
+                ItemKind::PdfCanvas => "Importar PDF",
+                ItemKind::SourcePdf => "Agregar fuente PDF",
+                ItemKind::DocLinked => "Nuevo documento ligado",
+            }
+            .to_owned()
+        });
+        let submit_label = self
+            .submit_label
+            .clone()
+            .unwrap_or_else(|| "Confirmar".to_owned());
         let submit = {
             let cur_name = cur_name.clone();
             move |_| {
@@ -223,7 +282,7 @@ impl Component for CanvasCreateSheet {
                                     Color::from_rgb(120, 170, 255)
                                 })
                                 .font_size(15.0)
-                                .text("Confirmar"),
+                                .text(submit_label),
                         ),
                     ),
             )
