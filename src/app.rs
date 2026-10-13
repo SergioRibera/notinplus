@@ -304,6 +304,12 @@ pub(crate) struct ChromeState {
     /// `canvas_item()` would always be `None` for those mounts.
     pub(crate) active_item: State<Option<ItemId>>,
     pub(crate) zoom: State<f32>,
+    /// Mirrors `Board::undo_depth() > 0`. Resynced from the redraw
+    /// pump (every doc-mutating commit pings it) so the toolbar's
+    /// Undo chip disables when the stack empties.
+    pub(crate) can_undo: State<bool>,
+    /// Mirrors `Board::redo_depth() > 0`. See `can_undo`.
+    pub(crate) can_redo: State<bool>,
     pub(crate) selected: State<usize>,
     pub(crate) scale: State<f32>,
     pub(crate) layers_ver: State<u32>,
@@ -327,6 +333,8 @@ pub(crate) fn use_chrome_state() -> ChromeState {
         active_board: use_state(|| Option::<Arc<Mutex<Board>>>::None),
         active_item: use_state(|| Option::<ItemId>::None),
         zoom: use_state(|| 1.0_f32),
+        can_undo: use_state(|| false),
+        can_redo: use_state(|| false),
         selected: use_state(|| 0_usize),
         scale: use_state(|| 1.0_f32),
         layers_ver: use_state(|| 0_u32),
@@ -381,6 +389,8 @@ impl Component for CanvasPane {
 /// single-pane routes that call it exactly once per render.
 pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoElement {
     let mut zoom = state.zoom;
+    let mut can_undo = state.can_undo;
+    let mut can_redo = state.can_redo;
     let mut selected_setter = state.selected;
     let mut scale_setter = state.scale;
     let mut mode_setter = state.mode;
@@ -418,6 +428,8 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoEl
             selected_setter.set(palette_index_for(g.current_kind()).unwrap_or(0));
             scale_setter.set(g.current_size());
             mode_setter.set(g.input_mode());
+            can_undo.set(g.undo_depth() > 0);
+            can_redo.set(g.redo_depth() > 0);
         }
         spawn_prefs_worker(Arc::clone(&board), prefs_rx);
         let zoom_board = Arc::clone(&board);
@@ -428,13 +440,22 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoEl
                 // signal off the freshest viewport so the HUD label
                 // stays in step with pinch / wheel gestures without
                 // needing its own notifier plumbing.
-                let s = lock(&zoom_board).viewport().scale;
+                let (s, u, r) = {
+                    let g = lock(&zoom_board);
+                    (g.viewport().scale, g.undo_depth() > 0, g.redo_depth() > 0)
+                };
                 // 0.1% threshold — the HUD label rounds to whole
                 // percent, so a stricter epsilon would push zoom.set
                 // (and the reactive root re-render it triggers) far
                 // more often than the label actually changes.
                 if (s - *zoom.read()).abs() > 0.001 {
                     zoom.set(s);
+                }
+                if u != *can_undo.read() {
+                    can_undo.set(u);
+                }
+                if r != *can_redo.read() {
+                    can_redo.set(r);
                 }
             }
         });
@@ -657,13 +678,13 @@ fn left_top(
                         current_input_mode.set(next);
                     }
                 }))
-                .child(icon_button(undo(), {
+                .child(icon_button_gated(undo(), *state.can_undo.read(), {
                     let board = Arc::clone(board);
                     move || {
                         lock(&board).undo();
                     }
                 }))
-                .child(icon_button(redo(), {
+                .child(icon_button_gated(redo(), *state.can_redo.read(), {
                     let board = Arc::clone(board);
                     move || {
                         lock(&board).redo();
@@ -680,20 +701,40 @@ fn left_top(
 }
 
 fn icon_button(icon: Bytes, cb: impl Into<NoArgCallback<()>>) -> impl IntoElement {
+    icon_button_gated(icon, true, cb)
+}
+
+/// Like `icon_button` but with an `enabled` gate. Dim glyph + press is
+/// a no-op when `enabled == false`; the chip still participates in the
+/// UI mask so taps don't bleed through to the canvas underneath.
+fn icon_button_gated(
+    icon: Bytes,
+    enabled: bool,
+    cb: impl Into<NoArgCallback<()>>,
+) -> impl IntoElement {
     let cb = cb.into();
+    let (bg, glyph) = if enabled {
+        (Color::from_rgb(30, 30, 34), Color::WHITE)
+    } else {
+        (Color::from_rgb(18, 18, 20), Color::from_rgb(70, 70, 76))
+    };
     rect()
         .center()
         .width(Size::px(30.))
         .height(Size::px(30.))
         .padding((6.0, 10.0))
         .layer(Layer::Overlay)
-        .background(Color::from_rgb(30, 30, 34))
+        .background(bg)
         .with_corner_radius(8.0)
         .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Back, e.area))
-        .on_press(move |_| cb.call())
+        .on_press(move |_| {
+            if enabled {
+                cb.call();
+            }
+        })
         .child(
             SvgViewer::new(icon)
-                .color(Color::WHITE)
+                .color(glyph)
                 .width(Size::px(13.))
                 .height(Size::px(13.)),
         )
