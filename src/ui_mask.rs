@@ -28,6 +28,8 @@
 
 use std::sync::{OnceLock, RwLock};
 
+use torin::prelude::Area;
+
 /// Which overlay owns a given slot in the mask. Ordering here is only
 /// used as the array index; new overlays append.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -38,6 +40,7 @@ pub enum UiRegion {
     Layers,
     Back,
     Mode,
+    Modal,
 }
 
 impl UiRegion {
@@ -46,7 +49,7 @@ impl UiRegion {
     }
 }
 
-const N_REGIONS: usize = 6;
+const N_REGIONS: usize = 7;
 
 /// Axis-aligned rectangle in surface-logical pixels: `(min_x, min_y,
 /// max_x, max_y)`. Kept as a tuple so [`crate::canvas::Board`] does
@@ -64,6 +67,23 @@ fn mask() -> &'static MaskInner {
     MASK.get_or_init(|| MaskInner {
         slots: RwLock::new([None; N_REGIONS]),
     })
+}
+
+/// Translate a Freya `on_sized` event area into the surface-pixel
+/// tuple [`crate::ui_mask`] expects. Skips writing when the resolved
+/// area collapses to zero — a still-laying-out element publishing an
+/// empty rect would leave a phantom hole in the mask.
+pub fn publish_mask(region: UiRegion, area: Area) {
+    let w = area.max_x() - area.min_x();
+    let h = area.max_y() - area.min_y();
+    if w <= 0.0 || h <= 0.0 {
+        set(region, None);
+        return;
+    }
+    set(
+        region,
+        Some((area.min_x(), area.min_y(), area.max_x(), area.max_y())),
+    );
 }
 
 /// Replace the rect associated with `region`. `None` clears the slot

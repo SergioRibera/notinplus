@@ -77,6 +77,11 @@ pub struct PaneTreeCallbacks {
     /// leaf along [`SplitEdge::orientation`] and moves the tab into
     /// the fresh pane sitting on [`SplitEdge::new_side`].
     pub on_tab_split: Callback<(PaneId, usize, PaneId, SplitEdge), ()>,
+    /// User clicked the pane-close button in the tab bar. Fires only
+    /// for leaves whose closure would still leave at least one pane in
+    /// the workspace — the component suppresses the button on the last
+    /// surviving leaf so the shell does not have to re-filter.
+    pub on_pane_close: Callback<PaneId, ()>,
 }
 
 impl std::fmt::Debug for PaneTreeCallbacks {
@@ -133,12 +138,16 @@ impl PaneTreeView {
 
 impl Component for PaneTreeView {
     fn render(&self) -> impl IntoElement {
+        // One leaf = cannot close any pane (workspace must retain at
+        // least one). Any split exposes the close button on every leaf.
+        let can_close_pane = self.layout.leaves().len() > 1;
         render_node(
             &self.layout,
             Vec::new(),
             &self.callbacks,
             &self.tab_labels,
             &self.tab_body,
+            can_close_pane,
         )
     }
 }
@@ -149,6 +158,7 @@ fn render_node(
     callbacks: &PaneTreeCallbacks,
     tab_labels: &Callback<PaneTab, String>,
     tab_body: &Callback<(PaneId, PaneTab), Element>,
+    can_close_pane: bool,
 ) -> Element {
     match node {
         PaneLayout::Leaf(pane) => LeafNode {
@@ -156,6 +166,7 @@ fn render_node(
             callbacks: callbacks.clone(),
             tab_labels: tab_labels.clone(),
             tab_body: tab_body.clone(),
+            can_close_pane,
         }
         .into_element(),
         PaneLayout::Split {
@@ -172,6 +183,7 @@ fn render_node(
             callbacks: callbacks.clone(),
             tab_labels: tab_labels.clone(),
             tab_body: tab_body.clone(),
+            can_close_pane,
         }
         .into_element(),
     }
@@ -190,6 +202,7 @@ struct SplitNode {
     callbacks: PaneTreeCallbacks,
     tab_labels: Callback<PaneTab, String>,
     tab_body: Callback<(PaneId, PaneTab), Element>,
+    can_close_pane: bool,
 }
 
 impl std::fmt::Debug for SplitNode {
@@ -280,6 +293,7 @@ impl Component for SplitNode {
             &self.callbacks,
             &self.tab_labels,
             &self.tab_body,
+            self.can_close_pane,
         );
         let second_el = render_node(
             &self.second,
@@ -291,6 +305,7 @@ impl Component for SplitNode {
             &self.callbacks,
             &self.tab_labels,
             &self.tab_body,
+            self.can_close_pane,
         );
 
         let (container, first_wrap, second_wrap) = match orientation {
@@ -309,6 +324,7 @@ impl Component for SplitNode {
         container
             .width(Size::fill())
             .height(Size::fill())
+            .content(Content::Flex)
             .on_sized(move |e: Event<SizedEventData>| area.set_if_modified(e.area))
             .on_global_pointer_move(on_global_pointer_move)
             .on_global_pointer_up(on_global_pointer_up)
@@ -360,6 +376,7 @@ struct LeafNode {
     callbacks: PaneTreeCallbacks,
     tab_labels: Callback<PaneTab, String>,
     tab_body: Callback<(PaneId, PaneTab), Element>,
+    can_close_pane: bool,
 }
 
 impl std::fmt::Debug for LeafNode {
@@ -405,7 +422,8 @@ impl Component for LeafNode {
         let close = self.callbacks.on_tab_close.clone();
         let new = self.callbacks.on_tab_new.clone();
         let move_cb = self.callbacks.on_tab_move.clone();
-        let bar = TabBar::new(
+        let close_pane = self.callbacks.on_pane_close.clone();
+        let mut bar = TabBar::new(
             pane_id,
             entries,
             Callback::new(move |i: usize| select.call((pane_id, i))),
@@ -415,6 +433,9 @@ impl Component for LeafNode {
         .on_tab_drop(Callback::new(move |payload: TabDragPayload| {
             move_cb.call((payload.source_pane, payload.source_index, pane_id));
         }));
+        if self.can_close_pane {
+            bar = bar.on_pane_close(NoArgCallback::new(move || close_pane.call(pane_id)));
+        }
 
         let active_tab = self.pane.tabs.get(self.pane.active_tab as usize).cloned();
         let body_inner = match active_tab {
@@ -595,6 +616,7 @@ mod tests {
             on_split_resize: Callback::new(|_| {}),
             on_tab_move: Callback::new(|_| {}),
             on_tab_split: Callback::new(|_| {}),
+            on_pane_close: Callback::new(|_| {}),
         }
     }
 

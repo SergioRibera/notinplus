@@ -58,6 +58,7 @@ pub struct TabBar {
     on_close: Callback<usize, ()>,
     on_new: NoArgCallback<()>,
     on_tab_drop: Option<Callback<TabDragPayload, ()>>,
+    on_pane_close: Option<NoArgCallback<()>>,
 }
 
 impl std::fmt::Debug for TabBar {
@@ -91,6 +92,7 @@ impl TabBar {
             on_close: on_close.into(),
             on_new: on_new.into(),
             on_tab_drop: None,
+            on_pane_close: None,
         }
     }
 
@@ -102,6 +104,16 @@ impl TabBar {
         self.on_tab_drop = Some(cb.into());
         self
     }
+
+    /// Install a pane-close handler. When present the bar renders a
+    /// trailing `×` button after the `+` so the pane can be closed in
+    /// place. Callers skip this on the last surviving leaf — the
+    /// library rejects closing it anyway.
+    #[must_use]
+    pub fn on_pane_close(mut self, cb: impl Into<NoArgCallback<()>>) -> Self {
+        self.on_pane_close = Some(cb.into());
+        self
+    }
 }
 
 impl Component for TabBar {
@@ -110,6 +122,7 @@ impl Component for TabBar {
         let mut row = rect()
             .horizontal()
             .width(Size::fill())
+            .content(Content::Flex)
             .height(Size::px(36.0))
             .background(bg)
             .padding((0.0, 4.0))
@@ -117,12 +130,7 @@ impl Component for TabBar {
             .spacing(2.0);
 
         for (i, entry) in self.entries.iter().enumerate() {
-            let cell = tab_cell(
-                i,
-                entry,
-                self.on_select.clone(),
-                self.on_close.clone(),
-            );
+            let cell = tab_cell(i, entry, self.on_select.clone(), self.on_close.clone());
             row = row.child(DragZone::new(
                 TabDragPayload {
                     source_pane: self.pane_id,
@@ -131,7 +139,12 @@ impl Component for TabBar {
                 cell,
             ));
         }
-        row = row.child(new_tab_button(self.on_new.clone()));
+        row = row
+            .child(new_tab_button(self.on_new.clone()))
+            .child(rect().width(Size::flex(1.)));
+        if let Some(close_pane) = self.on_pane_close.clone() {
+            row = row.child(close_pane_button(close_pane));
+        }
 
         let pane_id = self.pane_id;
         let on_tab_drop = self.on_tab_drop.clone();
@@ -186,12 +199,7 @@ fn tab_cell(
                 .height(Size::px(14.0)),
         );
     }
-    cell = cell.child(
-        label()
-            .color(label_color)
-            .font_size(13.0)
-            .text(label_text),
-    );
+    cell = cell.child(label().color(label_color).font_size(13.0).text(label_text));
     cell = cell.child(close_glyph(index, close_cb));
     cell
 }
@@ -223,6 +231,24 @@ fn new_tab_button(on_new: NoArgCallback<()>) -> Rect {
         .on_press(move |_| on_new.call())
         .child(
             SvgViewer::new(freya::icons::lucide::plus())
+                .color(Color::from_rgb(190, 190, 200))
+                .width(Size::px(14.0))
+                .height(Size::px(14.0)),
+        )
+}
+
+fn close_pane_button(on_close: NoArgCallback<()>) -> Rect {
+    rect()
+        .width(Size::px(28.0))
+        .height(Size::px(28.0))
+        .center()
+        .with_corner_radius(8.0)
+        .on_press(move |e: Event<PressEventData>| {
+            e.stop_propagation();
+            on_close.call();
+        })
+        .child(
+            SvgViewer::new(freya::icons::lucide::x())
                 .color(Color::from_rgb(190, 190, 200))
                 .width(Size::px(14.0))
                 .height(Size::px(14.0)),

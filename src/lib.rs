@@ -20,6 +20,7 @@ pub mod canvas;
 pub mod components;
 pub mod doc;
 pub mod doc_linked;
+pub mod doc_linked_prefs;
 pub mod doc_op;
 pub mod pane_layout_prefs;
 pub mod dynamic_plugins;

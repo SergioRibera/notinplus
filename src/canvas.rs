@@ -761,9 +761,11 @@ impl Board {
     /// event, which would otherwise fire a spurious finger-pan on
     /// every stroke.
     pub fn touch_down(&mut self, id: u64, sx: f32, sy: f32) {
-        if crate::pen_pump::is_pen_near(sx, sy, crate::pen_pump::PEN_TOUCH_FILTER_RADIUS) {
-            return;
-        }
+        // Pen-vs-touch disambiguation runs upstream in
+        // `drawing_surface` so the pen pos (window-coord) and the
+        // touch sample (canvas-local) can be compared in matching
+        // spaces. Reaching this point means the caller already
+        // decided the finger is not a stylus artifact.
         self.finger_positions.insert(id, (sx, sy));
         let n = self.finger_positions.len();
         if n == 1 {
@@ -985,9 +987,12 @@ impl Board {
         if self.gesture_active {
             return;
         }
-        if crate::ui_mask::contains(point.x, point.y) {
-            return;
-        }
+        // Mask gate is enforced upstream by `pen_pump` against
+        // window-coord samples. Repeating it here with canvas-local
+        // coords would silently false-negative (overlay rects live in
+        // window space) and false-positive when a padded canvas's
+        // local (0, 0) happens to fall inside a sibling overlay's
+        // window rect.
         let (wx, wy) = self.viewport.screen_to_world(point.x, point.y);
         point.x = wx;
         point.y = wy;
@@ -2122,6 +2127,15 @@ pub fn drawing_surface(
     let touch_cancel_board = Arc::clone(board);
     let pointer_move_board = Arc::clone(board);
     let pointer_leave_board = Arc::clone(board);
+    // Surface origin (window coords of this canvas's top-left) kept
+    // in a signal so the touch-start pen-filter can translate the
+    // local sample to window space before comparing against the
+    // pen-pump's screen-coord pos. Also lets split-pane layouts
+    // route pen samples: on_sized publishes the resolved rect to the
+    // pen pump every time layout resettles.
+    let surface_origin =
+        freya::prelude::use_state(|| (0.0_f32, 0.0_f32));
+    let sized_board = Arc::clone(board);
     // Shared long-press state: token invalidates when the pointer
     // moves far enough or leaves the surface; press_start records the
     // down-event location so the timer can create the pin at the
@@ -2130,10 +2144,24 @@ pub fn drawing_surface(
     let press_start = freya::prelude::use_state(|| Option::<(f32, f32)>::None);
     let press_down_board = Arc::clone(board);
 
+    let mut surface_origin_setter = surface_origin;
     rect()
         .width(Size::fill())
         .height(Size::fill())
         .background(backdrop)
+        .on_sized(move |e: Event<SizedEventData>| {
+            let r = crate::pen_pump::SurfaceRect {
+                min_x: e.area.min_x(),
+                min_y: e.area.min_y(),
+                max_x: e.area.max_x(),
+                max_y: e.area.max_y(),
+            };
+            crate::pen_pump::register_canvas_surface(&sized_board, r);
+            let next = (r.min_x, r.min_y);
+            if *surface_origin_setter.peek() != next {
+                surface_origin_setter.set(next);
+            }
+        })
         .on_wheel(move |e: Event<WheelEventData>| {
             #[allow(clippy::cast_possible_truncation)]
             let x = e.element_location.x as f32;
@@ -2162,6 +2190,18 @@ pub fn drawing_surface(
             lock(&down_board).pan_begin(x, y);
         })
         .on_global_pointer_move(move |e: Event<PointerEventData>| {
+            // Freya synthesizes PointerEventData from Touch for every
+            // `is_global_pointer` event (see freya-core
+            // `events/emittable.rs`). Those are already handled by
+            // `on_touch_move` with element-local coords; letting the
+            // global-pointer path through would run a second
+            // `pan_move` using `global_location` against an anchor
+            // latched in canvas-local space — the pad offset
+            // + tab-bar height drops into the delta on the first
+            // sample and the viewport jumps off-screen.
+            if matches!(e.data(), PointerEventData::Touch(_)) {
+                return;
+            }
             let mut guard = lock(&move_board);
             if !guard.is_panning() {
                 return;
@@ -2173,15 +2213,35 @@ pub fn drawing_surface(
             let y = loc.y as f32;
             guard.pan_move(x, y);
         })
-        .on_global_pointer_up(move |_: Event<PointerEventData>| {
+        .on_global_pointer_up(move |e: Event<PointerEventData>| {
+            if matches!(e.data(), PointerEventData::Touch(_)) {
+                return;
+            }
             lock(&up_board).pan_end();
         })
-        .on_touch_start(move |e: Event<TouchEventData>| {
-            #[allow(clippy::cast_possible_truncation)]
-            let x = e.element_location.x as f32;
-            #[allow(clippy::cast_possible_truncation)]
-            let y = e.element_location.y as f32;
-            lock(&touch_start_board).touch_down(e.finger_id, x, y);
+        .on_touch_start({
+            let origin = surface_origin;
+            move |e: Event<TouchEventData>| {
+                #[allow(clippy::cast_possible_truncation)]
+                let x = e.element_location.x as f32;
+                #[allow(clippy::cast_possible_truncation)]
+                let y = e.element_location.y as f32;
+                // Platforms that deliver stylus contact as both an
+                // istmo-pen sample AND a `TouchEventData` would other-
+                // wise fire the finger-pan path and steal the stroke.
+                // Pen pump stores pen pos in window coords; this
+                // handler owns canvas-local coords — translate before
+                // the proximity check.
+                let (ox, oy) = *origin.peek();
+                if crate::pen_pump::is_pen_near(
+                    x + ox,
+                    y + oy,
+                    crate::pen_pump::PEN_TOUCH_FILTER_RADIUS,
+                ) {
+                    return;
+                }
+                lock(&touch_start_board).touch_down(e.finger_id, x, y);
+            }
         })
         .on_touch_move(move |e: Event<TouchEventData>| {
             #[allow(clippy::cast_possible_truncation)]

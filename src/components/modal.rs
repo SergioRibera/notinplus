@@ -24,6 +24,8 @@ use freya::animation::*;
 use freya::prelude::*;
 
 use crate::hooks::use_safe_area_insets;
+use crate::ui_mask::UiRegion;
+use crate::ui_mask::publish_mask;
 
 /// Where the modal card sits inside the covered area.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -293,6 +295,13 @@ impl Component for ModalOverlay {
         // `ime.bottom` into `insets.bottom`, so this one read covers
         // both the system-bar gutter and the keyboard gutter.
         let insets = *use_safe_area_insets().read();
+        // The modal publishes a window-sized rect to `UiRegion::Modal`
+        // via `on_sized` below so the pen pump treats the whole
+        // surface as UI while the modal is open. The slot does NOT
+        // self-clear on unmount — without this drop the mask would
+        // keep blocking every pen `Down` for the rest of the session
+        // once the user closes the sidebar.
+        use_drop(|| crate::ui_mask::set(UiRegion::Modal, None));
 
         let animations = use_animation(|conf| {
             conf.on_creation(OnCreation::Run);
@@ -366,6 +375,7 @@ impl Component for ModalOverlay {
             .position(Position::new_absolute().top(0.0).left(0.0))
             .width(Size::px(width))
             .height(Size::px(height))
+            .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Modal, e.area))
             .maybe(dismiss_on_escape, |r| {
                 r.on_global_key_down(|e: Event<KeyboardEventData>| {
                     if matches!(

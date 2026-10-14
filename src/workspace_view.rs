@@ -11,10 +11,12 @@ use std::collections::HashMap;
 
 use freya::prelude::*;
 use freya::router::*;
+use istmo::plugins::EdgeInsets;
 
-use crate::components::{PaneTreeCallbacks, PaneTreeView};
 use crate::components::pane_tree_view::SplitEdge;
+use crate::components::{PaneTreeCallbacks, PaneTreeView};
 use crate::home::{LibHandle, open_library};
+use crate::hooks::{provide_safe_area_override, use_safe_area_insets};
 use crate::library::{
     BackgroundStyle, ItemId, ItemKind, Library, PaneId, PaneTab, SplitOrientation, SplitSide,
     Workspace, WorkspaceId,
@@ -51,6 +53,15 @@ impl Component for WorkspaceView {
         let workspace_id = self.id;
         let load_state = use_state(|| LoadState::Loading);
         let router = RouterContext::get();
+        let edge = use_safe_area_insets();
+        let edge = *edge.read();
+        // The shell carves out the physical safe area at its outer
+        // padding; nested components (pane canvases, DocLinked shells,
+        // sidebar modals) must not re-apply the same pad or the usable
+        // area collapses — the chrome overlays would then anchor off
+        // the visible viewport and the pane canvas would overflow past
+        // the window on bottom/right.
+        provide_safe_area_override(EdgeInsets::default());
 
         use_hook({
             let mut load_state = load_state;
@@ -79,34 +90,42 @@ impl Component for WorkspaceView {
         let state_val = load_state.read().clone();
 
         match state_val {
-            LoadState::Loading => rect()
-                .expanded()
+            LoadState::Loading => padded_safe_area(edge)
                 .background(bg)
                 .center()
                 .child(centered_text("Cargando workspace…"))
                 .into_element(),
-            LoadState::Error(msg) => rect()
-                .expanded()
+            LoadState::Error(msg) => padded_safe_area(edge)
                 .background(bg)
                 .center()
                 .child(centered_text(&msg))
                 .into_element(),
             LoadState::Ready(handle, snap) => {
-                workspace_shell(workspace_id, handle, snap, load_state, router).into_element()
+                workspace_shell(workspace_id, handle, snap, load_state, edge).into_element()
             }
         }
     }
 }
 
 fn centered_text(text: &str) -> Rect {
+    rect().center().child(
+        label()
+            .color(Color::from_rgb(200, 200, 210))
+            .font_size(14.0)
+            .text(text.to_owned()),
+    )
+}
+
+/// Full-window rect whose inner content area is inset by the platform
+/// safe-area edges. Uses `padding` rather than absolute positioning so
+/// the outer box stays sized to its parent — absolute `top/right/
+/// bottom/left` only shift the origin, so combining them with
+/// `.expanded()` would push the right/bottom edges past the window.
+fn padded_safe_area(edge: EdgeInsets) -> Rect {
     rect()
-        .center()
-        .child(
-            label()
-                .color(Color::from_rgb(200, 200, 210))
-                .font_size(14.0)
-                .text(text.to_owned()),
-        )
+        .width(Size::fill())
+        .height(Size::fill())
+        .padding((edge.top, edge.right, edge.bottom, edge.left))
 }
 
 fn snapshot_workspace(lib: &Library, id: WorkspaceId) -> Option<WorkspaceSnapshot> {
@@ -141,25 +160,23 @@ fn workspace_shell(
     handle: LibHandle,
     snap: WorkspaceSnapshot,
     load_state: State<LoadState>,
-    router: RouterContext,
+    edge: EdgeInsets,
 ) -> Rect {
     let focused = snap.workspace.focused_pane;
     // let header = header_bar(workspace_id, handle.clone(), focused, load_state, router, &snap);
     let body = pane_tree(workspace_id, handle, load_state, &snap);
     let keyboard = keyboard_shortcuts(workspace_id, handle_clone_for_keys(&snap, &load_state));
-    rect()
-        .expanded()
+
+    padded_safe_area(edge)
         .background(Color::from_rgb(15, 15, 18))
         .vertical()
+        .content(Content::Flex)
         .on_global_key_down(keyboard)
         // .child(header)
         .child(body)
 }
 
-fn handle_clone_for_keys(
-    snap: &WorkspaceSnapshot,
-    load_state: &State<LoadState>,
-) -> KeyboardCtx {
+fn handle_clone_for_keys(snap: &WorkspaceSnapshot, load_state: &State<LoadState>) -> KeyboardCtx {
     KeyboardCtx {
         focused: snap.workspace.focused_pane,
         tab_count: snap
@@ -191,8 +208,8 @@ fn keyboard_shortcuts(
     ctx: KeyboardCtx,
 ) -> impl FnMut(Event<KeyboardEventData>) + 'static {
     move |e: Event<KeyboardEventData>| {
-        let modded = e.modifiers.contains(Modifiers::CONTROL)
-            || e.modifiers.contains(Modifiers::META);
+        let modded =
+            e.modifiers.contains(Modifiers::CONTROL) || e.modifiers.contains(Modifiers::META);
         if !modded {
             return;
         }
@@ -217,10 +234,7 @@ fn keyboard_shortcuts(
                                 BackgroundStyle::default(),
                             )
                             .await
-                            && lib
-                                .add_pane_tab(workspace_id, pane, item)
-                                .await
-                                .is_ok()
+                            && lib.add_pane_tab(workspace_id, pane, item).await.is_ok()
                         {
                             if let Some(snap) = snapshot_workspace(&lib, workspace_id) {
                                 load_state.set(LoadState::Ready(handle.clone(), snap));
@@ -410,6 +424,16 @@ fn schedule_close_pane(
     });
 }
 
+fn pane_close_cb(
+    workspace_id: WorkspaceId,
+    handle: LibHandle,
+    load_state: State<LoadState>,
+) -> Callback<PaneId, ()> {
+    Callback::new(move |target: PaneId| {
+        schedule_close_pane(workspace_id, target, handle.clone(), load_state);
+    })
+}
+
 fn pane_tree(
     workspace_id: WorkspaceId,
     handle: LibHandle,
@@ -425,7 +449,8 @@ fn pane_tree(
         on_tab_new: tab_new_cb(workspace_id, handle.clone(), load_state),
         on_split_resize: split_resize_cb(workspace_id, handle.clone(), load_state),
         on_tab_move: tab_move_cb(workspace_id, handle.clone(), load_state),
-        on_tab_split: tab_split_cb(workspace_id, handle, load_state),
+        on_tab_split: tab_split_cb(workspace_id, handle.clone(), load_state),
+        on_pane_close: pane_close_cb(workspace_id, handle, load_state),
     };
     let label_cb = Callback::<PaneTab, String>::new(move |tab: PaneTab| {
         titles
@@ -440,7 +465,7 @@ fn pane_tree(
         });
     rect()
         .width(Size::fill())
-        .height(Size::flex(1.0))
+        .height(Size::fill())
         .content(Content::Flex)
         .child(PaneTreeView::new(layout, callbacks, label_cb, body_cb))
 }
@@ -582,10 +607,7 @@ fn tab_move_cb(
         let handle = handle.clone();
         spawn(async move {
             let mut lib = handle.lock().await;
-            if let Err(err) = lib
-                .move_workspace_tab(workspace_id, src, idx, dst)
-                .await
-            {
+            if let Err(err) = lib.move_workspace_tab(workspace_id, src, idx, dst).await {
                 log::error!("move_workspace_tab: {err}");
                 return;
             }

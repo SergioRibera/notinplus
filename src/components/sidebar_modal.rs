@@ -25,11 +25,11 @@ use freya::icons::lucide::{
 };
 use freya::prelude::*;
 use freya::router::*;
-use istmo::plugins::EdgeInsets;
 
 use crate::app::ChromeState;
 use crate::bookmark_ui::BookmarkSort;
 use crate::canvas::{Board, lock};
+use crate::hooks::use_safe_area_insets;
 use crate::library::{
     Item, ItemId, ItemKind, SplitOrientation, SplitSide, Tag, TagId, WorkspaceId,
 };
@@ -65,7 +65,6 @@ const ROW_SIZE: f32 = 56.0;
 
 #[derive(Clone)]
 pub struct SidebarModal {
-    pad: EdgeInsets,
     state: ChromeState,
     board: Arc<Mutex<Board>>,
     /// Captured at the open site so the modal body — which renders
@@ -80,13 +79,12 @@ pub struct SidebarModal {
 
 impl PartialEq for SidebarModal {
     fn eq(&self, other: &Self) -> bool {
-        self.pad == other.pad && self.state == other.state && self.workspace == other.workspace
+        self.state == other.state && self.workspace == other.workspace
     }
 }
 
 impl SidebarModal {
     pub(crate) fn open(
-        pad: EdgeInsets,
         state: ChromeState,
         board: Arc<Mutex<Board>>,
         router: RouterContext,
@@ -94,7 +92,6 @@ impl SidebarModal {
     ) {
         ModalController::get().open(
             Modal::new(Self {
-                pad,
                 state,
                 board,
                 router,
@@ -135,7 +132,14 @@ struct DocMenuTarget {
 
 impl Component for SidebarModal {
     fn render(&self) -> impl freya::prelude::IntoElement {
-        let pad = self.pad;
+        // Modals mount at the root scope — outside any
+        // `SafeAreaOverride` the Router subtree installs — so reading
+        // insets here always resolves to the live platform value.
+        // Passing `pad` in through `open(..)` would carry whatever
+        // override the caller saw (zero inside the workspace), which
+        // is why the sidebar used to clip under the Android status
+        // bar.
+        let pad = *use_safe_area_insets().read();
         let board = &self.board;
         let query = self.state.sidebar_query;
         let sort = self.state.sidebar_sort;
@@ -179,10 +183,22 @@ impl Component for SidebarModal {
             }
         };
 
+        // `Size::percent(100.)` would resolve against the modal portal's
+        // parent — which has no explicit height for a manually-placed
+        // body — and the shell would collapse (or, when the parent
+        // falls back to window-height, extend past the bottom safe
+        // area). Compute the carved height from the window directly so
+        // the sidebar always fits between top and bottom insets.
+        let pad_top = pad.top;
+        let pad_bottom = pad.bottom;
+        let height_fn = Size::func_data(
+            move |ctx| Some((ctx.root - pad_top - pad_bottom).max(0.0)),
+            &(pad_top.to_bits(), pad_bottom.to_bits()),
+        );
         let mut shell = rect()
             .position(Position::new_absolute().top(pad.top).left(left_pos))
             .width(Size::px(SIDEBAR_WIDTH))
-            .height(Size::percent(100.))
+            .height(height_fn)
             .background(PANEL_BG)
             .overflow(Overflow::Clip)
             .color(TEXT_PRIMARY)
@@ -911,6 +927,7 @@ fn contents_body(
         toc_row(entry, Arc::clone(&board_cell), collapsed).into_element()
     })
     .length(length)
+    .width(Size::fill())
     .item_size(ROW_SIZE)
     .into_element()
 }
@@ -926,6 +943,7 @@ fn toc_row(
             .cross_align(Alignment::Center)
             .padding((6.0, 10.0))
             .margin((2.0, 6.0))
+            .width(Size::fill())
             .height(Size::px(ROW_SIZE - 4.0))
             .child(
                 label()

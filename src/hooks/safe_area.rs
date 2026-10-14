@@ -14,12 +14,37 @@
 use freya::prelude::*;
 use istmo::plugins::{EdgeInsets, SafeArea, SafeAreaInsets};
 
+/// Context override: when a parent provides this, descendants' calls to
+/// [`use_safe_area_insets`] see the overridden value instead of the live
+/// platform stream. Routes that have already carved out the physical
+/// safe area at an outer frame install `SafeAreaOverride(EdgeInsets::default())`
+/// so nested components do not re-apply the same padding and collapse
+/// the usable area twice.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SafeAreaOverride(pub EdgeInsets);
+
+/// Install an override for every descendant that calls
+/// [`use_safe_area_insets`]. Idempotent across re-renders — provider
+/// value only matters on first mount of the owning scope.
+pub fn provide_safe_area_override(insets: EdgeInsets) {
+    use_provide_context(move || SafeAreaOverride(insets));
+}
+
 /// Subscribe to platform safe-area updates. The returned state resolves
 /// to the zero `EdgeInsets` until the first frame arrives (or forever
 /// on desktop, where no publisher exists).
+///
+/// When an ancestor installed a [`SafeAreaOverride`] via
+/// [`provide_safe_area_override`] the state is seeded with the override
+/// value and the platform subscription is skipped — the override is
+/// authoritative for the whole subtree.
 pub fn use_safe_area_insets() -> State<EdgeInsets> {
-    let mut insets = use_state(EdgeInsets::default);
+    let override_val = use_try_consume::<SafeAreaOverride>().map(|o| o.0);
+    let mut insets = use_state(move || override_val.unwrap_or_default());
     use_hook(move || {
+        if override_val.is_some() {
+            return;
+        }
         let sa = match SafeArea::acquire() {
             Ok(sa) => sa,
             Err(err) => {

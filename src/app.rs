@@ -15,17 +15,18 @@ use std::time::Duration;
 
 use freya::animation::{AnimNum, Ease, Function, use_animation_transition};
 use freya::icons::lucide::{
-    arrow_left, hand, layers, panel_left, panel_left_close, pencil, redo, sliders_horizontal, undo,
+    arrow_left, hand, layers, panel_left, pencil, redo, sliders_horizontal,
+    square_split_horizontal, square_split_vertical, undo, x,
 };
 use freya::prelude::*;
 use freya::router::*;
 use istmo::plugins::EdgeInsets;
 
-use crate::components::{SidebarModal, SidebarTab};
 use crate::components::theme::{
     BALL_PEN, BALL_PEN_FILL, BRUSH_PEN, BRUSH_PEN_FILL, ERASER, FOUNTAIN_PEN, FOUNTAIN_PEN_FILL,
     HIGHLIGHTER, HIGHLIGHTER_FILL, PENCIL, PENCIL_FILL,
 };
+use crate::components::{SidebarModal, SidebarTab};
 use crate::route::Route;
 
 use crate::bookmark::SourceRef;
@@ -40,7 +41,7 @@ use crate::pdf_viewer::{PDF_PLUGIN_ID, PdfAnchor, encode_pdf_anchor};
 use crate::pen_pump;
 use crate::plugins;
 use crate::prefs;
-use crate::ui_mask::{self, UiRegion};
+use crate::ui_mask::{self, UiRegion, publish_mask};
 
 /// Which flavour of mount the surrounding [`canvas_root`] call represents.
 /// Drives per-mount side effects (doc load, PDF background) without
@@ -87,23 +88,6 @@ impl CanvasMount {
             Self::Ephemeral => None,
         }
     }
-}
-
-/// Translate a Freya `on_sized` event area into the surface-pixel
-/// tuple [`crate::ui_mask`] expects. Skips writing when the resolved
-/// area collapses to zero — a still-laying-out element publishing an
-/// empty rect would leave a phantom hole in the mask.
-fn publish_mask(region: UiRegion, area: Area) {
-    let w = area.max_x() - area.min_x();
-    let h = area.max_y() - area.min_y();
-    if w <= 0.0 || h <= 0.0 {
-        ui_mask::set(region, None);
-        return;
-    }
-    ui_mask::set(
-        region,
-        Some((area.min_x(), area.min_y(), area.max_x(), area.max_y())),
-    );
 }
 
 /// Bundle of reactive signals every palette button shares to
@@ -465,11 +449,10 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoEl
         // consume via `try_consume_context::<Arc<Mutex<Board>>>()` and
         // operate on this mount's board — not a sibling pane's.
         provide_context(Arc::clone(&board));
-        // Register with the pen pump so stylus samples route to this
-        // board. If a sibling pane later gets focus, its own
-        // `canvas_body` call overwrites `ACTIVE_BOARD` and this one
-        // falls silent until it regains focus.
-        pen_pump::set_active_board(&board);
+        // Surface rect registration happens inside `drawing_surface`
+        // via `on_sized` — the pen pump hit-tests each stylus sample
+        // against every mounted canvas, so split-pane layouts route
+        // the pen to the pane the stroke physically lands on.
         if let Some(id) = mount.item() {
             crate::active_boards::set(id, Arc::clone(&board));
         }
@@ -486,7 +469,7 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoEl
         let mut active_setter = state.active_board;
         let mut active_item_setter = state.active_item;
         move || {
-            pen_pump::clear_active_board_if(&board);
+            pen_pump::unregister_canvas_surface(&board);
             if let Some(id) = mount.item() {
                 crate::active_boards::clear_if(id, &board);
             }
@@ -512,6 +495,7 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoEl
     rect()
         .width(Size::fill())
         .height(Size::fill())
+        .content(Content::Flex)
         .child(drawing_surface(
             &board,
             state.selected_bookmark,
@@ -674,7 +658,7 @@ fn left_top(
                             crate::route::Route::WorkspaceView { id } => Some(id),
                             _ => None,
                         };
-                        SidebarModal::open(pad, state, board.clone(), router, workspace);
+                        SidebarModal::open(state, board.clone(), router, workspace);
                     }
                 }))
                 .child(icon_button(input_mode_icon, {
@@ -970,8 +954,7 @@ fn palette_button(
             // merely passes over this brush on the way elsewhere
             // does not promote it. The timer no-ops if `hovered_idx`
             // has moved on by the time it fires.
-            let (delay, board_timer) = if open_idx.peek().is_some()
-                && *open_idx.peek() != Some(idx)
+            let (delay, board_timer) = if open_idx.peek().is_some() && *open_idx.peek() != Some(idx)
             {
                 (HOVER_SWAP_DELAY, Arc::clone(&enter_board))
             } else {
@@ -1241,8 +1224,9 @@ fn top_right_stack(
 }
 
 /// Horizontal row of icon buttons that lives above the layers panel.
-/// Current slots: toggle layers panel, open the document-config edit
-/// sheet, placeholder for a generic settings pane.
+/// Current slots (in order): optional DocLinked split controls when an
+/// ancestor provided [`DocLinkedChromeExt`], toggle layers panel, open
+/// the document-config edit sheet.
 fn top_right_toolbar(state: &ChromeState) -> impl IntoElement {
     let mut layers_vis = state.layers_visible;
     let toggle_layers: NoArgCallback<()> = NoArgCallback::new(move || {
@@ -1263,10 +1247,22 @@ fn top_right_toolbar(state: &ChromeState) -> impl IntoElement {
         crate::home::open_canvas_edit_sheet(id);
     });
 
-    rect()
-        .horizontal()
-        .spacing(6.0)
-        .child(icon_button(layers(), toggle_layers))
+    let doc_linked_ext = use_try_consume::<crate::doc_linked::DocLinkedChromeExt>();
+
+    let mut row = rect().horizontal().spacing(6.0);
+    if let Some(ext) = doc_linked_ext {
+        if ext.is_split {
+            // Canvas side of a live split: offer the close `×` only.
+            // Split buttons disappear — the shell is already in the
+            // split state they would toggle into.
+            row = row.child(icon_button(x(), ext.on_close));
+        } else {
+            row = row
+                .child(icon_button(square_split_horizontal(), ext.on_split_horizontal))
+                .child(icon_button(square_split_vertical(), ext.on_split_vertical));
+        }
+    }
+    row.child(icon_button(layers(), toggle_layers))
         .child(icon_button(sliders_horizontal(), open_doc_config))
 }
 

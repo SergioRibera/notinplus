@@ -106,50 +106,117 @@ pub fn hover_receiver() -> Receiver<Option<HoverPoint>> {
     hover_bridge().rx.clone()
 }
 
-/// Weak handle to whichever canvas-mounted [`Board`] is currently
-/// receiving pen samples. `None` while no canvas is mounted or focused.
-/// Weak so a dropped board auto-deregisters — `apply` skips the sample
-/// if `upgrade` fails.
-static ACTIVE_BOARD: Mutex<Option<Weak<Mutex<Board>>>> = Mutex::new(None);
+/// On-screen rect occupied by a mounted canvas, in surface-logical
+/// pixels. Published by `drawing_surface` from its `on_sized` handler so
+/// the pump can route pen samples (which arrive in window coordinates)
+/// to the canvas they land on and translate them into canvas-local
+/// space before dispatch.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SurfaceRect {
+    pub min_x: f32,
+    pub min_y: f32,
+    pub max_x: f32,
+    pub max_y: f32,
+}
 
-/// Register `board` as the active target for pen contact events.
-/// Called by every mounted canvas view, either at mount time (so the
-/// most recently mounted canvas wins by default) or on pointer-down /
-/// focus to transfer the pen to a different pane.
-pub fn set_active_board(board: &Arc<Mutex<Board>>) {
-    if let Ok(mut g) = ACTIVE_BOARD.lock() {
-        *g = Some(Arc::downgrade(board));
+impl SurfaceRect {
+    #[must_use]
+    pub fn contains(&self, x: f32, y: f32) -> bool {
+        x >= self.min_x && x < self.max_x && y >= self.min_y && y < self.max_y
     }
 }
 
-/// Clear the active target if it still points at `board`. Call on
-/// unmount so a dropped canvas does not keep the pump pointing at a
-/// soon-to-be-dangling slot. Boards that go out of scope silently
-/// deregister via `Weak::upgrade` returning `None`, but this keeps the
-/// slot tidy and the next sample's early-skip path cheap.
-pub fn clear_active_board_if(board: &Arc<Mutex<Board>>) {
-    if let Ok(mut g) = ACTIVE_BOARD.lock()
-        && let Some(ref weak) = *g
-        && let Some(current) = weak.upgrade()
-        && Arc::ptr_eq(&current, board)
-    {
+/// Every mounted canvas surface. Pen samples arrive in window-wide
+/// coordinates (`PenCaptureView` + iOS `UIEvent` both report
+/// decor-view / window space), so the pump hit-tests the sample against
+/// every registered rect and routes to the owning board. Split-pane
+/// layouts hold several entries at once — otherwise only the pane the
+/// pen is physically over receives the stroke. Weak so a dropped board
+/// auto-deregisters, same as the old single-slot design.
+static CANVAS_SURFACES: Mutex<Vec<(Weak<Mutex<Board>>, SurfaceRect)>> = Mutex::new(Vec::new());
+
+/// Board that latched the current stroke on `Down`. Move / Up / Cancel
+/// use this instead of re-hit-testing — a mid-stroke sample that
+/// crosses the pane divider should still land on the pane the stroke
+/// started on. Cleared on Up / Cancel.
+static ACTIVE_STROKE: Mutex<Option<(Weak<Mutex<Board>>, SurfaceRect)>> = Mutex::new(None);
+
+/// Register or update the on-screen rect for `board`'s drawing
+/// surface. Called from the surface's `on_sized` handler every time
+/// the layout engine resolves a new area for the canvas — mount,
+/// resize, split-pane divider drag.
+pub fn register_canvas_surface(board: &Arc<Mutex<Board>>, rect: SurfaceRect) {
+    let Ok(mut g) = CANVAS_SURFACES.lock() else {
+        return;
+    };
+    g.retain(|(w, _)| w.upgrade().is_some());
+    for entry in g.iter_mut() {
+        if let Some(b) = entry.0.upgrade()
+            && Arc::ptr_eq(&b, board)
+        {
+            entry.1 = rect;
+            return;
+        }
+    }
+    g.push((Arc::downgrade(board), rect));
+}
+
+/// Drop `board`'s registration if present. Called on unmount so the
+/// hit-test registry does not grow without bound across route changes.
+pub fn unregister_canvas_surface(board: &Arc<Mutex<Board>>) {
+    if let Ok(mut g) = CANVAS_SURFACES.lock() {
+        g.retain(|(w, _)| w.upgrade().is_some_and(|b| !Arc::ptr_eq(&b, board)));
+    }
+}
+
+/// Window-coord hit-test. Walks the registry in reverse (last-mounted
+/// first) so an overlay canvas (future PiP) wins over the base layer.
+fn hit_canvas(x: f32, y: f32) -> Option<(Arc<Mutex<Board>>, SurfaceRect)> {
+    let g = CANVAS_SURFACES.lock().ok()?;
+    for (w, rect) in g.iter().rev() {
+        if let Some(b) = w.upgrade()
+            && rect.contains(x, y)
+        {
+            return Some((b, *rect));
+        }
+    }
+    None
+}
+
+fn active_stroke() -> Option<(Arc<Mutex<Board>>, SurfaceRect)> {
+    let g = ACTIVE_STROKE.lock().ok()?;
+    let (w, r) = g.as_ref()?;
+    Some((w.upgrade()?, *r))
+}
+
+fn set_active_stroke(board: &Arc<Mutex<Board>>, rect: SurfaceRect) {
+    if let Ok(mut g) = ACTIVE_STROKE.lock() {
+        *g = Some((Arc::downgrade(board), rect));
+    }
+}
+
+fn clear_active_stroke() {
+    if let Ok(mut g) = ACTIVE_STROKE.lock() {
         *g = None;
     }
 }
 
-fn active_board() -> Option<Arc<Mutex<Board>>> {
-    let g = ACTIVE_BOARD.lock().ok()?;
-    g.as_ref()?.upgrade()
+/// Resolve the board whose rect the hover sample is over. Used by
+/// `pump_hover` so the pointer-overlay disc shows up in the correct
+/// pane in split-pane layouts.
+fn hover_target(x: f32, y: f32) -> Option<(Arc<Mutex<Board>>, SurfaceRect)> {
+    hit_canvas(x, y)
 }
 
 /// Kick off the pen pump for `window_id`.
 ///
 /// Spawns a thread that acquires the client and, on success, drains
-/// the event and hover streams. Each sample dispatches to whichever
-/// [`Board`] was most recently registered via [`set_active_board`] —
-/// multiple canvas views can coexist and the pump routes to the one
-/// in focus. Client ownership stays on that thread so its `Drop` runs
-/// only when the streams close.
+/// the event and hover streams. Each `Down` sample hit-tests against
+/// every canvas registered via [`register_canvas_surface`] and
+/// dispatches the stroke to whichever one it lands on; subsequent
+/// `Move` / `Up` / `Cancel` events follow the latched target. Client
+/// ownership stays on that thread so its `Drop` runs only when the
+/// streams close.
 pub fn spawn(window_id: u64) {
     std::thread::spawn(move || {
         let client = match pollster::block_on(PenClient::acquire_with(PenConfig::new(window_id))) {
@@ -221,9 +288,25 @@ fn pump_hover(stream: &TypedStream<PenHoverEvent, ()>) {
         // Pointer overlay follows hover regardless of whether the UI
         // task on the other side of `hover_bridge` picked up this
         // sample — pump_hover is the one place every proximity event
-        // flows through.
-        if let Some(board) = active_board() {
-            lock_board(&board).set_pointer(pointer);
+        // flows through. In split-pane layouts hover lands on
+        // whichever canvas the pen is physically over; a mid-canvas
+        // ProximityLeave clears the pointer on both candidates so a
+        // stale disc never lingers on the pane the pen just left.
+        match pointer {
+            Some((sx, sy)) => {
+                if let Some((board, rect)) = hover_target(sx, sy) {
+                    lock_board(&board).set_pointer(Some((sx - rect.min_x, sy - rect.min_y)));
+                }
+            }
+            None => {
+                if let Ok(g) = CANVAS_SURFACES.lock() {
+                    for (w, _) in g.iter() {
+                        if let Some(b) = w.upgrade() {
+                            lock_board(&b).set_pointer(None);
+                        }
+                    }
+                }
+            }
         }
         // Bounded channel: drop-oldest on full so a stalled consumer
         // never back-pressures the pen backend. Hover samples are
@@ -264,47 +347,67 @@ impl DtTracker {
 }
 
 fn apply(event: PenEvent, dt: &mut DtTracker) {
-    // Resolve the currently-focused board. A tap on Home / any route
-    // without a mounted canvas leaves `ACTIVE_BOARD` empty, so Down /
-    // Move / Up / Cancel all no-op and never phantom a stroke. A
-    // dropped board auto-deregisters via `Weak::upgrade` returning
-    // `None`. `dt` clears on skip so the next real stroke starts with
-    // a fresh baseline.
-    let Some(board) = active_board() else {
-        dt.clear();
-        return;
-    };
-    let board = &board;
-    // Compute the InkPoint(s) before touching the mutex, then take the
-    // lock only for the actual board mutation. Keeps the guard's live
-    // scope tight so the pump thread doesn't hold it during quantise +
-    // trig work. Dispatch flips at the top on `InputMode` so Pan reuses
-    // the same event stream to drive the viewport instead of a stroke.
+    // Pen samples arrive in window coordinates. `Down` hit-tests the
+    // sample against every registered canvas surface and latches the
+    // owning board for the stroke. Follow-up samples (`Move` / `Up` /
+    // `Cancel`) read that latch rather than re-hit-testing — a stroke
+    // that happens to cross a split-pane divider still belongs to the
+    // pane it started on. `dt` clears on skip so the next real stroke
+    // starts with a fresh baseline.
     match event {
         PenEvent::Down(sample) => {
             record_pen_pos(sample.x, sample.y);
+            // Mask gate: a `Down` landing inside any chrome overlay
+            // (palette, zoom HUD, bookmark card, back pill) must not
+            // start a stroke on the canvas underneath. Rects are
+            // published in window coords, same as `sample.x/y`.
+            if crate::ui_mask::contains(sample.x, sample.y) {
+                dt.clear();
+                clear_active_stroke();
+                return;
+            }
+            let Some((board, rect)) = hit_canvas(sample.x, sample.y) else {
+                dt.clear();
+                clear_active_stroke();
+                return;
+            };
+            set_active_stroke(&board, rect);
+            let (lx, ly) = (sample.x - rect.min_x, sample.y - rect.min_y);
             let d = dt.reset(sample.timestamp_us);
-            let point = point_from_sample(&sample, d);
-            let mut guard = lock_board(board);
-            guard.set_pointer(Some((sample.x, sample.y)));
+            let mut point = point_from_sample(&sample, d);
+            point.x = lx;
+            point.y = ly;
+            let mut guard = lock_board(&board);
+            guard.set_pointer(Some((lx, ly)));
             match guard.input_mode() {
                 InputMode::Draw => guard.begin_screen(point),
-                InputMode::Pan => guard.pan_begin(sample.x, sample.y),
+                InputMode::Pan => guard.pan_begin(lx, ly),
             }
         }
         PenEvent::Move(m) => {
             record_pen_pos(m.sample.x, m.sample.y);
-            let mut guard = lock_board(board);
-            guard.set_pointer(Some((m.sample.x, m.sample.y)));
+            let Some((board, rect)) = active_stroke() else {
+                dt.clear();
+                return;
+            };
+            let (lx, ly) = (m.sample.x - rect.min_x, m.sample.y - rect.min_y);
+            let mut guard = lock_board(&board);
+            guard.set_pointer(Some((lx, ly)));
             match guard.input_mode() {
                 InputMode::Draw => {
                     let mut points = Vec::with_capacity(m.coalesced.len() + 1);
                     for c in &m.coalesced {
                         let d = dt.advance(c.timestamp_us);
-                        points.push(point_from_sample(c, d));
+                        let mut p = point_from_sample(c, d);
+                        p.x = c.x - rect.min_x;
+                        p.y = c.y - rect.min_y;
+                        points.push(p);
                     }
                     let d = dt.advance(m.sample.timestamp_us);
-                    points.push(point_from_sample(&m.sample, d));
+                    let mut p = point_from_sample(&m.sample, d);
+                    p.x = lx;
+                    p.y = ly;
+                    points.push(p);
                     for p in points {
                         guard.extend_screen(p);
                     }
@@ -314,34 +417,42 @@ fn apply(event: PenEvent, dt: &mut DtTracker) {
                     // intermediate coalesced samples would thrash the
                     // anchor without changing the net viewport delta.
                     let _ = dt.advance(m.sample.timestamp_us);
-                    guard.pan_move(m.sample.x, m.sample.y);
+                    guard.pan_move(lx, ly);
                 }
             }
         }
         PenEvent::Up(sample) => {
             record_pen_pos(sample.x, sample.y);
+            let Some((board, rect)) = active_stroke() else {
+                dt.clear();
+                return;
+            };
+            let (lx, ly) = (sample.x - rect.min_x, sample.y - rect.min_y);
             let d = dt.advance(sample.timestamp_us);
             {
-                let mut guard = lock_board(board);
-                guard.set_pointer(Some((sample.x, sample.y)));
+                let mut guard = lock_board(&board);
+                guard.set_pointer(Some((lx, ly)));
                 match guard.input_mode() {
                     InputMode::Draw => {
-                        let point = point_from_sample(&sample, d);
+                        let mut point = point_from_sample(&sample, d);
+                        point.x = lx;
+                        point.y = ly;
                         guard.extend_screen(point);
                         guard.end();
                     }
                     InputMode::Pan => {
-                        guard.pan_move(sample.x, sample.y);
+                        guard.pan_move(lx, ly);
                         guard.pan_end();
                     }
                 }
             }
             dt.clear();
+            clear_active_stroke();
         }
         PenEvent::Cancel(_) => {
             clear_pen_pos();
-            {
-                let mut guard = lock_board(board);
+            if let Some((board, _)) = active_stroke() {
+                let mut guard = lock_board(&board);
                 guard.set_pointer(None);
                 match guard.input_mode() {
                     InputMode::Draw => guard.cancel(),
@@ -349,6 +460,7 @@ fn apply(event: PenEvent, dt: &mut DtTracker) {
                 }
             }
             dt.clear();
+            clear_active_stroke();
         }
         PenEvent::ButtonChanged(_) => {}
     }
