@@ -158,13 +158,18 @@ impl Component for SidebarModal {
         // this render tree and dropped when the modal closes.
         let menu_target = use_state(|| Option::<DocMenuTarget>::None);
 
-        let header = sidebar_header(current_tab, move |next| tab_state.set(next));
+        let header = sidebar_header(
+            current_tab,
+            query,
+            sort,
+            move |next| tab_state.set(next),
+        );
 
         let router = self.router;
         let workspace = self.workspace;
         let body = match current_tab {
             SidebarTab::Docs => docs_body(library_snapshot, query, menu_target, router),
-            SidebarTab::Contents => contents_body(board),
+            SidebarTab::Contents => contents_body(board, query),
             SidebarTab::Bookmarks => {
                 bookmarks_body(board, query, sort, selected_bookmark, body_buffer)
             }
@@ -180,9 +185,6 @@ impl Component for SidebarModal {
             .direction(Direction::Vertical)
             .content(Content::Flex)
             .child(header);
-        if !matches!(current_tab, SidebarTab::Contents) {
-            shell = shell.child(search_input(query, current_tab, sort));
-        }
         shell = shell.child(rect().width(Size::fill()).height(Size::fill()).child(body));
         if let Some(target) = menu_target.read().clone() {
             shell = shell.child(doc_context_overlay(
@@ -199,26 +201,35 @@ impl Component for SidebarModal {
 
 // ---------- Header / tab bar ----------------------------------------------
 
-fn sidebar_header(current: SidebarTab, on_pick: impl FnMut(SidebarTab) + Clone + 'static) -> Rect {
+fn sidebar_header(
+    current: SidebarTab,
+    query: State<String>,
+    sort: State<BookmarkSort>,
+    on_pick: impl FnMut(SidebarTab) + Clone + 'static,
+) -> Rect {
     let tabs = [
         (SidebarTab::Docs, file_text()),
         (SidebarTab::Contents, layers()),
         (SidebarTab::Bookmarks, bookmark()),
     ];
-    let mut row = rect()
+    let mut tab_row = rect()
         .direction(Direction::Horizontal)
         .cross_align(Alignment::Center)
         .content(Content::Flex)
         .main_align(Alignment::SpaceBetween)
         .width(Size::fill())
         .padding((8.0, 10.0))
-        .background(SIDEBAR_BG)
         .spacing(6.0);
     for (tab, icon) in tabs {
         let mut picker = on_pick.clone();
-        row = row.child(tab_chip(tab, icon, current == tab, move || picker(tab)));
+        tab_row = tab_row.child(tab_chip(tab, icon, current == tab, move || picker(tab)));
     }
-    row
+    rect()
+        .direction(Direction::Vertical)
+        .width(Size::fill())
+        .background(SIDEBAR_BG)
+        .child(tab_row)
+        .child(search_input(query, current, sort))
 }
 
 fn tab_chip(
@@ -263,7 +274,7 @@ fn search_input(query: State<String>, tab: SidebarTab, sort: State<BookmarkSort>
     let placeholder = match tab {
         SidebarTab::Docs => "Buscar por nombre o etiqueta",
         SidebarTab::Bookmarks => "Buscar marcadores",
-        SidebarTab::Contents => "",
+        SidebarTab::Contents => "Buscar en el contenido",
     };
     let mut row = rect()
         .direction(Direction::Horizontal)
@@ -710,28 +721,45 @@ enum TocEntry {
     },
 }
 
-fn collect_toc(board: &Arc<Mutex<Board>>) -> Vec<TocEntry> {
+fn collect_toc(board: &Arc<Mutex<Board>>, query: &str) -> Vec<TocEntry> {
     let g = lock(board);
     let mut out = Vec::new();
+    let needle = query.trim().to_ascii_lowercase();
 
     let outline = g.background().outline();
     if !outline.is_empty() {
-        out.push(TocEntry::Section("Contenido".to_owned()));
-        for node in &outline.nodes {
-            flatten_outline(node, 0, &mut out);
+        let has_match = outline
+            .nodes
+            .iter()
+            .any(|n| outline_subtree_matches(n, &needle));
+        if needle.is_empty() || has_match {
+            out.push(TocEntry::Section("Contenido".to_owned()));
+            for node in &outline.nodes {
+                flatten_outline(node, 0, &needle, &mut out);
+            }
         }
     } else {
         let pages = g.background().pages();
         if !pages.is_empty() {
-            out.push(TocEntry::Section("Páginas".to_owned()));
-            for (i, page) in pages.iter().enumerate() {
-                let cx = (page.rect.min_x + page.rect.max_x) * 0.5;
-                let cy = (page.rect.min_y + page.rect.max_y) * 0.5;
-                out.push(TocEntry::Page {
-                    label: format!("Página {}", i + 1),
-                    world_x: cx,
-                    world_y: cy,
-                });
+            let page_label = |i: usize| format!("Página {}", i + 1);
+            let visible: Vec<(usize, &freya_canvas_bg::PageLayout)> = pages
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| {
+                    needle.is_empty() || page_label(*i).to_ascii_lowercase().contains(&needle)
+                })
+                .collect();
+            if !visible.is_empty() {
+                out.push(TocEntry::Section("Páginas".to_owned()));
+                for (i, page) in visible {
+                    let cx = (page.rect.min_x + page.rect.max_x) * 0.5;
+                    let cy = (page.rect.min_y + page.rect.max_y) * 0.5;
+                    out.push(TocEntry::Page {
+                        label: page_label(i),
+                        world_x: cx,
+                        world_y: cy,
+                    });
+                }
             }
         }
     }
@@ -739,23 +767,53 @@ fn collect_toc(board: &Arc<Mutex<Board>>) -> Vec<TocEntry> {
     let layers = g.layers_snapshot();
     if !layers.is_empty() {
         let active_id = g.active_layer_id();
-        out.push(TocEntry::Section("Capas".to_owned()));
-        for layer in layers.into_iter().rev() {
-            out.push(TocEntry::Layer {
-                id: layer.id,
-                name: layer.name,
-                stroke_count: layer.stroke_count,
-                is_active: layer.id == active_id,
-            });
+        let filtered: Vec<_> = layers
+            .into_iter()
+            .rev()
+            .filter(|l| needle.is_empty() || l.name.to_ascii_lowercase().contains(&needle))
+            .collect();
+        if !filtered.is_empty() {
+            out.push(TocEntry::Section("Capas".to_owned()));
+            for layer in filtered {
+                out.push(TocEntry::Layer {
+                    id: layer.id,
+                    name: layer.name,
+                    stroke_count: layer.stroke_count,
+                    is_active: layer.id == active_id,
+                });
+            }
         }
     }
     out
 }
 
+/// Returns `true` when `node` or any descendant's label contains
+/// `needle`. Caller feeds already-lowercased `needle`; node labels
+/// are lowercased per-call (cheap compared to the DFS walk).
+fn outline_subtree_matches(node: &freya_canvas_bg::OutlineNode, needle: &str) -> bool {
+    if needle.is_empty() || node.label.to_ascii_lowercase().contains(needle) {
+        return true;
+    }
+    node.children
+        .iter()
+        .any(|c| outline_subtree_matches(c, needle))
+}
+
 /// Depth-first flatten of an [`OutlineNode`] tree into `out`. `depth`
 /// is clamped at 8 — any outline deeper than that is suspicious and
-/// the extra indent levels would truncate anyway.
-fn flatten_outline(node: &freya_canvas_bg::OutlineNode, depth: u8, out: &mut Vec<TocEntry>) {
+/// the extra indent levels would truncate anyway. When `needle` is
+/// non-empty, a node is emitted iff it or any descendant matches —
+/// parents stay visible so the user can see the hierarchy context of
+/// a matched leaf.
+fn flatten_outline(
+    node: &freya_canvas_bg::OutlineNode,
+    depth: u8,
+    needle: &str,
+    out: &mut Vec<TocEntry>,
+) {
+    if !outline_subtree_matches(node, needle) {
+        return;
+    }
     out.push(TocEntry::Outline {
         id: node.id,
         label: node.label.clone(),
@@ -764,23 +822,56 @@ fn flatten_outline(node: &freya_canvas_bg::OutlineNode, depth: u8, out: &mut Vec
         depth: depth.min(8),
     });
     for child in &node.children {
-        flatten_outline(child, depth.saturating_add(1), out);
+        flatten_outline(child, depth.saturating_add(1), needle, out);
     }
 }
 
-fn outline_icon_bytes(icon: &freya_canvas_bg::OutlineIcon) -> Bytes {
-    use freya_canvas_bg::OutlineIcon::*;
-    match icon {
-        Layer => layers(),
-        Bookmark => bookmark(),
-        Section | Page | Heading | Custom(_) => file_text(),
+fn outline_icon_element(icon: &freya_canvas_bg::OutlineIcon, color: Color) -> Element {
+    use freya_canvas_bg::{IconType, OutlineIcon::*};
+    let semantic = match icon {
+        Layer => Some(layers()),
+        Bookmark => Some(bookmark()),
+        Section | Page | Heading => Some(file_text()),
+        Custom(_) => None,
+    };
+    if let Some(bytes) = semantic {
+        return SvgViewer::new(bytes)
+            .fill(color)
+            .width(Size::px(14.))
+            .height(Size::px(14.))
+            .into_element();
+    }
+    // Plugin-supplied icon.
+    let Custom(custom) = icon else { unreachable!() };
+    match custom {
+        IconType::Svg(bytes) => {
+            // Freya's SvgViewer wants `Bytes`; the trait hands us an
+            // `Arc<[u8]>` so an allocation-free copy via `Bytes::from`
+            // is impossible — one `Vec<u8>` clone per render is still
+            // trivial compared to the SVG parser itself.
+            SvgViewer::new(Bytes::from(bytes.to_vec()))
+                .fill(color)
+                .width(Size::px(14.))
+                .height(Size::px(14.))
+                .into_element()
+        }
+        IconType::Png(bytes) => ImageViewer::new(Bytes::from(bytes.to_vec()))
+            .width(Size::px(14.))
+            .height(Size::px(14.))
+            .into_element(),
     }
 }
 
-fn contents_body(board: &Arc<Mutex<Board>>) -> Element {
-    let entries = collect_toc(board);
+fn contents_body(board: &Arc<Mutex<Board>>, query: State<String>) -> Element {
+    let needle_src = query.read();
+    let entries = collect_toc(board, &needle_src);
     if entries.is_empty() {
-        return empty_state("El documento no tiene contenido todavía.");
+        let msg = if needle_src.trim().is_empty() {
+            "El documento no tiene contenido todavía."
+        } else {
+            "Nada coincide con la búsqueda."
+        };
+        return empty_state(msg);
     }
 
     let length = entries.len();
@@ -825,7 +916,15 @@ fn toc_row(entry: TocEntry, board: Arc<Mutex<Board>>) -> Element {
                 drop(guard);
                 ModalController::get().close();
             };
-            toc_card_indented(outline_icon_bytes(&icon), text, subtitle, false, depth, on_press)
+            let icon_color = TEXT_PRIMARY;
+            toc_card_indented(
+                outline_icon_element(&icon, icon_color),
+                text,
+                subtitle,
+                false,
+                depth,
+                on_press,
+            )
         }
         TocEntry::Page {
             label: text,
@@ -837,7 +936,7 @@ fn toc_row(entry: TocEntry, board: Arc<Mutex<Board>>) -> Element {
                 let _ = lock(&press_board).center_on_world(world_x, world_y);
                 ModalController::get().close();
             };
-            toc_card(file_text(), text, None, false, on_press)
+            toc_card(bundled_icon(file_text(), TEXT_PRIMARY), text, None, false, on_press)
         }
         TocEntry::Layer {
             id,
@@ -849,8 +948,9 @@ fn toc_row(entry: TocEntry, board: Arc<Mutex<Board>>) -> Element {
             let on_press = move |_: Event<PressEventData>| {
                 lock(&press_board).set_active_layer(id);
             };
+            let icon_color = if is_active { TEXT_INVERSE } else { TEXT_PRIMARY };
             toc_card(
-                layers(),
+                bundled_icon(layers(), icon_color),
                 name,
                 Some(format!("{stroke_count} trazos")),
                 is_active,
@@ -860,8 +960,16 @@ fn toc_row(entry: TocEntry, board: Arc<Mutex<Board>>) -> Element {
     }
 }
 
+fn bundled_icon(bytes: Bytes, color: Color) -> Element {
+    SvgViewer::new(bytes)
+        .fill(color)
+        .width(Size::px(14.))
+        .height(Size::px(14.))
+        .into_element()
+}
+
 fn toc_card_indented<F>(
-    icon: Bytes,
+    icon: Element,
     title: String,
     subtitle: Option<String>,
     is_active: bool,
@@ -880,7 +988,7 @@ where
 }
 
 fn toc_card<F>(
-    icon: Bytes,
+    icon: Element,
     title: String,
     subtitle: Option<String>,
     is_active: bool,
@@ -914,12 +1022,7 @@ where
         .background(bg)
         .with_corner_radius(6.0)
         .on_press(on_press)
-        .child(
-            SvgViewer::new(icon)
-                .fill(text)
-                .width(Size::px(14.))
-                .height(Size::px(14.)),
-        )
+        .child(icon)
         .child(body)
         .into_element()
 }

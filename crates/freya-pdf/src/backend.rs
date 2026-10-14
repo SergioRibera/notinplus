@@ -106,9 +106,22 @@ pub struct PdfBackground {
 #[derive(Debug)]
 struct CachedOutline {
     outline: Outline,
-    /// Flat `OutlineNodeId.0 → PageId` lookup. Nodes without a
+    /// Flat `OutlineNodeId.0 → OutlineTarget` lookup. Nodes without a
     /// resolvable destination are absent.
-    targets: HashMap<u64, PageId>,
+    targets: HashMap<u64, OutlineTarget>,
+}
+
+/// Where an outline node points inside the PDF. `y_from_top` is
+/// optional — some PDF destinations (FitPage, no explicit y) do not
+/// name a specific vertical offset and the host just centres on the
+/// page top.
+#[derive(Debug, Clone, Copy)]
+struct OutlineTarget {
+    page: PageId,
+    /// Distance in PDF points from the TOP of the target page, when
+    /// the destination's view settings specify one. `None` falls back
+    /// to a small top margin.
+    y_from_top: Option<f32>,
 }
 
 impl PdfBackground {
@@ -237,15 +250,14 @@ impl CanvasBackground for PdfBackground {
     }
 
     fn navigate_to_outline(&self, id: OutlineNodeId) -> Option<(f32, f32)> {
-        let page_id = *self.cached_outline().targets.get(&id.0)?;
-        let page = self.pages.iter().find(|p| p.id == page_id)?;
-        Some((
-            (page.rect.min_x + page.rect.max_x) * 0.5,
-            // Prefer the page top (plus a thin margin) — jumping to a
-            // chapter should land at the start of the page, not the
-            // middle.
-            page.rect.min_y + 24.0,
-        ))
+        let target = *self.cached_outline().targets.get(&id.0)?;
+        let page = self.pages.iter().find(|p| p.id == target.page)?;
+        let x = (page.rect.min_x + page.rect.max_x) * 0.5;
+        let y = match target.y_from_top {
+            Some(off) => (page.rect.min_y + off).min(page.rect.max_y),
+            None => page.rect.min_y + 24.0,
+        };
+        Some((x, y))
     }
 
     fn paint(&self, cx: &mut BgPaintCtx<'_>) {
@@ -535,7 +547,7 @@ fn compute_layout(doc: &PdfDocument, gap: f32) -> (Vec<PageLayout>, Rect) {
 /// as section headers (still useful for navigation hierarchy) but
 /// omitted from the `targets` lookup, so clicking them is a no-op.
 fn build_outline(doc: &PdfDocument) -> CachedOutline {
-    use pdfium_render::prelude::PdfBookmark;
+    use pdfium_render::prelude::{PdfBookmark, PdfDestinationViewSettings};
 
     let pdoc = doc.pdfium_doc();
     let bookmarks = pdoc.bookmarks();
@@ -546,21 +558,47 @@ fn build_outline(doc: &PdfDocument) -> CachedOutline {
         };
     };
 
+    // Index pdfium's page-index-space heights (points, PDF
+    // bottom-up origin) once, so the destination y → "from top"
+    // translation does not pay a per-bookmark FFI round-trip.
+    let page_heights: Vec<f32> = doc.page_sizes().iter().map(|&(_, h)| h).collect();
+
     let mut next_id: u64 = 1;
-    let mut targets: HashMap<u64, PageId> = HashMap::new();
+    let mut targets: HashMap<u64, OutlineTarget> = HashMap::new();
 
     fn walk(
         node: &PdfBookmark<'_>,
+        page_heights: &[f32],
         next_id: &mut u64,
-        targets: &mut HashMap<u64, PageId>,
+        targets: &mut HashMap<u64, OutlineTarget>,
     ) -> OutlineNode {
         let id = OutlineNodeId(*next_id);
         *next_id += 1;
         let label = node.title().unwrap_or_else(|| "(sin título)".to_owned());
-        let dest_page = node.destination().and_then(|d| d.page_index().ok());
+
+        let destination = node.destination();
+        let dest_page = destination.as_ref().and_then(|d| d.page_index().ok());
         let (subtitle, icon) = if let Some(idx) = dest_page {
             #[allow(clippy::cast_lossless)]
-            targets.insert(id.0, PageId(idx as u64));
+            let page_id = PageId(idx as u64);
+            // PDF destinations use a bottom-up coordinate system; the
+            // shell's world space is top-down inside a page. For the
+            // view-setting variants that carry a y, translate once.
+            let y_from_top = destination
+                .and_then(|d| d.view_settings().ok())
+                .and_then(|s| extract_dest_y_bottom(s))
+                .and_then(|y_from_bottom| {
+                    page_heights
+                        .get(idx as usize)
+                        .map(|h| (h - y_from_bottom).max(0.0))
+                });
+            targets.insert(
+                id.0,
+                OutlineTarget {
+                    page: page_id,
+                    y_from_top,
+                },
+            );
             (Some(format!("p. {}", idx + 1)), OutlineIcon::Page)
         } else {
             (None, OutlineIcon::Section)
@@ -568,7 +606,7 @@ fn build_outline(doc: &PdfDocument) -> CachedOutline {
         let mut children = Vec::new();
         let mut child = node.first_child();
         while let Some(c) = child {
-            children.push(walk(&c, next_id, targets));
+            children.push(walk(&c, page_heights, next_id, targets));
             child = c.next_sibling();
         }
         OutlineNode {
@@ -586,7 +624,7 @@ fn build_outline(doc: &PdfDocument) -> CachedOutline {
     let mut nodes = Vec::new();
     let mut sibling = Some(root);
     while let Some(node) = sibling {
-        nodes.push(walk(&node, &mut next_id, &mut targets));
+        nodes.push(walk(&node, &page_heights, &mut next_id, &mut targets));
         sibling = node.next_sibling();
     }
 
@@ -596,6 +634,22 @@ fn build_outline(doc: &PdfDocument) -> CachedOutline {
             revision: 0,
         },
         targets,
+    }
+}
+
+/// Pull a bottom-up y (PDF points) out of a destination view setting
+/// when the variant specifies one. Returns `None` for Fit-type
+/// destinations that pin the whole page / bounds — the caller then
+/// falls back to a small top margin.
+fn extract_dest_y_bottom(
+    settings: pdfium_render::prelude::PdfDestinationViewSettings,
+) -> Option<f32> {
+    use pdfium_render::prelude::PdfDestinationViewSettings as V;
+    match settings {
+        V::SpecificCoordinatesAndZoom(_, Some(y), _)
+        | V::FitPageHorizontallyToWindow(Some(y))
+        | V::FitBoundsHorizontallyToWindow(Some(y)) => Some(y.value),
+        _ => None,
     }
 }
 

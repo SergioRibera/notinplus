@@ -209,10 +209,34 @@ pub struct BgPaintCtx<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct OutlineNodeId(pub u64);
 
+/// Plugin-shipped icon bytes tagged by format. The host picks the
+/// right rendering path (SVG rasteriser vs. image decoder) based on
+/// the variant. `Arc<[u8]>` is cheap to clone and already thread-safe
+/// so backends can keep a single instance per icon.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IconType {
+    /// Vector icon — raw SVG document bytes.
+    Svg(Arc<[u8]>),
+    /// Raster icon — PNG-encoded bytes. Hosts decode on first use.
+    Png(Arc<[u8]>),
+}
+
+impl IconType {
+    /// Build an SVG icon from any `Into<Arc<[u8]>>` source.
+    pub fn svg(bytes: impl Into<Arc<[u8]>>) -> Self {
+        Self::Svg(bytes.into())
+    }
+
+    /// Build a PNG icon from any `Into<Arc<[u8]>>` source.
+    pub fn png(bytes: impl Into<Arc<[u8]>>) -> Self {
+        Self::Png(bytes.into())
+    }
+}
+
 /// Semantic hint the host uses to pick an icon for an outline row.
-/// `Custom` carries a backend-defined label — a canvas with a bespoke
-/// node type can ship its own string and let future hosts match on it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+/// Shell-known variants map to bundled icons; `Custom` carries
+/// plugin-supplied icon bytes the shell renders directly.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum OutlineIcon {
     /// Non-navigable grouping row (e.g. "Pages", "Layers"). Default.
     #[default]
@@ -226,9 +250,8 @@ pub enum OutlineIcon {
     Layer,
     /// A pinned location (user bookmark).
     Bookmark,
-    /// Backend-specific icon identifier the host can route to its
-    /// own icon table. Unknown identifiers fall back to `Section`.
-    Custom(String),
+    /// Plugin-supplied icon — the shell renders the bytes directly.
+    Custom(IconType),
 }
 
 /// One node in an outline tree. Hierarchical — the host flattens the
