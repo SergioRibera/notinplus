@@ -2135,6 +2135,15 @@ pub fn drawing_surface(
     // pen pump every time layout resettles.
     let surface_origin =
         freya::prelude::use_state(|| (0.0_f32, 0.0_f32));
+    // Per-mount pen-pump id. Keyed registration lets two surfaces
+    // sharing one `Board` (DocLinked split view) both appear in the
+    // hit-test registry — unregister on drop is scoped to this id
+    // only, so the sibling surface keeps its entry.
+    let surface_id =
+        freya::prelude::use_hook(crate::pen_pump::allocate_canvas_surface_id);
+    freya::prelude::use_drop(move || {
+        crate::pen_pump::unregister_canvas_surface(surface_id);
+    });
     let sized_board = Arc::clone(board);
     // Shared long-press state: token invalidates when the pointer
     // moves far enough or leaves the surface; press_start records the
@@ -2156,7 +2165,7 @@ pub fn drawing_surface(
                 max_x: e.area.max_x(),
                 max_y: e.area.max_y(),
             };
-            crate::pen_pump::register_canvas_surface(&sized_board, r);
+            crate::pen_pump::register_canvas_surface(surface_id, &sized_board, r);
             let next = (r.min_x, r.min_y);
             if *surface_origin_setter.peek() != next {
                 surface_origin_setter.set(next);

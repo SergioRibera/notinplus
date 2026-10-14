@@ -93,7 +93,7 @@ impl CanvasMount {
 /// Bundle of reactive signals every palette button shares to
 /// coordinate the popup overlay. Grouped so [`palette_button`] does
 /// not spread a wide parameter list across every caller.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub(crate) struct PopupCoords {
     open_idx: State<Option<usize>>,
     hovered_idx: State<Option<usize>>,
@@ -374,102 +374,45 @@ impl Component for CanvasPane {
 /// a dynamic container (pane tree, tab bar); the free fn is kept for
 /// single-pane routes that call it exactly once per render.
 pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoElement {
-    let mut zoom = state.zoom;
-    let mut can_undo = state.can_undo;
-    let mut can_redo = state.can_redo;
-    let mut selected_setter = state.selected;
-    let mut scale_setter = state.scale;
-    let mut mode_setter = state.mode;
-    let mut active_setter = state.active_board;
-    let mut active_item_setter = state.active_item;
-    let board = use_hook(move || {
-        let board = Arc::new(Mutex::new(Board::default()));
-        let platform = Platform::get();
-        let (notifier, rx) = RedrawNotifier::new();
-        let (prefs_tx, prefs_rx) = flume::unbounded::<()>();
-        {
-            let mut g = lock(&board);
-            g.set_notifier(notifier);
-            // Restore global toolbar prefs before any UI reads
-            // `current_preset`. Sink is installed after the apply so the
-            // restore itself does not re-ping and churn disk at launch.
-            let saved = prefs::load_prefs();
-            for (kind, scale) in &saved.size_scales {
-                g.set_size_scale(*kind, *scale);
+    // When an ancestor hoisted the mount — e.g.
+    // `DocLinkedView::render` creates the board at the shell level so
+    // both halves of a split-view share it — pick up the provided
+    // `Board` from context instead of standing up a fresh one. The
+    // reuse path skips every init side-effect (prefs workers,
+    // redraw-sync, active_boards registration, `init_canvas_mount`)
+    // because the hoisting parent already ran them; we still seed the
+    // local `ChromeState` signals so the per-side chrome reflects the
+    // shared board's current state.
+    let shared_board = freya::prelude::try_consume_context::<Arc<Mutex<Board>>>();
+    let is_shared = shared_board.is_some();
+    let board = use_hook({
+        let shared_board = shared_board;
+        let mut state_copy = state;
+        move || {
+            if let Some(b) = shared_board {
+                seed_chrome_from_board(&b, &mut state_copy, mount);
+                return b;
             }
-            if let Some(preset) = saved.current_preset {
-                g.set_current_preset(preset);
-            }
-            if let Some(color) = saved.current_color {
-                g.set_current_color(color);
-            }
-            g.set_input_mode(saved.input_mode());
-            g.set_prefs_sink(prefs_tx);
+            mount_board(mount, state_copy)
         }
-        // Seed chrome signals from the restored board state. Done
-        // after the prefs apply so overlays open on the correct
-        // preset / size / mode on first paint.
-        {
-            let g = lock(&board);
-            selected_setter.set(palette_index_for(g.current_kind()).unwrap_or(0));
-            scale_setter.set(g.current_size());
-            mode_setter.set(g.input_mode());
-            can_undo.set(g.undo_depth() > 0);
-            can_redo.set(g.redo_depth() > 0);
-        }
-        spawn_prefs_worker(Arc::clone(&board), prefs_rx);
-        let zoom_board = Arc::clone(&board);
-        spawn(async move {
-            while rx.recv_async().await.is_ok() {
-                platform.send(UserEvent::RequestRedraw);
-                // Piggyback the redraw wakeup: sync the reactive zoom
-                // signal off the freshest viewport so the HUD label
-                // stays in step with pinch / wheel gestures without
-                // needing its own notifier plumbing.
-                let (s, u, r) = {
-                    let g = lock(&zoom_board);
-                    (g.viewport().scale, g.undo_depth() > 0, g.redo_depth() > 0)
-                };
-                // 0.1% threshold — the HUD label rounds to whole
-                // percent, so a stricter epsilon would push zoom.set
-                // (and the reactive root re-render it triggers) far
-                // more often than the label actually changes.
-                if (s - *zoom.read()).abs() > 0.001 {
-                    zoom.set(s);
-                }
-                if u != *can_undo.read() {
-                    can_undo.set(u);
-                }
-                if r != *can_redo.read() {
-                    can_redo.set(r);
-                }
-            }
-        });
-        // Provide to descendants (settings modal, etc.) so they can
-        // consume via `try_consume_context::<Arc<Mutex<Board>>>()` and
-        // operate on this mount's board — not a sibling pane's.
-        provide_context(Arc::clone(&board));
-        // Surface rect registration happens inside `drawing_surface`
-        // via `on_sized` — the pen pump hit-tests each stylus sample
-        // against every mounted canvas, so split-pane layouts route
-        // the pen to the pane the stroke physically lands on.
-        if let Some(id) = mount.item() {
-            crate::active_boards::set(id, Arc::clone(&board));
-        }
-        crate::route::init_canvas_mount(mount, &board);
-        // Publish for the sibling chrome. Any previously-published
-        // board (a prior mount of the same shell) is overwritten —
-        // last-mount-wins matches the pen pump semantics.
-        active_setter.set(Some(Arc::clone(&board)));
-        active_item_setter.set(mount.item());
-        board
     });
     use_drop({
         let board = Arc::clone(&board);
         let mut active_setter = state.active_board;
         let mut active_item_setter = state.active_item;
         move || {
-            pen_pump::unregister_canvas_surface(&board);
+            // Per-surface pen-pump deregistration lives inside
+            // `drawing_surface`; it owns the surface id and runs its
+            // own `use_drop`.
+            //
+            // Shared mount: lifecycle (active_boards + cancel + the
+            // chrome signals) belongs to the hoisting ancestor (see
+            // [`crate::doc_linked::DocLinkedView`]'s `use_drop`).
+            // Doing it here would clear state the ancestor just
+            // re-seeded on a split-toggle remount.
+            if is_shared {
+                return;
+            }
             if let Some(id) = mount.item() {
                 crate::active_boards::clear_if(id, &board);
             }
@@ -502,6 +445,131 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoEl
             state.bookmark_body,
             anchor_source,
         ))
+}
+
+/// Create a fresh `Board` for `mount`, restore global toolbar prefs,
+/// spawn the autosave + prefs + redraw-sync workers, publish the
+/// board to `active_boards` + the chrome's `active_board` signal, and
+/// install the `Arc<Mutex<Board>>` as a context value so descendants
+/// can look it up. Returns the `Arc` for the caller to hold.
+///
+/// Separated from [`canvas_body`] so shells that need to hoist the
+/// mount above a split-view layout (see
+/// [`crate::doc_linked::DocLinkedView`]) can run the init at a
+/// container scope and have inner canvas calls reuse the published
+/// board via `try_consume_context`.
+///
+/// Must be called inside a component render — spawn + provide_context
+/// resolve against the current scope.
+pub(crate) fn mount_board(mount: CanvasMount, state: ChromeState) -> Arc<Mutex<Board>> {
+    let mut zoom = state.zoom;
+    let mut can_undo = state.can_undo;
+    let mut can_redo = state.can_redo;
+    let mut selected_setter = state.selected;
+    let mut scale_setter = state.scale;
+    let mut mode_setter = state.mode;
+    let mut active_setter = state.active_board;
+    let mut active_item_setter = state.active_item;
+
+    let board = Arc::new(Mutex::new(Board::default()));
+    let platform = Platform::get();
+    let (notifier, rx) = RedrawNotifier::new();
+    let (prefs_tx, prefs_rx) = flume::unbounded::<()>();
+    {
+        let mut g = lock(&board);
+        g.set_notifier(notifier);
+        // Restore global toolbar prefs before any UI reads
+        // `current_preset`. Sink is installed after the apply so the
+        // restore itself does not re-ping and churn disk at launch.
+        let saved = prefs::load_prefs();
+        for (kind, scale) in &saved.size_scales {
+            g.set_size_scale(*kind, *scale);
+        }
+        if let Some(preset) = saved.current_preset {
+            g.set_current_preset(preset);
+        }
+        if let Some(color) = saved.current_color {
+            g.set_current_color(color);
+        }
+        g.set_input_mode(saved.input_mode());
+        g.set_prefs_sink(prefs_tx);
+    }
+    // Seed chrome signals from the restored board state. Done after
+    // the prefs apply so overlays open on the correct preset / size
+    // / mode on first paint.
+    {
+        let g = lock(&board);
+        selected_setter.set(palette_index_for(g.current_kind()).unwrap_or(0));
+        scale_setter.set(g.current_size());
+        mode_setter.set(g.input_mode());
+        can_undo.set(g.undo_depth() > 0);
+        can_redo.set(g.redo_depth() > 0);
+    }
+    spawn_prefs_worker(Arc::clone(&board), prefs_rx);
+    let zoom_board = Arc::clone(&board);
+    spawn(async move {
+        while rx.recv_async().await.is_ok() {
+            platform.send(UserEvent::RequestRedraw);
+            // Piggyback the redraw wakeup: sync the reactive zoom
+            // signal off the freshest viewport so the HUD label
+            // stays in step with pinch / wheel gestures without
+            // needing its own notifier plumbing.
+            let (s, u, r) = {
+                let g = lock(&zoom_board);
+                (g.viewport().scale, g.undo_depth() > 0, g.redo_depth() > 0)
+            };
+            // 0.1% threshold — the HUD label rounds to whole percent,
+            // so a stricter epsilon would push zoom.set (and the
+            // reactive root re-render it triggers) far more often
+            // than the label actually changes.
+            if (s - *zoom.read()).abs() > 0.001 {
+                zoom.set(s);
+            }
+            if u != *can_undo.read() {
+                can_undo.set(u);
+            }
+            if r != *can_redo.read() {
+                can_redo.set(r);
+            }
+        }
+    });
+    // Provide to descendants (settings modal, split-view sibling
+    // panes, …) so they can consume via `try_consume_context::
+    // <Arc<Mutex<Board>>>()` and operate on this mount's board.
+    provide_context(Arc::clone(&board));
+    if let Some(id) = mount.item() {
+        crate::active_boards::set(id, Arc::clone(&board));
+    }
+    crate::route::init_canvas_mount(mount, &board);
+    // Publish for the sibling chrome. Any previously-published board
+    // (a prior mount of the same shell) is overwritten — last-mount
+    // -wins matches the pen pump semantics.
+    active_setter.set(Some(Arc::clone(&board)));
+    active_item_setter.set(mount.item());
+    board
+}
+
+/// Reuse-path helper: seed a fresh `ChromeState`'s signals from an
+/// existing `Board` published by [`mount_board`] at an ancestor
+/// scope. Mirror of the signal-seeding block inside `mount_board` —
+/// kept separate so the fresh init path never pays the extra
+/// zoom-signal write when the chrome state is one it already seeded.
+fn seed_chrome_from_board(
+    board: &Arc<Mutex<Board>>,
+    state: &mut ChromeState,
+    mount: CanvasMount,
+) {
+    {
+        let g = lock(board);
+        state.selected.set(palette_index_for(g.current_kind()).unwrap_or(0));
+        state.scale.set(g.current_size());
+        state.mode.set(g.input_mode());
+        state.can_undo.set(g.undo_depth() > 0);
+        state.can_redo.set(g.redo_depth() > 0);
+        state.zoom.set(g.viewport().scale);
+    }
+    state.active_board.set(Some(Arc::clone(board)));
+    state.active_item.set(mount.item());
 }
 
 /// Toolbar + overlays stacked above the active pane. Bound to the

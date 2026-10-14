@@ -6,6 +6,7 @@
 //! to the board on a dedicated thread. Failure to acquire logs and
 //! returns — the app still runs, driven by mouse events.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
@@ -126,14 +127,39 @@ impl SurfaceRect {
     }
 }
 
+/// Opaque per-surface identifier. Each `drawing_surface` mount
+/// allocates one via [`allocate_canvas_surface_id`] and uses it as the
+/// key for register / unregister calls — multiple surfaces can share
+/// the same `Board` (DocLinked split view) without clobbering each
+/// other's rect on update.
+pub type CanvasSurfaceId = u64;
+
+static NEXT_SURFACE_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Monotonically increasing id generator. The id space is global, so
+/// surfaces coming from different windows / crates never collide.
+#[must_use]
+pub fn allocate_canvas_surface_id() -> CanvasSurfaceId {
+    NEXT_SURFACE_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+#[derive(Clone)]
+struct SurfaceEntry {
+    id: CanvasSurfaceId,
+    board: Weak<Mutex<Board>>,
+    rect: SurfaceRect,
+}
+
 /// Every mounted canvas surface. Pen samples arrive in window-wide
 /// coordinates (`PenCaptureView` + iOS `UIEvent` both report
 /// decor-view / window space), so the pump hit-tests the sample against
 /// every registered rect and routes to the owning board. Split-pane
 /// layouts hold several entries at once — otherwise only the pane the
-/// pen is physically over receives the stroke. Weak so a dropped board
-/// auto-deregisters, same as the old single-slot design.
-static CANVAS_SURFACES: Mutex<Vec<(Weak<Mutex<Board>>, SurfaceRect)>> = Mutex::new(Vec::new());
+/// pen is physically over receives the stroke. Entries are keyed by
+/// [`CanvasSurfaceId`] rather than board identity so two surfaces
+/// sharing a single `Board` (shared-canvas split) can coexist with
+/// distinct rects.
+static CANVAS_SURFACES: Mutex<Vec<SurfaceEntry>> = Mutex::new(Vec::new());
 
 /// Board that latched the current stroke on `Down`. Move / Up / Cancel
 /// use this instead of re-hit-testing — a mid-stroke sample that
@@ -141,31 +167,35 @@ static CANVAS_SURFACES: Mutex<Vec<(Weak<Mutex<Board>>, SurfaceRect)>> = Mutex::n
 /// started on. Cleared on Up / Cancel.
 static ACTIVE_STROKE: Mutex<Option<(Weak<Mutex<Board>>, SurfaceRect)>> = Mutex::new(None);
 
-/// Register or update the on-screen rect for `board`'s drawing
-/// surface. Called from the surface's `on_sized` handler every time
-/// the layout engine resolves a new area for the canvas — mount,
-/// resize, split-pane divider drag.
-pub fn register_canvas_surface(board: &Arc<Mutex<Board>>, rect: SurfaceRect) {
+/// Register or update the on-screen rect for the surface identified by
+/// `id`. Called from the surface's `on_sized` handler every time the
+/// layout engine resolves a new area — mount, resize, split-pane
+/// divider drag.
+pub fn register_canvas_surface(id: CanvasSurfaceId, board: &Arc<Mutex<Board>>, rect: SurfaceRect) {
     let Ok(mut g) = CANVAS_SURFACES.lock() else {
         return;
     };
-    g.retain(|(w, _)| w.upgrade().is_some());
+    g.retain(|e| e.board.upgrade().is_some());
     for entry in g.iter_mut() {
-        if let Some(b) = entry.0.upgrade()
-            && Arc::ptr_eq(&b, board)
-        {
-            entry.1 = rect;
+        if entry.id == id {
+            entry.board = Arc::downgrade(board);
+            entry.rect = rect;
             return;
         }
     }
-    g.push((Arc::downgrade(board), rect));
+    g.push(SurfaceEntry {
+        id,
+        board: Arc::downgrade(board),
+        rect,
+    });
 }
 
-/// Drop `board`'s registration if present. Called on unmount so the
-/// hit-test registry does not grow without bound across route changes.
-pub fn unregister_canvas_surface(board: &Arc<Mutex<Board>>) {
+/// Drop the registration for `id` if present. Called on unmount so
+/// the hit-test registry does not grow without bound across route
+/// changes. Siblings sharing the same `Board` retain their own entries.
+pub fn unregister_canvas_surface(id: CanvasSurfaceId) {
     if let Ok(mut g) = CANVAS_SURFACES.lock() {
-        g.retain(|(w, _)| w.upgrade().is_some_and(|b| !Arc::ptr_eq(&b, board)));
+        g.retain(|e| e.id != id);
     }
 }
 
@@ -173,11 +203,11 @@ pub fn unregister_canvas_surface(board: &Arc<Mutex<Board>>) {
 /// first) so an overlay canvas (future PiP) wins over the base layer.
 fn hit_canvas(x: f32, y: f32) -> Option<(Arc<Mutex<Board>>, SurfaceRect)> {
     let g = CANVAS_SURFACES.lock().ok()?;
-    for (w, rect) in g.iter().rev() {
-        if let Some(b) = w.upgrade()
-            && rect.contains(x, y)
+    for entry in g.iter().rev() {
+        if let Some(b) = entry.board.upgrade()
+            && entry.rect.contains(x, y)
         {
-            return Some((b, *rect));
+            return Some((b, entry.rect));
         }
     }
     None
@@ -300,8 +330,8 @@ fn pump_hover(stream: &TypedStream<PenHoverEvent, ()>) {
             }
             None => {
                 if let Ok(g) = CANVAS_SURFACES.lock() {
-                    for (w, _) in g.iter() {
-                        if let Some(b) = w.upgrade() {
+                    for entry in g.iter() {
+                        if let Some(b) = entry.board.upgrade() {
                             lock_board(&b).set_pointer(None);
                         }
                     }

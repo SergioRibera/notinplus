@@ -11,13 +11,25 @@
 //! surface. Overlay mode is the default; the split-view chrome buttons
 //! live in the top-right stack (see [`DocLinkedChromeExt`]).
 //!
+//! Board hoisting (V2): [`DocLinkedView`] creates the mount's `Board`
+//! at its own scope via [`crate::app::mount_board`] and installs the
+//! `Arc<Mutex<Board>>` as a Freya context value. Both halves of a
+//! split layout reuse this single board — their `canvas_body` calls
+//! pick it up via `try_consume_context`, so strokes drawn on one side
+//! appear on the other and only one autosave worker owns the on-disk
+//! doc. Collapsing the split (`×` button) leaves the board intact and
+//! the next render reattaches the overlay to it.
+//!
 //! [`SourcePdfView`] stays available for standalone
 //! [`crate::library::ItemKind::SourcePdf`] items (future flows).
+
+use std::sync::Arc;
 
 use freya::prelude::*;
 use istmo::plugins::EdgeInsets;
 
-use crate::app::{CanvasMount, canvas_body};
+use crate::app::{CanvasMount, ChromeState, PopupCoords, canvas_body, mount_board};
+use crate::canvas::lock;
 use crate::doc_linked_prefs::{self, DocLinkedSplit};
 use crate::hooks::provide_safe_area_override;
 use crate::library::{ItemId, SplitOrientation};
@@ -68,6 +80,42 @@ impl Component for DocLinkedView {
         // modals) sees zero so it does not re-apply the same inset.
         provide_safe_area_override(EdgeInsets::default());
 
+        // Chrome state + popup coords live at the shell level so a
+        // split-toggle (unmounting the inner overlay / split subtree)
+        // does not reset the toolbar's reactive state. Workers spawned
+        // by `mount_board` capture these signals, so the canvas-side
+        // chrome keeps syncing zoom / undo / redo across remounts.
+        let state = crate::app::use_chrome_state();
+        let coords = crate::app::use_chrome_coords();
+
+        // Single board instance for the whole shell. `mount_board`
+        // publishes it as a Freya context value, so every inner
+        // `canvas_body` call reuses the same `Arc<Mutex<Board>>`
+        // instead of standing up a sibling with its own autosave
+        // worker (would race-write the same on-disk doc).
+        let board = use_hook(move || mount_board(CanvasMount::PdfBacked(bundle), state));
+        // Owning-side cleanup: cancels any in-flight stroke and
+        // clears the item ↔ board slot. Inner `canvas_body`s are
+        // reuse-path mounts and skip this teardown.
+        use_drop({
+            let board = Arc::clone(&board);
+            let mut active_setter = state.active_board;
+            let mut active_item_setter = state.active_item;
+            move || {
+                crate::active_boards::clear_if(bundle, &board);
+                lock(&board).cancel();
+                let same = active_setter
+                    .peek()
+                    .as_ref()
+                    .map_or(false, |cur| Arc::ptr_eq(cur, &board));
+                if same {
+                    active_setter.set(None);
+                    if *active_item_setter.peek() == Some(bundle) {
+                        active_item_setter.set(None);
+                    }
+                }
+            }
+        });
         let split_state = use_state(move || doc_linked_prefs::load(bundle));
         let split = *split_state.read();
 
@@ -119,6 +167,8 @@ impl Component for DocLinkedView {
             .child(doc_linked_body(
                 bundle,
                 split,
+                state,
+                coords,
                 on_split_horizontal,
                 on_split_vertical,
                 on_close,
@@ -127,22 +177,16 @@ impl Component for DocLinkedView {
 }
 
 /// Body renderer. Overlay mode mounts a single canvas with the
-/// standard chrome; split mode mounts two independent canvases laid
-/// out along the chosen axis. The canvas on the "annotation side"
-/// retains the chrome (so the user still has the toolbar + overlays);
-/// the PDF-side pane is a plain canvas_body call — no chrome.
-///
-/// V1 trade-off: each split pane carries its own [`crate::canvas::Board`]
-/// since the current mount pipeline is not wired for board sharing.
-/// Both load from the same on-disk doc so they start identical; edits
-/// on either side autosave to the same file, so the last mutation
-/// wins. The common split-view use case (PDF on one side for reading,
-/// annotations on the other) does not exercise divergence — the user
-/// edits only one side. We revisit this when a real multi-edit flow
-/// shows up.
+/// standard chrome; split mode mounts two canvases (PDF-only, canvas)
+/// laid out along the chosen axis. Both the overlay and the canvas
+/// side of a split share the hoisted `ChromeState`, so the single
+/// redraw-sync worker spawned by `mount_board` keeps the chrome's
+/// zoom / undo / redo signals live regardless of mode.
 fn doc_linked_body(
     id: ItemId,
     split: DocLinkedSplit,
+    state: ChromeState,
+    coords: PopupCoords,
     on_split_horizontal: NoArgCallback<()>,
     on_split_vertical: NoArgCallback<()>,
     on_close: NoArgCallback<()>,
@@ -150,6 +194,8 @@ fn doc_linked_body(
     match split.orientation {
         None => DocLinkedOverlay {
             id,
+            state,
+            coords,
             on_split_horizontal,
             on_split_vertical,
         }
@@ -157,6 +203,8 @@ fn doc_linked_body(
         Some(orientation) => DocLinkedSplitBody {
             id,
             orientation,
+            state,
+            coords,
             on_close,
         }
         .into_element(),
@@ -169,6 +217,8 @@ fn doc_linked_body(
 #[derive(Clone, PartialEq)]
 struct DocLinkedOverlay {
     id: ItemId,
+    state: ChromeState,
+    coords: PopupCoords,
     on_split_horizontal: NoArgCallback<()>,
     on_split_vertical: NoArgCallback<()>,
 }
@@ -184,6 +234,8 @@ impl std::fmt::Debug for DocLinkedOverlay {
 impl Component for DocLinkedOverlay {
     fn render(&self) -> impl IntoElement {
         let id = self.id;
+        let state = self.state;
+        let coords = self.coords;
         use_provide_context({
             let on_split_horizontal = self.on_split_horizontal.clone();
             let on_split_vertical = self.on_split_vertical.clone();
@@ -194,8 +246,6 @@ impl Component for DocLinkedOverlay {
                 on_close: NoArgCallback::new(|| {}),
             }
         });
-        let state = crate::app::use_chrome_state();
-        let coords = crate::app::use_chrome_coords();
         rect()
             .width(Size::fill())
             .height(Size::flex(1.0))
@@ -209,16 +259,16 @@ impl Component for DocLinkedOverlay {
     }
 }
 
-/// Split DocLinked body: two independent canvas mounts laid out along
-/// `orientation`. The first child reads the PDF with no chrome (a
-/// quieter reading surface); the second child carries the editable
-/// canvas with the standard chrome and installs
-/// [`DocLinkedChromeExt`] with `is_split = true` so the chrome
-/// renders the close `×` instead of the split buttons.
+/// Split DocLinked body: PDF-only pane next to the editable canvas
+/// pane. Both reuse the single `Board` hoisted at the
+/// [`DocLinkedView`] scope — strokes stay in one authoritative place
+/// and only one autosave worker owns the on-disk doc.
 #[derive(Clone, PartialEq)]
 struct DocLinkedSplitBody {
     id: ItemId,
     orientation: SplitOrientation,
+    state: ChromeState,
+    coords: PopupCoords,
     on_close: NoArgCallback<()>,
 }
 
@@ -251,12 +301,12 @@ impl Component for DocLinkedSplitBody {
             .width(Size::fill())
             .height(Size::flex(1.0))
             .content(Content::Flex)
-            .child(first_wrap.child(
-                DocLinkedPdfSide { id: self.id }.into_element(),
-            ))
+            .child(first_wrap.child(DocLinkedPdfSide { id: self.id }.into_element()))
             .child(second_wrap.child(
                 DocLinkedCanvasSide {
                     id: self.id,
+                    state: self.state,
+                    coords: self.coords,
                     on_close: self.on_close.clone(),
                 }
                 .into_element(),
@@ -264,10 +314,12 @@ impl Component for DocLinkedSplitBody {
     }
 }
 
-/// PDF-only split pane: a canvas mount with no chrome. The user still
-/// gets pan + zoom on the surface, and strokes land on this pane's
-/// own [`crate::canvas::Board`] — same autosave target as the canvas
-/// side, so if the user accidentally draws here it still persists.
+/// PDF-only split pane: a canvas mount with no chrome. The reused
+/// board publishes its surface rect to the pen pump via its own
+/// `drawing_surface` id, so a stylus landing on this side routes
+/// correctly even though the chrome and toolbar live on the sibling
+/// side. Uses a throwaway `ChromeState` — none of its signals are
+/// read because there is no chrome rendered here.
 #[derive(Clone, PartialEq)]
 struct DocLinkedPdfSide {
     id: ItemId,
@@ -292,11 +344,15 @@ impl Component for DocLinkedPdfSide {
     }
 }
 
-/// Canvas split pane: full chrome, carries the close `×` via
-/// [`DocLinkedChromeExt`].
+/// Canvas split pane: full chrome bound to the hoisted `ChromeState`
+/// (so the toolbar's zoom / undo / redo signals stay live). Installs
+/// [`DocLinkedChromeExt`] with `is_split = true` so the chrome
+/// renders the close `×` instead of the split buttons.
 #[derive(Clone, PartialEq)]
 struct DocLinkedCanvasSide {
     id: ItemId,
+    state: ChromeState,
+    coords: PopupCoords,
     on_close: NoArgCallback<()>,
 }
 
@@ -311,6 +367,8 @@ impl std::fmt::Debug for DocLinkedCanvasSide {
 impl Component for DocLinkedCanvasSide {
     fn render(&self) -> impl IntoElement {
         let id = self.id;
+        let state = self.state;
+        let coords = self.coords;
         use_provide_context({
             let on_close = self.on_close.clone();
             move || DocLinkedChromeExt {
@@ -320,8 +378,6 @@ impl Component for DocLinkedCanvasSide {
                 on_close: on_close.clone(),
             }
         });
-        let state = crate::app::use_chrome_state();
-        let coords = crate::app::use_chrome_coords();
         rect()
             .width(Size::fill())
             .height(Size::fill())
