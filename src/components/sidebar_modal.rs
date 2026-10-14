@@ -286,11 +286,13 @@ fn search_input(query: State<String>, tab: SidebarTab, sort: State<BookmarkSort>
         .width(Size::fill())
         .padding((6.0, 8.0))
         .spacing(6.0)
+        .content(Content::Flex)
         .child(
             FormInput::new(query)
                 .left_icon(search())
                 .placeholder(placeholder)
-                .width(Size::fill()),
+                .min_width(Size::px(150.))
+                .width(Size::flex(1.)),
         );
     if matches!(tab, SidebarTab::Bookmarks) {
         row = row.child(sort_toggle(sort));
