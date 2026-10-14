@@ -666,7 +666,15 @@ fn left_top(
                     let board = Arc::clone(board);
                     let state = state.clone();
                     move || {
-                        SidebarModal::open(pad, state, board.clone());
+                        // Capture router + workspace in the Router subtree;
+                        // the modal body renders under `ModalPortal` where
+                        // `RouterContext::get()` would panic.
+                        let router = RouterContext::get();
+                        let workspace = match router.current::<crate::route::Route>() {
+                            crate::route::Route::WorkspaceView { id } => Some(id),
+                            _ => None,
+                        };
+                        SidebarModal::open(pad, state, board.clone(), router, workspace);
                     }
                 }))
                 .child(icon_button(input_mode_icon, {

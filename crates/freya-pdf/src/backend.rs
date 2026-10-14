@@ -17,10 +17,11 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use freya_canvas_bg::{
-    AttributionMode, BgPaintCtx, CanvasBackground, Color, PageAttachment, PageId, PageLayout, Rect,
+    AttributionMode, BgPaintCtx, CanvasBackground, Color, Outline, OutlineIcon, OutlineNode,
+    OutlineNodeId, PageAttachment, PageId, PageLayout, Rect,
 };
 use freya_engine::prelude::{
     AlphaType, ColorType, Data, FilterMode, Image, ImageInfo, MipmapMode, Paint, Rect as SkRect,
@@ -93,6 +94,21 @@ pub struct PdfBackground {
     /// ratio) captured on the last `paint` call. Read by `tick` so
     /// prefetch queues match the resolution paint just requested.
     last_effective_scale_bits: AtomicU32,
+    /// Lazily-built outline (PDF bookmarks). Walking pdfium is a
+    /// couple of FFI calls per node — cheap but still worth caching
+    /// since the sidebar polls on every tab render.
+    outline_cache: OnceLock<CachedOutline>,
+}
+
+/// Outline tree + id→page lookup kept together so
+/// [`CanvasBackground::outline`] and [`CanvasBackground::navigate_to_outline`]
+/// share one walk.
+#[derive(Debug)]
+struct CachedOutline {
+    outline: Outline,
+    /// Flat `OutlineNodeId.0 → PageId` lookup. Nodes without a
+    /// resolvable destination are absent.
+    targets: HashMap<u64, PageId>,
 }
 
 impl PdfBackground {
@@ -121,7 +137,12 @@ impl PdfBackground {
             thumbs: Mutex::new(HashMap::new()),
             frame_pins: Mutex::new(Vec::new()),
             last_effective_scale_bits: AtomicU32::new(1.0_f32.to_bits()),
+            outline_cache: OnceLock::new(),
         }
+    }
+
+    fn cached_outline(&self) -> &CachedOutline {
+        self.outline_cache.get_or_init(|| build_outline(&self.doc))
     }
 
     /// Underlying document — text extraction, page counts, etc.
@@ -209,6 +230,22 @@ impl CanvasBackground for PdfBackground {
                 None
             }
         })
+    }
+
+    fn outline(&self) -> Outline {
+        self.cached_outline().outline.clone()
+    }
+
+    fn navigate_to_outline(&self, id: OutlineNodeId) -> Option<(f32, f32)> {
+        let page_id = *self.cached_outline().targets.get(&id.0)?;
+        let page = self.pages.iter().find(|p| p.id == page_id)?;
+        Some((
+            (page.rect.min_x + page.rect.max_x) * 0.5,
+            // Prefer the page top (plus a thin margin) — jumping to a
+            // chapter should land at the start of the page, not the
+            // middle.
+            page.rect.min_y + 24.0,
+        ))
     }
 
     fn paint(&self, cx: &mut BgPaintCtx<'_>) {
@@ -491,6 +528,75 @@ fn compute_layout(doc: &PdfDocument, gap: f32) -> (Vec<PageLayout>, Rect) {
         max_y: bottom,
     };
     (pages, bounds)
+}
+
+/// Walk the PDF's bookmark tree once and translate it into a shell
+/// [`Outline`]. Bookmarks whose destination fails to resolve are kept
+/// as section headers (still useful for navigation hierarchy) but
+/// omitted from the `targets` lookup, so clicking them is a no-op.
+fn build_outline(doc: &PdfDocument) -> CachedOutline {
+    use pdfium_render::prelude::PdfBookmark;
+
+    let pdoc = doc.pdfium_doc();
+    let bookmarks = pdoc.bookmarks();
+    let Some(root) = bookmarks.root() else {
+        return CachedOutline {
+            outline: Outline::default(),
+            targets: HashMap::new(),
+        };
+    };
+
+    let mut next_id: u64 = 1;
+    let mut targets: HashMap<u64, PageId> = HashMap::new();
+
+    fn walk(
+        node: &PdfBookmark<'_>,
+        next_id: &mut u64,
+        targets: &mut HashMap<u64, PageId>,
+    ) -> OutlineNode {
+        let id = OutlineNodeId(*next_id);
+        *next_id += 1;
+        let label = node.title().unwrap_or_else(|| "(sin título)".to_owned());
+        let dest_page = node.destination().and_then(|d| d.page_index().ok());
+        let (subtitle, icon) = if let Some(idx) = dest_page {
+            #[allow(clippy::cast_lossless)]
+            targets.insert(id.0, PageId(idx as u64));
+            (Some(format!("p. {}", idx + 1)), OutlineIcon::Page)
+        } else {
+            (None, OutlineIcon::Section)
+        };
+        let mut children = Vec::new();
+        let mut child = node.first_child();
+        while let Some(c) = child {
+            children.push(walk(&c, next_id, targets));
+            child = c.next_sibling();
+        }
+        OutlineNode {
+            id,
+            label,
+            subtitle,
+            icon,
+            children,
+        }
+    }
+
+    // `root()` returns `FPDFBookmark_GetFirstChild(doc, NULL)` — the
+    // first top-level bookmark, NOT a sentinel. Walk it + every
+    // sibling at the root level.
+    let mut nodes = Vec::new();
+    let mut sibling = Some(root);
+    while let Some(node) = sibling {
+        nodes.push(walk(&node, &mut next_id, &mut targets));
+        sibling = node.next_sibling();
+    }
+
+    CachedOutline {
+        outline: Outline {
+            nodes,
+            revision: 0,
+        },
+        targets,
+    }
 }
 
 /// Sub-rect of the placeholder bitmap covering `dst_world`'s slice of

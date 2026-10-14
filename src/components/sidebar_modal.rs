@@ -2,10 +2,13 @@
 //!
 //! * **Docs** — library-wide item list with name + tag search; tapping a
 //!   row pushes the appropriate `Route` for the item's `ItemKind`.
-//! * **Contents** — table-of-contents of the currently open doc. Backed
-//!   by `Board::layers_snapshot` as a universal fallback; PDF outlines
-//!   and plugin-specific TOCs are a follow-up (no plugin TOC trait
-//!   exists today).
+//! * **Contents** — hierarchical table-of-contents of the currently
+//!   open doc. Primary source is `CanvasBackground::outline()` so
+//!   plugins describe their own structure (PDF bookmarks, future
+//!   mindmaps / text headings / ...); when a background returns an
+//!   empty outline the shell falls back to a flat list derived from
+//!   `pages()`. `Board::layers_snapshot` is always appended as the
+//!   layer section.
 //! * **Bookmarks** — the pre-rewrite behaviour, now navigable: a tap
 //!   centres the viewport on the pin and surfaces the edit sheet.
 //!
@@ -15,7 +18,10 @@
 use std::sync::{Arc, Mutex};
 
 use freya::animation::{AnimNum, Ease, Function, OnCreation, use_animation};
-use freya::icons::lucide::{bookmark, file_text, layers, search};
+use freya::icons::lucide::{
+    bookmark, ellipsis_vertical, file_text, layers, search, square_split_horizontal,
+    square_split_vertical,
+};
 use freya::prelude::*;
 use freya::router::*;
 use istmo::plugins::EdgeInsets;
@@ -23,7 +29,9 @@ use istmo::plugins::EdgeInsets;
 use crate::app::ChromeState;
 use crate::bookmark_ui::BookmarkSort;
 use crate::canvas::{Board, lock};
-use crate::library::{Item, ItemId, ItemKind, Tag, TagId};
+use crate::library::{
+    Item, ItemId, ItemKind, SplitOrientation, SplitSide, Tag, TagId, WorkspaceId,
+};
 use crate::route::Route;
 
 use super::{FormInput, theme::*};
@@ -59,21 +67,41 @@ pub struct SidebarModal {
     pad: EdgeInsets,
     state: ChromeState,
     board: Arc<Mutex<Board>>,
+    /// Captured at the open site so the modal body — which renders
+    /// inside `ModalPortal`, a sibling of `Router` — can navigate
+    /// without panicking on a missing `RouterContext`.
+    router: RouterContext,
+    /// Snapshot of the active workspace at open time (if any). The
+    /// context menu's split actions need a workspace to grow a pane
+    /// tree inside; outside one they stay hidden.
+    workspace: Option<WorkspaceId>,
 }
 
 impl PartialEq for SidebarModal {
     fn eq(&self, other: &Self) -> bool {
-        self.pad == other.pad && self.state == other.state
+        self.pad == other.pad && self.state == other.state && self.workspace == other.workspace
     }
 }
 
 impl SidebarModal {
-    pub(crate) fn open(pad: EdgeInsets, state: ChromeState, board: Arc<Mutex<Board>>) {
+    pub(crate) fn open(
+        pad: EdgeInsets,
+        state: ChromeState,
+        board: Arc<Mutex<Board>>,
+        router: RouterContext,
+        workspace: Option<WorkspaceId>,
+    ) {
         ModalController::get().open(
-            Modal::new(Self { pad, state, board })
-                .manual()
-                .width(SIDEBAR_WIDTH)
-                .dismiss_on_backdrop(true),
+            Modal::new(Self {
+                pad,
+                state,
+                board,
+                router,
+                workspace,
+            })
+            .manual()
+            .width(SIDEBAR_WIDTH)
+            .dismiss_on_backdrop(true),
         );
     }
 }
@@ -93,6 +121,15 @@ struct DocEntry {
 #[derive(Clone, Default, PartialEq)]
 struct LibrarySnapshot {
     docs: Vec<DocEntry>,
+}
+
+/// What's under the context menu overlay. `y` is the sidebar-relative
+/// pixel offset of the row the user tapped, so the menu card can be
+/// anchored right next to the ellipsis trigger.
+#[derive(Clone, PartialEq)]
+struct DocMenuTarget {
+    entry: DocEntry,
+    y: f32,
 }
 
 impl Component for SidebarModal {
@@ -116,11 +153,17 @@ impl Component for SidebarModal {
 
         let library_snapshot = use_library_snapshot();
         let current_tab = *tab_state.read();
+        // Local overlay state — stashing it on ChromeState would leak
+        // sidebar lifecycle into every pane. The State is scoped to
+        // this render tree and dropped when the modal closes.
+        let menu_target = use_state(|| Option::<DocMenuTarget>::None);
 
         let header = sidebar_header(current_tab, move |next| tab_state.set(next));
 
+        let router = self.router;
+        let workspace = self.workspace;
         let body = match current_tab {
-            SidebarTab::Docs => docs_body(library_snapshot, query),
+            SidebarTab::Docs => docs_body(library_snapshot, query, menu_target, router),
             SidebarTab::Contents => contents_body(board),
             SidebarTab::Bookmarks => {
                 bookmarks_body(board, query, sort, selected_bookmark, body_buffer)
@@ -140,21 +183,23 @@ impl Component for SidebarModal {
         if !matches!(current_tab, SidebarTab::Contents) {
             shell = shell.child(search_input(query, current_tab, sort));
         }
-        shell.child(
-            rect()
-                .width(Size::fill())
-                .height(Size::fill())
-                .child(body),
-        )
+        shell = shell.child(rect().width(Size::fill()).height(Size::fill()).child(body));
+        if let Some(target) = menu_target.read().clone() {
+            shell = shell.child(doc_context_overlay(
+                target,
+                pad.top,
+                menu_target,
+                router,
+                workspace,
+            ));
+        }
+        shell
     }
 }
 
 // ---------- Header / tab bar ----------------------------------------------
 
-fn sidebar_header(
-    current: SidebarTab,
-    on_pick: impl FnMut(SidebarTab) + Clone + 'static,
-) -> Rect {
+fn sidebar_header(current: SidebarTab, on_pick: impl FnMut(SidebarTab) + Clone + 'static) -> Rect {
     let tabs = [
         (SidebarTab::Docs, file_text()),
         (SidebarTab::Contents, layers()),
@@ -163,6 +208,7 @@ fn sidebar_header(
     let mut row = rect()
         .direction(Direction::Horizontal)
         .cross_align(Alignment::Center)
+        .content(Content::Flex)
         .main_align(Alignment::SpaceBetween)
         .width(Size::fill())
         .padding((8.0, 10.0))
@@ -186,7 +232,11 @@ fn tab_chip(
     } else {
         (SIDEBAR_BG, TEXT_MUTED)
     };
-    rect()
+
+    let flex = if selected { 2. } else { 1. };
+
+    let mut chip = rect()
+        .width(Size::flex(flex))
         .direction(Direction::Horizontal)
         .cross_align(Alignment::Center)
         .spacing(6.0)
@@ -194,21 +244,22 @@ fn tab_chip(
         .with_corner_radius(8.0)
         .background(bg)
         .on_press(move |_: Event<PressEventData>| on_press())
+        .maybe(!selected, |r| r.center())
         .child(
             SvgViewer::new(icon)
                 .fill(glyph)
                 .width(Size::px(14.))
                 .height(Size::px(14.)),
-        )
-        .child(label().color(glyph).font_size(12.0).text(tab.label()))
-        .into_element()
+        );
+    // Collapse to icon-only when inactive so the three chips stay on
+    // one line regardless of the sidebar width.
+    if selected {
+        chip = chip.child(label().color(glyph).font_size(12.0).text(tab.label()));
+    }
+    chip.into_element()
 }
 
-fn search_input(
-    query: State<String>,
-    tab: SidebarTab,
-    sort: State<BookmarkSort>,
-) -> Element {
+fn search_input(query: State<String>, tab: SidebarTab, sort: State<BookmarkSort>) -> Element {
     let placeholder = match tab {
         SidebarTab::Docs => "Buscar por nombre o etiqueta",
         SidebarTab::Bookmarks => "Buscar marcadores",
@@ -288,7 +339,12 @@ fn use_library_snapshot() -> State<LibrarySnapshot> {
     snap
 }
 
-fn docs_body(snapshot: State<LibrarySnapshot>, query: State<String>) -> Element {
+fn docs_body(
+    snapshot: State<LibrarySnapshot>,
+    query: State<String>,
+    menu_target: State<Option<DocMenuTarget>>,
+    router: RouterContext,
+) -> Element {
     let needle = query.read().trim().to_ascii_lowercase();
     let filtered: Vec<DocEntry> = snapshot
         .read()
@@ -299,7 +355,9 @@ fn docs_body(snapshot: State<LibrarySnapshot>, query: State<String>) -> Element 
                 return true;
             }
             e.name.to_ascii_lowercase().contains(&needle)
-                || e.tags.iter().any(|t| t.to_ascii_lowercase().contains(&needle))
+                || e.tags
+                    .iter()
+                    .any(|t| t.to_ascii_lowercase().contains(&needle))
         })
         .cloned()
         .collect();
@@ -315,21 +373,26 @@ fn docs_body(snapshot: State<LibrarySnapshot>, query: State<String>) -> Element 
     let length = filtered.len();
     VirtualScrollView::new_with_data(filtered, move |item, data: &Vec<DocEntry>| {
         let entry = data[item.index].clone();
-        doc_row(entry).into_element()
+        doc_row(entry, menu_target, router).into_element()
     })
     .length(length)
+    .width(Size::fill())
     .item_size(ROW_SIZE)
     .into_element()
 }
 
-fn doc_row(entry: DocEntry) -> Element {
+fn doc_row(
+    entry: DocEntry,
+    menu_target: State<Option<DocMenuTarget>>,
+    router: RouterContext,
+) -> Element {
     let DocEntry {
         id,
         kind,
         name,
         color,
         tags,
-    } = entry;
+    } = entry.clone();
     let dot_color = color
         .map(|[r, g, b, _]| Color::from_rgb(r, g, b))
         .unwrap_or(TEXT_MUTED);
@@ -340,7 +403,7 @@ fn doc_row(entry: DocEntry) -> Element {
     };
     let on_press = move |_: Event<PressEventData>| {
         let route = route_for_kind(kind, id);
-        let _ = RouterContext::get().push(route);
+        let _ = router.push(route);
         ModalController::get().close();
     };
     let title = if name.is_empty() {
@@ -354,10 +417,12 @@ fn doc_row(entry: DocEntry) -> Element {
         .spacing(10.0)
         .padding((8.0, 10.0))
         .margin((2.0, 6.0))
+        .width(Size::fill())
         .height(Size::px(ROW_SIZE - 4.0))
         .background(CARD_BG)
         .with_corner_radius(6.0)
         .on_press(on_press)
+        .content(Content::Flex)
         .child(
             rect()
                 .width(Size::px(10.0))
@@ -368,12 +433,221 @@ fn doc_row(entry: DocEntry) -> Element {
         .child(
             rect()
                 .direction(Direction::Vertical)
-                .width(Size::fill())
+                .width(Size::flex(1.))
                 .spacing(2.0)
                 .child(label().color(TEXT_PRIMARY).font_size(13.0).text(title))
                 .child(label().color(TEXT_MUTED).font_size(11.0).text(subtitle)),
         )
+        .child(doc_row_menu_button(entry, menu_target))
         .into_element()
+}
+
+fn doc_row_menu_button(entry: DocEntry, mut menu_target: State<Option<DocMenuTarget>>) -> Element {
+    let open_menu = move |e: Event<PressEventData>| {
+        // Stop the press from bubbling to the row's own navigate
+        // handler — otherwise the ellipsis tap would jump to the item.
+        e.stop_propagation();
+        let y = press_screen_y(&e).unwrap_or(0.0);
+        menu_target.set(Some(DocMenuTarget {
+            entry: entry.clone(),
+            y,
+        }));
+    };
+    rect()
+        .width(Size::px(28.0))
+        .height(Size::px(28.0))
+        .center()
+        .with_corner_radius(6.0)
+        .on_press(open_menu)
+        .child(
+            SvgViewer::new(ellipsis_vertical())
+                .fill(TEXT_MUTED)
+                .width(Size::px(16.))
+                .height(Size::px(16.)),
+        )
+        .into_element()
+}
+
+/// Pull the global y coordinate out of a press event. Mouse / touch
+/// carry a `global_location`; keyboard-triggered presses do not, in
+/// which case the caller falls back to a sensible default.
+fn press_screen_y(e: &Event<PressEventData>) -> Option<f32> {
+    match e.data() {
+        PressEventData::Mouse(m) => Some(m.global_location.y as f32),
+        PressEventData::Touch(t) => Some(t.global_location.y as f32),
+        PressEventData::Keyboard(_) => None,
+    }
+}
+
+/// Floating menu panel + transparent backdrop. The backdrop covers the
+/// whole sidebar so tapping anywhere outside the menu dismisses it; the
+/// menu itself anchors right next to the tapped row.
+fn doc_context_overlay(
+    target: DocMenuTarget,
+    pad_top: f32,
+    menu_setter: State<Option<DocMenuTarget>>,
+    router: RouterContext,
+    workspace: Option<WorkspaceId>,
+) -> Element {
+    // Sidebar-local y of the ellipsis button. Clamp above the header +
+    // some headroom so the card never slides off the top; actual bottom
+    // clamping is left to the layout engine (card height is small).
+    let anchor_y = (target.y - pad_top).max(60.0);
+    let entry = target.entry.clone();
+
+    let mut close_setter = menu_setter;
+    let backdrop = rect()
+        .width(Size::fill())
+        .height(Size::fill())
+        .position(Position::new_absolute().top(0.0).left(0.0))
+        .on_press(move |_: Event<PressEventData>| close_setter.set(None));
+
+    let card = doc_context_card(entry, workspace, menu_setter, router).position(
+        Position::new_absolute()
+            .top(anchor_y)
+            .left(12.0)
+            .right(12.0),
+    );
+
+    rect()
+        .layer(Layer::OverlayLevel(10))
+        .position(
+            Position::new_absolute()
+                .top(0.0)
+                .left(0.0)
+                .right(0.0)
+                .bottom(0.0),
+        )
+        .child(backdrop)
+        .child(card)
+        .into_element()
+}
+
+/// Menu card body. Variants depend on workspace vs non-workspace route
+/// — split actions only make sense when there is a pane tree to grow.
+fn doc_context_card(
+    entry: DocEntry,
+    workspace: Option<WorkspaceId>,
+    menu_setter: State<Option<DocMenuTarget>>,
+    router: RouterContext,
+) -> Rect {
+    let mut card = rect()
+        .direction(Direction::Vertical)
+        .background(CARD_BG)
+        .with_corner_radius(10.0)
+        .padding((6.0, 6.0))
+        .spacing(2.0);
+
+    // "Abrir" — navigate the top-level route for the item's kind.
+    {
+        let id = entry.id;
+        let kind = entry.kind;
+        let mut setter = menu_setter;
+        card = card.child(menu_row(
+            file_text(),
+            "Abrir",
+            move |_: Event<PressEventData>| {
+                let route = route_for_kind(kind, id);
+                let _ = router.push(route);
+                setter.set(None);
+                ModalController::get().close();
+            },
+        ));
+    }
+
+    // Split actions require a workspace to split within. Outside one
+    // (plain CanvasView etc.) they would have no referent, so skip.
+    if let Some(ws_id) = workspace {
+        let entry_v = entry.clone();
+        let mut setter_v = menu_setter;
+        card = card.child(menu_row(
+            square_split_vertical(),
+            "Dividir vertical",
+            move |_: Event<PressEventData>| {
+                schedule_split_to(ws_id, entry_v.id, SplitOrientation::Vertical);
+                setter_v.set(None);
+                ModalController::get().close();
+            },
+        ));
+        let entry_h = entry.clone();
+        let mut setter_h = menu_setter;
+        card = card.child(menu_row(
+            square_split_horizontal(),
+            "Dividir horizontal",
+            move |_: Event<PressEventData>| {
+                schedule_split_to(ws_id, entry_h.id, SplitOrientation::Horizontal);
+                setter_h.set(None);
+                ModalController::get().close();
+            },
+        ));
+    }
+
+    card
+}
+
+fn menu_row<F>(icon: Bytes, text: &'static str, on_press: F) -> Element
+where
+    F: FnMut(Event<PressEventData>) + 'static,
+{
+    rect()
+        .direction(Direction::Horizontal)
+        .cross_align(Alignment::Center)
+        .width(Size::fill())
+        .spacing(10.0)
+        .padding((8.0, 10.0))
+        .with_corner_radius(6.0)
+        .on_press(on_press)
+        .child(
+            SvgViewer::new(icon)
+                .fill(TEXT_PRIMARY)
+                .width(Size::px(14.))
+                .height(Size::px(14.)),
+        )
+        .child(label().color(TEXT_PRIMARY).font_size(13.0).text(text))
+        .into_element()
+}
+
+/// Split the focused pane in `workspace` along `orientation` and
+/// mount `item` in the new leaf. Silently no-ops when `item` already
+/// appears anywhere in the pane tree — the user asked that no doc
+/// show up more than once in the infinite split arrangement.
+fn schedule_split_to(workspace: WorkspaceId, item: ItemId, orientation: SplitOrientation) {
+    spawn(async move {
+        let Ok(handle) = crate::home::open_library().await else {
+            return;
+        };
+        let mut lib = handle.lock().await;
+        let Some(ws) = lib.workspace(workspace).cloned() else {
+            log::warn!("workspace {workspace} missing on split");
+            return;
+        };
+        let already_open = ws
+            .layout
+            .leaves()
+            .iter()
+            .any(|p| p.tabs.iter().any(|t| t.item == item));
+        if already_open {
+            log::info!("item {item} already in workspace tree; skipping split");
+            return;
+        }
+        let Some(focused) = ws.focused_pane else {
+            log::warn!("workspace {workspace} has no focused pane");
+            return;
+        };
+        let new_pane = match lib
+            .split_workspace_pane(workspace, focused, orientation, SplitSide::Second)
+            .await
+        {
+            Ok(pid) => pid,
+            Err(err) => {
+                log::error!("split_workspace_pane: {err}");
+                return;
+            }
+        };
+        if let Err(err) = lib.add_pane_tab(workspace, new_pane, item).await {
+            log::error!("add_pane_tab: {err}");
+        }
+    });
 }
 
 const fn kind_label(kind: ItemKind) -> &'static str {
@@ -396,15 +670,32 @@ fn route_for_kind(kind: ItemKind, id: ItemId) -> Route {
 
 // ---------- Contents tab --------------------------------------------------
 
-/// Flat TOC entry rendered in the Contents list. The shell builds the
-/// list from two Board-side sources — pagination comes from the active
-/// `CanvasBackground::pages()` (PDF-outline fallback until a plugin
-/// authors its own TOC), layers come from `Board::layers_snapshot()`.
+/// Flat TOC entry rendered in the Contents list. Built from three
+/// sources, in order:
+///
+/// 1. `CanvasBackground::outline()` — the plugin-authored, hierarchical
+///    table of contents (PDF bookmarks today; future canvases, text
+///    documents, mindmaps can plug in their own).
+/// 2. If step 1 is empty, fall back to a flat list derived from
+///    `CanvasBackground::pages()` so paginated backgrounds without a
+///    real outline (lined paper, grid) still get page jumps.
+/// 3. `Board::layers_snapshot()` — always appended; universal fallback
+///    for stroke-centric work.
 #[derive(Clone, PartialEq)]
 enum TocEntry {
     /// Visual-only separator rendered as a muted label.
-    Section(&'static str),
-    /// Jump the viewport to a world-space point.
+    Section(String),
+    /// Outline node authored by the active background. Activation
+    /// routes through `CanvasBackground::navigate_to_outline`.
+    Outline {
+        id: freya_canvas_bg::OutlineNodeId,
+        label: String,
+        subtitle: Option<String>,
+        icon: freya_canvas_bg::OutlineIcon,
+        depth: u8,
+    },
+    /// Pages-fallback leaf. Carries world coords directly because the
+    /// background has no outline tree to resolve against.
     Page {
         label: String,
         world_x: f32,
@@ -422,24 +713,33 @@ enum TocEntry {
 fn collect_toc(board: &Arc<Mutex<Board>>) -> Vec<TocEntry> {
     let g = lock(board);
     let mut out = Vec::new();
-    let pages = g.background().pages();
-    if !pages.is_empty() {
-        out.push(TocEntry::Section("Páginas"));
-        for (i, page) in pages.iter().enumerate() {
-            let cx = (page.rect.min_x + page.rect.max_x) * 0.5;
-            let cy = (page.rect.min_y + page.rect.max_y) * 0.5;
-            out.push(TocEntry::Page {
-                label: format!("Página {}", i + 1),
-                world_x: cx,
-                world_y: cy,
-            });
+
+    let outline = g.background().outline();
+    if !outline.is_empty() {
+        out.push(TocEntry::Section("Contenido".to_owned()));
+        for node in &outline.nodes {
+            flatten_outline(node, 0, &mut out);
+        }
+    } else {
+        let pages = g.background().pages();
+        if !pages.is_empty() {
+            out.push(TocEntry::Section("Páginas".to_owned()));
+            for (i, page) in pages.iter().enumerate() {
+                let cx = (page.rect.min_x + page.rect.max_x) * 0.5;
+                let cy = (page.rect.min_y + page.rect.max_y) * 0.5;
+                out.push(TocEntry::Page {
+                    label: format!("Página {}", i + 1),
+                    world_x: cx,
+                    world_y: cy,
+                });
+            }
         }
     }
+
     let layers = g.layers_snapshot();
     if !layers.is_empty() {
         let active_id = g.active_layer_id();
-        out.push(TocEntry::Section("Capas"));
-        // Top-first display matches the floating layer panel elsewhere.
+        out.push(TocEntry::Section("Capas".to_owned()));
         for layer in layers.into_iter().rev() {
             out.push(TocEntry::Layer {
                 id: layer.id,
@@ -450,6 +750,31 @@ fn collect_toc(board: &Arc<Mutex<Board>>) -> Vec<TocEntry> {
         }
     }
     out
+}
+
+/// Depth-first flatten of an [`OutlineNode`] tree into `out`. `depth`
+/// is clamped at 8 — any outline deeper than that is suspicious and
+/// the extra indent levels would truncate anyway.
+fn flatten_outline(node: &freya_canvas_bg::OutlineNode, depth: u8, out: &mut Vec<TocEntry>) {
+    out.push(TocEntry::Outline {
+        id: node.id,
+        label: node.label.clone(),
+        subtitle: node.subtitle.clone(),
+        icon: node.icon.clone(),
+        depth: depth.min(8),
+    });
+    for child in &node.children {
+        flatten_outline(child, depth.saturating_add(1), out);
+    }
+}
+
+fn outline_icon_bytes(icon: &freya_canvas_bg::OutlineIcon) -> Bytes {
+    use freya_canvas_bg::OutlineIcon::*;
+    match icon {
+        Layer => layers(),
+        Bookmark => bookmark(),
+        Section | Page | Heading | Custom(_) => file_text(),
+    }
 }
 
 fn contents_body(board: &Arc<Mutex<Board>>) -> Element {
@@ -484,6 +809,24 @@ fn toc_row(entry: TocEntry, board: Arc<Mutex<Board>>) -> Element {
                     .text(title.to_ascii_uppercase()),
             )
             .into_element(),
+        TocEntry::Outline {
+            id,
+            label: text,
+            subtitle,
+            icon,
+            depth,
+        } => {
+            let press_board = Arc::clone(&board);
+            let on_press = move |_: Event<PressEventData>| {
+                let mut guard = lock(&press_board);
+                if let Some((x, y)) = guard.background().navigate_to_outline(id) {
+                    let _ = guard.center_on_world(x, y);
+                }
+                drop(guard);
+                ModalController::get().close();
+            };
+            toc_card_indented(outline_icon_bytes(&icon), text, subtitle, false, depth, on_press)
+        }
         TocEntry::Page {
             label: text,
             world_x,
@@ -517,6 +860,25 @@ fn toc_row(entry: TocEntry, board: Arc<Mutex<Board>>) -> Element {
     }
 }
 
+fn toc_card_indented<F>(
+    icon: Bytes,
+    title: String,
+    subtitle: Option<String>,
+    is_active: bool,
+    depth: u8,
+    on_press: F,
+) -> Element
+where
+    F: FnMut(Event<PressEventData>) + 'static,
+{
+    let indent = f32::from(depth) * 12.0;
+    rect()
+        .direction(Direction::Horizontal)
+        .padding((0.0, 0.0, 0.0, indent))
+        .child(toc_card(icon, title, subtitle, is_active, on_press))
+        .into_element()
+}
+
 fn toc_card<F>(
     icon: Bytes,
     title: String,
@@ -528,7 +890,11 @@ where
     F: FnMut(Event<PressEventData>) + 'static,
 {
     let bg = if is_active { PRIMARY } else { CARD_BG };
-    let text = if is_active { TEXT_INVERSE } else { TEXT_PRIMARY };
+    let text = if is_active {
+        TEXT_INVERSE
+    } else {
+        TEXT_PRIMARY
+    };
     let sub = if is_active { TEXT_INVERSE } else { TEXT_MUTED };
     let mut body = rect()
         .direction(Direction::Vertical)
