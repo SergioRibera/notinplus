@@ -15,12 +15,13 @@
 //! Every tab's body is a `VirtualScrollView` with a fixed `item_size` so
 //! long libraries / long books do not materialise N rects per render.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use freya::animation::{AnimNum, Ease, Function, OnCreation, use_animation};
 use freya::icons::lucide::{
-    bookmark, ellipsis_vertical, file_text, layers, search, square_split_horizontal,
-    square_split_vertical,
+    bookmark, chevron_down, chevron_right, ellipsis_vertical, file_text, layers, search,
+    square_split_horizontal, square_split_vertical,
 };
 use freya::prelude::*;
 use freya::router::*;
@@ -157,6 +158,9 @@ impl Component for SidebarModal {
         // sidebar lifecycle into every pane. The State is scoped to
         // this render tree and dropped when the modal closes.
         let menu_target = use_state(|| Option::<DocMenuTarget>::None);
+        // Collapsed outline-node ids in the Contents tab. Session-
+        // scoped — reopening the sidebar starts fully expanded.
+        let collapsed = use_state(HashSet::<freya_canvas_bg::OutlineNodeId>::new);
 
         let header = sidebar_header(
             current_tab,
@@ -169,7 +173,7 @@ impl Component for SidebarModal {
         let workspace = self.workspace;
         let body = match current_tab {
             SidebarTab::Docs => docs_body(library_snapshot, query, menu_target, router),
-            SidebarTab::Contents => contents_body(board, query),
+            SidebarTab::Contents => contents_body(board, query, collapsed),
             SidebarTab::Bookmarks => {
                 bookmarks_body(board, query, sort, selected_bookmark, body_buffer)
             }
@@ -697,13 +701,16 @@ enum TocEntry {
     /// Visual-only separator rendered as a muted label.
     Section(String),
     /// Outline node authored by the active background. Activation
-    /// routes through `CanvasBackground::navigate_to_outline`.
+    /// routes through `CanvasBackground::navigate_to_outline`;
+    /// `has_children`/`collapsed` drive the chevron toggle.
     Outline {
         id: freya_canvas_bg::OutlineNodeId,
         label: String,
         subtitle: Option<String>,
         icon: freya_canvas_bg::OutlineIcon,
         depth: u8,
+        has_children: bool,
+        collapsed: bool,
     },
     /// Pages-fallback leaf. Carries world coords directly because the
     /// background has no outline tree to resolve against.
@@ -721,7 +728,11 @@ enum TocEntry {
     },
 }
 
-fn collect_toc(board: &Arc<Mutex<Board>>, query: &str) -> Vec<TocEntry> {
+fn collect_toc(
+    board: &Arc<Mutex<Board>>,
+    query: &str,
+    collapsed: &HashSet<freya_canvas_bg::OutlineNodeId>,
+) -> Vec<TocEntry> {
     let g = lock(board);
     let mut out = Vec::new();
     let needle = query.trim().to_ascii_lowercase();
@@ -735,7 +746,7 @@ fn collect_toc(board: &Arc<Mutex<Board>>, query: &str) -> Vec<TocEntry> {
         if needle.is_empty() || has_match {
             out.push(TocEntry::Section("Contenido".to_owned()));
             for node in &outline.nodes {
-                flatten_outline(node, 0, &needle, &mut out);
+                flatten_outline(node, 0, &needle, collapsed, &mut out);
             }
         }
     } else {
@@ -809,20 +820,30 @@ fn flatten_outline(
     node: &freya_canvas_bg::OutlineNode,
     depth: u8,
     needle: &str,
+    collapsed: &HashSet<freya_canvas_bg::OutlineNodeId>,
     out: &mut Vec<TocEntry>,
 ) {
     if !outline_subtree_matches(node, needle) {
         return;
     }
+    let has_children = !node.children.is_empty();
+    // Collapsed state ignored during a search — the user wants to see
+    // what matched regardless of expand/collapse history.
+    let is_collapsed = has_children && needle.is_empty() && collapsed.contains(&node.id);
     out.push(TocEntry::Outline {
         id: node.id,
         label: node.label.clone(),
         subtitle: node.subtitle.clone(),
         icon: node.icon.clone(),
         depth: depth.min(8),
+        has_children,
+        collapsed: is_collapsed,
     });
+    if is_collapsed {
+        return;
+    }
     for child in &node.children {
-        flatten_outline(child, depth.saturating_add(1), needle, out);
+        flatten_outline(child, depth.saturating_add(1), needle, collapsed, out);
     }
 }
 
@@ -862,9 +883,16 @@ fn outline_icon_element(icon: &freya_canvas_bg::OutlineIcon, color: Color) -> El
     }
 }
 
-fn contents_body(board: &Arc<Mutex<Board>>, query: State<String>) -> Element {
+fn contents_body(
+    board: &Arc<Mutex<Board>>,
+    query: State<String>,
+    collapsed: State<HashSet<freya_canvas_bg::OutlineNodeId>>,
+) -> Element {
     let needle_src = query.read();
-    let entries = collect_toc(board, &needle_src);
+    let entries = {
+        let guard = collapsed.read();
+        collect_toc(board, &needle_src, &guard)
+    };
     if entries.is_empty() {
         let msg = if needle_src.trim().is_empty() {
             "El documento no tiene contenido todavía."
@@ -878,14 +906,18 @@ fn contents_body(board: &Arc<Mutex<Board>>, query: State<String>) -> Element {
     let board_cell = Arc::clone(board);
     VirtualScrollView::new_with_data(entries, move |item, data: &Vec<TocEntry>| {
         let entry = data[item.index].clone();
-        toc_row(entry, Arc::clone(&board_cell)).into_element()
+        toc_row(entry, Arc::clone(&board_cell), collapsed).into_element()
     })
     .length(length)
     .item_size(ROW_SIZE)
     .into_element()
 }
 
-fn toc_row(entry: TocEntry, board: Arc<Mutex<Board>>) -> Element {
+fn toc_row(
+    entry: TocEntry,
+    board: Arc<Mutex<Board>>,
+    collapsed: State<HashSet<freya_canvas_bg::OutlineNodeId>>,
+) -> Element {
     match entry {
         TocEntry::Section(title) => rect()
             .direction(Direction::Horizontal)
@@ -906,6 +938,8 @@ fn toc_row(entry: TocEntry, board: Arc<Mutex<Board>>) -> Element {
             subtitle,
             icon,
             depth,
+            has_children,
+            collapsed: is_collapsed,
         } => {
             let press_board = Arc::clone(&board);
             let on_press = move |_: Event<PressEventData>| {
@@ -917,7 +951,9 @@ fn toc_row(entry: TocEntry, board: Arc<Mutex<Board>>) -> Element {
                 ModalController::get().close();
             };
             let icon_color = TEXT_PRIMARY;
+            let chevron = has_children.then(|| outline_chevron(id, is_collapsed, collapsed));
             toc_card_indented(
+                chevron,
                 outline_icon_element(&icon, icon_color),
                 text,
                 subtitle,
@@ -936,7 +972,14 @@ fn toc_row(entry: TocEntry, board: Arc<Mutex<Board>>) -> Element {
                 let _ = lock(&press_board).center_on_world(world_x, world_y);
                 ModalController::get().close();
             };
-            toc_card(bundled_icon(file_text(), TEXT_PRIMARY), text, None, false, on_press)
+            toc_card(
+                None,
+                bundled_icon(file_text(), TEXT_PRIMARY),
+                text,
+                None,
+                false,
+                on_press,
+            )
         }
         TocEntry::Layer {
             id,
@@ -950,6 +993,7 @@ fn toc_row(entry: TocEntry, board: Arc<Mutex<Board>>) -> Element {
             };
             let icon_color = if is_active { TEXT_INVERSE } else { TEXT_PRIMARY };
             toc_card(
+                None,
                 bundled_icon(layers(), icon_color),
                 name,
                 Some(format!("{stroke_count} trazos")),
@@ -958,6 +1002,42 @@ fn toc_row(entry: TocEntry, board: Arc<Mutex<Board>>) -> Element {
             )
         }
     }
+}
+
+/// Chevron button that toggles the outline node's collapsed state.
+/// Lives before the icon on the row. Uses `stop_propagation` so the
+/// toggle does not also fire the row's navigate handler.
+fn outline_chevron(
+    id: freya_canvas_bg::OutlineNodeId,
+    is_collapsed: bool,
+    mut collapsed: State<HashSet<freya_canvas_bg::OutlineNodeId>>,
+) -> Element {
+    let icon = if is_collapsed {
+        chevron_right()
+    } else {
+        chevron_down()
+    };
+    let on_press = move |e: Event<PressEventData>| {
+        e.stop_propagation();
+        collapsed.with_mut(|mut set| {
+            if !set.insert(id) {
+                set.remove(&id);
+            }
+        });
+    };
+    rect()
+        .width(Size::px(20.0))
+        .height(Size::px(20.0))
+        .center()
+        .with_corner_radius(4.0)
+        .on_press(on_press)
+        .child(
+            SvgViewer::new(icon)
+                .fill(TEXT_MUTED)
+                .width(Size::px(12.))
+                .height(Size::px(12.)),
+        )
+        .into_element()
 }
 
 fn bundled_icon(bytes: Bytes, color: Color) -> Element {
@@ -969,6 +1049,7 @@ fn bundled_icon(bytes: Bytes, color: Color) -> Element {
 }
 
 fn toc_card_indented<F>(
+    leading: Option<Element>,
     icon: Element,
     title: String,
     subtitle: Option<String>,
@@ -983,11 +1064,12 @@ where
     rect()
         .direction(Direction::Horizontal)
         .padding((0.0, 0.0, 0.0, indent))
-        .child(toc_card(icon, title, subtitle, is_active, on_press))
+        .child(toc_card(leading, icon, title, subtitle, is_active, on_press))
         .into_element()
 }
 
 fn toc_card<F>(
+    leading: Option<Element>,
     icon: Element,
     title: String,
     subtitle: Option<String>,
@@ -1012,7 +1094,7 @@ where
     if let Some(sub_text) = subtitle {
         body = body.child(label().color(sub).font_size(11.0).text(sub_text));
     }
-    rect()
+    let mut row = rect()
         .direction(Direction::Horizontal)
         .cross_align(Alignment::Center)
         .spacing(10.0)
@@ -1021,10 +1103,11 @@ where
         .height(Size::px(ROW_SIZE - 4.0))
         .background(bg)
         .with_corner_radius(6.0)
-        .on_press(on_press)
-        .child(icon)
-        .child(body)
-        .into_element()
+        .on_press(on_press);
+    if let Some(leading) = leading {
+        row = row.child(leading);
+    }
+    row.child(icon).child(body).into_element()
 }
 
 // ---------- Bookmarks tab -------------------------------------------------
