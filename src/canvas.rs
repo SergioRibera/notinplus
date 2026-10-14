@@ -116,7 +116,7 @@ impl RedrawNotifier {
 /// Snapshotting keeps the UI code lock-free between reads — the panel
 /// copies these once per render pass instead of holding a `Board`
 /// guard across a layout traversal.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LayerSnapshot {
     pub id: u32,
     pub name: String,
@@ -1356,6 +1356,38 @@ impl Board {
             }
         }
         best.map(|(_, id)| id)
+    }
+
+    /// Center the viewport on `id`'s live world position. Pure
+    /// translation — scale is untouched so the user keeps their zoom
+    /// level. Returns `true` iff `id` resolves and the surface size
+    /// is known (post first-frame); otherwise the viewport is left
+    /// alone and the caller can retry on the next paint.
+    pub fn center_on_bookmark(&mut self, id: BookmarkId) -> bool {
+        let Some(bm) = self.doc.bookmark(id).cloned() else {
+            return false;
+        };
+        let world = self.bookmark_world_position(&bm);
+        self.center_on_world(world.x, world.y)
+    }
+
+    /// Center the viewport on world-space point `(wx, wy)`. Returns
+    /// `false` when the surface size is still unknown (pre first-frame).
+    pub fn center_on_world(&mut self, wx: f32, wy: f32) -> bool {
+        if !wx.is_finite() || !wy.is_finite() {
+            return false;
+        }
+        let (sw, sh) = self.last_surface_size;
+        if sw <= 0.0 || sh <= 0.0 {
+            return false;
+        }
+        let scale = self.viewport.scale;
+        self.viewport.tx = sw * 0.5 - wx * scale;
+        self.viewport.ty = sh * 0.5 - wy * scale;
+        self.clamp_viewport_to_background();
+        self.notify();
+        self.ping_view();
+        true
     }
 
     /// Nearest stroke within `radius` of `world`, expressed as a

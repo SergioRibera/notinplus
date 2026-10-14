@@ -21,7 +21,7 @@ use freya::prelude::*;
 use freya::router::*;
 use istmo::plugins::EdgeInsets;
 
-use crate::components::SidebarModal;
+use crate::components::{SidebarModal, SidebarTab};
 use crate::components::theme::{
     BALL_PEN, BALL_PEN_FILL, BRUSH_PEN, BRUSH_PEN_FILL, ERASER, FOUNTAIN_PEN, FOUNTAIN_PEN_FILL,
     HIGHLIGHTER, HIGHLIGHTER_FILL, PENCIL, PENCIL_FILL,
@@ -323,6 +323,7 @@ pub(crate) struct ChromeState {
     pub(crate) sidebar_open: State<bool>,
     pub(crate) sidebar_query: State<String>,
     pub(crate) sidebar_sort: State<crate::bookmark_ui::BookmarkSort>,
+    pub(crate) sidebar_tab: State<SidebarTab>,
 }
 
 /// Allocate the chrome signals. Call once per shell that hosts a chrome
@@ -345,6 +346,7 @@ pub(crate) fn use_chrome_state() -> ChromeState {
         sidebar_open: use_state(|| false),
         sidebar_query: use_state(String::new),
         sidebar_sort: use_state(|| crate::bookmark_ui::BookmarkSort::Recent),
+        sidebar_tab: use_state(SidebarTab::default),
     }
 }
 

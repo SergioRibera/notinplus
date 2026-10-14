@@ -32,7 +32,7 @@ pub use form_input::FormInput;
 pub use modal::{Modal, ModalController, ModalPlacement, ModalPortal};
 pub use pane_tree_view::{PaneTreeCallbacks, PaneTreeView};
 pub use settings_modal::SettingsModal;
-pub use sidebar_modal::SidebarModal;
+pub use sidebar_modal::{SidebarModal, SidebarTab};
 pub use tab_bar::{TabBar, TabBarEntry, TabDragPayload};
 pub use tag::Tag;
 pub use tag_picker::TagPicker;
