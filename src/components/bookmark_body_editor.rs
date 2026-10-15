@@ -583,9 +583,17 @@ fn chip_widget(src: SourceRef) -> impl IntoElement {
         base_bg
     };
 
+    // Mirrors `freya_components::Button`'s pattern for inline-paragraph
+    // children: `a11y_focusable` + `AccessibilityRole::Button` +
+    // `on_all_press` so touch / mouse / keyboard activation all route
+    // the same way. Without the focusable flag Freya's event router
+    // doesn't nominate the chip as a hit target and the pointer press
+    // falls through to the editor's own `on_focus_press`.
     rect()
         .width(Size::Inner)
         .height(Size::Inner)
+        .a11y_focusable(true)
+        .a11y_role(AccessibilityRole::Button)
         .padding((2., 6.))
         .background(bg)
         .corner_radius(10.)
@@ -598,10 +606,11 @@ fn chip_widget(src: SourceRef) -> impl IntoElement {
         .cursor(CursorIcon::Pointer)
         .direction(Direction::Horizontal)
         .cross_align(Alignment::center())
-        .on_pointer_enter(move |_| hover.set(true))
-        .on_pointer_leave(move |_| hover.set(false))
-        .on_press(move |e: Event<PressEventData>| {
+        .on_pointer_over(move |_| hover.set(true))
+        .on_pointer_out(move |_| hover.set_if_modified(false))
+        .on_all_press(move |e: Event<PressEventData>| {
             e.stop_propagation();
+            log::debug!("bookmark_body_editor: chip clicked, navigating");
             source_ref_nav::navigate(&nav_src);
         })
         .maybe_child(icon_el)
