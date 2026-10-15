@@ -10,14 +10,15 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use notein_sdk::{
-    AnchorView, ChipView, ConfigError, ConfigSchema, ConfigValue, CreationCategory, CreationEntry,
-    CreationError, ItemCreationResult, SearchHit, Selection, Source, SourceError, Tile,
-    TileRequest, build::custom_entry,
+    AnchorView, ChipView, Completion, ConfigError, ConfigSchema, ConfigValue, CreationCategory,
+    CreationEntry, CreationError, ItemCreationResult, SearchHit, Selection, Source, SourceError,
+    SourceRef, Tile, TileRequest, build::custom_entry,
 };
 
 use crate::anchor::BibleAnchor;
 use crate::db::Db;
 use crate::plugin_config::{self, SetResult, SharedConfig};
+use crate::resolver;
 use crate::state::VerseSelection;
 
 pub const KIND_ID: &str = "io.notein.bible";
@@ -290,6 +291,38 @@ impl Source for BibleSource {
         Err(CreationError::Invalid(format!(
             "install flow for {entry_id} is driven by the UI, not Source::execute_creation",
         )))
+    }
+
+    fn plugin_completions(&self, query: &str) -> Vec<Completion> {
+        // Parse the whole query as a reference ("Juan 3:16", "Ef 6").
+        // On a hit, surface a single completion that inserts a chip
+        // backed by the resolved BibleAnchor. On a miss, no suggestions
+        // — the autocomplete falls back to shell-side providers.
+        let bible_id = plugin_config::effective_default_bible(&self.config, &self.db);
+        if bible_id.is_empty() {
+            return Vec::new();
+        }
+        let Some(anchor) = resolver::resolve(&self.db, &bible_id, query) else {
+            return Vec::new();
+        };
+        let label = format!(
+            "{} {}:{}",
+            anchor.book_id, anchor.start_chapter, anchor.start_verse
+        );
+        vec![Completion {
+            label,
+            subtitle: Some(bible_id.clone()),
+            source: SourceRef::Plugin {
+                plugin_id: KIND_ID.into(),
+                // Bible references do not belong to a single library
+                // item; the anchor is self-describing. The shell
+                // treats a nil UUID as "ambient" and lets the plugin
+                // resolve from `anchor` alone.
+                item: [0u8; 16],
+                anchor: anchor.encode(),
+                selection: None,
+            },
+        }]
     }
 
     fn render_chip(&self, anchor: &[u8]) -> Option<ChipView> {

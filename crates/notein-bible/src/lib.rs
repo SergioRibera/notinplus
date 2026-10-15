@@ -34,6 +34,7 @@ pub mod db;
 pub mod import;
 pub mod plugin_config;
 pub mod reference;
+pub mod resolver;
 pub mod source;
 pub mod state;
 #[cfg(feature = "ui")]
