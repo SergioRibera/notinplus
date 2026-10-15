@@ -39,6 +39,8 @@ pub struct BibleCanvas {
     /// `BibleSource` so `current_selection` can satisfy anchor
     /// requests coming from other canvases.
     selection: crate::source::SharedSelection,
+    #[cfg(feature = "importer")]
+    install_progress: crate::install_background::SharedInstallProgress,
     next_instance: std::sync::atomic::AtomicU64,
     instances: RwLock<HashMap<u64, Arc<RwLock<BibleViewerState>>>>,
 }
@@ -59,9 +61,29 @@ impl BibleCanvas {
             db,
             config,
             selection,
+            #[cfg(feature = "importer")]
+            install_progress: crate::install_background::new_shared_progress(),
             next_instance: std::sync::atomic::AtomicU64::new(1),
             instances: RwLock::new(HashMap::new()),
         }
+    }
+
+    #[cfg(feature = "importer")]
+    #[must_use]
+    pub fn with_install_progress(
+        mut self,
+        progress: crate::install_background::SharedInstallProgress,
+    ) -> Self {
+        self.install_progress = progress;
+        self
+    }
+
+    /// Observable progress of the latest install request. UI can poll
+    /// this to drive a progress bar in the settings panel.
+    #[cfg(feature = "importer")]
+    #[must_use]
+    pub fn install_progress(&self) -> &crate::install_background::SharedInstallProgress {
+        &self.install_progress
     }
 
     /// Called by the UI when the user updates a selection. Writes
@@ -250,11 +272,14 @@ impl CanvasKind for BibleCanvas {
         match plugin_config::apply_set(&self.config, key, value)? {
             SetResult::Stored => Ok(()),
             SetResult::InstallRequested(id) => {
-                // Install is a background job; schedule + ack. Real HTTP
-                // wiring lands when the catalogue picker UI goes in. For
-                // now we log the request so manual tests can confirm
-                // the signal reached the plugin.
                 log::info!("bible: install requested for {id}");
+                #[cfg(feature = "importer")]
+                crate::install_background::spawn_install(
+                    id,
+                    self.db.clone(),
+                    self.config.clone(),
+                    self.install_progress.clone(),
+                );
                 Ok(())
             }
         }

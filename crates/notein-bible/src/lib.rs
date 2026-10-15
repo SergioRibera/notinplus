@@ -32,6 +32,8 @@ pub mod anchor;
 pub mod canvas;
 pub mod db;
 pub mod import;
+#[cfg(feature = "importer")]
+pub mod install_background;
 pub mod plugin_config;
 pub mod reference;
 pub mod resolver;
@@ -67,12 +69,19 @@ pub fn install_with(
     config: SharedConfig,
 ) -> Result<(), RegistryError> {
     let selection = source::new_shared_selection();
-    let canvas = Arc::new(BibleCanvas::with_selection(
-        db.clone(),
-        config.clone(),
-        selection.clone(),
-    ));
-    let source_plugin = Arc::new(BibleSource::with_selection(db, config, selection));
+    #[cfg(feature = "importer")]
+    let progress = install_background::new_shared_progress();
+
+    let canvas = BibleCanvas::with_selection(db.clone(), config.clone(), selection.clone());
+    #[cfg(feature = "importer")]
+    let canvas = canvas.with_install_progress(progress.clone());
+    let canvas = Arc::new(canvas);
+
+    let source_plugin = BibleSource::with_selection(db, config, selection);
+    #[cfg(feature = "importer")]
+    let source_plugin = source_plugin.with_install_progress(progress);
+    let source_plugin = Arc::new(source_plugin);
+
     registry.register_canvas(canvas)?;
     registry.register_source(source_plugin)?;
     Ok(())

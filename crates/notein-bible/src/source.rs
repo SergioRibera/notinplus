@@ -38,6 +38,8 @@ pub struct BibleSource {
     db: Db,
     config: SharedConfig,
     selection: SharedSelection,
+    #[cfg(feature = "importer")]
+    install_progress: crate::install_background::SharedInstallProgress,
     /// Active search streams. Keyed by stream id; drained by poll +
     /// cleared on end. Streams are eager (we run the FTS5 query in
     /// `search_begin` and buffer the results) because the query cost is
@@ -62,11 +64,23 @@ impl BibleSource {
             db,
             config,
             selection,
+            #[cfg(feature = "importer")]
+            install_progress: crate::install_background::new_shared_progress(),
             streams: RwLock::new(HashMap::new()),
             next_stream: std::sync::atomic::AtomicU64::new(1),
             instances: RwLock::new(HashMap::new()),
             next_instance: std::sync::atomic::AtomicU64::new(1),
         }
+    }
+
+    #[cfg(feature = "importer")]
+    #[must_use]
+    pub fn with_install_progress(
+        mut self,
+        progress: crate::install_background::SharedInstallProgress,
+    ) -> Self {
+        self.install_progress = progress;
+        self
     }
 
     /// Shared selection handle — the canvas side writes here when the
@@ -265,6 +279,13 @@ impl Source for BibleSource {
             SetResult::Stored => Ok(()),
             SetResult::InstallRequested(id) => {
                 log::info!("bible: install requested for {id}");
+                #[cfg(feature = "importer")]
+                crate::install_background::spawn_install(
+                    id,
+                    self.db.clone(),
+                    self.config.clone(),
+                    self.install_progress.clone(),
+                );
                 Ok(())
             }
         }
