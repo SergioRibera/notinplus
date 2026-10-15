@@ -68,19 +68,15 @@ pub fn new_shared() -> SharedConfig {
     Arc::new(RwLock::new(Inner::new()))
 }
 
-/// Resolve the default platform cache directory. Preference order:
-/// `$XDG_CACHE_HOME/notinplus/bible` → `$HOME/.cache/notinplus/bible`
-/// → `./cache/bible`. The last one lets tests run without an HOME env
-/// var set.
+/// Resolve the default platform cache directory. Lives alongside the
+/// Bible DB under the shared notinplus data root so a single on-disk
+/// tree carries everything the plugin touches.
 #[must_use]
 pub fn platform_cache_dir() -> PathBuf {
-    if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
-        return PathBuf::from(xdg).join("notinplus").join("bible");
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home).join(".cache").join("notinplus").join("bible");
-    }
-    PathBuf::from("./cache/bible")
+    istmo_core::path::data_dir()
+        .join("notinplus")
+        .join("bible")
+        .join("cache")
 }
 
 /// Build the settings schema. Dynamic — reads installed Bibles from

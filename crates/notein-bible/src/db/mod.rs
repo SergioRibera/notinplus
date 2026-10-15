@@ -25,6 +25,7 @@ pub use search::{SearchHit, snippet_markers};
 #[derive(Debug)]
 pub enum DbError {
     Sqlite(rusqlite::Error),
+    Io(std::io::Error),
     MissingBible { id: String },
 }
 
@@ -32,6 +33,7 @@ impl std::fmt::Display for DbError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Sqlite(e) => write!(f, "sqlite: {e}"),
+            Self::Io(e) => write!(f, "io: {e}"),
             Self::MissingBible { id } => write!(f, "bible not installed: {id}"),
         }
     }
@@ -41,6 +43,7 @@ impl std::error::Error for DbError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Sqlite(e) => Some(e),
+            Self::Io(e) => Some(e),
             Self::MissingBible { .. } => None,
         }
     }
@@ -49,6 +52,12 @@ impl std::error::Error for DbError {
 impl From<rusqlite::Error> for DbError {
     fn from(e: rusqlite::Error) -> Self {
         Self::Sqlite(e)
+    }
+}
+
+impl From<std::io::Error> for DbError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
     }
 }
 
@@ -64,6 +73,9 @@ impl Db {
     /// first-time call lands a usable schema; a subsequent call is a
     /// cheap no-op (`CREATE … IF NOT EXISTS`).
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        if let Some(parent) = path.as_ref().parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let conn = Connection::open(path.as_ref())?;
         // WAL = concurrent readers vs one writer. `synchronous=NORMAL`
         // trades a tiny durability window on crash for a large speedup
@@ -74,6 +86,25 @@ impl Db {
         let db = Self { conn: Arc::new(Mutex::new(conn)) };
         schema::migrate(&db)?;
         Ok(db)
+    }
+
+    /// Resolve the canonical on-disk location for the Bible DB — a
+    /// `bible.db` file under the shared notinplus data directory
+    /// (`istmo::path::data_dir()/notinplus/bible/`). Mirrors the layout
+    /// the rest of notinplus uses for library bodies, pane layouts,
+    /// data store namespaces, etc.
+    #[must_use]
+    pub fn default_path() -> std::path::PathBuf {
+        istmo_core::path::data_dir()
+            .join("notinplus")
+            .join("bible")
+            .join("bible.db")
+    }
+
+    /// Open the DB at [`Self::default_path`]. Creates the enclosing
+    /// directory tree on first run.
+    pub fn open_default() -> Result<Self> {
+        Self::open(Self::default_path())
     }
 
     /// In-memory database — tests only. Each call gets its own fresh

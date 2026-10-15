@@ -13,12 +13,17 @@
 //! Both share the same `Db` handle so an edit done through either side
 //! shows up on the other without a sync hop.
 //!
-//! Built-in registration path:
+//! Built-in registration path (uses the shared notinplus data dir):
 //!
 //! ```ignore
-//! use notein_bible::install;
-//! let db = notein_bible::db::Db::open("~/.local/share/notinplus/bible.db")?;
-//! install(&mut registry, db)?;
+//! notein_bible::install_default(&mut registry)?;
+//! ```
+//!
+//! …or supply your own path:
+//!
+//! ```ignore
+//! let db = notein_bible::db::Db::open("/custom/path/bible.db")?;
+//! notein_bible::install(&mut registry, db)?;
 //! ```
 //!
 //! Dynamic registration via `notein_plugin::PluginBundle` is also
@@ -64,6 +69,31 @@ pub fn install(registry: &mut PluginRegistry, db: Db) -> Result<(), RegistryErro
     install_with(registry, db, new_shared())
 }
 
+/// Convenience wrapper that opens the DB at the shared notinplus data
+/// location ([`Db::default_path`]) and calls [`install`]. Hosts that
+/// want to control the DB path should call [`install`] directly.
+pub fn install_default(registry: &mut PluginRegistry) -> Result<(), InstallError> {
+    let db = Db::open_default().map_err(InstallError::Db)?;
+    install(registry, db).map_err(InstallError::Registry)
+}
+
+#[derive(Debug)]
+pub enum InstallError {
+    Db(db::DbError),
+    Registry(RegistryError),
+}
+
+impl std::fmt::Display for InstallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Db(e) => write!(f, "bible install: db: {e}"),
+            Self::Registry(e) => write!(f, "bible install: registry: {e:?}"),
+        }
+    }
+}
+
+impl std::error::Error for InstallError {}
+
 pub fn install_with(
     registry: &mut PluginRegistry,
     db: Db,
@@ -99,13 +129,20 @@ pub struct BibleBundle {
 }
 
 impl BibleBundle {
-    /// # Panics
-    /// If the in-memory SQLite instance cannot be created — a condition
-    /// that signals a fundamentally broken rusqlite link, not a
-    /// recoverable error.
+    /// Open the shared data-dir DB when possible, falling back to an
+    /// in-memory instance on IO failure so the dynamic plugin entry can
+    /// never panic the host. First-run `open_default` creates the
+    /// directory tree, so the fallback almost always indicates a
+    /// permission problem worth logging.
     #[must_use]
     pub fn new() -> Self {
-        let db = Db::in_memory().expect("in-memory sqlite should always open");
+        let db = Db::open_default().unwrap_or_else(|e| {
+            log::warn!(
+                "bible: open_default failed ({e}); falling back to in-memory DB — \
+                 any downloaded translations will not persist across restarts"
+            );
+            Db::in_memory().expect("in-memory sqlite should always open")
+        });
         let config = new_shared();
         let selection = source::new_shared_selection();
         Self {
@@ -148,12 +185,12 @@ impl notein_sdk::PluginBundle for BibleBundle {
 ///   trait-shape drift at load time; the host rejects the load before
 ///   touching any trait objects when the version does not match.
 ///
-/// The dynamic plugin instance always starts with an in-memory DB —
-/// no persisted translations — because the dynamic loader does not
-/// hand the plugin a filesystem path. Install flow (background
-/// downloader) still works through `set_config` once the UI
-/// surfaces it, writing fetched Bibles into that in-memory DB until
-/// the host grows a persist-dir handshake.
+/// The dynamic plugin instance opens the DB under
+/// `istmo::path::data_dir()/notinplus/bible/bible.db` so persisted
+/// translations survive across restarts without any extra handshake
+/// — the plugin and the host agree on the data root through
+/// `istmo-core`. Open failures silently fall back to an in-memory DB
+/// (logged at WARN) so the host never crashes on a locked disk.
 #[unsafe(no_mangle)]
 pub fn notein_plugin_entry() -> Box<dyn notein_sdk::PluginBundle> {
     Box::new(BibleBundle::new())

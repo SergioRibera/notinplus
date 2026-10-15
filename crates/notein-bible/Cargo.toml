@@ -39,6 +39,12 @@ ui = ["dep:freya", "dep:freya-components", "dep:freya-core"]
 
 [dependencies]
 notein-sdk = { path = "../notein-sdk" }
+# `istmo-core` is pulled in strictly for its `path::data_dir()`
+# resolver so the plugin writes its DB + cache alongside every other
+# notein data file. The transport / runtime pieces are unused — the
+# core crate itself only depends on `bincode` + `flume` + a tiny set of
+# workspace crates, so there is no hidden weight.
+istmo-core = { path = "../../../istmo/crates/core" }
 rusqlite = { version = "0.37", features = ["bundled"] }
 regex = "1.12"
 bincode = { version = "2", features = ["derive", "std"] }
