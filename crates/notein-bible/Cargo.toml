@@ -32,6 +32,9 @@ default = []
 # default so headless library bins (tests, CLIs) don't drag the HTTP
 # stack. Flip on in the host binary that bundles the plugin.
 importer = ["dep:reqwest", "dep:serde", "dep:serde_json"]
+# Freya rsx components. Off by default so library + import tests do not
+# drag the GPU stack. The host enables this to render the Bible viewer.
+ui = ["dep:freya", "dep:freya-components", "dep:freya-core"]
 
 [dependencies]
 notein-sdk = { path = "../notein-sdk" }
@@ -48,3 +51,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 ], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
+
+freya = { version = "=0.5.0-rc.8", features = ["router"], optional = true }
+freya-components = { version = "=0.5.0-rc.8", optional = true }
+freya-core = { version = "=0.5.0-rc.8", optional = true }

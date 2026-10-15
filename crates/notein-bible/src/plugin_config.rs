@@ -176,6 +176,7 @@ pub fn build_schema(db: &Db) -> ConfigSchema {
 /// Validate `value` against `key`. Writing to [`KEY_INSTALL_BIBLE`] is
 /// an action — the caller sees `Ok(InstallTrigger::Install(id))` and
 /// should spawn an installer, but the value is NOT retained.
+#[derive(Debug)]
 pub enum SetResult {
     Stored,
     InstallRequested(String),

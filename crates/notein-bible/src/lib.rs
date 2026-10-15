@@ -36,7 +36,15 @@ pub mod plugin_config;
 pub mod reference;
 pub mod source;
 pub mod state;
+#[cfg(feature = "ui")]
 pub mod ui;
+#[cfg(not(feature = "ui"))]
+pub mod ui {
+    //! Chapter planning is kept available regardless of the `ui`
+    //! feature flag so headless callers (importers, tests) can still
+    //! build a `ChapterPlan` without pulling in Freya.
+    pub mod chapter;
+}
 
 pub use anchor::BibleAnchor;
 pub use canvas::BibleCanvas;
