@@ -18,9 +18,10 @@ use freya::icons::lucide;
 use freya_canvas_bg::Rect;
 use freya_pdf::PdfDocument;
 use notein_plugin::{
-    AnchorView, ChipView, ConfigError, ConfigField, ConfigFieldKind, ConfigSchema, ConfigValue,
-    CreationCategory, CreationEntry, CreationError, CreationKind, ItemCreationResult, SearchHit,
-    SelectMode, Selection, Source, SourceError, Tile, TileRequest,
+    AnchorView, ChipView, Completion, ConfigError, ConfigField, ConfigFieldKind, ConfigSchema,
+    ConfigValue, CreationCategory, CreationEntry, CreationError, CreationKind,
+    ItemCreationResult, SearchHit, SelectMode, Selection, Source, SourceError, SourceRef, Tile,
+    TileRequest,
 };
 
 use crate::library::ItemId;
@@ -542,6 +543,42 @@ impl Source for PdfSourcePlugin {
             None => String::new(),
         };
         Some(AnchorView { title, snippet })
+    }
+
+    fn plugin_completions(&self, query: &str) -> Vec<Completion> {
+        let needle = query.to_lowercase();
+        let guard = self.lock_instances();
+        let mut out = Vec::with_capacity(guard.len());
+        for inst in guard.values() {
+            let Some(source_id) = inst.source else {
+                continue;
+            };
+            let page_count = inst.doc.page_count();
+            // Short item id for disambiguation when the library has
+            // multiple PDFs open — the plugin cannot reach the Library
+            // for the human-visible item name, so the shell enriches
+            // the label with it after this returns.
+            let short_id: String = source_id.to_string().chars().take(8).collect();
+            let display = format!("PDF ({page_count} páginas)");
+            if !needle.is_empty() && !display.to_lowercase().contains(&needle) {
+                continue;
+            }
+            let anchor_bytes = encode_pdf_anchor(PdfAnchor::Page {
+                source: source_id,
+                page: 0,
+            });
+            out.push(Completion {
+                label: display,
+                subtitle: Some(format!("PDF · página 1 · {short_id}")),
+                source: SourceRef::Plugin {
+                    plugin_id: KIND_ID.to_owned(),
+                    item: source_id.0,
+                    anchor: anchor_bytes,
+                    selection: None,
+                },
+            });
+        }
+        out
     }
 
     fn render_chip(&self, anchor: &[u8]) -> Option<ChipView> {
