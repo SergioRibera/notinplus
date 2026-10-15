@@ -31,6 +31,7 @@ use notein_sdk::{PluginRegistry, Registrations, RegistryError};
 pub mod anchor;
 pub mod canvas;
 pub mod db;
+pub mod fonts;
 pub mod import;
 #[cfg(feature = "importer")]
 pub mod install_background;
