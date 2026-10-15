@@ -9,10 +9,11 @@ description = "Bible source + canvas plugin for notinplus (SQLite + FTS5 backed,
 repository = "https://github.com/SergioRibera/notinplus"
 
 [lib]
-# Rlib only for now; cdylib is added later when we move to dynamic
-# loading. Keeping the type list short avoids pulling the Freya scene
-# graph into a separate ABI boundary at this stage.
-crate-type = ["rlib"]
+# `rlib` keeps the in-process built-in path open; `cdylib` emits the
+# shared library the dynamic loader (libloading + manifest discovery)
+# dlopens at runtime. Both consumers compile against the same source so
+# the two paths cannot drift.
+crate-type = ["cdylib", "rlib"]
 
 [lints.rust]
 missing_debug_implementations = "warn"

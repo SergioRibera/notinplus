@@ -133,3 +133,28 @@ impl notein_sdk::PluginBundle for BibleBundle {
         }
     }
 }
+
+/// Dynamic plugin entry point. The loader looks for this exact symbol
+/// (`notein_plugin_entry`) via `libloading` after `dlopen`ing the
+/// shared library produced by the `cdylib` crate-type above. The
+/// returned bundle lives on the heap and is drained once by the host.
+///
+/// Compatibility matrix:
+///
+/// - Host and plugin **must** be built with the same rustc toolchain
+///   and the same `notein-plugin` version — the signature uses the
+///   Rust ABI, not `extern "C"`.
+/// - [`notein_sdk::PluginBundle::sdk_abi_version`] guards against
+///   trait-shape drift at load time; the host rejects the load before
+///   touching any trait objects when the version does not match.
+///
+/// The dynamic plugin instance always starts with an in-memory DB —
+/// no persisted translations — because the dynamic loader does not
+/// hand the plugin a filesystem path. Install flow (background
+/// downloader) still works through `set_config` once the UI
+/// surfaces it, writing fetched Bibles into that in-memory DB until
+/// the host grows a persist-dir handshake.
+#[unsafe(no_mangle)]
+pub fn notein_plugin_entry() -> Box<dyn notein_sdk::PluginBundle> {
+    Box::new(BibleBundle::new())
+}
