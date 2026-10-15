@@ -46,6 +46,11 @@ const DBL_CLICK_WINDOW: Duration = Duration::from_millis(350);
 
 /// Translucent highlight colour painted over selected rects.
 const HIGHLIGHT_RGBA: (u8, u8, u8, u8) = (90, 155, 255, 90);
+/// Pulse highlight colour painted on top of the selection colour
+/// while a chip-tap navigation is still within the pulse window.
+/// Warmer tone so the user visually distinguishes "a chip just landed
+/// me here" from "I'm actively selecting".
+const PULSE_RGBA: (u8, u8, u8, u8) = (255, 193, 86, 150);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PdfSelectOverlay {
@@ -261,25 +266,51 @@ fn selection_paint(item: ItemId, tick: State<u64>) -> impl IntoElement {
         let Some(board) = active_boards::get(CanvasMount::Item(item)) else {
             return;
         };
-        let rects = handle.plugin.selection_world_rects(handle.instance);
-        if rects.is_empty() {
-            return;
-        }
-        let mut paint = Paint::default();
-        paint.set_color(SkColor::from_argb(
-            HIGHLIGHT_RGBA.3,
-            HIGHLIGHT_RGBA.0,
-            HIGHLIGHT_RGBA.1,
-            HIGHLIGHT_RGBA.2,
-        ));
-        paint.set_style(PaintStyle::Fill);
-        paint.set_anti_alias(true);
         let guard = lock(&board);
-        for r in rects {
-            let (sx0, sy0) = guard.world_to_screen(r.min_x, r.min_y);
-            let (sx1, sy1) = guard.world_to_screen(r.max_x, r.max_y);
-            let rect = SkRect::new(sx0, sy0, sx1, sy1);
-            ctx.canvas.draw_rect(rect, &paint);
+
+        // 1. Selection colour (user dragged highlight).
+        let sel_rects = handle.plugin.selection_world_rects(handle.instance);
+        if !sel_rects.is_empty() {
+            let mut paint = Paint::default();
+            paint.set_color(SkColor::from_argb(
+                HIGHLIGHT_RGBA.3,
+                HIGHLIGHT_RGBA.0,
+                HIGHLIGHT_RGBA.1,
+                HIGHLIGHT_RGBA.2,
+            ));
+            paint.set_style(PaintStyle::Fill);
+            paint.set_anti_alias(true);
+            for r in sel_rects {
+                let (sx0, sy0) = guard.world_to_screen(r.min_x, r.min_y);
+                let (sx1, sy1) = guard.world_to_screen(r.max_x, r.max_y);
+                ctx.canvas.draw_rect(SkRect::new(sx0, sy0, sx1, sy1), &paint);
+            }
+        }
+
+        // 2. Pulse highlight (chip just navigated here). Rendered flat
+        // (no fade tween — we don't own a continuous redraw loop); the
+        // paint disappears on the next natural redraw once
+        // `active_pulse` reaps past `PULSE_DURATION`.
+        if let Some(pulse) = active_pdf_sources::active_pulse(item) {
+            let rects = handle
+                .plugin
+                .anchor_world_rects(handle.instance, &pulse.anchor);
+            if !rects.is_empty() {
+                let mut paint = Paint::default();
+                paint.set_color(SkColor::from_argb(
+                    PULSE_RGBA.3,
+                    PULSE_RGBA.0,
+                    PULSE_RGBA.1,
+                    PULSE_RGBA.2,
+                ));
+                paint.set_style(PaintStyle::Fill);
+                paint.set_anti_alias(true);
+                for r in rects {
+                    let (sx0, sy0) = guard.world_to_screen(r.min_x, r.min_y);
+                    let (sx1, sy1) = guard.world_to_screen(r.max_x, r.max_y);
+                    ctx.canvas.draw_rect(SkRect::new(sx0, sy0, sx1, sy1), &paint);
+                }
+            }
         }
     }))
     .width(Size::fill())

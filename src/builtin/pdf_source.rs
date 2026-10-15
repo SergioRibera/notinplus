@@ -199,6 +199,67 @@ impl PdfSourcePlugin {
             .unwrap_or_default()
     }
 
+    /// World-space rects for an explicit `PdfAnchor` payload. Mirrors
+    /// [`Self::selection_world_rects`] but reads the anchor given on the
+    /// call (used by chip navigation) instead of the instance's live
+    /// selection. Returns an empty vec on decode error / unknown page.
+    #[must_use]
+    pub fn anchor_world_rects(&self, instance: u64, anchor: &[u8]) -> Vec<Rect> {
+        let Some(anchor) = decode_pdf_anchor(anchor) else {
+            return Vec::new();
+        };
+        let guard = self.lock_instances();
+        let Some(inst) = guard.get(&instance) else {
+            return Vec::new();
+        };
+        let Some(entry) = inst.pages.iter().find(|e| e.page == anchor.page()) else {
+            return Vec::new();
+        };
+        let (start, end) = match anchor.char_range() {
+            Some((s, e)) => (s as usize, e as usize),
+            None => {
+                let Ok(text) = inst.doc.extract_page_text(entry.page as usize) else {
+                    return Vec::new();
+                };
+                (0, text.chars().count())
+            }
+        };
+        let Ok(rects) = inst.doc.char_rects(entry.page as usize, start, end) else {
+            return Vec::new();
+        };
+        rects
+            .into_iter()
+            .map(|r| Rect {
+                min_x: r.min_x + entry.min_x,
+                min_y: r.min_y + entry.min_y,
+                max_x: r.max_x + entry.min_x,
+                max_y: r.max_y + entry.min_y,
+            })
+            .collect()
+    }
+
+    /// World-space centre of an `anchor`'s targeted content, suitable
+    /// for `Board::center_on_world` so chip navigation scrolls the
+    /// pane to the referenced page / range.
+    ///
+    /// Falls back to the page's layout origin when `anchor` points at
+    /// a known page but no glyphs resolve (empty page, bad range).
+    #[must_use]
+    pub fn anchor_scroll_target_world(&self, instance: u64, anchor: &[u8]) -> Option<(f32, f32)> {
+        let decoded = decode_pdf_anchor(anchor)?;
+        let page_centre = {
+            let guard = self.lock_instances();
+            let inst = guard.get(&instance)?;
+            let entry = inst.pages.iter().find(|e| e.page == decoded.page())?;
+            ((entry.min_x + entry.max_x) * 0.5, (entry.min_y + entry.max_y) * 0.5)
+        };
+        let rects = self.anchor_world_rects(instance, anchor);
+        if let Some(first) = rects.first() {
+            return Some(((first.min_x + first.max_x) * 0.5, (first.min_y + first.max_y) * 0.5));
+        }
+        Some(page_centre)
+    }
+
     /// Merge the stored selection's rects into world-space (shared
     /// coordinate system with the canvas viewport) across every page
     /// the selection touches. Returns an empty vec when there is no

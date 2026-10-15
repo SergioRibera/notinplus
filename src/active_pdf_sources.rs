@@ -17,6 +17,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::time::{Duration, Instant};
 
 use crate::builtin::pdf_source::PdfSourcePlugin;
 use crate::library::ItemId;
@@ -73,6 +74,60 @@ pub fn unregister(item: ItemId) {
 #[must_use]
 pub fn get(item: ItemId) -> Option<PdfSourceHandle> {
     lock().get(&item).cloned()
+}
+
+/// Pulse highlight the overlay paints on top of the selection colour
+/// to signal chip navigation. Lives in a side registry (not on the
+/// plugin instance) because the pulse is a shell UX concern.
+#[derive(Clone)]
+pub struct PulseState {
+    pub anchor: Vec<u8>,
+    pub until: Instant,
+}
+
+/// Duration of the chip-tap highlight pulse. Matches the "500 ms"
+/// callout in `SOURCES_PLAN` §7.
+pub const PULSE_DURATION: Duration = Duration::from_millis(500);
+
+type PulseRegistry = Mutex<HashMap<ItemId, PulseState>>;
+
+fn pulses() -> &'static PulseRegistry {
+    static P: OnceLock<PulseRegistry> = OnceLock::new();
+    P.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn lock_pulses() -> MutexGuard<'static, HashMap<ItemId, PulseState>> {
+    match pulses().lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    }
+}
+
+/// Trigger a pulse highlight over `anchor` for the current PDF face of
+/// `item`. Lasts [`PULSE_DURATION`]; the overlay paint queries this on
+/// every frame and renders translucent rects while within the window.
+pub fn pulse(item: ItemId, anchor: Vec<u8>) {
+    lock_pulses().insert(
+        item,
+        PulseState {
+            anchor,
+            until: Instant::now() + PULSE_DURATION,
+        },
+    );
+}
+
+/// Current pulse for `item`, or `None` when expired / absent.
+/// Expired pulses are reaped on query so stale state doesn't grow
+/// across sessions.
+#[must_use]
+pub fn active_pulse(item: ItemId) -> Option<PulseState> {
+    let mut g = lock_pulses();
+    let keep = g.get(&item).is_some_and(|p| Instant::now() < p.until);
+    if !keep {
+        g.remove(&item);
+        return None;
+    }
+    g.get(&item).cloned()
 }
 
 /// Selection-side [`PdfSourcePlugin`] singleton. Decoupled from the

@@ -17,10 +17,11 @@ use freya::icons::lucide::{bookmark, search};
 use freya::prelude::*;
 use istmo::plugins::EdgeInsets;
 
-use crate::bookmark::TimestampMs;
+use crate::bookmark::{SourceRef, TimestampMs};
 use crate::canvas::{Board, lock};
 use crate::components::FormInput;
 use crate::ids::BookmarkId;
+use crate::source_ref_nav;
 
 /// Card width in logical pixels. Narrow enough to not swamp a mobile
 /// landscape canvas; wide enough for a two-line body preview.
@@ -44,15 +45,15 @@ pub fn bookmark_card_overlay(
         return rect().width(Size::px(0.0)).height(Size::px(0.0));
     };
 
-    let (card_x, card_y, present) = {
+    let (card_x, card_y, present, refs) = {
         let guard = lock(board);
         match guard.doc().bookmark(selected_id) {
             Some(bm) => {
                 let world = guard.bookmark_world_position(bm);
                 let (sx, sy) = guard.viewport().world_to_screen(world.x, world.y);
-                (sx, sy, true)
+                (sx, sy, true, bm.refs.clone())
             }
-            None => (0.0_f32, 0.0_f32, false),
+            None => (0.0_f32, 0.0_f32, false, Vec::new()),
         }
     };
     if !present {
@@ -106,6 +107,7 @@ pub fn bookmark_card_overlay(
         .background(Color::from_rgb(28, 28, 32))
         .with_corner_radius(10.0)
         .child(FormInput::new(body_buffer).placeholder("Nota"))
+        .child(ref_chip_row(&refs))
         .child(
             rect()
                 .direction(Direction::Horizontal)
@@ -137,6 +139,46 @@ pub fn bookmark_card_overlay(
                         .on_press(on_save)
                         .child("Guardar"),
                 ),
+        )
+}
+
+/// Horizontal chip row showing one pill per [`SourceRef`] attached to
+/// the bookmark. Tapping a chip calls [`source_ref_nav::navigate`] —
+/// for PDF plugin anchors that scrolls the PDF face + fires a 500 ms
+/// pulse highlight.
+///
+/// Returns a zero-area placeholder when the bookmark has no refs so
+/// the surrounding card layout stays stable.
+fn ref_chip_row(refs: &[SourceRef]) -> impl IntoElement {
+    if refs.is_empty() {
+        return rect().width(Size::px(0.0)).height(Size::px(0.0));
+    }
+    let mut row = rect()
+        .direction(Direction::Horizontal)
+        .spacing(6.0)
+        .cross_align(Alignment::Center);
+    for src in refs {
+        row = row.child(ref_chip(src.clone()));
+    }
+    row
+}
+
+/// Single ref chip. Pill-shaped, tap → navigate.
+fn ref_chip(src: SourceRef) -> impl IntoElement {
+    let label_text = source_ref_nav::chip_label(&src);
+    let on_tap = move |_: Event<PressEventData>| {
+        source_ref_nav::navigate(&src);
+    };
+    rect()
+        .padding((4.0, 8.0))
+        .background(Color::from_rgb(44, 52, 70))
+        .with_corner_radius(12.0)
+        .on_press(on_tap)
+        .child(
+            label()
+                .color(Color::from_rgb(200, 215, 240))
+                .font_size(11.5)
+                .text(label_text),
         )
 }
 

@@ -42,6 +42,7 @@ pub mod prefs;
 pub mod render;
 pub mod route;
 pub mod shell_builtins;
+pub mod source_ref_nav;
 pub mod spatial;
 pub mod ui_mask;
 pub mod undo;
