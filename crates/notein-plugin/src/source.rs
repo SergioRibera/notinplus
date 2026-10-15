@@ -60,6 +60,22 @@ pub struct Selection {
     pub snippet: String,
 }
 
+/// Granularity of a `pointer_begin_select` gesture. Shell detects the
+/// gesture (long-press, double-click, …) and tells the plugin what the
+/// user intends; the plugin decides what "word" / "point" mean for its
+/// own content.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SelectMode {
+    /// Collapsed-caret start — subsequent `pointer_extend_select` calls
+    /// drag the end from here. Driven by long-press on tablet or
+    /// click-and-drag on desktop.
+    Point,
+    /// Snap the selection to the "word" containing the point. Driven by
+    /// double-click / double-tap. Plugins without a word notion can
+    /// fall back to [`SelectMode::Point`].
+    Word,
+}
+
 /// One full-text search hit returned by `search_poll`.
 #[derive(Clone, Debug, PartialEq, Archive, Serialize, Deserialize)]
 #[rkyv(compare(PartialEq), derive(Debug))]
@@ -74,7 +90,13 @@ pub struct SearchHit {
 ///
 /// Implementations are expected to be `Send + Sync` so the shell can
 /// register them behind an `Arc<dyn Source>`.
-pub trait Source: Send + Sync + std::fmt::Debug {
+pub trait Source: Send + Sync + std::fmt::Debug + std::any::Any {
+    /// Downcast hook. Lets the shell reach plugin-specific methods on a
+    /// known built-in (e.g. [`crate::Source`] held as `Arc<dyn Source>`
+    /// but wanting to call PDF-only text selection APIs). Each impl just
+    /// returns `self`.
+    fn as_any(&self) -> &dyn std::any::Any;
+
     /// Stable id for this plugin (e.g. `"io.notein.pdf"`).
     fn kind_id(&self) -> &str;
     /// Human label (e.g. `"PDF"`).
@@ -100,6 +122,33 @@ pub trait Source: Send + Sync + std::fmt::Debug {
     fn hit_test(&self, instance: u64, x: f32, y: f32) -> Option<Vec<u8>>;
     fn resolve_anchor(&self, instance: u64, anchor: &[u8]) -> Option<AnchorView>;
     fn current_selection(&self, instance: u64) -> Option<Selection>;
+
+    /// Begin a selection at the world-space point `(x, y)` with the
+    /// granularity `mode`. Shell detects the triggering gesture
+    /// (long-press, double-click) and routes it here; the plugin owns
+    /// what the point / word means in its own content model.
+    ///
+    /// Returns `true` when the point actually hit selectable content.
+    /// Default = no-op (`false`): source plugins that don't yet
+    /// implement selection stay inert.
+    fn pointer_begin_select(&self, instance: u64, x: f32, y: f32, mode: SelectMode) -> bool {
+        let _ = (instance, x, y, mode);
+        false
+    }
+    /// Extend an in-progress selection to the world-space point
+    /// `(x, y)`. No-op when there is no active selection.
+    fn pointer_extend_select(&self, instance: u64, x: f32, y: f32) {
+        let _ = (instance, x, y);
+    }
+    /// Finalise the in-progress selection. The selection stays visible
+    /// until [`Self::clear_selection`] is called.
+    fn pointer_end_select(&self, instance: u64) {
+        let _ = instance;
+    }
+    /// Clear any active or finalised selection. Default = no-op.
+    fn clear_selection(&self, instance: u64) {
+        let _ = instance;
+    }
 
     /// Begin a search stream. Returns an id used in subsequent poll /
     /// end calls.

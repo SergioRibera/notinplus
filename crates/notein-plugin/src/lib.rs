@@ -55,4 +55,4 @@ pub use registry::{
     DynamicOrigin, InstalledPlugin, PluginOrigin, PluginRegistry, PluginRole,
     RegistryCreationEntry, RegistryError, RegistrySchemaEntry,
 };
-pub use source::{AnchorView, SearchHit, Selection, Source, Tile, TileRequest};
+pub use source::{AnchorView, SearchHit, SelectMode, Selection, Source, Tile, TileRequest};

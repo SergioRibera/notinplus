@@ -67,7 +67,7 @@ fn pdf_anchor_source_for(mount: CanvasMount) -> Option<AnchorSourceRef> {
         return None;
     };
     Some(std::sync::Arc::new(move |att| {
-        let anchor = encode_pdf_anchor(PdfAnchor {
+        let anchor = encode_pdf_anchor(PdfAnchor::Page {
             source: item,
             page: att.page.0 as u32,
         });

@@ -15,12 +15,16 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use freya::icons::lucide;
+use freya_canvas_bg::Rect;
 use freya_pdf::PdfDocument;
 use notein_plugin::{
     AnchorView, ConfigError, ConfigField, ConfigFieldKind, ConfigSchema, ConfigValue,
     CreationCategory, CreationEntry, CreationError, CreationKind, ItemCreationResult, SearchHit,
-    Selection, Source, SourceError, Tile, TileRequest,
+    SelectMode, Selection, Source, SourceError, Tile, TileRequest,
 };
+
+use crate::library::ItemId;
+use crate::pdf_viewer::{PdfAnchor, PdfSelection, decode_pdf_anchor, encode_pdf_anchor};
 
 /// Stable id this plugin registers under. Referenced by future
 /// `SourceRef::Plugin` anchors.
@@ -54,7 +58,49 @@ pub struct PdfSourcePlugin {
 #[derive(Debug)]
 struct PdfInstance {
     doc: PdfDocument,
+    /// Library item id this instance was opened for. Shell populates it
+    /// via [`PdfSourcePlugin::attach_item`] right after `open` so that
+    /// [`Source::current_selection`] can encode a complete
+    /// [`PdfAnchor::Range`] without the shell having to know the
+    /// anchor's byte shape.
+    source: Option<ItemId>,
+    /// Live selection, if the user is dragging or has a finalised range.
+    /// `None` = no selection. Normalised on insert.
+    selection: Option<PdfSelection>,
+    /// Cached page-rect layout in world coords. Mirrors
+    /// `freya-pdf::backend::compute_layout` (centered-column stack with
+    /// a fixed gap) so the plugin can do pointer hit-testing without
+    /// the shell having to pass layout state in every call.
+    pages: Vec<PageLayoutEntry>,
+    /// Partial-drag anchor: `start_page` + `start_char` captured by the
+    /// most recent `pointer_begin_select`. The `end_*` endpoint moves
+    /// with `pointer_extend_select`. Cleared on `pointer_end_select` —
+    /// after that the finalised range lives only in [`Self::selection`].
+    drag_anchor: Option<DragAnchor>,
 }
+
+#[derive(Debug, Clone, Copy)]
+struct PageLayoutEntry {
+    page: u32,
+    min_x: f32,
+    min_y: f32,
+    max_x: f32,
+    max_y: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DragAnchor {
+    page: u32,
+    char_idx: u32,
+    /// Granularity of the drag — `Point` tracks the pointer char-by-char,
+    /// `Word` snaps both endpoints to word boundaries while dragging.
+    mode: SelectMode,
+}
+
+/// Vertical gap between stacked pages in world units. Matches
+/// `freya-pdf::backend` default so hit-testing lines up with the painted
+/// background 1:1.
+const PAGE_GAP: f32 = 40.0;
 
 #[derive(Debug, Clone, Copy)]
 struct PdfConfig {
@@ -89,9 +135,211 @@ impl PdfSourcePlugin {
             Err(p) => p.into_inner(),
         }
     }
+
+    /// Bind a library [`ItemId`] to the given instance. The shell calls
+    /// this right after `open` so [`Source::current_selection`] can
+    /// encode a full [`PdfAnchor::Range`] back to the item.
+    ///
+    /// Noop on unknown instance.
+    pub fn attach_item(&self, instance: u64, item: ItemId) {
+        if let Some(inst) = self.lock_instances().get_mut(&instance) {
+            inst.source = Some(item);
+        }
+    }
+
+    /// Store (or clear) the live selection for an instance. Automatically
+    /// normalises the range so `start` precedes `end`.
+    pub fn set_selection(&self, instance: u64, sel: Option<PdfSelection>) {
+        if let Some(inst) = self.lock_instances().get_mut(&instance) {
+            inst.selection = sel.map(PdfSelection::normalized);
+        }
+    }
+
+    /// Current selection stored for the instance, if any.
+    #[must_use]
+    pub fn selection(&self, instance: u64) -> Option<PdfSelection> {
+        self.lock_instances().get(&instance)?.selection
+    }
+
+    /// Union-merged bounding rects covering `sel` on `page`. Returns an
+    /// empty vec when the selection doesn't touch `page`, is empty, or
+    /// the instance is unknown.
+    #[must_use]
+    pub fn selection_rects(&self, instance: u64, page: u32, sel: PdfSelection) -> Vec<Rect> {
+        let guard = self.lock_instances();
+        let Some(inst) = guard.get(&instance) else {
+            return Vec::new();
+        };
+        let sel = sel.normalized();
+        if sel.is_empty() {
+            return Vec::new();
+        }
+        let (start, end) = if page < sel.start_page || page > sel.end_page {
+            return Vec::new();
+        } else if sel.start_page == sel.end_page {
+            (sel.start_char as usize, sel.end_char as usize)
+        } else if page == sel.start_page {
+            // Head page: from start_char to end of page's text.
+            let Ok(text) = inst.doc.extract_page_text(page as usize) else {
+                return Vec::new();
+            };
+            (sel.start_char as usize, text.chars().count())
+        } else if page == sel.end_page {
+            // Tail page: from 0 to end_char.
+            (0, sel.end_char as usize)
+        } else {
+            // Middle page: whole text.
+            let Ok(text) = inst.doc.extract_page_text(page as usize) else {
+                return Vec::new();
+            };
+            (0, text.chars().count())
+        };
+        inst.doc
+            .char_rects(page as usize, start, end)
+            .unwrap_or_default()
+    }
+
+    /// UTF-8 snippet covering `sel`. Pages are joined with `\n`.
+    /// Returns an empty string on error / empty selection.
+    #[must_use]
+    pub fn selection_snippet(&self, instance: u64, sel: PdfSelection) -> String {
+        let guard = self.lock_instances();
+        let Some(inst) = guard.get(&instance) else {
+            return String::new();
+        };
+        let sel = sel.normalized();
+        if sel.is_empty() {
+            return String::new();
+        }
+        if sel.start_page == sel.end_page {
+            return page_text_slice(
+                &inst.doc,
+                sel.start_page,
+                sel.start_char as usize,
+                sel.end_char as usize,
+            )
+            .unwrap_or_default();
+        }
+        let mut out = String::new();
+        // Head.
+        if let Some(s) = page_text_slice(
+            &inst.doc,
+            sel.start_page,
+            sel.start_char as usize,
+            usize::MAX,
+        ) {
+            out.push_str(&s);
+        }
+        for p in (sel.start_page + 1)..sel.end_page {
+            out.push('\n');
+            if let Some(s) = page_text_slice(&inst.doc, p, 0, usize::MAX) {
+                out.push_str(&s);
+            }
+        }
+        out.push('\n');
+        if let Some(s) = page_text_slice(&inst.doc, sel.end_page, 0, sel.end_char as usize) {
+            out.push_str(&s);
+        }
+        out
+    }
+}
+
+/// Centered-column vertical stack of pages, mirroring
+/// `freya-pdf::backend::compute_layout`. Called once at `open`.
+fn compute_page_layout(doc: &PdfDocument) -> Vec<PageLayoutEntry> {
+    let sizes = doc.page_sizes();
+    let mut out = Vec::with_capacity(sizes.len());
+    let mut y = 0.0_f32;
+    for (idx, &(w, h)) in sizes.iter().enumerate() {
+        let x = -(w * 0.5);
+        out.push(PageLayoutEntry {
+            page: u32::try_from(idx).unwrap_or(u32::MAX),
+            min_x: x,
+            min_y: y,
+            max_x: x + w,
+            max_y: y + h,
+        });
+        y += h + PAGE_GAP;
+    }
+    out
+}
+
+/// `(page, local_x, local_y)` for the world-space point, or `None` when
+/// the point falls between pages or outside the laid-out column.
+fn hit_page(pages: &[PageLayoutEntry], x: f32, y: f32) -> Option<(u32, f32, f32)> {
+    for entry in pages {
+        if y >= entry.min_y && y < entry.max_y {
+            // Clamp x into the page's horizontal span so a drag outside
+            // the right / left margin still extends to end / start of
+            // line instead of silently failing.
+            let local_x = x.clamp(entry.min_x, entry.max_x - 1.0) - entry.min_x;
+            let local_y = y - entry.min_y;
+            return Some((entry.page, local_x, local_y));
+        }
+    }
+    None
+}
+
+/// Expand `anchor_char` outward over `text` (char-indexed by `starts`)
+/// to the nearest whitespace boundaries. Returns `(start_char, end_char)`
+/// (half-open). Falls back to `(anchor_char, anchor_char + 1)` when the
+/// anchor char itself is whitespace.
+fn word_bounds(text: &str, starts: &[usize], anchor_char: usize) -> (usize, usize) {
+    let last = starts.len().saturating_sub(1);
+    if anchor_char >= last {
+        return (last, last);
+    }
+    let char_at = |i: usize| -> Option<char> {
+        let s = *starts.get(i)?;
+        text[s..].chars().next()
+    };
+    let is_word = |c: char| !c.is_whitespace();
+    let Some(anchor_ch) = char_at(anchor_char) else {
+        return (anchor_char, anchor_char + 1);
+    };
+    if !is_word(anchor_ch) {
+        return (anchor_char, anchor_char + 1);
+    }
+    let mut start = anchor_char;
+    while start > 0 {
+        let Some(c) = char_at(start - 1) else {
+            break;
+        };
+        if !is_word(c) {
+            break;
+        }
+        start -= 1;
+    }
+    let mut end = anchor_char + 1;
+    while end < last {
+        let Some(c) = char_at(end) else {
+            break;
+        };
+        if !is_word(c) {
+            break;
+        }
+        end += 1;
+    }
+    (start, end)
+}
+
+/// UTF-8 slice of a page's extracted text by char index. Returns `None`
+/// on page out of range. `end = usize::MAX` means "to end of page".
+fn page_text_slice(doc: &PdfDocument, page: u32, start: usize, end: usize) -> Option<String> {
+    let (text, starts) = doc.extract_page_text_indexed(page as usize).ok()?;
+    let last_char = starts.len().saturating_sub(1);
+    let end = end.min(last_char);
+    let start = start.min(end);
+    let start_byte = *starts.get(start)?;
+    let end_byte = *starts.get(end)?;
+    Some(text[start_byte..end_byte].to_owned())
 }
 
 impl Source for PdfSourcePlugin {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn kind_id(&self) -> &str {
         KIND_ID
     }
@@ -111,8 +359,18 @@ impl Source for PdfSourcePlugin {
         }
         let doc = PdfDocument::open_bytes(item_bytes.to_vec())
             .map_err(|e| SourceError::OpenFailed(e.to_string()))?;
+        let pages = compute_page_layout(&doc);
         let id = self.alloc_id();
-        self.lock_instances().insert(id, PdfInstance { doc });
+        self.lock_instances().insert(
+            id,
+            PdfInstance {
+                doc,
+                source: None,
+                selection: None,
+                pages,
+                drag_anchor: None,
+            },
+        );
         Ok(id)
     }
 
@@ -151,12 +409,151 @@ impl Source for PdfSourcePlugin {
         None
     }
 
-    fn resolve_anchor(&self, _instance: u64, _anchor: &[u8]) -> Option<AnchorView> {
-        None
+    fn resolve_anchor(&self, instance: u64, anchor: &[u8]) -> Option<AnchorView> {
+        let anchor = decode_pdf_anchor(anchor)?;
+        let guard = self.lock_instances();
+        let inst = guard.get(&instance)?;
+        let page = anchor.page();
+        let title = format!("Página {}", page.saturating_add(1));
+        let snippet = match anchor.char_range() {
+            Some((start, end)) => {
+                page_text_slice(&inst.doc, page, start as usize, end as usize).unwrap_or_default()
+            }
+            None => String::new(),
+        };
+        Some(AnchorView { title, snippet })
     }
 
-    fn current_selection(&self, _instance: u64) -> Option<Selection> {
-        None
+    fn pointer_begin_select(&self, instance: u64, x: f32, y: f32, mode: SelectMode) -> bool {
+        let mut guard = self.lock_instances();
+        let Some(inst) = guard.get_mut(&instance) else {
+            return false;
+        };
+        let Some((page, local_x, local_y)) = hit_page(&inst.pages, x, y) else {
+            return false;
+        };
+        let Ok(Some(char_idx)) = inst.doc.hit_char_at(page as usize, local_x, local_y) else {
+            return false;
+        };
+        let (start_char, end_char) = match mode {
+            SelectMode::Point => (char_idx as u32, char_idx as u32),
+            SelectMode::Word => {
+                if let Ok((text, starts)) = inst.doc.extract_page_text_indexed(page as usize) {
+                    let (s, e) = word_bounds(&text, &starts, char_idx);
+                    (s as u32, e as u32)
+                } else {
+                    (char_idx as u32, char_idx as u32)
+                }
+            }
+        };
+        inst.drag_anchor = Some(DragAnchor {
+            page,
+            char_idx: start_char,
+            mode,
+        });
+        inst.selection = Some(PdfSelection {
+            start_page: page,
+            start_char,
+            end_page: page,
+            end_char,
+        });
+        true
+    }
+
+    fn pointer_extend_select(&self, instance: u64, x: f32, y: f32) {
+        let mut guard = self.lock_instances();
+        let Some(inst) = guard.get_mut(&instance) else {
+            return;
+        };
+        let Some(anchor) = inst.drag_anchor else {
+            return;
+        };
+        let Some((page, local_x, local_y)) = hit_page(&inst.pages, x, y) else {
+            return;
+        };
+        let Ok(Some(char_idx)) = inst.doc.hit_char_at(page as usize, local_x, local_y) else {
+            return;
+        };
+        // Word mode: snap both the live end and the anchor-side end
+        // outward so a drag that starts mid-word still highlights whole
+        // words through the pointer path.
+        let (start_page, start_char, end_page, end_char) = match anchor.mode {
+            SelectMode::Point => (anchor.page, anchor.char_idx, page, char_idx as u32),
+            SelectMode::Word => {
+                let anchor_bounds = inst
+                    .doc
+                    .extract_page_text_indexed(anchor.page as usize)
+                    .ok()
+                    .map(|(t, s)| word_bounds(&t, &s, anchor.char_idx as usize));
+                let live_bounds = inst
+                    .doc
+                    .extract_page_text_indexed(page as usize)
+                    .ok()
+                    .map(|(t, s)| word_bounds(&t, &s, char_idx));
+                let (as_s, as_e) = anchor_bounds
+                    .unwrap_or((anchor.char_idx as usize, anchor.char_idx as usize + 1));
+                let (ls_s, ls_e) = live_bounds.unwrap_or((char_idx, char_idx + 1));
+                // Direction of the drag relative to the anchor word.
+                let going_right = (page, char_idx as u32) >= (anchor.page, anchor.char_idx);
+                if going_right {
+                    (anchor.page, as_s as u32, page, ls_e as u32)
+                } else {
+                    (page, ls_s as u32, anchor.page, as_e as u32)
+                }
+            }
+        };
+        inst.selection = Some(PdfSelection {
+            start_page,
+            start_char,
+            end_page,
+            end_char,
+        });
+    }
+
+    fn pointer_end_select(&self, instance: u64) {
+        if let Some(inst) = self.lock_instances().get_mut(&instance) {
+            inst.drag_anchor = None;
+        }
+    }
+
+    fn clear_selection(&self, instance: u64) {
+        if let Some(inst) = self.lock_instances().get_mut(&instance) {
+            inst.drag_anchor = None;
+            inst.selection = None;
+        }
+    }
+
+    fn current_selection(&self, instance: u64) -> Option<Selection> {
+        let guard = self.lock_instances();
+        let inst = guard.get(&instance)?;
+        let sel = inst.selection?;
+        let source = inst.source?;
+        if sel.is_empty() {
+            return None;
+        }
+        // Single-page selections become proper Range anchors; cross-page
+        // selections fall back to the start page so chip resolve still
+        // navigates somewhere useful (anchor shape doesn't model page
+        // spans yet).
+        let (page, start_char, end_char) = if sel.start_page == sel.end_page {
+            (sel.start_page, sel.start_char, sel.end_char)
+        } else {
+            (sel.start_page, sel.start_char, u32::MAX)
+        };
+        let snippet = {
+            // Drop the guard before re-locking inside selection_snippet
+            // (it would deadlock otherwise since std::sync::Mutex isn't
+            // reentrant).
+            drop(guard);
+            self.selection_snippet(instance, sel)
+        };
+        let anchor = encode_pdf_anchor(PdfAnchor::Range {
+            source,
+            page,
+            start_char,
+            end_char,
+        });
+        Some(Selection { anchor, snippet })
     }
 
     fn search_begin(&self, _instance: u64, _query: &str) -> u64 {

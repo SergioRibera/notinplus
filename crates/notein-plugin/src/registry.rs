@@ -479,6 +479,9 @@ mod tests {
     }
 
     impl Source for StubSource {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
         fn kind_id(&self) -> &str {
             self.kind_id
         }

@@ -281,6 +281,59 @@ impl PdfDocument {
         Ok(merged)
     }
 
+    /// Pdfium char index whose tight bounds contain the page-local
+    /// point `(x, y)` (PDF-top-left convention, y grows down), or
+    /// `None` when no glyph covers the point.
+    ///
+    /// Falls back to the nearest char on the same line when the point
+    /// hits whitespace between glyphs — this is what the standard
+    /// desktop / mobile text selection UX expects (clicking in a gap
+    /// snaps to the adjacent glyph rather than failing silently).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PdfError::PageOutOfRange`] when `page` is out of
+    /// range, [`PdfError::Backend`] on pdfium failure.
+    pub fn hit_char_at(&self, page: usize, x: f32, y: f32) -> Result<Option<usize>, PdfError> {
+        let (_, page_height) = self.page_size(page)?;
+        let pdf_page = self.pdf_page(page)?;
+        let text = pdf_page
+            .text()
+            .map_err(|e| PdfError::Backend(e.to_string()))?;
+        let char_count = usize::try_from(text.len()).unwrap_or(0);
+        if char_count == 0 {
+            return Ok(None);
+        }
+        let chars = text.chars();
+        // Two-pass: exact containment wins; otherwise nearest glyph on
+        // the same line (by x-centre distance).
+        let mut best_same_line: Option<(usize, f32)> = None;
+        for idx in 0..char_count {
+            let Ok(ch) = chars.get(idx) else {
+                continue;
+            };
+            let Ok(bounds) = ch.tight_bounds() else {
+                continue;
+            };
+            let min_y = page_height - bounds.top().value;
+            let max_y = page_height - bounds.bottom().value;
+            let min_x = bounds.left().value;
+            let max_x = bounds.right().value;
+            if x >= min_x && x < max_x && y >= min_y && y < max_y {
+                return Ok(Some(idx));
+            }
+            if y >= min_y && y < max_y {
+                let centre = (min_x + max_x) * 0.5;
+                let dist = (centre - x).abs();
+                match best_same_line {
+                    Some((_, d)) if d <= dist => {}
+                    _ => best_same_line = Some((idx, dist)),
+                }
+            }
+        }
+        Ok(best_same_line.map(|(idx, _)| idx))
+    }
+
     fn pdf_page(&self, page: usize) -> Result<pdfium_render::prelude::PdfPage<'_>, PdfError> {
         let count = self.page_count();
         if page >= count {
