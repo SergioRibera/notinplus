@@ -19,7 +19,7 @@ mod queries;
 mod schema;
 mod search;
 
-pub use queries::{BookRow, ChapterRow, HeaderRow, VerseRow};
+pub use queries::{BibleRow, BookRow, ChapterRow, HeaderRow, VerseRow};
 pub use search::{SearchHit, snippet_markers};
 
 #[derive(Debug)]

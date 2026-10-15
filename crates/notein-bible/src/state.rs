@@ -186,6 +186,16 @@ impl BibleViewerState {
         Ok(true)
     }
 
+    /// Swap the active translation while staying on the same book +
+    /// chapter. Clears the chapter cache so the new text loads fresh.
+    pub fn switch_bible(&mut self, db: &Db, new_bible_id: &str) -> Result<(), DbError> {
+        self.bible_id = new_bible_id.into();
+        self.chapter_cache.clear();
+        self.scroll_y = 0.0;
+        self.selection = None;
+        self.ensure_current_loaded(db)
+    }
+
     /// Jump directly to `(book, chapter)`. Fails if the chapter does
     /// not exist in the installed Bible.
     pub fn jump_to(&mut self, db: &Db, book: &str, chapter: u16) -> Result<(), DbError> {
@@ -354,6 +364,44 @@ mod tests {
         assert!(!st.go_prev_chapter(&db, &books).unwrap());
         assert_eq!(st.current_book, "GEN");
         assert_eq!(st.current_chapter, 1);
+    }
+
+    #[test]
+    fn switch_bible_clears_cache_and_reloads() {
+        let db = two_book_db();
+        let mut st = BibleViewerState::new("spa_rv1960", "GEN", 1);
+        st.ensure_current_loaded(&db).unwrap();
+        assert_eq!(st.chapter_cache.len(), 1);
+        st.scroll_y = 300.0;
+
+        // Install a second translation sharing the same book id so the
+        // reload path finds a chapter in the new context too.
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO bibles (id, abbrev, name_local, language)
+                 VALUES ('spa_lbla', 'LBLA', 'La Biblia de las Américas', 'spa')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO books (bible_id, book_id, name, abbrev, order_num, testament)
+                 VALUES ('spa_lbla', 'GEN', 'Génesis', 'Gn', 1, 'OT')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO verses (bible_id, book_id, chapter, verse, text, paragraph_break)
+                 VALUES ('spa_lbla', 'GEN', 1, 1, 'alt verse text', 0)",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        st.switch_bible(&db, "spa_lbla").unwrap();
+        assert_eq!(st.bible_id, "spa_lbla");
+        assert_eq!(st.scroll_y, 0.0);
+        assert_eq!(st.chapter_cache.len(), 1);
+        let chap = st.current_chapter_data().unwrap();
+        assert!(chap.verses[0].text.contains("alt"));
     }
 
     #[test]

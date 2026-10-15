@@ -4,7 +4,7 @@ use rusqlite::{OptionalExtension, params};
 
 use super::{Db, DbError, Result};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct BibleRow {
     pub id: String,
     pub abbrev: String,
