@@ -91,6 +91,15 @@ impl Db {
         f(&guard)
     }
 
+    #[cfg_attr(not(feature = "importer"), allow(dead_code))]
+    pub(crate) fn with_conn_mut<R>(
+        &self,
+        f: impl FnOnce(&mut Connection) -> Result<R>,
+    ) -> Result<R> {
+        let mut guard = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        f(&mut guard)
+    }
+
     // ─── Public API delegates (see queries.rs / search.rs) ─────────
 
     pub fn list_bibles(&self) -> Result<Vec<queries::BibleRow>> {
