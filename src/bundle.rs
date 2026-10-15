@@ -542,8 +542,7 @@ fn append_file<W: Write>(tar: &mut tar::Builder<W>, name: &str, bytes: &[u8]) ->
 }
 
 fn read_doc_bytes(id: ItemId) -> Option<Vec<u8>> {
-    let path = bodies::doc_path(id);
-    std::fs::read(path).ok()
+    bodies::read_doc_bytes(id)
 }
 
 fn load_doc_opt(id: ItemId) -> Option<Doc> {
