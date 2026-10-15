@@ -585,11 +585,13 @@ fn chip_widget(src: SourceRef) -> impl IntoElement {
 
     // Freya requires explicit dimensions for inline paragraph
     // children (see `feature_inlined_text_elements` demo). Without
-    // them the placeholder rect collapses and no pointer events hit.
-    // `on_pointer_down` fires on the press itself (no press-release
-    // pairing); kept alongside `on_press` so a drag that originates
-    // on the chip still navigates.
-    let nav_src_down = nav_src.clone();
+    // an explicit `height`, the placeholder rect collapses and
+    // pointer events never hit.
+    //
+    // `on_press` won't fire reliably on a small inline chip (release
+    // often lands outside the pixel-tight rect) — `on_pointer_down`
+    // triggers on the press itself, which matches the UX a user
+    // expects from a link-shaped chip anyway.
     rect()
         .height(Size::px(20.))
         .padding((2., 8.))
@@ -604,17 +606,9 @@ fn chip_widget(src: SourceRef) -> impl IntoElement {
         .cursor(CursorIcon::Pointer)
         .direction(Direction::Horizontal)
         .cross_align(Alignment::center())
-        .on_pointer_enter(move |_| {
-            log::info!("chip: pointer_enter");
-            hover.set(true);
-        })
+        .on_pointer_enter(move |_| hover.set(true))
         .on_pointer_leave(move |_| hover.set_if_modified(false))
         .on_pointer_down(move |_: Event<PointerEventData>| {
-            log::info!("chip: pointer_down -> navigate");
-            source_ref_nav::navigate(&nav_src_down);
-        })
-        .on_press(move |_: Event<PressEventData>| {
-            log::info!("chip: press -> navigate");
             source_ref_nav::navigate(&nav_src);
         })
         .maybe_child(icon_el)

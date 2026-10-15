@@ -155,20 +155,45 @@ fn navigate_canvas_bookmark(bookmark: BookmarkId) {
     });
 }
 
-/// Open `url` with the host's default handler. Routes through Freya's
-/// `UserEvent::OpenUrl`, which `freya-winit`'s renderer dispatches via
-/// the `open` crate on desktop. Must be called from inside a render
-/// / event-handler context — [`Platform::get`] expects an active
-/// Freya scope.
+/// Open `url` with the host's default handler. Freya exposes
+/// `UserEvent::OpenUrl` on desktop but reaching it from a render-scope
+/// `Platform::get()` call turned out silent (dispatcher queue not
+/// drained for our window?) during Phase 6 testing. We spawn the
+/// platform-native opener directly instead — simpler and matches what
+/// `open::that` would do inside the renderer anyway.
 fn open_external_url(url: &str) {
     log::info!("navigate: opening external url {url}");
-    freya::prelude::Platform::get().send(freya_core::user_event::UserEvent::OpenUrl(url.to_owned()));
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    {
+        #[cfg(target_os = "linux")]
+        let (cmd, args): (&str, Vec<&str>) = ("xdg-open", vec![url]);
+        #[cfg(target_os = "macos")]
+        let (cmd, args): (&str, Vec<&str>) = ("open", vec![url]);
+        #[cfg(target_os = "windows")]
+        let (cmd, args): (&str, Vec<&str>) = ("cmd", vec!["/C", "start", "", url]);
+
+        match std::process::Command::new(cmd)
+            .args(&args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(_) => log::info!("navigate: spawned {cmd}"),
+            Err(e) => log::warn!("navigate: failed to launch {cmd} for {url}: {e}"),
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        log::warn!("navigate: external url nav unavailable on this platform ({url})");
+    }
 }
 
 /// Scroll the PDF face for `item` to the anchor's content centre + pulse
 /// highlight. Opens the plugin instance lazily when it's not already
 /// registered.
 fn navigate_pdf(item: ItemId, anchor: Vec<u8>) {
+    log::info!("navigate_pdf: item={item:?}");
     let Some(handle) = active_pdf_sources::ensure_registered(item) else {
         log::warn!("navigate_pdf: failed to open PDF plugin for {item:?}");
         return;
@@ -179,6 +204,17 @@ fn navigate_pdf(item: ItemId, anchor: Vec<u8>) {
     {
         if let Some(board) = active_boards::get(CanvasMount::Item(item)) {
             lock(&board).center_on_world(wx, wy);
+        } else {
+            // No pane open for this PDF yet — the pulse still queues
+            // and the full tab-router cross-item flow handles the
+            // auto-open from `navigate_canvas_bookmark`'s slow path.
+            // For PDF chips we'd need an analogous spawn; log the
+            // gap so the user knows to open the PDF manually.
+            log::warn!(
+                "navigate_pdf: item {item:?} is not mounted in any pane — \
+                 open the PDF tab first (cross-item PDF routing lands in \
+                 a follow-up)"
+            );
         }
     }
     active_pdf_sources::pulse(item, anchor);
