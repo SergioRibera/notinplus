@@ -13,12 +13,13 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use notein_sdk::{
-    Bookmark, BookmarkId, CanvasError, CanvasKind, ConfigError, ConfigField, ConfigFieldKind,
-    ConfigSchema, ConfigValue, CreationCategory, CreationEntry, CreationError, FrameCtxHandle,
-    InputEvent, ItemCreationResult, WorldPoint, build::custom_entry,
+    Bookmark, BookmarkId, CanvasError, CanvasKind, ConfigError, ConfigSchema, ConfigValue,
+    CreationCategory, CreationEntry, CreationError, FrameCtxHandle, InputEvent,
+    ItemCreationResult, WorldPoint, build::custom_entry,
 };
 
 use crate::db::Db;
+use crate::plugin_config::{self, SetResult, SharedConfig};
 use crate::state::BibleViewerState;
 
 /// Canvas kind id used by the shell to route open requests.
@@ -28,33 +29,22 @@ pub const KIND_ID: &str = "io.notein.bible.viewer";
 /// off. Keep it in sync with the ui/toolbar visibility rules.
 const CAPABILITIES: &[&str] = &["bookmarks"];
 
-/// Config key: body font size in logical pixels. Also drives the drop
-/// cap size (× `DROP_CAP_RATIO`).
-const KEY_FONT_SIZE: &str = "font_size";
-/// Config key: line height multiplier applied to the body paragraph.
-const KEY_LINE_HEIGHT: &str = "line_height";
-const DEFAULT_FONT_SIZE: f64 = 22.0;
-const DEFAULT_LINE_HEIGHT: f64 = 1.65;
-
 #[derive(Debug)]
 pub struct BibleCanvas {
     db: Db,
+    config: SharedConfig,
     next_instance: std::sync::atomic::AtomicU64,
     instances: RwLock<HashMap<u64, Arc<RwLock<BibleViewerState>>>>,
-    /// Per-plugin (not per-instance) settings. Keyed by `KEY_*`
-    /// constants. The host persists the whole map after each
-    /// `set_config` call.
-    config: RwLock<HashMap<String, ConfigValue>>,
 }
 
 impl BibleCanvas {
     #[must_use]
-    pub fn new(db: Db) -> Self {
+    pub fn new(db: Db, config: SharedConfig) -> Self {
         Self {
             db,
+            config,
             next_instance: std::sync::atomic::AtomicU64::new(1),
             instances: RwLock::new(HashMap::new()),
-            config: RwLock::new(HashMap::new()),
         }
     }
 
@@ -66,6 +56,13 @@ impl BibleCanvas {
     #[must_use]
     pub fn db(&self) -> &Db {
         &self.db
+    }
+
+    /// Expose the shared config so UI widgets can observe font / line
+    /// height without round-tripping through the trait method.
+    #[must_use]
+    pub fn config(&self) -> &SharedConfig {
+        &self.config
     }
 }
 
@@ -87,8 +84,18 @@ impl CanvasKind for BibleCanvas {
         // open we hydrate the viewer state and fall through to the
         // on-demand loader. An empty slice means "open user's default
         // Bible at Genesis 1".
-        let (bible_id, book_id, chapter) = decode_open_payload(item_bytes)
-            .unwrap_or_else(|| ("spa_rv1960".into(), "GEN".into(), 1));
+        let default_bible = plugin_config::effective_default_bible(&self.config, &self.db);
+        let (bible_id, book_id, chapter) = decode_open_payload(item_bytes).unwrap_or_else(|| {
+            (
+                if default_bible.is_empty() {
+                    "spa_rv1960".into()
+                } else {
+                    default_bible
+                },
+                "GEN".into(),
+                1,
+            )
+        });
 
         let mut state = BibleViewerState::new(bible_id, book_id, chapter);
         if let Ok(chap) = self.db.load_chapter(&state.bible_id, &state.current_book, state.current_chapter) {
@@ -178,42 +185,25 @@ impl CanvasKind for BibleCanvas {
     fn apply_remote_op(&self, _instance: u64, _op: &[u8]) {}
 
     fn config_schema(&self) -> ConfigSchema {
-        ConfigSchema {
-            version: 1,
-            fields: vec![
-                ConfigField {
-                    key: KEY_FONT_SIZE.into(),
-                    label: "Tamaño del texto".into(),
-                    help: "Tamaño en píxeles del cuerpo del versículo.".into(),
-                    kind: ConfigFieldKind::Float { min: 14.0, max: 32.0, step: 1.0 },
-                    default: ConfigValue::Float(DEFAULT_FONT_SIZE),
-                    aliases: Vec::new(),
-                },
-                ConfigField {
-                    key: KEY_LINE_HEIGHT.into(),
-                    label: "Interlineado".into(),
-                    help: "Multiplicador de altura de línea del párrafo.".into(),
-                    kind: ConfigFieldKind::Float { min: 1.2, max: 2.2, step: 0.05 },
-                    default: ConfigValue::Float(DEFAULT_LINE_HEIGHT),
-                    aliases: Vec::new(),
-                },
-            ],
-        }
+        plugin_config::build_schema(&self.db)
     }
 
     fn get_config(&self, key: &str) -> Option<ConfigValue> {
-        self.config.read().unwrap().get(key).cloned()
+        plugin_config::get_value(&self.config, key)
     }
 
     fn set_config(&self, key: &str, value: ConfigValue) -> Result<(), ConfigError> {
-        match (key, &value) {
-            (KEY_FONT_SIZE, ConfigValue::Float(v)) if (14.0..=32.0).contains(v) => {}
-            (KEY_LINE_HEIGHT, ConfigValue::Float(v)) if (1.2..=2.2).contains(v) => {}
-            (KEY_FONT_SIZE | KEY_LINE_HEIGHT, _) => return Err(ConfigError::TypeMismatch),
-            _ => return Err(ConfigError::UnknownKey(key.into())),
+        match plugin_config::apply_set(&self.config, key, value)? {
+            SetResult::Stored => Ok(()),
+            SetResult::InstallRequested(id) => {
+                // Install is a background job; schedule + ack. Real HTTP
+                // wiring lands when the catalogue picker UI goes in. For
+                // now we log the request so manual tests can confirm
+                // the signal reached the plugin.
+                log::info!("bible: install requested for {id}");
+                Ok(())
+            }
         }
-        self.config.write().unwrap().insert(key.into(), value);
-        Ok(())
     }
 
     fn creation_entries(&self) -> Vec<CreationEntry> {
@@ -234,10 +224,13 @@ impl CanvasKind for BibleCanvas {
         if entry_id != "new-bible-viewer" {
             return Err(CreationError::UnknownEntry(entry_id.into()));
         }
-        // Default new tab = user's primary Bible at Genesis 1. The
-        // toolbar translation picker can retarget without creating a
-        // fresh item.
-        let bytes = encode_open_payload("spa_rv1960", "GEN", 1);
+        let default_bible = plugin_config::effective_default_bible(&self.config, &self.db);
+        let bible_id = if default_bible.is_empty() {
+            "spa_rv1960".into()
+        } else {
+            default_bible
+        };
+        let bytes = encode_open_payload(&bible_id, "GEN", 1);
         Ok(ItemCreationResult {
             item_bytes: bytes,
             suggested_name: "Biblia".into(),
@@ -296,7 +289,7 @@ mod tests {
     #[test]
     fn open_from_payload_loads_chapter() {
         let db = seeded_db();
-        let canvas = BibleCanvas::new(db);
+        let canvas = BibleCanvas::new(db, plugin_config::new_shared());
         let bytes = encode_open_payload("spa_rv1960", "EPH", 6);
         let inst = canvas.open(&bytes).unwrap();
         assert_eq!(canvas.title(inst), "Efesios 6");
@@ -305,19 +298,62 @@ mod tests {
     }
 
     #[test]
+    fn open_empty_payload_uses_configured_default_bible() {
+        let db = seeded_db();
+        let config = plugin_config::new_shared();
+        config
+            .write()
+            .unwrap()
+            .values
+            .insert(
+                plugin_config::KEY_DEFAULT_BIBLE.into(),
+                ConfigValue::String("spa_rv1960".into()),
+            );
+        let canvas = BibleCanvas::new(db, config);
+        let inst = canvas.open(&[]).unwrap();
+        // Genesis is seeded empty here, but the Bible id resolution
+        // flows from the config, not the hard-coded fallback.
+        let st = canvas.get(inst).unwrap();
+        assert_eq!(st.read().unwrap().bible_id, "spa_rv1960");
+    }
+
+    #[test]
     fn set_config_rejects_out_of_range() {
-        let canvas = BibleCanvas::new(Db::in_memory().unwrap());
+        let canvas = BibleCanvas::new(Db::in_memory().unwrap(), plugin_config::new_shared());
         assert!(canvas
-            .set_config(KEY_FONT_SIZE, ConfigValue::Float(DEFAULT_FONT_SIZE))
+            .set_config(
+                plugin_config::KEY_FONT_SIZE,
+                ConfigValue::Float(plugin_config::DEFAULT_FONT_SIZE),
+            )
             .is_ok());
         assert!(matches!(
-            canvas.set_config(KEY_FONT_SIZE, ConfigValue::Float(100.0)),
+            canvas.set_config(plugin_config::KEY_FONT_SIZE, ConfigValue::Float(100.0)),
             Err(ConfigError::TypeMismatch)
         ));
         assert!(matches!(
             canvas.set_config("unknown_key", ConfigValue::Bool(true)),
             Err(ConfigError::UnknownKey(_))
         ));
+    }
+
+    #[test]
+    fn install_bible_request_acked_without_storing_value() {
+        let db = Db::in_memory().unwrap();
+        let config = plugin_config::new_shared();
+        let canvas = BibleCanvas::new(db, config.clone());
+        canvas
+            .set_config(
+                plugin_config::KEY_INSTALL_BIBLE,
+                ConfigValue::String("spa_rv1960".into()),
+            )
+            .unwrap();
+        // Action key is not retained in the stored map.
+        assert!(config
+            .read()
+            .unwrap()
+            .values
+            .get(plugin_config::KEY_INSTALL_BIBLE)
+            .is_none());
     }
 
     // Trait method surface for consumers inside this crate's tests.

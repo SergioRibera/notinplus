@@ -17,12 +17,14 @@ use notein_sdk::{
 
 use crate::anchor::BibleAnchor;
 use crate::db::Db;
+use crate::plugin_config::{self, SetResult, SharedConfig};
 
 pub const KIND_ID: &str = "io.notein.bible";
 
 #[derive(Debug)]
 pub struct BibleSource {
     db: Db,
+    config: SharedConfig,
     /// Active search streams. Keyed by stream id; drained by poll +
     /// cleared on end. Streams are eager (we run the FTS5 query in
     /// `search_begin` and buffer the results) because the query cost is
@@ -37,9 +39,10 @@ pub struct BibleSource {
 
 impl BibleSource {
     #[must_use]
-    pub fn new(db: Db) -> Self {
+    pub fn new(db: Db, config: SharedConfig) -> Self {
         Self {
             db,
+            config,
             streams: RwLock::new(HashMap::new()),
             next_stream: std::sync::atomic::AtomicU64::new(1),
             instances: RwLock::new(HashMap::new()),
@@ -70,7 +73,8 @@ impl Source for BibleSource {
     fn open(&self, item_bytes: &[u8]) -> Result<u64, SourceError> {
         // item_bytes = bincoded bible_id String. Empty → default.
         let bible_id: String = if item_bytes.is_empty() {
-            "spa_rv1960".into()
+            let default = plugin_config::effective_default_bible(&self.config, &self.db);
+            if default.is_empty() { "spa_rv1960".into() } else { default }
         } else {
             bincode::decode_from_slice::<String, _>(item_bytes, bincode::config::standard())
                 .map(|(v, _)| v)
@@ -209,15 +213,21 @@ impl Source for BibleSource {
     }
 
     fn config_schema(&self) -> ConfigSchema {
-        ConfigSchema { version: 1, fields: Vec::new() }
+        plugin_config::build_schema(&self.db)
     }
 
-    fn get_config(&self, _key: &str) -> Option<ConfigValue> {
-        None
+    fn get_config(&self, key: &str) -> Option<ConfigValue> {
+        plugin_config::get_value(&self.config, key)
     }
 
-    fn set_config(&self, _key: &str, _value: ConfigValue) -> Result<(), ConfigError> {
-        Ok(())
+    fn set_config(&self, key: &str, value: ConfigValue) -> Result<(), ConfigError> {
+        match plugin_config::apply_set(&self.config, key, value)? {
+            SetResult::Stored => Ok(()),
+            SetResult::InstallRequested(id) => {
+                log::info!("bible: install requested for {id}");
+                Ok(())
+            }
+        }
     }
 
     fn creation_entries(&self) -> Vec<CreationEntry> {

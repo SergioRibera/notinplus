@@ -32,6 +32,7 @@ pub mod anchor;
 pub mod canvas;
 pub mod db;
 pub mod import;
+pub mod plugin_config;
 pub mod reference;
 pub mod source;
 pub mod state;
@@ -40,13 +41,24 @@ pub mod ui;
 pub use anchor::BibleAnchor;
 pub use canvas::BibleCanvas;
 pub use db::Db;
+pub use plugin_config::{SharedConfig, new_shared};
 pub use source::BibleSource;
 
 /// Register both plugin trait objects with the shell's registry.
-/// Called by the host at startup for the built-in path.
+/// Called by the host at startup for the built-in path. A fresh shared
+/// config is created unless one is handed in — call [`install_with`]
+/// to reuse an already-populated config map.
 pub fn install(registry: &mut PluginRegistry, db: Db) -> Result<(), RegistryError> {
-    let canvas = Arc::new(BibleCanvas::new(db.clone()));
-    let source = Arc::new(BibleSource::new(db));
+    install_with(registry, db, new_shared())
+}
+
+pub fn install_with(
+    registry: &mut PluginRegistry,
+    db: Db,
+    config: SharedConfig,
+) -> Result<(), RegistryError> {
+    let canvas = Arc::new(BibleCanvas::new(db.clone(), config.clone()));
+    let source = Arc::new(BibleSource::new(db, config));
     registry.register_canvas(canvas)?;
     registry.register_source(source)?;
     Ok(())
@@ -70,9 +82,10 @@ impl BibleBundle {
     #[must_use]
     pub fn new() -> Self {
         let db = Db::in_memory().expect("in-memory sqlite should always open");
+        let config = new_shared();
         Self {
-            canvas: Arc::new(BibleCanvas::new(db.clone())),
-            source: Arc::new(BibleSource::new(db)),
+            canvas: Arc::new(BibleCanvas::new(db.clone(), config.clone())),
+            source: Arc::new(BibleSource::new(db, config)),
         }
     }
 }
