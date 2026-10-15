@@ -1,0 +1,97 @@
+//! Bible plugin — SQLite + FTS5 backed source + canvas kind.
+//!
+//! The crate exposes two trait objects to the host:
+//!
+//! - [`canvas::BibleCanvas`] — reading surface. Takes the full pane,
+//!   renders a flowing paragraph with inline verse numbers + section
+//!   headers + highlight bookmarks. Declares the `"bookmarks"`
+//!   capability only; no stroke / layer tools.
+//! - [`source::BibleSource`] — anchor resolver. Lets other canvases
+//!   create `SourceRef::Plugin { plugin_id = "io.notein.bible" }`
+//!   references, renders chips for them, and exposes FTS5 search.
+//!
+//! Both share the same `Db` handle so an edit done through either side
+//! shows up on the other without a sync hop.
+//!
+//! Built-in registration path:
+//!
+//! ```ignore
+//! use notein_bible::install;
+//! let db = notein_bible::db::Db::open("~/.local/share/notinplus/bible.db")?;
+//! install(&mut registry, db)?;
+//! ```
+//!
+//! Dynamic registration via `notein_plugin::PluginBundle` is also
+//! exposed below; the host decides which path to use.
+
+use std::sync::Arc;
+
+use notein_sdk::{PluginRegistry, Registrations, RegistryError};
+
+pub mod anchor;
+pub mod canvas;
+pub mod db;
+pub mod import;
+pub mod reference;
+pub mod source;
+pub mod state;
+pub mod ui;
+
+pub use anchor::BibleAnchor;
+pub use canvas::BibleCanvas;
+pub use db::Db;
+pub use source::BibleSource;
+
+/// Register both plugin trait objects with the shell's registry.
+/// Called by the host at startup for the built-in path.
+pub fn install(registry: &mut PluginRegistry, db: Db) -> Result<(), RegistryError> {
+    let canvas = Arc::new(BibleCanvas::new(db.clone()));
+    let source = Arc::new(BibleSource::new(db));
+    registry.register_canvas(canvas)?;
+    registry.register_source(source)?;
+    Ok(())
+}
+
+/// `PluginBundle` entry used by the dynamic loader. Returns both trait
+/// objects populated with an **in-memory** DB — the dynamic path is
+/// smoke-test only until the host negotiates a shared DB path via a
+/// future config channel.
+#[derive(Debug)]
+pub struct BibleBundle {
+    canvas: Arc<BibleCanvas>,
+    source: Arc<BibleSource>,
+}
+
+impl BibleBundle {
+    /// # Panics
+    /// If the in-memory SQLite instance cannot be created — a condition
+    /// that signals a fundamentally broken rusqlite link, not a
+    /// recoverable error.
+    #[must_use]
+    pub fn new() -> Self {
+        let db = Db::in_memory().expect("in-memory sqlite should always open");
+        Self {
+            canvas: Arc::new(BibleCanvas::new(db.clone())),
+            source: Arc::new(BibleSource::new(db)),
+        }
+    }
+}
+
+impl Default for BibleBundle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl notein_sdk::PluginBundle for BibleBundle {
+    fn sdk_abi_version(&self) -> u32 {
+        notein_sdk::SDK_ABI_VERSION
+    }
+
+    fn take_registrations(self: Box<Self>) -> Registrations {
+        Registrations {
+            canvases: vec![self.canvas as Arc<dyn notein_sdk::CanvasKind>],
+            sources: vec![self.source as Arc<dyn notein_sdk::Source>],
+        }
+    }
+}

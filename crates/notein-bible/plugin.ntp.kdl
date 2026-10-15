@@ -1,0 +1,20 @@
+id      "io.notein.bible"
+name    "Bible"
+version "0.1.0"
+author  "Sergio Ribera"
+
+provides "io.notein.canvas"
+provides "io.notein.source"
+requires "io.notein.sdk" min-version="1.0"
+
+canvas {
+    kind-id "io.notein.bible.viewer"
+    kind-label "Biblia"
+    capabilities "bookmarks"
+}
+
+source {
+    kind-id "io.notein.bible"
+    kind-label "Biblia"
+    extensions "bible"
+}
