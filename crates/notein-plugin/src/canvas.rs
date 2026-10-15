@@ -25,11 +25,20 @@
 
 use rkyv::{Archive, Deserialize, Serialize};
 
+use std::sync::Arc;
+
 use crate::bookmark::{Bookmark, WorldPoint};
 use crate::config::{ConfigSchema, ConfigValue};
 use crate::creation::{CreationEntry, ItemCreationResult};
 use crate::error::{CanvasError, ConfigError, CreationError};
 use crate::ids::{BookmarkId, OpId};
+
+/// Callback the host hands to a canvas plugin so the plugin can push
+/// locally-produced ops as they happen. Args are `(instance, op_bytes)`.
+/// Phase 10 wires this to the sync transport; earlier phases install a
+/// no-op sink that drops the bytes on the floor — the shell still runs
+/// mutations through [`CanvasKind::emit_pending_ops`] in the meantime.
+pub type HostOpSink = Arc<dyn Fn(u64, &[u8]) + Send + Sync>;
 
 /// Opaque handle to the host's current draw context.
 ///
@@ -187,6 +196,16 @@ pub trait CanvasKind: Send + Sync + std::fmt::Debug {
     fn inverse_op(&self, instance: u64, op: &[u8]) -> Option<Vec<u8>> {
         let _ = (instance, op);
         None
+    }
+
+    /// Install the host's op sink. Called once per registered plugin
+    /// at startup; stable across instances. Plugins save the sink and
+    /// call it from their mutation paths so op broadcast lands on the
+    /// transport synchronously — the pull alternative via
+    /// [`CanvasKind::emit_pending_ops`] stays available for plugins
+    /// that prefer buffering.
+    fn register_host_op_sink(&self, sink: HostOpSink) {
+        let _ = sink;
     }
 
     fn config_schema(&self) -> ConfigSchema;

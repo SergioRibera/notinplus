@@ -122,6 +122,10 @@ pub struct PluginRegistry {
     /// entry owns its `libloading::Library`, which must outlive every
     /// `Arc<dyn Trait>` registered from it.
     dynamic: Vec<LoadedPlugin>,
+    /// Op sink installed by the host. Pre-registered plugins pick it
+    /// up at [`PluginRegistry::install_op_sink`] time; late-registered
+    /// plugins get it slid in via [`PluginRegistry::register_canvas`].
+    op_sink: Option<crate::canvas::HostOpSink>,
 }
 
 impl std::fmt::Debug for PluginRegistry {
@@ -156,7 +160,10 @@ impl PluginRegistry {
     }
 
     /// Register a built-in canvas plugin. Fails if another canvas
-    /// with the same `kind_id` is already present.
+    /// with the same `kind_id` is already present. When a host op sink
+    /// has already been installed (common for dynamic plugins loaded
+    /// after startup), the plugin picks it up here before any instance
+    /// opens.
     pub fn register_canvas(&mut self, plugin: Arc<dyn CanvasKind>) -> Result<(), RegistryError> {
         let kind_id = plugin.kind_id().to_owned();
         if self.canvases.contains_key(&kind_id) {
@@ -165,8 +172,23 @@ impl PluginRegistry {
                 kind_id,
             });
         }
+        if let Some(sink) = &self.op_sink {
+            plugin.register_host_op_sink(sink.clone());
+        }
         self.canvases.insert(kind_id, plugin);
         Ok(())
+    }
+
+    /// Install the host-side op sink. Every already-registered canvas
+    /// plugin receives it immediately; subsequent
+    /// [`PluginRegistry::register_canvas`] calls plumb the sink into
+    /// the newcomer before it can produce an instance. The sink itself
+    /// is cheaply cloneable (`Arc<dyn Fn>`).
+    pub fn install_op_sink(&mut self, sink: crate::canvas::HostOpSink) {
+        for plugin in self.canvases.values() {
+            plugin.register_host_op_sink(sink.clone());
+        }
+        self.op_sink = Some(sink);
     }
 
     #[must_use]

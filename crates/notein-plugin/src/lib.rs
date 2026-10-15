@@ -41,7 +41,7 @@ pub use rkyv;
 pub use bytes;
 
 pub use bookmark::{Bookmark, Rgba, SourceRef, StrokeAnchor, TimestampMs, WorldPoint};
-pub use canvas::{CanvasKind, FrameCtxHandle, InputEvent, PointerKind};
+pub use canvas::{CanvasKind, FrameCtxHandle, HostOpSink, InputEvent, PointerKind};
 pub use config::{ConfigEnumOption, ConfigField, ConfigFieldKind, ConfigSchema, ConfigValue};
 pub use creation::{CreationCategory, CreationEntry, CreationKind, ItemCreationResult};
 pub use dynamic::{
