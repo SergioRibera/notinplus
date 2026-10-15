@@ -5,6 +5,7 @@
 //! implements [`Component`] (or `Into<Element>`) so it drops into
 //! `.child(...)` positions unchanged.
 
+pub mod bookmark_body_editor;
 pub mod canvas_create;
 pub mod chip;
 pub mod color_wheel;
@@ -22,6 +23,7 @@ pub mod tag_picker;
 pub mod theme;
 pub mod workspace_switcher;
 
+pub use bookmark_body_editor::BookmarkBodyEditor;
 pub use canvas_create::{CanvasCreateSheet, CreateCanvasRequest};
 pub use chip::Chip;
 pub use color_wheel::{ColorWheel, DEFAULT_SWATCHES, auto_color};

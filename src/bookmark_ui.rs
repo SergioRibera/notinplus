@@ -18,8 +18,9 @@ use freya::prelude::*;
 use istmo::plugins::EdgeInsets;
 
 use crate::bookmark::{SourceRef, TimestampMs};
+use crate::bookmark_body::Completion;
 use crate::canvas::{Board, lock};
-use crate::components::FormInput;
+use crate::components::{BookmarkBodyEditor, FormInput};
 use crate::ids::BookmarkId;
 use crate::source_ref_nav;
 
@@ -106,7 +107,11 @@ pub fn bookmark_card_overlay(
         .spacing(10.0)
         .background(Color::from_rgb(28, 28, 32))
         .with_corner_radius(10.0)
-        .child(FormInput::new(body_buffer).placeholder("Nota"))
+        .child(
+            BookmarkBodyEditor::new(body_buffer)
+                .placeholder("Nota")
+                .completions(bookmark_completions_provider(board, selected_id)),
+        )
         .child(ref_chip_row(&refs))
         .child(
             rect()
@@ -140,6 +145,84 @@ pub fn bookmark_card_overlay(
                         .child("Guardar"),
                 ),
         )
+}
+
+/// Build the completion provider the body editor consults while the
+/// `[[` autocomplete popup is open. Phase 6.2 aggregates:
+///
+/// - Bookmarks on the current board (minus the one being edited).
+/// - A URL shortcut when the query starts with `http://` or
+///   `https://`.
+/// - Plugin completions — every registered `Source` plugin is given
+///   the query via [`notein_plugin::Source::plugin_completions`].
+///
+/// Called on every keystroke while the popup is open; registry
+/// snapshot is taken under the mutex and dropped before any UI work.
+fn bookmark_completions_provider(
+    board: &Arc<Mutex<Board>>,
+    editing: BookmarkId,
+) -> impl Into<freya::prelude::Callback<String, Vec<Completion>>> {
+    let board = Arc::clone(board);
+    move |query: String| {
+        let needle = query.to_lowercase();
+        let guard = lock(&board);
+        let mut out: Vec<Completion> = guard
+            .doc()
+            .bookmarks()
+            .iter()
+            .filter(|bm| bm.id != editing)
+            .filter(|bm| {
+                needle.is_empty() || bm.body.to_lowercase().contains(&needle)
+            })
+            .map(|bm| Completion {
+                label: completion_label_for(bm),
+                subtitle: Some(format!("Bookmark {}", short_uuid(bm.id))),
+                source: SourceRef::Canvas { bookmark: bm.id },
+            })
+            .collect();
+        drop(guard);
+
+        // External url shortcut when the user types a well-formed url.
+        if query.starts_with("http://") || query.starts_with("https://") {
+            out.insert(
+                0,
+                Completion {
+                    label: query.clone(),
+                    subtitle: Some("Enlace externo".to_owned()),
+                    source: SourceRef::External { url: query.clone() },
+                },
+            );
+        }
+
+        // Plugin-driven entries. Clone the Arcs out of the registry
+        // under the lock so individual plugin calls run lock-free.
+        let plugins: Vec<_> = {
+            let reg = crate::plugins::registry();
+            let reg_guard = crate::plugins::lock(&reg);
+            reg_guard.sources().cloned().collect()
+        };
+        for plugin in plugins {
+            let entries = plugin.plugin_completions(&query);
+            out.extend(entries);
+        }
+
+        out
+    }
+}
+
+fn completion_label_for(bm: &notein_plugin::Bookmark) -> String {
+    let trimmed = bm.body.trim();
+    if trimmed.is_empty() {
+        format!("Bookmark {}", short_uuid(bm.id))
+    } else {
+        let one_line = trimmed.replace('\n', " ");
+        truncate_body(&one_line)
+    }
+}
+
+fn short_uuid(id: BookmarkId) -> String {
+    let s = id.to_string();
+    s.chars().take(8).collect()
 }
 
 /// Horizontal chip row showing one pill per [`SourceRef`] attached to

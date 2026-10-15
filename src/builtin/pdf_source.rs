@@ -18,7 +18,7 @@ use freya::icons::lucide;
 use freya_canvas_bg::Rect;
 use freya_pdf::PdfDocument;
 use notein_plugin::{
-    AnchorView, ConfigError, ConfigField, ConfigFieldKind, ConfigSchema, ConfigValue,
+    AnchorView, ChipView, ConfigError, ConfigField, ConfigFieldKind, ConfigSchema, ConfigValue,
     CreationCategory, CreationEntry, CreationError, CreationKind, ItemCreationResult, SearchHit,
     SelectMode, Selection, Source, SourceError, Tile, TileRequest,
 };
@@ -542,6 +542,23 @@ impl Source for PdfSourcePlugin {
             None => String::new(),
         };
         Some(AnchorView { title, snippet })
+    }
+
+    fn render_chip(&self, anchor: &[u8]) -> Option<ChipView> {
+        let decoded = decode_pdf_anchor(anchor)?;
+        let page = decoded.page().saturating_add(1);
+        let has_range = decoded.char_range().is_some();
+        let label = if has_range {
+            format!("PDF p.{page} · fragmento")
+        } else {
+            format!("PDF p.{page}")
+        };
+        Some(ChipView {
+            label,
+            icon: Some("\u{1F4D6}".to_owned()), // 📖
+            tint: None,
+            tooltip: Some("Referencia a PDF".to_owned()),
+        })
     }
 
     fn pointer_begin_select(&self, instance: u64, x: f32, y: f32, mode: SelectMode) -> bool {

@@ -40,6 +40,8 @@ istmo-data-store = { path = "../istmo/plugins/data-store" }
 freya = { version = "=0.5.0-rc.8", features = ["router", "icons", "icons-lucide"] }
 freya-engine = "=0.5.0-rc.8"
 freya-components = "=0.5.0-rc.8"
+freya-edit = "=0.5.0-rc.8"
+freya-core = "=0.5.0-rc.8"
 torin = "=0.5.0-rc.8"
 freya-canvas-bg = { path = "crates/freya-canvas-bg" }
 freya-pdf = { path = "crates/freya-pdf" }

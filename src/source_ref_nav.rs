@@ -20,6 +20,7 @@ use crate::active_pdf_sources;
 use crate::app::CanvasMount;
 use crate::bookmark::SourceRef;
 use crate::canvas::lock;
+use crate::ids::BookmarkId;
 use crate::library::ItemId;
 use crate::pdf_viewer::PDF_PLUGIN_ID;
 
@@ -67,12 +68,113 @@ pub fn navigate(src: &SourceRef) {
         SourceRef::Plugin { plugin_id, .. } => {
             log::warn!("navigate: unsupported plugin ref {plugin_id}");
         }
-        SourceRef::Canvas { bookmark } => {
-            log::warn!("navigate: cross-canvas bookmark nav not implemented (target={bookmark:?})");
+        SourceRef::Canvas { bookmark } => navigate_canvas_bookmark(*bookmark),
+        SourceRef::External { url } => open_external_url(url),
+    }
+}
+
+/// Scroll the pane that owns `bookmark` to its live world position.
+///
+/// Two paths:
+///
+/// 1. Fast — the bookmark lives in a currently-mounted board. Scan
+///    [`active_boards::snapshot`] and centre on the first match.
+/// 2. Slow — scan the library on disk: for each registered item,
+///    deserialize its [`crate::doc::Doc`] and check if the bookmark
+///    is there. On a hit, open the item in the active workspace's
+///    focused pane (via [`crate::library::Library::add_pane_tab`])
+///    and poll [`active_boards::get_item`] until the board mounts,
+///    then centre.
+///
+/// Capped at a short poll window so a hung mount can't wedge the
+/// task forever.
+fn navigate_canvas_bookmark(bookmark: BookmarkId) {
+    // Fast path.
+    for (_, board) in active_boards::snapshot() {
+        let mut guard = lock(&board);
+        if guard.doc().bookmark(bookmark).is_some() {
+            guard.center_on_bookmark(bookmark);
+            return;
         }
-        SourceRef::External { url } => {
-            log::warn!("navigate: external url nav not implemented ({url})");
+    }
+    // Slow path — spawn an async task so the UI stays responsive while
+    // the library scan + tab-open sequence runs.
+    freya::prelude::spawn(async move {
+        let Ok(handle) = crate::home::open_library().await else {
+            log::warn!("navigate_canvas: library handle unavailable");
+            return;
+        };
+        let (found, workspace, focused_pane) = {
+            let lib = handle.lock().await;
+            let mut hit = None;
+            for item in &lib.index().items {
+                if let Ok(doc) = lib.load_doc(item.id).await
+                    && doc.bookmark(bookmark).is_some()
+                {
+                    hit = Some(item.id);
+                    break;
+                }
+            }
+            let workspace = lib.active_workspace();
+            let focused_pane = workspace
+                .and_then(|wid| lib.workspace(wid).and_then(|w| w.focused_pane));
+            (hit, workspace, focused_pane)
+        };
+        let Some(item_id) = found else {
+            log::warn!("navigate_canvas: bookmark {bookmark:?} not found in any item");
+            return;
+        };
+        let (Some(workspace), Some(pane)) = (workspace, focused_pane) else {
+            log::warn!(
+                "navigate_canvas: bookmark lives in item {item_id:?} but no \
+                 active workspace / focused pane to host the tab"
+            );
+            return;
+        };
+        {
+            let mut lib = handle.lock().await;
+            if let Err(err) = lib.add_pane_tab(workspace, pane, item_id).await {
+                log::error!("navigate_canvas: add_pane_tab failed: {err}");
+                return;
+            }
         }
+        // Poll for mount — the pane re-renders, the canvas registers
+        // its board under `CanvasMount::Item(item_id)`, and then we
+        // can centre. 3 s budget.
+        for _ in 0..30 {
+            async_io::Timer::after(std::time::Duration::from_millis(100)).await;
+            if let Some(board) = active_boards::get_item(item_id) {
+                lock(&board).center_on_bookmark(bookmark);
+                return;
+            }
+        }
+        log::warn!(
+            "navigate_canvas: item {item_id:?} opened but board never mounted \
+             within the poll window"
+        );
+    });
+}
+
+/// Open `url` with the host OS's default handler. Mobile targets
+/// have no spawn-process API available here; log and defer.
+fn open_external_url(url: &str) {
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    {
+        #[cfg(target_os = "linux")]
+        let (cmd, args): (&str, Vec<&str>) = ("xdg-open", vec![url]);
+        #[cfg(target_os = "macos")]
+        let (cmd, args): (&str, Vec<&str>) = ("open", vec![url]);
+        #[cfg(target_os = "windows")]
+        let (cmd, args): (&str, Vec<&str>) = ("cmd", vec!["/C", "start", "", url]);
+
+        match std::process::Command::new(cmd).args(&args).spawn() {
+            Ok(_) => {}
+            Err(e) => log::warn!("navigate: failed to launch {cmd} for {url}: {e}"),
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        log::warn!("navigate: external url nav unavailable on this platform ({url})");
     }
 }
 

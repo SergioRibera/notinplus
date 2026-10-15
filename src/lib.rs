@@ -13,6 +13,7 @@ pub mod active_boards;
 pub mod active_pdf_sources;
 pub mod app;
 pub mod bookmark;
+pub mod bookmark_body;
 pub mod bookmark_ui;
 pub mod brush;
 pub mod builtin;

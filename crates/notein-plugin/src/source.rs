@@ -12,6 +12,7 @@
 
 use rkyv::{Archive, Deserialize, Serialize};
 
+use crate::bookmark::{Rgba, SourceRef};
 use crate::config::{ConfigSchema, ConfigValue};
 use crate::creation::{CreationEntry, ItemCreationResult};
 use crate::error::{ConfigError, CreationError, SourceError};
@@ -173,4 +174,61 @@ pub trait Source: Send + Sync + std::fmt::Debug + std::any::Any {
         import_bytes: Option<&[u8]>,
         name_hint: Option<&str>,
     ) -> Result<ItemCreationResult, CreationError>;
+
+    /// Return candidate entries for the body-editor `[[` autocomplete,
+    /// matching `query` (case-insensitive substring is the usual
+    /// convention; plugins free to score however they like). Called at
+    /// the plugin level — no instance context — because completions
+    /// usually span the whole catalogue of refs the plugin can
+    /// produce, not any one open document.
+    ///
+    /// Default = empty vec. Plugins that want to surface entries opt
+    /// in by overriding.
+    fn plugin_completions(&self, query: &str) -> Vec<Completion> {
+        let _ = query;
+        Vec::new()
+    }
+
+    /// Produce the visual for a chip pointing at `anchor`. The anchor
+    /// blob is self-describing by convention (page / section / char
+    /// range all baked in); no instance context is passed because
+    /// chip rendering must stay cheap enough to run on every editor
+    /// render frame without touching live document state.
+    ///
+    /// Default = `None` so the shell falls back to a generic label.
+    /// Plugins that want branded chips override.
+    fn render_chip(&self, anchor: &[u8]) -> Option<ChipView> {
+        let _ = anchor;
+        None
+    }
+}
+
+/// Autocomplete entry surfaced by [`Source::plugin_completions`] and
+/// the shell's built-in canvas / url providers. Picking an entry
+/// inserts [`source`] as a chip in the editing body.
+#[derive(Clone, Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[rkyv(compare(PartialEq), derive(Debug))]
+pub struct Completion {
+    /// Primary label (one line).
+    pub label: String,
+    /// Optional muted subtitle (e.g. plugin id, page number, path).
+    pub subtitle: Option<String>,
+    /// The ref inserted on pick.
+    pub source: SourceRef,
+}
+
+/// Visual spec for a chip pill. The shell paints the pill; the plugin
+/// supplies the text + icon + tint so chips look native to the data
+/// they reference.
+#[derive(Clone, Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[rkyv(compare(PartialEq), derive(Debug))]
+pub struct ChipView {
+    /// Text inside the pill (plugin-chosen; e.g. `"PDF p.12"`).
+    pub label: String,
+    /// Optional emoji or asset reference to paint left of the label.
+    pub icon: Option<String>,
+    /// Optional background tint. `None` = shell default.
+    pub tint: Option<Rgba>,
+    /// Optional accessible description / tooltip.
+    pub tooltip: Option<String>,
 }
