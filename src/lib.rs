@@ -10,6 +10,7 @@
 //! manifests every dep's `build.rs` emits.
 
 pub mod active_boards;
+pub mod active_pdf_sources;
 pub mod app;
 pub mod bookmark;
 pub mod bookmark_ui;
