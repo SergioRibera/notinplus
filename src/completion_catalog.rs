@@ -31,7 +31,9 @@ use std::sync::{Mutex, OnceLock};
 
 use notein_plugin::{Completion, SourceRef};
 
-use crate::library::ItemId;
+use crate::builtin::pdf_source::KIND_ID as PDF_PLUGIN_ID;
+use crate::library::{Item, ItemId, ItemKind};
+use crate::pdf_viewer::{PdfAnchor, encode_pdf_anchor};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CatalogEntry {
@@ -116,4 +118,99 @@ pub fn query(needle: &str) -> Vec<Completion> {
 #[must_use]
 pub fn snapshot() -> Vec<CatalogEntry> {
     lock().clone()
+}
+
+/// Drop every entry owned by `plugin_id`. Used when a plugin
+/// repopulates its slice from a persisted source — call this first,
+/// then `register` each entry fresh.
+pub fn clear_plugin(plugin_id: &str) {
+    lock().retain(|e| e.plugin_id != plugin_id);
+}
+
+/// Rebuild the PDF slice of the catalog from a snapshot of library
+/// items. Call this on every library open so a fresh app start sees
+/// every PDF the user has imported, not only the ones they've
+/// re-opened this session. Idempotent: existing PDF entries are
+/// cleared before the rebuild.
+///
+/// Uses the item's user-facing `name` for the chip label — the plugin
+/// cannot reach the library on its own.
+pub fn prime_pdf_entries<'a, I: IntoIterator<Item = &'a Item>>(items: I) {
+    clear_plugin(PDF_PLUGIN_ID);
+    for item in items {
+        if !is_pdf_item(&item.kind) {
+            continue;
+        }
+        let anchor = encode_pdf_anchor(PdfAnchor::Page {
+            source: item.id,
+            page: 0,
+        });
+        let short_id: String = item.id.to_string().chars().take(8).collect();
+        let name = if item.name.trim().is_empty() {
+            format!("PDF {short_id}")
+        } else {
+            item.name.clone()
+        };
+        register(CatalogEntry {
+            plugin_id: PDF_PLUGIN_ID.to_owned(),
+            item_id: item.id,
+            label: name,
+            subtitle: Some(format!("PDF · {short_id}")),
+            source: SourceRef::Plugin {
+                plugin_id: PDF_PLUGIN_ID.to_owned(),
+                item: item.id.0,
+                anchor,
+                selection: None,
+            },
+        });
+    }
+}
+
+/// Refresh the page-count subtitle for the PDF entry pointing at
+/// `item`. If the entry already exists (e.g. populated by
+/// [`prime_pdf_entries`] on library open), only the subtitle is
+/// touched — the human label stays as the user's item name.
+/// Otherwise registers a short-id fallback label so the chip is
+/// still linkable before the next library prime.
+pub fn ensure_pdf_entry(item: ItemId, page_count: usize) {
+    let short_id: String = item.to_string().chars().take(8).collect();
+    let anchor = encode_pdf_anchor(PdfAnchor::Page {
+        source: item,
+        page: 0,
+    });
+    let new_subtitle = Some(format!("PDF · {page_count} páginas · {short_id}"));
+    let mut g = lock();
+    if let Some(entry) = g
+        .iter_mut()
+        .find(|e| e.plugin_id == PDF_PLUGIN_ID && e.item_id == item)
+    {
+        entry.subtitle = new_subtitle;
+        entry.source = SourceRef::Plugin {
+            plugin_id: PDF_PLUGIN_ID.to_owned(),
+            item: item.0,
+            anchor,
+            selection: None,
+        };
+        return;
+    }
+    g.push(CatalogEntry {
+        plugin_id: PDF_PLUGIN_ID.to_owned(),
+        item_id: item,
+        label: format!("PDF {short_id}"),
+        subtitle: new_subtitle,
+        source: SourceRef::Plugin {
+            plugin_id: PDF_PLUGIN_ID.to_owned(),
+            item: item.0,
+            anchor,
+            selection: None,
+        },
+    });
+}
+
+fn is_pdf_item(kind: &ItemKind) -> bool {
+    match kind {
+        ItemKind::PdfCanvas | ItemKind::SourcePdf => true,
+        ItemKind::DocLinked { source_plugin } => source_plugin == PDF_PLUGIN_ID,
+        ItemKind::Canvas => false,
+    }
 }

@@ -141,9 +141,11 @@ impl PdfSourcePlugin {
     /// this right after `open` so [`Source::current_selection`] can
     /// encode a full [`PdfAnchor::Range`] back to the item.
     ///
-    /// Also publishes the item into the process-wide completion
-    /// catalog so the `[[` popup can list this PDF whether or not
-    /// a viewer is currently open (static catalog pattern).
+    /// Also refreshes the catalog subtitle with the live page count.
+    /// The catalog label itself is set by
+    /// [`crate::completion_catalog::prime_pdf_entries`] from the
+    /// library's item name on open — attach_item only enriches
+    /// metadata that depends on reading the PDF (page count).
     ///
     /// Noop on unknown instance.
     pub fn attach_item(&self, instance: u64, item: ItemId) {
@@ -155,23 +157,7 @@ impl PdfSourcePlugin {
             inst.source = Some(item);
             inst.doc.page_count()
         };
-        let anchor = encode_pdf_anchor(PdfAnchor::Page {
-            source: item,
-            page: 0,
-        });
-        let short_id: String = item.to_string().chars().take(8).collect();
-        crate::completion_catalog::register(crate::completion_catalog::CatalogEntry {
-            plugin_id: KIND_ID.to_owned(),
-            item_id: item,
-            label: format!("PDF ({page_count} páginas)"),
-            subtitle: Some(format!("PDF · {short_id}")),
-            source: SourceRef::Plugin {
-                plugin_id: KIND_ID.to_owned(),
-                item: item.0,
-                anchor,
-                selection: None,
-            },
-        });
+        crate::completion_catalog::ensure_pdf_entry(item, page_count);
     }
 
     /// Store (or clear) the live selection for an instance. Automatically

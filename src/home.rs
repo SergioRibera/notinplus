@@ -1969,6 +1969,10 @@ pub(crate) async fn open_library() -> Result<LibHandle, String> {
     let lib = Library::open(&runtime)
         .await
         .map_err(|e| format!("open library: {e}"))?;
+    // Rebuild the shell's completion catalog from the freshly-loaded
+    // library so the `[[` popup lists every PDF the user has
+    // imported, even those not opened yet this session.
+    crate::completion_catalog::prime_pdf_entries(lib.index().items.iter());
     Ok(Arc::new(AsyncMutex::new(lib)))
 }
 

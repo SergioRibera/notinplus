@@ -31,6 +31,27 @@ use notein_plugin::{BookmarkId, SourceRef};
 /// pairs this char with a shaper placeholder.
 pub const CHIP_SENTINEL: char = '\u{FFFC}';
 
+/// Truncate `s` to at most `max_chars` user-perceived characters,
+/// appending `…` when it was clipped. Operates on `char` (Unicode
+/// scalar values) rather than bytes so grapheme boundaries aren't
+/// mid-split; good enough for Latin / CJK — grapheme clusters with
+/// combining marks may still be clipped, which is acceptable for
+/// chip / completion labels.
+#[must_use]
+pub fn ellipsize(s: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    let count = s.chars().count();
+    if count <= max_chars {
+        return s.to_owned();
+    }
+    let keep = max_chars.saturating_sub(1);
+    let mut out: String = s.chars().take(keep).collect();
+    out.push('…');
+    out
+}
+
 /// A piece of the compiled body: either literal text or a chip ref.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Segment {
@@ -431,6 +452,18 @@ mod tests {
     /// atomic-delete contract (Phase 6 step 4). Because the chip
     /// occupies a single `\u{FFFC}` char in the rope, `use_editable`'s
     /// one-char delete already removes it in one op — no loop needed.
+    #[test]
+    fn ellipsize_passes_short_strings() {
+        assert_eq!(ellipsize("hola", 10), "hola");
+    }
+
+    #[test]
+    fn ellipsize_truncates_long_strings_with_single_dot() {
+        let got = ellipsize("abcdefghij", 5);
+        assert_eq!(got, "abcd…");
+        assert_eq!(got.chars().count(), 5);
+    }
+
     #[test]
     fn literal_bracket_text_escapes_on_roundtrip() {
         let segs = vec![Segment::Text("ver [[canvas:xyz]] fin".into())];

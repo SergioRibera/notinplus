@@ -33,7 +33,7 @@ use freya_edit::{EditableConfig, EditableEvent, EditorLine, TextEditor, use_edit
 use notein_plugin::{ChipView, SourceRef};
 
 use crate::bookmark_body::{
-    CHIP_SENTINEL, Completion, from_rope_with_chips, parse, rebase_chips, serialize,
+    CHIP_SENTINEL, Completion, ellipsize, from_rope_with_chips, parse, rebase_chips, serialize,
     to_rope_with_chips,
 };
 use crate::components::theme::{
@@ -51,6 +51,13 @@ const DEFAULT_MIN_HEIGHT: f32 = 72.0;
 /// buttons.
 const CHIP_BG: Color = Color::from_rgb(44, 52, 70);
 const CHIP_FG: Color = Color::from_rgb(200, 215, 240);
+/// Max visible chars for an inline chip label — longer source names
+/// collapse to `prefix…`. Keeps chips readable inside wrapped
+/// bookmark bodies without eating the line.
+const CHIP_LABEL_MAX_CHARS: usize = 24;
+/// Max visible chars for autocomplete popup entry label / subtitle.
+const COMPLETION_LABEL_MAX_CHARS: usize = 60;
+const COMPLETION_SUBTITLE_MAX_CHARS: usize = 60;
 
 /// Cap how many autocomplete entries the popup lists at once so the
 /// scroll view stays snappy on long libraries.
@@ -533,7 +540,7 @@ fn build_interleaved(mut p: Paragraph, rope: &str, chips: &[(usize, SourceRef)])
                 p = p.span(std::mem::take(&mut buf));
             }
             match chip_iter.next() {
-                Some((_, chip)) => p = p.child(chip_widget(chip)),
+                Some((_, chip)) => p = p.child(chip_widget(chip.clone())),
                 None => buf.push(' '),
             }
         } else {
@@ -551,14 +558,25 @@ fn build_interleaved(mut p: Paragraph, rope: &str, chips: &[(usize, SourceRef)])
 /// before falling back to [`source_ref_nav::chip_label`]. Plugins
 /// that override `render_chip` get a tinted pill with their own icon
 /// + label; shell handles the generic Canvas / External cases.
-fn chip_widget(src: &SourceRef) -> impl IntoElement {
-    let view = resolve_chip_view(src);
-    let bg = view.tint.map(rgba_to_color).unwrap_or(CHIP_BG);
+///
+/// Clicking the chip calls [`source_ref_nav::navigate`] — Canvas
+/// → scroll + highlight, Plugin → open the owning viewer, External
+/// → platform-default URL handler. Hover state tints the pill so
+/// chips telegraph that they're actionable.
+fn chip_widget(src: SourceRef) -> impl IntoElement {
+    let view = resolve_chip_view(&src);
+    let base_bg = view.tint.map(rgba_to_color).unwrap_or(CHIP_BG);
+    let display_label = ellipsize(&view.label, CHIP_LABEL_MAX_CHARS);
+    let tooltip_text = view.tooltip.clone();
+    let _ = tooltip_text; // tooltip hook — reserved for a future hover popover.
+
+    let nav_src = src.clone();
 
     let label_body = label()
         .font_size(11.5)
         .color(CHIP_FG)
-        .text(view.label.clone());
+        .max_lines(1)
+        .text(display_label);
 
     let icon_el = view.icon.clone().map(|icon| {
         label()
@@ -566,6 +584,13 @@ fn chip_widget(src: &SourceRef) -> impl IntoElement {
             .color(CHIP_FG)
             .text(format!("{icon} "))
     });
+
+    let mut hover = use_state(|| false);
+    let bg = if hover() {
+        lighten(base_bg, 0.12)
+    } else {
+        base_bg
+    };
 
     rect()
         .width(Size::Inner)
@@ -579,10 +604,28 @@ fn chip_widget(src: &SourceRef) -> impl IntoElement {
                 .alignment(BorderAlignment::Inner)
                 .fill(SURFACE_TERTIARY),
         )
+        .cursor(CursorIcon::Pointer)
         .direction(Direction::Horizontal)
         .cross_align(Alignment::center())
+        .on_pointer_enter(move |_| hover.set(true))
+        .on_pointer_leave(move |_| hover.set(false))
+        .on_press(move |e: Event<PressEventData>| {
+            e.stop_propagation();
+            source_ref_nav::navigate(&nav_src);
+        })
         .maybe_child(icon_el)
         .child(label_body)
+}
+
+/// Blend `color` toward white by `t` (0 = original, 1 = white).
+fn lighten(color: Color, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    let mix = |c: u8| -> u8 {
+        let base = f32::from(c);
+        let mixed = base + (255.0 - base) * t;
+        mixed.round().clamp(0.0, 255.0) as u8
+    };
+    Color::from_argb(color.a(), mix(color.r()), mix(color.g()), mix(color.b()))
 }
 
 fn resolve_chip_view(src: &SourceRef) -> ChipView {
@@ -852,12 +895,16 @@ impl Component for CompletionItem {
         let primary = label()
             .font_size(13.5)
             .color(fg)
-            .text(self.completion.label.clone());
+            .max_lines(1)
+            .text(ellipsize(
+                &self.completion.label,
+                COMPLETION_LABEL_MAX_CHARS,
+            ));
         let maybe_subtitle = self.completion.subtitle.clone().map(|s| {
             label()
                 .font_size(11.)
                 .color(sub_fg)
-                .text(s)
+                .text(ellipsize(&s, COMPLETION_SUBTITLE_MAX_CHARS))
                 .max_lines(1)
         });
 
