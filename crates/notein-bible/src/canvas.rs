@@ -18,9 +18,10 @@ use notein_sdk::{
     ItemCreationResult, WorldPoint, build::custom_entry,
 };
 
+use crate::anchor::BibleAnchor;
 use crate::db::Db;
 use crate::plugin_config::{self, SetResult, SharedConfig};
-use crate::state::BibleViewerState;
+use crate::state::{BibleBookmark, BibleViewerState, u32_to_rgba};
 
 /// Canvas kind id used by the shell to route open requests.
 pub const KIND_ID: &str = "io.notein.bible.viewer";
@@ -33,6 +34,11 @@ const CAPABILITIES: &[&str] = &["bookmarks"];
 pub struct BibleCanvas {
     db: Db,
     config: SharedConfig,
+    /// Mirror of the active selection — populated by the UI reader
+    /// when the user begins / extends a verse selection. Shared with
+    /// `BibleSource` so `current_selection` can satisfy anchor
+    /// requests coming from other canvases.
+    selection: crate::source::SharedSelection,
     next_instance: std::sync::atomic::AtomicU64,
     instances: RwLock<HashMap<u64, Arc<RwLock<BibleViewerState>>>>,
 }
@@ -40,12 +46,29 @@ pub struct BibleCanvas {
 impl BibleCanvas {
     #[must_use]
     pub fn new(db: Db, config: SharedConfig) -> Self {
+        Self::with_selection(db, config, crate::source::new_shared_selection())
+    }
+
+    #[must_use]
+    pub fn with_selection(
+        db: Db,
+        config: SharedConfig,
+        selection: crate::source::SharedSelection,
+    ) -> Self {
         Self {
             db,
             config,
+            selection,
             next_instance: std::sync::atomic::AtomicU64::new(1),
             instances: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// Called by the UI when the user updates a selection. Writes
+    /// through to the shared selection slot that `BibleSource` reads.
+    pub fn publish_selection(&self, bible_id: &str, selection: Option<crate::state::VerseSelection>) {
+        let mut guard = self.selection.write().unwrap();
+        *guard = selection.map(|s| (bible_id.to_string(), s));
     }
 
     fn get(&self, instance: u64) -> Option<Arc<RwLock<BibleViewerState>>> {
@@ -160,22 +183,53 @@ impl CanvasKind for BibleCanvas {
     }
 
     fn create_bookmark(&self, instance: u64, _at: WorldPoint) -> Option<BookmarkId> {
-        // Highlights are driven from the UI selection path, not the
-        // shell's generic bookmark-at-point call: WorldPoint is not
-        // meaningful for reflow-able text.
-        let _ = instance;
-        None
+        // The shell may call this on a bookmark-tool click. For Bible,
+        // we promote the current selection — WorldPoint is irrelevant
+        // for reflow text, verse-coord is authoritative.
+        let state = self.get(instance)?;
+        state
+            .write()
+            .unwrap()
+            .commit_selection_as_highlight(None, "")
     }
 
-    fn list_bookmarks(&self, _instance: u64) -> Vec<Bookmark> {
-        Vec::new()
+    fn list_bookmarks(&self, instance: u64) -> Vec<Bookmark> {
+        let Some(state) = self.get(instance) else { return Vec::new() };
+        let st = state.read().unwrap();
+        st.highlights
+            .iter()
+            .map(|h| bible_to_shell(h, &st.bible_id))
+            .collect()
     }
 
-    fn update_bookmark(&self, _instance: u64, _bookmark: Bookmark) {}
+    fn update_bookmark(&self, instance: u64, bookmark: Bookmark) {
+        let Some(state) = self.get(instance) else { return };
+        let mut st = state.write().unwrap();
+        if let Some(existing) = st.highlights.iter_mut().find(|h| h.id == bookmark.id) {
+            existing.color = bookmark.color.map(crate::state::rgba_to_u32);
+            existing.note = bookmark.body;
+        }
+    }
 
-    fn delete_bookmark(&self, _instance: u64, _id: BookmarkId) {}
+    fn delete_bookmark(&self, instance: u64, id: BookmarkId) {
+        let Some(state) = self.get(instance) else { return };
+        state.write().unwrap().remove_highlight(id);
+    }
 
-    fn navigate_to_bookmark(&self, _instance: u64, _id: BookmarkId) {}
+    fn navigate_to_bookmark(&self, instance: u64, id: BookmarkId) {
+        let Some(state) = self.get(instance) else { return };
+        let target = {
+            let st = state.read().unwrap();
+            st.highlights
+                .iter()
+                .find(|h| h.id == id)
+                .map(|h| (h.book_id.clone(), h.chapter))
+        };
+        let Some((book, chap)) = target else { return };
+        if let Err(e) = state.write().unwrap().jump_to(&self.db, &book, chap) {
+            log::warn!("bible: navigate_to_bookmark failed: {e}");
+        }
+    }
 
     fn serialize_snapshot(&self, instance: u64) -> Vec<u8> {
         let _ = instance;
@@ -236,6 +290,42 @@ impl CanvasKind for BibleCanvas {
             suggested_name: "Biblia".into(),
         })
     }
+}
+
+/// Map an internal `BibleBookmark` to the shell's `Bookmark` shape.
+/// `anchor` carries no meaningful pixel coord — set to `(0, 0)` and
+/// kept stable so the shell's generic bookmark panel still has a sort
+/// key. The real anchor lives in the plugin-private highlights list.
+fn bible_to_shell(h: &BibleBookmark, _bible_id: &str) -> Bookmark {
+    Bookmark {
+        id: h.id,
+        anchor: WorldPoint { x: 0.0, y: f32::from(h.chapter) * 1000.0 + f32::from(h.start_verse) },
+        stuck_to: None,
+        body: h.note.clone(),
+        refs: Vec::new(),
+        color: h.color.map(u32_to_rgba),
+        created_at: 0,
+        updated_at: 0,
+        lamport: 0,
+    }
+}
+
+/// Convenience for callers that want the anchor payload for a given
+/// highlight — fed into `SourceRef::Plugin { anchor }` when a user
+/// links from a different canvas to this highlight.
+#[must_use]
+pub fn highlight_anchor(h: &BibleBookmark, bible_id: &str) -> Vec<u8> {
+    BibleAnchor {
+        bible_id: bible_id.into(),
+        book_id: h.book_id.clone(),
+        start_chapter: h.chapter,
+        start_verse: h.start_verse,
+        end_chapter: h.chapter,
+        end_verse: h.end_verse,
+        start_char: None,
+        end_char: None,
+    }
+    .encode()
 }
 
 pub fn encode_open_payload(bible_id: &str, book_id: &str, chapter: u16) -> Vec<u8> {

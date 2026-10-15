@@ -65,10 +65,15 @@ pub fn install_with(
     db: Db,
     config: SharedConfig,
 ) -> Result<(), RegistryError> {
-    let canvas = Arc::new(BibleCanvas::new(db.clone(), config.clone()));
-    let source = Arc::new(BibleSource::new(db, config));
+    let selection = source::new_shared_selection();
+    let canvas = Arc::new(BibleCanvas::with_selection(
+        db.clone(),
+        config.clone(),
+        selection.clone(),
+    ));
+    let source_plugin = Arc::new(BibleSource::with_selection(db, config, selection));
     registry.register_canvas(canvas)?;
-    registry.register_source(source)?;
+    registry.register_source(source_plugin)?;
     Ok(())
 }
 
@@ -91,9 +96,10 @@ impl BibleBundle {
     pub fn new() -> Self {
         let db = Db::in_memory().expect("in-memory sqlite should always open");
         let config = new_shared();
+        let selection = source::new_shared_selection();
         Self {
-            canvas: Arc::new(BibleCanvas::new(db.clone(), config.clone())),
-            source: Arc::new(BibleSource::new(db, config)),
+            canvas: Arc::new(BibleCanvas::with_selection(db.clone(), config.clone(), selection.clone())),
+            source: Arc::new(BibleSource::with_selection(db, config, selection)),
         }
     }
 }

@@ -12,6 +12,8 @@
 
 use std::collections::VecDeque;
 
+use notein_sdk::{BookmarkId, Rgba};
+
 use crate::db::{BookRow, ChapterRow, Db, DbError};
 
 /// Everything a single open Bible tab needs to render + navigate.
@@ -28,6 +30,44 @@ pub struct BibleViewerState {
     pub chapter_cache: VecDeque<ChapterRow>,
     /// Current in-progress or finalised selection, if any.
     pub selection: Option<VerseSelection>,
+    /// User-created verse highlights. Each entry is a tinted range the
+    /// reader renders as a background colour wash on the matching
+    /// paragraph spans.
+    pub highlights: Vec<BibleBookmark>,
+}
+
+/// Internal highlight / bookmark representation. The host's `Bookmark`
+/// model is pixel-coord based; this one is verse-coord based so it
+/// survives chapter reflow + font-size changes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BibleBookmark {
+    pub id: BookmarkId,
+    pub book_id: String,
+    pub chapter: u16,
+    pub start_verse: u16,
+    pub end_verse: u16,
+    /// `0xRRGGBBAA` packed colour. `None` = default yellow wash.
+    pub color: Option<u32>,
+    /// Optional note body. Empty when the highlight is colour-only.
+    pub note: String,
+}
+
+#[must_use]
+pub fn rgba_to_u32(rgba: Rgba) -> u32 {
+    (u32::from(rgba[0]) << 24)
+        | (u32::from(rgba[1]) << 16)
+        | (u32::from(rgba[2]) << 8)
+        | u32::from(rgba[3])
+}
+
+#[must_use]
+pub fn u32_to_rgba(packed: u32) -> Rgba {
+    [
+        ((packed >> 24) & 0xff) as u8,
+        ((packed >> 16) & 0xff) as u8,
+        ((packed >> 8) & 0xff) as u8,
+        (packed & 0xff) as u8,
+    ]
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,6 +94,7 @@ impl BibleViewerState {
             scroll_y: 0.0,
             chapter_cache: VecDeque::with_capacity(Self::CACHE_CAP),
             selection: None,
+            highlights: Vec::new(),
         }
     }
 
@@ -186,6 +227,45 @@ impl BibleViewerState {
     pub fn clear_selection(&mut self) {
         self.selection = None;
     }
+
+    /// Convert the current selection into a persistent highlight.
+    /// Returns the created bookmark id, or `None` when there is no
+    /// selection to promote.
+    pub fn commit_selection_as_highlight(
+        &mut self,
+        color: Option<u32>,
+        note: impl Into<String>,
+    ) -> Option<BookmarkId> {
+        let sel = self.selection.take()?;
+        let id = BookmarkId::new_v4();
+        self.highlights.push(BibleBookmark {
+            id,
+            book_id: sel.book_id,
+            chapter: sel.chapter,
+            start_verse: sel.start_verse,
+            end_verse: sel.end_verse,
+            color,
+            note: note.into(),
+        });
+        Some(id)
+    }
+
+    pub fn remove_highlight(&mut self, id: BookmarkId) -> bool {
+        let before = self.highlights.len();
+        self.highlights.retain(|h| h.id != id);
+        before != self.highlights.len()
+    }
+
+    /// Highlights visible on `(book, chapter)` — the UI consults this
+    /// per chapter render to decide which verses need a background
+    /// wash + gutter note icon.
+    #[must_use]
+    pub fn highlights_on(&self, book_id: &str, chapter: u16) -> Vec<&BibleBookmark> {
+        self.highlights
+            .iter()
+            .filter(|h| h.book_id == book_id && h.chapter == chapter)
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -274,6 +354,22 @@ mod tests {
         assert!(!st.go_prev_chapter(&db, &books).unwrap());
         assert_eq!(st.current_book, "GEN");
         assert_eq!(st.current_chapter, 1);
+    }
+
+    #[test]
+    fn commit_selection_as_highlight_round_trip() {
+        let mut st = BibleViewerState::new("spa_rv1960", "EPH", 6);
+        st.begin_selection("EPH", 6, 3);
+        st.extend_selection(5);
+        let id = st
+            .commit_selection_as_highlight(Some(0xffcc3399), "mi nota")
+            .unwrap();
+        assert!(st.selection.is_none());
+        assert_eq!(st.highlights.len(), 1);
+        assert_eq!(st.highlights_on("EPH", 6).len(), 1);
+        assert_eq!(st.highlights_on("GEN", 1).len(), 0);
+        assert!(st.remove_highlight(id));
+        assert!(st.highlights.is_empty());
     }
 
     #[test]

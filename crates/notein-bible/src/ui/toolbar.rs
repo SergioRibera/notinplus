@@ -1,7 +1,7 @@
-//! Top toolbar — audio / search / more / translation chip.
+//! Top toolbar — search / more / translation chip.
 //!
 //! Mirrors the right-aligned stack seen in common Bible-reading apps:
-//! three square icon buttons on the left and a pill-shaped translation
+//! two square icon buttons on the left and a pill-shaped translation
 //! picker on the right. Callbacks are supplied by the host so the
 //! actual behaviour (opening search sheet, popping the translation
 //! menu, etc.) stays outside this crate.
@@ -13,33 +13,29 @@ use super::theme;
 const ICON_SIZE: f32 = 20.0;
 const BUTTON_SIZE: f32 = 36.0;
 
-/// `(audio, search, more, translation)` click handlers.
+/// `(search, more, translation)` click handlers.
 #[allow(missing_debug_implementations)]
-pub struct ToolbarCallbacks<FA, FS, FM, FT>
+pub struct ToolbarCallbacks<FS, FM, FT>
 where
-    FA: FnMut() + 'static,
     FS: FnMut() + 'static,
     FM: FnMut() + 'static,
     FT: FnMut() + 'static,
 {
-    pub on_audio: FA,
     pub on_search: FS,
     pub on_more: FM,
     pub on_translation: FT,
 }
 
-pub fn top_toolbar<FA, FS, FM, FT>(
+pub fn top_toolbar<FS, FM, FT>(
     translation_abbrev: &str,
-    callbacks: ToolbarCallbacks<FA, FS, FM, FT>,
+    callbacks: ToolbarCallbacks<FS, FM, FT>,
 ) -> impl IntoElement
 where
-    FA: FnMut() + 'static,
     FS: FnMut() + 'static,
     FM: FnMut() + 'static,
     FT: FnMut() + 'static,
 {
     let ToolbarCallbacks {
-        on_audio,
         on_search,
         on_more,
         on_translation,
@@ -54,12 +50,8 @@ where
         .cross_align(Alignment::Center)
         .main_align(Alignment::End)
         .spacing(4.0)
-        .child(icon_button(freya::icons::lucide::volume_2(), on_audio))
         .child(icon_button(freya::icons::lucide::search(), on_search))
-        .child(icon_button(
-            freya::icons::lucide::ellipsis(),
-            on_more,
-        ))
+        .child(icon_button(freya::icons::lucide::ellipsis(), on_more))
         .child(translation_chip(translation_abbrev, on_translation))
 }
 

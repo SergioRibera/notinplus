@@ -1,9 +1,7 @@
-//! Bottom chapter nav — pill with `<` + `BOOK N` + `>` + a floating
-//! play circle to its left.
+//! Bottom chapter nav — a pill with `<` + `BOOK N` + `>`.
 //!
-//! The host passes current book name + chapter + three callbacks. All
-//! state (which book, which chapter, whether audio is playing) lives
-//! on the viewer state, not here.
+//! The host passes current book name + chapter + two callbacks. All
+//! state (which book, which chapter) lives on the viewer state.
 
 use freya::prelude::*;
 
@@ -11,31 +9,27 @@ use super::theme;
 
 const BAR_HEIGHT: f32 = 72.0;
 const PILL_HEIGHT: f32 = 48.0;
-const PLAY_SIZE: f32 = 52.0;
 
 #[allow(missing_debug_implementations)]
-pub struct BottomNavCallbacks<FP, FN, FA>
+pub struct BottomNavCallbacks<FP, FN>
 where
     FP: FnMut() + 'static,
     FN: FnMut() + 'static,
-    FA: FnMut() + 'static,
 {
     pub on_prev: FP,
     pub on_next: FN,
-    pub on_play: FA,
 }
 
-pub fn bottom_nav<FP, FN, FA>(
+pub fn bottom_nav<FP, FN>(
     book_name: &str,
     chapter: u16,
-    callbacks: BottomNavCallbacks<FP, FN, FA>,
+    callbacks: BottomNavCallbacks<FP, FN>,
 ) -> impl IntoElement
 where
     FP: FnMut() + 'static,
     FN: FnMut() + 'static,
-    FA: FnMut() + 'static,
 {
-    let BottomNavCallbacks { on_prev, on_next, on_play } = callbacks;
+    let BottomNavCallbacks { on_prev, on_next } = callbacks;
     let caption = format!("{} {}", book_name.to_uppercase(), chapter);
 
     rect()
@@ -46,28 +40,7 @@ where
         .direction(Direction::Horizontal)
         .cross_align(Alignment::Center)
         .main_align(Alignment::Center)
-        .spacing(12.0)
-        .child(play_button(on_play))
         .child(chapter_pill(caption, on_prev, on_next))
-}
-
-fn play_button<F>(mut on_press: F) -> impl IntoElement
-where
-    F: FnMut() + 'static,
-{
-    rect()
-        .width(Size::px(PLAY_SIZE))
-        .height(Size::px(PLAY_SIZE))
-        .center()
-        .with_corner_radius(PLAY_SIZE / 2.0)
-        .background(parse_rgb(theme::CHIP_BG))
-        .on_press(move |_: Event<PressEventData>| on_press())
-        .child(
-            SvgViewer::new(freya::icons::lucide::play())
-                .color(parse_rgb(theme::TEXT_PRIMARY))
-                .width(Size::px(20.0))
-                .height(Size::px(20.0)),
-        )
 }
 
 fn chapter_pill<FP, FN>(

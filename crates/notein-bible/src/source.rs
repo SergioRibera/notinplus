@@ -18,13 +18,25 @@ use notein_sdk::{
 use crate::anchor::BibleAnchor;
 use crate::db::Db;
 use crate::plugin_config::{self, SetResult, SharedConfig};
+use crate::state::VerseSelection;
 
 pub const KIND_ID: &str = "io.notein.bible";
+
+/// Per-bible shared selection. The canvas writes its current verse
+/// selection here as the user drags; the source reads it when the host
+/// asks `current_selection(instance)` to seed a chip in another canvas.
+pub type SharedSelection = Arc<RwLock<Option<(String, VerseSelection)>>>;
+
+#[must_use]
+pub fn new_shared_selection() -> SharedSelection {
+    Arc::new(RwLock::new(None))
+}
 
 #[derive(Debug)]
 pub struct BibleSource {
     db: Db,
     config: SharedConfig,
+    selection: SharedSelection,
     /// Active search streams. Keyed by stream id; drained by poll +
     /// cleared on end. Streams are eager (we run the FTS5 query in
     /// `search_begin` and buffer the results) because the query cost is
@@ -40,14 +52,28 @@ pub struct BibleSource {
 impl BibleSource {
     #[must_use]
     pub fn new(db: Db, config: SharedConfig) -> Self {
+        Self::with_selection(db, config, new_shared_selection())
+    }
+
+    #[must_use]
+    pub fn with_selection(db: Db, config: SharedConfig, selection: SharedSelection) -> Self {
         Self {
             db,
             config,
+            selection,
             streams: RwLock::new(HashMap::new()),
             next_stream: std::sync::atomic::AtomicU64::new(1),
             instances: RwLock::new(HashMap::new()),
             next_instance: std::sync::atomic::AtomicU64::new(1),
         }
+    }
+
+    /// Shared selection handle — the canvas side writes here when the
+    /// user long-presses a verse; the source reads here on
+    /// `current_selection`.
+    #[must_use]
+    pub fn selection(&self) -> &SharedSelection {
+        &self.selection
     }
 }
 
@@ -155,11 +181,24 @@ impl Source for BibleSource {
     }
 
     fn current_selection(&self, _instance: u64) -> Option<Selection> {
-        // Selection emission lives on the canvas side; when the host
-        // asks the Source for a selection to seed a chip, the UI
-        // mirrors its current verse selection into this spot via a
-        // shared selection registry.
-        None
+        let guard = self.selection.read().unwrap();
+        let (bible_id, sel) = guard.clone()?;
+        let anchor = BibleAnchor {
+            bible_id,
+            book_id: sel.book_id.clone(),
+            start_chapter: sel.chapter,
+            start_verse: sel.start_verse,
+            end_chapter: sel.chapter,
+            end_verse: sel.end_verse,
+            start_char: sel.start_char,
+            end_char: sel.end_char,
+        }
+        .encode();
+        let snippet = format!(
+            "{} {}:{}-{}",
+            sel.book_id, sel.chapter, sel.start_verse, sel.end_verse
+        );
+        Some(Selection { anchor, snippet })
     }
 
     fn search_begin(&self, instance: u64, query: &str) -> u64 {
