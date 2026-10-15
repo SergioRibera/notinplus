@@ -1597,6 +1597,18 @@ fn trigger_entry(entry: &crate::plugins::AvailableEntry, ctx: &FabCtx) {
                 other => log::warn!("unknown pdf source entry: {other}"),
             }
         }
+        EntrySource::Plugin(_) if entry.plugin_id == "io.notein.bible.viewer" => {
+            match entry.entry.id.as_str() {
+                "new-bible-viewer" => flow_open_bible(ctx.clone()),
+                other => log::warn!("unknown bible viewer entry: {other}"),
+            }
+        }
+        EntrySource::Plugin(_) if entry.plugin_id == "io.notein.bible" => {
+            match entry.entry.id.as_str() {
+                "install-bible" => flow_install_bible(),
+                other => log::warn!("unknown bible source entry: {other}"),
+            }
+        }
         EntrySource::Plugin(_) => {
             log::info!(
                 "plugin creation entry {}/{} — execute_creation wiring lands with Phase 2.6+",
@@ -1604,6 +1616,39 @@ fn trigger_entry(entry: &crate::plugins::AvailableEntry, ctx: &FabCtx) {
                 entry.entry.id
             );
         }
+    }
+}
+
+fn flow_open_bible(ctx: FabCtx) {
+    let _ = ctx.router.push(Route::BibleStandalone);
+}
+
+/// Trigger the Bible plugin's background install flow via its registered
+/// trait object. For now installs a hardcoded Spanish translation; a
+/// real picker UI lives in a follow-up.
+fn flow_install_bible() {
+    use notein_plugin::ConfigValue;
+
+    let registry = crate::plugins::registry();
+    let guard = match registry.lock() {
+        Ok(g) => g,
+        Err(e) => {
+            log::warn!("bible install: registry poisoned: {e}");
+            return;
+        }
+    };
+    let Some(source) = guard.get_source("io.notein.bible") else {
+        log::warn!("bible install: source plugin not registered");
+        return;
+    };
+    let bible_id = "spa_rv1960".to_string();
+    if let Err(e) = source.set_config(
+        notein_bible::plugin_config::KEY_INSTALL_BIBLE,
+        ConfigValue::String(bible_id.clone()),
+    ) {
+        log::warn!("bible install: set_config failed: {e}");
+    } else {
+        log::info!("bible install: requested {bible_id} in background");
     }
 }
 

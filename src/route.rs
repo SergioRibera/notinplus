@@ -64,6 +64,8 @@ pub enum Route {
     DocLinkedView { id: ItemId },
     #[route("/workspace/:id")]
     WorkspaceView { id: crate::library::WorkspaceId },
+    #[route("/bible")]
+    BibleStandalone,
 }
 
 impl Route {
@@ -78,7 +80,8 @@ impl Route {
             Route::Home
             | Route::CanvasEphemeral
             | Route::SourcePdfView { .. }
-            | Route::WorkspaceView { .. } => None,
+            | Route::WorkspaceView { .. }
+            | Route::BibleStandalone => None,
         }
     }
 }
@@ -106,6 +109,19 @@ pub struct CanvasEphemeral;
 impl Component for CanvasEphemeral {
     fn render(&self) -> impl IntoElement {
         canvas_root(CanvasMount::Ephemeral)
+    }
+}
+
+/// Standalone Bible reader. No library item backing — the Bible plugin
+/// owns its own storage (highlights, downloaded translations) via its
+/// SQLite DB. The reader is a system-wide tab, not a user-authored
+/// document.
+#[derive(Debug, PartialEq)]
+pub struct BibleStandalone;
+
+impl Component for BibleStandalone {
+    fn render(&self) -> impl IntoElement {
+        crate::bible_face::BibleFace {}
     }
 }
 

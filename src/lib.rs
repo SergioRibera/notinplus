@@ -12,6 +12,7 @@
 pub mod active_boards;
 pub mod active_pdf_sources;
 pub mod app;
+pub mod bible_face;
 pub mod bookmark;
 pub mod bookmark_body;
 pub mod bookmark_ui;

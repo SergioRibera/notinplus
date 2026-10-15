@@ -32,4 +32,12 @@ pub fn register_all(reg: &mut PluginRegistry) {
     if let Err(err) = reg.register_source(Arc::new(PdfSourcePlugin::default())) {
         log::warn!("register PdfSourcePlugin: {err}");
     }
+    // Bible plugin: hard-linked for the custom UI render path (the
+    // generic `CanvasKind::render(FrameCtxHandle)` trait method cannot
+    // return Freya rsx). Register ahead of the dynamic scan so if the
+    // user also dropped the shared library in the plugins dir the
+    // duplicate id lands as a warning (not a crash).
+    if let Err(err) = notein_bible::install_default(reg) {
+        log::warn!("register notein-bible: {err}");
+    }
 }

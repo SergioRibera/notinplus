@@ -55,6 +55,7 @@ uuid = { version = "1", features = ["v4"] }
 tar = { version = "0.4", default-features = false }
 zstd = "0.13"
 notein-plugin = { version = "0.1.0", path = "crates/notein-plugin" }
+notein-bible = { path = "crates/notein-bible", features = ["ui", "importer"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.14"

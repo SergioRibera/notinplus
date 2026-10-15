@@ -73,8 +73,39 @@ pub fn install(registry: &mut PluginRegistry, db: Db) -> Result<(), RegistryErro
 /// location ([`Db::default_path`]) and calls [`install`]. Hosts that
 /// want to control the DB path should call [`install`] directly.
 pub fn install_default(registry: &mut PluginRegistry) -> Result<(), InstallError> {
+    install_default_with_handle(registry).map(|_| ())
+}
+
+/// Same as [`install_default`] but returns the concrete [`BibleCanvas`]
+/// handle so the host can call plugin-specific methods (fetching the DB
+/// for a custom UI render path, polling install progress, etc.) that
+/// the generic `CanvasKind` trait object does not expose.
+pub fn install_default_with_handle(
+    registry: &mut PluginRegistry,
+) -> Result<Arc<BibleCanvas>, InstallError> {
     let db = Db::open_default().map_err(InstallError::Db)?;
-    install(registry, db).map_err(InstallError::Registry)
+    let config = new_shared();
+    let selection = source::new_shared_selection();
+    #[cfg(feature = "importer")]
+    let progress = install_background::new_shared_progress();
+
+    let canvas = BibleCanvas::with_selection(db.clone(), config.clone(), selection.clone());
+    #[cfg(feature = "importer")]
+    let canvas = canvas.with_install_progress(progress.clone());
+    let canvas = Arc::new(canvas);
+
+    let source_plugin = BibleSource::with_selection(db, config, selection);
+    #[cfg(feature = "importer")]
+    let source_plugin = source_plugin.with_install_progress(progress);
+    let source_plugin = Arc::new(source_plugin);
+
+    registry
+        .register_canvas(canvas.clone())
+        .map_err(InstallError::Registry)?;
+    registry
+        .register_source(source_plugin)
+        .map_err(InstallError::Registry)?;
+    Ok(canvas)
 }
 
 #[derive(Debug)]
