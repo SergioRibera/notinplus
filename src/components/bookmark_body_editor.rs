@@ -33,7 +33,7 @@ use freya_edit::{EditableConfig, EditableEvent, EditorLine, TextEditor, use_edit
 use notein_plugin::{ChipView, SourceRef};
 
 use crate::bookmark_body::{
-    CHIP_SENTINEL, Completion, ellipsize, from_rope_with_chips, parse, rebase_chips, serialize,
+    CHIP_SENTINEL, Completion, from_rope_with_chips, parse, rebase_chips, serialize,
     to_rope_with_chips,
 };
 use crate::components::theme::{
@@ -51,13 +51,6 @@ const DEFAULT_MIN_HEIGHT: f32 = 72.0;
 /// buttons.
 const CHIP_BG: Color = Color::from_rgb(44, 52, 70);
 const CHIP_FG: Color = Color::from_rgb(200, 215, 240);
-/// Max visible chars for an inline chip label — longer source names
-/// collapse to `prefix…`. Keeps chips readable inside wrapped
-/// bookmark bodies without eating the line.
-const CHIP_LABEL_MAX_CHARS: usize = 24;
-/// Max visible chars for autocomplete popup entry label / subtitle.
-const COMPLETION_LABEL_MAX_CHARS: usize = 60;
-const COMPLETION_SUBTITLE_MAX_CHARS: usize = 60;
 
 /// Cap how many autocomplete entries the popup lists at once so the
 /// scroll view stays snappy on long libraries.
@@ -566,7 +559,6 @@ fn build_interleaved(mut p: Paragraph, rope: &str, chips: &[(usize, SourceRef)])
 fn chip_widget(src: SourceRef) -> impl IntoElement {
     let view = resolve_chip_view(&src);
     let base_bg = view.tint.map(rgba_to_color).unwrap_or(CHIP_BG);
-    let display_label = ellipsize(&view.label, CHIP_LABEL_MAX_CHARS);
     let tooltip_text = view.tooltip.clone();
     let _ = tooltip_text; // tooltip hook — reserved for a future hover popover.
 
@@ -575,8 +567,7 @@ fn chip_widget(src: SourceRef) -> impl IntoElement {
     let label_body = label()
         .font_size(11.5)
         .color(CHIP_FG)
-        .max_lines(1)
-        .text(display_label);
+        .text(view.label.clone());
 
     let icon_el = view.icon.clone().map(|icon| {
         label()
@@ -896,16 +887,15 @@ impl Component for CompletionItem {
             .font_size(13.5)
             .color(fg)
             .max_lines(1)
-            .text(ellipsize(
-                &self.completion.label,
-                COMPLETION_LABEL_MAX_CHARS,
-            ));
+            .text_overflow(TextOverflow::Ellipsis)
+            .text(self.completion.label.clone());
         let maybe_subtitle = self.completion.subtitle.clone().map(|s| {
             label()
                 .font_size(11.)
                 .color(sub_fg)
-                .text(ellipsize(&s, COMPLETION_SUBTITLE_MAX_CHARS))
                 .max_lines(1)
+                .text_overflow(TextOverflow::Ellipsis)
+                .text(s)
         });
 
         rect()
