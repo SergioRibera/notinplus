@@ -16,8 +16,8 @@ use std::path::PathBuf;
 
 use bincode::config::{self, Configuration};
 
-use crate::library::{ItemId, PaneLayout};
 use crate::library::bodies;
+use crate::library::{ItemId, PaneLayout};
 
 const CODEC: Configuration = config::standard();
 const SUBDIR: &str = "pane_layouts";
@@ -25,9 +25,7 @@ const EXT: &str = "bin";
 
 #[must_use]
 fn path(id: ItemId) -> PathBuf {
-    bodies::root_dir()
-        .join(SUBDIR)
-        .join(format!("{id}.{EXT}"))
+    bodies::root_dir().join(SUBDIR).join(format!("{id}.{EXT}"))
 }
 
 /// Read the layout sidecar for `id`. `None` when missing / corrupt —

@@ -27,8 +27,8 @@ use crate::components::form_input::FormInput;
 use crate::components::modal::{Modal, ModalController};
 use freya::icons::lucide as icons;
 
-use crate::plugins;
 use crate::components::theme::*;
+use crate::plugins;
 
 const MODAL_WIDTH: f32 = 820.0;
 const MODAL_HEIGHT: f32 = 580.0;
@@ -477,10 +477,7 @@ fn option_row(
 /// Fixed-size icon slot: renders the SVG when present, otherwise a
 /// small centered dot so rows stay aligned.
 fn icon_slot(icon: Option<Bytes>, color: Color) -> Rect {
-    let mut slot = rect()
-        .width(Size::px(18.0))
-        .height(Size::px(18.0))
-        .center();
+    let mut slot = rect().width(Size::px(18.0)).height(Size::px(18.0)).center();
     slot = match icon {
         Some(bytes) => slot.child(
             SvgViewer::new(bytes)

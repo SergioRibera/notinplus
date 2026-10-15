@@ -122,10 +122,12 @@ fn centered_text(text: &str) -> Rect {
 /// bottom/left` only shift the origin, so combining them with
 /// `.expanded()` would push the right/bottom edges past the window.
 fn padded_safe_area(edge: EdgeInsets) -> Rect {
-    rect()
-        .width(Size::fill())
-        .height(Size::fill())
-        .padding((edge.top, edge.right, edge.bottom, edge.left))
+    rect().width(Size::fill()).height(Size::fill()).padding((
+        edge.top,
+        edge.right,
+        edge.bottom,
+        edge.left,
+    ))
 }
 
 fn snapshot_workspace(lib: &Library, id: WorkspaceId) -> Option<WorkspaceSnapshot> {
@@ -140,7 +142,7 @@ fn snapshot_workspace(lib: &Library, id: WorkspaceId) -> Option<WorkspaceSnapsho
             match lib.index().item(tab.item) {
                 Some(item) => {
                     titles.insert(tab.item, item.name.clone());
-                    kinds.insert(tab.item, item.kind);
+                    kinds.insert(tab.item, item.kind.clone());
                 }
                 None => {
                     titles.insert(tab.item, MISSING_TITLE.to_owned());
@@ -461,7 +463,7 @@ fn pane_tree(
     let body_kinds = kinds;
     let body_cb =
         Callback::<(PaneId, PaneTab), Element>::new(move |(_, tab): (PaneId, PaneTab)| {
-            tab_body_element(tab.item, body_kinds.get(&tab.item).copied())
+            tab_body_element(tab.item, body_kinds.get(&tab.item).cloned())
         });
     rect()
         .width(Size::fill())
@@ -483,14 +485,12 @@ fn pane_tree(
 /// shells with the same per-pane scope.
 fn tab_body_element(id: ItemId, kind: Option<ItemKind>) -> Element {
     use crate::app::{CanvasMount, CanvasPane};
+    use crate::builtin::pdf_linked::PdfFace;
     use crate::doc_linked::{DocLinkedView, SourcePdfView};
     match kind {
-        Some(ItemKind::PdfCanvas) => CanvasPane {
-            mount: CanvasMount::PdfBacked(id),
-        }
-        .into_element(),
+        Some(ItemKind::PdfCanvas) => PdfFace { item: id }.into_element(),
         Some(ItemKind::SourcePdf) => SourcePdfView { id }.into_element(),
-        Some(ItemKind::DocLinked) => DocLinkedView { id }.into_element(),
+        Some(ItemKind::DocLinked { .. }) => DocLinkedView { id }.into_element(),
         Some(ItemKind::Canvas) | None => CanvasPane {
             mount: CanvasMount::Item(id),
         }

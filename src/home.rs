@@ -575,11 +575,11 @@ fn grid(
     }
 
     for item in items {
-        let kind_label = match item.kind {
+        let kind_label = match &item.kind {
             ItemKind::Canvas => "Lienzo",
             ItemKind::PdfCanvas => "PDF",
             ItemKind::SourcePdf => "Fuente PDF",
-            ItemKind::DocLinked => "Documento ligado",
+            ItemKind::DocLinked { .. } => "Documento ligado",
         };
         let subtitle = format!("{} · {}", kind_label, format_date(item.updated_at));
         let tint = item
@@ -587,7 +587,7 @@ fn grid(
             .unwrap_or_else(|| color_to_rgba(auto_color(&item.name)));
         wrap = wrap.child(ItemCard {
             id: item.id,
-            kind: item.kind,
+            kind: item.kind.clone(),
             title: item.name.clone(),
             subtitle,
             tint,
@@ -650,7 +650,7 @@ impl Component for ItemCard {
         let press_start = use_state(|| Option::<CursorPoint>::None);
 
         let id = self.id;
-        let kind = self.kind;
+        let kind = self.kind.clone();
         let bg_style = self.bg_style;
         let tint = self.tint;
         let title = self.title.clone();
@@ -680,11 +680,11 @@ impl Component for ItemCard {
 
         let open = move || {
             crate::route::queue_canvas_background(bg_style, rgba_to_color(tint).into());
-            let route = match kind {
+            let route = match &kind {
                 ItemKind::Canvas => Route::CanvasView { id },
                 ItemKind::PdfCanvas => Route::CanvasPdfView { id },
                 ItemKind::SourcePdf => Route::SourcePdfView { id },
-                ItemKind::DocLinked => Route::DocLinkedView { id },
+                ItemKind::DocLinked { .. } => Route::DocLinkedView { id },
             };
             let _ = router.push(route);
         };
@@ -2000,11 +2000,15 @@ pub(crate) fn open_canvas_edit_sheet(item_id: ItemId) {
                 .iter()
                 .filter_map(|tid| lib.index().tag(*tid).map(|t| t.name.clone()))
                 .collect::<Vec<_>>();
-            let available = lib.tags().iter().map(|t| t.name.clone()).collect::<Vec<_>>();
+            let available = lib
+                .tags()
+                .iter()
+                .map(|t| t.name.clone())
+                .collect::<Vec<_>>();
             (item, current, available)
         };
         let default_color = item.color.map(rgba_to_color);
-        let kind = item.kind;
+        let kind = item.kind.clone();
         let apply_handle = handle.clone();
         CanvasCreateSheet::new(move |req: CreateCanvasRequest| {
             let handle = apply_handle.clone();

@@ -11,10 +11,12 @@ use std::sync::Arc;
 use notein_plugin::PluginRegistry;
 
 pub mod pdf_canvas;
+pub mod pdf_linked;
 pub mod pdf_source;
 pub mod stroke_canvas;
 
 pub use pdf_canvas::PdfCanvasPlugin;
+pub use pdf_linked::PdfLinkedSource;
 pub use pdf_source::PdfSourcePlugin;
 pub use stroke_canvas::StrokeCanvasPlugin;
 

@@ -1,38 +1,58 @@
 //! Shell for a [`crate::library::ItemKind::DocLinked`] bundle.
 //!
-//! A DocLinked item owns a PDF attachment and the canvas doc that
-//! annotates it under the same [`ItemId`]. [`DocLinkedView`] mounts
-//! the PDF as the stroke canvas background so strokes, highlights and
-//! long-press pins land directly over the pages.
+//! A DocLinked item owns two independent docs: a "source" face
+//! rendered by an arbitrary plugin (named by the item's
+//! `source_plugin` field) and a free-form "infinite canvas" face
+//! whose strokes land at
+//! [`crate::library::bodies::canvas_doc_path`]. [`DocLinkedView`]
+//! exposes both: overlay mode renders the source face full-screen,
+//! split mode lays the source face next to the canvas face with a
+//! draggable divider.
 //!
-//! A persisted per-item preference (see [`crate::doc_linked_prefs`])
-//! lets the user split the shell into two side-by-side panes — PDF on
-//! one side, canvas on the other — or keep them overlaid in a single
-//! surface. Overlay mode is the default; the split-view chrome buttons
-//! live in the top-right stack (see [`DocLinkedChromeExt`]).
+//! Source rendering is deferred to the plugin via the
+//! [`crate::linked_source`] registry. The shell knows nothing about
+//! how PDF (or any future source like Bible, EPUB, …) composes its
+//! face — it just passes the item id and renders whatever element
+//! [`crate::linked_source::LinkedDocSource::render_face`] returns.
 //!
-//! Board hoisting (V2): [`DocLinkedView`] creates the mount's `Board`
-//! at its own scope via [`crate::app::mount_board`] and installs the
-//! `Arc<Mutex<Board>>` as a Freya context value. Both halves of a
-//! split layout reuse this single board — their `canvas_body` calls
-//! pick it up via `try_consume_context`, so strokes drawn on one side
-//! appear on the other and only one autosave worker owns the on-disk
-//! doc. Collapsing the split (`×` button) leaves the board intact and
-//! the next render reattaches the overlay to it.
+//! Split layout is served by the shared
+//! [`crate::components::pane_tree_view::PaneTreeView`] with
+//! [`crate::components::pane_tree_view::PaneTreeView::show_tabs`] off
+//! — DocLinked has no tabs, just two fixed faces. The divider commits
+//! its final ratio to the per-item sidecar (see
+//! [`crate::doc_linked_prefs`]) on release.
+//!
+//! Each face owns its own backing resources: the source plugin
+//! manages its own storage; the canvas face autosaves to
+//! `canvas_doc_path(id)` through
+//! [`crate::app::CanvasMount::DocLinkedCanvas`].
 //!
 //! [`SourcePdfView`] stays available for standalone
 //! [`crate::library::ItemKind::SourcePdf`] items (future flows).
 
-use std::sync::Arc;
-
 use freya::prelude::*;
 use istmo::plugins::EdgeInsets;
 
-use crate::app::{CanvasMount, ChromeState, PopupCoords, canvas_body, mount_board};
-use crate::canvas::lock;
+use crate::app::{CanvasMount, CanvasPane};
+use crate::components::pane_tree_view::{PaneTreeCallbacks, PaneTreeView, SplitEdge};
 use crate::doc_linked_prefs::{self, DocLinkedSplit};
 use crate::hooks::provide_safe_area_override;
-use crate::library::{ItemId, SplitOrientation};
+use crate::library::{
+    ItemId, ItemKind, Pane, PaneId, PaneLayout, PaneTab, SplitOrientation, SplitSide,
+};
+use crate::linked_source;
+
+/// Deterministic pane ids for the DocLinked split faces. They never
+/// hit disk — DocLinked's split layout is not a persisted workspace,
+/// so the `PaneTreeView`'s pane-id-keyed hashing only needs them to be
+/// distinct within a single render tree.
+const PANE_ID_SOURCE: PaneId = PaneId::from_bytes([1; 16]);
+const PANE_ID_CANVAS: PaneId = PaneId::from_bytes([2; 16]);
+
+/// `PaneTab::plugin_id` sentinel assigned to the canvas face so the
+/// body dispatch can tell the two leaves apart without peeking at
+/// pane ids.
+const CANVAS_FACE_PLUGIN: &str = "io.notein.doc-linked.canvas";
 
 /// Context value a `DocLinked` shell installs so the chrome's
 /// top-right stack can render the split-mode buttons without the chrome
@@ -47,12 +67,13 @@ pub struct DocLinkedChromeExt {
     /// visibility: split buttons when `false`, the close `×` when
     /// `true`.
     pub is_split: bool,
-    /// Trigger a horizontal split — PDF left, canvas right.
+    /// Trigger a horizontal split — source left, canvas right.
     pub on_split_horizontal: NoArgCallback<()>,
-    /// Trigger a vertical split — PDF top, canvas bottom.
+    /// Trigger a vertical split — source top, canvas bottom.
     pub on_split_vertical: NoArgCallback<()>,
-    /// Collapse the split back to overlay mode. Only wired on the
-    /// canvas side of a split; the PDF side renders no chrome.
+    /// Collapse the split back to overlay mode. Rendered on every
+    /// visible chrome instance in split mode so either face can
+    /// dismiss the split.
     pub on_close: NoArgCallback<()>,
 }
 
@@ -64,8 +85,8 @@ impl std::fmt::Debug for DocLinkedChromeExt {
     }
 }
 
-/// Canvas + PDF bundle route backed by a
-/// [`crate::library::ItemKind::DocLinked`] item.
+/// Linked-doc bundle route. The source face plugin is resolved from
+/// the item's [`ItemKind::DocLinked`] payload at mount time.
 #[derive(Debug, PartialEq)]
 pub struct DocLinkedView {
     pub id: ItemId,
@@ -80,49 +101,42 @@ impl Component for DocLinkedView {
         // modals) sees zero so it does not re-apply the same inset.
         provide_safe_area_override(EdgeInsets::default());
 
-        // Chrome state + popup coords live at the shell level so a
-        // split-toggle (unmounting the inner overlay / split subtree)
-        // does not reset the toolbar's reactive state. Workers spawned
-        // by `mount_board` capture these signals, so the canvas-side
-        // chrome keeps syncing zoom / undo / redo across remounts.
-        let state = crate::app::use_chrome_state();
-        let coords = crate::app::use_chrome_coords();
-
-        // Single board instance for the whole shell. `mount_board`
-        // publishes it as a Freya context value, so every inner
-        // `canvas_body` call reuses the same `Arc<Mutex<Board>>`
-        // instead of standing up a sibling with its own autosave
-        // worker (would race-write the same on-disk doc).
-        let board = use_hook(move || mount_board(CanvasMount::PdfBacked(bundle), state));
-        // Owning-side cleanup: cancels any in-flight stroke and
-        // clears the item ↔ board slot. Inner `canvas_body`s are
-        // reuse-path mounts and skip this teardown.
-        use_drop({
-            let board = Arc::clone(&board);
-            let mut active_setter = state.active_board;
-            let mut active_item_setter = state.active_item;
+        // Async-resolve the item's source plugin on first mount.
+        // Until it lands we render a blank slate (background color
+        // only) so the shell never flashes a wrong plugin's face.
+        let source_plugin = use_state(|| Option::<String>::None);
+        use_hook({
+            let mut setter = source_plugin;
             move || {
-                crate::active_boards::clear_if(bundle, &board);
-                lock(&board).cancel();
-                let same = active_setter
-                    .peek()
-                    .as_ref()
-                    .map_or(false, |cur| Arc::ptr_eq(cur, &board));
-                if same {
-                    active_setter.set(None);
-                    if *active_item_setter.peek() == Some(bundle) {
-                        active_item_setter.set(None);
+                spawn(async move {
+                    match crate::home::open_library().await {
+                        Ok(handle) => {
+                            let lib = handle.lock().await;
+                            if let Some(item) = lib.item(bundle) {
+                                if let ItemKind::DocLinked { source_plugin } = &item.kind {
+                                    setter.set(Some(source_plugin.clone()));
+                                } else {
+                                    log::error!(
+                                        "DocLinkedView mounted on non-DocLinked item {bundle:?}",
+                                    );
+                                }
+                            } else {
+                                log::error!("DocLinkedView item {bundle:?} not found");
+                            }
+                        }
+                        Err(err) => log::error!("open library on DocLinkedView mount: {err}"),
                     }
-                }
+                });
             }
         });
+
         let split_state = use_state(move || doc_linked_prefs::load(bundle));
         let split = *split_state.read();
 
-        // Writes the new split preference, kicks off a best-effort
-        // disk save in the background. Save failures log and are
-        // ignored — the next successful save supersedes the old
-        // on-disk state, and the UI already reflects the intent.
+        // Persist the new split preference in the background. Save
+        // failures log and are ignored — the next successful save
+        // supersedes the on-disk state, and the UI already reflects
+        // the intent.
         let apply = move |mut setter: State<DocLinkedSplit>, next: DocLinkedSplit| {
             setter.set(next);
             spawn(async move {
@@ -160,33 +174,34 @@ impl Component for DocLinkedView {
             );
         });
 
+        let body = source_plugin.read().clone().map_or_else(
+            || loading_placeholder().into_element(),
+            |plugin_id| {
+                doc_linked_body(
+                    bundle,
+                    plugin_id,
+                    split,
+                    on_split_horizontal.clone(),
+                    on_split_vertical.clone(),
+                    on_close.clone(),
+                )
+            },
+        );
+
         safe_area_shell(pad)
             .background(Color::from_rgb(15, 15, 18))
             .vertical()
             .content(Content::Flex)
-            .child(doc_linked_body(
-                bundle,
-                split,
-                state,
-                coords,
-                on_split_horizontal,
-                on_split_vertical,
-                on_close,
-            ))
+            .child(body)
     }
 }
 
-/// Body renderer. Overlay mode mounts a single canvas with the
-/// standard chrome; split mode mounts two canvases (PDF-only, canvas)
-/// laid out along the chosen axis. Both the overlay and the canvas
-/// side of a split share the hoisted `ChromeState`, so the single
-/// redraw-sync worker spawned by `mount_board` keeps the chrome's
-/// zoom / undo / redo signals live regardless of mode.
+/// Body renderer. Overlay mode mounts the source face full-screen;
+/// split mode delegates to the shared pane tree with tabs disabled.
 fn doc_linked_body(
     id: ItemId,
+    source_plugin: String,
     split: DocLinkedSplit,
-    state: ChromeState,
-    coords: PopupCoords,
     on_split_horizontal: NoArgCallback<()>,
     on_split_vertical: NoArgCallback<()>,
     on_close: NoArgCallback<()>,
@@ -194,31 +209,29 @@ fn doc_linked_body(
     match split.orientation {
         None => DocLinkedOverlay {
             id,
-            state,
-            coords,
+            source_plugin,
             on_split_horizontal,
             on_split_vertical,
         }
         .into_element(),
         Some(orientation) => DocLinkedSplitBody {
             id,
+            source_plugin,
             orientation,
-            state,
-            coords,
+            ratio: split.ratio,
             on_close,
         }
         .into_element(),
     }
 }
 
-/// Default DocLinked body: a single canvas mount with the standard
-/// chrome. The split-mode buttons live in the chrome's top-right stack
-/// via the [`DocLinkedChromeExt`] context installed here.
+/// Default DocLinked body: the source face full-screen. The split-mode
+/// buttons live in the chrome's top-right stack via the
+/// [`DocLinkedChromeExt`] context installed here (`is_split = false`).
 #[derive(Clone, PartialEq)]
 struct DocLinkedOverlay {
     id: ItemId,
-    state: ChromeState,
-    coords: PopupCoords,
+    source_plugin: String,
     on_split_horizontal: NoArgCallback<()>,
     on_split_vertical: NoArgCallback<()>,
 }
@@ -227,6 +240,7 @@ impl std::fmt::Debug for DocLinkedOverlay {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DocLinkedOverlay")
             .field("id", &self.id)
+            .field("source_plugin", &self.source_plugin)
             .finish_non_exhaustive()
     }
 }
@@ -234,8 +248,6 @@ impl std::fmt::Debug for DocLinkedOverlay {
 impl Component for DocLinkedOverlay {
     fn render(&self) -> impl IntoElement {
         let id = self.id;
-        let state = self.state;
-        let coords = self.coords;
         use_provide_context({
             let on_split_horizontal = self.on_split_horizontal.clone();
             let on_split_vertical = self.on_split_vertical.clone();
@@ -250,25 +262,21 @@ impl Component for DocLinkedOverlay {
             .width(Size::fill())
             .height(Size::flex(1.0))
             .content(Content::Flex)
-            .child(canvas_body(CanvasMount::PdfBacked(id), state))
-            .child(crate::app::canvas_chrome(
-                state,
-                coords,
-                EdgeInsets::default(),
-            ))
+            .child(source_face_element(id, &self.source_plugin))
     }
 }
 
-/// Split DocLinked body: PDF-only pane next to the editable canvas
-/// pane. Both reuse the single `Board` hoisted at the
-/// [`DocLinkedView`] scope — strokes stay in one authoritative place
-/// and only one autosave worker owns the on-disk doc.
+/// Split DocLinked body: source face next to the infinite canvas
+/// face, served by the shared pane tree with tabs off so the divider
+/// stays resizable without exposing tab-strip chrome. The
+/// `DocLinkedChromeExt` (`is_split = true`) is installed once at this
+/// level and read by every descendant [`CanvasPane`]'s chrome.
 #[derive(Clone, PartialEq)]
 struct DocLinkedSplitBody {
     id: ItemId,
+    source_plugin: String,
     orientation: SplitOrientation,
-    state: ChromeState,
-    coords: PopupCoords,
+    ratio: f32,
     on_close: NoArgCallback<()>,
 }
 
@@ -276,99 +284,20 @@ impl std::fmt::Debug for DocLinkedSplitBody {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DocLinkedSplitBody")
             .field("id", &self.id)
+            .field("source_plugin", &self.source_plugin)
             .field("orientation", &self.orientation)
+            .field("ratio", &self.ratio)
             .finish_non_exhaustive()
     }
 }
 
 impl Component for DocLinkedSplitBody {
     fn render(&self) -> impl IntoElement {
-        let container = match self.orientation {
-            SplitOrientation::Horizontal => rect().horizontal(),
-            SplitOrientation::Vertical => rect().vertical(),
-        };
-        let (first_wrap, second_wrap) = match self.orientation {
-            SplitOrientation::Horizontal => (
-                rect().width(Size::flex(1.)).height(Size::fill()),
-                rect().width(Size::flex(1.)).height(Size::fill()),
-            ),
-            SplitOrientation::Vertical => (
-                rect().width(Size::fill()).height(Size::flex(1.)),
-                rect().width(Size::fill()).height(Size::flex(1.)),
-            ),
-        };
-        container
-            .width(Size::fill())
-            .height(Size::flex(1.0))
-            .content(Content::Flex)
-            .child(first_wrap.child(DocLinkedPdfSide { id: self.id }.into_element()))
-            .child(second_wrap.child(
-                DocLinkedCanvasSide {
-                    id: self.id,
-                    state: self.state,
-                    coords: self.coords,
-                    on_close: self.on_close.clone(),
-                }
-                .into_element(),
-            ))
-    }
-}
+        let bundle = self.id;
+        let orientation = self.orientation;
+        let ratio = self.ratio;
+        let source_plugin = self.source_plugin.clone();
 
-/// PDF-only split pane: a canvas mount with no chrome. The reused
-/// board publishes its surface rect to the pen pump via its own
-/// `drawing_surface` id, so a stylus landing on this side routes
-/// correctly even though the chrome and toolbar live on the sibling
-/// side. Uses a throwaway `ChromeState` — none of its signals are
-/// read because there is no chrome rendered here.
-#[derive(Clone, PartialEq)]
-struct DocLinkedPdfSide {
-    id: ItemId,
-}
-
-impl std::fmt::Debug for DocLinkedPdfSide {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DocLinkedPdfSide")
-            .field("id", &self.id)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Component for DocLinkedPdfSide {
-    fn render(&self) -> impl IntoElement {
-        let state = crate::app::use_chrome_state();
-        rect()
-            .width(Size::fill())
-            .height(Size::fill())
-            .content(Content::Flex)
-            .child(canvas_body(CanvasMount::PdfBacked(self.id), state))
-    }
-}
-
-/// Canvas split pane: full chrome bound to the hoisted `ChromeState`
-/// (so the toolbar's zoom / undo / redo signals stay live). Installs
-/// [`DocLinkedChromeExt`] with `is_split = true` so the chrome
-/// renders the close `×` instead of the split buttons.
-#[derive(Clone, PartialEq)]
-struct DocLinkedCanvasSide {
-    id: ItemId,
-    state: ChromeState,
-    coords: PopupCoords,
-    on_close: NoArgCallback<()>,
-}
-
-impl std::fmt::Debug for DocLinkedCanvasSide {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DocLinkedCanvasSide")
-            .field("id", &self.id)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Component for DocLinkedCanvasSide {
-    fn render(&self) -> impl IntoElement {
-        let id = self.id;
-        let state = self.state;
-        let coords = self.coords;
         use_provide_context({
             let on_close = self.on_close.clone();
             move || DocLinkedChromeExt {
@@ -378,17 +307,98 @@ impl Component for DocLinkedCanvasSide {
                 on_close: on_close.clone(),
             }
         });
-        rect()
-            .width(Size::fill())
-            .height(Size::fill())
-            .content(Content::Flex)
-            .child(canvas_body(CanvasMount::PdfBacked(id), state))
-            .child(crate::app::canvas_chrome(
-                state,
-                coords,
-                EdgeInsets::default(),
-            ))
+
+        let layout = PaneLayout::Split {
+            orientation,
+            ratio,
+            first: Box::new(PaneLayout::Leaf(Pane {
+                id: PANE_ID_SOURCE,
+                tabs: vec![PaneTab::with_plugin(bundle, source_plugin.clone())],
+                active_tab: 0,
+            })),
+            second: Box::new(PaneLayout::Leaf(Pane {
+                id: PANE_ID_CANVAS,
+                tabs: vec![PaneTab::with_plugin(bundle, CANVAS_FACE_PLUGIN)],
+                active_tab: 0,
+            })),
+        };
+
+        let callbacks = PaneTreeCallbacks {
+            on_tab_select: Callback::new(|_: (PaneId, usize)| {}),
+            on_tab_close: Callback::new(|_: (PaneId, usize)| {}),
+            on_tab_new: Callback::new(|_: PaneId| {}),
+            on_split_resize: Callback::new(move |(_path, new_ratio): (Vec<SplitSide>, f32)| {
+                let next = DocLinkedSplit {
+                    orientation: Some(orientation),
+                    ratio: new_ratio,
+                };
+                spawn(async move {
+                    if let Err(err) = doc_linked_prefs::save(bundle, &next) {
+                        log::warn!("doc_linked_prefs::save (ratio): {err}");
+                    }
+                });
+            }),
+            on_tab_move: Callback::new(|_: (PaneId, usize, PaneId)| {}),
+            on_tab_split: Callback::new(|_: (PaneId, usize, PaneId, SplitEdge)| {}),
+            on_pane_close: Callback::new(|_: PaneId| {}),
+        };
+
+        let labels = Callback::<PaneTab, String>::new(|_: PaneTab| String::new());
+        let body =
+            Callback::<(PaneId, PaneTab), Element>::new(move |(_pane, tab): (PaneId, PaneTab)| {
+                face_element(tab.item, tab.plugin_id.as_deref())
+            });
+
+        PaneTreeView::new(layout, callbacks, labels, body)
+            .show_tabs(false)
+            .into_element()
     }
+}
+
+/// Render the element for one split face. `plugin_id` is read from
+/// the `PaneTab`: our canvas-face sentinel maps to the infinite
+/// canvas mount; anything else goes through the
+/// [`linked_source`] registry so any registered source plugin wins.
+fn face_element(id: ItemId, plugin_id: Option<&str>) -> Element {
+    match plugin_id {
+        Some(CANVAS_FACE_PLUGIN) => CanvasPane {
+            mount: CanvasMount::DocLinkedCanvas(id),
+        }
+        .into_element(),
+        Some(plugin) => source_face_element(id, plugin),
+        None => missing_source_placeholder("(sin plugin)").into_element(),
+    }
+}
+
+/// Look up the source backend for `plugin_id` and render its face.
+/// Unknown plugins render a visible placeholder instead of panicking
+/// so a bundle whose plugin was uninstalled stays navigable.
+fn source_face_element(id: ItemId, plugin_id: &str) -> Element {
+    match linked_source::get(plugin_id) {
+        Some(backend) => backend.render_face(id),
+        None => missing_source_placeholder(plugin_id).into_element(),
+    }
+}
+
+fn loading_placeholder() -> Rect {
+    rect()
+        .width(Size::fill())
+        .height(Size::flex(1.0))
+        .background(Color::from_rgb(15, 15, 18))
+}
+
+fn missing_source_placeholder(plugin_id: &str) -> Rect {
+    rect()
+        .width(Size::fill())
+        .height(Size::fill())
+        .background(Color::from_rgb(28, 28, 32))
+        .center()
+        .child(
+            label()
+                .color(Color::from_rgb(220, 180, 100))
+                .font_size(14.0)
+                .text(format!("Plugin «{plugin_id}» no registrado")),
+        )
 }
 
 /// Readonly PDF viewer for a persisted
@@ -401,27 +411,15 @@ pub struct SourcePdfView {
 impl Component for SourcePdfView {
     fn render(&self) -> impl IntoElement {
         let id = self.id;
-        let state = crate::app::use_chrome_state();
-        let coords = crate::app::use_chrome_coords();
         let insets = crate::hooks::use_safe_area_insets();
         let pad = *insets.read();
         provide_safe_area_override(EdgeInsets::default());
 
-        let canvas_el = canvas_body(CanvasMount::PdfBacked(id), state).into_element();
-        let body = rect()
-            .width(Size::fill())
-            .height(Size::flex(1.0))
-            .child(canvas_el);
         safe_area_shell(pad)
             .background(Color::from_rgb(15, 15, 18))
             .vertical()
             .content(Content::Flex)
-            .child(body)
-            .child(crate::app::canvas_chrome(
-                state,
-                coords,
-                EdgeInsets::default(),
-            ))
+            .child(crate::builtin::pdf_linked::PdfFace { item: id })
     }
 }
 

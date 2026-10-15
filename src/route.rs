@@ -28,7 +28,6 @@ use freya_canvas_bg::{
     CanvasBackground, DotGridBackground, GridBackground, LinedBackground, SolidColorBackground,
 };
 use freya_engine::prelude::Color as SkColor;
-use freya_pdf::{PdfBackground, PdfDocument};
 
 use crate::app::{CanvasMount, canvas_root};
 use crate::canvas::{Board, Viewport, lock};
@@ -36,8 +35,8 @@ use crate::doc::Doc;
 use crate::doc_linked::{DocLinkedView, SourcePdfView};
 use crate::home::Home;
 use crate::library::{BackgroundStyle, ItemId, LibraryError, bodies};
-use crate::workspace_view::WorkspaceView;
 use crate::prefs;
+use crate::workspace_view::WorkspaceView;
 
 /// Off-white paper used when the caller does not override the surface.
 pub const DEFAULT_PAPER: SkColor = SkColor::from_rgb(250, 250, 248);
@@ -110,10 +109,9 @@ impl Component for CanvasEphemeral {
     }
 }
 
-/// PDF-backed canvas. Reads the attached PDF for the route's item id,
-/// builds a [`PdfBackground`] from it, and installs that as the board's
-/// background so strokes drawn on top of the pages share the same world
-/// coordinates as the PDF geometry.
+/// PDF-backed canvas route. Delegates to the PDF linked-source plugin
+/// which installs the PDF background + the anchor-source closure
+/// around a plain `CanvasMount::Item(id)` strokes mount.
 #[derive(Debug, PartialEq)]
 pub struct CanvasPdfView {
     pub id: ItemId,
@@ -121,7 +119,7 @@ pub struct CanvasPdfView {
 
 impl Component for CanvasPdfView {
     fn render(&self) -> impl IntoElement {
-        canvas_root(CanvasMount::PdfBacked(self.id))
+        crate::builtin::pdf_linked::PdfFace { item: self.id }
     }
 }
 
@@ -131,22 +129,13 @@ impl Component for CanvasPdfView {
 /// background slot off the UI thread.
 pub(crate) fn init_canvas_mount(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
     apply_pending_canvas_background(board);
-    load_doc_into_board(mount.item(), Arc::clone(board));
-    if let CanvasMount::PdfBacked(id) = mount {
-        let board = Arc::clone(board);
-        spawn(async move {
-            match load_pdf_background(id) {
-                Ok(bg) => lock(&board).set_background(bg),
-                Err(err) => log::error!("load pdf id={id:?}: {err}"),
-            }
-        });
+    match mount {
+        CanvasMount::Item(id) => load_doc_into_board(Some(id), Arc::clone(board)),
+        CanvasMount::Ephemeral => load_doc_into_board(None, Arc::clone(board)),
+        CanvasMount::DocLinkedCanvas(id) => {
+            load_canvas_doc_into_board(id, Arc::clone(board));
+        }
     }
-}
-
-fn load_pdf_background(id: ItemId) -> Result<Arc<dyn CanvasBackground>, String> {
-    let bytes = bodies::read_pdf(id).map_err(|e| format!("read pdf: {e}"))?;
-    let doc = PdfDocument::open_bytes(bytes).map_err(|e| format!("open pdf: {e:?}"))?;
-    Ok(Arc::new(PdfBackground::new(doc)))
 }
 
 /// Queue a background for the next canvas-route mount. Callers invoke
@@ -280,6 +269,90 @@ fn spawn_view_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Receiver<(
             };
             if let Err(err) = prefs::save_view(id, view) {
                 log::error!("save_view id={id:?}: {err}");
+            }
+        }
+    });
+}
+
+/// Hydrate the DocLinked canvas side. Parallel of [`load_doc_into_board`]
+/// but routed through [`crate::library::Library::load_canvas_doc`] and
+/// the canvas-side view sidecar so the PDF-annotation and infinite
+/// canvas faces of a DocLinked item autosave to independent files
+/// without stomping each other's pan/zoom.
+fn load_canvas_doc_into_board(id: ItemId, board: Arc<Mutex<Board>>) {
+    spawn(async move {
+        let doc = match crate::home::open_library().await {
+            Ok(handle) => {
+                let lib = handle.lock().await;
+                match lib.load_canvas_doc(id).await {
+                    Ok(doc) => doc,
+                    Err(LibraryError::Io(ref e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                        Doc::default()
+                    }
+                    Err(err) => {
+                        log::error!("load_canvas_doc id={id:?}: {err}");
+                        return;
+                    }
+                }
+            }
+            Err(err) => {
+                log::error!("open library on canvas enter (canvas-side): {err}");
+                return;
+            }
+        };
+        let saved_view = prefs::load_view_canvas(id);
+        {
+            let mut guard = lock(&board);
+            guard.replace_doc(doc);
+            let next_view = saved_view
+                .map(|v| Viewport {
+                    tx: v.tx,
+                    ty: v.ty,
+                    scale: v.scale,
+                })
+                .unwrap_or_default();
+            guard.set_viewport(next_view);
+            let (tx, rx) = flume::unbounded::<()>();
+            let (view_tx, view_rx) = flume::unbounded::<()>();
+            guard.set_commit_sink(tx);
+            guard.set_view_sink(view_tx);
+            spawn_canvas_autosave_worker(id, Arc::clone(&board), rx);
+            spawn_canvas_view_worker(id, Arc::clone(&board), view_rx);
+        }
+    });
+}
+
+fn spawn_canvas_autosave_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
+    spawn(async move {
+        while rx.recv_async().await.is_ok() {
+            while rx.try_recv().is_ok() {}
+            let mut doc_snapshot = {
+                let guard = lock(&board);
+                guard.doc().clone()
+            };
+            match crate::home::open_library().await {
+                Ok(handle) => {
+                    let mut lib = handle.lock().await;
+                    if let Err(err) = lib.save_canvas_doc(id, &mut doc_snapshot).await {
+                        log::error!("autosave save_canvas_doc id={id:?}: {err}");
+                    }
+                }
+                Err(err) => log::error!("autosave open library (canvas-side): {err}"),
+            }
+        }
+    });
+}
+
+fn spawn_canvas_view_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
+    spawn(async move {
+        while rx.recv_async().await.is_ok() {
+            while rx.try_recv().is_ok() {}
+            let view = {
+                let guard = lock(&board);
+                prefs::DocView::from_viewport(guard.viewport())
+            };
+            if let Err(err) = prefs::save_view_canvas(id, view) {
+                log::error!("save_view_canvas id={id:?}: {err}");
             }
         }
     });

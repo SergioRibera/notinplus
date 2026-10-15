@@ -134,7 +134,7 @@ impl CanvasCreateSheet {
     /// The sheet hides the paper-pattern grid for `PdfCanvas` since a
     /// PDF supplies its own page background.
     #[must_use]
-    pub const fn kind(mut self, kind: ItemKind) -> Self {
+    pub fn kind(mut self, kind: ItemKind) -> Self {
         self.kind = kind;
         self
     }
@@ -187,13 +187,13 @@ impl Component for CanvasCreateSheet {
 
         let submit_disabled = cur_name.trim().is_empty();
         let submit_cb = self.on_confirm.clone();
-        let kind = self.kind;
+        let kind = self.kind.clone();
         let title_label: String = self.title_override.clone().unwrap_or_else(|| {
-            match kind {
+            match &kind {
                 ItemKind::Canvas => "Nuevo lienzo",
                 ItemKind::PdfCanvas => "Importar PDF",
                 ItemKind::SourcePdf => "Agregar fuente PDF",
-                ItemKind::DocLinked => "Nuevo documento ligado",
+                ItemKind::DocLinked { .. } => "Nuevo documento ligado",
             }
             .to_owned()
         });
@@ -203,12 +203,13 @@ impl Component for CanvasCreateSheet {
             .unwrap_or_else(|| "Confirmar".to_owned());
         let submit = {
             let cur_name = cur_name.clone();
+            let kind = kind.clone();
             move |_| {
                 if submit_disabled {
                     return;
                 }
                 submit_cb.call(CreateCanvasRequest {
-                    kind,
+                    kind: kind.clone(),
                     name: cur_name.trim().to_owned(),
                     color: effective_color,
                     background: cur_background,
@@ -251,7 +252,10 @@ impl Component for CanvasCreateSheet {
                 effective_color,
                 cur_background,
                 background,
-                matches!(kind, ItemKind::PdfCanvas | ItemKind::SourcePdf | ItemKind::DocLinked),
+                matches!(
+                    kind,
+                    ItemKind::PdfCanvas | ItemKind::SourcePdf | ItemKind::DocLinked { .. }
+                ),
             ))
             .child(
                 TagPicker::new(tag_names)

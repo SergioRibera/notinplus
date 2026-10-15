@@ -100,7 +100,7 @@ pub type Rgba = [u8; 4];
 /// What kind of doc an [`Item`] represents. Drives which body files
 /// the library expects to find on disk for the id.
 #[istmo::message]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ItemKind {
     /// Blank infinite canvas.
     Canvas,
@@ -111,13 +111,28 @@ pub enum ItemKind {
     /// Reserved for future flows that import a bare PDF without the
     /// Modo B canvas pairing.
     SourcePdf,
-    /// Modo B bundle: one item owns both a canvas doc (strokes +
-    /// bookmarks at [`super::bodies::doc_path`]) AND the paired PDF
-    /// blob ([`super::bodies::pdf_path`]). The viewer renders both
-    /// sides from this single id — persistence stays as a single
-    /// `.notein` bundle, which lines up with the share flow in
-    /// SOURCES_PLAN §8.
-    DocLinked,
+    /// Generic linked-doc bundle: one item owns a "source" face
+    /// rendered by an arbitrary plugin (identified by `source_plugin`)
+    /// paired with a free-form "infinite canvas" face whose strokes
+    /// land at [`super::bodies::canvas_doc_path`]. The source plugin
+    /// decides how its own body is stored (PDF uses
+    /// [`super::bodies::pdf_path`]; future plugins may bring their own
+    /// backing store). The split shell at [`crate::doc_linked`] looks
+    /// up the plugin via [`crate::linked_source::get`] and defers face
+    /// rendering to it.
+    DocLinked { source_plugin: String },
+}
+
+impl ItemKind {
+    /// Plugin id owning the source face of a [`ItemKind::DocLinked`]
+    /// bundle, if any. Other kinds return `None`.
+    #[must_use]
+    pub fn source_plugin(&self) -> Option<&str> {
+        match self {
+            Self::DocLinked { source_plugin } => Some(source_plugin),
+            Self::Canvas | Self::PdfCanvas | Self::SourcePdf => None,
+        }
+    }
 }
 
 /// Paper pattern rendered underneath the canvas strokes. Only the
@@ -324,7 +339,9 @@ impl PaneLayout {
         match self {
             Self::Leaf(p) if p.id == id => Some(p),
             Self::Leaf(_) => None,
-            Self::Split { first, second, .. } => first.find_leaf(id).or_else(|| second.find_leaf(id)),
+            Self::Split { first, second, .. } => {
+                first.find_leaf(id).or_else(|| second.find_leaf(id))
+            }
         }
     }
 
@@ -509,7 +526,10 @@ impl PaneLayout {
     /// payload cannot drive the divider off-screen.
     pub fn clamp_ratios(&mut self) {
         if let Self::Split {
-            ratio, first, second, ..
+            ratio,
+            first,
+            second,
+            ..
         } = self
         {
             *ratio = ratio.clamp(0.05, 0.95);

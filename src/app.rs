@@ -29,7 +29,6 @@ use crate::components::theme::{
 use crate::components::{SidebarModal, SidebarTab};
 use crate::route::Route;
 
-use crate::bookmark::SourceRef;
 use crate::brush::{BrushKind, BrushPreset, ShapeMode};
 use crate::canvas::{
     AnchorSourceRef, Board, InputMode, LayerSnapshot, RedrawNotifier, drawing_surface, lock,
@@ -37,56 +36,66 @@ use crate::canvas::{
 use crate::hooks::use_safe_area_insets;
 use crate::library::ItemId;
 use crate::palette_popup::{HOVER_DELAY, brush_popup};
-use crate::pdf_viewer::{PDF_PLUGIN_ID, PdfAnchor, encode_pdf_anchor};
 use crate::pen_pump;
 use crate::plugins;
 use crate::prefs;
 use crate::ui_mask::{self, UiRegion, publish_mask};
 
 /// Which flavour of mount the surrounding [`canvas_root`] call represents.
-/// Drives per-mount side effects (doc load, PDF background) without
-/// forcing every caller to re-implement the hook plumbing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Drives per-mount side effects (doc load, viewport sidecar routing)
+/// without forcing every caller to re-implement the hook plumbing.
+///
+/// Plugin-specific concerns (PDF background install, Bible viewer,
+/// …) live in the plugin crate — [`crate::linked_source`]. The shell
+/// only knows about generic doc flavours.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum CanvasMount {
     /// Persisted canvas item — doc + viewport sidecar load from
     /// [`crate::library`] by id; autosave worker spawned on mount.
     Item(ItemId),
     /// Scratch surface. No library item, no autosave, no view sidecar.
     Ephemeral,
-    /// Canvas overlaid on a PDF. Strokes persist against `id`; the PDF
-    /// blob is loaded off the UI thread and installed as background.
-    PdfBacked(ItemId),
-}
-
-/// Build the anchor-ref closure drawing_surface uses on long-press.
-/// Only [`CanvasMount::PdfBacked`] produces a non-None closure — PDF
-/// pins carry a [`SourceRef::Plugin`] back to the source item + page
-/// so chip strips and cross-pane navigation can resolve the target.
-fn pdf_anchor_source_for(mount: CanvasMount) -> Option<AnchorSourceRef> {
-    let CanvasMount::PdfBacked(item) = mount else {
-        return None;
-    };
-    Some(std::sync::Arc::new(move |att| {
-        let anchor = encode_pdf_anchor(PdfAnchor::Page {
-            source: item,
-            page: att.page.0 as u32,
-        });
-        SourceRef::Plugin {
-            plugin_id: PDF_PLUGIN_ID.to_owned(),
-            item: item.0,
-            anchor,
-            selection: None,
-        }
-    }))
+    /// DocLinked bundle's secondary face: a free-form "infinite
+    /// canvas" sitting next to the plugin-rendered source face. Strokes
+    /// persist to [`crate::library::bodies::canvas_doc_path`]
+    /// independently from the source-side doc, so each face autosaves
+    /// to its own file. The paper pattern on the item drives the
+    /// backdrop.
+    DocLinkedCanvas(ItemId),
 }
 
 impl CanvasMount {
     /// Item id to drive autosave + viewport sidecar against, if any.
     pub(crate) const fn item(self) -> Option<ItemId> {
         match self {
-            Self::Item(id) | Self::PdfBacked(id) => Some(id),
+            Self::Item(id) | Self::DocLinkedCanvas(id) => Some(id),
             Self::Ephemeral => None,
         }
+    }
+}
+
+/// Freya context wrapper carrying the long-press anchor-ref closure
+/// published by the enclosing linked-source plugin. [`canvas_body`]
+/// consumes it with `try_consume_context`; when `None` (the default
+/// for plain canvas routes) long-press pins land without a plugin
+/// `SourceRef` attribution.
+///
+/// Clone / PartialEq are structural over the `Arc` pointer — two
+/// contexts compare equal iff they wrap the same closure allocation.
+#[derive(Clone)]
+pub struct AnchorSourceCtx {
+    pub source: AnchorSourceRef,
+}
+
+impl PartialEq for AnchorSourceCtx {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.source, &other.source)
+    }
+}
+
+impl std::fmt::Debug for AnchorSourceCtx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnchorSourceCtx").finish_non_exhaustive()
     }
 }
 
@@ -413,9 +422,7 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoEl
             if is_shared {
                 return;
             }
-            if let Some(id) = mount.item() {
-                crate::active_boards::clear_if(id, &board);
-            }
+            crate::active_boards::clear_if(mount, &board);
             // Drop any in-flight stroke so a tap mid-navigation does
             // not deliver a trailing Up into the mounted board after
             // its view has already unmounted.
@@ -434,7 +441,8 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoEl
             }
         }
     });
-    let anchor_source = pdf_anchor_source_for(mount);
+    let anchor_source =
+        freya::prelude::try_consume_context::<AnchorSourceCtx>().map(|ctx| Arc::clone(&ctx.source));
     rect()
         .width(Size::fill())
         .height(Size::fill())
@@ -537,9 +545,7 @@ pub(crate) fn mount_board(mount: CanvasMount, state: ChromeState) -> Arc<Mutex<B
     // panes, …) so they can consume via `try_consume_context::
     // <Arc<Mutex<Board>>>()` and operate on this mount's board.
     provide_context(Arc::clone(&board));
-    if let Some(id) = mount.item() {
-        crate::active_boards::set(id, Arc::clone(&board));
-    }
+    crate::active_boards::set(mount, Arc::clone(&board));
     crate::route::init_canvas_mount(mount, &board);
     // Publish for the sibling chrome. Any previously-published board
     // (a prior mount of the same shell) is overwritten — last-mount
@@ -554,14 +560,12 @@ pub(crate) fn mount_board(mount: CanvasMount, state: ChromeState) -> Arc<Mutex<B
 /// scope. Mirror of the signal-seeding block inside `mount_board` —
 /// kept separate so the fresh init path never pays the extra
 /// zoom-signal write when the chrome state is one it already seeded.
-fn seed_chrome_from_board(
-    board: &Arc<Mutex<Board>>,
-    state: &mut ChromeState,
-    mount: CanvasMount,
-) {
+fn seed_chrome_from_board(board: &Arc<Mutex<Board>>, state: &mut ChromeState, mount: CanvasMount) {
     {
         let g = lock(board);
-        state.selected.set(palette_index_for(g.current_kind()).unwrap_or(0));
+        state
+            .selected
+            .set(palette_index_for(g.current_kind()).unwrap_or(0));
         state.scale.set(g.current_size());
         state.mode.set(g.input_mode());
         state.can_undo.set(g.undo_depth() > 0);
@@ -1328,7 +1332,10 @@ fn top_right_toolbar(state: &ChromeState) -> impl IntoElement {
             row = row.child(icon_button(x(), ext.on_close));
         } else {
             row = row
-                .child(icon_button(square_split_horizontal(), ext.on_split_horizontal))
+                .child(icon_button(
+                    square_split_horizontal(),
+                    ext.on_split_horizontal,
+                ))
                 .child(icon_button(square_split_vertical(), ext.on_split_vertical));
         }
     }

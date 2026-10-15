@@ -37,6 +37,10 @@ const DOCS_SUBDIR: &str = "docs";
 const PDFS_SUBDIR: &str = "pdfs";
 const DOC_EXT: &str = "notinplus";
 const PDF_EXT: &str = "pdf";
+/// Suffix used for the DocLinked bundle's secondary stroke doc — the
+/// free-form "infinite canvas" side that sits next to the annotated
+/// PDF. Lives next to [`doc_path`] under `docs/` so purge sweeps both.
+const CANVAS_DOC_EXT: &str = "canvas.notinplus";
 
 /// Absolute path to the library root. Created on demand — call sites
 /// that go on to write also call [`ensure_dir`].
@@ -49,17 +53,24 @@ pub fn root_dir() -> PathBuf {
 /// guaranteed to exist; use [`ensure_dir`] before writing.
 #[must_use]
 pub fn doc_path(id: ItemId) -> PathBuf {
-    root_dir()
-        .join(DOCS_SUBDIR)
-        .join(format!("{id}.{DOC_EXT}"))
+    root_dir().join(DOCS_SUBDIR).join(format!("{id}.{DOC_EXT}"))
 }
 
 /// Absolute path of the PDF attachment for `id`.
 #[must_use]
 pub fn pdf_path(id: ItemId) -> PathBuf {
+    root_dir().join(PDFS_SUBDIR).join(format!("{id}.{PDF_EXT}"))
+}
+
+/// Absolute path of the DocLinked bundle's secondary ("infinite
+/// canvas") stroke doc for `id`. Independent from [`doc_path`] so the
+/// PDF-annotation side and the free-form canvas side autosave to
+/// different files and never clobber each other.
+#[must_use]
+pub fn canvas_doc_path(id: ItemId) -> PathBuf {
     root_dir()
-        .join(PDFS_SUBDIR)
-        .join(format!("{id}.{PDF_EXT}"))
+        .join(DOCS_SUBDIR)
+        .join(format!("{id}.{CANVAS_DOC_EXT}"))
 }
 
 fn ensure_dir(path: &std::path::Path) -> io::Result<()> {
@@ -104,6 +115,39 @@ pub fn write_doc_bytes(id: ItemId, bytes: &[u8]) -> Result<()> {
     write_blob(&doc_path(id), bytes)
 }
 
+/// Encode `doc` and land it at [`canvas_doc_path`] atomically. Mirror
+/// of [`write_doc`] for the DocLinked canvas side.
+///
+/// # Errors
+/// Codec / filesystem failures (see [`write_doc`]).
+pub fn write_canvas_doc(id: ItemId, doc: &mut Doc) -> Result<()> {
+    doc.maybe_compact_log();
+    let bytes =
+        bincode::encode_to_vec(&*doc, CODEC).map_err(|e| LibraryError::Codec(e.to_string()))?;
+    write_blob(&canvas_doc_path(id), &bytes)
+}
+
+/// Decode the DocLinked canvas-side body at [`canvas_doc_path`].
+///
+/// # Errors
+/// Same shape as [`read_doc`].
+pub fn read_canvas_doc(id: ItemId) -> Result<Doc> {
+    let bytes = fs::read(canvas_doc_path(id))?;
+    let (doc, _) = bincode::decode_from_slice::<Doc, _>(&bytes, CODEC)
+        .map_err(|e| LibraryError::Codec(e.to_string()))?;
+    Ok(doc)
+}
+
+/// Persist raw canvas-side doc bytes verbatim at [`canvas_doc_path`].
+/// Pair of [`write_doc_bytes`] for the DocLinked canvas side so bundle
+/// round-trips can skip a decode/encode cycle.
+///
+/// # Errors
+/// Filesystem failure.
+pub fn write_canvas_doc_bytes(id: ItemId, bytes: &[u8]) -> Result<()> {
+    write_blob(&canvas_doc_path(id), bytes)
+}
+
 /// Persist raw PDF bytes at [`pdf_path`]. Overwrites any previous
 /// attachment for the same id.
 ///
@@ -127,6 +171,7 @@ pub fn read_pdf(id: ItemId) -> Result<Vec<u8>> {
 pub fn purge(id: ItemId) {
     let _ = fs::remove_file(doc_path(id));
     let _ = fs::remove_file(pdf_path(id));
+    let _ = fs::remove_file(canvas_doc_path(id));
 }
 
 fn write_blob(dest: &std::path::Path, bytes: &[u8]) -> Result<()> {

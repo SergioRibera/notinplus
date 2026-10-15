@@ -166,12 +166,7 @@ impl Component for SidebarModal {
         // scoped — reopening the sidebar starts fully expanded.
         let collapsed = use_state(HashSet::<freya_canvas_bg::OutlineNodeId>::new);
 
-        let header = sidebar_header(
-            current_tab,
-            query,
-            sort,
-            move |next| tab_state.set(next),
-        );
+        let header = sidebar_header(current_tab, query, sort, move |next| tab_state.set(next));
 
         let router = self.router;
         let workspace = self.workspace;
@@ -359,7 +354,7 @@ fn use_library_snapshot() -> State<LibrarySnapshot> {
                     .iter()
                     .map(|it: &Item| DocEntry {
                         id: it.id,
-                        kind: it.kind,
+                        kind: it.kind.clone(),
                         name: it.name.clone(),
                         color: it.color,
                         tags: it.tags.iter().map(tag_name).collect(),
@@ -430,12 +425,12 @@ fn doc_row(
         .map(|[r, g, b, _]| Color::from_rgb(r, g, b))
         .unwrap_or(TEXT_MUTED);
     let subtitle = if tags.is_empty() {
-        kind_label(kind).to_owned()
+        kind_label(&kind).to_owned()
     } else {
-        format!("{} · {}", kind_label(kind), tags.join(", "))
+        format!("{} · {}", kind_label(&kind), tags.join(", "))
     };
     let on_press = move |_: Event<PressEventData>| {
-        let route = route_for_kind(kind, id);
+        let route = route_for_kind(&kind, id);
         let _ = router.push(route);
         ModalController::get().close();
     };
@@ -574,13 +569,13 @@ fn doc_context_card(
     // "Abrir" — navigate the top-level route for the item's kind.
     {
         let id = entry.id;
-        let kind = entry.kind;
+        let kind = entry.kind.clone();
         let mut setter = menu_setter;
         card = card.child(menu_row(
             file_text(),
             "Abrir",
             move |_: Event<PressEventData>| {
-                let route = route_for_kind(kind, id);
+                let route = route_for_kind(&kind, id);
                 let _ = router.push(route);
                 setter.set(None);
                 ModalController::get().close();
@@ -683,21 +678,21 @@ fn schedule_split_to(workspace: WorkspaceId, item: ItemId, orientation: SplitOri
     });
 }
 
-const fn kind_label(kind: ItemKind) -> &'static str {
+fn kind_label(kind: &ItemKind) -> &'static str {
     match kind {
         ItemKind::Canvas => "Lienzo",
         ItemKind::PdfCanvas => "PDF + lienzo",
         ItemKind::SourcePdf => "PDF",
-        ItemKind::DocLinked => "Bundle",
+        ItemKind::DocLinked { .. } => "Bundle",
     }
 }
 
-fn route_for_kind(kind: ItemKind, id: ItemId) -> Route {
+fn route_for_kind(kind: &ItemKind, id: ItemId) -> Route {
     match kind {
         ItemKind::Canvas => Route::CanvasView { id },
         ItemKind::PdfCanvas => Route::CanvasPdfView { id },
         ItemKind::SourcePdf => Route::SourcePdfView { id },
-        ItemKind::DocLinked => Route::DocLinkedView { id },
+        ItemKind::DocLinked { .. } => Route::DocLinkedView { id },
     }
 }
 
@@ -1011,7 +1006,11 @@ fn toc_row(
             let on_press = move |_: Event<PressEventData>| {
                 lock(&press_board).set_active_layer(id);
             };
-            let icon_color = if is_active { TEXT_INVERSE } else { TEXT_PRIMARY };
+            let icon_color = if is_active {
+                TEXT_INVERSE
+            } else {
+                TEXT_PRIMARY
+            };
             toc_card(
                 None,
                 bundled_icon(layers(), icon_color),
@@ -1084,7 +1083,9 @@ where
     rect()
         .direction(Direction::Horizontal)
         .padding((0.0, 0.0, 0.0, indent))
-        .child(toc_card(leading, icon, title, subtitle, is_active, on_press))
+        .child(toc_card(
+            leading, icon, title, subtitle, is_active, on_press,
+        ))
         .into_element()
 }
 

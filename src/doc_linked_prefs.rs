@@ -47,9 +47,7 @@ impl Default for DocLinkedSplit {
 
 #[must_use]
 fn path(id: ItemId) -> PathBuf {
-    bodies::root_dir()
-        .join(SUBDIR)
-        .join(format!("{id}.{EXT}"))
+    bodies::root_dir().join(SUBDIR).join(format!("{id}.{EXT}"))
 }
 
 /// Read the split sidecar for `id`. Returns the default (overlay mode)

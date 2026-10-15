@@ -78,10 +78,7 @@ pub async fn load_workspaces(client: &DataStoreClient) -> Result<WorkspaceIndex>
 ///
 /// # Errors
 /// Runtime / data-store / codec failures.
-pub async fn save_workspaces(
-    client: &DataStoreClient,
-    snapshot: &WorkspaceIndex,
-) -> Result<()> {
+pub async fn save_workspaces(client: &DataStoreClient, snapshot: &WorkspaceIndex) -> Result<()> {
     let bytes =
         bincode::encode_to_vec(snapshot, CODEC).map_err(|e| LibraryError::Codec(e.to_string()))?;
     client.set_bytes(WORKSPACES_KEY.to_owned(), bytes).await?;

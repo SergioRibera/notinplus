@@ -571,6 +571,47 @@ impl Library {
         self.persist().await
     }
 
+    /// Decode and return the DocLinked canvas-side [`Doc`] body for
+    /// `id`. Only [`ItemKind::DocLinked`] items own this file — any
+    /// other kind rejects with [`LibraryError::NotFound`].
+    ///
+    /// # Errors
+    /// [`LibraryError::NotFound`] when the item is unknown or not a
+    /// DocLinked bundle, [`LibraryError::Io`] when no canvas-side body
+    /// has been written yet, [`LibraryError::Codec`] on decode failure.
+    #[allow(clippy::unused_async)]
+    pub async fn load_canvas_doc(&self, id: ItemId) -> Result<Doc> {
+        let item = self
+            .index
+            .item(id)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
+        if !matches!(item.kind, ItemKind::DocLinked { .. }) {
+            return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
+        }
+        bodies::read_canvas_doc(id)
+    }
+
+    /// Persist `doc` as the DocLinked canvas-side body for `id`. Pair
+    /// of [`save_doc`] routed to [`bodies::canvas_doc_path`].
+    ///
+    /// # Errors
+    /// [`LibraryError::NotFound`] / body I/O.
+    pub async fn save_canvas_doc(&mut self, id: ItemId, doc: &mut Doc) -> Result<()> {
+        let item = self
+            .index
+            .item(id)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
+        if !matches!(item.kind, ItemKind::DocLinked { .. }) {
+            return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
+        }
+        bodies::write_canvas_doc(id, doc)?;
+        let now = now_millis();
+        if let Some(m) = self.index.item_mut(id) {
+            m.updated_at = now;
+        }
+        self.persist().await
+    }
+
     /// Attach raw PDF bytes to `id`. Overwrites any prior attachment.
     ///
     /// # Errors
@@ -584,7 +625,7 @@ impl Library {
             .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
         if !matches!(
             item.kind,
-            ItemKind::PdfCanvas | ItemKind::SourcePdf | ItemKind::DocLinked
+            ItemKind::PdfCanvas | ItemKind::SourcePdf | ItemKind::DocLinked { .. }
         ) {
             return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
         }
@@ -596,10 +637,35 @@ impl Library {
         self.persist().await
     }
 
-    /// Create a single [`ItemKind::DocLinked`] item bundling a canvas
-    /// doc + the imported PDF. The PDF blob lands at the item's own
-    /// [`bodies::pdf_path`], the doc body is written lazily on first
-    /// stroke / bookmark edit.
+    /// Create a generic [`ItemKind::DocLinked`] bundle backed by
+    /// `source_plugin` on the source face. The canvas-side body is
+    /// written lazily on first stroke; the source plugin owns its own
+    /// backing store (PDF uses [`bodies::pdf_path`]).
+    ///
+    /// # Errors
+    /// [`LibraryError::NotFound`] when `folder` is unknown.
+    pub async fn create_doc_linked(
+        &mut self,
+        folder: FolderId,
+        name: &str,
+        source_plugin: &str,
+    ) -> Result<ItemId> {
+        self.create_item(
+            folder,
+            ItemKind::DocLinked {
+                source_plugin: source_plugin.to_owned(),
+            },
+            name,
+            None,
+            Vec::new(),
+            BackgroundStyle::default(),
+        )
+        .await
+    }
+
+    /// PDF-specific convenience: mint a [`ItemKind::DocLinked`] with
+    /// the PDF source plugin and land the pdf blob at
+    /// [`bodies::pdf_path`] in one step.
     ///
     /// # Errors
     /// [`LibraryError::NotFound`] when `folder` is unknown; body I/O
@@ -611,14 +677,7 @@ impl Library {
         pdf_bytes: &[u8],
     ) -> Result<ItemId> {
         let linked = self
-            .create_item(
-                folder,
-                ItemKind::DocLinked,
-                name,
-                None,
-                Vec::new(),
-                BackgroundStyle::default(),
-            )
+            .create_doc_linked(folder, name, crate::builtin::pdf_source::KIND_ID)
             .await?;
         bodies::write_pdf(linked, pdf_bytes)?;
         Ok(linked)
@@ -1237,10 +1296,7 @@ mod tests {
             ratio: 0.6,
             first: Box::new(PaneLayout::Leaf(Pane {
                 id: left,
-                tabs: vec![
-                    PaneTab::new(mk_item(42)),
-                    PaneTab::new(mk_item(7)),
-                ],
+                tabs: vec![PaneTab::new(mk_item(42)), PaneTab::new(mk_item(7))],
                 active_tab: 1,
             })),
             second: Box::new(PaneLayout::Leaf(Pane {
@@ -1271,7 +1327,12 @@ mod tests {
         let root = mk_pane(1);
         let mut layout = PaneLayout::leaf(root);
         let new_id = mk_pane(2);
-        assert!(layout.split_leaf(root, SplitOrientation::Horizontal, new_id, SplitSide::Second));
+        assert!(layout.split_leaf(
+            root,
+            SplitOrientation::Horizontal,
+            new_id,
+            SplitSide::Second
+        ));
         assert_eq!(layout.leaves().len(), 2);
         assert!(layout.find_leaf(root).is_some());
         assert!(layout.find_leaf(new_id).is_some());
@@ -1376,10 +1437,7 @@ mod tests {
             0.4,
         ));
 
-        let PaneLayout::Split {
-            ratio, second, ..
-        } = layout
-        else {
+        let PaneLayout::Split { ratio, second, .. } = layout else {
             panic!("root collapsed")
         };
         assert!((ratio - 0.3).abs() < 1e-6);

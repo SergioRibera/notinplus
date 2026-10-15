@@ -168,11 +168,7 @@ type Result<T> = core::result::Result<T, BundleError>;
 /// # Errors
 /// Filesystem / codec / library failures surface through
 /// [`BundleError`].
-pub fn write_bundle<W: Write>(
-    sink: W,
-    lib: &Library,
-    selection: &ExportSelection,
-) -> Result<()> {
+pub fn write_bundle<W: Write>(sink: W, lib: &Library, selection: &ExportSelection) -> Result<()> {
     let plan = plan_export(lib, selection)?;
     let manifest = build_manifest(lib, &plan)?;
 
@@ -180,8 +176,8 @@ pub fn write_bundle<W: Write>(
     let mut tar = tar::Builder::new(encoder);
     tar.mode(tar::HeaderMode::Deterministic);
 
-    let manifest_bytes = bincode::encode_to_vec(&manifest, CODEC)
-        .map_err(|e| BundleError::Codec(e.to_string()))?;
+    let manifest_bytes =
+        bincode::encode_to_vec(&manifest, CODEC).map_err(|e| BundleError::Codec(e.to_string()))?;
     append_file(&mut tar, MANIFEST_ENTRY, &manifest_bytes)?;
 
     for item in &manifest.items {
@@ -189,7 +185,7 @@ pub fn write_bundle<W: Write>(
             let path = format!("{DOCS_PREFIX}{}.{DOC_EXT}", item.id);
             append_file(&mut tar, &path, &doc_bytes)?;
         }
-        if item_carries_pdf(item.kind) {
+        if item_carries_pdf(&item.kind) {
             if let Ok(pdf_bytes) = bodies::read_pdf(item.id) {
                 let path = format!("{PDFS_PREFIX}{}.{PDF_EXT}", item.id);
                 append_file(&mut tar, &path, &pdf_bytes)?;
@@ -206,11 +202,7 @@ pub fn write_bundle<W: Write>(
 ///
 /// # Errors
 /// See [`write_bundle`].
-pub fn write_bundle_to_path(
-    dest: &Path,
-    lib: &Library,
-    selection: &ExportSelection,
-) -> Result<()> {
+pub fn write_bundle_to_path(dest: &Path, lib: &Library, selection: &ExportSelection) -> Result<()> {
     let file = File::create(dest)?;
     write_bundle(file, lib, selection)
 }
@@ -498,10 +490,10 @@ fn load_doc_opt(id: ItemId) -> Option<Doc> {
     bodies::read_doc(id).ok()
 }
 
-const fn item_carries_pdf(kind: ItemKind) -> bool {
+fn item_carries_pdf(kind: &ItemKind) -> bool {
     matches!(
         kind,
-        ItemKind::PdfCanvas | ItemKind::SourcePdf | ItemKind::DocLinked
+        ItemKind::PdfCanvas | ItemKind::SourcePdf | ItemKind::DocLinked { .. }
     )
 }
 
@@ -597,7 +589,10 @@ mod tests {
             tar.mode(tar::HeaderMode::Deterministic);
             let bytes = bincode::encode_to_vec(&manifest, CODEC).expect("encode");
             super::append_file(&mut tar, MANIFEST_ENTRY, &bytes).expect("append");
-            tar.into_inner().expect("tar finish").flush().expect("flush");
+            tar.into_inner()
+                .expect("tar finish")
+                .flush()
+                .expect("flush");
         }
         let parsed = parse_bundle(Cursor::new(buf)).expect("parse");
         assert_eq!(parsed.manifest, manifest);

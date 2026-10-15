@@ -2073,8 +2073,7 @@ const PIN_STICKY_WORLD_RADIUS: f32 = 40.0;
 /// lands over an attribution-aware background. Takes the surface-level
 /// page attachment reported by [`CanvasBackground::locate`] and returns
 /// the typed [`SourceRef`] the pin should carry.
-pub type AnchorSourceRef =
-    Arc<dyn Fn(PageAttachment) -> SourceRef + Send + Sync + 'static>;
+pub type AnchorSourceRef = Arc<dyn Fn(PageAttachment) -> SourceRef + Send + Sync + 'static>;
 
 pub fn drawing_surface(
     board: &Arc<Mutex<Board>>,
@@ -2138,14 +2137,12 @@ pub fn drawing_surface(
     // pen-pump's screen-coord pos. Also lets split-pane layouts
     // route pen samples: on_sized publishes the resolved rect to the
     // pen pump every time layout resettles.
-    let surface_origin =
-        freya::prelude::use_state(|| (0.0_f32, 0.0_f32));
+    let surface_origin = freya::prelude::use_state(|| (0.0_f32, 0.0_f32));
     // Per-mount pen-pump id. Keyed registration lets two surfaces
     // sharing one `Board` (DocLinked split view) both appear in the
     // hit-test registry — unregister on drop is scoped to this id
     // only, so the sibling surface keeps its entry.
-    let surface_id =
-        freya::prelude::use_hook(crate::pen_pump::allocate_canvas_surface_id);
+    let surface_id = freya::prelude::use_hook(crate::pen_pump::allocate_canvas_surface_id);
     freya::prelude::use_drop(move || {
         crate::pen_pump::unregister_canvas_surface(surface_id);
     });

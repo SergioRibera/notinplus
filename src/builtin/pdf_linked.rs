@@ -1,0 +1,134 @@
+//! PDF implementation of
+//! [`crate::linked_source::LinkedDocSource`].
+//!
+//! Owns everything PDF-specific that used to live in the shell:
+//!
+//! * Loading the PDF blob from
+//!   [`crate::library::bodies::pdf_path`] off the UI thread.
+//! * Wrapping it in a [`PdfBackground`] and installing it onto the
+//!   mounted [`Board`] via `set_background`.
+//! * Publishing the long-press anchor-ref closure
+//!   ([`AnchorSourceRef`]) through the Freya context so
+//!   [`crate::app::canvas_body`] picks it up without the shell having
+//!   to know PDF anchor semantics.
+//!
+//! The shell contributes only the generic
+//! [`CanvasMount::Item`] mount flavour — strokes land on
+//! `doc_path(id)` through the standard autosave worker. Everything
+//! else is this plugin's business.
+
+use std::sync::Arc;
+
+use freya::prelude::*;
+use freya_pdf::{PdfBackground, PdfDocument};
+
+use crate::active_boards;
+use crate::app::{AnchorSourceCtx, CanvasMount, CanvasPane};
+use crate::bookmark::SourceRef;
+use crate::builtin::pdf_source;
+use crate::canvas::{AnchorSourceRef, lock};
+use crate::library::{ItemId, bodies};
+use crate::linked_source::LinkedDocSource;
+use crate::pdf_select_overlay::PdfSelectOverlay;
+use crate::pdf_viewer::{PdfAnchor, encode_pdf_anchor};
+
+/// Builtin PDF source backend for linked-doc bundles.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct PdfLinkedSource;
+
+impl LinkedDocSource for PdfLinkedSource {
+    fn plugin_id(&self) -> &'static str {
+        pdf_source::KIND_ID
+    }
+
+    fn render_face(&self, item: ItemId) -> Element {
+        PdfFace { item }.into_element()
+    }
+}
+
+/// Freya component that renders the PDF face. Mounts a shell
+/// [`CanvasPane`] over a plain [`CanvasMount::Item`] (strokes against
+/// `doc_path(id)`) and layers on the PDF-specific side effects:
+/// background install + anchor-source context.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PdfFace {
+    pub item: ItemId,
+}
+
+impl Component for PdfFace {
+    fn render(&self) -> impl IntoElement {
+        let item = self.item;
+
+        // Publish the long-press anchor-ref for this item. Any
+        // descendant `canvas_body` picks it up via `try_consume_context`
+        // and threads it through `drawing_surface`.
+        use_provide_context(move || AnchorSourceCtx {
+            source: pdf_anchor_source(item),
+        });
+
+        // Install the PDF background on whichever `Board` the inner
+        // `CanvasPane` publishes. `active_boards` is keyed by mount, so
+        // the lookup resolves even in a split layout where sibling
+        // mounts share the same item id. First render spawns the
+        // async load; later renders no-op because `use_hook` runs once
+        // per component instance.
+        use_hook(move || {
+            spawn(async move {
+                let bg = match load_pdf_background(item) {
+                    Ok(bg) => bg,
+                    Err(err) => {
+                        log::error!("load pdf id={item:?}: {err}");
+                        return;
+                    }
+                };
+                let Some(board) = crate::active_boards::get(CanvasMount::Item(item)) else {
+                    log::warn!("PdfFace install_background: no board registered for {item:?}",);
+                    return;
+                };
+                lock(&board).set_background(bg);
+            });
+        });
+
+        // Overlay is always mounted; it self-gates on
+        // [`InputMode::Select`] inside its handlers so the stroke pump
+        // keeps full control of the canvas in Draw / Pan modes.
+        rect()
+            .width(Size::fill())
+            .height(Size::fill())
+            .content(Content::Flex)
+            .child(
+                CanvasPane {
+                    mount: CanvasMount::Item(item),
+                }
+                .into_element(),
+            )
+            .child(PdfSelectOverlay { item }.into_element())
+    }
+}
+
+/// Decode the PDF blob at [`bodies::pdf_path`] into a
+/// [`PdfBackground`] usable by the stroke canvas as its backdrop.
+fn load_pdf_background(id: ItemId) -> Result<Arc<dyn freya_canvas_bg::CanvasBackground>, String> {
+    let bytes = bodies::read_pdf(id).map_err(|e| format!("read pdf: {e}"))?;
+    let doc = PdfDocument::open_bytes(bytes).map_err(|e| format!("open pdf: {e:?}"))?;
+    Ok(Arc::new(PdfBackground::new(doc)))
+}
+
+/// Build the per-item [`AnchorSourceRef`] closure. Long-press pins
+/// that land over a page get a [`SourceRef::Plugin`] carrying an
+/// encoded [`PdfAnchor::Page`] so chip strips and cross-pane
+/// navigation can resolve back to this bundle + page.
+fn pdf_anchor_source(item: ItemId) -> AnchorSourceRef {
+    Arc::new(move |att| {
+        let anchor = encode_pdf_anchor(PdfAnchor::Page {
+            source: item,
+            page: att.page.0 as u32,
+        });
+        SourceRef::Plugin {
+            plugin_id: pdf_source::KIND_ID.to_owned(),
+            item: item.0,
+            anchor,
+            selection: None,
+        }
+    })
+}

@@ -40,6 +40,10 @@ const CODEC: Configuration = config::standard();
 const PREFS_FILE: &str = "prefs.bin";
 const VIEWS_SUBDIR: &str = "views";
 const VIEW_EXT: &str = "bin";
+/// Suffix for the DocLinked canvas-side viewport sidecar — kept apart
+/// from the PDF-annotation side so pan/zoom per face persist
+/// independently.
+const CANVAS_VIEW_EXT: &str = "canvas.bin";
 
 /// Global toolbar prefs. `HashMap`-shaped state is serialised as
 /// `Vec<(K, V)>` to keep bincode's derive requirements narrow.
@@ -113,6 +117,13 @@ fn view_path(id: ItemId) -> PathBuf {
         .join(format!("{id}.{VIEW_EXT}"))
 }
 
+#[must_use]
+fn view_path_canvas(id: ItemId) -> PathBuf {
+    bodies::root_dir()
+        .join(VIEWS_SUBDIR)
+        .join(format!("{id}.{CANVAS_VIEW_EXT}"))
+}
+
 /// Read [`Prefs`] from disk. Missing / corrupt payload → `Prefs::default`
 /// so a first-run or schema-bump never surfaces to the user as an error.
 #[must_use]
@@ -152,6 +163,25 @@ pub fn save_view(id: ItemId, view: DocView) -> io::Result<()> {
     let bytes = bincode::encode_to_vec(view, CODEC)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     write_atomic(&view_path(id), &bytes)
+}
+
+/// Read the DocLinked canvas-side view sidecar for `id`.
+#[must_use]
+pub fn load_view_canvas(id: ItemId) -> Option<DocView> {
+    let bytes = fs::read(view_path_canvas(id)).ok()?;
+    bincode::decode_from_slice::<DocView, _>(&bytes, CODEC)
+        .ok()
+        .map(|(v, _)| v)
+}
+
+/// Atomically overwrite the DocLinked canvas-side view sidecar for `id`.
+///
+/// # Errors
+/// Encode / fs failures.
+pub fn save_view_canvas(id: ItemId, view: DocView) -> io::Result<()> {
+    let bytes = bincode::encode_to_vec(view, CODEC)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    write_atomic(&view_path_canvas(id), &bytes)
 }
 
 fn write_atomic(dest: &std::path::Path, bytes: &[u8]) -> io::Result<()> {

@@ -99,6 +99,7 @@ pub struct PaneTreeView {
     callbacks: PaneTreeCallbacks,
     tab_labels: Callback<PaneTab, String>,
     tab_body: Callback<(PaneId, PaneTab), Element>,
+    show_tabs: bool,
 }
 
 impl PartialEq for PaneTreeView {
@@ -132,7 +133,19 @@ impl PaneTreeView {
             callbacks,
             tab_labels: tab_labels.into(),
             tab_body: tab_body.into(),
+            show_tabs: true,
         }
+    }
+
+    /// Hide every leaf's tab bar + its drag/edge-drop + pane-close
+    /// chrome. Each leaf renders its active tab's body only. Intended
+    /// for embedders that reuse the resize/split machinery but handle
+    /// tab semantics externally (or have no concept of tabs at all —
+    /// see [`crate::doc_linked`] for a two-face split-view shell).
+    #[must_use]
+    pub const fn show_tabs(mut self, show: bool) -> Self {
+        self.show_tabs = show;
+        self
     }
 }
 
@@ -148,6 +161,7 @@ impl Component for PaneTreeView {
             &self.tab_labels,
             &self.tab_body,
             can_close_pane,
+            self.show_tabs,
         )
     }
 }
@@ -159,6 +173,7 @@ fn render_node(
     tab_labels: &Callback<PaneTab, String>,
     tab_body: &Callback<(PaneId, PaneTab), Element>,
     can_close_pane: bool,
+    show_tabs: bool,
 ) -> Element {
     match node {
         PaneLayout::Leaf(pane) => LeafNode {
@@ -167,6 +182,7 @@ fn render_node(
             tab_labels: tab_labels.clone(),
             tab_body: tab_body.clone(),
             can_close_pane,
+            show_tabs,
         }
         .into_element(),
         PaneLayout::Split {
@@ -184,6 +200,7 @@ fn render_node(
             tab_labels: tab_labels.clone(),
             tab_body: tab_body.clone(),
             can_close_pane,
+            show_tabs,
         }
         .into_element(),
     }
@@ -203,6 +220,7 @@ struct SplitNode {
     tab_labels: Callback<PaneTab, String>,
     tab_body: Callback<(PaneId, PaneTab), Element>,
     can_close_pane: bool,
+    show_tabs: bool,
 }
 
 impl std::fmt::Debug for SplitNode {
@@ -294,6 +312,7 @@ impl Component for SplitNode {
             &self.tab_labels,
             &self.tab_body,
             self.can_close_pane,
+            self.show_tabs,
         );
         let second_el = render_node(
             &self.second,
@@ -306,6 +325,7 @@ impl Component for SplitNode {
             &self.tab_labels,
             &self.tab_body,
             self.can_close_pane,
+            self.show_tabs,
         );
 
         let (container, first_wrap, second_wrap) = match orientation {
@@ -377,6 +397,7 @@ struct LeafNode {
     tab_labels: Callback<PaneTab, String>,
     tab_body: Callback<(PaneId, PaneTab), Element>,
     can_close_pane: bool,
+    show_tabs: bool,
 }
 
 impl std::fmt::Debug for LeafNode {
@@ -395,18 +416,43 @@ impl PartialEq for LeafNode {
 
 impl Component for LeafNode {
     fn render(&self) -> impl IntoElement {
+        // Hook calls run on every render regardless of `show_tabs` so
+        // freya's hook ordering stays constant whether the embedder has
+        // tabs enabled or not. The resulting state is only observed
+        // when tabs are on.
         let drag = use_drag::<TabDragPayload>();
-        // Hover-highlight state for every edge drop zone lives at the
-        // top of render so freya's hook ordering stays constant across
-        // renders — the zones themselves are only mounted while a
-        // drag is active.
         let hover_top = use_state(|| false);
         let hover_bottom = use_state(|| false);
         let hover_left = use_state(|| false);
         let hover_right = use_state(|| false);
-        let drag_active = drag.read().is_some();
 
         let pane_id = self.pane.id;
+        let active_tab = self.pane.tabs.get(self.pane.active_tab as usize).cloned();
+        let body_inner = match active_tab {
+            Some(tab) => self.tab_body.call((self.pane.id, tab)),
+            None => leaf_body_empty(self.pane.id).into_element(),
+        };
+
+        if !self.show_tabs {
+            // Tabs disabled: skip the tab bar + the drag/edge-drop
+            // overlay entirely. Embedders that still need "close the
+            // split" semantics render that chrome inside the body.
+            return rect()
+                .vertical()
+                .width(Size::percent(100.))
+                .height(Size::percent(100.))
+                .content(Content::Flex)
+                .background(Color::from_rgb(22, 22, 28))
+                .child(
+                    rect()
+                        .width(Size::percent(100.))
+                        .height(Size::flex(1.0))
+                        .content(Content::Flex)
+                        .child(body_inner),
+                );
+        }
+
+        let drag_active = drag.read().is_some();
         let entries: Vec<TabBarEntry> = self
             .pane
             .tabs
@@ -437,11 +483,6 @@ impl Component for LeafNode {
             bar = bar.on_pane_close(NoArgCallback::new(move || close_pane.call(pane_id)));
         }
 
-        let active_tab = self.pane.tabs.get(self.pane.active_tab as usize).cloned();
-        let body_inner = match active_tab {
-            Some(tab) => self.tab_body.call((self.pane.id, tab)),
-            None => leaf_body_empty(self.pane.id).into_element(),
-        };
         let mut body = rect()
             .width(Size::percent(100.))
             .height(Size::flex(1.0))
