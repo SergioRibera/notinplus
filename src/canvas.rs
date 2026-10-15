@@ -1255,9 +1255,24 @@ impl Board {
         timestamp_ms: TimestampMs,
         refs: Vec<SourceRef>,
     ) -> BookmarkId {
+        self.add_bookmark_full(world, sticky_radius, timestamp_ms, String::new(), refs)
+    }
+
+    /// Full-form create: body + refs land in a single op so the "create
+    /// bookmark from a source selection" flow doesn't need a follow-up
+    /// `UpdateBookmark` just to seed the snippet into the body.
+    pub fn add_bookmark_full(
+        &mut self,
+        world: WorldPoint,
+        sticky_radius: f32,
+        timestamp_ms: TimestampMs,
+        body: String,
+        refs: Vec<SourceRef>,
+    ) -> BookmarkId {
         let id = BookmarkId::new_v4();
         let mut bm = Bookmark::new(id, world, timestamp_ms);
         bm.stuck_to = self.resolve_sticky(world, sticky_radius);
+        bm.body = body;
         bm.refs = refs;
         self.apply_op(DocOp::AddBookmark { bookmark: bm });
         self.notify_commit();

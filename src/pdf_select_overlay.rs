@@ -18,10 +18,14 @@ use freya::prelude::*;
 use freya_engine::prelude::{Color as SkColor, Paint, PaintStyle, Rect as SkRect};
 
 use crate::active_boards;
-use crate::active_pdf_sources;
+use crate::active_pdf_sources::{self, PdfSourceHandle};
 use crate::app::CanvasMount;
+use crate::bookmark::{SourceRef, WorldPoint};
+use crate::bookmark_ui::now_ms;
 use crate::canvas::{InputMode, lock};
+use crate::ids::BookmarkId;
 use crate::library::ItemId;
+use crate::pdf_viewer::PDF_PLUGIN_ID;
 
 use notein_plugin::{SelectMode, Source as _};
 
@@ -55,6 +59,10 @@ impl Component for PdfSelectOverlay {
         let mut last_down_at = use_state(|| Option::<Instant>::None);
         // Bumping this signal forces the paint child to re-render.
         let mut paint_tick = use_state(|| 0u64);
+        // Context menu toggles after a drag completes with a non-empty
+        // selection. Clicking anywhere else — or starting a new drag —
+        // hides it again.
+        let mut menu_visible = use_state(|| false);
 
         use_hook(move || {
             let _ = active_pdf_sources::ensure_registered(item);
@@ -85,6 +93,7 @@ impl Component for PdfSelectOverlay {
                 .pointer_begin_select(handle.instance, world_x, world_y, mode)
             {
                 dragging.set(true);
+                menu_visible.set(false);
                 let cur = *paint_tick.read();
                 paint_tick.set(cur.wrapping_add(1));
                 evt.stop_propagation();
@@ -114,15 +123,23 @@ impl Component for PdfSelectOverlay {
             if !*dragging.read() {
                 return;
             }
-            if let Some(handle) = active_pdf_sources::get(item) {
+            let has_selection = if let Some(handle) = active_pdf_sources::get(item) {
                 handle.plugin.pointer_end_select(handle.instance);
-            }
+                handle
+                    .plugin
+                    .selection(handle.instance)
+                    .is_some_and(|s| !s.is_empty())
+            } else {
+                false
+            };
             dragging.set(false);
+            menu_visible.set(has_selection);
             let cur = *paint_tick.read();
-                paint_tick.set(cur.wrapping_add(1));
+            paint_tick.set(cur.wrapping_add(1));
         };
 
         let interactive = in_select_mode(item);
+        let show_menu = *menu_visible.read();
         rect()
             .width(Size::fill())
             .height(Size::fill())
@@ -133,7 +150,102 @@ impl Component for PdfSelectOverlay {
             .on_pointer_move(on_pointer_move)
             .on_global_pointer_up(on_pointer_up)
             .child(selection_paint(item, paint_tick))
+            .child(if show_menu {
+                selection_menu(item, menu_visible).into_element()
+            } else {
+                rect().width(Size::px(0.0)).height(Size::px(0.0)).into_element()
+            })
     }
+}
+
+/// Floating action card shown after the user finishes a selection.
+/// Currently exposes a single "Crear bookmark" action; the clipboard
+/// "Copiar como ref" flow lands with Phase 6 once the `[[…]]` body
+/// chip format is settled.
+fn selection_menu(item: ItemId, mut visible: State<bool>) -> impl IntoElement {
+    let on_create = move |_: Event<PressEventData>| {
+        let created = active_pdf_sources::get(item)
+            .and_then(|h| create_bookmark_from_selection(item, &h));
+        if created.is_some() {
+            if let Some(handle) = active_pdf_sources::get(item) {
+                handle.plugin.clear_selection(handle.instance);
+            }
+            visible.set(false);
+        } else {
+            log::warn!("create bookmark from selection failed for {item:?}");
+        }
+    };
+
+    rect()
+        .layer(Layer::Overlay)
+        .position(
+            Position::new_absolute()
+                .bottom(24.0)
+                .right(24.0),
+        )
+        .padding(Gaps::new(8.0, 12.0, 8.0, 12.0))
+        .corner_radius(CornerRadius::new_all(8.0))
+        .background(Color::from_argb(240, 32, 32, 36))
+        .shadow(Shadow::from((
+            0.0_f32,
+            6.0_f32,
+            18.0_f32,
+            0.0_f32,
+            Color::from_argb(120, 0, 0, 0),
+        )))
+        .child(
+            rect()
+                .horizontal()
+                .spacing(8.0)
+                .cross_align(Alignment::Center)
+                .child(
+                    rect()
+                        .padding(Gaps::new(6.0, 10.0, 6.0, 10.0))
+                        .corner_radius(CornerRadius::new_all(6.0))
+                        .background(Color::from_argb(255, 90, 155, 255))
+                        .on_press(on_create)
+                        .child(
+                            label()
+                                .color(Color::from_rgb(255, 255, 255))
+                                .font_size(13.0)
+                                .text("Crear bookmark"),
+                        ),
+                ),
+        )
+}
+
+/// Dispatch "create bookmark from current selection":
+/// - Pulls `Selection { anchor, snippet }` from the plugin.
+/// - Walks preference-ordered mount keys to pick a target canvas (the
+///   sibling [`CanvasMount::DocLinkedCanvas`] for a DocLinked bundle,
+///   otherwise the same-item mount).
+/// - Emits a single [`crate::doc_op::DocOp::AddBookmark`] carrying the
+///   snippet in the body and a `SourceRef::Plugin` pointing back at the
+///   PDF anchor.
+fn create_bookmark_from_selection(item: ItemId, handle: &PdfSourceHandle) -> Option<BookmarkId> {
+    let selection = handle.plugin.current_selection(handle.instance)?;
+    let target = active_boards::get(CanvasMount::DocLinkedCanvas(item))
+        .or_else(|| active_boards::get(CanvasMount::Item(item)))?;
+    let now = now_ms();
+    let source_ref = SourceRef::Plugin {
+        plugin_id: PDF_PLUGIN_ID.to_owned(),
+        item: item.0,
+        anchor: selection.anchor.clone(),
+        selection: Some(selection.snippet.clone()),
+    };
+    let mut guard = lock(&target);
+    // Drop the bookmark at the target viewport's current centre so the
+    // pin is visible after creation. `world_point_at_viewport_centre`
+    // defaults to (0, 0) when the surface rect hasn't been measured
+    // yet — still better than silently stashing offscreen.
+    let world = WorldPoint::new(0.0, 0.0);
+    Some(guard.add_bookmark_full(
+        world,
+        0.0,
+        now,
+        selection.snippet,
+        vec![source_ref],
+    ))
 }
 
 /// Freya canvas whose paint callback reads the plugin's selection
