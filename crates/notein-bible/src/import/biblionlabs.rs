@@ -363,9 +363,7 @@ fn insert_book_contents(
 
     let mut insert_header = conn.prepare_cached(
         "INSERT INTO headers (bible_id, book_id, chapter, before_verse, text)
-         VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT(bible_id, book_id, chapter, before_verse) DO UPDATE SET
-             text = excluded.text",
+         VALUES (?1, ?2, ?3, ?4, ?5)",
     )?;
 
     let mut count = 0usize;
@@ -437,9 +435,7 @@ fn insert_headers(
 ) -> rusqlite::Result<()> {
     let mut insert_header = conn.prepare_cached(
         "INSERT INTO headers (bible_id, book_id, chapter, before_verse, text)
-         VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT(bible_id, book_id, chapter, before_verse) DO UPDATE SET
-             text = excluded.text",
+         VALUES (?1, ?2, ?3, ?4, ?5)",
     )?;
 
     if let Some(headings) = desc.chapter_headings.get(book_id) {

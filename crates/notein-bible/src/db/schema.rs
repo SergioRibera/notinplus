@@ -47,13 +47,15 @@ CREATE INDEX IF NOT EXISTS idx_verses_chapter
     ON verses(bible_id, book_id, chapter);
 
 CREATE TABLE IF NOT EXISTS headers (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
     bible_id      TEXT NOT NULL,
     book_id       TEXT NOT NULL,
     chapter       INTEGER NOT NULL,
     before_verse  INTEGER NOT NULL,
-    text          TEXT NOT NULL,
-    PRIMARY KEY (bible_id, book_id, chapter, before_verse)
+    text          TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_headers_loc
+    ON headers(bible_id, book_id, chapter, before_verse);
 
 CREATE TABLE IF NOT EXISTS cross_refs (
     bible_id    TEXT NOT NULL,
