@@ -49,7 +49,7 @@ pub use dynamic::{
     SDK_ABI_VERSION, load_from_manifest,
 };
 pub use error::{CanvasError, ConfigError, CreationError, SourceError};
-pub use ids::{BookmarkId, StrokeId};
+pub use ids::{ActorId, BookmarkId, DeviceId, OpId, StrokeId, UserId};
 pub use manifest::{ManifestError, ManifestRequirement, PluginManifest};
 pub use registry::{
     DynamicOrigin, InstalledPlugin, PluginOrigin, PluginRegistry, PluginRole,

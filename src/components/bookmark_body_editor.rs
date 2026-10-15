@@ -583,13 +583,16 @@ fn chip_widget(src: SourceRef) -> impl IntoElement {
         base_bg
     };
 
-    // Mirrors `freya_components::Link`'s pattern for inline-paragraph
-    // children: plain `rect` with `on_press`, no a11y_focusable (the
-    // paragraph wrapper owns the focus target). `Link` renders inline
-    // chip-shaped links in the Freya `feature_inlined_text_elements`
-    // demo via this exact shape, so we know it routes clicks.
+    // Freya requires explicit dimensions for inline paragraph
+    // children (see `feature_inlined_text_elements` demo). Without
+    // them the placeholder rect collapses and no pointer events hit.
+    // `on_pointer_down` fires on the press itself (no press-release
+    // pairing); kept alongside `on_press` so a drag that originates
+    // on the chip still navigates.
+    let nav_src_down = nav_src.clone();
     rect()
-        .padding((2., 6.))
+        .height(Size::px(20.))
+        .padding((2., 8.))
         .background(bg)
         .corner_radius(10.)
         .border(
@@ -601,10 +604,17 @@ fn chip_widget(src: SourceRef) -> impl IntoElement {
         .cursor(CursorIcon::Pointer)
         .direction(Direction::Horizontal)
         .cross_align(Alignment::center())
-        .on_pointer_enter(move |_| hover.set(true))
+        .on_pointer_enter(move |_| {
+            log::info!("chip: pointer_enter");
+            hover.set(true);
+        })
         .on_pointer_leave(move |_| hover.set_if_modified(false))
+        .on_pointer_down(move |_: Event<PointerEventData>| {
+            log::info!("chip: pointer_down -> navigate");
+            source_ref_nav::navigate(&nav_src_down);
+        })
         .on_press(move |_: Event<PressEventData>| {
-            log::info!("bookmark_body_editor: chip clicked, navigating");
+            log::info!("chip: press -> navigate");
             source_ref_nav::navigate(&nav_src);
         })
         .maybe_child(icon_el)
