@@ -289,7 +289,7 @@ impl CanvasKind for BibleCanvas {
         vec![custom_entry(
             "new-bible-viewer",
             "Nueva Biblia",
-            notein_sdk::bytes::Bytes::from_static(b"\xf0\x9f\x93\x96"),
+            freya_icons::lucide::book_open(),
             CreationCategory::Canvas,
         )]
     }

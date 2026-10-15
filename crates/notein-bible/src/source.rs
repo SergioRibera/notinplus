@@ -295,7 +295,7 @@ impl Source for BibleSource {
         vec![custom_entry(
             "install-bible",
             "Instalar Biblia",
-            notein_sdk::bytes::Bytes::from_static(b"\xf0\x9f\x93\xa5"),
+            freya_icons::lucide::download(),
             CreationCategory::Source,
         )]
     }
