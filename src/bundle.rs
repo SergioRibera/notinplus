@@ -55,6 +55,37 @@ pub struct ExportSelection {
     pub workspaces: Vec<WorkspaceId>,
 }
 
+/// Flags toggled by the export dialog before the writer runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExportOptions {
+    /// When `true`, PDF attachments are embedded verbatim in the
+    /// bundle. When `false`, only the manifest + canvas doc bodies
+    /// travel — the receiver sees chips but no re-openable PDFs.
+    pub include_attachments: bool,
+}
+
+impl Default for ExportOptions {
+    fn default() -> Self {
+        Self {
+            include_attachments: true,
+        }
+    }
+}
+
+/// Preview computed from a selection without touching disk. Rendered
+/// by the export dialog so the user can trim the item list and see
+/// which plugins the receiver will need before the writer runs.
+///
+/// Not `Eq`: [`Workspace::layout`] carries an `f32` split ratio, so
+/// the comparison bottoms out as `PartialEq`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ExportPreview {
+    pub items: Vec<Item>,
+    pub folders: Vec<Folder>,
+    pub workspaces: Vec<Workspace>,
+    pub requires_plugins: Vec<String>,
+}
+
 /// Bundle manifest. One per `.notein` file, serialised via `bincode` at
 /// [`MANIFEST_ENTRY`].
 #[derive(Clone, Debug, PartialEq)]
@@ -168,7 +199,12 @@ type Result<T> = core::result::Result<T, BundleError>;
 /// # Errors
 /// Filesystem / codec / library failures surface through
 /// [`BundleError`].
-pub fn write_bundle<W: Write>(sink: W, lib: &Library, selection: &ExportSelection) -> Result<()> {
+pub fn write_bundle<W: Write>(
+    sink: W,
+    lib: &Library,
+    selection: &ExportSelection,
+    options: ExportOptions,
+) -> Result<()> {
     let plan = plan_export(lib, selection)?;
     let manifest = build_manifest(lib, &plan)?;
 
@@ -185,7 +221,7 @@ pub fn write_bundle<W: Write>(sink: W, lib: &Library, selection: &ExportSelectio
             let path = format!("{DOCS_PREFIX}{}.{DOC_EXT}", item.id);
             append_file(&mut tar, &path, &doc_bytes)?;
         }
-        if item_carries_pdf(&item.kind) {
+        if options.include_attachments && item_carries_pdf(&item.kind) {
             if let Ok(pdf_bytes) = bodies::read_pdf(item.id) {
                 let path = format!("{PDFS_PREFIX}{}.{PDF_EXT}", item.id);
                 append_file(&mut tar, &path, &pdf_bytes)?;
@@ -202,9 +238,14 @@ pub fn write_bundle<W: Write>(sink: W, lib: &Library, selection: &ExportSelectio
 ///
 /// # Errors
 /// See [`write_bundle`].
-pub fn write_bundle_to_path(dest: &Path, lib: &Library, selection: &ExportSelection) -> Result<()> {
+pub fn write_bundle_to_path(
+    dest: &Path,
+    lib: &Library,
+    selection: &ExportSelection,
+    options: ExportOptions,
+) -> Result<()> {
     let file = File::create(dest)?;
-    write_bundle(file, lib, selection)
+    write_bundle(file, lib, selection, options)
 }
 
 /// Decoded bundle payload. Lives entirely in memory — the on-disk
@@ -352,6 +393,25 @@ struct ExportPlan {
     item_ids: Vec<ItemId>,
     folder_ids: Vec<FolderId>,
     workspace_ids: Vec<WorkspaceId>,
+}
+
+/// Resolve `selection` to a materialised preview without touching
+/// disk. The dialog renders item names + plugin deps from this; a
+/// subsequent [`write_bundle`] call runs the actual export.
+///
+/// # Errors
+/// [`BundleError::MissingItem`] / [`BundleError::MissingFolder`] /
+/// [`BundleError::MissingWorkspace`] when `selection` names an id the
+/// library does not know.
+pub fn preview_export(lib: &Library, selection: &ExportSelection) -> Result<ExportPreview> {
+    let plan = plan_export(lib, selection)?;
+    let manifest = build_manifest(lib, &plan)?;
+    Ok(ExportPreview {
+        items: manifest.items,
+        folders: manifest.folders,
+        workspaces: manifest.workspaces,
+        requires_plugins: manifest.requires_plugins,
+    })
 }
 
 fn plan_export(lib: &Library, selection: &ExportSelection) -> Result<ExportPlan> {

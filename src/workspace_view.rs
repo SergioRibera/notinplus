@@ -333,19 +333,14 @@ fn header_bar(
     let export_handle = handle.clone();
     let export_name = snap.workspace.name.clone();
     let export_btn = text_button("Exportar").on_press(move |_| {
-        let handle = export_handle.clone();
-        let stem = export_name.clone();
-        spawn_forever(async move {
-            crate::home::export_selection_via_picker(
-                handle,
-                crate::bundle::ExportSelection {
-                    workspaces: vec![workspace_id],
-                    ..Default::default()
-                },
-                stem,
-            )
-            .await;
-        });
+        crate::home::open_export_bundle_flow(
+            export_handle.clone(),
+            crate::bundle::ExportSelection {
+                workspaces: vec![workspace_id],
+                ..Default::default()
+            },
+            export_name.clone(),
+        );
     });
 
     rect()

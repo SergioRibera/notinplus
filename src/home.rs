@@ -725,19 +725,14 @@ impl Component for ItemCard {
                 let handle = handle.clone();
                 let name = title.clone();
                 move || {
-                    let handle = handle.clone();
-                    let name = name.clone();
-                    spawn_forever(async move {
-                        export_selection_via_picker(
-                            handle,
-                            crate::bundle::ExportSelection {
-                                items: vec![id],
-                                ..Default::default()
-                            },
-                            name,
-                        )
-                        .await;
-                    });
+                    open_export_bundle_flow(
+                        handle.clone(),
+                        crate::bundle::ExportSelection {
+                            items: vec![id],
+                            ..Default::default()
+                        },
+                        name.clone(),
+                    );
                 }
             };
             build_card_menu(
@@ -897,19 +892,14 @@ impl Component for FolderCard {
                 let handle = handle.clone();
                 let name = title.clone();
                 move || {
-                    let handle = handle.clone();
-                    let name = name.clone();
-                    spawn_forever(async move {
-                        export_selection_via_picker(
-                            handle,
-                            crate::bundle::ExportSelection {
-                                folders: vec![id],
-                                ..Default::default()
-                            },
-                            name,
-                        )
-                        .await;
-                    });
+                    open_export_bundle_flow(
+                        handle.clone(),
+                        crate::bundle::ExportSelection {
+                            folders: vec![id],
+                            ..Default::default()
+                        },
+                        name.clone(),
+                    );
                 }
             };
             build_card_menu(
@@ -1145,12 +1135,64 @@ where
         })
 }
 
+/// Resolve `selection` into an [`crate::bundle::ExportPreview`],
+/// open the review sheet, then — on confirm — hand the trimmed
+/// item list + options off to [`export_selection_via_picker`]. This
+/// is the single entry point the item / folder / workspace export
+/// surfaces call so the user always sees the preview + attachments
+/// toggle before the save picker opens.
+pub(crate) fn open_export_bundle_flow(
+    handle: LibHandle,
+    selection: crate::bundle::ExportSelection,
+    suggested_stem: String,
+) {
+    use crate::components::{ExportBundleRequest, ExportBundleSheet};
+
+    let preview_handle = handle.clone();
+    spawn_forever(async move {
+        let preview = {
+            let lib = preview_handle.lock().await;
+            match crate::bundle::preview_export(&lib, &selection) {
+                Ok(p) => p,
+                Err(err) => {
+                    log::error!("preview export: {err}");
+                    return;
+                }
+            }
+        };
+
+        let launch_handle = handle;
+        let launch_stem = suggested_stem;
+        ExportBundleSheet::new(preview, move |req: ExportBundleRequest| {
+            if req.items.is_empty() {
+                return;
+            }
+            let launch_handle = launch_handle.clone();
+            let launch_stem = launch_stem.clone();
+            spawn_forever(async move {
+                export_selection_via_picker(
+                    launch_handle,
+                    crate::bundle::ExportSelection {
+                        items: req.items,
+                        ..Default::default()
+                    },
+                    req.options,
+                    launch_stem,
+                )
+                .await;
+            });
+        })
+        .open();
+    });
+}
+
 /// Prompt the user for a destination `.notein` file via the file
 /// picker, then stream a bundle of `selection` into it. Logs on
 /// failure; no toast infra on home yet.
 pub(crate) async fn export_selection_via_picker(
     handle: LibHandle,
     selection: crate::bundle::ExportSelection,
+    options: crate::bundle::ExportOptions,
     suggested_stem: String,
 ) {
     use istmo_file_picker::{FileFilter, FilePickerClient, SaveConfig};
@@ -1192,7 +1234,7 @@ pub(crate) async fn export_selection_via_picker(
         }
     };
     let lib = handle.lock().await;
-    if let Err(err) = crate::bundle::write_bundle(writer, &lib, &selection) {
+    if let Err(err) = crate::bundle::write_bundle(writer, &lib, &selection, options) {
         log::error!("export bundle: {err}");
     } else {
         log::info!("bundle exported to {}", owned.display_name);
