@@ -141,11 +141,37 @@ impl PdfSourcePlugin {
     /// this right after `open` so [`Source::current_selection`] can
     /// encode a full [`PdfAnchor::Range`] back to the item.
     ///
+    /// Also publishes the item into the process-wide completion
+    /// catalog so the `[[` popup can list this PDF whether or not
+    /// a viewer is currently open (static catalog pattern).
+    ///
     /// Noop on unknown instance.
     pub fn attach_item(&self, instance: u64, item: ItemId) {
-        if let Some(inst) = self.lock_instances().get_mut(&instance) {
+        let page_count = {
+            let mut g = self.lock_instances();
+            let Some(inst) = g.get_mut(&instance) else {
+                return;
+            };
             inst.source = Some(item);
-        }
+            inst.doc.page_count()
+        };
+        let anchor = encode_pdf_anchor(PdfAnchor::Page {
+            source: item,
+            page: 0,
+        });
+        let short_id: String = item.to_string().chars().take(8).collect();
+        crate::completion_catalog::register(crate::completion_catalog::CatalogEntry {
+            plugin_id: KIND_ID.to_owned(),
+            item_id: item,
+            label: format!("PDF ({page_count} páginas)"),
+            subtitle: Some(format!("PDF · {short_id}")),
+            source: SourceRef::Plugin {
+                plugin_id: KIND_ID.to_owned(),
+                item: item.0,
+                anchor,
+                selection: None,
+            },
+        });
     }
 
     /// Store (or clear) the live selection for an instance. Automatically
@@ -545,41 +571,10 @@ impl Source for PdfSourcePlugin {
         Some(AnchorView { title, snippet })
     }
 
-    fn plugin_completions(&self, query: &str) -> Vec<Completion> {
-        let needle = query.to_lowercase();
-        let guard = self.lock_instances();
-        let mut out = Vec::with_capacity(guard.len());
-        for inst in guard.values() {
-            let Some(source_id) = inst.source else {
-                continue;
-            };
-            let page_count = inst.doc.page_count();
-            // Short item id for disambiguation when the library has
-            // multiple PDFs open — the plugin cannot reach the Library
-            // for the human-visible item name, so the shell enriches
-            // the label with it after this returns.
-            let short_id: String = source_id.to_string().chars().take(8).collect();
-            let display = format!("PDF ({page_count} páginas)");
-            if !needle.is_empty() && !display.to_lowercase().contains(&needle) {
-                continue;
-            }
-            let anchor_bytes = encode_pdf_anchor(PdfAnchor::Page {
-                source: source_id,
-                page: 0,
-            });
-            out.push(Completion {
-                label: display,
-                subtitle: Some(format!("PDF · página 1 · {short_id}")),
-                source: SourceRef::Plugin {
-                    plugin_id: KIND_ID.to_owned(),
-                    item: source_id.0,
-                    anchor: anchor_bytes,
-                    selection: None,
-                },
-            });
-        }
-        out
-    }
+    // `plugin_completions` is intentionally not overridden now —
+    // the shell reads from `completion_catalog` which is populated
+    // by `attach_item` whenever the PDF opens. Keeps completions
+    // visible even after the instance closes.
 
     fn render_chip(&self, anchor: &[u8]) -> Option<ChipView> {
         let decoded = decode_pdf_anchor(anchor)?;

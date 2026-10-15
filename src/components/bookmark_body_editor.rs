@@ -750,6 +750,11 @@ fn completion_popup(
 ) -> impl IntoElement {
     let is_empty = entries.is_empty();
     let popup_height = if is_empty { 44.0 } else { 220.0 };
+    let hint = label()
+        .font_size(10.5)
+        .color(TEXT_PLACEHOLDER)
+        .max_lines(1)
+        .text("↑↓ seleccionar · Enter / Tab / clic insertar · Esc cerrar");
     let body: Element = if is_empty {
         rect()
             .width(Size::fill())
@@ -758,22 +763,35 @@ fn completion_popup(
                 label()
                     .font_size(12.)
                     .color(TEXT_PLACEHOLDER)
-                    .text("Sin sugerencias — Esc para cerrar"),
+                    .text("Sin sugerencias"),
             )
+            .child(hint)
             .into_element()
     } else {
-        ScrollView::new()
-            .direction(Direction::Vertical)
-            .show_scrollbar(false)
-            .children(entries.into_iter().enumerate().map(|(i, c)| {
-                CompletionItem {
-                    completion: c,
-                    selected: i == selected,
-                    on_pick: on_pick.clone(),
-                    key: DiffKey::U64(i as u64),
-                }
-                .into_element()
-            }))
+        rect()
+            .width(Size::fill())
+            .height(Size::fill())
+            .child(
+                ScrollView::new()
+                    .direction(Direction::Vertical)
+                    .show_scrollbar(false)
+                    .height(Size::flex(1.))
+                    .children(entries.into_iter().enumerate().map(|(i, c)| {
+                        CompletionItem {
+                            completion: c,
+                            selected: i == selected,
+                            on_pick: on_pick.clone(),
+                            key: DiffKey::U64(i as u64),
+                        }
+                        .into_element()
+                    })),
+            )
+            .child(
+                rect()
+                    .width(Size::fill())
+                    .padding((4., 8.))
+                    .child(hint),
+            )
             .into_element()
     };
 
@@ -822,21 +840,23 @@ impl Component for CompletionItem {
         let on_pick = self.on_pick.clone();
 
         let bg = if self.selected {
-            PRIMARY.with_a(64)
+            PRIMARY
         } else if is_hover() {
             SURFACE_SECONDARY
         } else {
             Color::TRANSPARENT
         };
+        let fg = if self.selected { TEXT_PRIMARY } else { TEXT_PRIMARY };
+        let sub_fg = if self.selected { Color::from_rgb(220, 230, 250) } else { TEXT_SECONDARY };
 
         let primary = label()
             .font_size(13.5)
-            .color(TEXT_PRIMARY)
+            .color(fg)
             .text(self.completion.label.clone());
         let maybe_subtitle = self.completion.subtitle.clone().map(|s| {
             label()
                 .font_size(11.)
-                .color(TEXT_SECONDARY)
+                .color(sub_fg)
                 .text(s)
                 .max_lines(1)
         });

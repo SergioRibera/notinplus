@@ -15,6 +15,7 @@ pub mod app;
 pub mod bookmark;
 pub mod bookmark_body;
 pub mod bookmark_ui;
+pub mod completion_catalog;
 pub mod brush;
 pub mod builtin;
 pub mod bundle;

@@ -194,8 +194,16 @@ fn bookmark_completions_provider(
             );
         }
 
-        // Plugin-driven entries. Clone the Arcs out of the registry
-        // under the lock so individual plugin calls run lock-free.
+        // Static catalog entries — populated by plugins when they
+        // open / process a document. Survives close so the user can
+        // link to any previously-opened item, not just the one with
+        // a live viewer.
+        out.extend(crate::completion_catalog::query(&query));
+
+        // Dynamic plugin entries (optional). Plugins that want
+        // instance-aware completions (per-page search, live
+        // selection ref, …) override `plugin_completions`. Catalog
+        // entries are the common case; this is the escape hatch.
         let plugins: Vec<_> = {
             let reg = crate::plugins::registry();
             let reg_guard = crate::plugins::lock(&reg);
