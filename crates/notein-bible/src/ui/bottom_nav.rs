@@ -16,9 +16,9 @@ const PLAY_SIZE: f32 = 52.0;
 #[allow(missing_debug_implementations)]
 pub struct BottomNavCallbacks<FP, FN, FA>
 where
-    FP: FnMut() + Send + 'static,
-    FN: FnMut() + Send + 'static,
-    FA: FnMut() + Send + 'static,
+    FP: FnMut() + 'static,
+    FN: FnMut() + 'static,
+    FA: FnMut() + 'static,
 {
     pub on_prev: FP,
     pub on_next: FN,
@@ -31,9 +31,9 @@ pub fn bottom_nav<FP, FN, FA>(
     callbacks: BottomNavCallbacks<FP, FN, FA>,
 ) -> impl IntoElement
 where
-    FP: FnMut() + Send + 'static,
-    FN: FnMut() + Send + 'static,
-    FA: FnMut() + Send + 'static,
+    FP: FnMut() + 'static,
+    FN: FnMut() + 'static,
+    FA: FnMut() + 'static,
 {
     let BottomNavCallbacks { on_prev, on_next, on_play } = callbacks;
     let caption = format!("{} {}", book_name.to_uppercase(), chapter);
@@ -53,7 +53,7 @@ where
 
 fn play_button<F>(mut on_press: F) -> impl IntoElement
 where
-    F: FnMut() + Send + 'static,
+    F: FnMut() + 'static,
 {
     rect()
         .width(Size::px(PLAY_SIZE))
@@ -76,8 +76,8 @@ fn chapter_pill<FP, FN>(
     mut on_next: FN,
 ) -> impl IntoElement
 where
-    FP: FnMut() + Send + 'static,
-    FN: FnMut() + Send + 'static,
+    FP: FnMut() + 'static,
+    FN: FnMut() + 'static,
 {
     rect()
         .height(Size::px(PILL_HEIGHT))

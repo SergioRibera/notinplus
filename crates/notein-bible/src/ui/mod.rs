@@ -7,6 +7,7 @@
 pub mod bottom_nav;
 pub mod chapter;
 pub mod reader;
+pub mod search_sheet;
 pub mod theme;
 pub mod toolbar;
 pub mod typography;

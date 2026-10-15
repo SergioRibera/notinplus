@@ -17,10 +17,10 @@ const BUTTON_SIZE: f32 = 36.0;
 #[allow(missing_debug_implementations)]
 pub struct ToolbarCallbacks<FA, FS, FM, FT>
 where
-    FA: FnMut() + Send + 'static,
-    FS: FnMut() + Send + 'static,
-    FM: FnMut() + Send + 'static,
-    FT: FnMut() + Send + 'static,
+    FA: FnMut() + 'static,
+    FS: FnMut() + 'static,
+    FM: FnMut() + 'static,
+    FT: FnMut() + 'static,
 {
     pub on_audio: FA,
     pub on_search: FS,
@@ -33,10 +33,10 @@ pub fn top_toolbar<FA, FS, FM, FT>(
     callbacks: ToolbarCallbacks<FA, FS, FM, FT>,
 ) -> impl IntoElement
 where
-    FA: FnMut() + Send + 'static,
-    FS: FnMut() + Send + 'static,
-    FM: FnMut() + Send + 'static,
-    FT: FnMut() + Send + 'static,
+    FA: FnMut() + 'static,
+    FS: FnMut() + 'static,
+    FM: FnMut() + 'static,
+    FT: FnMut() + 'static,
 {
     let ToolbarCallbacks {
         on_audio,
@@ -65,7 +65,7 @@ where
 
 fn icon_button<F>(icon: Bytes, mut on_press: F) -> impl IntoElement
 where
-    F: FnMut() + Send + 'static,
+    F: FnMut() + 'static,
 {
     rect()
         .width(Size::px(BUTTON_SIZE))
@@ -83,7 +83,7 @@ where
 
 fn translation_chip<F>(abbrev: &str, mut on_press: F) -> impl IntoElement
 where
-    F: FnMut() + Send + 'static,
+    F: FnMut() + 'static,
 {
     rect()
         .height(Size::px(34.0))
