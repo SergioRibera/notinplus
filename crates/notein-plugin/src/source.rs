@@ -201,6 +201,13 @@ pub trait Source: Send + Sync + std::fmt::Debug + std::any::Any {
         let _ = anchor;
         None
     }
+
+    /// Install the shared host handle ([`crate::Host`]). Called once
+    /// at registration time. Default no-op; plugins that need progress
+    /// bars, notifications or url opening stash the clone.
+    fn install_host(&self, host: crate::Host) {
+        let _ = host;
+    }
 }
 
 /// Autocomplete entry surfaced by [`Source::plugin_completions`] and

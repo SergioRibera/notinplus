@@ -15,10 +15,12 @@ use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection;
 
+mod highlights;
 mod queries;
 mod schema;
 mod search;
 
+pub use highlights::HighlightRow;
 pub use queries::{BibleRow, BookRow, ChapterRow, HeaderRow, VerseRow};
 pub use search::{SearchHit, snippet_markers};
 
@@ -151,6 +153,18 @@ impl Db {
 
     pub fn search(&self, bible_id: Option<&str>, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
         search::search(self, bible_id, query, limit)
+    }
+
+    pub fn insert_highlight(&self, row: &HighlightRow) -> Result<()> {
+        highlights::insert_highlight(self, row)
+    }
+
+    pub fn delete_highlight(&self, id: notein_sdk::BookmarkId) -> Result<bool> {
+        highlights::delete_highlight(self, id)
+    }
+
+    pub fn list_highlights(&self, bible_id: &str) -> Result<Vec<HighlightRow>> {
+        highlights::list_highlights(self, bible_id)
     }
 }
 

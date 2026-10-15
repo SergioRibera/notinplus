@@ -11,10 +11,11 @@
 //! instant without pinning the whole Bible in memory.
 
 use std::collections::VecDeque;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use notein_sdk::{BookmarkId, Rgba};
 
-use crate::db::{BookRow, ChapterRow, Db, DbError};
+use crate::db::{BookRow, ChapterRow, Db, DbError, HighlightRow};
 
 /// Everything a single open Bible tab needs to render + navigate.
 #[derive(Debug)]
@@ -193,7 +194,11 @@ impl BibleViewerState {
         self.chapter_cache.clear();
         self.scroll_y = 0.0;
         self.selection = None;
-        self.ensure_current_loaded(db)
+        self.ensure_current_loaded(db)?;
+        // Rebuild highlights against the new translation — verses are
+        // keyed by (bible_id, book, chap, verse) so cross-translation
+        // reuse is not meaningful.
+        self.hydrate_highlights(db)
     }
 
     /// Jump directly to `(book, chapter)`. Fails if the chapter does
@@ -276,6 +281,78 @@ impl BibleViewerState {
             .filter(|h| h.book_id == book_id && h.chapter == chapter)
             .collect()
     }
+
+    /// Commit the current selection as a highlight AND persist it to
+    /// `db`. Returns the new bookmark id, or `None` when no selection
+    /// was pending.
+    pub fn persist_selection_as_highlight(
+        &mut self,
+        db: &Db,
+        color: Option<u32>,
+        note: impl Into<String>,
+    ) -> Result<Option<BookmarkId>, DbError> {
+        let note = note.into();
+        let Some(id) = self.commit_selection_as_highlight(color, note.clone()) else {
+            return Ok(None);
+        };
+        let hl = self
+            .highlights
+            .iter()
+            .find(|h| h.id == id)
+            .expect("just-inserted highlight must be in list");
+        let row = HighlightRow {
+            id: hl.id,
+            bible_id: self.bible_id.clone(),
+            book_id: hl.book_id.clone(),
+            chapter: hl.chapter,
+            start_verse: hl.start_verse,
+            end_verse: hl.end_verse,
+            color: hl.color,
+            note: hl.note.clone(),
+            created_at: now_millis(),
+        };
+        db.insert_highlight(&row)?;
+        Ok(Some(id))
+    }
+
+    /// Delete + unpersist in one step. Returns `true` when at least one
+    /// side had the entry.
+    pub fn delete_highlight_persisted(
+        &mut self,
+        db: &Db,
+        id: BookmarkId,
+    ) -> Result<bool, DbError> {
+        let in_memory = self.remove_highlight(id);
+        let in_db = db.delete_highlight(id)?;
+        Ok(in_memory || in_db)
+    }
+
+    /// Replace the in-memory highlights with every entry persisted for
+    /// `self.bible_id`. Called after a chapter load or bible switch so
+    /// the reader surface reflects on-disk state.
+    pub fn hydrate_highlights(&mut self, db: &Db) -> Result<(), DbError> {
+        let rows = db.list_highlights(&self.bible_id)?;
+        self.highlights = rows
+            .into_iter()
+            .map(|r| BibleBookmark {
+                id: r.id,
+                book_id: r.book_id,
+                chapter: r.chapter,
+                start_verse: r.start_verse,
+                end_verse: r.end_verse,
+                color: r.color,
+                note: r.note,
+            })
+            .collect();
+        Ok(())
+    }
+}
+
+fn now_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

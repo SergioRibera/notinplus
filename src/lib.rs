@@ -29,6 +29,8 @@ pub mod doc_op;
 pub mod dynamic_plugins;
 pub mod home;
 pub mod hooks;
+pub mod host_api;
+pub mod host_overlay;
 pub mod identity;
 pub mod ids;
 pub mod library;

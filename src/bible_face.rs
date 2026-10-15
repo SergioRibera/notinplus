@@ -66,6 +66,9 @@ fn bible_viewer(db: Db, bibles: Vec<BibleRow>) -> impl IntoElement {
         ) {
             st.push_chapter(chap);
         }
+        if let Err(e) = st.hydrate_highlights(&db_for_init) {
+            log::warn!("bible: hydrate highlights: {e}");
+        }
         st
     });
     let mut picker_open = use_state(|| false);

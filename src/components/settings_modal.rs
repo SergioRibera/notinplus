@@ -827,7 +827,46 @@ fn render_control(
         ConfigFieldKind::FilePath { .. } => {
             string_control(plugin_id, role, field, current, 1024, tick, registry)
         }
+        ConfigFieldKind::Action { button_label, confirm } => action_control(
+            plugin_id,
+            role,
+            field,
+            button_label,
+            confirm,
+            tick,
+            registry,
+        ),
     }
+}
+
+fn action_control(
+    plugin_id: String,
+    role: PluginRole,
+    field: ConfigField,
+    button_label: String,
+    _confirm: Option<String>,
+    tick: State<u64>,
+    registry: Arc<Mutex<PluginRegistry>>,
+) -> Element {
+    // Confirmation dialog is a follow-up; for now the button fires
+    // immediately so users can exercise the trigger end-to-end.
+    let key = field.key.clone();
+    let on_press = move |_: Event<PressEventData>| {
+        write_value(&registry, &plugin_id, role, &key, ConfigValue::Trigger, tick);
+    };
+    rect()
+        .padding((8., 14.))
+        .with_corner_radius(8.0)
+        .background(Color::from_rgb(55, 80, 140))
+        .cross_align(Alignment::Center)
+        .on_press(on_press)
+        .child(
+            label()
+                .font_size(13.0)
+                .color(Color::from_rgb(240, 240, 240))
+                .text(button_label),
+        )
+        .into_element()
 }
 
 fn bool_control(

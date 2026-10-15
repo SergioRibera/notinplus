@@ -161,7 +161,7 @@ fn navigate_canvas_bookmark(bookmark: BookmarkId) {
 /// drained for our window?) during Phase 6 testing. We spawn the
 /// platform-native opener directly instead — simpler and matches what
 /// `open::that` would do inside the renderer anyway.
-fn open_external_url(url: &str) {
+pub fn open_external_url(url: &str) {
     log::info!("navigate: opening external url {url}");
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     {

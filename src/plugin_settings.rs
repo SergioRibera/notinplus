@@ -24,7 +24,9 @@ use std::io;
 use std::path::PathBuf;
 
 use bincode::config::{self, Configuration};
-use notein_plugin::{ConfigField, ConfigValue, PluginRegistry, PluginRole, RegistrySchemaEntry};
+use notein_plugin::{
+    ConfigField, ConfigFieldKind, ConfigValue, PluginRegistry, PluginRole, RegistrySchemaEntry,
+};
 
 use crate::library::bodies;
 
@@ -185,6 +187,11 @@ fn collect_schema_entry(
 ) {
     let plugin_id = schema_entry.plugin_id.as_str();
     for field in &schema_entry.schema.fields {
+        // Action fields carry no persisted value — the trigger fires
+        // transiently and is never stored.
+        if matches!(field.kind, ConfigFieldKind::Action { .. }) {
+            continue;
+        }
         let current = match schema_entry.plugin_role {
             PluginRole::Source => registry
                 .get_source(plugin_id)

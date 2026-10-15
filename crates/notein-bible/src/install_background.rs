@@ -12,11 +12,15 @@
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use notein_sdk::{NotificationKind, Progress as HostProgress};
 use reqwest::blocking::Client;
 
 use crate::db::Db;
 use crate::import::biblionlabs;
 use crate::plugin_config::{self, SharedConfig};
+
+const PLUGIN_ID: &str = "io.notein.bible";
+const PROGRESS_TOKEN: &str = "install";
 
 /// 7-day TTL on cached manifests + per-book files. The installer walks
 /// the biblionlabs cache dir in the same shape the service does; a stale
@@ -80,17 +84,29 @@ fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallPr
         p.error = None;
     }
 
+    let host = plugin_config::host(&config);
+    if let Some(h) = &host {
+        h.report_progress(
+            PLUGIN_ID,
+            PROGRESS_TOKEN,
+            HostProgress::Starting {
+                label: format!("Descargando {bible_id}…"),
+                total: None,
+            },
+        );
+    }
+
     let client = match Client::builder().user_agent("notein-bible/0.1").build() {
         Ok(c) => c,
         Err(e) => {
-            fail(&progress, format!("http client build: {e}"));
+            fail(&progress, host.as_ref(), format!("http client build: {e}"));
             return;
         }
     };
 
     let cache_dir = plugin_config::effective_cache_dir(&config);
     if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-        fail(&progress, format!("mkdir cache: {e}"));
+        fail(&progress, host.as_ref(), format!("mkdir cache: {e}"));
         return;
     }
 
@@ -100,15 +116,38 @@ fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallPr
     let books_template = format!("{base}/bibles/{{bible_id}}/books/{{book}}.json");
 
     let progress_cb_handle = progress.clone();
+    let host_cb = host.clone();
     let progress_cb = move |ev: biblionlabs::Progress| {
         let mut p = progress_cb_handle.write().unwrap();
         match ev {
             biblionlabs::Progress::ManifestFetched { total_books } => {
                 p.stage = InstallStage::Downloading;
                 p.total_books = total_books;
+                if let Some(h) = &host_cb {
+                    h.report_progress(
+                        PLUGIN_ID,
+                        PROGRESS_TOKEN,
+                        HostProgress::Update {
+                            done: 0,
+                            total: Some(total_books as u64),
+                            label: Some("Descargando libros…".into()),
+                        },
+                    );
+                }
             }
             biblionlabs::Progress::BookDone { .. } => {
                 p.done_books += 1;
+                if let Some(h) = &host_cb {
+                    h.report_progress(
+                        PLUGIN_ID,
+                        PROGRESS_TOKEN,
+                        HostProgress::Update {
+                            done: p.done_books as u64,
+                            total: Some(p.total_books as u64),
+                            label: None,
+                        },
+                    );
+                }
             }
             biblionlabs::Progress::Started { .. } | biblionlabs::Progress::Finished { .. } => {}
         }
@@ -126,20 +165,49 @@ fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallPr
     );
 
     match result {
-        Ok(_) => {
+        Ok(verses) => {
             let mut p = progress.write().unwrap();
             p.stage = InstallStage::Finished;
             p.error = None;
+            drop(p);
+            if let Some(h) = &host {
+                h.report_progress(
+                    PLUGIN_ID,
+                    PROGRESS_TOKEN,
+                    HostProgress::Finished { success: true, note: None },
+                );
+                h.notify(
+                    PLUGIN_ID,
+                    NotificationKind::Success,
+                    format!("Biblia {bible_id} instalada ({verses} versículos)"),
+                );
+            }
         }
-        Err(e) => fail(&progress, format!("{e}")),
+        Err(e) => fail(&progress, host.as_ref(), format!("{e}")),
     }
 }
 
-fn fail(progress: &SharedInstallProgress, message: String) {
+fn fail(progress: &SharedInstallProgress, host: Option<&notein_sdk::Host>, message: String) {
     log::warn!("bible: install failed: {message}");
     let mut p = progress.write().unwrap();
     p.stage = InstallStage::Failed;
-    p.error = Some(message);
+    p.error = Some(message.clone());
+    drop(p);
+    if let Some(h) = host {
+        h.report_progress(
+            PLUGIN_ID,
+            PROGRESS_TOKEN,
+            HostProgress::Finished {
+                success: false,
+                note: Some(message.clone()),
+            },
+        );
+        h.notify(
+            PLUGIN_ID,
+            NotificationKind::Error,
+            format!("Instalación falló: {message}"),
+        );
+    }
 }
 
 /// Derive the catalogue base URL from a `.../manifest.json` endpoint.

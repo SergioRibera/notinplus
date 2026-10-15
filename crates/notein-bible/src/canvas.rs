@@ -14,7 +14,7 @@ use std::sync::{Arc, RwLock};
 
 use notein_sdk::{
     Bookmark, BookmarkId, CanvasError, CanvasKind, ConfigError, ConfigSchema, ConfigValue,
-    CreationCategory, CreationEntry, CreationError, FrameCtxHandle, InputEvent,
+    CreationCategory, CreationEntry, CreationError, FrameCtxHandle, Host, InputEvent,
     ItemCreationResult, WorldPoint, build::custom_entry,
 };
 
@@ -260,6 +260,10 @@ impl CanvasKind for BibleCanvas {
 
     fn apply_remote_op(&self, _instance: u64, _op: &[u8]) {}
 
+    fn install_host(&self, host: Host) {
+        plugin_config::set_host(&self.config, host);
+    }
+
     fn config_schema(&self) -> ConfigSchema {
         plugin_config::build_schema(&self.db)
     }
@@ -456,13 +460,18 @@ mod tests {
         let db = Db::in_memory().unwrap();
         let config = plugin_config::new_shared();
         let canvas = BibleCanvas::new(db, config.clone());
+        // Seed the id String field so the Action trigger has something
+        // to install.
         canvas
             .set_config(
-                plugin_config::KEY_INSTALL_BIBLE,
+                plugin_config::KEY_INSTALL_BIBLE_ID,
                 ConfigValue::String("spa_rv1960".into()),
             )
             .unwrap();
-        // Action key is not retained in the stored map.
+        canvas
+            .set_config(plugin_config::KEY_INSTALL_BIBLE, ConfigValue::Trigger)
+            .unwrap();
+        // Action trigger is never retained.
         assert!(config
             .read()
             .unwrap()

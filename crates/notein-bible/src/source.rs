@@ -11,8 +11,8 @@ use std::sync::{Arc, RwLock};
 
 use notein_sdk::{
     AnchorView, ChipView, Completion, ConfigError, ConfigSchema, ConfigValue, CreationCategory,
-    CreationEntry, CreationError, ItemCreationResult, SearchHit, Selection, Source, SourceError,
-    SourceRef, Tile, TileRequest, build::custom_entry,
+    CreationEntry, CreationError, Host, ItemCreationResult, SearchHit, Selection, Source,
+    SourceError, SourceRef, Tile, TileRequest, build::custom_entry,
 };
 
 use crate::anchor::BibleAnchor;
@@ -344,6 +344,10 @@ impl Source for BibleSource {
                 selection: None,
             },
         }]
+    }
+
+    fn install_host(&self, host: Host) {
+        plugin_config::set_host(&self.config, host);
     }
 
     fn render_chip(&self, anchor: &[u8]) -> Option<ChipView> {

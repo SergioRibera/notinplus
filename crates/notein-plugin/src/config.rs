@@ -78,6 +78,16 @@ pub enum ConfigFieldKind {
         /// Lowercase file extensions without the leading dot.
         extensions: Vec<String>,
     },
+    /// Button-shaped action. The host renders a button labelled
+    /// `button_label` in the settings form; clicking it dispatches
+    /// `set_config(key, ConfigValue::Trigger)` to the plugin. No value
+    /// is stored. Use for "Install", "Reset", "Refresh" style actions.
+    Action {
+        button_label: String,
+        /// Optional confirmation prompt. When set, the host pops a
+        /// confirm dialog before firing the trigger.
+        confirm: Option<String>,
+    },
 }
 
 /// One option inside [`ConfigFieldKind::Enum`].
@@ -102,4 +112,8 @@ pub enum ConfigValue {
     /// RGBA packed as `0xRRGGBBAA`.
     Color(u32),
     FilePath(String),
+    /// Button-style trigger. Carries no payload. Dispatched to the
+    /// plugin on button press when the field kind is
+    /// [`ConfigFieldKind::Action`].
+    Trigger,
 }

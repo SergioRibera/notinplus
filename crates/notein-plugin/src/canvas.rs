@@ -208,6 +208,14 @@ pub trait CanvasKind: Send + Sync + std::fmt::Debug {
         let _ = sink;
     }
 
+    /// Install the shared host handle ([`crate::Host`]). Called once at
+    /// registration time. Default no-op so existing plugins keep
+    /// compiling; plugins that need progress / notifications / url
+    /// opening override + stash the clone.
+    fn install_host(&self, host: crate::Host) {
+        let _ = host;
+    }
+
     fn config_schema(&self) -> ConfigSchema;
     fn get_config(&self, key: &str) -> Option<ConfigValue>;
     fn set_config(&self, key: &str, value: ConfigValue) -> Result<(), ConfigError>;

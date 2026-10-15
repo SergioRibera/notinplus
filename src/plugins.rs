@@ -95,6 +95,10 @@ pub fn registry() -> Arc<Mutex<PluginRegistry>> {
             report.failed.len(),
             report.scanned_root.display(),
         );
+        // Hand every registered plugin a clone of the shared `Host`
+        // handle so background workers can report progress + notify
+        // without the plugin having to reach up through the registry.
+        crate::host_api::install_host_in_registry(&reg);
         Arc::new(Mutex::new(reg))
     }))
 }

@@ -32,6 +32,7 @@ pub mod config;
 pub mod creation;
 pub mod dynamic;
 pub mod error;
+pub mod host;
 pub mod ids;
 pub mod manifest;
 pub mod registry;
@@ -49,6 +50,7 @@ pub use dynamic::{
     SDK_ABI_VERSION, load_from_manifest,
 };
 pub use error::{CanvasError, ConfigError, CreationError, SourceError};
+pub use host::{Host, HostApi, NotificationKind, Progress};
 pub use ids::{ActorId, BookmarkId, DeviceId, OpId, StrokeId, UserId};
 pub use manifest::{ManifestError, ManifestRequirement, PluginManifest};
 pub use registry::{

@@ -26,7 +26,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use notein_sdk::{
-    ConfigEnumOption, ConfigError, ConfigField, ConfigFieldKind, ConfigSchema, ConfigValue,
+    ConfigEnumOption, ConfigError, ConfigField, ConfigFieldKind, ConfigSchema, ConfigValue, Host,
 };
 
 use crate::db::Db;
@@ -34,7 +34,11 @@ use crate::db::Db;
 pub const KEY_DEFAULT_BIBLE: &str = "default_bible_id";
 pub const KEY_MANIFEST_URL: &str = "biblionlabs_manifest_url";
 pub const KEY_CACHE_DIR: &str = "cache_dir";
-pub const KEY_INSTALL_BIBLE: &str = "install_bible_id";
+/// String field — user-supplied catalogue id (persisted).
+pub const KEY_INSTALL_BIBLE_ID: &str = "install_bible_id";
+/// Action trigger — fires install for whatever id lives at
+/// [`KEY_INSTALL_BIBLE_ID`]. The value is not stored.
+pub const KEY_INSTALL_BIBLE: &str = "install_bible";
 pub const KEY_FONT_SIZE: &str = "font_size";
 pub const KEY_LINE_HEIGHT: &str = "line_height";
 
@@ -45,27 +49,33 @@ pub const DEFAULT_MANIFEST_URL: &str = "https://v1.fetch.bible/manifest.json";
 /// Shared handle. Cheap to clone, interior-mutable.
 pub type SharedConfig = Arc<RwLock<Inner>>;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Inner {
     pub values: HashMap<String, ConfigValue>,
+    /// Host handle received through [`notein_sdk::CanvasKind::install_host`].
+    /// Only populated once the shell has registered the plugin.
+    pub host: Option<Host>,
 }
 
 impl Inner {
     #[must_use]
     pub fn new() -> Self {
-        Self { values: HashMap::new() }
-    }
-}
-
-impl Default for Inner {
-    fn default() -> Self {
-        Self::new()
+        Self::default()
     }
 }
 
 #[must_use]
 pub fn new_shared() -> SharedConfig {
     Arc::new(RwLock::new(Inner::new()))
+}
+
+pub fn set_host(config: &SharedConfig, host: Host) {
+    config.write().unwrap().host = Some(host);
+}
+
+#[must_use]
+pub fn host(config: &SharedConfig) -> Option<Host> {
+    config.read().unwrap().host.clone()
 }
 
 /// Resolve the default platform cache directory. Lives alongside the
@@ -140,13 +150,22 @@ pub fn build_schema(db: &Db) -> ConfigSchema {
                 aliases: Vec::new(),
             },
             ConfigField {
-                key: KEY_INSTALL_BIBLE.into(),
-                label: "Instalar Biblia (id)".into(),
-                help: "Escribí un id del catálogo y guardá — \
-                       dispara la descarga en segundo plano."
-                    .into(),
+                key: KEY_INSTALL_BIBLE_ID.into(),
+                label: "Biblia a instalar (id del catálogo)".into(),
+                help: "Id del catálogo biblionlabs (ej. spa_rv1960).".into(),
                 kind: ConfigFieldKind::String { max_len: 64 },
-                default: ConfigValue::String(String::new()),
+                default: ConfigValue::String("spa_rv1960".into()),
+                aliases: Vec::new(),
+            },
+            ConfigField {
+                key: KEY_INSTALL_BIBLE.into(),
+                label: "Instalar".into(),
+                help: "Descarga la Biblia indicada arriba en segundo plano.".into(),
+                kind: ConfigFieldKind::Action {
+                    button_label: "Instalar ahora".into(),
+                    confirm: None,
+                },
+                default: ConfigValue::Trigger,
                 aliases: Vec::new(),
             },
             ConfigField {
@@ -187,15 +206,21 @@ pub fn apply_set(
         (KEY_FONT_SIZE, ConfigValue::Float(v)) if (14.0..=32.0).contains(v) => {}
         (KEY_LINE_HEIGHT, ConfigValue::Float(v)) if (1.2..=2.2).contains(v) => {}
         (KEY_FONT_SIZE | KEY_LINE_HEIGHT, _) => return Err(ConfigError::TypeMismatch),
-        (KEY_DEFAULT_BIBLE | KEY_MANIFEST_URL | KEY_CACHE_DIR, ConfigValue::String(_)) => {}
-        (KEY_DEFAULT_BIBLE | KEY_MANIFEST_URL | KEY_CACHE_DIR, _) => {
+        (
+            KEY_DEFAULT_BIBLE | KEY_MANIFEST_URL | KEY_CACHE_DIR | KEY_INSTALL_BIBLE_ID,
+            ConfigValue::String(_),
+        ) => {}
+        (KEY_DEFAULT_BIBLE | KEY_MANIFEST_URL | KEY_CACHE_DIR | KEY_INSTALL_BIBLE_ID, _) => {
             return Err(ConfigError::TypeMismatch);
         }
-        (KEY_INSTALL_BIBLE, ConfigValue::String(id)) => {
+        (KEY_INSTALL_BIBLE, ConfigValue::Trigger) => {
+            let id = string(config, KEY_INSTALL_BIBLE_ID).unwrap_or_default();
             if id.trim().is_empty() {
-                return Err(ConfigError::Rejected("install id is empty".into()));
+                return Err(ConfigError::Rejected(
+                    "no bible id configured (set install_bible_id first)".into(),
+                ));
             }
-            return Ok(SetResult::InstallRequested(id.clone()));
+            return Ok(SetResult::InstallRequested(id));
         }
         (KEY_INSTALL_BIBLE, _) => return Err(ConfigError::TypeMismatch),
         _ => return Err(ConfigError::UnknownKey(key.into())),

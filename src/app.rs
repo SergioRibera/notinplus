@@ -231,8 +231,8 @@ pub fn run() {
     }
 
     #[cfg(not(target_os = "android"))]
-    launch(
-        LaunchConfig::new().with_window(
+    {
+        let mut cfg = LaunchConfig::new().with_window(
             WindowConfig::new(router)
                 .with_title("notinplus")
                 .with_window_handle(|window| {
@@ -247,8 +247,15 @@ pub fn run() {
                         }
                     }
                 }),
-        ),
-    );
+        );
+        // Register bundled plugin fonts up-front — the Bible reader
+        // references `font_family: "Lora"` and would silently fall
+        // back to the system serif otherwise.
+        for (_name, bytes) in notein_bible::fonts::all() {
+            cfg = cfg.with_font(notein_bible::fonts::FAMILY, bytes.to_vec());
+        }
+        launch(cfg);
+    }
 }
 
 fn router() -> impl IntoElement {
@@ -274,6 +281,7 @@ impl Component for AppShell {
                 RouterConfig::default().with_initial_path(Route::Home)
             }))
             .child(crate::components::ModalPortal::new(area))
+            .child(crate::host_overlay::HostOverlay)
     }
 }
 
