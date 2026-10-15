@@ -16,7 +16,7 @@ use std::time::Duration;
 use freya::animation::{AnimNum, Ease, Function, use_animation_transition};
 use freya::icons::lucide::{
     arrow_left, hand, layers, panel_left, pencil, redo, sliders_horizontal,
-    square_split_horizontal, square_split_vertical, undo, x,
+    square_split_horizontal, square_split_vertical, text_select, undo, x,
 };
 use freya::prelude::*;
 use freya::router::*;
@@ -671,6 +671,7 @@ fn left_top(
     let input_mode_icon = match *current_input_mode.read() {
         InputMode::Draw => pencil(),
         InputMode::Pan => hand(),
+        InputMode::Select => text_select(),
     };
 
     rect()
@@ -734,7 +735,8 @@ fn left_top(
                     move || {
                         let next = match *current_input_mode.read() {
                             InputMode::Draw => InputMode::Pan,
-                            InputMode::Pan => InputMode::Draw,
+                            InputMode::Pan => InputMode::Select,
+                            InputMode::Select => InputMode::Draw,
                         };
                         lock(&press_board).set_input_mode(next);
                         current_input_mode.set(next);

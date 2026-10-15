@@ -311,6 +311,11 @@ pub enum InputMode {
     /// `pan_begin` / `pan_move` / `pan_end`. Useful on touchscreens where
     /// the user wants to drag the canvas with a single finger.
     Pan,
+    /// Pen samples are ignored by the pump; a sibling selection overlay
+    /// (see [`crate::pdf_select_overlay`]) captures pointer events and
+    /// drives the active source plugin's `pointer_*` API instead. Only
+    /// meaningful on PDF-backed mounts for now; no-op otherwise.
+    Select,
 }
 
 impl Default for Board {

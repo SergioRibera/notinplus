@@ -412,6 +412,8 @@ fn apply(event: PenEvent, dt: &mut DtTracker) {
             match guard.input_mode() {
                 InputMode::Draw => guard.begin_screen(point),
                 InputMode::Pan => guard.pan_begin(lx, ly),
+                // Pen is deferred to the sibling overlay; pump is inert.
+                InputMode::Select => {}
             }
         }
         PenEvent::Move(m) => {
@@ -449,6 +451,9 @@ fn apply(event: PenEvent, dt: &mut DtTracker) {
                     let _ = dt.advance(m.sample.timestamp_us);
                     guard.pan_move(lx, ly);
                 }
+                InputMode::Select => {
+                    let _ = dt.advance(m.sample.timestamp_us);
+                }
             }
         }
         PenEvent::Up(sample) => {
@@ -474,6 +479,7 @@ fn apply(event: PenEvent, dt: &mut DtTracker) {
                         guard.pan_move(lx, ly);
                         guard.pan_end();
                     }
+                    InputMode::Select => {}
                 }
             }
             dt.clear();
@@ -487,6 +493,7 @@ fn apply(event: PenEvent, dt: &mut DtTracker) {
                 match guard.input_mode() {
                     InputMode::Draw => guard.cancel(),
                     InputMode::Pan => guard.pan_end(),
+                    InputMode::Select => {}
                 }
             }
             dt.clear();

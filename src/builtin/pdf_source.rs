@@ -199,6 +199,65 @@ impl PdfSourcePlugin {
             .unwrap_or_default()
     }
 
+    /// Merge the stored selection's rects into world-space (shared
+    /// coordinate system with the canvas viewport) across every page
+    /// the selection touches. Returns an empty vec when there is no
+    /// selection or the instance is unknown.
+    ///
+    /// Each returned rect translates a page-local `char_rects` output
+    /// by the page's layout origin, so overlay paint can map world → screen
+    /// via [`crate::canvas::Board::world_to_screen`] without touching
+    /// per-page offsets.
+    #[must_use]
+    pub fn selection_world_rects(&self, instance: u64) -> Vec<Rect> {
+        let guard = self.lock_instances();
+        let Some(inst) = guard.get(&instance) else {
+            return Vec::new();
+        };
+        let Some(sel) = inst.selection else {
+            return Vec::new();
+        };
+        let sel = sel.normalized();
+        if sel.is_empty() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for entry in &inst.pages {
+            if entry.page < sel.start_page || entry.page > sel.end_page {
+                continue;
+            }
+            // Reuse the per-page selection logic to compute char-range
+            // bounds + merged rects, then shift into world space.
+            let (start, end) = if sel.start_page == sel.end_page {
+                (sel.start_char as usize, sel.end_char as usize)
+            } else if entry.page == sel.start_page {
+                let Ok(text) = inst.doc.extract_page_text(entry.page as usize) else {
+                    continue;
+                };
+                (sel.start_char as usize, text.chars().count())
+            } else if entry.page == sel.end_page {
+                (0, sel.end_char as usize)
+            } else {
+                let Ok(text) = inst.doc.extract_page_text(entry.page as usize) else {
+                    continue;
+                };
+                (0, text.chars().count())
+            };
+            let Ok(rects) = inst.doc.char_rects(entry.page as usize, start, end) else {
+                continue;
+            };
+            for r in rects {
+                out.push(Rect {
+                    min_x: r.min_x + entry.min_x,
+                    min_y: r.min_y + entry.min_y,
+                    max_x: r.max_x + entry.min_x,
+                    max_y: r.max_y + entry.min_y,
+                });
+            }
+        }
+        out
+    }
+
     /// UTF-8 snippet covering `sel`. Pages are joined with `\n`.
     /// Returns an empty string on error / empty selection.
     #[must_use]
