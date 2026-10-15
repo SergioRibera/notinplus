@@ -14,27 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::identity::ActorId;
 
-/// Globally orderable op identifier. Travels with every CRDT op.
-#[istmo::message]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct OpId {
-    pub lamport: u64,
-    pub actor: ActorId,
-}
-
-impl Ord for OpId {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.lamport
-            .cmp(&other.lamport)
-            .then_with(|| self.actor.cmp(&other.actor))
-    }
-}
-
-impl PartialOrd for OpId {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
+pub use notein_plugin::OpId;
 
 /// In-memory Lamport counter. One per workspace in the eventual model;
 /// a single global instance is enough until Phase 4 brings workspaces.

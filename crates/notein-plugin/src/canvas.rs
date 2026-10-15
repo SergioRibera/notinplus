@@ -29,7 +29,7 @@ use crate::bookmark::{Bookmark, WorldPoint};
 use crate::config::{ConfigSchema, ConfigValue};
 use crate::creation::{CreationEntry, ItemCreationResult};
 use crate::error::{CanvasError, ConfigError, CreationError};
-use crate::ids::BookmarkId;
+use crate::ids::{BookmarkId, OpId};
 
 /// Opaque handle to the host's current draw context.
 ///
@@ -138,9 +138,56 @@ pub trait CanvasKind: Send + Sync + std::fmt::Debug {
     /// CRDT snapshot of the instance state. Plugin-private encoding —
     /// the shell stores + ships the bytes but never decodes them.
     fn serialize_snapshot(&self, instance: u64) -> Vec<u8>;
+
+    /// `(snapshot_bytes, at)` — the snapshot plus the op id up to and
+    /// including which it reflects state. Plugins that have not reached
+    /// Phase 10 can keep the default impl, which returns an empty
+    /// snapshot at the zero op id; the shell treats that as "replay the
+    /// full log on load".
+    fn snapshot_at(&self, instance: u64) -> (Vec<u8>, OpId) {
+        let _ = instance;
+        (Vec::new(), OpId::default())
+    }
+
+    /// Reconstruct instance state from a previously-taken snapshot
+    /// along with its op id. Plugins that do not yet implement
+    /// snapshotting leave the default no-op; the shell will fall back
+    /// to replaying the full op log.
+    fn restore(&self, instance: u64, snapshot: &[u8], at: OpId) {
+        let _ = (instance, snapshot, at);
+    }
+
+    /// Local ops produced since the last call. The shell drains the
+    /// vec, persists it to the log, and (phase 10) broadcasts to
+    /// peers. Default is empty — plugins without Phase 10 wiring stay
+    /// local-only.
+    fn emit_pending_ops(&self, instance: u64) -> Vec<Vec<u8>> {
+        let _ = instance;
+        Vec::new()
+    }
+
     /// Apply one remote op. Op bytes are plugin-private; the shell is
     /// pure CRDT transport.
     fn apply_remote_op(&self, instance: u64, op: &[u8]);
+
+    /// Return `true` when `op` can be undone by this plugin. The shell
+    /// uses this to decide whether to push the op onto the local undo
+    /// stack; `false` ops are applied but never undoable (e.g. remote
+    /// bookkeeping, cursor pings).
+    fn is_undoable(&self, instance: u64, op: &[u8]) -> bool {
+        let _ = (instance, op);
+        false
+    }
+
+    /// Compute an inverse op for `op` so that applying it undoes the
+    /// effect of the original. Returns `None` when `op` is not
+    /// invertible by this plugin. The shell emits the inverse as a
+    /// fresh op (new OpId / lamport) rather than mutating the log,
+    /// matching Figma / Google Docs semantics.
+    fn inverse_op(&self, instance: u64, op: &[u8]) -> Option<Vec<u8>> {
+        let _ = (instance, op);
+        None
+    }
 
     fn config_schema(&self) -> ConfigSchema;
     fn get_config(&self, key: &str) -> Option<ConfigValue>;

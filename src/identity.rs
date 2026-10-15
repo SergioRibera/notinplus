@@ -16,67 +16,9 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use uuid::{Bytes, Uuid};
+use uuid::Uuid;
 
-/// Per-install device identifier. Persists in `device.toml`.
-#[istmo::message]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
-pub struct DeviceId(pub Bytes);
-
-impl DeviceId {
-    #[must_use]
-    pub fn new_v4() -> Self {
-        Self(*Uuid::new_v4().as_bytes())
-    }
-}
-
-impl std::fmt::Display for DeviceId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Uuid::from_bytes(self.0).fmt(f)
-    }
-}
-
-/// Per-user identifier. Shared across every device a user signs in to.
-#[istmo::message]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
-pub struct UserId(pub Bytes);
-
-impl UserId {
-    #[must_use]
-    pub fn new_v4() -> Self {
-        Self(*Uuid::new_v4().as_bytes())
-    }
-}
-
-impl std::fmt::Display for UserId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Uuid::from_bytes(self.0).fmt(f)
-    }
-}
-
-/// `(user, device)` pair. Written as the authorship key on every op;
-/// used to break ties when two ops share a Lamport timestamp.
-#[istmo::message]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
-pub struct ActorId {
-    pub user: UserId,
-    pub device: DeviceId,
-}
-
-impl Ord for ActorId {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.user
-            .0
-            .cmp(&other.user.0)
-            .then_with(|| self.device.0.cmp(&other.device.0))
-    }
-}
-
-impl PartialOrd for ActorId {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
+pub use notein_plugin::{ActorId, DeviceId, UserId};
 
 static GLOBAL_ACTOR: OnceLock<ActorId> = OnceLock::new();
 
