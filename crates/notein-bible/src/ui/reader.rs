@@ -5,11 +5,55 @@
 //! own state; chapter navigation and selection live on
 //! [`crate::state::BibleViewerState`].
 
+use std::collections::HashMap;
+
 use freya::prelude::*;
+
+use crate::state::{BibleBookmark, u32_to_rgba};
 
 use super::chapter::{Block, ChapterPlan, ParagraphSpan};
 use super::theme;
 use super::typography;
+
+/// Styling info derived from the active highlights, keyed by verse
+/// number inside a single chapter. Precomputed so the paragraph builder
+/// does one hash lookup per span instead of a linear scan.
+#[derive(Clone, Debug, Default)]
+pub struct VerseStyle {
+    /// Non-default text colour when the verse is highlighted. The
+    /// absence of a stored colour on the bookmark falls back to the
+    /// theme highlight yellow.
+    pub tint: Option<Color>,
+    /// True when the verse carries a non-empty note. Drives the inline
+    /// note icon rendered right after the verse text.
+    pub has_note: bool,
+}
+
+/// Build the per-verse style map from a highlights slice. The caller
+/// passes `state.highlights_on(book, chapter)` for the chapter being
+/// rendered.
+#[must_use]
+pub fn style_map(highlights: &[&BibleBookmark]) -> HashMap<u16, VerseStyle> {
+    let mut out: HashMap<u16, VerseStyle> = HashMap::new();
+    for h in highlights {
+        let tint = h.color.map(|c| rgba_to_freya(u32_to_rgba(c))).or_else(|| {
+            Some(parse_rgb(theme::HIGHLIGHT_YELLOW))
+        });
+        let has_note = !h.note.is_empty();
+        for v in h.start_verse..=h.end_verse {
+            let entry = out.entry(v).or_default();
+            // Later highlights win on tint — matches a layered-notes
+            // mental model (the newest note shows its colour).
+            entry.tint = tint;
+            entry.has_note |= has_note;
+        }
+    }
+    out
+}
+
+fn rgba_to_freya(rgba: [u8; 4]) -> Color {
+    Color::from_rgb(rgba[0], rgba[1], rgba[2])
+}
 
 /// Full chapter view — scrollable column of section headers +
 /// paragraph groups.
@@ -19,10 +63,12 @@ use super::typography;
 /// this crate.
 pub fn chapter_view(
     plan: &ChapterPlan,
+    highlights: &[&BibleBookmark],
     font_size: f32,
     line_height: f32,
 ) -> impl IntoElement {
     let drop_cap_size = font_size * 4.5;
+    let styles = style_map(highlights);
 
     rect()
         .width(Size::fill())
@@ -37,8 +83,8 @@ pub fn chapter_view(
                         .padding((16., 0.))
                         .spacing(14.)
                         .child(spacer(28.))
-                        .child(drop_cap_block(plan, font_size, line_height, drop_cap_size))
-                        .child(trailing_blocks(plan, font_size, line_height)),
+                        .child(drop_cap_block(plan, &styles, font_size, line_height, drop_cap_size))
+                        .child(trailing_blocks(plan, &styles, font_size, line_height)),
                 ),
         )
 }
@@ -50,6 +96,7 @@ pub fn chapter_view(
 /// without needing a true float.
 fn drop_cap_block(
     plan: &ChapterPlan,
+    styles: &HashMap<u16, VerseStyle>,
     font_size: f32,
     line_height: f32,
     drop_cap_size: f32,
@@ -79,7 +126,7 @@ fn drop_cap_block(
                 ),
         )
         .child(rect().padding((0., 0., 0., drop_cap_size * 0.65)).child(
-            verse_paragraph(&first_paragraph, font_size, line_height),
+            verse_paragraph(&first_paragraph, styles, font_size, line_height),
         ))
 }
 
@@ -89,6 +136,7 @@ fn drop_cap_block(
 /// text.
 fn trailing_blocks(
     plan: &ChapterPlan,
+    styles: &HashMap<u16, VerseStyle>,
     font_size: f32,
     line_height: f32,
 ) -> impl IntoElement {
@@ -101,7 +149,7 @@ fn trailing_blocks(
                     skipped_first = true;
                     continue;
                 }
-                root = root.child(verse_paragraph(spans, font_size, line_height));
+                root = root.child(verse_paragraph(spans, styles, font_size, line_height));
             }
             Block::Header(text) => {
                 root = root.child(section_header(text));
@@ -112,8 +160,11 @@ fn trailing_blocks(
 }
 
 /// A single paragraph with inline superscript verse numbers.
+/// Highlighted verses get their text repainted in the stored tint and
+/// gain an inline note icon when the bookmark has a non-empty body.
 fn verse_paragraph(
     spans: &[ParagraphSpan],
+    styles: &HashMap<u16, VerseStyle>,
     font_size: f32,
     line_height: f32,
 ) -> impl IntoElement {
@@ -124,7 +175,14 @@ fn verse_paragraph(
         .font_family(typography::FAMILY)
         .font_size(font_size);
 
+    let default_text_color = parse_rgb(theme::TEXT_PRIMARY);
+
     for span in spans {
+        let style = styles.get(&span.verse);
+        let text_color = style
+            .and_then(|s| s.tint)
+            .unwrap_or(default_text_color);
+
         p = p.span(
             Span::new(format!(" {} ", span.verse))
                 .font_size(font_size * 0.6)
@@ -133,10 +191,27 @@ fn verse_paragraph(
         p = p.span(
             Span::new(format!("{} ", span.text))
                 .font_size(font_size)
-                .color(parse_rgb(theme::TEXT_PRIMARY)),
+                .color(text_color),
         );
+        if style.map(|s| s.has_note).unwrap_or(false) {
+            p = p.child(note_icon(font_size));
+        }
     }
     p
+}
+
+fn note_icon(font_size: f32) -> impl IntoElement {
+    let size = font_size * 0.75;
+    rect()
+        .width(Size::px(size + 6.0))
+        .height(Size::px(size + 2.0))
+        .center()
+        .child(
+            SvgViewer::new(freya::icons::lucide::file_text())
+                .color(parse_rgb(theme::VERSE_NUM))
+                .width(Size::px(size))
+                .height(Size::px(size)),
+        )
 }
 
 fn section_header(text: &str) -> impl IntoElement {
