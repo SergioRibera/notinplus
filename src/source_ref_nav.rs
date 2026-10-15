@@ -155,27 +155,14 @@ fn navigate_canvas_bookmark(bookmark: BookmarkId) {
     });
 }
 
-/// Open `url` with the host OS's default handler. Mobile targets
-/// have no spawn-process API available here; log and defer.
+/// Open `url` with the host's default handler. Routes through Freya's
+/// `UserEvent::OpenUrl`, which `freya-winit`'s renderer dispatches via
+/// the `open` crate on desktop. Must be called from inside a render
+/// / event-handler context — [`Platform::get`] expects an active
+/// Freya scope.
 fn open_external_url(url: &str) {
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-    {
-        #[cfg(target_os = "linux")]
-        let (cmd, args): (&str, Vec<&str>) = ("xdg-open", vec![url]);
-        #[cfg(target_os = "macos")]
-        let (cmd, args): (&str, Vec<&str>) = ("open", vec![url]);
-        #[cfg(target_os = "windows")]
-        let (cmd, args): (&str, Vec<&str>) = ("cmd", vec!["/C", "start", "", url]);
-
-        match std::process::Command::new(cmd).args(&args).spawn() {
-            Ok(_) => {}
-            Err(e) => log::warn!("navigate: failed to launch {cmd} for {url}: {e}"),
-        }
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    {
-        log::warn!("navigate: external url nav unavailable on this platform ({url})");
-    }
+    log::info!("navigate: opening external url {url}");
+    freya::prelude::Platform::get().send(freya_core::user_event::UserEvent::OpenUrl(url.to_owned()));
 }
 
 /// Scroll the PDF face for `item` to the anchor's content centre + pulse
