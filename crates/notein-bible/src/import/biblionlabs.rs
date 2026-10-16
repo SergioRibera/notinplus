@@ -395,10 +395,19 @@ fn insert_book_contents(
     let mut count = 0usize;
 
     for (chapter_idx, chapter) in book.contents.iter().enumerate() {
-        let chapter_num = (chapter_idx as u16) + 1;
+        // biblionlabs uses 1-based indexing on `contents` — index 0 is
+        // always an empty placeholder so `contents[1]` is chapter 1.
+        if chapter_idx == 0 {
+            continue;
+        }
+        let chapter_num = chapter_idx as u16;
         let mut pending_header: Option<String> = None;
         for (verse_idx, verse_contents) in chapter.iter().enumerate() {
-            let verse_num = (verse_idx as u16) + 1;
+            if verse_idx == 0 {
+                // Same 1-based convention for verses.
+                continue;
+            }
+            let verse_num = verse_idx as u16;
             let mut text = String::new();
             let mut paragraph_break = false;
             for item in verse_contents {
@@ -466,10 +475,11 @@ fn insert_headers(
 
     if let Some(headings) = desc.chapter_headings.get(book_id) {
         for (chapter_idx, heading) in headings.iter().enumerate() {
-            if heading.is_empty() {
+            // biblionlabs 1-based indexing — slot 0 is placeholder.
+            if chapter_idx == 0 || heading.is_empty() {
                 continue;
             }
-            let chapter_num = (chapter_idx as u16) + 1;
+            let chapter_num = chapter_idx as u16;
             insert_header.execute(params![
                 bible_id,
                 book_id,
@@ -669,7 +679,8 @@ mod tests {
                 }
             },
             "chapter_headings": {
-                "EPH": ["", "", "", "", "", "La armadura de Dios"]
+                // 1-based: slot 0 is placeholder, slot 6 is chapter 6.
+                "EPH": ["", "", "", "", "", "", "La armadura de Dios"]
             },
             "sections": {
                 "EPH": [
@@ -683,15 +694,17 @@ mod tests {
         let book = json!({
             "book": "EPH",
             "name": { "normal": "Efesios", "long": "Carta a los Efesios", "abbrev": "Ef" },
+            // 1-based: contents[0] + verse[0] are empty placeholders.
             "contents": [
-                // chapter 1 → chapters 2..5 omitted for test brevity
-                [[ "En el principio …" ]],
-                [[ "placeholder c2 v1" ]],
-                [[ "placeholder c3 v1" ]],
-                [[ "placeholder c4 v1" ]],
-                [[ "placeholder c5 v1" ]],
+                [],
+                [[], [ "En el principio …" ]],
+                [[], [ "placeholder c2 v1" ]],
+                [[], [ "placeholder c3 v1" ]],
+                [[], [ "placeholder c4 v1" ]],
+                [[], [ "placeholder c5 v1" ]],
                 // chapter 6
                 [
+                    [],
                     [ "Hijos, obedeced en el Señor a vuestros padres, porque esto es justo." ],
                     [ "Honra a tu padre y a tu madre, que es el primer mandamiento con promesa;" ],
                     [ "para que te vaya bien, y seas de larga vida sobre la tierra." ],

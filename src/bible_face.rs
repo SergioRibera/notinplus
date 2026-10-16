@@ -23,10 +23,7 @@ impl Component for BibleFace {
             Ok(db) => {
                 let bibles = db.list_bibles().unwrap_or_default();
                 if bibles.is_empty() {
-                    placeholder(
-                        "No hay Biblias instaladas. Usá «Instalar Biblia» desde el menú +.".into(),
-                    )
-                    .into_element()
+                    empty_state_with_install().into_element()
                 } else {
                     bible_viewer(db, bibles).into_element()
                 }
@@ -40,12 +37,57 @@ impl Component for BibleFace {
     }
 }
 
+/// Full-screen "no bibles installed" page. Explains + offers a single
+/// install action that mirrors the FAB `+` menu's "Instalar Biblia"
+/// trigger. The host already owns the background download thread, so
+/// this button just dispatches via the shared registry.
+fn empty_state_with_install() -> impl IntoElement {
+    let on_install = move |_: Event<PressEventData>| {
+        crate::home::fab_install_bible();
+    };
+    rect()
+        .width(Size::fill())
+        .height(Size::fill())
+        .center()
+        .padding((32., 32.))
+        .spacing(14.0)
+        .child(
+            label()
+                .font_size(18.0)
+                .color(Color::from_rgb(230, 230, 230))
+                .text("No hay Biblias instaladas"),
+        )
+        .child(
+            label()
+                .font_size(14.0)
+                .color(Color::from_rgb(170, 170, 170))
+                .text("Descargá una traducción para empezar a leer."),
+        )
+        .child(
+            rect()
+                .padding((10., 20.))
+                .with_corner_radius(10.0)
+                .background(Color::from_rgb(55, 80, 140))
+                .on_press(on_install)
+                .child(
+                    label()
+                        .font_size(14.0)
+                        .color(Color::from_rgb(240, 240, 240))
+                        .text("Instalar Biblia (RVR1960)"),
+                ),
+        )
+}
+
 fn bible_viewer(db: Db, bibles: Vec<BibleRow>) -> impl IntoElement {
-    let first_book = db
-        .list_books(&bibles[0].id)
-        .unwrap_or_default()
-        .into_iter()
-        .next()
+    let books = db.list_books(&bibles[0].id).unwrap_or_default();
+    // Prefer Genesis (any casing) so a freshly opened Bible lands on
+    // the canonical book 1 / chapter 1 / verse 1 instead of whatever
+    // happens to sort first in the installed catalogue.
+    let first_book = books
+        .iter()
+        .find(|b| b.book_id.eq_ignore_ascii_case("gen"))
+        .cloned()
+        .or_else(|| books.into_iter().next())
         .unwrap_or(BookRow {
             book_id: "GEN".into(),
             name: "Génesis".into(),

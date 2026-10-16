@@ -1605,7 +1605,7 @@ fn trigger_entry(entry: &crate::plugins::AvailableEntry, ctx: &FabCtx) {
         }
         EntrySource::Plugin(_) if entry.plugin_id == "io.notein.bible" => {
             match entry.entry.id.as_str() {
-                "install-bible" => flow_install_bible(),
+                "install-bible" => fab_install_bible(),
                 other => log::warn!("unknown bible source entry: {other}"),
             }
         }
@@ -1626,7 +1626,9 @@ fn flow_open_bible(ctx: FabCtx) {
 /// Trigger the Bible plugin's background install flow via its registered
 /// trait object. For now installs a hardcoded Spanish translation; a
 /// real picker UI lives in a follow-up.
-fn flow_install_bible() {
+/// Exposed so pages (e.g. the Bible empty-state) can trigger the same
+/// install flow the FAB `+` menu does.
+pub fn fab_install_bible() {
     use notein_plugin::ConfigValue;
 
     let registry = crate::plugins::registry();
