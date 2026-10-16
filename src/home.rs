@@ -1642,11 +1642,20 @@ fn flow_install_bible() {
         return;
     };
     let bible_id = "spa_rv1960".to_string();
+    // Seed the id field so apply_set has something to resolve; then
+    // fire the Action trigger.
     if let Err(e) = source.set_config(
-        notein_bible::plugin_config::KEY_INSTALL_BIBLE,
+        notein_bible::plugin_config::KEY_INSTALL_BIBLE_ID,
         ConfigValue::String(bible_id.clone()),
     ) {
-        log::warn!("bible install: set_config failed: {e}");
+        log::warn!("bible install: seeding id failed: {e}");
+        return;
+    }
+    if let Err(e) = source.set_config(
+        notein_bible::plugin_config::KEY_INSTALL_BIBLE,
+        ConfigValue::Trigger,
+    ) {
+        log::warn!("bible install: trigger failed: {e}");
     } else {
         log::info!("bible install: requested {bible_id} in background");
     }

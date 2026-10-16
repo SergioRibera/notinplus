@@ -214,12 +214,12 @@ pub fn apply_set(
             return Err(ConfigError::TypeMismatch);
         }
         (KEY_INSTALL_BIBLE, ConfigValue::Trigger) => {
-            let id = string(config, KEY_INSTALL_BIBLE_ID).unwrap_or_default();
-            if id.trim().is_empty() {
-                return Err(ConfigError::Rejected(
-                    "no bible id configured (set install_bible_id first)".into(),
-                ));
-            }
+            // Fall through: stored value → schema default (spa_rv1960)
+            // so the user can hit "Instalar ahora" straight from the
+            // settings panel without first saving the id field.
+            let id = string(config, KEY_INSTALL_BIBLE_ID)
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "spa_rv1960".to_string());
             return Ok(SetResult::InstallRequested(id));
         }
         (KEY_INSTALL_BIBLE, _) => return Err(ConfigError::TypeMismatch),
