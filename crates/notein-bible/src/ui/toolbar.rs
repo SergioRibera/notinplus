@@ -71,12 +71,11 @@ where
     if let Some(mut cb) = on_home {
         left = left.child(icon_button(freya::icons::lucide::house(), move || cb()));
     }
-    if let Some(mut cb) = on_back {
-        left = left.child(icon_button(freya::icons::lucide::arrow_left(), move || cb()));
-    }
-    if let Some(mut cb) = on_forward {
-        left = left.child(icon_button(freya::icons::lucide::arrow_right(), move || cb()));
-    }
+    // Back / forward buttons always render — when the stack is empty we
+    // keep the icon in the grid with a muted tint so the toolbar
+    // doesn't reflow between chapters.
+    left = left.child(nav_icon_button(freya::icons::lucide::arrow_left(), on_back));
+    left = left.child(nav_icon_button(freya::icons::lucide::arrow_right(), on_forward));
 
     let right = rect()
         .direction(Direction::Horizontal)
@@ -104,6 +103,37 @@ where
                 .width(Size::px(ICON_SIZE))
                 .height(Size::px(ICON_SIZE)),
         )
+}
+
+/// Icon that renders enabled when a handler is supplied, muted
+/// otherwise. Preserves slot width so the toolbar doesn't jitter
+/// as the nav stacks fill / drain.
+fn nav_icon_button(icon: Bytes, handler: Option<BackHandler>) -> impl IntoElement {
+    match handler {
+        Some(mut cb) => rect()
+            .width(Size::px(BUTTON_SIZE))
+            .height(Size::px(BUTTON_SIZE))
+            .center()
+            .with_corner_radius(BUTTON_SIZE / 2.0)
+            .on_press(move |_: Event<PressEventData>| cb())
+            .child(
+                SvgViewer::new(icon)
+                    .color(parse_rgb(theme::TEXT_PRIMARY))
+                    .width(Size::px(ICON_SIZE))
+                    .height(Size::px(ICON_SIZE)),
+            ),
+        None => rect()
+            .width(Size::px(BUTTON_SIZE))
+            .height(Size::px(BUTTON_SIZE))
+            .center()
+            .with_corner_radius(BUTTON_SIZE / 2.0)
+            .child(
+                SvgViewer::new(icon)
+                    .color(Color::from_rgb(80, 80, 90))
+                    .width(Size::px(ICON_SIZE))
+                    .height(Size::px(ICON_SIZE)),
+            ),
+    }
 }
 
 fn translation_chip<F>(abbrev: &str, mut on_press: F) -> impl IntoElement

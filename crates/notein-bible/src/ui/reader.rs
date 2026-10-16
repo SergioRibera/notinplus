@@ -140,6 +140,7 @@ pub fn chapter_view(
         );
     }
 
+    let _ = drop_cap_size;
     rect()
         .width(Size::fill())
         .height(Size::fill())
@@ -152,17 +153,7 @@ pub fn chapter_view(
                     .padding(16.)
                     .spacing(14.)
                     .child(book_title_header(plan))
-                    .child(drop_cap_block(
-                        plan,
-                        &styles,
-                        cross_refs,
-                        footnotes,
-                        on_jump.clone(),
-                        font_size,
-                        line_height,
-                        drop_cap_size,
-                    ))
-                    .child(trailing_blocks(
+                    .child(all_blocks(
                         plan,
                         &styles,
                         cross_refs,
@@ -197,65 +188,10 @@ fn book_title_header(plan: &ChapterPlan) -> impl IntoElement {
     }
 }
 
-/// First visual block of the chapter — large chapter number sitting
-/// to the left of the opening paragraph. The chapter number is placed
-/// absolutely so the paragraph wraps full-width underneath after the
-/// first two lines; close enough to the YouVersion-style drop cap
-/// without needing a true float.
-fn drop_cap_block(
-    plan: &ChapterPlan,
-    styles: &HashMap<u16, VerseStyle>,
-    cross_refs: &HashMap<u16, Vec<CrossRefView>>,
-    footnotes: &HashMap<u16, Vec<FootnoteView>>,
-    on_jump: OnJump,
-    font_size: f32,
-    line_height: f32,
-    drop_cap_size: f32,
-) -> impl IntoElement {
-    let first_paragraph = plan
-        .blocks
-        .iter()
-        .find_map(|b| match b {
-            Block::Paragraph(spans) => Some(spans.clone()),
-            Block::Header(_) => None,
-        })
-        .unwrap_or_default();
-
-    rect()
-        .width(Size::fill())
-        .padding((0., 0., 10., 0.))
-        .child(
-            rect()
-                .position(Position::new_absolute().left(0.).top(0.))
-                .width(Size::px(drop_cap_size * 0.75))
-                .child(
-                    label()
-                        .font_family(typography::FAMILY)
-                        .font_size(drop_cap_size)
-                        .color(parse_rgb(theme::DROP_CAP))
-                        .text(format!("{}", plan.chapter)),
-                ),
-        )
-        .child(
-            rect()
-                .padding((0., 0., 0., drop_cap_size * 0.65))
-                .child(verse_paragraph(
-                    &first_paragraph,
-                    styles,
-                    cross_refs,
-                    footnotes,
-                    on_jump,
-                    font_size,
-                    line_height,
-                )),
-        )
-}
-
-/// Every block after the first paragraph — includes section headers
-/// and later paragraph groups. The first paragraph is handled by
-/// [`drop_cap_block`] above so we skip it here to avoid duplicating
-/// text.
-fn trailing_blocks(
+/// Walk every block in reading order. The paragraph that owns verse 1
+/// gets its "1" slot replaced by the big chapter number — the rest
+/// render as regular verse-number superscripts.
+fn all_blocks(
     plan: &ChapterPlan,
     styles: &HashMap<u16, VerseStyle>,
     cross_refs: &HashMap<u16, Vec<CrossRefView>>,
@@ -265,14 +201,10 @@ fn trailing_blocks(
     line_height: f32,
 ) -> impl IntoElement {
     let mut root = rect().width(Size::fill()).spacing(14.);
-    let mut skipped_first = false;
     for block in &plan.blocks {
         match block {
             Block::Paragraph(spans) => {
-                if !skipped_first {
-                    skipped_first = true;
-                    continue;
-                }
+                let starts_chapter = spans.first().is_some_and(|s| s.verse == 1);
                 root = root.child(verse_paragraph(
                     spans,
                     styles,
@@ -281,6 +213,7 @@ fn trailing_blocks(
                     on_jump.clone(),
                     font_size,
                     line_height,
+                    if starts_chapter { Some(plan.chapter) } else { None },
                 ));
             }
             Block::Header(text) => {
@@ -296,6 +229,10 @@ fn trailing_blocks(
 /// gain an inline note icon when the bookmark has a non-empty body.
 /// Cross-reference chips render as blue clickable widgets right after
 /// each verse that has at least one ref.
+///
+/// `starts_chapter` carries the chapter number when this paragraph
+/// contains verse 1 — the "1" slot is then rendered as the chapter
+/// number at 2.5× body font (drop-cap style, inline).
 fn verse_paragraph(
     spans: &[ParagraphSpan],
     styles: &HashMap<u16, VerseStyle>,
@@ -304,6 +241,7 @@ fn verse_paragraph(
     on_jump: OnJump,
     font_size: f32,
     line_height: f32,
+    starts_chapter: Option<u16>,
 ) -> impl IntoElement {
     let mut p = paragraph()
         .width(Size::fill())
@@ -318,11 +256,20 @@ fn verse_paragraph(
         let style = styles.get(&span.verse);
         let text_color = style.and_then(|s| s.tint).unwrap_or(default_text_color);
 
-        p = p.span(
-            Span::new(format!(" {} ", span.verse))
-                .font_size(font_size * 0.6)
-                .color(parse_rgb(theme::VERSE_NUM)),
-        );
+        if span.verse == 1 && starts_chapter.is_some() {
+            let chap = starts_chapter.unwrap();
+            p = p.span(
+                Span::new(format!("{chap} "))
+                    .font_size(font_size * 2.5)
+                    .color(parse_rgb(theme::DROP_CAP)),
+            );
+        } else {
+            p = p.span(
+                Span::new(format!(" {} ", span.verse))
+                    .font_size(font_size * 0.6)
+                    .color(parse_rgb(theme::VERSE_NUM)),
+            );
+        }
         p = p.span(
             Span::new(format!("{} ", span.text))
                 .font_size(font_size)
@@ -417,9 +364,16 @@ impl Component for FootnoteLetter {
                 let mut version = version;
                 move |_| close_soon(&mut hover, &mut version)
             })
-            .on_press(move |_: Event<PressEventData>| {
-                if let Some(t) = target.clone() {
-                    on_jump.call(t);
+            .on_press({
+                let mut hover = hover;
+                let mut version = version;
+                move |_: Event<PressEventData>| {
+                    hover.set(false);
+                    let next = version.peek().wrapping_add(1);
+                    version.set(next);
+                    if let Some(t) = target.clone() {
+                        on_jump.call(t);
+                    }
                 }
             })
             .child(label().font_size(marker_font).color(blue).text(letter));
@@ -563,6 +517,8 @@ impl Component for RefHoverButton {
                             view: xref.clone(),
                             jump: jump_for_list.clone(),
                             expanded,
+                            parent_hover: hover,
+                            parent_version: version,
                             font_size,
                         });
                     }
@@ -583,6 +539,8 @@ struct RefListRow {
     view: CrossRefView,
     jump: OnJump,
     expanded: State<std::collections::HashSet<usize>>,
+    parent_hover: State<bool>,
+    parent_version: State<u64>,
     font_size: f32,
 }
 
@@ -613,7 +571,12 @@ impl Component for RefListRow {
             self.view.tgt_verse,
         );
         let on_jump = self.jump.clone();
+        let mut parent_hover = self.parent_hover;
+        let mut parent_version = self.parent_version;
         let goto = move |_: Event<PressEventData>| {
+            parent_hover.set(false);
+            let next = parent_version.peek().wrapping_add(1);
+            parent_version.set(next);
             on_jump.call(target.clone());
         };
 
