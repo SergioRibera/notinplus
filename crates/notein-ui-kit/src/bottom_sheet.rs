@@ -237,10 +237,13 @@ impl Component for SheetPager {
         let pages = self.pages.clone();
 
         // Reactive dep: reading `index` inside the closure wires the
-        // animation to re-run whenever the state changes.
+        // animation to re-run whenever the state changes. Also opt
+        // into `OnCreation::Run` so the initial progress animates up
+        // to 1 — without it, `AnimNum::new(0.0, 1.0)` stays frozen at
+        // 0 and the body renders at opacity 0 (invisible).
         let animations = use_animation(move |conf| {
+            conf.on_creation(OnCreation::Run);
             conf.on_change(OnChange::Rerun);
-            // Touch the state so the hook subscribes.
             let _ = *index.read();
             AnimNum::new(0.0, 1.0)
                 .time(220)

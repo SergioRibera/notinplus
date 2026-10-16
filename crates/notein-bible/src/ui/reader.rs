@@ -387,6 +387,24 @@ impl Component for VerseParagraph {
         // the holder has been populated, so the second-pass bg-rect
         // compute reads a laid-out paragraph.
         let mut area: State<Area> = use_state(Area::default);
+        // Belt-and-suspenders tick that bumps a few times right after
+        // mount, so the bg-rect compute re-runs even if `on_sized`
+        // misses (first layout before the handler was attached, size
+        // unchanged across frames, etc.). Cheap: at most three extra
+        // renders in the first ~150ms.
+        let tick: State<u32> = use_state(|| 0);
+        use_hook({
+            let mut tick = tick;
+            move || {
+                spawn(async move {
+                    for i in 1u32..=3 {
+                        async_io::Timer::after(std::time::Duration::from_millis(40)).await;
+                        tick.set(i);
+                    }
+                });
+            }
+        });
+        let _ = *tick.read();
 
         let on_jump = self.on_jump.clone();
         let on_highlight = self.on_highlight.clone();
@@ -637,9 +655,11 @@ fn build_bg_rects(
         .position(Position::new_absolute().top(0.).left(0.))
         .width(Size::fill())
         .height(Size::fill());
-    // Guard against the pre-layout call (holder empty) + skip empty
-    // items so unhighlighted paragraphs do not allocate.
-    if items.is_empty() || paragraph_area.width() <= 0.0 {
+    // Skip empty items so unhighlighted paragraphs do not allocate.
+    // Keep the area read for its subscription side-effect so a layout
+    // change schedules a re-render even when the holder data hasn't.
+    let _ = paragraph_area;
+    if items.is_empty() {
         return container;
     }
     let inner = holder.0.borrow();
