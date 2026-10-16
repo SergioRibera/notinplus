@@ -216,8 +216,40 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
     let bible_for_search = st_snapshot.bible_id.clone();
     let books_for_search = db.list_books(&bible_for_search).unwrap_or_default();
     let db_jump = db.clone();
+    let db_ref = db.clone();
+    let bible_for_ref = st_snapshot.bible_id.clone();
     let on_search = EventHandler::<String>::new(move |query: String| {
         log::debug!("bible search: on_search fired with '{query}'");
+        // Reference path: `"Juan 3:16"` / `"Jn 3"` / etc. resolve
+        // against the installed book catalogue — no FTS needed.
+        // Tried first so a user that already knows where they want
+        // to go doesn't wade through snippet hits.
+        if let Some(anchor) =
+            notein_bible::resolver::resolve(&db_ref, &bible_for_ref, query.trim())
+        {
+            log::debug!(
+                "bible search: '{query}' resolved → {} {}:{}",
+                anchor.book_id,
+                anchor.start_chapter,
+                anchor.start_verse
+            );
+            if let Err(e) =
+                state
+                    .write()
+                    .jump_to(&db_ref, &anchor.book_id, anchor.start_chapter)
+            {
+                log::warn!("bible search ref jump: {e}");
+            }
+            flash_verse.set(Some(anchor.start_verse));
+            let mut flash_verse = flash_verse;
+            spawn_forever(async move {
+                async_io::Timer::after(Duration::from_secs(3)).await;
+                flash_verse.set(None);
+            });
+            search_hits.set(Vec::new());
+            search_query.set(String::new());
+            return;
+        }
         // Pick path: query exactly matches an existing hit's label →
         // jump + reset.
         let hits_snapshot = search_hits.read().clone();
@@ -267,6 +299,10 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         .iter()
         .map(|v| std::borrow::Cow::Owned(v.suggestion_label.clone()))
         .collect();
+    log::debug!(
+        "bible search: render pass — suggestions.len={}",
+        search_suggestions.len()
+    );
 
     // Read the DocLinked chrome extension so the Bible toolbar can
     // surface split H/V (overlay mode) or close-split (split mode) in

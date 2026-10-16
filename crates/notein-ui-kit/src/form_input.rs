@@ -497,7 +497,19 @@ impl Component for FormInput {
                     })),
             )
             .maybe(
-                has_suggestions && show_suggestions() && !current_value.read().is_empty(),
+                {
+                    let gate = has_suggestions
+                        && show_suggestions()
+                        && !current_value.read().is_empty();
+                    eprintln!(
+                        "[form_input] dropdown gate — has_suggestions={} show={} current='{}' → {}",
+                        has_suggestions,
+                        show_suggestions(),
+                        &*current_value.read(),
+                        gate,
+                    );
+                    gate
+                },
                 move |r| {
                     let filtered: Vec<Cow<'static, str>> = if self.suggestions_prefilter {
                         suggestions
@@ -512,6 +524,11 @@ impl Component for FormInput {
                         suggestions.clone()
                     };
 
+                    eprintln!(
+                        "[form_input] dropdown filtered={} prefilter={}",
+                        filtered.len(),
+                        self.suggestions_prefilter
+                    );
                     if filtered.is_empty() {
                         return r;
                     }
