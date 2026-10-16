@@ -18,10 +18,9 @@ const BUTTON_SIZE: f32 = 36.0;
 /// generic bounds.
 pub type BackHandler = Box<dyn FnMut() + 'static>;
 
-/// `(back, search, more, translation)` click handlers. The back
-/// button is optional — pass `None` when the toolbar hosts a tab that
-/// already has its own navigation chrome (e.g. the linked-doc split
-/// view).
+/// `(home, back, forward, search, more, translation)` click handlers.
+/// All three nav buttons are optional — pass `None` when the stack is
+/// empty so the toolbar collapses them.
 #[allow(missing_debug_implementations)]
 pub struct ToolbarCallbacks<FS, FM, FT>
 where
@@ -29,7 +28,9 @@ where
     FM: FnMut() + 'static,
     FT: FnMut() + 'static,
 {
+    pub on_home: Option<BackHandler>,
     pub on_back: Option<BackHandler>,
+    pub on_forward: Option<BackHandler>,
     pub on_search: FS,
     pub on_more: FM,
     pub on_translation: FT,
@@ -45,13 +46,15 @@ where
     FT: FnMut() + 'static,
 {
     let ToolbarCallbacks {
+        on_home,
         on_back,
+        on_forward,
         on_search,
-        on_more,
+        on_more: _on_more,
         on_translation,
     } = callbacks;
 
-    let mut row = rect()
+    let row = rect()
         .width(Size::fill())
         .height(Size::px(56.0))
         .background(parse_rgb(theme::BG))
@@ -61,23 +64,28 @@ where
         .main_align(Alignment::SpaceBetween)
         .spacing(4.0);
 
-    let left = match on_back {
-        Some(mut cb) => {
-            icon_button(freya::icons::lucide::house(), move || cb()).into_element()
-        }
-        None => rect().width(Size::px(0.0)).into_element(),
-    };
+    let mut left = rect()
+        .direction(Direction::Horizontal)
+        .cross_align(Alignment::Center)
+        .spacing(2.0);
+    if let Some(mut cb) = on_home {
+        left = left.child(icon_button(freya::icons::lucide::house(), move || cb()));
+    }
+    if let Some(mut cb) = on_back {
+        left = left.child(icon_button(freya::icons::lucide::arrow_left(), move || cb()));
+    }
+    if let Some(mut cb) = on_forward {
+        left = left.child(icon_button(freya::icons::lucide::arrow_right(), move || cb()));
+    }
 
     let right = rect()
         .direction(Direction::Horizontal)
         .cross_align(Alignment::Center)
         .spacing(4.0)
         .child(icon_button(freya::icons::lucide::search(), on_search))
-        .child(icon_button(freya::icons::lucide::ellipsis(), on_more))
         .child(translation_chip(translation_abbrev, on_translation));
 
-    row = row.child(left).child(right);
-    row
+    row.child(left).child(right)
 }
 
 fn icon_button<F>(icon: Bytes, mut on_press: F) -> impl IntoElement

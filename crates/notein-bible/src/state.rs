@@ -39,6 +39,9 @@ pub struct BibleViewerState {
     /// every explicit navigation (jump_to / switch_bible / cross-ref
     /// click) so the toolbar's back arrow can rewind the trail.
     pub nav_history: Vec<NavEntry>,
+    /// Forward stack — populated when the user hits "back"; cleared on
+    /// any explicit forward navigation that is not `pop_nav`.
+    pub nav_future: Vec<NavEntry>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -162,6 +165,7 @@ impl BibleViewerState {
             selection: None,
             highlights: Vec::new(),
             nav_history: Vec::new(),
+            nav_future: Vec::new(),
         }
     }
 
@@ -180,6 +184,10 @@ impl BibleViewerState {
         if self.nav_history.last() != Some(&entry) {
             self.nav_history.push(entry);
         }
+        // Any explicit forward navigation (not pop_nav) invalidates the
+        // forward trail — browsers behave the same way so a user never
+        // sees stale forward entries after a side-step.
+        self.nav_future.clear();
         // Cap depth so unbounded navigation doesn't balloon memory.
         const MAX_HISTORY: usize = 64;
         if self.nav_history.len() > MAX_HISTORY {
@@ -187,8 +195,36 @@ impl BibleViewerState {
         }
     }
 
+    /// Pop the back stack; the current position is pushed onto the
+    /// forward stack so a subsequent `pop_nav_forward` restores it.
     pub fn pop_nav(&mut self) -> Option<NavEntry> {
-        self.nav_history.pop()
+        let entry = self.nav_history.pop()?;
+        let here = self.current_as_nav();
+        if self.nav_future.last() != Some(&here) {
+            self.nav_future.push(here);
+        }
+        Some(entry)
+    }
+
+    /// Walk the forward stack. Mirror of `pop_nav` — current position
+    /// moves back onto `nav_history` so the user can rewind again.
+    pub fn pop_nav_forward(&mut self) -> Option<NavEntry> {
+        let entry = self.nav_future.pop()?;
+        let here = self.current_as_nav();
+        if self.nav_history.last() != Some(&here) {
+            self.nav_history.push(here);
+        }
+        Some(entry)
+    }
+
+    #[must_use]
+    pub fn has_back(&self) -> bool {
+        !self.nav_history.is_empty()
+    }
+
+    #[must_use]
+    pub fn has_forward(&self) -> bool {
+        !self.nav_future.is_empty()
     }
 
     /// Insert a freshly-loaded chapter at the end of the cache,

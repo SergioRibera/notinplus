@@ -35,7 +35,7 @@ default = []
 importer = ["dep:reqwest", "dep:serde", "dep:serde_json"]
 # Freya rsx components. Off by default so library + import tests do not
 # drag the GPU stack. The host enables this to render the Bible viewer.
-ui = ["dep:freya", "dep:freya-components", "dep:freya-core"]
+ui = ["dep:freya", "dep:freya-components", "dep:freya-core", "dep:async-io"]
 
 [dependencies]
 notein-sdk = { path = "../notein-sdk" }
@@ -70,3 +70,4 @@ freya = { version = "=0.5.0-rc.8", features = [
 ], optional = true }
 freya-components = { version = "=0.5.0-rc.8", optional = true }
 freya-core = { version = "=0.5.0-rc.8", optional = true }
+async-io = { version = "2", optional = true }

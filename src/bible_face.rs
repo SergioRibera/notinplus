@@ -19,7 +19,9 @@ use notein_bible::db::{BibleRow, BookRow, ChapterRow, Db};
 use notein_bible::plugin_config;
 use notein_bible::state::{BibleBookmark, BibleSnapshot, BibleViewerState};
 use notein_bible::ui::chapter::plan_chapter;
-use notein_bible::ui::reader::{CrossRefView, FootnoteView, cross_refs_by_verse, footnotes_by_verse};
+use notein_bible::ui::reader::{
+    CrossRefView, FootnoteView, cross_refs_by_verse, footnotes_by_verse,
+};
 use notein_bible::ui::{bottom_nav, reader, toolbar, translation_switcher};
 
 use std::time::Duration;
@@ -78,7 +80,10 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
                 .or_else(|| books.first().map(|b| b.book_id.clone()))
                 .unwrap_or_else(|| "GEN".into())
         });
-    let starting_chapter = saved_snapshot.as_ref().map(|s| s.current_chapter).unwrap_or(1);
+    let starting_chapter = saved_snapshot
+        .as_ref()
+        .map(|s| s.current_chapter)
+        .unwrap_or(1);
 
     let db_for_init = db.clone();
     let snap_for_init = saved_snapshot.clone();
@@ -87,12 +92,18 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         if let Some(snap) = snap_for_init {
             snap.apply_to(&mut st);
         }
-        if let Ok(chap) = db_for_init.load_chapter(&st.bible_id, &st.current_book, st.current_chapter) {
+        if let Ok(chap) =
+            db_for_init.load_chapter(&st.bible_id, &st.current_book, st.current_chapter)
+        {
             st.push_chapter(chap);
         }
         st
     });
     let mut picker_open = use_state(|| false);
+    let mut search_open = use_state(|| false);
+    let mut search_query: State<String> = use_state(String::new);
+    let mut search_hits: State<Vec<notein_bible::ui::search_sheet::SearchHitView>> =
+        use_state(Vec::new);
     // Transient highlight on the destination verse of a TSK / xref jump
     // — set on click, cleared by a spawned timer after a few seconds so
     // the user eye lands on the referenced text before the colour fades.
@@ -105,8 +116,7 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         let st = state.read();
         let snap = BibleSnapshot::from_state(&st);
         let bytes = snap.encode();
-        if let Err(e) =
-            crate::library::bodies::write_plugin_snapshot(item, BIBLE_PLUGIN_ID, &bytes)
+        if let Err(e) = crate::library::bodies::write_plugin_snapshot(item, BIBLE_PLUGIN_ID, &bytes)
         {
             log::warn!("bible: snapshot write failed: {e}");
         }
@@ -162,19 +172,33 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         let current = *picker_open.read();
         picker_open.set(!current);
     };
+    let on_search_toggle = move || {
+        let current = *search_open.read();
+        search_open.set(!current);
+    };
     let router = RouterContext::get();
+    let on_home = move || {
+        let _ = router.push(crate::route::Route::Home);
+    };
     let db_back = db.clone();
-    let on_back = move || {
-        // Nav history has priority — rewind the trail first; fall back
-        // to Home only when the user is at the root of their journey.
+    let has_back = state.read().has_back();
+    let on_back_cb = move || {
         let popped = state.write().pop_nav();
         if let Some(entry) = popped {
             if let Err(e) = state.write().jump_to_entry(&db_back, &entry) {
                 log::warn!("bible: back nav: {e}");
             }
-            return;
         }
-        let _ = router.push(crate::route::Route::Home);
+    };
+    let db_fwd = db.clone();
+    let has_forward = state.read().has_forward();
+    let on_forward_cb = move || {
+        let popped = state.write().pop_nav_forward();
+        if let Some(entry) = popped {
+            if let Err(e) = state.write().jump_to_entry(&db_fwd, &entry) {
+                log::warn!("bible: forward nav: {e}");
+            }
+        }
     };
 
     let picker_overlay = if *picker_open.read() {
@@ -203,11 +227,14 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
     let mut column = rect()
         .width(Size::fill())
         .height(Size::fill())
+        .content(Content::Flex)
         .child(toolbar::top_toolbar(
             &abbrev,
             toolbar::ToolbarCallbacks {
-                on_back: Some(Box::new(on_back)),
-                on_search: || log::info!("bible: search sheet not wired yet"),
+                on_home: Some(Box::new(on_home)),
+                on_back: has_back.then(|| Box::new(on_back_cb) as toolbar::BackHandler),
+                on_forward: has_forward.then(|| Box::new(on_forward_cb) as toolbar::BackHandler),
+                on_search: on_search_toggle,
                 on_more: || log::info!("bible: more menu not wired yet"),
                 on_translation: translation_cb,
             },
@@ -241,6 +268,67 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         ));
     if let Some(overlay) = picker_overlay {
         column = column.child(overlay);
+    }
+    if *search_open.read() {
+        let db_search = db.clone();
+        let bible_for_search = st_snapshot.bible_id.clone();
+        let books_for_search = db
+            .list_books(&bible_for_search)
+            .unwrap_or_default();
+        let on_submit = move |query: String| {
+            let hits = db_search
+                .search(Some(&bible_for_search), &query, 50)
+                .unwrap_or_default();
+            let views: Vec<notein_bible::ui::search_sheet::SearchHitView> = hits
+                .into_iter()
+                .map(|h| {
+                    let book_name = books_for_search
+                        .iter()
+                        .find(|b| b.book_id == h.book_id)
+                        .map(|b| b.name.clone());
+                    notein_bible::ui::search_sheet::hit_to_view(h, book_name.as_deref())
+                })
+                .collect();
+            search_hits.set(views);
+        };
+
+        let hits_snapshot = search_hits.read().clone();
+        let db_pick = db.clone();
+        let picker_handler = EventHandler::<usize>::new(move |idx: usize| {
+            let hits = search_hits.read().clone();
+            if let Some(view) = hits.get(idx) {
+                let src = view.source.clone();
+                if let Err(e) = state.write().jump_to(&db_pick, &src.book_id, src.chapter) {
+                    log::warn!("bible search jump: {e}");
+                }
+                flash_verse.set(Some(src.verse));
+                let mut flash_verse = flash_verse;
+                spawn(async move {
+                    async_io::Timer::after(Duration::from_secs(3)).await;
+                    flash_verse.set(None);
+                });
+                search_open.set(false);
+            }
+        });
+
+        column = column.child(
+            rect()
+                .position(Position::new_absolute().top(56.).right(16.))
+                .width(Size::px(420.0))
+                .max_height(Size::px(540.0))
+                .padding((10., 12.))
+                .with_corner_radius(10.0)
+                .background(Color::from_rgb(32, 32, 32))
+                .spacing(8.0)
+                .child(notein_bible::ui::search_sheet::search_input(
+                    Writable::<String>::from(search_query),
+                    on_submit,
+                ))
+                .child(notein_bible::ui::search_sheet::search_results_list(
+                    hits_snapshot,
+                    picker_handler,
+                )),
+        );
     }
     column
 }
@@ -282,7 +370,7 @@ fn chapter_body(
     flash_verse: Option<u16>,
     on_jump: impl FnMut((String, u16, u16)) + 'static,
 ) -> impl IntoElement {
-    let base = rect().width(Size::fill()).height(Size::fill());
+    let base = rect().width(Size::fill()).height(Size::flex(1.));
     match chapter {
         Some(data) => {
             let plan = plan_chapter(data);
@@ -321,13 +409,14 @@ fn chapter_body(
     }
 }
 
-
 /// Pull publisher footnotes for `(book, chapter)` from the helloao
 /// cache + resolve each `Cited in …` style text into a navigable
 /// target. Footnotes without a parseable target render as hover-only
 /// (no click action).
 fn build_footnotes(db: &Db, bible_id: &str, book_id: &str, chapter: u16) -> Vec<FootnoteView> {
-    let rows = db.footnotes_for_chapter(bible_id, book_id, chapter).unwrap_or_default();
+    let rows = db
+        .footnotes_for_chapter(bible_id, book_id, chapter)
+        .unwrap_or_default();
     rows.into_iter()
         .map(|r| {
             let target = extract_target_from_note_text(&r.text);
@@ -360,7 +449,9 @@ fn extract_target_from_note_text(text: &str) -> Option<(String, u16, u16)> {
 /// with hover popups. One DB round-trip per unique target — Bible
 /// chapters cap at ~150 refs so the cost stays tiny.
 fn build_cross_refs(db: &Db, bible_id: &str, book_id: &str, chapter: u16) -> Vec<CrossRefView> {
-    let rows = db.cross_refs_for_chapter(bible_id, book_id, chapter).unwrap_or_default();
+    let rows = db
+        .cross_refs_for_chapter(bible_id, book_id, chapter)
+        .unwrap_or_default();
     rows.into_iter()
         .map(|r| {
             let tooltip = db

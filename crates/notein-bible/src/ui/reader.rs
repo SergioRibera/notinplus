@@ -85,9 +85,10 @@ pub struct VerseStyle {
 pub fn style_map(highlights: &[&BibleBookmark]) -> HashMap<u16, VerseStyle> {
     let mut out: HashMap<u16, VerseStyle> = HashMap::new();
     for h in highlights {
-        let tint = h.color.map(|c| rgba_to_freya(u32_to_rgba(c))).or_else(|| {
-            Some(parse_rgb(theme::HIGHLIGHT_YELLOW))
-        });
+        let tint = h
+            .color
+            .map(|c| rgba_to_freya(u32_to_rgba(c)))
+            .or_else(|| Some(parse_rgb(theme::HIGHLIGHT_YELLOW)));
         let has_note = !h.note.is_empty();
         for v in h.start_verse..=h.end_verse {
             let entry = out.entry(v).or_default();
@@ -145,33 +146,32 @@ pub fn chapter_view(
         .background(parse_rgb(theme::BG))
         .padding((24., 28.))
         .child(
-            ScrollView::new()
-                .child(
-                    rect()
-                        .width(Size::fill())
-                        .padding((16., 0.))
-                        .spacing(14.)
-                        .child(book_title_header(plan))
-                        .child(drop_cap_block(
-                            plan,
-                            &styles,
-                            cross_refs,
-                            footnotes,
-                            on_jump.clone(),
-                            font_size,
-                            line_height,
-                            drop_cap_size,
-                        ))
-                        .child(trailing_blocks(
-                            plan,
-                            &styles,
-                            cross_refs,
-                            footnotes,
-                            on_jump,
-                            font_size,
-                            line_height,
-                        )),
-                ),
+            ScrollView::new().child(
+                rect()
+                    .width(Size::fill())
+                    .padding(16.)
+                    .spacing(14.)
+                    .child(book_title_header(plan))
+                    .child(drop_cap_block(
+                        plan,
+                        &styles,
+                        cross_refs,
+                        footnotes,
+                        on_jump.clone(),
+                        font_size,
+                        line_height,
+                        drop_cap_size,
+                    ))
+                    .child(trailing_blocks(
+                        plan,
+                        &styles,
+                        cross_refs,
+                        footnotes,
+                        on_jump,
+                        font_size,
+                        line_height,
+                    )),
+            ),
         )
 }
 
@@ -236,9 +236,19 @@ fn drop_cap_block(
                         .text(format!("{}", plan.chapter)),
                 ),
         )
-        .child(rect().padding((0., 0., 0., drop_cap_size * 0.65)).child(
-            verse_paragraph(&first_paragraph, styles, cross_refs, footnotes, on_jump, font_size, line_height),
-        ))
+        .child(
+            rect()
+                .padding((0., 0., 0., drop_cap_size * 0.65))
+                .child(verse_paragraph(
+                    &first_paragraph,
+                    styles,
+                    cross_refs,
+                    footnotes,
+                    on_jump,
+                    font_size,
+                    line_height,
+                )),
+        )
 }
 
 /// Every block after the first paragraph — includes section headers
@@ -306,9 +316,7 @@ fn verse_paragraph(
 
     for span in spans {
         let style = styles.get(&span.verse);
-        let text_color = style
-            .and_then(|s| s.tint)
-            .unwrap_or(default_text_color);
+        let text_color = style.and_then(|s| s.tint).unwrap_or(default_text_color);
 
         p = p.span(
             Span::new(format!(" {} ", span.verse))
@@ -383,7 +391,8 @@ impl std::fmt::Debug for FootnoteLetter {
 
 impl Component for FootnoteLetter {
     fn render(&self) -> impl IntoElement {
-        let mut hover = use_state(|| false);
+        let hover = use_state(|| false);
+        let version = use_state(|| 0u64);
         let letter = self.letter.clone();
         let text = self.text.clone();
         let target = self.target.clone();
@@ -396,11 +405,17 @@ impl Component for FootnoteLetter {
             .margin((0., 1.))
             .on_pointer_enter({
                 let mut hover = hover;
-                move |_| hover.set(true)
+                let mut version = version;
+                move |_| {
+                    hover.set(true);
+                    let next = version.peek().wrapping_add(1);
+                    version.set(next);
+                }
             })
             .on_pointer_leave({
                 let mut hover = hover;
-                move |_| hover.set(false)
+                let mut version = version;
+                move |_| close_soon(&mut hover, &mut version)
             })
             .on_press(move |_: Event<PressEventData>| {
                 if let Some(t) = target.clone() {
@@ -417,6 +432,20 @@ impl Component for FootnoteLetter {
                     .padding((10., 12.))
                     .with_corner_radius(8.0)
                     .background(parse_rgb(theme::CHIP_BG))
+                    .on_pointer_enter({
+                        let mut hover = hover;
+                        let mut version = version;
+                        move |_| {
+                            hover.set(true);
+                            let next = version.peek().wrapping_add(1);
+                            version.set(next);
+                        }
+                    })
+                    .on_pointer_leave({
+                        let mut hover = hover;
+                        let mut version = version;
+                        move |_| close_soon(&mut hover, &mut version)
+                    })
                     .child(
                         label()
                             .font_size(self.font_size * 0.65)
@@ -427,6 +456,22 @@ impl Component for FootnoteLetter {
         }
         container
     }
+}
+
+/// Schedule a hover close that only fires if no `enter` event bumps
+/// `version` in the meantime. Shared by every hover-popup widget so
+/// the "move cursor from icon to popup body" gesture is reliable.
+fn close_soon(hover: &mut State<bool>, version: &mut State<u64>) {
+    let my_token = version.peek().wrapping_add(1);
+    version.set(my_token);
+    let mut hover = *hover;
+    let version = *version;
+    spawn(async move {
+        async_io::Timer::after(std::time::Duration::from_millis(350)).await;
+        if *version.peek() == my_token {
+            hover.set(false);
+        }
+    });
 }
 
 /// Inline bookmark icon rendered when a verse has at least one
@@ -451,10 +496,9 @@ impl std::fmt::Debug for RefHoverButton {
 
 impl Component for RefHoverButton {
     fn render(&self) -> impl IntoElement {
-        let mut hover = use_state(|| false);
-        // Expanded entries by index — multiple can be open at once so
-        // the user compares two refs side by side.
-        let mut expanded = use_state(|| std::collections::HashSet::<usize>::new());
+        let hover = use_state(|| false);
+        let version = use_state(|| 0u64);
+        let expanded = use_state(|| std::collections::HashSet::<usize>::new());
 
         let icon_size = self.font_size * 0.55;
         let blue = Color::from_rgb(100, 150, 230);
@@ -469,11 +513,17 @@ impl Component for RefHoverButton {
             .main_align(Alignment::Start)
             .on_pointer_enter({
                 let mut hover = hover;
-                move |_| hover.set(true)
+                let mut version = version;
+                move |_| {
+                    hover.set(true);
+                    let next = version.peek().wrapping_add(1);
+                    version.set(next);
+                }
             })
             .on_pointer_leave({
                 let mut hover = hover;
-                move |_| hover.set(false)
+                let mut version = version;
+                move |_| close_soon(&mut hover, &mut version)
             })
             .child(
                 SvgViewer::new(freya::icons::lucide::trending_up_down())
@@ -491,6 +541,20 @@ impl Component for RefHoverButton {
                 .with_corner_radius(10.0)
                 .background(parse_rgb(theme::CHIP_BG))
                 .spacing(4.0)
+                .on_pointer_enter({
+                    let mut hover = hover;
+                    let mut version = version;
+                    move |_| {
+                        hover.set(true);
+                        let next = version.peek().wrapping_add(1);
+                        version.set(next);
+                    }
+                })
+                .on_pointer_leave({
+                    let mut hover = hover;
+                    let mut version = version;
+                    move |_| close_soon(&mut hover, &mut version)
+                })
                 .child(ScrollView::new().child({
                     let mut col = rect().width(Size::fill()).spacing(4.0);
                     for (idx, xref) in refs_for_list.iter().enumerate() {
@@ -585,15 +649,12 @@ impl Component for RefListRow {
         let mut body = rect().width(Size::fill()).spacing(2.0).child(header);
         if is_open && !self.view.tooltip.is_empty() {
             body = body.child(
-                rect()
-                    .width(Size::fill())
-                    .padding((8., 10.))
-                    .child(
-                        label()
-                            .font_size(self.font_size * 0.65)
-                            .color(parse_rgb(theme::TEXT_SECONDARY))
-                            .text(self.view.tooltip.clone()),
-                    ),
+                rect().width(Size::fill()).padding((8., 10.)).child(
+                    label()
+                        .font_size(self.font_size * 0.65)
+                        .color(parse_rgb(theme::TEXT_SECONDARY))
+                        .text(self.view.tooltip.clone()),
+                ),
             );
         }
         body
@@ -615,16 +676,13 @@ fn note_icon(font_size: f32) -> impl IntoElement {
 }
 
 fn section_header(text: &str) -> impl IntoElement {
-    rect()
-        .width(Size::fill())
-        .padding((12., 0., 4., 0.))
-        .child(
-            label()
-                .font_family(typography::FAMILY)
-                .font_size(typography::SECTION_HEADER_PX)
-                .color(parse_rgb(theme::HEADER))
-                .text(text.to_string()),
-        )
+    rect().width(Size::fill()).padding((12., 0., 4., 0.)).child(
+        label()
+            .font_family(typography::FAMILY)
+            .font_size(typography::SECTION_HEADER_PX)
+            .color(parse_rgb(theme::HEADER))
+            .text(text.to_string()),
+    )
 }
 
 fn spacer(height: f32) -> impl IntoElement {
