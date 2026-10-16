@@ -18,34 +18,39 @@ const BUTTON_SIZE: f32 = 36.0;
 /// generic bounds.
 pub type BackHandler = Box<dyn FnMut() + 'static>;
 
-/// `(back, search, more, translation)` click handlers. The back button
-/// is optional — pass `None` when the toolbar hosts a tab that already
-/// has its own navigation chrome (e.g. the linked-doc split view).
+/// `(back, search, refs, more, translation)` click handlers. The back
+/// button is optional — pass `None` when the toolbar hosts a tab that
+/// already has its own navigation chrome (e.g. the linked-doc split
+/// view).
 #[allow(missing_debug_implementations)]
-pub struct ToolbarCallbacks<FS, FM, FT>
+pub struct ToolbarCallbacks<FS, FR, FM, FT>
 where
     FS: FnMut() + 'static,
+    FR: FnMut() + 'static,
     FM: FnMut() + 'static,
     FT: FnMut() + 'static,
 {
     pub on_back: Option<BackHandler>,
     pub on_search: FS,
+    pub on_refs: FR,
     pub on_more: FM,
     pub on_translation: FT,
 }
 
-pub fn top_toolbar<FS, FM, FT>(
+pub fn top_toolbar<FS, FR, FM, FT>(
     translation_abbrev: &str,
-    callbacks: ToolbarCallbacks<FS, FM, FT>,
+    callbacks: ToolbarCallbacks<FS, FR, FM, FT>,
 ) -> impl IntoElement
 where
     FS: FnMut() + 'static,
+    FR: FnMut() + 'static,
     FM: FnMut() + 'static,
     FT: FnMut() + 'static,
 {
     let ToolbarCallbacks {
         on_back,
         on_search,
+        on_refs,
         on_more,
         on_translation,
     } = callbacks;
@@ -72,6 +77,7 @@ where
         .cross_align(Alignment::Center)
         .spacing(4.0)
         .child(icon_button(freya::icons::lucide::search(), on_search))
+        .child(icon_button(freya::icons::lucide::book_marked(), on_refs))
         .child(icon_button(freya::icons::lucide::ellipsis(), on_more))
         .child(translation_chip(translation_abbrev, on_translation));
 

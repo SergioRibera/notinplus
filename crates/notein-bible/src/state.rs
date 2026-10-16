@@ -34,6 +34,18 @@ pub struct BibleViewerState {
     /// reader renders as a background colour wash on the matching
     /// paragraph spans.
     pub highlights: Vec<BibleBookmark>,
+    /// In-memory back stack of visited positions. NOT persisted — users
+    /// expect browser-style "back" to clear across sessions. Pushed on
+    /// every explicit navigation (jump_to / switch_bible / cross-ref
+    /// click) so the toolbar's back arrow can rewind the trail.
+    pub nav_history: Vec<NavEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NavEntry {
+    pub bible_id: String,
+    pub book_id: String,
+    pub chapter: u16,
 }
 
 /// Internal highlight / bookmark representation. The host's `Bookmark`
@@ -149,7 +161,34 @@ impl BibleViewerState {
             chapter_cache: VecDeque::with_capacity(Self::CACHE_CAP),
             selection: None,
             highlights: Vec::new(),
+            nav_history: Vec::new(),
         }
+    }
+
+    #[must_use]
+    pub fn current_as_nav(&self) -> NavEntry {
+        NavEntry {
+            bible_id: self.bible_id.clone(),
+            book_id: self.current_book.clone(),
+            chapter: self.current_chapter,
+        }
+    }
+
+    pub fn push_nav(&mut self, entry: NavEntry) {
+        // Dedup: adjacent duplicates (e.g. re-click same ref) collapse
+        // so back-arrow doesn't require two taps to leave.
+        if self.nav_history.last() != Some(&entry) {
+            self.nav_history.push(entry);
+        }
+        // Cap depth so unbounded navigation doesn't balloon memory.
+        const MAX_HISTORY: usize = 64;
+        if self.nav_history.len() > MAX_HISTORY {
+            self.nav_history.drain(..self.nav_history.len() - MAX_HISTORY);
+        }
+    }
+
+    pub fn pop_nav(&mut self) -> Option<NavEntry> {
+        self.nav_history.pop()
     }
 
     /// Insert a freshly-loaded chapter at the end of the cache,
@@ -243,6 +282,7 @@ impl BibleViewerState {
     /// Swap the active translation while staying on the same book +
     /// chapter. Clears the chapter cache so the new text loads fresh.
     pub fn switch_bible(&mut self, db: &Db, new_bible_id: &str) -> Result<(), DbError> {
+        let from = self.current_as_nav();
         self.bible_id = new_bible_id.into();
         self.chapter_cache.clear();
         self.scroll_y = 0.0;
@@ -252,18 +292,40 @@ impl BibleViewerState {
         // shell's snapshot sidecar is per-item and will restore them if
         // the user flips back.
         self.highlights.clear();
-        self.ensure_current_loaded(db)
+        self.ensure_current_loaded(db)?;
+        self.push_nav(from);
+        Ok(())
     }
 
-    /// Jump directly to `(book, chapter)`. Fails if the chapter does
-    /// not exist in the installed Bible.
+    /// Jump directly to `(book, chapter)`. Pushes the current position
+    /// onto the back stack so the user can rewind via the toolbar.
+    /// Fails if the chapter does not exist in the installed Bible.
     pub fn jump_to(&mut self, db: &Db, book: &str, chapter: u16) -> Result<(), DbError> {
+        let from = self.current_as_nav();
         self.current_book = book.into();
         self.current_chapter = chapter;
         self.ensure_current_loaded(db)?;
         self.scroll_y = 0.0;
         self.selection = None;
+        self.push_nav(from);
         Ok(())
+    }
+
+    /// Jump directly to a stored history entry WITHOUT re-pushing the
+    /// current position — used by the back arrow so a repeated back
+    /// click walks the stack monotonically.
+    pub fn jump_to_entry(&mut self, db: &Db, entry: &NavEntry) -> Result<(), DbError> {
+        self.bible_id = entry.bible_id.clone();
+        self.current_book = entry.book_id.clone();
+        self.current_chapter = entry.chapter;
+        self.chapter_cache.retain(|c| {
+            c.bible_id == self.bible_id
+                && c.book_id == self.current_book
+                && c.chapter == self.current_chapter
+        });
+        self.selection = None;
+        self.scroll_y = 0.0;
+        self.ensure_current_loaded(db)
     }
 
     pub fn begin_selection(

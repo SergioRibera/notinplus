@@ -284,10 +284,15 @@ fn verse_paragraph(
             p = p.child(note_icon(font_size));
         }
         if let Some(refs) = cross_refs.get(&span.verse) {
-            for xref in refs {
-                p = p.child(CrossRefChipWidget {
-                    view: xref.clone(),
+            // Letter markers a..z..aa..ab per ref. Inline as blue
+            // superscript so the reading flow stays undisturbed.
+            // Chars past the 26-letter run collapse to the first 26 —
+            // a chapter with 27+ refs on one verse is pathological.
+            for (idx, xref) in refs.iter().enumerate() {
+                p = p.child(RefLetterMarker {
+                    letter: letter_for(idx),
                     jump: on_jump.clone(),
+                    target: (xref.tgt_book.clone(), xref.tgt_chap, xref.tgt_verse),
                     font_size,
                 });
             }
@@ -296,76 +301,59 @@ fn verse_paragraph(
     p
 }
 
-/// Clickable + hoverable chip rendered inline inside a paragraph.
-/// Hover state is per-instance so one tooltip at a time is visible.
+fn letter_for(idx: usize) -> String {
+    // a..z cycle, then double aa, ab, …. Caps at 26² = 676 which
+    // comfortably exceeds any real chapter's cross-ref density.
+    if idx < 26 {
+        char::from(b'a' + idx as u8).to_string()
+    } else {
+        let first = (idx / 26 - 1) as u8;
+        let second = (idx % 26) as u8;
+        format!(
+            "{}{}",
+            char::from(b'a' + first),
+            char::from(b'a' + second)
+        )
+    }
+}
+
+/// Single-letter superscript rendered inside the paragraph. Click
+/// navigates to the referenced verse; the chapter cross-ref panel is
+/// the full browse UI for everything.
 #[derive(Clone, PartialEq)]
-struct CrossRefChipWidget {
-    view: CrossRefView,
+struct RefLetterMarker {
+    letter: String,
     jump: OnJump,
+    target: (String, u16, u16),
     font_size: f32,
 }
 
-impl std::fmt::Debug for CrossRefChipWidget {
+impl std::fmt::Debug for RefLetterMarker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CrossRefChipWidget")
-            .field("view", &self.view.label)
+        f.debug_struct("RefLetterMarker")
+            .field("letter", &self.letter)
             .finish()
     }
 }
 
-impl Component for CrossRefChipWidget {
+impl Component for RefLetterMarker {
     fn render(&self) -> impl IntoElement {
-        let mut hover = use_state(|| false);
-        let label_text = self.view.label.clone();
-        let tooltip_text = self.view.tooltip.clone();
-        let tgt = (
-            self.view.tgt_book.clone(),
-            self.view.tgt_chap,
-            self.view.tgt_verse,
-        );
+        let target = self.target.clone();
         let on_jump = self.jump.clone();
-        let chip_font = self.font_size * 0.7;
-        let blue = Color::from_rgb(100, 150, 230);
-
-        let mut container = rect()
-            .padding((2., 6.))
-            .margin((0., 2.))
-            .with_corner_radius(4.0)
-            .on_pointer_enter({
-                let mut hover = hover;
-                move |_| hover.set(true)
-            })
-            .on_pointer_leave({
-                let mut hover = hover;
-                move |_| hover.set(false)
-            })
+        let letter_text = self.letter.clone();
+        let blue = Color::from_rgb(80, 140, 220);
+        let marker_font = self.font_size * 0.55;
+        rect()
+            .padding((0., 2.))
             .on_press(move |_: Event<PressEventData>| {
-                on_jump.call(tgt.clone());
+                on_jump.call(target.clone());
             })
             .child(
                 label()
-                    .font_size(chip_font)
+                    .font_size(marker_font)
                     .color(blue)
-                    .text(label_text),
-            );
-
-        if *hover.read() && !tooltip_text.is_empty() {
-            container = container.child(
-                rect()
-                    .position(Position::new_absolute().top(chip_font * 1.6).left(0.))
-                    .width(Size::px(280.0))
-                    .padding((10., 12.))
-                    .with_corner_radius(8.0)
-                    .background(parse_rgb(theme::CHIP_BG))
-                    .child(
-                        label()
-                            .font_size(self.font_size * 0.72)
-                            .color(parse_rgb(theme::TEXT_PRIMARY))
-                            .text(tooltip_text),
-                    ),
-            );
-        }
-        container
+                    .text(letter_text),
+            )
     }
 }
 
