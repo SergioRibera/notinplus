@@ -686,6 +686,14 @@ fn build_bg_rects(
             }
             container = container.child(
                 rect()
+                    // Mirror the parent's negative relative so each
+                    // painted rect sits strictly below the paragraph
+                    // sibling in the paint order — otherwise the
+                    // auto `+1` Freya applies to every element pulls
+                    // them up to the paragraph's layer and the rect
+                    // ends up on top of the text + swallowing pointer
+                    // events.
+                    .layer(Layer::Relative(-1))
                     .position(Position::new_absolute().top(top).left(left))
                     .width(Size::px(width))
                     .height(Size::px(height))

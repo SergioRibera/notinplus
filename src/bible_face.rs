@@ -424,7 +424,22 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
             .as_ref()
             .map(|c| c.chapter)
             .unwrap_or(1);
-        let initial_preview = Color::from_rgb(255, 225, 110);
+        // If the target range already overlaps a stored bookmark,
+        // seed the picker with that bookmark's colour so editing an
+        // existing highlight doesn't start by clobbering it with the
+        // default yellow swatch.
+        let initial_preview = {
+            let st = state.read();
+            st.highlights_on(&book, chapter_num)
+                .into_iter()
+                .find(|h| h.start_verse <= hi && h.end_verse >= lo)
+                .and_then(|h| h.color)
+                .map(|c| {
+                    let rgba = notein_bible::state::u32_to_rgba(c);
+                    Color::from_rgb(rgba[0], rgba[1], rgba[2])
+                })
+                .unwrap_or_else(|| Color::from_rgb(255, 225, 110))
+        };
         // Seed the live preview so the gesture target lights up as
         // soon as the picker opens, before the user has moved the
         // wheel at all.
