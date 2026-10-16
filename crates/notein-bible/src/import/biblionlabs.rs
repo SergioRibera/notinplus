@@ -269,21 +269,47 @@ pub fn install_bible(
     Ok(inserted)
 }
 
-/// Download `url` into `dest` when the on-disk copy is missing or older
-/// than `ttl`. Returns `Ok(())` on cache hit without touching the file.
+/// Download `url` into `dest` when the on-disk copy is missing, older
+/// than `ttl`, or does not start with a JSON prefix (handles the case
+/// where a previous attempt cached an HTML error page from a 200 OK).
 fn fetch_if_stale(client: &Client, url: &str, dest: &Path, ttl: Duration) -> Result<()> {
     if dest.exists() {
         if let Ok(meta) = dest.metadata() {
             if let Ok(modified) = meta.modified() {
-                if modified.elapsed().map(|e| e <= ttl).unwrap_or(false) {
+                let fresh = modified.elapsed().map(|e| e <= ttl).unwrap_or(false);
+                if fresh && cache_looks_like_json(dest) {
                     return Ok(());
                 }
             }
         }
     }
     let bytes = client.get(url).send()?.error_for_status()?.bytes()?;
+    if !bytes_look_like_json(&bytes) {
+        return Err(ImportError::Format {
+            reason: format!(
+                "non-JSON response from {url} (got {} bytes starting with {:?})",
+                bytes.len(),
+                &bytes[..bytes.len().min(32)]
+            ),
+        });
+    }
     std::fs::write(dest, &bytes)?;
     Ok(())
+}
+
+fn cache_looks_like_json(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(mut f) = std::fs::File::open(path) else { return false };
+    let mut buf = [0u8; 16];
+    let n = f.read(&mut buf).unwrap_or(0);
+    bytes_look_like_json(&buf[..n])
+}
+
+fn bytes_look_like_json(bytes: &[u8]) -> bool {
+    bytes
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .is_some_and(|i| matches!(bytes[i], b'{' | b'[' | b'"' | b't' | b'f' | b'n' | b'-' | b'0'..=b'9'))
 }
 
 fn upsert_bible(

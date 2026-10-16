@@ -2,6 +2,7 @@ id      "io.notein.bible"
 name    "Bible"
 version "0.1.0"
 author  "Sergio Ribera"
+library "libio_notein_bible.so"
 
 provides "io.notein.canvas"
 provides "io.notein.source"
