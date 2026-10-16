@@ -15,6 +15,27 @@ use super::chapter::{Block, ChapterPlan, ParagraphSpan};
 use super::theme;
 use super::typography;
 
+/// UI-side projection of a TSK note. One entry per letter per verse.
+/// Target verse text pre-fetched so hover renders instantly.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TskNoteView {
+    pub src_verse: u16,
+    pub letter: String,
+    pub tooltip: String,
+    pub tgt_book: String,
+    pub tgt_chap: u16,
+    pub tgt_verse: u16,
+}
+
+#[must_use]
+pub fn tsk_notes_by_verse(notes: &[TskNoteView]) -> HashMap<u16, Vec<TskNoteView>> {
+    let mut out: HashMap<u16, Vec<TskNoteView>> = HashMap::new();
+    for n in notes {
+        out.entry(n.src_verse).or_default().push(n.clone());
+    }
+    out
+}
+
 /// UI-side projection of a cross-reference. The target text is
 /// pre-fetched (`db.verse_text`) so the hover popup renders without
 /// a DB round-trip inside the layout pass.
@@ -98,12 +119,25 @@ pub fn chapter_view(
     plan: &ChapterPlan,
     highlights: &[&BibleBookmark],
     cross_refs: &HashMap<u16, Vec<CrossRefView>>,
+    tsk_notes: &HashMap<u16, Vec<TskNoteView>>,
     on_jump: OnJump,
+    flash_verse: Option<u16>,
     font_size: f32,
     line_height: f32,
 ) -> impl IntoElement {
     let drop_cap_size = font_size * 4.5;
-    let styles = style_map(highlights);
+    let mut styles = style_map(highlights);
+    if let Some(v) = flash_verse {
+        // Transient wash — overrides any user highlight on the flash
+        // target so the eye lands immediately.
+        styles.insert(
+            v,
+            VerseStyle {
+                tint: Some(Color::from_rgb(255, 225, 110)),
+                has_note: styles.get(&v).map(|s| s.has_note).unwrap_or(false),
+            },
+        );
+    }
 
     rect()
         .width(Size::fill())
@@ -122,6 +156,7 @@ pub fn chapter_view(
                             plan,
                             &styles,
                             cross_refs,
+                            tsk_notes,
                             on_jump.clone(),
                             font_size,
                             line_height,
@@ -131,6 +166,7 @@ pub fn chapter_view(
                             plan,
                             &styles,
                             cross_refs,
+                            tsk_notes,
                             on_jump,
                             font_size,
                             line_height,
@@ -170,6 +206,7 @@ fn drop_cap_block(
     plan: &ChapterPlan,
     styles: &HashMap<u16, VerseStyle>,
     cross_refs: &HashMap<u16, Vec<CrossRefView>>,
+    tsk_notes: &HashMap<u16, Vec<TskNoteView>>,
     on_jump: OnJump,
     font_size: f32,
     line_height: f32,
@@ -200,7 +237,7 @@ fn drop_cap_block(
                 ),
         )
         .child(rect().padding((0., 0., 0., drop_cap_size * 0.65)).child(
-            verse_paragraph(&first_paragraph, styles, cross_refs, on_jump, font_size, line_height),
+            verse_paragraph(&first_paragraph, styles, cross_refs, tsk_notes, on_jump, font_size, line_height),
         ))
 }
 
@@ -212,6 +249,7 @@ fn trailing_blocks(
     plan: &ChapterPlan,
     styles: &HashMap<u16, VerseStyle>,
     cross_refs: &HashMap<u16, Vec<CrossRefView>>,
+    tsk_notes: &HashMap<u16, Vec<TskNoteView>>,
     on_jump: OnJump,
     font_size: f32,
     line_height: f32,
@@ -229,6 +267,7 @@ fn trailing_blocks(
                     spans,
                     styles,
                     cross_refs,
+                    tsk_notes,
                     on_jump.clone(),
                     font_size,
                     line_height,
@@ -251,6 +290,7 @@ fn verse_paragraph(
     spans: &[ParagraphSpan],
     styles: &HashMap<u16, VerseStyle>,
     cross_refs: &HashMap<u16, Vec<CrossRefView>>,
+    tsk_notes: &HashMap<u16, Vec<TskNoteView>>,
     on_jump: OnJump,
     font_size: f32,
     line_height: f32,
@@ -283,6 +323,15 @@ fn verse_paragraph(
         if style.map(|s| s.has_note).unwrap_or(false) {
             p = p.child(note_icon(font_size));
         }
+        if let Some(notes) = tsk_notes.get(&span.verse) {
+            for note in notes {
+                p = p.child(TskLetter {
+                    note: note.clone(),
+                    jump: on_jump.clone(),
+                    font_size,
+                });
+            }
+        }
         if let Some(refs) = cross_refs.get(&span.verse) {
             p = p.child(RefHoverButton {
                 refs: refs.clone(),
@@ -292,6 +341,74 @@ fn verse_paragraph(
         }
     }
     p
+}
+
+/// TSK letter marker inline. Hover shows a small popup with the target
+/// verse text; click dispatches the jump handler. One letter per note
+/// (publisher-style `a` / `b` / `c`).
+#[derive(Clone, PartialEq)]
+struct TskLetter {
+    note: TskNoteView,
+    jump: OnJump,
+    font_size: f32,
+}
+
+impl std::fmt::Debug for TskLetter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TskLetter")
+            .field("letter", &self.note.letter)
+            .finish()
+    }
+}
+
+impl Component for TskLetter {
+    fn render(&self) -> impl IntoElement {
+        let mut hover = use_state(|| false);
+        let target = (
+            self.note.tgt_book.clone(),
+            self.note.tgt_chap,
+            self.note.tgt_verse,
+        );
+        let on_jump = self.jump.clone();
+        let letter = self.note.letter.clone();
+        let tooltip_text = self.note.tooltip.clone();
+        let marker_font = self.font_size * 0.55;
+        let blue = Color::from_rgb(80, 150, 230);
+
+        let mut container = rect()
+            .padding((0., 1.))
+            .margin((0., 1.))
+            .on_pointer_enter({
+                let mut hover = hover;
+                move |_| hover.set(true)
+            })
+            .on_pointer_leave({
+                let mut hover = hover;
+                move |_| hover.set(false)
+            })
+            .on_press(move |_: Event<PressEventData>| {
+                on_jump.call(target.clone());
+            })
+            .child(label().font_size(marker_font).color(blue).text(letter));
+
+        if *hover.read() && !tooltip_text.is_empty() {
+            container = container.child(
+                rect()
+                    .position(Position::new_absolute().top(marker_font * 1.6).left(0.))
+                    .width(Size::px(280.0))
+                    .padding((8., 10.))
+                    .with_corner_radius(8.0)
+                    .background(parse_rgb(theme::CHIP_BG))
+                    .child(
+                        label()
+                            .font_size(self.font_size * 0.65)
+                            .color(parse_rgb(theme::TEXT_PRIMARY))
+                            .text(tooltip_text),
+                    ),
+            );
+        }
+        container
+    }
 }
 
 /// Inline bookmark icon rendered when a verse has at least one

@@ -16,11 +16,12 @@ use notein_sdk::{NotificationKind, Progress as HostProgress};
 use reqwest::blocking::Client;
 
 use crate::db::Db;
-use crate::import::biblionlabs;
+use crate::import::{biblionlabs, tsk};
 use crate::plugin_config::{self, SharedConfig};
 
 const PLUGIN_ID: &str = "io.notein.bible";
 const PROGRESS_TOKEN: &str = "install";
+const TSK_TOKEN: &str = "install-tsk";
 
 /// 7-day TTL on cached manifests + per-book files. The installer walks
 /// the biblionlabs cache dir in the same shape the service does; a stale
@@ -72,6 +73,142 @@ pub fn spawn_install(
         .name(format!("bible-install-{bible_id}"))
         .spawn(move || run(bible_id, db, config, progress))
         .expect("failed to spawn bible installer thread");
+}
+
+/// Spawn the TSK downloader. One-shot — the dataset is translation-
+/// agnostic so a single install feeds every Bible row the user ever
+/// opens. Reporting mirrors `spawn_install` so the shell overlay
+/// animates identically.
+pub fn spawn_install_tsk(db: Db, config: SharedConfig) {
+    std::thread::Builder::new()
+        .name("bible-install-tsk".into())
+        .spawn(move || run_tsk(db, config))
+        .expect("failed to spawn tsk installer thread");
+}
+
+fn run_tsk(db: Db, config: SharedConfig) {
+    let host = plugin_config::host(&config);
+    if let Some(h) = &host {
+        h.report_progress(
+            PLUGIN_ID,
+            TSK_TOKEN,
+            HostProgress::Starting {
+                label: "Descargando notas TSK…".into(),
+                total: None,
+            },
+        );
+        h.notify(
+            PLUGIN_ID,
+            NotificationKind::Info,
+            "Descarga TSK iniciada (~20 MB)".into(),
+        );
+    }
+    let client = match Client::builder().user_agent("notein-bible/0.1").build() {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("tsk: client build: {e}");
+            if let Some(h) = &host {
+                h.report_progress(
+                    PLUGIN_ID,
+                    TSK_TOKEN,
+                    HostProgress::Finished {
+                        success: false,
+                        note: Some(e.to_string()),
+                    },
+                );
+                h.notify(PLUGIN_ID, NotificationKind::Error, format!("TSK: {e}"));
+            }
+            return;
+        }
+    };
+    let cache_dir = plugin_config::effective_cache_dir(&config);
+    if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+        log::error!("tsk: mkdir cache: {e}");
+        return;
+    }
+    let host_cb = host.clone();
+    let result = tsk::install_tsk(&db, &client, &cache_dir, CACHE_TTL, move |p| {
+        if let Some(h) = &host_cb {
+            match p {
+                tsk::TskProgress::Started => {}
+                tsk::TskProgress::FetchedBooks { count } => {
+                    h.report_progress(
+                        PLUGIN_ID,
+                        TSK_TOKEN,
+                        HostProgress::Update {
+                            done: 0,
+                            total: None,
+                            label: Some(format!("Catálogo listo ({count} libros)")),
+                        },
+                    );
+                }
+                tsk::TskProgress::FetchedVerses { count } => {
+                    h.report_progress(
+                        PLUGIN_ID,
+                        TSK_TOKEN,
+                        HostProgress::Update {
+                            done: 0,
+                            total: None,
+                            label: Some(format!("Index de versos ({count})")),
+                        },
+                    );
+                }
+                tsk::TskProgress::ParsingXrefs => {
+                    h.report_progress(
+                        PLUGIN_ID,
+                        TSK_TOKEN,
+                        HostProgress::Update {
+                            done: 0,
+                            total: None,
+                            label: Some("Parseando referencias…".into()),
+                        },
+                    );
+                }
+                tsk::TskProgress::InsertedRows { done, total_hint } => {
+                    h.report_progress(
+                        PLUGIN_ID,
+                        TSK_TOKEN,
+                        HostProgress::Update {
+                            done: done as u64,
+                            total: Some(total_hint as u64),
+                            label: None,
+                        },
+                    );
+                }
+                tsk::TskProgress::Finished { .. } => {}
+            }
+        }
+    });
+    match result {
+        Ok(count) => {
+            if let Some(h) = &host {
+                h.report_progress(
+                    PLUGIN_ID,
+                    TSK_TOKEN,
+                    HostProgress::Finished { success: true, note: None },
+                );
+                h.notify(
+                    PLUGIN_ID,
+                    NotificationKind::Success,
+                    format!("TSK instalado — {count} notas"),
+                );
+            }
+        }
+        Err(e) => {
+            log::error!("tsk: install failed: {e}");
+            if let Some(h) = &host {
+                h.report_progress(
+                    PLUGIN_ID,
+                    TSK_TOKEN,
+                    HostProgress::Finished {
+                        success: false,
+                        note: Some(e.to_string()),
+                    },
+                );
+                h.notify(PLUGIN_ID, NotificationKind::Error, format!("TSK: {e}"));
+            }
+        }
+    }
 }
 
 fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallProgress) {

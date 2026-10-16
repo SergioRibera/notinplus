@@ -303,6 +303,15 @@ impl CanvasKind for BibleCanvas {
                 );
                 Ok(())
             }
+            SetResult::TskInstallRequested => {
+                log::info!("bible: tsk install requested");
+                #[cfg(feature = "importer")]
+                crate::install_background::spawn_install_tsk(
+                    self.db.clone(),
+                    self.config.clone(),
+                );
+                Ok(())
+            }
         }
     }
 

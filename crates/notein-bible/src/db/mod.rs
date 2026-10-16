@@ -219,6 +219,49 @@ pub struct CrossRefRow {
     pub tgt_verse: u16,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TskNoteRow {
+    pub src_verse: u16,
+    pub letter: String,
+    pub anchor_word: String,
+    pub tgt_book: String,
+    pub tgt_chap: u16,
+    pub tgt_verse: u16,
+}
+
+impl Db {
+    /// Treasury-of-Scripture-Knowledge notes for `(book, chapter)`.
+    /// Ordered by `src_verse` then `letter` so the UI can render in
+    /// natural reading order without re-sorting.
+    pub fn tsk_notes_for_chapter(
+        &self,
+        book_id: &str,
+        chapter: u16,
+    ) -> Result<Vec<TskNoteRow>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT src_verse, letter, anchor_word, tgt_book, tgt_chap, tgt_verse
+                 FROM tsk_notes
+                 WHERE src_book = ?1 AND src_chap = ?2
+                 ORDER BY src_verse, letter",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![book_id, chapter as i64], |r| {
+                    Ok(TskNoteRow {
+                        src_verse: r.get::<_, i64>(0)? as u16,
+                        letter: r.get(1)?,
+                        anchor_word: r.get(2)?,
+                        tgt_book: r.get(3)?,
+                        tgt_chap: r.get::<_, i64>(4)? as u16,
+                        tgt_verse: r.get::<_, i64>(5)? as u16,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -39,6 +39,10 @@ pub const KEY_INSTALL_BIBLE_ID: &str = "install_bible_id";
 /// Action trigger — fires install for whatever id lives at
 /// [`KEY_INSTALL_BIBLE_ID`]. The value is not stored.
 pub const KEY_INSTALL_BIBLE: &str = "install_bible";
+/// Action trigger — downloads the TSK (Treasury of Scripture Knowledge)
+/// cross-reference dataset into `tsk_notes`. One shot per Bible install
+/// is enough since TSK is translation-agnostic.
+pub const KEY_INSTALL_TSK: &str = "install_tsk";
 pub const KEY_FONT_SIZE: &str = "font_size";
 pub const KEY_LINE_HEIGHT: &str = "line_height";
 /// Toggle for the fetch.bible / "advanced" cross-reference overlay —
@@ -174,6 +178,20 @@ pub fn build_schema(db: &Db) -> ConfigSchema {
                 aliases: Vec::new(),
             },
             ConfigField {
+                key: KEY_INSTALL_TSK.into(),
+                label: "Notas TSK".into(),
+                help: "Descarga el Treasury of Scripture Knowledge (~20 MB). \
+                       Letras `a`/`b`/`c` por verso con referencias cruzadas \
+                       curadas, independiente de la traducción."
+                    .into(),
+                kind: ConfigFieldKind::Action {
+                    button_label: "Descargar TSK".into(),
+                    confirm: None,
+                },
+                default: ConfigValue::Trigger,
+                aliases: Vec::new(),
+            },
+            ConfigField {
                 key: KEY_FONT_SIZE.into(),
                 label: "Tamaño del texto".into(),
                 help: "Tamaño en píxeles del cuerpo del versículo.".into(),
@@ -211,6 +229,7 @@ pub fn build_schema(db: &Db) -> ConfigSchema {
 pub enum SetResult {
     Stored,
     InstallRequested(String),
+    TskInstallRequested,
 }
 
 pub fn apply_set(
@@ -241,6 +260,8 @@ pub fn apply_set(
             return Ok(SetResult::InstallRequested(id));
         }
         (KEY_INSTALL_BIBLE, _) => return Err(ConfigError::TypeMismatch),
+        (KEY_INSTALL_TSK, ConfigValue::Trigger) => return Ok(SetResult::TskInstallRequested),
+        (KEY_INSTALL_TSK, _) => return Err(ConfigError::TypeMismatch),
         _ => return Err(ConfigError::UnknownKey(key.into())),
     }
     config.write().unwrap().values.insert(key.into(), value);

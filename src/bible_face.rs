@@ -19,8 +19,10 @@ use notein_bible::db::{BibleRow, BookRow, ChapterRow, Db};
 use notein_bible::plugin_config;
 use notein_bible::state::{BibleBookmark, BibleSnapshot, BibleViewerState};
 use notein_bible::ui::chapter::plan_chapter;
-use notein_bible::ui::reader::{CrossRefView, cross_refs_by_verse};
+use notein_bible::ui::reader::{CrossRefView, TskNoteView, cross_refs_by_verse, tsk_notes_by_verse};
 use notein_bible::ui::{bottom_nav, reader, toolbar, translation_switcher};
+
+use std::time::Duration;
 
 use crate::library::ItemId;
 
@@ -91,6 +93,10 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         st
     });
     let mut picker_open = use_state(|| false);
+    // Transient highlight on the destination verse of a TSK / xref jump
+    // — set on click, cleared by a spawned timer after a few seconds so
+    // the user eye lands on the referenced text before the colour fades.
+    let mut flash_verse: State<Option<u16>> = use_state(|| None);
 
     // Save snapshot whenever `state` changes. `use_side_effect` reruns
     // on signal mutations so highlights + chapter navigation persist
@@ -190,13 +196,21 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
             &db,
             st_snapshot.chapter.as_ref(),
             &st_snapshot.highlights,
+            *flash_verse.read(),
             {
                 let db = db.clone();
                 move |(book, chap, verse): (String, u16, u16)| {
                     if let Err(e) = state.write().jump_to(&db, &book, chap) {
                         log::warn!("bible xref jump: {e}");
                     }
-                    let _ = verse; // scroll-to-verse lives on a follow-up
+                    flash_verse.set(Some(verse));
+                    // Clear after 3 seconds so the wash fades without
+                    // the user needing a second click.
+                    let mut flash_verse = flash_verse;
+                    spawn(async move {
+                        async_io::Timer::after(Duration::from_secs(3)).await;
+                        flash_verse.set(None);
+                    });
                 }
             },
         ))
@@ -245,6 +259,7 @@ fn chapter_body(
     db: &Db,
     chapter: Option<&ChapterRow>,
     highlights: &[BibleBookmark],
+    flash_verse: Option<u16>,
     on_jump: impl FnMut((String, u16, u16)) + 'static,
 ) -> impl IntoElement {
     let base = rect().width(Size::fill()).height(Size::fill());
@@ -254,8 +269,7 @@ fn chapter_body(
             let hl_refs: Vec<&BibleBookmark> = highlights.iter().collect();
             // Advanced cross-refs honour the plugin config toggle so the
             // user can declutter the paragraph when the TSK letters are
-            // enough. TSK letters (follow-up data source) render in a
-            // parallel path and ignore this flag.
+            // enough. TSK letters always render regardless.
             let enabled = crate::builtin::bible_canvas()
                 .map(|c| plugin_config::effective_enable_crossref(c.config()))
                 .unwrap_or(true);
@@ -265,9 +279,11 @@ fn chapter_body(
                 Vec::new()
             };
             let refs_map = cross_refs_by_verse(&refs);
+            let tsk = build_tsk_notes(db, &data.bible_id, &data.book_id, data.chapter);
+            let tsk_map = tsk_notes_by_verse(&tsk);
             let handler = EventHandler::<(String, u16, u16)>::new(on_jump);
             base.child(reader::chapter_view(
-                &plan, &hl_refs, &refs_map, handler, 22.0, 1.65,
+                &plan, &hl_refs, &refs_map, &tsk_map, handler, flash_verse, 22.0, 1.65,
             ))
         }
         None => base.center().child(
@@ -276,6 +292,36 @@ fn chapter_body(
                 .text("Cargando capítulo…"),
         ),
     }
+}
+
+/// Pull TSK notes for the chapter + resolve tooltip text for each
+/// target so the hover popup renders without a per-chip DB round-trip.
+/// Uses the shell's chosen Bible for tooltip text so the hover copy
+/// matches what the reader is showing on the page.
+fn build_tsk_notes(
+    db: &Db,
+    bible_id: &str,
+    book_id: &str,
+    chapter: u16,
+) -> Vec<TskNoteView> {
+    let rows = db.tsk_notes_for_chapter(book_id, chapter).unwrap_or_default();
+    rows.into_iter()
+        .map(|r| {
+            let tooltip = db
+                .verse_text(bible_id, &r.tgt_book, r.tgt_chap, r.tgt_verse)
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            TskNoteView {
+                src_verse: r.src_verse,
+                letter: r.letter,
+                tooltip,
+                tgt_book: r.tgt_book,
+                tgt_chap: r.tgt_chap,
+                tgt_verse: r.tgt_verse,
+            }
+        })
+        .collect()
 }
 
 /// Fetch every cross-reference the DB holds for `(book, chapter)` and

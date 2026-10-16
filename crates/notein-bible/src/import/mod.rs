@@ -7,4 +7,7 @@
 #[cfg(feature = "importer")]
 pub mod biblionlabs;
 
+#[cfg(feature = "importer")]
+pub mod tsk;
+
 pub mod osis;
