@@ -34,6 +34,7 @@ use std::sync::Arc;
 use notein_sdk::{PluginRegistry, Registrations, RegistryError};
 
 pub mod anchor;
+pub mod canon;
 pub mod canvas;
 pub mod db;
 pub mod fonts;

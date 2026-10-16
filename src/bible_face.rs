@@ -205,8 +205,7 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
     // surface split H/V (overlay mode) or close-split (split mode) in
     // sync with the shell. Standalone `BibleView` mounts see `None` and
     // the toolbar renders without split buttons.
-    let doc_linked_chrome =
-        try_consume_context::<crate::doc_linked::DocLinkedChromeExt>();
+    let doc_linked_chrome = try_consume_context::<crate::doc_linked::DocLinkedChromeExt>();
     let router = RouterContext::get();
     let on_home = move || {
         let _ = router.push(crate::route::Route::Home);
@@ -266,27 +265,18 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
                 on_home: Some(Box::new(on_home)),
                 on_back: has_back.then(|| Box::new(on_back_cb) as toolbar::BackHandler),
                 on_forward: has_forward.then(|| Box::new(on_forward_cb) as toolbar::BackHandler),
-                on_split_horizontal: doc_linked_chrome
-                    .as_ref()
-                    .filter(|c| !c.is_split)
-                    .map(|c| {
-                        let cb = c.on_split_horizontal.clone();
-                        Box::new(move || cb.call()) as toolbar::BackHandler
-                    }),
-                on_split_vertical: doc_linked_chrome
-                    .as_ref()
-                    .filter(|c| !c.is_split)
-                    .map(|c| {
-                        let cb = c.on_split_vertical.clone();
-                        Box::new(move || cb.call()) as toolbar::BackHandler
-                    }),
-                on_close_split: doc_linked_chrome
-                    .as_ref()
-                    .filter(|c| c.is_split)
-                    .map(|c| {
-                        let cb = c.on_close.clone();
-                        Box::new(move || cb.call()) as toolbar::BackHandler
-                    }),
+                on_split_horizontal: doc_linked_chrome.as_ref().filter(|c| !c.is_split).map(|c| {
+                    let cb = c.on_split_horizontal.clone();
+                    Box::new(move || cb.call()) as toolbar::BackHandler
+                }),
+                on_split_vertical: doc_linked_chrome.as_ref().filter(|c| !c.is_split).map(|c| {
+                    let cb = c.on_split_vertical.clone();
+                    Box::new(move || cb.call()) as toolbar::BackHandler
+                }),
+                on_close_split: doc_linked_chrome.as_ref().filter(|c| c.is_split).map(|c| {
+                    let cb = c.on_close.clone();
+                    Box::new(move || cb.call()) as toolbar::BackHandler
+                }),
                 on_search: on_search_toggle,
                 on_more: || log::info!("bible: more menu not wired yet"),
                 on_translation: translation_cb,
@@ -347,9 +337,7 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
     if *search_open.read() {
         let db_search = db.clone();
         let bible_for_search = st_snapshot.bible_id.clone();
-        let books_for_search = db
-            .list_books(&bible_for_search)
-            .unwrap_or_default();
+        let books_for_search = db.list_books(&bible_for_search).unwrap_or_default();
         let on_submit = move |query: String| {
             let hits = db_search
                 .search(Some(&bible_for_search), &query, 50)
@@ -418,12 +406,12 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         // the finger keeps the touch target visible.
         let anchor_left = target.anchor_x.max(0.0);
         let anchor_top = (target.anchor_y + 12.0).max(0.0);
-        let book = st_snapshot.chapter.as_ref().map(|c| c.book_id.clone()).unwrap_or_default();
-        let chapter_num = st_snapshot
+        let book = st_snapshot
             .chapter
             .as_ref()
-            .map(|c| c.chapter)
-            .unwrap_or(1);
+            .map(|c| c.book_id.clone())
+            .unwrap_or_default();
+        let chapter_num = st_snapshot.chapter.as_ref().map(|c| c.chapter).unwrap_or(1);
         // If the target range already overlaps a stored bookmark,
         // seed the picker with that bookmark's colour so editing an
         // existing highlight doesn't start by clobbering it with the
@@ -539,20 +527,22 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
     // the sheet.
     if *nav_sheet_open.read() {
         let bible_id_sheet = st_snapshot.bible_id.clone();
-        let books = db.list_books(&bible_id_sheet).unwrap_or_default();
+        // Publisher order_num reflects the importer's alphabetical
+        // sort, not the canon. Re-sort by the canonical OSIS table so
+        // the grid always runs Genesis → Revelation, regardless of
+        // which translation is installed.
+        let mut books = db.list_books(&bible_id_sheet).unwrap_or_default();
+        books.sort_by_key(|b| notein_bible::canon::canonical_order(&b.book_id));
         let selected_book = nav_sheet_book.read().clone();
 
-        let book_page = book_grid_page(
-            books.clone(),
-            {
-                let mut nav_sheet_book = nav_sheet_book;
-                let mut nav_sheet_page = nav_sheet_page;
-                move |book_id: String| {
-                    nav_sheet_book.set(Some(book_id));
-                    nav_sheet_page.set(1);
-                }
-            },
-        );
+        let book_page = book_grid_page(books.clone(), {
+            let mut nav_sheet_book = nav_sheet_book;
+            let mut nav_sheet_page = nav_sheet_page;
+            move |book_id: String| {
+                nav_sheet_book.set(Some(book_id));
+                nav_sheet_page.set(1);
+            }
+        });
 
         let chapter_page = match selected_book.as_ref() {
             Some(book_id) => {
@@ -631,7 +621,7 @@ fn book_grid_page(
         }
         rows = rows.child(row);
     }
-    ScrollView::new().child(rows)
+    ScrollView::new().child(rows).max_width(Size::percent(70.))
 }
 
 /// Grid of chapter numbers for the drilled-in book, with a back chip
