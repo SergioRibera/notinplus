@@ -104,6 +104,9 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
     let mut search_query: State<String> = use_state(String::new);
     let mut search_hits: State<Vec<notein_bible::ui::search_sheet::SearchHitView>> =
         use_state(Vec::new);
+    // Verse number tapped — hosts the colour-picker overlay anchored to
+    // the chosen verse. `None` keeps the picker hidden.
+    let mut pending_highlight: State<Option<u16>> = use_state(|| None);
     // Transient highlight on the destination verse of a TSK / xref jump
     // — set on click, cleared by a spawned timer after a few seconds so
     // the user eye lands on the referenced text before the colour fades.
@@ -288,6 +291,9 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
                     });
                 }
             },
+            move |verse: u16| {
+                pending_highlight.set(Some(verse));
+            },
         ))
         .child(bottom_nav::bottom_nav(
             &st_snapshot.book_name,
@@ -358,6 +364,61 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
                 )),
         );
     }
+
+    if let Some(verse) = *pending_highlight.read() {
+        let book = st_snapshot.chapter.as_ref().map(|c| c.book_id.clone()).unwrap_or_default();
+        let chapter_num = st_snapshot
+            .chapter
+            .as_ref()
+            .map(|c| c.chapter)
+            .unwrap_or(1);
+        let on_pick = move |color: freya::prelude::Color| {
+            let rgba = [color.r(), color.g(), color.b(), color.a()];
+            let packed = notein_bible::state::rgba_to_u32(rgba);
+            {
+                let mut st = state.write();
+                st.begin_selection(book.clone(), chapter_num, verse);
+                let _ = st.commit_selection_as_highlight(Some(packed), "");
+            }
+            pending_highlight.set(None);
+        };
+        let mut on_close = move || pending_highlight.set(None);
+        column = column.child(
+            rect()
+                .position(Position::new_absolute().top(72.).right(16.))
+                .width(Size::px(300.0))
+                .padding((12., 14.))
+                .with_corner_radius(12.0)
+                .background(Color::from_rgb(28, 28, 32))
+                .spacing(10.0)
+                .child(
+                    label()
+                        .font_size(13.0)
+                        .color(Color::from_rgb(220, 220, 220))
+                        .text(format!("Resaltar verso {verse}")),
+                )
+                .child(
+                    notein_ui_kit::ColorWheel::new()
+                        .initial(Color::from_rgb(255, 225, 110))
+                        .allow_custom(true)
+                        .on_change(on_pick),
+                )
+                .child(
+                    rect()
+                        .padding((6., 12.))
+                        .with_corner_radius(6.0)
+                        .background(Color::from_rgb(55, 60, 70))
+                        .on_press(move |_: Event<PressEventData>| on_close())
+                        .child(
+                            label()
+                                .font_size(12.0)
+                                .color(Color::from_rgb(230, 230, 230))
+                                .text("Cancelar"),
+                        ),
+                ),
+        );
+    }
+
     column
 }
 
@@ -397,15 +458,13 @@ fn chapter_body(
     highlights: &[BibleBookmark],
     flash_verse: Option<u16>,
     on_jump: impl FnMut((String, u16, u16)) + 'static,
+    on_highlight: impl FnMut(u16) + 'static,
 ) -> impl IntoElement {
     let base = rect().width(Size::fill()).height(Size::flex(1.));
     match chapter {
         Some(data) => {
             let plan = plan_chapter(data);
             let hl_refs: Vec<&BibleBookmark> = highlights.iter().collect();
-            // Advanced cross-refs honour the plugin config toggle so the
-            // user can declutter the paragraph when the TSK letters are
-            // enough. TSK letters always render regardless.
             let enabled = crate::builtin::bible_canvas()
                 .map(|c| plugin_config::effective_enable_crossref(c.config()))
                 .unwrap_or(true);
@@ -417,13 +476,15 @@ fn chapter_body(
             let refs_map = cross_refs_by_verse(&refs);
             let footnotes = build_footnotes(db, &data.bible_id, &data.book_id, data.chapter);
             let footnotes_map = footnotes_by_verse(&footnotes);
-            let handler = EventHandler::<(String, u16, u16)>::new(on_jump);
+            let jump_handler = EventHandler::<(String, u16, u16)>::new(on_jump);
+            let highlight_handler = EventHandler::<u16>::new(on_highlight);
             base.child(reader::chapter_view(
                 &plan,
                 &hl_refs,
                 &refs_map,
                 &footnotes_map,
-                handler,
+                jump_handler,
+                highlight_handler,
                 flash_verse,
                 22.0,
                 1.65,

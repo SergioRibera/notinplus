@@ -116,12 +116,18 @@ fn rgba_to_freya(rgba: [u8; 4]) -> Color {
 /// `jump_to` the referenced verse without re-decoding anchor bytes.
 pub type OnJump = EventHandler<(String, u16, u16)>;
 
+/// Callback the reader fires when the user taps a verse-number marker
+/// to open the highlight workflow. The host sets its pending-highlight
+/// signal so a color picker anchors to the clicked verse.
+pub type OnHighlight = EventHandler<u16>;
+
 pub fn chapter_view(
     plan: &ChapterPlan,
     highlights: &[&BibleBookmark],
     cross_refs: &HashMap<u16, Vec<CrossRefView>>,
     footnotes: &HashMap<u16, Vec<FootnoteView>>,
     on_jump: OnJump,
+    on_highlight: OnHighlight,
     flash_verse: Option<u16>,
     font_size: f32,
     line_height: f32,
@@ -159,6 +165,7 @@ pub fn chapter_view(
                         cross_refs,
                         footnotes,
                         on_jump,
+                        on_highlight,
                         font_size,
                         line_height,
                     )),
@@ -197,6 +204,7 @@ fn all_blocks(
     cross_refs: &HashMap<u16, Vec<CrossRefView>>,
     footnotes: &HashMap<u16, Vec<FootnoteView>>,
     on_jump: OnJump,
+    on_highlight: OnHighlight,
     font_size: f32,
     line_height: f32,
 ) -> impl IntoElement {
@@ -211,6 +219,7 @@ fn all_blocks(
                     cross_refs,
                     footnotes,
                     on_jump.clone(),
+                    on_highlight.clone(),
                     font_size,
                     line_height,
                     if starts_chapter { Some(plan.chapter) } else { None },
@@ -239,6 +248,7 @@ fn verse_paragraph(
     cross_refs: &HashMap<u16, Vec<CrossRefView>>,
     footnotes: &HashMap<u16, Vec<FootnoteView>>,
     on_jump: OnJump,
+    on_highlight: OnHighlight,
     font_size: f32,
     line_height: f32,
     starts_chapter: Option<u16>,
@@ -256,20 +266,16 @@ fn verse_paragraph(
         let style = styles.get(&span.verse);
         let text_color = style.and_then(|s| s.tint).unwrap_or(default_text_color);
 
-        if span.verse == 1 && starts_chapter.is_some() {
-            let chap = starts_chapter.unwrap();
-            p = p.span(
-                Span::new(format!("{chap} "))
-                    .font_size(font_size * 2.5)
-                    .color(parse_rgb(theme::DROP_CAP)),
-            );
-        } else {
-            p = p.span(
-                Span::new(format!(" {} ", span.verse))
-                    .font_size(font_size * 0.6)
-                    .color(parse_rgb(theme::VERSE_NUM)),
-            );
-        }
+        p = p.child(VerseMarker {
+            verse: span.verse,
+            display: if span.verse == 1 && starts_chapter.is_some() {
+                MarkerDisplay::Chapter(starts_chapter.unwrap())
+            } else {
+                MarkerDisplay::Verse
+            },
+            on_highlight: on_highlight.clone(),
+            font_size,
+        });
         p = p.span(
             Span::new(format!("{} ", span.text))
                 .font_size(font_size)
@@ -298,6 +304,63 @@ fn verse_paragraph(
         }
     }
     p
+}
+
+/// What the clickable verse marker should display — the superscript
+/// verse number OR the big chapter number (when the marker opens a
+/// chapter + sits on verse 1).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum MarkerDisplay {
+    Verse,
+    Chapter(u16),
+}
+
+/// Clickable verse number. Tap dispatches `on_highlight(verse)` so the
+/// host can open its colour-picker overlay anchored to the chosen
+/// verse. The display styling matches the previous span-based renderer
+/// so paragraph flow stays unchanged.
+#[derive(Clone, PartialEq)]
+struct VerseMarker {
+    verse: u16,
+    display: MarkerDisplay,
+    on_highlight: OnHighlight,
+    font_size: f32,
+}
+
+impl std::fmt::Debug for VerseMarker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VerseMarker")
+            .field("verse", &self.verse)
+            .finish()
+    }
+}
+
+impl Component for VerseMarker {
+    fn render(&self) -> impl IntoElement {
+        let verse = self.verse;
+        let on_highlight = self.on_highlight.clone();
+        match self.display {
+            MarkerDisplay::Chapter(chap) => rect()
+                .padding((0., 2.))
+                .on_press(move |_: Event<PressEventData>| on_highlight.call(verse))
+                .child(
+                    label()
+                        .font_family(typography::FAMILY)
+                        .font_size(self.font_size * 2.5)
+                        .color(parse_rgb(theme::DROP_CAP))
+                        .text(format!("{chap} ")),
+                ),
+            MarkerDisplay::Verse => rect()
+                .padding((0., 2.))
+                .on_press(move |_: Event<PressEventData>| on_highlight.call(verse))
+                .child(
+                    label()
+                        .font_size(self.font_size * 0.6)
+                        .color(parse_rgb(theme::VERSE_NUM))
+                        .text(format!(" {verse} ")),
+                ),
+        }
+    }
 }
 
 /// Normalise the publisher-supplied caller glyph. Many translations

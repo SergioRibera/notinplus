@@ -1,10 +1,18 @@
 //! Palette constants shared across the notinplus UI.
 //!
-//! Dark-first. Older sites (home, canvas_create) still hand-inline the
-//! same rgb triples; migrate them here opportunistically as they get
-//! touched. New components should reach for these names first.
+//! Colour constants live in [`notein_ui_kit::theme`]; this module
+//! re-exports them so existing call sites keep working while plugins
+//! consume the same values directly from the kit. Brush asset bytes
+//! stay here because they ship with the stroke canvas, not with the
+//! generic UI kit.
 
-use freya::prelude::{Bytes, Color};
+use freya::prelude::Bytes;
+
+pub use notein_ui_kit::theme::{
+    ACCENT, BORDER, BORDER_FOCUS, CARD_BG, ERROR, PANEL_BG, PRIMARY, SECONDARY, SIDEBAR_BG,
+    SIDEBAR_WIDTH, SUCCESS, SURFACE_PRIMARY, SURFACE_SECONDARY, SURFACE_TERTIARY, TEXT_INVERSE,
+    TEXT_MUTED, TEXT_PLACEHOLDER, TEXT_PRIMARY, TEXT_SECONDARY, WARNING,
+};
 
 pub const BALL_PEN: Bytes = Bytes::from_static(include_bytes!("../../assets/brushes/ball_pen.svg"));
 pub const BRUSH_PEN: Bytes =
@@ -27,29 +35,3 @@ pub const PENCIL_FILL: Bytes =
 pub const HIGHLIGHTER_FILL: Bytes =
     Bytes::from_static(include_bytes!("../../assets/brushes/highlighter_fill.svg"));
 
-pub const SURFACE_PRIMARY: Color = Color::from_rgb(15, 15, 18);
-pub const SURFACE_SECONDARY: Color = Color::from_rgb(30, 30, 36);
-pub const SURFACE_TERTIARY: Color = Color::from_rgb(45, 45, 52);
-
-pub const BORDER: Color = Color::from_rgb(60, 60, 70);
-pub const BORDER_FOCUS: Color = Color::from_rgb(70, 140, 250);
-
-pub const TEXT_PRIMARY: Color = Color::from_rgb(230, 230, 240);
-pub const TEXT_SECONDARY: Color = Color::from_rgb(150, 150, 165);
-pub const TEXT_PLACEHOLDER: Color = Color::from_rgb(110, 110, 125);
-pub const TEXT_INVERSE: Color = Color::from_rgb(15, 15, 18);
-
-pub const PRIMARY: Color = Color::from_rgb(70, 140, 250);
-pub const SECONDARY: Color = Color::from_rgb(100, 130, 200);
-
-pub const SUCCESS: Color = Color::from_rgb(76, 175, 120);
-pub const WARNING: Color = Color::from_rgb(230, 190, 105);
-pub const ERROR: Color = Color::from_rgb(220, 70, 70);
-
-pub const PANEL_BG: Color = Color::from_rgb(30, 30, 34);
-pub const SIDEBAR_BG: Color = Color::from_rgb(22, 22, 26);
-pub const CARD_BG: Color = Color::from_rgb(38, 38, 44);
-pub const TEXT_MUTED: Color = Color::from_rgb(160, 160, 175);
-pub const ACCENT: Color = Color::from_rgb(120, 170, 255);
-
-pub const SIDEBAR_WIDTH: f32 = 320.0;
