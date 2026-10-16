@@ -280,7 +280,16 @@ impl Component for AppShell {
             .child(Router::<Route>::new(|| {
                 RouterConfig::default().with_initial_path(Route::Home)
             }))
-            .child(crate::components::ModalPortal::new(area))
+            .child({
+                // Install the host-side ModalChrome context before the
+                // portal materialises its children, so every modal
+                // body inherits the shell's safe-area insets + pen-mask
+                // hooks. Plugin-opened modals that bypass the shell
+                // portal still work with the default (no inset, no
+                // mask) chrome.
+                crate::components::modal::provide_host_modal_chrome();
+                crate::components::ModalPortal::new(area)
+            })
             .child(crate::host_overlay::HostOverlay)
     }
 }

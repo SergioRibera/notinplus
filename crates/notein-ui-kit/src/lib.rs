@@ -11,7 +11,9 @@
 
 pub mod color_wheel;
 pub mod form_input;
+pub mod modal;
 pub mod theme;
 
 pub use color_wheel::{ColorWheel, DEFAULT_SWATCHES, auto_color, color_swatch_strip};
 pub use form_input::FormInput;
+pub use modal::{Modal, ModalChrome, ModalController, ModalPlacement, ModalPortal};

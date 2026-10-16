@@ -260,11 +260,16 @@ fn verse_paragraph(
         .font_family(typography::FAMILY)
         .font_size(font_size);
 
-    let default_text_color = parse_rgb(theme::TEXT_PRIMARY);
+    // Freya's paragraph.highlights uses byte offsets inside the span
+    // text buffer. Track running offset as we emit spans so we can
+    // register `(start, end)` ranges per highlighted verse without a
+    // post-walk.
+    let mut char_offset: usize = 0;
+    let mut highlight_ranges: Vec<(usize, usize)> = Vec::new();
+    let highlight_color = Color::from_rgb(170, 150, 60);
 
     for span in spans {
         let style = styles.get(&span.verse);
-        let text_color = style.and_then(|s| s.tint).unwrap_or(default_text_color);
 
         p = p.child(VerseMarker {
             verse: span.verse,
@@ -276,11 +281,18 @@ fn verse_paragraph(
             on_highlight: on_highlight.clone(),
             font_size,
         });
-        p = p.span(
-            Span::new(format!("{} ", span.text))
-                .font_size(font_size)
-                .color(text_color),
-        );
+
+        let text = format!("{} ", span.text);
+        let text_bytes = text.len();
+        let start = char_offset;
+        p = p.span(Span::new(text).font_size(font_size));
+        char_offset += text_bytes;
+        let end = char_offset;
+
+        if style.is_some() {
+            highlight_ranges.push((start, end));
+        }
+
         if style.map(|s| s.has_note).unwrap_or(false) {
             p = p.child(note_icon(font_size));
         }
@@ -302,6 +314,10 @@ fn verse_paragraph(
                 font_size,
             });
         }
+    }
+
+    if !highlight_ranges.is_empty() {
+        p = p.highlights(highlight_ranges).highlight_color(highlight_color);
     }
     p
 }
@@ -338,27 +354,21 @@ impl std::fmt::Debug for VerseMarker {
 impl Component for VerseMarker {
     fn render(&self) -> impl IntoElement {
         let verse = self.verse;
-        let on_highlight = self.on_highlight.clone();
+        let _ = (verse, &self.on_highlight);
         match self.display {
-            MarkerDisplay::Chapter(chap) => rect()
-                .padding((0., 2.))
-                .on_press(move |_: Event<PressEventData>| on_highlight.call(verse))
-                .child(
-                    label()
-                        .font_family(typography::FAMILY)
-                        .font_size(self.font_size * 2.5)
-                        .color(parse_rgb(theme::DROP_CAP))
-                        .text(format!("{chap} ")),
-                ),
-            MarkerDisplay::Verse => rect()
-                .padding((0., 2.))
-                .on_press(move |_: Event<PressEventData>| on_highlight.call(verse))
-                .child(
-                    label()
-                        .font_size(self.font_size * 0.6)
-                        .color(parse_rgb(theme::VERSE_NUM))
-                        .text(format!(" {verse} ")),
-                ),
+            MarkerDisplay::Chapter(chap) => rect().padding((0., 2.)).child(
+                label()
+                    .font_family(typography::FAMILY)
+                    .font_size(self.font_size * 2.5)
+                    .color(parse_rgb(theme::DROP_CAP))
+                    .text(format!("{chap} ")),
+            ),
+            MarkerDisplay::Verse => rect().padding((0., 2.)).child(
+                label()
+                    .font_size(self.font_size * 0.6)
+                    .color(parse_rgb(theme::VERSE_NUM))
+                    .text(format!(" {verse} ")),
+            ),
         }
     }
 }
