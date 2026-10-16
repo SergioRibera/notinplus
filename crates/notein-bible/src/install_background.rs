@@ -75,6 +75,8 @@ pub fn spawn_install(
 }
 
 fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallProgress) {
+    log::info!("bible install thread: starting for {bible_id}");
+    eprintln!("[bible] install thread starting for {bible_id}");
     {
         let mut p = progress.write().unwrap();
         p.bible_id = bible_id.clone();
@@ -85,6 +87,10 @@ fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallPr
     }
 
     let host = plugin_config::host(&config);
+    if host.is_none() {
+        log::warn!("bible install: host handle not installed; progress + notifications disabled");
+        eprintln!("[bible] WARNING host handle not installed");
+    }
     if let Some(h) = &host {
         h.report_progress(
             PLUGIN_ID,
@@ -105,15 +111,26 @@ fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallPr
     };
 
     let cache_dir = plugin_config::effective_cache_dir(&config);
+    log::info!("bible install: cache_dir={}", cache_dir.display());
+    eprintln!("[bible] cache_dir={}", cache_dir.display());
     if let Err(e) = std::fs::create_dir_all(&cache_dir) {
         fail(&progress, host.as_ref(), format!("mkdir cache: {e}"));
         return;
     }
 
-    let manifest_url = plugin_config::effective_manifest_url(&config);
-    let base = base_for(&manifest_url);
-    let desc_url = format!("{base}/bibles/{bible_id}/extra.json");
-    let books_template = format!("{base}/bibles/{{bible_id}}/books/{{book}}.json");
+    // biblionlabs raw layout. The per-bible `manifest.json` holds
+    // `book_names` / `chapter_headings` / `sections`; per-book files
+    // live at `bibles/<id>/books/<book>.json`. The fetch.bible catalogue
+    // endpoint uses a different shape (`extra.json`) that this
+    // installer does NOT currently parse — switch here if we grow a
+    // fetch.bible path.
+    const BIBLIONLABS_BASE: &str =
+        "https://raw.githubusercontent.com/biblionlabs/extra_data_source/refs/heads/main";
+    let desc_url = format!("{BIBLIONLABS_BASE}/bibles/{bible_id}/manifest.json");
+    let books_template =
+        format!("{BIBLIONLABS_BASE}/bibles/{{bible_id}}/books/{{book}}.json");
+    log::info!("bible install: desc_url={desc_url}");
+    eprintln!("[bible] desc_url={desc_url}");
 
     let progress_cb_handle = progress.clone();
     let host_cb = host.clone();
@@ -188,7 +205,8 @@ fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallPr
 }
 
 fn fail(progress: &SharedInstallProgress, host: Option<&notein_sdk::Host>, message: String) {
-    log::warn!("bible: install failed: {message}");
+    log::error!("bible: install failed: {message}");
+    eprintln!("[bible] install failed: {message}");
     let mut p = progress.write().unwrap();
     p.stage = InstallStage::Failed;
     p.error = Some(message.clone());
@@ -210,33 +228,3 @@ fn fail(progress: &SharedInstallProgress, host: Option<&notein_sdk::Host>, messa
     }
 }
 
-/// Derive the catalogue base URL from a `.../manifest.json` endpoint.
-/// Falls back to the fetch.bible root if the URL does not end in
-/// `/manifest.json`.
-fn base_for(manifest_url: &str) -> String {
-    manifest_url
-        .strip_suffix("/manifest.json")
-        .map(str::to_string)
-        .unwrap_or_else(|| "https://v1.fetch.bible".into())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn base_for_strips_manifest_suffix() {
-        assert_eq!(
-            base_for("https://v1.fetch.bible/manifest.json"),
-            "https://v1.fetch.bible"
-        );
-        assert_eq!(
-            base_for("https://mirror.local/bible/manifest.json"),
-            "https://mirror.local/bible"
-        );
-        assert_eq!(
-            base_for("https://other.example"),
-            "https://v1.fetch.bible"
-        );
-    }
-}
