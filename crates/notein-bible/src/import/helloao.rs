@@ -1,0 +1,330 @@
+//! helloao.org footnote fetcher.
+//!
+//! helloao serves per-chapter JSON with publisher-authored footnotes
+//! (caller + text + verse reference). The upstream dataset is
+//! translation-specific, so we map biblionlabs ids → helloao ids via
+//! [`helloao_id_for_bible`]. Pull is lazy — the reader triggers one
+//! fetch per `(bible, book, chapter)` as the user opens it, cached on
+//! disk + indexed in the local `footnotes` table so subsequent opens
+//! short-circuit.
+//!
+//! Many translations ship empty footnote arrays (public-domain Spanish
+//! Bibles) — in that case the chapter row count stays `0` and the
+//! reader simply shows no inline letters. BSB (English) is the richest
+//! source with "Cited in Scripture:Reference" style apparatus.
+
+use std::path::Path;
+use std::time::Duration;
+
+use reqwest::blocking::Client;
+use rusqlite::params;
+use serde::Deserialize;
+
+use crate::db::Db;
+
+/// Base API endpoint. Configurable only via source edit for now; the
+/// upstream project does not publish a stable mirror story.
+const HELLOAO_BASE: &str = "https://bible.helloao.org/api";
+
+#[derive(Debug)]
+pub enum HelloaoError {
+    Http(reqwest::Error),
+    Json { context: String, source: serde_json::Error },
+    Io(std::io::Error),
+    Db(crate::db::DbError),
+    Unmapped { bible_id: String },
+}
+
+impl std::fmt::Display for HelloaoError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Http(e) => write!(f, "helloao http: {e}"),
+            Self::Json { context, source } => write!(f, "helloao json ({context}): {source}"),
+            Self::Io(e) => write!(f, "helloao io: {e}"),
+            Self::Db(e) => write!(f, "helloao db: {e}"),
+            Self::Unmapped { bible_id } => write!(f, "no helloao mapping for bible {bible_id}"),
+        }
+    }
+}
+
+impl std::error::Error for HelloaoError {}
+
+impl From<reqwest::Error> for HelloaoError {
+    fn from(e: reqwest::Error) -> Self {
+        Self::Http(e)
+    }
+}
+impl From<std::io::Error> for HelloaoError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+impl From<crate::db::DbError> for HelloaoError {
+    fn from(e: crate::db::DbError) -> Self {
+        Self::Db(e)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ChapterEnvelope {
+    #[serde(default)]
+    chapter: ChapterPayload,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ChapterPayload {
+    #[serde(default)]
+    footnotes: Vec<FootnoteEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FootnoteEntry {
+    #[serde(default)]
+    #[serde(rename = "noteId")]
+    note_id: i64,
+    #[serde(default)]
+    caller: String,
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    reference: Option<FootnoteRef>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FootnoteRef {
+    #[serde(default)]
+    chapter: i64,
+    #[serde(default)]
+    verse: i64,
+}
+
+/// Download the footnote payload for `(bible, book, chapter)` + persist
+/// into `footnotes`. Idempotent: wipes the matching rows first so a
+/// re-run (e.g. cache busted) never duplicates. `Ok(n)` reports how
+/// many rows actually landed — a chapter with no publisher apparatus
+/// returns `Ok(0)` without erroring.
+pub fn install_footnotes_for_chapter(
+    db: &Db,
+    client: &Client,
+    cache_dir: &Path,
+    bible_id: &str,
+    book_id: &str,
+    chapter: u16,
+    cache_ttl: Duration,
+) -> Result<usize, HelloaoError> {
+    let Some(helloao_translation) = helloao_id_for_bible(bible_id) else {
+        return Err(HelloaoError::Unmapped {
+            bible_id: bible_id.to_string(),
+        });
+    };
+    let helloao_book = helloao_book_for_osis(book_id).unwrap_or(book_id.to_uppercase());
+
+    let chapter_dir = cache_dir
+        .join("helloao")
+        .join(helloao_translation)
+        .join(&helloao_book);
+    std::fs::create_dir_all(&chapter_dir)?;
+    let dest = chapter_dir.join(format!("{chapter}.json"));
+    let url = format!(
+        "{HELLOAO_BASE}/{helloao_translation}/{helloao_book}/{chapter}.json"
+    );
+    fetch_if_stale(client, &url, &dest, cache_ttl)?;
+
+    let bytes = std::fs::read(&dest)?;
+    let env: ChapterEnvelope = serde_json::from_slice(&bytes)
+        .map_err(|e| HelloaoError::Json { context: url.clone(), source: e })?;
+
+    let inserted = db.with_conn_mut(|conn| {
+        let tx = conn.transaction().map_err(crate::db::DbError::from)?;
+        tx.execute(
+            "DELETE FROM footnotes
+             WHERE bible_id = ?1 AND book_id = ?2 AND chapter = ?3",
+            params![bible_id, book_id, chapter as i64],
+        )
+        .map_err(crate::db::DbError::from)?;
+        let mut inserted = 0usize;
+        {
+            let mut stmt = tx
+                .prepare(
+                    "INSERT INTO footnotes
+                     (bible_id, book_id, chapter, verse, note_id, caller, text)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                )
+                .map_err(crate::db::DbError::from)?;
+            for note in &env.chapter.footnotes {
+                let verse = note
+                    .reference
+                    .as_ref()
+                    .map(|r| r.verse)
+                    .unwrap_or(0)
+                    .max(0) as i64;
+                stmt.execute(params![
+                    bible_id,
+                    book_id,
+                    chapter as i64,
+                    verse,
+                    note.note_id,
+                    &note.caller,
+                    &note.text,
+                ])
+                .map_err(crate::db::DbError::from)?;
+                inserted += 1;
+            }
+        }
+        tx.commit().map_err(crate::db::DbError::from)?;
+        Ok(inserted)
+    })?;
+
+    Ok(inserted)
+}
+
+/// Map a biblionlabs bible id to the closest public-domain helloao
+/// translation id. Returns `None` for unknown ids so the caller can
+/// skip the fetch cleanly without a cryptic 404.
+#[must_use]
+pub fn helloao_id_for_bible(bible_id: &str) -> Option<&'static str> {
+    match bible_id {
+        // Spanish — pick the public-domain Reina Valera 1909 since
+        // RVR1960 is SBU copyright (not on helloao). The reader sees
+        // Spanish text from biblionlabs; the footnotes side-channel
+        // through r09 is close enough linguistically.
+        "spa_rv1960" | "spa_rvg" | "spa_r09" => Some("spa_r09"),
+        "spa_blm" => Some("spa_blm"),
+        "spa_vbl" => Some("spa_vbl"),
+        "spa_pdt" => Some("spa_pdt"),
+        "spa_bes" => Some("spa_bes"),
+        "spa_onbv" => Some("spa_onbv"),
+        "spa_v2p" => Some("spa_v2p"),
+        // English — common seed Bibles. BSB is the richest apparatus.
+        "eng_bsb" | "bsb" | "BSB" => Some("BSB"),
+        "eng_web" | "WEB" => Some("WEB"),
+        "eng_asv" | "ASV" => Some("ASV"),
+        "eng_kjv" | "KJV" => Some("KJV"),
+        _ => None,
+    }
+}
+
+/// Convert a biblionlabs lowercase OSIS book id to the helloao API's
+/// uppercase form. Falls back to `None` for unmapped books so callers
+/// skip + log without 404 noise.
+#[must_use]
+pub fn helloao_book_for_osis(book_id: &str) -> Option<String> {
+    let out = match book_id.to_ascii_lowercase().as_str() {
+        "gen" => "GEN",
+        "exo" => "EXO",
+        "lev" => "LEV",
+        "num" => "NUM",
+        "deu" => "DEU",
+        "jos" => "JOS",
+        "jdg" => "JDG",
+        "rut" => "RUT",
+        "1sa" => "1SA",
+        "2sa" => "2SA",
+        "1ki" => "1KI",
+        "2ki" => "2KI",
+        "1ch" => "1CH",
+        "2ch" => "2CH",
+        "ezr" => "EZR",
+        "neh" => "NEH",
+        "est" => "EST",
+        "job" => "JOB",
+        "psa" => "PSA",
+        "pro" => "PRO",
+        "ecc" => "ECC",
+        "sng" => "SNG",
+        "isa" => "ISA",
+        "jer" => "JER",
+        "lam" => "LAM",
+        "ezk" => "EZK",
+        "dan" => "DAN",
+        "hos" => "HOS",
+        "jol" => "JOL",
+        "amo" => "AMO",
+        "oba" => "OBA",
+        "jon" => "JON",
+        "mic" => "MIC",
+        "nam" => "NAM",
+        "hab" => "HAB",
+        "zep" => "ZEP",
+        "hag" => "HAG",
+        "zec" => "ZEC",
+        "mal" => "MAL",
+        "mat" => "MAT",
+        "mrk" => "MRK",
+        "luk" => "LUK",
+        "jhn" => "JHN",
+        "act" => "ACT",
+        "rom" => "ROM",
+        "1co" => "1CO",
+        "2co" => "2CO",
+        "gal" => "GAL",
+        "eph" => "EPH",
+        "php" => "PHP",
+        "col" => "COL",
+        "1th" => "1TH",
+        "2th" => "2TH",
+        "1ti" => "1TI",
+        "2ti" => "2TI",
+        "tit" => "TIT",
+        "phm" => "PHM",
+        "heb" => "HEB",
+        "jas" => "JAS",
+        "1pe" => "1PE",
+        "2pe" => "2PE",
+        "1jn" => "1JN",
+        "2jn" => "2JN",
+        "3jn" => "3JN",
+        "jud" => "JUD",
+        "rev" => "REV",
+        _ => return None,
+    };
+    Some(out.to_string())
+}
+
+fn fetch_if_stale(
+    client: &Client,
+    url: &str,
+    dest: &Path,
+    ttl: Duration,
+) -> Result<(), HelloaoError> {
+    if dest.exists() {
+        if let Ok(meta) = dest.metadata() {
+            if let Ok(modified) = meta.modified() {
+                let fresh = modified.elapsed().map(|e| e <= ttl).unwrap_or(false);
+                if fresh && cache_looks_like_json(dest) {
+                    return Ok(());
+                }
+            }
+        }
+    }
+    let response = client.get(url).send()?;
+    // 404 is fine — some chapters simply have no footnotes catalogue.
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        std::fs::write(dest, b"{\"chapter\":{\"footnotes\":[]}}")?;
+        return Ok(());
+    }
+    let response = response.error_for_status()?;
+    let bytes = response.bytes()?;
+    if !bytes_look_like_json(&bytes) {
+        return Err(HelloaoError::Io(std::io::Error::other(format!(
+            "non-JSON response from {url}"
+        ))));
+    }
+    std::fs::write(dest, &bytes)?;
+    Ok(())
+}
+
+fn cache_looks_like_json(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(mut f) = std::fs::File::open(path) else { return false };
+    let mut buf = [0u8; 16];
+    let n = f.read(&mut buf).unwrap_or(0);
+    bytes_look_like_json(&buf[..n])
+}
+
+fn bytes_look_like_json(bytes: &[u8]) -> bool {
+    bytes
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .is_some_and(|i| matches!(bytes[i], b'{' | b'[' | b'"' | b't' | b'f' | b'n' | b'-' | b'0'..=b'9'))
+}

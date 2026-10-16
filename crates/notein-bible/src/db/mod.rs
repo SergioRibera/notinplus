@@ -220,44 +220,64 @@ pub struct CrossRefRow {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TskNoteRow {
-    pub src_verse: u16,
-    pub letter: String,
-    pub anchor_word: String,
-    pub tgt_book: String,
-    pub tgt_chap: u16,
-    pub tgt_verse: u16,
+pub struct FootnoteRow {
+    pub verse: u16,
+    pub note_id: i64,
+    pub caller: String,
+    pub text: String,
 }
 
 impl Db {
-    /// Treasury-of-Scripture-Knowledge notes for `(book, chapter)`.
-    /// Ordered by `src_verse` then `letter` so the UI can render in
-    /// natural reading order without re-sorting.
-    pub fn tsk_notes_for_chapter(
+    /// Publisher-authored footnotes (via helloao.org) for `(book,
+    /// chapter)` under `bible_id`. Ordered by verse then note_id so the
+    /// reader can walk them in-line with the paragraph.
+    pub fn footnotes_for_chapter(
         &self,
+        bible_id: &str,
         book_id: &str,
         chapter: u16,
-    ) -> Result<Vec<TskNoteRow>> {
+    ) -> Result<Vec<FootnoteRow>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT src_verse, letter, anchor_word, tgt_book, tgt_chap, tgt_verse
-                 FROM tsk_notes
-                 WHERE src_book = ?1 AND src_chap = ?2
-                 ORDER BY src_verse, letter",
+                "SELECT verse, note_id, caller, text
+                 FROM footnotes
+                 WHERE bible_id = ?1 AND book_id = ?2 AND chapter = ?3
+                 ORDER BY verse, note_id",
             )?;
             let rows = stmt
-                .query_map(rusqlite::params![book_id, chapter as i64], |r| {
-                    Ok(TskNoteRow {
-                        src_verse: r.get::<_, i64>(0)? as u16,
-                        letter: r.get(1)?,
-                        anchor_word: r.get(2)?,
-                        tgt_book: r.get(3)?,
-                        tgt_chap: r.get::<_, i64>(4)? as u16,
-                        tgt_verse: r.get::<_, i64>(5)? as u16,
-                    })
-                })?
+                .query_map(
+                    rusqlite::params![bible_id, book_id, chapter as i64],
+                    |r| {
+                        Ok(FootnoteRow {
+                            verse: r.get::<_, i64>(0)? as u16,
+                            note_id: r.get(1)?,
+                            caller: r.get(2)?,
+                            text: r.get(3)?,
+                        })
+                    },
+                )?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
+        })
+    }
+
+    /// `true` when at least one footnote row exists for `(bible, book,
+    /// chap)`. Used to decide whether the lazy fetcher needs to hit
+    /// helloao this render pass.
+    pub fn has_footnotes_for_chapter(
+        &self,
+        bible_id: &str,
+        book_id: &str,
+        chapter: u16,
+    ) -> Result<bool> {
+        self.with_conn(|conn| {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(1) FROM footnotes
+                 WHERE bible_id = ?1 AND book_id = ?2 AND chapter = ?3",
+                rusqlite::params![bible_id, book_id, chapter as i64],
+                |r| r.get(0),
+            )?;
+            Ok(count > 0)
         })
     }
 }

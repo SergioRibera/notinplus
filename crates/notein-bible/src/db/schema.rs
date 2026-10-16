@@ -69,19 +69,20 @@ CREATE TABLE IF NOT EXISTS cross_refs (
 CREATE INDEX IF NOT EXISTS idx_xref_src
     ON cross_refs(bible_id, src_book, src_chap, src_verse);
 
-CREATE TABLE IF NOT EXISTS tsk_notes (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    src_book      TEXT NOT NULL,
-    src_chap      INTEGER NOT NULL,
-    src_verse     INTEGER NOT NULL,
-    letter        TEXT NOT NULL,
-    anchor_word   TEXT NOT NULL DEFAULT '',
-    tgt_book      TEXT NOT NULL,
-    tgt_chap      INTEGER NOT NULL,
-    tgt_verse     INTEGER NOT NULL
+CREATE TABLE IF NOT EXISTS footnotes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    bible_id    TEXT NOT NULL,
+    book_id     TEXT NOT NULL,
+    chapter     INTEGER NOT NULL,
+    verse       INTEGER NOT NULL,
+    note_id     INTEGER NOT NULL,
+    caller      TEXT NOT NULL DEFAULT '',
+    text        TEXT NOT NULL DEFAULT ''
 );
-CREATE INDEX IF NOT EXISTS idx_tsk_src
-    ON tsk_notes(src_book, src_chap, src_verse);
+CREATE INDEX IF NOT EXISTS idx_footnotes_loc
+    ON footnotes(bible_id, book_id, chapter);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_footnotes_pk
+    ON footnotes(bible_id, book_id, chapter, note_id);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS verses_fts USING fts5(
     text,

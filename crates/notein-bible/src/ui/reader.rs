@@ -15,21 +15,21 @@ use super::chapter::{Block, ChapterPlan, ParagraphSpan};
 use super::theme;
 use super::typography;
 
-/// UI-side projection of a TSK note. One entry per letter per verse.
-/// Target verse text pre-fetched so hover renders instantly.
+/// UI-side projection of a publisher footnote. `caller` is the display
+/// letter (publisher-assigned — "a", "b", "c" or "+" for autogen).
+/// `text` is the footnote body shown in the hover popup. `target`, when
+/// present, lets the click handler navigate to the referenced verse.
 #[derive(Clone, Debug, PartialEq)]
-pub struct TskNoteView {
+pub struct FootnoteView {
     pub src_verse: u16,
-    pub letter: String,
-    pub tooltip: String,
-    pub tgt_book: String,
-    pub tgt_chap: u16,
-    pub tgt_verse: u16,
+    pub caller: String,
+    pub text: String,
+    pub target: Option<(String, u16, u16)>,
 }
 
 #[must_use]
-pub fn tsk_notes_by_verse(notes: &[TskNoteView]) -> HashMap<u16, Vec<TskNoteView>> {
-    let mut out: HashMap<u16, Vec<TskNoteView>> = HashMap::new();
+pub fn footnotes_by_verse(notes: &[FootnoteView]) -> HashMap<u16, Vec<FootnoteView>> {
+    let mut out: HashMap<u16, Vec<FootnoteView>> = HashMap::new();
     for n in notes {
         out.entry(n.src_verse).or_default().push(n.clone());
     }
@@ -119,6 +119,7 @@ pub fn chapter_view(
     plan: &ChapterPlan,
     highlights: &[&BibleBookmark],
     cross_refs: &HashMap<u16, Vec<CrossRefView>>,
+    footnotes: &HashMap<u16, Vec<FootnoteView>>,
     on_jump: OnJump,
     flash_verse: Option<u16>,
     font_size: f32,
@@ -155,6 +156,7 @@ pub fn chapter_view(
                             plan,
                             &styles,
                             cross_refs,
+                            footnotes,
                             on_jump.clone(),
                             font_size,
                             line_height,
@@ -164,6 +166,7 @@ pub fn chapter_view(
                             plan,
                             &styles,
                             cross_refs,
+                            footnotes,
                             on_jump,
                             font_size,
                             line_height,
@@ -203,6 +206,7 @@ fn drop_cap_block(
     plan: &ChapterPlan,
     styles: &HashMap<u16, VerseStyle>,
     cross_refs: &HashMap<u16, Vec<CrossRefView>>,
+    footnotes: &HashMap<u16, Vec<FootnoteView>>,
     on_jump: OnJump,
     font_size: f32,
     line_height: f32,
@@ -233,7 +237,7 @@ fn drop_cap_block(
                 ),
         )
         .child(rect().padding((0., 0., 0., drop_cap_size * 0.65)).child(
-            verse_paragraph(&first_paragraph, styles, cross_refs, on_jump, font_size, line_height),
+            verse_paragraph(&first_paragraph, styles, cross_refs, footnotes, on_jump, font_size, line_height),
         ))
 }
 
@@ -245,6 +249,7 @@ fn trailing_blocks(
     plan: &ChapterPlan,
     styles: &HashMap<u16, VerseStyle>,
     cross_refs: &HashMap<u16, Vec<CrossRefView>>,
+    footnotes: &HashMap<u16, Vec<FootnoteView>>,
     on_jump: OnJump,
     font_size: f32,
     line_height: f32,
@@ -262,6 +267,7 @@ fn trailing_blocks(
                     spans,
                     styles,
                     cross_refs,
+                    footnotes,
                     on_jump.clone(),
                     font_size,
                     line_height,
@@ -284,6 +290,7 @@ fn verse_paragraph(
     spans: &[ParagraphSpan],
     styles: &HashMap<u16, VerseStyle>,
     cross_refs: &HashMap<u16, Vec<CrossRefView>>,
+    footnotes: &HashMap<u16, Vec<FootnoteView>>,
     on_jump: OnJump,
     font_size: f32,
     line_height: f32,
@@ -316,6 +323,17 @@ fn verse_paragraph(
         if style.map(|s| s.has_note).unwrap_or(false) {
             p = p.child(note_icon(font_size));
         }
+        if let Some(notes) = footnotes.get(&span.verse) {
+            for (idx, note) in notes.iter().enumerate() {
+                p = p.child(FootnoteLetter {
+                    letter: display_letter(&note.caller, idx),
+                    text: note.text.clone(),
+                    target: note.target.clone(),
+                    jump: on_jump.clone(),
+                    font_size,
+                });
+            }
+        }
         if let Some(refs) = cross_refs.get(&span.verse) {
             p = p.child(RefHoverButton {
                 refs: refs.clone(),
@@ -325,6 +343,90 @@ fn verse_paragraph(
         }
     }
     p
+}
+
+/// Normalise the publisher-supplied caller glyph. Many translations
+/// ship `"+"` as an autogen placeholder — fall back to positional
+/// letters a/b/c in that case so the UI stays readable.
+fn display_letter(caller: &str, idx: usize) -> String {
+    let trimmed = caller.trim();
+    if trimmed.is_empty() || trimmed == "+" || trimmed == "*" {
+        if idx < 26 {
+            char::from(b'a' + idx as u8).to_string()
+        } else {
+            format!("{idx}")
+        }
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Publisher footnote letter inline. Hover shows the full note text;
+/// click navigates to the target verse when the footnote carries one
+/// (parsed `Cited in Book Chap:Verse` style refs).
+#[derive(Clone, PartialEq)]
+struct FootnoteLetter {
+    letter: String,
+    text: String,
+    target: Option<(String, u16, u16)>,
+    jump: OnJump,
+    font_size: f32,
+}
+
+impl std::fmt::Debug for FootnoteLetter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FootnoteLetter")
+            .field("letter", &self.letter)
+            .finish()
+    }
+}
+
+impl Component for FootnoteLetter {
+    fn render(&self) -> impl IntoElement {
+        let mut hover = use_state(|| false);
+        let letter = self.letter.clone();
+        let text = self.text.clone();
+        let target = self.target.clone();
+        let on_jump = self.jump.clone();
+        let marker_font = self.font_size * 0.55;
+        let blue = Color::from_rgb(80, 150, 230);
+
+        let mut container = rect()
+            .padding((0., 1.))
+            .margin((0., 1.))
+            .on_pointer_enter({
+                let mut hover = hover;
+                move |_| hover.set(true)
+            })
+            .on_pointer_leave({
+                let mut hover = hover;
+                move |_| hover.set(false)
+            })
+            .on_press(move |_: Event<PressEventData>| {
+                if let Some(t) = target.clone() {
+                    on_jump.call(t);
+                }
+            })
+            .child(label().font_size(marker_font).color(blue).text(letter));
+
+        if *hover.read() && !text.is_empty() {
+            container = container.child(
+                rect()
+                    .position(Position::new_absolute().top(marker_font * 1.6).left(0.))
+                    .width(Size::px(300.0))
+                    .padding((10., 12.))
+                    .with_corner_radius(8.0)
+                    .background(parse_rgb(theme::CHIP_BG))
+                    .child(
+                        label()
+                            .font_size(self.font_size * 0.65)
+                            .color(parse_rgb(theme::TEXT_PRIMARY))
+                            .text(text),
+                    ),
+            );
+        }
+        container
+    }
 }
 
 /// Inline bookmark icon rendered when a verse has at least one

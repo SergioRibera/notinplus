@@ -19,7 +19,7 @@ use notein_bible::db::{BibleRow, BookRow, ChapterRow, Db};
 use notein_bible::plugin_config;
 use notein_bible::state::{BibleBookmark, BibleSnapshot, BibleViewerState};
 use notein_bible::ui::chapter::plan_chapter;
-use notein_bible::ui::reader::{CrossRefView, cross_refs_by_verse};
+use notein_bible::ui::reader::{CrossRefView, FootnoteView, cross_refs_by_verse, footnotes_by_verse};
 use notein_bible::ui::{bottom_nav, reader, toolbar, translation_switcher};
 
 use std::time::Duration;
@@ -112,6 +112,26 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         }
     });
 
+    // Kick a lazy helloao fetch each time the viewer settles on a new
+    // chapter. The spawned worker short-circuits when rows already
+    // exist, so the real network traffic only fires on first open.
+    use_side_effect(move || {
+        let st = state.read();
+        let bid = st.bible_id.clone();
+        let book = st.current_book.clone();
+        let chap = st.current_chapter;
+        drop(st);
+        if let Some(canvas) = crate::builtin::bible_canvas() {
+            notein_bible::install_background::spawn_fetch_footnotes(
+                canvas.db().clone(),
+                canvas.config().clone(),
+                bid,
+                book,
+                chap,
+            );
+        }
+    });
+
     let st_snapshot = {
         let s = state.read();
         ReaderSnapshot::from_state(&s)
@@ -119,7 +139,7 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
     let abbrev = bibles
         .iter()
         .find(|b| b.id == st_snapshot.bible_id)
-        .map(|b| b.abbrev.clone())
+        .map(|b| b.name_local.clone())
         .unwrap_or_else(|| st_snapshot.bible_id.clone());
 
     let db_prev = db.clone();
@@ -279,9 +299,18 @@ fn chapter_body(
                 Vec::new()
             };
             let refs_map = cross_refs_by_verse(&refs);
+            let footnotes = build_footnotes(db, &data.bible_id, &data.book_id, data.chapter);
+            let footnotes_map = footnotes_by_verse(&footnotes);
             let handler = EventHandler::<(String, u16, u16)>::new(on_jump);
             base.child(reader::chapter_view(
-                &plan, &hl_refs, &refs_map, handler, flash_verse, 22.0, 1.65,
+                &plan,
+                &hl_refs,
+                &refs_map,
+                &footnotes_map,
+                handler,
+                flash_verse,
+                22.0,
+                1.65,
             ))
         }
         None => base.center().child(
@@ -292,6 +321,39 @@ fn chapter_body(
     }
 }
 
+
+/// Pull publisher footnotes for `(book, chapter)` from the helloao
+/// cache + resolve each `Cited in …` style text into a navigable
+/// target. Footnotes without a parseable target render as hover-only
+/// (no click action).
+fn build_footnotes(db: &Db, bible_id: &str, book_id: &str, chapter: u16) -> Vec<FootnoteView> {
+    let rows = db.footnotes_for_chapter(bible_id, book_id, chapter).unwrap_or_default();
+    rows.into_iter()
+        .map(|r| {
+            let target = extract_target_from_note_text(&r.text);
+            FootnoteView {
+                src_verse: r.verse,
+                caller: r.caller,
+                text: r.text,
+                target,
+            }
+        })
+        .collect()
+}
+
+/// Parse `Cited in 2 Corinthians 4:6` / `See John 3:16` style refs out
+/// of a footnote body. Returns the first match. Falls back to `None`
+/// for prose-only footnotes.
+fn extract_target_from_note_text(text: &str) -> Option<(String, u16, u16)> {
+    use notein_bible::reference;
+    use notein_bible::resolver;
+    let parsed = reference::parse(text)?;
+    let db_bible = crate::builtin::bible_canvas()?.db().clone();
+    let bibles = db_bible.list_bibles().ok()?;
+    let first_bible = bibles.first()?.id.clone();
+    let anchor = resolver::resolve_parsed(&db_bible, &first_bible, &parsed)?;
+    Some((anchor.book_id, anchor.start_chapter, anchor.start_verse))
+}
 
 /// Fetch every cross-reference the DB holds for `(book, chapter)` and
 /// resolve the target verse text so the reader can render inline chips
