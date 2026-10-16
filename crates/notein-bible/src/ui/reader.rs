@@ -116,10 +116,46 @@ fn rgba_to_freya(rgba: [u8; 4]) -> Color {
 /// `jump_to` the referenced verse without re-decoding anchor bytes.
 pub type OnJump = EventHandler<(String, u16, u16)>;
 
-/// Callback the reader fires when the user taps a verse-number marker
-/// to open the highlight workflow. The host sets its pending-highlight
-/// signal so a color picker anchors to the clicked verse.
-pub type OnHighlight = EventHandler<u16>;
+/// Chapter-scoped drag-selection cursor. Provided via `use_provide_context`
+/// at the `chapter_view` root so every `VerseMarker` can co-operate on
+/// a single multi-marker drag without the parent threading state as a
+/// prop. `start` sticks on pointer-down over a marker; `end` tracks the
+/// last marker the pointer entered while held. Global pointer-up reads
+/// both and emits a `HighlightTarget::Range` when they differ.
+#[derive(Clone, Copy)]
+struct DragSelect {
+    start: State<Option<u16>>,
+    end: State<Option<u16>>,
+    /// Set true on the first marker's `pointer_down` and cleared on
+    /// global `pointer_up`. Markers mid-paragraph only extend `end`
+    /// while this is true so a stray `pointer_enter` (hover without
+    /// press) never grows the selection.
+    pressing: State<bool>,
+}
+
+impl DragSelect {
+    fn use_context() -> Self {
+        use_provide_context(|| Self {
+            start: State::create_in_scope(None, ScopeId::ROOT),
+            end: State::create_in_scope(None, ScopeId::ROOT),
+            pressing: State::create_in_scope(false, ScopeId::ROOT),
+        })
+    }
+}
+
+/// Pending-highlight target emitted by the three bookmark gestures.
+/// `Verse` fires for a double-tap or long-press on a single verse
+/// marker; `Range` fires when the user drags between two verse markers
+/// (inclusive on both ends — the shell applies the chosen colour to
+/// every verse in the range).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HighlightTarget {
+    Verse(u16),
+    Range(u16, u16),
+}
+
+/// Callback the reader fires when a bookmark gesture completes.
+pub type OnHighlight = EventHandler<HighlightTarget>;
 
 pub fn chapter_view(
     plan: &ChapterPlan,
@@ -132,6 +168,10 @@ pub fn chapter_view(
     font_size: f32,
     line_height: f32,
 ) -> impl IntoElement {
+    // Install the chapter-scoped drag-select cursor so every verse
+    // marker rendered under this view shares one `(start, end)` state
+    // for the drag-highlight gesture.
+    let _drag = DragSelect::use_context();
     let drop_cap_size = font_size * 4.5;
     let mut styles = style_map(highlights);
     if let Some(v) = flash_verse {
@@ -260,11 +300,13 @@ fn verse_paragraph(
         .font_family(typography::FAMILY)
         .font_size(font_size);
 
-    // Freya's paragraph.highlights uses byte offsets inside the span
-    // text buffer. Track running offset as we emit spans so we can
-    // register `(start, end)` ranges per highlighted verse without a
-    // post-walk.
-    let mut char_offset: usize = 0;
+    // Freya's `paragraph.highlights` indexes UTF-16 code units inside
+    // the paragraph (spans + inline placeholders). Each `.child(...)`
+    // adds one placeholder (one UTF-16 unit); each span contributes
+    // `text.encode_utf16().count()` units. Track both so the highlight
+    // range covers only the verse text — not the preceding verse
+    // marker nor the trailing footnote / cross-ref icon.
+    let mut utf16_offset: usize = 0;
     let mut highlight_ranges: Vec<(usize, usize)> = Vec::new();
     let highlight_color = Color::from_rgb(170, 150, 60);
 
@@ -281,13 +323,14 @@ fn verse_paragraph(
             on_highlight: on_highlight.clone(),
             font_size,
         });
+        utf16_offset += 1; // placeholder for the marker child
 
         let text = format!("{} ", span.text);
-        let text_bytes = text.len();
-        let start = char_offset;
+        let text_units = text.encode_utf16().count();
+        let start = utf16_offset;
         p = p.span(Span::new(text).font_size(font_size));
-        char_offset += text_bytes;
-        let end = char_offset;
+        utf16_offset += text_units;
+        let end = utf16_offset;
 
         if style.is_some() {
             highlight_ranges.push((start, end));
@@ -295,6 +338,7 @@ fn verse_paragraph(
 
         if style.map(|s| s.has_note).unwrap_or(false) {
             p = p.child(note_icon(font_size));
+            utf16_offset += 1;
         }
         if let Some(notes) = footnotes.get(&span.verse) {
             for (idx, note) in notes.iter().enumerate() {
@@ -305,6 +349,7 @@ fn verse_paragraph(
                     jump: on_jump.clone(),
                     font_size,
                 });
+                utf16_offset += 1;
             }
         }
         if let Some(refs) = cross_refs.get(&span.verse) {
@@ -313,6 +358,7 @@ fn verse_paragraph(
                 jump: on_jump.clone(),
                 font_size,
             });
+            utf16_offset += 1;
         }
     }
 
@@ -331,10 +377,11 @@ enum MarkerDisplay {
     Chapter(u16),
 }
 
-/// Clickable verse number. Tap dispatches `on_highlight(verse)` so the
-/// host can open its colour-picker overlay anchored to the chosen
-/// verse. The display styling matches the previous span-based renderer
-/// so paragraph flow stays unchanged.
+/// Clickable verse number. Opens the colour-picker overlay via
+/// `on_highlight(verse)` on **two** gestures — double-tap or
+/// long-press — so a stray single tap while reading never commits a
+/// highlight. The display styling matches the previous span-based
+/// renderer so paragraph flow stays unchanged.
 #[derive(Clone, PartialEq)]
 struct VerseMarker {
     verse: u16,
@@ -351,25 +398,128 @@ impl std::fmt::Debug for VerseMarker {
     }
 }
 
+/// Delay before a sustained press is treated as a long-press.
+const LONG_PRESS_MS: u64 = 500;
+
 impl Component for VerseMarker {
     fn render(&self) -> impl IntoElement {
         let verse = self.verse;
-        let _ = (verse, &self.on_highlight);
-        match self.display {
-            MarkerDisplay::Chapter(chap) => rect().padding((0., 2.)).child(
-                label()
-                    .font_family(typography::FAMILY)
-                    .font_size(self.font_size * 2.5)
-                    .color(parse_rgb(theme::DROP_CAP))
-                    .text(format!("{chap} ")),
-            ),
-            MarkerDisplay::Verse => rect().padding((0., 2.)).child(
-                label()
-                    .font_size(self.font_size * 0.6)
-                    .color(parse_rgb(theme::VERSE_NUM))
-                    .text(format!(" {verse} ")),
-            ),
-        }
+        let on_highlight = self.on_highlight.clone();
+        // Monotonic token so a `pointer_up` / `pointer_leave` that
+        // arrives after the long-press timer has already fired is a
+        // no-op, and so a second press starts a fresh timer.
+        let long_press_token = use_state(|| 0u64);
+        // Chapter-level drag cursor (installed by `chapter_view`).
+        let drag = use_consume::<DragSelect>();
+
+        let inner = match self.display {
+            MarkerDisplay::Chapter(chap) => label()
+                .font_family(typography::FAMILY)
+                .font_size(self.font_size * 2.5)
+                .color(parse_rgb(theme::DROP_CAP))
+                .text(format!("{chap} ")),
+            MarkerDisplay::Verse => label()
+                .font_size(self.font_size * 0.6)
+                .color(parse_rgb(theme::VERSE_NUM))
+                .text(format!(" {verse} ")),
+        };
+
+        rect()
+            .padding((0., 2.))
+            .on_pointer_down({
+                let mut long_press_token = long_press_token;
+                let on_highlight = on_highlight.clone();
+                let mut drag = drag;
+                move |e: Event<PointerEventData>| {
+                    // Seed the drag cursor on this verse so a drag that
+                    // ends on a different marker produces a range.
+                    drag.start.set(Some(verse));
+                    drag.end.set(Some(verse));
+                    drag.pressing.set(true);
+
+                    // Advance the token to invalidate any still-queued
+                    // long-press timer from a previous press, then bind
+                    // a copy for this press.
+                    let my_token = long_press_token.peek().wrapping_add(1);
+                    long_press_token.set(my_token);
+
+                    // Double-tap: EventsCombos tracks consecutive
+                    // presses at the same global location within the
+                    // multi-press window. `is_double` fires on the
+                    // second tap only.
+                    if EventsCombos::<()>::pressed(e.global_location()).is_double() {
+                        on_highlight.call(HighlightTarget::Verse(verse));
+                        // Collapse the drag so pointer-up skips the
+                        // range emit path.
+                        drag.start.set(None);
+                        drag.end.set(None);
+                        drag.pressing.set(false);
+                        return;
+                    }
+
+                    // Long-press: fire after the press has survived
+                    // `LONG_PRESS_MS` without the token being bumped
+                    // (release / move-away / another press all bump).
+                    let on_highlight = on_highlight.clone();
+                    let long_press_token = long_press_token;
+                    let mut drag_for_long = drag;
+                    spawn(async move {
+                        async_io::Timer::after(std::time::Duration::from_millis(
+                            LONG_PRESS_MS,
+                        ))
+                        .await;
+                        if *long_press_token.peek() == my_token {
+                            on_highlight.call(HighlightTarget::Verse(verse));
+                            drag_for_long.start.set(None);
+                            drag_for_long.end.set(None);
+                            drag_for_long.pressing.set(false);
+                        }
+                    });
+                }
+            })
+            .on_pointer_enter({
+                let mut drag = drag;
+                move |_: Event<PointerEventData>| {
+                    // Extend the drag end while the pointer is held
+                    // down. `EventsCombos::pressing` is true from the
+                    // first marker's pointer-down until the global
+                    // pointer-up.
+                    if *drag.pressing.peek() && drag.start.peek().is_some() {
+                        drag.end.set(Some(verse));
+                    }
+                }
+            })
+            .on_global_pointer_up({
+                let mut long_press_token = long_press_token;
+                let on_highlight = on_highlight.clone();
+                let mut drag = drag;
+                move |_: Event<PointerEventData>| {
+                    let next = long_press_token.peek().wrapping_add(1);
+                    long_press_token.set(next);
+
+                    let start = *drag.start.peek();
+                    let end = *drag.end.peek();
+                    drag.start.set(None);
+                    drag.end.set(None);
+                    drag.pressing.set(false);
+                    EventsCombos::<()>::released();
+
+                    if let (Some(a), Some(b)) = (start, end)
+                        && a != b
+                    {
+                        let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+                        on_highlight.call(HighlightTarget::Range(lo, hi));
+                    }
+                }
+            })
+            .on_pointer_leave({
+                let mut long_press_token = long_press_token;
+                move |_: Event<PointerEventData>| {
+                    let next = long_press_token.peek().wrapping_add(1);
+                    long_press_token.set(next);
+                }
+            })
+            .child(inner)
     }
 }
 

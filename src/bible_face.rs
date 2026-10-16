@@ -104,9 +104,12 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
     let mut search_query: State<String> = use_state(String::new);
     let mut search_hits: State<Vec<notein_bible::ui::search_sheet::SearchHitView>> =
         use_state(Vec::new);
-    // Verse number tapped — hosts the colour-picker overlay anchored to
-    // the chosen verse. `None` keeps the picker hidden.
-    let mut pending_highlight: State<Option<u16>> = use_state(|| None);
+    // Bookmark gesture target — hosts the colour-picker overlay. A
+    // double-tap / long-press on one verse marker produces `Verse(n)`;
+    // a drag between two markers produces `Range(lo, hi)` so the
+    // picker applies the chosen colour across the whole span.
+    let mut pending_highlight: State<Option<notein_bible::ui::reader::HighlightTarget>> =
+        use_state(|| None);
     // Transient highlight on the destination verse of a TSK / xref jump
     // — set on click, cleared by a spawned timer after a few seconds so
     // the user eye lands on the referenced text before the colour fades.
@@ -291,8 +294,8 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
                     });
                 }
             },
-            move |verse: u16| {
-                pending_highlight.set(Some(verse));
+            move |target: notein_bible::ui::reader::HighlightTarget| {
+                pending_highlight.set(Some(target));
             },
         ))
         .child(bottom_nav::bottom_nav(
@@ -365,7 +368,12 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         );
     }
 
-    if let Some(verse) = *pending_highlight.read() {
+    if let Some(target) = *pending_highlight.read() {
+        use notein_bible::ui::reader::HighlightTarget;
+        let (lo, hi) = match target {
+            HighlightTarget::Verse(v) => (v, v),
+            HighlightTarget::Range(a, b) => (a, b),
+        };
         let book = st_snapshot.chapter.as_ref().map(|c| c.book_id.clone()).unwrap_or_default();
         let chapter_num = st_snapshot
             .chapter
@@ -377,12 +385,19 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
             let packed = notein_bible::state::rgba_to_u32(rgba);
             {
                 let mut st = state.write();
-                st.begin_selection(book.clone(), chapter_num, verse);
-                let _ = st.commit_selection_as_highlight(Some(packed), "");
+                for v in lo..=hi {
+                    st.begin_selection(book.clone(), chapter_num, v);
+                    let _ = st.commit_selection_as_highlight(Some(packed), "");
+                }
             }
             pending_highlight.set(None);
         };
         let mut on_close = move || pending_highlight.set(None);
+        let title = if lo == hi {
+            format!("Resaltar verso {lo}")
+        } else {
+            format!("Resaltar versos {lo}–{hi}")
+        };
         column = column.child(
             rect()
                 .position(Position::new_absolute().top(72.).right(16.))
@@ -395,7 +410,7 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
                     label()
                         .font_size(13.0)
                         .color(Color::from_rgb(220, 220, 220))
-                        .text(format!("Resaltar verso {verse}")),
+                        .text(title),
                 )
                 .child(
                     notein_ui_kit::ColorWheel::new()
@@ -458,7 +473,7 @@ fn chapter_body(
     highlights: &[BibleBookmark],
     flash_verse: Option<u16>,
     on_jump: impl FnMut((String, u16, u16)) + 'static,
-    on_highlight: impl FnMut(u16) + 'static,
+    on_highlight: impl FnMut(notein_bible::ui::reader::HighlightTarget) + 'static,
 ) -> impl IntoElement {
     let base = rect().width(Size::fill()).height(Size::flex(1.));
     match chapter {
@@ -477,7 +492,8 @@ fn chapter_body(
             let footnotes = build_footnotes(db, &data.bible_id, &data.book_id, data.chapter);
             let footnotes_map = footnotes_by_verse(&footnotes);
             let jump_handler = EventHandler::<(String, u16, u16)>::new(on_jump);
-            let highlight_handler = EventHandler::<u16>::new(on_highlight);
+            let highlight_handler =
+                EventHandler::<notein_bible::ui::reader::HighlightTarget>::new(on_highlight);
             base.child(reader::chapter_view(
                 &plan,
                 &hl_refs,
