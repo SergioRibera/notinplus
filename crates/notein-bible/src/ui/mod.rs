@@ -6,7 +6,6 @@
 
 pub mod bottom_nav;
 pub mod chapter;
-pub mod cross_ref_panel;
 pub mod reader;
 pub mod search_sheet;
 pub mod theme;

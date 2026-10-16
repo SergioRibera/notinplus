@@ -19,7 +19,7 @@ use notein_bible::db::{BibleRow, BookRow, ChapterRow, Db};
 use notein_bible::state::{BibleBookmark, BibleSnapshot, BibleViewerState};
 use notein_bible::ui::chapter::plan_chapter;
 use notein_bible::ui::reader::{CrossRefView, cross_refs_by_verse};
-use notein_bible::ui::{bottom_nav, cross_ref_panel, reader, toolbar, translation_switcher};
+use notein_bible::ui::{bottom_nav, reader, toolbar, translation_switcher};
 
 use crate::library::ItemId;
 
@@ -90,7 +90,6 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         st
     });
     let mut picker_open = use_state(|| false);
-    let mut refs_panel_open = use_state(|| false);
 
     // Save snapshot whenever `state` changes. `use_side_effect` reruns
     // on signal mutations so highlights + chapter navigation persist
@@ -150,10 +149,6 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         }
         let _ = router.push(crate::route::Route::Home);
     };
-    let on_refs = move || {
-        let open = *refs_panel_open.read();
-        refs_panel_open.set(!open);
-    };
 
     let picker_overlay = if *picker_open.read() {
         let db_pick = db.clone();
@@ -186,7 +181,6 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
             toolbar::ToolbarCallbacks {
                 on_back: Some(Box::new(on_back)),
                 on_search: || log::info!("bible: search sheet not wired yet"),
-                on_refs,
                 on_more: || log::info!("bible: more menu not wired yet"),
                 on_translation: translation_cb,
             },
@@ -212,38 +206,6 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         ));
     if let Some(overlay) = picker_overlay {
         column = column.child(overlay);
-    }
-
-    if *refs_panel_open.read() {
-        let chapter_refs = st_snapshot
-            .chapter
-            .as_ref()
-            .map(|c| build_cross_refs(&db, &c.bible_id, &c.book_id, c.chapter))
-            .unwrap_or_default();
-        let chapter_label = st_snapshot
-            .chapter
-            .as_ref()
-            .map(|c| format!("{} {}", c.book_name, c.chapter))
-            .unwrap_or_else(|| "Capítulo".into());
-        let panel_handler = EventHandler::<(String, u16, u16)>::new({
-            let db = db.clone();
-            move |(book, chap, _verse): (String, u16, u16)| {
-                if let Err(e) = state.write().jump_to(&db, &book, chap) {
-                    log::warn!("bible panel jump: {e}");
-                }
-                refs_panel_open.set(false);
-            }
-        });
-        column = column.child(
-            rect()
-                .position(Position::new_absolute().right(0.).top(56.).bottom(0.))
-                .child(cross_ref_panel::cross_ref_panel(
-                    &chapter_label,
-                    &chapter_refs,
-                    panel_handler,
-                    move || refs_panel_open.set(false),
-                )),
-        );
     }
     column
 }
