@@ -16,6 +16,7 @@ use freya::prelude::*;
 use freya::router::RouterContext;
 
 use notein_bible::db::{BibleRow, BookRow, ChapterRow, Db};
+use notein_bible::plugin_config;
 use notein_bible::state::{BibleBookmark, BibleSnapshot, BibleViewerState};
 use notein_bible::ui::chapter::plan_chapter;
 use notein_bible::ui::reader::{CrossRefView, cross_refs_by_verse};
@@ -251,7 +252,18 @@ fn chapter_body(
         Some(data) => {
             let plan = plan_chapter(data);
             let hl_refs: Vec<&BibleBookmark> = highlights.iter().collect();
-            let refs = build_cross_refs(db, &data.bible_id, &data.book_id, data.chapter);
+            // Advanced cross-refs honour the plugin config toggle so the
+            // user can declutter the paragraph when the TSK letters are
+            // enough. TSK letters (follow-up data source) render in a
+            // parallel path and ignore this flag.
+            let enabled = crate::builtin::bible_canvas()
+                .map(|c| plugin_config::effective_enable_crossref(c.config()))
+                .unwrap_or(true);
+            let refs = if enabled {
+                build_cross_refs(db, &data.bible_id, &data.book_id, data.chapter)
+            } else {
+                Vec::new()
+            };
             let refs_map = cross_refs_by_verse(&refs);
             let handler = EventHandler::<(String, u16, u16)>::new(on_jump);
             base.child(reader::chapter_view(

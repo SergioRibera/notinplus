@@ -41,6 +41,11 @@ pub const KEY_INSTALL_BIBLE_ID: &str = "install_bible_id";
 pub const KEY_INSTALL_BIBLE: &str = "install_bible";
 pub const KEY_FONT_SIZE: &str = "font_size";
 pub const KEY_LINE_HEIGHT: &str = "line_height";
+/// Toggle for the fetch.bible / "advanced" cross-reference overlay —
+/// the inline bookmark icon + hover popup with every xref the TSK
+/// doesn't surface. Default `true` so first-time users see the
+/// enriched set; power users who want a cleaner page turn it off.
+pub const KEY_ENABLE_CROSSREF: &str = "enable_crossref";
 
 pub const DEFAULT_FONT_SIZE: f64 = 22.0;
 pub const DEFAULT_LINE_HEIGHT: f64 = 1.65;
@@ -184,6 +189,17 @@ pub fn build_schema(db: &Db) -> ConfigSchema {
                 default: ConfigValue::Float(DEFAULT_LINE_HEIGHT),
                 aliases: Vec::new(),
             },
+            ConfigField {
+                key: KEY_ENABLE_CROSSREF.into(),
+                label: "Referencias cruzadas avanzadas".into(),
+                help: "Muestra el ícono + popup con todas las referencias \
+                       de fetch.bible. Las notas TSK (letras a/b/c) se ven \
+                       siempre sin importar esta opción."
+                    .into(),
+                kind: ConfigFieldKind::Bool,
+                default: ConfigValue::Bool(true),
+                aliases: Vec::new(),
+            },
         ],
     }
 }
@@ -206,6 +222,8 @@ pub fn apply_set(
         (KEY_FONT_SIZE, ConfigValue::Float(v)) if (14.0..=32.0).contains(v) => {}
         (KEY_LINE_HEIGHT, ConfigValue::Float(v)) if (1.2..=2.2).contains(v) => {}
         (KEY_FONT_SIZE | KEY_LINE_HEIGHT, _) => return Err(ConfigError::TypeMismatch),
+        (KEY_ENABLE_CROSSREF, ConfigValue::Bool(_)) => {}
+        (KEY_ENABLE_CROSSREF, _) => return Err(ConfigError::TypeMismatch),
         (
             KEY_DEFAULT_BIBLE | KEY_MANIFEST_URL | KEY_CACHE_DIR | KEY_INSTALL_BIBLE_ID,
             ConfigValue::String(_),
@@ -245,6 +263,19 @@ pub fn float(config: &SharedConfig, key: &str) -> Option<f64> {
         ConfigValue::Float(v) => Some(v),
         _ => None,
     }
+}
+
+pub fn bool(config: &SharedConfig, key: &str) -> Option<bool> {
+    match get_value(config, key)? {
+        ConfigValue::Bool(v) => Some(v),
+        _ => None,
+    }
+}
+
+/// Whether the advanced (fetch.bible) cross-ref overlay should render.
+/// Defaults to `true` so first-run installs see the enriched set.
+pub fn effective_enable_crossref(config: &SharedConfig) -> bool {
+    bool(config, KEY_ENABLE_CROSSREF).unwrap_or(true)
 }
 
 /// Resolve the effective default Bible id — the stored value, or the

@@ -6,7 +6,7 @@
 //! startup. Dynamic (dlopen) plugins land in a later phase; the trait
 //! surface is identical.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use notein_plugin::PluginRegistry;
 
@@ -21,6 +21,17 @@ pub use pdf_canvas::PdfCanvasPlugin;
 pub use pdf_linked::PdfLinkedSource;
 pub use pdf_source::PdfSourcePlugin;
 pub use stroke_canvas::StrokeCanvasPlugin;
+
+/// Concrete handle to the registered Bible canvas, stored at
+/// registration so page code can reach plugin-specific helpers (shared
+/// config, install progress, selection) that the generic
+/// `Arc<dyn CanvasKind>` trait object does not expose.
+static BIBLE_CANVAS: OnceLock<Arc<notein_bible::BibleCanvas>> = OnceLock::new();
+
+#[must_use]
+pub fn bible_canvas() -> Option<Arc<notein_bible::BibleCanvas>> {
+    BIBLE_CANVAS.get().cloned()
+}
 
 /// Register every in-process builtin into `reg`. Idempotent: duplicate
 /// kind-ids are logged and skipped so a second call never panics.
@@ -39,7 +50,10 @@ pub fn register_all(reg: &mut PluginRegistry) {
     // return Freya rsx). Register ahead of the dynamic scan so if the
     // user also dropped the shared library in the plugins dir the
     // duplicate id lands as a warning (not a crash).
-    if let Err(err) = notein_bible::install_default(reg) {
-        log::warn!("register notein-bible: {err}");
+    match notein_bible::install_default_with_handle(reg) {
+        Ok(handle) => {
+            let _ = BIBLE_CANVAS.set(handle);
+        }
+        Err(err) => log::warn!("register notein-bible: {err}"),
     }
 }
