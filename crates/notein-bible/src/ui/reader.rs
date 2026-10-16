@@ -144,15 +144,24 @@ impl DragSelect {
     }
 }
 
-/// Pending-highlight target emitted by the three bookmark gestures.
-/// `Verse` fires for a double-tap or long-press on a single verse
-/// marker; `Range` fires when the user drags between two verse markers
-/// (inclusive on both ends — the shell applies the chosen colour to
-/// every verse in the range).
+/// Which verse(s) a bookmark gesture targets. `Verse` fires for a
+/// double-tap or long-press on a single verse; `Range` fires when the
+/// user drags across multiple verses (inclusive on both ends).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HighlightTarget {
+pub enum HighlightKind {
     Verse(u16),
     Range(u16, u16),
+}
+
+/// Full gesture payload. `anchor` is the global (window-relative)
+/// pointer location where the gesture started, so the host can float
+/// the colour picker next to the touch point instead of pinning it to
+/// a fixed corner.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HighlightTarget {
+    pub kind: HighlightKind,
+    pub anchor_x: f32,
+    pub anchor_y: f32,
 }
 
 /// Callback the reader fires when a bookmark gesture completes.
@@ -341,6 +350,10 @@ impl Component for VerseParagraph {
         // after the long-press timer has already fired is a no-op, and
         // so a second press starts a fresh timer.
         let long_press_token = use_state(|| 0u64);
+        // Global pointer location captured on `pointer_down`. The
+        // host anchors its colour picker here so the popup opens next
+        // to the finger / cursor instead of pinned to a fixed corner.
+        let anchor: State<(f32, f32)> = use_state(|| (0.0, 0.0));
 
         let on_jump = self.on_jump.clone();
         let on_highlight = self.on_highlight.clone();
@@ -435,6 +448,7 @@ impl Component for VerseParagraph {
             let mut long_press_token = long_press_token;
             let on_highlight = on_highlight.clone();
             let mut drag = drag;
+            let mut anchor = anchor;
             move |e: Event<PointerEventData>| {
                 let Some(offset) = hit_offset(&holder_for_down, e.element_location()) else {
                     return;
@@ -442,6 +456,10 @@ impl Component for VerseParagraph {
                 let Some(verse) = offset_to_verse(&ranges_for_down, offset) else {
                     return;
                 };
+
+                let g = e.global_location();
+                let anchor_pt = (g.x as f32, g.y as f32);
+                anchor.set(anchor_pt);
 
                 drag.start.set(Some(verse));
                 drag.end.set(Some(verse));
@@ -451,7 +469,11 @@ impl Component for VerseParagraph {
                 long_press_token.set(my_token);
 
                 if EventsCombos::<()>::pressed(e.global_location()).is_double() {
-                    on_highlight.call(HighlightTarget::Verse(verse));
+                    on_highlight.call(HighlightTarget {
+                        kind: HighlightKind::Verse(verse),
+                        anchor_x: anchor_pt.0,
+                        anchor_y: anchor_pt.1,
+                    });
                     drag.start.set(None);
                     drag.end.set(None);
                     drag.pressing.set(false);
@@ -465,7 +487,11 @@ impl Component for VerseParagraph {
                     async_io::Timer::after(std::time::Duration::from_millis(LONG_PRESS_MS))
                         .await;
                     if *long_press_token.peek() == my_token {
-                        on_highlight.call(HighlightTarget::Verse(verse));
+                        on_highlight.call(HighlightTarget {
+                            kind: HighlightKind::Verse(verse),
+                            anchor_x: anchor_pt.0,
+                            anchor_y: anchor_pt.1,
+                        });
                         drag_for_long.start.set(None);
                         drag_for_long.end.set(None);
                         drag_for_long.pressing.set(false);
@@ -501,6 +527,7 @@ impl Component for VerseParagraph {
             let mut long_press_token = long_press_token;
             let on_highlight = on_highlight.clone();
             let mut drag = drag;
+            let anchor = anchor;
             move |_: Event<PointerEventData>| {
                 let next = long_press_token.peek().wrapping_add(1);
                 long_press_token.set(next);
@@ -516,7 +543,12 @@ impl Component for VerseParagraph {
                     && a != b
                 {
                     let (lo, hi) = if a < b { (a, b) } else { (b, a) };
-                    on_highlight.call(HighlightTarget::Range(lo, hi));
+                    let (ax, ay) = *anchor.peek();
+                    on_highlight.call(HighlightTarget {
+                        kind: HighlightKind::Range(lo, hi),
+                        anchor_x: ax,
+                        anchor_y: ay,
+                    });
                 }
             }
         })
@@ -678,6 +710,7 @@ impl Component for FootnoteLetter {
         if *hover.read() && !text.is_empty() {
             container = container.child(
                 rect()
+                    .layer(Layer::Overlay)
                     .position(Position::new_absolute().top(marker_font * 1.6).left(0.))
                     .width(Size::px(300.0))
                     .padding((10., 12.))
@@ -785,6 +818,7 @@ impl Component for RefHoverButton {
 
         if *hover.read() {
             let popup = rect()
+                .layer(Layer::Overlay)
                 .position(Position::new_absolute().top(icon_size * 1.4).left(0.))
                 .width(Size::px(320.0))
                 .max_height(Size::px(360.0))

@@ -220,6 +220,7 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         let current_bible = st_snapshot.bible_id.clone();
         Some(
             rect()
+                .layer(Layer::Overlay)
                 .position(Position::new_absolute().right(16.).top(60.))
                 .child(translation_switcher::translation_switcher(
                     bibles_pick,
@@ -350,6 +351,7 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
 
         column = column.child(
             rect()
+                .layer(Layer::Overlay)
                 .position(Position::new_absolute().top(56.).right(16.))
                 .width(Size::px(420.0))
                 .max_height(Size::px(540.0))
@@ -369,11 +371,16 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
     }
 
     if let Some(target) = *pending_highlight.read() {
-        use notein_bible::ui::reader::HighlightTarget;
-        let (lo, hi) = match target {
-            HighlightTarget::Verse(v) => (v, v),
-            HighlightTarget::Range(a, b) => (a, b),
+        use notein_bible::ui::reader::HighlightKind;
+        let (lo, hi) = match target.kind {
+            HighlightKind::Verse(v) => (v, v),
+            HighlightKind::Range(a, b) => (a, b),
         };
+        // Anchor the picker next to the gesture, clamped so the card
+        // stays on-screen with its ~300×200 footprint. 12px gap below
+        // the finger keeps the touch target visible.
+        let anchor_left = target.anchor_x.max(0.0);
+        let anchor_top = (target.anchor_y + 12.0).max(0.0);
         let book = st_snapshot.chapter.as_ref().map(|c| c.book_id.clone()).unwrap_or_default();
         let chapter_num = st_snapshot
             .chapter
@@ -400,7 +407,8 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         };
         column = column.child(
             rect()
-                .position(Position::new_absolute().top(72.).right(16.))
+                .layer(Layer::Overlay)
+                .position(Position::new_absolute().top(anchor_top).left(anchor_left))
                 .width(Size::px(300.0))
                 .padding((12., 14.))
                 .with_corner_radius(12.0)
