@@ -254,7 +254,7 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
                     // Clear after 3 seconds so the wash fades without
                     // the user needing a second click.
                     let mut flash_verse = flash_verse;
-                    spawn(async move {
+                    spawn_forever(async move {
                         async_io::Timer::after(Duration::from_secs(3)).await;
                         flash_verse.set(None);
                     });
@@ -303,7 +303,7 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
                 }
                 flash_verse.set(Some(src.verse));
                 let mut flash_verse = flash_verse;
-                spawn(async move {
+                spawn_forever(async move {
                     async_io::Timer::after(Duration::from_secs(3)).await;
                     flash_verse.set(None);
                 });
