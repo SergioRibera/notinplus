@@ -110,6 +110,10 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
     // picker applies the chosen colour across the whole span.
     let mut pending_highlight: State<Option<notein_bible::ui::reader::HighlightTarget>> =
         use_state(|| None);
+    // Live preview tracks the ColorWheel's current colour so the
+    // paragraph updates in real time as the user drags. Commit happens
+    // only on explicit "Guardar"; Cancel discards.
+    let mut preview_color: State<Option<freya::prelude::Color>> = use_state(|| None);
     // Transient highlight on the destination verse of a TSK / xref jump
     // — set on click, cleared by a spawned timer after a few seconds so
     // the user eye lands on the referenced text before the colour fades.
@@ -177,6 +181,20 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
     let translation_cb = move || {
         let current = *picker_open.read();
         picker_open.set(!current);
+    };
+
+    // Book + chapter picker sheet state. `nav_sheet_open` toggles the
+    // sheet from the bottom-nav tap; `nav_sheet_page` is the SheetPager
+    // index (0 = book grid, 1 = chapter grid); `nav_sheet_book` keeps
+    // the book_id the user drilled into so page 1 renders chapter cells
+    // without a parent re-render.
+    let mut nav_sheet_open = use_state(|| false);
+    let mut nav_sheet_page = use_state(|| 0usize);
+    let mut nav_sheet_book: State<Option<String>> = use_state(|| None);
+    let open_nav_sheet = move || {
+        nav_sheet_page.set(0);
+        nav_sheet_book.set(None);
+        nav_sheet_open.set(true);
     };
     let on_search_toggle = move || {
         let current = *search_open.read();
@@ -280,6 +298,21 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
             &st_snapshot.highlights,
             *flash_verse.read(),
             {
+                let pending = *pending_highlight.read();
+                let color = *preview_color.read();
+                match (pending, color) {
+                    (Some(t), Some(c)) => {
+                        use notein_bible::ui::reader::{HighlightKind, HighlightPreview};
+                        let (lo, hi) = match t.kind {
+                            HighlightKind::Verse(v) => (v, v),
+                            HighlightKind::Range(a, b) => (a, b),
+                        };
+                        Some(HighlightPreview { lo, hi, color: c })
+                    }
+                    _ => None,
+                }
+            },
+            {
                 let db = db.clone();
                 move |(book, chap, verse): (String, u16, u16)| {
                     if let Err(e) = state.write().jump_to(&db, &book, chap) {
@@ -302,7 +335,11 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         .child(bottom_nav::bottom_nav(
             &st_snapshot.book_name,
             st_snapshot.current_chapter,
-            bottom_nav::BottomNavCallbacks { on_prev, on_next },
+            bottom_nav::BottomNavCallbacks {
+                on_prev,
+                on_next,
+                on_open_picker: open_nav_sheet,
+            },
         ));
     if let Some(overlay) = picker_overlay {
         column = column.child(overlay);
@@ -387,19 +424,39 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
             .as_ref()
             .map(|c| c.chapter)
             .unwrap_or(1);
-        let on_pick = move |color: freya::prelude::Color| {
+        let initial_preview = Color::from_rgb(255, 225, 110);
+        // Seed the live preview so the gesture target lights up as
+        // soon as the picker opens, before the user has moved the
+        // wheel at all.
+        if preview_color.peek().is_none() {
+            preview_color.set(Some(initial_preview));
+        }
+        let on_change = move |color: freya::prelude::Color| {
+            preview_color.set(Some(color));
+        };
+        let book_commit = book.clone();
+        let on_commit = move |_: Event<PressEventData>| {
+            let Some(color) = *preview_color.read() else {
+                pending_highlight.set(None);
+                preview_color.set(None);
+                return;
+            };
             let rgba = [color.r(), color.g(), color.b(), color.a()];
             let packed = notein_bible::state::rgba_to_u32(rgba);
             {
                 let mut st = state.write();
                 for v in lo..=hi {
-                    st.begin_selection(book.clone(), chapter_num, v);
+                    st.begin_selection(book_commit.clone(), chapter_num, v);
                     let _ = st.commit_selection_as_highlight(Some(packed), "");
                 }
             }
             pending_highlight.set(None);
+            preview_color.set(None);
         };
-        let mut on_close = move || pending_highlight.set(None);
+        let on_cancel = move |_: Event<PressEventData>| {
+            pending_highlight.set(None);
+            preview_color.set(None);
+        };
         let title = if lo == hi {
             format!("Resaltar verso {lo}")
         } else {
@@ -422,27 +479,215 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
                 )
                 .child(
                     notein_ui_kit::ColorWheel::new()
-                        .initial(Color::from_rgb(255, 225, 110))
+                        .initial(initial_preview)
                         .allow_custom(true)
-                        .on_change(on_pick),
+                        .on_change(on_change),
                 )
                 .child(
                     rect()
-                        .padding((6., 12.))
-                        .with_corner_radius(6.0)
-                        .background(Color::from_rgb(55, 60, 70))
-                        .on_press(move |_: Event<PressEventData>| on_close())
+                        .direction(Direction::Horizontal)
+                        .spacing(8.0)
                         .child(
-                            label()
-                                .font_size(12.0)
-                                .color(Color::from_rgb(230, 230, 230))
-                                .text("Cancelar"),
+                            rect()
+                                .padding((6., 12.))
+                                .with_corner_radius(6.0)
+                                .background(Color::from_rgb(55, 60, 70))
+                                .on_press(on_cancel)
+                                .child(
+                                    label()
+                                        .font_size(12.0)
+                                        .color(Color::from_rgb(230, 230, 230))
+                                        .text("Cancelar"),
+                                ),
+                        )
+                        .child(
+                            rect()
+                                .padding((6., 12.))
+                                .with_corner_radius(6.0)
+                                .background(Color::from_rgb(90, 110, 60))
+                                .on_press(on_commit)
+                                .child(
+                                    label()
+                                        .font_size(12.0)
+                                        .color(Color::from_rgb(240, 240, 240))
+                                        .text("Guardar"),
+                                ),
                         ),
                 ),
         );
     }
 
+    // Book + chapter picker sheet. Opens from the bottom-nav caption,
+    // slides a `BookGrid` → (horizontal slide) → `ChapterGrid` for the
+    // selected book. Picking a chapter navigates the viewer + closes
+    // the sheet.
+    if *nav_sheet_open.read() {
+        let bible_id_sheet = st_snapshot.bible_id.clone();
+        let books = db.list_books(&bible_id_sheet).unwrap_or_default();
+        let selected_book = nav_sheet_book.read().clone();
+
+        let book_page = book_grid_page(
+            books.clone(),
+            {
+                let mut nav_sheet_book = nav_sheet_book;
+                let mut nav_sheet_page = nav_sheet_page;
+                move |book_id: String| {
+                    nav_sheet_book.set(Some(book_id));
+                    nav_sheet_page.set(1);
+                }
+            },
+        );
+
+        let chapter_page = match selected_book.as_ref() {
+            Some(book_id) => {
+                let count = db.chapter_count(&bible_id_sheet, book_id).unwrap_or(1);
+                let name = books
+                    .iter()
+                    .find(|b| b.book_id == *book_id)
+                    .map(|b| b.name.clone())
+                    .unwrap_or_else(|| book_id.clone());
+                let db_nav = db.clone();
+                let book_for_nav = book_id.clone();
+                chapter_grid_page(
+                    &name,
+                    count,
+                    {
+                        let mut nav_sheet_page = nav_sheet_page;
+                        move |_: Event<PressEventData>| nav_sheet_page.set(0)
+                    },
+                    move |chapter: u16| {
+                        if let Err(e) = state.write().jump_to(&db_nav, &book_for_nav, chapter) {
+                            log::warn!("bible sheet nav: {e}");
+                        }
+                        nav_sheet_open.set(false);
+                    },
+                )
+                .into_element()
+            }
+            None => rect().into_element(),
+        };
+
+        column = column.child(
+            notein_ui_kit::BottomSheet::new(notein_ui_kit::SheetPager::new(
+                nav_sheet_page,
+                vec![book_page.into_element(), chapter_page],
+            ))
+            .open(nav_sheet_open)
+            .height(460.0),
+        );
+    }
+
     column
+}
+
+/// Grid of every book in the current Bible. Clicking a cell drills
+/// into the matching chapter grid in page 1 of the sheet.
+fn book_grid_page(
+    books: Vec<notein_bible::db::BookRow>,
+    on_pick: impl FnMut(String) + Clone + 'static,
+) -> impl IntoElement {
+    const CELL: f32 = 72.0;
+    const COLS: usize = 5;
+    let mut rows = rect().width(Size::fill()).spacing(8.0);
+    for chunk in books.chunks(COLS) {
+        let mut row = rect()
+            .direction(Direction::Horizontal)
+            .spacing(8.0)
+            .width(Size::fill());
+        for b in chunk {
+            let book_id = b.book_id.clone();
+            let mut on_pick = on_pick.clone();
+            row = row.child(
+                rect()
+                    .width(Size::px(CELL))
+                    .height(Size::px(CELL))
+                    .center()
+                    .with_corner_radius(10.0)
+                    .background(Color::from_rgb(38, 38, 42))
+                    .on_press(move |_: Event<PressEventData>| on_pick(book_id.clone()))
+                    .child(
+                        label()
+                            .font_size(13.0)
+                            .color(Color::from_rgb(230, 230, 230))
+                            .text(b.abbrev.clone()),
+                    ),
+            );
+        }
+        rows = rows.child(row);
+    }
+    ScrollView::new().child(rows)
+}
+
+/// Grid of chapter numbers for the drilled-in book, with a back chip
+/// at the top that returns to the book grid.
+fn chapter_grid_page(
+    book_name: &str,
+    count: u16,
+    on_back: impl FnMut(Event<PressEventData>) + 'static,
+    on_pick: impl FnMut(u16) + Clone + 'static,
+) -> impl IntoElement {
+    const CELL: f32 = 48.0;
+    const COLS: usize = 7;
+    let header = rect()
+        .direction(Direction::Horizontal)
+        .cross_align(Alignment::Center)
+        .spacing(10.0)
+        .child(
+            rect()
+                .padding((4., 10.))
+                .with_corner_radius(6.0)
+                .background(Color::from_rgb(55, 60, 70))
+                .on_press(on_back)
+                .child(
+                    label()
+                        .font_size(12.0)
+                        .color(Color::from_rgb(230, 230, 230))
+                        .text("‹ Libros"),
+                ),
+        )
+        .child(
+            label()
+                .font_size(14.0)
+                .color(Color::from_rgb(230, 230, 230))
+                .text(book_name.to_string()),
+        );
+
+    let mut grid = rect().width(Size::fill()).spacing(8.0);
+    let mut chapter: u16 = 1;
+    while chapter <= count {
+        let mut row = rect()
+            .direction(Direction::Horizontal)
+            .spacing(8.0)
+            .width(Size::fill());
+        let row_end = (chapter as usize + COLS).min(count as usize + 1);
+        for c in (chapter as usize)..row_end {
+            let c_u16 = c as u16;
+            let mut on_pick = on_pick.clone();
+            row = row.child(
+                rect()
+                    .width(Size::px(CELL))
+                    .height(Size::px(CELL))
+                    .center()
+                    .with_corner_radius(8.0)
+                    .background(Color::from_rgb(38, 38, 42))
+                    .on_press(move |_: Event<PressEventData>| on_pick(c_u16))
+                    .child(
+                        label()
+                            .font_size(13.0)
+                            .color(Color::from_rgb(230, 230, 230))
+                            .text(format!("{c_u16}")),
+                    ),
+            );
+        }
+        grid = grid.child(row);
+        chapter = row_end as u16;
+    }
+
+    rect()
+        .width(Size::fill())
+        .spacing(10.0)
+        .child(header)
+        .child(ScrollView::new().child(grid))
 }
 
 struct ReaderSnapshot {
@@ -480,6 +725,7 @@ fn chapter_body(
     chapter: Option<&ChapterRow>,
     highlights: &[BibleBookmark],
     flash_verse: Option<u16>,
+    preview: Option<notein_bible::ui::reader::HighlightPreview>,
     on_jump: impl FnMut((String, u16, u16)) + 'static,
     on_highlight: impl FnMut(notein_bible::ui::reader::HighlightTarget) + 'static,
 ) -> impl IntoElement {
@@ -510,6 +756,7 @@ fn chapter_body(
                 jump_handler,
                 highlight_handler,
                 flash_verse,
+                preview,
                 22.0,
                 1.65,
             ))

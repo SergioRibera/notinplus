@@ -9,11 +9,13 @@
 //! Keep the surface additive: `pub use` reexports from the sub-modules
 //! so consumer `use` lines stay stable even if internals move.
 
+pub mod bottom_sheet;
 pub mod color_wheel;
 pub mod form_input;
 pub mod modal;
 pub mod theme;
 
+pub use bottom_sheet::{BottomSheet, SheetPager};
 pub use color_wheel::{ColorWheel, DEFAULT_SWATCHES, auto_color, color_swatch_strip};
 pub use form_input::FormInput;
 pub use modal::{Modal, ModalChrome, ModalController, ModalPlacement, ModalPortal};

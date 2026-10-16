@@ -11,25 +11,34 @@ const BAR_HEIGHT: f32 = 72.0;
 const PILL_HEIGHT: f32 = 48.0;
 
 #[allow(missing_debug_implementations)]
-pub struct BottomNavCallbacks<FP, FN>
+pub struct BottomNavCallbacks<FP, FN, FC>
 where
     FP: FnMut() + 'static,
     FN: FnMut() + 'static,
+    FC: FnMut() + 'static,
 {
     pub on_prev: FP,
     pub on_next: FN,
+    /// Fired when the user taps the central caption. The host opens the
+    /// book + chapter picker sheet.
+    pub on_open_picker: FC,
 }
 
-pub fn bottom_nav<FP, FN>(
+pub fn bottom_nav<FP, FN, FC>(
     book_name: &str,
     chapter: u16,
-    callbacks: BottomNavCallbacks<FP, FN>,
+    callbacks: BottomNavCallbacks<FP, FN, FC>,
 ) -> impl IntoElement
 where
     FP: FnMut() + 'static,
     FN: FnMut() + 'static,
+    FC: FnMut() + 'static,
 {
-    let BottomNavCallbacks { on_prev, on_next } = callbacks;
+    let BottomNavCallbacks {
+        on_prev,
+        on_next,
+        on_open_picker,
+    } = callbacks;
     let caption = format!("{} {}", book_name.to_uppercase(), chapter);
 
     rect()
@@ -40,17 +49,19 @@ where
         .direction(Direction::Horizontal)
         .cross_align(Alignment::Center)
         .main_align(Alignment::Center)
-        .child(chapter_pill(caption, on_prev, on_next))
+        .child(chapter_pill(caption, on_prev, on_next, on_open_picker))
 }
 
-fn chapter_pill<FP, FN>(
+fn chapter_pill<FP, FN, FC>(
     caption: String,
     mut on_prev: FP,
     mut on_next: FN,
+    mut on_open_picker: FC,
 ) -> impl IntoElement
 where
     FP: FnMut() + 'static,
     FN: FnMut() + 'static,
+    FC: FnMut() + 'static,
 {
     rect()
         .height(Size::px(PILL_HEIGHT))
@@ -75,10 +86,15 @@ where
                 ),
         )
         .child(
-            label()
-                .font_size(14.0)
-                .color(parse_rgb(theme::TEXT_PRIMARY))
-                .text(caption),
+            rect()
+                .padding((4., 10.))
+                .on_press(move |_: Event<PressEventData>| on_open_picker())
+                .child(
+                    label()
+                        .font_size(14.0)
+                        .color(parse_rgb(theme::TEXT_PRIMARY))
+                        .text(caption),
+                ),
         )
         .child(
             rect()

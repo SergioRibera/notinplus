@@ -167,6 +167,17 @@ pub struct HighlightTarget {
 /// Callback the reader fires when a bookmark gesture completes.
 pub type OnHighlight = EventHandler<HighlightTarget>;
 
+/// Live-preview highlight shown while the colour picker is open. The
+/// shell forwards whatever colour the user is currently hovering /
+/// dragging on the wheel; the reader overrides those verses' tint so
+/// the paragraph updates in real time instead of only on commit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HighlightPreview {
+    pub lo: u16,
+    pub hi: u16,
+    pub color: Color,
+}
+
 pub fn chapter_view(
     plan: &ChapterPlan,
     highlights: &[&BibleBookmark],
@@ -175,6 +186,7 @@ pub fn chapter_view(
     on_jump: OnJump,
     on_highlight: OnHighlight,
     flash_verse: Option<u16>,
+    preview: Option<HighlightPreview>,
     font_size: f32,
     line_height: f32,
 ) -> impl IntoElement {
@@ -194,6 +206,17 @@ pub fn chapter_view(
                 has_note: styles.get(&v).map(|s| s.has_note).unwrap_or(false),
             },
         );
+    }
+    if let Some(prev) = preview {
+        for v in prev.lo..=prev.hi {
+            styles.insert(
+                v,
+                VerseStyle {
+                    tint: Some(prev.color),
+                    has_note: styles.get(&v).map(|s| s.has_note).unwrap_or(false),
+                },
+            );
+        }
     }
 
     let _ = drop_cap_size;
@@ -218,6 +241,7 @@ pub fn chapter_view(
                         on_highlight,
                         font_size,
                         line_height,
+                        preview,
                     )),
             ),
         )
@@ -257,6 +281,7 @@ fn all_blocks(
     on_highlight: OnHighlight,
     font_size: f32,
     line_height: f32,
+    preview: Option<HighlightPreview>,
 ) -> impl IntoElement {
     let mut root = rect().width(Size::fill()).spacing(14.);
     for block in &plan.blocks {
@@ -273,6 +298,7 @@ fn all_blocks(
                     font_size,
                     line_height,
                     if starts_chapter { Some(plan.chapter) } else { None },
+                    preview,
                 ));
             }
             Block::Header(text) => {
@@ -310,6 +336,7 @@ pub(super) struct VerseParagraph {
     pub(super) font_size: f32,
     pub(super) line_height: f32,
     pub(super) starts_chapter: Option<u16>,
+    pub(super) preview: Option<HighlightPreview>,
 }
 
 impl std::fmt::Debug for VerseParagraph {
@@ -377,10 +404,25 @@ impl Component for VerseParagraph {
         let mut utf16_offset: usize = 0;
         let mut highlight_ranges: Vec<(usize, usize)> = Vec::new();
         let mut verse_ranges: Vec<VerseRange> = Vec::new();
-        let highlight_color = Color::from_rgb(170, 150, 60);
+        // Preview colour overrides the paragraph's default bookmark
+        // yellow for every verse in the preview range. Freya paints
+        // all highlight ranges with a single colour per paragraph, so
+        // a mid-pick paragraph that already has other bookmarks will
+        // momentarily recolour them too — acceptable since the preview
+        // is live and goes away on confirm / cancel.
+        let highlight_color = self
+            .preview
+            .as_ref()
+            .filter(|p| self.spans.iter().any(|s| s.verse >= p.lo && s.verse <= p.hi))
+            .map(|p| p.color)
+            .unwrap_or_else(|| Color::from_rgb(170, 150, 60));
 
         for span in &self.spans {
             let style = self.styles.get(&span.verse);
+            let in_preview = self
+                .preview
+                .as_ref()
+                .is_some_and(|p| span.verse >= p.lo && span.verse <= p.hi);
 
             p = p.child(VerseMarker {
                 verse: span.verse,
@@ -401,7 +443,7 @@ impl Component for VerseParagraph {
             let end = utf16_offset;
 
             verse_ranges.push((start, end, span.verse));
-            if style.is_some() {
+            if style.is_some() || in_preview {
                 highlight_ranges.push((start, end));
             }
 
@@ -567,6 +609,7 @@ fn verse_paragraph(
     font_size: f32,
     line_height: f32,
     starts_chapter: Option<u16>,
+    preview: Option<HighlightPreview>,
 ) -> impl IntoElement {
     VerseParagraph {
         spans: spans.to_vec(),
@@ -578,6 +621,7 @@ fn verse_paragraph(
         font_size,
         line_height,
         starts_chapter,
+        preview,
     }
 }
 
