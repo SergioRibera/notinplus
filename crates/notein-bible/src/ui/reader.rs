@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 
+use freya::elements::paragraph::ParagraphCursorExt;
 use freya::prelude::*;
 
 use crate::state::{BibleBookmark, u32_to_rgba};
@@ -67,7 +68,7 @@ pub fn cross_refs_by_verse(refs: &[CrossRefView]) -> HashMap<u16, Vec<CrossRefVi
 /// Styling info derived from the active highlights, keyed by verse
 /// number inside a single chapter. Precomputed so the paragraph builder
 /// does one hash lookup per span instead of a linear scan.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct VerseStyle {
     /// Non-default text colour when the verse is highlighted. The
     /// absence of a stored colour on the bookmark falls back to the
@@ -282,6 +283,248 @@ fn all_blocks(
 /// `starts_chapter` carries the chapter number when this paragraph
 /// contains verse 1 — the "1" slot is then rendered as the chapter
 /// number at 2.5× body font (drop-cap style, inline).
+/// Paragraph wrapper that owns the bookmark gestures. Taps and drags
+/// hit the whole paragraph (not the tiny verse-number marker), map
+/// element-local coordinates to a UTF-16 offset via `ParagraphHolder::
+/// cursor_index_at_point`, and resolve the offset to a verse number
+/// via the per-verse span ranges computed at build time. Visual-only
+/// inline children (`VerseMarker`, `FootnoteLetter`, `RefHoverButton`)
+/// still render as before; they no longer carry gesture handlers.
+#[derive(Clone, PartialEq)]
+pub(super) struct VerseParagraph {
+    pub(super) spans: Vec<ParagraphSpan>,
+    pub(super) styles: HashMap<u16, VerseStyle>,
+    pub(super) cross_refs: HashMap<u16, Vec<CrossRefView>>,
+    pub(super) footnotes: HashMap<u16, Vec<FootnoteView>>,
+    pub(super) on_jump: OnJump,
+    pub(super) on_highlight: OnHighlight,
+    pub(super) font_size: f32,
+    pub(super) line_height: f32,
+    pub(super) starts_chapter: Option<u16>,
+}
+
+impl std::fmt::Debug for VerseParagraph {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VerseParagraph")
+            .field("spans", &self.spans.len())
+            .finish()
+    }
+}
+
+/// `(start_utf16, end_utf16, verse_number)` so a hit-tested offset can
+/// be mapped back to the owning verse in `O(n)` for `n` = verses in the
+/// paragraph (typically ≤ 10, so no indexing structure needed).
+type VerseRange = (usize, usize, u16);
+
+fn offset_to_verse(ranges: &[VerseRange], offset: usize) -> Option<u16> {
+    ranges
+        .iter()
+        .find(|(start, end, _)| offset >= *start && offset < *end)
+        .map(|(_, _, v)| *v)
+}
+
+/// Resolve `element_location` to the UTF-16 offset inside the laid-out
+/// paragraph the holder references. Returns `None` before the first
+/// frame has published the paragraph (holder still empty).
+fn hit_offset(holder: &ParagraphHolder, elem: CursorPoint) -> Option<usize> {
+    let inner = holder.0.borrow();
+    let data = inner.as_ref()?;
+    let vis = holder.visible_location(elem);
+    Some(data.paragraph.cursor_index_at_point((vis.x, vis.y)))
+}
+
+impl Component for VerseParagraph {
+    fn render(&self) -> impl IntoElement {
+        let holder = use_hook(ParagraphHolder::default);
+        let drag = use_consume::<DragSelect>();
+        // Monotonic token so a pointer-up / pointer-leave that arrives
+        // after the long-press timer has already fired is a no-op, and
+        // so a second press starts a fresh timer.
+        let long_press_token = use_state(|| 0u64);
+
+        let on_jump = self.on_jump.clone();
+        let on_highlight = self.on_highlight.clone();
+        let font_size = self.font_size;
+        let line_height = self.line_height;
+
+        let mut p = paragraph()
+            .width(Size::fill())
+            .line_height(line_height)
+            .color(parse_rgb(theme::TEXT_PRIMARY))
+            .font_family(typography::FAMILY)
+            .font_size(font_size)
+            .holder(holder.clone());
+
+        // Freya's `paragraph.highlights` indexes UTF-16 code units
+        // across spans + inline placeholders. Each `.child(...)` adds
+        // one placeholder unit; each span contributes
+        // `text.encode_utf16().count()` units. Track both so the
+        // highlight range covers only verse text — not the preceding
+        // verse marker nor the trailing footnote / cross-ref icon.
+        let mut utf16_offset: usize = 0;
+        let mut highlight_ranges: Vec<(usize, usize)> = Vec::new();
+        let mut verse_ranges: Vec<VerseRange> = Vec::new();
+        let highlight_color = Color::from_rgb(170, 150, 60);
+
+        for span in &self.spans {
+            let style = self.styles.get(&span.verse);
+
+            p = p.child(VerseMarker {
+                verse: span.verse,
+                display: if span.verse == 1 && self.starts_chapter.is_some() {
+                    MarkerDisplay::Chapter(self.starts_chapter.unwrap())
+                } else {
+                    MarkerDisplay::Verse
+                },
+                font_size,
+            });
+            utf16_offset += 1; // placeholder for the marker child
+
+            let text = format!("{} ", span.text);
+            let text_units = text.encode_utf16().count();
+            let start = utf16_offset;
+            p = p.span(Span::new(text).font_size(font_size));
+            utf16_offset += text_units;
+            let end = utf16_offset;
+
+            verse_ranges.push((start, end, span.verse));
+            if style.is_some() {
+                highlight_ranges.push((start, end));
+            }
+
+            if style.map(|s| s.has_note).unwrap_or(false) {
+                p = p.child(note_icon(font_size));
+                utf16_offset += 1;
+            }
+            if let Some(notes) = self.footnotes.get(&span.verse) {
+                for (idx, note) in notes.iter().enumerate() {
+                    p = p.child(FootnoteLetter {
+                        letter: display_letter(&note.caller, idx),
+                        text: note.text.clone(),
+                        target: note.target.clone(),
+                        jump: on_jump.clone(),
+                        font_size,
+                    });
+                    utf16_offset += 1;
+                }
+            }
+            if let Some(refs) = self.cross_refs.get(&span.verse) {
+                p = p.child(RefHoverButton {
+                    refs: refs.clone(),
+                    jump: on_jump.clone(),
+                    font_size,
+                });
+                utf16_offset += 1;
+            }
+        }
+
+        if !highlight_ranges.is_empty() {
+            p = p
+                .highlights(highlight_ranges)
+                .highlight_color(highlight_color);
+        }
+
+        // Gesture wiring: paragraph-level so a tap anywhere in verse
+        // text — not just the tiny superscript marker — fires.
+        let holder_for_down = holder.clone();
+        let ranges_for_down = verse_ranges.clone();
+        let holder_for_move = holder.clone();
+        let ranges_for_move = verse_ranges.clone();
+
+        p.on_pointer_down({
+            let mut long_press_token = long_press_token;
+            let on_highlight = on_highlight.clone();
+            let mut drag = drag;
+            move |e: Event<PointerEventData>| {
+                let Some(offset) = hit_offset(&holder_for_down, e.element_location()) else {
+                    return;
+                };
+                let Some(verse) = offset_to_verse(&ranges_for_down, offset) else {
+                    return;
+                };
+
+                drag.start.set(Some(verse));
+                drag.end.set(Some(verse));
+                drag.pressing.set(true);
+
+                let my_token = long_press_token.peek().wrapping_add(1);
+                long_press_token.set(my_token);
+
+                if EventsCombos::<()>::pressed(e.global_location()).is_double() {
+                    on_highlight.call(HighlightTarget::Verse(verse));
+                    drag.start.set(None);
+                    drag.end.set(None);
+                    drag.pressing.set(false);
+                    return;
+                }
+
+                let on_highlight = on_highlight.clone();
+                let long_press_token = long_press_token;
+                let mut drag_for_long = drag;
+                spawn(async move {
+                    async_io::Timer::after(std::time::Duration::from_millis(LONG_PRESS_MS))
+                        .await;
+                    if *long_press_token.peek() == my_token {
+                        on_highlight.call(HighlightTarget::Verse(verse));
+                        drag_for_long.start.set(None);
+                        drag_for_long.end.set(None);
+                        drag_for_long.pressing.set(false);
+                    }
+                });
+            }
+        })
+        .on_pointer_move({
+            let mut drag = drag;
+            let mut long_press_token = long_press_token;
+            move |e: Event<PointerEventData>| {
+                if !*drag.pressing.peek() {
+                    return;
+                }
+                let Some(offset) = hit_offset(&holder_for_move, e.element_location()) else {
+                    return;
+                };
+                let Some(verse) = offset_to_verse(&ranges_for_move, offset) else {
+                    return;
+                };
+                let current = *drag.end.peek();
+                if current != Some(verse) {
+                    drag.end.set(Some(verse));
+                    // Dragging across verses cancels the long-press
+                    // timer so the user does not get both a Verse +
+                    // Range emission from one gesture.
+                    let next = long_press_token.peek().wrapping_add(1);
+                    long_press_token.set(next);
+                }
+            }
+        })
+        .on_global_pointer_up({
+            let mut long_press_token = long_press_token;
+            let on_highlight = on_highlight.clone();
+            let mut drag = drag;
+            move |_: Event<PointerEventData>| {
+                let next = long_press_token.peek().wrapping_add(1);
+                long_press_token.set(next);
+
+                let start = *drag.start.peek();
+                let end = *drag.end.peek();
+                drag.start.set(None);
+                drag.end.set(None);
+                drag.pressing.set(false);
+                EventsCombos::<()>::released();
+
+                if let (Some(a), Some(b)) = (start, end)
+                    && a != b
+                {
+                    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+                    on_highlight.call(HighlightTarget::Range(lo, hi));
+                }
+            }
+        })
+    }
+}
+
+/// Legacy entry point. Preserved so `all_blocks` doesn't need to care
+/// about construction details; just forwards to the component.
 fn verse_paragraph(
     spans: &[ParagraphSpan],
     styles: &HashMap<u16, VerseStyle>,
@@ -293,79 +536,17 @@ fn verse_paragraph(
     line_height: f32,
     starts_chapter: Option<u16>,
 ) -> impl IntoElement {
-    let mut p = paragraph()
-        .width(Size::fill())
-        .line_height(line_height)
-        .color(parse_rgb(theme::TEXT_PRIMARY))
-        .font_family(typography::FAMILY)
-        .font_size(font_size);
-
-    // Freya's `paragraph.highlights` indexes UTF-16 code units inside
-    // the paragraph (spans + inline placeholders). Each `.child(...)`
-    // adds one placeholder (one UTF-16 unit); each span contributes
-    // `text.encode_utf16().count()` units. Track both so the highlight
-    // range covers only the verse text — not the preceding verse
-    // marker nor the trailing footnote / cross-ref icon.
-    let mut utf16_offset: usize = 0;
-    let mut highlight_ranges: Vec<(usize, usize)> = Vec::new();
-    let highlight_color = Color::from_rgb(170, 150, 60);
-
-    for span in spans {
-        let style = styles.get(&span.verse);
-
-        p = p.child(VerseMarker {
-            verse: span.verse,
-            display: if span.verse == 1 && starts_chapter.is_some() {
-                MarkerDisplay::Chapter(starts_chapter.unwrap())
-            } else {
-                MarkerDisplay::Verse
-            },
-            on_highlight: on_highlight.clone(),
-            font_size,
-        });
-        utf16_offset += 1; // placeholder for the marker child
-
-        let text = format!("{} ", span.text);
-        let text_units = text.encode_utf16().count();
-        let start = utf16_offset;
-        p = p.span(Span::new(text).font_size(font_size));
-        utf16_offset += text_units;
-        let end = utf16_offset;
-
-        if style.is_some() {
-            highlight_ranges.push((start, end));
-        }
-
-        if style.map(|s| s.has_note).unwrap_or(false) {
-            p = p.child(note_icon(font_size));
-            utf16_offset += 1;
-        }
-        if let Some(notes) = footnotes.get(&span.verse) {
-            for (idx, note) in notes.iter().enumerate() {
-                p = p.child(FootnoteLetter {
-                    letter: display_letter(&note.caller, idx),
-                    text: note.text.clone(),
-                    target: note.target.clone(),
-                    jump: on_jump.clone(),
-                    font_size,
-                });
-                utf16_offset += 1;
-            }
-        }
-        if let Some(refs) = cross_refs.get(&span.verse) {
-            p = p.child(RefHoverButton {
-                refs: refs.clone(),
-                jump: on_jump.clone(),
-                font_size,
-            });
-            utf16_offset += 1;
-        }
+    VerseParagraph {
+        spans: spans.to_vec(),
+        styles: styles.clone(),
+        cross_refs: cross_refs.clone(),
+        footnotes: footnotes.clone(),
+        on_jump,
+        on_highlight,
+        font_size,
+        line_height,
+        starts_chapter,
     }
-
-    if !highlight_ranges.is_empty() {
-        p = p.highlights(highlight_ranges).highlight_color(highlight_color);
-    }
-    p
 }
 
 /// What the clickable verse marker should display — the superscript
@@ -377,16 +558,13 @@ enum MarkerDisplay {
     Chapter(u16),
 }
 
-/// Clickable verse number. Opens the colour-picker overlay via
-/// `on_highlight(verse)` on **two** gestures — double-tap or
-/// long-press — so a stray single tap while reading never commits a
-/// highlight. The display styling matches the previous span-based
-/// renderer so paragraph flow stays unchanged.
+/// Visual-only verse marker. Gestures live on the enclosing
+/// `VerseParagraph` so taps hit the whole verse text, not just the
+/// tiny superscript number.
 #[derive(Clone, PartialEq)]
 struct VerseMarker {
     verse: u16,
     display: MarkerDisplay,
-    on_highlight: OnHighlight,
     font_size: f32,
 }
 
@@ -404,14 +582,6 @@ const LONG_PRESS_MS: u64 = 500;
 impl Component for VerseMarker {
     fn render(&self) -> impl IntoElement {
         let verse = self.verse;
-        let on_highlight = self.on_highlight.clone();
-        // Monotonic token so a `pointer_up` / `pointer_leave` that
-        // arrives after the long-press timer has already fired is a
-        // no-op, and so a second press starts a fresh timer.
-        let long_press_token = use_state(|| 0u64);
-        // Chapter-level drag cursor (installed by `chapter_view`).
-        let drag = use_consume::<DragSelect>();
-
         let inner = match self.display {
             MarkerDisplay::Chapter(chap) => label()
                 .font_family(typography::FAMILY)
@@ -423,103 +593,7 @@ impl Component for VerseMarker {
                 .color(parse_rgb(theme::VERSE_NUM))
                 .text(format!(" {verse} ")),
         };
-
-        rect()
-            .padding((0., 2.))
-            .on_pointer_down({
-                let mut long_press_token = long_press_token;
-                let on_highlight = on_highlight.clone();
-                let mut drag = drag;
-                move |e: Event<PointerEventData>| {
-                    // Seed the drag cursor on this verse so a drag that
-                    // ends on a different marker produces a range.
-                    drag.start.set(Some(verse));
-                    drag.end.set(Some(verse));
-                    drag.pressing.set(true);
-
-                    // Advance the token to invalidate any still-queued
-                    // long-press timer from a previous press, then bind
-                    // a copy for this press.
-                    let my_token = long_press_token.peek().wrapping_add(1);
-                    long_press_token.set(my_token);
-
-                    // Double-tap: EventsCombos tracks consecutive
-                    // presses at the same global location within the
-                    // multi-press window. `is_double` fires on the
-                    // second tap only.
-                    if EventsCombos::<()>::pressed(e.global_location()).is_double() {
-                        on_highlight.call(HighlightTarget::Verse(verse));
-                        // Collapse the drag so pointer-up skips the
-                        // range emit path.
-                        drag.start.set(None);
-                        drag.end.set(None);
-                        drag.pressing.set(false);
-                        return;
-                    }
-
-                    // Long-press: fire after the press has survived
-                    // `LONG_PRESS_MS` without the token being bumped
-                    // (release / move-away / another press all bump).
-                    let on_highlight = on_highlight.clone();
-                    let long_press_token = long_press_token;
-                    let mut drag_for_long = drag;
-                    spawn(async move {
-                        async_io::Timer::after(std::time::Duration::from_millis(
-                            LONG_PRESS_MS,
-                        ))
-                        .await;
-                        if *long_press_token.peek() == my_token {
-                            on_highlight.call(HighlightTarget::Verse(verse));
-                            drag_for_long.start.set(None);
-                            drag_for_long.end.set(None);
-                            drag_for_long.pressing.set(false);
-                        }
-                    });
-                }
-            })
-            .on_pointer_enter({
-                let mut drag = drag;
-                move |_: Event<PointerEventData>| {
-                    // Extend the drag end while the pointer is held
-                    // down. `EventsCombos::pressing` is true from the
-                    // first marker's pointer-down until the global
-                    // pointer-up.
-                    if *drag.pressing.peek() && drag.start.peek().is_some() {
-                        drag.end.set(Some(verse));
-                    }
-                }
-            })
-            .on_global_pointer_up({
-                let mut long_press_token = long_press_token;
-                let on_highlight = on_highlight.clone();
-                let mut drag = drag;
-                move |_: Event<PointerEventData>| {
-                    let next = long_press_token.peek().wrapping_add(1);
-                    long_press_token.set(next);
-
-                    let start = *drag.start.peek();
-                    let end = *drag.end.peek();
-                    drag.start.set(None);
-                    drag.end.set(None);
-                    drag.pressing.set(false);
-                    EventsCombos::<()>::released();
-
-                    if let (Some(a), Some(b)) = (start, end)
-                        && a != b
-                    {
-                        let (lo, hi) = if a < b { (a, b) } else { (b, a) };
-                        on_highlight.call(HighlightTarget::Range(lo, hi));
-                    }
-                }
-            })
-            .on_pointer_leave({
-                let mut long_press_token = long_press_token;
-                move |_: Event<PointerEventData>| {
-                    let next = long_press_token.peek().wrapping_add(1);
-                    long_press_token.set(next);
-                }
-            })
-            .child(inner)
+        rect().padding((0., 2.)).child(inner)
     }
 }
 
