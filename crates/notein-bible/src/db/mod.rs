@@ -152,6 +152,71 @@ impl Db {
     pub fn search(&self, bible_id: Option<&str>, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
         search::search(self, bible_id, query, limit)
     }
+
+    /// Cross-references originating in `(book, chapter)`. Returns a
+    /// per-verse map so the reader can render inline chips without one
+    /// query per verse. Includes ALL targets even for the same source
+    /// verse — collapsing happens UI-side.
+    pub fn cross_refs_for_chapter(
+        &self,
+        bible_id: &str,
+        book_id: &str,
+        chapter: u16,
+    ) -> Result<Vec<CrossRefRow>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT src_verse, tgt_book, tgt_chap, tgt_verse
+                 FROM cross_refs
+                 WHERE bible_id = ?1 AND src_book = ?2 AND src_chap = ?3
+                 ORDER BY src_verse, tgt_book, tgt_chap, tgt_verse",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![bible_id, book_id, chapter as i64], |r| {
+                    Ok(CrossRefRow {
+                        src_verse: r.get::<_, i64>(0)? as u16,
+                        tgt_book: r.get(1)?,
+                        tgt_chap: r.get::<_, i64>(2)? as u16,
+                        tgt_verse: r.get::<_, i64>(3)? as u16,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
+    }
+
+    /// Fetch the display text of a single verse. Used by the cross-ref
+    /// hover popup — the row count is `0..=1` so the call stays cheap
+    /// per chip.
+    pub fn verse_text(
+        &self,
+        bible_id: &str,
+        book_id: &str,
+        chapter: u16,
+        verse: u16,
+    ) -> Result<Option<String>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT text FROM verses
+                 WHERE bible_id = ?1 AND book_id = ?2 AND chapter = ?3 AND verse = ?4
+                 LIMIT 1",
+            )?;
+            let text = stmt
+                .query_row(
+                    rusqlite::params![bible_id, book_id, chapter as i64, verse as i64],
+                    |r| r.get::<_, String>(0),
+                )
+                .ok();
+            Ok(text)
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CrossRefRow {
+    pub src_verse: u16,
+    pub tgt_book: String,
+    pub tgt_chap: u16,
+    pub tgt_verse: u16,
 }
 
 #[cfg(test)]

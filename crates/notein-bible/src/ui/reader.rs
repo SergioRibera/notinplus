@@ -15,6 +15,34 @@ use super::chapter::{Block, ChapterPlan, ParagraphSpan};
 use super::theme;
 use super::typography;
 
+/// UI-side projection of a cross-reference. The target text is
+/// pre-fetched (`db.verse_text`) so the hover popup renders without
+/// a DB round-trip inside the layout pass.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CrossRefView {
+    pub src_verse: u16,
+    /// Short label shown as the inline chip (e.g. `"2 Co 4:6"`).
+    pub label: String,
+    /// Target verse text — shown inside the hover popup.
+    pub tooltip: String,
+    /// Target coordinates — the chip's `on_press` hands these back so
+    /// the viewer navigates to the referenced verse.
+    pub tgt_book: String,
+    pub tgt_chap: u16,
+    pub tgt_verse: u16,
+}
+
+/// Build a map keyed by source-verse so the paragraph renderer can look
+/// up chips in O(1) per verse without walking the full list.
+#[must_use]
+pub fn cross_refs_by_verse(refs: &[CrossRefView]) -> HashMap<u16, Vec<CrossRefView>> {
+    let mut out: HashMap<u16, Vec<CrossRefView>> = HashMap::new();
+    for r in refs {
+        out.entry(r.src_verse).or_default().push(r.clone());
+    }
+    out
+}
+
 /// Styling info derived from the active highlights, keyed by verse
 /// number inside a single chapter. Precomputed so the paragraph builder
 /// does one hash lookup per span instead of a linear scan.
@@ -61,9 +89,16 @@ fn rgba_to_freya(rgba: [u8; 4]) -> Color {
 /// `font_size` and `line_height` override the typography defaults so
 /// the shell can honour the user's plugin config without re-building
 /// this crate.
+/// Callback the reader fires when the user clicks a cross-reference
+/// chip. Carries `(book, chapter, verse)` so the viewer can
+/// `jump_to` the referenced verse without re-decoding anchor bytes.
+pub type OnJump = EventHandler<(String, u16, u16)>;
+
 pub fn chapter_view(
     plan: &ChapterPlan,
     highlights: &[&BibleBookmark],
+    cross_refs: &HashMap<u16, Vec<CrossRefView>>,
+    on_jump: OnJump,
     font_size: f32,
     line_height: f32,
 ) -> impl IntoElement {
@@ -83,8 +118,23 @@ pub fn chapter_view(
                         .padding((16., 0.))
                         .spacing(14.)
                         .child(book_title_header(plan))
-                        .child(drop_cap_block(plan, &styles, font_size, line_height, drop_cap_size))
-                        .child(trailing_blocks(plan, &styles, font_size, line_height)),
+                        .child(drop_cap_block(
+                            plan,
+                            &styles,
+                            cross_refs,
+                            on_jump.clone(),
+                            font_size,
+                            line_height,
+                            drop_cap_size,
+                        ))
+                        .child(trailing_blocks(
+                            plan,
+                            &styles,
+                            cross_refs,
+                            on_jump,
+                            font_size,
+                            line_height,
+                        )),
                 ),
         )
 }
@@ -119,6 +169,8 @@ fn book_title_header(plan: &ChapterPlan) -> impl IntoElement {
 fn drop_cap_block(
     plan: &ChapterPlan,
     styles: &HashMap<u16, VerseStyle>,
+    cross_refs: &HashMap<u16, Vec<CrossRefView>>,
+    on_jump: OnJump,
     font_size: f32,
     line_height: f32,
     drop_cap_size: f32,
@@ -148,7 +200,7 @@ fn drop_cap_block(
                 ),
         )
         .child(rect().padding((0., 0., 0., drop_cap_size * 0.65)).child(
-            verse_paragraph(&first_paragraph, styles, font_size, line_height),
+            verse_paragraph(&first_paragraph, styles, cross_refs, on_jump, font_size, line_height),
         ))
 }
 
@@ -159,6 +211,8 @@ fn drop_cap_block(
 fn trailing_blocks(
     plan: &ChapterPlan,
     styles: &HashMap<u16, VerseStyle>,
+    cross_refs: &HashMap<u16, Vec<CrossRefView>>,
+    on_jump: OnJump,
     font_size: f32,
     line_height: f32,
 ) -> impl IntoElement {
@@ -171,7 +225,14 @@ fn trailing_blocks(
                     skipped_first = true;
                     continue;
                 }
-                root = root.child(verse_paragraph(spans, styles, font_size, line_height));
+                root = root.child(verse_paragraph(
+                    spans,
+                    styles,
+                    cross_refs,
+                    on_jump.clone(),
+                    font_size,
+                    line_height,
+                ));
             }
             Block::Header(text) => {
                 root = root.child(section_header(text));
@@ -184,9 +245,13 @@ fn trailing_blocks(
 /// A single paragraph with inline superscript verse numbers.
 /// Highlighted verses get their text repainted in the stored tint and
 /// gain an inline note icon when the bookmark has a non-empty body.
+/// Cross-reference chips render as blue clickable widgets right after
+/// each verse that has at least one ref.
 fn verse_paragraph(
     spans: &[ParagraphSpan],
     styles: &HashMap<u16, VerseStyle>,
+    cross_refs: &HashMap<u16, Vec<CrossRefView>>,
+    on_jump: OnJump,
     font_size: f32,
     line_height: f32,
 ) -> impl IntoElement {
@@ -218,8 +283,90 @@ fn verse_paragraph(
         if style.map(|s| s.has_note).unwrap_or(false) {
             p = p.child(note_icon(font_size));
         }
+        if let Some(refs) = cross_refs.get(&span.verse) {
+            for xref in refs {
+                p = p.child(CrossRefChipWidget {
+                    view: xref.clone(),
+                    jump: on_jump.clone(),
+                    font_size,
+                });
+            }
+        }
     }
     p
+}
+
+/// Clickable + hoverable chip rendered inline inside a paragraph.
+/// Hover state is per-instance so one tooltip at a time is visible.
+#[derive(Clone, PartialEq)]
+struct CrossRefChipWidget {
+    view: CrossRefView,
+    jump: OnJump,
+    font_size: f32,
+}
+
+impl std::fmt::Debug for CrossRefChipWidget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CrossRefChipWidget")
+            .field("view", &self.view.label)
+            .finish()
+    }
+}
+
+impl Component for CrossRefChipWidget {
+    fn render(&self) -> impl IntoElement {
+        let mut hover = use_state(|| false);
+        let label_text = self.view.label.clone();
+        let tooltip_text = self.view.tooltip.clone();
+        let tgt = (
+            self.view.tgt_book.clone(),
+            self.view.tgt_chap,
+            self.view.tgt_verse,
+        );
+        let on_jump = self.jump.clone();
+        let chip_font = self.font_size * 0.7;
+        let blue = Color::from_rgb(100, 150, 230);
+
+        let mut container = rect()
+            .padding((2., 6.))
+            .margin((0., 2.))
+            .with_corner_radius(4.0)
+            .on_pointer_enter({
+                let mut hover = hover;
+                move |_| hover.set(true)
+            })
+            .on_pointer_leave({
+                let mut hover = hover;
+                move |_| hover.set(false)
+            })
+            .on_press(move |_: Event<PressEventData>| {
+                on_jump.call(tgt.clone());
+            })
+            .child(
+                label()
+                    .font_size(chip_font)
+                    .color(blue)
+                    .text(label_text),
+            );
+
+        if *hover.read() && !tooltip_text.is_empty() {
+            container = container.child(
+                rect()
+                    .position(Position::new_absolute().top(chip_font * 1.6).left(0.))
+                    .width(Size::px(280.0))
+                    .padding((10., 12.))
+                    .with_corner_radius(8.0)
+                    .background(parse_rgb(theme::CHIP_BG))
+                    .child(
+                        label()
+                            .font_size(self.font_size * 0.72)
+                            .color(parse_rgb(theme::TEXT_PRIMARY))
+                            .text(tooltip_text),
+                    ),
+            );
+        }
+        container
+    }
 }
 
 fn note_icon(font_size: f32) -> impl IntoElement {

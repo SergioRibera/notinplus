@@ -27,6 +27,11 @@ use crate::db::Db;
 /// supply a custom source. Mirror the biblionlabs/fetch.bible layout.
 pub const DEFAULT_MANIFEST_URL: &str = "https://v1.fetch.bible/manifest.json";
 
+/// fetch.bible cross-reference bundle, per lowercase book id.
+/// Shape: `{ chapter_str: { verse_str: [[tgt_book, chap, verse, …], …] } }`.
+pub const CROSSREF_URL_TEMPLATE: &str =
+    "https://v1.fetch.bible/crossref/large/{book}.json";
+
 #[derive(Debug)]
 pub enum ImportError {
     Http(reqwest::Error),
@@ -262,11 +267,97 @@ pub fn install_bible(
         });
     }
 
+    // Cross-references land once per installed Bible. Each per-book
+    // file is small (~1-5 MB total across the canon) and the upstream
+    // caches at the HTTP layer, so a background re-install only pays
+    // the parse cost.
+    let xref_cache = cache_dir.join("crossrefs");
+    std::fs::create_dir_all(&xref_cache)?;
+    for book_id in &book_ids {
+        let xref_path = xref_cache.join(format!("{book_id}.json"));
+        let xref_url = CROSSREF_URL_TEMPLATE.replace("{book}", book_id);
+        if let Err(e) = fetch_if_stale(client, &xref_url, &xref_path, cache_ttl) {
+            log::debug!("biblionlabs: no cross-refs for {book_id}: {e}");
+            continue;
+        }
+        let bytes = match std::fs::read(&xref_path) {
+            Ok(b) => b,
+            Err(e) => {
+                log::debug!("biblionlabs: read {book_id} xrefs: {e}");
+                continue;
+            }
+        };
+        let value: serde_json::Value = match serde_json::from_slice(&bytes) {
+            Ok(v) => v,
+            Err(e) => {
+                log::debug!("biblionlabs: parse {book_id} xrefs: {e}");
+                continue;
+            }
+        };
+        if let Err(e) = db.with_conn_mut(|conn| {
+            let tx = conn.transaction().map_err(crate::db::DbError::from)?;
+            tx.execute(
+                "DELETE FROM cross_refs WHERE bible_id = ?1 AND src_book = ?2",
+                rusqlite::params![bible_id, book_id],
+            )
+            .map_err(crate::db::DbError::from)?;
+            insert_crossrefs_for_book(&tx, bible_id, book_id, &value)
+                .map_err(crate::db::DbError::from)?;
+            tx.commit().map_err(crate::db::DbError::from)?;
+            Ok(())
+        }) {
+            log::debug!("biblionlabs: insert {book_id} xrefs: {e}");
+        }
+    }
+
     on_progress(Progress::Finished {
         bible_id: bible_id.into(),
         inserted_verses: inserted,
     });
     Ok(inserted)
+}
+
+/// Walk the fetch.bible crossref payload for one book + emit rows. The
+/// JSON shape is `{ chapter_str: { verse_str: [[tgt_book, chap, verse,
+/// end_chap?, end_verse?], …] } }`. We insert one row per target
+/// (collapsing ranges to their start since the reader only needs a
+/// clickable anchor, not a span).
+fn insert_crossrefs_for_book(
+    conn: &rusqlite::Connection,
+    bible_id: &str,
+    src_book: &str,
+    value: &serde_json::Value,
+) -> rusqlite::Result<()> {
+    let Some(chapters) = value.as_object() else { return Ok(()) };
+    let mut stmt = conn.prepare_cached(
+        "INSERT INTO cross_refs
+         (bible_id, src_book, src_chap, src_verse, tgt_book, tgt_chap, tgt_verse)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    )?;
+    for (chap_key, verses) in chapters {
+        let Ok(src_chap) = chap_key.parse::<i64>() else { continue };
+        let Some(verses) = verses.as_object() else { continue };
+        for (verse_key, targets) in verses {
+            let Ok(src_verse) = verse_key.parse::<i64>() else { continue };
+            let Some(targets) = targets.as_array() else { continue };
+            for target in targets {
+                let Some(items) = target.as_array() else { continue };
+                let Some(tgt_book) = items.first().and_then(serde_json::Value::as_str) else {
+                    continue;
+                };
+                let Some(tgt_chap) = items.get(1).and_then(serde_json::Value::as_i64) else {
+                    continue;
+                };
+                let Some(tgt_verse) = items.get(2).and_then(serde_json::Value::as_i64) else {
+                    continue;
+                };
+                stmt.execute(rusqlite::params![
+                    bible_id, src_book, src_chap, src_verse, tgt_book, tgt_chap, tgt_verse,
+                ])?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Download `url` into `dest` when the on-disk copy is missing, older

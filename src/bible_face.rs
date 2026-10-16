@@ -18,6 +18,7 @@ use freya::router::RouterContext;
 use notein_bible::db::{BibleRow, BookRow, ChapterRow, Db};
 use notein_bible::state::{BibleBookmark, BibleSnapshot, BibleViewerState};
 use notein_bible::ui::chapter::plan_chapter;
+use notein_bible::ui::reader::{CrossRefView, cross_refs_by_verse};
 use notein_bible::ui::{bottom_nav, reader, toolbar, translation_switcher};
 
 use crate::library::ItemId;
@@ -174,7 +175,20 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
                 on_translation: translation_cb,
             },
         ))
-        .child(chapter_body(st_snapshot.chapter.as_ref(), &st_snapshot.highlights))
+        .child(chapter_body(
+            &db,
+            st_snapshot.chapter.as_ref(),
+            &st_snapshot.highlights,
+            {
+                let db = db.clone();
+                move |(book, chap, verse): (String, u16, u16)| {
+                    if let Err(e) = state.write().jump_to(&db, &book, chap) {
+                        log::warn!("bible xref jump: {e}");
+                    }
+                    let _ = verse; // scroll-to-verse lives on a follow-up
+                }
+            },
+        ))
         .child(bottom_nav::bottom_nav(
             &st_snapshot.book_name,
             st_snapshot.current_chapter,
@@ -217,21 +231,134 @@ impl ReaderSnapshot {
 }
 
 fn chapter_body(
+    db: &Db,
     chapter: Option<&ChapterRow>,
     highlights: &[BibleBookmark],
+    on_jump: impl FnMut((String, u16, u16)) + 'static,
 ) -> impl IntoElement {
     let base = rect().width(Size::fill()).height(Size::fill());
     match chapter {
         Some(data) => {
             let plan = plan_chapter(data);
             let hl_refs: Vec<&BibleBookmark> = highlights.iter().collect();
-            base.child(reader::chapter_view(&plan, &hl_refs, 22.0, 1.65))
+            let refs = build_cross_refs(db, &data.bible_id, &data.book_id, data.chapter);
+            let refs_map = cross_refs_by_verse(&refs);
+            let handler = EventHandler::<(String, u16, u16)>::new(on_jump);
+            base.child(reader::chapter_view(
+                &plan, &hl_refs, &refs_map, handler, 22.0, 1.65,
+            ))
         }
         None => base.center().child(
             label()
                 .color(Color::from_rgb(200, 200, 200))
                 .text("Cargando capítulo…"),
         ),
+    }
+}
+
+/// Fetch every cross-reference the DB holds for `(book, chapter)` and
+/// resolve the target verse text so the reader can render inline chips
+/// with hover popups. One DB round-trip per unique target — Bible
+/// chapters cap at ~150 refs so the cost stays tiny.
+fn build_cross_refs(db: &Db, bible_id: &str, book_id: &str, chapter: u16) -> Vec<CrossRefView> {
+    let rows = db.cross_refs_for_chapter(bible_id, book_id, chapter).unwrap_or_default();
+    rows.into_iter()
+        .map(|r| {
+            let tooltip = db
+                .verse_text(bible_id, &r.tgt_book, r.tgt_chap, r.tgt_verse)
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            let label = format!(
+                "{} {}:{}",
+                abbreviate_book(&r.tgt_book),
+                r.tgt_chap,
+                r.tgt_verse
+            );
+            CrossRefView {
+                src_verse: r.src_verse,
+                label,
+                tooltip,
+                tgt_book: r.tgt_book,
+                tgt_chap: r.tgt_chap,
+                tgt_verse: r.tgt_verse,
+            }
+        })
+        .collect()
+}
+
+fn abbreviate_book(book_id: &str) -> String {
+    // Rough display mapping: upper-case the first + collapse to 3-4
+    // chars so chips stay compact in the paragraph.
+    let s = book_id.to_lowercase();
+    match s.as_str() {
+        "gen" => "Gn".into(),
+        "exo" => "Ex".into(),
+        "lev" => "Lv".into(),
+        "num" => "Nm".into(),
+        "deu" => "Dt".into(),
+        "jos" => "Jos".into(),
+        "jdg" => "Jue".into(),
+        "rut" => "Rt".into(),
+        "1sa" => "1 Sm".into(),
+        "2sa" => "2 Sm".into(),
+        "1ki" => "1 R".into(),
+        "2ki" => "2 R".into(),
+        "1ch" => "1 Cr".into(),
+        "2ch" => "2 Cr".into(),
+        "ezr" => "Esd".into(),
+        "neh" => "Neh".into(),
+        "est" => "Est".into(),
+        "job" => "Job".into(),
+        "psa" => "Sal".into(),
+        "pro" => "Pr".into(),
+        "ecc" => "Ec".into(),
+        "sng" => "Cnt".into(),
+        "isa" => "Is".into(),
+        "jer" => "Jer".into(),
+        "lam" => "Lm".into(),
+        "ezk" => "Ez".into(),
+        "dan" => "Dn".into(),
+        "hos" => "Os".into(),
+        "jol" => "Jl".into(),
+        "amo" => "Am".into(),
+        "oba" => "Abd".into(),
+        "jon" => "Jon".into(),
+        "mic" => "Miq".into(),
+        "nam" => "Nah".into(),
+        "hab" => "Hab".into(),
+        "zep" => "Sof".into(),
+        "hag" => "Hag".into(),
+        "zec" => "Zac".into(),
+        "mal" => "Mal".into(),
+        "mat" => "Mt".into(),
+        "mrk" => "Mc".into(),
+        "luk" => "Lc".into(),
+        "jhn" => "Jn".into(),
+        "act" => "Hch".into(),
+        "rom" => "Ro".into(),
+        "1co" => "1 Co".into(),
+        "2co" => "2 Co".into(),
+        "gal" => "Gá".into(),
+        "eph" => "Ef".into(),
+        "php" => "Flp".into(),
+        "col" => "Col".into(),
+        "1th" => "1 Ts".into(),
+        "2th" => "2 Ts".into(),
+        "1ti" => "1 Ti".into(),
+        "2ti" => "2 Ti".into(),
+        "tit" => "Tit".into(),
+        "phm" => "Flm".into(),
+        "heb" => "Heb".into(),
+        "jas" => "Stg".into(),
+        "1pe" => "1 P".into(),
+        "2pe" => "2 P".into(),
+        "1jn" => "1 Jn".into(),
+        "2jn" => "2 Jn".into(),
+        "3jn" => "3 Jn".into(),
+        "jud" => "Jud".into(),
+        "rev" => "Ap".into(),
+        _ => book_id.to_string(),
     }
 }
 
