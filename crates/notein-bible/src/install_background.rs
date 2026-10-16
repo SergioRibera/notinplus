@@ -119,6 +119,60 @@ pub fn spawn_fetch_footnotes(db: Db, config: SharedConfig, bible_id: String, boo
         .expect("failed to spawn footnotes fetch thread");
 }
 
+/// Lazy section-heading fetch. Hits a sibling helloao translation
+/// chosen by [`helloao::helloao_headings_id_for_bible`] (e.g. RV1960
+/// → `spa_pdt` for the standard "Pablo es enviado a Roma" style
+/// apparatus) and inserts into the `headers` table so the reader
+/// renders them inline between paragraphs. Skipped when the chapter
+/// already has rows OR when no sibling id is mapped.
+pub fn spawn_fetch_headings(
+    db: Db,
+    config: SharedConfig,
+    bible_id: String,
+    book_id: String,
+    chapter: u16,
+) {
+    std::thread::Builder::new()
+        .name(format!("bible-headings-{book_id}-{chapter}"))
+        .spawn(move || {
+            if db
+                .has_headers_for_chapter(&bible_id, &book_id, chapter)
+                .unwrap_or(false)
+            {
+                return;
+            }
+            let Some(source) = helloao::helloao_headings_id_for_bible(&bible_id) else {
+                return;
+            };
+            let client = match Client::builder().user_agent("notein-bible/0.1").build() {
+                Ok(c) => c,
+                Err(e) => {
+                    log::debug!("headings: client build: {e}");
+                    return;
+                }
+            };
+            let cache_dir = plugin_config::effective_cache_dir(&config);
+            if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+                log::debug!("headings: mkdir: {e}");
+                return;
+            }
+            match helloao::install_headings_for_chapter(
+                &db,
+                &client,
+                &cache_dir,
+                &bible_id,
+                source,
+                &book_id,
+                chapter,
+                CACHE_TTL,
+            ) {
+                Ok(n) => log::debug!("headings: {book_id} {chapter} → {n} rows (via {source})"),
+                Err(e) => log::debug!("headings: fetch failed for {book_id} {chapter}: {e}"),
+            }
+        })
+        .expect("failed to spawn headings fetch thread");
+}
+
 
 fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallProgress) {
     log::info!("bible install thread: starting for {bible_id}");

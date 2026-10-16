@@ -75,6 +75,52 @@ struct ChapterEnvelope {
 struct ChapterPayload {
     #[serde(default)]
     footnotes: Vec<FootnoteEntry>,
+    #[serde(default)]
+    content: Vec<ContentNode>,
+}
+
+/// Items inside `chapter.content`. We only care about `heading` + the
+/// `verse` number so we can emit `headers` rows at `before_verse =
+/// next verse number`. Everything else (line_break, hebrew_subtitle,
+/// paragraph markers, …) is ignored.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+enum ContentNode {
+    #[serde(rename = "verse")]
+    Verse {
+        #[serde(default)]
+        number: u16,
+    },
+    #[serde(rename = "heading")]
+    Heading {
+        #[serde(default)]
+        content: Vec<HeadingPiece>,
+    },
+    #[serde(other)]
+    Other,
+}
+
+/// Headings arrive as a mix of raw strings + typed sub-items (hebrew
+/// subtitles, references). The simple string form covers the ~99%
+/// case; typed pieces fall through to their stringified value.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum HeadingPiece {
+    Raw(String),
+    Typed(serde_json::Value),
+}
+
+impl HeadingPiece {
+    fn render(&self) -> String {
+        match self {
+            Self::Raw(s) => s.clone(),
+            Self::Typed(v) => v
+                .get("text")
+                .and_then(|t| t.as_str())
+                .map(ToOwned::to_owned)
+                .unwrap_or_default(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -176,6 +222,123 @@ pub fn install_footnotes_for_chapter(
     })?;
 
     Ok(inserted)
+}
+
+/// Download the heading payload for `(bible, book, chapter)` + persist
+/// into `headers`. Idempotent: wipes the matching rows first so a
+/// re-run never duplicates. Returns the number of inserted rows.
+///
+/// Translations without inline headings (e.g. `spa_r09` the public-
+/// domain Reina Valera 1909) return 0 silently — the caller then falls
+/// back to a sibling translation via
+/// [`helloao_headings_id_for_bible`].
+pub fn install_headings_for_chapter(
+    db: &Db,
+    client: &Client,
+    cache_dir: &Path,
+    bible_id: &str,
+    source_translation: &str,
+    book_id: &str,
+    chapter: u16,
+    cache_ttl: Duration,
+) -> Result<usize, HelloaoError> {
+    let helloao_book = helloao_book_for_osis(book_id).unwrap_or(book_id.to_uppercase());
+    let chapter_dir = cache_dir
+        .join("helloao")
+        .join(source_translation)
+        .join(&helloao_book);
+    std::fs::create_dir_all(&chapter_dir)?;
+    let dest = chapter_dir.join(format!("{chapter}.json"));
+    let url = format!(
+        "{HELLOAO_BASE}/{source_translation}/{helloao_book}/{chapter}.json"
+    );
+    fetch_if_stale(client, &url, &dest, cache_ttl)?;
+
+    let bytes = std::fs::read(&dest)?;
+    let env: ChapterEnvelope = serde_json::from_slice(&bytes)
+        .map_err(|e| HelloaoError::Json { context: url.clone(), source: e })?;
+
+    // Walk the content array tracking the *next* verse number so
+    // `heading` entries emit a `headers` row anchored to the verse
+    // they precede. A heading at the very top of a chapter (before
+    // any verse) uses `before_verse = 1`.
+    let mut next_verse: u16 = 1;
+    let mut pending: Vec<(u16, String)> = Vec::new();
+    for node in &env.chapter.content {
+        match node {
+            ContentNode::Verse { number } => {
+                next_verse = (*number).max(1);
+            }
+            ContentNode::Heading { content } => {
+                let text: String = content
+                    .iter()
+                    .map(HeadingPiece::render)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let text = text.trim().to_string();
+                if !text.is_empty() {
+                    pending.push((next_verse, text));
+                }
+            }
+            ContentNode::Other => {}
+        }
+    }
+
+    if pending.is_empty() {
+        return Ok(0);
+    }
+
+    let inserted = db.with_conn_mut(|conn| {
+        let tx = conn.transaction().map_err(crate::db::DbError::from)?;
+        tx.execute(
+            "DELETE FROM headers
+             WHERE bible_id = ?1 AND book_id = ?2 AND chapter = ?3",
+            params![bible_id, book_id, chapter as i64],
+        )
+        .map_err(crate::db::DbError::from)?;
+        let mut inserted = 0usize;
+        {
+            let mut stmt = tx
+                .prepare(
+                    "INSERT INTO headers (bible_id, book_id, chapter, before_verse, text)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                )
+                .map_err(crate::db::DbError::from)?;
+            for (before_verse, text) in &pending {
+                stmt.execute(params![
+                    bible_id,
+                    book_id,
+                    chapter as i64,
+                    *before_verse as i64,
+                    text,
+                ])
+                .map_err(crate::db::DbError::from)?;
+                inserted += 1;
+            }
+        }
+        tx.commit().map_err(crate::db::DbError::from)?;
+        Ok(inserted)
+    })?;
+
+    Ok(inserted)
+}
+
+/// Pick the best helloao translation to source section headings from
+/// when the primary bible has none inline. Spanish RV / r09 route
+/// through `spa_pdt` (Palabra de Dios para Todos) which ships the
+/// standard "Pablo es enviado a Roma" style apparatus. English
+/// bibles already have BSB-style headings in their own feed, so this
+/// just echoes the primary id. `None` means no sensible fallback —
+/// callers skip the enrichment pass.
+#[must_use]
+pub fn helloao_headings_id_for_bible(bible_id: &str) -> Option<&'static str> {
+    match bible_id {
+        "spa_rv1960" | "spa_rvg" | "spa_r09" | "spa_bes" | "spa_vbl" | "spa_blm" | "spa_v2p" => {
+            Some("spa_pdt")
+        }
+        "spa_pdt" | "spa_onbv" => helloao_id_for_bible(bible_id),
+        other => helloao_id_for_bible(other),
+    }
 }
 
 /// Map a biblionlabs bible id to the closest public-domain helloao

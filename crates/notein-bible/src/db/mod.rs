@@ -280,6 +280,27 @@ impl Db {
             Ok(count > 0)
         })
     }
+
+    /// `true` when at least one section header row exists for `(bible,
+    /// book, chap)`. The lazy helloao enricher uses this to skip
+    /// chapters already populated (either from the primary importer or
+    /// from a prior enrichment pass).
+    pub fn has_headers_for_chapter(
+        &self,
+        bible_id: &str,
+        book_id: &str,
+        chapter: u16,
+    ) -> Result<bool> {
+        self.with_conn(|conn| {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(1) FROM headers
+                 WHERE bible_id = ?1 AND book_id = ?2 AND chapter = ?3",
+                rusqlite::params![bible_id, book_id, chapter as i64],
+                |r| r.get(0),
+            )?;
+            Ok(count > 0)
+        })
+    }
 }
 
 #[cfg(test)]
