@@ -136,12 +136,24 @@ struct DragSelect {
 }
 
 impl DragSelect {
+    /// Install (once) and return the chapter-scoped drag cursor.
+    /// Not a `use_hook` — `chapter_view` is called conditionally
+    /// (hidden while the chapter loads), so a real hook would
+    /// violate Freya's "no conditional hooks" rule. Instead, this
+    /// does a plain context lookup and provides the context on
+    /// miss. `State::create_in_scope(ScopeId::ROOT)` keeps the slot
+    /// alive across any re-render where the view disappears.
     fn use_context() -> Self {
-        use_provide_context(|| Self {
+        if let Some(existing) = try_consume_context::<Self>() {
+            return existing;
+        }
+        let fresh = Self {
             start: State::create_in_scope(None, ScopeId::ROOT),
             end: State::create_in_scope(None, ScopeId::ROOT),
             pressing: State::create_in_scope(false, ScopeId::ROOT),
-        })
+        };
+        provide_context(fresh);
+        fresh
     }
 }
 
@@ -974,6 +986,7 @@ impl Component for RefHoverButton {
                 .layer(Layer::Overlay)
                 .position(Position::new_absolute().top(icon_size * 1.4).left(0.))
                 .width(Size::px(320.0))
+                .height(Size::fill_minimum())
                 .max_height(Size::px(360.0))
                 .padding((6., 8.))
                 .with_corner_radius(10.0)
@@ -1096,7 +1109,7 @@ impl Component for RefListRow {
         let mut body = rect().width(Size::fill()).spacing(2.0).child(header);
         if is_open && !self.view.tooltip.is_empty() {
             body = body.child(
-                rect().width(Size::fill()).padding((8., 10.)).child(
+                rect().width(Size::fill()).padding((8., 10., 8., 16.)).child(
                     label()
                         .font_size(self.font_size * 0.65)
                         .color(parse_rgb(theme::TEXT_SECONDARY))
@@ -1123,13 +1136,17 @@ fn note_icon(font_size: f32) -> impl IntoElement {
 }
 
 fn section_header(text: &str) -> impl IntoElement {
-    rect().width(Size::fill()).padding((12., 0., 4., 0.)).child(
-        label()
-            .font_family(typography::FAMILY)
-            .font_size(typography::SECTION_HEADER_PX)
-            .color(parse_rgb(theme::HEADER))
-            .text(text.to_string()),
-    )
+    rect()
+        .width(Size::fill())
+        .center()
+        .padding((12., 0., 4., 0.))
+        .child(
+            label()
+                .font_family(typography::FAMILY)
+                .font_size(typography::SECTION_HEADER_PX)
+                .color(parse_rgb(theme::HEADER))
+                .text(text.to_string()),
+        )
 }
 
 fn spacer(height: f32) -> impl IntoElement {

@@ -219,39 +219,11 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
     let db_ref = db.clone();
     let bible_for_ref = st_snapshot.bible_id.clone();
     let on_search = EventHandler::<String>::new(move |query: String| {
-        log::debug!("bible search: on_search fired with '{query}'");
-        // Reference path: `"Juan 3:16"` / `"Jn 3"` / etc. resolve
-        // against the installed book catalogue — no FTS needed.
-        // Tried first so a user that already knows where they want
-        // to go doesn't wade through snippet hits.
-        if let Some(anchor) =
-            notein_bible::resolver::resolve(&db_ref, &bible_for_ref, query.trim())
-        {
-            log::debug!(
-                "bible search: '{query}' resolved → {} {}:{}",
-                anchor.book_id,
-                anchor.start_chapter,
-                anchor.start_verse
-            );
-            if let Err(e) =
-                state
-                    .write()
-                    .jump_to(&db_ref, &anchor.book_id, anchor.start_chapter)
-            {
-                log::warn!("bible search ref jump: {e}");
-            }
-            flash_verse.set(Some(anchor.start_verse));
-            let mut flash_verse = flash_verse;
-            spawn_forever(async move {
-                async_io::Timer::after(Duration::from_secs(3)).await;
-                flash_verse.set(None);
-            });
-            search_hits.set(Vec::new());
-            search_query.set(String::new());
-            return;
-        }
         // Pick path: query exactly matches an existing hit's label →
-        // jump + reset.
+        // jump + reset. Reference-shaped queries (`"Juan 3:16"`) land
+        // on this path only when the user explicitly picks the
+        // suggestion labelled "Ir a Juan 3:16" — never automatically
+        // while they're still typing.
         let hits_snapshot = search_hits.read().clone();
         if let Some(view) = hits_snapshot.iter().find(|v| v.suggestion_label == query) {
             let src = view.source.clone();
@@ -276,8 +248,7 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         let hits = db_search
             .search(Some(&bible_for_search), &query, 50)
             .unwrap_or_default();
-        log::debug!("bible search: '{query}' → {} hits", hits.len());
-        let views: Vec<notein_bible::ui::search_sheet::SearchHitView> = hits
+        let mut views: Vec<notein_bible::ui::search_sheet::SearchHitView> = hits
             .into_iter()
             .map(|h| {
                 let book_name = books_for_search
@@ -287,6 +258,61 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
                 notein_bible::ui::search_sheet::hit_to_view(h, book_name.as_deref())
             })
             .collect();
+
+        // Synthetic nav suggestion for reference-shaped queries
+        // (`"Juan 3"`, `"Juan 3:16"`). Validates book + chapter +
+        // (optional) verse exist in the installed Bible before
+        // offering the pill at the top of the dropdown — invalid
+        // refs silently fall through to the plain FTS results so the
+        // user still sees snippet hits for e.g. `"Juan 99"`.
+        if let Some(parsed) = notein_bible::reference::parse(query.trim())
+            && let Some(book_id) = notein_bible::resolver::resolve_book_token(
+                &db_search,
+                &bible_for_search,
+                &parsed.book_token,
+            )
+        {
+            let total_chaps = db_search
+                .chapter_count(&bible_for_search, &book_id)
+                .unwrap_or(0);
+            if parsed.chapter >= 1 && parsed.chapter <= total_chaps {
+                let verse = parsed.start_verse.unwrap_or(1);
+                let verse_ok = db_search
+                    .verse_text(&bible_for_search, &book_id, parsed.chapter, verse)
+                    .ok()
+                    .flatten()
+                    .is_some();
+                if verse_ok {
+                    let book_name = books_for_search
+                        .iter()
+                        .find(|b| b.book_id == book_id)
+                        .map(|b| b.name.clone())
+                        .unwrap_or_else(|| book_id.clone());
+                    let label = if parsed.start_verse.is_some() {
+                        format!("→ {} {}:{}", book_name, parsed.chapter, verse)
+                    } else {
+                        format!("→ {} {}", book_name, parsed.chapter)
+                    };
+                    let reference = format!("{} {}:{}", book_name, parsed.chapter, verse);
+                    let source = notein_bible::db::SearchHit {
+                        bible_id: bible_for_search.clone(),
+                        book_id,
+                        chapter: parsed.chapter,
+                        verse,
+                        snippet: String::new(),
+                        score: 0.0,
+                    };
+                    let nav = notein_bible::ui::search_sheet::SearchHitView {
+                        reference,
+                        snippet_runs: Vec::new(),
+                        suggestion_label: label,
+                        source,
+                    };
+                    views.insert(0, nav);
+                }
+            }
+        }
+
         search_hits.set(views);
     });
 
@@ -299,10 +325,6 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         .iter()
         .map(|v| std::borrow::Cow::Owned(v.suggestion_label.clone()))
         .collect();
-    log::debug!(
-        "bible search: render pass — suggestions.len={}",
-        search_suggestions.len()
-    );
 
     // Read the DocLinked chrome extension so the Bible toolbar can
     // surface split H/V (overlay mode) or close-split (split mode) in

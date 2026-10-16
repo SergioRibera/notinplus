@@ -276,6 +276,11 @@ impl Component for FormInput {
 
         let mut was_focused = use_state(|| false);
         let mut has_been_focused = use_state(|| false);
+        let mut show_suggestions = use_state(|| false);
+        let mut current_value = use_state(String::new);
+        let suggestions = self.suggestions.clone();
+        let has_suggestions = !suggestions.is_empty();
+
         let value_watch = self.value.clone();
         let mut collapse_width = animation_width;
         let mut collapse_content = animation_content;
@@ -307,14 +312,19 @@ impl Component for FormInput {
             }
 
             if was != focused_now {
+                // Blur hides the suggestion dropdown so the overlay
+                // never lingers above unrelated content; focus
+                // re-opens it when there's still text to filter.
+                if focused_now {
+                    if !value_watch.peek().is_empty() {
+                        show_suggestions.set(true);
+                    }
+                } else {
+                    show_suggestions.set(false);
+                }
                 was_focused.set(focused_now);
             }
         });
-
-        let suggestions = self.suggestions.clone();
-        let has_suggestions = !suggestions.is_empty();
-        let mut show_suggestions = use_state(|| false);
-        let mut current_value = use_state(String::new);
 
         let border_color = if has_error {
             ERROR
@@ -340,57 +350,29 @@ impl Component for FormInput {
             input = input.on_submit(on_change.clone());
         }
 
-        // `on_validate` fires on every keystroke (the Input widget's
-        // reactive change hook). The branches below forward the typed
-        // text to the external `on_change` handler so autocomplete
-        // consumers (search, pickers, …) react per character instead
-        // of only on Enter / blur. Previously the external handler
-        // was only wired to `on_submit`, which is why typing in the
-        // Bible search bar never fired the FTS.
+        // `on_validate` fires on every keystroke. Always update the
+        // internal suggestion-gate state + forward to the external
+        // handler + run the validator if any. Keeping the wiring
+        // uniform (not branched on `has_suggestions`) is critical:
+        // the closure captures its branch at render time, so a
+        // suggestions-less first render would otherwise install a
+        // closure that never updates `current_value`, leaving the
+        // dropdown gate stuck at `current=''` once suggestions
+        // arrive on a later render.
         let keystroke_handler = on_change.clone();
-        match (&self.on_validation, has_suggestions, keystroke_handler) {
-            (Some(validator), true, external) => {
-                let validator = validator.clone();
-                let mut validation_error = validation_error.clone();
-                input = input.on_validate(move |v: InputValidator| {
-                    let text = v.text().clone();
-                    current_value.set(text.clone());
-                    show_suggestions.set(!text.is_empty());
-                    validation_error.set(validator.call(text.clone()));
-                    if let Some(h) = external.as_ref() {
-                        h.call(text);
-                    }
-                });
+        let validator_opt = self.on_validation.clone();
+        let mut validation_error_for_cb = validation_error.clone();
+        input = input.on_validate(move |v: InputValidator| {
+            let text = v.text().clone();
+            current_value.set(text.clone());
+            show_suggestions.set(!text.is_empty());
+            if let Some(validator) = validator_opt.as_ref() {
+                validation_error_for_cb.set(validator.call(text.clone()));
             }
-            (Some(validator), false, external) => {
-                let validator = validator.clone();
-                let mut validation_error = validation_error.clone();
-                input = input.on_validate(move |e: InputValidator| {
-                    let text = e.text().clone();
-                    validation_error.set(validator.call(text.clone()));
-                    if let Some(h) = external.as_ref() {
-                        h.call(text);
-                    }
-                });
+            if let Some(h) = keystroke_handler.as_ref() {
+                h.call(text);
             }
-            (None, true, external) => {
-                input = input.on_validate(move |v: InputValidator| {
-                    let text = v.text().clone();
-                    eprintln!("[form_input] on_validate '{text}' (suggestions path)");
-                    current_value.set(text.clone());
-                    show_suggestions.set(!text.is_empty());
-                    if let Some(h) = external.as_ref() {
-                        h.call(text);
-                    }
-                });
-            }
-            (None, false, Some(external)) => {
-                input = input.on_validate(move |e: InputValidator| {
-                    external.call(e.text().clone());
-                });
-            }
-            (None, false, None) => {}
-        }
+        });
 
         input = input.theme_colors(InputColorsThemePartial {
             border_fill: Some(Color::TRANSPARENT.into()),
@@ -497,19 +479,7 @@ impl Component for FormInput {
                     })),
             )
             .maybe(
-                {
-                    let gate = has_suggestions
-                        && show_suggestions()
-                        && !current_value.read().is_empty();
-                    eprintln!(
-                        "[form_input] dropdown gate — has_suggestions={} show={} current='{}' → {}",
-                        has_suggestions,
-                        show_suggestions(),
-                        &*current_value.read(),
-                        gate,
-                    );
-                    gate
-                },
+                has_suggestions && show_suggestions() && !current_value.read().is_empty(),
                 move |r| {
                     let filtered: Vec<Cow<'static, str>> = if self.suggestions_prefilter {
                         suggestions
@@ -524,11 +494,6 @@ impl Component for FormInput {
                         suggestions.clone()
                     };
 
-                    eprintln!(
-                        "[form_input] dropdown filtered={} prefilter={}",
-                        filtered.len(),
-                        self.suggestions_prefilter
-                    );
                     if filtered.is_empty() {
                         return r;
                     }
