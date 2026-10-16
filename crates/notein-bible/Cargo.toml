@@ -39,6 +39,7 @@ ui = [
     "dep:freya",
     "dep:freya-components",
     "dep:freya-core",
+    "dep:freya-engine",
     "dep:async-io",
     "dep:notein-ui-kit",
 ]
@@ -76,5 +77,6 @@ freya = { version = "=0.5.0-rc.8", features = [
 ], optional = true }
 freya-components = { version = "=0.5.0-rc.8", optional = true }
 freya-core = { version = "=0.5.0-rc.8", optional = true }
+freya-engine = { version = "=0.5.0-rc.8", optional = true }
 async-io = { version = "2", optional = true }
 notein-ui-kit = { path = "../notein-ui-kit", optional = true }

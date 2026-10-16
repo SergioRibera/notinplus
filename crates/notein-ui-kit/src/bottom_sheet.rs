@@ -173,7 +173,7 @@ impl Component for BottomSheet {
                     .position(
                         Position::new_global()
                             .left(0.)
-                            .top((h - height).max(0.0) + translate_y),
+                            .bottom(translate_y),
                     )
                     .width(Size::px(w.max(0.0)))
                     .height(Size::px(height))
@@ -259,16 +259,13 @@ impl Component for SheetPager {
             .cloned()
             .unwrap_or_else(|| rect().into_element());
 
-        rect()
-            .width(Size::fill())
-            .height(Size::fill())
-            .child(
-                rect()
-                    .width(Size::fill())
-                    .height(Size::fill())
-                    .offset_x(offset_x)
-                    .opacity(progress)
-                    .child(body),
-            )
+        rect().width(Size::fill()).height(Size::fill()).child(
+            rect()
+                .width(Size::fill())
+                .height(Size::fill())
+                .offset_x(offset_x)
+                .opacity(progress)
+                .child(body),
+        )
     }
 }

@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 use freya::elements::paragraph::ParagraphCursorExt;
 use freya::prelude::*;
+use freya_engine::prelude::{RectHeightStyle, RectWidthStyle};
 
 use crate::state::{BibleBookmark, u32_to_rgba};
 
@@ -381,6 +382,11 @@ impl Component for VerseParagraph {
         // host anchors its colour picker here so the popup opens next
         // to the finger / cursor instead of pinned to a fixed corner.
         let anchor: State<(f32, f32)> = use_state(|| (0.0, 0.0));
+        // Paragraph area captured via `on_sized`. Flips 0 → real_size
+        // after first layout; subscribing to it forces a re-render once
+        // the holder has been populated, so the second-pass bg-rect
+        // compute reads a laid-out paragraph.
+        let mut area: State<Area> = use_state(Area::default);
 
         let on_jump = self.on_jump.clone();
         let on_highlight = self.on_highlight.clone();
@@ -393,39 +399,34 @@ impl Component for VerseParagraph {
             .color(parse_rgb(theme::TEXT_PRIMARY))
             .font_family(typography::FAMILY)
             .font_size(font_size)
-            .holder(holder.clone());
+            .holder(holder.clone())
+            .on_sized(move |e: Event<SizedEventData>| {
+                let new_area = e.data().area;
+                if *area.peek() != new_area {
+                    area.set(new_area);
+                }
+            });
 
-        // Freya's `paragraph.highlights` indexes UTF-16 code units
-        // across spans + inline placeholders. Each `.child(...)` adds
-        // one placeholder unit; each span contributes
-        // `text.encode_utf16().count()` units. Track both so the
-        // highlight range covers only verse text — not the preceding
-        // verse marker nor the trailing footnote / cross-ref icon.
+        // UTF-16 offsets drive both pointer hit-testing and the
+        // per-verse bg rects we paint behind the text. Each `.child()`
+        // adds one placeholder unit; each span contributes
+        // `text.encode_utf16().count()` units.
         let mut utf16_offset: usize = 0;
-        let mut highlight_ranges: Vec<(usize, usize)> = Vec::new();
         let mut verse_ranges: Vec<VerseRange> = Vec::new();
-        // Freya paints every `.highlights()` range in a paragraph with
-        // the single `.highlight_color()` value. During preview, hide
-        // every stored bookmark in paragraphs that contain preview
-        // verses — only the preview range stays painted. That way the
-        // preview colour reads clean (no visual contamination of the
-        // user's other bookmarks) while the picker is open.
-        let paragraph_has_preview = self
-            .preview
-            .as_ref()
-            .is_some_and(|p| self.spans.iter().any(|s| s.verse >= p.lo && s.verse <= p.hi));
-        let highlight_color = if paragraph_has_preview {
-            self.preview.as_ref().unwrap().color
-        } else {
-            Color::from_rgb(170, 150, 60)
-        };
+        // Per-verse highlight items — one entry per bookmark /
+        // preview target with its own colour, so we can paint
+        // per-verse bg rects via `holder.get_rects_for_range` after
+        // layout. Preserves stored colours (the single-colour
+        // `paragraph.highlights` paint path couldn't).
+        let mut highlight_items: Vec<(usize, usize, Color)> = Vec::new();
 
         for span in &self.spans {
             let style = self.styles.get(&span.verse);
-            let in_preview = self
+            let preview_color = self
                 .preview
                 .as_ref()
-                .is_some_and(|p| span.verse >= p.lo && span.verse <= p.hi);
+                .filter(|p| span.verse >= p.lo && span.verse <= p.hi)
+                .map(|p| p.color);
 
             p = p.child(VerseMarker {
                 verse: span.verse,
@@ -446,15 +447,12 @@ impl Component for VerseParagraph {
             let end = utf16_offset;
 
             verse_ranges.push((start, end, span.verse));
-            // Preview-active paragraph: paint ONLY the preview range,
-            // suppress every stored highlight (they re-appear on
-            // commit / cancel). Non-preview paragraphs behave normally.
-            if paragraph_has_preview {
-                if in_preview {
-                    highlight_ranges.push((start, end));
-                }
-            } else if style.is_some() {
-                highlight_ranges.push((start, end));
+            // Preview wins over the stored tint for the targeted verse
+            // so the live wheel feedback stays on top; non-targeted
+            // bookmarks keep their own colour.
+            let paint_color = preview_color.or_else(|| style.and_then(|s| s.tint));
+            if let Some(c) = paint_color {
+                highlight_items.push((start, end, c));
             }
 
             if style.map(|s| s.has_note).unwrap_or(false) {
@@ -483,11 +481,10 @@ impl Component for VerseParagraph {
             }
         }
 
-        if !highlight_ranges.is_empty() {
-            p = p
-                .highlights(highlight_ranges)
-                .highlight_color(highlight_color);
-        }
+        // Subscribe to the area signal so the second pass runs after
+        // the paragraph publishes its laid-out form into the holder.
+        let paragraph_area = *area.read();
+        let bg_rects = build_bg_rects(&holder, &highlight_items, paragraph_area);
 
         // Gesture wiring: paragraph-level so a tap anywhere in verse
         // text — not just the tiny superscript marker — fires.
@@ -496,7 +493,7 @@ impl Component for VerseParagraph {
         let holder_for_move = holder.clone();
         let ranges_for_move = verse_ranges.clone();
 
-        p.on_pointer_down({
+        let p = p.on_pointer_down({
             let mut long_press_token = long_press_token;
             let on_highlight = on_highlight.clone();
             let mut drag = drag;
@@ -603,8 +600,72 @@ impl Component for VerseParagraph {
                     });
                 }
             }
-        })
+        });
+
+        // Wrap: bg rects first (painted behind) + paragraph with
+        // gestures second. Both are children of a `rect` whose own
+        // size is driven by the paragraph (bg rects are absolute, so
+        // they do not contribute to layout).
+        rect()
+            .width(Size::fill())
+            .child(bg_rects)
+            .child(p)
     }
+}
+
+/// Build the per-verse background-rect overlay. Reads the laid-out
+/// paragraph from `holder` and emits one absolute-positioned coloured
+/// rect per text box the paragraph returned for each highlight range.
+/// Multi-line verses produce one box per visual line, so the paint
+/// hugs the line heights naturally.
+///
+/// Before the first layout publishes into the holder (`area` still at
+/// its default), returns an empty rect. The `on_sized` callback on the
+/// paragraph flips `area` after layout, which re-runs render and gives
+/// this function a populated holder on the second pass.
+fn build_bg_rects(
+    holder: &ParagraphHolder,
+    items: &[(usize, usize, Color)],
+    paragraph_area: Area,
+) -> impl IntoElement {
+    let mut container = rect().width(Size::fill());
+    // Guard against the pre-layout call (holder empty) + skip empty
+    // items so unhighlighted paragraphs do not allocate.
+    if items.is_empty() || paragraph_area.width() <= 0.0 {
+        return container;
+    }
+    let inner = holder.0.borrow();
+    let Some(data) = inner.as_ref() else {
+        return container;
+    };
+    let scale = data.scale_factor.max(1e-3);
+    for (start, end, color) in items {
+        if start == end {
+            continue;
+        }
+        let boxes = data.paragraph.get_rects_for_range(
+            *start..*end,
+            RectHeightStyle::Tight,
+            RectWidthStyle::Tight,
+        );
+        for tb in boxes {
+            let left = (tb.rect.left as f64 / scale) as f32;
+            let top = (tb.rect.top as f64 / scale) as f32;
+            let width = ((tb.rect.right - tb.rect.left) as f64 / scale) as f32;
+            let height = ((tb.rect.bottom - tb.rect.top) as f64 / scale) as f32;
+            if width <= 0.0 || height <= 0.0 {
+                continue;
+            }
+            container = container.child(
+                rect()
+                    .position(Position::new_absolute().top(top).left(left))
+                    .width(Size::px(width))
+                    .height(Size::px(height))
+                    .background(*color),
+            );
+        }
+    }
+    container
 }
 
 /// Legacy entry point. Preserved so `all_blocks` doesn't need to care
