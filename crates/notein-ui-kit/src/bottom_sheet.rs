@@ -93,6 +93,11 @@ impl BottomSheet {
     }
 }
 
+/// Drag past this many pixels downward on the card and the sheet
+/// commits to a dismiss on release. Shorter drags snap back to the
+/// resting position.
+const DRAG_DISMISS_PX: f32 = 120.0;
+
 impl Component for BottomSheet {
     fn render(&self) -> impl IntoElement {
         let Some(open) = self.open else {
@@ -114,6 +119,14 @@ impl Component for BottomSheet {
         // sits over the whole window, regardless of the ancestor it
         // was mounted under.
         let mut area: State<Area> = use_state(Area::default);
+        // Drag-to-dismiss state. `drag_origin_y` is the global pointer
+        // Y at pointer-down; `drag_offset` is the current downward
+        // offset applied on top of the slide-in animation. Both reset
+        // on pointer-up — if the final offset crossed
+        // `DRAG_DISMISS_PX` we flip `open` false, otherwise the state
+        // reset snaps the card back.
+        let drag_origin_y: State<Option<f32>> = use_state(|| None);
+        let drag_offset: State<f32> = use_state(|| 0.0);
 
         // 0 → 1 drives both the fade of the backdrop + the slide-up of
         // the card from `height` px below its resting position.
@@ -132,13 +145,59 @@ impl Component for BottomSheet {
         });
         let (fade, slide_remaining) = animations.get().value();
 
-        let translate_y = -((slide_remaining as f32) * height);
-        let alpha = ((fade as f64) * f64::from(backdrop_alpha)) as u8;
+        let base_translate_y = -((slide_remaining as f32) * height);
+        let drag_y = (*drag_offset.read()).max(0.0);
+        // Negative bottom lifts the card upward from the viewport edge
+        // (slide-in). Positive subtracts so a downward drag pushes the
+        // card toward dismiss.
+        let translate_y = base_translate_y - drag_y;
+        // Fade the backdrop proportionally as the drag approaches the
+        // dismiss threshold so the sheet feels anchored to the gesture.
+        let drag_fade = 1.0 - (drag_y / (DRAG_DISMISS_PX * 2.0)).min(1.0);
+        let alpha = ((fade as f64) * (drag_fade as f64) * f64::from(backdrop_alpha)) as u8;
 
         let close = {
             let mut open = open;
             move |_: Event<PressEventData>| {
                 if dismiss_on_backdrop {
+                    open.set(false);
+                }
+            }
+        };
+
+        let on_card_down = {
+            let mut drag_origin_y = drag_origin_y;
+            let mut drag_offset = drag_offset;
+            move |e: Event<PointerEventData>| {
+                drag_origin_y.set(Some(e.global_location().y as f32));
+                drag_offset.set(0.0);
+            }
+        };
+        let on_card_move = {
+            let drag_origin_y = drag_origin_y;
+            let mut drag_offset = drag_offset;
+            move |e: Event<PointerEventData>| {
+                let Some(origin) = *drag_origin_y.read() else {
+                    return;
+                };
+                let delta = (e.global_location().y as f32) - origin;
+                // Allow a tiny upward tug (negative) but clamp to 0 so
+                // the card does not float above its anchor.
+                drag_offset.set(delta.max(0.0));
+            }
+        };
+        let on_card_up = {
+            let mut drag_origin_y = drag_origin_y;
+            let mut drag_offset = drag_offset;
+            let mut open = open;
+            move |_: Event<PointerEventData>| {
+                if drag_origin_y.read().is_none() {
+                    return;
+                }
+                let committed = *drag_offset.read() >= DRAG_DISMISS_PX;
+                drag_origin_y.set(None);
+                drag_offset.set(0.0);
+                if committed {
                     open.set(false);
                 }
             }
@@ -181,6 +240,9 @@ impl Component for BottomSheet {
                     .corner_radius(CornerRadius::new(16.0, 16.0, 0.0, 0.0))
                     .padding((12., 16.))
                     .spacing(10.0)
+                    .on_pointer_down(on_card_down)
+                    .on_pointer_move(on_card_move)
+                    .on_global_pointer_up(on_card_up)
                     .child(sheet_handle_bar())
                     .child(body),
             )

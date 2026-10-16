@@ -593,35 +593,32 @@ fn book_grid_page(
     on_pick: impl FnMut(String) + Clone + 'static,
 ) -> impl IntoElement {
     const CELL: f32 = 72.0;
-    const COLS: usize = 5;
-    let mut rows = rect().width(Size::fill()).spacing(8.0);
-    for chunk in books.chunks(COLS) {
-        let mut row = rect()
-            .direction(Direction::Horizontal)
-            .spacing(8.0)
-            .width(Size::fill());
-        for b in chunk {
-            let book_id = b.book_id.clone();
-            let mut on_pick = on_pick.clone();
-            row = row.child(
-                rect()
-                    .width(Size::px(CELL))
-                    .height(Size::px(CELL))
-                    .center()
-                    .with_corner_radius(10.0)
-                    .background(Color::from_rgb(38, 38, 42))
-                    .on_press(move |_: Event<PressEventData>| on_pick(book_id.clone()))
-                    .child(
-                        label()
-                            .font_size(13.0)
-                            .color(Color::from_rgb(230, 230, 230))
-                            .text(b.abbrev.clone()),
-                    ),
-            );
-        }
-        rows = rows.child(row);
+    let mut content = rect()
+        .expanded()
+        .horizontal()
+        .spacing(8.0)
+        .padding((0., 20.))
+        .content(Content::wrap_spacing(8.));
+    for b in books {
+        let book_id = b.book_id.clone();
+        let mut on_pick = on_pick.clone();
+        content = content.child(
+            rect()
+                .width(Size::px(CELL))
+                .height(Size::px(CELL))
+                .center()
+                .with_corner_radius(10.0)
+                .background(Color::from_rgb(38, 38, 42))
+                .on_press(move |_: Event<PressEventData>| on_pick(book_id.clone()))
+                .child(
+                    label()
+                        .font_size(13.0)
+                        .color(Color::from_rgb(230, 230, 230))
+                        .text(b.abbrev.clone()),
+                ),
+        );
     }
-    ScrollView::new().child(rows).max_width(Size::percent(70.))
+    ScrollView::new().width(Size::fill()).child(content)
 }
 
 /// Grid of chapter numbers for the drilled-in book, with a back chip
