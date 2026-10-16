@@ -88,6 +88,9 @@ fn lock_registry(r: &Registry) -> MutexGuard<'_, HashMap<&'static str, Arc<dyn L
 fn register_builtins(g: &mut HashMap<&'static str, Arc<dyn LinkedDocSource>>) {
     let pdf: Arc<dyn LinkedDocSource> = Arc::new(crate::builtin::pdf_linked::PdfLinkedSource);
     g.insert(pdf.plugin_id(), pdf);
+    let bible: Arc<dyn LinkedDocSource> =
+        Arc::new(crate::builtin::bible_linked::BibleLinkedSource);
+    g.insert(bible.plugin_id(), bible);
 }
 
 /// Publish a backend. Call this at app bootstrap (or from a dynamic

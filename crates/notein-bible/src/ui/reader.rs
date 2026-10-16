@@ -82,11 +82,33 @@ pub fn chapter_view(
                         .width(Size::fill())
                         .padding((16., 0.))
                         .spacing(14.)
-                        .child(spacer(28.))
+                        .child(book_title_header(plan))
                         .child(drop_cap_block(plan, &styles, font_size, line_height, drop_cap_size))
                         .child(trailing_blocks(plan, &styles, font_size, line_height)),
                 ),
         )
+}
+
+/// Render the full book name centered above the first chapter — doubles
+/// as the top-of-document ornament the reader lands on. Hidden on
+/// chapters > 1 so a swipe-nav doesn't repaint the heading mid-flow.
+fn book_title_header(plan: &ChapterPlan) -> impl IntoElement {
+    if plan.chapter == 1 {
+        rect()
+            .width(Size::fill())
+            .padding((28., 0., 18., 0.))
+            .cross_align(Alignment::Center)
+            .child(
+                label()
+                    .font_family(typography::FAMILY)
+                    .font_size(28.0)
+                    .color(parse_rgb(theme::TEXT_PRIMARY))
+                    .text(plan.book_name.to_uppercase()),
+            )
+            .into_element()
+    } else {
+        spacer(28.).into_element()
+    }
 }
 
 /// First visual block of the chapter — large chapter number sitting

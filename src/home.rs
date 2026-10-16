@@ -1616,6 +1616,7 @@ fn trigger_entry(entry: &crate::plugins::AvailableEntry, ctx: &FabCtx) {
         EntrySource::Plugin(_) if entry.plugin_id == "io.notein.bible.viewer" => {
             match entry.entry.id.as_str() {
                 "new-bible-viewer" => flow_open_bible(ctx.clone()),
+                "new-bible-linked" => flow_open_bible_linked(ctx.clone()),
                 other => log::warn!("unknown bible viewer entry: {other}"),
             }
         }
@@ -1633,6 +1634,34 @@ fn trigger_entry(entry: &crate::plugins::AvailableEntry, ctx: &FabCtx) {
             );
         }
     }
+}
+
+fn flow_open_bible_linked(ctx: FabCtx) {
+    use crate::library::{BackgroundStyle, ItemKind};
+    let FabCtx { handle, snap, current, router } = ctx;
+    let mut snap = snap;
+    spawn_forever(async move {
+        let mut lib = handle.lock().await;
+        match lib
+            .create_item(
+                current,
+                ItemKind::DocLinked {
+                    source_plugin: "io.notein.bible.viewer".into(),
+                },
+                "Biblia + lienzo",
+                None,
+                Vec::new(),
+                BackgroundStyle::default(),
+            )
+            .await
+        {
+            Ok(id) => {
+                snap.set(Some(lib.index().clone()));
+                let _ = router.push(Route::DocLinkedView { id });
+            }
+            Err(e) => log::warn!("bible linked: create_item failed: {e}"),
+        }
+    });
 }
 
 fn flow_open_bible(ctx: FabCtx) {

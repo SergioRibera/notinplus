@@ -13,6 +13,7 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
+use freya::router::RouterContext;
 
 use notein_bible::db::{BibleRow, BookRow, ChapterRow, Db};
 use notein_bible::state::{BibleBookmark, BibleSnapshot, BibleViewerState};
@@ -133,6 +134,10 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         let current = *picker_open.read();
         picker_open.set(!current);
     };
+    let router = RouterContext::get();
+    let on_back = move || {
+        let _ = router.push(crate::route::Route::Home);
+    };
 
     let picker_overlay = if *picker_open.read() {
         let db_pick = db.clone();
@@ -163,6 +168,7 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         .child(toolbar::top_toolbar(
             &abbrev,
             toolbar::ToolbarCallbacks {
+                on_back: Some(Box::new(on_back)),
                 on_search: || log::info!("bible: search sheet not wired yet"),
                 on_more: || log::info!("bible: more menu not wired yet"),
                 on_translation: translation_cb,

@@ -307,12 +307,20 @@ impl CanvasKind for BibleCanvas {
     }
 
     fn creation_entries(&self) -> Vec<CreationEntry> {
-        vec![custom_entry(
-            "new-bible-viewer",
-            "Nueva Biblia",
-            freya_icons::lucide::book_open(),
-            CreationCategory::Canvas,
-        )]
+        vec![
+            custom_entry(
+                "new-bible-viewer",
+                "Nueva Biblia",
+                freya_icons::lucide::book_open(),
+                CreationCategory::Canvas,
+            ),
+            custom_entry(
+                "new-bible-linked",
+                "Biblia + lienzo (enlazado)",
+                freya_icons::lucide::columns_2(),
+                CreationCategory::Canvas,
+            ),
+        ]
     }
 
     fn execute_creation(

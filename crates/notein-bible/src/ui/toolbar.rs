@@ -13,7 +13,14 @@ use super::theme;
 const ICON_SIZE: f32 = 20.0;
 const BUTTON_SIZE: f32 = 36.0;
 
-/// `(search, more, translation)` click handlers.
+/// Boxed back handler. Boxed (instead of a generic parameter) so
+/// callers can leave it `None` without needing a turbofish on the
+/// generic bounds.
+pub type BackHandler = Box<dyn FnMut() + 'static>;
+
+/// `(back, search, more, translation)` click handlers. The back button
+/// is optional — pass `None` when the toolbar hosts a tab that already
+/// has its own navigation chrome (e.g. the linked-doc split view).
 #[allow(missing_debug_implementations)]
 pub struct ToolbarCallbacks<FS, FM, FT>
 where
@@ -21,6 +28,7 @@ where
     FM: FnMut() + 'static,
     FT: FnMut() + 'static,
 {
+    pub on_back: Option<BackHandler>,
     pub on_search: FS,
     pub on_more: FM,
     pub on_translation: FT,
@@ -36,23 +44,39 @@ where
     FT: FnMut() + 'static,
 {
     let ToolbarCallbacks {
+        on_back,
         on_search,
         on_more,
         on_translation,
     } = callbacks;
 
-    rect()
+    let mut row = rect()
         .width(Size::fill())
         .height(Size::px(56.0))
         .background(parse_rgb(theme::BG))
         .padding((0., 16.))
         .direction(Direction::Horizontal)
         .cross_align(Alignment::Center)
-        .main_align(Alignment::End)
+        .main_align(Alignment::SpaceBetween)
+        .spacing(4.0);
+
+    let left = match on_back {
+        Some(mut cb) => {
+            icon_button(freya::icons::lucide::arrow_left(), move || cb()).into_element()
+        }
+        None => rect().width(Size::px(0.0)).into_element(),
+    };
+
+    let right = rect()
+        .direction(Direction::Horizontal)
+        .cross_align(Alignment::Center)
         .spacing(4.0)
         .child(icon_button(freya::icons::lucide::search(), on_search))
         .child(icon_button(freya::icons::lucide::ellipsis(), on_more))
-        .child(translation_chip(translation_abbrev, on_translation))
+        .child(translation_chip(translation_abbrev, on_translation));
+
+    row = row.child(left).child(right);
+    row
 }
 
 fn icon_button<F>(icon: Bytes, mut on_press: F) -> impl IntoElement
