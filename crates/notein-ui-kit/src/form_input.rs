@@ -340,26 +340,56 @@ impl Component for FormInput {
             input = input.on_submit(on_change.clone());
         }
 
-        if let Some(validator) = &self.on_validation {
-            let external_handler = validator.clone();
-            let mut validation_error = validation_error.clone();
-            if has_suggestions {
+        // `on_validate` fires on every keystroke (the Input widget's
+        // reactive change hook). The branches below forward the typed
+        // text to the external `on_change` handler so autocomplete
+        // consumers (search, pickers, …) react per character instead
+        // of only on Enter / blur. Previously the external handler
+        // was only wired to `on_submit`, which is why typing in the
+        // Bible search bar never fired the FTS.
+        let keystroke_handler = on_change.clone();
+        match (&self.on_validation, has_suggestions, keystroke_handler) {
+            (Some(validator), true, external) => {
+                let validator = validator.clone();
+                let mut validation_error = validation_error.clone();
                 input = input.on_validate(move |v: InputValidator| {
-                    current_value.set(v.text().clone());
-                    show_suggestions.set(!v.text().is_empty());
-                    external_handler.call(v.text().clone());
-                });
-            } else {
-                input = input.on_validate(move |e: InputValidator| {
-                    let result = external_handler.call(e.text().clone());
-                    validation_error.set(result);
+                    let text = v.text().clone();
+                    current_value.set(text.clone());
+                    show_suggestions.set(!text.is_empty());
+                    validation_error.set(validator.call(text.clone()));
+                    if let Some(h) = external.as_ref() {
+                        h.call(text);
+                    }
                 });
             }
-        } else if has_suggestions {
-            input = input.on_validate(move |v: InputValidator| {
-                current_value.set(v.text().clone());
-                show_suggestions.set(!v.text().is_empty());
-            });
+            (Some(validator), false, external) => {
+                let validator = validator.clone();
+                let mut validation_error = validation_error.clone();
+                input = input.on_validate(move |e: InputValidator| {
+                    let text = e.text().clone();
+                    validation_error.set(validator.call(text.clone()));
+                    if let Some(h) = external.as_ref() {
+                        h.call(text);
+                    }
+                });
+            }
+            (None, true, external) => {
+                input = input.on_validate(move |v: InputValidator| {
+                    let text = v.text().clone();
+                    eprintln!("[form_input] on_validate '{text}' (suggestions path)");
+                    current_value.set(text.clone());
+                    show_suggestions.set(!text.is_empty());
+                    if let Some(h) = external.as_ref() {
+                        h.call(text);
+                    }
+                });
+            }
+            (None, false, Some(external)) => {
+                input = input.on_validate(move |e: InputValidator| {
+                    external.call(e.text().clone());
+                });
+            }
+            (None, false, None) => {}
         }
 
         input = input.theme_colors(InputColorsThemePartial {

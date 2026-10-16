@@ -217,6 +217,7 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
     let books_for_search = db.list_books(&bible_for_search).unwrap_or_default();
     let db_jump = db.clone();
     let on_search = EventHandler::<String>::new(move |query: String| {
+        log::debug!("bible search: on_search fired with '{query}'");
         // Pick path: query exactly matches an existing hit's label →
         // jump + reset.
         let hits_snapshot = search_hits.read().clone();
@@ -243,6 +244,7 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         let hits = db_search
             .search(Some(&bible_for_search), &query, 50)
             .unwrap_or_default();
+        log::debug!("bible search: '{query}' → {} hits", hits.len());
         let views: Vec<notein_bible::ui::search_sheet::SearchHitView> = hits
             .into_iter()
             .map(|h| {
