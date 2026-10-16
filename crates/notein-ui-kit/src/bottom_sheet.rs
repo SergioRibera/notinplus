@@ -132,7 +132,7 @@ impl Component for BottomSheet {
         });
         let (fade, slide_remaining) = animations.get().value();
 
-        let translate_y = (slide_remaining as f32) * height;
+        let translate_y = -((slide_remaining as f32) * height);
         let alpha = ((fade as f64) * f64::from(backdrop_alpha)) as u8;
 
         let close = {

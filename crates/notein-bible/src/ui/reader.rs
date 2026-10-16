@@ -628,7 +628,15 @@ fn build_bg_rects(
     items: &[(usize, usize, Color)],
     paragraph_area: Area,
 ) -> impl IntoElement {
-    let mut container = rect().width(Size::fill());
+    // `Layer::Relative(-1)` pushes every bg rect one step behind the
+    // paragraph sibling in the paint order. Hit-testing then prefers
+    // the paragraph on top, so the gestures keep firing even over a
+    // painted highlight.
+    let mut container = rect()
+        .layer(Layer::Relative(-1))
+        .position(Position::new_absolute().top(0.).left(0.))
+        .width(Size::fill())
+        .height(Size::fill());
     // Guard against the pre-layout call (holder empty) + skip empty
     // items so unhighlighted paragraphs do not allocate.
     if items.is_empty() || paragraph_area.width() <= 0.0 {
