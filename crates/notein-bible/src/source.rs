@@ -115,7 +115,11 @@ impl Source for BibleSource {
         // item_bytes = bincoded bible_id String. Empty → default.
         let bible_id: String = if item_bytes.is_empty() {
             let default = plugin_config::effective_default_bible(&self.config, &self.db);
-            if default.is_empty() { "spa_rv1960".into() } else { default }
+            if default.is_empty() {
+                "spa_rv1960".into()
+            } else {
+                default
+            }
         } else {
             bincode::decode_from_slice::<String, _>(item_bytes, bincode::config::standard())
                 .map(|(v, _)| v)
@@ -217,24 +221,14 @@ impl Source for BibleSource {
     }
 
     fn search_begin(&self, instance: u64, query: &str) -> u64 {
-        let bible_id = self
-            .instances
-            .read()
-            .unwrap()
-            .get(&instance)
-            .cloned();
+        let bible_id = self.instances.read().unwrap().get(&instance).cloned();
         let bid = bible_id.as_deref().map(String::as_str);
         let hits = self.db.search(bid, query, 100).unwrap_or_default();
 
         let shell_hits: Vec<SearchHit> = hits
             .into_iter()
             .map(|h| {
-                let anchor = BibleAnchor::single_verse(
-                    &h.bible_id,
-                    &h.book_id,
-                    h.chapter,
-                    h.verse,
-                );
+                let anchor = BibleAnchor::single_verse(&h.bible_id, &h.book_id, h.chapter, h.verse);
                 // FTS5 BM25 ascends (lower = better). The shell expects
                 // "higher = better"; negate so the sort flips naturally
                 // in whatever UI picks a top-N view.
@@ -292,12 +286,7 @@ impl Source for BibleSource {
     }
 
     fn creation_entries(&self) -> Vec<CreationEntry> {
-        vec![custom_entry(
-            "install-bible",
-            "Instalar Biblia",
-            freya_icons::lucide::download(),
-            CreationCategory::Source,
-        )]
+        vec![]
     }
 
     fn execute_creation(

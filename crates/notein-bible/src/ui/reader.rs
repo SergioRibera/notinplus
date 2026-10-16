@@ -284,76 +284,182 @@ fn verse_paragraph(
             p = p.child(note_icon(font_size));
         }
         if let Some(refs) = cross_refs.get(&span.verse) {
-            // Letter markers a..z..aa..ab per ref. Inline as blue
-            // superscript so the reading flow stays undisturbed.
-            // Chars past the 26-letter run collapse to the first 26 —
-            // a chapter with 27+ refs on one verse is pathological.
-            for (idx, xref) in refs.iter().enumerate() {
-                p = p.child(RefLetterMarker {
-                    letter: letter_for(idx),
-                    jump: on_jump.clone(),
-                    target: (xref.tgt_book.clone(), xref.tgt_chap, xref.tgt_verse),
-                    font_size,
-                });
-            }
+            p = p.child(RefHoverButton {
+                refs: refs.clone(),
+                jump: on_jump.clone(),
+                font_size,
+            });
         }
     }
     p
 }
 
-fn letter_for(idx: usize) -> String {
-    // a..z cycle, then double aa, ab, …. Caps at 26² = 676 which
-    // comfortably exceeds any real chapter's cross-ref density.
-    if idx < 26 {
-        char::from(b'a' + idx as u8).to_string()
-    } else {
-        let first = (idx / 26 - 1) as u8;
-        let second = (idx % 26) as u8;
-        format!(
-            "{}{}",
-            char::from(b'a' + first),
-            char::from(b'a' + second)
-        )
-    }
-}
-
-/// Single-letter superscript rendered inside the paragraph. Click
-/// navigates to the referenced verse; the chapter cross-ref panel is
-/// the full browse UI for everything.
+/// Inline bookmark icon rendered when a verse has at least one
+/// cross-ref. Hovering opens a floating list of collapsible refs;
+/// each row carries a "Ir a" button that drives `on_jump`. The icon
+/// stays single + unobtrusive so the paragraph flow is not broken by
+/// per-letter superscripts.
 #[derive(Clone, PartialEq)]
-struct RefLetterMarker {
-    letter: String,
+struct RefHoverButton {
+    refs: Vec<CrossRefView>,
     jump: OnJump,
-    target: (String, u16, u16),
     font_size: f32,
 }
 
-impl std::fmt::Debug for RefLetterMarker {
+impl std::fmt::Debug for RefHoverButton {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RefLetterMarker")
-            .field("letter", &self.letter)
+        f.debug_struct("RefHoverButton")
+            .field("ref_count", &self.refs.len())
             .finish()
     }
 }
 
-impl Component for RefLetterMarker {
+impl Component for RefHoverButton {
     fn render(&self) -> impl IntoElement {
-        let target = self.target.clone();
-        let on_jump = self.jump.clone();
-        let letter_text = self.letter.clone();
-        let blue = Color::from_rgb(80, 140, 220);
-        let marker_font = self.font_size * 0.55;
-        rect()
+        let mut hover = use_state(|| false);
+        // Expanded entries by index — multiple can be open at once so
+        // the user compares two refs side by side.
+        let mut expanded = use_state(|| std::collections::HashSet::<usize>::new());
+
+        let icon_size = self.font_size * 0.9;
+        let blue = Color::from_rgb(100, 150, 230);
+        let refs_for_list = self.refs.clone();
+        let jump_for_list = self.jump.clone();
+        let font_size = self.font_size;
+
+        let mut container = rect()
             .padding((0., 2.))
-            .on_press(move |_: Event<PressEventData>| {
-                on_jump.call(target.clone());
+            .margin((0., 2.))
+            .on_pointer_enter({
+                let mut hover = hover;
+                move |_| hover.set(true)
+            })
+            .on_pointer_leave({
+                let mut hover = hover;
+                move |_| hover.set(false)
             })
             .child(
-                label()
-                    .font_size(marker_font)
+                SvgViewer::new(freya::icons::lucide::bookmark())
                     .color(blue)
-                    .text(letter_text),
+                    .width(Size::px(icon_size))
+                    .height(Size::px(icon_size)),
+            );
+
+        if *hover.read() {
+            let popup = rect()
+                .position(Position::new_absolute().top(icon_size * 1.4).left(0.))
+                .width(Size::px(320.0))
+                .max_height(Size::px(360.0))
+                .padding((6., 8.))
+                .with_corner_radius(10.0)
+                .background(parse_rgb(theme::CHIP_BG))
+                .spacing(4.0)
+                .child(ScrollView::new().child({
+                    let mut col = rect().width(Size::fill()).spacing(4.0);
+                    for (idx, xref) in refs_for_list.iter().enumerate() {
+                        col = col.child(RefListRow {
+                            idx,
+                            view: xref.clone(),
+                            jump: jump_for_list.clone(),
+                            expanded,
+                            font_size,
+                        });
+                    }
+                    col
+                }));
+            container = container.child(popup);
+        }
+        container
+    }
+}
+
+/// One collapsible row inside the hover popup. Clicking anywhere on
+/// the header expands / collapses; the "Ir a" button navigates
+/// unconditionally.
+#[derive(Clone, PartialEq)]
+struct RefListRow {
+    idx: usize,
+    view: CrossRefView,
+    jump: OnJump,
+    expanded: State<std::collections::HashSet<usize>>,
+    font_size: f32,
+}
+
+impl std::fmt::Debug for RefListRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RefListRow")
+            .field("ref", &self.view.label)
+            .finish()
+    }
+}
+
+impl Component for RefListRow {
+    fn render(&self) -> impl IntoElement {
+        let is_open = self.expanded.read().contains(&self.idx);
+        let idx = self.idx;
+        let mut expanded = self.expanded;
+        let on_header = move |_: Event<PressEventData>| {
+            let mut set = expanded.write();
+            if set.contains(&idx) {
+                set.remove(&idx);
+            } else {
+                set.insert(idx);
+            }
+        };
+        let target = (
+            self.view.tgt_book.clone(),
+            self.view.tgt_chap,
+            self.view.tgt_verse,
+        );
+        let on_jump = self.jump.clone();
+        let goto = move |_: Event<PressEventData>| {
+            on_jump.call(target.clone());
+        };
+
+        let header = rect()
+            .width(Size::fill())
+            .padding((6., 10.))
+            .direction(Direction::Horizontal)
+            .cross_align(Alignment::Center)
+            .main_align(Alignment::SpaceBetween)
+            .with_corner_radius(6.0)
+            .background(parse_rgb(theme::BG))
+            .on_press(on_header)
+            .child(
+                label()
+                    .font_size(self.font_size * 0.65)
+                    .color(Color::from_rgb(100, 150, 230))
+                    .text(self.view.label.clone()),
             )
+            .child(
+                rect()
+                    .padding((4., 10.))
+                    .with_corner_radius(5.0)
+                    .background(Color::from_rgb(55, 80, 140))
+                    .on_press(goto)
+                    .child(
+                        label()
+                            .font_size(self.font_size * 0.58)
+                            .color(Color::from_rgb(240, 240, 240))
+                            .text("Ir a"),
+                    ),
+            );
+
+        let mut body = rect().width(Size::fill()).spacing(2.0).child(header);
+        if is_open && !self.view.tooltip.is_empty() {
+            body = body.child(
+                rect()
+                    .width(Size::fill())
+                    .padding((8., 10.))
+                    .child(
+                        label()
+                            .font_size(self.font_size * 0.65)
+                            .color(parse_rgb(theme::TEXT_SECONDARY))
+                            .text(self.view.tooltip.clone()),
+                    ),
+            );
+        }
+        body
     }
 }
 
