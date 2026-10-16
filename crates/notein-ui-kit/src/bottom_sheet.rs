@@ -107,6 +107,14 @@ impl Component for BottomSheet {
         let dismiss_on_backdrop = self.dismiss_on_backdrop;
         let body = self.body.clone();
 
+        // Window area captured via `on_sized` on the invisible probe
+        // the sheet mounts first — gives absolute dimensions for the
+        // backdrop + card, so the sheet doesn't depend on how the
+        // parent sizes it. Positions below are global so the sheet
+        // sits over the whole window, regardless of the ancestor it
+        // was mounted under.
+        let mut area: State<Area> = use_state(Area::default);
+
         // 0 → 1 drives both the fade of the backdrop + the slide-up of
         // the card from `height` px below its resting position.
         let animations = use_animation(|conf| {
@@ -136,28 +144,39 @@ impl Component for BottomSheet {
             }
         };
 
+        let a = *area.read();
+        let w = a.width();
+        let h = a.height();
+
         rect()
             .layer(Layer::OverlayLevel(5))
-            .position(Position::new_absolute().top(0.).left(0.))
+            .position(Position::new_global().top(0.).left(0.))
             .width(Size::fill())
             .height(Size::fill())
+            .on_sized(move |e: Event<SizedEventData>| {
+                area.set(e.data().area);
+            })
             .child(
-                // Backdrop
+                // Backdrop — stretched to the captured window area so
+                // taps anywhere outside the card dismiss it.
                 rect()
-                    .width(Size::fill())
-                    .height(Size::fill())
+                    .position(Position::new_global().top(0.).left(0.))
+                    .width(Size::px(w.max(0.0)))
+                    .height(Size::px(h.max(0.0)))
                     .background(Color::from_argb(alpha, 0, 0, 0))
                     .on_press(close),
             )
             .child(
-                // Card anchored at the bottom edge, offset up by
-                // (1 - progress) * height pixels so the finished state
-                // sits flush with the bottom.
+                // Card pinned to the window's bottom edge, offset
+                // down by `translate_y` during the slide-in.
                 rect()
-                    .position(Position::new_absolute().bottom(0.).left(0.))
-                    .width(Size::fill())
+                    .position(
+                        Position::new_global()
+                            .left(0.)
+                            .top((h - height).max(0.0) + translate_y),
+                    )
+                    .width(Size::px(w.max(0.0)))
                     .height(Size::px(height))
-                    .offset_y(translate_y)
                     .background(Color::from_rgb(26, 26, 30))
                     .corner_radius(CornerRadius::new(16.0, 16.0, 0.0, 0.0))
                     .padding((12., 16.))

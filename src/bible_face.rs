@@ -445,10 +445,11 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
             let packed = notein_bible::state::rgba_to_u32(rgba);
             {
                 let mut st = state.write();
-                for v in lo..=hi {
-                    st.begin_selection(book_commit.clone(), chapter_num, v);
-                    let _ = st.commit_selection_as_highlight(Some(packed), "");
-                }
+                // Upsert on the full span in one call so an existing
+                // bookmark overlapping the range gets its colour /
+                // extent replaced instead of a second bookmark being
+                // layered on top. Keeps repeated edits idempotent.
+                st.upsert_highlight(&book_commit, chapter_num, lo, hi, Some(packed), "");
             }
             pending_highlight.set(None);
             preview_color.set(None);

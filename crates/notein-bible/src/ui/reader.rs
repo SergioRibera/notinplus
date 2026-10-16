@@ -404,18 +404,21 @@ impl Component for VerseParagraph {
         let mut utf16_offset: usize = 0;
         let mut highlight_ranges: Vec<(usize, usize)> = Vec::new();
         let mut verse_ranges: Vec<VerseRange> = Vec::new();
-        // Preview colour overrides the paragraph's default bookmark
-        // yellow for every verse in the preview range. Freya paints
-        // all highlight ranges with a single colour per paragraph, so
-        // a mid-pick paragraph that already has other bookmarks will
-        // momentarily recolour them too — acceptable since the preview
-        // is live and goes away on confirm / cancel.
-        let highlight_color = self
+        // Freya paints every `.highlights()` range in a paragraph with
+        // the single `.highlight_color()` value. During preview, hide
+        // every stored bookmark in paragraphs that contain preview
+        // verses — only the preview range stays painted. That way the
+        // preview colour reads clean (no visual contamination of the
+        // user's other bookmarks) while the picker is open.
+        let paragraph_has_preview = self
             .preview
             .as_ref()
-            .filter(|p| self.spans.iter().any(|s| s.verse >= p.lo && s.verse <= p.hi))
-            .map(|p| p.color)
-            .unwrap_or_else(|| Color::from_rgb(170, 150, 60));
+            .is_some_and(|p| self.spans.iter().any(|s| s.verse >= p.lo && s.verse <= p.hi));
+        let highlight_color = if paragraph_has_preview {
+            self.preview.as_ref().unwrap().color
+        } else {
+            Color::from_rgb(170, 150, 60)
+        };
 
         for span in &self.spans {
             let style = self.styles.get(&span.verse);
@@ -443,7 +446,14 @@ impl Component for VerseParagraph {
             let end = utf16_offset;
 
             verse_ranges.push((start, end, span.verse));
-            if style.is_some() || in_preview {
+            // Preview-active paragraph: paint ONLY the preview range,
+            // suppress every stored highlight (they re-appear on
+            // commit / cancel). Non-preview paragraphs behave normally.
+            if paragraph_has_preview {
+                if in_preview {
+                    highlight_ranges.push((start, end));
+                }
+            } else if style.is_some() {
                 highlight_ranges.push((start, end));
             }
 

@@ -423,6 +423,48 @@ impl BibleViewerState {
         before != self.highlights.len()
     }
 
+    /// Apply a highlight across `[start, end]` on `(book, chapter)`,
+    /// re-using any existing bookmark whose range overlaps instead of
+    /// stacking a new one on top. Overlapping bookmark gets its range
+    /// unioned with the new span and its colour / note replaced.
+    ///
+    /// Returns the `BookmarkId` of the mutated / inserted bookmark.
+    pub fn upsert_highlight(
+        &mut self,
+        book_id: &str,
+        chapter: u16,
+        start: u16,
+        end: u16,
+        color: Option<u32>,
+        note: impl Into<String>,
+    ) -> BookmarkId {
+        let (lo, hi) = if start <= end { (start, end) } else { (end, start) };
+        let note = note.into();
+        if let Some(existing) = self.highlights.iter_mut().find(|h| {
+            h.book_id == book_id
+                && h.chapter == chapter
+                && h.start_verse <= hi
+                && h.end_verse >= lo
+        }) {
+            existing.start_verse = existing.start_verse.min(lo);
+            existing.end_verse = existing.end_verse.max(hi);
+            existing.color = color;
+            existing.note = note;
+            return existing.id;
+        }
+        let id = BookmarkId::new_v4();
+        self.highlights.push(BibleBookmark {
+            id,
+            book_id: book_id.to_string(),
+            chapter,
+            start_verse: lo,
+            end_verse: hi,
+            color,
+            note,
+        });
+        id
+    }
+
     /// Highlights visible on `(book, chapter)` — the UI consults this
     /// per chapter render to decide which verses need a background
     /// wash + gutter note icon.
