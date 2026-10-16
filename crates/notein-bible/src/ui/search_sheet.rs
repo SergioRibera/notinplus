@@ -27,6 +27,11 @@ pub struct SearchHitView {
     /// Alternating normal / highlighted runs. Each `bold = true` run
     /// paints in a brighter colour so the match pops in the list.
     pub snippet_runs: Vec<SnippetRun>,
+    /// Flat single-line summary string used as the suggestion label
+    /// in an inline input (toolbar FormInput). Formatted as
+    /// `"<reference> — <snippet>"` with the snippet markers stripped
+    /// so suggestions render as plain text.
+    pub suggestion_label: String,
     /// Original hit — preserved so the pick callback can navigate the
     /// viewer to it without reconstructing the anchor.
     pub source: DbSearchHit,
@@ -47,7 +52,24 @@ pub fn hit_to_view(hit: DbSearchHit, book_name: Option<&str>) -> SearchHitView {
     let runs = split_snippet(&hit.snippet, open, close);
     let book = book_name.unwrap_or(&hit.book_id);
     let reference = format!("{} {}:{}", book, hit.chapter, hit.verse);
-    SearchHitView { reference, snippet_runs: runs, source: hit }
+    // Flatten the runs for the inline suggestion label — one plain
+    // line, no markup, trimmed to a readable length.
+    let flat: String = runs.iter().map(|r| r.text.as_str()).collect();
+    let flat = flat.replace('\n', " ");
+    let trimmed = if flat.chars().count() > 80 {
+        let mut s = flat.chars().take(77).collect::<String>();
+        s.push('…');
+        s
+    } else {
+        flat
+    };
+    let suggestion_label = format!("{reference} — {trimmed}");
+    SearchHitView {
+        reference,
+        snippet_runs: runs,
+        suggestion_label,
+        source: hit,
+    }
 }
 
 fn split_snippet(snippet: &str, open: &str, close: &str) -> Vec<SnippetRun> {

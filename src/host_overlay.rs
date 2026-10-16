@@ -9,8 +9,9 @@
 use std::time::Duration;
 
 use freya::prelude::*;
-use notein_plugin::NotificationKind;
+use notein_plugin::{BookmarkDraft, BookmarkEditRequest, NotificationKind, Rgba, SourceRef};
 
+use crate::components::BookmarkBodyEditor;
 use crate::host_api::{self, HostInner, Notification, ProgressEntry};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -44,13 +45,22 @@ impl Component for HostOverlay {
         let _ = *tick.read();
         let bars = host.snapshot_progress();
         let toasts = host.snapshot_notifications();
+        let pending_edit = host.snapshot_bookmark_edit();
 
-        rect()
+        let mut root = rect()
             .position(Position::new_absolute().top(0.).left(0.).right(0.).bottom(0.))
             .width(Size::fill())
             .height(Size::fill())
             .child(progress_bar_stack(&bars))
-            .child(toast_stack(&toasts, host))
+            .child(toast_stack(&toasts, host.clone()));
+        if let Some((id, _plugin, request)) = pending_edit {
+            root = root.child(BookmarkEditModal {
+                id,
+                request,
+                host: host.clone(),
+            });
+        }
+        root
     }
 }
 
@@ -143,5 +153,193 @@ const fn kind_colors(kind: NotificationKind) -> (Color, Color) {
             Color::from_rgb(70, 32, 36),
             Color::from_rgb(240, 220, 220),
         ),
+    }
+}
+
+/// Modal the shell renders when any plugin pushes a bookmark edit
+/// request through [`host_api::HostInner::request_bookmark_edit`].
+/// Hosts the FormInput body field + the ColorWheel + the Save /
+/// Cancel buttons; result flows back to the plugin via
+/// [`host_api::HostInner::resolve_bookmark_edit`].
+///
+/// Wrapped as a `Component` so the `use_state` hooks inside its render
+/// have a proper scope context (plain fn calls would panic at
+/// `CurrentContext::with`).
+#[derive(Clone)]
+pub struct BookmarkEditModal {
+    pub id: u64,
+    pub request: BookmarkEditRequest,
+    pub host: std::sync::Arc<HostInner>,
+}
+
+impl PartialEq for BookmarkEditModal {
+    fn eq(&self, other: &Self) -> bool {
+        // Only the `id` matters for Freya's diff: the shell drops +
+        // re-mounts whenever a new request supersedes the current.
+        self.id == other.id
+    }
+}
+
+impl std::fmt::Debug for BookmarkEditModal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BookmarkEditModal")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Component for BookmarkEditModal {
+    fn render(&self) -> impl IntoElement {
+        let id = self.id;
+        let seed_body = self.request.draft.body.clone();
+        let seed_color = self.request.draft.color;
+        let seed_refs = self.request.draft.refs.clone();
+        let title = self.request.title.clone();
+        let anchor = self.request.anchor;
+        let host = self.host.clone();
+        let preview_sink = self.request.on_preview.clone();
+
+        let body: State<String> = use_state(move || seed_body.clone());
+        let color: State<Option<Rgba>> = use_state(move || seed_color);
+        let refs: State<Vec<SourceRef>> = use_state(move || seed_refs.clone());
+
+        let initial_wheel_color = seed_color
+            .map(|c| Color::from_rgb(c[0], c[1], c[2]))
+            .unwrap_or_else(|| Color::from_rgb(255, 225, 110));
+
+        // Emit the initial preview exactly once on mount so the
+        // plugin's render reflects the seeded colour before the user
+        // touches the wheel. Guarded by `use_hook` so re-renders
+        // don't keep firing.
+        {
+            let preview_sink = preview_sink.clone();
+            let body = body;
+            let color = color;
+            let refs = refs;
+            use_hook(move || {
+                if let Some(sink) = preview_sink.as_ref() {
+                    sink(BookmarkDraft {
+                        body: body.read().clone(),
+                        color: *color.read(),
+                        refs: refs.read().clone(),
+                    });
+                }
+            });
+        }
+
+        let fire_preview = {
+            let preview_sink = preview_sink.clone();
+            let body = body;
+            let color = color;
+            let refs = refs;
+            std::sync::Arc::new(move || {
+                if let Some(sink) = preview_sink.as_ref() {
+                    sink(BookmarkDraft {
+                        body: body.read().clone(),
+                        color: *color.read(),
+                        refs: refs.read().clone(),
+                    });
+                }
+            })
+        };
+
+        let on_color_change = {
+            let mut color = color;
+            let fire_preview = fire_preview.clone();
+            move |c: Color| {
+                color.set(Some([c.r(), c.g(), c.b(), c.a()]));
+                fire_preview();
+            }
+        };
+
+        let on_save = {
+            let host = host.clone();
+            move |_: Event<PressEventData>| {
+                let draft = BookmarkDraft {
+                    body: body.read().clone(),
+                    color: *color.read(),
+                    refs: refs.read().clone(),
+                };
+                host.resolve_bookmark_edit(id, Some(draft));
+            }
+        };
+        let on_cancel = {
+            let host = host.clone();
+            move |_: Event<PressEventData>| {
+                host.resolve_bookmark_edit(id, None);
+            }
+        };
+
+        let (left, top) = anchor
+            .map(|(x, y)| (x.max(16.0), (y + 12.0).max(16.0)))
+            .unwrap_or((f32::NAN, 72.0));
+
+        let card = rect()
+            .layer(Layer::OverlayLevel(6))
+            .width(Size::px(320.0))
+            .padding((12., 14.))
+            .with_corner_radius(12.0)
+            .background(Color::from_rgb(28, 28, 32))
+            .spacing(10.0);
+
+        let card = if left.is_nan() {
+            card.position(Position::new_global().top(top).right(16.))
+        } else {
+            card.position(Position::new_global().top(top).left(left))
+        };
+
+        let refs_snapshot = refs.read().clone();
+        card.child(
+            label()
+                .font_size(13.0)
+                .color(Color::from_rgb(220, 220, 220))
+                .text(title.into_owned()),
+        )
+        .child(
+            // Reuse notein's own rich body editor — chip refs, `[[`
+            // autocomplete popup, atomic chip delete all behave
+            // exactly like they do in the canvas / PDF bookmark card.
+            BookmarkBodyEditor::new(Writable::<String>::from(body))
+                .placeholder("Nota (opcional)")
+                .completions(crate::bookmark_ui::plugin_completions_provider()),
+        )
+        .child(crate::bookmark_ui::ref_chip_row(&refs_snapshot))
+        .child(
+            notein_ui_kit::ColorWheel::new()
+                .initial(initial_wheel_color)
+                .allow_custom(true)
+                .on_change(on_color_change),
+        )
+        .child(
+            rect()
+                .direction(Direction::Horizontal)
+                .spacing(8.0)
+                .child(
+                    rect()
+                        .padding((6., 12.))
+                        .with_corner_radius(6.0)
+                        .background(Color::from_rgb(55, 60, 70))
+                        .on_press(on_cancel)
+                        .child(
+                            label()
+                                .font_size(12.0)
+                                .color(Color::from_rgb(230, 230, 230))
+                                .text("Cancelar"),
+                        ),
+                )
+                .child(
+                    rect()
+                        .padding((6., 12.))
+                        .with_corner_radius(6.0)
+                        .background(Color::from_rgb(90, 110, 60))
+                        .on_press(on_save)
+                        .child(
+                            label()
+                                .font_size(12.0)
+                                .color(Color::from_rgb(240, 240, 240))
+                                .text("Guardar"),
+                        ),
+                ),
+        )
     }
 }

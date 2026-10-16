@@ -158,6 +158,36 @@ pub fn bookmark_card_overlay(
 ///
 /// Called on every keystroke while the popup is open; registry
 /// snapshot is taken under the mutex and dropped before any UI work.
+/// Completion provider for plugin-driven bookmark edits — same shape
+/// as [`bookmark_completions_provider`] minus the per-board bookmark
+/// list, since plugin bookmarks don't live on a canvas `Board`. The
+/// catalog + plugin suggestions still flow through so autocomplete
+/// stays useful across cross-plugin links.
+#[must_use]
+pub fn plugin_completions_provider()
+-> impl Into<freya::prelude::Callback<String, Vec<Completion>>> {
+    move |query: String| {
+        let mut out: Vec<Completion> = Vec::new();
+        if query.starts_with("http://") || query.starts_with("https://") {
+            out.push(Completion {
+                label: query.clone(),
+                subtitle: Some("Enlace externo".to_owned()),
+                source: SourceRef::External { url: query.clone() },
+            });
+        }
+        out.extend(crate::completion_catalog::query(&query));
+        let plugins: Vec<_> = {
+            let reg = crate::plugins::registry();
+            let reg_guard = crate::plugins::lock(&reg);
+            reg_guard.sources().cloned().collect()
+        };
+        for plugin in plugins {
+            out.extend(plugin.plugin_completions(&query));
+        }
+        out
+    }
+}
+
 fn bookmark_completions_provider(
     board: &Arc<Mutex<Board>>,
     editing: BookmarkId,
@@ -240,7 +270,7 @@ fn short_uuid(id: BookmarkId) -> String {
 ///
 /// Returns a zero-area placeholder when the bookmark has no refs so
 /// the surrounding card layout stays stable.
-fn ref_chip_row(refs: &[SourceRef]) -> impl IntoElement {
+pub fn ref_chip_row(refs: &[SourceRef]) -> impl IntoElement {
     if refs.is_empty() {
         return rect().width(Size::px(0.0)).height(Size::px(0.0));
     }

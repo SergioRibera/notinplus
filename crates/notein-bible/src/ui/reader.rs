@@ -298,7 +298,11 @@ fn all_blocks(
                     on_highlight.clone(),
                     font_size,
                     line_height,
-                    if starts_chapter { Some(plan.chapter) } else { None },
+                    if starts_chapter {
+                        Some(plan.chapter)
+                    } else {
+                        None
+                    },
                     preview,
                 ));
             }
@@ -511,123 +515,121 @@ impl Component for VerseParagraph {
         let holder_for_move = holder.clone();
         let ranges_for_move = verse_ranges.clone();
 
-        let p = p.on_pointer_down({
-            let mut long_press_token = long_press_token;
-            let on_highlight = on_highlight.clone();
-            let mut drag = drag;
-            let mut anchor = anchor;
-            move |e: Event<PointerEventData>| {
-                let Some(offset) = hit_offset(&holder_for_down, e.element_location()) else {
-                    return;
-                };
-                let Some(verse) = offset_to_verse(&ranges_for_down, offset) else {
-                    return;
-                };
-
-                let g = e.global_location();
-                let anchor_pt = (g.x as f32, g.y as f32);
-                anchor.set(anchor_pt);
-
-                drag.start.set(Some(verse));
-                drag.end.set(Some(verse));
-                drag.pressing.set(true);
-
-                let my_token = long_press_token.peek().wrapping_add(1);
-                long_press_token.set(my_token);
-
-                if EventsCombos::<()>::pressed(e.global_location()).is_double() {
-                    on_highlight.call(HighlightTarget {
-                        kind: HighlightKind::Verse(verse),
-                        anchor_x: anchor_pt.0,
-                        anchor_y: anchor_pt.1,
-                    });
-                    drag.start.set(None);
-                    drag.end.set(None);
-                    drag.pressing.set(false);
-                    return;
-                }
-
+        let p = p
+            .on_pointer_down({
+                let mut long_press_token = long_press_token;
                 let on_highlight = on_highlight.clone();
-                let long_press_token = long_press_token;
-                let mut drag_for_long = drag;
-                spawn(async move {
-                    async_io::Timer::after(std::time::Duration::from_millis(LONG_PRESS_MS))
-                        .await;
-                    if *long_press_token.peek() == my_token {
+                let mut drag = drag;
+                let mut anchor = anchor;
+                move |e: Event<PointerEventData>| {
+                    let Some(offset) = hit_offset(&holder_for_down, e.element_location()) else {
+                        return;
+                    };
+                    let Some(verse) = offset_to_verse(&ranges_for_down, offset) else {
+                        return;
+                    };
+
+                    let g = e.global_location();
+                    let anchor_pt = (g.x as f32, g.y as f32);
+                    anchor.set(anchor_pt);
+
+                    drag.start.set(Some(verse));
+                    drag.end.set(Some(verse));
+                    drag.pressing.set(true);
+
+                    let my_token = long_press_token.peek().wrapping_add(1);
+                    long_press_token.set(my_token);
+
+                    if EventsCombos::<()>::pressed(e.global_location()).is_double() {
                         on_highlight.call(HighlightTarget {
                             kind: HighlightKind::Verse(verse),
                             anchor_x: anchor_pt.0,
                             anchor_y: anchor_pt.1,
                         });
-                        drag_for_long.start.set(None);
-                        drag_for_long.end.set(None);
-                        drag_for_long.pressing.set(false);
+                        drag.start.set(None);
+                        drag.end.set(None);
+                        drag.pressing.set(false);
+                        return;
                     }
-                });
-            }
-        })
-        .on_pointer_move({
-            let mut drag = drag;
-            let mut long_press_token = long_press_token;
-            move |e: Event<PointerEventData>| {
-                if !*drag.pressing.peek() {
-                    return;
-                }
-                let Some(offset) = hit_offset(&holder_for_move, e.element_location()) else {
-                    return;
-                };
-                let Some(verse) = offset_to_verse(&ranges_for_move, offset) else {
-                    return;
-                };
-                let current = *drag.end.peek();
-                if current != Some(verse) {
-                    drag.end.set(Some(verse));
-                    // Dragging across verses cancels the long-press
-                    // timer so the user does not get both a Verse +
-                    // Range emission from one gesture.
-                    let next = long_press_token.peek().wrapping_add(1);
-                    long_press_token.set(next);
-                }
-            }
-        })
-        .on_global_pointer_up({
-            let mut long_press_token = long_press_token;
-            let on_highlight = on_highlight.clone();
-            let mut drag = drag;
-            let anchor = anchor;
-            move |_: Event<PointerEventData>| {
-                let next = long_press_token.peek().wrapping_add(1);
-                long_press_token.set(next);
 
-                let start = *drag.start.peek();
-                let end = *drag.end.peek();
-                drag.start.set(None);
-                drag.end.set(None);
-                drag.pressing.set(false);
-                EventsCombos::<()>::released();
-
-                if let (Some(a), Some(b)) = (start, end)
-                    && a != b
-                {
-                    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
-                    let (ax, ay) = *anchor.peek();
-                    on_highlight.call(HighlightTarget {
-                        kind: HighlightKind::Range(lo, hi),
-                        anchor_x: ax,
-                        anchor_y: ay,
+                    let on_highlight = on_highlight.clone();
+                    let long_press_token = long_press_token;
+                    let mut drag_for_long = drag;
+                    spawn(async move {
+                        async_io::Timer::after(std::time::Duration::from_millis(LONG_PRESS_MS))
+                            .await;
+                        if *long_press_token.peek() == my_token {
+                            on_highlight.call(HighlightTarget {
+                                kind: HighlightKind::Verse(verse),
+                                anchor_x: anchor_pt.0,
+                                anchor_y: anchor_pt.1,
+                            });
+                            drag_for_long.start.set(None);
+                            drag_for_long.end.set(None);
+                            drag_for_long.pressing.set(false);
+                        }
                     });
                 }
-            }
-        });
+            })
+            .on_pointer_move({
+                let mut drag = drag;
+                let mut long_press_token = long_press_token;
+                move |e: Event<PointerEventData>| {
+                    if !*drag.pressing.peek() {
+                        return;
+                    }
+                    let Some(offset) = hit_offset(&holder_for_move, e.element_location()) else {
+                        return;
+                    };
+                    let Some(verse) = offset_to_verse(&ranges_for_move, offset) else {
+                        return;
+                    };
+                    let current = *drag.end.peek();
+                    if current != Some(verse) {
+                        drag.end.set(Some(verse));
+                        // Dragging across verses cancels the long-press
+                        // timer so the user does not get both a Verse +
+                        // Range emission from one gesture.
+                        let next = long_press_token.peek().wrapping_add(1);
+                        long_press_token.set(next);
+                    }
+                }
+            })
+            .on_global_pointer_up({
+                let mut long_press_token = long_press_token;
+                let on_highlight = on_highlight.clone();
+                let mut drag = drag;
+                let anchor = anchor;
+                move |_: Event<PointerEventData>| {
+                    let next = long_press_token.peek().wrapping_add(1);
+                    long_press_token.set(next);
+
+                    let start = *drag.start.peek();
+                    let end = *drag.end.peek();
+                    drag.start.set(None);
+                    drag.end.set(None);
+                    drag.pressing.set(false);
+                    EventsCombos::<()>::released();
+
+                    if let (Some(a), Some(b)) = (start, end)
+                        && a != b
+                    {
+                        let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+                        let (ax, ay) = *anchor.peek();
+                        on_highlight.call(HighlightTarget {
+                            kind: HighlightKind::Range(lo, hi),
+                            anchor_x: ax,
+                            anchor_y: ay,
+                        });
+                    }
+                }
+            });
 
         // Wrap: bg rects first (painted behind) + paragraph with
         // gestures second. Both are children of a `rect` whose own
         // size is driven by the paragraph (bg rects are absolute, so
         // they do not contribute to layout).
-        rect()
-            .width(Size::fill())
-            .child(bg_rects)
-            .child(p)
+        rect().width(Size::fill()).child(bg_rects).child(p)
     }
 }
 

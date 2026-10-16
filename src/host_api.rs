@@ -14,7 +14,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
-use notein_plugin::{Host, HostApi, NotificationKind, Progress};
+use notein_plugin::{
+    BookmarkDraft, BookmarkEditCallback, BookmarkEditRequest, Host, HostApi, NotificationKind,
+    Progress,
+};
 
 /// Oldest-to-newest cap on retained notifications. Older entries get
 /// evicted so a chatty plugin cannot grow the toast list unbounded.
@@ -33,7 +36,29 @@ pub struct HostInner {
     version: AtomicU64,
     progress: RwLock<HashMap<ProgressKey, ProgressEntry>>,
     notifications: RwLock<VecDeque<Notification>>,
+    /// At most one bookmark edit modal is open at a time. The shell
+    /// renders when `Some`, drains + fires the callback on save/cancel.
+    pending_bookmark_edit: RwLock<Option<PendingBookmarkEdit>>,
 }
+
+/// Live bookmark edit request pulled by the shell's modal.
+pub struct PendingBookmarkEdit {
+    pub id: u64,
+    pub plugin_id: String,
+    pub request: BookmarkEditRequest,
+    pub callback: BookmarkEditCallback,
+}
+
+impl std::fmt::Debug for PendingBookmarkEdit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingBookmarkEdit")
+            .field("id", &self.id)
+            .field("plugin_id", &self.plugin_id)
+            .finish_non_exhaustive()
+    }
+}
+
+static NEXT_BOOKMARK_EDIT_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub struct ProgressKey {
@@ -79,6 +104,7 @@ pub fn host() -> Arc<HostInner> {
             version: AtomicU64::new(0),
             progress: RwLock::new(HashMap::new()),
             notifications: RwLock::new(VecDeque::new()),
+            pending_bookmark_edit: RwLock::new(None),
         })
     }))
 }
@@ -132,6 +158,35 @@ impl HostInner {
         guard.retain(|n| n.id != id);
         drop(guard);
         self.bump();
+    }
+
+    /// Snapshot the currently open bookmark edit request, if any. The
+    /// shell polls this each tick and mounts its editor modal when
+    /// `Some`.
+    pub fn snapshot_bookmark_edit(&self) -> Option<(u64, String, BookmarkEditRequest)> {
+        let guard = self.pending_bookmark_edit.read().unwrap();
+        guard
+            .as_ref()
+            .map(|p| (p.id, p.plugin_id.clone(), p.request.clone()))
+    }
+
+    /// Resolve the pending bookmark edit by firing its callback with
+    /// `result` and clearing the slot. The shell calls this from the
+    /// modal's save (`Some(draft)`) + cancel (`None`) handlers. The
+    /// `id` guard prevents a stale modal from resolving a request that
+    /// was superseded by a new one.
+    pub fn resolve_bookmark_edit(&self, id: u64, result: Option<BookmarkDraft>) {
+        let callback = {
+            let mut guard = self.pending_bookmark_edit.write().unwrap();
+            match guard.as_ref() {
+                Some(p) if p.id == id => guard.take().map(|p| p.callback),
+                _ => None,
+            }
+        };
+        if let Some(cb) = callback {
+            cb(result);
+            self.bump();
+        }
     }
 }
 
@@ -202,6 +257,32 @@ impl HostApi for HostInner {
         // Reuse the shell's url opener — same path shell-side chip
         // navigation goes through.
         crate::source_ref_nav::open_external_url(url);
+    }
+
+    fn request_bookmark_edit(
+        &self,
+        plugin_id: &str,
+        request: BookmarkEditRequest,
+        on_done: BookmarkEditCallback,
+    ) {
+        let id = NEXT_BOOKMARK_EDIT_ID.fetch_add(1, Ordering::Relaxed);
+        // If a prior request is still open, release it with None so
+        // the previous plugin cleans up before the new one takes over.
+        let stale = {
+            let mut guard = self.pending_bookmark_edit.write().unwrap();
+            let stale = guard.take();
+            *guard = Some(PendingBookmarkEdit {
+                id,
+                plugin_id: plugin_id.to_string(),
+                request,
+                callback: on_done,
+            });
+            stale
+        };
+        if let Some(prev) = stale {
+            (prev.callback)(None);
+        }
+        self.bump();
     }
 }
 

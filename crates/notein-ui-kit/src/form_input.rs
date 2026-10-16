@@ -44,6 +44,12 @@ pub struct FormInput {
     collapsible: bool,
     flat: bool,
     background: Option<Color>,
+    /// When `false`, the dropdown shows every suggestion verbatim —
+    /// skipping the default `label.contains(query)` filter. Useful
+    /// when the suggestions are already server-filtered (e.g. an
+    /// FTS result list) and client-side substring matching would
+    /// miss diacritic / stemmed hits.
+    suggestions_prefilter: bool,
 }
 
 impl std::fmt::Debug for FormInput {
@@ -93,7 +99,17 @@ impl FormInput {
             auto_focus: false,
             collapsible: false,
             flat: false,
+            suggestions_prefilter: true,
         }
+    }
+
+    /// Disable the default `label.contains(query)` filter so every
+    /// supplied suggestion is rendered as-is. Call this when the
+    /// suggestion list is already filtered server-side.
+    #[must_use]
+    pub const fn suggestions_unfiltered(mut self) -> Self {
+        self.suggestions_prefilter = false;
+        self
     }
 
     #[must_use]
@@ -453,14 +469,18 @@ impl Component for FormInput {
             .maybe(
                 has_suggestions && show_suggestions() && !current_value.read().is_empty(),
                 move |r| {
-                    let filtered: Vec<Cow<'static, str>> = suggestions
-                        .iter()
-                        .filter(|s| {
-                            s.to_lowercase()
-                                .contains(&current_value.read().to_lowercase())
-                        })
-                        .cloned()
-                        .collect();
+                    let filtered: Vec<Cow<'static, str>> = if self.suggestions_prefilter {
+                        suggestions
+                            .iter()
+                            .filter(|s| {
+                                s.to_lowercase()
+                                    .contains(&current_value.read().to_lowercase())
+                            })
+                            .cloned()
+                            .collect()
+                    } else {
+                        suggestions.clone()
+                    };
 
                     if filtered.is_empty() {
                         return r;

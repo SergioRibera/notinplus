@@ -533,7 +533,7 @@ fn build_interleaved(mut p: Paragraph, rope: &str, chips: &[(usize, SourceRef)])
                 p = p.span(std::mem::take(&mut buf));
             }
             match chip_iter.next() {
-                Some((_, chip)) => p = p.child(chip_widget(chip.clone())),
+                Some((_, chip)) => p = p.child(ChipWidget { src: chip.clone() }),
                 None => buf.push(' '),
             }
         } else {
@@ -556,63 +556,81 @@ fn build_interleaved(mut p: Paragraph, rope: &str, chips: &[(usize, SourceRef)])
 /// → scroll + highlight, Plugin → open the owning viewer, External
 /// → platform-default URL handler. Hover state tints the pill so
 /// chips telegraph that they're actionable.
-fn chip_widget(src: SourceRef) -> impl IntoElement {
-    let view = resolve_chip_view(&src);
-    let base_bg = view.tint.map(rgba_to_color).unwrap_or(CHIP_BG);
-    let tooltip_text = view.tooltip.clone();
-    let _ = tooltip_text; // tooltip hook — reserved for a future hover popover.
+///
+/// Wrapped as a `Component` (instead of a plain `fn`) because the
+/// chip is instantiated inside a `for` loop in `build_interleaved`,
+/// and Freya rejects hook calls in loops. Giving each chip its own
+/// scope lets `use_state` live safely on the hover tint.
+#[derive(Clone, PartialEq)]
+struct ChipWidget {
+    src: SourceRef,
+}
 
-    let nav_src = src.clone();
+impl std::fmt::Debug for ChipWidget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChipWidget").finish_non_exhaustive()
+    }
+}
 
-    let label_body = label()
-        .font_size(11.5)
-        .color(CHIP_FG)
-        .text(view.label.clone());
+impl Component for ChipWidget {
+    fn render(&self) -> impl IntoElement {
+        let src = self.src.clone();
+        let view = resolve_chip_view(&src);
+        let base_bg = view.tint.map(rgba_to_color).unwrap_or(CHIP_BG);
+        let _ = view.tooltip.clone(); // reserved for a future hover popover.
 
-    let icon_el = view.icon.clone().map(|icon| {
-        label()
+        let nav_src = src.clone();
+
+        let label_body = label()
             .font_size(11.5)
             .color(CHIP_FG)
-            .text(format!("{icon} "))
-    });
+            .text(view.label.clone());
 
-    let mut hover = use_state(|| false);
-    let bg = if hover() {
-        lighten(base_bg, 0.12)
-    } else {
-        base_bg
-    };
+        let icon_el = view.icon.clone().map(|icon| {
+            label()
+                .font_size(11.5)
+                .color(CHIP_FG)
+                .text(format!("{icon} "))
+        });
 
-    // Freya requires explicit dimensions for inline paragraph
-    // children (see `feature_inlined_text_elements` demo). Without
-    // an explicit `height`, the placeholder rect collapses and
-    // pointer events never hit.
-    //
-    // `on_press` won't fire reliably on a small inline chip (release
-    // often lands outside the pixel-tight rect) — `on_pointer_down`
-    // triggers on the press itself, which matches the UX a user
-    // expects from a link-shaped chip anyway.
-    rect()
-        .height(Size::px(20.))
-        .padding((2., 8.))
-        .background(bg)
-        .corner_radius(10.)
-        .border(
-            Border::new()
-                .width(1.)
-                .alignment(BorderAlignment::Inner)
-                .fill(SURFACE_TERTIARY),
-        )
-        .cursor(CursorIcon::Pointer)
-        .direction(Direction::Horizontal)
-        .cross_align(Alignment::center())
-        .on_pointer_enter(move |_| hover.set(true))
-        .on_pointer_leave(move |_| hover.set_if_modified(false))
-        .on_pointer_down(move |_: Event<PointerEventData>| {
-            source_ref_nav::navigate(&nav_src);
-        })
-        .maybe_child(icon_el)
-        .child(label_body)
+        let mut hover = use_state(|| false);
+        let bg = if hover() {
+            lighten(base_bg, 0.12)
+        } else {
+            base_bg
+        };
+
+        // Freya requires explicit dimensions for inline paragraph
+        // children (see `feature_inlined_text_elements` demo).
+        // Without an explicit `height`, the placeholder rect
+        // collapses and pointer events never hit.
+        //
+        // `on_press` won't fire reliably on a small inline chip
+        // (release often lands outside the pixel-tight rect) —
+        // `on_pointer_down` triggers on the press itself, which
+        // matches the UX a user expects from a link-shaped chip.
+        rect()
+            .height(Size::px(20.))
+            .padding((2., 8.))
+            .background(bg)
+            .corner_radius(10.)
+            .border(
+                Border::new()
+                    .width(1.)
+                    .alignment(BorderAlignment::Inner)
+                    .fill(SURFACE_TERTIARY),
+            )
+            .cursor(CursorIcon::Pointer)
+            .direction(Direction::Horizontal)
+            .cross_align(Alignment::center())
+            .on_pointer_enter(move |_| hover.set(true))
+            .on_pointer_leave(move |_| hover.set_if_modified(false))
+            .on_pointer_down(move |_: Event<PointerEventData>| {
+                source_ref_nav::navigate(&nav_src);
+            })
+            .maybe_child(icon_el)
+            .child(label_body)
+    }
 }
 
 /// Blend `color` toward white by `t` (0 = original, 1 = white).

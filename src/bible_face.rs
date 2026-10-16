@@ -100,7 +100,6 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         st
     });
     let mut picker_open = use_state(|| false);
-    let mut search_open = use_state(|| false);
     let mut search_query: State<String> = use_state(String::new);
     let mut search_hits: State<Vec<notein_bible::ui::search_sheet::SearchHitView>> =
         use_state(Vec::new);
@@ -196,10 +195,64 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         nav_sheet_book.set(None);
         nav_sheet_open.set(true);
     };
-    let on_search_toggle = move || {
-        let current = *search_open.read();
-        search_open.set(!current);
-    };
+    // Inline FTS search driven by the toolbar's expandable
+    // FormInput. Fires on every keystroke OR suggestion pick. We
+    // distinguish by exact-matching the incoming string against the
+    // current hits' labels — a match means "picked a suggestion",
+    // anything else is a fresh filter query.
+    let db_search = db.clone();
+    let bible_for_search = st_snapshot.bible_id.clone();
+    let books_for_search = db.list_books(&bible_for_search).unwrap_or_default();
+    let db_jump = db.clone();
+    let on_search = EventHandler::<String>::new(move |query: String| {
+        // Pick path: query exactly matches an existing hit's label →
+        // jump + reset.
+        let hits_snapshot = search_hits.read().clone();
+        if let Some(view) = hits_snapshot.iter().find(|v| v.suggestion_label == query) {
+            let src = view.source.clone();
+            if let Err(e) = state.write().jump_to(&db_jump, &src.book_id, src.chapter) {
+                log::warn!("bible search jump: {e}");
+            }
+            flash_verse.set(Some(src.verse));
+            let mut flash_verse = flash_verse;
+            spawn_forever(async move {
+                async_io::Timer::after(Duration::from_secs(3)).await;
+                flash_verse.set(None);
+            });
+            search_hits.set(Vec::new());
+            search_query.set(String::new());
+            return;
+        }
+        // Filter path.
+        if query.trim().is_empty() {
+            search_hits.set(Vec::new());
+            return;
+        }
+        let hits = db_search
+            .search(Some(&bible_for_search), &query, 50)
+            .unwrap_or_default();
+        let views: Vec<notein_bible::ui::search_sheet::SearchHitView> = hits
+            .into_iter()
+            .map(|h| {
+                let book_name = books_for_search
+                    .iter()
+                    .find(|b| b.book_id == h.book_id)
+                    .map(|b| b.name.clone());
+                notein_bible::ui::search_sheet::hit_to_view(h, book_name.as_deref())
+            })
+            .collect();
+        search_hits.set(views);
+    });
+
+    // Snapshot of the current hits as suggestion labels. The
+    // FormInput filters this list client-side against the typed
+    // query, so even if the FTS lag is a few frames the dropdown
+    // reflects the latest query.
+    let search_suggestions: Vec<std::borrow::Cow<'static, str>> = search_hits
+        .read()
+        .iter()
+        .map(|v| std::borrow::Cow::Owned(v.suggestion_label.clone()))
+        .collect();
 
     // Read the DocLinked chrome extension so the Bible toolbar can
     // surface split H/V (overlay mode) or close-split (split mode) in
@@ -277,8 +330,9 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
                     let cb = c.on_close.clone();
                     Box::new(move || cb.call()) as toolbar::BackHandler
                 }),
-                on_search: on_search_toggle,
-                on_more: || log::info!("bible: more menu not wired yet"),
+                search_query: Writable::<String>::from(search_query),
+                on_search,
+                search_suggestions,
                 on_translation: translation_cb,
             },
         ))
@@ -319,7 +373,108 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
                 }
             },
             move |target: notein_bible::ui::reader::HighlightTarget| {
+                // Delegate the full bookmark UX to the shell. The
+                // plugin only owns the paint + the (book, chapter,
+                // range) anchor; everything else — body + colour
+                // picker + autocomplete chips — comes from
+                // `host.request_bookmark_edit`, which returns the
+                // edited draft when the user commits.
+                use notein_bible::ui::reader::HighlightKind;
+                let (lo, hi) = match target.kind {
+                    HighlightKind::Verse(v) => (v, v),
+                    HighlightKind::Range(a, b) => (a, b),
+                };
+                // Flag the preview as active for THIS range —
+                // chapter_body only paints the live-preview overlay
+                // when both `pending_highlight` and `preview_color`
+                // are set. Cleared on commit / cancel below.
                 pending_highlight.set(Some(target));
+                let book = {
+                    let st = state.read();
+                    st.current_book.clone()
+                };
+                let chapter_num = {
+                    let st = state.read();
+                    st.current_chapter
+                };
+                // Seed the modal with the existing bookmark's colour +
+                // note if the target range overlaps one so editing
+                // never clobbers prior data.
+                let existing = {
+                    let st = state.read();
+                    st.highlights_on(&book, chapter_num)
+                        .into_iter()
+                        .find(|h| h.start_verse <= hi && h.end_verse >= lo)
+                        .cloned()
+                };
+                let draft = notein_plugin::BookmarkDraft {
+                    body: existing.as_ref().map(|h| h.note.clone()).unwrap_or_default(),
+                    color: existing.as_ref().and_then(|h| h.color).map(|c| {
+                        notein_bible::state::u32_to_rgba(c)
+                    }),
+                    refs: Vec::new(),
+                };
+                let title = if lo == hi {
+                    format!("Resaltar verso {lo}")
+                } else {
+                    format!("Resaltar versos {lo}–{hi}")
+                };
+                // Shell callback crosses threads via a `Send + Sync`
+                // bound; Freya `State` isn't Send so we forward
+                // commit result + preview updates through flume
+                // channels and apply them from UI-thread listeners.
+                let host = crate::host_api::host_handle();
+                let book_cb = book.clone();
+                let (tx, rx) = flume::bounded::<Option<notein_plugin::BookmarkDraft>>(1);
+                spawn(async move {
+                    if let Ok(Some(draft)) = rx.recv_async().await {
+                        let packed = draft
+                            .color
+                            .map(notein_bible::state::rgba_to_u32);
+                        let mut st = state.write();
+                        st.upsert_highlight(
+                            &book_cb,
+                            chapter_num,
+                            lo,
+                            hi,
+                            packed,
+                            draft.body,
+                        );
+                    }
+                    // Preview is per-session; drop it on commit AND
+                    // on cancel (recv returning Ok(None)).
+                    preview_color.set(None);
+                    pending_highlight.set(None);
+                });
+                // Preview sink mirrors wheel drags into the plugin's
+                // live-preview state so the paragraph bg rect tracks
+                // the user's choice before the Save button fires.
+                let (preview_tx, preview_rx) =
+                    flume::unbounded::<notein_plugin::BookmarkDraft>();
+                spawn_forever(async move {
+                    while let Ok(draft) = preview_rx.recv_async().await {
+                        if let Some(rgba) = draft.color {
+                            preview_color.set(Some(freya::prelude::Color::from_rgb(
+                                rgba[0], rgba[1], rgba[2],
+                            )));
+                        }
+                    }
+                });
+                let request = notein_plugin::BookmarkEditRequest {
+                    draft,
+                    title: title.into(),
+                    anchor: Some((target.anchor_x, target.anchor_y)),
+                    on_preview: Some(std::sync::Arc::new(move |draft| {
+                        let _ = preview_tx.send(draft);
+                    })),
+                };
+                host.request_bookmark_edit(
+                    BIBLE_PLUGIN_ID,
+                    request,
+                    std::sync::Arc::new(move |result| {
+                        let _ = tx.send(result);
+                    }),
+                );
             },
         ))
         .child(bottom_nav::bottom_nav(
@@ -334,201 +489,15 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
     if let Some(overlay) = picker_overlay {
         column = column.child(overlay);
     }
-    if *search_open.read() {
-        let db_search = db.clone();
-        let bible_for_search = st_snapshot.bible_id.clone();
-        let books_for_search = db.list_books(&bible_for_search).unwrap_or_default();
-        let on_submit = move |query: String| {
-            let hits = db_search
-                .search(Some(&bible_for_search), &query, 50)
-                .unwrap_or_default();
-            let views: Vec<notein_bible::ui::search_sheet::SearchHitView> = hits
-                .into_iter()
-                .map(|h| {
-                    let book_name = books_for_search
-                        .iter()
-                        .find(|b| b.book_id == h.book_id)
-                        .map(|b| b.name.clone());
-                    notein_bible::ui::search_sheet::hit_to_view(h, book_name.as_deref())
-                })
-                .collect();
-            search_hits.set(views);
-        };
+    // Search results live inside the toolbar FormInput as its
+    // suggestion dropdown now; the standalone results popup was
+    // dropped — picking a suggestion dispatches the jump via
+    // `on_search` matching the hit label.
 
-        let hits_snapshot = search_hits.read().clone();
-        let db_pick = db.clone();
-        let picker_handler = EventHandler::<usize>::new(move |idx: usize| {
-            let hits = search_hits.read().clone();
-            if let Some(view) = hits.get(idx) {
-                let src = view.source.clone();
-                if let Err(e) = state.write().jump_to(&db_pick, &src.book_id, src.chapter) {
-                    log::warn!("bible search jump: {e}");
-                }
-                flash_verse.set(Some(src.verse));
-                let mut flash_verse = flash_verse;
-                spawn_forever(async move {
-                    async_io::Timer::after(Duration::from_secs(3)).await;
-                    flash_verse.set(None);
-                });
-                search_open.set(false);
-            }
-        });
-
-        column = column.child(
-            rect()
-                .layer(Layer::Overlay)
-                .position(Position::new_absolute().top(56.).right(16.))
-                .width(Size::px(420.0))
-                .max_height(Size::px(540.0))
-                .padding((10., 12.))
-                .with_corner_radius(10.0)
-                .background(Color::from_rgb(32, 32, 32))
-                .spacing(8.0)
-                .child(
-                    // Reuse the shared FormInput in collapsible mode
-                    // (icon-only until focused) + transparent chrome
-                    // so the search bar reads as part of the floating
-                    // overlay instead of a nested panel.
-                    notein_ui_kit::FormInput::new(Writable::<String>::from(search_query))
-                        .collapsible()
-                        .left_icon(freya::icons::lucide::search())
-                        .placeholder("Buscar en la Biblia…")
-                        .background(Color::TRANSPARENT)
-                        .width(Size::fill())
-                        .on_change(EventHandler::<String>::new(on_submit)),
-                )
-                .child(notein_bible::ui::search_sheet::search_results_list(
-                    hits_snapshot,
-                    picker_handler,
-                )),
-        );
-    }
-
-    if let Some(target) = *pending_highlight.read() {
-        use notein_bible::ui::reader::HighlightKind;
-        let (lo, hi) = match target.kind {
-            HighlightKind::Verse(v) => (v, v),
-            HighlightKind::Range(a, b) => (a, b),
-        };
-        // Anchor the picker next to the gesture, clamped so the card
-        // stays on-screen with its ~300×200 footprint. 12px gap below
-        // the finger keeps the touch target visible.
-        let anchor_left = target.anchor_x.max(0.0);
-        let anchor_top = (target.anchor_y + 12.0).max(0.0);
-        let book = st_snapshot
-            .chapter
-            .as_ref()
-            .map(|c| c.book_id.clone())
-            .unwrap_or_default();
-        let chapter_num = st_snapshot.chapter.as_ref().map(|c| c.chapter).unwrap_or(1);
-        // If the target range already overlaps a stored bookmark,
-        // seed the picker with that bookmark's colour so editing an
-        // existing highlight doesn't start by clobbering it with the
-        // default yellow swatch.
-        let initial_preview = {
-            let st = state.read();
-            st.highlights_on(&book, chapter_num)
-                .into_iter()
-                .find(|h| h.start_verse <= hi && h.end_verse >= lo)
-                .and_then(|h| h.color)
-                .map(|c| {
-                    let rgba = notein_bible::state::u32_to_rgba(c);
-                    Color::from_rgb(rgba[0], rgba[1], rgba[2])
-                })
-                .unwrap_or_else(|| Color::from_rgb(255, 225, 110))
-        };
-        // Seed the live preview so the gesture target lights up as
-        // soon as the picker opens, before the user has moved the
-        // wheel at all.
-        if preview_color.peek().is_none() {
-            preview_color.set(Some(initial_preview));
-        }
-        let on_change = move |color: freya::prelude::Color| {
-            preview_color.set(Some(color));
-        };
-        let book_commit = book.clone();
-        let on_commit = move |_: Event<PressEventData>| {
-            let Some(color) = *preview_color.read() else {
-                pending_highlight.set(None);
-                preview_color.set(None);
-                return;
-            };
-            let rgba = [color.r(), color.g(), color.b(), color.a()];
-            let packed = notein_bible::state::rgba_to_u32(rgba);
-            {
-                let mut st = state.write();
-                // Upsert on the full span in one call so an existing
-                // bookmark overlapping the range gets its colour /
-                // extent replaced instead of a second bookmark being
-                // layered on top. Keeps repeated edits idempotent.
-                st.upsert_highlight(&book_commit, chapter_num, lo, hi, Some(packed), "");
-            }
-            pending_highlight.set(None);
-            preview_color.set(None);
-        };
-        let on_cancel = move |_: Event<PressEventData>| {
-            pending_highlight.set(None);
-            preview_color.set(None);
-        };
-        let title = if lo == hi {
-            format!("Resaltar verso {lo}")
-        } else {
-            format!("Resaltar versos {lo}–{hi}")
-        };
-        column = column.child(
-            rect()
-                .layer(Layer::Overlay)
-                .position(Position::new_absolute().top(anchor_top).left(anchor_left))
-                .width(Size::px(300.0))
-                .padding((12., 14.))
-                .with_corner_radius(12.0)
-                .background(Color::from_rgb(28, 28, 32))
-                .spacing(10.0)
-                .child(
-                    label()
-                        .font_size(13.0)
-                        .color(Color::from_rgb(220, 220, 220))
-                        .text(title),
-                )
-                .child(
-                    notein_ui_kit::ColorWheel::new()
-                        .initial(initial_preview)
-                        .allow_custom(true)
-                        .on_change(on_change),
-                )
-                .child(
-                    rect()
-                        .direction(Direction::Horizontal)
-                        .spacing(8.0)
-                        .child(
-                            rect()
-                                .padding((6., 12.))
-                                .with_corner_radius(6.0)
-                                .background(Color::from_rgb(55, 60, 70))
-                                .on_press(on_cancel)
-                                .child(
-                                    label()
-                                        .font_size(12.0)
-                                        .color(Color::from_rgb(230, 230, 230))
-                                        .text("Cancelar"),
-                                ),
-                        )
-                        .child(
-                            rect()
-                                .padding((6., 12.))
-                                .with_corner_radius(6.0)
-                                .background(Color::from_rgb(90, 110, 60))
-                                .on_press(on_commit)
-                                .child(
-                                    label()
-                                        .font_size(12.0)
-                                        .color(Color::from_rgb(240, 240, 240))
-                                        .text("Guardar"),
-                                ),
-                        ),
-                ),
-        );
-    }
+    // Bookmark edit UX now lives shell-side (host_overlay's
+    // `bookmark_edit_modal`), driven through
+    // `host.request_bookmark_edit`. The plugin's job is reduced to
+    // emitting the gesture + persisting the final draft.
 
     // Book + chapter picker sheet. Opens from the bottom-nav caption,
     // slides a `BookGrid` → (horizontal slide) → `ChapterGrid` for the

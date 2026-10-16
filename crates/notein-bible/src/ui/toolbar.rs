@@ -6,6 +6,8 @@
 //! actual behaviour (opening search sheet, popping the translation
 //! menu, etc.) stays outside this crate.
 
+use std::borrow::Cow;
+
 use freya::prelude::*;
 
 use super::theme;
@@ -18,14 +20,12 @@ const BUTTON_SIZE: f32 = 36.0;
 /// generic bounds.
 pub type BackHandler = Box<dyn FnMut() + 'static>;
 
-/// `(home, back, forward, split_h, split_v, close_split, search, more,
+/// `(home, back, forward, split_h, split_v, close_split, search,
 /// translation)` click handlers. Nav + split buttons are optional —
 /// pass `None` to render them disabled (or absent for close_split).
 #[allow(missing_debug_implementations)]
-pub struct ToolbarCallbacks<FS, FM, FT>
+pub struct ToolbarCallbacks<FT>
 where
-    FS: FnMut() + 'static,
-    FM: FnMut() + 'static,
     FT: FnMut() + 'static,
 {
     pub on_home: Option<BackHandler>,
@@ -34,18 +34,26 @@ where
     pub on_split_horizontal: Option<BackHandler>,
     pub on_split_vertical: Option<BackHandler>,
     pub on_close_split: Option<BackHandler>,
-    pub on_search: FS,
-    pub on_more: FM,
+    /// Reactive buffer bound to the inline search input. The caller
+    /// owns the signal + reacts to its value in a `use_side_effect`
+    /// (so the toolbar doesn't need an explicit submit callback).
+    pub search_query: Writable<String>,
+    /// Fired when the user types OR picks a suggestion; the caller
+    /// decides whether the string is a new filter query or a hit label
+    /// to navigate to.
+    pub on_search: EventHandler<String>,
+    /// Current list of hit labels rendered as suggestions in the
+    /// inline FormInput dropdown. The caller refreshes this each time
+    /// `on_search` runs the FTS query.
+    pub search_suggestions: Vec<Cow<'static, str>>,
     pub on_translation: FT,
 }
 
-pub fn top_toolbar<FS, FM, FT>(
+pub fn top_toolbar<FT>(
     translation_abbrev: &str,
-    callbacks: ToolbarCallbacks<FS, FM, FT>,
+    callbacks: ToolbarCallbacks<FT>,
 ) -> impl IntoElement
 where
-    FS: FnMut() + 'static,
-    FM: FnMut() + 'static,
     FT: FnMut() + 'static,
 {
     let ToolbarCallbacks {
@@ -55,8 +63,9 @@ where
         on_split_horizontal,
         on_split_vertical,
         on_close_split,
+        search_query,
         on_search,
-        on_more: _on_more,
+        search_suggestions,
         on_translation,
     } = callbacks;
 
@@ -81,12 +90,28 @@ where
     // keep the icon in the grid with a muted tint so the toolbar
     // doesn't reflow between chapters.
     left = left.child(nav_icon_button(freya::icons::lucide::arrow_left(), on_back));
-    left = left.child(nav_icon_button(freya::icons::lucide::arrow_right(), on_forward));
+    left = left.child(nav_icon_button(
+        freya::icons::lucide::arrow_right(),
+        on_forward,
+    ));
 
     let mut right = rect()
         .direction(Direction::Horizontal)
         .cross_align(Alignment::Center)
-        .spacing(4.0);
+        .spacing(4.0)
+        .child(
+            notein_ui_kit::FormInput::new(Writable::<String>::from(search_query))
+                .flat()
+                .collapsible()
+                .left_icon(freya::icons::lucide::search())
+                .placeholder("Buscar en la Biblia…")
+                .background(Color::TRANSPARENT)
+                .width(Size::px(360.))
+                .min_width(Size::px(40.))
+                .suggestions(search_suggestions)
+                .suggestions_unfiltered()
+                .on_change(on_search),
+        );
     if let Some(mut cb) = on_split_horizontal {
         right = right.child(icon_button(
             freya::icons::lucide::square_split_horizontal(),
@@ -102,9 +127,7 @@ where
     if let Some(mut cb) = on_close_split {
         right = right.child(icon_button(freya::icons::lucide::x(), move || cb()));
     }
-    right = right
-        .child(icon_button(freya::icons::lucide::search(), on_search))
-        .child(translation_chip(translation_abbrev, on_translation));
+    right = right.child(translation_chip(translation_abbrev, on_translation));
 
     row.child(left).child(right)
 }

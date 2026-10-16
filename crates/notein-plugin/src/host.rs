@@ -21,10 +21,23 @@
 //! this crate so hosts can grow richer facilities without turning the
 //! surface into a one-off IPC channel.
 
+use std::borrow::Cow;
 use std::sync::Arc;
+
+use crate::{Rgba, SourceRef};
 
 /// Shared handle every plugin receives from the host. Clone cheaply.
 pub type Host = Arc<dyn HostApi>;
+
+/// Callback the host invokes once the bookmark edit modal closes.
+/// `Some(draft)` when the user saved; `None` when cancelled / dismissed.
+pub type BookmarkEditCallback = Arc<dyn Fn(Option<BookmarkDraft>) + Send + Sync>;
+
+/// Callback the host invokes while the user is editing — fires on
+/// every colour / body change so plugins can paint a live preview
+/// without waiting for commit. The payload is the current in-progress
+/// draft; final commit still flows through [`BookmarkEditCallback`].
+pub type BookmarkEditPreview = Arc<dyn Fn(BookmarkDraft) + Send + Sync>;
 
 pub trait HostApi: Send + Sync + std::fmt::Debug {
     /// Push a progress update for `token` (unique per operation inside
@@ -42,6 +55,66 @@ pub trait HostApi: Send + Sync + std::fmt::Debug {
     /// Lets plugins stay transport-free while still shipping deep-link
     /// chip clicks, "help" links from settings, etc.
     fn open_url(&self, url: &str);
+
+    /// Ask the shell to open its full bookmark editor (body with
+    /// autocomplete, color picker, source-ref chips) prefilled with
+    /// `request.draft`. The host fires `on_done` once with the saved
+    /// draft or `None` on cancel. Plugins get the shell's rich
+    /// bookmark UX without reinventing it; shell stays the single
+    /// owner of chip autocomplete + cross-plugin ref semantics.
+    ///
+    /// Default implementation returns `None` so plugins stay usable
+    /// when embedded by hosts that don't yet surface the editor.
+    fn request_bookmark_edit(
+        &self,
+        plugin_id: &str,
+        request: BookmarkEditRequest,
+        on_done: BookmarkEditCallback,
+    ) {
+        let _ = (plugin_id, request);
+        on_done(None);
+    }
+}
+
+/// Minimal bookmark payload exchanged between plugin + host when the
+/// shell drives the editor UI. Deliberately a subset of the full
+/// [`crate::Bookmark`] record — anchor + timestamps + lamport belong to
+/// whichever side owns storage, so this struct only carries the
+/// user-authored fields the modal mutates.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct BookmarkDraft {
+    pub body: String,
+    pub color: Option<Rgba>,
+    pub refs: Vec<SourceRef>,
+}
+
+/// Request shape for [`HostApi::request_bookmark_edit`].
+#[derive(Clone)]
+pub struct BookmarkEditRequest {
+    /// Prefilled draft — empty for a brand-new bookmark, populated
+    /// for edits.
+    pub draft: BookmarkDraft,
+    /// Header string the modal shows ("Resaltar verso 5" etc.).
+    pub title: Cow<'static, str>,
+    /// Approximate anchor the plugin would prefer the modal to float
+    /// near (gesture location in window coords). The shell may ignore
+    /// it when its modal layout is fixed.
+    pub anchor: Option<(f32, f32)>,
+    /// Optional live-preview sink. When set, the shell fires it on
+    /// every edit (colour wheel drag, body keystroke) so the plugin
+    /// can paint a preview before the user commits.
+    pub on_preview: Option<BookmarkEditPreview>,
+}
+
+impl std::fmt::Debug for BookmarkEditRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BookmarkEditRequest")
+            .field("draft", &self.draft)
+            .field("title", &self.title)
+            .field("anchor", &self.anchor)
+            .field("on_preview", &self.on_preview.is_some())
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

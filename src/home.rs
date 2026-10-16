@@ -238,6 +238,8 @@ fn top_bar(
         .child(flexible_spacer())
         .child(
             FormInput::new(search_value)
+                .flat()
+                .background(Color::TRANSPARENT)
                 .left_icon(icons::search())
                 .collapsible()
                 .corner_radius(99.)
@@ -1638,7 +1640,12 @@ fn trigger_entry(entry: &crate::plugins::AvailableEntry, ctx: &FabCtx) {
 
 fn flow_open_bible_linked(ctx: FabCtx) {
     use crate::library::{BackgroundStyle, ItemKind};
-    let FabCtx { handle, snap, current, router } = ctx;
+    let FabCtx {
+        handle,
+        snap,
+        current,
+        router,
+    } = ctx;
     let mut snap = snap;
     spawn_forever(async move {
         let mut lib = handle.lock().await;
@@ -1666,7 +1673,12 @@ fn flow_open_bible_linked(ctx: FabCtx) {
 
 fn flow_open_bible(ctx: FabCtx) {
     use crate::library::{BackgroundStyle, ItemKind};
-    let FabCtx { handle, snap, current, router } = ctx;
+    let FabCtx {
+        handle,
+        snap,
+        current,
+        router,
+    } = ctx;
     let mut snap = snap;
     spawn_forever(async move {
         let mut lib = handle.lock().await;
