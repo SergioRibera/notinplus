@@ -18,9 +18,9 @@ const BUTTON_SIZE: f32 = 36.0;
 /// generic bounds.
 pub type BackHandler = Box<dyn FnMut() + 'static>;
 
-/// `(home, back, forward, search, more, translation)` click handlers.
-/// All three nav buttons are optional — pass `None` when the stack is
-/// empty so the toolbar collapses them.
+/// `(home, back, forward, split_h, split_v, close_split, search, more,
+/// translation)` click handlers. Nav + split buttons are optional —
+/// pass `None` to render them disabled (or absent for close_split).
 #[allow(missing_debug_implementations)]
 pub struct ToolbarCallbacks<FS, FM, FT>
 where
@@ -31,6 +31,9 @@ where
     pub on_home: Option<BackHandler>,
     pub on_back: Option<BackHandler>,
     pub on_forward: Option<BackHandler>,
+    pub on_split_horizontal: Option<BackHandler>,
+    pub on_split_vertical: Option<BackHandler>,
+    pub on_close_split: Option<BackHandler>,
     pub on_search: FS,
     pub on_more: FM,
     pub on_translation: FT,
@@ -49,6 +52,9 @@ where
         on_home,
         on_back,
         on_forward,
+        on_split_horizontal,
+        on_split_vertical,
+        on_close_split,
         on_search,
         on_more: _on_more,
         on_translation,
@@ -77,10 +83,26 @@ where
     left = left.child(nav_icon_button(freya::icons::lucide::arrow_left(), on_back));
     left = left.child(nav_icon_button(freya::icons::lucide::arrow_right(), on_forward));
 
-    let right = rect()
+    let mut right = rect()
         .direction(Direction::Horizontal)
         .cross_align(Alignment::Center)
-        .spacing(4.0)
+        .spacing(4.0);
+    if let Some(mut cb) = on_split_horizontal {
+        right = right.child(icon_button(
+            freya::icons::lucide::square_split_horizontal(),
+            move || cb(),
+        ));
+    }
+    if let Some(mut cb) = on_split_vertical {
+        right = right.child(icon_button(
+            freya::icons::lucide::square_split_vertical(),
+            move || cb(),
+        ));
+    }
+    if let Some(mut cb) = on_close_split {
+        right = right.child(icon_button(freya::icons::lucide::x(), move || cb()));
+    }
+    right = right
         .child(icon_button(freya::icons::lucide::search(), on_search))
         .child(translation_chip(translation_abbrev, on_translation));
 

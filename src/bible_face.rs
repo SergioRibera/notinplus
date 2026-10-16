@@ -176,6 +176,13 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         let current = *search_open.read();
         search_open.set(!current);
     };
+
+    // Read the DocLinked chrome extension so the Bible toolbar can
+    // surface split H/V (overlay mode) or close-split (split mode) in
+    // sync with the shell. Standalone `BibleView` mounts see `None` and
+    // the toolbar renders without split buttons.
+    let doc_linked_chrome =
+        try_consume_context::<crate::doc_linked::DocLinkedChromeExt>();
     let router = RouterContext::get();
     let on_home = move || {
         let _ = router.push(crate::route::Route::Home);
@@ -234,6 +241,27 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
                 on_home: Some(Box::new(on_home)),
                 on_back: has_back.then(|| Box::new(on_back_cb) as toolbar::BackHandler),
                 on_forward: has_forward.then(|| Box::new(on_forward_cb) as toolbar::BackHandler),
+                on_split_horizontal: doc_linked_chrome
+                    .as_ref()
+                    .filter(|c| !c.is_split)
+                    .map(|c| {
+                        let cb = c.on_split_horizontal.clone();
+                        Box::new(move || cb.call()) as toolbar::BackHandler
+                    }),
+                on_split_vertical: doc_linked_chrome
+                    .as_ref()
+                    .filter(|c| !c.is_split)
+                    .map(|c| {
+                        let cb = c.on_split_vertical.clone();
+                        Box::new(move || cb.call()) as toolbar::BackHandler
+                    }),
+                on_close_split: doc_linked_chrome
+                    .as_ref()
+                    .filter(|c| c.is_split)
+                    .map(|c| {
+                        let cb = c.on_close.clone();
+                        Box::new(move || cb.call()) as toolbar::BackHandler
+                    }),
                 on_search: on_search_toggle,
                 on_more: || log::info!("bible: more menu not wired yet"),
                 on_translation: translation_cb,

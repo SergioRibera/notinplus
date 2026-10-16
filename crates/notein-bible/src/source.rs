@@ -304,35 +304,59 @@ impl Source for BibleSource {
     }
 
     fn plugin_completions(&self, query: &str) -> Vec<Completion> {
-        // Parse the whole query as a reference ("Juan 3:16", "Ef 6").
-        // On a hit, surface a single completion that inserts a chip
-        // backed by the resolved BibleAnchor. On a miss, no suggestions
-        // — the autocomplete falls back to shell-side providers.
         let bible_id = plugin_config::effective_default_bible(&self.config, &self.db);
         if bible_id.is_empty() {
             return Vec::new();
         }
-        let Some(anchor) = resolver::resolve(&self.db, &bible_id, query) else {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return Vec::new();
+        }
+
+        // Fast path: query parses as a complete reference ("Juan 3:16"
+        // / "Ef 6"). Return the resolved anchor directly.
+        if let Some(anchor) = resolver::resolve(&self.db, &bible_id, trimmed) {
+            return vec![completion_for(
+                &bible_id,
+                format!(
+                    "{} {}:{}",
+                    anchor.book_id, anchor.start_chapter, anchor.start_verse
+                ),
+                anchor,
+            )];
+        }
+
+        // Fallback: prefix-match the installed book catalogue so a
+        // partial typed word ("juan", "efe", "1 cor") still surfaces
+        // suggestions. Each hit resolves to chapter 1, verse 1.
+        let needle = normalise_prefix(trimmed);
+        if needle.is_empty() {
+            return Vec::new();
+        }
+        let Ok(books) = self.db.list_books(&bible_id) else {
             return Vec::new();
         };
-        let label = format!(
-            "{} {}:{}",
-            anchor.book_id, anchor.start_chapter, anchor.start_verse
-        );
-        vec![Completion {
-            label,
-            subtitle: Some(bible_id.clone()),
-            source: SourceRef::Plugin {
-                plugin_id: KIND_ID.into(),
-                // Bible references do not belong to a single library
-                // item; the anchor is self-describing. The shell
-                // treats a nil UUID as "ambient" and lets the plugin
-                // resolve from `anchor` alone.
-                item: [0u8; 16],
-                anchor: anchor.encode(),
-                selection: None,
-            },
-        }]
+        let mut out: Vec<Completion> = Vec::new();
+        for b in books {
+            let name_norm = normalise_prefix(&b.name);
+            let abbrev_norm = normalise_prefix(&b.abbrev);
+            let id_norm = normalise_prefix(&b.book_id);
+            if name_norm.starts_with(&needle)
+                || abbrev_norm.starts_with(&needle)
+                || id_norm.starts_with(&needle)
+            {
+                let anchor = BibleAnchor::single_verse(&bible_id, &b.book_id, 1, 1);
+                out.push(completion_for(
+                    &bible_id,
+                    format!("{} 1:1", b.name),
+                    anchor,
+                ));
+                if out.len() >= 8 {
+                    break;
+                }
+            }
+        }
+        out
     }
 
     fn install_host(&self, host: Host) {
@@ -360,4 +384,32 @@ impl Source for BibleSource {
             tooltip: None,
         })
     }
+}
+
+fn completion_for(bible_id: &str, label: String, anchor: BibleAnchor) -> Completion {
+    Completion {
+        label,
+        subtitle: Some(bible_id.to_string()),
+        source: SourceRef::Plugin {
+            plugin_id: KIND_ID.into(),
+            item: [0u8; 16],
+            anchor: anchor.encode(),
+            selection: None,
+        },
+    }
+}
+
+fn normalise_prefix(s: &str) -> String {
+    s.chars()
+        .filter_map(|c| match c {
+            'á' => Some('a'),
+            'é' => Some('e'),
+            'í' => Some('i'),
+            'ó' => Some('o'),
+            'ú' => Some('u'),
+            'ñ' => Some('n'),
+            ' ' | '.' | '-' => None,
+            _ => Some(c.to_ascii_lowercase()),
+        })
+        .collect()
 }
