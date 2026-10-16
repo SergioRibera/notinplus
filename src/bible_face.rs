@@ -384,10 +384,19 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
                 .with_corner_radius(10.0)
                 .background(Color::from_rgb(32, 32, 32))
                 .spacing(8.0)
-                .child(notein_bible::ui::search_sheet::search_input(
-                    Writable::<String>::from(search_query),
-                    on_submit,
-                ))
+                .child(
+                    // Reuse the shared FormInput in collapsible mode
+                    // (icon-only until focused) + transparent chrome
+                    // so the search bar reads as part of the floating
+                    // overlay instead of a nested panel.
+                    notein_ui_kit::FormInput::new(Writable::<String>::from(search_query))
+                        .collapsible()
+                        .left_icon(freya::icons::lucide::search())
+                        .placeholder("Buscar en la Biblia…")
+                        .background(Color::TRANSPARENT)
+                        .width(Size::fill())
+                        .on_change(EventHandler::<String>::new(on_submit)),
+                )
                 .child(notein_bible::ui::search_sheet::search_results_list(
                     hits_snapshot,
                     picker_handler,
@@ -593,16 +602,20 @@ fn book_grid_page(
     on_pick: impl FnMut(String) + Clone + 'static,
 ) -> impl IntoElement {
     const CELL: f32 = 72.0;
-    let mut content = rect()
-        .expanded()
+    // Vertical ScrollView over a horizontal wrap-row of cells. The row
+    // flows horizontally with `Content::wrap_spacing` so cells wrap at
+    // the container's edge; the ScrollView only kicks in once the
+    // wrapped rows overflow its height. Without the wrapper the row
+    // just clipped at the viewport bottom.
+    let mut row = rect()
+        .width(Size::fill())
         .horizontal()
         .spacing(8.0)
-        .padding((0., 20.))
         .content(Content::wrap_spacing(8.));
     for b in books {
         let book_id = b.book_id.clone();
         let mut on_pick = on_pick.clone();
-        content = content.child(
+        row = row.child(
             rect()
                 .width(Size::px(CELL))
                 .height(Size::px(CELL))
@@ -618,7 +631,10 @@ fn book_grid_page(
                 ),
         );
     }
-    ScrollView::new().width(Size::fill()).child(content)
+    rect()
+        .expanded()
+        .padding((0., 4.))
+        .child(ScrollView::new().child(row))
 }
 
 /// Grid of chapter numbers for the drilled-in book, with a back chip
