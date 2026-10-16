@@ -63,7 +63,7 @@ where
 
     let left = match on_back {
         Some(mut cb) => {
-            icon_button(freya::icons::lucide::arrow_left(), move || cb()).into_element()
+            icon_button(freya::icons::lucide::house(), move || cb()).into_element()
         }
         None => rect().width(Size::px(0.0)).into_element(),
     };

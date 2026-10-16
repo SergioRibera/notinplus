@@ -19,7 +19,7 @@ use notein_bible::db::{BibleRow, BookRow, ChapterRow, Db};
 use notein_bible::plugin_config;
 use notein_bible::state::{BibleBookmark, BibleSnapshot, BibleViewerState};
 use notein_bible::ui::chapter::plan_chapter;
-use notein_bible::ui::reader::{CrossRefView, TskNoteView, cross_refs_by_verse, tsk_notes_by_verse};
+use notein_bible::ui::reader::{CrossRefView, cross_refs_by_verse};
 use notein_bible::ui::{bottom_nav, reader, toolbar, translation_switcher};
 
 use std::time::Duration;
@@ -279,11 +279,9 @@ fn chapter_body(
                 Vec::new()
             };
             let refs_map = cross_refs_by_verse(&refs);
-            let tsk = build_tsk_notes(db, &data.bible_id, &data.book_id, data.chapter);
-            let tsk_map = tsk_notes_by_verse(&tsk);
             let handler = EventHandler::<(String, u16, u16)>::new(on_jump);
             base.child(reader::chapter_view(
-                &plan, &hl_refs, &refs_map, &tsk_map, handler, flash_verse, 22.0, 1.65,
+                &plan, &hl_refs, &refs_map, handler, flash_verse, 22.0, 1.65,
             ))
         }
         None => base.center().child(
@@ -294,35 +292,6 @@ fn chapter_body(
     }
 }
 
-/// Pull TSK notes for the chapter + resolve tooltip text for each
-/// target so the hover popup renders without a per-chip DB round-trip.
-/// Uses the shell's chosen Bible for tooltip text so the hover copy
-/// matches what the reader is showing on the page.
-fn build_tsk_notes(
-    db: &Db,
-    bible_id: &str,
-    book_id: &str,
-    chapter: u16,
-) -> Vec<TskNoteView> {
-    let rows = db.tsk_notes_for_chapter(book_id, chapter).unwrap_or_default();
-    rows.into_iter()
-        .map(|r| {
-            let tooltip = db
-                .verse_text(bible_id, &r.tgt_book, r.tgt_chap, r.tgt_verse)
-                .ok()
-                .flatten()
-                .unwrap_or_default();
-            TskNoteView {
-                src_verse: r.src_verse,
-                letter: r.letter,
-                tooltip,
-                tgt_book: r.tgt_book,
-                tgt_chap: r.tgt_chap,
-                tgt_verse: r.tgt_verse,
-            }
-        })
-        .collect()
-}
 
 /// Fetch every cross-reference the DB holds for `(book, chapter)` and
 /// resolve the target verse text so the reader can render inline chips
