@@ -174,6 +174,22 @@ impl Component for DocLinkedView {
             );
         });
 
+        // Divider commit must land in the parent-owned `split_state`
+        // alongside the sidecar save. `SplitNode::PartialEq` returns
+        // false, so the drag-release render reads `self.ratio` back
+        // from the parent prop — persisting without updating state
+        // snaps the divider back and only the next remount shows the
+        // new position.
+        let on_resize: Callback<f32, ()> = Callback::new(move |new_ratio: f32| {
+            apply(
+                split_state,
+                DocLinkedSplit {
+                    orientation: split.orientation,
+                    ratio: new_ratio,
+                },
+            );
+        });
+
         let body = source_plugin.read().clone().map_or_else(
             || loading_placeholder().into_element(),
             |plugin_id| {
@@ -184,6 +200,7 @@ impl Component for DocLinkedView {
                     on_split_horizontal.clone(),
                     on_split_vertical.clone(),
                     on_close.clone(),
+                    on_resize,
                 )
             },
         );
@@ -205,6 +222,7 @@ fn doc_linked_body(
     on_split_horizontal: NoArgCallback<()>,
     on_split_vertical: NoArgCallback<()>,
     on_close: NoArgCallback<()>,
+    on_resize: Callback<f32, ()>,
 ) -> Element {
     match split.orientation {
         None => DocLinkedOverlay {
@@ -220,6 +238,7 @@ fn doc_linked_body(
             orientation,
             ratio: split.ratio,
             on_close,
+            on_resize,
         }
         .into_element(),
     }
@@ -278,6 +297,7 @@ struct DocLinkedSplitBody {
     orientation: SplitOrientation,
     ratio: f32,
     on_close: NoArgCallback<()>,
+    on_resize: Callback<f32, ()>,
 }
 
 impl std::fmt::Debug for DocLinkedSplitBody {
@@ -297,6 +317,7 @@ impl Component for DocLinkedSplitBody {
         let orientation = self.orientation;
         let ratio = self.ratio;
         let source_plugin = self.source_plugin.clone();
+        let on_resize = self.on_resize.clone();
 
         use_provide_context({
             let on_close = self.on_close.clone();
@@ -328,15 +349,7 @@ impl Component for DocLinkedSplitBody {
             on_tab_close: Callback::new(|_: (PaneId, usize)| {}),
             on_tab_new: Callback::new(|_: PaneId| {}),
             on_split_resize: Callback::new(move |(_path, new_ratio): (Vec<SplitSide>, f32)| {
-                let next = DocLinkedSplit {
-                    orientation: Some(orientation),
-                    ratio: new_ratio,
-                };
-                spawn(async move {
-                    if let Err(err) = doc_linked_prefs::save(bundle, &next) {
-                        log::warn!("doc_linked_prefs::save (ratio): {err}");
-                    }
-                });
+                on_resize.call(new_ratio);
             }),
             on_tab_move: Callback::new(|_: (PaneId, usize, PaneId)| {}),
             on_tab_split: Callback::new(|_: (PaneId, usize, PaneId, SplitEdge)| {}),
