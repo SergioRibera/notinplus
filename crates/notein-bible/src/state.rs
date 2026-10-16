@@ -11,11 +11,10 @@
 //! instant without pinning the whole Bible in memory.
 
 use std::collections::VecDeque;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use notein_sdk::{BookmarkId, Rgba};
 
-use crate::db::{BookRow, ChapterRow, Db, DbError, HighlightRow};
+use crate::db::{BookRow, ChapterRow, Db, DbError};
 
 /// Everything a single open Bible tab needs to render + navigate.
 #[derive(Debug)]
@@ -40,7 +39,7 @@ pub struct BibleViewerState {
 /// Internal highlight / bookmark representation. The host's `Bookmark`
 /// model is pixel-coord based; this one is verse-coord based so it
 /// survives chapter reflow + font-size changes.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, bincode::Encode, bincode::Decode)]
 pub struct BibleBookmark {
     pub id: BookmarkId,
     pub book_id: String,
@@ -51,6 +50,60 @@ pub struct BibleBookmark {
     pub color: Option<u32>,
     /// Optional note body. Empty when the highlight is colour-only.
     pub note: String,
+}
+
+/// Snapshot payload the shell persists via `CanvasKind::serialize_snapshot`.
+/// Carries the full viewer state (highlights + last position) so a
+/// subsequent `restore` lands the user exactly where they left off.
+///
+/// Keep the layout additive: `#[bincode(skip)]` on new fields OR add
+/// `Option<T>` variants so older snapshots keep decoding.
+#[derive(Clone, Debug, PartialEq, Eq, bincode::Encode, bincode::Decode)]
+pub struct BibleSnapshot {
+    pub version: u16,
+    pub bible_id: String,
+    pub current_book: String,
+    pub current_chapter: u16,
+    pub highlights: Vec<BibleBookmark>,
+}
+
+impl BibleSnapshot {
+    pub const VERSION: u16 = 1;
+
+    #[must_use]
+    pub fn from_state(st: &BibleViewerState) -> Self {
+        Self {
+            version: Self::VERSION,
+            bible_id: st.bible_id.clone(),
+            current_book: st.current_book.clone(),
+            current_chapter: st.current_chapter,
+            highlights: st.highlights.clone(),
+        }
+    }
+
+    /// Apply the snapshot onto `st`. Does not touch the chapter cache —
+    /// the caller runs `ensure_current_loaded(db)` afterwards.
+    pub fn apply_to(self, st: &mut BibleViewerState) {
+        st.bible_id = self.bible_id;
+        st.current_book = self.current_book;
+        st.current_chapter = self.current_chapter;
+        st.highlights = self.highlights;
+        st.selection = None;
+        st.scroll_y = 0.0;
+    }
+
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        bincode::encode_to_vec(self, bincode::config::standard())
+            .expect("BibleSnapshot encode: standard config cannot fail")
+    }
+
+    #[must_use]
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        bincode::decode_from_slice(bytes, bincode::config::standard())
+            .ok()
+            .map(|(v, _)| v)
+    }
 }
 
 #[must_use]
@@ -194,11 +247,12 @@ impl BibleViewerState {
         self.chapter_cache.clear();
         self.scroll_y = 0.0;
         self.selection = None;
-        self.ensure_current_loaded(db)?;
-        // Rebuild highlights against the new translation — verses are
-        // keyed by (bible_id, book, chap, verse) so cross-translation
-        // reuse is not meaningful.
-        self.hydrate_highlights(db)
+        // Highlights are keyed by (bible_id, book, chap, verse); dropping
+        // them on a translation switch keeps the reader honest — the
+        // shell's snapshot sidecar is per-item and will restore them if
+        // the user flips back.
+        self.highlights.clear();
+        self.ensure_current_loaded(db)
     }
 
     /// Jump directly to `(book, chapter)`. Fails if the chapter does
@@ -282,77 +336,6 @@ impl BibleViewerState {
             .collect()
     }
 
-    /// Commit the current selection as a highlight AND persist it to
-    /// `db`. Returns the new bookmark id, or `None` when no selection
-    /// was pending.
-    pub fn persist_selection_as_highlight(
-        &mut self,
-        db: &Db,
-        color: Option<u32>,
-        note: impl Into<String>,
-    ) -> Result<Option<BookmarkId>, DbError> {
-        let note = note.into();
-        let Some(id) = self.commit_selection_as_highlight(color, note.clone()) else {
-            return Ok(None);
-        };
-        let hl = self
-            .highlights
-            .iter()
-            .find(|h| h.id == id)
-            .expect("just-inserted highlight must be in list");
-        let row = HighlightRow {
-            id: hl.id,
-            bible_id: self.bible_id.clone(),
-            book_id: hl.book_id.clone(),
-            chapter: hl.chapter,
-            start_verse: hl.start_verse,
-            end_verse: hl.end_verse,
-            color: hl.color,
-            note: hl.note.clone(),
-            created_at: now_millis(),
-        };
-        db.insert_highlight(&row)?;
-        Ok(Some(id))
-    }
-
-    /// Delete + unpersist in one step. Returns `true` when at least one
-    /// side had the entry.
-    pub fn delete_highlight_persisted(
-        &mut self,
-        db: &Db,
-        id: BookmarkId,
-    ) -> Result<bool, DbError> {
-        let in_memory = self.remove_highlight(id);
-        let in_db = db.delete_highlight(id)?;
-        Ok(in_memory || in_db)
-    }
-
-    /// Replace the in-memory highlights with every entry persisted for
-    /// `self.bible_id`. Called after a chapter load or bible switch so
-    /// the reader surface reflects on-disk state.
-    pub fn hydrate_highlights(&mut self, db: &Db) -> Result<(), DbError> {
-        let rows = db.list_highlights(&self.bible_id)?;
-        self.highlights = rows
-            .into_iter()
-            .map(|r| BibleBookmark {
-                id: r.id,
-                book_id: r.book_id,
-                chapter: r.chapter,
-                start_verse: r.start_verse,
-                end_verse: r.end_verse,
-                color: r.color,
-                note: r.note,
-            })
-            .collect();
-        Ok(())
-    }
-}
-
-fn now_millis() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

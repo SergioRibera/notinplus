@@ -100,20 +100,6 @@ AFTER UPDATE ON verses BEGIN
     VALUES (new.rowid, new.text, new.bible_id, new.book_id, new.chapter, new.verse);
 END;
 
-CREATE TABLE IF NOT EXISTS highlights (
-    id            BLOB PRIMARY KEY,
-    bible_id      TEXT NOT NULL,
-    book_id       TEXT NOT NULL,
-    chapter       INTEGER NOT NULL,
-    start_verse   INTEGER NOT NULL,
-    end_verse     INTEGER NOT NULL,
-    color         INTEGER,
-    note          TEXT NOT NULL DEFAULT '',
-    created_at    INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_highlights_loc
-    ON highlights(bible_id, book_id, chapter);
-
 COMMIT;
 "#;
 

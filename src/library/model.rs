@@ -121,6 +121,17 @@ pub enum ItemKind {
     /// up the plugin via [`crate::linked_source::get`] and defers face
     /// rendering to it.
     DocLinked { source_plugin: String },
+    /// Generic plugin-canvas item. The shell knows nothing about the
+    /// item's contents — it dispatches rendering + persistence to the
+    /// plugin identified by `plugin_id`. `init_bytes` is passed to
+    /// `CanvasKind::open` on mount so the plugin can hydrate instance
+    /// metadata (which translation to open, which document id, etc.);
+    /// the per-item snapshot blob lives at
+    /// [`super::bodies::plugin_snapshot_path`].
+    PluginCanvas {
+        plugin_id: String,
+        init_bytes: Vec<u8>,
+    },
 }
 
 impl ItemKind {
@@ -130,7 +141,10 @@ impl ItemKind {
     pub fn source_plugin(&self) -> Option<&str> {
         match self {
             Self::DocLinked { source_plugin } => Some(source_plugin),
-            Self::Canvas | Self::PdfCanvas | Self::SourcePdf => None,
+            Self::Canvas
+            | Self::PdfCanvas
+            | Self::SourcePdf
+            | Self::PluginCanvas { .. } => None,
         }
     }
 }

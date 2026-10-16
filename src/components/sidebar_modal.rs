@@ -684,6 +684,7 @@ fn kind_label(kind: &ItemKind) -> &'static str {
         ItemKind::PdfCanvas => "PDF + lienzo",
         ItemKind::SourcePdf => "PDF",
         ItemKind::DocLinked { .. } => "Bundle",
+        ItemKind::PluginCanvas { .. } => "Plugin",
     }
 }
 
@@ -693,6 +694,12 @@ fn route_for_kind(kind: &ItemKind, id: ItemId) -> Route {
         ItemKind::PdfCanvas => Route::CanvasPdfView { id },
         ItemKind::SourcePdf => Route::SourcePdfView { id },
         ItemKind::DocLinked { .. } => Route::DocLinkedView { id },
+        ItemKind::PluginCanvas { plugin_id, .. }
+            if plugin_id == "io.notein.bible.viewer" =>
+        {
+            Route::BibleView { id }
+        }
+        ItemKind::PluginCanvas { .. } => Route::Home,
     }
 }
 

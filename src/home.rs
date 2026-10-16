@@ -580,6 +580,13 @@ fn grid(
             ItemKind::PdfCanvas => "PDF",
             ItemKind::SourcePdf => "Fuente PDF",
             ItemKind::DocLinked { .. } => "Documento ligado",
+            ItemKind::PluginCanvas { plugin_id, .. } => {
+                if plugin_id == "io.notein.bible.viewer" {
+                    "Biblia"
+                } else {
+                    "Documento del plugin"
+                }
+            }
         };
         let subtitle = format!("{} · {}", kind_label, format_date(item.updated_at));
         let tint = item
@@ -685,6 +692,15 @@ impl Component for ItemCard {
                 ItemKind::PdfCanvas => Route::CanvasPdfView { id },
                 ItemKind::SourcePdf => Route::SourcePdfView { id },
                 ItemKind::DocLinked { .. } => Route::DocLinkedView { id },
+                ItemKind::PluginCanvas { plugin_id, .. }
+                    if plugin_id == "io.notein.bible.viewer" =>
+                {
+                    Route::BibleView { id }
+                }
+                ItemKind::PluginCanvas { plugin_id, .. } => {
+                    log::warn!("no shell route registered for plugin {plugin_id}");
+                    Route::Home
+                }
             };
             let _ = router.push(route);
         };
@@ -1620,7 +1636,34 @@ fn trigger_entry(entry: &crate::plugins::AvailableEntry, ctx: &FabCtx) {
 }
 
 fn flow_open_bible(ctx: FabCtx) {
-    let _ = ctx.router.push(Route::BibleStandalone);
+    use crate::library::{BackgroundStyle, ItemKind};
+    let FabCtx { handle, snap, current, router } = ctx;
+    let mut snap = snap;
+    spawn_forever(async move {
+        let mut lib = handle.lock().await;
+        let init_bytes =
+            bincode::encode_to_vec(&String::new(), bincode::config::standard()).unwrap_or_default();
+        match lib
+            .create_item(
+                current,
+                ItemKind::PluginCanvas {
+                    plugin_id: "io.notein.bible.viewer".into(),
+                    init_bytes,
+                },
+                "Biblia",
+                None,
+                Vec::new(),
+                BackgroundStyle::default(),
+            )
+            .await
+        {
+            Ok(id) => {
+                snap.set(Some(lib.index().clone()));
+                let _ = router.push(Route::BibleView { id });
+            }
+            Err(e) => log::warn!("bible: create_item failed: {e}"),
+        }
+    });
 }
 
 /// Trigger the Bible plugin's background install flow via its registered

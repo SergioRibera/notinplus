@@ -1,23 +1,36 @@
-//! Standalone Bible reader page.
+//! Bible reader page bound to a library item.
 //!
-//! Opens the shared `notein_bible::Db` on mount, keeps per-tab state
-//! (`BibleViewerState`) in a Freya `State<_>` and renders the plugin's
-//! UI builders. Highlights land in the state and persist for the
-//! lifetime of the mounted component — a follow-up persists them in
-//! the DB alongside the verse rows.
+//! The item carries [`ItemKind::PluginCanvas`] with `plugin_id =
+//! "io.notein.bible.viewer"` + `init_bytes` holding the chosen
+//! translation id. Highlights + the user's last-read coordinates live
+//! in a notein-managed snapshot sidecar
+//! ([`crate::library::bodies::plugin_snapshot_path`]) that the shell
+//! writes via `CanvasKind::serialize_snapshot`. This keeps the Bible
+//! plugin's own SQLite focused on the installed text + search index
+//! only — user-authored data flows through notein's generic storage
+//! so bundle export + Phase 10 CRDT sync pick it up for free.
+
+use std::sync::Arc;
 
 use freya::prelude::*;
 
 use notein_bible::db::{BibleRow, BookRow, ChapterRow, Db};
-use notein_bible::state::{BibleBookmark, BibleViewerState};
+use notein_bible::state::{BibleBookmark, BibleSnapshot, BibleViewerState};
 use notein_bible::ui::chapter::plan_chapter;
 use notein_bible::ui::{bottom_nav, reader, toolbar, translation_switcher};
 
+use crate::library::ItemId;
+
+const BIBLE_PLUGIN_ID: &str = "io.notein.bible.viewer";
+
 #[derive(Debug, PartialEq)]
-pub struct BibleFace;
+pub struct BibleFace {
+    pub item: ItemId,
+}
 
 impl Component for BibleFace {
     fn render(&self) -> impl IntoElement {
+        let item = self.item;
         let inner: Element = match Db::open_default() {
             Err(e) => placeholder(format!("No se pudo abrir la DB: {e}")).into_element(),
             Ok(db) => {
@@ -25,7 +38,7 @@ impl Component for BibleFace {
                 if bibles.is_empty() {
                     empty_state_with_install().into_element()
                 } else {
-                    bible_viewer(db, bibles).into_element()
+                    bible_viewer(item, db, bibles).into_element()
                 }
             }
         };
@@ -37,83 +50,58 @@ impl Component for BibleFace {
     }
 }
 
-/// Full-screen "no bibles installed" page. Explains + offers a single
-/// install action that mirrors the FAB `+` menu's "Instalar Biblia"
-/// trigger. The host already owns the background download thread, so
-/// this button just dispatches via the shared registry.
-fn empty_state_with_install() -> impl IntoElement {
-    let on_install = move |_: Event<PressEventData>| {
-        crate::home::fab_install_bible();
-    };
-    rect()
-        .width(Size::fill())
-        .height(Size::fill())
-        .center()
-        .padding((32., 32.))
-        .spacing(14.0)
-        .child(
-            label()
-                .font_size(18.0)
-                .color(Color::from_rgb(230, 230, 230))
-                .text("No hay Biblias instaladas"),
-        )
-        .child(
-            label()
-                .font_size(14.0)
-                .color(Color::from_rgb(170, 170, 170))
-                .text("Descargá una traducción para empezar a leer."),
-        )
-        .child(
-            rect()
-                .padding((10., 20.))
-                .with_corner_radius(10.0)
-                .background(Color::from_rgb(55, 80, 140))
-                .on_press(on_install)
-                .child(
-                    label()
-                        .font_size(14.0)
-                        .color(Color::from_rgb(240, 240, 240))
-                        .text("Instalar Biblia (RVR1960)"),
-                ),
-        )
-}
+fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement {
+    let saved_snapshot: Option<BibleSnapshot> =
+        crate::library::bodies::read_plugin_snapshot(item, BIBLE_PLUGIN_ID)
+            .ok()
+            .flatten()
+            .and_then(|bytes| BibleSnapshot::decode(&bytes));
 
-fn bible_viewer(db: Db, bibles: Vec<BibleRow>) -> impl IntoElement {
-    let books = db.list_books(&bibles[0].id).unwrap_or_default();
-    // Prefer Genesis (any casing) so a freshly opened Bible lands on
-    // the canonical book 1 / chapter 1 / verse 1 instead of whatever
-    // happens to sort first in the installed catalogue.
-    let first_book = books
-        .iter()
-        .find(|b| b.book_id.eq_ignore_ascii_case("gen"))
-        .cloned()
-        .or_else(|| books.into_iter().next())
-        .unwrap_or(BookRow {
-            book_id: "GEN".into(),
-            name: "Génesis".into(),
-            abbrev: "Gn".into(),
-            order_num: 1,
-            testament: "OT".into(),
+    let starting_bible = saved_snapshot
+        .as_ref()
+        .map(|s| s.bible_id.clone())
+        .unwrap_or_else(|| bibles[0].id.clone());
+    let books = db.list_books(&starting_bible).unwrap_or_default();
+    let starting_book = saved_snapshot
+        .as_ref()
+        .map(|s| s.current_book.clone())
+        .unwrap_or_else(|| {
+            books
+                .iter()
+                .find(|b| b.book_id.eq_ignore_ascii_case("gen"))
+                .map(|b| b.book_id.clone())
+                .or_else(|| books.first().map(|b| b.book_id.clone()))
+                .unwrap_or_else(|| "GEN".into())
         });
+    let starting_chapter = saved_snapshot.as_ref().map(|s| s.current_chapter).unwrap_or(1);
 
     let db_for_init = db.clone();
-    let bible_id_for_init = bibles[0].id.clone();
-    let book_id_for_init = first_book.book_id.clone();
+    let snap_for_init = saved_snapshot.clone();
     let mut state = use_state(move || {
-        let mut st = BibleViewerState::new(&bible_id_for_init, &book_id_for_init, 1);
-        if let Ok(chap) = db_for_init.load_chapter(
-            &st.bible_id,
-            &st.current_book,
-            st.current_chapter,
-        ) {
-            st.push_chapter(chap);
+        let mut st = BibleViewerState::new(&starting_bible, &starting_book, starting_chapter);
+        if let Some(snap) = snap_for_init {
+            snap.apply_to(&mut st);
         }
-        if let Err(e) = st.hydrate_highlights(&db_for_init) {
-            log::warn!("bible: hydrate highlights: {e}");
+        if let Ok(chap) = db_for_init.load_chapter(&st.bible_id, &st.current_book, st.current_chapter) {
+            st.push_chapter(chap);
         }
         st
     });
     let mut picker_open = use_state(|| false);
+
+    // Save snapshot whenever `state` changes. `use_side_effect` reruns
+    // on signal mutations so highlights + chapter navigation persist
+    // without the user explicitly saving.
+    use_side_effect(move || {
+        let st = state.read();
+        let snap = BibleSnapshot::from_state(&st);
+        let bytes = snap.encode();
+        if let Err(e) =
+            crate::library::bodies::write_plugin_snapshot(item, BIBLE_PLUGIN_ID, &bytes)
+        {
+            log::warn!("bible: snapshot write failed: {e}");
+        }
+    });
 
     let st_snapshot = {
         let s = state.read();
@@ -241,6 +229,43 @@ fn chapter_body(
     }
 }
 
+fn empty_state_with_install() -> impl IntoElement {
+    let on_install = move |_: Event<PressEventData>| {
+        crate::home::fab_install_bible();
+    };
+    rect()
+        .width(Size::fill())
+        .height(Size::fill())
+        .center()
+        .padding((32., 32.))
+        .spacing(14.0)
+        .child(
+            label()
+                .font_size(18.0)
+                .color(Color::from_rgb(230, 230, 230))
+                .text("No hay Biblias instaladas"),
+        )
+        .child(
+            label()
+                .font_size(14.0)
+                .color(Color::from_rgb(170, 170, 170))
+                .text("Descargá una traducción para empezar a leer."),
+        )
+        .child(
+            rect()
+                .padding((10., 20.))
+                .with_corner_radius(10.0)
+                .background(Color::from_rgb(55, 80, 140))
+                .on_press(on_install)
+                .child(
+                    label()
+                        .font_size(14.0)
+                        .color(Color::from_rgb(240, 240, 240))
+                        .text("Instalar Biblia (RVR1960)"),
+                ),
+        )
+}
+
 fn placeholder(message: String) -> impl IntoElement {
     rect()
         .width(Size::fill())
@@ -253,4 +278,10 @@ fn placeholder(message: String) -> impl IntoElement {
                 .font_size(16.0)
                 .text(message),
         )
+}
+
+// Suppress unused Arc import warning when Arc gets dropped by edits.
+#[allow(dead_code)]
+fn _unused() -> Option<Arc<()>> {
+    None
 }

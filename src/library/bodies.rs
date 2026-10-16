@@ -56,6 +56,11 @@ const CANVAS_SNAPSHOT_FILE: &str = "canvas_snapshot.bincode";
 const CANVAS_SNAPSHOT_AT_FILE: &str = "canvas_snapshot_at.bincode";
 const CANVAS_LOG_SUBDIR: &str = "canvas_log";
 const PDF_FILE: &str = "attachment.pdf";
+/// Subdir holding per-plugin snapshot blobs under each item root.
+/// Keyed by plugin id (sanitised to a filesystem-safe form) so a
+/// single item can carry snapshots from several plugins without any
+/// name collision at the shell level.
+const PLUGIN_SNAPSHOTS_SUBDIR: &str = "plugin_snapshots";
 /// First (and today only) log segment. Phase 10 compaction will
 /// rotate to `00002.bincode`, `00003.bincode`, … and glob the dir in
 /// sorted order on read.
@@ -126,6 +131,46 @@ pub fn canvas_log_dir(id: ItemId) -> PathBuf {
 #[must_use]
 pub fn pdf_path(id: ItemId) -> PathBuf {
     item_root(id).join(PDF_FILE)
+}
+
+/// Absolute path of a plugin snapshot blob. Opaque bincode produced
+/// by `CanvasKind::serialize_snapshot`; the shell is pure transport.
+/// Plugin id is sanitised to be filesystem-safe (dots preserved,
+/// everything else lowercased + non-alnum to `_`).
+#[must_use]
+pub fn plugin_snapshot_path(id: ItemId, plugin_id: &str) -> PathBuf {
+    item_root(id)
+        .join(PLUGIN_SNAPSHOTS_SUBDIR)
+        .join(format!("{}.bincode", sanitise_plugin_id(plugin_id)))
+}
+
+/// Write a plugin snapshot blob. Creates the subdir on first call.
+pub fn write_plugin_snapshot(id: ItemId, plugin_id: &str, bytes: &[u8]) -> io::Result<()> {
+    let path = plugin_snapshot_path(id, plugin_id);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, bytes)
+}
+
+/// Read a plugin snapshot blob. `Ok(None)` on missing file; IO errors
+/// on other failures.
+pub fn read_plugin_snapshot(id: ItemId, plugin_id: &str) -> io::Result<Option<Vec<u8>>> {
+    let path = plugin_snapshot_path(id, plugin_id);
+    if !path.exists() {
+        return Ok(None);
+    }
+    fs::read(&path).map(Some)
+}
+
+fn sanitise_plugin_id(plugin_id: &str) -> String {
+    plugin_id
+        .chars()
+        .map(|c| match c {
+            c if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' => c,
+            _ => '_',
+        })
+        .collect()
 }
 
 fn ensure_dir(path: &Path) -> io::Result<()> {

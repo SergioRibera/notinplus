@@ -486,6 +486,18 @@ fn tab_body_element(id: ItemId, kind: Option<ItemKind>) -> Element {
         Some(ItemKind::PdfCanvas) => PdfFace { item: id }.into_element(),
         Some(ItemKind::SourcePdf) => SourcePdfView { id }.into_element(),
         Some(ItemKind::DocLinked { .. }) => DocLinkedView { id }.into_element(),
+        Some(ItemKind::PluginCanvas { plugin_id, .. })
+            if plugin_id == "io.notein.bible.viewer" =>
+        {
+            crate::bible_face::BibleFace { item: id }.into_element()
+        }
+        Some(ItemKind::PluginCanvas { .. }) => {
+            log::warn!("workspace: no pane mount registered for this plugin");
+            CanvasPane {
+                mount: CanvasMount::Item(id),
+            }
+            .into_element()
+        }
         Some(ItemKind::Canvas) | None => CanvasPane {
             mount: CanvasMount::Item(id),
         }

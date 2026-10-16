@@ -254,8 +254,25 @@ impl CanvasKind for BibleCanvas {
     }
 
     fn serialize_snapshot(&self, instance: u64) -> Vec<u8> {
-        let _ = instance;
-        Vec::new()
+        let Some(state) = self.get(instance) else { return Vec::new() };
+        let st = state.read().unwrap();
+        crate::state::BibleSnapshot::from_state(&st).encode()
+    }
+
+    fn restore(&self, instance: u64, snapshot: &[u8], _at: notein_sdk::OpId) {
+        let Some(state) = self.get(instance) else { return };
+        let Some(snap) = crate::state::BibleSnapshot::decode(snapshot) else {
+            log::warn!("bible: snapshot decode failed; keeping default state");
+            return;
+        };
+        let mut st = state.write().unwrap();
+        snap.apply_to(&mut st);
+        if let Ok(chap) = self
+            .db
+            .load_chapter(&st.bible_id, &st.current_book, st.current_chapter)
+        {
+            st.push_chapter(chap);
+        }
     }
 
     fn apply_remote_op(&self, _instance: u64, _op: &[u8]) {}

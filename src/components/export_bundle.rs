@@ -343,6 +343,7 @@ const fn kind_label(kind: &ItemKind) -> &'static str {
         ItemKind::PdfCanvas => "PDF + lienzo",
         ItemKind::SourcePdf => "PDF",
         ItemKind::DocLinked { .. } => "Documento ligado",
+        ItemKind::PluginCanvas { .. } => "Plugin",
     }
 }
 

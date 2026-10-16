@@ -211,6 +211,6 @@ fn is_pdf_item(kind: &ItemKind) -> bool {
     match kind {
         ItemKind::PdfCanvas | ItemKind::SourcePdf => true,
         ItemKind::DocLinked { source_plugin } => source_plugin == PDF_PLUGIN_ID,
-        ItemKind::Canvas => false,
+        ItemKind::Canvas | ItemKind::PluginCanvas { .. } => false,
     }
 }

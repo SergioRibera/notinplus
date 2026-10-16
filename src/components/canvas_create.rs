@@ -194,6 +194,7 @@ impl Component for CanvasCreateSheet {
                 ItemKind::PdfCanvas => "Importar PDF",
                 ItemKind::SourcePdf => "Agregar fuente PDF",
                 ItemKind::DocLinked { .. } => "Nuevo documento ligado",
+                ItemKind::PluginCanvas { .. } => "Nuevo documento del plugin",
             }
             .to_owned()
         });
@@ -254,7 +255,10 @@ impl Component for CanvasCreateSheet {
                 background,
                 matches!(
                     kind,
-                    ItemKind::PdfCanvas | ItemKind::SourcePdf | ItemKind::DocLinked { .. }
+                    ItemKind::PdfCanvas
+                        | ItemKind::SourcePdf
+                        | ItemKind::DocLinked { .. }
+                        | ItemKind::PluginCanvas { .. }
                 ),
             ))
             .child(

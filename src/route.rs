@@ -64,8 +64,8 @@ pub enum Route {
     DocLinkedView { id: ItemId },
     #[route("/workspace/:id")]
     WorkspaceView { id: crate::library::WorkspaceId },
-    #[route("/bible")]
-    BibleStandalone,
+    #[route("/bible/:id")]
+    BibleView { id: ItemId },
 }
 
 impl Route {
@@ -77,11 +77,11 @@ impl Route {
             Route::CanvasView { id }
             | Route::CanvasPdfView { id }
             | Route::DocLinkedView { id } => Some(*id),
+            Route::BibleView { id } => Some(*id),
             Route::Home
             | Route::CanvasEphemeral
             | Route::SourcePdfView { .. }
-            | Route::WorkspaceView { .. }
-            | Route::BibleStandalone => None,
+            | Route::WorkspaceView { .. } => None,
         }
     }
 }
@@ -112,16 +112,19 @@ impl Component for CanvasEphemeral {
     }
 }
 
-/// Standalone Bible reader. No library item backing — the Bible plugin
-/// owns its own storage (highlights, downloaded translations) via its
-/// SQLite DB. The reader is a system-wide tab, not a user-authored
-/// document.
+/// Bible reader bound to a library item. The item carries the chosen
+/// translation id ([`crate::library::ItemKind::Bible`]); highlights +
+/// view state live in a notein-managed snapshot sidecar at
+/// [`crate::library::bodies::bible_snapshot_path`], ready to travel
+/// with bundle export + Phase 10 CRDT sync.
 #[derive(Debug, PartialEq)]
-pub struct BibleStandalone;
+pub struct BibleView {
+    pub id: ItemId,
+}
 
-impl Component for BibleStandalone {
+impl Component for BibleView {
     fn render(&self) -> impl IntoElement {
-        crate::bible_face::BibleFace {}
+        crate::bible_face::BibleFace { item: self.id }
     }
 }
 
