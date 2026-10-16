@@ -22,11 +22,11 @@ const MAX_NOTIFICATIONS: usize = 16;
 
 /// Age at which a `Finished` progress bar entry drops out so the UI
 /// does not permanently display a 100%-full line.
-const FINISHED_LINGER: Duration = Duration::from_millis(1500);
+const FINISHED_LINGER: Duration = Duration::from_millis(900);
 
 /// Age at which a Success / Info notification auto-dismisses. Warning
 /// + Error toasts persist until the user clicks them.
-const AUTO_DISMISS: Duration = Duration::from_secs(5);
+const AUTO_DISMISS: Duration = Duration::from_secs(4);
 
 #[derive(Debug)]
 pub struct HostInner {

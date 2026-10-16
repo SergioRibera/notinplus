@@ -100,6 +100,11 @@ fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallPr
                 total: None,
             },
         );
+        h.notify(
+            PLUGIN_ID,
+            NotificationKind::Info,
+            format!("Descarga iniciada: {bible_id}"),
+        );
     }
 
     let client = match Client::builder().user_agent("notein-bible/0.1").build() {
@@ -149,6 +154,11 @@ fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallPr
                             total: Some(total_books as u64),
                             label: Some("Descargando libros…".into()),
                         },
+                    );
+                    h.notify(
+                        PLUGIN_ID,
+                        NotificationKind::Info,
+                        format!("Catálogo listo — descargando {total_books} libros"),
                     );
                 }
             }

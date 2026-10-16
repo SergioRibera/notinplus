@@ -13,7 +13,7 @@ use notein_plugin::NotificationKind;
 
 use crate::host_api::{self, HostInner, Notification, ProgressEntry};
 
-const POLL_INTERVAL: Duration = Duration::from_millis(120);
+const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const BAR_HEIGHT_PX: f32 = 3.0;
 const TOAST_WIDTH_PX: f32 = 320.0;
 
@@ -23,27 +23,25 @@ pub struct HostOverlay;
 impl Component for HostOverlay {
     fn render(&self) -> impl IntoElement {
         let host = host_api::host();
-        let mut version: State<u64> = use_state(|| host.version());
+        // Local tick drives unconditional re-render every `POLL_INTERVAL`
+        // regardless of host version changes — needed so stale `Finished`
+        // progress entries and auto-dismiss notifications actually fall
+        // out of the overlay without a user interaction forcing a repaint.
+        let mut tick: State<u64> = use_state(|| 0);
 
-        // Background poller: bumps `version` when the atomic advances.
-        // The spawned future owns a clone of the Arc so it stays alive
-        // for the component's lifetime.
         use_hook({
-            let host = host.clone();
             move || {
                 spawn(async move {
                     loop {
                         async_io::Timer::after(POLL_INTERVAL).await;
-                        let current = host.version();
-                        if current != *version.peek() {
-                            version.set(current);
-                        }
+                        let next = tick.peek().wrapping_add(1);
+                        tick.set(next);
                     }
                 });
             }
         });
 
-        let _ = *version.read();
+        let _ = *tick.read();
         let bars = host.snapshot_progress();
         let toasts = host.snapshot_notifications();
 
