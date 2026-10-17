@@ -330,6 +330,12 @@ fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallPr
 
     match result {
         Ok(verses) => {
+            // Pre-fetch section headings for every (book, chapter)
+            // right after the main install so the reader renders
+            // subtitles the first time the user opens a passage —
+            // the lazy per-chapter fetch is only a fallback.
+            prefetch_all_headings(&db, &client, &cache_dir, &bible_id, host.as_ref());
+
             let mut p = progress.write().unwrap();
             p.stage = InstallStage::Finished;
             p.error = None;
@@ -348,6 +354,76 @@ fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallPr
             }
         }
         Err(e) => fail(&progress, host.as_ref(), format!("{e}")),
+    }
+}
+
+/// Walk every (book, chapter) in the newly installed Bible and
+/// populate the `headers` table from helloao's sibling translation.
+/// Idempotent — [`helloao::install_headings_for_chapter`] wipes +
+/// rewrites per chapter, and the per-chapter JSON cache stops
+/// re-downloads of unchanged payloads.
+///
+/// Failures are logged + swallowed per chapter: a flaky network for
+/// one book must not fail the whole install.
+fn prefetch_all_headings(
+    db: &Db,
+    client: &Client,
+    cache_dir: &std::path::Path,
+    bible_id: &str,
+    host: Option<&notein_sdk::Host>,
+) {
+    let Some(source) = helloao::helloao_headings_id_for_bible(bible_id) else {
+        log::debug!("headings prefetch: no sibling id for {bible_id}; skipping");
+        return;
+    };
+    let books = match db.list_books(bible_id) {
+        Ok(b) => b,
+        Err(e) => {
+            log::warn!("headings prefetch: list_books failed: {e:?}");
+            return;
+        }
+    };
+    if let Some(h) = host {
+        h.report_progress(
+            PLUGIN_ID,
+            PROGRESS_TOKEN,
+            HostProgress::Update {
+                done: 0,
+                total: Some(books.len() as u64),
+                label: Some("Descargando subtítulos…".into()),
+            },
+        );
+    }
+    for (idx, book) in books.iter().enumerate() {
+        let chapters = db.chapter_count(bible_id, &book.book_id).unwrap_or(0);
+        for chapter in 1..=chapters {
+            if let Err(e) = helloao::install_headings_for_chapter(
+                db,
+                client,
+                cache_dir,
+                bible_id,
+                source,
+                &book.book_id,
+                chapter,
+                CACHE_TTL,
+            ) {
+                log::debug!(
+                    "headings prefetch: {bible_id} {} {chapter}: {e}",
+                    book.book_id
+                );
+            }
+        }
+        if let Some(h) = host {
+            h.report_progress(
+                PLUGIN_ID,
+                PROGRESS_TOKEN,
+                HostProgress::Update {
+                    done: (idx + 1) as u64,
+                    total: Some(books.len() as u64),
+                    label: Some(format!("Subtítulos — {}", book.name)),
+                },
+            );
+        }
     }
 }
 

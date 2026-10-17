@@ -149,22 +149,13 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
             notein_bible::install_background::spawn_fetch_footnotes(
                 canvas.db().clone(),
                 canvas.config().clone(),
-                bid.clone(),
-                book.clone(),
-                chap,
-            );
-            // Translations without inline section headings (e.g.
-            // RV1960 via biblionlabs) borrow them from a sibling
-            // helloao id — same chapter JSON cache is reused so the
-            // enrichment adds one HTTP call max, then zero after
-            // first hit.
-            notein_bible::install_background::spawn_fetch_headings(
-                canvas.db().clone(),
-                canvas.config().clone(),
                 bid,
                 book,
                 chap,
             );
+            // Section headings are prefetched in bulk during the
+            // bible install (`install_background::prefetch_all_headings`)
+            // so the reader never pays a lazy fetch after first open.
         }
     });
 
