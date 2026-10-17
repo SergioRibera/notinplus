@@ -223,17 +223,19 @@ pub fn run() {
             .with_android_app(app)
             .build()
             .expect("failed to build Android event loop");
+        install_global_router();
         launch(
             LaunchConfig::new()
                 .with_event_loop(event_loop)
-                .with_window(WindowConfig::new(router).with_title("notinplus")),
+                .with_window(WindowConfig::new(router_root).with_title("notinplus")),
         );
     }
 
     #[cfg(not(target_os = "android"))]
     {
+        install_global_router();
         let cfg = LaunchConfig::new().with_window(
-            WindowConfig::new(router)
+            WindowConfig::new(router_root)
                 .with_title("notinplus")
                 .with_window_handle(|window| {
                     // Freya hands us the live winit `Window` exactly once at
@@ -252,8 +254,39 @@ pub fn run() {
     }
 }
 
-fn router() -> impl IntoElement {
+fn router_root() -> impl IntoElement {
     AppShell
+}
+
+// `RouterContext` is `!Send + !Sync` (it holds an `Rc`-backed
+// subscriber set + a `RefCell` history), so a cross-thread
+// `OnceLock<RouterContext>` is impossible. The runtime creates
+// exactly one on the UI thread and every consumer runs on the same
+// thread (Freya event handlers + the shared task executor), so a
+// thread-local cell is both correct and sufficient.
+thread_local! {
+    static GLOBAL_ROUTER: std::cell::OnceCell<freya::router::RouterContext> =
+        const { std::cell::OnceCell::new() };
+}
+
+fn install_global_router() {
+    GLOBAL_ROUTER.with(|cell| {
+        let _ = cell.get_or_init(|| {
+            freya::router::RouterContext::create_global::<crate::route::Route>(
+                freya::router::RouterConfig::default()
+                    .with_initial_path(crate::route::Route::Home),
+            )
+        });
+    });
+}
+
+#[must_use]
+pub fn global_router() -> freya::router::RouterContext {
+    GLOBAL_ROUTER.with(|cell| {
+        cell.get()
+            .cloned()
+            .expect("global_router: install_global_router must run before any route push")
+    })
 }
 
 /// Root layout that measures its own area and hosts the shared
@@ -269,6 +302,12 @@ impl Component for AppShell {
         // wants to clamp its own popup/overlay inside the viewport —
         // see `notein_ui_kit::ViewportArea` + `clamp_popup_top`.
         provide_context(notein_ui_kit::ViewportArea(area));
+        // Share the global router context at AppShell scope so
+        // sibling subtrees (`ModalPortal`, `HostOverlay`) see it via
+        // `RouterContext::get()` / `::try_get()`. The actual Router
+        // component is replaced by `Outlet` below — it would create
+        // its own scope-local context and leave siblings blind.
+        freya::router::use_share_router(global_router);
         // Drain the font-registration buffer that plugins fill via
         // `Host::load_font` during pre-launch `install_host`. This
         // must run inside the freya scheduler context — `use_hook`
@@ -283,9 +322,14 @@ impl Component for AppShell {
                 let mut area = area;
                 move |e: Event<SizedEventData>| area.set(e.area)
             })
-            .child(Router::<Route>::new(|| {
-                RouterConfig::default().with_initial_path(Route::Home)
-            }))
+            // Router context is installed at the window root via
+            // `with_root_context`, so every window-scoped descendant
+            // (including sibling `HostOverlay`) sees it. We mount the
+            // outlet directly instead of wrapping another `Router`
+            // component — otherwise the inner `Router` scope creates
+            // its own context and siblings outside its subtree would
+            // again lose access.
+            .child(Outlet::<Route>::new())
             .child({
                 // Install the host-side ModalChrome context before the
                 // portal materialises its children, so every modal
