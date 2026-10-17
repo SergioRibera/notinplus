@@ -1,4 +1,4 @@
-//! Block based rich Markdown editor and viewer for [Freya](https://freyaui.dev).
+#![doc = include_str!("../README.md")]
 //!
 //! - [`document`]: the editable model (blocks, inline marks, atoms).
 //! - [`markdown`]: `CommonMark` + GFM + extensions parsing and writing, in a
