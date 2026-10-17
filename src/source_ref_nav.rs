@@ -104,7 +104,7 @@ fn navigate_canvas_bookmark(bookmark: BookmarkId) {
     }
     // Slow path — spawn an async task so the UI stays responsive while
     // the library scan + tab-open sequence runs.
-    freya::prelude::spawn(async move {
+    freya::prelude::spawn_forever(async move {
         let Ok(handle) = crate::home::open_library().await else {
             log::warn!("navigate_canvas: library handle unavailable");
             return;
@@ -222,7 +222,7 @@ fn navigate_pdf(item: ItemId, anchor: Vec<u8>) {
     // asset-load latency.
     let router = crate::app::global_router();
     let _ = router.push(crate::route::Route::CanvasPdfView { id: item });
-    freya::prelude::spawn(async move {
+    freya::prelude::spawn_forever(async move {
         for _ in 0..30 {
             async_io::Timer::after(std::time::Duration::from_millis(100)).await;
             if let Some(board) = active_boards::get(CanvasMount::Item(item)) {
@@ -282,7 +282,7 @@ fn navigate_plugin(plugin_id: &str, anchor: &[u8]) {
     // the Router subtree (e.g. the host-level `BookmarkEditModal`
     // lives in `HostOverlay`, a sibling of Outlet).
     let router = crate::app::global_router();
-    freya::prelude::spawn(async move {
+    freya::prelude::spawn_forever(async move {
         let Ok(handle) = crate::home::open_library().await else {
             log::warn!("navigate_plugin: library handle unavailable");
             return;
