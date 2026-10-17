@@ -221,6 +221,13 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                     log::warn!("bible chip: anchor decode failed");
                     continue;
                 };
+                log::info!(
+                    "bible chip: applying jump bible={} book={} chap={} verse={}",
+                    jump.bible_id,
+                    jump.book_id,
+                    jump.start_chapter,
+                    jump.start_verse
+                );
                 let current_bible = { state_setter.peek().bible_id.clone() };
                 if current_bible != jump.bible_id
                     && let Err(e) = state_setter.write().switch_bible(&db_notify, &jump.bible_id)
@@ -230,7 +237,12 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                 if let Err(e) =
                     state_setter.write().jump_to(&db_notify, &jump.book_id, jump.start_chapter)
                 {
-                    log::warn!("bible chip: jump_to failed: {e}");
+                    log::warn!(
+                        "bible chip: jump_to failed (bible={}, book={}, chap={}): {e}",
+                        jump.bible_id,
+                        jump.book_id,
+                        jump.start_chapter
+                    );
                     continue;
                 }
                 flash_setter.set(Some(jump.start_verse));
