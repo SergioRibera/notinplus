@@ -46,6 +46,20 @@ pub fn bookmark_card_overlay(
     let pane_area = freya::prelude::try_consume_context::<notein_ui_kit::PaneArea>();
     let mut card_area: State<Area> = use_state(Area::default);
 
+    // Install a close callback the ChipWidget inside this card can
+    // fire so in-app chip taps (Canvas / PDF / Bible / Plugin) tear
+    // the card down before routing — otherwise the overlay would
+    // land on top of the destination. External URL chips keep the
+    // card open; the user never leaves the app.
+    let close_card_selected = selected;
+    let on_chip_tap_close: std::rc::Rc<dyn Fn()> = std::rc::Rc::new(move || {
+        let mut setter = close_card_selected;
+        setter.set(None);
+    });
+    freya::prelude::provide_context(crate::components::ChipTapCloseCallback(
+        on_chip_tap_close,
+    ));
+
     let Some(selected_id) = *selected.read() else {
         // Nothing selected — render a zero-area placeholder so the
         // overlay slot in `app::root` always has a child regardless

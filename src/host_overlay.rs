@@ -192,6 +192,22 @@ impl Component for BookmarkEditModal {
         let body: State<String> = use_state(move || seed_body.clone());
         let color: State<Option<Rgba>> = use_state(move || seed_color);
         let refs: State<Vec<SourceRef>> = use_state(move || seed_refs.clone());
+
+        // Install the chip-tap close hook — in-app chip refs
+        // (Bible / Canvas / Plugin) hand off to another route, so
+        // this modal needs to tear down before the destination
+        // renders. `resolve_bookmark_edit(id, None)` fires the
+        // original `on_done` callback with `None`, matching the
+        // Cancel path, so the plugin side cleans up correctly.
+        {
+            let host = host.clone();
+            let on_chip_tap_close: std::rc::Rc<dyn Fn()> = std::rc::Rc::new(move || {
+                host.resolve_bookmark_edit(id, None);
+            });
+            freya::prelude::provide_context(crate::components::ChipTapCloseCallback(
+                on_chip_tap_close,
+            ));
+        }
         // Full HSVA panel lives behind a trigger now; the inline card
         // only surfaces the preset swatches + a rainbow slot that pops
         // the panel open. Keeps the modal compact when the user is

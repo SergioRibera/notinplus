@@ -659,11 +659,42 @@ impl Component for ChipWidget {
             .on_pointer_enter(move |_| hover.set(true))
             .on_pointer_leave(move |_| hover.set_if_modified(false))
             .on_pointer_down(move |_: Event<PointerEventData>| {
+                let navigates_in_app = !matches!(nav_src, SourceRef::External { .. });
                 source_ref_nav::navigate(&nav_src);
+                // External URL chips keep the editor open — the user
+                // stays in notinplus. Every other chip hands off to
+                // another route / modal, so the current bookmark
+                // popup must close so it doesn't block the
+                // destination.
+                if navigates_in_app
+                    && let Some(close) =
+                        try_consume_context::<ChipTapCloseCallback>()
+                {
+                    (close.0)();
+                }
             })
             .maybe_child(svg_icon_el)
             .maybe_child(emoji_icon_el)
             .child(label_body)
+    }
+}
+
+/// Context installed by a bookmark popup / modal to let in-tree chip
+/// taps close the host overlay. Wrapping a bare `Rc<dyn Fn()>` —
+/// Freya state handles are `!Send`, so the close callback captures
+/// one and stays on the UI thread. Context lifetime is per-mount.
+#[derive(Clone)]
+pub struct ChipTapCloseCallback(pub std::rc::Rc<dyn Fn()>);
+
+impl PartialEq for ChipTapCloseCallback {
+    fn eq(&self, other: &Self) -> bool {
+        std::rc::Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl std::fmt::Debug for ChipTapCloseCallback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChipTapCloseCallback").finish_non_exhaustive()
     }
 }
 

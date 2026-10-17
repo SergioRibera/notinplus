@@ -24,7 +24,7 @@ pub mod tag_picker;
 pub mod theme;
 pub mod workspace_switcher;
 
-pub use bookmark_body_editor::BookmarkBodyEditor;
+pub use bookmark_body_editor::{BookmarkBodyEditor, ChipTapCloseCallback};
 pub use canvas_create::{CanvasCreateSheet, CreateCanvasRequest};
 pub use chip::Chip;
 pub use color_wheel::{ColorWheel, DEFAULT_SWATCHES, auto_color};
