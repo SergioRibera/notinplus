@@ -382,6 +382,17 @@ fn apply_pending_canvas_background(board: &Arc<Mutex<Board>>) {
     let (style, surface) = queued.map_or((BackgroundStyle::default(), DEFAULT_PAPER), |p| {
         (p.style, p.surface)
     });
+    apply_canvas_background(board, style, surface);
+}
+
+/// Install the `(style, surface)` pair on an already-mounted board.
+/// Used by the edit-sheet flow so a tint / pattern change paints into
+/// the live canvas immediately instead of waiting for the next mount.
+pub fn apply_canvas_background(
+    board: &Arc<Mutex<Board>>,
+    style: BackgroundStyle,
+    surface: SkColor,
+) {
     let bg: Arc<dyn CanvasBackground> = match style {
         BackgroundStyle::Blank => Arc::new(SolidColorBackground::new(surface)),
         BackgroundStyle::Line => Arc::new(LinedBackground::new(surface)),

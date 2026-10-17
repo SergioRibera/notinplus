@@ -1341,7 +1341,7 @@ fn top_right_toolbar(state: &ChromeState) -> impl IntoElement {
             // Ephemeral mounts have no item to edit.
             return;
         };
-        crate::home::open_canvas_edit_sheet(id);
+        crate::home::open_canvas_edit_sheet(id, None);
     });
 
     let doc_linked_ext = use_try_consume::<crate::doc_linked::DocLinkedChromeExt>();

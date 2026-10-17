@@ -753,12 +753,11 @@ impl Component for ItemCard {
                     );
                 }
             };
-            build_card_menu(
-                start_rename,
-                move || open_canvas_edit_sheet(id),
-                on_export,
-                ask_delete,
-            )
+            let on_edit_item = {
+                let snap = snap;
+                move || open_canvas_edit_sheet(id, Some(snap))
+            };
+            build_card_menu(start_rename, on_edit_item, on_export, ask_delete)
         };
 
         let on_commit_rename = {
@@ -920,12 +919,11 @@ impl Component for FolderCard {
                     );
                 }
             };
-            build_card_menu(
-                start_rename,
-                move || open_folder_edit_sheet(id),
-                on_export,
-                ask_delete,
-            )
+            let on_edit_folder = {
+                let snap = snap;
+                move || open_folder_edit_sheet(id, Some(snap))
+            };
+            build_card_menu(start_rename, on_edit_folder, on_export, ask_delete)
         };
 
         let on_commit_rename = {
@@ -2132,7 +2130,10 @@ pub(crate) async fn open_library() -> Result<LibHandle, String> {
 /// builders so this edit flow reuses it instead of maintaining a
 /// parallel component. On confirm, applies the changes via the
 /// `rename_item` / `set_item_*` setters.
-pub(crate) fn open_canvas_edit_sheet(item_id: ItemId) {
+pub(crate) fn open_canvas_edit_sheet(
+    item_id: ItemId,
+    mut snap: Option<State<Option<LibraryIndex>>>,
+) {
     use crate::components::{CanvasCreateSheet, CreateCanvasRequest};
     // `spawn_forever` so the task lives on the root scope — the
     // context-menu button that calls us unmounts right after press,
@@ -2189,6 +2190,25 @@ pub(crate) fn open_canvas_edit_sheet(item_id: ItemId) {
                 if let Err(err) = lib.set_item_tags(item_id, tag_ids).await {
                     log::error!("set_item_tags: {err}");
                 }
+                // Push the fresh tint + pattern into the live board if
+                // the item is currently mounted — the canvas repaints
+                // its background right away instead of waiting for the
+                // next route mount.
+                if let Some(board) = crate::active_boards::get_item(item_id) {
+                    crate::route::apply_canvas_background(
+                        &board,
+                        req.background,
+                        req.color.into(),
+                    );
+                }
+                // Refresh the home grid snapshot so the renamed title /
+                // retinted swatch / new tags land on screen immediately
+                // instead of waiting for the next focus-driven reload.
+                // `None` when the sheet is opened from canvas chrome —
+                // no grid to repaint in that view.
+                if let Some(snap) = snap.as_mut() {
+                    snap.set(Some(lib.index().clone()));
+                }
             });
         })
         .kind(kind)
@@ -2208,7 +2228,10 @@ pub(crate) fn open_canvas_edit_sheet(item_id: ItemId) {
 /// same `FolderCreateSheet` the create flow uses (configured with
 /// `default_*` + `title_override` + `submit_label`). On confirm, applies
 /// the changes via the `rename_folder` / `set_folder_*` setters.
-pub(crate) fn open_folder_edit_sheet(folder_id: FolderId) {
+pub(crate) fn open_folder_edit_sheet(
+    folder_id: FolderId,
+    mut snap: Option<State<Option<LibraryIndex>>>,
+) {
     use crate::components::{CreateFolderRequest, FolderCreateSheet};
     // See `open_canvas_edit_sheet` — root-scope task so it survives
     // the menu-button unmount that follows the press.
@@ -2256,6 +2279,9 @@ pub(crate) fn open_folder_edit_sheet(folder_id: FolderId) {
                 }
                 if let Err(err) = lib.set_folder_tags(folder_id, tag_ids).await {
                     log::error!("set_folder_tags: {err}");
+                }
+                if let Some(snap) = snap.as_mut() {
+                    snap.set(Some(lib.index().clone()));
                 }
             });
         })
