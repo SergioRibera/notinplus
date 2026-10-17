@@ -1862,6 +1862,27 @@ impl Board {
         // before the surface size was known.
         self.clamp_viewport_to_background();
 
+        // Backdrop fill lives inside the paint callback so a runtime
+        // `set_background` swap (edit sheet re-tint) actually repaints
+        // the surface — the enclosing freya rect's `.background(...)`
+        // attribute captures a stale color at element construction and
+        // only refreshes on remount, which is unacceptable for an in-
+        // place colour change on the active canvas.
+        if let Some(bd) = self.background.viewport_backdrop() {
+            let mut paint = freya_engine::prelude::Paint::default();
+            paint.set_color(bd);
+            paint.set_anti_alias(false);
+            canvas.draw_rect(
+                freya_engine::prelude::Rect::from_ltrb(
+                    surface.min_x,
+                    surface.min_y,
+                    surface.max_x,
+                    surface.max_y,
+                ),
+                &paint,
+            );
+        }
+
         // Everything below draws in world coordinates. Wrapping in a
         // save/restore lets viewport pan+zoom compose freely with any
         // future overlay pass that wants to draw in screen space.

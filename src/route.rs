@@ -147,7 +147,37 @@ impl Component for CanvasPdfView {
 /// autosave sinks, and (for PDF-backed mounts) load the PDF into the
 /// background slot off the UI thread.
 pub(crate) fn init_canvas_mount(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
-    apply_pending_canvas_background(board);
+    let had_pending = apply_pending_canvas_background(board);
+    // No pending slot — this mount did not come through the home open
+    // path (e.g. re-opening the split in a DocLinked bundle). Pull the
+    // item's persisted color + pattern from the library so the canvas
+    // paints with the user's chosen backdrop instead of flashing the
+    // default off-white paper.
+    if !had_pending {
+        if let Some(id) = mount.item() {
+            let board = Arc::clone(board);
+            spawn(async move {
+                let handle = match crate::home::open_library().await {
+                    Ok(h) => h,
+                    Err(err) => {
+                        log::warn!("init_canvas_mount: open_library: {err}");
+                        return;
+                    }
+                };
+                let (color, bg) = {
+                    let lib = handle.lock().await;
+                    let Some(item) = lib.index().item(id) else {
+                        return;
+                    };
+                    (item.color, item.background)
+                };
+                let surface: SkColor = color
+                    .map(|c| SkColor::from_argb(c[3], c[0], c[1], c[2]))
+                    .unwrap_or(DEFAULT_PAPER);
+                apply_canvas_background(&board, bg, surface);
+            });
+        }
+    }
     match mount {
         CanvasMount::Item(id) => load_doc_into_board(Some(id), Arc::clone(board)),
         CanvasMount::Ephemeral => load_doc_into_board(None, Arc::clone(board)),
@@ -377,12 +407,14 @@ fn spawn_canvas_view_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Rec
     });
 }
 
-fn apply_pending_canvas_background(board: &Arc<Mutex<Board>>) {
+fn apply_pending_canvas_background(board: &Arc<Mutex<Board>>) -> bool {
     let queued = pending().lock().ok().and_then(|mut slot| slot.take());
+    let had_queued = queued.is_some();
     let (style, surface) = queued.map_or((BackgroundStyle::default(), DEFAULT_PAPER), |p| {
         (p.style, p.surface)
     });
     apply_canvas_background(board, style, surface);
+    had_queued
 }
 
 /// Install the `(style, surface)` pair on an already-mounted board.
