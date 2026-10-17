@@ -984,9 +984,13 @@ fn empty_state_with_install() -> impl IntoElement {
     let on_install = move |_: Event<PressEventData>| {
         crate::bible_install_modal::open_install_modal();
     };
-    rect()
+    let router = RouterContext::get();
+    let on_home = move || {
+        let _ = router.push(crate::route::Route::Home);
+    };
+    let body = rect()
         .width(Size::fill())
-        .height(Size::fill())
+        .height(Size::flex(1.0))
         .center()
         .padding((32., 32.))
         .spacing(14.0)
@@ -1014,7 +1018,13 @@ fn empty_state_with_install() -> impl IntoElement {
                         .color(Color::from_rgb(240, 240, 240))
                         .text("Elegir Biblia…"),
                 ),
-        )
+        );
+    rect()
+        .width(Size::fill())
+        .height(Size::fill())
+        .content(Content::Flex)
+        .child(toolbar::empty_toolbar(on_home))
+        .child(body)
 }
 
 fn placeholder(message: String) -> impl IntoElement {

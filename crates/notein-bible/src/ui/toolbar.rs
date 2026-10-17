@@ -132,6 +132,79 @@ where
     row.child(left).child(right)
 }
 
+/// Variant of [`top_toolbar`] rendered when no translations are
+/// installed. Keeps the full chrome visible (so the user can still
+/// navigate home) but every control except the home icon is muted +
+/// inert — the search box, translation chip and nav icons all
+/// render as decorations.
+pub fn empty_toolbar(on_home: impl FnMut() + 'static) -> impl IntoElement {
+    let mut on_home = on_home;
+    rect()
+        .width(Size::fill())
+        .height(Size::px(56.0))
+        .background(parse_rgb(theme::BG))
+        .padding((0., 16.))
+        .direction(Direction::Horizontal)
+        .cross_align(Alignment::Center)
+        .main_align(Alignment::SpaceBetween)
+        .spacing(4.0)
+        .child(
+            rect()
+                .direction(Direction::Horizontal)
+                .cross_align(Alignment::Center)
+                .spacing(2.0)
+                .child(icon_button(freya::icons::lucide::house(), move || on_home()))
+                .child(nav_icon_button(freya::icons::lucide::arrow_left(), None))
+                .child(nav_icon_button(freya::icons::lucide::arrow_right(), None)),
+        )
+        .child(
+            rect()
+                .direction(Direction::Horizontal)
+                .cross_align(Alignment::Center)
+                .spacing(4.0)
+                .child(muted_search_placeholder())
+                .child(muted_translation_chip()),
+        )
+}
+
+fn muted_search_placeholder() -> impl IntoElement {
+    rect()
+        .height(Size::px(34.0))
+        .width(Size::px(40.0))
+        .center()
+        .with_corner_radius(17.0)
+        .child(
+            SvgViewer::new(freya::icons::lucide::search())
+                .color(Color::from_rgb(80, 80, 90))
+                .width(Size::px(ICON_SIZE))
+                .height(Size::px(ICON_SIZE)),
+        )
+}
+
+fn muted_translation_chip() -> impl IntoElement {
+    rect()
+        .height(Size::px(34.0))
+        .direction(Direction::Horizontal)
+        .cross_align(Alignment::Center)
+        .padding((0., 12.))
+        .spacing(6.0)
+        .margin((0., 0., 0., 6.))
+        .with_corner_radius(17.0)
+        .background(parse_rgb(theme::CHIP_BG))
+        .child(
+            SvgViewer::new(freya::icons::lucide::globe())
+                .color(Color::from_rgb(80, 80, 90))
+                .width(Size::px(14.0))
+                .height(Size::px(14.0)),
+        )
+        .child(
+            label()
+                .font_size(13.0)
+                .color(Color::from_rgb(80, 80, 90))
+                .text("—"),
+        )
+}
+
 fn icon_button<F>(icon: Bytes, mut on_press: F) -> impl IntoElement
 where
     F: FnMut() + 'static,
