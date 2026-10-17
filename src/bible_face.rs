@@ -30,6 +30,10 @@ use std::time::Duration;
 use crate::library::ItemId;
 
 const BIBLE_PLUGIN_ID: &str = "io.notein.bible.viewer";
+/// Plugin id used by the Bible *source* (chip refs + completions).
+/// Separate from `BIBLE_PLUGIN_ID` (the viewer / canvas plugin) —
+/// chip taps route through the source id's pending-anchor channel.
+const BIBLE_SOURCE_PLUGIN_ID: &str = "io.notein.bible";
 
 #[derive(Debug, PartialEq)]
 pub struct BibleFace {
@@ -118,7 +122,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
         .map(|s| s.current_chapter)
         .unwrap_or(1);
 
-    // Chip-tap jump queued by `source_ref_nav::navigate_bible`. Pull
+    // Chip-tap jump queued via `HostApi::queue_source_anchor`. Pull
     // it once at init so a re-render inside the same mount doesn't
     // re-trigger the jump. Captured by the init closure below (which
     // Freya runs exactly once per mount) and stashed in
@@ -129,8 +133,10 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
         let jump_cell: State<Option<u16>> = use_state(|| None);
         let mut jump_cell_setter = jump_cell;
         let state = use_state(move || {
-            let initial_jump = crate::active_bible_sources::take(item);
-            jump_cell_setter.set(initial_jump.as_ref().map(|j| j.verse));
+            let initial_jump = crate::host_api::host_handle()
+                .take_source_anchor(BIBLE_SOURCE_PLUGIN_ID, item.0)
+                .and_then(|bytes| notein_bible::BibleAnchor::decode(&bytes));
+            jump_cell_setter.set(initial_jump.as_ref().map(|j| j.start_verse));
             let mut st =
                 BibleViewerState::new(&starting_bible, &starting_book, starting_chapter);
             if let Some(snap) = snap_for_init {
@@ -142,7 +148,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                 // requested verse.
                 st.bible_id = jump.bible_id.clone();
                 st.current_book = jump.book_id.clone();
-                st.current_chapter = jump.chapter;
+                st.current_chapter = jump.start_chapter;
             }
             if let Ok(chap) =
                 db_for_init.load_chapter(&st.bible_id, &st.current_book, st.current_chapter)
@@ -189,26 +195,34 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
 
     // Live chip-tap subscription — when the user clicks a Bible chip
     // while this mount is already on screen, the router dedupe
-    // suppresses a remount so `active_bible_sources::take` would
-    // normally not re-fire. Subscribe to the broadcast + apply the
-    // jump in-place; mirrors the fresh-mount path (snapshot override
-    // + verse flash + flash-clear timer). Uses `spawn` (scope-bound)
-    // so the receiver drops on unmount and the next broadcast reaps
-    // the orphaned sender via the `retain` on the subscribers list.
+    // suppresses a remount so the snapshot-override path above never
+    // re-runs. Subscribe to `HostApi::subscribe_source_anchor` and
+    // apply the jump in-place; mirrors the fresh-mount path
+    // (snapshot override + verse flash + flash-clear timer). Uses
+    // `spawn` (scope-bound) so the receiver drops on unmount and the
+    // host-side `retain` reaps the orphaned sender on the next
+    // broadcast.
     let db_notify = db.clone();
     let notify_state = state;
     let notify_flash = flash_verse;
     use_hook(move || {
-        let rx = crate::active_bible_sources::subscribe();
+        let host = crate::host_api::host_handle();
+        let rx = host.subscribe_source_anchor(BIBLE_SOURCE_PLUGIN_ID);
         let mut state_setter = notify_state;
         let mut flash_setter = notify_flash;
         let db_notify = db_notify;
         spawn(async move {
             while let Ok(target_item) = rx.recv_async().await {
-                if target_item != item {
+                if target_item != item.0 {
                     continue;
                 }
-                let Some(jump) = crate::active_bible_sources::take(item) else {
+                let Some(bytes) = crate::host_api::host_handle()
+                    .take_source_anchor(BIBLE_SOURCE_PLUGIN_ID, item.0)
+                else {
+                    continue;
+                };
+                let Some(jump) = notein_bible::BibleAnchor::decode(&bytes) else {
+                    log::warn!("bible chip: anchor decode failed");
                     continue;
                 };
                 let current_bible = { state_setter.peek().bible_id.clone() };
@@ -218,14 +232,14 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                     log::warn!("bible chip: switch_bible failed: {e}");
                 }
                 if let Err(e) =
-                    state_setter.write().jump_to(&db_notify, &jump.book_id, jump.chapter)
+                    state_setter.write().jump_to(&db_notify, &jump.book_id, jump.start_chapter)
                 {
                     log::warn!("bible chip: jump_to failed: {e}");
                     continue;
                 }
-                flash_setter.set(Some(jump.verse));
+                flash_setter.set(Some(jump.start_verse));
                 let mut flash_clear = flash_setter;
-                let flash_verse_val = jump.verse;
+                let flash_verse_val = jump.start_verse;
                 spawn(async move {
                     async_io::Timer::after(Duration::from_secs(3)).await;
                     if flash_clear.peek().as_ref() == Some(&flash_verse_val) {

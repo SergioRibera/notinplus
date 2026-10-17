@@ -354,6 +354,15 @@ impl Source for BibleSource {
         plugin_config::set_host(&self.config, host);
     }
 
+    fn navigate_payload(&self, anchor: &[u8]) -> Option<Vec<u8>> {
+        // Fast validation: refuse to queue an un-decodable anchor so
+        // the shell doesn't route into a viewer that will reject the
+        // payload. The viewer re-decodes the same bytes via
+        // `BibleAnchor::decode` on mount.
+        BibleAnchor::decode(anchor)?;
+        Some(anchor.to_vec())
+    }
+
     fn render_chip(&self, anchor: &[u8]) -> Option<ChipView> {
         let BibleAnchor {
             book_id,

@@ -15,18 +15,14 @@
 //! Other `SourceRef` variants (Canvas, Item, External) are stubbed
 //! until Phase 6 — chips still render; tapping logs a warning.
 
-use crate::active_bible_sources;
 use crate::active_boards;
 use crate::active_pdf_sources;
 use crate::app::CanvasMount;
 use crate::bookmark::SourceRef;
 use crate::canvas::lock;
 use crate::ids::BookmarkId;
-use crate::library::{ItemId, ItemKind};
+use crate::library::ItemId;
 use crate::pdf_viewer::PDF_PLUGIN_ID;
-
-const BIBLE_SOURCE_PLUGIN_ID: &str = "io.notein.bible";
-const BIBLE_VIEWER_PLUGIN_ID: &str = "io.notein.bible.viewer";
 
 /// Human-readable one-liner for a chip's visible label. For PDF
 /// anchors returns `"PDF p.N"` (or `"PDF p.N (range)"` when the
@@ -66,17 +62,17 @@ pub fn navigate(src: &SourceRef) {
             anchor,
             ..
         } if plugin_id == PDF_PLUGIN_ID => {
+            // PDF stays on a shell-specific path: anchor resolves to
+            // world coords via the plugin, which the shell then
+            // centres + pulses in the mounted canvas. The generic
+            // plugin dispatch below only models "find item + route +
+            // queue payload" — not enough for the PDF pulse UX.
             let item_id = ItemId(*item);
             navigate_pdf(item_id, anchor.clone());
         }
         SourceRef::Plugin {
             plugin_id, anchor, ..
-        } if plugin_id == BIBLE_SOURCE_PLUGIN_ID => {
-            navigate_bible(anchor);
-        }
-        SourceRef::Plugin { plugin_id, .. } => {
-            log::warn!("navigate: unsupported plugin ref {plugin_id}");
-        }
+        } => navigate_plugin(plugin_id, anchor),
         SourceRef::Canvas { bookmark } => navigate_canvas_bookmark(*bookmark),
         SourceRef::External { url } => open_external_url(url),
     }
@@ -242,106 +238,66 @@ fn navigate_pdf(item: ItemId, anchor: Vec<u8>) {
     });
 }
 
-/// Navigate to a Bible chip's target verse. Decodes the plugin anchor,
-/// finds the right Bible item in the library, queues a pending jump
-/// keyed on the item id, and pushes the Bible route. The Bible viewer
-/// polls [`active_bible_sources::take`] on mount and applies the jump.
+/// Generic chip-tap dispatch for any `SourceRef::Plugin` whose plugin
+/// opts into navigation via [`notein_plugin::Source::navigate_payload`].
 ///
-/// When the viewer is already open against the right item the pending
-/// jump is still queued — the viewer's reactive hook picks it up on
-/// the next render.
-fn navigate_bible(anchor_bytes: &[u8]) {
-    let Some(decoded) = notein_bible::BibleAnchor::decode(anchor_bytes) else {
-        log::warn!("navigate_bible: failed to decode anchor payload");
+/// 1. Ask the plugin for the payload it wants its viewer to receive.
+///    `None` → chip is inert for this plugin; abort.
+/// 2. Find any library item citing the plugin (via
+///    [`crate::library::ItemKind::hosting_plugin`]). Covers
+///    standalone `PluginCanvas` + `DocLinked` bundles in one scan.
+/// 3. Queue the payload on the host under `(plugin_id, item_id)` and
+///    broadcast so a live viewer on the same item re-applies.
+/// 4. Route to the item's native face via
+///    [`crate::route::route_for_kind`].
+///
+/// No fallback item-creation: when the plugin opts into chip nav but
+/// no library item of its kind exists, we log + stop. Opening a
+/// placeholder item is a dedicated flow the user should drive (FAB,
+/// settings, bundle import) — not a side effect of tapping a chip.
+fn navigate_plugin(plugin_id: &str, anchor: &[u8]) {
+    let registry = crate::plugins::registry();
+    let plugin = {
+        let guard = crate::plugins::lock(&registry);
+        guard.get_source(plugin_id).cloned()
+    };
+    let Some(plugin) = plugin else {
+        log::warn!("navigate_plugin: no plugin registered for {plugin_id}");
         return;
     };
-    let jump = active_bible_sources::PendingJump {
-        bible_id: decoded.bible_id.clone(),
-        book_id: decoded.book_id.clone(),
-        chapter: decoded.start_chapter,
-        verse: decoded.start_verse,
+    let Some(payload) = plugin.navigate_payload(anchor) else {
+        log::info!(
+            "navigate_plugin: plugin {plugin_id} opted out of chip nav"
+        );
+        return;
     };
-    // Capture the router at call time — the pointer-down handler runs
-    // in a Freya scope, so `RouterContext::get()` resolves here.
-    // The async spawn below cannot call it after `.await` because the
-    // scope's thread-local disappears across executor steps.
+    let plugin_id = plugin_id.to_string();
+    // Capture router at call time — the pointer-down handler runs in
+    // a Freya scope so `RouterContext::get()` resolves here. The
+    // async spawn below cannot call it after `.await`.
     let router = freya::router::RouterContext::get();
-    // Resolve the library item that hosts a Bible viewer. The chip
-    // itself does not carry an `ItemId` — Bible chips come from
-    // completions that originate at the plugin level, not from a
-    // specific item. The viewer swaps translations in-place from the
-    // user's installed Bibles, so any Bible item works as the mount
-    // target; the jump's `bible_id` steers the final translation
-    // once the viewer has rehydrated.
     freya::prelude::spawn(async move {
         let Ok(handle) = crate::home::open_library().await else {
-            log::warn!("navigate_bible: library handle unavailable");
+            log::warn!("navigate_plugin: library handle unavailable");
             return;
         };
-        // Walk every item that hosts the Bible viewer — both the
-        // standalone `PluginCanvas` form and the `DocLinked` bundle
-        // (bible + canvas sibling). The item id + its route live
-        // together so we can dispatch to the correct shell face
-        // without conflating a split-view bundle with a flat viewer.
-        let existing = {
+        let found = {
             let lib = handle.lock().await;
-            lib.index()
-                .items
-                .iter()
-                .find_map(|item| match &item.kind {
-                    ItemKind::PluginCanvas { plugin_id, .. }
-                        if plugin_id == BIBLE_VIEWER_PLUGIN_ID =>
-                    {
-                        Some((item.id, crate::route::Route::BibleView { id: item.id }))
-                    }
-                    ItemKind::DocLinked { source_plugin }
-                        if source_plugin == BIBLE_VIEWER_PLUGIN_ID =>
-                    {
-                        Some((
-                            item.id,
-                            crate::route::Route::DocLinkedView { id: item.id },
-                        ))
-                    }
-                    _ => None,
-                })
+            lib.index().items.iter().find_map(|item| {
+                item.kind
+                    .hosting_plugin()
+                    .filter(|id| *id == plugin_id)
+                    .map(|_| (item.id, crate::route::route_for_kind(&item.kind, item.id)))
+            })
         };
-        let (item_id, route) = match existing {
-            Some(found) => found,
-            None => {
-                // No Bible item in the library yet. Mirrors
-                // `home::flow_open_bible` — create a fresh
-                // `PluginCanvas` under the root folder so chip taps
-                // keep working for users who installed a translation
-                // but never opened the viewer manually.
-                let init_bytes = bincode::encode_to_vec(
-                    &String::new(),
-                    bincode::config::standard(),
-                )
-                .unwrap_or_default();
-                let mut lib = handle.lock().await;
-                match lib
-                    .create_item(
-                        crate::library::ROOT_FOLDER,
-                        ItemKind::PluginCanvas {
-                            plugin_id: BIBLE_VIEWER_PLUGIN_ID.into(),
-                            init_bytes,
-                        },
-                        "Biblia",
-                        None,
-                        Vec::new(),
-                        crate::library::BackgroundStyle::default(),
-                    )
-                    .await
-                {
-                    Ok(id) => (id, crate::route::Route::BibleView { id }),
-                    Err(e) => {
-                        log::warn!("navigate_bible: create_item failed: {e}");
-                        return;
-                    }
-                }
-            }
+        let Some((item_id, route)) = found else {
+            log::warn!(
+                "navigate_plugin: no library item hosts {plugin_id}; chip \
+                 target unreachable"
+            );
+            return;
         };
-        active_bible_sources::queue(item_id, jump);
+        crate::host_api::host_handle().queue_source_anchor(&plugin_id, item_id.0, payload);
         let _ = router.push(route);
     });
 }
