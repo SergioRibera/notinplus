@@ -334,7 +334,7 @@ fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallPr
             // right after the main install so the reader renders
             // subtitles the first time the user opens a passage —
             // the lazy per-chapter fetch is only a fallback.
-            prefetch_all_headings(&db, &client, &cache_dir, &bible_id, host.as_ref());
+            prefetch_all_headings(&db, &client, &cache_dir, &bible_id, &progress, host.as_ref());
 
             let mut p = progress.write().unwrap();
             p.stage = InstallStage::Finished;
@@ -370,6 +370,7 @@ fn prefetch_all_headings(
     client: &Client,
     cache_dir: &std::path::Path,
     bible_id: &str,
+    progress: &SharedInstallProgress,
     host: Option<&notein_sdk::Host>,
 ) {
     let Some(source) = helloao::helloao_headings_id_for_bible(bible_id) else {
@@ -383,6 +384,15 @@ fn prefetch_all_headings(
             return;
         }
     };
+    // Reset the shared counters so the install modal animates through
+    // the subtitle pass instead of looking frozen at the last state
+    // from `install_bible`.
+    {
+        let mut p = progress.write().unwrap();
+        p.stage = InstallStage::Downloading;
+        p.done_books = 0;
+        p.total_books = books.len();
+    }
     if let Some(h) = host {
         h.report_progress(
             PLUGIN_ID,
@@ -412,6 +422,10 @@ fn prefetch_all_headings(
                     book.book_id
                 );
             }
+        }
+        {
+            let mut p = progress.write().unwrap();
+            p.done_books = idx + 1;
         }
         if let Some(h) = host {
             h.report_progress(

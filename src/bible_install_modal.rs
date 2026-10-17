@@ -428,7 +428,15 @@ fn row_trailing(
     active: Option<notein_bible::install_background::InstallProgress>,
     on_install: impl FnMut(Event<PressEventData>) + 'static,
 ) -> Element {
-    if installed {
+    // In-progress install wins over the "installed" check: `install_bible`
+    // commits the verses/books rows mid-flight (so `list_bibles` already
+    // reports the id as installed) but the subtitle pre-fetch still has
+    // minutes of work left. Showing the check icon too early makes it
+    // look like nothing is happening when the modal is actually busy.
+    let in_progress = active
+        .as_ref()
+        .is_some_and(|p| matches!(p.stage, InstallStage::Starting | InstallStage::Downloading));
+    if installed && !in_progress {
         return rect()
             .direction(Direction::Horizontal)
             .cross_align(Alignment::Center)
