@@ -278,7 +278,7 @@ fn navigate_bible(anchor_bytes: &[u8]) {
             log::warn!("navigate_bible: library handle unavailable");
             return;
         };
-        let item_id = {
+        let existing = {
             let lib = handle.lock().await;
             lib.index()
                 .items
@@ -292,12 +292,42 @@ fn navigate_bible(anchor_bytes: &[u8]) {
                     _ => None,
                 })
         };
-        let Some(item_id) = item_id else {
-            log::warn!(
-                "navigate_bible: no library item holds a Bible viewer; \
-                 install one first"
-            );
-            return;
+        let item_id = match existing {
+            Some(id) => id,
+            None => {
+                // No Bible viewer item in the library yet. Mirrors
+                // `home::flow_open_bible` — create a fresh PluginCanvas
+                // under the root folder with empty `init_bytes` (the
+                // viewer picks the user's default translation on
+                // mount) so chip taps keep working even when the user
+                // never ran "open bible viewer" manually.
+                let init_bytes = bincode::encode_to_vec(
+                    &String::new(),
+                    bincode::config::standard(),
+                )
+                .unwrap_or_default();
+                let mut lib = handle.lock().await;
+                match lib
+                    .create_item(
+                        crate::library::ROOT_FOLDER,
+                        ItemKind::PluginCanvas {
+                            plugin_id: BIBLE_VIEWER_PLUGIN_ID.into(),
+                            init_bytes,
+                        },
+                        "Biblia",
+                        None,
+                        Vec::new(),
+                        crate::library::BackgroundStyle::default(),
+                    )
+                    .await
+                {
+                    Ok(id) => id,
+                    Err(e) => {
+                        log::warn!("navigate_bible: create_item failed: {e}");
+                        return;
+                    }
+                }
+            }
         };
         active_bible_sources::queue(item_id, jump);
         let _ = router.push(crate::route::Route::BibleView { id: item_id });
