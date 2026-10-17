@@ -1223,7 +1223,13 @@ impl EditorController {
             return;
         };
         if next >= rows * columns {
-            self.table_insert_row();
+            self.edit_table(|table, _| {
+                table.insert_row(rows);
+                Some(CellPos {
+                    row: rows,
+                    column: 0,
+                })
+            });
             return;
         }
         let next = CellPos {

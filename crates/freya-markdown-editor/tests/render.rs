@@ -110,3 +110,42 @@ fn typing_writes_markdown_back() {
     runner.render_to_file(snapshot_path("typing"));
     assert_eq!(value.peek().as_str(), "# Title\n\nhello **world**\n");
 }
+
+fn toolbar_app() -> impl IntoElement {
+    let value = use_consume::<State<String>>();
+    let controller = use_consume::<EditorController>();
+    rect()
+        .expanded()
+        .background(EditorTheme::dark().colors.surface)
+        .padding(12.)
+        .spacing(10.)
+        .child(MarkdownToolbar::new(controller))
+        .child(
+            MarkdownEditor::new(value)
+                .controller(controller)
+                .width(Size::fill()),
+        )
+}
+
+#[test]
+fn toolbar_menus_render() {
+    let (mut runner, controller) = TestingRunner::new(
+        toolbar_app,
+        (900., 520.).into(),
+        |runner| {
+            runner.provide_root_context(|| State::create("Pick **some** text".to_owned()));
+            runner.provide_root_context(|| EditorController::create(Document::default()))
+        },
+        1.0,
+    );
+    runner.poll_n(std::time::Duration::from_millis(1), 3);
+    runner.run_in(|| controller.focus_end());
+    runner.poll_n(std::time::Duration::from_millis(1), 3);
+    runner.click_cursor((155., 27.));
+    runner.poll_n(std::time::Duration::from_millis(1), 3);
+    runner.render_to_file(snapshot_path("toolbar_block_menu"));
+    runner.click_cursor((155., 27.));
+    runner.click_cursor((725., 27.));
+    runner.poll_n(std::time::Duration::from_millis(1), 3);
+    runner.render_to_file(snapshot_path("toolbar_palette"));
+}
