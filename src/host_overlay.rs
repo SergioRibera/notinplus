@@ -49,7 +49,13 @@ impl Component for HostOverlay {
         let pending_edit = host.snapshot_bookmark_edit();
 
         let mut root = rect()
-            .position(Position::new_absolute().top(0.).left(0.).right(0.).bottom(0.))
+            .position(
+                Position::new_absolute()
+                    .top(0.)
+                    .left(0.)
+                    .right(0.)
+                    .bottom(0.),
+            )
             .width(Size::fill())
             .height(Size::fill())
             .child(progress_bar_stack(&bars))
@@ -128,32 +134,15 @@ fn toast(n: Notification, host: std::sync::Arc<HostInner>) -> impl IntoElement {
                 .color(Color::from_rgb(230, 230, 230))
                 .text(n.plugin_id.clone()),
         )
-        .child(
-            label()
-                .font_size(13.5)
-                .color(fg)
-                .text(n.message.clone()),
-        )
+        .child(label().font_size(13.5).color(fg).text(n.message.clone()))
 }
 
 const fn kind_colors(kind: NotificationKind) -> (Color, Color) {
     match kind {
-        NotificationKind::Info => (
-            Color::from_rgb(32, 48, 70),
-            Color::from_rgb(220, 220, 220),
-        ),
-        NotificationKind::Success => (
-            Color::from_rgb(32, 70, 48),
-            Color::from_rgb(230, 240, 230),
-        ),
-        NotificationKind::Warning => (
-            Color::from_rgb(70, 60, 32),
-            Color::from_rgb(240, 230, 200),
-        ),
-        NotificationKind::Error => (
-            Color::from_rgb(70, 32, 36),
-            Color::from_rgb(240, 220, 220),
-        ),
+        NotificationKind::Info => (Color::from_rgb(32, 48, 70), Color::from_rgb(220, 220, 220)),
+        NotificationKind::Success => (Color::from_rgb(32, 70, 48), Color::from_rgb(230, 240, 230)),
+        NotificationKind::Warning => (Color::from_rgb(70, 60, 32), Color::from_rgb(240, 230, 200)),
+        NotificationKind::Error => (Color::from_rgb(70, 32, 36), Color::from_rgb(240, 220, 220)),
     }
 }
 
@@ -312,10 +301,6 @@ impl Component for BookmarkEditModal {
         let mut card_area: State<Area> = use_state(Area::default);
         let viewport = freya::prelude::try_consume_context::<notein_ui_kit::ViewportArea>();
 
-        // `max_width` caps the modal so a very long title / body does
-        // not grow it past readable; `Size::auto()` lets it shrink to
-        // the content width (short refs + short note stay compact).
-        let card_max_width = 320.0_f32;
         let (anchor_left, anchor_top_below) = anchor
             .map(|(x, y)| (Some(x), y + 12.0))
             .unwrap_or((None, 72.0));
@@ -325,7 +310,7 @@ impl Component for BookmarkEditModal {
         let card = rect()
             .layer(Layer::OverlayLevel(6))
             .width(Size::auto())
-            .max_width(Size::px(card_max_width))
+            .max_width(Size::px(342.))
             .padding((12., 14.))
             .with_corner_radius(12.0)
             .background(Color::from_rgb(28, 28, 32))
@@ -336,7 +321,11 @@ impl Component for BookmarkEditModal {
                     card_area.set(new_area);
                 }
             })
-            .opacity(if is_measured || anchor_left.is_none() { 1.0 } else { 0.0 });
+            .opacity(if is_measured || anchor_left.is_none() {
+                1.0
+            } else {
+                0.0
+            });
 
         let card = match (anchor_left, viewport, is_measured) {
             (None, _, _) => card.position(Position::new_global().top(anchor_top_below).right(16.)),
@@ -356,12 +345,8 @@ impl Component for BookmarkEditModal {
                         measured.height(),
                         16.0,
                     );
-                    let left = notein_ui_kit::clamp_popup_left(
-                        viewport_area,
-                        x,
-                        measured.width(),
-                        16.0,
-                    );
+                    let left =
+                        notein_ui_kit::clamp_popup_left(viewport_area, x, measured.width(), 16.0);
                     card.position(Position::new_global().top(top).left(left))
                 }
             }
@@ -378,8 +363,7 @@ impl Component for BookmarkEditModal {
             .unwrap_or(initial_wheel_color);
         let stored_special = *color_special.read();
         let matches_preset = DEFAULT_SWATCHES.iter().any(|c| *c == current_color);
-        let display_special =
-            stored_special.or_else(|| (!matches_preset).then_some(current_color));
+        let display_special = stored_special.or_else(|| (!matches_preset).then_some(current_color));
         let selected_is_special = !matches_preset;
         let selected_preset = matches_preset.then_some(current_color);
         let picker_open = *color_picker_open.read();
