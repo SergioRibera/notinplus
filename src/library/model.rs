@@ -147,6 +147,19 @@ impl ItemKind {
             | Self::PluginCanvas { .. } => None,
         }
     }
+
+    /// Plugin id citing this item in either the `PluginCanvas`
+    /// standalone form or the `DocLinked` bundle. Used by chip-nav /
+    /// cross-item routing to find an item of a specific plugin kind
+    /// without hardcoding kind-shape in the shell.
+    #[must_use]
+    pub fn hosting_plugin(&self) -> Option<&str> {
+        match self {
+            Self::DocLinked { source_plugin } => Some(source_plugin),
+            Self::PluginCanvas { plugin_id, .. } => Some(plugin_id),
+            Self::Canvas | Self::PdfCanvas | Self::SourcePdf => None,
+        }
+    }
 }
 
 /// Paper pattern rendered underneath the canvas strokes. Only the

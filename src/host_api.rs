@@ -39,6 +39,13 @@ pub struct HostInner {
     /// At most one bookmark edit modal is open at a time. The shell
     /// renders when `Some`, drains + fires the callback on save/cancel.
     pending_bookmark_edit: RwLock<Option<PendingBookmarkEdit>>,
+    /// Pending anchor payloads keyed by `(plugin_id, item)`. Queued
+    /// by [`HostApi::queue_source_anchor`] and drained via
+    /// [`HostApi::take_source_anchor`] when a plugin viewer mounts.
+    pending_anchors: Mutex<HashMap<(String, [u8; 16]), Vec<u8>>>,
+    /// Fan-out senders keyed by plugin id. A broadcast on
+    /// `queue_source_anchor` tells live viewers to re-check pending.
+    anchor_subs: Mutex<Vec<(String, flume::Sender<[u8; 16]>)>>,
 }
 
 /// Live bookmark edit request pulled by the shell's modal.
@@ -105,6 +112,8 @@ pub fn host() -> Arc<HostInner> {
             progress: RwLock::new(HashMap::new()),
             notifications: RwLock::new(VecDeque::new()),
             pending_bookmark_edit: RwLock::new(None),
+            pending_anchors: Mutex::new(HashMap::new()),
+            anchor_subs: Mutex::new(Vec::new()),
         })
     }))
 }
@@ -297,6 +306,40 @@ impl HostApi for HostInner {
             (prev.callback)(None);
         }
         self.bump();
+    }
+
+    fn queue_source_anchor(&self, plugin_id: &str, item: [u8; 16], payload: Vec<u8>) {
+        {
+            let mut guard = self
+                .pending_anchors
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            guard.insert((plugin_id.to_string(), item), payload);
+        }
+        let mut subs = self.anchor_subs.lock().unwrap_or_else(|e| e.into_inner());
+        subs.retain(|(sub_id, tx)| {
+            if sub_id != plugin_id {
+                return !tx.is_disconnected();
+            }
+            tx.try_send(item).is_ok() || !tx.is_disconnected()
+        });
+    }
+
+    fn take_source_anchor(&self, plugin_id: &str, item: [u8; 16]) -> Option<Vec<u8>> {
+        let mut guard = self
+            .pending_anchors
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        guard.remove(&(plugin_id.to_string(), item))
+    }
+
+    fn subscribe_source_anchor(&self, plugin_id: &str) -> flume::Receiver<[u8; 16]> {
+        let (tx, rx) = flume::bounded(8);
+        self.anchor_subs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((plugin_id.to_string(), tx));
+        rx
     }
 }
 

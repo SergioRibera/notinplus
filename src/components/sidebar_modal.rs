@@ -689,18 +689,7 @@ fn kind_label(kind: &ItemKind) -> &'static str {
 }
 
 fn route_for_kind(kind: &ItemKind, id: ItemId) -> Route {
-    match kind {
-        ItemKind::Canvas => Route::CanvasView { id },
-        ItemKind::PdfCanvas => Route::CanvasPdfView { id },
-        ItemKind::SourcePdf => Route::SourcePdfView { id },
-        ItemKind::DocLinked { .. } => Route::DocLinkedView { id },
-        ItemKind::PluginCanvas { plugin_id, .. }
-            if plugin_id == "io.notein.bible.viewer" =>
-        {
-            Route::BibleView { id }
-        }
-        ItemKind::PluginCanvas { .. } => Route::Home,
-    }
+    crate::route::route_for_kind(kind, id)
 }
 
 // ---------- Contents tab --------------------------------------------------

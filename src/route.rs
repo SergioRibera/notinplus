@@ -34,7 +34,7 @@ use crate::canvas::{Board, Viewport, lock};
 use crate::doc::Doc;
 use crate::doc_linked::{DocLinkedView, SourcePdfView};
 use crate::home::Home;
-use crate::library::{BackgroundStyle, ItemId, LibraryError, bodies};
+use crate::library::{BackgroundStyle, ItemId, ItemKind, LibraryError, bodies};
 use crate::prefs;
 use crate::workspace_view::WorkspaceView;
 
@@ -83,6 +83,27 @@ impl Route {
             | Route::SourcePdfView { .. }
             | Route::WorkspaceView { .. } => None,
         }
+    }
+}
+
+/// Native route for an item of `kind`. Covers every `ItemKind`
+/// variant exhaustively — new kinds must extend this map or ship
+/// a dedicated route. Keeps shell-side navigation (chip taps,
+/// sidebar jumps, slow-path auto-opens) free of per-kind
+/// branching.
+#[must_use]
+pub fn route_for_kind(kind: &ItemKind, id: ItemId) -> Route {
+    match kind {
+        ItemKind::Canvas => Route::CanvasView { id },
+        ItemKind::PdfCanvas => Route::CanvasPdfView { id },
+        ItemKind::SourcePdf => Route::SourcePdfView { id },
+        ItemKind::DocLinked { .. } => Route::DocLinkedView { id },
+        ItemKind::PluginCanvas { plugin_id, .. }
+            if plugin_id == "io.notein.bible.viewer" =>
+        {
+            Route::BibleView { id }
+        }
+        ItemKind::PluginCanvas { .. } => Route::Home,
     }
 }
 
