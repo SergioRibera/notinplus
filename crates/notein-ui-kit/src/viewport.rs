@@ -35,6 +35,33 @@ impl ViewportArea {
     }
 }
 
+/// Scoped sibling of [`ViewportArea`] for popups that must stay inside
+/// a specific sub-region of the window (a canvas pane, a split-view
+/// half, etc.) instead of the whole viewport. Shells install one of
+/// these per pane; descendants consume it to clamp against the pane's
+/// bounds.
+#[derive(Clone, Copy)]
+pub struct PaneArea(pub State<Area>);
+
+impl PartialEq for PaneArea {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for PaneArea {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PaneArea").finish_non_exhaustive()
+    }
+}
+
+impl PaneArea {
+    #[must_use]
+    pub fn get(self) -> Area {
+        *self.0.read()
+    }
+}
+
 /// Compute a vertical top offset for a popup anchored to `trigger`.
 /// `below_top` is the default position (just below the trigger);
 /// `popup_height` is the popup's own (or capped) height.

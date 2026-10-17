@@ -21,5 +21,5 @@ pub use color_wheel::{ColorWheel, DEFAULT_SWATCHES, auto_color, color_swatch_str
 pub use form_input::FormInput;
 pub use modal::{Modal, ModalChrome, ModalController, ModalPlacement, ModalPortal};
 pub use viewport::{
-    ViewportArea, clamp_popup_left, clamp_popup_top, clamp_popup_top_from_point,
+    PaneArea, ViewportArea, clamp_popup_left, clamp_popup_top, clamp_popup_top_from_point,
 };

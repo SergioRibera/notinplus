@@ -649,6 +649,12 @@ pub(crate) fn canvas_chrome(
             .function(Function::Cubic)
     });
     let palette_progress = palette_anim.get().value();
+    // Per-pane area probe. Descendants (bookmark card overlay, future
+    // popups) consume `PaneArea` to clamp against the pane's own
+    // bounds instead of the full window — matters under split-view
+    // layouts where the pane does not start at (0, 0).
+    let pane_area_signal = use_state(Area::default);
+    provide_context(notein_ui_kit::PaneArea(pane_area_signal));
     let Some(board) = state.active_board.read().clone() else {
         // No pane mounted yet — zero-sized placeholder so parent
         // layout slot does not jump when the pane arrives.
@@ -673,6 +679,14 @@ pub(crate) fn canvas_chrome(
                 .right(0.0)
                 .bottom(0.0),
         )
+        .on_sized({
+            let mut setter = pane_area_signal;
+            move |e: Event<SizedEventData>| {
+                if *setter.peek() != e.area {
+                    setter.set(e.area);
+                }
+            }
+        })
         .child(top_right_stack(&board, &state, pad))
         .child(left_top(&board, &state, coords, pad, palette_progress))
         .child(zoom_overlay(&board, state.zoom, pad))

@@ -39,6 +39,13 @@ pub fn bookmark_card_overlay(
     mut selected: State<Option<BookmarkId>>,
     body_buffer: State<String>,
 ) -> impl IntoElement {
+    // Hooks must run on every render regardless of the selection /
+    // presence state — otherwise the hook index drifts when a bookmark
+    // opens / closes between frames. Read all state up-front, then
+    // branch on the derived flags.
+    let pane_area = freya::prelude::try_consume_context::<notein_ui_kit::PaneArea>();
+    let mut card_area: State<Area> = use_state(Area::default);
+
     let Some(selected_id) = *selected.read() else {
         // Nothing selected — render a zero-area placeholder so the
         // overlay slot in `app::root` always has a child regardless
@@ -92,21 +99,75 @@ pub fn bookmark_card_overlay(
         close_selected.set(None);
     };
 
-    // Position the card below the pin, nudged right so the top-left
-    // corner lands roughly on the pin baseline. Clamping to the
-    // surface is left to Phase 1.6 — the current overlay stays
-    // visible under any realistic zoom.
-    let left = (card_x - CARD_WIDTH * 0.5).max(8.0);
-    let top = card_y + CARD_GAP;
+    // `(card_x, card_y)` are pane-local screen coords from
+    // `Viewport::world_to_screen`. We keep the card in pane-local
+    // space (via `Position::new_absolute`, relative to the chrome
+    // overlay rect that fills the pane) so split-view layouts don't
+    // offset the popup by the pane's window origin.
+    //
+    // Clamping walks a pane-origin `Area` (0, 0, pane_w, pane_h) so
+    // the Bible-style "stay inside the visible viewport even when the
+    // trigger sits near the edge" behaviour applies to the current
+    // pane rather than the full window.
+    let anchor_top_below = card_y + CARD_GAP;
+    let anchor_left_raw = card_x - CARD_WIDTH * 0.5;
+
+    let measured = *card_area.read();
+    let is_measured = measured.height() > 0.0;
+
+    let (top, left) = match (pane_area, is_measured) {
+        (Some(pa), true) => {
+            let pane = pa.get();
+            let pane_w = pane.width();
+            let pane_h = pane.height();
+            if pane_w > 0.0 && pane_h > 0.0 {
+                // Clamp runs in window-coord space (same frame as the
+                // pane `Area`), then we subtract the pane origin to
+                // land back in pane-local coords for
+                // `Position::new_absolute`.
+                let ox = pane.min_x();
+                let oy = pane.min_y();
+                let top_global = notein_ui_kit::clamp_popup_top_from_point(
+                    pane,
+                    card_y + oy,
+                    anchor_top_below + oy,
+                    measured.height(),
+                    16.0,
+                );
+                let left_global = notein_ui_kit::clamp_popup_left(
+                    pane,
+                    anchor_left_raw + ox,
+                    measured.width(),
+                    16.0,
+                );
+                (top_global - oy, left_global - ox)
+            } else {
+                (anchor_top_below.max(8.0), anchor_left_raw.max(8.0))
+            }
+        }
+        _ => (anchor_top_below.max(8.0), anchor_left_raw.max(8.0)),
+    };
+
+    // Hide the card for the first frame (until `on_sized` publishes
+    // its real height) so the user does not see a one-frame flash at
+    // the un-clamped position.
+    let opacity = if is_measured { 1.0 } else { 0.0 };
 
     rect()
-        .position(Position::new_global().top(top).left(left))
+        .position(Position::new_absolute().top(top).left(left))
         .layer(Layer::Overlay)
         .width(Size::px(CARD_WIDTH))
         .padding((12.0, 12.0))
         .spacing(10.0)
         .background(Color::from_rgb(28, 28, 32))
         .with_corner_radius(10.0)
+        .opacity(opacity)
+        .on_sized(move |e: Event<SizedEventData>| {
+            let new_area = e.area;
+            if *card_area.peek() != new_area {
+                card_area.set(new_area);
+            }
+        })
         .child(
             BookmarkBodyEditor::new(body_buffer)
                 .placeholder("Nota")
