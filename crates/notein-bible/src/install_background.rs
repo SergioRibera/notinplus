@@ -377,13 +377,6 @@ fn prefetch_all_headings(
         log::debug!("headings prefetch: no sibling id for {bible_id}; skipping");
         return;
     };
-    let books = match db.list_books(bible_id) {
-        Ok(b) => b,
-        Err(e) => {
-            log::warn!("headings prefetch: list_books failed: {e:?}");
-            return;
-        }
-    };
     // Reset the shared counters so the install modal animates through
     // the subtitle pass instead of looking frozen at the last state
     // from `install_bible`.
@@ -391,7 +384,7 @@ fn prefetch_all_headings(
         let mut p = progress.write().unwrap();
         p.stage = InstallStage::Downloading;
         p.done_books = 0;
-        p.total_books = books.len();
+        p.total_books = 66;
     }
     if let Some(h) = host {
         h.report_progress(
@@ -399,45 +392,42 @@ fn prefetch_all_headings(
             PROGRESS_TOKEN,
             HostProgress::Update {
                 done: 0,
-                total: Some(books.len() as u64),
+                total: Some(66),
                 label: Some("Descargando subtítulos…".into()),
             },
         );
     }
-    for (idx, book) in books.iter().enumerate() {
-        let chapters = db.chapter_count(bible_id, &book.book_id).unwrap_or(0);
-        for chapter in 1..=chapters {
-            if let Err(e) = helloao::install_headings_for_chapter(
-                db,
-                client,
-                cache_dir,
-                bible_id,
-                source,
-                &book.book_id,
-                chapter,
-                CACHE_TTL,
-            ) {
-                log::debug!(
-                    "headings prefetch: {bible_id} {} {chapter}: {e}",
-                    book.book_id
+    let progress_clone = progress.clone();
+    let host_clone = host.cloned();
+    let result = helloao::install_all_headings(
+        db,
+        client,
+        cache_dir,
+        bible_id,
+        source,
+        CACHE_TTL,
+        move |done, total, book_name| {
+            {
+                let mut p = progress_clone.write().unwrap();
+                p.done_books = done;
+                p.total_books = total;
+            }
+            if let Some(h) = &host_clone {
+                h.report_progress(
+                    PLUGIN_ID,
+                    PROGRESS_TOKEN,
+                    HostProgress::Update {
+                        done: done as u64,
+                        total: Some(total as u64),
+                        label: Some(format!("Subtítulos — {book_name}")),
+                    },
                 );
             }
-        }
-        {
-            let mut p = progress.write().unwrap();
-            p.done_books = idx + 1;
-        }
-        if let Some(h) = host {
-            h.report_progress(
-                PLUGIN_ID,
-                PROGRESS_TOKEN,
-                HostProgress::Update {
-                    done: (idx + 1) as u64,
-                    total: Some(books.len() as u64),
-                    label: Some(format!("Subtítulos — {}", book.name)),
-                },
-            );
-        }
+        },
+    );
+    match result {
+        Ok(n) => log::info!("headings prefetch: {bible_id} inserted {n} rows via {source}"),
+        Err(e) => log::warn!("headings prefetch: {bible_id} failed: {e}"),
     }
 }
 

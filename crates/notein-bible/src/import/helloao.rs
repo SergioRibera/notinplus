@@ -224,6 +224,134 @@ pub fn install_footnotes_for_chapter(
     Ok(inserted)
 }
 
+/// Bulk variant: one HTTP request pulls the entire translation
+/// (`/api/<source>/complete.json`, ~6 MB for a Spanish Bible) and
+/// writes every `(book, chapter)` heading row in a single DB
+/// transaction per book. Replaces the per-chapter fan-out used by
+/// [`install_headings_for_chapter`] when the whole Bible needs to be
+/// enriched at once — ~1189 requests collapse to 1.
+///
+/// `on_book_progress(idx, total, book_display_name)` fires after each
+/// book commit so the caller can forward progress to the install
+/// modal.
+pub fn install_all_headings(
+    db: &Db,
+    client: &Client,
+    cache_dir: &Path,
+    bible_id: &str,
+    source_translation: &str,
+    cache_ttl: Duration,
+    mut on_book_progress: impl FnMut(usize, usize, &str),
+) -> Result<usize, HelloaoError> {
+    let bulk_dir = cache_dir.join("helloao").join(source_translation);
+    std::fs::create_dir_all(&bulk_dir)?;
+    let dest = bulk_dir.join("complete.json");
+    let url = format!("{HELLOAO_BASE}/{source_translation}/complete.json");
+    fetch_if_stale(client, &url, &dest, cache_ttl)?;
+
+    let bytes = std::fs::read(&dest)?;
+    let bundle: CompleteTranslation = serde_json::from_slice(&bytes)
+        .map_err(|e| HelloaoError::Json { context: url.clone(), source: e })?;
+
+    // The DB stores book ids lowercase (`gen`, `1co`, …) but helloao
+    // emits uppercase OSIS (`GEN`, `1CO`). Normalise once here so the
+    // insert matches the primary key.
+    let total_books = bundle.books.len();
+    let mut total_inserted = 0usize;
+    for (idx, book) in bundle.books.iter().enumerate() {
+        let book_id = book.id.to_lowercase();
+        let display = if book.name.trim().is_empty() {
+            book.id.as_str()
+        } else {
+            book.name.as_str()
+        };
+        let book_rows = db.with_conn_mut(|conn| {
+            let tx = conn.transaction().map_err(crate::db::DbError::from)?;
+            tx.execute(
+                "DELETE FROM headers WHERE bible_id = ?1 AND book_id = ?2",
+                params![bible_id, &book_id],
+            )
+            .map_err(crate::db::DbError::from)?;
+            let mut inserted = 0usize;
+            {
+                let mut stmt = tx
+                    .prepare(
+                        "INSERT INTO headers (bible_id, book_id, chapter, before_verse, text)
+                         VALUES (?1, ?2, ?3, ?4, ?5)",
+                    )
+                    .map_err(crate::db::DbError::from)?;
+                for chap in &book.chapters {
+                    let chapter_num = chap.chapter.number.max(1);
+                    let mut next_verse: u16 = 1;
+                    for node in &chap.chapter.content {
+                        match node {
+                            ContentNode::Verse { number } => {
+                                next_verse = (*number).max(1);
+                            }
+                            ContentNode::Heading { content } => {
+                                let text: String = content
+                                    .iter()
+                                    .map(HeadingPiece::render)
+                                    .collect::<Vec<_>>()
+                                    .join(" ");
+                                let text = text.trim().to_string();
+                                if text.is_empty() {
+                                    continue;
+                                }
+                                stmt.execute(params![
+                                    bible_id,
+                                    &book_id,
+                                    chapter_num as i64,
+                                    next_verse as i64,
+                                    text,
+                                ])
+                                .map_err(crate::db::DbError::from)?;
+                                inserted += 1;
+                            }
+                            ContentNode::Other => {}
+                        }
+                    }
+                }
+            }
+            tx.commit().map_err(crate::db::DbError::from)?;
+            Ok(inserted)
+        })?;
+        total_inserted += book_rows;
+        on_book_progress(idx + 1, total_books, display);
+    }
+    Ok(total_inserted)
+}
+
+#[derive(Debug, Deserialize)]
+struct CompleteTranslation {
+    #[serde(default)]
+    books: Vec<CompleteBook>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CompleteBook {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    chapters: Vec<CompleteChapter>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CompleteChapter {
+    #[serde(default)]
+    chapter: CompleteChapterInner,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct CompleteChapterInner {
+    #[serde(default)]
+    number: u16,
+    #[serde(default)]
+    content: Vec<ContentNode>,
+}
+
 /// Download the heading payload for `(bible, book, chapter)` + persist
 /// into `headers`. Idempotent: wipes the matching rows first so a
 /// re-run never duplicates. Returns the number of inserted rows.
