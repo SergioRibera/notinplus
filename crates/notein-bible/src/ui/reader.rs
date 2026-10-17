@@ -237,7 +237,7 @@ pub fn chapter_view(
         .width(Size::fill())
         .height(Size::fill())
         .background(parse_rgb(theme::BG))
-        .padding((24., 28.))
+        .padding((0., 28., 12., 28.))
         .child(
             ScrollView::new().child(
                 rect()

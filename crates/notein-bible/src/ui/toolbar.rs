@@ -71,9 +71,8 @@ where
 
     let row = rect()
         .width(Size::fill())
-        .height(Size::px(56.0))
         .background(parse_rgb(theme::BG))
-        .padding((0., 16.))
+        .padding(16.)
         .direction(Direction::Horizontal)
         .cross_align(Alignment::Center)
         .main_align(Alignment::SpaceBetween)

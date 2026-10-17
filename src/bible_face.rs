@@ -12,6 +12,7 @@
 
 use std::sync::Arc;
 
+use freya::icons::lucide::arrow_left;
 use freya::prelude::*;
 use freya::router::RouterContext;
 
@@ -506,10 +507,14 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                         .cloned()
                 };
                 let draft = notein_plugin::BookmarkDraft {
-                    body: existing.as_ref().map(|h| h.note.clone()).unwrap_or_default(),
-                    color: existing.as_ref().and_then(|h| h.color).map(|c| {
-                        notein_bible::state::u32_to_rgba(c)
-                    }),
+                    body: existing
+                        .as_ref()
+                        .map(|h| h.note.clone())
+                        .unwrap_or_default(),
+                    color: existing
+                        .as_ref()
+                        .and_then(|h| h.color)
+                        .map(|c| notein_bible::state::u32_to_rgba(c)),
                     refs: Vec::new(),
                 };
                 let title = if lo == hi {
@@ -526,18 +531,9 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                 let (tx, rx) = flume::bounded::<Option<notein_plugin::BookmarkDraft>>(1);
                 spawn(async move {
                     if let Ok(Some(draft)) = rx.recv_async().await {
-                        let packed = draft
-                            .color
-                            .map(notein_bible::state::rgba_to_u32);
+                        let packed = draft.color.map(notein_bible::state::rgba_to_u32);
                         let mut st = state.write();
-                        st.upsert_highlight(
-                            &book_cb,
-                            chapter_num,
-                            lo,
-                            hi,
-                            packed,
-                            draft.body,
-                        );
+                        st.upsert_highlight(&book_cb, chapter_num, lo, hi, packed, draft.body);
                     }
                     // Preview is per-session; drop it on commit AND
                     // on cancel (recv returning Ok(None)).
@@ -547,8 +543,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                 // Preview sink mirrors wheel drags into the plugin's
                 // live-preview state so the paragraph bg rect tracks
                 // the user's choice before the Save button fires.
-                let (preview_tx, preview_rx) =
-                    flume::unbounded::<notein_plugin::BookmarkDraft>();
+                let (preview_tx, preview_rx) = flume::unbounded::<notein_plugin::BookmarkDraft>();
                 spawn_forever(async move {
                     while let Ok(draft) = preview_rx.recv_async().await {
                         if let Some(rgba) = draft.color {
@@ -654,6 +649,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                 nav_sheet_page,
                 vec![book_page.into_element(), chapter_page],
             ))
+            .background((10, 10, 10))
             .open(nav_sheet_open)
             .height(460.0),
         );
@@ -674,7 +670,7 @@ fn book_grid_page(
     // the container's edge; the ScrollView only kicks in once the
     // wrapped rows overflow its height. Without the wrapper the row
     // just clipped at the viewport bottom.
-    let mut row = rect()
+    let mut grid = rect()
         .width(Size::fill())
         .horizontal()
         .spacing(8.0)
@@ -682,13 +678,13 @@ fn book_grid_page(
     for b in books {
         let book_id = b.book_id.clone();
         let mut on_pick = on_pick.clone();
-        row = row.child(
+        grid = grid.child(
             rect()
                 .width(Size::px(CELL))
                 .height(Size::px(CELL))
                 .center()
                 .with_corner_radius(10.0)
-                .background(Color::from_rgb(38, 38, 42))
+                .background(Color::from_rgb(32, 32, 32))
                 .on_press(move |_: Event<PressEventData>| on_pick(book_id.clone()))
                 .child(
                     label()
@@ -701,7 +697,7 @@ fn book_grid_page(
     rect()
         .expanded()
         .padding((0., 4.))
-        .child(ScrollView::new().child(row))
+        .child(ScrollView::new().child(grid))
 }
 
 /// Grid of chapter numbers for the drilled-in book, with a back chip
@@ -713,23 +709,16 @@ fn chapter_grid_page(
     on_pick: impl FnMut(u16) + Clone + 'static,
 ) -> impl IntoElement {
     const CELL: f32 = 48.0;
-    const COLS: usize = 7;
     let header = rect()
         .direction(Direction::Horizontal)
         .cross_align(Alignment::Center)
         .spacing(10.0)
+        .on_press(on_back)
         .child(
-            rect()
-                .padding((4., 10.))
-                .with_corner_radius(6.0)
-                .background(Color::from_rgb(55, 60, 70))
-                .on_press(on_back)
-                .child(
-                    label()
-                        .font_size(12.0)
-                        .color(Color::from_rgb(230, 230, 230))
-                        .text("‹ Libros"),
-                ),
+            SvgViewer::new(arrow_left())
+                .color(Color::from_rgb(230, 230, 230))
+                .width(Size::px(14.))
+                .height(Size::px(14.)),
         )
         .child(
             label()
@@ -738,39 +727,34 @@ fn chapter_grid_page(
                 .text(book_name.to_string()),
         );
 
-    let mut grid = rect().width(Size::fill()).spacing(8.0);
-    let mut chapter: u16 = 1;
-    while chapter <= count {
-        let mut row = rect()
-            .direction(Direction::Horizontal)
-            .spacing(8.0)
-            .width(Size::fill());
-        let row_end = (chapter as usize + COLS).min(count as usize + 1);
-        for c in (chapter as usize)..row_end {
-            let c_u16 = c as u16;
-            let mut on_pick = on_pick.clone();
-            row = row.child(
-                rect()
-                    .width(Size::px(CELL))
-                    .height(Size::px(CELL))
-                    .center()
-                    .with_corner_radius(8.0)
-                    .background(Color::from_rgb(38, 38, 42))
-                    .on_press(move |_: Event<PressEventData>| on_pick(c_u16))
-                    .child(
-                        label()
-                            .font_size(13.0)
-                            .color(Color::from_rgb(230, 230, 230))
-                            .text(format!("{c_u16}")),
-                    ),
-            );
-        }
-        grid = grid.child(row);
-        chapter = row_end as u16;
+    let mut grid = rect()
+        .width(Size::fill())
+        .horizontal()
+        .spacing(8.0)
+        .content(Content::wrap_spacing(8.));
+
+    for c in 1..=count {
+        let mut on_pick = on_pick.clone();
+        grid = grid.child(
+            rect()
+                .width(Size::px(CELL))
+                .height(Size::px(CELL))
+                .center()
+                .with_corner_radius(8.0)
+                .background(Color::from_rgb(32, 32, 32))
+                .on_press(move |_: Event<PressEventData>| on_pick(c))
+                .child(
+                    label()
+                        .font_size(13.0)
+                        .color(Color::from_rgb(230, 230, 230))
+                        .text(format!("{c}")),
+                ),
+        );
     }
 
     rect()
-        .width(Size::fill())
+        .expanded()
+        .padding((0., 4.))
         .spacing(10.0)
         .child(header)
         .child(ScrollView::new().child(grid))

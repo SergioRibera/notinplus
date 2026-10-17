@@ -47,6 +47,7 @@ use freya::prelude::*;
 pub struct BottomSheet {
     open: Option<State<bool>>,
     height: f32,
+    background: Color,
     dismiss_on_backdrop: bool,
     backdrop_alpha: u8,
     body: Element,
@@ -66,6 +67,7 @@ impl BottomSheet {
         Self {
             open: None,
             height: 360.0,
+            background: Color::from_rgb(26, 26, 30),
             dismiss_on_backdrop: true,
             backdrop_alpha: 120,
             body: body.into_element(),
@@ -84,6 +86,11 @@ impl BottomSheet {
 
     pub fn dismiss_on_backdrop(mut self, dismiss: bool) -> Self {
         self.dismiss_on_backdrop = dismiss;
+        self
+    }
+
+    pub fn background(mut self, color: impl Into<Color>) -> Self {
+        self.background = color.into();
         self
     }
 
@@ -219,6 +226,7 @@ impl Component for BottomSheet {
                 // Backdrop — stretched to the captured window area so
                 // taps anywhere outside the card dismiss it.
                 rect()
+                    .layer(Layer::OverlayLevel(4))
                     .position(Position::new_global().top(0.).left(0.))
                     .width(Size::px(w.max(0.0)))
                     .height(Size::px(h.max(0.0)))
@@ -229,14 +237,10 @@ impl Component for BottomSheet {
                 // Card pinned to the window's bottom edge, offset
                 // down by `translate_y` during the slide-in.
                 rect()
-                    .position(
-                        Position::new_global()
-                            .left(0.)
-                            .bottom(translate_y),
-                    )
+                    .position(Position::new_global().left(0.).bottom(translate_y))
                     .width(Size::px(w.max(0.0)))
                     .height(Size::px(height))
-                    .background(Color::from_rgb(26, 26, 30))
+                    .background(self.background.clone())
                     .corner_radius(CornerRadius::new(16.0, 16.0, 0.0, 0.0))
                     .padding((12., 16.))
                     .spacing(10.0)

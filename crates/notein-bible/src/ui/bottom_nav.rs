@@ -65,7 +65,9 @@ where
 {
     rect()
         .height(Size::px(PILL_HEIGHT))
-        .min_width(Size::px(220.0))
+        .width(Size::percent(100.))
+        .content(Content::Flex)
+        .max_width(Size::px(220.0))
         .direction(Direction::Horizontal)
         .cross_align(Alignment::Center)
         .main_align(Alignment::SpaceBetween)
@@ -87,11 +89,15 @@ where
         )
         .child(
             rect()
+                .width(Size::flex(1.))
                 .padding((4., 10.))
                 .on_press(move |_: Event<PressEventData>| on_open_picker())
                 .child(
                     label()
+                        .width(Size::fill())
                         .font_size(14.0)
+                        .text_align(TextAlign::Center)
+                        .text_overflow(TextOverflow::Ellipsis)
                         .color(parse_rgb(theme::TEXT_PRIMARY))
                         .text(caption),
                 ),
