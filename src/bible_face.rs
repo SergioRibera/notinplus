@@ -30,10 +30,6 @@ use std::time::Duration;
 use crate::library::ItemId;
 
 const BIBLE_PLUGIN_ID: &str = "io.notein.bible.viewer";
-/// Plugin id used by the Bible *source* (chip refs + completions).
-/// Separate from `BIBLE_PLUGIN_ID` (the viewer / canvas plugin) —
-/// chip taps route through the source id's pending-anchor channel.
-const BIBLE_SOURCE_PLUGIN_ID: &str = "io.notein.bible";
 
 #[derive(Debug, PartialEq)]
 pub struct BibleFace {
@@ -134,7 +130,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
         let mut jump_cell_setter = jump_cell;
         let state = use_state(move || {
             let initial_jump = crate::host_api::host_handle()
-                .take_source_anchor(BIBLE_SOURCE_PLUGIN_ID, item.0)
+                .take_source_anchor(BIBLE_PLUGIN_ID, item.0)
                 .and_then(|bytes| notein_bible::BibleAnchor::decode(&bytes));
             jump_cell_setter.set(initial_jump.as_ref().map(|j| j.start_verse));
             let mut st =
@@ -207,7 +203,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
     let notify_flash = flash_verse;
     use_hook(move || {
         let host = crate::host_api::host_handle();
-        let rx = host.subscribe_source_anchor(BIBLE_SOURCE_PLUGIN_ID);
+        let rx = host.subscribe_source_anchor(BIBLE_PLUGIN_ID);
         let mut state_setter = notify_state;
         let mut flash_setter = notify_flash;
         let db_notify = db_notify;
@@ -217,7 +213,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                     continue;
                 }
                 let Some(bytes) = crate::host_api::host_handle()
-                    .take_source_anchor(BIBLE_SOURCE_PLUGIN_ID, item.0)
+                    .take_source_anchor(BIBLE_PLUGIN_ID, item.0)
                 else {
                     continue;
                 };

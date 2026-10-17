@@ -220,7 +220,7 @@ fn navigate_pdf(item: ItemId, anchor: Vec<u8>) {
     // and poll `active_boards` until the mount lands, then centre +
     // re-pulse so the pulse window isn't exhausted by the route /
     // asset-load latency.
-    let router = freya::router::RouterContext::get();
+    let router = crate::app::global_router();
     let _ = router.push(crate::route::Route::CanvasPdfView { id: item });
     freya::prelude::spawn(async move {
         for _ in 0..30 {
@@ -271,11 +271,17 @@ fn navigate_plugin(plugin_id: &str, anchor: &[u8]) {
         );
         return;
     };
-    let plugin_id = plugin_id.to_string();
-    // Capture router at call time — the pointer-down handler runs in
-    // a Freya scope so `RouterContext::get()` resolves here. The
-    // async spawn below cannot call it after `.await`.
-    let router = freya::router::RouterContext::get();
+    // Target plugin id is the viewer side — plugins with a split
+    // source / viewer design (e.g. Bible) override `viewer_kind_id`
+    // so the library lookup + pending-anchor channel land on the
+    // right id. For single-id plugins the default returns
+    // `self.kind_id()`, keeping behaviour transparent.
+    let viewer_id = plugin.viewer_kind_id().to_string();
+    // Capture the launch-installed router — reaching through
+    // `RouterContext::get()` would panic on chips rendered outside
+    // the Router subtree (e.g. the host-level `BookmarkEditModal`
+    // lives in `HostOverlay`, a sibling of Outlet).
+    let router = crate::app::global_router();
     freya::prelude::spawn(async move {
         let Ok(handle) = crate::home::open_library().await else {
             log::warn!("navigate_plugin: library handle unavailable");
@@ -286,18 +292,18 @@ fn navigate_plugin(plugin_id: &str, anchor: &[u8]) {
             lib.index().items.iter().find_map(|item| {
                 item.kind
                     .hosting_plugin()
-                    .filter(|id| *id == plugin_id)
+                    .filter(|id| *id == viewer_id)
                     .map(|_| (item.id, crate::route::route_for_kind(&item.kind, item.id)))
             })
         };
         let Some((item_id, route)) = found else {
             log::warn!(
-                "navigate_plugin: no library item hosts {plugin_id}; chip \
+                "navigate_plugin: no library item hosts {viewer_id}; chip \
                  target unreachable"
             );
             return;
         };
-        crate::host_api::host_handle().queue_source_anchor(&plugin_id, item_id.0, payload);
+        crate::host_api::host_handle().queue_source_anchor(&viewer_id, item_id.0, payload);
         let _ = router.push(route);
     });
 }
