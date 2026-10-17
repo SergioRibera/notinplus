@@ -208,6 +208,25 @@ pub trait Source: Send + Sync + std::fmt::Debug + std::any::Any {
     fn install_host(&self, host: crate::Host) {
         let _ = host;
     }
+
+    /// Chip-tap entry: the user clicked a `SourceRef::Plugin` chip
+    /// pointing at `anchor` and owned by this plugin. Returning
+    /// `Some(payload)` tells the shell to find any library item whose
+    /// kind cites this plugin's [`Self::kind_id`], queue `payload`
+    /// under `(kind_id, item)` via
+    /// [`crate::HostApi::queue_source_anchor`], and route to that
+    /// item's native face. The mounted plugin viewer pulls the
+    /// payload via [`crate::HostApi::take_source_anchor`] /
+    /// [`crate::HostApi::subscribe_source_anchor`].
+    ///
+    /// Default returns `None` — chip taps on inert plugins no-op.
+    /// Plugins that want their own anchor-interpretation on tap (e.g.
+    /// scroll to the exact page / verse) override and return a
+    /// private payload the viewer knows how to decode.
+    fn navigate_payload(&self, anchor: &[u8]) -> Option<Vec<u8>> {
+        let _ = anchor;
+        None
+    }
 }
 
 /// Autocomplete entry surfaced by [`Source::plugin_completions`] and

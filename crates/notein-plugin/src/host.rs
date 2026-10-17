@@ -92,6 +92,35 @@ pub trait HostApi: Send + Sync + std::fmt::Debug {
         let _ = (plugin_id, request);
         on_done(None);
     }
+
+    /// Queue a plugin-private anchor payload for `(plugin_id, item)`.
+    /// Chip-tap navigation calls this before pushing the host route;
+    /// the mounted viewer pulls it via [`Self::take_source_anchor`]
+    /// (or [`Self::subscribe_source_anchor`] for same-route re-taps).
+    ///
+    /// The host is pure transport — the payload format is private to
+    /// `plugin_id`. Default no-op so hosts without routing stay usable.
+    fn queue_source_anchor(&self, plugin_id: &str, item: [u8; 16], payload: Vec<u8>) {
+        let _ = (plugin_id, item, payload);
+    }
+
+    /// Take + clear the pending anchor payload for `(plugin_id, item)`.
+    /// Default returns `None`.
+    fn take_source_anchor(&self, plugin_id: &str, item: [u8; 16]) -> Option<Vec<u8>> {
+        let _ = (plugin_id, item);
+        None
+    }
+
+    /// Subscribe to anchor-queue notifications for `plugin_id`. The
+    /// receiver fires with the target item id every time
+    /// [`Self::queue_source_anchor`] runs under the same plugin id.
+    /// Default returns a disconnected receiver so plugin viewers that
+    /// drive their own re-tap handling never block.
+    fn subscribe_source_anchor(&self, plugin_id: &str) -> flume::Receiver<[u8; 16]> {
+        let _ = plugin_id;
+        let (_tx, rx) = flume::bounded(0);
+        rx
+    }
 }
 
 /// Minimal bookmark payload exchanged between plugin + host when the
