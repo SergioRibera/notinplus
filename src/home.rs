@@ -755,7 +755,7 @@ impl Component for ItemCard {
             };
             build_card_menu(
                 start_rename,
-                || log::info!("edit item: TODO"),
+                move || open_canvas_edit_sheet(id),
                 on_export,
                 ask_delete,
             )
@@ -922,7 +922,7 @@ impl Component for FolderCard {
             };
             build_card_menu(
                 start_rename,
-                || log::info!("edit folder: TODO"),
+                move || open_folder_edit_sheet(id),
                 on_export,
                 ask_delete,
             )
@@ -2192,6 +2192,70 @@ pub(crate) fn open_canvas_edit_sheet(item_id: ItemId) {
         .default_tags(current_tag_names)
         .available_tags(available_tag_names)
         .title_override("Editar lienzo")
+        .submit_label("Guardar")
+        .open();
+    });
+}
+
+/// Folder-side counterpart to [`open_canvas_edit_sheet`]. Resolves the
+/// folder's current name / color / tags from the library, then opens the
+/// same `FolderCreateSheet` the create flow uses (configured with
+/// `default_*` + `title_override` + `submit_label`). On confirm, applies
+/// the changes via the `rename_folder` / `set_folder_*` setters.
+pub(crate) fn open_folder_edit_sheet(folder_id: FolderId) {
+    use crate::components::{CreateFolderRequest, FolderCreateSheet};
+    spawn(async move {
+        let handle = match open_library().await {
+            Ok(h) => h,
+            Err(err) => {
+                log::error!("open library on folder edit sheet: {err}");
+                return;
+            }
+        };
+        let (folder, current_tag_names, available_tag_names) = {
+            let lib = handle.lock().await;
+            let Some(folder) = lib.index().folder(folder_id).cloned() else {
+                log::error!("folder edit sheet: folder {folder_id:?} not found");
+                return;
+            };
+            let current = folder
+                .tags
+                .iter()
+                .filter_map(|tid| lib.index().tag(*tid).map(|t| t.name.clone()))
+                .collect::<Vec<_>>();
+            let available = lib
+                .tags()
+                .iter()
+                .map(|t| t.name.clone())
+                .collect::<Vec<_>>();
+            (folder, current, available)
+        };
+        let default_color = folder.color.map(rgba_to_color);
+        let apply_handle = handle.clone();
+        FolderCreateSheet::new(move |req: CreateFolderRequest| {
+            let handle = apply_handle.clone();
+            spawn(async move {
+                let mut lib = handle.lock().await;
+                let tag_ids = resolve_tag_names(&mut lib, &req.tag_names).await;
+                if let Err(err) = lib.rename_folder(folder_id, &req.name).await {
+                    log::error!("rename_folder: {err}");
+                }
+                if let Err(err) = lib
+                    .set_folder_color(folder_id, Some(color_to_rgba(req.color)))
+                    .await
+                {
+                    log::error!("set_folder_color: {err}");
+                }
+                if let Err(err) = lib.set_folder_tags(folder_id, tag_ids).await {
+                    log::error!("set_folder_tags: {err}");
+                }
+            });
+        })
+        .default_name(folder.name.clone())
+        .default_color(default_color)
+        .default_tags(current_tag_names)
+        .available_tags(available_tag_names)
+        .title_override("Editar carpeta")
         .submit_label("Guardar")
         .open();
     });

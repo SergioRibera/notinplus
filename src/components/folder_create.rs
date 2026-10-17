@@ -34,7 +34,11 @@ pub struct CreateFolderRequest {
 #[derive(Clone)]
 pub struct FolderCreateSheet {
     default_name: String,
+    default_color: Option<Color>,
+    default_tags: Vec<String>,
     available_tags: Vec<String>,
+    title_override: Option<String>,
+    submit_label: Option<String>,
     on_confirm: Callback<CreateFolderRequest, ()>,
     on_cancel: Option<NoArgCallback<()>>,
 }
@@ -58,7 +62,11 @@ impl FolderCreateSheet {
     pub fn new(on_confirm: impl Into<Callback<CreateFolderRequest, ()>>) -> Self {
         Self {
             default_name: "Nueva carpeta".to_owned(),
+            default_color: None,
+            default_tags: Vec::new(),
             available_tags: Vec::new(),
+            title_override: None,
+            submit_label: None,
             on_confirm: on_confirm.into(),
             on_cancel: None,
         }
@@ -71,10 +79,39 @@ impl FolderCreateSheet {
         self
     }
 
+    /// Pre-fill the color swatch. `None` falls back to the auto-tint
+    /// derived from the name.
+    #[must_use]
+    pub fn default_color(mut self, color: Option<Color>) -> Self {
+        self.default_color = color;
+        self
+    }
+
+    /// Pre-fill the tag picker with `tags`.
+    #[must_use]
+    pub fn default_tags(mut self, tags: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.default_tags = tags.into_iter().map(Into::into).collect();
+        self
+    }
+
     /// Existing tag names to offer as suggestions in the tag picker.
     #[must_use]
     pub fn available_tags(mut self, tags: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.available_tags = tags.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Replace the sheet title (defaults to `Crear nueva carpeta`).
+    #[must_use]
+    pub fn title_override(mut self, title: impl Into<String>) -> Self {
+        self.title_override = Some(title.into());
+        self
+    }
+
+    /// Replace the submit button label (defaults to `Confirmar`).
+    #[must_use]
+    pub fn submit_label(mut self, label: impl Into<String>) -> Self {
+        self.submit_label = Some(label.into());
         self
     }
 
@@ -105,9 +142,19 @@ impl FolderCreateSheet {
 impl Component for FolderCreateSheet {
     fn render(&self) -> impl IntoElement {
         let default_name = self.default_name.clone();
+        let seed_color = self.default_color;
+        let seed_tags = self.default_tags.clone();
+        let title_text = self
+            .title_override
+            .clone()
+            .unwrap_or_else(|| "Crear nueva carpeta".to_owned());
+        let submit_text = self
+            .submit_label
+            .clone()
+            .unwrap_or_else(|| "Confirmar".to_owned());
         let name = use_state(move || default_name);
-        let custom_color = use_state(|| Option::<Color>::None);
-        let tag_names = use_state(Vec::<String>::new);
+        let custom_color = use_state(move || seed_color);
+        let tag_names = use_state(move || seed_tags);
 
         let cur_name = name.read().clone();
         let effective_color = custom_color.read().unwrap_or_else(|| auto_color(&cur_name));
@@ -188,7 +235,7 @@ impl Component for FolderCreateSheet {
                 label()
                     .color(Color::from_rgb(230, 230, 240))
                     .font_size(15.0)
-                    .text("Crear nueva carpeta"),
+                    .text(title_text),
             )
             .child(
                 FormInput::new(name)
@@ -226,7 +273,7 @@ impl Component for FolderCreateSheet {
                                     Color::from_rgb(120, 170, 255)
                                 })
                                 .font_size(15.0)
-                                .text("Confirmar"),
+                                .text(submit_text),
                         ),
                     ),
             )
