@@ -170,12 +170,17 @@ fn color_row(
     };
 
     let dropdown = picker_open.then(|| {
-        ColorWheel::new()
+        let wheel = ColorWheel::new()
             .initial(display_special.unwrap_or(current_color))
             .swatches(Vec::<Color>::new())
             .allow_custom(true)
             .width(240.0)
-            .on_change(picker_on_change)
+            .on_change(picker_on_change);
+        rect()
+            .on_pointer_leave(move |_| {
+                color_picker_open.set(false);
+            })
+            .child(wheel)
     });
 
     color_swatch_strip(

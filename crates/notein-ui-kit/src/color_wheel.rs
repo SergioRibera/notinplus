@@ -22,15 +22,17 @@ pub fn auto_color(name: &str) -> Color {
     DEFAULT_SWATCHES[(hash as usize) % DEFAULT_SWATCHES.len()]
 }
 
-/// Canonical folder / item swatch strip.
+/// Canonical folder / item swatch strip. Tones match the darkened
+/// highlighter-marker palette used by the Bible reader so the strip
+/// doubles as the bookmark-highlight picker without re-authoring.
 pub const DEFAULT_SWATCHES: [Color; 7] = [
-    Color::from_rgb(245, 240, 235),
-    Color::from_rgb(55, 65, 80),
-    Color::from_rgb(245, 195, 175),
-    Color::from_rgb(215, 105, 105),
-    Color::from_rgb(100, 130, 200),
-    Color::from_rgb(150, 205, 205),
-    Color::from_rgb(230, 190, 105),
+    Color::from_rgb(0x6F, 0x63, 0x31),
+    Color::from_rgb(0x6E, 0x38, 0x38),
+    Color::from_rgb(0x3C, 0x5A, 0x7A),
+    Color::from_rgb(0x2E, 0x5E, 0x54),
+    Color::from_rgb(0x5C, 0x3F, 0x6E),
+    Color::from_rgb(0x6E, 0x4F, 0x2D),
+    Color::from_rgb(0x3C, 0x3C, 0x3C),
 ];
 
 const SV_HEIGHT: f32 = 200.0;

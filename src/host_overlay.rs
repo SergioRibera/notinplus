@@ -219,7 +219,7 @@ impl Component for BookmarkEditModal {
 
         let initial_wheel_color = seed_color
             .map(|c| Color::from_rgb(c[0], c[1], c[2]))
-            .unwrap_or_else(|| Color::from_rgb(255, 225, 110));
+            .unwrap_or_else(|| Color::from_rgb(0x6F, 0x63, 0x31));
 
         // Emit the initial preview exactly once on mount so the
         // plugin's render reflects the seeded colour before the user
@@ -312,7 +312,10 @@ impl Component for BookmarkEditModal {
         let mut card_area: State<Area> = use_state(Area::default);
         let viewport = freya::prelude::try_consume_context::<notein_ui_kit::ViewportArea>();
 
-        let card_width = 320.0_f32;
+        // `max_width` caps the modal so a very long title / body does
+        // not grow it past readable; `Size::auto()` lets it shrink to
+        // the content width (short refs + short note stay compact).
+        let card_max_width = 320.0_f32;
         let (anchor_left, anchor_top_below) = anchor
             .map(|(x, y)| (Some(x), y + 12.0))
             .unwrap_or((None, 72.0));
@@ -321,7 +324,8 @@ impl Component for BookmarkEditModal {
         let is_measured = measured.height() > 0.0;
         let card = rect()
             .layer(Layer::OverlayLevel(6))
-            .width(Size::px(card_width))
+            .width(Size::auto())
+            .max_width(Size::px(card_max_width))
             .padding((12., 14.))
             .with_corner_radius(12.0)
             .background(Color::from_rgb(28, 28, 32))
@@ -355,7 +359,7 @@ impl Component for BookmarkEditModal {
                     let left = notein_ui_kit::clamp_popup_left(
                         viewport_area,
                         x,
-                        card_width,
+                        measured.width(),
                         16.0,
                     );
                     card.position(Position::new_global().top(top).left(left))
@@ -379,13 +383,21 @@ impl Component for BookmarkEditModal {
         let selected_is_special = !matches_preset;
         let selected_preset = matches_preset.then_some(current_color);
         let picker_open = *color_picker_open.read();
+        // Wrap the wheel so a `pointer_leave` from the floating panel
+        // auto-dismisses it — matches the implicit tooltip behaviour
+        // the Bible reader's ref popup uses.
         let picker = picker_open.then(|| {
-            ColorWheel::new()
+            let wheel = ColorWheel::new()
                 .initial(display_special.unwrap_or(initial_wheel_color))
                 .swatches(Vec::<Color>::new())
                 .allow_custom(true)
                 .width(240.0)
-                .on_change(on_wheel_change)
+                .on_change(on_wheel_change);
+            rect()
+                .on_pointer_leave(move |_| {
+                    color_picker_open.set(false);
+                })
+                .child(wheel)
         });
 
         card.child(
