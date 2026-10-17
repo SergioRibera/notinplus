@@ -363,6 +363,15 @@ impl Source for BibleSource {
         Some(anchor.to_vec())
     }
 
+    fn viewer_kind_id(&self) -> &str {
+        // Chip refs use `"io.notein.bible"` (the source plugin id);
+        // library items + the mounted viewer live under
+        // `"io.notein.bible.viewer"` (the canvas plugin id). Point
+        // the shell at the viewer so the lookup + routing lands on
+        // the right `ItemKind`.
+        crate::canvas::KIND_ID
+    }
+
     fn render_chip(&self, anchor: &[u8]) -> Option<ChipView> {
         let BibleAnchor {
             book_id,

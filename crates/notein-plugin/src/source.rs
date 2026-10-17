@@ -212,8 +212,8 @@ pub trait Source: Send + Sync + std::fmt::Debug + std::any::Any {
     /// Chip-tap entry: the user clicked a `SourceRef::Plugin` chip
     /// pointing at `anchor` and owned by this plugin. Returning
     /// `Some(payload)` tells the shell to find any library item whose
-    /// kind cites this plugin's [`Self::kind_id`], queue `payload`
-    /// under `(kind_id, item)` via
+    /// kind cites [`Self::viewer_kind_id`], queue `payload` under
+    /// `(viewer_kind_id, item)` via
     /// [`crate::HostApi::queue_source_anchor`], and route to that
     /// item's native face. The mounted plugin viewer pulls the
     /// payload via [`crate::HostApi::take_source_anchor`] /
@@ -226,6 +226,20 @@ pub trait Source: Send + Sync + std::fmt::Debug + std::any::Any {
     fn navigate_payload(&self, anchor: &[u8]) -> Option<Vec<u8>> {
         let _ = anchor;
         None
+    }
+
+    /// Companion id of the canvas-side plugin that renders this
+    /// source's items. Chip navigation uses it to find the library
+    /// item (via `ItemKind::hosting_plugin`) and to key the pending
+    /// anchor registry so the viewer subscribes under the same id.
+    ///
+    /// Default = `self.kind_id()`: the source and its viewer share
+    /// one plugin id. Split designs (e.g. the Bible pair — chip refs
+    /// under `"io.notein.bible"`, viewer / `ItemKind::PluginCanvas`
+    /// under `"io.notein.bible.viewer"`) override and return the
+    /// viewer id.
+    fn viewer_kind_id(&self) -> &str {
+        self.kind_id()
     }
 }
 
