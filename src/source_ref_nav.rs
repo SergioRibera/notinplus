@@ -278,6 +278,11 @@ fn navigate_bible(anchor_bytes: &[u8]) {
             log::warn!("navigate_bible: library handle unavailable");
             return;
         };
+        // Walk every item that hosts the Bible viewer — both the
+        // standalone `PluginCanvas` form and the `DocLinked` bundle
+        // (bible + canvas sibling). The item id + its route live
+        // together so we can dispatch to the correct shell face
+        // without conflating a split-view bundle with a flat viewer.
         let existing = {
             let lib = handle.lock().await;
             lib.index()
@@ -287,20 +292,27 @@ fn navigate_bible(anchor_bytes: &[u8]) {
                     ItemKind::PluginCanvas { plugin_id, .. }
                         if plugin_id == BIBLE_VIEWER_PLUGIN_ID =>
                     {
-                        Some(item.id)
+                        Some((item.id, crate::route::Route::BibleView { id: item.id }))
+                    }
+                    ItemKind::DocLinked { source_plugin }
+                        if source_plugin == BIBLE_VIEWER_PLUGIN_ID =>
+                    {
+                        Some((
+                            item.id,
+                            crate::route::Route::DocLinkedView { id: item.id },
+                        ))
                     }
                     _ => None,
                 })
         };
-        let item_id = match existing {
-            Some(id) => id,
+        let (item_id, route) = match existing {
+            Some(found) => found,
             None => {
-                // No Bible viewer item in the library yet. Mirrors
-                // `home::flow_open_bible` — create a fresh PluginCanvas
-                // under the root folder with empty `init_bytes` (the
-                // viewer picks the user's default translation on
-                // mount) so chip taps keep working even when the user
-                // never ran "open bible viewer" manually.
+                // No Bible item in the library yet. Mirrors
+                // `home::flow_open_bible` — create a fresh
+                // `PluginCanvas` under the root folder so chip taps
+                // keep working for users who installed a translation
+                // but never opened the viewer manually.
                 let init_bytes = bincode::encode_to_vec(
                     &String::new(),
                     bincode::config::standard(),
@@ -321,7 +333,7 @@ fn navigate_bible(anchor_bytes: &[u8]) {
                     )
                     .await
                 {
-                    Ok(id) => id,
+                    Ok(id) => (id, crate::route::Route::BibleView { id }),
                     Err(e) => {
                         log::warn!("navigate_bible: create_item failed: {e}");
                         return;
@@ -330,7 +342,7 @@ fn navigate_bible(anchor_bytes: &[u8]) {
             }
         };
         active_bible_sources::queue(item_id, jump);
-        let _ = router.push(crate::route::Route::BibleView { id: item_id });
+        let _ = router.push(route);
     });
 }
 
