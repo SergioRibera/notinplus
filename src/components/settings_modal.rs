@@ -503,7 +503,15 @@ fn plugins_section(tick: State<u64>, registry: Arc<Mutex<PluginRegistry>>) -> im
         Vec<PluginOrigin>,
     ) = {
         let g = plugins::lock(&registry);
-        let schemas = g.all_schemas();
+        // Drop entries that expose no fields — a plugin without a
+        // schema has nothing to show in the settings panel, and
+        // rendering an empty section (or a sibling with the same label
+        // as the canvas side) just clutters the list.
+        let schemas: Vec<RegistrySchemaEntry> = g
+            .all_schemas()
+            .into_iter()
+            .filter(|s| !s.schema.fields.is_empty())
+            .collect();
         let disabled = g.disabled_ids().map(ToOwned::to_owned).collect();
         let origins = schemas.iter().map(|s| g.origin(&s.plugin_id)).collect();
         (schemas, disabled, origins)

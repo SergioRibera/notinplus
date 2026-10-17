@@ -210,7 +210,13 @@ impl Component for BibleInstallModal {
             .padding((16., 20.))
             .spacing(12.0)
             .child(header(close))
-            .child(search_bar(query))
+            .child(
+                notein_ui_kit::FormInput::new(query)
+                    .flat()
+                    .left_icon(search())
+                    .placeholder("Buscar por idioma, abreviación o id")
+                    .width(Size::fill()),
+            )
             .child(body(
                 fetch_snapshot,
                 installed_ids,
@@ -253,14 +259,6 @@ fn header(close: Callback<(), ()>) -> impl IntoElement {
         )
 }
 
-fn search_bar(query: State<String>) -> impl IntoElement {
-    notein_ui_kit::FormInput::new(query)
-        .flat()
-        .left_icon(search())
-        .placeholder("Buscar por idioma, abreviación o id")
-        .width(Size::fill())
-}
-
 fn body(
     fetch: CatalogueFetch,
     installed_ids: Vec<String>,
@@ -287,12 +285,7 @@ fn body(
             .into_element(),
         CatalogueFetch::Failed(message) => container
             .center()
-            .child(
-                label()
-                    .color(theme::ERROR)
-                    .font_size(14.0)
-                    .text(message),
-            )
+            .child(label().color(theme::ERROR).font_size(14.0).text(message))
             .into_element(),
         CatalogueFetch::Ready(view) => {
             let filtered = filter_bibles(&view.bibles, query);
@@ -323,9 +316,8 @@ fn body(
                 })
                 .collect();
             let length = rows.len();
-            let scroll = VirtualScrollView::new_with_data(
-                rows,
-                move |item, data: &Vec<BibleRowData>| {
+            let scroll =
+                VirtualScrollView::new_with_data(rows, move |item, data: &Vec<BibleRowData>| {
                     let row = data[item.index].clone();
                     bible_row(
                         row.entry,
@@ -334,11 +326,10 @@ fn body(
                         on_install.clone(),
                         on_pick_installed.clone(),
                     )
-                },
-            )
-            .length(length)
-            .width(Size::fill())
-            .item_size(ROW_SIZE);
+                })
+                .length(length)
+                .expanded()
+                .item_size(ROW_SIZE);
             container.child(scroll).into_element()
         }
     }
@@ -415,10 +406,12 @@ fn bible_row(
 
     let mut row = rect()
         .width(Size::fill())
+        .height(Size::px(ROW_SIZE))
         .direction(Direction::Horizontal)
         .cross_align(Alignment::Center)
         .padding((6., 10.))
         .spacing(10.0)
+        .content(Content::Flex)
         .with_corner_radius(10.0);
     if installed {
         // Picking an installed row commits it as the stored default +
@@ -465,10 +458,7 @@ fn row_trailing(
                 }
             }
             InstallStage::Finished => "Finalizando…".to_string(),
-            InstallStage::Failed => p
-                .error
-                .clone()
-                .unwrap_or_else(|| "Falló".to_string()),
+            InstallStage::Failed => p.error.clone().unwrap_or_else(|| "Falló".to_string()),
             InstallStage::Idle => "Pendiente".to_string(),
         };
         let color = if matches!(p.stage, InstallStage::Failed) {

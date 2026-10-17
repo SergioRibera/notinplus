@@ -261,7 +261,11 @@ impl Source for BibleSource {
     }
 
     fn config_schema(&self) -> ConfigSchema {
-        plugin_config::build_schema(&self.db)
+        // The canvas side (`BibleCanvas`) already advertises the full
+        // schema against the shared config. Returning the same schema
+        // here would surface the plugin twice in the settings panel —
+        // return empty so the source is a pure anchor/search provider.
+        ConfigSchema::empty()
     }
 
     fn get_config(&self, key: &str) -> Option<ConfigValue> {

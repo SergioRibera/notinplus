@@ -180,6 +180,21 @@ enum ContentItem {
     Raw(String),
 }
 
+/// Metadata overrides from the top-level catalogue. The per-bible
+/// biblionlabs manifest only carries `book_names` / `chapter_headings`
+/// / `sections` — the user-facing name, language, and abbreviation
+/// live on the catalogue entry, so the caller resolves them there and
+/// hands them in here. Any field left `None` falls back to a sensible
+/// default (bible_id prefix for language, bible_id itself for name /
+/// abbrev).
+#[derive(Debug, Default, Clone)]
+pub struct BibleMeta {
+    pub name_local: Option<String>,
+    pub name_english: Option<String>,
+    pub language: Option<String>,
+    pub abbrev: Option<String>,
+}
+
 /// Download the whole catalogue entry for `bible_id`, land JSON files
 /// into `cache_dir`, then populate `db`. The HTTP step is skipped per
 /// file when the cache is fresher than `cache_ttl`.
@@ -191,6 +206,7 @@ pub fn install_bible(
     desc_url: &str,
     books_url_template: &str,
     cache_ttl: Duration,
+    meta: BibleMeta,
     mut on_progress: impl FnMut(Progress),
 ) -> Result<usize> {
     on_progress(Progress::Started { bible_id: bible_id.into() });
@@ -201,8 +217,23 @@ pub fn install_bible(
     let desc_path = bible_dir.join("manifest.json");
     fetch_if_stale(client, desc_url, &desc_path, cache_ttl)?;
     let desc_bytes = std::fs::read(&desc_path)?;
-    let desc: BibleDesc = serde_json::from_slice(&desc_bytes)
+    let mut desc: BibleDesc = serde_json::from_slice(&desc_bytes)
         .map_err(|e| ImportError::Json { context: format!("{bible_id} desc"), source: e })?;
+    // Catalogue-provided fields override the per-bible manifest when
+    // the latter is silent (which is the common case on biblionlabs —
+    // the per-bible manifest ships without name/language/abbrev).
+    if desc.name_local.is_none() {
+        desc.name_local = meta.name_local.clone().or_else(|| meta.name_english.clone());
+    }
+    if desc.name_english.is_none() {
+        desc.name_english = meta.name_english.clone();
+    }
+    if desc.language.is_none() {
+        desc.language = meta.language.clone();
+    }
+    if desc.abbrev.is_none() {
+        desc.abbrev = meta.abbrev.clone();
+    }
 
     let books_dir = bible_dir.join("books");
     std::fs::create_dir_all(&books_dir)?;
@@ -663,23 +694,52 @@ pub struct LanguageEntryView {
 
 impl CatalogueView {
     fn from_raw(c: Catalogue) -> Self {
+        // The upstream manifest nests the bible name under
+        // `name.{local,english,local_abbrev,english_abbrev}` and
+        // never surfaces a `language` field on the bible entry —
+        // language is derived from the id prefix (ISO 639-3) and
+        // resolved against the `languages` map's `local` display.
+        let lang_lookup: &HashMap<String, LanguageEntry> = &c.languages;
         let mut bibles: Vec<BibleEntryView> = c
             .bibles
-            .into_iter()
-            .map(|(id, v)| BibleEntryView {
-                id,
-                language: v
-                    .get("language")
-                    .and_then(|x| x.as_str())
-                    .map(str::to_string),
-                name_local: v
-                    .get("name_local")
-                    .and_then(|x| x.as_str())
-                    .map(str::to_string),
-                name_english: v
-                    .get("name_english")
-                    .and_then(|x| x.as_str())
-                    .map(str::to_string),
+            .iter()
+            .map(|(id, v)| {
+                let name = v.get("name");
+                let non_empty = |s: &serde_json::Value| {
+                    s.as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
+                };
+                let name_local = name
+                    .and_then(|n| n.get("local"))
+                    .and_then(non_empty)
+                    .or_else(|| name.and_then(|n| n.get("local_abbrev")).and_then(non_empty));
+                let name_english = name
+                    .and_then(|n| n.get("english"))
+                    .and_then(non_empty)
+                    .or_else(|| name.and_then(|n| n.get("english_abbrev")).and_then(non_empty));
+                let language = id
+                    .split('_')
+                    .next()
+                    .and_then(|iso| lang_lookup.get(iso))
+                    .and_then(|l| {
+                        l.local
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string)
+                            .or_else(|| {
+                                l.english
+                                    .as_deref()
+                                    .map(str::trim)
+                                    .filter(|s| !s.is_empty())
+                                    .map(str::to_string)
+                            })
+                    });
+                BibleEntryView {
+                    id: id.clone(),
+                    language,
+                    name_local,
+                    name_english,
+                }
             })
             .collect();
         bibles.sort_by(|a, b| a.id.cmp(&b.id));

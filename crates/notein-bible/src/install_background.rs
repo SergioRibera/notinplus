@@ -292,6 +292,30 @@ fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallPr
         }
     };
 
+    // Resolve catalogue-side name / language / abbrev — the per-bible
+    // biblionlabs manifest is silent on these so without this lookup
+    // the DB ends up storing `bible_id` as the display name.
+    let meta = {
+        let manifest_url = plugin_config::effective_manifest_url(&config);
+        match biblionlabs::load_catalogue(&client, &cache_dir, &manifest_url, CACHE_TTL) {
+            Ok(cat) => cat
+                .bibles
+                .iter()
+                .find(|b| b.id == bible_id)
+                .map(|b| biblionlabs::BibleMeta {
+                    name_local: b.name_local.clone(),
+                    name_english: b.name_english.clone(),
+                    language: b.language.clone(),
+                    abbrev: None,
+                })
+                .unwrap_or_default(),
+            Err(e) => {
+                log::warn!("bible install: catalogue lookup failed, DB name will fall back to id: {e}");
+                biblionlabs::BibleMeta::default()
+            }
+        }
+    };
+
     let result = biblionlabs::install_bible(
         &db,
         &client,
@@ -300,6 +324,7 @@ fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallPr
         &desc_url,
         &books_template,
         CACHE_TTL,
+        meta,
         progress_cb,
     );
 
