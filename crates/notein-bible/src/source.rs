@@ -17,7 +17,7 @@ use notein_sdk::{
 
 use crate::anchor::BibleAnchor;
 use crate::db::Db;
-use crate::plugin_config::{self, SetResult, SharedConfig};
+use crate::plugin_config::{self, SharedConfig};
 use crate::resolver;
 use crate::state::VerseSelection;
 
@@ -269,20 +269,7 @@ impl Source for BibleSource {
     }
 
     fn set_config(&self, key: &str, value: ConfigValue) -> Result<(), ConfigError> {
-        match plugin_config::apply_set(&self.config, key, value)? {
-            SetResult::Stored => Ok(()),
-            SetResult::InstallRequested(id) => {
-                log::info!("bible: install requested for {id}");
-                #[cfg(feature = "importer")]
-                crate::install_background::spawn_install(
-                    id,
-                    self.db.clone(),
-                    self.config.clone(),
-                    self.install_progress.clone(),
-                );
-                Ok(())
-            }
-        }
+        plugin_config::apply_set(&self.config, key, value)
     }
 
     fn creation_entries(&self) -> Vec<CreationEntry> {

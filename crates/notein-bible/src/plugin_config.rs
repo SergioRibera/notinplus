@@ -2,24 +2,11 @@
 //!
 //! The host persists plugin settings per `(plugin_id, key)` tuple via
 //! the generic settings panel. Both trait objects need the same values
-//! (which Bible is the default, where to cache downloads, which
-//! catalogue URL to hit) so they share an `Arc<RwLock<_>>`.
-//!
-//! Schema fields:
-//!
-//! - `default_bible_id` — `Enum` over installed Bibles. Fresh options
-//!   are read from the DB on every `config_schema()` call so a newly
-//!   installed translation shows up without a plugin reload.
-//! - `biblionlabs_manifest_url` — catalogue endpoint. Default points at
-//!   fetch.bible but a user with a self-hosted mirror can retarget.
-//! - `cache_dir` — where downloaded JSON lives. Blank = platform
-//!   default (`~/.cache/notinplus/bible` on Linux).
-//! - `install_bible_id` — action key. Writing a value triggers an async
-//!   install of that Bible id in the background; the value is not
-//!   stored. The settings panel renders it as a plain text field; UI
-//!   phases will swap for a dropdown driven off `CatalogueView`.
-//! - `font_size` — body text size in logical pixels.
-//! - `line_height` — line height multiplier.
+//! (which Bible is the default, which catalogue URL to hit) so they
+//! share an `Arc<RwLock<_>>`. Install flow + cache dir are no longer
+//! exposed as config — installs go through the dedicated install
+//! modal + [`crate::BibleCanvas::request_install`], and the cache dir
+//! is derived from [`istmo_core::path::data_dir`].
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -33,12 +20,6 @@ use crate::db::Db;
 
 pub const KEY_DEFAULT_BIBLE: &str = "default_bible_id";
 pub const KEY_MANIFEST_URL: &str = "biblionlabs_manifest_url";
-pub const KEY_CACHE_DIR: &str = "cache_dir";
-/// String field — user-supplied catalogue id (persisted).
-pub const KEY_INSTALL_BIBLE_ID: &str = "install_bible_id";
-/// Action trigger — fires install for whatever id lives at
-/// [`KEY_INSTALL_BIBLE_ID`]. The value is not stored.
-pub const KEY_INSTALL_BIBLE: &str = "install_bible";
 pub const KEY_FONT_SIZE: &str = "font_size";
 pub const KEY_LINE_HEIGHT: &str = "line_height";
 /// Toggle for the fetch.bible / "advanced" cross-reference overlay —
@@ -83,9 +64,10 @@ pub fn host(config: &SharedConfig) -> Option<Host> {
     config.read().unwrap().host.clone()
 }
 
-/// Resolve the default platform cache directory. Lives alongside the
-/// Bible DB under the shared notinplus data root so a single on-disk
-/// tree carries everything the plugin touches.
+/// Default platform cache directory, derived from the shared notinplus
+/// data root. Not user-configurable — the UI used to expose a cache_dir
+/// field but all callers now resolve the path directly through this
+/// helper so a single on-disk tree carries everything the plugin touches.
 #[must_use]
 pub fn platform_cache_dir() -> PathBuf {
     istmo_core::path::data_dir()
@@ -116,10 +98,6 @@ pub fn build_schema(db: &Db) -> ConfigSchema {
         .map(|o| ConfigValue::String(o.value.clone()))
         .unwrap_or_else(|| ConfigValue::String(String::new()));
 
-    let cache_default = platform_cache_dir()
-        .to_string_lossy()
-        .into_owned();
-
     ConfigSchema {
         version: 1,
         fields: vec![
@@ -129,8 +107,8 @@ pub fn build_schema(db: &Db) -> ConfigSchema {
                 help: "Traducción abierta al crear una pestaña nueva.".into(),
                 kind: if options.is_empty() {
                     // No installed Bibles yet — surface as a string
-                    // field so the user can type an id manually (then
-                    // the install action downloads it).
+                    // field so the user can see something while the
+                    // install modal is their actual next step.
                     ConfigFieldKind::String { max_len: 64 }
                 } else {
                     ConfigFieldKind::Enum { options }
@@ -144,33 +122,6 @@ pub fn build_schema(db: &Db) -> ConfigSchema {
                 help: "Endpoint del manifest biblionlabs / fetch.bible.".into(),
                 kind: ConfigFieldKind::String { max_len: 256 },
                 default: ConfigValue::String(DEFAULT_MANIFEST_URL.into()),
-                aliases: Vec::new(),
-            },
-            ConfigField {
-                key: KEY_CACHE_DIR.into(),
-                label: "Directorio de caché".into(),
-                help: "Donde se guardan los JSON descargados.".into(),
-                kind: ConfigFieldKind::String { max_len: 512 },
-                default: ConfigValue::String(cache_default),
-                aliases: Vec::new(),
-            },
-            ConfigField {
-                key: KEY_INSTALL_BIBLE_ID.into(),
-                label: "Biblia a instalar (id del catálogo)".into(),
-                help: "Id del catálogo biblionlabs (ej. spa_rv1960).".into(),
-                kind: ConfigFieldKind::String { max_len: 64 },
-                default: ConfigValue::String("spa_rv1960".into()),
-                aliases: Vec::new(),
-            },
-            ConfigField {
-                key: KEY_INSTALL_BIBLE.into(),
-                label: "Instalar".into(),
-                help: "Descarga la Biblia indicada arriba en segundo plano.".into(),
-                kind: ConfigFieldKind::Action {
-                    button_label: "Instalar ahora".into(),
-                    confirm: None,
-                },
-                default: ConfigValue::Trigger,
                 aliases: Vec::new(),
             },
             ConfigField {
@@ -204,47 +155,25 @@ pub fn build_schema(db: &Db) -> ConfigSchema {
     }
 }
 
-/// Validate `value` against `key`. Writing to [`KEY_INSTALL_BIBLE`] is
-/// an action — the caller sees `Ok(InstallTrigger::Install(id))` and
-/// should spawn an installer, but the value is NOT retained.
-#[derive(Debug)]
-pub enum SetResult {
-    Stored,
-    InstallRequested(String),
-}
-
 pub fn apply_set(
     config: &SharedConfig,
     key: &str,
     value: ConfigValue,
-) -> Result<SetResult, ConfigError> {
+) -> Result<(), ConfigError> {
     match (key, &value) {
         (KEY_FONT_SIZE, ConfigValue::Float(v)) if (14.0..=32.0).contains(v) => {}
         (KEY_LINE_HEIGHT, ConfigValue::Float(v)) if (1.2..=2.2).contains(v) => {}
         (KEY_FONT_SIZE | KEY_LINE_HEIGHT, _) => return Err(ConfigError::TypeMismatch),
         (KEY_ENABLE_CROSSREF, ConfigValue::Bool(_)) => {}
         (KEY_ENABLE_CROSSREF, _) => return Err(ConfigError::TypeMismatch),
-        (
-            KEY_DEFAULT_BIBLE | KEY_MANIFEST_URL | KEY_CACHE_DIR | KEY_INSTALL_BIBLE_ID,
-            ConfigValue::String(_),
-        ) => {}
-        (KEY_DEFAULT_BIBLE | KEY_MANIFEST_URL | KEY_CACHE_DIR | KEY_INSTALL_BIBLE_ID, _) => {
+        (KEY_DEFAULT_BIBLE | KEY_MANIFEST_URL, ConfigValue::String(_)) => {}
+        (KEY_DEFAULT_BIBLE | KEY_MANIFEST_URL, _) => {
             return Err(ConfigError::TypeMismatch);
         }
-        (KEY_INSTALL_BIBLE, ConfigValue::Trigger) => {
-            // Fall through: stored value → schema default (spa_rv1960)
-            // so the user can hit "Instalar ahora" straight from the
-            // settings panel without first saving the id field.
-            let id = string(config, KEY_INSTALL_BIBLE_ID)
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| "spa_rv1960".to_string());
-            return Ok(SetResult::InstallRequested(id));
-        }
-        (KEY_INSTALL_BIBLE, _) => return Err(ConfigError::TypeMismatch),
         _ => return Err(ConfigError::UnknownKey(key.into())),
     }
     config.write().unwrap().values.insert(key.into(), value);
-    Ok(SetResult::Stored)
+    Ok(())
 }
 
 pub fn get_value(config: &SharedConfig, key: &str) -> Option<ConfigValue> {
@@ -293,13 +222,6 @@ pub fn effective_default_bible(config: &SharedConfig, db: &Db) -> String {
         .unwrap_or_default()
 }
 
-/// Resolve the effective cache dir, falling back to platform default.
-pub fn effective_cache_dir(config: &SharedConfig) -> PathBuf {
-    string(config, KEY_CACHE_DIR)
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(platform_cache_dir)
-}
 
 /// Resolve the effective manifest URL, falling back to the default
 /// fetch.bible endpoint.

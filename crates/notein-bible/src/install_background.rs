@@ -1,10 +1,10 @@
 //! Fire-and-forget installer thread.
 //!
-//! `set_config(KEY_INSTALL_BIBLE, "spa_rv1960")` from the shell lands
-//! here. We spawn a dedicated OS thread, load the catalogue, resolve
-//! the per-Bible endpoints and populate the shared [`crate::db::Db`].
-//! Progress is written to a shared [`InstallProgress`] slot that the
-//! settings UI polls.
+//! The install modal calls [`crate::BibleCanvas::request_install`],
+//! which lands here. We spawn a dedicated OS thread, load the
+//! catalogue, resolve the per-Bible endpoints and populate the shared
+//! [`crate::db::Db`]. Progress is written to a shared
+//! [`InstallProgress`] slot that the modal polls.
 //!
 //! Gated behind the `importer` feature — the HTTP stack only pulls in
 //! when the host wants real downloads.
@@ -30,7 +30,7 @@ const CACHE_TTL: Duration = Duration::from_secs(60 * 60 * 24 * 7);
 
 /// Snapshot of the active install (or the last finished one). Written
 /// by the installer thread, read by the settings panel.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct InstallProgress {
     pub bible_id: String,
     pub stage: InstallStage,
@@ -57,6 +57,22 @@ pub type SharedInstallProgress = Arc<RwLock<InstallProgress>>;
 #[must_use]
 pub fn new_shared_progress() -> SharedInstallProgress {
     Arc::new(RwLock::new(InstallProgress::default()))
+}
+
+/// Fetch (or load from on-disk cache) the biblionlabs catalogue.
+/// Blocking HTTP; call from a worker thread. Reuses the install
+/// cache dir so a prior install warms the manifest file.
+pub fn load_catalogue(
+    config: &SharedConfig,
+) -> Result<biblionlabs::CatalogueView, biblionlabs::ImportError> {
+    let client = Client::builder()
+        .user_agent("notein-bible/0.1")
+        .build()
+        .map_err(biblionlabs::ImportError::from)?;
+    let cache_dir = plugin_config::platform_cache_dir();
+    std::fs::create_dir_all(&cache_dir)?;
+    let manifest_url = plugin_config::effective_manifest_url(config);
+    biblionlabs::load_catalogue(&client, &cache_dir, &manifest_url, CACHE_TTL)
 }
 
 /// Spawn an install thread. Returns immediately. Safe to call multiple
@@ -96,7 +112,7 @@ pub fn spawn_fetch_footnotes(db: Db, config: SharedConfig, bible_id: String, boo
                     return;
                 }
             };
-            let cache_dir = plugin_config::effective_cache_dir(&config);
+            let cache_dir = plugin_config::platform_cache_dir();
             if let Err(e) = std::fs::create_dir_all(&cache_dir) {
                 log::debug!("footnotes: mkdir: {e}");
                 return;
@@ -151,7 +167,7 @@ pub fn spawn_fetch_headings(
                     return;
                 }
             };
-            let cache_dir = plugin_config::effective_cache_dir(&config);
+            let cache_dir = plugin_config::platform_cache_dir();
             if let Err(e) = std::fs::create_dir_all(&cache_dir) {
                 log::debug!("headings: mkdir: {e}");
                 return;
@@ -176,7 +192,6 @@ pub fn spawn_fetch_headings(
 
 fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallProgress) {
     log::info!("bible install thread: starting for {bible_id}");
-    eprintln!("[bible] install thread starting for {bible_id}");
     {
         let mut p = progress.write().unwrap();
         p.bible_id = bible_id.clone();
@@ -189,7 +204,6 @@ fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallPr
     let host = plugin_config::host(&config);
     if host.is_none() {
         log::warn!("bible install: host handle not installed; progress + notifications disabled");
-        eprintln!("[bible] WARNING host handle not installed");
     }
     if let Some(h) = &host {
         h.report_progress(
@@ -215,9 +229,8 @@ fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallPr
         }
     };
 
-    let cache_dir = plugin_config::effective_cache_dir(&config);
+    let cache_dir = plugin_config::platform_cache_dir();
     log::info!("bible install: cache_dir={}", cache_dir.display());
-    eprintln!("[bible] cache_dir={}", cache_dir.display());
     if let Err(e) = std::fs::create_dir_all(&cache_dir) {
         fail(&progress, host.as_ref(), format!("mkdir cache: {e}"));
         return;
@@ -235,7 +248,6 @@ fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallPr
     let books_template =
         format!("{BIBLIONLABS_BASE}/bibles/{{bible_id}}/books/{{book}}.json");
     log::info!("bible install: desc_url={desc_url}");
-    eprintln!("[bible] desc_url={desc_url}");
 
     let progress_cb_handle = progress.clone();
     let host_cb = host.clone();
@@ -316,7 +328,6 @@ fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallPr
 
 fn fail(progress: &SharedInstallProgress, host: Option<&notein_sdk::Host>, message: String) {
     log::error!("bible: install failed: {message}");
-    eprintln!("[bible] install failed: {message}");
     let mut p = progress.write().unwrap();
     p.stage = InstallStage::Failed;
     p.error = Some(message.clone());

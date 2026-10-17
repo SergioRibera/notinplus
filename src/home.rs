@@ -1707,44 +1707,11 @@ fn flow_open_bible(ctx: FabCtx) {
     });
 }
 
-/// Trigger the Bible plugin's background install flow via its registered
-/// trait object. For now installs a hardcoded Spanish translation; a
-/// real picker UI lives in a follow-up.
-/// Exposed so pages (e.g. the Bible empty-state) can trigger the same
-/// install flow the FAB `+` menu does.
+/// Open the Bible install modal. Shared entry point used by the
+/// Bible empty-state, the FAB `+` menu's "install-bible" action and
+/// the translation picker's "Agregar traducción…" row.
 pub fn fab_install_bible() {
-    use notein_plugin::ConfigValue;
-
-    let registry = crate::plugins::registry();
-    let guard = match registry.lock() {
-        Ok(g) => g,
-        Err(e) => {
-            log::warn!("bible install: registry poisoned: {e}");
-            return;
-        }
-    };
-    let Some(source) = guard.get_source("io.notein.bible") else {
-        log::warn!("bible install: source plugin not registered");
-        return;
-    };
-    let bible_id = "spa_rv1960".to_string();
-    // Seed the id field so apply_set has something to resolve; then
-    // fire the Action trigger.
-    if let Err(e) = source.set_config(
-        notein_bible::plugin_config::KEY_INSTALL_BIBLE_ID,
-        ConfigValue::String(bible_id.clone()),
-    ) {
-        log::warn!("bible install: seeding id failed: {e}");
-        return;
-    }
-    if let Err(e) = source.set_config(
-        notein_bible::plugin_config::KEY_INSTALL_BIBLE,
-        ConfigValue::Trigger,
-    ) {
-        log::warn!("bible install: trigger failed: {e}");
-    } else {
-        log::info!("bible install: requested {bible_id} in background");
-    }
+    crate::bible_install_modal::open_install_modal();
 }
 
 fn flow_new_ephemeral(ctx: FabCtx) {

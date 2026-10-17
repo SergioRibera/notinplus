@@ -20,7 +20,7 @@ use notein_sdk::{
 
 use crate::anchor::BibleAnchor;
 use crate::db::Db;
-use crate::plugin_config::{self, SetResult, SharedConfig};
+use crate::plugin_config::{self, SharedConfig};
 use crate::state::{BibleBookmark, BibleViewerState, u32_to_rgba};
 
 /// Canvas kind id used by the shell to route open requests.
@@ -79,11 +79,39 @@ impl BibleCanvas {
     }
 
     /// Observable progress of the latest install request. UI can poll
-    /// this to drive a progress bar in the settings panel.
+    /// this to drive a progress bar in the install modal.
     #[cfg(feature = "importer")]
     #[must_use]
     pub fn install_progress(&self) -> &crate::install_background::SharedInstallProgress {
         &self.install_progress
+    }
+
+    /// Spawn a background install for `bible_id`. Returns immediately;
+    /// progress lands in [`Self::install_progress`]. Replaces the old
+    /// `set_config(KEY_INSTALL_BIBLE, Trigger)` entry point so the UI
+    /// can pass the id straight through without staging it in config
+    /// state first.
+    #[cfg(feature = "importer")]
+    pub fn request_install(&self, bible_id: String) {
+        crate::install_background::spawn_install(
+            bible_id,
+            self.db.clone(),
+            self.config.clone(),
+            self.install_progress.clone(),
+        );
+    }
+
+    /// Load the biblionlabs catalogue (fetched from the configured
+    /// manifest URL and cached on disk). Blocking HTTP call — invoke
+    /// from a background thread, not the UI thread.
+    #[cfg(feature = "importer")]
+    pub fn load_catalogue(
+        &self,
+    ) -> Result<
+        crate::import::biblionlabs::CatalogueView,
+        crate::import::biblionlabs::ImportError,
+    > {
+        crate::install_background::load_catalogue(&self.config)
     }
 
     /// Called by the UI when the user updates a selection. Writes
@@ -290,20 +318,7 @@ impl CanvasKind for BibleCanvas {
     }
 
     fn set_config(&self, key: &str, value: ConfigValue) -> Result<(), ConfigError> {
-        match plugin_config::apply_set(&self.config, key, value)? {
-            SetResult::Stored => Ok(()),
-            SetResult::InstallRequested(id) => {
-                log::info!("bible: install requested for {id}");
-                #[cfg(feature = "importer")]
-                crate::install_background::spawn_install(
-                    id,
-                    self.db.clone(),
-                    self.config.clone(),
-                    self.install_progress.clone(),
-                );
-                Ok(())
-            }
-        }
+        plugin_config::apply_set(&self.config, key, value)
     }
 
     fn creation_entries(&self) -> Vec<CreationEntry> {
@@ -478,31 +493,6 @@ mod tests {
             canvas.set_config("unknown_key", ConfigValue::Bool(true)),
             Err(ConfigError::UnknownKey(_))
         ));
-    }
-
-    #[test]
-    fn install_bible_request_acked_without_storing_value() {
-        let db = Db::in_memory().unwrap();
-        let config = plugin_config::new_shared();
-        let canvas = BibleCanvas::new(db, config.clone());
-        // Seed the id String field so the Action trigger has something
-        // to install.
-        canvas
-            .set_config(
-                plugin_config::KEY_INSTALL_BIBLE_ID,
-                ConfigValue::String("spa_rv1960".into()),
-            )
-            .unwrap();
-        canvas
-            .set_config(plugin_config::KEY_INSTALL_BIBLE, ConfigValue::Trigger)
-            .unwrap();
-        // Action trigger is never retained.
-        assert!(config
-            .read()
-            .unwrap()
-            .values
-            .get(plugin_config::KEY_INSTALL_BIBLE)
-            .is_none());
     }
 
     // Trait method surface for consumers inside this crate's tests.

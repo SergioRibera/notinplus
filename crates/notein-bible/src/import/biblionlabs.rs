@@ -645,7 +645,7 @@ pub struct CatalogueView {
     pub languages: Vec<LanguageEntryView>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BibleEntryView {
     pub id: String,
     pub language: Option<String>,

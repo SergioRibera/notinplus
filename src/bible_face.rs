@@ -38,6 +38,11 @@ pub struct BibleFace {
 impl Component for BibleFace {
     fn render(&self) -> impl IntoElement {
         let item = self.item;
+        // Subscribe to the install-modal's epoch so an install
+        // finishing (or a user picking a different installed Bible)
+        // forces this scope to re-render — otherwise the empty-state
+        // branch would stay even after a background install lands.
+        let _ = *crate::bible_install_modal::install_epoch().read();
         let inner: Element = match Db::open_default() {
             Err(e) => placeholder(format!("No se pudo abrir la DB: {e}")).into_element(),
             Ok(db) => {
@@ -373,7 +378,10 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
                         }
                         picker_open.set(false);
                     },
-                    || log::info!("bible: use «Instalar Biblia» from the + menu"),
+                    move || {
+                        picker_open.set(false);
+                        crate::bible_install_modal::open_install_modal();
+                    },
                 )),
         )
     } else {
@@ -974,7 +982,7 @@ fn abbreviate_book(book_id: &str) -> String {
 
 fn empty_state_with_install() -> impl IntoElement {
     let on_install = move |_: Event<PressEventData>| {
-        crate::home::fab_install_bible();
+        crate::bible_install_modal::open_install_modal();
     };
     rect()
         .width(Size::fill())
@@ -992,7 +1000,7 @@ fn empty_state_with_install() -> impl IntoElement {
             label()
                 .font_size(14.0)
                 .color(Color::from_rgb(170, 170, 170))
-                .text("Descargá una traducción para empezar a leer."),
+                .text("Elegí una traducción del catálogo para empezar a leer."),
         )
         .child(
             rect()
@@ -1004,7 +1012,7 @@ fn empty_state_with_install() -> impl IntoElement {
                     label()
                         .font_size(14.0)
                         .color(Color::from_rgb(240, 240, 240))
-                        .text("Instalar Biblia (RVR1960)"),
+                        .text("Elegir Biblia…"),
                 ),
         )
 }
