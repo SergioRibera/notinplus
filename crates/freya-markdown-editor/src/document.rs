@@ -783,8 +783,9 @@ impl Document {
     }
 
     /// Turn a paragraph starting with a markdown block marker (`# `, `- `,
-    /// `1. `, `> `, `[ ] `, `` ``` ``, `---`, `$$`) into that block.
-    pub fn apply_block_shortcut(&mut self, id: BlockId) -> Option<Caret> {
+    /// `1. `, `> `, `[ ] `, `` ``` ``, `---`, `$$`) into that block. Only fires
+    /// when `cursor` sits right after the marker, i.e. it was just typed.
+    pub fn apply_block_shortcut(&mut self, id: BlockId, cursor: usize) -> Option<Caret> {
         let index = self.index_of(id)?;
         let block = &mut self.blocks[index];
         let BlockKind::Paragraph(content) = &block.kind else {
@@ -798,6 +799,9 @@ impl Document {
                     .iter()
                     .find(|marker| content.text().starts_with(**marker))
                     .map(|marker| marker.len())?;
+                if marker_len != cursor {
+                    return None;
+                }
                 let checked = content.text().starts_with("[x]");
                 content.replace(0..marker_len, "");
                 *kind = ListKind::Task { checked };
@@ -808,6 +812,7 @@ impl Document {
         let text = content.text().to_owned();
 
         let whole = match text.as_str() {
+            _ if cursor != utf16_len(&text) => None,
             "---" | "***" | "___" => Some(BlockKind::Divider),
             "```" => Some(BlockKind::Code {
                 language: String::new(),
@@ -827,6 +832,9 @@ impl Document {
         }
 
         let (marker_len, kind) = shortcut_marker(&text)?;
+        if marker_len != cursor {
+            return None;
+        }
         let mut content = content.clone();
         content.replace(0..marker_len, "");
         block.kind = match kind {
@@ -985,9 +993,10 @@ mod tests {
 
     #[test]
     fn shortcuts_convert_paragraphs() {
-        let mut document = doc(vec![BlockKind::Paragraph("## ".into())]);
+        let mut document = doc(vec![BlockKind::Paragraph("## title".into())]);
         let id = document.blocks()[0].id;
-        document.apply_block_shortcut(id);
+        assert!(document.apply_block_shortcut(id, 5).is_none());
+        document.apply_block_shortcut(id, 3);
         assert!(matches!(
             document.blocks()[0].kind,
             BlockKind::Heading {
@@ -998,7 +1007,7 @@ mod tests {
 
         let mut document = doc(vec![BlockKind::Paragraph("3. ".into())]);
         let id = document.blocks()[0].id;
-        document.apply_block_shortcut(id);
+        document.apply_block_shortcut(id, 3);
         assert!(matches!(
             document.blocks()[0].kind,
             BlockKind::ListItem {
@@ -1012,7 +1021,7 @@ mod tests {
     fn divider_shortcut_adds_paragraph_after() {
         let mut document = doc(vec![BlockKind::Paragraph("---".into())]);
         let id = document.blocks()[0].id;
-        let caret = document.apply_block_shortcut(id).expect("divider");
+        let caret = document.apply_block_shortcut(id, 3).expect("divider");
         assert_eq!(document.blocks()[0].kind, BlockKind::Divider);
         assert_eq!(caret.target.block, document.blocks()[1].id);
     }
