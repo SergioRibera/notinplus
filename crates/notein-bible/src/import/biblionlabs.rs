@@ -648,6 +648,48 @@ fn testament_for(book_id: &str) -> &'static str {
     }
 }
 
+// ─── Catalogue extras ────────────────────────────────────────────
+//
+// Translations the biblionlabs raw repo hosts
+// (github.com/biblionlabs/extra_data_source) but the top-level
+// `v1.fetch.bible/manifest.json` catalogue does NOT list — typically
+// because the translation is still under active copyright and the
+// public catalogue only advertises CC / public-domain entries.
+//
+// Everything here must still be fetchable at the standard biblionlabs
+// per-bible paths:
+//   {BIBLIONLABS_BASE}/bibles/<id>/manifest.json
+//   {BIBLIONLABS_BASE}/bibles/<id>/desc.json
+//   {BIBLIONLABS_BASE}/bibles/<id>/books/<lowercase-book>.json
+//
+// The host app is responsible for having negotiated the appropriate
+// usage license with the attribution holder before shipping any of
+// these in a production build.
+
+#[derive(Debug, Clone)]
+pub struct ExtraBible {
+    pub id: &'static str,
+    pub name_local: &'static str,
+    pub name_english: &'static str,
+    pub local_abbrev: &'static str,
+    pub language: &'static str,
+}
+
+pub const EXTRAS: &[ExtraBible] = &[ExtraBible {
+    id: "spa_rv1960",
+    name_local: "Reina Valera 1960",
+    name_english: "Reina-Valera 1960",
+    local_abbrev: "RVR1960",
+    language: "Español",
+}];
+
+/// Lookup an extra by id. Returns `None` for ids served by the regular
+/// catalogue (which already carry their own name / language metadata).
+#[must_use]
+pub fn find_extra(id: &str) -> Option<&'static ExtraBible> {
+    EXTRAS.iter().find(|e| e.id == id)
+}
+
 // ─── Catalogue helpers ────────────────────────────────────────────
 
 /// Load the top-level manifest from `cache_dir/manifest.json`, fetching
@@ -742,6 +784,21 @@ impl CatalogueView {
                 }
             })
             .collect();
+        // Merge in hardcoded extras — translations hosted by the
+        // biblionlabs raw repo but absent from the top-level catalogue.
+        // Skip any id already present (catalogue wins) so a future
+        // upstream addition doesn't collide.
+        for extra in EXTRAS {
+            if bibles.iter().any(|b| b.id == extra.id) {
+                continue;
+            }
+            bibles.push(BibleEntryView {
+                id: extra.id.to_string(),
+                language: Some(extra.language.to_string()),
+                name_local: Some(extra.name_local.to_string()),
+                name_english: Some(extra.name_english.to_string()),
+            });
+        }
         bibles.sort_by(|a, b| a.id.cmp(&b.id));
 
         let mut languages: Vec<LanguageEntryView> = c
