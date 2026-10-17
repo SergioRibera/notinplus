@@ -11,7 +11,7 @@ use std::time::Duration;
 use freya::prelude::*;
 use notein_plugin::{BookmarkDraft, BookmarkEditRequest, NotificationKind, Rgba, SourceRef};
 
-use crate::components::BookmarkBodyEditor;
+use crate::components::NoteEditor;
 use crate::components::color_wheel::{ColorWheel, DEFAULT_SWATCHES, color_swatch_strip};
 use crate::host_api::{self, HostInner, Notification, ProgressEntry};
 
@@ -407,10 +407,7 @@ impl Component for BookmarkEditModal {
                 .text(title.into_owned()),
         )
         .child(
-            // Reuse notein's own rich body editor — chip refs, `[[`
-            // autocomplete popup, atomic chip delete all behave
-            // exactly like they do in the canvas / PDF bookmark card.
-            BookmarkBodyEditor::new(Writable::<String>::from(body))
+            NoteEditor::new(Writable::<String>::from(body))
                 .placeholder("Nota (opcional)")
                 .completions(crate::bookmark_ui::plugin_completions_provider()),
         )

@@ -5,7 +5,6 @@
 //! implements [`Component`] (or `Into<Element>`) so it drops into
 //! `.child(...)` positions unchanged.
 
-pub mod bookmark_body_editor;
 pub mod canvas_create;
 pub mod chip;
 pub mod color_wheel;
@@ -15,6 +14,7 @@ pub mod fab_menu;
 pub mod folder_create;
 pub mod form_input;
 pub mod modal;
+pub mod note_editor;
 pub mod pane_tree_view;
 pub mod settings_modal;
 pub mod sidebar_modal;
@@ -24,7 +24,6 @@ pub mod tag_picker;
 pub mod theme;
 pub mod workspace_switcher;
 
-pub use bookmark_body_editor::{BookmarkBodyEditor, ChipTapCloseCallback};
 pub use canvas_create::{CanvasCreateSheet, CreateCanvasRequest};
 pub use chip::Chip;
 pub use color_wheel::{ColorWheel, DEFAULT_SWATCHES, auto_color};
@@ -34,6 +33,7 @@ pub use fab_menu::{FabMenu, FabMenuEntry};
 pub use folder_create::{CreateFolderRequest, FolderCreateSheet};
 pub use form_input::FormInput;
 pub use modal::{Modal, ModalController, ModalPlacement, ModalPortal};
+pub use note_editor::{ChipTapCloseCallback, NoteEditor};
 pub use pane_tree_view::{PaneTreeCallbacks, PaneTreeView};
 pub use settings_modal::SettingsModal;
 pub use sidebar_modal::{SidebarModal, SidebarTab};

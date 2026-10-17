@@ -1205,8 +1205,7 @@ where
         .color
         .map(|[r, g, b, _]| Color::from_rgb(r, g, b))
         .unwrap_or_else(|| Color::from_rgb(245, 158, 11));
-    let preview = entry
-        .body
+    let preview = crate::components::NoteEditor::plain_text(&entry.body)
         .lines()
         .next()
         .map(|l| {

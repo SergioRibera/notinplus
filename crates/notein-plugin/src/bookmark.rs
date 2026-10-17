@@ -102,7 +102,8 @@ pub struct Bookmark {
     pub id: BookmarkId,
     pub anchor: WorldPoint,
     pub stuck_to: Option<StrokeAnchor>,
-    /// Markdown-lite body. Phase 1.5+ parses `[[…]]` chips out of it.
+    /// Markdown body. References are links using `notein://` deep link
+    /// URLs, rendered as chips by the note editor.
     pub body: String,
     /// Explicit refs rendered as chips alongside the body.
     pub refs: Vec<SourceRef>,

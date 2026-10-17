@@ -1,4 +1,4 @@
-//! Process-wide static catalog of entries the `[[` autocomplete
+//! Process-wide static catalog of entries the `[` reference picker
 //! popup can insert.
 //!
 //! Rationale: computing completions by iterating a plugin's live
@@ -7,7 +7,7 @@
 //! whether or not it's got a viewer open right now. The catalog
 //! captures the entry when the document is first processed (open /
 //! import) and keeps it until the owning item is deleted — so the
-//! `[[` popup lists every "linkable thing" without needing a fresh
+//! `[` popup lists every "linkable thing" without needing a fresh
 //! query to each plugin instance.
 //!
 //! Plugins register from their open path:

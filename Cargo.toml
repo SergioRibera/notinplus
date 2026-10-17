@@ -56,6 +56,7 @@ tar = { version = "0.4", default-features = false }
 zstd = "0.13"
 notein-plugin = { version = "0.1.0", path = "crates/notein-plugin" }
 notein-ui-kit = { path = "crates/notein-ui-kit" }
+freya-markdown-editor = { path = "crates/freya-markdown-editor" }
 notein-bible = { path = "crates/notein-bible", features = ["ui", "importer"] }
 
 [target.'cfg(target_os = "android")'.dependencies]

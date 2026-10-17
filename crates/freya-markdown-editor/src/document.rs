@@ -853,6 +853,33 @@ impl Document {
         Some(Caret::new(id, 0))
     }
 
+    /// Text of every block without formatting, one block per line.
+    /// Table rows join their cells with ` | `.
+    #[must_use]
+    pub fn plain_text(&self) -> String {
+        self.blocks
+            .iter()
+            .filter_map(|block| match &block.kind {
+                BlockKind::Table(table) => Some(
+                    table
+                        .rows()
+                        .iter()
+                        .map(|row| {
+                            row.iter()
+                                .map(Inline::plain_text)
+                                .collect::<Vec<_>>()
+                                .join(" | ")
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ),
+                kind => kind.content().map(Inline::plain_text),
+            })
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     /// Headings in document order, used to build tables of contents.
     pub fn headings(&self) -> impl Iterator<Item = (BlockId, HeadingLevel, &Inline)> {
         self.blocks.iter().filter_map(|block| match &block.kind {

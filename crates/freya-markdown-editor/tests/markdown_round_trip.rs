@@ -245,3 +245,10 @@ fn empty_input_still_has_an_editable_block() {
     assert_eq!(document.blocks().len(), 1);
     assert_eq!(document.to_markdown(Dialect::Rich), "");
 }
+
+#[test]
+fn plain_text_strips_markup() {
+    let document =
+        Document::parse("# Hi\n\nsome **bold** [link](x)\n\n| a | b |\n|---|---|\n| 1 | 2 |");
+    assert_eq!(document.plain_text(), "Hi\nsome bold link\na | b\n1 | 2");
+}

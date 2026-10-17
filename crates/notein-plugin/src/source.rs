@@ -175,7 +175,7 @@ pub trait Source: Send + Sync + std::fmt::Debug + std::any::Any {
         name_hint: Option<&str>,
     ) -> Result<ItemCreationResult, CreationError>;
 
-    /// Return candidate entries for the body-editor `[[` autocomplete,
+    /// Return candidate entries for the note editor `[` reference picker,
     /// matching `query` (case-insensitive substring is the usual
     /// convention; plugins free to score however they like). Called at
     /// the plugin level — no instance context — because completions

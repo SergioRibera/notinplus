@@ -1,7 +1,7 @@
 //! Pin UI — long-press to create, floating card to view / edit.
 //!
-//! Phase 1.5 of `SOURCES_PLAN`. Scope limited to body-only editing;
-//! rich `[[…]]` refs chip parsing + source anchors land in Phase 1.6+.
+//! Phase 1.5 of `SOURCES_PLAN`. The card edits the markdown body;
+//! references inside it render as chips (see [`crate::deep_link`]).
 //!
 //! The gesture layer that produces long-press events lives inside
 //! [`crate::canvas::drawing_surface`] because it must sit on the same
@@ -18,11 +18,11 @@ use freya::prelude::*;
 use istmo::plugins::EdgeInsets;
 
 use crate::bookmark::{SourceRef, TimestampMs};
-use crate::bookmark_body::Completion;
 use crate::canvas::{Board, lock};
-use crate::components::{BookmarkBodyEditor, FormInput};
+use crate::components::{FormInput, NoteEditor};
 use crate::ids::BookmarkId;
 use crate::source_ref_nav;
+use notein_plugin::Completion;
 
 /// Card width in logical pixels. Narrow enough to not swamp a mobile
 /// landscape canvas; wide enough for a two-line body preview.
@@ -56,9 +56,7 @@ pub fn bookmark_card_overlay(
         let mut setter = close_card_selected;
         setter.set(None);
     });
-    freya::prelude::provide_context(crate::components::ChipTapCloseCallback(
-        on_chip_tap_close,
-    ));
+    freya::prelude::provide_context(crate::components::ChipTapCloseCallback(on_chip_tap_close));
 
     let Some(selected_id) = *selected.read() else {
         // Nothing selected — render a zero-area placeholder so the
@@ -183,7 +181,7 @@ pub fn bookmark_card_overlay(
             }
         })
         .child(
-            BookmarkBodyEditor::new(body_buffer)
+            NoteEditor::new(body_buffer)
                 .placeholder("Nota")
                 .completions(bookmark_completions_provider(board, selected_id)),
         )
@@ -223,7 +221,7 @@ pub fn bookmark_card_overlay(
 }
 
 /// Build the completion provider the body editor consults while the
-/// `[[` autocomplete popup is open. Phase 6.2 aggregates:
+/// `[` reference picker is open. Aggregates:
 ///
 /// - Bookmarks on the current board (minus the one being edited).
 /// - A URL shortcut when the query starts with `http://` or
@@ -239,8 +237,8 @@ pub fn bookmark_card_overlay(
 /// catalog + plugin suggestions still flow through so autocomplete
 /// stays useful across cross-plugin links.
 #[must_use]
-pub fn plugin_completions_provider()
--> impl Into<freya::prelude::Callback<String, Vec<Completion>>> {
+pub fn plugin_completions_provider() -> impl Into<freya::prelude::Callback<String, Vec<Completion>>>
+{
     move |query: String| {
         let mut out: Vec<Completion> = Vec::new();
         if query.starts_with("http://") || query.starts_with("https://") {
@@ -276,9 +274,7 @@ fn bookmark_completions_provider(
             .bookmarks()
             .iter()
             .filter(|bm| bm.id != editing)
-            .filter(|bm| {
-                needle.is_empty() || bm.body.to_lowercase().contains(&needle)
-            })
+            .filter(|bm| needle.is_empty() || bm.body.to_lowercase().contains(&needle))
             .map(|bm| Completion {
                 label: completion_label_for(bm),
                 subtitle: Some(format!("Bookmark {}", short_uuid(bm.id))),
@@ -324,12 +320,11 @@ fn bookmark_completions_provider(
 }
 
 fn completion_label_for(bm: &notein_plugin::Bookmark) -> String {
-    let trimmed = bm.body.trim();
-    if trimmed.is_empty() {
+    let preview = truncate_body(&bm.body);
+    if preview.is_empty() {
         format!("Bookmark {}", short_uuid(bm.id))
     } else {
-        let one_line = trimmed.replace('\n', " ");
-        truncate_body(&one_line)
+        preview
     }
 }
 
@@ -614,7 +609,10 @@ struct SidebarEntry {
 }
 
 fn truncate_body(body: &str) -> String {
-    let flat: String = body.lines().collect::<Vec<_>>().join(" · ");
+    let flat: String = NoteEditor::plain_text(body)
+        .lines()
+        .collect::<Vec<_>>()
+        .join(" · ");
     if flat.chars().count() <= PREVIEW_MAX_LEN {
         return flat;
     }
@@ -641,8 +639,8 @@ mod tests {
     }
 
     #[test]
-    fn truncate_flattens_multi_line_bodies() {
-        let out = truncate_body("linea 1\nlinea 2\nlinea 3");
+    fn truncate_flattens_multi_block_bodies() {
+        let out = truncate_body("# linea 1\n\nlinea **2**\n\n- linea 3");
         assert_eq!(out, "linea 1 · linea 2 · linea 3");
     }
 
