@@ -2134,7 +2134,11 @@ pub(crate) async fn open_library() -> Result<LibHandle, String> {
 /// `rename_item` / `set_item_*` setters.
 pub(crate) fn open_canvas_edit_sheet(item_id: ItemId) {
     use crate::components::{CanvasCreateSheet, CreateCanvasRequest};
-    spawn(async move {
+    // `spawn_forever` so the task lives on the root scope — the
+    // context-menu button that calls us unmounts right after press,
+    // which would cancel a plain `spawn` task before the library
+    // handle even resolves.
+    spawn_forever(async move {
         let handle = match open_library().await {
             Ok(h) => h,
             Err(err) => {
@@ -2165,7 +2169,9 @@ pub(crate) fn open_canvas_edit_sheet(item_id: ItemId) {
         let apply_handle = handle.clone();
         CanvasCreateSheet::new(move |req: CreateCanvasRequest| {
             let handle = apply_handle.clone();
-            spawn(async move {
+            // `spawn_forever` so the save survives the sheet's own
+            // unmount on confirm.
+            spawn_forever(async move {
                 let mut lib = handle.lock().await;
                 let tag_ids = resolve_tag_names(&mut lib, &req.tag_names).await;
                 if let Err(err) = lib.rename_item(item_id, &req.name).await {
@@ -2204,7 +2210,9 @@ pub(crate) fn open_canvas_edit_sheet(item_id: ItemId) {
 /// the changes via the `rename_folder` / `set_folder_*` setters.
 pub(crate) fn open_folder_edit_sheet(folder_id: FolderId) {
     use crate::components::{CreateFolderRequest, FolderCreateSheet};
-    spawn(async move {
+    // See `open_canvas_edit_sheet` — root-scope task so it survives
+    // the menu-button unmount that follows the press.
+    spawn_forever(async move {
         let handle = match open_library().await {
             Ok(h) => h,
             Err(err) => {
@@ -2234,7 +2242,7 @@ pub(crate) fn open_folder_edit_sheet(folder_id: FolderId) {
         let apply_handle = handle.clone();
         FolderCreateSheet::new(move |req: CreateFolderRequest| {
             let handle = apply_handle.clone();
-            spawn(async move {
+            spawn_forever(async move {
                 let mut lib = handle.lock().await;
                 let tag_ids = resolve_tag_names(&mut lib, &req.tag_names).await;
                 if let Err(err) = lib.rename_folder(folder_id, &req.name).await {
