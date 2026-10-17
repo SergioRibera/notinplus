@@ -6,7 +6,7 @@
 use freya::prelude::*;
 use freya_markdown_editor::prelude::*;
 
-const WELCOME: &str = r#"# Welcome to the playground
+const WELCOME: &str = r"# Welcome to the playground
 
 Type `/` for blocks, `@` to mention someone, or select text and use the toolbar.
 Markdown shortcuts work too: `# `, `- `, `1. `, `[ ] `, `> `, `**bold**`, `==mark==`.
@@ -16,7 +16,7 @@ Markdown shortcuts work too: `# `, `- `, `1. `, `[ ] `, `> `, `**bold**`, `==mar
 
 - [x] CommonMark and GFM
 - [ ] Your next idea #todo
-"#;
+";
 
 fn main() {
     launch(
@@ -51,7 +51,7 @@ fn app() -> impl IntoElement {
                     ScrollView::new().expanded().child(
                         MarkdownEditor::new(markdown)
                             .controller(controller)
-                            .theme(theme.clone())
+                            .theme(theme)
                             .placeholder("Start writing…")
                             .slash_commands()
                             .trigger(mentions())

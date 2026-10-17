@@ -122,7 +122,7 @@ insert a block. Arrow keys navigate, Enter/Tab pick, Escape closes.
 
 ## Markdown support
 
-Parsing uses [comrak]: CommonMark, GFM (tables, task lists,
+Parsing uses [comrak]: `CommonMark`, GFM (tables, task lists,
 strikethrough, autolinks, footnotes, alerts) and extensions: math (`$`,
 `$$`, ```` ```math ````), `==highlight==`, `^sup^`, `~sub~`, `||spoiler||`,
 definition lists, front matter, heading ids `{#id}`, emoji shortcodes
@@ -138,7 +138,7 @@ Inline HTML the editor understands: `<u>`, `<ins>`, `<mark>`, `<sup>`,
 - `Dialect::Rich` (default): lossless for everything the editor can do.
   Colors, fonts and sizes travel as `<span style>`, underline as `<u>`,
   alignment as `<div align>`, extensions keep their syntax.
-- `Dialect::Portable`: plain CommonMark + GFM that renders anywhere.
+- `Dialect::Portable`: plain `CommonMark` + GFM that renders anywhere.
   Editor only styling is dropped and `[TOC]` expands into a list of
   heading links.
 
