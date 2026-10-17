@@ -1034,6 +1034,50 @@ impl Component for RefHoverButton {
             }
         };
 
+        // Outside-tap close for the pinned popup. Focus-based dismissal
+        // conflicts with the collapsible rows inside — expanding a row
+        // moves focus and would snap the popup shut. Instead listen on
+        // the global pointer-up and compare the hit location against
+        // both the trigger icon and the popup rect; a release outside
+        // both areas tears the popup down. Pointer events inside the
+        // popup already `stop_propagation`, but global handlers still
+        // fire — the hit-test discriminates.
+        let on_outside_up = {
+            let mut open = open;
+            let mut pinned = pinned;
+            let mut version = version;
+            let icon_area = icon_area;
+            let popup_area = popup_area;
+            move |e: Event<PointerEventData>| {
+                if !*pinned.peek() {
+                    return;
+                }
+                let g = e.global_location();
+                #[allow(clippy::cast_possible_truncation)]
+                let gx = g.x as f32;
+                #[allow(clippy::cast_possible_truncation)]
+                let gy = g.y as f32;
+                let icon = *icon_area.peek();
+                let popup = *popup_area.peek();
+                let inside_icon = icon.width() > 0.0
+                    && gx >= icon.min_x()
+                    && gx <= icon.max_x()
+                    && gy >= icon.min_y()
+                    && gy <= icon.max_y();
+                let inside_popup = popup.width() > 0.0
+                    && gx >= popup.min_x()
+                    && gx <= popup.max_x()
+                    && gy >= popup.min_y()
+                    && gy <= popup.max_y();
+                if !inside_icon && !inside_popup {
+                    pinned.set(false);
+                    open.set(false);
+                    let next = version.peek().wrapping_add(1);
+                    version.set(next);
+                }
+            }
+        };
+
         let mut container = rect()
             .padding((0., 2.))
             .margin((0., 2.))
@@ -1071,6 +1115,7 @@ impl Component for RefHoverButton {
             .on_pointer_down(|e: Event<PointerEventData>| {
                 e.stop_propagation();
             })
+            .on_global_pointer_up(on_outside_up)
             .on_press(on_toggle)
             .child(
                 SvgViewer::new(freya::icons::lucide::trending_up_down())
