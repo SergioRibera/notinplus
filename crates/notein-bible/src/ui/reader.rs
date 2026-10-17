@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 
+use freya::components::ScrollController;
 use freya::elements::paragraph::ParagraphCursorExt;
 use freya::prelude::*;
 use freya_engine::prelude::{RectHeightStyle, RectWidthStyle};
@@ -16,6 +17,37 @@ use crate::state::{BibleBookmark, u32_to_rgba};
 use super::chapter::{Block, ChapterPlan, ParagraphSpan};
 use super::theme;
 use super::typography;
+
+/// Context the host installs so verse-level widgets can scroll the
+/// chapter viewport into focus when a chip-tap or TSK jump sets
+/// `flash_verse`. `viewport_top` is published by `chapter_view`'s
+/// outer rect `on_sized` and read inside `VerseMarker::on_sized` so
+/// scroll targets translate verse window-coords into content-coords
+/// without pulling in a shared layout crate.
+///
+/// Vertical margin applied so the target verse sits a comfortable
+/// distance below the chapter header + translation strip.
+pub const VERSE_SCROLL_MARGIN: f32 = 96.0;
+
+#[derive(Clone)]
+pub struct VerseScrollCtx {
+    pub controller: ScrollController,
+    pub flash_verse: State<Option<u16>>,
+    pub viewport_top: State<f32>,
+}
+
+impl PartialEq for VerseScrollCtx {
+    fn eq(&self, _other: &Self) -> bool {
+        // Shared signal handles — the inner `State`s drive the diff.
+        true
+    }
+}
+
+impl std::fmt::Debug for VerseScrollCtx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VerseScrollCtx").finish_non_exhaustive()
+    }
+}
 
 /// UI-side projection of a publisher footnote. `caller` is the display
 /// letter (publisher-assigned — "a", "b", "c" or "+" for autogen).
@@ -202,6 +234,7 @@ pub fn chapter_view(
     preview: Option<HighlightPreview>,
     font_size: f32,
     line_height: f32,
+    scroll_ctx: Option<VerseScrollCtx>,
 ) -> impl IntoElement {
     // Install the chapter-scoped drag-select cursor so every verse
     // marker rendered under this view shares one `(start, end)` state
@@ -233,13 +266,33 @@ pub fn chapter_view(
     }
 
     let _ = drop_cap_size;
+    // Install the scroll context so inline VerseMarkers can snap the
+    // chapter viewport onto a chip-tap / TSK flash target during
+    // layout. Controller + flash signal travel together; the outer
+    // rect publishes its window-coord top so each verse can convert
+    // its own `on_sized` area into a scroll offset.
+    let viewport_top_setter = scroll_ctx.as_ref().map(|c| c.viewport_top);
+    if let Some(ctx) = scroll_ctx.as_ref() {
+        provide_context(ctx.clone());
+    }
+    let scroll = match scroll_ctx {
+        Some(ctx) => ScrollView::new_controlled(ctx.controller),
+        None => ScrollView::new(),
+    };
     rect()
         .width(Size::fill())
         .height(Size::fill())
         .background(parse_rgb(theme::BG))
         .padding((0., 28., 12., 28.))
+        .on_sized(move |e: Event<SizedEventData>| {
+            if let Some(mut setter) = viewport_top_setter
+                && (*setter.peek() - e.area.min_y()).abs() > 0.5
+            {
+                setter.set(e.area.min_y());
+            }
+        })
         .child(
-            ScrollView::new().child(
+            scroll.child(
                 rect()
                     .width(Size::fill())
                     .padding(16.)
@@ -777,7 +830,36 @@ impl Component for VerseMarker {
                 .color(parse_rgb(theme::VERSE_NUM))
                 .text(format!(" {verse} ")),
         };
-        rect().padding((0., 2.)).child(inner)
+        // Scroll-into-view hook: when a chip-tap / TSK jump has
+        // written this verse into `flash_verse`, align the chapter
+        // viewport on it the first time Freya reports the marker's
+        // laid-out area. Consume the signal so repeated flashes to
+        // the same verse re-fire without needing a State-level reset.
+        let scroll_ctx = try_consume_context::<VerseScrollCtx>();
+        rect()
+            .padding((0., 2.))
+            .on_sized(move |e: Event<SizedEventData>| {
+                let Some(ctx) = scroll_ctx.as_ref() else {
+                    return;
+                };
+                let Some(target) = *ctx.flash_verse.peek() else {
+                    return;
+                };
+                if target != verse {
+                    return;
+                }
+                let viewport_top = *ctx.viewport_top.peek();
+                if viewport_top == 0.0 && e.area.min_y() == 0.0 {
+                    return;
+                }
+                let (_, cur_y): (i32, i32) = ctx.controller.into();
+                let delta = e.area.min_y() - viewport_top - VERSE_SCROLL_MARGIN;
+                #[allow(clippy::cast_possible_truncation)]
+                let desired = cur_y + delta.round() as i32;
+                let mut controller = ctx.controller;
+                controller.scroll_to_y(desired.max(0));
+            })
+            .child(inner)
     }
 }
 

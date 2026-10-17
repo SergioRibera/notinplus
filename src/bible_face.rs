@@ -181,6 +181,20 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
     // Chip-tap jumps seed the flash via `initial_flash_verse` so the
     // chip's target verse pulses just like a TSK click would.
     let mut flash_verse: State<Option<u16>> = use_state(|| initial_flash_verse);
+    // Scroll-into-view wiring. The controller drives the chapter
+    // `ScrollView`; `viewport_top` carries the window-coord top of
+    // the chapter container so inline `VerseMarker::on_sized` can
+    // compute a content-relative scroll target. Both signals + the
+    // controller travel together via `VerseScrollCtx`.
+    let scroll_controller = freya::components::use_scroll_controller(
+        freya::components::ScrollConfig::default,
+    );
+    let viewport_top: State<f32> = use_state(|| 0.0_f32);
+    let verse_scroll_ctx = notein_bible::ui::reader::VerseScrollCtx {
+        controller: scroll_controller,
+        flash_verse,
+        viewport_top,
+    };
     // Hook runs unconditionally to keep hook order stable; it only
     // schedules a clear timer when a chip-tap seeded the flash.
     let mut flash_clear = flash_verse;
@@ -555,6 +569,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
             st_snapshot.chapter.as_ref(),
             &st_snapshot.highlights,
             *flash_verse.read(),
+
             {
                 let pending = *pending_highlight.read();
                 let color = *preview_color.read();
@@ -684,6 +699,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                     }),
                 );
             },
+            Some(verse_scroll_ctx.clone()),
         ))
         .child(bottom_nav::bottom_nav(
             &st_snapshot.book_name,
@@ -935,6 +951,7 @@ fn chapter_body(
     preview: Option<notein_bible::ui::reader::HighlightPreview>,
     on_jump: impl FnMut((String, u16, u16)) + 'static,
     on_highlight: impl FnMut(notein_bible::ui::reader::HighlightTarget) + 'static,
+    scroll_ctx: Option<notein_bible::ui::reader::VerseScrollCtx>,
 ) -> impl IntoElement {
     let base = rect().width(Size::fill()).height(Size::flex(1.));
     match chapter {
@@ -966,6 +983,7 @@ fn chapter_body(
                 preview,
                 22.0,
                 1.65,
+                scroll_ctx,
             ))
         }
         None => base.center().child(
