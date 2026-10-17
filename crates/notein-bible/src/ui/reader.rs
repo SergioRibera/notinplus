@@ -390,10 +390,6 @@ impl Component for VerseParagraph {
     fn render(&self) -> impl IntoElement {
         let holder = use_hook(ParagraphHolder::default);
         let drag = use_consume::<DragSelect>();
-        // Monotonic token so a pointer-up / pointer-leave that arrives
-        // after the long-press timer has already fired is a no-op, and
-        // so a second press starts a fresh timer.
-        let long_press_token = use_state(|| 0u64);
         // Global pointer location captured on `pointer_down`. The
         // host anchors its colour picker here so the popup opens next
         // to the finger / cursor instead of pinned to a fixed corner.
@@ -529,7 +525,6 @@ impl Component for VerseParagraph {
 
         let p = p
             .on_pointer_down({
-                let mut long_press_token = long_press_token;
                 let on_highlight = on_highlight.clone();
                 let mut drag = drag;
                 let mut anchor = anchor;
@@ -549,9 +544,11 @@ impl Component for VerseParagraph {
                     drag.end.set(Some(verse));
                     drag.pressing.set(true);
 
-                    let my_token = long_press_token.peek().wrapping_add(1);
-                    long_press_token.set(my_token);
-
+                    // Double-tap on a verse is the only way to open the
+                    // highlight picker now — the long-press path was
+                    // dropped because sustained touch is uncomfortable
+                    // on mobile. Drag between verses still produces a
+                    // `Range` highlight on pointer-up.
                     if EventsCombos::<()>::pressed(e.global_location()).is_double() {
                         on_highlight.call(HighlightTarget {
                             kind: HighlightKind::Verse(verse),
@@ -561,31 +558,11 @@ impl Component for VerseParagraph {
                         drag.start.set(None);
                         drag.end.set(None);
                         drag.pressing.set(false);
-                        return;
                     }
-
-                    let on_highlight = on_highlight.clone();
-                    let long_press_token = long_press_token;
-                    let mut drag_for_long = drag;
-                    spawn(async move {
-                        async_io::Timer::after(std::time::Duration::from_millis(LONG_PRESS_MS))
-                            .await;
-                        if *long_press_token.peek() == my_token {
-                            on_highlight.call(HighlightTarget {
-                                kind: HighlightKind::Verse(verse),
-                                anchor_x: anchor_pt.0,
-                                anchor_y: anchor_pt.1,
-                            });
-                            drag_for_long.start.set(None);
-                            drag_for_long.end.set(None);
-                            drag_for_long.pressing.set(false);
-                        }
-                    });
                 }
             })
             .on_pointer_move({
                 let mut drag = drag;
-                let mut long_press_token = long_press_token;
                 move |e: Event<PointerEventData>| {
                     if !*drag.pressing.peek() {
                         return;
@@ -599,23 +576,14 @@ impl Component for VerseParagraph {
                     let current = *drag.end.peek();
                     if current != Some(verse) {
                         drag.end.set(Some(verse));
-                        // Dragging across verses cancels the long-press
-                        // timer so the user does not get both a Verse +
-                        // Range emission from one gesture.
-                        let next = long_press_token.peek().wrapping_add(1);
-                        long_press_token.set(next);
                     }
                 }
             })
             .on_global_pointer_up({
-                let mut long_press_token = long_press_token;
                 let on_highlight = on_highlight.clone();
                 let mut drag = drag;
                 let anchor = anchor;
                 move |_: Event<PointerEventData>| {
-                    let next = long_press_token.peek().wrapping_add(1);
-                    long_press_token.set(next);
-
                     let start = *drag.start.peek();
                     let end = *drag.end.peek();
                     drag.start.set(None);
@@ -772,9 +740,6 @@ impl std::fmt::Debug for VerseMarker {
             .finish()
     }
 }
-
-/// Delay before a sustained press is treated as a long-press.
-const LONG_PRESS_MS: u64 = 500;
 
 impl Component for VerseMarker {
     fn render(&self) -> impl IntoElement {
