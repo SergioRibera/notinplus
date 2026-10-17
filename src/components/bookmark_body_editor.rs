@@ -586,12 +586,40 @@ impl Component for ChipWidget {
             .color(CHIP_FG)
             .text(view.label.clone());
 
-        let icon_el = view.icon.clone().map(|icon| {
-            label()
-                .font_size(11.5)
-                .color(CHIP_FG)
-                .text(format!("{icon} "))
-        });
+        // Prefer a lucide SVG keyed on the ref kind — gives every chip
+        // a consistent iconography (Bible = scroll, PDF = book, link =
+        // chain). Falls back to the plugin-supplied emoji label when
+        // the ref kind has no shell-side SVG mapping.
+        let svg_icon_el = {
+            use freya::icons::lucide;
+            let bytes = match &src {
+                SourceRef::Plugin { plugin_id, .. }
+                    if plugin_id == crate::pdf_viewer::PDF_PLUGIN_ID =>
+                {
+                    Some(lucide::book_text())
+                }
+                SourceRef::Plugin { plugin_id, .. } if plugin_id == "io.notein.bible" => {
+                    Some(lucide::scroll_text())
+                }
+                SourceRef::External { .. } => Some(lucide::link_2()),
+                _ => None,
+            };
+            bytes.map(|b| {
+                SvgViewer::new(b)
+                    .color(CHIP_FG)
+                    .width(Size::px(CHIP_ICON_SIZE))
+                    .height(Size::px(CHIP_ICON_SIZE))
+            })
+        };
+        let emoji_icon_el = (svg_icon_el.is_none())
+            .then(|| view.icon.clone())
+            .flatten()
+            .map(|icon| {
+                label()
+                    .font_size(11.5)
+                    .color(CHIP_FG)
+                    .text(icon)
+            });
 
         let mut hover = use_state(|| false);
         let bg = if hover() {
@@ -609,6 +637,10 @@ impl Component for ChipWidget {
         // (release often lands outside the pixel-tight rect) —
         // `on_pointer_down` triggers on the press itself, which
         // matches the UX a user expects from a link-shaped chip.
+        //
+        // `spacing(6)` replaces the old trailing-space hack on the
+        // icon label — the glyph-space combo left a visible gap on
+        // chips where the fallback emoji was absent.
         rect()
             .height(Size::px(20.))
             .padding((2., 8.))
@@ -623,15 +655,22 @@ impl Component for ChipWidget {
             .cursor(CursorIcon::Pointer)
             .direction(Direction::Horizontal)
             .cross_align(Alignment::center())
+            .spacing(6.0)
             .on_pointer_enter(move |_| hover.set(true))
             .on_pointer_leave(move |_| hover.set_if_modified(false))
             .on_pointer_down(move |_: Event<PointerEventData>| {
                 source_ref_nav::navigate(&nav_src);
             })
-            .maybe_child(icon_el)
+            .maybe_child(svg_icon_el)
+            .maybe_child(emoji_icon_el)
             .child(label_body)
     }
 }
+
+/// Logical pixel size of the leading SVG icon inside a chip pill.
+/// Picked to sit comfortably below the 20 px chip height while still
+/// reading at inline-paragraph scale.
+const CHIP_ICON_SIZE: f32 = 12.0;
 
 /// Blend `color` toward white by `t` (0 = original, 1 = white).
 fn lighten(color: Color, t: f32) -> Color {
