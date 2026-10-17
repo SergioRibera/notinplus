@@ -50,7 +50,13 @@ impl Component for BibleFace {
                 if bibles.is_empty() {
                     empty_state_with_install().into_element()
                 } else {
-                    bible_viewer(item, db, bibles).into_element()
+                    // Delegate to a dedicated component so the viewer's
+                    // many hooks are tracked under its own scope. When
+                    // the empty-state branch flips to the viewer branch
+                    // post-install, mounting a fresh component is safe;
+                    // calling hooks inline from this `match` arm is NOT
+                    // (freya enforces identical hook order per render).
+                    BibleViewer { item }.into_element()
                 }
             }
         };
@@ -62,7 +68,28 @@ impl Component for BibleFace {
     }
 }
 
-fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement {
+#[derive(Debug, PartialEq)]
+struct BibleViewer {
+    item: ItemId,
+}
+
+impl Component for BibleViewer {
+    fn render(&self) -> impl IntoElement {
+        let item = self.item;
+        // Reuse the plugin-owned DB handle so we don't re-run schema
+        // migrations on every render. Fall back to a fresh open only
+        // if the registry isn't wired yet (should never happen inside
+        // a mounted viewer, but keeps the match total).
+        let db = crate::builtin::bible_canvas()
+            .map(|c| c.db().clone())
+            .or_else(|| Db::open_default().ok())
+            .expect("bible db available when viewer mounts");
+        let bibles = db.list_bibles().unwrap_or_default();
+        bible_viewer_body(item, db, bibles)
+    }
+}
+
+fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
     let saved_snapshot: Option<BibleSnapshot> =
         crate::library::bodies::read_plugin_snapshot(item, BIBLE_PLUGIN_ID)
             .ok()
@@ -632,7 +659,7 @@ fn bible_viewer(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> impl IntoElement
         );
     }
 
-    column
+    column.into_element()
 }
 
 /// Grid of every book in the current Bible. Clicking a cell drills
