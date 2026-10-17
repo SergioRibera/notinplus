@@ -15,14 +15,18 @@
 //! Other `SourceRef` variants (Canvas, Item, External) are stubbed
 //! until Phase 6 — chips still render; tapping logs a warning.
 
+use crate::active_bible_sources;
 use crate::active_boards;
 use crate::active_pdf_sources;
 use crate::app::CanvasMount;
 use crate::bookmark::SourceRef;
 use crate::canvas::lock;
 use crate::ids::BookmarkId;
-use crate::library::ItemId;
+use crate::library::{ItemId, ItemKind};
 use crate::pdf_viewer::PDF_PLUGIN_ID;
+
+const BIBLE_SOURCE_PLUGIN_ID: &str = "io.notein.bible";
+const BIBLE_VIEWER_PLUGIN_ID: &str = "io.notein.bible.viewer";
 
 /// Human-readable one-liner for a chip's visible label. For PDF
 /// anchors returns `"PDF p.N"` (or `"PDF p.N (range)"` when the
@@ -64,6 +68,11 @@ pub fn navigate(src: &SourceRef) {
         } if plugin_id == PDF_PLUGIN_ID => {
             let item_id = ItemId(*item);
             navigate_pdf(item_id, anchor.clone());
+        }
+        SourceRef::Plugin {
+            plugin_id, anchor, ..
+        } if plugin_id == BIBLE_SOURCE_PLUGIN_ID => {
+            navigate_bible(anchor);
         }
         SourceRef::Plugin { plugin_id, .. } => {
             log::warn!("navigate: unsupported plugin ref {plugin_id}");
@@ -191,31 +200,107 @@ pub fn open_external_url(url: &str) {
 
 /// Scroll the PDF face for `item` to the anchor's content centre + pulse
 /// highlight. Opens the plugin instance lazily when it's not already
-/// registered.
+/// registered. If no canvas pane is currently mounted for `item`, the
+/// slow path adds a tab to the focused workspace pane and polls until
+/// the board mounts, mirroring [`navigate_canvas_bookmark`].
 fn navigate_pdf(item: ItemId, anchor: Vec<u8>) {
     log::info!("navigate_pdf: item={item:?}");
     let Some(handle) = active_pdf_sources::ensure_registered(item) else {
         log::warn!("navigate_pdf: failed to open PDF plugin for {item:?}");
         return;
     };
-    if let Some((wx, wy)) = handle
+    let target = handle
         .plugin
-        .anchor_scroll_target_world(handle.instance, &anchor)
-    {
-        if let Some(board) = active_boards::get(CanvasMount::Item(item)) {
-            lock(&board).center_on_world(wx, wy);
-        } else {
-            // No pane open for this PDF yet — the pulse still queues
-            // and the full tab-router cross-item flow handles the
-            // auto-open from `navigate_canvas_bookmark`'s slow path.
-            // For PDF chips we'd need an analogous spawn; log the
-            // gap so the user knows to open the PDF manually.
-            log::warn!(
-                "navigate_pdf: item {item:?} is not mounted in any pane — \
-                 open the PDF tab first (cross-item PDF routing lands in \
-                 a follow-up)"
-            );
-        }
+        .anchor_scroll_target_world(handle.instance, &anchor);
+    active_pdf_sources::pulse(item, anchor.clone());
+    let Some((wx, wy)) = target else {
+        return;
+    };
+    if let Some(board) = active_boards::get(CanvasMount::Item(item)) {
+        lock(&board).center_on_world(wx, wy);
+        return;
     }
-    active_pdf_sources::pulse(item, anchor);
+    // Slow path — not mounted. Route to the item's PDF canvas view
+    // and poll `active_boards` until the mount lands, then centre +
+    // re-pulse so the pulse window isn't exhausted by the route /
+    // asset-load latency.
+    let router = freya::router::RouterContext::get();
+    let _ = router.push(crate::route::Route::CanvasPdfView { id: item });
+    freya::prelude::spawn(async move {
+        for _ in 0..30 {
+            async_io::Timer::after(std::time::Duration::from_millis(100)).await;
+            if let Some(board) = active_boards::get(CanvasMount::Item(item)) {
+                lock(&board).center_on_world(wx, wy);
+                active_pdf_sources::pulse(item, anchor);
+                return;
+            }
+        }
+        log::warn!(
+            "navigate_pdf: item {item:?} routed but board never mounted \
+             within the poll window"
+        );
+    });
 }
+
+/// Navigate to a Bible chip's target verse. Decodes the plugin anchor,
+/// finds the right Bible item in the library, queues a pending jump
+/// keyed on the item id, and pushes the Bible route. The Bible viewer
+/// polls [`active_bible_sources::take`] on mount and applies the jump.
+///
+/// When the viewer is already open against the right item the pending
+/// jump is still queued — the viewer's reactive hook picks it up on
+/// the next render.
+fn navigate_bible(anchor_bytes: &[u8]) {
+    let Some(decoded) = notein_bible::BibleAnchor::decode(anchor_bytes) else {
+        log::warn!("navigate_bible: failed to decode anchor payload");
+        return;
+    };
+    let jump = active_bible_sources::PendingJump {
+        bible_id: decoded.bible_id.clone(),
+        book_id: decoded.book_id.clone(),
+        chapter: decoded.start_chapter,
+        verse: decoded.start_verse,
+    };
+    // Capture the router at call time — the pointer-down handler runs
+    // in a Freya scope, so `RouterContext::get()` resolves here.
+    // The async spawn below cannot call it after `.await` because the
+    // scope's thread-local disappears across executor steps.
+    let router = freya::router::RouterContext::get();
+    // Resolve the library item that hosts a Bible viewer. The chip
+    // itself does not carry an `ItemId` — Bible chips come from
+    // completions that originate at the plugin level, not from a
+    // specific item. The viewer swaps translations in-place from the
+    // user's installed Bibles, so any Bible item works as the mount
+    // target; the jump's `bible_id` steers the final translation
+    // once the viewer has rehydrated.
+    freya::prelude::spawn(async move {
+        let Ok(handle) = crate::home::open_library().await else {
+            log::warn!("navigate_bible: library handle unavailable");
+            return;
+        };
+        let item_id = {
+            let lib = handle.lock().await;
+            lib.index()
+                .items
+                .iter()
+                .find_map(|item| match &item.kind {
+                    ItemKind::PluginCanvas { plugin_id, .. }
+                        if plugin_id == BIBLE_VIEWER_PLUGIN_ID =>
+                    {
+                        Some(item.id)
+                    }
+                    _ => None,
+                })
+        };
+        let Some(item_id) = item_id else {
+            log::warn!(
+                "navigate_bible: no library item holds a Bible viewer; \
+                 install one first"
+            );
+            return;
+        };
+        active_bible_sources::queue(item_id, jump);
+        let _ = router.push(crate::route::Route::BibleView { id: item_id });
+    });
+}
+

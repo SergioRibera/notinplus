@@ -118,20 +118,41 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
         .map(|s| s.current_chapter)
         .unwrap_or(1);
 
+    // Chip-tap jump queued by `source_ref_nav::navigate_bible`. Pull
+    // it once at init so a re-render inside the same mount doesn't
+    // re-trigger the jump. Captured by the init closure below (which
+    // Freya runs exactly once per mount) and stashed in
+    // `initial_flash_verse` for the flash hook further down.
     let db_for_init = db.clone();
     let snap_for_init = saved_snapshot.clone();
-    let mut state = use_state(move || {
-        let mut st = BibleViewerState::new(&starting_bible, &starting_book, starting_chapter);
-        if let Some(snap) = snap_for_init {
-            snap.apply_to(&mut st);
-        }
-        if let Ok(chap) =
-            db_for_init.load_chapter(&st.bible_id, &st.current_book, st.current_chapter)
-        {
-            st.push_chapter(chap);
-        }
-        st
-    });
+    let (mut state, initial_flash_verse) = {
+        let jump_cell: State<Option<u16>> = use_state(|| None);
+        let mut jump_cell_setter = jump_cell;
+        let state = use_state(move || {
+            let initial_jump = crate::active_bible_sources::take(item);
+            jump_cell_setter.set(initial_jump.as_ref().map(|j| j.verse));
+            let mut st =
+                BibleViewerState::new(&starting_bible, &starting_book, starting_chapter);
+            if let Some(snap) = snap_for_init {
+                snap.apply_to(&mut st);
+            }
+            if let Some(jump) = initial_jump.as_ref() {
+                // Chip-tap landed on this mount — override the restored
+                // snapshot so the viewer opens straight at the
+                // requested verse.
+                st.bible_id = jump.bible_id.clone();
+                st.current_book = jump.book_id.clone();
+                st.current_chapter = jump.chapter;
+            }
+            if let Ok(chap) =
+                db_for_init.load_chapter(&st.bible_id, &st.current_book, st.current_chapter)
+            {
+                st.push_chapter(chap);
+            }
+            st
+        });
+        (state, *jump_cell.read())
+    };
     let mut picker_open = use_state(|| false);
     let mut search_query: State<String> = use_state(String::new);
     let mut search_hits: State<Vec<notein_bible::ui::search_sheet::SearchHitView>> =
@@ -149,7 +170,71 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
     // Transient highlight on the destination verse of a TSK / xref jump
     // — set on click, cleared by a spawned timer after a few seconds so
     // the user eye lands on the referenced text before the colour fades.
-    let mut flash_verse: State<Option<u16>> = use_state(|| None);
+    // Chip-tap jumps seed the flash via `initial_flash_verse` so the
+    // chip's target verse pulses just like a TSK click would.
+    let mut flash_verse: State<Option<u16>> = use_state(|| initial_flash_verse);
+    // Hook runs unconditionally to keep hook order stable; it only
+    // schedules a clear timer when a chip-tap seeded the flash.
+    let mut flash_clear = flash_verse;
+    use_hook(move || {
+        if let Some(verse) = initial_flash_verse {
+            spawn_forever(async move {
+                async_io::Timer::after(Duration::from_secs(3)).await;
+                if flash_clear.peek().as_ref() == Some(&verse) {
+                    flash_clear.set(None);
+                }
+            });
+        }
+    });
+
+    // Live chip-tap subscription — when the user clicks a Bible chip
+    // while this mount is already on screen, the router dedupe
+    // suppresses a remount so `active_bible_sources::take` would
+    // normally not re-fire. Subscribe to the broadcast + apply the
+    // jump in-place; mirrors the fresh-mount path (snapshot override
+    // + verse flash + flash-clear timer). Uses `spawn` (scope-bound)
+    // so the receiver drops on unmount and the next broadcast reaps
+    // the orphaned sender via the `retain` on the subscribers list.
+    let db_notify = db.clone();
+    let notify_state = state;
+    let notify_flash = flash_verse;
+    use_hook(move || {
+        let rx = crate::active_bible_sources::subscribe();
+        let mut state_setter = notify_state;
+        let mut flash_setter = notify_flash;
+        let db_notify = db_notify;
+        spawn(async move {
+            while let Ok(target_item) = rx.recv_async().await {
+                if target_item != item {
+                    continue;
+                }
+                let Some(jump) = crate::active_bible_sources::take(item) else {
+                    continue;
+                };
+                let current_bible = { state_setter.peek().bible_id.clone() };
+                if current_bible != jump.bible_id
+                    && let Err(e) = state_setter.write().switch_bible(&db_notify, &jump.bible_id)
+                {
+                    log::warn!("bible chip: switch_bible failed: {e}");
+                }
+                if let Err(e) =
+                    state_setter.write().jump_to(&db_notify, &jump.book_id, jump.chapter)
+                {
+                    log::warn!("bible chip: jump_to failed: {e}");
+                    continue;
+                }
+                flash_setter.set(Some(jump.verse));
+                let mut flash_clear = flash_setter;
+                let flash_verse_val = jump.verse;
+                spawn(async move {
+                    async_io::Timer::after(Duration::from_secs(3)).await;
+                    if flash_clear.peek().as_ref() == Some(&flash_verse_val) {
+                        flash_clear.set(None);
+                    }
+                });
+            }
+        });
+    });
 
     // Save snapshot whenever `state` changes. `use_side_effect` reruns
     // on signal mutations so highlights + chapter navigation persist
