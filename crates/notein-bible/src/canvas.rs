@@ -306,6 +306,13 @@ impl CanvasKind for BibleCanvas {
     fn apply_remote_op(&self, _instance: u64, _op: &[u8]) {}
 
     fn install_host(&self, host: Host) {
+        // Push every bundled Lora face to the renderer under the same
+        // family name — the shell no longer has to know this plugin
+        // needs a specific font at startup. Skia groups the eight TTFs
+        // by family + resolves weight / italic per request.
+        for (_name, bytes) in crate::fonts::all() {
+            host.load_font(crate::fonts::FAMILY, bytes.to_vec());
+        }
         plugin_config::set_host(&self.config, host);
     }
 

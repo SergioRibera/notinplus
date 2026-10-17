@@ -56,6 +56,24 @@ pub trait HostApi: Send + Sync + std::fmt::Debug {
     /// chip clicks, "help" links from settings, etc.
     fn open_url(&self, url: &str);
 
+    /// Register a font typeface under `font_name` so the renderer
+    /// resolves `font_family("<font_name>")` references coming from
+    /// the plugin's own UI. Plugins ship their fonts (typically via
+    /// `include_bytes!`) and call this from `install_host` so the
+    /// shell never has to know what fonts a plugin needs at startup.
+    ///
+    /// Multiple variants (regular / bold / italic) register under the
+    /// same `font_name` — the font provider groups them by family and
+    /// resolves weight / slant per request. `font_name` collisions
+    /// across plugins overwrite the earlier registration, so plugin
+    /// authors are expected to namespace (e.g. `"Lora"` is fine for
+    /// a single owner, otherwise prefix with the plugin id).
+    ///
+    /// Default no-op so hosts without a renderer stay usable.
+    fn load_font(&self, font_name: &str, font_data: Vec<u8>) {
+        let _ = (font_name, font_data);
+    }
+
     /// Ask the shell to open its full bookmark editor (body with
     /// autocomplete, color picker, source-ref chips) prefilled with
     /// `request.draft`. The host fires `on_done` once with the saved

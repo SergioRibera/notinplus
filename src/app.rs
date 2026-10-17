@@ -232,7 +232,7 @@ pub fn run() {
 
     #[cfg(not(target_os = "android"))]
     {
-        let mut cfg = LaunchConfig::new().with_window(
+        let cfg = LaunchConfig::new().with_window(
             WindowConfig::new(router)
                 .with_title("notinplus")
                 .with_window_handle(|window| {
@@ -248,12 +248,6 @@ pub fn run() {
                     }
                 }),
         );
-        // Register bundled plugin fonts up-front — the Bible reader
-        // references `font_family: "Lora"` and would silently fall
-        // back to the system serif otherwise.
-        for (_name, bytes) in notein_bible::fonts::all() {
-            cfg = cfg.with_font(notein_bible::fonts::FAMILY, bytes.to_vec());
-        }
         launch(cfg);
     }
 }
@@ -271,6 +265,14 @@ struct AppShell;
 impl Component for AppShell {
     fn render(&self) -> impl IntoElement {
         let area = use_state(Area::default);
+        // Drain the font-registration buffer that plugins fill via
+        // `Host::load_font` during pre-launch `install_host`. This
+        // must run inside the freya scheduler context — `use_hook`
+        // runs once per `AppShell` mount, exactly when `Platform::get`
+        // becomes safe to call.
+        use_hook(|| {
+            crate::host_api::flush_pending_fonts();
+        });
         rect()
             .expanded()
             .on_sized({

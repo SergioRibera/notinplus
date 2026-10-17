@@ -11,7 +11,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use notein_plugin::{
@@ -259,6 +259,20 @@ impl HostApi for HostInner {
         crate::source_ref_nav::open_external_url(url);
     }
 
+    fn load_font(&self, font_name: &str, font_data: Vec<u8>) {
+        // Freya's `Platform::get()` panics outside the scheduler's
+        // root context — and most `install_host` calls fire during
+        // `plugins::hydrate_from_disk`, which runs *before* `launch`.
+        // So every registration lands in `PENDING_FONTS`; the root
+        // shell drains the buffer once per mount via
+        // [`flush_pending_fonts`] where `Platform::get()` is safe.
+        //
+        // Plugins loaded hot (post-launch) also funnel through here;
+        // the drain runs again on the next `AppShell` re-render.
+        let mut guard = pending_fonts().lock().unwrap_or_else(|e| e.into_inner());
+        guard.push((font_name.to_owned(), font_data));
+    }
+
     fn request_bookmark_edit(
         &self,
         plugin_id: &str,
@@ -283,6 +297,39 @@ impl HostApi for HostInner {
             (prev.callback)(None);
         }
         self.bump();
+    }
+}
+
+/// Font registrations queued by [`HostInner::load_font`] before the
+/// freya root context exists. Drained by [`flush_pending_fonts`].
+static PENDING_FONTS: OnceLock<Mutex<Vec<(String, Vec<u8>)>>> = OnceLock::new();
+
+fn pending_fonts() -> &'static Mutex<Vec<(String, Vec<u8>)>> {
+    PENDING_FONTS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Push any buffered font registrations through `freya_core::Platform`
+/// so renderer windows pick up new typefaces. Must be called from
+/// inside a freya render / event-handler context (e.g. a root-scope
+/// `use_hook`) — [`freya_core::platform::Platform::get`] panics
+/// otherwise.
+///
+/// Idempotent: a second call after the buffer has been drained is a
+/// no-op, so wiring this into every `AppShell::render` is safe.
+pub fn flush_pending_fonts() {
+    let Some(buffer) = PENDING_FONTS.get() else {
+        return;
+    };
+    let drained: Vec<(String, Vec<u8>)> = {
+        let mut guard = buffer.lock().unwrap_or_else(|e| e.into_inner());
+        std::mem::take(&mut *guard)
+    };
+    if drained.is_empty() {
+        return;
+    }
+    let platform = freya_core::platform::Platform::get();
+    for (name, bytes) in drained {
+        platform.load_font(name, bytes);
     }
 }
 
