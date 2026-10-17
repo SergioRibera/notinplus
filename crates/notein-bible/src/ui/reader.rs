@@ -376,12 +376,30 @@ fn offset_to_verse(ranges: &[VerseRange], offset: usize) -> Option<u16> {
         .map(|(_, _, v)| *v)
 }
 
-/// Resolve `element_location` to the UTF-16 offset inside the laid-out
-/// paragraph the holder references. Returns `None` before the first
-/// frame has published the paragraph (holder still empty).
-fn hit_offset(holder: &ParagraphHolder, elem: CursorPoint) -> Option<usize> {
+/// Resolve a global pointer location to the UTF-16 offset inside the
+/// laid-out paragraph the holder references. Returns `None` before the
+/// first frame has published the paragraph (holder empty) or before
+/// `on_sized` has published the paragraph area (zero area).
+///
+/// Freya bubbles pointer events from the target node up to ancestor
+/// handlers but keeps `element_location` relative to the ORIGINAL hit
+/// target. For a verse paragraph that means a tap on an inline child
+/// (`VerseMarker`, `FootnoteLetter`, `RefHoverButton`) arrives at the
+/// paragraph handler with coordinates relative to the tiny child box,
+/// not the paragraph — hit testing against the laid-out paragraph then
+/// returns a stale offset and the handler fires for the wrong verse.
+/// Rebasing from `global_location` against the paragraph's own area
+/// closes the hole.
+fn hit_offset(holder: &ParagraphHolder, global: CursorPoint, area: Area) -> Option<usize> {
+    if area.width() <= 0.0 || area.height() <= 0.0 {
+        return None;
+    }
     let inner = holder.0.borrow();
     let data = inner.as_ref()?;
+    let elem = CursorPoint::new(
+        global.x - f64::from(area.min_x()),
+        global.y - f64::from(area.min_y()),
+    );
     let vis = holder.visible_location(elem);
     Some(data.paragraph.cursor_index_at_point((vis.x, vis.y)))
 }
@@ -529,14 +547,15 @@ impl Component for VerseParagraph {
                 let mut drag = drag;
                 let mut anchor = anchor;
                 move |e: Event<PointerEventData>| {
-                    let Some(offset) = hit_offset(&holder_for_down, e.element_location()) else {
+                    let g = e.global_location();
+                    let paragraph_area = *area.peek();
+                    let Some(offset) = hit_offset(&holder_for_down, g, paragraph_area) else {
                         return;
                     };
                     let Some(verse) = offset_to_verse(&ranges_for_down, offset) else {
                         return;
                     };
 
-                    let g = e.global_location();
                     let anchor_pt = (g.x as f32, g.y as f32);
                     anchor.set(anchor_pt);
 
@@ -549,7 +568,7 @@ impl Component for VerseParagraph {
                     // dropped because sustained touch is uncomfortable
                     // on mobile. Drag between verses still produces a
                     // `Range` highlight on pointer-up.
-                    if EventsCombos::<()>::pressed(e.global_location()).is_double() {
+                    if EventsCombos::<()>::pressed(g).is_double() {
                         on_highlight.call(HighlightTarget {
                             kind: HighlightKind::Verse(verse),
                             anchor_x: anchor_pt.0,
@@ -567,7 +586,10 @@ impl Component for VerseParagraph {
                     if !*drag.pressing.peek() {
                         return;
                     }
-                    let Some(offset) = hit_offset(&holder_for_move, e.element_location()) else {
+                    let paragraph_area = *area.peek();
+                    let Some(offset) =
+                        hit_offset(&holder_for_move, e.global_location(), paragraph_area)
+                    else {
                         return;
                     };
                     let Some(verse) = offset_to_verse(&ranges_for_move, offset) else {
@@ -799,16 +821,27 @@ impl Component for FootnoteLetter {
     fn render(&self) -> impl IntoElement {
         let hover = use_state(|| false);
         let version = use_state(|| 0u64);
+        let mut letter_area: State<Area> = use_state(Area::default);
+        let mut popup_area: State<Area> = use_state(Area::default);
+        let viewport = try_consume_context::<notein_ui_kit::ViewportArea>();
         let letter = self.letter.clone();
         let text = self.text.clone();
         let target = self.target.clone();
         let on_jump = self.jump.clone();
         let marker_font = self.font_size * 0.55;
         let blue = Color::from_rgb(80, 150, 230);
+        let popup_width = 300.0_f32;
+        let popup_margin = 8.0_f32;
 
         let mut container = rect()
             .padding((0., 1.))
             .margin((0., 1.))
+            .on_sized(move |e: Event<SizedEventData>| {
+                let new_area = e.data().area;
+                if *letter_area.peek() != new_area {
+                    letter_area.set(new_area);
+                }
+            })
             .on_pointer_enter({
                 let mut hover = hover;
                 let mut version = version;
@@ -822,6 +855,11 @@ impl Component for FootnoteLetter {
                 let mut hover = hover;
                 let mut version = version;
                 move |_| close_soon(&mut hover, &mut version)
+            })
+            // Swallow pointer_down so a footnote tap does not seed
+            // the paragraph's drag-highlight or double-tap gestures.
+            .on_pointer_down(|e: Event<PointerEventData>| {
+                e.stop_propagation();
             })
             .on_press({
                 let mut hover = hover;
@@ -838,35 +876,70 @@ impl Component for FootnoteLetter {
             .child(label().font_size(marker_font).color(blue).text(letter));
 
         if *hover.read() && !text.is_empty() {
-            container = container.child(
-                rect()
-                    .layer(Layer::Overlay)
-                    .position(Position::new_absolute().top(marker_font * 1.6).left(0.))
-                    .width(Size::px(300.0))
-                    .padding((10., 12.))
-                    .with_corner_radius(8.0)
-                    .background(parse_rgb(theme::CHIP_BG))
-                    .on_pointer_enter({
-                        let mut hover = hover;
-                        let mut version = version;
-                        move |_| {
-                            hover.set(true);
-                            let next = version.peek().wrapping_add(1);
-                            version.set(next);
-                        }
-                    })
-                    .on_pointer_leave({
-                        let mut hover = hover;
-                        let mut version = version;
-                        move |_| close_soon(&mut hover, &mut version)
-                    })
-                    .child(
-                        label()
-                            .font_size(self.font_size * 0.65)
-                            .color(parse_rgb(theme::TEXT_PRIMARY))
-                            .text(text),
-                    ),
-            );
+            let icon = *letter_area.read();
+            let measured = *popup_area.read();
+            let popup_height = measured.height().max(0.0);
+            let viewport_area = viewport.map(|v| v.get()).unwrap_or(icon);
+            let has_viewport = viewport_area.width() > 0.0 && viewport_area.height() > 0.0;
+            let is_measured = icon.width() > 0.0 && popup_height > 0.0;
+
+            let popup = rect()
+                .layer(Layer::Overlay)
+                .width(Size::px(popup_width))
+                .padding((10., 12.))
+                .with_corner_radius(8.0)
+                .background(parse_rgb(theme::CHIP_BG))
+                .on_sized(move |e: Event<SizedEventData>| {
+                    let new_area = e.data().area;
+                    if *popup_area.peek() != new_area {
+                        popup_area.set(new_area);
+                    }
+                })
+                .opacity(if is_measured { 1.0 } else { 0.0 })
+                .on_pointer_down(|e: Event<PointerEventData>| {
+                    e.stop_propagation();
+                })
+                .on_pointer_enter({
+                    let mut hover = hover;
+                    let mut version = version;
+                    move |_| {
+                        hover.set(true);
+                        let next = version.peek().wrapping_add(1);
+                        version.set(next);
+                    }
+                })
+                .on_pointer_leave({
+                    let mut hover = hover;
+                    let mut version = version;
+                    move |_| close_soon(&mut hover, &mut version)
+                })
+                .child(
+                    label()
+                        .font_size(self.font_size * 0.65)
+                        .color(parse_rgb(theme::TEXT_PRIMARY))
+                        .text(text),
+                );
+
+            let popup = if has_viewport && is_measured {
+                let below_top = icon.max_y() + 4.0;
+                let top = notein_ui_kit::clamp_popup_top(
+                    viewport_area,
+                    icon,
+                    below_top,
+                    popup_height,
+                    popup_margin,
+                );
+                let left = notein_ui_kit::clamp_popup_left(
+                    viewport_area,
+                    icon.min_x(),
+                    popup_width,
+                    popup_margin,
+                );
+                popup.position(Position::new_global().top(top).left(left))
+            } else {
+                popup.position(Position::new_absolute().top(marker_font * 1.6).left(0.))
+            };
+            container = container.child(popup);
         }
         container
     }
@@ -910,35 +983,95 @@ impl std::fmt::Debug for RefHoverButton {
 
 impl Component for RefHoverButton {
     fn render(&self) -> impl IntoElement {
-        let hover = use_state(|| false);
+        // `open` is the shared visibility signal; `pinned` marks it as
+        // tap-opened so hover-leave does not auto-close it on devices
+        // that fire `pointer_leave` right after the touch-up.
+        let open = use_state(|| false);
+        let pinned = use_state(|| false);
         let version = use_state(|| 0u64);
         let expanded = use_state(|| std::collections::HashSet::<usize>::new());
+        // Icon area in window coords — captured via `on_sized` on the
+        // trigger container so the popup can anchor against it with
+        // `Position::new_global`.
+        let mut icon_area: State<Area> = use_state(Area::default);
+        // Measured popup height so the first paint can flip above the
+        // trigger if below would clip. Falls back to `max_height` on
+        // the first frame (popup renders invisibly, then re-positions
+        // once `on_sized` publishes).
+        let mut popup_area: State<Area> = use_state(Area::default);
+        // Viewport bounds — provided by `AppShell` so popups can clamp
+        // themselves inside the window. Falls back to naive placement
+        // if the context is missing (plugin running under a shell that
+        // did not opt in).
+        let viewport = try_consume_context::<notein_ui_kit::ViewportArea>();
 
         let icon_size = self.font_size * 0.55;
+        let popup_max_height = 360.0_f32;
+        let popup_width = 320.0_f32;
+        let popup_margin = 8.0_f32;
         let blue = Color::from_rgb(100, 150, 230);
         let refs_for_list = self.refs.clone();
         let jump_for_list = self.jump.clone();
         let font_size = self.font_size;
+
+        // Tap on the icon flips the pinned flag — opens on first tap,
+        // closes on second. Touch devices do not fire hover reliably,
+        // and the hover-leave timer used to dismiss the popup before
+        // the user could reach it with their finger.
+        let on_toggle = {
+            let mut open = open;
+            let mut pinned = pinned;
+            let mut version = version;
+            move |_: Event<PressEventData>| {
+                let next_pinned = !*pinned.peek();
+                pinned.set(next_pinned);
+                open.set(next_pinned || *open.peek());
+                if !next_pinned {
+                    open.set(false);
+                }
+                let next = version.peek().wrapping_add(1);
+                version.set(next);
+            }
+        };
 
         let mut container = rect()
             .padding((0., 2.))
             .margin((0., 2.))
             .cross_align(Alignment::Start)
             .main_align(Alignment::Start)
+            .on_sized(move |e: Event<SizedEventData>| {
+                let new_area = e.data().area;
+                if *icon_area.peek() != new_area {
+                    icon_area.set(new_area);
+                }
+            })
             .on_pointer_enter({
-                let mut hover = hover;
+                let mut open = open;
                 let mut version = version;
                 move |_| {
-                    hover.set(true);
+                    open.set(true);
                     let next = version.peek().wrapping_add(1);
                     version.set(next);
                 }
             })
             .on_pointer_leave({
-                let mut hover = hover;
+                let mut open = open;
                 let mut version = version;
-                move |_| close_soon(&mut hover, &mut version)
+                let pinned = pinned;
+                move |_| {
+                    if !*pinned.peek() {
+                        close_soon(&mut open, &mut version);
+                    }
+                }
             })
+            // Stop the pointer_down from bubbling into the enclosing
+            // paragraph — otherwise a tap on the icon registers as a
+            // verse hit and a second tap would double-tap into the
+            // highlight picker instead of closing the popup.
+            .on_pointer_down(|e: Event<PointerEventData>| {
+                e.stop_propagation();
+            })
+            .on_press(on_toggle)
             .child(
                 SvgViewer::new(freya::icons::lucide::trending_up_down())
                     .color(blue)
@@ -946,46 +1079,115 @@ impl Component for RefHoverButton {
                     .height(Size::px(icon_size)),
             );
 
-        if *hover.read() {
+        if *open.read() {
+            let icon = *icon_area.read();
+            let measured = *popup_area.read();
+            let popup_height = if measured.height() > 0.0 {
+                measured.height().min(popup_max_height)
+            } else {
+                popup_max_height
+            };
+            let viewport_area = viewport.map(|v| v.get()).unwrap_or(icon);
+            let has_viewport = viewport_area.width() > 0.0 && viewport_area.height() > 0.0;
+            let is_measured = icon.width() > 0.0;
+
+            // Anchor the popup globally so it can escape the paragraph
+            // clip region. Without `has_viewport` (shell did not install
+            // the context) or before the icon has been measured, fall
+            // back to the historic absolute placement below the icon.
             let popup = rect()
                 .layer(Layer::Overlay)
-                .position(Position::new_absolute().top(icon_size * 1.4).left(0.))
-                .width(Size::px(320.0))
-                .height(Size::fill_minimum())
-                .max_height(Size::px(360.0))
+                .width(Size::px(popup_width))
+                // ScrollView drives the actual height/scroll — the
+                // outer rect only paints the chrome + padding.
                 .padding((6., 8.))
                 .with_corner_radius(10.0)
                 .background(parse_rgb(theme::CHIP_BG))
                 .spacing(4.0)
+                .on_sized(move |e: Event<SizedEventData>| {
+                    let new_area = e.data().area;
+                    if *popup_area.peek() != new_area {
+                        popup_area.set(new_area);
+                    }
+                })
+                // Hide the first frame while measurements are stale so
+                // the user never sees the popup flash at its default
+                // (below-and-clipped) position before the clamp lands.
+                .opacity(if is_measured { 1.0 } else { 0.0 })
+                // Swallow pointer_down inside the popup so taps on
+                // rows do not seed the paragraph's drag-highlight
+                // gesture — the popup sits above an absolute-positioned
+                // overlay layer, but event bubbling still reaches the
+                // enclosing paragraph through the DOM tree.
+                .on_pointer_down(|e: Event<PointerEventData>| {
+                    e.stop_propagation();
+                })
+                // Press events bubble too — without stopping here, a
+                // tap on a row header (expand/collapse) or the "Ir a"
+                // button walks back up to the icon container's
+                // `on_toggle` and flips the popup shut.
+                .on_press(|e: Event<PressEventData>| {
+                    e.stop_propagation();
+                })
                 .on_pointer_enter({
-                    let mut hover = hover;
+                    let mut open = open;
                     let mut version = version;
                     move |_| {
-                        hover.set(true);
+                        open.set(true);
                         let next = version.peek().wrapping_add(1);
                         version.set(next);
                     }
                 })
                 .on_pointer_leave({
-                    let mut hover = hover;
+                    let mut open = open;
                     let mut version = version;
-                    move |_| close_soon(&mut hover, &mut version)
-                })
-                .child(ScrollView::new().child({
-                    let mut col = rect().width(Size::fill()).spacing(4.0);
-                    for (idx, xref) in refs_for_list.iter().enumerate() {
-                        col = col.child(RefListRow {
-                            idx,
-                            view: xref.clone(),
-                            jump: jump_for_list.clone(),
-                            expanded,
-                            parent_hover: hover,
-                            parent_version: version,
-                            font_size,
-                        });
+                    let pinned = pinned;
+                    move |_| {
+                        if !*pinned.peek() {
+                            close_soon(&mut open, &mut version);
+                        }
                     }
-                    col
-                }));
+                })
+                .child(
+                    ScrollView::new()
+                        .height(Size::auto())
+                        .max_height(Size::px(popup_max_height))
+                        .child({
+                            let mut col = rect().width(Size::fill()).spacing(4.0);
+                            for (idx, xref) in refs_for_list.iter().enumerate() {
+                                col = col.child(RefListRow {
+                                    idx,
+                                    view: xref.clone(),
+                                    jump: jump_for_list.clone(),
+                                    expanded,
+                                    parent_hover: open,
+                                    parent_version: version,
+                                    font_size,
+                                });
+                            }
+                            col
+                        }),
+                );
+
+            let popup = if has_viewport && is_measured {
+                let below_top = icon.max_y() + 4.0;
+                let top = notein_ui_kit::clamp_popup_top(
+                    viewport_area,
+                    icon,
+                    below_top,
+                    popup_height,
+                    popup_margin,
+                );
+                let left = notein_ui_kit::clamp_popup_left(
+                    viewport_area,
+                    icon.min_x(),
+                    popup_width,
+                    popup_margin,
+                );
+                popup.position(Position::new_global().top(top).left(left))
+            } else {
+                popup.position(Position::new_absolute().top(icon_size * 1.4).left(0.))
+            };
             container = container.child(popup);
         }
         container
@@ -1035,7 +1237,11 @@ impl Component for RefListRow {
         let on_jump = self.jump.clone();
         let mut parent_hover = self.parent_hover;
         let mut parent_version = self.parent_version;
-        let goto = move |_: Event<PressEventData>| {
+        let goto = move |e: Event<PressEventData>| {
+            // "Ir a" sits inside the collapsible header; let its press
+            // navigate but do not let the event bubble into the header
+            // and toggle the expand state too.
+            e.stop_propagation();
             parent_hover.set(false);
             let next = parent_version.peek().wrapping_add(1);
             parent_version.set(next);

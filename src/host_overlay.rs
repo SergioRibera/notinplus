@@ -12,6 +12,7 @@ use freya::prelude::*;
 use notein_plugin::{BookmarkDraft, BookmarkEditRequest, NotificationKind, Rgba, SourceRef};
 
 use crate::components::BookmarkBodyEditor;
+use crate::components::color_wheel::{ColorWheel, DEFAULT_SWATCHES, color_swatch_strip};
 use crate::host_api::{self, HostInner, Notification, ProgressEntry};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -202,6 +203,19 @@ impl Component for BookmarkEditModal {
         let body: State<String> = use_state(move || seed_body.clone());
         let color: State<Option<Rgba>> = use_state(move || seed_color);
         let refs: State<Vec<SourceRef>> = use_state(move || seed_refs.clone());
+        // Full HSVA panel lives behind a trigger now; the inline card
+        // only surfaces the preset swatches + a rainbow slot that pops
+        // the panel open. Keeps the modal compact when the user is
+        // happy with one of the defaults.
+        let mut color_picker_open: State<bool> = use_state(|| false);
+        // Last custom-wheel colour. Painted on the special slot so a
+        // reopen remembers the user's non-preset pick after they pick a
+        // preset in between.
+        let mut color_special: State<Option<Color>> = use_state(move || {
+            seed_color
+                .map(|c| Color::from_rgb(c[0], c[1], c[2]))
+                .filter(|c| !DEFAULT_SWATCHES.iter().any(|p| p == c))
+        });
 
         let initial_wheel_color = seed_color
             .map(|c| Color::from_rgb(c[0], c[1], c[2]))
@@ -243,11 +257,31 @@ impl Component for BookmarkEditModal {
             })
         };
 
-        let on_color_change = {
+        // Preset swatch commit: closes the picker and clears the custom
+        // slot so the ring sits on the chosen preset.
+        let on_preset_change = {
             let mut color = color;
             let fire_preview = fire_preview.clone();
             move |c: Color| {
                 color.set(Some([c.r(), c.g(), c.b(), c.a()]));
+                color_special.set(None);
+                color_picker_open.set(false);
+                fire_preview();
+            }
+        };
+        // Rainbow-slot press: toggles the floating HSVA picker.
+        let on_special_press = move |_: Event<PressEventData>| {
+            let cur = *color_picker_open.read();
+            color_picker_open.set(!cur);
+        };
+        // Picker commits mirror back into the special slot so the slot
+        // stays painted with the user's latest custom pick.
+        let on_wheel_change = {
+            let mut color = color;
+            let fire_preview = fire_preview.clone();
+            move |c: Color| {
+                color.set(Some([c.r(), c.g(), c.b(), c.a()]));
+                color_special.set(Some(c));
                 fire_preview();
             }
         };
@@ -270,25 +304,90 @@ impl Component for BookmarkEditModal {
             }
         };
 
-        let (left, top) = anchor
-            .map(|(x, y)| (x.max(16.0), (y + 12.0).max(16.0)))
-            .unwrap_or((f32::NAN, 72.0));
+        // Capture the card's own measured area so the clamp can flip
+        // the modal upward when the anchor sits near the bottom of
+        // the viewport. First frame hides it (opacity 0) until the
+        // on_sized callback publishes a real height — otherwise the
+        // user would see a one-frame flash at the clipped position.
+        let mut card_area: State<Area> = use_state(Area::default);
+        let viewport = freya::prelude::try_consume_context::<notein_ui_kit::ViewportArea>();
 
+        let card_width = 320.0_f32;
+        let (anchor_left, anchor_top_below) = anchor
+            .map(|(x, y)| (Some(x), y + 12.0))
+            .unwrap_or((None, 72.0));
+
+        let measured = *card_area.read();
+        let is_measured = measured.height() > 0.0;
         let card = rect()
             .layer(Layer::OverlayLevel(6))
-            .width(Size::px(320.0))
+            .width(Size::px(card_width))
             .padding((12., 14.))
             .with_corner_radius(12.0)
             .background(Color::from_rgb(28, 28, 32))
-            .spacing(10.0);
+            .spacing(10.0)
+            .on_sized(move |e: Event<SizedEventData>| {
+                let new_area = e.data().area;
+                if *card_area.peek() != new_area {
+                    card_area.set(new_area);
+                }
+            })
+            .opacity(if is_measured || anchor_left.is_none() { 1.0 } else { 0.0 });
 
-        let card = if left.is_nan() {
-            card.position(Position::new_global().top(top).right(16.))
-        } else {
-            card.position(Position::new_global().top(top).left(left))
+        let card = match (anchor_left, viewport, is_measured) {
+            (None, _, _) => card.position(Position::new_global().top(anchor_top_below).right(16.)),
+            (Some(x), Some(viewport_ctx), true) => {
+                let viewport_area = viewport_ctx.get();
+                if viewport_area.width() <= 0.0 {
+                    card.position(
+                        Position::new_global()
+                            .top(anchor_top_below.max(16.0))
+                            .left(x.max(16.0)),
+                    )
+                } else {
+                    let top = notein_ui_kit::clamp_popup_top_from_point(
+                        viewport_area,
+                        anchor_top_below - 12.0,
+                        anchor_top_below,
+                        measured.height(),
+                        16.0,
+                    );
+                    let left = notein_ui_kit::clamp_popup_left(
+                        viewport_area,
+                        x,
+                        card_width,
+                        16.0,
+                    );
+                    card.position(Position::new_global().top(top).left(left))
+                }
+            }
+            (Some(x), _, _) => card.position(
+                Position::new_global()
+                    .top(anchor_top_below.max(16.0))
+                    .left(x.max(16.0)),
+            ),
         };
 
         let refs_snapshot = refs.read().clone();
+        let current_color = (*color.read())
+            .map(|c| Color::from_rgb(c[0], c[1], c[2]))
+            .unwrap_or(initial_wheel_color);
+        let stored_special = *color_special.read();
+        let matches_preset = DEFAULT_SWATCHES.iter().any(|c| *c == current_color);
+        let display_special =
+            stored_special.or_else(|| (!matches_preset).then_some(current_color));
+        let selected_is_special = !matches_preset;
+        let selected_preset = matches_preset.then_some(current_color);
+        let picker_open = *color_picker_open.read();
+        let picker = picker_open.then(|| {
+            ColorWheel::new()
+                .initial(display_special.unwrap_or(initial_wheel_color))
+                .swatches(Vec::<Color>::new())
+                .allow_custom(true)
+                .width(240.0)
+                .on_change(on_wheel_change)
+        });
+
         card.child(
             label()
                 .font_size(13.0)
@@ -304,12 +403,15 @@ impl Component for BookmarkEditModal {
                 .completions(crate::bookmark_ui::plugin_completions_provider()),
         )
         .child(crate::bookmark_ui::ref_chip_row(&refs_snapshot))
-        .child(
-            notein_ui_kit::ColorWheel::new()
-                .initial(initial_wheel_color)
-                .allow_custom(true)
-                .on_change(on_color_change),
-        )
+        .child(color_swatch_strip(
+            selected_preset,
+            display_special,
+            selected_is_special,
+            picker_open,
+            on_preset_change,
+            on_special_press,
+            picker,
+        ))
         .child(
             rect()
                 .direction(Direction::Horizontal)

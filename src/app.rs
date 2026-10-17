@@ -265,6 +265,10 @@ struct AppShell;
 impl Component for AppShell {
     fn render(&self) -> impl IntoElement {
         let area = use_state(Area::default);
+        // Share the measured window area with any descendant that
+        // wants to clamp its own popup/overlay inside the viewport —
+        // see `notein_ui_kit::ViewportArea` + `clamp_popup_top`.
+        provide_context(notein_ui_kit::ViewportArea(area));
         // Drain the font-registration buffer that plugins fill via
         // `Host::load_font` during pre-launch `install_host`. This
         // must run inside the freya scheduler context — `use_hook`
