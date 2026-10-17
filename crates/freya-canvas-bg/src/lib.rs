@@ -209,29 +209,11 @@ pub struct BgPaintCtx<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct OutlineNodeId(pub u64);
 
-/// Plugin-shipped icon bytes tagged by format. The host picks the
-/// right rendering path (SVG rasteriser vs. image decoder) based on
-/// the variant. `Arc<[u8]>` is cheap to clone and already thread-safe
-/// so backends can keep a single instance per icon.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum IconType {
-    /// Vector icon — raw SVG document bytes.
-    Svg(Arc<[u8]>),
-    /// Raster icon — PNG-encoded bytes. Hosts decode on first use.
-    Png(Arc<[u8]>),
-}
-
-impl IconType {
-    /// Build an SVG icon from any `Into<Arc<[u8]>>` source.
-    pub fn svg(bytes: impl Into<Arc<[u8]>>) -> Self {
-        Self::Svg(bytes.into())
-    }
-
-    /// Build a PNG icon from any `Into<Arc<[u8]>>` source.
-    pub fn png(bytes: impl Into<Arc<[u8]>>) -> Self {
-        Self::Png(bytes.into())
-    }
-}
+/// Plugin-shipped icon bytes tagged by format. Re-exported from
+/// [`notein_plugin::IconType`] — the canonical home — so backgrounds +
+/// outline consumers that only depend on this crate still get the
+/// type without a direct `notein-plugin` import.
+pub use notein_plugin::IconType;
 
 /// Semantic hint the host uses to pick an icon for an outline row.
 /// Shell-known variants map to bundled icons; `Custom` carries

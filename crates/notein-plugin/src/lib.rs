@@ -33,6 +33,7 @@ pub mod creation;
 pub mod dynamic;
 pub mod error;
 pub mod host;
+pub mod icon;
 pub mod ids;
 pub mod manifest;
 pub mod registry;
@@ -54,6 +55,7 @@ pub use host::{
     BookmarkDraft, BookmarkEditCallback, BookmarkEditPreview, BookmarkEditRequest, Host, HostApi,
     NotificationKind, Progress,
 };
+pub use icon::IconType;
 pub use ids::{ActorId, BookmarkId, DeviceId, OpId, StrokeId, UserId};
 pub use manifest::{ManifestError, ManifestRequirement, PluginManifest};
 pub use registry::{
