@@ -46,22 +46,34 @@ pub fn resolve_parsed(db: &Db, bible_id: &str, parsed: &ParsedRef) -> Option<Bib
 /// finally accepts the token verbatim if it looks like an OSIS id.
 pub fn resolve_book_token(db: &Db, bible_id: &str, token: &str) -> Option<String> {
     let normalised = normalise(token);
+    let books = db.list_books(bible_id).ok()?;
 
-    if let Some(osis) = book_id_for_alias(&normalised) {
-        return Some(osis.into());
+    // Alias map returns canonical uppercase OSIS, but the installed
+    // `books` table may store its own casing (biblionlabs ships
+    // lowercase ids like `jhn`). Match the alias output against the
+    // catalogue case-insensitively and return the stored id so
+    // downstream `load_chapter` queries hit the right row.
+    if let Some(osis) = book_id_for_alias(&normalised)
+        && let Some(book) = books
+            .iter()
+            .find(|b| b.book_id.eq_ignore_ascii_case(osis))
+    {
+        return Some(book.book_id.clone());
     }
 
-    let books = db.list_books(bible_id).ok()?;
     for book in &books {
         if normalise(&book.name) == normalised || normalise(&book.abbrev) == normalised {
             return Some(book.book_id.clone());
         }
     }
 
-    // Last-resort: assume the user typed an OSIS id directly.
-    let upper = token.to_ascii_uppercase();
-    if books.iter().any(|b| b.book_id == upper) {
-        return Some(upper);
+    // Last-resort: user may have typed an OSIS id directly. Match the
+    // catalogue case-insensitively and return the stored id.
+    if let Some(book) = books
+        .iter()
+        .find(|b| b.book_id.eq_ignore_ascii_case(token))
+    {
+        return Some(book.book_id.clone());
     }
 
     None

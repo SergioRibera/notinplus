@@ -141,9 +141,15 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
             if let Some(jump) = initial_jump.as_ref() {
                 // Chip-tap landed on this mount — override the restored
                 // snapshot so the viewer opens straight at the
-                // requested verse.
+                // requested verse. Canonicalise `book_id` against the
+                // installed books catalogue: stored anchors may carry
+                // the uppercase OSIS form while a biblionlabs install
+                // keys its `books` table in lowercase (and vice
+                // versa) — mismatch would surface as `MissingBible`
+                // down inside `load_chapter`.
                 st.bible_id = jump.bible_id.clone();
-                st.current_book = jump.book_id.clone();
+                st.current_book =
+                    canonicalise_book_id(&db_for_init, &jump.bible_id, &jump.book_id);
                 st.current_chapter = jump.start_chapter;
             }
             if let Ok(chap) =
@@ -234,13 +240,15 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                 {
                     log::warn!("bible chip: switch_bible failed: {e}");
                 }
+                let canonical_book =
+                    canonicalise_book_id(&db_notify, &jump.bible_id, &jump.book_id);
                 if let Err(e) =
-                    state_setter.write().jump_to(&db_notify, &jump.book_id, jump.start_chapter)
+                    state_setter.write().jump_to(&db_notify, &canonical_book, jump.start_chapter)
                 {
                     log::warn!(
                         "bible chip: jump_to failed (bible={}, book={}, chap={}): {e}",
                         jump.bible_id,
-                        jump.book_id,
+                        canonical_book,
                         jump.start_chapter
                     );
                     continue;
@@ -767,6 +775,28 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
 
 /// Grid of every book in the current Bible. Clicking a cell drills
 /// into the matching chapter grid in page 1 of the sheet.
+/// Return the installed `book_id` for `bible_id` that matches
+/// `candidate` case-insensitively, or `candidate` verbatim when no
+/// catalogue entry matches (lets the caller surface a clean
+/// MissingBible error further down instead of silently rewriting).
+///
+/// Chip anchors persist whatever casing the plugin's resolver chose
+/// at creation time — typically uppercase OSIS from the alias map —
+/// while biblionlabs installs key `books` in lowercase. Normalising
+/// here keeps every chip-driven jump + the mount-time snapshot
+/// override on the same casing the DB expects.
+fn canonicalise_book_id(db: &Db, bible_id: &str, candidate: &str) -> String {
+    db.list_books(bible_id)
+        .ok()
+        .and_then(|books| {
+            books
+                .iter()
+                .find(|b| b.book_id.eq_ignore_ascii_case(candidate))
+                .map(|b| b.book_id.clone())
+        })
+        .unwrap_or_else(|| candidate.to_owned())
+}
+
 fn book_grid_page(
     books: Vec<notein_bible::db::BookRow>,
     on_pick: impl FnMut(String) + Clone + 'static,
