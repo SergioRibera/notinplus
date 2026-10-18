@@ -25,6 +25,12 @@ targets:
         createIntermediateGroups: true
         excludes:
           - "*.fragment"
+      - path: "../../../istmo/plugins/share/native/ios"
+        name: ISTMO_SHARE
+        type: group
+        createIntermediateGroups: true
+        excludes:
+          - "*.fragment"
     settings:
       base:
         ISTMO_LIB_NAME: "notinplus"
@@ -41,6 +47,16 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: "rs.sergioribera.notinplus"
         IPHONEOS_DEPLOYMENT_TARGET: "14.0"
     preBuildScripts:
+      - name: istmo minimum iOS version
+        basedOnDependencyAnalysis: false
+        script: |
+          required="13.0"
+          actual="${IPHONEOS_DEPLOYMENT_TARGET:-0}"
+          lowest=$(printf '%s\n%s\n' "$required" "$actual" | sort -t. -k1,1n -k2,2n -k3,3n | head -n1)
+          if [ "$lowest" != "$required" ]; then
+            echo "error: istmo plugin istmo.share requires iOS >= $required, but IPHONEOS_DEPLOYMENT_TARGET is $actual"
+            exit 1
+          fi
       - name: istmo cargo build
         basedOnDependencyAnalysis: false
         script: '"${PROJECT_DIR}/.istmo/build-rust.sh"'
