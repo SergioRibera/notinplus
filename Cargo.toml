@@ -37,6 +37,7 @@ istmo = { path = "../istmo", default-features = false, features = [
 istmo-pen = { path = "../istmo/plugins/istmo-pen" }
 istmo-file-picker = { path = "../istmo/plugins/file-picker" }
 istmo-data-store = { path = "../istmo/plugins/data-store" }
+istmo-share = { path = "../istmo/plugins/share" }
 freya = { version = "=0.5.0-rc.8", features = ["router", "icons", "icons-lucide"] }
 freya-engine = "=0.5.0-rc.8"
 freya-components = "=0.5.0-rc.8"
@@ -62,6 +63,8 @@ notein-notes = { path = "crates/notein-notes" }
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.14"
+freya-clipboard = "=0.5.0-rc.8"
+jni = { version = "0.21", default-features = false }
 # Freya-winit doesn't pin an Android activity backend on winit, so we
 # opt in additively. Cargo feature unification propagates the feature
 # to freya-winit's own winit dep — both crates end up compiled against
@@ -74,6 +77,7 @@ winit = { version = "0.30", features = ["android-game-activity"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos")))'.dependencies]
 env_logger = "0.11"
+istmo-window = { path = "../istmo/crates/window" }
 
 [build-dependencies]
 istmo-build = { path = "../istmo/crates/build" }

@@ -248,6 +248,12 @@ pub fn run() {
                             log::warn!("pen register_window failed: {err}");
                         }
                     }
+                    // The share sheet anchors on the window on macOS / Windows.
+                    if let Err(err) = istmo_window::WindowRegistry::global()
+                        .register(istmo_window::WindowId(crate::WINDOW_ID), &*window)
+                    {
+                        log::warn!("share window registration failed: {err}");
+                    }
                 }),
         );
         launch(cfg);
@@ -297,6 +303,8 @@ struct AppShell;
 
 impl Component for AppShell {
     fn render(&self) -> impl IntoElement {
+        #[cfg(target_os = "android")]
+        use_hook(crate::android_clipboard::install);
         let area = use_state(Area::default);
         // Share the measured window area with any descendant that
         // wants to clamp its own popup/overlay inside the viewport —

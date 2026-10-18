@@ -50,6 +50,11 @@ pub fn install() -> Result<(), Box<dyn std::error::Error>> {
     picker.install_release_hook(&runtime);
     runtime.register_host(FilePickerHost::new(picker));
 
+    match istmo_share::DesktopShare::with_global_registry() {
+        Ok(share) => runtime.register_host(istmo_share::ShareHost::new(share)),
+        Err(err) => log::warn!("share backend unavailable: {err}"),
+    }
+
     log_storage_paths();
 
     // Local-hosted plugin calls short-circuit into dispatch_inbound, so

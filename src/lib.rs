@@ -11,9 +11,12 @@
 
 pub mod active_boards;
 pub mod active_pdf_sources;
+#[cfg(target_os = "android")]
+pub mod android_clipboard;
 pub mod app;
 pub mod bible_face;
 pub mod notes_face;
+pub mod notes_share;
 pub mod soft_keyboard;
 pub mod bible_install_modal;
 pub mod bookmark;
@@ -82,9 +85,10 @@ use istmo::plugins::SafeArea;
 use istmo_data_store::DataStoreClient;
 use istmo_file_picker::FilePickerClient;
 use istmo_pen::PenClient;
+use istmo_share::ShareClient;
 
 istmo::runtime!(
-    plugins: [PenClient, SafeArea, FilePickerClient, DataStoreClient],
+    plugins: [PenClient, SafeArea, FilePickerClient, DataStoreClient, ShareClient],
 );
 
 #[cfg(any(
