@@ -5,7 +5,8 @@
 //!
 //! - `notein://` links (see [`crate::deep_link`]) render as source chips
 //!   that navigate on tap.
-//! - Typing `[` opens the reference picker fed by plugin completions.
+//! - The `/` menu gets a "Referencias" section (`/ref query` scopes to it)
+//!   fed by plugin completions.
 //! - Regular links open through the platform URL handler.
 
 use std::borrow::Cow;
@@ -91,7 +92,8 @@ impl NoteEditor {
         self
     }
 
-    /// Reference picker source, queried with the text typed after `[`.
+    /// Reference source for the `/` menu, queried with the text typed after
+    /// `/` (or after `/ref `).
     #[must_use]
     pub fn completions(mut self, provider: impl Into<Callback<String, Vec<Completion>>>) -> Self {
         self.completions = Some(provider.into());
@@ -108,7 +110,6 @@ impl Component for NoteEditor {
         let mut editor = MarkdownEditor::new(self.value.clone())
             .controller(controller)
             .theme(note_theme())
-            .slash_commands()
             .decorator(SchemeEmbed::new(deep_link::SCHEME, |embed| {
                 ChipWidget {
                     src: SourceRef::from_link(embed.url),
@@ -121,17 +122,18 @@ impl Component for NoteEditor {
             editor = editor.placeholder(placeholder.clone());
         }
         if let Some(provider) = completions {
-            editor = editor.trigger(
-                Trigger::new('[', move |query| {
+            editor = editor.suggestions(
+                SuggestionGroup::new("Referencias", move |query| {
                     provider
                         .call(query.to_owned())
                         .into_iter()
                         .map(suggestion)
                         .collect()
                 })
-                .anywhere(),
+                .keyword("ref"),
             );
         }
+        let editor = editor.slash_menu();
 
         rect()
             .width(Size::fill())
