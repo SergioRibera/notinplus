@@ -7,17 +7,20 @@
 //! notes can reference this one, and scrolls to a heading when the
 //! sidebar outline or a chip asks for it.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::time::Duration;
 
 use freya::prelude::*;
 use freya::router::RouterContext;
+use freya_markdown_editor::document::BlockId;
 use freya_markdown_editor::prelude::*;
 use notein_notes::ui::{self, Action, TopbarActions};
 use notein_notes::{KIND_ID, NoteAnchor};
 
-use crate::components::note_editor::{note_theme, notein_editor};
+use crate::components::note_editor::{note_theme, notein_editor, use_note_keyboard};
+use crate::hooks::{provide_safe_area_override, use_safe_area_insets};
 use crate::library::ItemId;
 
 /// Width of the reading column.
@@ -25,6 +28,10 @@ const COLUMN_WIDTH: f32 = 760.0;
 /// How long a jump waits for the note to be laid out.
 const JUMP_ATTEMPTS: u32 = 40;
 const JUMP_RETRY: Duration = Duration::from_millis(25);
+/// Room kept between the block being typed in and the viewport edges.
+const CARET_MARGIN: f32 = 24.0;
+/// Wait for the edit to be laid out before following it.
+const FOLLOW_DELAY: Duration = Duration::from_millis(30);
 
 thread_local! {
     /// Editors of the notes on screen, so a reference made elsewhere can
@@ -47,7 +54,9 @@ impl Component for NotesFace {
         let chrome = crate::app::use_chrome_state();
         let router = RouterContext::get();
         let doc_linked = try_consume_context::<crate::doc_linked::DocLinkedChromeExt>();
-
+        let insets = *use_safe_area_insets().read();
+        provide_safe_area_override(istmo::plugins::EdgeInsets::default());
+        let (mut viewport, content_top) = use_follow_typing(controller, scroll);
         use_hook(move || load_title(item, title));
         use_side_effect(move || save(item, &markdown.read(), &title.read()));
         use_hook(move || listen_for_jumps(item, controller, scroll));
@@ -99,6 +108,7 @@ impl Component for NotesFace {
 
         rect()
             .expanded()
+            .padding((insets.top, insets.right, insets.bottom, insets.left))
             .background(ui::BACKGROUND)
             .content(Content::flex())
             .child(ui::topbar(&title.read(), read_only, actions))
@@ -116,10 +126,16 @@ impl Component for NotesFace {
                 ScrollView::new_controlled(scroll)
                     .width(Size::fill())
                     .height(Size::flex(1.))
+                    .on_sized(move |event: Event<SizedEventData>| {
+                        viewport.set_if_modified(Some(event.area));
+                    })
                     .child(
                         rect()
                             .width(Size::fill())
                             .cross_align(Alignment::Center)
+                            .on_sized(move |event: Event<SizedEventData>| {
+                                content_top.set(event.area.min_y());
+                            })
                             .child(editor),
                     ),
             )
@@ -210,6 +226,59 @@ fn listen_for_jumps(item: ItemId, controller: EditorController, scroll: ScrollCo
                 jump(controller, scroll, &anchor);
             }
         }
+    });
+}
+
+/// Follow the block being typed in, see [`follow`]. Returns where the
+/// viewport and the note content are laid out, for the page to fill.
+fn use_follow_typing(
+    controller: EditorController,
+    scroll: ScrollController,
+) -> (State<Option<Area>>, Rc<Cell<f32>>) {
+    let viewport = use_state(|| None::<Area>);
+    let content_top = use_hook(|| Rc::new(Cell::new(0.0_f32)));
+    use_note_keyboard(controller);
+    {
+        let content_top = content_top.clone();
+        use_side_effect(move || {
+            let _ = controller.revision();
+            let block = controller
+                .selection()
+                .map(|selection| selection.target.block);
+            let viewport = *viewport.read();
+            if let (true, Some(block), Some(viewport)) = (controller.has_focus(), block, viewport) {
+                follow(controller, scroll, block, viewport, content_top.clone());
+            }
+        });
+    }
+    (viewport, content_top)
+}
+
+/// Keep the block being typed in on screen, above the soft keyboard once
+/// it shrinks the viewport.
+fn follow(
+    controller: EditorController,
+    mut scroll: ScrollController,
+    block: BlockId,
+    viewport: Area,
+    content_top: Rc<Cell<f32>>,
+) {
+    spawn(async move {
+        async_io::Timer::after(FOLLOW_DELAY).await;
+        let Some((top, bottom)) = controller.block_bounds(block) else {
+            return;
+        };
+        let shown = viewport.min_y() - content_top.get();
+        let height = viewport.height();
+        let target = if bottom + CARET_MARGIN > shown + height {
+            bottom + CARET_MARGIN - height
+        } else if top - CARET_MARGIN < shown {
+            top - CARET_MARGIN
+        } else {
+            return;
+        };
+        #[allow(clippy::cast_possible_truncation, reason = "pixel offsets")]
+        scroll.scroll_to_y(-(target.max(0.) as i32));
     });
 }
 

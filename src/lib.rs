@@ -14,6 +14,7 @@ pub mod active_pdf_sources;
 pub mod app;
 pub mod bible_face;
 pub mod notes_face;
+pub mod soft_keyboard;
 pub mod bible_install_modal;
 pub mod bookmark;
 pub mod bookmark_ui;

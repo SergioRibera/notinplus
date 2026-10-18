@@ -12,6 +12,8 @@
 //!   applies to every note editor at once.
 
 use std::borrow::Cow;
+use std::cell::Cell;
+use std::rc::Rc;
 
 use freya::prelude::*;
 use freya_markdown_editor::prelude::*;
@@ -132,7 +134,8 @@ impl NoteEditor {
 impl Component for NoteEditor {
     fn render(&self) -> impl IntoElement {
         let controller = use_editor_controller();
-        let focused = controller.selection().is_some();
+        use_note_keyboard(controller);
+        let focused = controller.has_focus();
 
         let mut editor = notein_editor(self.value.clone(), controller, self.completions.clone())
             .width(Size::fill());
@@ -154,6 +157,26 @@ impl Component for NoteEditor {
             .corner_radius(8.)
             .child(editor)
     }
+}
+
+/// Give the soft keyboard a return key while `controller`'s editor has the
+/// focus.
+pub(crate) fn use_note_keyboard(controller: EditorController) {
+    let reported = use_hook(|| Rc::new(Cell::new(false)));
+    {
+        let reported = reported.clone();
+        use_side_effect(move || {
+            let focused = controller.has_focus();
+            if reported.replace(focused) != focused {
+                crate::soft_keyboard::note_editor_focus(focused);
+            }
+        });
+    }
+    use_drop(move || {
+        if reported.get() {
+            crate::soft_keyboard::note_editor_focus(false);
+        }
+    });
 }
 
 /// [`MarkdownEditor`] the way notein uses it everywhere: note theme,
