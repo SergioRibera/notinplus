@@ -12,9 +12,13 @@ struct Harness {
     controller: EditorController,
 }
 
+#[derive(Clone, Copy)]
+struct RevealSyntax(bool);
+
 fn app() -> impl IntoElement {
     let value = use_consume::<State<String>>();
     let controller = use_consume::<EditorController>();
+    let reveal = use_consume::<RevealSyntax>().0;
     rect()
         .expanded()
         .background((30, 32, 38))
@@ -22,6 +26,7 @@ fn app() -> impl IntoElement {
         .child(
             MarkdownEditor::new(value)
                 .controller(controller)
+                .syntax_reveal(reveal)
                 .slash_menu()
                 .suggestions(
                     SuggestionGroup::new("Docs", |query| {
@@ -53,10 +58,15 @@ fn app() -> impl IntoElement {
 
 impl Harness {
     fn new(markdown: &'static str) -> Self {
+        Self::with_reveal(markdown, false)
+    }
+
+    fn with_reveal(markdown: &'static str, reveal: bool) -> Self {
         let (runner, (value, controller)) = TestingRunner::new(
             app,
             (600., 400.).into(),
             move |runner| {
+                runner.provide_root_context(|| RevealSyntax(reveal));
                 let value = runner.provide_root_context(|| State::create(markdown.to_owned()));
                 let controller =
                     runner.provide_root_context(|| EditorController::create(Document::default()));
@@ -327,4 +337,58 @@ fn ctrl_shift_arrows_move_blocks() {
         .run_in(|| controller.move_block_onto(ids[2], ids[0]));
     harness.settle();
     assert_eq!(harness.value(), "three\n\ntwo\n\none\n");
+}
+
+#[test]
+fn deleting_back_to_a_mark_end_does_not_resume_it() {
+    let mut harness = Harness::new("");
+    let first = harness.block(0);
+    harness.focus(first, 0);
+    harness.type_text("**texto** ab");
+    assert_eq!(harness.value(), "**texto** ab\n");
+    for _ in 0..3 {
+        harness.named(NamedKey::Backspace);
+    }
+    harness.type_text("x");
+    assert_eq!(harness.value(), "**texto**x\n");
+}
+
+#[test]
+fn arrow_right_at_the_end_leaves_the_mark() {
+    let mut harness = Harness::new("**bold**");
+    let first = harness.block(0);
+    harness.focus(first, 4);
+    harness.type_text("er");
+    assert_eq!(harness.value(), "**bolder**\n");
+    harness.named(NamedKey::ArrowRight);
+    harness.type_text(" plain");
+    assert_eq!(harness.value(), "**bolder** plain\n");
+}
+
+#[test]
+fn revealed_source_is_edited_as_markdown() {
+    let mut harness = Harness::with_reveal("say **hi**", true);
+    let first = harness.block(0);
+    harness.focus(first, 6);
+    harness.snapshot("syntax_reveal");
+    harness.type_text("!");
+    assert_eq!(harness.value(), "say **hi**!\n");
+    harness.named(NamedKey::Backspace);
+    harness.named(NamedKey::Backspace);
+    assert_eq!(harness.value(), "say \\**hi*\n");
+    harness.type_text("*");
+    assert_eq!(harness.value(), "say **hi**\n");
+}
+
+#[test]
+fn revealed_source_closes_when_the_caret_leaves() {
+    let mut harness = Harness::with_reveal("say **hi** there", true);
+    let first = harness.block(0);
+    harness.focus(first, 6);
+    harness.named(NamedKey::End);
+    harness.type_text("!");
+    assert_eq!(harness.value(), "say **hi** there!\n");
+    harness.focus(first, 0);
+    harness.type_text("x");
+    assert_eq!(harness.value(), "xsay **hi** there!\n");
 }

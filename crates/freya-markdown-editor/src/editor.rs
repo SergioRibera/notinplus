@@ -2,6 +2,7 @@
 
 mod block;
 mod paint;
+mod reveal;
 mod suggest;
 mod text;
 
@@ -58,6 +59,7 @@ pub(crate) struct Shared {
     pub(crate) on_link: LinkHandler,
     pub(crate) read_only: bool,
     pub(crate) reorderable: bool,
+    pub(crate) syntax_reveal: bool,
     pub(crate) abbreviations: Rc<Vec<Abbreviation>>,
 }
 
@@ -97,6 +99,7 @@ pub struct MarkdownEditor {
     placeholder: Option<Cow<'static, str>>,
     slash: SlashMenu,
     reorderable: bool,
+    syntax_reveal: bool,
     on_link: LinkHandler,
     layout: LayoutData,
     text_style: TextStyleData,
@@ -127,6 +130,7 @@ impl Default for MarkdownEditor {
             placeholder: None,
             slash: SlashMenu::default(),
             reorderable: false,
+            syntax_reveal: false,
             on_link: LinkHandler::default(),
             layout: LayoutData::default(),
             text_style: TextStyleData::default(),
@@ -224,6 +228,16 @@ impl MarkdownEditor {
         self
     }
 
+    /// Show the markdown source of bold, italic, code, links and the other
+    /// formatting with markdown syntax while the caret touches it, like
+    /// Obsidian or Typora. Styling that only exists as HTML (underline,
+    /// colors, fonts) keeps being edited visually.
+    #[must_use]
+    pub const fn syntax_reveal(mut self, syntax_reveal: bool) -> Self {
+        self.syntax_reveal = syntax_reveal;
+        self
+    }
+
     /// Called when a link is pressed: always in read only mode, with Ctrl
     /// (or Cmd) held while editing.
     #[must_use]
@@ -296,6 +310,7 @@ impl Component for MarkdownEditor {
             on_link: self.on_link.clone(),
             read_only,
             reorderable: self.reorderable,
+            syntax_reveal: self.syntax_reveal,
             abbreviations: Rc::new(document.abbreviations.clone()),
         };
 

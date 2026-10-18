@@ -287,6 +287,11 @@ impl Writer<'_> {
     }
 }
 
+/// Markdown source of `inline` as written inside a paragraph.
+pub(super) fn inline_source(inline: &Inline) -> String {
+    InlineWriter::new(inline, Dialect::Rich, InlineContext::Block).write()
+}
+
 fn fenced(language: &str, code: &str) -> String {
     let longest_run = code
         .lines()

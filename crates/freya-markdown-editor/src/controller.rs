@@ -1083,9 +1083,16 @@ impl EditorController {
                 return false;
             };
             if current.text() == text {
+                let moved = state.selection.is_none_or(|previous| {
+                    previous.target != target || previous.head != selection.head
+                });
+                if moved {
+                    state.pending.clear();
+                }
                 state.selection = Some(selection);
                 return false;
             }
+            let escaped = deleted_up_to_mark_end(current, text, hint);
             state.record(Some(target));
             let role = state.document.role(target);
             let pending = std::mem::take(&mut state.pending);
@@ -1095,6 +1102,11 @@ impl EditorController {
             let Some(change) = inline.apply_text(text, hint) else {
                 return false;
             };
+            if role == Some(TextRole::Rich) {
+                state
+                    .pending
+                    .extend(escaped.into_iter().map(Pending::Remove));
+            }
             let inserted_len = utf16_len(&change.inserted);
             let inserted = change.range.start..change.range.start + inserted_len;
             let mut selection = selection;
@@ -1140,6 +1152,67 @@ impl EditorController {
             }
             resync
         })
+    }
+
+    /// Stop the marks that end at a collapsed caret at `pos` from applying
+    /// to the next typed text. Returns whether any mark was escaped.
+    pub(crate) fn escape_marks(&self, target: TextTarget, pos: usize) -> bool {
+        let families: Vec<MarkFamily> = self.peek(|state| {
+            let Some(inline) = state.document.inline(target) else {
+                return Vec::new();
+            };
+            inline
+                .kinds_at(pos)
+                .into_iter()
+                .filter(|kind| kind.is_inclusive())
+                .map(MarkKind::family)
+                .filter(|family| inline.mark_at(pos, *family).is_none())
+                .filter(|family| {
+                    !state.pending.iter().any(
+                        |pending| matches!(pending, Pending::Remove(removed) if removed == family),
+                    )
+                })
+                .collect()
+        });
+        if families.is_empty() {
+            return false;
+        }
+        self.update(|state| {
+            for family in families {
+                state.pending.retain(|pending| match pending {
+                    Pending::Add(kind) => kind.family() != family,
+                    Pending::Remove(_) => true,
+                });
+                state.pending.push(Pending::Remove(family));
+            }
+        });
+        true
+    }
+
+    /// Replace the whole content of `target` after an edit made on its
+    /// markdown source.
+    pub(crate) fn replace_inline(&self, target: TextTarget, inline: Inline, selection: Selection) {
+        self.update(|state| {
+            if state.document.inline(target) == Some(&inline) {
+                state.selection = Some(selection);
+                return;
+            }
+            state.record(Some(target));
+            state.pending.clear();
+            if let Some(current) = state.document.inline_mut(target) {
+                *current = inline;
+            }
+            state.changed();
+            state.selection = Some(selection);
+        });
+    }
+
+    pub(crate) fn peek_inline(&self, target: TextTarget) -> Option<Inline> {
+        self.peek(|state| state.document.inline(target).cloned())
+    }
+
+    pub(crate) fn parse_options(&self) -> ParseOptions {
+        self.peek(|state| state.parse.clone())
     }
 
     /// Enter: split the block, or open a code block on `` ```lang ``.
@@ -1367,4 +1440,24 @@ fn clamp(document: &Document, selection: Selection) -> Selection {
         anchor: selection.anchor.min(len),
         head: selection.head.min(len),
     }
+}
+
+/// Families whose mark ends where a pure deletion of unmarked text starts.
+/// Typing there afterwards should not grow the mark back over the text that
+/// was just removed.
+fn deleted_up_to_mark_end(current: &Inline, text: &str, hint: usize) -> Vec<MarkFamily> {
+    let Some(change) = crate::document::diff(current.text(), text, hint) else {
+        return Vec::new();
+    };
+    if !change.inserted.is_empty() || change.range.is_empty() {
+        return Vec::new();
+    }
+    let at = change.range.start;
+    current
+        .marks()
+        .iter()
+        .filter(|mark| mark.kind.is_inclusive() && mark.range.end == at && mark.range.start < at)
+        .map(|mark| mark.kind.family())
+        .filter(|family| current.mark_at(at, *family).is_none())
+        .collect()
 }

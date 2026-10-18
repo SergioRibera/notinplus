@@ -18,7 +18,7 @@ mod serialize;
 use std::fmt;
 use std::rc::Rc;
 
-use crate::document::Document;
+use crate::document::{BlockKind, Document, Inline};
 
 pub use serialize::slug;
 
@@ -164,5 +164,26 @@ impl Document {
     #[must_use]
     pub fn to_markdown(&self, dialect: Dialect) -> String {
         serialize::serialize(self, dialect)
+    }
+}
+
+/// Markdown source of a single run of inline content.
+pub(crate) fn inline_source(inline: &Inline) -> String {
+    serialize::inline_source(inline)
+}
+
+/// Parse `source` as the content of one paragraph. `None` when it reads as
+/// anything else (a heading, a list, several blocks...).
+pub(crate) fn parse_inline(source: &str, options: &ParseOptions) -> Option<Inline> {
+    if source.trim().is_empty() {
+        return Some(Inline::from(source));
+    }
+    let document = Document::parse_with(source, options);
+    match document.blocks() {
+        [only] => match &only.kind {
+            BlockKind::Paragraph(content) => Some(content.clone()),
+            _ => None,
+        },
+        _ => None,
     }
 }

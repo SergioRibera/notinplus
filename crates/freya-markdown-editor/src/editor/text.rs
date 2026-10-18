@@ -15,12 +15,13 @@ use freya_engine::prelude::{
 
 use super::Shared;
 use super::paint::{Decor, DecorKind, PaintContext, Piece};
+use super::reveal::{Reveal, RevealEdit};
 use super::suggest::{MENU_WIDTH, MenuRow, OpenMenu, SuggestionMenu, item, item_count};
 use crate::controller::{CaretRequest, Selection};
 use crate::decorator::{EmbedContext, ImageContext};
 use crate::document::{
     Atom, BlockType, HeadingLevel, Inline, MarkFamily, MarkKind, OBJECT_REPLACEMENT, TextRole,
-    TextTarget, byte_index,
+    TextTarget, byte_index, utf16_len,
 };
 
 /// Base look of a text block, before inline marks apply.
@@ -70,6 +71,7 @@ impl Component for TextBlock {
         let applied_caret = use_hook(|| Rc::new(Cell::new(0u64)));
         let command_held = use_hook(|| Rc::new(Cell::new(false)));
         let decor = use_hook(|| Rc::new(RefCell::new(Vec::<Decor>::new())));
+        let reveal = use_hook(|| Rc::new(RefCell::new(None::<Reveal>)));
         let initial = self.content.text().to_owned();
         let mut editable = use_editable(move || initial, EditableConfig::new);
 
@@ -80,27 +82,24 @@ impl Component for TextBlock {
         let place = self.place;
         let read_only = shared.read_only;
 
-        sync_rope(&mut editable, &self.content);
-        if let Some(request) = self.caret
-            && request.seq > applied_caret.get()
-        {
+        let is_focused = focus().is_focused();
+        let request = self
+            .caret
+            .filter(|request| request.seq > applied_caret.get());
+        let revealing = shared.syntax_reveal && role == TextRole::Rich && !read_only && is_focused;
+        let revealed = sync_rope(&mut editable, &self.content, &reveal, request, revealing);
+        if let Some(request) = request {
             applied_caret.set(request.seq);
-            let mut editor = editable.editor_mut().write();
-            let selection = request.selection;
-            if selection.is_collapsed() {
-                editor.clear_selection();
-                editor.move_cursor_to(selection.head);
-            } else {
-                editor.set_selection((selection.anchor, selection.head));
-            }
-            drop(editor);
             if !a11y_id.is_focused() {
                 a11y_id.request_focus();
             }
         }
 
-        let is_focused = focus().is_focused();
         let content = self.content.clone();
+        let shown = revealed.as_ref().map_or_else(
+            || content.clone(),
+            |revealed| revealed.display_inline(&content, shared.theme.colors.muted.into()),
+        );
         let rope_text = editable.editor().read().rope().to_string();
         let has_preedit = editable.editor().read().has_preedit();
 
@@ -133,6 +132,7 @@ impl Component for TextBlock {
         let entries_for_keys = entries.clone();
         let shared_for_keys = shared.clone();
         let command_for_keys = command_held.clone();
+        let reveal_for_keys = reveal.clone();
         let on_key_down = move |event: Event<KeyboardEventData>| {
             let key = event.key.clone();
             let modifiers = event.modifiers;
@@ -140,6 +140,7 @@ impl Component for TextBlock {
             event.prevent_default();
             let command = modifiers.contains(Modifiers::ctrl_or_meta());
             command_for_keys.set(command);
+            let model = |display: usize| model_offset(&reveal_for_keys, display);
             let shift = modifiers.contains(Modifiers::SHIFT);
             let alt = modifiers.contains(Modifiers::ALT);
 
@@ -169,7 +170,11 @@ impl Component for TextBlock {
                             let end = editable.editor().peek().cursor_pos();
                             let action = pick.action.clone();
                             menu.set(None);
-                            controller.commit_suggestion(target, open.at..end, action);
+                            controller.commit_suggestion(
+                                target,
+                                model(open.at)..model(end),
+                                action,
+                            );
                         }
                         return;
                     }
@@ -195,6 +200,7 @@ impl Component for TextBlock {
                 )
             };
             let collapsed = selection.is_none_or(|(from, to)| from == to);
+            let model_selection = selection.map(|(from, to)| (model(from), model(to)));
             let rich = role == TextRole::Rich;
 
             if read_only {
@@ -262,7 +268,7 @@ impl Component for TextBlock {
                         true
                     }
                     ("k", false, false) if rich => {
-                        link_from_clipboard(&shared_for_keys, &content_for_keys, selection);
+                        link_from_clipboard(&shared_for_keys, &content_for_keys, model_selection);
                         true
                     }
                     ("k", true, false) if rich => {
@@ -284,7 +290,7 @@ impl Component for TextBlock {
                         true
                     }
                     ("c" | "x", false, false) => {
-                        if let Some((from, to)) = selection {
+                        if let Some((from, to)) = model_selection {
                             controller.remember_copy(target, from.min(to)..from.max(to));
                         }
                         false
@@ -331,9 +337,9 @@ impl Component for TextBlock {
                     if place == TextPlace::Cell {
                         controller.step(target, true);
                     } else {
-                        let range = selection.map_or(cursor_pos..cursor_pos, |(from, to)| {
-                            from.min(to)..from.max(to)
-                        });
+                        let caret = model(cursor_pos);
+                        let range = model_selection
+                            .map_or(caret..caret, |(from, to)| from.min(to)..from.max(to));
                         controller.split(target, range);
                     }
                     return;
@@ -367,7 +373,12 @@ impl Component for TextBlock {
                     return;
                 }
                 Key::Named(NamedKey::ArrowRight) if collapsed && cursor_pos == length && !shift => {
-                    controller.step(target, true);
+                    let escaped = rich
+                        && reveal_for_keys.borrow().is_none()
+                        && controller.escape_marks(target, cursor_pos);
+                    if !escaped {
+                        controller.step(target, true);
+                    }
                     return;
                 }
                 Key::Named(NamedKey::ArrowUp) if !shift => {
@@ -421,7 +432,7 @@ impl Component for TextBlock {
                 editor_line: Some(EditorLine::SingleParagraph),
                 holder: Some(&holder.read()),
             });
-            commit_rope(&editable, controller, target, hint);
+            commit_rope(&editable, controller, target, hint, &reveal_for_keys);
 
             if let Some(open) = opening {
                 menu.set(Some(open));
@@ -458,7 +469,8 @@ impl Component for TextBlock {
             }
         };
 
-        let content_for_press = content.clone();
+        let content_for_press = shown.clone();
+        let reveal_for_press = reveal.clone();
         let shared_for_press = shared.clone();
         let command_for_press = command_held;
         let on_focus_press = move |event: Event<FocusPressEventData>| {
@@ -483,7 +495,11 @@ impl Component for TextBlock {
             }
             a11y_id.request_focus();
             menu.set_if_modified(None);
-            controller.set_selection(rope_selection(&editable, target));
+            controller.set_selection(rope_selection(
+                &editable,
+                target,
+                reveal_for_press.borrow().as_ref(),
+            ));
         };
 
         let on_global_pointer_move = move |event: Event<PointerEventData>| {
@@ -498,11 +514,16 @@ impl Component for TextBlock {
             }
         };
 
+        let reveal_for_up = reveal.clone();
         let on_global_pointer_up = move |_: Event<PointerEventData>| {
             if *dragging.peek() {
                 editable.process_event(EditableEvent::Release);
                 dragging.set(false);
-                controller.set_selection(rope_selection(&editable, target));
+                controller.set_selection(rope_selection(
+                    &editable,
+                    target,
+                    reveal_for_up.borrow().as_ref(),
+                ));
             }
         };
 
@@ -559,16 +580,14 @@ impl Component for TextBlock {
                 .span(Span::new(preedit).text_decoration(TextDecoration::Underline))
                 .span(after);
         } else {
-            let painted = paint_context.paint(&content);
+            let painted = paint_context.paint(&shown);
             decor_list = painted.decor;
             for piece in painted.pieces {
                 paragraph = match piece {
                     Piece::Text(span) => paragraph.span(span),
-                    Piece::Atom(index) => paragraph.child(atom_element(
-                        content.atoms().get(index),
-                        &shared,
-                        base_size,
-                    )),
+                    Piece::Atom(index) => {
+                        paragraph.child(atom_element(shown.atoms().get(index), &shared, base_size))
+                    }
                 };
             }
         }
@@ -585,6 +604,7 @@ impl Component for TextBlock {
 
         let popup = entries.map(|(open, rows)| {
             let pick_rows = rows.clone();
+            let reveal = reveal.clone();
             let on_pick = EventHandler::new(move |index: usize| {
                 let Some(entry) = item(&pick_rows, index) else {
                     return;
@@ -593,7 +613,8 @@ impl Component for TextBlock {
                 let action = entry.action.clone();
                 let mut menu = menu;
                 menu.set(None);
-                controller.commit_suggestion(target, open.at..end, action);
+                let range = model_offset(&reveal, open.at)..model_offset(&reveal, end);
+                controller.commit_suggestion(target, range, action);
             });
             rect()
                 .layer(Layer::Overlay)
@@ -646,55 +667,140 @@ impl Component for TextBlock {
     }
 }
 
-/// Reset the rope when the model text changed from outside (undo,
-/// commands, autoformat).
-fn sync_rope(editable: &mut freya_edit::UseEditable, content: &Inline) {
-    let overflow = {
+/// Bring the rope in line with the model (undo, commands, autoformat) and
+/// with the markdown source revealed around the caret. Returns the reveal
+/// now shown.
+fn sync_rope(
+    editable: &mut freya_edit::UseEditable,
+    content: &Inline,
+    reveal: &RefCell<Option<Reveal>>,
+    request: Option<CaretRequest>,
+    revealing: bool,
+) -> Option<Reveal> {
+    let (anchor, head, has_preedit, rope_text) = {
         let editor = editable.editor().peek();
-        !editor.has_preedit() && editor.cursor_pos() > editor.len_utf16_cu()
+        let (anchor, head) = match editor.selection() {
+            TextSelection::Cursor(position) => (*position, *position),
+            TextSelection::Range { from, to } => (*from, *to),
+        };
+        (anchor, head, editor.has_preedit(), editor.committed_text())
     };
-    if overflow {
-        let mut editor = editable.editor_mut().write();
-        let end = editor.len_utf16_cu();
-        editor.clear_selection();
-        editor.move_cursor_to(end);
+    let previous = reveal.borrow().clone();
+    if has_preedit {
+        return previous;
     }
-    let stale = {
-        let editor = editable.editor().peek();
-        !editor.has_preedit() && editor.committed_text() != content.text()
+    let to_model = |display: usize| previous.as_ref().map_or(display, |r| r.to_model(display));
+    let len = content.len();
+    let (model_anchor, model_head) = request.map_or_else(
+        || (to_model(anchor), to_model(head)),
+        |request| (request.selection.anchor, request.selection.head),
+    );
+    let (model_anchor, model_head) = (model_anchor.min(len), model_head.min(len));
+
+    let keep = request.is_none()
+        && previous
+            .as_ref()
+            .is_some_and(|r| r.is_current(content) && r.contains(anchor) && r.contains(head));
+    let next = if !revealing {
+        None
+    } else if keep {
+        previous.clone()
+    } else if model_anchor == model_head {
+        Reveal::open(content, model_head)
+    } else {
+        None
     };
-    if stale {
+    let expected = next
+        .as_ref()
+        .map_or_else(|| content.text().to_owned(), |r| r.display_text(content));
+    let stale = rope_text != expected;
+    let overflow = head.max(anchor) > utf16_len(&expected);
+    if stale || overflow || request.is_some() || next != previous {
+        let to_display = |model: usize| next.as_ref().map_or(model, |r| r.to_display(model));
         let mut editor = editable.editor_mut().write();
-        let cursor = editor.cursor_pos().min(content.len());
-        editor.set(content.text());
-        editor.editor_history_mut().clear();
-        editor.clear_selection();
-        editor.move_cursor_to(cursor);
+        if stale {
+            editor.set(&expected);
+            editor.editor_history_mut().clear();
+        }
+        let (anchor, head) = (to_display(model_anchor), to_display(model_head));
+        if anchor == head {
+            editor.clear_selection();
+            editor.move_cursor_to(head);
+        } else {
+            editor.set_selection((anchor, head));
+        }
     }
+    reveal.borrow_mut().clone_from(&next);
+    next
 }
 
-fn rope_selection(editable: &freya_edit::UseEditable, target: TextTarget) -> Selection {
+/// Model offset of a position in the rope.
+fn model_offset(reveal: &RefCell<Option<Reveal>>, display: usize) -> usize {
+    reveal
+        .borrow()
+        .as_ref()
+        .map_or(display, |reveal| reveal.to_model(display))
+}
+
+fn rope_selection(
+    editable: &freya_edit::UseEditable,
+    target: TextTarget,
+    reveal: Option<&Reveal>,
+) -> Selection {
+    let to_model = |display: usize| reveal.map_or(display, |reveal| reveal.to_model(display));
     let editor = editable.editor().peek();
     match editor.selection() {
-        TextSelection::Cursor(position) => Selection::caret(target, *position),
+        TextSelection::Cursor(position) => Selection::caret(target, to_model(*position)),
         TextSelection::Range { from, to } => Selection {
             target,
-            anchor: *from,
-            head: *to,
+            anchor: to_model(*from),
+            head: to_model(*to),
         },
     }
 }
 
-/// Push the rope text and selection into the controller.
+/// Push the rope text and selection into the controller, re-parsing the
+/// revealed markdown source when the edit touched it.
 fn commit_rope(
     editable: &freya_edit::UseEditable,
     controller: crate::EditorController,
     target: TextTarget,
     hint: usize,
+    reveal: &RefCell<Option<Reveal>>,
 ) {
     let text = editable.editor().peek().committed_text();
-    let selection = rope_selection(editable, target);
-    controller.edit_text(target, &text, hint, selection);
+    let active = reveal.borrow().clone();
+    let Some(active) = active else {
+        let selection = rope_selection(editable, target, None);
+        controller.edit_text(target, &text, hint, selection);
+        return;
+    };
+    let Some(content) = controller.peek_inline(target) else {
+        return;
+    };
+    if !active.is_current(&content) {
+        *reveal.borrow_mut() = None;
+        return;
+    }
+    match active.edit(&content, &text, hint, &controller.parse_options()) {
+        None => controller.set_selection(rope_selection(editable, target, Some(&active))),
+        Some(RevealEdit::Outside {
+            model_text,
+            reveal: moved,
+        }) => {
+            let selection = rope_selection(editable, target, Some(&moved));
+            *reveal.borrow_mut() = Some(moved);
+            controller.edit_text(target, &model_text, active.to_model(hint), selection);
+        }
+        Some(RevealEdit::Source {
+            content,
+            reveal: next,
+        }) => {
+            let selection = rope_selection(editable, target, Some(&next));
+            *reveal.borrow_mut() = Some(next);
+            controller.replace_inline(target, content, selection);
+        }
+    }
 }
 
 /// Text typed after the trigger symbol, or `None` when the menu must close.

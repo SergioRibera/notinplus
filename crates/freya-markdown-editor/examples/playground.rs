@@ -30,6 +30,7 @@ fn main() {
 
 fn app() -> impl IntoElement {
     let markdown = use_state(|| WELCOME.to_owned());
+    let mut reveal = use_state(|| false);
     let controller = use_editor_controller();
     let theme = EditorTheme::dark();
     let surface = theme.colors.surface;
@@ -53,6 +54,7 @@ fn app() -> impl IntoElement {
                             .controller(controller)
                             .theme(theme)
                             .placeholder("Start writing…")
+                            .syntax_reveal(*reveal.read())
                             .slash_menu()
                             .suggestions(mentions())
                             .decorator(PrefixTokens::new(
@@ -86,6 +88,16 @@ fn app() -> impl IntoElement {
                 .height(Size::fill())
                 .padding(16.)
                 .background((24, 26, 31))
+                .spacing(8.)
+                .child(
+                    Button::new()
+                        .on_press(move |_| reveal.toggle())
+                        .child(if *reveal.read() {
+                            "Hide markdown syntax"
+                        } else {
+                            "Show markdown syntax"
+                        }),
+                )
                 .child(label().color(muted).font_size(12.).text("MARKDOWN"))
                 .child(
                     ScrollView::new().expanded().child(

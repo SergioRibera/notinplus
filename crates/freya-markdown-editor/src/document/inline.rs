@@ -86,7 +86,7 @@ impl MarkKind {
     }
 
     /// Whether text typed right after the end of the mark joins it.
-    const fn is_inclusive(&self) -> bool {
+    pub(crate) const fn is_inclusive(&self) -> bool {
         !matches!(self, Self::Code | Self::Link(_))
     }
 }

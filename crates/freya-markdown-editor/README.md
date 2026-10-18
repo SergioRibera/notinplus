@@ -133,6 +133,25 @@ navigate, Enter/Tab pick, Escape closes. The list is virtualized and the
 query results are cached, so large sources stay fast; on touch screens it
 scrolls by dragging and only a tap picks.
 
+## Formatting boundaries and markdown source
+
+Typing right after bold, italic, a color... continues it, like in a word
+processor. To leave it:
+
+- press the shortcut again (Ctrl+B) or use the toolbar,
+- press Right at the end of the block,
+- or delete back to its end: what you type next is not formatted.
+
+With `.syntax_reveal(true)` the formatting touching the caret is shown as
+its markdown source (`**bold**`, `[link](url)`, `` `code` ``...) and edited
+as text, like Obsidian or Typora: delete a `*` and it is plain text again,
+type after the closing `**` and it is not bold. Styling that only exists
+as HTML (underline, colors, fonts, sizes) keeps being edited visually.
+
+```rust,ignore
+MarkdownEditor::new(value).syntax_reveal(settings.show_markdown);
+```
+
 ## Reordering blocks
 
 ```rust,ignore
@@ -196,6 +215,7 @@ while editing but are not written.
 | Ctrl+Enter | Paragraph after the block (leave any block) |
 | Enter on an empty last line | Leave a code, math or raw block |
 | Ctrl+Shift+Up / Down | Move the current block |
+| Right at the end of a block | Stop the formatting that ends there |
 | Tab / Shift+Tab | Indent list items, move between table cells |
 | Backspace at start | Turn block into text, then merge with the previous |
 | Arrows at edges | Move between blocks |
