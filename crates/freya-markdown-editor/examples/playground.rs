@@ -8,7 +8,7 @@ use freya_markdown_editor::prelude::*;
 
 const WELCOME: &str = r"# Welcome to the playground
 
-Type `/` for blocks, `@` to mention someone, or select text and use the toolbar.
+Type `/` for blocks and people (`/at ada` jumps to people), or select text and use the toolbar.
 Markdown shortcuts work too: `# `, `- `, `1. `, `[ ] `, `> `, `**bold**`, `==mark==`.
 
 > [!TIP]
@@ -53,8 +53,8 @@ fn app() -> impl IntoElement {
                             .controller(controller)
                             .theme(theme)
                             .placeholder("Start writing…")
-                            .slash_commands()
-                            .trigger(mentions())
+                            .slash_menu()
+                            .suggestions(mentions())
                             .decorator(PrefixTokens::new(
                                 '#',
                                 SpanStyle::default().color((168, 85, 247)).bold(),
@@ -99,18 +99,17 @@ fn app() -> impl IntoElement {
         )
 }
 
-fn mentions() -> Trigger {
+fn mentions() -> SuggestionGroup {
     const PEOPLE: [&str; 4] = [
         "Ada Lovelace",
         "Alan Turing",
         "Grace Hopper",
         "Linus Torvalds",
     ];
-    Trigger::new('@', |query| {
-        let query = query.to_lowercase();
+    SuggestionGroup::new("People", |query| {
         PEOPLE
             .iter()
-            .filter(|name| name.to_lowercase().contains(&query))
+            .filter(|name| name.to_lowercase().contains(query))
             .map(|name| {
                 Suggestion::new(
                     *name,
@@ -123,4 +122,5 @@ fn mentions() -> Trigger {
             })
             .collect()
     })
+    .keyword("at")
 }

@@ -20,7 +20,7 @@ fn app() -> impl IntoElement {
         .child(
             MarkdownEditor::new(notes)
                 .controller(controller)
-                .slash_commands()
+                .slash_menu()
                 .placeholder("Write something…")
                 .padding(16.)
                 .expanded(),
@@ -38,7 +38,7 @@ Run the playground: `cargo run -p freya-markdown-editor --example playground`.
 | `EditorController` | `Copy` handle to the shared state. Every toolbar button is a call on it, so custom toolbars, menus and shortcuts use the same API. |
 | `MarkdownToolbar` | Ready made Word style bar (feature `toolbar`, on by default). |
 | `Decorator` | Hooks that map markdown constructs to your own visuals. |
-| `Trigger` | Character triggered suggestion menus (`/`, `@`, `[`...). |
+| `SuggestionSource` | Sections of the `/` menu (blocks, references, mentions...). |
 | `document` | The editable model: flat blocks, inline marks and atoms. |
 | `markdown` | Parsing (comrak) and writing in two dialects. |
 
@@ -107,18 +107,44 @@ pattern), `render_code_block` (e.g. diagrams) and `render_image`.
 Embedded widgets are inline paragraph children: give them an explicit
 height.
 
-## Suggestion menus
+## The `/` menu
+
+Everything lives behind one `/` menu (typed at the start of a word). It is
+built from sources, each one a titled section:
 
 ```rust,ignore
 MarkdownEditor::new(value)
-    .slash_commands() // built in `/` block menu
-    .trigger(Trigger::new('@', |query| {
-        vec![Suggestion::new("Ada", SuggestionAction::InsertText("@Ada".into()))]
-    }))
+    // your own section, `/at ada` scopes the menu to it
+    .suggestions(
+        SuggestionGroup::new("People", |query| {
+            people_matching(query)
+                .map(|name| Suggestion::new(name, SuggestionAction::InsertText(format!("@{name}"))))
+                .collect()
+        })
+        .keyword("at"),
+    )
+    // the built in `BlockSuggestions` (headings, lists, code, tables...)
+    .slash_menu()
 ```
 
-Actions: insert text, rich inline, link, embed, change block type or
-insert a block. Arrow keys navigate, Enter/Tab pick, Escape closes.
+Implement `SuggestionSource` for richer sources. Actions: insert text,
+rich inline, link, embed, change block type or insert a block. Arrow keys
+navigate, Enter/Tab pick, Escape closes. The list is virtualized and the
+query results are cached, so large sources stay fast; on touch screens it
+scrolls by dragging and only a tap picks.
+
+## Reordering blocks
+
+```rust,ignore
+MarkdownEditor::new(value).reorderable(true); // drag handle on every block
+
+controller.move_block(id, -1);          // by offset
+controller.move_block_to(id, 0);        // to an index
+controller.move_block_onto(id, other);  // where `other` is
+controller.move_current_block(1);       // the block holding the caret
+```
+
+Ctrl+Shift+Up/Down moves the current block too.
 
 ## Markdown support
 
@@ -167,7 +193,9 @@ while editing but are not written.
 | Ctrl+Alt+7 / 8 / 9 | Numbered, bulleted, to-do list |
 | Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z | Undo, redo |
 | Enter / Shift+Enter | New block / line break |
-| Ctrl+Enter | New paragraph after the block (leave code blocks) |
+| Ctrl+Enter | Paragraph after the block (leave any block) |
+| Enter on an empty last line | Leave a code, math or raw block |
+| Ctrl+Shift+Up / Down | Move the current block |
 | Tab / Shift+Tab | Indent list items, move between table cells |
 | Backspace at start | Turn block into text, then merge with the previous |
 | Arrows at edges | Move between blocks |
@@ -185,6 +213,10 @@ toolbar below picks it up. `EditorTheme::dark()` and `EditorTheme::light()`
 are included.
 
 ## Limitations
+
+- The document always ends with a paragraph when its last block is not one
+  (code, list, table...), so there is always a place to keep writing.
+  Empty paragraphs are not written to markdown.
 
 - Selections never span more than one block.
 - Images render as a labelled pill unless a decorator renders them.

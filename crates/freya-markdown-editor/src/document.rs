@@ -489,13 +489,14 @@ impl Document {
         }
     }
 
-    /// The document always keeps an editable block to type into.
+    /// Keep a paragraph to type into after the last block: whenever the
+    /// document ends in anything but a paragraph that already has content
+    /// (or cannot hold text, like a table), an empty paragraph follows it.
+    /// That is the way out of code blocks, quotes, tables and the like.
     pub fn ensure_editable(&mut self) {
-        let needs_tail = self.blocks.last().is_none_or(|block| {
-            matches!(
-                block.kind,
-                BlockKind::Divider | BlockKind::Table(_) | BlockKind::TableOfContents
-            )
+        let needs_tail = self.blocks.last().is_none_or(|block| match &block.kind {
+            BlockKind::Paragraph(_) => false,
+            kind => kind.content().is_none_or(|content| !content.is_empty()),
         });
         if needs_tail {
             self.blocks.push(Block::paragraph(""));
@@ -557,6 +558,7 @@ impl Document {
         Some(block)
     }
 
+    /// Move a block by `delta` positions (negative moves up).
     pub fn move_block(&mut self, id: BlockId, delta: isize) -> bool {
         let Some(index) = self.index_of(id) else {
             return false;
@@ -564,13 +566,46 @@ impl Document {
         let Some(destination) = index.checked_add_signed(delta) else {
             return false;
         };
-        if destination >= self.blocks.len() {
+        destination < self.blocks.len() && self.move_block_to(id, destination)
+    }
+
+    /// Move a block so it ends at `index` (clamped to the document).
+    pub fn move_block_to(&mut self, id: BlockId, index: usize) -> bool {
+        let Some(from) = self.index_of(id) else {
+            return false;
+        };
+        let to = index.min(self.blocks.len() - 1);
+        if from == to {
             return false;
         }
-        let block = self.blocks.remove(index);
-        self.blocks.insert(destination, block);
+        let block = self.blocks.remove(from);
+        self.blocks.insert(to, block);
+        self.normalize_depths();
         self.ensure_editable();
         true
+    }
+
+    /// Move `id` to the position currently held by `target`, the usual
+    /// drop semantics of a drag handle.
+    pub fn move_block_onto(&mut self, id: BlockId, target: BlockId) -> bool {
+        self.index_of(target)
+            .is_some_and(|index| self.move_block_to(id, index))
+    }
+
+    /// Clamp list depths so every item is at most one level deeper than
+    /// the item before it, keeping the markdown valid after moves.
+    fn normalize_depths(&mut self) {
+        let mut previous: Option<u8> = None;
+        for block in &mut self.blocks {
+            match &mut block.kind {
+                BlockKind::ListItem { depth, .. } => {
+                    let limit = previous.map_or(0, |depth| depth.saturating_add(1));
+                    *depth = (*depth).min(limit);
+                    previous = Some(*depth);
+                }
+                _ => previous = None,
+            }
+        }
     }
 
     /// Convert a block, keeping its text. Unsupported kinds are left as is.
@@ -1078,5 +1113,44 @@ mod tests {
         assert_eq!(document.ordinal(ids[0]), Some(4));
         assert_eq!(document.ordinal(ids[1]), Some(1));
         assert_eq!(document.ordinal(ids[2]), Some(5));
+    }
+
+    #[test]
+    fn code_with_text_at_the_end_gets_a_paragraph_after() {
+        let empty_code = doc(vec![BlockKind::Code {
+            language: String::new(),
+            code: Inline::default(),
+        }]);
+        assert_eq!(empty_code.blocks().len(), 1);
+
+        let code = doc(vec![BlockKind::Code {
+            language: String::new(),
+            code: "fn main() {}".into(),
+        }]);
+        assert_eq!(code.blocks().len(), 2);
+        assert!(matches!(&code.blocks()[1].kind, BlockKind::Paragraph(text) if text.is_empty()));
+    }
+
+    #[test]
+    fn moving_blocks_keeps_list_depths_valid() {
+        let item = |depth, text: &str| BlockKind::ListItem {
+            kind: ListKind::Bullet,
+            depth,
+            content: text.into(),
+        };
+        let mut document = doc(vec![
+            item(0, "a"),
+            item(1, "b"),
+            BlockKind::Paragraph("p".into()),
+        ]);
+        let ids: Vec<_> = document.blocks().iter().map(|b| b.id).collect();
+        assert!(document.move_block_onto(ids[2], ids[0]));
+        let order: Vec<_> = document.blocks().iter().map(|b| b.id).collect();
+        assert_eq!(&order[..3], &[ids[2], ids[0], ids[1]]);
+        assert!(document.move_block(ids[1], -2));
+        assert!(matches!(
+            document.blocks()[0].kind,
+            BlockKind::ListItem { depth: 0, .. }
+        ));
     }
 }

@@ -229,7 +229,8 @@ impl EditorState {
         self.history.redo.clear();
     }
 
-    const fn changed(&mut self) {
+    fn changed(&mut self) {
+        self.document.ensure_editable();
         self.revision += 1;
     }
 
@@ -870,10 +871,32 @@ impl EditorController {
         });
     }
 
+    /// Move a block by `delta` positions (negative moves up).
     pub fn move_block(&self, block: BlockId, delta: isize) {
+        self.reorder(|document| document.move_block(block, delta));
+    }
+
+    /// Move a block to `index` in the document.
+    pub fn move_block_to(&self, block: BlockId, index: usize) {
+        self.reorder(|document| document.move_block_to(block, index));
+    }
+
+    /// Move `block` to the position of `target`, as a drop on `target`.
+    pub fn move_block_onto(&self, block: BlockId, target: BlockId) {
+        self.reorder(|document| document.move_block_onto(block, target));
+    }
+
+    /// Move the block holding the caret by `delta` positions.
+    pub fn move_current_block(&self, delta: isize) {
+        if let Some(block) = self.peek(|state| state.selection.map(|s| s.target.block)) {
+            self.move_block(block, delta);
+        }
+    }
+
+    fn reorder(&self, edit: impl FnOnce(&mut Document) -> bool) {
         self.update(|state| {
             let mut document = state.document.clone();
-            if document.move_block(block, delta) {
+            if edit(&mut document) {
                 state.record(None);
                 state.document = document;
                 state.changed();
@@ -1271,12 +1294,32 @@ impl EditorController {
     }
 
     /// Ctrl+Enter: open an empty paragraph after the block of `target`.
-    pub(crate) fn exit_block(&self, target: TextTarget) {
+    /// Leave the block of `target` for the paragraph after it, creating
+    /// one unless an empty paragraph already follows. With
+    /// `trim_newline` a trailing line break typed to get out is removed.
+    pub(crate) fn exit_block(&self, target: TextTarget, trim_newline: bool) {
         self.update(|state| {
             state.record(None);
-            let id = state
+            if trim_newline
+                && let Some(inline) = state.document.inline_mut(target)
+                && inline.text().ends_with('\n')
+            {
+                let end = inline.len();
+                inline.replace(end - 1..end, "");
+            }
+            let next = state
                 .document
-                .insert_after(target.block, Block::paragraph(""));
+                .index_of(target.block)
+                .and_then(|index| state.document.blocks().get(index + 1))
+                .filter(|block| {
+                    matches!(&block.kind, BlockKind::Paragraph(content) if content.is_empty())
+                })
+                .map(|block| block.id);
+            let id = next.unwrap_or_else(|| {
+                state
+                    .document
+                    .insert_after(target.block, Block::paragraph(""))
+            });
             state.changed();
             state.request_caret(Selection::caret(TextTarget::from(id), 0));
         });

@@ -15,7 +15,7 @@ use freya_engine::prelude::{
 
 use super::Shared;
 use super::paint::{Decor, DecorKind, PaintContext, Piece};
-use super::suggest::{OpenMenu, menu_popup, query_entries};
+use super::suggest::{MENU_WIDTH, MenuRow, OpenMenu, SuggestionMenu, item, item_count};
 use crate::controller::{CaretRequest, Selection};
 use crate::decorator::{EmbedContext, ImageContext};
 use crate::document::{
@@ -66,6 +66,7 @@ impl Component for TextBlock {
         let mut area = use_state(Area::default);
         let mut dragging = use_state(|| false);
         let mut menu = use_state(|| None::<OpenMenu>);
+        let menu_cache = use_hook(|| Rc::new(RefCell::new(None::<(String, Rc<Vec<MenuRow>>)>)));
         let applied_caret = use_hook(|| Rc::new(Cell::new(0u64)));
         let command_held = use_hook(|| Rc::new(Cell::new(false)));
         let decor = use_hook(|| Rc::new(RefCell::new(Vec::<Decor>::new())));
@@ -103,11 +104,28 @@ impl Component for TextBlock {
         let rope_text = editable.editor().read().rope().to_string();
         let has_preedit = editable.editor().read().has_preedit();
 
-        let open_menu = (*menu.read()).filter(|_| is_focused && !read_only);
+        let elsewhere = !is_focused
+            && controller.peek(super::super::controller::EditorState::focused_target)
+                != Some(target);
+        if menu.peek().is_some() && (elsewhere || read_only) {
+            menu.set(None);
+        }
+        let open_menu = *menu.read();
         let cursor = editable.editor().read().cursor_pos();
         let query = open_menu.and_then(|open| menu_query(&rope_text, open.at, cursor));
-        let entries = match (open_menu, &query) {
-            (Some(open), Some(query)) => Some((open, query_entries(&shared.triggers, open, query))),
+        let entries = match (open_menu, query) {
+            (Some(open), Some(query)) => {
+                let mut cache = menu_cache.borrow_mut();
+                let rows = match &*cache {
+                    Some((cached, rows)) if *cached == query => rows.clone(),
+                    _ => {
+                        let rows = Rc::new(shared.slash.rows(&query));
+                        *cache = Some((query, rows.clone()));
+                        rows
+                    }
+                };
+                Some((open, rows))
+            }
             _ => None,
         };
 
@@ -126,7 +144,7 @@ impl Component for TextBlock {
             let alt = modifiers.contains(Modifiers::ALT);
 
             if let Some((open, entries)) = &entries_for_keys {
-                let count = entries.len();
+                let count = item_count(entries);
                 match &key {
                     Key::Named(NamedKey::Escape) => {
                         menu.set(None);
@@ -147,10 +165,12 @@ impl Component for TextBlock {
                         return;
                     }
                     Key::Named(NamedKey::Enter | NamedKey::Tab) if count > 0 => {
-                        let pick = entries[open.selected.min(count - 1)].action.clone();
-                        let end = editable.editor().peek().cursor_pos();
-                        menu.set(None);
-                        controller.commit_suggestion(target, open.at..end, pick);
+                        if let Some(pick) = item(entries, open.selected.min(count - 1)) {
+                            let end = editable.editor().peek().cursor_pos();
+                            let action = pick.action.clone();
+                            menu.set(None);
+                            controller.commit_suggestion(target, open.at..end, action);
+                        }
                         return;
                     }
                     _ => {}
@@ -281,8 +301,30 @@ impl Component for TextBlock {
             match &key {
                 Key::Named(NamedKey::Enter) if command => {
                     if target.cell.is_none() {
-                        controller.exit_block(target);
+                        controller.exit_block(target, false);
                     }
+                    return;
+                }
+                Key::Named(NamedKey::Enter)
+                    if !shift
+                        && !rich
+                        && target.cell.is_none()
+                        && collapsed
+                        && cursor_pos == length
+                        && (length == 0 || content_for_keys.text().ends_with('\n')) =>
+                {
+                    controller.exit_block(target, true);
+                    return;
+                }
+                Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown)
+                    if command && shift && target.cell.is_none() =>
+                {
+                    let delta = if key == Key::Named(NamedKey::ArrowUp) {
+                        -1
+                    } else {
+                        1
+                    };
+                    controller.move_current_block(delta);
                     return;
                 }
                 Key::Named(NamedKey::Enter) if !shift && rich => {
@@ -352,18 +394,23 @@ impl Component for TextBlock {
             }
 
             let opening = match &key {
-                Key::Character(ch) if !command => ch.chars().next().and_then(|symbol| {
-                    let (index, trigger) = shared_for_keys.triggers.find(symbol)?;
+                Key::Character(ch)
+                    if !command && ch == "/" && shared_for_keys.slash.is_enabled() =>
+                {
                     let text = editable.editor().peek().rope().to_string();
                     let start = selection.map_or(cursor_pos, |(from, to)| from.min(to));
                     let before = text[..byte_index(&text, start)].chars().next_back();
-                    let allowed = !trigger.word_start || before.is_none_or(char::is_whitespace);
-                    allowed.then_some(OpenMenu {
-                        trigger: index,
-                        at: start,
-                        selected: 0,
+                    before.is_none_or(char::is_whitespace).then(|| {
+                        let (top, left) = menu_anchor(&holder.read(), &text, start);
+                        let width = area.peek().width();
+                        OpenMenu {
+                            at: start,
+                            selected: 0,
+                            top,
+                            left: left.min(width - MENU_WIDTH).max(0.),
+                        }
                     })
-                }),
+                }
                 _ => None,
             };
 
@@ -536,21 +583,27 @@ impl Component for TextBlock {
         let has_decor = !decor_list.is_empty();
         *decor.borrow_mut() = decor_list;
 
-        let menu_top = entries
-            .as_ref()
-            .map_or(0.0, |_| caret_offset(&holder.read(), &rope_text, cursor));
-        let popup = entries.map(|(open, entries)| {
-            let pick_entries = entries.clone();
-            let on_pick = move |index: usize| {
-                let Some(entry) = pick_entries.get(index) else {
+        let popup = entries.map(|(open, rows)| {
+            let pick_rows = rows.clone();
+            let on_pick = EventHandler::new(move |index: usize| {
+                let Some(entry) = item(&pick_rows, index) else {
                     return;
                 };
                 let end = editable.editor().peek().cursor_pos();
+                let action = entry.action.clone();
                 let mut menu = menu;
                 menu.set(None);
-                controller.commit_suggestion(target, open.at..end, entry.action.clone());
-            };
-            menu_popup(&entries, open.selected, menu_top, &theme, on_pick)
+                controller.commit_suggestion(target, open.at..end, action);
+            });
+            rect()
+                .layer(Layer::Overlay)
+                .position(Position::new_absolute().top(open.top).left(open.left))
+                .child(SuggestionMenu {
+                    rows,
+                    selected: open.selected,
+                    theme: theme.clone(),
+                    on_pick,
+                })
         });
 
         let painter_holder = holder.read().clone();
@@ -565,25 +618,27 @@ impl Component for TextBlock {
             .height(Size::fill())
         });
 
+        // The popup is a sibling of the editable area, not a child, so
+        // presses and drags inside it never reach the text editor handlers.
         rect()
-            .a11y_id(a11y_id)
-            .a11y_focusable(!read_only)
-            .a11y_role(AccessibilityRole::MultilineTextInput)
             .width(Size::fill())
-            .cursor(if read_only {
-                CursorIcon::Default
-            } else {
-                CursorIcon::Text
-            })
-            .on_key_down(on_key_down)
-            .on_key_up(on_key_up)
-            .on_ime_preedit(on_ime_preedit)
-            .on_focus_press(on_focus_press)
-            .on_global_pointer_move(on_global_pointer_move)
-            .on_global_pointer_up(on_global_pointer_up)
             .child(
                 rect()
+                    .a11y_id(a11y_id)
+                    .a11y_focusable(!read_only)
+                    .a11y_role(AccessibilityRole::MultilineTextInput)
                     .width(Size::fill())
+                    .cursor(if read_only {
+                        CursorIcon::Default
+                    } else {
+                        CursorIcon::Text
+                    })
+                    .on_key_down(on_key_down)
+                    .on_key_up(on_key_up)
+                    .on_ime_preedit(on_ime_preedit)
+                    .on_focus_press(on_focus_press)
+                    .on_global_pointer_move(on_global_pointer_move)
+                    .on_global_pointer_up(on_global_pointer_up)
                     .maybe_child(background)
                     .child(paragraph.layer(Layer::Relative(1))),
             )
@@ -741,18 +796,18 @@ fn link_at(holder: &ParagraphHolder, location: CursorPoint, content: &Inline) ->
         })
 }
 
-/// Vertical offset (from the bottom of the paragraph) of the caret's line
-/// bottom, so popups open right under the caret.
-fn caret_offset(holder: &ParagraphHolder, text: &str, cursor: usize) -> f32 {
+/// `(top, left)` in paragraph coordinates right under the caret at
+/// `cursor`, used to place the suggestion menu once when it opens.
+fn menu_anchor(holder: &ParagraphHolder, text: &str, cursor: usize) -> (f32, f32) {
     let inner = holder.0.borrow();
-    inner.as_ref().map_or(4.0, |inner| {
+    inner.as_ref().map_or((24.0, 0.0), |inner| {
         #[allow(clippy::cast_possible_truncation, reason = "scale factors are small")]
         let scale = inner.scale_factor as f32;
         if scale <= 0.0 {
-            return 4.0;
+            return (24.0, 0.0);
         }
         let rect = inner.paragraph.cursor_rect(text, cursor, TextAlign::Left);
-        rect.bottom / scale - inner.paragraph.height() / scale + 4.0
+        (rect.bottom / scale + 4.0, rect.left / scale)
     })
 }
 

@@ -537,16 +537,97 @@ impl Component for BlockView {
                 )
                 .into_element(),
         };
+        let mut hovered = use_state(|| false);
+        let mut drop_target = use_state(|| false);
         let body = self
             .decorated()
             .or_else(|| self.framed().map(Frame::render))
             .unwrap_or_else(fallback);
-        rect()
+        let block = rect()
             .width(Size::fill())
             .padding((theme.block_spacing / 2., 0.))
-            .child(body)
+            .child(body);
+        if !self.shared.reorderable || self.shared.read_only {
+            return block.into_element();
+        }
+
+        let colors = &theme.colors;
+        let controller = self.shared.controller;
+        let id = self.block.id;
+        let preview = self
+            .block
+            .kind
+            .content()
+            .map(Inline::plain_text)
+            .unwrap_or_default()
+            .chars()
+            .take(40)
+            .collect::<String>();
+        let handle = DragZone::new(id)
+            .drag_element(
+                rect()
+                    .padding((6., 10.))
+                    .corner_radius(8.)
+                    .background(colors.popup_background)
+                    .border(
+                        Border::new()
+                            .width(1.)
+                            .alignment(BorderAlignment::Inner)
+                            .fill(colors.border),
+                    )
+                    .child(label().color(colors.text).font_size(12.).max_lines(1).text(
+                        if preview.is_empty() {
+                            "Block".to_owned()
+                        } else {
+                            preview
+                        },
+                    )),
+            )
+            .child(
+                rect()
+                    .width(Size::px(HANDLE))
+                    .padding((theme.block_spacing / 2. + 3., 0., 0., 0.))
+                    .cursor(CursorIcon::Grab)
+                    .child(
+                        SvgViewer::new(freya::icons::lucide::grip_vertical())
+                            .color(if hovered() {
+                                colors.muted
+                            } else {
+                                colors.muted.with_a(70)
+                            })
+                            .width(Size::px(14.))
+                            .height(Size::px(16.)),
+                    ),
+            );
+        DropZone::new(move |dragged: BlockId| controller.move_block_onto(dragged, id))
+            .on_drag_over(move |over| drop_target.set(over))
+            .width(Size::fill())
+            .child(
+                rect()
+                    .width(Size::fill())
+                    .height(Size::px(2.))
+                    .background(if drop_target() {
+                        colors.accent
+                    } else {
+                        Color::TRANSPARENT
+                    }),
+            )
+            .child(
+                rect()
+                    .horizontal()
+                    .content(Content::flex())
+                    .width(Size::fill())
+                    .on_pointer_enter(move |_| hovered.set(true))
+                    .on_pointer_leave(move |_| hovered.set_if_modified(false))
+                    .child(handle)
+                    .child(rect().width(Size::flex(1.)).child(block)),
+            )
+            .into_element()
     }
 }
+
+/// Width of the drag handle column shown when blocks can be reordered.
+const HANDLE: f32 = 20.0;
 
 const fn callout_icon(kind: CalloutKind) -> &'static str {
     match kind {

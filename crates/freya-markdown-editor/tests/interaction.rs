@@ -22,9 +22,9 @@ fn app() -> impl IntoElement {
         .child(
             MarkdownEditor::new(value)
                 .controller(controller)
-                .slash_commands()
-                .trigger(
-                    Trigger::new('[', |query| {
+                .slash_menu()
+                .suggestions(
+                    SuggestionGroup::new("Docs", |query| {
                         vec![
                             Suggestion::new(
                                 format!("Doc {query}"),
@@ -36,7 +36,7 @@ fn app() -> impl IntoElement {
                             .detail("embed"),
                         ]
                     })
-                    .anywhere(),
+                    .keyword("doc"),
                 )
                 .decorator(SchemeEmbed::new("app", |embed| {
                     rect()
@@ -247,11 +247,12 @@ fn undo_reverts_a_typing_burst() {
 }
 
 #[test]
-fn trigger_inserts_embed_that_round_trips() {
+fn suggestion_source_inserts_embed_that_round_trips() {
     let mut harness = Harness::new("see");
     let first = harness.block(0);
     harness.focus(first, 3);
-    harness.type_text(" [do");
+    harness.type_text(" /doc");
+    harness.snapshot("slash_sections");
     harness.named(NamedKey::Enter);
     assert_eq!(harness.value(), "see [Doc](app://doc)\n");
     let document = harness.document();
@@ -277,4 +278,53 @@ fn heading_shortcut_and_toolbar_api() {
         harness.value(),
         "<div align=\"center\">\n\n## Title\n\n</div>\n"
     );
+}
+
+#[test]
+fn double_enter_at_the_end_leaves_a_code_block() {
+    let mut harness = Harness::new("```\nlet x = 1;\n```");
+    let code = harness.block(0);
+    harness.focus(code, 10);
+    harness.named(NamedKey::Enter);
+    harness.type_text("x");
+    harness.named(NamedKey::Enter);
+    harness.named(NamedKey::Enter);
+    harness.type_text("after");
+    assert_eq!(harness.value(), "```\nlet x = 1;\nx\n```\n\nafter\n");
+}
+
+#[test]
+fn code_block_at_the_end_always_has_a_way_out() {
+    let mut harness = Harness::new("```\ncode\n```");
+    assert_eq!(harness.document().blocks().len(), 2);
+    let paragraph = harness.block(1);
+    harness.focus(paragraph, 0);
+    harness.type_text("next");
+    assert_eq!(harness.value(), "```\ncode\n```\n\nnext\n");
+}
+
+#[test]
+fn ctrl_shift_arrows_move_blocks() {
+    let mut harness = Harness::new("one\n\ntwo\n\nthree");
+    let first = harness.block(0);
+    harness.focus(first, 0);
+    harness.key(
+        Key::Named(NamedKey::ArrowDown),
+        Modifiers::CONTROL | Modifiers::SHIFT,
+    );
+    assert_eq!(harness.value(), "two\n\none\n\nthree\n");
+    let controller = harness.controller;
+    let ids: Vec<_> = harness.runner.run_in(|| {
+        controller
+            .document()
+            .blocks()
+            .iter()
+            .map(|b| b.id)
+            .collect()
+    });
+    harness
+        .runner
+        .run_in(|| controller.move_block_onto(ids[2], ids[0]));
+    harness.settle();
+    assert_eq!(harness.value(), "three\n\ntwo\n\none\n");
 }

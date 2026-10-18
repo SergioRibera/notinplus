@@ -26,7 +26,10 @@ pub use decorator::{
     CodeContext, Decorator, Decorators, EmbedContext, ImageContext, PrefixTokens, SchemeEmbed,
     SpanStyle, TextMatch,
 };
-pub use editor::{MarkdownEditor, Suggestion, SuggestionAction, Trigger};
+pub use editor::{
+    BlockSuggestions, MarkdownEditor, Suggestion, SuggestionAction, SuggestionGroup,
+    SuggestionSource,
+};
 pub use theme::{EditorColors, EditorTheme};
 #[cfg(feature = "toolbar")]
 pub use toolbar::MarkdownToolbar;
@@ -41,9 +44,9 @@ pub mod prelude {
     #[cfg(feature = "toolbar")]
     pub use crate::toolbar::MarkdownToolbar;
     pub use crate::{
-        ActiveFormat, CodeContext, Decorator, Decorators, EditorColors, EditorController,
-        EditorTheme, EmbedContext, ImageContext, MarkdownEditor, PrefixTokens, SchemeEmbed,
-        Selection, SpanStyle, Suggestion, SuggestionAction, TextMatch, Trigger,
-        use_editor_controller, use_editor_controller_with,
+        ActiveFormat, BlockSuggestions, CodeContext, Decorator, Decorators, EditorColors,
+        EditorController, EditorTheme, EmbedContext, ImageContext, MarkdownEditor, PrefixTokens,
+        SchemeEmbed, Selection, SpanStyle, Suggestion, SuggestionAction, SuggestionGroup,
+        SuggestionSource, TextMatch, use_editor_controller, use_editor_controller_with,
     };
 }

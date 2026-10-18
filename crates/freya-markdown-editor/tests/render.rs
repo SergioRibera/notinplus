@@ -54,7 +54,7 @@ fn editor_app() -> impl IntoElement {
             ScrollView::new().expanded().child(
                 MarkdownEditor::new(value)
                     .controller(controller)
-                    .slash_commands()
+                    .slash_menu()
                     .decorator(PrefixTokens::new(
                         '#',
                         SpanStyle::default().color((168, 85, 247)),
@@ -148,4 +148,52 @@ fn toolbar_menus_render() {
     runner.click_cursor((725., 27.));
     runner.poll_n(std::time::Duration::from_millis(1), 3);
     runner.render_to_file(snapshot_path("toolbar_palette"));
+}
+
+fn sections_app() -> impl IntoElement {
+    let value = use_consume::<State<String>>();
+    let controller = use_consume::<EditorController>();
+    rect()
+        .expanded()
+        .background(EditorTheme::dark().colors.surface)
+        .padding(12.)
+        .child(
+            MarkdownEditor::new(value)
+                .controller(controller)
+                .reorderable(true)
+                .suggestions(SuggestionGroup::new("People", |query| {
+                    ["Ada Lovelace", "Alan Turing", "Grace Hopper"]
+                        .into_iter()
+                        .filter(|name| name.to_lowercase().contains(query))
+                        .map(|name| {
+                            Suggestion::new(name, SuggestionAction::InsertText(name.into()))
+                                .icon("@")
+                        })
+                        .collect()
+                }))
+                .slash_menu()
+                .width(Size::fill()),
+        )
+}
+
+#[test]
+fn slash_menu_sections_and_handles_render() {
+    let (mut runner, controller) = TestingRunner::new(
+        sections_app,
+        (700., 520.).into(),
+        |runner| {
+            runner.provide_root_context(|| {
+                State::create("# Plan\n\nFirst line\n\n- item".to_owned())
+            });
+            runner.provide_root_context(|| EditorController::create(Document::default()))
+        },
+        1.0,
+    );
+    runner.poll_n(std::time::Duration::from_millis(1), 3);
+    runner.run_in(|| controller.focus_end());
+    runner.poll_n(std::time::Duration::from_millis(1), 3);
+    runner.write_text("/");
+    runner.write_text("a");
+    runner.poll_n(std::time::Duration::from_millis(1), 3);
+    runner.render_to_file(snapshot_path("slash_sections_handles"));
 }

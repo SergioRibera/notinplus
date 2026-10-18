@@ -12,10 +12,12 @@ use std::rc::Rc;
 
 use freya::prelude::*;
 
-pub use suggest::{Suggestion, SuggestionAction, Trigger};
+pub use suggest::{
+    BlockSuggestions, Suggestion, SuggestionAction, SuggestionGroup, SuggestionSource,
+};
 
 use self::block::{BlockView, TocEntry};
-use self::suggest::Triggers;
+use self::suggest::SlashMenu;
 use crate::controller::{EditorController, EditorState};
 use crate::decorator::{Decorator, Decorators};
 use crate::document::{Abbreviation, BlockKind, Document, Inline};
@@ -52,9 +54,10 @@ pub(crate) struct Shared {
     pub(crate) controller: EditorController,
     pub(crate) theme: Rc<EditorTheme>,
     pub(crate) decorators: Decorators,
-    pub(crate) triggers: Triggers,
+    pub(crate) slash: SlashMenu,
     pub(crate) on_link: LinkHandler,
     pub(crate) read_only: bool,
+    pub(crate) reorderable: bool,
     pub(crate) abbreviations: Rc<Vec<Abbreviation>>,
 }
 
@@ -75,7 +78,7 @@ pub(crate) struct Shared {
 ///         .child(
 ///             MarkdownEditor::new(notes)
 ///                 .controller(controller)
-///                 .slash_commands()
+///                 .slash_menu()
 ///                 .placeholder("Write something…")
 ///                 .padding(16.)
 ///                 .expanded(),
@@ -92,7 +95,8 @@ pub struct MarkdownEditor {
     decorators: Decorators,
     theme: Option<EditorTheme>,
     placeholder: Option<Cow<'static, str>>,
-    triggers: Triggers,
+    slash: SlashMenu,
+    reorderable: bool,
     on_link: LinkHandler,
     layout: LayoutData,
     text_style: TextStyleData,
@@ -121,7 +125,8 @@ impl Default for MarkdownEditor {
             decorators: Decorators::default(),
             theme: None,
             placeholder: None,
-            triggers: Triggers::default(),
+            slash: SlashMenu::default(),
+            reorderable: false,
             on_link: LinkHandler::default(),
             layout: LayoutData::default(),
             text_style: TextStyleData::default(),
@@ -196,16 +201,27 @@ impl MarkdownEditor {
         self
     }
 
+    /// Add a section to the `/` menu. Sources are listed in the order they
+    /// are added.
     #[must_use]
-    pub fn trigger(mut self, trigger: Trigger) -> Self {
-        Rc::make_mut(&mut self.triggers.0).push(trigger);
+    pub fn suggestions(mut self, source: impl SuggestionSource + 'static) -> Self {
+        Rc::make_mut(&mut self.slash.0).push(Rc::new(source));
         self
     }
 
-    /// Enable the built in `/` block menu.
+    /// Enable the `/` menu with the built in [`BlockSuggestions`].
     #[must_use]
-    pub fn slash_commands(self) -> Self {
-        self.trigger(Trigger::slash_commands())
+    pub fn slash_menu(self) -> Self {
+        self.suggestions(BlockSuggestions)
+    }
+
+    /// Show a drag handle next to every block (edit mode only). Blocks can
+    /// always be moved from code with [`EditorController::move_block`] and
+    /// friends, or with Ctrl+Shift+Up/Down.
+    #[must_use]
+    pub const fn reorderable(mut self, reorderable: bool) -> Self {
+        self.reorderable = reorderable;
+        self
     }
 
     /// Called when a link is pressed: always in read only mode, with Ctrl
@@ -276,9 +292,10 @@ impl Component for MarkdownEditor {
             controller,
             theme: theme.clone(),
             decorators: self.decorators.clone(),
-            triggers: self.triggers.clone(),
+            slash: self.slash.clone(),
             on_link: self.on_link.clone(),
             read_only,
+            reorderable: self.reorderable,
             abbreviations: Rc::new(document.abbreviations.clone()),
         };
 
