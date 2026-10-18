@@ -245,13 +245,25 @@ fn use_follow_typing(
     use_note_keyboard(controller);
     {
         let content_top = content_top.clone();
+        // Revision, viewport height and focus at the last run: following only
+        // on their changes leaves the scroll to the user in between.
+        let seen = use_hook(|| Rc::new(Cell::new((0_u64, 0.0_f32, false))));
         use_side_effect(move || {
-            let _ = controller.revision();
+            let revision = controller.revision();
+            let focused = controller.has_focus();
+            let viewport = *viewport.read();
+            let height = viewport.map_or(0.0, |area| area.height());
+            let (last_revision, last_height, was_focused) =
+                seen.replace((revision, height, focused));
+            let typed = revision != last_revision;
+            let keyboard_opened = height < last_height - 1.0;
+            if !focused || !(typed || keyboard_opened || !was_focused) {
+                return;
+            }
             let block = controller
                 .selection()
                 .map(|selection| selection.target.block);
-            let viewport = *viewport.read();
-            if let (true, Some(block), Some(viewport)) = (controller.has_focus(), block, viewport) {
+            if let (Some(block), Some(viewport)) = (block, viewport) {
                 follow(controller, scroll, block, viewport, content_top.clone());
             }
         });
