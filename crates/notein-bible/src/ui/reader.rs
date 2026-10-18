@@ -29,10 +29,32 @@ use super::typography;
 /// distance below the chapter header + translation strip.
 pub const VERSE_SCROLL_MARGIN: f32 = 96.0;
 
+/// How long a jump keeps realigning its verse while the chapter settles.
+const SCROLL_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// A pending jump to `verse`.
+///
+/// The verse marker aligns the viewport on it as the chapter lays out, then
+/// drops the target: once aligned, or [`SCROLL_SETTLE`] after the first
+/// attempt, so scrolling afterwards is the user's again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScrollTarget {
+    verse: u16,
+    since: Option<std::time::Instant>,
+}
+
+impl ScrollTarget {
+    #[must_use]
+    pub const fn new(verse: u16) -> Self {
+        Self { verse, since: None }
+    }
+}
+
 #[derive(Clone)]
 pub struct VerseScrollCtx {
     pub controller: ScrollController,
     pub flash_verse: State<Option<u16>>,
+    pub scroll_to: State<Option<ScrollTarget>>,
     pub viewport_top: State<f32>,
 }
 
@@ -831,10 +853,9 @@ impl Component for VerseMarker {
                 .text(format!(" {verse} ")),
         };
         // Scroll-into-view hook: when a chip-tap / TSK jump has
-        // written this verse into `flash_verse`, align the chapter
-        // viewport on it the first time Freya reports the marker's
-        // laid-out area. Consume the signal so repeated flashes to
-        // the same verse re-fire without needing a State-level reset.
+        // written this verse into `scroll_to`, align the chapter
+        // viewport on it as Freya reports the marker's laid-out area,
+        // then consume the target (see `ScrollTarget`).
         let scroll_ctx = try_consume_context::<VerseScrollCtx>();
         rect()
             .padding((0., 2.))
@@ -842,18 +863,30 @@ impl Component for VerseMarker {
                 let Some(ctx) = scroll_ctx.as_ref() else {
                     return;
                 };
-                let Some(target) = *ctx.flash_verse.peek() else {
+                let Some(target) = *ctx.scroll_to.peek() else {
                     return;
                 };
-                if target != verse {
+                if target.verse != verse {
                     return;
                 }
                 let viewport_top = *ctx.viewport_top.peek();
                 if viewport_top == 0.0 && e.area.min_y() == 0.0 {
                     return;
                 }
-                let (_, cur_y): (i32, i32) = ctx.controller.into();
+                let mut scroll_to = ctx.scroll_to;
+                let since = target.since.unwrap_or_else(std::time::Instant::now);
                 let delta = e.area.min_y() - viewport_top - VERSE_SCROLL_MARGIN;
+                if delta.abs() < 1.0 || since.elapsed() > SCROLL_SETTLE {
+                    scroll_to.set(None);
+                    return;
+                }
+                if target.since.is_none() {
+                    scroll_to.set(Some(ScrollTarget {
+                        since: Some(since),
+                        ..target
+                    }));
+                }
+                let (_, cur_y): (i32, i32) = ctx.controller.into();
                 #[allow(clippy::cast_possible_truncation)]
                 let desired = cur_y + delta.round() as i32;
                 let mut controller = ctx.controller;

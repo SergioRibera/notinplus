@@ -190,9 +190,14 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
         freya::components::ScrollConfig::default,
     );
     let viewport_top: State<f32> = use_state(|| 0.0_f32);
+    // Verse to bring into view, separate from the 3 s flash so the scroll
+    // happens once and then leaves the user in control.
+    let scroll_to =
+        use_state(|| initial_flash_verse.map(notein_bible::ui::reader::ScrollTarget::new));
     let verse_scroll_ctx = notein_bible::ui::reader::VerseScrollCtx {
         controller: scroll_controller,
         flash_verse,
+        scroll_to,
         viewport_top,
     };
     // Hook runs unconditionally to keep hook order stable; it only
@@ -222,11 +227,13 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
     let notify_state = state;
     let notify_flash = flash_verse;
     let notify_scroll = scroll_controller;
+    let notify_scroll_to = scroll_to;
     use_hook(move || {
         let host = crate::host_api::host_handle();
         let rx = host.subscribe_source_anchor(BIBLE_PLUGIN_ID);
         let mut state_setter = notify_state;
         let mut flash_setter = notify_flash;
+        let mut scroll_setter = notify_scroll_to;
         let db_notify = db_notify;
         spawn(async move {
             while let Ok(target_item) = rx.recv_async().await {
@@ -271,6 +278,10 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                 if jump.start_verse == 0 {
                     let mut scroll = notify_scroll;
                     scroll.scroll_to_y(0);
+                } else {
+                    scroll_setter.set(Some(notein_bible::ui::reader::ScrollTarget::new(
+                        jump.start_verse,
+                    )));
                 }
                 flash_setter.set(Some(jump.start_verse));
                 let mut flash_clear = flash_setter;
@@ -389,6 +400,8 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                 log::warn!("bible search jump: {e}");
             }
             flash_verse.set(Some(src.verse));
+            let mut scroll_to = scroll_to;
+            scroll_to.set(Some(notein_bible::ui::reader::ScrollTarget::new(src.verse)));
             let mut flash_verse = flash_verse;
             spawn_forever(async move {
                 async_io::Timer::after(Duration::from_secs(3)).await;
@@ -601,6 +614,8 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                     if let Err(e) = state.write().jump_to(&db, &book, chap) {
                         log::warn!("bible xref jump: {e}");
                     }
+                    let mut scroll_to = scroll_to;
+                    scroll_to.set(Some(notein_bible::ui::reader::ScrollTarget::new(verse)));
                     flash_verse.set(Some(verse));
                     // Clear after 3 seconds so the wash fades without
                     // the user needing a second click.
