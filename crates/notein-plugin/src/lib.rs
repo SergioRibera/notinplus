@@ -36,6 +36,7 @@ pub mod host;
 pub mod icon;
 pub mod ids;
 pub mod manifest;
+pub mod outline;
 pub mod registry;
 pub mod source;
 
@@ -58,6 +59,7 @@ pub use host::{
 pub use icon::IconType;
 pub use ids::{ActorId, BookmarkId, DeviceId, OpId, StrokeId, UserId};
 pub use manifest::{ManifestError, ManifestRequirement, PluginManifest};
+pub use outline::{Outline, OutlineIcon, OutlineNode, OutlineNodeId};
 pub use registry::{
     DynamicOrigin, InstalledPlugin, PluginOrigin, PluginRegistry, PluginRole,
     RegistryCreationEntry, RegistryError, RegistrySchemaEntry,

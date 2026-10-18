@@ -32,6 +32,7 @@ use crate::config::{ConfigSchema, ConfigValue};
 use crate::creation::{CreationEntry, ItemCreationResult};
 use crate::error::{CanvasError, ConfigError, CreationError};
 use crate::ids::{BookmarkId, OpId};
+use crate::outline::{Outline, OutlineNodeId};
 
 /// Callback the host hands to a canvas plugin so the plugin can push
 /// locally-produced ops as they happen. Args are `(instance, op_bytes)`.
@@ -214,6 +215,25 @@ pub trait CanvasKind: Send + Sync + std::fmt::Debug {
     /// opening override + stash the clone.
     fn install_host(&self, host: crate::Host) {
         let _ = host;
+    }
+
+    /// Table of contents of an item, computed from the snapshot the
+    /// shell stores for it (the bytes of [`CanvasKind::serialize_snapshot`]
+    /// or the ones a page wrote directly). Shown in the sidebar
+    /// "Contents" tab. Default: no outline.
+    fn outline(&self, snapshot: &[u8]) -> Outline {
+        let _ = snapshot;
+        Outline::default()
+    }
+
+    /// Anchor payload that moves an open page to outline node `node`.
+    /// The shell delivers it through `Host::queue_source_anchor` under
+    /// this canvas' [`CanvasKind::kind_id`], exactly like a chip tap,
+    /// so pages handle both with the same subscription. `None` makes
+    /// the row inert.
+    fn outline_anchor(&self, snapshot: &[u8], node: OutlineNodeId) -> Option<Vec<u8>> {
+        let _ = (snapshot, node);
+        None
     }
 
     fn config_schema(&self) -> ConfigSchema;

@@ -15,12 +15,14 @@ use std::sync::{Arc, RwLock};
 use notein_sdk::{
     Bookmark, BookmarkId, CanvasError, CanvasKind, ConfigError, ConfigSchema, ConfigValue,
     CreationCategory, CreationEntry, CreationError, FrameCtxHandle, Host, InputEvent,
-    ItemCreationResult, WorldPoint, build::custom_entry,
+    ItemCreationResult, Outline, OutlineIcon, OutlineNode, OutlineNodeId, WorldPoint,
+    build::custom_entry,
 };
 
 use crate::anchor::BibleAnchor;
 use crate::db::Db;
 use crate::plugin_config::{self, SharedConfig};
+use crate::state::BibleSnapshot;
 use crate::state::{BibleBookmark, BibleViewerState, u32_to_rgba};
 
 /// Canvas kind id used by the shell to route open requests.
@@ -136,6 +138,15 @@ impl BibleCanvas {
     #[must_use]
     pub fn config(&self) -> &SharedConfig {
         &self.config
+    }
+
+    /// Translation an item's snapshot reads, or the default one for an
+    /// item that was never opened.
+    fn outline_bible(&self, snapshot: &[u8]) -> String {
+        BibleSnapshot::decode(snapshot)
+            .map(|snapshot| snapshot.bible_id)
+            .filter(|bible_id| !bible_id.is_empty())
+            .unwrap_or_else(|| plugin_config::effective_default_bible(&self.config, &self.db))
     }
 }
 
@@ -316,6 +327,45 @@ impl CanvasKind for BibleCanvas {
         plugin_config::set_host(&self.config, host);
     }
 
+    /// Books of the translation the item reads, each with its chapters.
+    fn outline(&self, snapshot: &[u8]) -> Outline {
+        let bible_id = self.outline_bible(snapshot);
+        let books = self.db.list_books(&bible_id).unwrap_or_default();
+        let nodes = books
+            .iter()
+            .enumerate()
+            .map(|(index, book)| {
+                let book_key = (index as u64 + 1) << 16;
+                let chapters = self.db.chapter_count(&bible_id, &book.book_id).unwrap_or(0);
+                OutlineNode {
+                    id: OutlineNodeId(book_key),
+                    label: book.name.clone(),
+                    subtitle: Some(format!("{chapters} capítulos")),
+                    icon: OutlineIcon::Section,
+                    children: (1..=chapters)
+                        .map(|chapter| {
+                            OutlineNode::new(
+                                OutlineNodeId(book_key | u64::from(chapter)),
+                                format!("{} {chapter}", book.name),
+                            )
+                        })
+                        .collect(),
+                }
+            })
+            .collect();
+        Outline { nodes, revision: 0 }
+    }
+
+    /// Chapter 1 for a book row, the chapter itself for a chapter row.
+    /// Verse `0` asks the reader to jump without flashing a verse.
+    fn outline_anchor(&self, snapshot: &[u8], node: OutlineNodeId) -> Option<Vec<u8>> {
+        let bible_id = self.outline_bible(snapshot);
+        let index = usize::try_from(node.0 >> 16).ok()?.checked_sub(1)?;
+        let chapter = u16::try_from(node.0 & 0xFFFF).ok()?.max(1);
+        let book = self.db.list_books(&bible_id).ok()?.into_iter().nth(index)?;
+        Some(BibleAnchor::single_verse(bible_id, book.book_id, chapter, 0).encode())
+    }
+
     fn config_schema(&self) -> ConfigSchema {
         plugin_config::build_schema(&self.db)
     }
@@ -450,6 +500,36 @@ mod tests {
         })
         .unwrap();
         db
+    }
+
+    #[test]
+    fn outline_lists_books_and_anchors_chapters() {
+        let canvas = BibleCanvas::new(seeded_db(), plugin_config::new_shared());
+        let snapshot = BibleSnapshot {
+            version: BibleSnapshot::VERSION,
+            bible_id: "spa_rv1960".into(),
+            current_book: "EPH".into(),
+            current_chapter: 6,
+            highlights: Vec::new(),
+        }
+        .encode();
+        let outline = canvas.outline(&snapshot);
+        assert_eq!(outline.nodes.len(), 1);
+        let book = &outline.nodes[0];
+        assert_eq!(book.label, "Efesios");
+        let chapter = book.children.last().expect("chapters");
+        assert_eq!(chapter.label, "Efesios 6");
+
+        let anchor = canvas
+            .outline_anchor(&snapshot, chapter.id)
+            .and_then(|bytes| BibleAnchor::decode(&bytes))
+            .expect("chapter anchor");
+        assert_eq!((anchor.book_id.as_str(), anchor.start_chapter, anchor.start_verse), ("EPH", 6, 0));
+        let first = canvas
+            .outline_anchor(&snapshot, book.id)
+            .and_then(|bytes| BibleAnchor::decode(&bytes))
+            .expect("book anchor");
+        assert_eq!(first.start_chapter, 1);
     }
 
     #[test]

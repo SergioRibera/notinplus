@@ -202,83 +202,9 @@ pub struct BgPaintCtx<'a> {
     pub redraw: RedrawHandle,
 }
 
-/// Opaque identifier for a node inside a background-provided
-/// [`Outline`]. Backends choose their own numbering; the host must
-/// treat these as tokens handed back to
-/// [`CanvasBackground::navigate_to_outline`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct OutlineNodeId(pub u64);
-
-/// Plugin-shipped icon bytes tagged by format. Re-exported from
-/// [`notein_plugin::IconType`] — the canonical home — so backgrounds +
-/// outline consumers that only depend on this crate still get the
-/// type without a direct `notein-plugin` import.
-pub use notein_plugin::IconType;
-
-/// Semantic hint the host uses to pick an icon for an outline row.
-/// Shell-known variants map to bundled icons; `Custom` carries
-/// plugin-supplied icon bytes the shell renders directly.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum OutlineIcon {
-    /// Non-navigable grouping row (e.g. "Pages", "Layers"). Default.
-    #[default]
-    Section,
-    /// A page / sheet / card. For PDFs this is one PDF page; for
-    /// stacked-paper canvases this is one notebook page.
-    Page,
-    /// A heading / section anchor inside a text-like document.
-    Heading,
-    /// A canvas layer entry.
-    Layer,
-    /// A pinned location (user bookmark).
-    Bookmark,
-    /// Plugin-supplied icon — the shell renders the bytes directly.
-    Custom(IconType),
-}
-
-/// One node in an outline tree. Hierarchical — the host flattens the
-/// tree depth-first and uses nesting depth for indentation.
-#[derive(Debug, Clone)]
-pub struct OutlineNode {
-    /// Backend-assigned token. Opaque to the host; handed back to
-    /// [`CanvasBackground::navigate_to_outline`] on activation.
-    pub id: OutlineNodeId,
-    /// Human label shown as the row title.
-    pub label: String,
-    /// Optional secondary text (e.g. "p. 12", stroke count).
-    pub subtitle: Option<String>,
-    /// Semantic icon hint.
-    pub icon: OutlineIcon,
-    /// Nested children. Empty for leaf nodes.
-    pub children: Vec<OutlineNode>,
-}
-
-/// Hierarchical table-of-contents a background exposes to the host.
-///
-/// The host surfaces this in UI (sidebar "Contents" tab, breadcrumbs,
-/// etc.) and calls [`CanvasBackground::navigate_to_outline`] with a
-/// node's `id` when the user activates a row.
-///
-/// Backends that cannot provide an outline (solid color, plain
-/// patterns) return [`Outline::default`]; the host then falls back to
-/// the `pages()` list.
-#[derive(Debug, Clone, Default)]
-pub struct Outline {
-    /// Top-level nodes. Depth-first flattening is a host concern.
-    pub nodes: Vec<OutlineNode>,
-    /// Monotonic token the host can compare across polls to skip
-    /// re-rendering when the tree has not changed. Backends with a
-    /// static outline leave this at `0`.
-    pub revision: u64,
-}
-
-impl Outline {
-    /// `true` when there are no nodes to render.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
-    }
-}
+/// Outline types live in the plugin SDK so plugin canvases can publish
+/// the same table of contents backgrounds do.
+pub use notein_plugin::{IconType, Outline, OutlineIcon, OutlineNode, OutlineNodeId};
 
 /// A pluggable background layer for a Freya canvas.
 ///

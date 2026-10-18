@@ -66,7 +66,7 @@ const ROW_SIZE: f32 = 56.0;
 #[derive(Clone)]
 pub struct SidebarModal {
     state: ChromeState,
-    board: Arc<Mutex<Board>>,
+    contents: SidebarContents,
     /// Captured at the open site so the modal body — which renders
     /// inside `ModalPortal`, a sibling of `Router` — can navigate
     /// without panicking on a missing `RouterContext`.
@@ -83,6 +83,25 @@ impl PartialEq for SidebarModal {
     }
 }
 
+/// What the Contents and Bookmarks tabs describe.
+#[derive(Clone)]
+pub(crate) enum SidebarContents {
+    /// A mounted canvas: background outline, pages, layers, bookmarks.
+    Board(Arc<Mutex<Board>>),
+    /// A plugin page: its outline comes from
+    /// [`notein_plugin::CanvasKind::outline`] over the item's snapshot.
+    Plugin { plugin_id: String, item: ItemId },
+}
+
+impl SidebarContents {
+    fn board(&self) -> Option<Arc<Mutex<Board>>> {
+        match self {
+            Self::Board(board) => Some(Arc::clone(board)),
+            Self::Plugin { .. } => None,
+        }
+    }
+}
+
 impl SidebarModal {
     pub(crate) fn open(
         state: ChromeState,
@@ -90,10 +109,35 @@ impl SidebarModal {
         router: RouterContext,
         workspace: Option<WorkspaceId>,
     ) {
+        Self::open_with(state, SidebarContents::Board(board), router, workspace);
+    }
+
+    /// Sidebar for a page rendered by the plugin canvas `plugin_id`,
+    /// opened on its Contents tab.
+    pub(crate) fn open_plugin(state: ChromeState, plugin_id: &str, item: ItemId, router: RouterContext) {
+        let workspace = match router.current::<Route>() {
+            Route::WorkspaceView { id } => Some(id),
+            _ => None,
+        };
+        let mut tab = state.sidebar_tab;
+        tab.set(SidebarTab::Contents);
+        let contents = SidebarContents::Plugin {
+            plugin_id: plugin_id.to_owned(),
+            item,
+        };
+        Self::open_with(state, contents, router, workspace);
+    }
+
+    fn open_with(
+        state: ChromeState,
+        contents: SidebarContents,
+        router: RouterContext,
+        workspace: Option<WorkspaceId>,
+    ) {
         ModalController::get().open(
             Modal::new(Self {
                 state,
-                board,
+                contents,
                 router,
                 workspace,
             })
@@ -140,7 +184,7 @@ impl Component for SidebarModal {
         // is why the sidebar used to clip under the Android status
         // bar.
         let pad = *use_safe_area_insets().read();
-        let board = &self.board;
+        let contents = &self.contents;
         let query = self.state.sidebar_query;
         let sort = self.state.sidebar_sort;
         let mut tab_state = self.state.sidebar_tab;
@@ -163,8 +207,12 @@ impl Component for SidebarModal {
         // this render tree and dropped when the modal closes.
         let menu_target = use_state(|| Option::<DocMenuTarget>::None);
         // Collapsed outline-node ids in the Contents tab. Session-
-        // scoped — reopening the sidebar starts fully expanded.
-        let collapsed = use_state(HashSet::<freya_canvas_bg::OutlineNodeId>::new);
+        // scoped — reopening the sidebar starts expanded, except for
+        // long plugin outlines (a whole Bible) that start folded.
+        let collapsed = use_state({
+            let contents = contents.clone();
+            move || initially_collapsed(&contents)
+        });
 
         let header = sidebar_header(current_tab, query, sort, move |next| tab_state.set(next));
 
@@ -172,10 +220,15 @@ impl Component for SidebarModal {
         let workspace = self.workspace;
         let body = match current_tab {
             SidebarTab::Docs => docs_body(library_snapshot, query, menu_target, router),
-            SidebarTab::Contents => contents_body(board, query, collapsed),
-            SidebarTab::Bookmarks => {
-                bookmarks_body(board, query, sort, selected_bookmark, body_buffer)
-            }
+            SidebarTab::Contents => contents_body(contents, query, collapsed),
+            SidebarTab::Bookmarks => match contents {
+                SidebarContents::Board(board) => {
+                    bookmarks_body(board, query, sort, selected_bookmark, body_buffer)
+                }
+                SidebarContents::Plugin { .. } => {
+                    empty_state("Este documento no tiene marcadores.")
+                }
+            },
         };
 
         // `Size::percent(100.)` would resolve against the modal portal's
@@ -892,15 +945,89 @@ fn outline_icon_element(icon: &freya_canvas_bg::OutlineIcon, color: Color) -> El
     }
 }
 
+/// Outline a plugin canvas publishes for `item`, read from the snapshot
+/// the shell keeps for it.
+fn plugin_outline(plugin_id: &str, item: ItemId) -> (freya_canvas_bg::Outline, Vec<u8>) {
+    let snapshot = crate::library::bodies::read_plugin_snapshot(item, plugin_id)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let plugin = {
+        let registry = crate::plugins::registry();
+        let guard = crate::plugins::lock(&registry);
+        guard.get_canvas(plugin_id).cloned()
+    };
+    let outline = plugin.map(|plugin| plugin.outline(&snapshot)).unwrap_or_default();
+    (outline, snapshot)
+}
+
+/// Long plugin outlines start with every parent folded.
+fn initially_collapsed(contents: &SidebarContents) -> HashSet<freya_canvas_bg::OutlineNodeId> {
+    const FOLD_ABOVE: usize = 80;
+    fn parents(nodes: &[freya_canvas_bg::OutlineNode], out: &mut HashSet<freya_canvas_bg::OutlineNodeId>) {
+        for node in nodes {
+            if !node.children.is_empty() {
+                out.insert(node.id);
+                parents(&node.children, out);
+            }
+        }
+    }
+    let mut folded = HashSet::new();
+    if let SidebarContents::Plugin { plugin_id, item } = contents {
+        let (outline, _) = plugin_outline(plugin_id, *item);
+        if outline.len() > FOLD_ABOVE {
+            parents(&outline.nodes, &mut folded);
+        }
+    }
+    folded
+}
+
+fn collect_plugin_toc(
+    plugin_id: &str,
+    item: ItemId,
+    query: &str,
+    collapsed: &HashSet<freya_canvas_bg::OutlineNodeId>,
+) -> Vec<TocEntry> {
+    let (outline, _) = plugin_outline(plugin_id, item);
+    let needle = query.trim().to_ascii_lowercase();
+    let mut out = Vec::new();
+    if outline.nodes.iter().any(|n| outline_subtree_matches(n, &needle)) {
+        out.push(TocEntry::Section("Contenido".to_owned()));
+        for node in &outline.nodes {
+            flatten_outline(node, 0, &needle, collapsed, &mut out);
+        }
+    }
+    out
+}
+
+/// Move the open plugin page to an outline node: the anchor travels the
+/// same channel as a chip tap, which the page already listens to.
+fn activate_plugin_outline(plugin_id: &str, item: ItemId, node: freya_canvas_bg::OutlineNodeId) {
+    let (_, snapshot) = plugin_outline(plugin_id, item);
+    let plugin = {
+        let registry = crate::plugins::registry();
+        let guard = crate::plugins::lock(&registry);
+        guard.get_canvas(plugin_id).cloned()
+    };
+    if let Some(anchor) = plugin.and_then(|plugin| plugin.outline_anchor(&snapshot, node)) {
+        crate::host_api::host_handle().queue_source_anchor(plugin_id, item.0, anchor);
+    }
+}
+
 fn contents_body(
-    board: &Arc<Mutex<Board>>,
+    contents: &SidebarContents,
     query: State<String>,
     collapsed: State<HashSet<freya_canvas_bg::OutlineNodeId>>,
 ) -> Element {
     let needle_src = query.read();
     let entries = {
         let guard = collapsed.read();
-        collect_toc(board, &needle_src, &guard)
+        match contents {
+            SidebarContents::Board(board) => collect_toc(board, &needle_src, &guard),
+            SidebarContents::Plugin { plugin_id, item } => {
+                collect_plugin_toc(plugin_id, *item, &needle_src, &guard)
+            }
+        }
     };
     if entries.is_empty() {
         let msg = if needle_src.trim().is_empty() {
@@ -912,10 +1039,10 @@ fn contents_body(
     }
 
     let length = entries.len();
-    let board_cell = Arc::clone(board);
+    let target = contents.clone();
     VirtualScrollView::new_with_data(entries, move |item, data: &Vec<TocEntry>| {
         let entry = data[item.index].clone();
-        toc_row(entry, Arc::clone(&board_cell), collapsed).into_element()
+        toc_row(entry, target.clone(), collapsed).into_element()
     })
     .length(length)
     .width(Size::fill())
@@ -925,7 +1052,7 @@ fn contents_body(
 
 fn toc_row(
     entry: TocEntry,
-    board: Arc<Mutex<Board>>,
+    target: SidebarContents,
     collapsed: State<HashSet<freya_canvas_bg::OutlineNodeId>>,
 ) -> Element {
     match entry {
@@ -952,13 +1079,18 @@ fn toc_row(
             has_children,
             collapsed: is_collapsed,
         } => {
-            let press_board = Arc::clone(&board);
             let on_press = move |_: Event<PressEventData>| {
-                let mut guard = lock(&press_board);
-                if let Some((x, y)) = guard.background().navigate_to_outline(id) {
-                    let _ = guard.center_on_world(x, y);
+                match &target {
+                    SidebarContents::Board(board) => {
+                        let mut guard = lock(board);
+                        if let Some((x, y)) = guard.background().navigate_to_outline(id) {
+                            let _ = guard.center_on_world(x, y);
+                        }
+                    }
+                    SidebarContents::Plugin { plugin_id, item } => {
+                        activate_plugin_outline(plugin_id, *item, id);
+                    }
                 }
-                drop(guard);
                 ModalController::get().close();
             };
             let icon_color = TEXT_PRIMARY;
@@ -978,9 +1110,11 @@ fn toc_row(
             world_x,
             world_y,
         } => {
-            let press_board = Arc::clone(&board);
+            let press_board = target.board();
             let on_press = move |_: Event<PressEventData>| {
-                let _ = lock(&press_board).center_on_world(world_x, world_y);
+                if let Some(board) = &press_board {
+                    let _ = lock(board).center_on_world(world_x, world_y);
+                }
                 ModalController::get().close();
             };
             toc_card(
@@ -998,9 +1132,11 @@ fn toc_row(
             stroke_count,
             is_active,
         } => {
-            let press_board = Arc::clone(&board);
+            let press_board = target.board();
             let on_press = move |_: Event<PressEventData>| {
-                lock(&press_board).set_active_layer(id);
+                if let Some(board) = &press_board {
+                    lock(board).set_active_layer(id);
+                }
             };
             let icon_color = if is_active {
                 TEXT_INVERSE

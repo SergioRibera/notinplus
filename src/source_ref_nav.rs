@@ -71,8 +71,11 @@ pub fn navigate(src: &SourceRef) {
             navigate_pdf(item_id, anchor.clone());
         }
         SourceRef::Plugin {
-            plugin_id, anchor, ..
-        } => navigate_plugin(plugin_id, anchor),
+            plugin_id,
+            item,
+            anchor,
+            ..
+        } => navigate_plugin(plugin_id, ItemId(*item), anchor),
         SourceRef::Canvas { bookmark } => navigate_canvas_bookmark(*bookmark),
         SourceRef::External { url } => open_external_url(url),
     }
@@ -255,7 +258,9 @@ fn navigate_pdf(item: ItemId, anchor: Vec<u8>) {
 /// no library item of its kind exists, we log + stop. Opening a
 /// placeholder item is a dedicated flow the user should drive (FAB,
 /// settings, bundle import) — not a side effect of tapping a chip.
-fn navigate_plugin(plugin_id: &str, anchor: &[u8]) {
+/// Open the item `target` points at (or, when it is gone, the first item
+/// the plugin hosts) and hand it the anchor.
+fn navigate_plugin(plugin_id: &str, target: ItemId, anchor: &[u8]) {
     let registry = crate::plugins::registry();
     let plugin = {
         let guard = crate::plugins::lock(&registry);
@@ -289,12 +294,14 @@ fn navigate_plugin(plugin_id: &str, anchor: &[u8]) {
         };
         let found = {
             let lib = handle.lock().await;
-            lib.index().items.iter().find_map(|item| {
-                item.kind
-                    .hosting_plugin()
-                    .filter(|id| *id == viewer_id)
-                    .map(|_| (item.id, crate::route::route_for_kind(&item.kind, item.id)))
-            })
+            let hosts = |item: &&crate::library::Item| item.kind.hosting_plugin() == Some(viewer_id.as_str());
+            let items = &lib.index().items;
+            items
+                .iter()
+                .filter(hosts)
+                .find(|item| item.id == target)
+                .or_else(|| items.iter().find(hosts))
+                .map(|item| (item.id, crate::route::route_for_kind(&item.kind, item.id)))
         };
         let Some((item_id, route)) = found else {
             log::warn!(

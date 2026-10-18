@@ -29,6 +29,8 @@ where
     FT: FnMut() + 'static,
 {
     pub on_home: Option<BackHandler>,
+    /// Opens the sidebar (documents, contents, bookmarks).
+    pub on_sidebar: Option<BackHandler>,
     pub on_back: Option<BackHandler>,
     pub on_forward: Option<BackHandler>,
     pub on_split_horizontal: Option<BackHandler>,
@@ -58,6 +60,7 @@ where
 {
     let ToolbarCallbacks {
         on_home,
+        on_sidebar,
         on_back,
         on_forward,
         on_split_horizontal,
@@ -84,6 +87,9 @@ where
         .spacing(2.0);
     if let Some(mut cb) = on_home {
         left = left.child(icon_button(freya::icons::lucide::house(), move || cb()));
+    }
+    if let Some(mut cb) = on_sidebar {
+        left = left.child(icon_button(freya::icons::lucide::panel_left(), move || cb()));
     }
     // Back / forward buttons always render — when the stack is empty we
     // keep the icon in the grid with a muted tint so the toolbar

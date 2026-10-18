@@ -221,6 +221,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
     let db_notify = db.clone();
     let notify_state = state;
     let notify_flash = flash_verse;
+    let notify_scroll = scroll_controller;
     use_hook(move || {
         let host = crate::host_api::host_handle();
         let rx = host.subscribe_source_anchor(BIBLE_PLUGIN_ID);
@@ -266,6 +267,10 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                         jump.start_chapter
                     );
                     continue;
+                }
+                if jump.start_verse == 0 {
+                    let mut scroll = notify_scroll;
+                    scroll.scroll_to_y(0);
                 }
                 flash_setter.set(Some(jump.start_verse));
                 let mut flash_clear = flash_setter;
@@ -485,6 +490,10 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
     // the toolbar renders without split buttons.
     let doc_linked_chrome = try_consume_context::<crate::doc_linked::DocLinkedChromeExt>();
     let router = RouterContext::get();
+    let chrome = crate::app::use_chrome_state();
+    let on_sidebar = move || {
+        crate::components::SidebarModal::open_plugin(chrome, BIBLE_PLUGIN_ID, item, router);
+    };
     let on_home = move || {
         let _ = router.push(crate::route::Route::Home);
     };
@@ -544,6 +553,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
             &abbrev,
             toolbar::ToolbarCallbacks {
                 on_home: Some(Box::new(on_home)),
+                on_sidebar: Some(Box::new(on_sidebar)),
                 on_back: has_back.then(|| Box::new(on_back_cb) as toolbar::BackHandler),
                 on_forward: has_forward.then(|| Box::new(on_forward_cb) as toolbar::BackHandler),
                 on_split_horizontal: doc_linked_chrome.as_ref().filter(|c| !c.is_split).map(|c| {
