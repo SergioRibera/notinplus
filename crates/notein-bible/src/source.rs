@@ -372,7 +372,7 @@ impl Source for BibleSource {
         crate::canvas::KIND_ID
     }
 
-    fn render_chip(&self, anchor: &[u8]) -> Option<ChipView> {
+    fn render_chip(&self, _item: [u8; 16], anchor: &[u8]) -> Option<ChipView> {
         let BibleAnchor {
             book_id,
             start_chapter,

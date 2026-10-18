@@ -42,6 +42,19 @@ impl NotesIndex {
             .insert(item, note);
     }
 
+    /// Refresh the headings of a known note, keeping its title.
+    pub fn update_body(&self, item: [u8; 16], markdown: &str) {
+        let title = self
+            .0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&item)
+            .map(|note| note.title.clone());
+        if let Some(title) = title {
+            self.update(item, &title, markdown);
+        }
+    }
+
     pub fn remove(&self, item: [u8; 16]) {
         self.0
             .write()
@@ -55,6 +68,29 @@ impl NotesIndex {
             .write()
             .unwrap_or_else(PoisonError::into_inner)
             .clear();
+    }
+
+    /// Current label of a reference to `item`: the note title, plus the
+    /// heading text when the anchor names one. `None` when the note is
+    /// gone; a heading that no longer exists falls back to the title.
+    #[must_use]
+    pub fn label(&self, item: [u8; 16], anchor: &NoteAnchor) -> Option<String> {
+        let note = self
+            .0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&item)?
+            .clone();
+        let heading = anchor.heading.as_deref().and_then(|slug| {
+            note.headings
+                .iter()
+                .find(|(candidate, _)| candidate == slug)
+                .map(|(_, text)| text)
+        });
+        Some(heading.map_or_else(
+            || note.title.clone(),
+            |text| format!("{} › {text}", note.title),
+        ))
     }
 
     /// Notes and headings whose label contains `query` (case

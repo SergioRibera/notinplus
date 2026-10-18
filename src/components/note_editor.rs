@@ -197,6 +197,25 @@ fn suggestion(completion: Completion) -> Suggestion {
             label: completion.label.clone(),
             url: url.clone(),
         },
+        SourceRef::Plugin {
+            plugin_id,
+            item,
+            anchor,
+            ..
+        } if plugin_id == notein_notes::SOURCE_ID => {
+            // Fix the heading anchor first so the reference survives
+            // renaming the heading later.
+            let heading = notein_notes::NoteAnchor::decode(anchor).and_then(|anchor| anchor.heading);
+            let item = crate::library::ItemId(*item);
+            let label = completion.label.clone();
+            let url = completion.source.to_url();
+            SuggestionAction::Run(SuggestionRun::new(move |controller| {
+                if let Some(slug) = &heading {
+                    crate::notes_face::pin_heading(item, slug);
+                }
+                controller.insert_embed(&label, &url);
+            }))
+        }
         source => SuggestionAction::InsertEmbed {
             label: completion.label.clone(),
             url: source.to_url(),
@@ -255,6 +274,9 @@ impl Component for ChipWidget {
                 SourceRef::Plugin { plugin_id, .. } if plugin_id == "io.notein.bible" => {
                     Some(lucide::scroll_text())
                 }
+                SourceRef::Plugin { plugin_id, .. } if plugin_id == notein_notes::SOURCE_ID => {
+                    Some(lucide::notebook_text())
+                }
                 SourceRef::External { .. } => Some(lucide::link_2()),
                 _ => None,
             }
@@ -307,13 +329,16 @@ impl Component for ChipWidget {
 
 fn resolve_chip_view(src: &SourceRef) -> ChipView {
     if let SourceRef::Plugin {
-        plugin_id, anchor, ..
+        plugin_id,
+        item,
+        anchor,
+        ..
     } = src
     {
         let registry = crate::plugins::registry();
         let guard = crate::plugins::lock(&registry);
         if let Some(plugin) = guard.get_source(plugin_id)
-            && let Some(view) = plugin.render_chip(anchor)
+            && let Some(view) = plugin.render_chip(*item, anchor)
         {
             return view;
         }

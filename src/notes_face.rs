@@ -7,6 +7,8 @@
 //! notes can reference this one, and scrolls to a heading when the
 //! sidebar outline or a chip asks for it.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::time::Duration;
 
 use freya::prelude::*;
@@ -23,6 +25,12 @@ const COLUMN_WIDTH: f32 = 760.0;
 /// How long a jump waits for the note to be laid out.
 const JUMP_ATTEMPTS: u32 = 40;
 const JUMP_RETRY: Duration = Duration::from_millis(25);
+
+thread_local! {
+    /// Editors of the notes on screen, so a reference made elsewhere can
+    /// fix a heading anchor in the live document instead of under it.
+    static OPEN_NOTES: RefCell<HashMap<ItemId, EditorController>> = RefCell::new(HashMap::new());
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct NotesFace {
@@ -43,6 +51,17 @@ impl Component for NotesFace {
         use_hook(move || load_title(item, title));
         use_side_effect(move || save(item, &markdown.read(), &title.read()));
         use_hook(move || listen_for_jumps(item, controller, scroll));
+        use_hook(move || {
+            OPEN_NOTES.with(|open| open.borrow_mut().insert(item, controller));
+        });
+        use_drop(move || {
+            OPEN_NOTES.with(|open| {
+                let mut open = open.borrow_mut();
+                if open.get(&item) == Some(&controller) {
+                    open.remove(&item);
+                }
+            });
+        });
 
         let read_only = controller.active_format().read_only;
         let mut actions = TopbarActions {
@@ -104,6 +123,36 @@ impl Component for NotesFace {
                             .child(editor),
                     ),
             )
+    }
+}
+
+/// Fix the anchor of heading `slug` in note `item` before something links
+/// to it, so the link survives renaming the heading. Works on the open
+/// editor when the note is on screen, on the stored body otherwise.
+pub(crate) fn pin_heading(item: ItemId, slug: &str) {
+    let open = OPEN_NOTES.with(|open| open.borrow().get(&item).copied());
+    if let Some(controller) = open {
+        let heading = controller
+            .document()
+            .outline()
+            .into_iter()
+            .find(|heading| heading.slug == slug && !heading.pinned);
+        if let Some(heading) = heading {
+            controller.set_heading_anchor(heading.block, Some(heading.slug));
+        }
+        return;
+    }
+    let Some(pinned) = notein_notes::pin_heading(&read_body(item), slug) else {
+        return;
+    };
+    if let Err(err) =
+        crate::library::bodies::write_plugin_snapshot(item, KIND_ID, pinned.as_bytes())
+    {
+        log::warn!("notes: pin heading write failed: {err}");
+        return;
+    }
+    if let Some(index) = crate::builtin::notes_index() {
+        index.update_body(item.0, &pinned);
     }
 }
 

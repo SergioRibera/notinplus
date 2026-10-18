@@ -562,7 +562,7 @@ impl Source for PdfSourcePlugin {
     // by `attach_item` whenever the PDF opens. Keeps completions
     // visible even after the instance closes.
 
-    fn render_chip(&self, anchor: &[u8]) -> Option<ChipView> {
+    fn render_chip(&self, _item: [u8; 16], anchor: &[u8]) -> Option<ChipView> {
         let decoded = decode_pdf_anchor(anchor)?;
         let page = decoded.page().saturating_add(1);
         let has_range = decoded.char_range().is_some();

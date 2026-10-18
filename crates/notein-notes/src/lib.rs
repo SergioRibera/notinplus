@@ -51,3 +51,48 @@ pub fn install(registry: &mut PluginRegistry) -> Result<NotesIndex, RegistryErro
 pub fn body_from_snapshot(snapshot: &[u8]) -> String {
     String::from_utf8_lossy(snapshot).into_owned()
 }
+
+/// Fix the anchor of the heading `slug` names in `markdown`.
+///
+/// A reference to it then keeps working when the heading text changes.
+/// Returns the updated markdown, or `None` when the heading is missing or its
+/// anchor is already fixed.
+#[must_use]
+pub fn pin_heading(markdown: &str, slug: &str) -> Option<String> {
+    use freya_markdown_editor::document::Document;
+    use freya_markdown_editor::markdown::Dialect;
+
+    let mut document = Document::parse(markdown);
+    let heading = document
+        .outline()
+        .into_iter()
+        .find(|heading| heading.slug == slug && !heading.pinned)?;
+    document.set_heading_anchor(heading.block, Some(heading.slug));
+    Some(document.to_markdown(Dialect::Rich))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pinned_heading_keeps_its_anchor_after_a_rename() {
+        let note = "# Diario\n\n## Ideas\n\ntexto\n";
+        let pinned = pin_heading(note, "ideas").expect("heading found");
+        assert!(pinned.contains("## Ideas {#ideas}"), "{pinned}");
+        assert_eq!(pin_heading(&pinned, "ideas"), None);
+
+        let index = NotesIndex::default();
+        index.update(
+            [7; 16],
+            "Diario",
+            &pinned.replace("## Ideas", "## Proyectos"),
+        );
+        assert_eq!(
+            index
+                .label([7; 16], &NoteAnchor::heading("ideas"))
+                .as_deref(),
+            Some("Diario › Proyectos")
+        );
+    }
+}

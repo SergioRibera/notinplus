@@ -11,7 +11,7 @@ const NOTE: &str = "# Plan de estudio\n\nRepasar **Efesios 6** y anotar ideas.\n
 fn page() -> impl IntoElement {
     let markdown = use_state(|| NOTE.to_owned());
     let controller = use_editor_controller();
-    let action = |_: ()| Box::new(|| {}) as ui::Action;
+    let action = |(): ()| Box::new(|| {}) as ui::Action;
     rect()
         .expanded()
         .background(ui::BACKGROUND)

@@ -195,10 +195,14 @@ pub trait Source: Send + Sync + std::fmt::Debug + std::any::Any {
     /// chip rendering must stay cheap enough to run on every editor
     /// render frame without touching live document state.
     ///
+    /// `item` is the library item the reference targets, so plugins whose
+    /// items carry user names (notes) can label the chip with the current
+    /// name instead of the one captured when the reference was made.
+    ///
     /// Default = `None` so the shell falls back to a generic label.
     /// Plugins that want branded chips override.
-    fn render_chip(&self, anchor: &[u8]) -> Option<ChipView> {
-        let _ = anchor;
+    fn render_chip(&self, item: [u8; 16], anchor: &[u8]) -> Option<ChipView> {
+        let _ = (item, anchor);
         None
     }
 

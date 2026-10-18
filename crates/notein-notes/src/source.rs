@@ -4,8 +4,9 @@
 //! headings to the reference picker and hands chip taps to the page.
 
 use notein_sdk::{
-    AnchorView, Completion, ConfigError, ConfigSchema, ConfigValue, CreationEntry, CreationError,
-    ItemCreationResult, SearchHit, Selection, Source, SourceError, Tile, TileRequest,
+    AnchorView, ChipView, Completion, ConfigError, ConfigSchema, ConfigValue, CreationEntry,
+    CreationError, ItemCreationResult, SearchHit, Selection, Source, SourceError, Tile,
+    TileRequest,
 };
 
 use crate::anchor::NoteAnchor;
@@ -108,6 +109,21 @@ impl Source for NotesSource {
         _name_hint: Option<&str>,
     ) -> Result<ItemCreationResult, CreationError> {
         Err(CreationError::UnknownEntry(entry_id.into()))
+    }
+
+    /// Labels follow renames of the note and of its headings.
+    fn render_chip(&self, item: [u8; 16], anchor: &[u8]) -> Option<ChipView> {
+        let anchor = NoteAnchor::decode(anchor)?;
+        let label = self
+            .index
+            .label(item, &anchor)
+            .unwrap_or_else(|| "⚠ Nota no encontrada".to_owned());
+        Some(ChipView {
+            label,
+            icon: None,
+            tint: None,
+            tooltip: None,
+        })
     }
 
     fn plugin_completions(&self, query: &str) -> Vec<Completion> {
