@@ -8,6 +8,7 @@ mod color;
 mod inline;
 mod table;
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use color::{ParseColorError, Rgba};
@@ -340,6 +341,17 @@ impl BlockKind {
     const fn is_paragraph(&self) -> bool {
         matches!(self, Self::Paragraph(_))
     }
+}
+
+/// A heading as listed by [`Document::outline`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeadingRef {
+    pub block: BlockId,
+    pub level: HeadingLevel,
+    /// Plain text of the heading.
+    pub text: String,
+    /// Unique anchor inside the document.
+    pub slug: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -923,6 +935,53 @@ impl Document {
         })
     }
 
+    /// Headings with a unique anchor each: the explicit `{#id}` when the
+    /// heading has one, otherwise a GitHub style slug of its text with a
+    /// `-1`, `-2`... suffix when it repeats. The anchors are what
+    /// `[text](#anchor)` links point to.
+    #[must_use]
+    pub fn outline(&self) -> Vec<HeadingRef> {
+        let mut seen: HashMap<String, usize> = HashMap::new();
+        self.blocks
+            .iter()
+            .filter_map(|block| match &block.kind {
+                BlockKind::Heading {
+                    level,
+                    content,
+                    anchor,
+                } => {
+                    let text = content.plain_text();
+                    let base = anchor
+                        .clone()
+                        .unwrap_or_else(|| crate::markdown::slug(&text));
+                    let count = seen.entry(base.clone()).or_insert(0);
+                    let slug = if *count == 0 {
+                        base
+                    } else {
+                        format!("{base}-{count}")
+                    };
+                    *count += 1;
+                    Some(HeadingRef {
+                        block: block.id,
+                        level: *level,
+                        text,
+                        slug,
+                    })
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Block of the heading whose [`Self::outline`] anchor is `slug`.
+    #[must_use]
+    pub fn heading_by_slug(&self, slug: &str) -> Option<BlockId> {
+        self.outline()
+            .into_iter()
+            .find(|heading| heading.slug == slug)
+            .map(|heading| heading.block)
+    }
+
     /// Number shown in front of an ordered list item: the run start plus
     /// the number of same depth items before it.
     #[must_use]
@@ -1129,6 +1188,21 @@ mod tests {
         }]);
         assert_eq!(code.blocks().len(), 2);
         assert!(matches!(&code.blocks()[1].kind, BlockKind::Paragraph(text) if text.is_empty()));
+    }
+
+    #[test]
+    fn outline_slugs_are_unique() {
+        let document = Document::parse("# Intro\n\n## Notas\n\n## Notas\n\n## Otra {#custom}");
+        let slugs: Vec<String> = document
+            .outline()
+            .into_iter()
+            .map(|heading| heading.slug)
+            .collect();
+        assert_eq!(slugs, ["intro", "notas", "notas-1", "custom"]);
+        assert_eq!(
+            document.heading_by_slug("notas-1"),
+            Some(document.outline()[2].block)
+        );
     }
 
     #[test]

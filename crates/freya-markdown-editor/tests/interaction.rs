@@ -432,3 +432,20 @@ fn deleting_the_content_back_to_an_empty_pair_leaves_no_text() {
     harness.type_text("b");
     assert_eq!(harness.value(), "say **b**\n");
 }
+
+#[test]
+fn block_offsets_follow_the_layout() {
+    let harness = Harness::new("# One\n\ntext\n\n# Two");
+    let controller = harness.controller;
+    let (first, last) = (harness.block(0).block, harness.block(2).block);
+    let offsets = harness.runner.run_in(|| {
+        (
+            controller.block_offset(first),
+            controller.block_offset(last),
+        )
+    });
+    let (Some(first), Some(last)) = offsets else {
+        panic!("blocks were laid out: {offsets:?}");
+    };
+    assert!(first < last, "{first} < {last}");
+}

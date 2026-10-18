@@ -1,7 +1,10 @@
 //! Shared editor state and the command API used by toolbars, shortcuts and
 //! integrators.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ops::Range;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use freya::prelude::*;
@@ -176,6 +179,16 @@ pub(crate) struct EditorState {
     /// Rich copy of the last text copied from the editor, reused on paste
     /// when the system clipboard still holds the same plain text.
     clipboard: Option<(String, Inline)>,
+    /// Where blocks were last laid out. Written from layout callbacks, so
+    /// it never notifies.
+    layout: Rc<RefCell<BlockLayout>>,
+}
+
+/// Top edges, in window coordinates, of the editor and of its blocks.
+#[derive(Default)]
+struct BlockLayout {
+    root: Option<f32>,
+    blocks: HashMap<BlockId, f32>,
 }
 
 impl EditorState {
@@ -191,6 +204,7 @@ impl EditorState {
             read_only: false,
             parse: ParseOptions::default(),
             clipboard: None,
+            layout: Rc::default(),
         }
     }
 
@@ -1037,6 +1051,28 @@ impl EditorController {
         if let Some((target, offset)) = end {
             self.focus(target, offset);
         }
+    }
+
+    /// Distance in logical pixels from the top of the editor to block
+    /// `id`, as last laid out. Add it to wherever the editor sits inside
+    /// your `ScrollView` to scroll a heading into view. `None` until the
+    /// block has been laid out.
+    #[must_use]
+    pub fn block_offset(&self, id: BlockId) -> Option<f32> {
+        self.peek(|state| {
+            let layout = state.layout.borrow();
+            Some(*layout.blocks.get(&id)? - layout.root?)
+        })
+    }
+
+    pub(crate) fn record_root_top(&self, top: f32) {
+        self.peek(|state| state.layout.borrow_mut().root = Some(top));
+    }
+
+    pub(crate) fn record_block_top(&self, id: BlockId, top: f32) {
+        self.peek(|state| {
+            state.layout.borrow_mut().blocks.insert(id, top);
+        });
     }
 
     // Internal hooks used by the text editors.

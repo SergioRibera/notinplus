@@ -330,9 +330,13 @@ impl Component for MarkdownEditor {
             } else {
                 Vec::new()
             };
+            let id = block.id;
             rect()
                 .key(block.id)
                 .width(Size::fill())
+                .on_sized(move |event: Event<SizedEventData>| {
+                    controller.record_block_top(id, event.area.min_y());
+                })
                 .child(BlockView {
                     block: block.clone(),
                     ordinal: document.ordinal(block.id),
@@ -357,6 +361,9 @@ impl Component for MarkdownEditor {
         rect()
             .layout(self.layout.clone())
             .text_style(text_style)
+            .on_sized(move |event: Event<SizedEventData>| {
+                controller.record_root_top(event.area.min_y());
+            })
             .on_press(move |_| {
                 if !read_only && controller.peek(super::controller::EditorState::selection_is_none)
                 {
