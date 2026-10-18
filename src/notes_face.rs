@@ -28,7 +28,7 @@ const COLUMN_WIDTH: f32 = 760.0;
 /// How long a jump waits for the note to be laid out.
 const JUMP_ATTEMPTS: u32 = 40;
 const JUMP_RETRY: Duration = Duration::from_millis(25);
-/// Room kept between the block being typed in and the viewport edges.
+/// Room kept between the line being typed and the viewport edges.
 const CARET_MARGIN: f32 = 24.0;
 /// Wait for the edit to be laid out before following it.
 const FOLLOW_DELAY: Duration = Duration::from_millis(30);
@@ -254,8 +254,8 @@ fn use_follow_typing(
     (viewport, content_top)
 }
 
-/// Keep the block being typed in on screen, above the soft keyboard once
-/// it shrinks the viewport.
+/// Keep the line being typed on screen, above the soft keyboard once it
+/// shrinks the viewport.
 fn follow(
     controller: EditorController,
     mut scroll: ScrollController,
@@ -265,7 +265,10 @@ fn follow(
 ) {
     spawn(async move {
         async_io::Timer::after(FOLLOW_DELAY).await;
-        let Some((top, bottom)) = controller.block_bounds(block) else {
+        let Some((top, bottom)) = controller
+            .caret_bounds()
+            .or_else(|| controller.block_bounds(block))
+        else {
             return;
         };
         let shown = viewport.min_y() - content_top.get();
