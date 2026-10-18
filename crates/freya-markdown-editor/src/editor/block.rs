@@ -521,6 +521,7 @@ impl BlockView {
 }
 
 impl Component for BlockView {
+    #[allow(clippy::too_many_lines, reason = "one match over the block kinds")]
     fn render(&self) -> impl IntoElement {
         let theme = self.shared.theme.clone();
         let fallback = || match &self.block.kind {
@@ -619,7 +620,14 @@ impl Component for BlockView {
                     .width(Size::fill())
                     .on_pointer_enter(move |_| hovered.set(true))
                     .on_pointer_leave(move |_| hovered.set_if_modified(false))
-                    .child(handle)
+                    .child(
+                        // A scroll view would claim the touch as a scroll.
+                        rect()
+                            .on_pointer_down(|event: Event<PointerEventData>| {
+                                event.stop_propagation();
+                            })
+                            .child(handle),
+                    )
                     .child(rect().width(Size::flex(1.)).child(block)),
             )
             .into_element()

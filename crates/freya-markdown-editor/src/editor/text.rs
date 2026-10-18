@@ -83,6 +83,7 @@ impl Component for TextBlock {
         let read_only = shared.read_only;
 
         let is_focused = focus().is_focused();
+        use_side_effect(move || controller.track_focus(target, focus().is_focused()));
         let request = self
             .caret
             .filter(|request| request.seq > applied_caret.get());
@@ -134,7 +135,7 @@ impl Component for TextBlock {
         let command_for_keys = command_held.clone();
         let reveal_for_keys = reveal.clone();
         let on_key_down = move |event: Event<KeyboardEventData>| {
-            let key = event.key.clone();
+            let key = enter_from_text(event.key.clone());
             let modifiers = event.modifiers;
             event.stop_propagation();
             event.prevent_default();
@@ -907,6 +908,16 @@ fn menu_query(text: &str, at: usize, cursor: usize) -> Option<String> {
     let query: String = chars.collect();
     let closes = query.contains('\n') || query.contains("  ") || query.chars().count() > 48;
     (!closes).then_some(query)
+}
+
+/// Soft keyboards commit the line break as text instead of pressing Enter.
+fn enter_from_text(key: Key) -> Key {
+    match key {
+        Key::Character(text) if matches!(text.as_str(), "\n" | "\r" | "\r\n") => {
+            Key::Named(NamedKey::Enter)
+        }
+        key => key,
+    }
 }
 
 fn heading_shortcut(digit: &str) -> Option<BlockType> {

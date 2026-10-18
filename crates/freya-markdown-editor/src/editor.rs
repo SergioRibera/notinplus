@@ -336,7 +336,7 @@ impl Component for MarkdownEditor {
                 .key(block.id)
                 .width(Size::fill())
                 .on_sized(move |event: Event<SizedEventData>| {
-                    controller.record_block_top(id, event.area.min_y());
+                    controller.record_block_area(id, event.area.min_y(), event.area.max_y());
                 })
                 .child(BlockView {
                     block: block.clone(),

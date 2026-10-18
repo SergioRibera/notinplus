@@ -182,13 +182,16 @@ pub(crate) struct EditorState {
     /// Where blocks were last laid out. Written from layout callbacks, so
     /// it never notifies.
     layout: Rc<RefCell<BlockLayout>>,
+    /// Text field holding the keyboard focus.
+    focused: Option<TextTarget>,
 }
 
 /// Top edges, in window coordinates, of the editor and of its blocks.
 #[derive(Default)]
 struct BlockLayout {
     root: Option<f32>,
-    blocks: HashMap<BlockId, f32>,
+    /// Top and bottom edge of every block.
+    blocks: HashMap<BlockId, (f32, f32)>,
 }
 
 impl EditorState {
@@ -205,6 +208,7 @@ impl EditorState {
             parse: ParseOptions::default(),
             clipboard: None,
             layout: Rc::default(),
+            focused: None,
         }
     }
 
@@ -1061,8 +1065,26 @@ impl EditorController {
     pub fn block_offset(&self, id: BlockId) -> Option<f32> {
         self.peek(|state| {
             let layout = state.layout.borrow();
-            Some(*layout.blocks.get(&id)? - layout.root?)
+            Some(layout.blocks.get(&id)?.0 - layout.root?)
         })
+    }
+
+    /// Top and bottom edge of block `id`, measured like
+    /// [`block_offset`](Self::block_offset).
+    #[must_use]
+    pub fn block_bounds(&self, id: BlockId) -> Option<(f32, f32)> {
+        self.peek(|state| {
+            let layout = state.layout.borrow();
+            let (top, bottom) = *layout.blocks.get(&id)?;
+            let root = layout.root?;
+            Some((top - root, bottom - root))
+        })
+    }
+
+    /// Whether one of the editor's text fields holds the keyboard focus.
+    #[must_use]
+    pub fn has_focus(&self) -> bool {
+        self.read(|state| state.focused.is_some())
     }
 
     /// Fix (or release with `None`) the anchor of heading `id`, see
@@ -1080,10 +1102,20 @@ impl EditorController {
         self.peek(|state| state.layout.borrow_mut().root = Some(top));
     }
 
-    pub(crate) fn record_block_top(&self, id: BlockId, top: f32) {
+    pub(crate) fn record_block_area(&self, id: BlockId, top: f32, bottom: f32) {
         self.peek(|state| {
-            state.layout.borrow_mut().blocks.insert(id, top);
+            state.layout.borrow_mut().blocks.insert(id, (top, bottom));
         });
+    }
+
+    pub(crate) fn track_focus(&self, target: TextTarget, focused: bool) {
+        let current = self.peek(|state| state.focused);
+        let next = match (focused, current) {
+            (true, current) if current != Some(target) => Some(target),
+            (false, Some(current)) if current == target => None,
+            _ => return,
+        };
+        self.update(|state| state.focused = next);
     }
 
     // Internal hooks used by the text editors.

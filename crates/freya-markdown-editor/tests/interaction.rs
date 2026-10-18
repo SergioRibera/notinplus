@@ -470,3 +470,30 @@ fn run_suggestion_drives_the_controller() {
     harness.named(NamedKey::Enter);
     assert_eq!(harness.value(), "stamped\n");
 }
+
+#[test]
+fn soft_keyboard_line_break_splits_the_block() {
+    let mut harness = Harness::new("one");
+    let first = harness.block(0);
+    harness.focus(first, 3);
+    harness.type_text("\n");
+    harness.type_text("two");
+    assert_eq!(harness.value(), "one\n\ntwo\n");
+}
+
+#[test]
+fn focus_and_block_bounds_are_tracked() {
+    let mut harness = Harness::new("one\n\ntwo");
+    let controller = harness.controller;
+    assert!(!harness.runner.run_in(|| controller.has_focus()));
+    let second = harness.block(1);
+    harness.focus(second, 0);
+    assert!(harness.runner.run_in(|| controller.has_focus()));
+    let bounds = harness
+        .runner
+        .run_in(|| controller.block_bounds(second.block));
+    let Some((top, bottom)) = bounds else {
+        panic!("block was laid out");
+    };
+    assert!(top < bottom, "{top} < {bottom}");
+}
