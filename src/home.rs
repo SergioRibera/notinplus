@@ -585,6 +585,8 @@ fn grid(
             ItemKind::PluginCanvas { plugin_id, .. } => {
                 if plugin_id == "io.notein.bible.viewer" {
                     "Biblia"
+                } else if plugin_id == notein_notes::KIND_ID {
+                    "Nota"
                 } else {
                     "Documento del plugin"
                 }
@@ -698,6 +700,9 @@ impl Component for ItemCard {
                     if plugin_id == "io.notein.bible.viewer" =>
                 {
                     Route::BibleView { id }
+                }
+                ItemKind::PluginCanvas { plugin_id, .. } if plugin_id == notein_notes::KIND_ID => {
+                    Route::NotesView { id }
                 }
                 ItemKind::PluginCanvas { plugin_id, .. } => {
                     log::warn!("no shell route registered for plugin {plugin_id}");
@@ -1620,6 +1625,12 @@ fn trigger_entry(entry: &crate::plugins::AvailableEntry, ctx: &FabCtx) {
                 other => log::warn!("unknown bible viewer entry: {other}"),
             }
         }
+        EntrySource::Plugin(_) if entry.plugin_id == notein_notes::KIND_ID => {
+            match entry.entry.id.as_str() {
+                notein_notes::canvas::NEW_NOTE => flow_new_note(ctx.clone()),
+                other => log::warn!("unknown notes entry: {other}"),
+            }
+        }
         EntrySource::Plugin(_) if entry.plugin_id == "io.notein.bible" => {
             match entry.entry.id.as_str() {
                 "install-bible" => fab_install_bible(),
@@ -1665,6 +1676,41 @@ fn flow_open_bible_linked(ctx: FabCtx) {
                 let _ = router.push(Route::DocLinkedView { id });
             }
             Err(e) => log::warn!("bible linked: create_item failed: {e}"),
+        }
+    });
+}
+
+fn flow_new_note(ctx: FabCtx) {
+    use crate::library::{BackgroundStyle, ItemKind};
+    let FabCtx {
+        handle,
+        snap,
+        current,
+        router,
+    } = ctx;
+    let mut snap = snap;
+    spawn_forever(async move {
+        let mut lib = handle.lock().await;
+        match lib
+            .create_item(
+                current,
+                ItemKind::PluginCanvas {
+                    plugin_id: notein_notes::KIND_ID.into(),
+                    init_bytes: Vec::new(),
+                },
+                "Nota",
+                None,
+                Vec::new(),
+                BackgroundStyle::default(),
+            )
+            .await
+        {
+            Ok(id) => {
+                snap.set(Some(lib.index().clone()));
+                crate::builtin::prime_notes(lib.index().items.iter());
+                let _ = router.push(Route::NotesView { id });
+            }
+            Err(e) => log::warn!("notes: create_item failed: {e}"),
         }
     });
 }
@@ -2120,6 +2166,7 @@ pub(crate) async fn open_library() -> Result<LibHandle, String> {
     // library so the `[[` popup lists every PDF the user has
     // imported, even those not opened yet this session.
     crate::completion_catalog::prime_pdf_entries(lib.index().items.iter());
+    crate::builtin::prime_notes(lib.index().items.iter());
     Ok(Arc::new(AsyncMutex::new(lib)))
 }
 

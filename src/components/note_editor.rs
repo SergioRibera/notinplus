@@ -133,36 +133,12 @@ impl Component for NoteEditor {
     fn render(&self) -> impl IntoElement {
         let controller = use_editor_controller();
         let focused = controller.selection().is_some();
-        let completions = self.completions.clone();
 
-        let mut editor = MarkdownEditor::new(self.value.clone())
-            .controller(controller)
-            .theme(note_theme())
-            .syntax_reveal(show_markdown_syntax())
-            .decorator(SchemeEmbed::new(deep_link::SCHEME, |embed| {
-                ChipWidget {
-                    src: SourceRef::from_link(embed.url),
-                }
-                .into_element()
-            }))
-            .on_link(|url| source_ref_nav::navigate(&SourceRef::from_link(url)))
+        let mut editor = notein_editor(self.value.clone(), controller, self.completions.clone())
             .width(Size::fill());
         if let Some(placeholder) = &self.placeholder {
             editor = editor.placeholder(placeholder.clone());
         }
-        if let Some(provider) = completions {
-            editor = editor.suggestions(
-                SuggestionGroup::new("Referencias", move |query| {
-                    provider
-                        .call(query.to_owned())
-                        .into_iter()
-                        .map(suggestion)
-                        .collect()
-                })
-                .keyword("ref"),
-            );
-        }
-        let editor = editor.slash_menu();
 
         rect()
             .width(Size::fill())
@@ -178,6 +154,41 @@ impl Component for NoteEditor {
             .corner_radius(8.)
             .child(editor)
     }
+}
+
+/// [`MarkdownEditor`] the way notein uses it everywhere: note theme,
+/// `notein://` chips, links through [`source_ref_nav`], the user's
+/// markdown syntax setting, and a "Referencias" section (`/ref`) in the
+/// `/` menu fed by `completions`.
+pub(crate) fn notein_editor(
+    value: impl Into<Writable<String>>,
+    controller: EditorController,
+    completions: Option<Callback<String, Vec<Completion>>>,
+) -> MarkdownEditor {
+    let mut editor = MarkdownEditor::new(value)
+        .controller(controller)
+        .theme(note_theme())
+        .syntax_reveal(show_markdown_syntax())
+        .decorator(SchemeEmbed::new(deep_link::SCHEME, |embed| {
+            ChipWidget {
+                src: SourceRef::from_link(embed.url),
+            }
+            .into_element()
+        }))
+        .on_link(|url| source_ref_nav::navigate(&SourceRef::from_link(url)));
+    if let Some(provider) = completions {
+        editor = editor.suggestions(
+            SuggestionGroup::new("Referencias", move |query| {
+                provider
+                    .call(query.to_owned())
+                    .into_iter()
+                    .map(suggestion)
+                    .collect()
+            })
+            .keyword("ref"),
+        );
+    }
+    editor.slash_menu()
 }
 
 fn suggestion(completion: Completion) -> Suggestion {
@@ -198,7 +209,7 @@ fn suggestion(completion: Completion) -> Suggestion {
     }
 }
 
-fn note_theme() -> EditorTheme {
+pub(crate) fn note_theme() -> EditorTheme {
     let mut theme = EditorTheme::dark();
     theme.body_size = 13.5;
     theme.heading_sizes = [22.0, 19.0, 16.5, 15.0, 14.0, 13.5];

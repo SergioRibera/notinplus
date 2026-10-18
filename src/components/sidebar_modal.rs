@@ -737,6 +737,10 @@ fn kind_label(kind: &ItemKind) -> &'static str {
         ItemKind::PdfCanvas => "PDF + lienzo",
         ItemKind::SourcePdf => "PDF",
         ItemKind::DocLinked { .. } => "Bundle",
+        ItemKind::PluginCanvas { plugin_id, .. } if plugin_id == notein_notes::KIND_ID => "Nota",
+        ItemKind::PluginCanvas { plugin_id, .. } if plugin_id == "io.notein.bible.viewer" => {
+            "Biblia"
+        }
         ItemKind::PluginCanvas { .. } => "Plugin",
     }
 }

@@ -66,6 +66,8 @@ pub enum Route {
     WorkspaceView { id: crate::library::WorkspaceId },
     #[route("/bible/:id")]
     BibleView { id: ItemId },
+    #[route("/notes/:id")]
+    NotesView { id: ItemId },
 }
 
 impl Route {
@@ -78,6 +80,7 @@ impl Route {
             | Route::CanvasPdfView { id }
             | Route::DocLinkedView { id } => Some(*id),
             Route::BibleView { id } => Some(*id),
+            Route::NotesView { id } => Some(*id),
             Route::Home
             | Route::CanvasEphemeral
             | Route::SourcePdfView { .. }
@@ -102,6 +105,9 @@ pub fn route_for_kind(kind: &ItemKind, id: ItemId) -> Route {
             if plugin_id == "io.notein.bible.viewer" =>
         {
             Route::BibleView { id }
+        }
+        ItemKind::PluginCanvas { plugin_id, .. } if plugin_id == notein_notes::KIND_ID => {
+            Route::NotesView { id }
         }
         ItemKind::PluginCanvas { .. } => Route::Home,
     }
@@ -146,6 +152,18 @@ pub struct BibleView {
 impl Component for BibleView {
     fn render(&self) -> impl IntoElement {
         crate::bible_face::BibleFace { item: self.id }
+    }
+}
+
+/// Text note bound to a library item.
+#[derive(Debug, PartialEq)]
+pub struct NotesView {
+    pub id: ItemId,
+}
+
+impl Component for NotesView {
+    fn render(&self) -> impl IntoElement {
+        crate::notes_face::NotesFace { item: self.id }
     }
 }
 

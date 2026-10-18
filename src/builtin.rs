@@ -28,6 +28,35 @@ pub use stroke_canvas::StrokeCanvasPlugin;
 /// `Arc<dyn CanvasKind>` trait object does not expose.
 static BIBLE_CANVAS: OnceLock<Arc<notein_bible::BibleCanvas>> = OnceLock::new();
 
+/// Titles + headings of every note, fed by the shell and read by the notes
+/// reference source.
+static NOTES_INDEX: OnceLock<notein_notes::NotesIndex> = OnceLock::new();
+
+#[must_use]
+pub fn notes_index() -> Option<&'static notein_notes::NotesIndex> {
+    NOTES_INDEX.get()
+}
+
+/// Rebuild the notes index from the library: every note item with its
+/// current name and stored body.
+pub fn prime_notes<'a, I: IntoIterator<Item = &'a crate::library::Item>>(items: I) {
+    let Some(index) = notes_index() else {
+        return;
+    };
+    index.clear();
+    for item in items {
+        if item.kind.hosting_plugin() != Some(notein_notes::KIND_ID) {
+            continue;
+        }
+        let body = crate::library::bodies::read_plugin_snapshot(item.id, notein_notes::KIND_ID)
+            .ok()
+            .flatten()
+            .map(|bytes| notein_notes::body_from_snapshot(&bytes))
+            .unwrap_or_default();
+        index.update(item.id.0, &item.name, &body);
+    }
+}
+
 #[must_use]
 pub fn bible_canvas() -> Option<Arc<notein_bible::BibleCanvas>> {
     BIBLE_CANVAS.get().cloned()
@@ -55,5 +84,11 @@ pub fn register_all(reg: &mut PluginRegistry) {
             let _ = BIBLE_CANVAS.set(handle);
         }
         Err(err) => log::warn!("register notein-bible: {err}"),
+    }
+    match notein_notes::install(reg) {
+        Ok(index) => {
+            let _ = NOTES_INDEX.set(index);
+        }
+        Err(err) => log::warn!("register notein-notes: {err:?}"),
     }
 }

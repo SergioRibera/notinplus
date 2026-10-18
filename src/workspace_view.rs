@@ -491,6 +491,9 @@ fn tab_body_element(id: ItemId, kind: Option<ItemKind>) -> Element {
         {
             crate::bible_face::BibleFace { item: id }.into_element()
         }
+        Some(ItemKind::PluginCanvas { plugin_id, .. }) if plugin_id == notein_notes::KIND_ID => {
+            crate::notes_face::NotesFace { item: id }.into_element()
+        }
         Some(ItemKind::PluginCanvas { .. }) => {
             log::warn!("workspace: no pane mount registered for this plugin");
             CanvasPane {
