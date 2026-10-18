@@ -1628,6 +1628,7 @@ fn trigger_entry(entry: &crate::plugins::AvailableEntry, ctx: &FabCtx) {
         EntrySource::Plugin(_) if entry.plugin_id == notein_notes::KIND_ID => {
             match entry.entry.id.as_str() {
                 notein_notes::canvas::NEW_NOTE => flow_new_note(ctx.clone()),
+                notein_notes::canvas::IMPORT_MARKDOWN => flow_import_markdown(ctx.clone()),
                 other => log::warn!("unknown notes entry: {other}"),
             }
         }
@@ -1713,6 +1714,102 @@ fn flow_new_note(ctx: FabCtx) {
             Err(e) => log::warn!("notes: create_item failed: {e}"),
         }
     });
+}
+
+/// Pick a markdown file and open it as a new text note.
+fn flow_import_markdown(ctx: FabCtx) {
+    use crate::library::{BackgroundStyle, ItemKind};
+    let FabCtx {
+        handle,
+        snap,
+        current,
+        router,
+    } = ctx;
+    let mut snap = snap;
+    spawn_forever(async move {
+        let Some((file_name, markdown)) = pick_markdown().await else {
+            return;
+        };
+        let name = notein_notes::import_name(Some(&file_name), &markdown);
+        let mut lib = handle.lock().await;
+        let created = lib
+            .create_item(
+                current,
+                ItemKind::PluginCanvas {
+                    plugin_id: notein_notes::KIND_ID.into(),
+                    init_bytes: Vec::new(),
+                },
+                &name,
+                None,
+                Vec::new(),
+                BackgroundStyle::default(),
+            )
+            .await;
+        let id = match created {
+            Ok(id) => id,
+            Err(err) => {
+                log::warn!("notes import: create_item failed: {err}");
+                return;
+            }
+        };
+        if let Err(err) = crate::library::bodies::write_plugin_snapshot(
+            id,
+            notein_notes::KIND_ID,
+            markdown.as_bytes(),
+        ) {
+            log::warn!("notes import: snapshot write failed: {err}");
+        }
+        snap.set(Some(lib.index().clone()));
+        crate::builtin::prime_notes(lib.index().items.iter());
+        drop(lib);
+        let _ = router.push(Route::NotesView { id });
+    });
+}
+
+/// Ask for a markdown file; returns its name and text.
+async fn pick_markdown() -> Option<(String, String)> {
+    use std::io::Read;
+    use std::sync::Arc as StdArc;
+
+    use istmo_file_picker::{FileFilter, FilePickerClient, PickConfig};
+
+    let picker = FilePickerClient::acquire()
+        .inspect_err(|err| log::error!("file picker unavailable: {err:?}"))
+        .ok()?;
+    let config = PickConfig {
+        dialog_title: Some("Elegí un archivo markdown".into()),
+        filter: FileFilter {
+            mime_types: notein_notes::IMPORT_MIME_TYPES.map(str::to_owned).to_vec(),
+            extensions: notein_notes::IMPORT_EXTENSIONS.map(str::to_owned).to_vec(),
+            uti_types: vec![
+                "net.daringfireball.markdown".into(),
+                "public.plain-text".into(),
+            ],
+        },
+        start_directory_hint: None,
+        allow_multiple: false,
+    };
+    let file = match picker.pick_file_owned(config).await {
+        Ok(Some(file)) => file,
+        Ok(None) => return None,
+        Err(err) => {
+            log::error!("picker call error: {err:?}");
+            return None;
+        }
+    };
+    let name = file.display_name.clone();
+    let file = StdArc::new(file);
+    let mut reader = file
+        .open_reader(&picker)
+        .await
+        .inspect_err(|err| log::error!("open reader: {err:?}"))
+        .ok()?;
+    let mut bytes = Vec::new();
+    reader
+        .read_to_end(&mut bytes)
+        .inspect_err(|err| log::error!("read markdown: {err}"))
+        .ok()?;
+    Some((name, String::from_utf8_lossy(&bytes).into_owned()))
 }
 
 fn flow_open_bible(ctx: FabCtx) {

@@ -52,6 +52,40 @@ pub fn body_from_snapshot(snapshot: &[u8]) -> String {
     String::from_utf8_lossy(snapshot).into_owned()
 }
 
+/// File extensions a markdown import accepts.
+pub const IMPORT_EXTENSIONS: [&str; 3] = ["md", "markdown", "txt"];
+/// MIME types a markdown import accepts.
+pub const IMPORT_MIME_TYPES: [&str; 2] = ["text/markdown", "text/plain"];
+
+/// Name of a note imported from `file_name`: the file stem, else the
+/// first heading of `markdown`, else a generic name.
+#[must_use]
+pub fn import_name(file_name: Option<&str>, markdown: &str) -> String {
+    let stem = file_name
+        .map(|name| {
+            let lower = name.to_ascii_lowercase();
+            IMPORT_EXTENSIONS
+                .iter()
+                .find_map(|ext| {
+                    lower
+                        .strip_suffix(&format!(".{ext}"))
+                        .map(|stem| &name[..stem.len()])
+                })
+                .unwrap_or(name)
+                .trim()
+        })
+        .filter(|stem| !stem.is_empty());
+    if let Some(stem) = stem {
+        return stem.to_owned();
+    }
+    freya_markdown_editor::document::Document::parse(markdown)
+        .outline()
+        .into_iter()
+        .map(|heading| heading.text)
+        .find(|text| !text.trim().is_empty())
+        .unwrap_or_else(|| "Nota importada".to_owned())
+}
+
 /// Fix the anchor of the heading `slug` names in `markdown`.
 ///
 /// A reference to it then keeps working when the heading text changes.
@@ -94,5 +128,13 @@ mod tests {
                 .as_deref(),
             Some("Diario › Proyectos")
         );
+    }
+
+    #[test]
+    fn imported_notes_are_named_after_the_file_or_first_heading() {
+        assert_eq!(import_name(Some("Plan.MD"), "# Otro"), "Plan");
+        assert_eq!(import_name(Some("notas.txt"), ""), "notas");
+        assert_eq!(import_name(None, "texto\n\n## Viaje\n"), "Viaje");
+        assert_eq!(import_name(Some(" .md"), "sin títulos"), "Nota importada");
     }
 }

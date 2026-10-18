@@ -10,15 +10,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use freya_markdown_editor::document::{Document, HeadingRef};
 use notein_sdk::{
     Bookmark, BookmarkId, CanvasError, CanvasKind, ConfigError, ConfigSchema, ConfigValue,
-    CreationCategory, CreationEntry, CreationError, FrameCtxHandle, InputEvent, ItemCreationResult,
-    Outline, OutlineNode, OutlineNodeId, WorldPoint, build::custom_entry,
+    CreationCategory, CreationEntry, CreationError, CreationKind, FrameCtxHandle, InputEvent,
+    ItemCreationResult, Outline, OutlineNode, OutlineNodeId, WorldPoint, build::custom_entry,
 };
 
 use crate::anchor::NoteAnchor;
-use crate::{KIND_ID, body_from_snapshot};
+use crate::{IMPORT_EXTENSIONS, IMPORT_MIME_TYPES, KIND_ID, body_from_snapshot, import_name};
 
 /// Creation entry id of a blank note.
 pub const NEW_NOTE: &str = "new-note";
+/// Creation entry id of a note imported from a markdown file.
+pub const IMPORT_MARKDOWN: &str = "import-markdown";
 
 #[derive(Debug, Default)]
 pub struct NotesCanvas {
@@ -97,27 +99,47 @@ impl CanvasKind for NotesCanvas {
     }
 
     fn creation_entries(&self) -> Vec<CreationEntry> {
-        vec![custom_entry(
-            NEW_NOTE,
-            "Nota de texto",
-            freya_icons::lucide::notebook_pen(),
-            CreationCategory::Canvas,
-        )]
+        vec![
+            custom_entry(
+                NEW_NOTE,
+                "Nota de texto",
+                freya_icons::lucide::notebook_pen(),
+                CreationCategory::Canvas,
+            ),
+            CreationEntry {
+                id: IMPORT_MARKDOWN.to_owned(),
+                label: "Importar markdown".to_owned(),
+                icon: freya_icons::lucide::file_input(),
+                category: CreationCategory::Source,
+                kind: CreationKind::Import {
+                    dialog_title: "Elegí un archivo markdown".to_owned(),
+                    extensions: IMPORT_EXTENSIONS.map(str::to_owned).to_vec(),
+                    mime_types: IMPORT_MIME_TYPES.map(str::to_owned).to_vec(),
+                },
+            },
+        ]
     }
 
     fn execute_creation(
         &self,
         entry_id: &str,
-        _import_bytes: Option<&[u8]>,
-        _name_hint: Option<&str>,
+        import_bytes: Option<&[u8]>,
+        name_hint: Option<&str>,
     ) -> Result<ItemCreationResult, CreationError> {
-        if entry_id != NEW_NOTE {
-            return Err(CreationError::UnknownEntry(entry_id.into()));
+        match entry_id {
+            NEW_NOTE => Ok(ItemCreationResult {
+                item_bytes: Vec::new(),
+                suggested_name: "Nota".into(),
+            }),
+            IMPORT_MARKDOWN => {
+                let bytes = import_bytes.ok_or(CreationError::MissingImportBytes)?;
+                Ok(ItemCreationResult {
+                    item_bytes: Vec::new(),
+                    suggested_name: import_name(name_hint, &body_from_snapshot(bytes)),
+                })
+            }
+            other => Err(CreationError::UnknownEntry(other.into())),
         }
-        Ok(ItemCreationResult {
-            item_bytes: Vec::new(),
-            suggested_name: "Nota".into(),
-        })
     }
 }
 
