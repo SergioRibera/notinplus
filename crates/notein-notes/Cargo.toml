@@ -1,0 +1,28 @@
+[package]
+name = "notein-notes"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.86"
+license = "MIT OR Apache-2.0"
+authors = ["Sergio Ribera <contact@sergioribera.rs>"]
+description = "Text notes plugin for notinplus: markdown documents with a heading outline and linkable sections."
+repository = "https://github.com/SergioRibera/notinplus"
+
+[lints.rust]
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+[dependencies]
+notein-sdk = { path = "../notein-sdk" }
+freya-markdown-editor = { path = "../freya-markdown-editor", default-features = false }
+freya = { version = "=0.5.0-rc.8", features = ["icons", "icons-lucide"] }
+# Standalone icons crate: `creation_entries` needs SVG bytes.
+freya-icons = { version = "=0.4.0", features = ["lucide"] }
+bincode = { version = "2", features = ["derive", "std"] }
