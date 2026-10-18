@@ -15,6 +15,7 @@ use std::rc::Rc;
 
 use freya::prelude::*;
 
+use crate::EditorController;
 use crate::document::{BlockKind, BlockType, CalloutKind, HeadingLevel, Inline, Table};
 use crate::theme::EditorTheme;
 
@@ -24,10 +25,47 @@ use crate::theme::EditorTheme;
 pub enum SuggestionAction {
     InsertText(String),
     InsertInline(Inline),
-    InsertLink { label: String, url: String },
-    InsertEmbed { label: String, url: String },
+    InsertLink {
+        label: String,
+        url: String,
+    },
+    InsertEmbed {
+        label: String,
+        url: String,
+    },
     SetBlockType(BlockType),
     InsertBlock(BlockKind),
+    /// Anything else, done through the controller: update data the
+    /// suggestion depends on, then insert whatever fits.
+    Run(SuggestionRun),
+}
+
+/// Custom suggestion action, see [`SuggestionAction::Run`].
+#[derive(Clone)]
+pub struct SuggestionRun(Rc<dyn Fn(EditorController)>);
+
+impl SuggestionRun {
+    pub fn new(run: impl Fn(EditorController) + 'static) -> Self {
+        Self(Rc::new(run))
+    }
+
+    pub(crate) fn call(&self, controller: EditorController) {
+        (self.0)(controller);
+    }
+}
+
+impl PartialEq for SuggestionRun {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for SuggestionRun {}
+
+impl fmt::Debug for SuggestionRun {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SuggestionRun")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

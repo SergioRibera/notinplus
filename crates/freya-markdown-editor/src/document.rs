@@ -8,7 +8,7 @@ mod color;
 mod inline;
 mod table;
 
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use color::{ParseColorError, Rgba};
@@ -352,6 +352,9 @@ pub struct HeadingRef {
     pub text: String,
     /// Unique anchor inside the document.
     pub slug: String,
+    /// Whether the anchor is fixed (`{#anchor}`) rather than derived from
+    /// the text.
+    pub pinned: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -937,40 +940,76 @@ impl Document {
 
     /// Headings with a unique anchor each: the explicit `{#id}` when the
     /// heading has one, otherwise a GitHub style slug of its text with a
-    /// `-1`, `-2`... suffix when it repeats. The anchors are what
-    /// `[text](#anchor)` links point to.
+    /// `-1`, `-2`... suffix when it is taken. Explicit anchors are
+    /// reserved first, so a heading added later never steals one. The
+    /// anchors are what `[text](#anchor)` links point to.
     #[must_use]
     pub fn outline(&self) -> Vec<HeadingRef> {
-        let mut seen: HashMap<String, usize> = HashMap::new();
-        self.blocks
+        let headings: Vec<(BlockId, HeadingLevel, String, Option<&String>)> = self
+            .blocks
             .iter()
             .filter_map(|block| match &block.kind {
                 BlockKind::Heading {
                     level,
                     content,
                     anchor,
-                } => {
-                    let text = content.plain_text();
-                    let base = anchor
-                        .clone()
-                        .unwrap_or_else(|| crate::markdown::slug(&text));
-                    let count = seen.entry(base.clone()).or_insert(0);
-                    let slug = if *count == 0 {
-                        base
-                    } else {
-                        format!("{base}-{count}")
-                    };
-                    *count += 1;
-                    Some(HeadingRef {
-                        block: block.id,
-                        level: *level,
-                        text,
-                        slug,
-                    })
-                }
+                } => Some((block.id, *level, content.plain_text(), anchor.as_ref())),
                 _ => None,
             })
+            .collect();
+
+        let mut taken: HashSet<String> = HashSet::new();
+        let mut slugs: Vec<Option<String>> = headings
+            .iter()
+            .map(|(_, _, _, anchor)| {
+                anchor
+                    .filter(|anchor| taken.insert((*anchor).clone()))
+                    .cloned()
+            })
+            .collect();
+        for (slug, (_, _, text, anchor)) in slugs.iter_mut().zip(&headings) {
+            if slug.is_some() {
+                continue;
+            }
+            let base = anchor.map_or_else(|| crate::markdown::slug(text), Clone::clone);
+            let mut unique = base.clone();
+            let mut suffix = 0;
+            while taken.contains(&unique) {
+                suffix += 1;
+                unique = format!("{base}-{suffix}");
+            }
+            taken.insert(unique.clone());
+            *slug = Some(unique);
+        }
+
+        headings
+            .into_iter()
+            .zip(slugs)
+            .map(|((block, level, text, anchor), slug)| HeadingRef {
+                block,
+                level,
+                text,
+                slug: slug.unwrap_or_default(),
+                pinned: anchor.is_some(),
+            })
             .collect()
+    }
+
+    /// Give heading `id` a fixed anchor (`{#anchor}` in markdown), or go
+    /// back to one derived from its text with `None`. A fixed anchor
+    /// keeps links to the heading working when its text changes.
+    /// Returns whether `id` is a heading.
+    pub fn set_heading_anchor(&mut self, id: BlockId, new_anchor: Option<String>) -> bool {
+        let Some(index) = self.index_of(id) else {
+            return false;
+        };
+        match &mut self.blocks[index].kind {
+            BlockKind::Heading { anchor, .. } => {
+                *anchor = new_anchor;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Block of the heading whose [`Self::outline`] anchor is `slug`.
@@ -1203,6 +1242,25 @@ mod tests {
             document.heading_by_slug("notas-1"),
             Some(document.outline()[2].block)
         );
+    }
+
+    #[test]
+    fn pinned_anchor_survives_renames_and_wins_collisions() {
+        let mut document = Document::parse("## Notas\n\n## Otra");
+        let first = document.outline()[0].block;
+        assert!(document.set_heading_anchor(first, Some("notas".into())));
+
+        let renamed = Document::parse(
+            &document
+                .to_markdown(crate::markdown::Dialect::Rich)
+                .replace("## Notas", "## Apuntes"),
+        );
+        assert_eq!(renamed.outline()[0].slug, "notas");
+        assert!(renamed.outline()[0].pinned);
+
+        let collision = Document::parse("## Notas\n\n## Apuntes {#notas}");
+        let slugs: Vec<String> = collision.outline().into_iter().map(|h| h.slug).collect();
+        assert_eq!(slugs, ["notas-1", "notas"]);
     }
 
     #[test]

@@ -14,7 +14,8 @@ use std::rc::Rc;
 use freya::prelude::*;
 
 pub use suggest::{
-    BlockSuggestions, Suggestion, SuggestionAction, SuggestionGroup, SuggestionSource,
+    BlockSuggestions, Suggestion, SuggestionAction, SuggestionGroup, SuggestionRun,
+    SuggestionSource,
 };
 
 use self::block::{BlockView, TocEntry};

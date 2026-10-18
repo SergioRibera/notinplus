@@ -128,7 +128,9 @@ MarkdownEditor::new(value)
 ```
 
 Implement `SuggestionSource` for richer sources. Actions: insert text,
-rich inline, link, embed, change block type or insert a block. Arrow keys
+rich inline, link, embed, change block type, insert a block, or
+`SuggestionAction::Run` to do anything through the controller (e.g. update
+what the link points to before inserting it). Arrow keys
 navigate, Enter/Tab pick, Escape closes. The list is virtualized and the
 query results are cached, so large sources stay fast; on touch screens it
 scrolls by dragging and only a tap picks.

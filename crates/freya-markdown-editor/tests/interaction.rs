@@ -43,6 +43,17 @@ fn app() -> impl IntoElement {
                     })
                     .keyword("doc"),
                 )
+                .suggestions(
+                    SuggestionGroup::new("Actions", |_| {
+                        vec![Suggestion::new(
+                            "Stamp",
+                            SuggestionAction::Run(SuggestionRun::new(|controller| {
+                                controller.insert_text("stamped");
+                            })),
+                        )]
+                    })
+                    .keyword("run"),
+                )
                 .decorator(SchemeEmbed::new("app", |embed| {
                     rect()
                         .height(Size::px(20.))
@@ -448,4 +459,14 @@ fn block_offsets_follow_the_layout() {
         panic!("blocks were laid out: {offsets:?}");
     };
     assert!(first < last, "{first} < {last}");
+}
+
+#[test]
+fn run_suggestion_drives_the_controller() {
+    let mut harness = Harness::new("");
+    let first = harness.block(0);
+    harness.focus(first, 0);
+    harness.type_text("/run st");
+    harness.named(NamedKey::Enter);
+    assert_eq!(harness.value(), "stamped\n");
 }

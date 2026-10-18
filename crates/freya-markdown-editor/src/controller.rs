@@ -1065,6 +1065,17 @@ impl EditorController {
         })
     }
 
+    /// Fix (or release with `None`) the anchor of heading `id`, see
+    /// [`Document::set_heading_anchor`]. Not an undoable edit: it only
+    /// keeps links stable.
+    pub fn set_heading_anchor(&self, id: BlockId, anchor: Option<String>) {
+        self.update(|state| {
+            if state.document.set_heading_anchor(id, anchor) {
+                state.changed();
+            }
+        });
+    }
+
     pub(crate) fn record_root_top(&self, top: f32) {
         self.peek(|state| state.layout.borrow_mut().root = Some(top));
     }
@@ -1399,6 +1410,7 @@ impl EditorController {
             SuggestionAction::InsertEmbed { label, url } => self.insert_embed(&label, &url),
             SuggestionAction::SetBlockType(block_type) => self.set_block_type(block_type),
             SuggestionAction::InsertBlock(kind) => self.insert_block(kind),
+            SuggestionAction::Run(run) => run.call(*self),
         }
     }
 

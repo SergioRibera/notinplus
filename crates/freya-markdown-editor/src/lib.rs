@@ -27,7 +27,7 @@ pub use decorator::{
     SpanStyle, TextMatch,
 };
 pub use editor::{
-    BlockSuggestions, MarkdownEditor, Suggestion, SuggestionAction, SuggestionGroup,
+    BlockSuggestions, MarkdownEditor, Suggestion, SuggestionAction, SuggestionGroup, SuggestionRun,
     SuggestionSource,
 };
 pub use theme::{EditorColors, EditorTheme};
@@ -47,6 +47,7 @@ pub mod prelude {
         ActiveFormat, BlockSuggestions, CodeContext, Decorator, Decorators, EditorColors,
         EditorController, EditorTheme, EmbedContext, ImageContext, MarkdownEditor, PrefixTokens,
         SchemeEmbed, Selection, SpanStyle, Suggestion, SuggestionAction, SuggestionGroup,
-        SuggestionSource, TextMatch, use_editor_controller, use_editor_controller_with,
+        SuggestionRun, SuggestionSource, TextMatch, use_editor_controller,
+        use_editor_controller_with,
     };
 }
