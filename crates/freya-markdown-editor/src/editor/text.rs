@@ -228,6 +228,23 @@ impl Component for TextBlock {
                 return;
             }
 
+            if command
+                && rich
+                && collapsed
+                && shared_for_keys.syntax_reveal
+                && let Key::Character(ch) = &key
+                && let Some(delimiter) = syntax_delimiter(&ch.to_lowercase(), shift, alt)
+            {
+                type_delimiters(
+                    &mut editable,
+                    controller,
+                    target,
+                    &reveal_for_keys,
+                    delimiter,
+                );
+                return;
+            }
+
             if command && let Key::Character(ch) = &key {
                 let lower = ch.to_lowercase();
                 let handled = match (lower.as_str(), shift, alt) {
@@ -732,6 +749,81 @@ fn sync_rope(
     }
     reveal.borrow_mut().clone_from(&next);
     next
+}
+
+/// Markdown delimiter typed by a formatting shortcut while syntax is shown.
+fn syntax_delimiter(key: &str, shift: bool, alt: bool) -> Option<&'static str> {
+    Some(match (key, shift, alt) {
+        ("b", false, false) => "**",
+        ("i", false, false) => "*",
+        ("e", false, false) => "`",
+        ("x" | "s", true, false) => "~~",
+        ("h", true, false) => "==",
+        (".", false, false) => "^",
+        (",", false, false) => "~",
+        _ => return None,
+    })
+}
+
+/// Formatting shortcut with a bare caret while syntax is shown: type the
+/// delimiter pair around the caret, or remove an empty pair it sits in.
+/// A fresh pair only lives on screen until something is typed inside it.
+fn type_delimiters(
+    editable: &mut freya_edit::UseEditable,
+    controller: crate::EditorController,
+    target: TextTarget,
+    reveal: &RefCell<Option<Reveal>>,
+    delimiter: &str,
+) {
+    let (text, cursor) = {
+        let editor = editable.editor().peek();
+        (editor.committed_text(), editor.cursor_pos())
+    };
+    let at = byte_index(&text, cursor);
+    let width = utf16_len(delimiter);
+    let inside_empty_pair = text[..at].ends_with(delimiter) && text[at..].starts_with(delimiter);
+    let active = reveal.borrow().clone();
+
+    if active
+        .as_ref()
+        .is_some_and(|active| active.contains(cursor))
+    {
+        let (edited, caret) = if inside_empty_pair {
+            let start = at - delimiter.len();
+            let end = at + delimiter.len();
+            (
+                format!("{}{}", &text[..start], &text[end..]),
+                cursor - width,
+            )
+        } else {
+            (
+                format!("{}{delimiter}{delimiter}{}", &text[..at], &text[at..]),
+                cursor + width,
+            )
+        };
+        let hint = if inside_empty_pair {
+            cursor - width
+        } else {
+            cursor
+        };
+        let mut editor = editable.editor_mut().write();
+        editor.set(&edited);
+        editor.move_cursor_to(caret);
+        drop(editor);
+        commit_rope(editable, controller, target, hint, reveal);
+        return;
+    }
+
+    let Some(content) = controller.peek_inline(target) else {
+        return;
+    };
+    let model = active.map_or(cursor, |active| active.to_model(cursor));
+    let pair = Reveal::delimiters(model.min(content.len()), delimiter);
+    let shown = pair.display_text(&content);
+    *reveal.borrow_mut() = Some(pair);
+    let mut editor = editable.editor_mut().write();
+    editor.set(&shown);
+    editor.move_cursor_to(model + width);
 }
 
 /// Model offset of a position in the rope.

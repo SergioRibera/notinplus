@@ -392,3 +392,43 @@ fn revealed_source_closes_when_the_caret_leaves() {
     harness.type_text("x");
     assert_eq!(harness.value(), "xsay **hi** there!\n");
 }
+
+#[test]
+fn shortcut_types_delimiters_when_syntax_is_shown() {
+    let mut harness = Harness::with_reveal("say", true);
+    let first = harness.block(0);
+    harness.focus(first, 3);
+    harness.type_text(" ");
+    harness.command("b");
+    assert_eq!(harness.value(), "say \n");
+    harness.snapshot("syntax_reveal_pair");
+    harness.type_text("hi");
+    assert_eq!(harness.value(), "say **hi**\n");
+}
+
+#[test]
+fn shortcut_twice_removes_the_empty_pair() {
+    let mut harness = Harness::with_reveal("say", true);
+    let first = harness.block(0);
+    harness.focus(first, 3);
+    harness.type_text(" ");
+    harness.command("i");
+    harness.command("i");
+    harness.type_text("x");
+    assert_eq!(harness.value(), "say x\n");
+}
+
+#[test]
+fn deleting_the_content_back_to_an_empty_pair_leaves_no_text() {
+    let mut harness = Harness::with_reveal("say", true);
+    let first = harness.block(0);
+    harness.focus(first, 3);
+    harness.type_text(" ");
+    harness.command("b");
+    harness.type_text("a");
+    assert_eq!(harness.value(), "say **a**\n");
+    harness.named(NamedKey::Backspace);
+    assert_eq!(harness.value(), "say \n");
+    harness.type_text("b");
+    assert_eq!(harness.value(), "say **b**\n");
+}

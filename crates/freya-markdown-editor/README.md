@@ -148,6 +148,11 @@ as text, like Obsidian or Typora: delete a `*` and it is plain text again,
 type after the closing `**` and it is not bold. Styling that only exists
 as HTML (underline, colors, fonts, sizes) keeps being edited visually.
 
+In this mode the formatting shortcuts (Ctrl+B, I, E, Shift+X, Shift+H, `.`,
+`,`) with no selection type the delimiter pair around the caret, like
+Obsidian; pressing it again on an empty pair removes it. With a selection
+they format it as usual.
+
 ```rust,ignore
 MarkdownEditor::new(value).syntax_reveal(settings.show_markdown);
 ```

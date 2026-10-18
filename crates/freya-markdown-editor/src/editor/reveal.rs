@@ -78,6 +78,11 @@ impl Reveal {
         Some(Self::new(range.start, model, source))
     }
 
+    /// An empty `delimiter` pair typed at `at`, not yet in the model.
+    pub(crate) fn delimiters(at: usize, delimiter: &str) -> Self {
+        Self::new(at, Inline::default(), format!("{delimiter}{delimiter}"))
+    }
+
     fn new(start: usize, model: Inline, source: String) -> Self {
         let (to_model, content) = align(&source, model.text());
         Self {
@@ -340,6 +345,11 @@ fn reparse(source: &str, old: &Inline, options: &ParseOptions) -> Inline {
     let lead = &source[..source.len() - core_start.len()];
     let core = core_start.trim_end();
     let trail = &core_start[core.len()..];
+    if !core.is_empty() && core.chars().all(|ch| "*_~=^`|".contains(ch)) {
+        let mut empty = Inline::from(lead);
+        empty.append(Inline::from(trail));
+        return empty;
+    }
     let parsed = parse_inline(core, options)
         .or_else(|| parse_inline(&escape_block_start(core), options))
         .unwrap_or_else(|| Inline::from(core));
