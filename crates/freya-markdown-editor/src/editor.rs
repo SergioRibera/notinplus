@@ -26,6 +26,44 @@ use crate::document::{Abbreviation, BlockKind, Document, Inline};
 use crate::markdown::{Dialect, Extensions, ParseOptions};
 use crate::theme::EditorTheme;
 
+/// Text of the focused text field and its selection, as the platform input
+/// method should see it. Offsets are bytes into `text`; `cursor == anchor`
+/// for a plain caret.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InputContext {
+    pub text: String,
+    pub cursor: usize,
+    pub anchor: usize,
+}
+
+/// Called when the input context changes other than by typing.
+#[derive(Clone, Default)]
+pub(crate) struct InputContextHandler(Option<InputContextCallback>);
+
+type InputContextCallback = Rc<dyn Fn(&InputContext)>;
+
+impl PartialEq for InputContextHandler {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+}
+
+impl InputContextHandler {
+    pub(crate) const fn is_set(&self) -> bool {
+        self.0.is_some()
+    }
+
+    pub(crate) fn call(&self, context: &InputContext) {
+        if let Some(handler) = &self.0 {
+            handler(context);
+        }
+    }
+}
+
 /// Called with the URL of a pressed link.
 #[derive(Clone, Default)]
 pub(crate) struct LinkHandler(Option<LinkCallback>);
@@ -58,6 +96,7 @@ pub(crate) struct Shared {
     pub(crate) decorators: Decorators,
     pub(crate) slash: SlashMenu,
     pub(crate) on_link: LinkHandler,
+    pub(crate) on_input_context: InputContextHandler,
     pub(crate) read_only: bool,
     pub(crate) reorderable: bool,
     pub(crate) syntax_reveal: bool,
@@ -102,6 +141,7 @@ pub struct MarkdownEditor {
     reorderable: bool,
     syntax_reveal: bool,
     on_link: LinkHandler,
+    on_input_context: InputContextHandler,
     layout: LayoutData,
     text_style: TextStyleData,
     key: DiffKey,
@@ -133,6 +173,7 @@ impl Default for MarkdownEditor {
             reorderable: false,
             syntax_reveal: false,
             on_link: LinkHandler::default(),
+            on_input_context: InputContextHandler::default(),
             layout: LayoutData::default(),
             text_style: TextStyleData::default(),
             key: DiffKey::None,
@@ -246,6 +287,17 @@ impl MarkdownEditor {
         self.on_link = LinkHandler(Some(Rc::new(on_link)));
         self
     }
+
+    /// Called with the focused text field's text and selection when they
+    /// change other than by typing: on focus, when the caret jumps, after
+    /// edits the editor makes itself. Platform input methods that keep their
+    /// own copy of the text (the Android soft keyboard) need it to suggest
+    /// and correct words.
+    #[must_use]
+    pub fn on_input_context(mut self, on_input_context: impl Fn(&InputContext) + 'static) -> Self {
+        self.on_input_context = InputContextHandler(Some(Rc::new(on_input_context)));
+        self
+    }
 }
 
 impl KeyExt for MarkdownEditor {
@@ -309,6 +361,7 @@ impl Component for MarkdownEditor {
             decorators: self.decorators.clone(),
             slash: self.slash.clone(),
             on_link: self.on_link.clone(),
+            on_input_context: self.on_input_context.clone(),
             read_only,
             reorderable: self.reorderable,
             syntax_reveal: self.syntax_reveal,

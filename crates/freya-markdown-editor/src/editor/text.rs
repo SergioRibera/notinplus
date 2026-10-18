@@ -13,10 +13,10 @@ use freya_engine::prelude::{
     Paint, PaintStyle, PathEffect, RectHeightStyle, RectWidthStyle, SkRect,
 };
 
-use super::Shared;
 use super::paint::{Decor, DecorKind, PaintContext, Piece};
 use super::reveal::{Reveal, RevealEdit};
 use super::suggest::{MENU_WIDTH, MenuRow, OpenMenu, SuggestionMenu, item, item_count};
+use super::{InputContext, Shared};
 use crate::controller::{CaretRequest, Selection};
 use crate::decorator::{EmbedContext, ImageContext};
 use crate::document::{
@@ -72,6 +72,7 @@ impl Component for TextBlock {
         let command_held = use_hook(|| Rc::new(Cell::new(false)));
         let decor = use_hook(|| Rc::new(RefCell::new(Vec::<Decor>::new())));
         let reveal = use_hook(|| Rc::new(RefCell::new(None::<Reveal>)));
+        let input_shown = use_hook(|| Rc::new(RefCell::new(None::<InputContext>)));
         let initial = self.content.text().to_owned();
         let mut editable = use_editable(move || initial, EditableConfig::new);
 
@@ -114,6 +115,17 @@ impl Component for TextBlock {
             |revealed| revealed.display_inline(&content, shared.theme.colors.muted.into()),
         );
         let rope_text = editable.editor().read().rope().to_string();
+        if shared.on_input_context.is_set() {
+            if is_focused && !read_only {
+                let shown = input_context(&editable);
+                if input_shown.borrow().as_ref() != Some(&shown) {
+                    shared.on_input_context.call(&shown);
+                    *input_shown.borrow_mut() = Some(shown);
+                }
+            } else {
+                input_shown.borrow_mut().take();
+            }
+        }
         let has_preedit = editable.editor().read().has_preedit();
 
         let elsewhere = !is_focused
@@ -146,6 +158,7 @@ impl Component for TextBlock {
         let shared_for_keys = shared.clone();
         let command_for_keys = command_held.clone();
         let reveal_for_keys = reveal.clone();
+        let input_for_keys = input_shown;
         let on_key_down = move |event: Event<KeyboardEventData>| {
             let key = enter_from_text(event.key.clone());
             let modifiers = event.modifiers;
@@ -472,6 +485,15 @@ impl Component for TextBlock {
                 holder: Some(&holder.read()),
             });
             commit_rope(&editable, controller, target, hint, &reveal_for_keys);
+            // The input method made this edit itself, so it already knows it.
+            if !command
+                && matches!(
+                    key,
+                    Key::Character(_) | Key::Named(NamedKey::Backspace | NamedKey::Delete)
+                )
+            {
+                *input_for_keys.borrow_mut() = Some(input_context(&editable));
+            }
 
             if let Some(open) = opening {
                 menu.set(Some(open));
@@ -1051,6 +1073,22 @@ fn menu_anchor(holder: &ParagraphHolder, text: &str, cursor: usize) -> (f32, f32
         let rect = inner.paragraph.cursor_rect(text, cursor, TextAlign::Left);
         (rect.bottom / scale + 4.0, rect.left / scale)
     })
+}
+
+/// What the input method should see of this field: the shown text and the
+/// selection in byte offsets.
+fn input_context(editable: &freya_edit::UseEditable) -> InputContext {
+    let editor = editable.editor().peek();
+    let text = editor.rope().to_string();
+    let cursor = editor.cursor_pos();
+    let anchor = editor
+        .get_selection()
+        .map_or(cursor, |(from, to)| if from == cursor { to } else { from });
+    InputContext {
+        cursor: byte_index(&text, cursor),
+        anchor: byte_index(&text, anchor),
+        text,
+    }
 }
 
 /// Top and bottom edge of the caret at `cursor`, relative to the paragraph.
