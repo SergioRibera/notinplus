@@ -186,13 +186,18 @@ pub(crate) struct EditorState {
     focused: Option<TextTarget>,
 }
 
-/// Top edges, in window coordinates, of the editor and of its blocks.
+/// Where the editor, its blocks and its caret are, in window coordinates.
 #[derive(Default)]
 struct BlockLayout {
     root: Option<f32>,
     /// Top and bottom edge of every block.
     blocks: HashMap<BlockId, (f32, f32)>,
+    /// Measures the caret of the focused text field.
+    caret: Option<(TextTarget, CaretProbe)>,
 }
+
+/// Top and bottom edge of the caret, measured on the latest layout.
+pub(crate) type CaretProbe = Rc<dyn Fn() -> Option<(f32, f32)>>;
 
 impl EditorState {
     fn new(document: Document) -> Self {
@@ -692,7 +697,17 @@ impl EditorController {
                 return;
             };
             let target = selection.target;
-            let blocks = parsed.blocks();
+            // Parsing adds an empty paragraph after a trailing list or
+            // table; the pasted content does not need it.
+            let blocks = match parsed.blocks() {
+                [rest @ .., last]
+                    if !rest.is_empty()
+                        && matches!(&last.kind, BlockKind::Paragraph(content) if content.is_empty()) =>
+                {
+                    rest
+                }
+                blocks => blocks,
+            };
             let single = match blocks {
                 [only] => match &only.kind {
                     BlockKind::Paragraph(content) => Some(content.clone()),
@@ -716,29 +731,60 @@ impl EditorController {
             if target.cell.is_some() || !rich {
                 return;
             }
+            let Some(index) = state.document.index_of(target.block) else {
+                return;
+            };
             state.record(None);
             let range = selection.range();
-            if let Some(inline) = state.document.inline_mut(target) {
+            let length = state.document.inline_mut(target).map_or(0, |inline| {
                 inline.replace(range.clone(), "");
-            }
-            let tail = state
-                .document
-                .split(target, range.start)
-                .map(|caret| caret.target.block);
-            let mut anchor = target.block;
-            for block in blocks {
-                anchor = state.document.insert_after(
-                    anchor,
+                inline.len()
+            });
+            let (at_start, at_end) = (range.start == 0, range.start == length);
+            // Text left after the caret keeps it; the pasted blocks go
+            // around the current one without leaving empty blocks behind.
+            let rest = if at_start || at_end {
+                (!at_end).then_some(target.block)
+            } else {
+                state
+                    .document
+                    .split(target, range.start)
+                    .map(|caret| caret.target.block)
+            };
+            let first = if at_start { index } else { index + 1 };
+            let mut last = None;
+            for (at, block) in (first..).zip(blocks) {
+                last = Some(state.document.insert(
+                    at,
                     Block {
                         id: BlockId::fresh(),
                         ..block.clone()
                     },
-                );
+                ));
             }
-            let caret = tail.map_or_else(
-                || Selection::caret(TextTarget::from(anchor), 0),
-                |tail| Selection::caret(TextTarget::from(tail), 0),
-            );
+            let replaced = at_start
+                && at_end
+                && last.is_some()
+                && matches!(
+                    state.document.block(target.block).map(|block| &block.kind),
+                    Some(BlockKind::Paragraph(_))
+                );
+            if replaced {
+                state.document.remove(target.block);
+            }
+            let end_of_last = last.and_then(|id| {
+                let target = state
+                    .document
+                    .targets()
+                    .into_iter()
+                    .rfind(|target| target.block == id)?;
+                let length = state.document.inline(target)?.len();
+                Some(Selection::caret(target, length))
+            });
+            let caret = rest
+                .map(|rest| Selection::caret(TextTarget::from(rest), 0))
+                .or(end_of_last)
+                .unwrap_or_else(|| Selection::caret(TextTarget::from(last.unwrap_or(target.block)), 0));
             state.document.ensure_editable();
             state.changed();
             state.request_caret(caret);
@@ -1081,6 +1127,19 @@ impl EditorController {
         })
     }
 
+    /// Top and bottom edge of the caret while the editor has the focus,
+    /// measured like [`block_offset`](Self::block_offset). Lets the page
+    /// keep the line being typed visible, e.g. above a soft keyboard.
+    #[must_use]
+    pub fn caret_bounds(&self) -> Option<(f32, f32)> {
+        let (probe, root) = self.peek(|state| {
+            let layout = state.layout.borrow();
+            Some((layout.caret.as_ref()?.1.clone(), layout.root?))
+        })?;
+        let (top, bottom) = probe()?;
+        Some((top - root, bottom - root))
+    }
+
     /// Whether one of the editor's text fields holds the keyboard focus.
     #[must_use]
     pub fn has_focus(&self) -> bool {
@@ -1108,7 +1167,19 @@ impl EditorController {
         });
     }
 
-    pub(crate) fn track_focus(&self, target: TextTarget, focused: bool) {
+    pub(crate) fn track_focus(&self, target: TextTarget, focused: bool, probe: CaretProbe) {
+        self.peek(|state| {
+            let mut layout = state.layout.borrow_mut();
+            if focused {
+                layout.caret = Some((target, probe));
+            } else if layout
+                .caret
+                .as_ref()
+                .is_some_and(|(owner, _)| *owner == target)
+            {
+                layout.caret = None;
+            }
+        });
         let current = self.peek(|state| state.focused);
         let next = match (focused, current) {
             (true, current) if current != Some(target) => Some(target),

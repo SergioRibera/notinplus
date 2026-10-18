@@ -83,7 +83,19 @@ impl Component for TextBlock {
         let read_only = shared.read_only;
 
         let is_focused = focus().is_focused();
-        use_side_effect(move || controller.track_focus(target, focus().is_focused()));
+        use_side_effect(move || {
+            let probe = Rc::new(move || {
+                let editor = editable.editor().peek();
+                let (top, bottom) = caret_rect(
+                    &holder.peek(),
+                    &editor.rope().to_string(),
+                    editor.cursor_pos(),
+                )?;
+                let origin = area.peek().min_y();
+                Some((origin + top, origin + bottom))
+            });
+            controller.track_focus(target, focus().is_focused(), probe);
+        });
         let request = self
             .caret
             .filter(|request| request.seq > applied_caret.get());
@@ -189,6 +201,15 @@ impl Component for TextBlock {
                 && let Key::Character(text) = &key
             {
                 controller.insert_text(text);
+                return;
+            }
+
+            if !command
+                && role == TextRole::Rich
+                && let Key::Character(text) = &key
+                && is_committed_paste(text)
+                && paste_markdown(&shared_for_keys, place, text)
+            {
                 return;
             }
 
@@ -967,19 +988,31 @@ fn paste(shared: &Shared, role: TextRole, place: TextPlace) -> bool {
         shared.controller.insert_inline(rich);
         return true;
     }
+    paste_markdown(shared, place, &text)
+}
+
+/// Insert `text` as parsed markdown when it looks like markdown.
+fn paste_markdown(shared: &Shared, place: TextPlace, text: &str) -> bool {
     let markdown_like = text.contains('\n')
         || ["**", "__", "`", "](", "~~", "==", "<span"]
             .iter()
             .any(|marker| text.contains(marker));
-    if markdown_like && place != TextPlace::Cell {
-        shared.controller.insert_markdown(&text);
-        return true;
+    if !markdown_like {
+        return false;
     }
-    if markdown_like {
+    if place == TextPlace::Cell {
         shared.controller.insert_markdown(&text.replace('\n', " "));
-        return true;
+    } else {
+        shared.controller.insert_markdown(text);
     }
-    false
+    true
+}
+
+/// Soft keyboards paste by committing the whole clipboard as typed text.
+fn is_committed_paste(text: &str) -> bool {
+    let count = text.chars().count();
+    (count > 1 && text.trim_end_matches(['\r', '\n']).contains('\n'))
+        || (count > 4 && (text.contains("**") || text.contains("](")))
 }
 
 fn link_at(holder: &ParagraphHolder, location: CursorPoint, content: &Inline) -> Option<String> {
@@ -1018,6 +1051,19 @@ fn menu_anchor(holder: &ParagraphHolder, text: &str, cursor: usize) -> (f32, f32
         let rect = inner.paragraph.cursor_rect(text, cursor, TextAlign::Left);
         (rect.bottom / scale + 4.0, rect.left / scale)
     })
+}
+
+/// Top and bottom edge of the caret at `cursor`, relative to the paragraph.
+fn caret_rect(holder: &ParagraphHolder, text: &str, cursor: usize) -> Option<(f32, f32)> {
+    let inner = holder.0.borrow();
+    let inner = inner.as_ref()?;
+    #[allow(clippy::cast_possible_truncation, reason = "scale factors are small")]
+    let scale = inner.scale_factor as f32;
+    if scale <= 0.0 {
+        return None;
+    }
+    let rect = inner.paragraph.cursor_rect(text, cursor, TextAlign::Left);
+    Some((rect.top / scale, rect.bottom / scale))
 }
 
 fn paint_decor(context: &mut CanvasContext, holder: &ParagraphHolder, decor: &[Decor]) {

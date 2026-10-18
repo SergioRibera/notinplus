@@ -496,4 +496,38 @@ fn focus_and_block_bounds_are_tracked() {
         panic!("block was laid out");
     };
     assert!(top < bottom, "{top} < {bottom}");
+    let caret = harness.runner.run_in(|| controller.caret_bounds());
+    let Some((caret_top, caret_bottom)) = caret else {
+        panic!("caret was measured");
+    };
+    assert!(
+        top <= caret_top && caret_bottom <= bottom + 1.,
+        "{caret_top}..{caret_bottom} in {top}..{bottom}"
+    );
+}
+
+#[test]
+fn soft_keyboard_paste_imports_markdown_blocks() {
+    let mut harness = Harness::new("intro");
+    let first = harness.block(0);
+    harness.focus(first, 5);
+    harness.named(NamedKey::Enter);
+    harness.key(
+        Key::Character("# Title\n\n- one\n- **two**".to_owned()),
+        Modifiers::empty(),
+    );
+    harness.type_text("!");
+    assert_eq!(harness.value(), "intro\n\n# Title\n\n- one\n- **two!**\n");
+}
+
+#[test]
+fn pasted_markdown_splits_around_the_caret() {
+    let mut harness = Harness::new("before after");
+    let first = harness.block(0);
+    harness.focus(first, 7);
+    harness.key(
+        Key::Character("## Mid\n\ntext".to_owned()),
+        Modifiers::empty(),
+    );
+    assert_eq!(harness.value(), "before \n\n## Mid\n\ntext\n\nafter\n");
 }
