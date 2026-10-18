@@ -54,6 +54,7 @@ impl Component for NotesFace {
         let chrome = crate::app::use_chrome_state();
         let router = RouterContext::get();
         let doc_linked = try_consume_context::<crate::doc_linked::DocLinkedChromeExt>();
+        let viewport_area = try_consume_context::<notein_ui_kit::ViewportArea>();
         let insets = *use_safe_area_insets().read();
         provide_safe_area_override(istmo::plugins::EdgeInsets::default());
         let (mut viewport, content_top) = use_follow_typing(controller, scroll);
@@ -79,6 +80,10 @@ impl Component for NotesFace {
             })),
             on_sidebar: Some(action(move || {
                 crate::components::SidebarModal::open_plugin(chrome, KIND_ID, item, router);
+            })),
+            on_share: Some(Box::new(move |at| {
+                let window = viewport_area.map(|area| *area.0.peek());
+                crate::notes_share::open_menu(controller, title.peek().clone(), at, window);
             })),
             on_toggle_mode: Some(action(move || controller.toggle_read_only())),
             ..TopbarActions::default()

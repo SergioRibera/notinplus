@@ -64,6 +64,9 @@ pub struct FabMenu {
     entries: Vec<FabMenuEntry>,
     anchor_right: f32,
     anchor_bottom: f32,
+    /// Hang from this distance to the top edge instead of sitting on the
+    /// bottom one.
+    anchor_top: Option<f32>,
     width: f32,
 }
 
@@ -79,6 +82,7 @@ impl Default for FabMenu {
             entries: Vec::new(),
             anchor_right: 24.0,
             anchor_bottom: 24.0,
+            anchor_top: None,
             width: 260.0,
         }
     }
@@ -104,6 +108,15 @@ impl FabMenu {
     pub const fn anchor(mut self, right: f32, bottom: f32) -> Self {
         self.anchor_right = right;
         self.anchor_bottom = bottom;
+        self
+    }
+
+    /// Hang the menu `top` pixels below the shell's top edge, `right`
+    /// pixels from its right edge — for menus opened from a top bar.
+    #[must_use]
+    pub const fn anchor_top(mut self, right: f32, top: f32) -> Self {
+        self.anchor_right = right;
+        self.anchor_top = Some(top);
         self
     }
 
@@ -134,11 +147,13 @@ impl Component for FabMenu {
             .background(Color::from_rgb(28, 28, 32))
             .with_corner_radius(14.0)
             .padding((6.0, 6.0))
-            .position(
-                Position::new_absolute()
-                    .right(self.anchor_right)
-                    .bottom(self.anchor_bottom),
-            );
+            .position({
+                let position = Position::new_absolute().right(self.anchor_right);
+                self.anchor_top.map_or_else(
+                    || position.clone().bottom(self.anchor_bottom),
+                    |top| position.clone().top(top),
+                )
+            });
 
         for entry in &self.entries {
             if entry.divider_above {

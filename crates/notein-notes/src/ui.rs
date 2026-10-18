@@ -14,24 +14,30 @@ const BUTTON_SIZE: f32 = 36.0;
 /// Boxed press handler.
 pub type Action = Box<dyn FnMut() + 'static>;
 
+/// Press handler told where the press landed, in window coordinates, so
+/// it can anchor a popup to the button. `None` for keyboard presses.
+pub type PointAction = Box<dyn FnMut(Option<(f32, f32)>) + 'static>;
+
 /// Top bar handlers. Missing ones hide their button.
 #[allow(missing_debug_implementations)]
 #[derive(Default)]
 pub struct TopbarActions {
     pub on_home: Option<Action>,
     pub on_sidebar: Option<Action>,
+    pub on_share: Option<PointAction>,
     pub on_toggle_mode: Option<Action>,
     pub on_split_horizontal: Option<Action>,
     pub on_split_vertical: Option<Action>,
     pub on_close_split: Option<Action>,
 }
 
-/// `[home][sidebar] title ............ [split][mode]`
+/// `[home][sidebar] title ............ [split][share][mode]`
 #[must_use]
 pub fn topbar(title: &str, read_only: bool, actions: TopbarActions) -> impl IntoElement {
     let TopbarActions {
         on_home,
         on_sidebar,
+        on_share,
         on_toggle_mode,
         on_split_horizontal,
         on_split_vertical,
@@ -74,16 +80,33 @@ pub fn topbar(title: &str, read_only: bool, actions: TopbarActions) -> impl Into
                 .map(|on_press| icon_button(lucide::square_split_vertical(), on_press)),
         )
         .maybe_child(on_close_split.map(|on_press| icon_button(lucide::x(), on_press)))
+        .maybe_child(on_share.map(share_button))
         .maybe_child(on_toggle_mode.map(|on_press| mode_chip(read_only, on_press)))
 }
 
 fn icon_button(icon: Bytes, mut on_press: Action) -> Element {
+    round_button(icon, move |_| on_press())
+}
+
+fn share_button(mut on_press: PointAction) -> Element {
+    round_button(lucide::share_2(), move |event| {
+        let at = match event.data() {
+            PressEventData::Mouse(mouse) => Some(mouse.global_location),
+            PressEventData::Touch(touch) => Some(touch.global_location),
+            PressEventData::Keyboard(_) => None,
+        };
+        #[allow(clippy::cast_possible_truncation, reason = "pixel coordinates")]
+        on_press(at.map(|at| (at.x as f32, at.y as f32)));
+    })
+}
+
+fn round_button(icon: Bytes, on_press: impl FnMut(Event<PressEventData>) + 'static) -> Element {
     rect()
         .width(Size::px(BUTTON_SIZE))
         .height(Size::px(BUTTON_SIZE))
         .center()
         .corner_radius(BUTTON_SIZE / 2.0)
-        .on_press(move |_| on_press())
+        .on_press(on_press)
         .child(
             SvgViewer::new(icon)
                 .color(TEXT)

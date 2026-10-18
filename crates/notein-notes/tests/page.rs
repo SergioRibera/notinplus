@@ -22,6 +22,7 @@ fn page() -> impl IntoElement {
             TopbarActions {
                 on_home: Some(action(())),
                 on_sidebar: Some(action(())),
+                on_share: Some(Box::new(|_| {})),
                 on_toggle_mode: Some(action(())),
                 on_split_horizontal: Some(action(())),
                 on_split_vertical: Some(action(())),
