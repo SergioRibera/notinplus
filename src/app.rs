@@ -321,7 +321,6 @@ impl Component for AppShell {
         // must run inside the freya scheduler context — `use_hook`
         // runs once per `AppShell` mount, exactly when `Platform::get`
         // becomes safe to call.
-        crate::soft_keyboard::use_text_field_focus();
         use_hook(|| {
             crate::host_api::flush_pending_fonts();
         });

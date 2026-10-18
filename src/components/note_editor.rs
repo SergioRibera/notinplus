@@ -198,7 +198,8 @@ pub(crate) fn notein_editor(
             }
             .into_element()
         }))
-        .on_link(|url| source_ref_nav::navigate(&SourceRef::from_link(url)));
+        .on_link(|url| source_ref_nav::navigate(&SourceRef::from_link(url)))
+        .on_input_context(crate::soft_keyboard::input_context);
     if let Some(provider) = completions {
         editor = editor.suggestions(
             SuggestionGroup::new("Referencias", move |query| {

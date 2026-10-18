@@ -1,19 +1,23 @@
 //! Soft keyboard on Android.
 //!
+//! - Note editors tell the keyboard the text around the caret
+//!   ([`input_context`]), so it suggests, corrects and capitalizes from
+//!   what is written instead of from an empty field.
 //! - `GameActivity` opens a single-line keyboard whose action key is
 //!   "Done"; while a note editor has the focus it is switched to a
 //!   multi-line one so the return key types line breaks.
-//! - The keyboard buffer is emptied when the focus moves to another text
-//!   field (winit only resets it when the keyboard turns on).
 //! - Tapping the focused field brings back a keyboard the system hid.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use freya::prelude::*;
+use freya_markdown_editor::prelude::InputContext;
 
 thread_local! {
     /// Note editors currently holding the focus.
     static NOTE_EDITORS: Cell<u32> = const { Cell::new(0) };
+    /// Last text and selection a note editor reported.
+    static NOTE_CONTEXT: RefCell<Option<InputContext>> = const { RefCell::new(None) };
 }
 
 /// Report that a note editor gained (`true`) or lost (`false`) the focus.
@@ -30,47 +34,42 @@ pub fn note_editor_focus(focused: bool) {
         (before, after)
     });
     if (before == 0) != (after == 0) {
-        android::set_multiline(after > 0);
+        let multiline = after > 0;
+        let context = if multiline {
+            NOTE_CONTEXT.with(|context| context.borrow().clone())
+        } else {
+            NOTE_CONTEXT.with(|context| context.borrow_mut().take());
+            None
+        };
+        android::set_layout(multiline, context.as_ref());
     }
 }
 
-/// Follow Freya's focus so every text field starts from an empty
-/// keyboard buffer. Call once, from the app root.
-pub fn use_text_field_focus() {
-    let previous = use_hook(|| std::rc::Rc::new(Cell::new(None::<(AccessibilityId, bool)>)));
-    use_side_effect(move || {
-        let platform = Platform::get();
-        let id = *platform.focused_accessibility_id.read();
-        let typing = focused_text_field(&platform);
-        // Turning the keyboard on already empties the buffer; only a move
-        // between two text fields needs it.
-        if let Some((before, was_typing)) = previous.replace(Some((id, typing)))
-            && before != id
-            && was_typing
-            && typing
-        {
-            android::reset_text();
-        }
-    });
+/// Input context handler for note editors.
+pub fn input_context(context: &InputContext) {
+    NOTE_CONTEXT.with(|current| *current.borrow_mut() = Some(context.clone()));
+    android::set_text(context);
 }
 
 /// Pointer-up handler for the app root: show the keyboard again when a
 /// text field has the focus but the keyboard was dismissed.
 pub fn reshow_on_tap(_: Event<PointerEventData>) {
-    if focused_text_field(&Platform::get()) {
+    let role = Platform::get().focused_accessibility_node.peek().role();
+    if freya_core::accessibility::ime::is_ime_role(role) {
         android::reshow();
     }
 }
 
-fn focused_text_field(platform: &Platform) -> bool {
-    freya_core::accessibility::ime::is_ime_role(platform.focused_accessibility_node.peek().role())
-}
-
 #[cfg(target_os = "android")]
 mod android {
+    use freya_markdown_editor::prelude::InputContext;
     use winit::platform::android::activity::input::{ImeOptions, InputType, TextInputAction};
+    use winit::platform::android::set_ime_surrounding_text;
 
-    pub(super) fn set_multiline(multiline: bool) {
+    /// Switch between the multi-line note keyboard and the single-line
+    /// one, then reload `context` (the field is unknown without one) so
+    /// the restarted keyboard picks up the new layout.
+    pub(super) fn set_layout(multiline: bool, context: Option<&InputContext>) {
         let Some(app) = istmo::android::android_app() else {
             return;
         };
@@ -88,14 +87,17 @@ mod android {
                 ImeOptions::IME_FLAG_NO_FULLSCREEN,
             );
         }
-        // Restarts the input connection, so an open keyboard picks up the
-        // new layout. The buffer is empty right after a focus change.
-        winit::platform::android::reset_ime_text(&app);
+        match context {
+            Some(context) => {
+                set_ime_surrounding_text(&app, &context.text, context.cursor, context.anchor);
+            }
+            None => set_ime_surrounding_text(&app, "", 0, 0),
+        }
     }
 
-    pub(super) fn reset_text() {
+    pub(super) fn set_text(context: &InputContext) {
         if let Some(app) = istmo::android::android_app() {
-            winit::platform::android::reset_ime_text(&app);
+            set_ime_surrounding_text(&app, &context.text, context.cursor, context.anchor);
         }
     }
 
@@ -110,7 +112,9 @@ mod android {
 
 #[cfg(not(target_os = "android"))]
 mod android {
-    pub(super) const fn set_multiline(_multiline: bool) {}
-    pub(super) const fn reset_text() {}
+    use freya_markdown_editor::prelude::InputContext;
+
+    pub(super) const fn set_layout(_multiline: bool, _context: Option<&InputContext>) {}
+    pub(super) const fn set_text(_context: &InputContext) {}
     pub(super) const fn reshow() {}
 }
