@@ -83,7 +83,7 @@ istmo-window = { path = "../istmo/crates/window" }
 istmo-build = { path = "../istmo/crates/build" }
 
 [patch.crates-io]
-winit = { git = "https://github.com/SergioRibera/winit", branch = "android-ime-events" }
+winit = { git = "https://github.com/SergioRibera/winit", branch = "notein" }
 
 [lints.rust]
 missing_debug_implementations = "warn"
