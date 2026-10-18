@@ -252,6 +252,8 @@ impl Component for GeneralSection {
             }
         };
 
+        let show_syntax = crate::components::show_markdown_syntax();
+
         let open = use_state(|| Option::<usize>::None);
         let slots = crate::plugins::fab_shortcut_slots();
         rect()
@@ -265,6 +267,17 @@ impl Component for GeneralSection {
                     "El lápiz dibuja"
                 },
                 toggle_switch(is_pan, self.tick, toggle),
+            ))
+            .child(settings_row(
+                "Sintaxis markdown en notas",
+                if show_syntax {
+                    "Al acercar el cursor se ve el markdown (**negrita**)"
+                } else {
+                    "El formato se edita como en un procesador de texto"
+                },
+                toggle_switch(show_syntax, self.tick, move || {
+                    crate::components::set_show_markdown_syntax(!show_syntax);
+                }),
             ))
             .child(
     rect()

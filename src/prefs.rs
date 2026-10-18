@@ -17,6 +17,7 @@
 //! ```text
 //! <data_dir>/notinplus/
 //!     prefs.bin                      // global toolbar prefs
+//!     editor.bin                     // markdown note editor prefs
 //!     views/<item_id>.bin            // per-doc viewport sidecar
 //! ```
 //!
@@ -38,6 +39,7 @@ use crate::library::bodies;
 
 const CODEC: Configuration = config::standard();
 const PREFS_FILE: &str = "prefs.bin";
+const EDITOR_PREFS_FILE: &str = "editor.bin";
 const VIEWS_SUBDIR: &str = "views";
 const VIEW_EXT: &str = "bin";
 /// Suffix for the DocLinked canvas-side viewport sidecar — kept apart
@@ -73,6 +75,15 @@ impl Prefs {
     pub fn size_scales_map(&self) -> HashMap<BrushKind, f32> {
         self.size_scales.iter().copied().collect()
     }
+}
+
+/// Markdown note editor prefs, shared by every note editor. Kept out of
+/// [`Prefs`] so adding fields to either never resets the other.
+#[istmo::message]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EditorPrefs {
+    /// Show the markdown source of formatting around the caret.
+    pub show_markdown_syntax: bool,
 }
 
 /// Per-doc view state (pan + zoom). Primitive fields so the encoded shape
@@ -144,6 +155,27 @@ pub fn save_prefs(prefs: &Prefs) -> io::Result<()> {
     let bytes = bincode::encode_to_vec(prefs, CODEC)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     write_atomic(&prefs_path(), &bytes)
+}
+
+/// Read [`EditorPrefs`]. Missing / corrupt payload → defaults.
+#[must_use]
+pub fn load_editor_prefs() -> EditorPrefs {
+    let Ok(bytes) = fs::read(bodies::root_dir().join(EDITOR_PREFS_FILE)) else {
+        return EditorPrefs::default();
+    };
+    bincode::decode_from_slice::<EditorPrefs, _>(&bytes, CODEC)
+        .map(|(p, _)| p)
+        .unwrap_or_default()
+}
+
+/// Atomically overwrite the editor prefs file.
+///
+/// # Errors
+/// Encode / fs failures.
+pub fn save_editor_prefs(prefs: EditorPrefs) -> io::Result<()> {
+    let bytes = bincode::encode_to_vec(prefs, CODEC)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    write_atomic(&bodies::root_dir().join(EDITOR_PREFS_FILE), &bytes)
 }
 
 /// Read the view sidecar for `id`. `None` when missing / corrupt.

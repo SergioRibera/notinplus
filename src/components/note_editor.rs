@@ -8,6 +8,8 @@
 //! - The `/` menu gets a "Referencias" section (`/ref query` scopes to it)
 //!   fed by plugin completions.
 //! - Regular links open through the platform URL handler.
+//! - The user choice to show markdown syntax ([`show_markdown_syntax`])
+//!   applies to every note editor at once.
 
 use std::borrow::Cow;
 
@@ -26,6 +28,32 @@ const DEFAULT_MIN_HEIGHT: f32 = 72.0;
 const CHIP_BG: Color = Color::from_rgb(44, 52, 70);
 const CHIP_FG: Color = Color::from_rgb(200, 215, 240);
 const CHIP_ICON_SIZE: f32 = 12.0;
+
+thread_local! {
+    static SHOW_MARKDOWN_SYNTAX: State<bool> =
+        State::create_global(crate::prefs::load_editor_prefs().show_markdown_syntax);
+}
+
+/// Whether note editors show the markdown source of the formatting around
+/// the caret. Reading it subscribes the caller.
+#[must_use]
+pub fn show_markdown_syntax() -> bool {
+    SHOW_MARKDOWN_SYNTAX.with(|state| *state.read())
+}
+
+/// Change [`show_markdown_syntax`] for every note editor and persist it.
+pub fn set_show_markdown_syntax(show: bool) {
+    SHOW_MARKDOWN_SYNTAX.with(|state| {
+        let mut state = *state;
+        state.set(show);
+    });
+    let prefs = crate::prefs::EditorPrefs {
+        show_markdown_syntax: show,
+    };
+    if let Err(err) = crate::prefs::save_editor_prefs(prefs) {
+        log::error!("save_editor_prefs: {err}");
+    }
+}
 
 /// Context installed by a bookmark popup / modal so chip taps can close
 /// the host overlay before navigating elsewhere.
@@ -110,6 +138,7 @@ impl Component for NoteEditor {
         let mut editor = MarkdownEditor::new(self.value.clone())
             .controller(controller)
             .theme(note_theme())
+            .syntax_reveal(show_markdown_syntax())
             .decorator(SchemeEmbed::new(deep_link::SCHEME, |embed| {
                 ChipWidget {
                     src: SourceRef::from_link(embed.url),

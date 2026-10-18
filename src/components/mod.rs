@@ -33,7 +33,9 @@ pub use fab_menu::{FabMenu, FabMenuEntry};
 pub use folder_create::{CreateFolderRequest, FolderCreateSheet};
 pub use form_input::FormInput;
 pub use modal::{Modal, ModalController, ModalPlacement, ModalPortal};
-pub use note_editor::{ChipTapCloseCallback, NoteEditor};
+pub use note_editor::{
+    ChipTapCloseCallback, NoteEditor, set_show_markdown_syntax, show_markdown_syntax,
+};
 pub use pane_tree_view::{PaneTreeCallbacks, PaneTreeView};
 pub use settings_modal::SettingsModal;
 pub use sidebar_modal::{SidebarModal, SidebarTab};
