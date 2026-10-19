@@ -29,8 +29,8 @@ use istmo::plugins::EdgeInsets;
 use crate::components::FormInput;
 use crate::components::drag_drop::{DragZone, DropZone};
 use crate::components::{
-    CanvasCreateSheet, CreateCanvasRequest, Modal, ModalController, SettingsModal, SpaceCardData,
-    SpaceEditRequest, SpaceEditSheet, SpaceStrip, auto_color,
+    CanvasCreateSheet, CreateCanvasRequest, GraphView, Modal, ModalController, SettingsModal,
+    SpaceCardData, SpaceEditRequest, SpaceEditSheet, SpaceStrip, auto_color,
 };
 use crate::hooks::use_safe_area_insets;
 use crate::library::{
@@ -245,6 +245,8 @@ fn top_bar() -> impl IntoElement {
                 .min_width(Size::px(40.))
                 .placeholder("Search"),
         )
+        .child(spacer_px(6.0))
+        .child(icon_button(icons::waypoints()).on_press(|_| GraphView::open()))
         .child(spacer_px(6.0))
         .child(icon_button(icons::settings()).on_press(|_| SettingsModal::open()))
 }
