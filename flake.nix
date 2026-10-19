@@ -10,13 +10,17 @@
   outputs = { nixpkgs, flake-utils, nix-bundle-app, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
+        pkgs = import nixpkgs {
+          inherit system;
+          config.allowUnfree = true;
+        };
       in {
         # Devshell — bring `just`, wayland/x11 dev libs for the desktop shell,
         # and the utilities the mobile builds shell out to.
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             just
+            claude-code-bin
             dioxus-cli
             pkg-config
             libGL

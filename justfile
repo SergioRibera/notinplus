@@ -46,10 +46,19 @@ release-android:
     docker run --rm -it {{mount}} \
         -w /src/notinplus/android \
         --entrypoint bash {{image}} \
-        -c 'gradle :app:bundleRelease --no-daemon'
+        -c 'gradle :app:bundleRelease --no-daemon && \
+            java -jar $BUNDLETOOL_PATH build-apks --overwrite --mode=universal \
+              --bundle=app/build/outputs/bundle/release/app-release.aab \
+              --output=app/build/outputs/bundle/release/app-release.apks && \
+            cd app/build/outputs/bundle/release && rm -f universal.apk && \
+            unzip -o app-release.apks universal.apk'
 
 install-android:
     adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+
+# Universal APK extracted by `release-android`; host adb sees the device.
+install-android-release:
+    adb install -r android/app/build/outputs/bundle/release/universal.apk
 
 # iOS — regenerate the .xcodeproj (idempotent) and build for the simulator.
 build-ios:
@@ -64,6 +73,7 @@ bundle-desktop:
 
 # Run the desktop shell (uses the mock runtime + emulator thread).
 android: (clean) (build-android) (install-android)
+android-release: (clean) (release-android) (install-android-release)
 
 # Run the desktop shell (uses the mock runtime + emulator thread).
 run:

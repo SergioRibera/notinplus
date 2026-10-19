@@ -19,6 +19,7 @@ android {
         // `applicationId`, `versionCode`, `versionName` and `minSdk`
         // come from `istmo.toml` `[app]` + `[min_versions]` — the
         // gradle plugin injects them and warns on manual overrides.
+        //
         targetSdk = 36
         ndk { abiFilters += setOf("arm64-v8a") }
     }
