@@ -1,7 +1,7 @@
 //! Handwriting smoothing on the [`Board`].
 //!
 //! While enabled, pen strokes collect into a pending letter. The letter
-//! closes when the next stroke starts away from it or the pen rests for
+//! closes when the next stroke does not overlap it or the pen rests for
 //! [`LETTER_IDLE`] (the UI owns that timer, see
 //! [`Board::set_handwriting_waker`]). A closed letter is recognized and,
 //! when it reads as a character, its strokes are replaced by an
@@ -21,7 +21,7 @@ use crate::ids::StrokeId;
 use crate::ink_glyph::{GlyphFont, InkGlyph, InkGlyphId};
 
 /// Pen rest that closes the pending letter.
-pub const LETTER_IDLE: Duration = Duration::from_millis(650);
+pub const LETTER_IDLE: Duration = Duration::from_millis(1200);
 /// Distance of the best match past which the ink is not a character.
 /// Around the 99th percentile of correct matches in `glyph-bake eval`.
 const REJECT_DISTANCE: f32 = 3.0;
@@ -30,8 +30,22 @@ const MAX_STROKES: usize = 5;
 /// Slack around the pending letter, as a fraction of its size, where a
 /// new stroke still belongs to it. Vertical slack is wider so tittles
 /// and accents written after the body join it.
-const JOIN_SLACK_X: f32 = 0.15;
+const JOIN_SLACK_X: f32 = 0.05;
 const JOIN_SLACK_Y: f32 = 0.7;
+
+/// Candidates scanned for one that passes [`fits_ink_size`].
+const CANDIDATES: usize = 8;
+
+/// Largest ink, in pen widths, that can be `glyph`. The recognizer
+/// normalizes size away, so a stem drawn bottom-up reads as `.`; only
+/// the absolute size tells a dot from a stroke.
+fn fits_ink_size(glyph: char, pen_widths: f32) -> bool {
+    match glyph {
+        '.' => pen_widths <= 3.0,
+        ',' | '\'' | '`' => pen_widths <= 7.0,
+        _ => true,
+    }
+}
 
 /// Bundled recognizer, decoded once. `None` (logged) if the archive is
 /// stale; re-run `glyph-bake templates`.
@@ -131,27 +145,16 @@ impl Board {
         }
     }
 
-    /// Close the pending letter when a stroke starting at `(x, y)` is
-    /// not part of it.
-    pub(super) fn handwriting_before_stroke(&mut self, x: f32, y: f32) {
-        if self.handwriting.pending.is_empty() {
-            return;
-        }
-        let joins = self.pending_bounds().is_some_and(|b| {
-            let size = b.width().max(b.height());
-            let (slack_x, slack_y) = (JOIN_SLACK_X * size, JOIN_SLACK_Y * size);
-            (b.min_x - slack_x..=b.max_x + slack_x).contains(&x)
-                && (b.min_y - slack_y..=b.max_y + slack_y).contains(&y)
-        });
-        if !joins {
-            self.close_letter();
-        }
-    }
-
     /// Track a just-committed stroke as part of the pending letter.
+    /// Close the previous letter first when the stroke does not overlap it
+    /// (decided on the whole stroke, so a `t` bar starting left of its stem
+    /// still joins).
     pub(super) fn handwriting_after_stroke(&mut self, id: StrokeId, kind: BrushKind) {
         if !self.handwriting.enabled || !writes(kind) {
             return;
+        }
+        if !self.handwriting.pending.is_empty() && !self.joins_pending(id) {
+            self.close_letter();
         }
         let handwriting = &mut self.handwriting;
         handwriting.pending.push(id);
@@ -169,6 +172,32 @@ impl Board {
     pub(super) fn forget_handwriting(&mut self) {
         self.handwriting.pending.clear();
         self.handwriting.generation += 1;
+    }
+
+    /// Whether stroke `id` overlaps the pending letter grown by the join
+    /// slack. The horizontal slack never drops below two pen widths so a
+    /// tittle drifting off its stem still lands.
+    fn joins_pending(&self, id: StrokeId) -> bool {
+        let Some(stroke) = self.doc.find_stroke(id) else {
+            return true;
+        };
+        let (Some(pending), Some(new)) = (
+            self.pending_bounds(),
+            Bounds::of(stroke.points.iter().map(|p| (p.x, p.y))),
+        ) else {
+            return true;
+        };
+        let pen_width = self
+            .doc
+            .preset(stroke.brush)
+            .map_or(0.0, |preset| preset.max_width * preset.size_scale);
+        let size = pending.width().max(pending.height());
+        let slack_x = (JOIN_SLACK_X * size).max(2.0 * pen_width);
+        let slack_y = JOIN_SLACK_Y * size;
+        new.min_x <= pending.max_x + slack_x
+            && new.max_x >= pending.min_x - slack_x
+            && new.min_y <= pending.max_y + slack_y
+            && new.max_y >= pending.min_y - slack_y
     }
 
     fn pending_bounds(&self) -> Option<Bounds> {
@@ -202,25 +231,30 @@ impl Board {
             .iter()
             .map(|(_, stroke)| stroke.points.iter().map(|p| Point::new(p.x, p.y)).collect())
             .collect();
-        let Some(best) = recognizer.recognize(&ink, None, 1).into_iter().next() else {
+        let Some(centerline) = Bounds::of(ink.iter().flatten().map(|p| (p.x, p.y))) else {
             return;
         };
-        if best.distance > REJECT_DISTANCE {
-            return;
-        }
-        // The outline includes the font's stroke weight, so fit it over the
-        // inked area rather than the bare centerline (a `.` has none).
-        let pad = self
+        let pen_width = self
             .doc
             .preset(first.brush)
-            .map_or(0.0, |preset| preset.max_width * preset.size_scale * 0.5);
-        let Some(bounds) = Bounds::of(ink.iter().flatten().map(|p| (p.x, p.y))).map(|b| Bounds {
-            min_x: b.min_x - pad,
-            min_y: b.min_y - pad,
-            max_x: b.max_x + pad,
-            max_y: b.max_y + pad,
-        }) else {
+            .map_or(0.0, |preset| preset.max_width * preset.size_scale);
+        let pen_widths = centerline.width().max(centerline.height()) / pen_width.max(f32::EPSILON);
+        let Some(best) = recognizer
+            .recognize(&ink, None, CANDIDATES)
+            .into_iter()
+            .find(|candidate| fits_ink_size(candidate.glyph, pen_widths))
+            .filter(|candidate| candidate.distance <= REJECT_DISTANCE)
+        else {
             return;
+        };
+        // The outline includes the font's stroke weight, so fit it over the
+        // inked area rather than the bare centerline (a `.` has none).
+        let pad = pen_width * 0.5;
+        let bounds = Bounds {
+            min_x: centerline.min_x - pad,
+            min_y: centerline.min_y - pad,
+            max_x: centerline.max_x + pad,
+            max_y: centerline.max_y + pad,
         };
         let Some(glyph) = place(best.glyph, GlyphFont::selected(), bounds, first.color) else {
             return;
@@ -407,6 +441,49 @@ mod tests {
         board.flush_handwriting(board.handwriting.generation);
         assert_eq!(glyphs(&board), 0);
         assert_eq!(board.doc().stroke_count(), 1);
+    }
+
+    #[test]
+    fn long_stem_drawn_upwards_is_not_a_dot() {
+        let mut board = Board::default();
+        board.set_handwriting(true);
+        let mut up = stem(50.0);
+        up.reverse();
+        stroke(&mut board, &up);
+        board.flush_handwriting(board.handwriting.generation);
+        let glyph = board
+            .doc()
+            .layers
+            .iter()
+            .flat_map(|layer| layer.glyphs.iter())
+            .next();
+        assert!(glyph.is_none_or(|glyph| glyph.glyph != '.'));
+    }
+
+    #[test]
+    fn offset_tittle_joins_its_stem() {
+        let mut board = Board::default();
+        board.set_handwriting(true);
+        stroke(&mut board, &stem(50.0));
+        stroke(&mut board, &[(53.0, 80.0), (53.5, 80.5)]);
+        assert_eq!(board.handwriting.pending.len(), 2);
+    }
+
+    #[test]
+    fn next_letter_close_by_closes_the_previous_one() {
+        let mut board = Board::default();
+        board.set_handwriting(true);
+        stroke(&mut board, &stem(50.0));
+        stroke(&mut board, &stem(62.0));
+        assert_eq!(glyphs(&board), 1);
+        assert_eq!(board.handwriting.pending.len(), 1);
+    }
+
+    #[test]
+    fn tiny_dot_stays_a_dot() {
+        assert!(fits_ink_size('.', 1.0));
+        assert!(!fits_ink_size('.', 20.0));
+        assert!(fits_ink_size('l', 20.0));
     }
 
     #[test]

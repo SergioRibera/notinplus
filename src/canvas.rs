@@ -1015,7 +1015,6 @@ impl Board {
             Some(layer) if !layer.locked => {}
             _ => return,
         }
-        self.handwriting_before_stroke(point.x, point.y);
         self.active_layer_at_begin = Some(target);
         let brush = self.doc.register_brush(self.current_preset);
         let id = self.doc.allocate_stroke_id();
