@@ -14,7 +14,6 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bincode::config::standard;
 use freya::icons::lucide;
 use notein_plugin::{
     Bookmark, BookmarkId, CanvasError, CanvasKind, ConfigError, ConfigSchema, ConfigValue,
@@ -77,10 +76,8 @@ impl CanvasKind for StrokeCanvasPlugin {
         let doc = if item_bytes.is_empty() {
             Doc::default()
         } else {
-            match bincode::decode_from_slice::<Doc, _>(item_bytes, standard()) {
-                Ok((doc, _)) => doc,
-                Err(err) => return Err(CanvasError::OpenFailed(err.to_string())),
-            }
+            Doc::from_snapshot(item_bytes)
+                .map_err(|err| CanvasError::OpenFailed(err.to_string()))?
         };
         let id = self.alloc_id();
         self.lock_instances().insert(id, doc);
@@ -114,7 +111,7 @@ impl CanvasKind for StrokeCanvasPlugin {
         let Some(doc) = guard.get(&instance) else {
             return Vec::new();
         };
-        bincode::encode_to_vec(doc, standard()).unwrap_or_default()
+        doc.snapshot_bytes().unwrap_or_default()
     }
 
     fn apply_remote_op(&self, _instance: u64, _op: &[u8]) {}
@@ -170,8 +167,8 @@ impl CanvasKind for StrokeCanvasPlugin {
             other => return Err(CreationError::UnknownEntry(other.to_owned())),
         };
         let suggested_name = name_hint.map_or_else(|| default_name.to_owned(), str::to_owned);
-        let doc = Doc::default();
-        let item_bytes = bincode::encode_to_vec(&doc, standard())
+        let item_bytes = Doc::default()
+            .snapshot_bytes()
             .map_err(|e| CreationError::BackendFailed(e.to_string()))?;
         Ok(ItemCreationResult {
             item_bytes,
@@ -210,8 +207,7 @@ mod tests {
             .execute_creation(NEW_CANVAS, None, None)
             .expect("execute");
         assert_eq!(result.suggested_name, "Lienzo infinito");
-        let (_doc, _) =
-            bincode::decode_from_slice::<Doc, _>(&result.item_bytes, standard()).expect("decode");
+        Doc::from_snapshot(&result.item_bytes).expect("decode");
     }
 
     #[test]

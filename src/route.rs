@@ -308,14 +308,21 @@ fn spawn_autosave_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Receiv
     spawn(async move {
         while rx.recv_async().await.is_ok() {
             while rx.try_recv().is_ok() {}
-            let mut doc_snapshot = {
+            let (bytes, captured) = {
                 let guard = lock(&board);
-                guard.doc().clone()
+                let doc = guard.doc();
+                match doc.snapshot_bytes() {
+                    Ok(bytes) => (bytes, crate::library::refs::capture(doc)),
+                    Err(err) => {
+                        log::error!("autosave snapshot id={id:?}: {err}");
+                        continue;
+                    }
+                }
             };
             match crate::home::open_library().await {
                 Ok(handle) => {
                     let mut lib = handle.lock().await;
-                    if let Err(err) = lib.save_doc(id, &mut doc_snapshot).await {
+                    if let Err(err) = lib.save_doc_snapshot(id, &bytes, captured).await {
                         log::error!("autosave save_doc id={id:?}: {err}");
                     }
                 }

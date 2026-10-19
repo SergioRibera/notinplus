@@ -885,26 +885,33 @@ fn left_top(
                 .child(icon_button(arrow_left(), {
                     let board = Arc::clone(board);
                     move || {
-                        let mut doc_snapshot = {
+                        let snapshot = {
                             let mut guard = lock(&board);
                             guard.end_text_session();
-                            guard.doc().clone()
+                            let doc = guard.doc();
+                            doc.snapshot_bytes()
+                                .map(|bytes| (bytes, crate::library::refs::capture(doc)))
                         };
                         let item_id = RouterContext::get()
                             .current::<crate::route::Route>()
                             .canvas_item();
                         spawn(async move {
-                            if let Some(id) = item_id {
-                                match crate::home::open_library().await {
-                                    Ok(handle) => {
-                                        let mut lib = handle.lock().await;
-                                        if let Err(err) = lib.save_doc(id, &mut doc_snapshot).await
-                                        {
-                                            log::error!("save_doc: {err}");
+                            match (item_id, snapshot) {
+                                (Some(id), Ok((bytes, captured))) => {
+                                    match crate::home::open_library().await {
+                                        Ok(handle) => {
+                                            let mut lib = handle.lock().await;
+                                            if let Err(err) =
+                                                lib.save_doc_snapshot(id, &bytes, captured).await
+                                            {
+                                                log::error!("save_doc: {err}");
+                                            }
                                         }
+                                        Err(err) => log::error!("open library on back: {err}"),
                                     }
-                                    Err(err) => log::error!("open library on back: {err}"),
                                 }
+                                (Some(_), Err(err)) => log::error!("snapshot on back: {err}"),
+                                (None, _) => {}
                             }
                             let _ = RouterContext::get().push(crate::route::Route::Home);
                         });

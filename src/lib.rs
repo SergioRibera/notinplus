@@ -40,7 +40,6 @@ pub mod ink_glyph;
 pub mod library;
 pub mod notes_face;
 pub mod notes_share;
-pub mod op;
 pub mod palette_popup;
 pub mod pdf_select_overlay;
 pub mod pdf_viewer;

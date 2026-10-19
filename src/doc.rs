@@ -1,27 +1,31 @@
-//! `.notinplus` document — the persisted shape of a drawing.
+//! A drawing: the persisted shape of a canvas.
 //!
 //! Vector-only by design: every stroke is a sequence of quantised
-//! [`InkPoint`]s referencing a [`BrushPreset`] in the shared registry.
-//! Strokes live inside [`Layer`]s — paint order is bottom-to-top by
-//! layer, then insertion order within each layer. Bincode 2 is the
-//! wire codec (`istmo::message` prepends the derives); no serde in the
-//! tree.
+//! [`InkPoint`](crate::brush::InkPoint)s referencing a [`BrushPreset`]
+//! in the shared registry. Strokes live inside [`Layer`]s — paint
+//! order is bottom-to-top by layer, then insertion order within each
+//! layer.
+//!
+//! The plain fields are the materialised state the renderer reads
+//! every frame. Behind them a [`store::DocStore`] keeps the same state
+//! as a mergeable history: every mutation goes through [`Doc::emit`],
+//! which records the change in the store and mirrors it into the
+//! fields, and changes made elsewhere arrive through
+//! [`Doc::import_updates`], after which the fields are rebuilt from
+//! the store.
 
-use std::io;
-use std::path::Path;
+mod store;
 
-use bincode::config::{self, Configuration};
+use std::fmt;
 
 use crate::bookmark::Bookmark;
 use crate::brush::{BrushId, BrushPreset, Stroke};
-use crate::doc_op::{DocOp, OpRecord};
-use crate::identity::global_actor;
+use crate::doc_op::DocOp;
 use crate::ids::{BookmarkId, StrokeId};
 use crate::ink_glyph::{InkGlyph, InkGlyphId};
-use crate::op::OpId;
 use crate::text_box::{TextBox, TextBoxId};
 
-const CODEC: Configuration = config::standard();
+use self::store::DocStore;
 
 /// One editable layer.
 ///
@@ -60,10 +64,32 @@ impl Layer {
     }
 }
 
+/// Failure inside the document store.
+#[derive(Debug)]
+pub enum DocError {
+    /// The underlying store rejected the operation.
+    Store(String),
+    /// A domain payload could not be encoded or decoded.
+    Codec(String),
+    /// The store holds a container shape this build does not read.
+    Shape(&'static str),
+}
+
+impl fmt::Display for DocError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Store(msg) => write!(f, "doc store error: {msg}"),
+            Self::Codec(msg) => write!(f, "doc codec error: {msg}"),
+            Self::Shape(what) => write!(f, "doc store has an unexpected shape at {what}"),
+        }
+    }
+}
+
+impl std::error::Error for DocError {}
+
 /// A drawing. Brush presets are interned into `brushes`; strokes carry
 /// only a [`BrushId`] into that table and their own colour override.
-#[istmo::message]
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Debug)]
 pub struct Doc {
     pub brushes: Vec<BrushPreset>,
     /// Bottom-to-top paint order. `layers[0]` renders first (below);
@@ -76,68 +102,145 @@ pub struct Doc {
     /// order (not z-sorted) — the pin overlay sorts by position / age
     /// at paint time. UUID ids mean cross-device merges never collide.
     pub bookmarks: Vec<Bookmark>,
-    /// Highest Lamport observed on this doc. Local emission in
-    /// Phase 1.2 bumps this before stamping an `OpId`; Phase 10
-    /// `observe_remote` fast-forwards it past an incoming op.
-    pub lamport: u64,
-    /// Append-only CRDT op record log. Empty until Phase 1.2 wires
-    /// mutations to emit; shape is fixed now so persisted docs don't
-    /// need another breaking migration mid-phase.
-    pub log: Vec<OpRecord>,
+    store: DocStore,
 }
 
 impl Default for Doc {
     fn default() -> Self {
+        let store = match DocStore::seeded() {
+            Ok(store) => store,
+            Err(err) => {
+                // The seed only touches containers this build created;
+                // failure would mean the store itself is broken.
+                log::error!("seed doc store: {err}");
+                DocStore::seeded().unwrap_or_else(|_| unreachable!("fresh store cannot fail twice"))
+            }
+        };
         Self {
             brushes: Vec::new(),
             layers: vec![Layer::new(0, "Layer 1")],
             active_layer: 0,
             next_layer_id: 1,
             bookmarks: Vec::new(),
-            lamport: 0,
-            log: Vec::new(),
+            store,
         }
     }
 }
 
-/// Compact the log into the materialised snapshot once it crosses
-/// this threshold. Peers that are more than `SNAPSHOT_EVERY` ops
-/// behind cannot catch up from a diff after a compaction — Phase 10
-/// will formalise a sync-aware policy that only trims up to the
-/// slowest known peer's `OpId`.
-const SNAPSHOT_EVERY: usize = 512;
+impl Clone for Doc {
+    /// Deep copy: the clone owns an independent history.
+    fn clone(&self) -> Self {
+        Self {
+            brushes: self.brushes.clone(),
+            layers: self.layers.clone(),
+            active_layer: self.active_layer,
+            next_layer_id: self.next_layer_id,
+            bookmarks: self.bookmarks.clone(),
+            store: self.store.fork(),
+        }
+    }
+}
+
+impl PartialEq for Doc {
+    /// Compares the materialised state only; two docs with the same
+    /// content but different histories are equal.
+    fn eq(&self, other: &Self) -> bool {
+        self.brushes == other.brushes
+            && self.layers == other.layers
+            && self.active_layer == other.active_layer
+            && self.next_layer_id == other.next_layer_id
+            && self.bookmarks == other.bookmarks
+    }
+}
 
 impl Doc {
-    /// Stamp an `OpId`, mutate the materialised state via [`apply`],
-    /// and append the record to the log. Returns the stamped `OpId`
-    /// so callers that need to tag follow-up work (undo-stack entries
-    /// in Phase 1.3, bookmark backrefs in Phase 1.5) can keep the
-    /// identifier without a second lookup.
-    pub fn emit(&mut self, op: DocOp) -> OpId {
-        self.lamport = self.lamport.saturating_add(1);
-        let id = OpId {
-            lamport: self.lamport,
-            actor: global_actor(),
+    /// Rebuild a doc from bytes produced by [`Self::snapshot_bytes`].
+    ///
+    /// # Errors
+    /// Corrupt bytes or a container shape this build does not read.
+    pub fn from_snapshot(bytes: &[u8]) -> Result<Self, DocError> {
+        let store = DocStore::from_snapshot(bytes)?;
+        let mut doc = Self {
+            brushes: Vec::new(),
+            layers: Vec::new(),
+            active_layer: 0,
+            next_layer_id: 0,
+            bookmarks: Vec::new(),
+            store,
         };
+        doc.refresh()?;
+        Ok(doc)
+    }
+
+    /// Full history + state, ready for [`Self::from_snapshot`].
+    ///
+    /// # Errors
+    /// Store export failure.
+    pub fn snapshot_bytes(&self) -> Result<Vec<u8>, DocError> {
+        self.store.snapshot()
+    }
+
+    /// Opaque marker of everything this doc has seen. Hand it to
+    /// another replica's [`Self::updates_since`] to get what is
+    /// missing here.
+    #[must_use]
+    pub fn version(&self) -> Vec<u8> {
+        self.store.version()
+    }
+
+    /// Changes this doc knows that a replica at `version` does not.
+    ///
+    /// # Errors
+    /// Malformed `version` or store export failure.
+    pub fn updates_since(&self, version: &[u8]) -> Result<Vec<u8>, DocError> {
+        self.store.updates_since(version)
+    }
+
+    /// Merge changes made on another replica and rebuild the
+    /// materialised state.
+    ///
+    /// # Errors
+    /// Corrupt bytes or a container shape this build does not read.
+    pub fn import_updates(&mut self, bytes: &[u8]) -> Result<(), DocError> {
+        self.store.import(bytes)?;
+        self.refresh()
+    }
+
+    fn refresh(&mut self) -> Result<(), DocError> {
+        let state = self.store.materialize()?;
+        self.brushes = state.brushes;
+        self.layers = state.layers;
+        self.active_layer = state.active_layer;
+        self.next_layer_id = state.next_layer_id;
+        self.bookmarks = state.bookmarks;
+        Ok(())
+    }
+
+    /// Record `op` in the store and mirror it into the materialised
+    /// state. A store failure is logged and the materialised state
+    /// still moves, so the user never loses the edit on screen.
+    #[allow(clippy::needless_pass_by_value)] // callers hand the op over; it has landed once this returns
+    pub fn emit(&mut self, op: DocOp) {
+        if let Err(err) = self.store.apply(&op, self) {
+            log::error!("doc store apply: {err}");
+        }
         self.apply(&op);
-        self.log.push(OpRecord { id, op });
-        id
     }
 
     /// Apply a single op to the materialised state. Idempotent on the
     /// shapes that matter (duplicate `PushStroke`, duplicate
-    /// `RegisterBrush`, repeated `SetActiveLayer` on the same id) so
-    /// Phase 10 replay from a shared log converges.
+    /// `RegisterBrush`, repeated `SetActiveLayer` on the same id).
+    #[allow(clippy::too_many_lines)]
     fn apply(&mut self, op: &DocOp) {
         match op {
             DocOp::RegisterBrush { preset } => {
                 if !self.brushes.iter().any(|b| b == preset) {
-                    self.brushes.push(preset.clone());
+                    self.brushes.push(*preset);
                 }
             }
             DocOp::PushStroke { layer_id, stroke } => {
-                if let Some(layer) = self.layers.iter_mut().find(|l| l.id == *layer_id)
-                    && !layer.strokes.iter().any(|s| s.id == stroke.id)
+                if self.find_stroke(stroke.id).is_none()
+                    && let Some(layer) = self.layers.iter_mut().find(|l| l.id == *layer_id)
                 {
                     layer.strokes.push(stroke.clone());
                 }
@@ -197,9 +300,7 @@ impl Doc {
             }
             DocOp::AddBookmark { bookmark } => {
                 if !self.bookmarks.iter().any(|b| b.id == bookmark.id) {
-                    let mut copy = bookmark.clone();
-                    copy.lamport = copy.lamport.max(self.lamport);
-                    self.bookmarks.push(copy);
+                    self.bookmarks.push(bookmark.clone());
                 }
             }
             DocOp::UpdateBookmark {
@@ -214,7 +315,6 @@ impl Doc {
                     bm.refs.clone_from(refs);
                     bm.color = *color;
                     bm.updated_at = *updated_at;
-                    bm.lamport = bm.lamport.max(self.lamport);
                 }
             }
             DocOp::DeleteBookmark { id } => {
@@ -225,7 +325,6 @@ impl Doc {
             DocOp::StickBookmark { id, to } => {
                 if let Some(bm) = self.bookmarks.iter_mut().find(|b| b.id == *id) {
                     bm.stuck_to = *to;
-                    bm.lamport = bm.lamport.max(self.lamport);
                 }
             }
             DocOp::AddText { layer_id, text } => {
@@ -276,23 +375,16 @@ impl Doc {
         }
     }
 
-    /// Drop the op log while keeping the materialised state and the
-    /// lamport counter. Future ops continue past the retained lamport
-    /// so causal ordering survives compaction.
-    pub fn compact_log(&mut self) {
-        self.log.clear();
-    }
-
     /// Produce the op list that undoes `op` when applied in order.
     /// Must be called *before* `op` lands in [`Self::emit`] — LWW
     /// variants read the previous value from the current state.
     ///
     /// Empty vec = non-invertible in isolation. `RegisterBrush` is the
     /// canonical case: `BrushId` is positional and removing an entry
-    /// would renumber every later stroke's brush pointer. Callers
-    /// that need to undo a palette registration must snapshot the
-    /// whole doc instead; here we treat it as additive forever.
+    /// would renumber every later stroke's brush pointer, so palette
+    /// registrations are additive forever.
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn inverse_before_apply(&self, op: &DocOp) -> Vec<DocOp> {
         match op {
             DocOp::RegisterBrush { .. } => Vec::new(),
@@ -569,15 +661,6 @@ impl Doc {
         None
     }
 
-    /// Trim the log if it has grown past [`SNAPSHOT_EVERY`]. Invoked
-    /// before every persist so disk files never grow unbounded. Pure
-    /// in-memory — writes happen elsewhere.
-    pub fn maybe_compact_log(&mut self) {
-        if self.log.len() >= SNAPSHOT_EVERY {
-            self.compact_log();
-        }
-    }
-
     /// Insert `preset` if not already registered and return its
     /// [`BrushId`]. Deduping by structural equality keeps identical
     /// palette entries from bloating the registry when a doc is loaded
@@ -640,24 +723,18 @@ impl Doc {
         true
     }
 
-    /// Mint a fresh stroke id without pushing anything. Replaces the
-    /// pre-UUID monotonic counter — UUID v4 is globally unique, so no
-    /// per-doc state is needed.
+    /// Mint a fresh stroke id without pushing anything.
     #[must_use]
+    #[allow(clippy::unused_self)]
     pub fn allocate_stroke_id(&self) -> StrokeId {
         StrokeId::new_v4()
     }
 
     #[must_use]
     pub fn find_stroke(&self, id: StrokeId) -> Option<&Stroke> {
-        for layer in &self.layers {
-            for stroke in &layer.strokes {
-                if stroke.id == id {
-                    return Some(stroke);
-                }
-            }
-        }
-        None
+        self.layers
+            .iter()
+            .find_map(|layer| layer.strokes.iter().find(|s| s.id == id))
     }
 
     /// Remove the stroke with `id` from whichever layer holds it.
@@ -746,9 +823,6 @@ impl Doc {
 
     /// Flat iterator over every committed stroke across all layers in
     /// paint order (bottom layer first, then insertion order within).
-    /// Materialised view intended for read-only consumers (render,
-    /// search). Mutations stay on dedicated methods so Phase 1.2 can
-    /// make every one of them emit a [`DocOp`](crate::doc_op::DocOp).
     pub fn strokes(&self) -> impl Iterator<Item = &Stroke> {
         self.layers.iter().flat_map(|l| l.strokes.iter())
     }
@@ -758,96 +832,103 @@ impl Doc {
     pub fn stroke_count(&self) -> usize {
         self.layers.iter().map(|l| l.strokes.len()).sum()
     }
-
-    #[must_use]
-    pub fn log(&self) -> &[OpRecord] {
-        &self.log
-    }
-
-    #[must_use]
-    pub const fn lamport(&self) -> u64 {
-        self.lamport
-    }
-
-    /// # Errors
-    /// I/O or bincode encode failures.
-    pub fn save(&mut self, path: impl AsRef<Path>) -> io::Result<()> {
-        self.maybe_compact_log();
-        let bytes = bincode::encode_to_vec(&*self, CODEC)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        std::fs::write(path, bytes)
-    }
-
-    /// # Errors
-    /// I/O or bincode decode failures.
-    pub fn load(path: impl AsRef<Path>) -> io::Result<Self> {
-        let bytes = std::fs::read(path)?;
-        let (doc, _) = bincode::decode_from_slice::<Self, _>(&bytes, CODEC)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        Ok(doc)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bookmark::{SourceRef, StrokeAnchor, WorldPoint};
     use crate::brush::InkPoint;
 
+    fn point(x: f32, y: f32) -> InkPoint {
+        InkPoint::new(x, y, 0, 0, 0)
+    }
+
     #[test]
-    fn every_mutation_appends_an_op_with_monotonic_lamport() {
+    fn snapshot_round_trips_every_kind_of_content() {
         let mut d = Doc::default();
-        let before = d.lamport();
         let bid = d.register_brush(BrushPreset::pen());
-        let sid = d.push_stroke(bid, [1, 2, 3, 4], vec![InkPoint::new(0.0, 0.0, 0, 0, 0)]);
+        let sid = d.push_stroke(bid, [1, 2, 3, 4], vec![point(0.0, 0.0)]);
         let l2 = d.add_layer("L2");
         d.set_active_layer(l2);
         d.set_layer_visible(l2, false);
         d.set_layer_locked(l2, true);
         d.set_layer_opacity(l2, 0.5);
-        d.remove_stroke(sid);
-        d.remove_layer(l2);
-        d.clear();
-        // 9 ops: RegisterBrush, PushStroke, AddLayer, SetActiveLayer,
-        // SetLayerVisible, SetLayerLocked, SetLayerOpacity,
-        // RemoveStroke, RemoveLayer, Clear = 10. Count:
-        assert_eq!(d.log().len(), 10);
-        assert_eq!(d.lamport(), before + 10);
-        let lamports: Vec<u64> = d.log().iter().map(|r| r.id.lamport).collect();
-        assert!(lamports.windows(2).all(|w| w[0] < w[1]));
+        d.push_stroke(bid, [9; 4], vec![point(1.0, 2.0)]);
+        let bm = BookmarkId::new_v4();
+        d.emit(DocOp::AddBookmark {
+            bookmark: Bookmark::new(bm, WorldPoint::new(3.0, 4.0), 10),
+        });
+        d.emit(DocOp::AddText {
+            layer_id: 0,
+            text: TextBox {
+                id: TextBoxId::new_v4(),
+                frame: crate::text_box::TextFrame::at(1.0, 1.0),
+                markdown: "hola".into(),
+                color: [0, 0, 0, 255],
+            },
+        });
+
+        let bytes = d.snapshot_bytes().unwrap();
+        let back = Doc::from_snapshot(&bytes).unwrap();
+        assert_eq!(back, d);
+        assert!(back.find_stroke(sid).is_some());
+        assert_eq!(back.active_layer, l2);
+        assert_eq!(back.next_layer_id, d.next_layer_id);
+        assert_eq!(back.bookmark(bm).unwrap().anchor, WorldPoint::new(3.0, 4.0));
     }
 
     #[test]
-    fn apply_replay_rebuilds_state() {
-        use crate::doc_op::OpRecord;
-        let mut d = Doc::default();
-        let bid = d.register_brush(BrushPreset::marker());
-        d.push_stroke(bid, [10; 4], vec![InkPoint::new(0.0, 0.0, 0, 0, 0)]);
-        let l2 = d.add_layer("Layer 2");
-        d.set_active_layer(l2);
-        d.push_stroke(bid, [20; 4], vec![InkPoint::new(1.0, 2.0, 0, 0, 0)]);
-        d.set_layer_opacity(l2, 0.3);
+    fn concurrent_edits_converge_in_either_order() {
+        let mut a = Doc::default();
+        let base = a.snapshot_bytes().unwrap();
+        let mut b = Doc::from_snapshot(&base).unwrap();
+        let va = a.version();
+        let vb = b.version();
 
-        let log: Vec<OpRecord> = d.log().to_vec();
-        let mut replay = Doc::default();
-        for record in &log {
-            replay.apply(&record.op);
-        }
-        assert_eq!(replay.brushes, d.brushes);
-        assert_eq!(replay.layers, d.layers);
-        assert_eq!(replay.active_layer, d.active_layer);
+        let brush_a = a.register_brush(BrushPreset::pen());
+        let sa = a.push_stroke(brush_a, [1; 4], vec![point(0.0, 0.0)]);
+        let brush_b = b.register_brush(BrushPreset::marker());
+        let sb = b.push_stroke(brush_b, [2; 4], vec![point(5.0, 5.0)]);
+        let lb = b.add_layer("from b");
+
+        let from_a = a.updates_since(&vb).unwrap();
+        let from_b = b.updates_since(&va).unwrap();
+        a.import_updates(&from_b).unwrap();
+        b.import_updates(&from_a).unwrap();
+
+        assert_eq!(a, b);
+        assert!(a.find_stroke(sa).is_some());
+        assert!(a.find_stroke(sb).is_some());
+        assert!(a.layer(lb).is_some());
+        assert_eq!(a.brushes.len(), 2);
     }
 
     #[test]
-    fn compact_log_preserves_state_and_lamport() {
-        let mut d = Doc::default();
-        let bid = d.register_brush(BrushPreset::pen());
-        d.push_stroke(bid, [0; 4], vec![InkPoint::new(0.0, 0.0, 0, 0, 0)]);
-        let lamport_before = d.lamport();
-        let layers_before = d.layers.clone();
-        d.compact_log();
-        assert!(d.log().is_empty());
-        assert_eq!(d.lamport(), lamport_before);
-        assert_eq!(d.layers, layers_before);
+    fn remote_removal_drops_the_stroke_here() {
+        let mut a = Doc::default();
+        let bid = a.register_brush(BrushPreset::pen());
+        let sid = a.push_stroke(bid, [1; 4], vec![point(0.0, 0.0)]);
+        let mut b = Doc::from_snapshot(&a.snapshot_bytes().unwrap()).unwrap();
+        let before = a.version();
+        b.remove_stroke(sid);
+        a.import_updates(&b.updates_since(&before).unwrap())
+            .unwrap();
+        assert!(a.find_stroke(sid).is_none());
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn clone_is_an_independent_replica() {
+        let mut a = Doc::default();
+        let bid = a.register_brush(BrushPreset::pen());
+        let mut c = a.clone();
+        let only_in_clone = c.push_stroke(bid, [1; 4], vec![point(0.0, 0.0)]);
+        assert!(a.find_stroke(only_in_clone).is_none());
+        let before = a.version();
+        a.import_updates(&c.updates_since(&before).unwrap())
+            .unwrap();
+        assert!(a.find_stroke(only_in_clone).is_some());
     }
 
     #[test]
@@ -863,51 +944,12 @@ mod tests {
     fn strokes_iterator_flattens_layers() {
         let mut d = Doc::default();
         let bid = d.register_brush(BrushPreset::pen());
-        d.push_stroke(bid, [0; 4], vec![InkPoint::new(0.0, 0.0, 0, 0, 0)]);
+        d.push_stroke(bid, [0; 4], vec![point(0.0, 0.0)]);
         let l2 = d.add_layer("Layer 2");
         d.set_active_layer(l2);
-        d.push_stroke(bid, [0; 4], vec![InkPoint::new(1.0, 1.0, 0, 0, 0)]);
+        d.push_stroke(bid, [0; 4], vec![point(1.0, 1.0)]);
         assert_eq!(d.strokes().count(), 2);
         assert_eq!(d.stroke_count(), 2);
-    }
-
-    #[test]
-    fn roundtrip_preserves_log_and_lamport() {
-        use crate::doc_op::{DocOp, OpRecord};
-        use crate::identity::{ActorId, DeviceId, UserId};
-        use crate::op::OpId;
-        let mut d = Doc::default();
-        d.lamport = 7;
-        d.log.push(OpRecord {
-            id: OpId {
-                lamport: 7,
-                actor: ActorId {
-                    user: UserId::new_v4(),
-                    device: DeviceId::new_v4(),
-                },
-            },
-            op: DocOp::Clear,
-        });
-        let bytes = bincode::encode_to_vec(&d, CODEC).unwrap();
-        let (d2, _) = bincode::decode_from_slice::<Doc, _>(&bytes, CODEC).unwrap();
-        assert_eq!(d, d2);
-        assert_eq!(d2.lamport(), 7);
-        assert_eq!(d2.log().len(), 1);
-    }
-
-    #[test]
-    fn roundtrip() {
-        let mut d = Doc::default();
-        let bid = d.register_brush(BrushPreset::marker());
-        let id = d.push_stroke(
-            bid,
-            [200, 20, 20, 255],
-            vec![InkPoint::new(1.0, 2.0, 128, 32, 0)],
-        );
-        let bytes = bincode::encode_to_vec(&d, CODEC).unwrap();
-        let (d2, _) = bincode::decode_from_slice::<Doc, _>(&bytes, CODEC).unwrap();
-        assert_eq!(d, d2);
-        assert!(d2.find_stroke(id).is_some());
     }
 
     #[test]
@@ -917,8 +959,7 @@ mod tests {
         assert!(d.set_active_layer(l2));
         assert_eq!(d.active_layer, l2);
         let bid = d.register_brush(BrushPreset::pen());
-        let sid = d.push_stroke(bid, [0, 0, 0, 255], vec![InkPoint::new(0.0, 0.0, 0, 0, 0)]);
-        // stroke lands in Layer 2, not Layer 1.
+        let sid = d.push_stroke(bid, [0, 0, 0, 255], vec![point(0.0, 0.0)]);
         assert!(d.layer(l2).unwrap().strokes.iter().any(|s| s.id == sid));
         assert!(d.layer(0).unwrap().strokes.is_empty());
     }
@@ -930,17 +971,29 @@ mod tests {
         let l2 = d.add_layer("Layer 2");
         assert!(d.remove_layer(l2).is_some());
         assert_eq!(d.layers.len(), 1);
+        let back = Doc::from_snapshot(&d.snapshot_bytes().unwrap()).unwrap();
+        assert_eq!(back, d);
+    }
+
+    #[test]
+    fn clear_resets_store_and_state_alike() {
+        let mut d = Doc::default();
+        let bid = d.register_brush(BrushPreset::pen());
+        d.push_stroke(bid, [0; 4], vec![point(0.0, 0.0)]);
+        d.add_layer("Layer 2");
+        d.clear();
+        assert_eq!(d.layers.len(), 1);
+        assert_eq!(d.stroke_count(), 0);
+        let back = Doc::from_snapshot(&d.snapshot_bytes().unwrap()).unwrap();
+        assert_eq!(back, d);
     }
 
     #[test]
     fn bookmark_add_update_delete_roundtrip() {
-        use crate::bookmark::{Bookmark, SourceRef, WorldPoint};
-        use crate::ids::BookmarkId;
         let mut d = Doc::default();
         let bid = BookmarkId::new_v4();
-        let bm = Bookmark::new(bid, WorldPoint::new(10.0, 20.0), 1000);
         d.emit(DocOp::AddBookmark {
-            bookmark: bm.clone(),
+            bookmark: Bookmark::new(bid, WorldPoint::new(10.0, 20.0), 1000),
         });
         assert_eq!(d.bookmarks().len(), 1);
         assert_eq!(d.bookmark(bid).unwrap().anchor, WorldPoint::new(10.0, 20.0));
@@ -958,20 +1011,21 @@ mod tests {
         assert_eq!(after.body, "hola");
         assert_eq!(after.refs.len(), 1);
         assert_eq!(after.updated_at, 2000);
+        let back = Doc::from_snapshot(&d.snapshot_bytes().unwrap()).unwrap();
+        assert_eq!(back.bookmark(bid).unwrap().body, "hola");
 
         d.emit(DocOp::DeleteBookmark { id: bid });
         assert!(d.bookmark(bid).is_none());
+        let back = Doc::from_snapshot(&d.snapshot_bytes().unwrap()).unwrap();
+        assert!(back.bookmark(bid).is_none());
     }
 
     #[test]
     fn bookmark_add_delete_inverses_roundtrip() {
-        use crate::bookmark::{Bookmark, WorldPoint};
-        use crate::ids::BookmarkId;
         let mut d = Doc::default();
         let bid = BookmarkId::new_v4();
-        let bm = Bookmark::new(bid, WorldPoint::new(1.0, 2.0), 0);
         let add = DocOp::AddBookmark {
-            bookmark: bm.clone(),
+            bookmark: Bookmark::new(bid, WorldPoint::new(1.0, 2.0), 0),
         };
         let inv_add = d.inverse_before_apply(&add);
         d.emit(add);
@@ -994,8 +1048,6 @@ mod tests {
 
     #[test]
     fn stick_bookmark_inverse_restores_previous_target() {
-        use crate::bookmark::{Bookmark, StrokeAnchor, WorldPoint};
-        use crate::ids::{BookmarkId, StrokeId};
         let mut d = Doc::default();
         let bid = BookmarkId::new_v4();
         d.emit(DocOp::AddBookmark {

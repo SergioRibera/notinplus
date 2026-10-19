@@ -97,10 +97,7 @@ pub fn supports_ink(kind: &DocKind) -> bool {
 /// Pane body for `item`. Unknown plugins get a placeholder.
 #[must_use]
 pub fn render(item: ItemId, kind: &DocKind) -> Element {
-    match get(&kind.plugin_id) {
-        Some(face) => face.render(item),
-        None => missing_plugin(&kind.plugin_id),
-    }
+    get(&kind.plugin_id).map_or_else(|| missing_plugin(&kind.plugin_id), |face| face.render(item))
 }
 
 fn missing_plugin(plugin_id: &str) -> Element {

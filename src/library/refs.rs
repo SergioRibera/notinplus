@@ -209,14 +209,35 @@ fn doc_refs(doc: &Doc) -> Vec<(RefOrigin, SourceRef)> {
     out
 }
 
+/// References a canvas doc makes, captured so they can be recorded
+/// later without holding on to the doc.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Captured {
+    refs: Vec<(RefOrigin, SourceRef)>,
+    pins: Vec<[u8; 16]>,
+}
+
+/// Collect what `doc` references right now.
+#[must_use]
+pub fn capture(doc: &Doc) -> Captured {
+    Captured {
+        refs: doc_refs(doc),
+        pins: doc.bookmarks().iter().map(|b| b.id.0).collect(),
+    }
+}
+
 /// Re-index the references a canvas doc makes. Call after every save.
 pub fn record_doc(item: ItemId, doc: &Doc) {
-    let found = doc_refs(doc);
-    let pins: Vec<[u8; 16]> = doc.bookmarks().iter().map(|b| b.id.0).collect();
+    record_captured(item, capture(doc));
+}
+
+/// Re-index from a [`Captured`] set taken earlier with [`capture`].
+pub fn record_captured(item: ItemId, captured: Captured) {
     let mut guard = index();
-    guard.record_pins(item, pins);
-    guard.replace(item, found);
+    guard.record_pins(item, captured.pins);
+    guard.replace(item, captured.refs);
     persist(&guard);
+    drop(guard);
 }
 
 /// Re-index the references a markdown note makes. Call after every
@@ -227,6 +248,7 @@ pub fn record_note(item: ItemId, markdown: &str) {
     let mut guard = index();
     guard.replace(item, found);
     persist(&guard);
+    drop(guard);
 }
 
 /// Drop every reference from or to `item`.
@@ -234,6 +256,7 @@ pub fn forget(item: ItemId) {
     let mut guard = index();
     guard.forget(item);
     persist(&guard);
+    drop(guard);
 }
 
 /// References `item` makes.
@@ -284,6 +307,7 @@ pub fn rebuild<'a>(
         guard.replace(item, found);
     }
     persist(&guard);
+    drop(guard);
 }
 
 #[cfg(test)]

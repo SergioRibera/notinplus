@@ -131,7 +131,7 @@ impl Default for HighlighterTip {
 /// Per-variant tunables paired with a [`BrushKind`].
 ///
 /// Intentionally outside the [`BrushPreset`] wire shape: presets travel
-/// on disk (see [`crate::doc::Doc::save`]) and adding variant-scoped
+/// on disk and adding variant-scoped
 /// fields there would churn the doc format every time the popup grows
 /// a control. [`crate::canvas::Board`] owns a `BrushKind → BrushConfig`
 /// map; UI writes through [`crate::canvas::Board::set_brush_config`],

@@ -71,15 +71,12 @@ impl Library {
             DataStoreConfig::new(index::NAMESPACE.to_owned()),
         )
         .await?;
-        let index = match index::load(&client).await? {
-            Some(index) => index,
-            None => {
-                // Nothing readable under the current key: whatever the
-                // item store holds belongs to an older schema.
-                bodies::discard_store();
-                LibraryIndex::default()
-            }
-        };
+        let index = index::load(&client).await?.unwrap_or_else(|| {
+            // Nothing readable under the current key: whatever the
+            // item store holds belongs to an older schema.
+            bodies::discard_store();
+            LibraryIndex::default()
+        });
         let workspaces = index::load_workspaces(&client).await?;
         let links = index::load_links(&client).await?;
         let mut lib = Self {
@@ -578,12 +575,36 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`] / body I/O.
-    pub async fn save_doc(&mut self, id: ItemId, doc: &mut Doc) -> Result<()> {
+    pub async fn save_doc(&mut self, id: ItemId, doc: &Doc) -> Result<()> {
         if self.index.item(id).is_none() {
             return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
         }
         bodies::write_doc(id, doc)?;
         refs::record_doc(id, doc);
+        self.touch_item(id).await
+    }
+
+    /// Persist snapshot bytes taken earlier with [`Doc::snapshot_bytes`]
+    /// together with the references captured at the same moment.
+    /// Lets a worker export under the board lock and write without it.
+    ///
+    /// # Errors
+    /// [`LibraryError::NotFound`] / body I/O.
+    pub async fn save_doc_snapshot(
+        &mut self,
+        id: ItemId,
+        bytes: &[u8],
+        captured: refs::Captured,
+    ) -> Result<()> {
+        if self.index.item(id).is_none() {
+            return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
+        }
+        bodies::write_doc_bytes(id, bytes)?;
+        refs::record_captured(id, captured);
+        self.touch_item(id).await
+    }
+
+    async fn touch_item(&mut self, id: ItemId) -> Result<()> {
         let now = now_millis();
         if let Some(item) = self.index.item_mut(id) {
             item.updated_at = now;
