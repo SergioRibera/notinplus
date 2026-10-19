@@ -17,6 +17,7 @@ use crate::brush::{BrushId, BrushPreset, Stroke};
 use crate::doc_op::{DocOp, OpRecord};
 use crate::identity::global_actor;
 use crate::ids::{BookmarkId, StrokeId};
+use crate::ink_glyph::{InkGlyph, InkGlyphId};
 use crate::op::OpId;
 use crate::text_box::{TextBox, TextBoxId};
 
@@ -39,6 +40,8 @@ pub struct Layer {
     pub strokes: Vec<Stroke>,
     /// Text boxes painted above this layer's strokes, in insertion order.
     pub texts: Vec<TextBox>,
+    /// Recognized handwriting redrawn from a font, painted with the strokes.
+    pub glyphs: Vec<InkGlyph>,
 }
 
 impl Layer {
@@ -52,6 +55,7 @@ impl Layer {
             opacity: 1.0,
             strokes: Vec::new(),
             texts: Vec::new(),
+            glyphs: Vec::new(),
         }
     }
 }
@@ -254,6 +258,21 @@ impl Doc {
                     }
                 }
             }
+            DocOp::AddGlyph { layer_id, glyph } => {
+                if self.locate_glyph(glyph.id).is_none()
+                    && let Some(layer) = self.layers.iter_mut().find(|l| l.id == *layer_id)
+                {
+                    layer.glyphs.push(*glyph);
+                }
+            }
+            DocOp::DeleteGlyph { id } => {
+                for layer in &mut self.layers {
+                    if let Some(pos) = layer.glyphs.iter().position(|g| g.id == *id) {
+                        layer.glyphs.remove(pos);
+                        return;
+                    }
+                }
+            }
         }
     }
 
@@ -322,6 +341,12 @@ impl Doc {
                             text: text.clone(),
                         });
                     }
+                    for glyph in &layer.glyphs {
+                        ops.push(DocOp::AddGlyph {
+                            layer_id: layer.id,
+                            glyph: *glyph,
+                        });
+                    }
                 }
                 if !had_zero {
                     // The clear-seeded default layer was not in the
@@ -371,6 +396,12 @@ impl Doc {
                     ops.push(DocOp::AddText {
                         layer_id: *id,
                         text: text.clone(),
+                    });
+                }
+                for glyph in &layer.glyphs {
+                    ops.push(DocOp::AddGlyph {
+                        layer_id: *id,
+                        glyph: *glyph,
                     });
                 }
                 if self.active_layer == *id {
@@ -472,7 +503,24 @@ impl Doc {
                     }]
                 })
                 .unwrap_or_default(),
+            DocOp::AddGlyph { glyph, .. } => vec![DocOp::DeleteGlyph { id: glyph.id }],
+            DocOp::DeleteGlyph { id } => self
+                .locate_glyph(*id)
+                .map(|(layer_id, glyph)| vec![DocOp::AddGlyph { layer_id, glyph }])
+                .unwrap_or_default(),
         }
+    }
+
+    /// `(layer_id, glyph)` for the ink glyph carrying `id`.
+    #[must_use]
+    pub fn locate_glyph(&self, id: InkGlyphId) -> Option<(u32, InkGlyph)> {
+        self.layers.iter().find_map(|layer| {
+            layer
+                .glyphs
+                .iter()
+                .find(|g| g.id == id)
+                .map(|glyph| (layer.id, *glyph))
+        })
     }
 
     /// `(layer_id, text)` for the text box carrying `id`.

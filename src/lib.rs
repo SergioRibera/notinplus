@@ -39,6 +39,7 @@ pub mod hooks;
 pub mod host_api;
 pub mod host_overlay;
 pub mod identity;
+pub mod ink_glyph;
 pub mod ids;
 pub mod library;
 pub mod linked_source;

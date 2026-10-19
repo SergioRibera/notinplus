@@ -60,6 +60,7 @@ notein-ui-kit = { path = "crates/notein-ui-kit" }
 freya-markdown-editor = { path = "crates/freya-markdown-editor" }
 notein-bible = { path = "crates/notein-bible", features = ["ui", "importer"] }
 notein-notes = { path = "crates/notein-notes" }
+notein-handwriting = { path = "crates/notein-handwriting" }
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.14"

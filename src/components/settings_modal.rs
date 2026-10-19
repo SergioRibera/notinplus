@@ -25,6 +25,7 @@ use notein_plugin::{
 use crate::canvas::{Board, InputMode};
 use crate::components::form_input::FormInput;
 use crate::components::modal::{Modal, ModalController};
+use crate::ink_glyph::GlyphFont;
 use freya::icons::lucide as icons;
 
 use crate::components::theme::*;
@@ -279,6 +280,7 @@ impl Component for GeneralSection {
                     crate::components::set_show_markdown_syntax(!show_syntax);
                 }),
             ))
+            .child(handwriting_font_row(self.tick))
             .child(
     rect()
         .vertical()
@@ -1183,6 +1185,47 @@ fn toggle_switch(
             tick.set(next);
             on_press()
         })
+}
+
+/// Font the canvas redraws recognized handwriting in.
+fn handwriting_font_row(mut tick: State<u64>) -> impl IntoElement {
+    let _rerender = *tick.read();
+    let selected = GlyphFont::selected();
+    let mut chips = rect().horizontal().spacing(6.0);
+    for font in GlyphFont::ALL {
+        let active = font == selected;
+        chips = chips.child(
+            rect()
+                .padding((6.0, 12.0))
+                .with_corner_radius(8.0)
+                .background(if active {
+                    Color::from_rgb(80, 140, 240)
+                } else {
+                    Color::from_rgb(70, 70, 80)
+                })
+                .on_press(move |_| {
+                    font.select();
+                    let mut saved = crate::prefs::load_handwriting_prefs();
+                    saved.font = font;
+                    if let Err(err) = crate::prefs::save_handwriting_prefs(saved) {
+                        log::error!("save_handwriting_prefs: {err}");
+                    }
+                    let next = *tick.peek() + 1;
+                    tick.set(next);
+                })
+                .child(
+                    label()
+                        .color(TEXT_PRIMARY)
+                        .font_size(12.0)
+                        .text(font.name()),
+                ),
+        );
+    }
+    settings_row(
+        "Fuente de escritura suavizada",
+        "Con el botón de firma activo, las letras escritas se redibujan en esta fuente",
+        chips,
+    )
 }
 
 fn settings_row(

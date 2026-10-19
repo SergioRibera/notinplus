@@ -39,12 +39,16 @@ use crate::brush::{
 use crate::doc::Doc;
 use crate::doc_op::DocOp;
 use crate::ids::{BookmarkId, StrokeId};
+use crate::ink_glyph::InkGlyphId;
 use crate::render::{BrushRegistry, HighlighterBrush, HighlighterState, PointerStyle};
 use crate::spatial::SpatialIndex;
 use crate::text_box::TextBoxId;
 use crate::undo::UndoStack;
 
+mod handwriting;
 mod text;
+
+pub use handwriting::LETTER_IDLE;
 
 pub use text::{SceneText, TextLayerView, TextScene};
 
@@ -165,6 +169,10 @@ pub struct Board {
     /// commit / erase / load — repainting is a `HashMap` lookup plus a
     /// single `draw_path` call.
     cached_paths: HashMap<StrokeId, Path>,
+    /// Filled outline per [`crate::ink_glyph::InkGlyph`], rebuilt on add / load.
+    glyph_paths: HashMap<InkGlyphId, Path>,
+    /// Handwriting smoothing: pending letter, font, idle timer channel.
+    handwriting: handwriting::Handwriting,
     /// `stroke_id → (layer_id, within-layer stroke index)`. Kills the
     /// O(N) `position` scan the eraser used to run per candidate hit
     /// and localises index shifting to the affected layer.
@@ -359,6 +367,8 @@ impl Default for Board {
             brush_configs: HashMap::new(),
             spatial: SpatialIndex::new(),
             cached_paths: HashMap::new(),
+            glyph_paths: HashMap::new(),
+            handwriting: handwriting::Handwriting::default(),
             stroke_index: HashMap::new(),
             undo: UndoStack::default(),
             erase_session: None,
@@ -938,6 +948,17 @@ impl Board {
         self.touch_text_scene();
         self.undo.clear();
         self.spatial.clear();
+        self.glyph_paths.clear();
+        self.forget_handwriting();
+        let glyphs: Vec<crate::ink_glyph::InkGlyph> = self
+            .doc
+            .layers
+            .iter()
+            .flat_map(|layer| layer.glyphs.iter().copied())
+            .collect();
+        for glyph in &glyphs {
+            self.cache_glyph(glyph);
+        }
         self.cached_paths.clear();
         self.stroke_index.clear();
         // Clone the Arc so the loop body can call renderer methods
@@ -994,6 +1015,7 @@ impl Board {
             Some(layer) if !layer.locked => {}
             _ => return,
         }
+        self.handwriting_before_stroke(point.x, point.y);
         self.active_layer_at_begin = Some(target);
         let brush = self.doc.register_brush(self.current_preset);
         let id = self.doc.allocate_stroke_id();
@@ -1087,8 +1109,10 @@ impl Board {
             return;
         }
         if let Some(active) = self.active.take() {
+            let (id, kind) = (active.id, self.current_kind());
             self.commit_stroke(active);
             self.two_point_active = false;
+            self.handwriting_after_stroke(id, kind);
             self.notify_commit();
         }
     }
@@ -1134,6 +1158,7 @@ impl Board {
     /// was undone.
     pub fn undo(&mut self) -> bool {
         self.end_text_session();
+        self.forget_handwriting();
         let Some(entry) = self.undo.pop_undo() else {
             return false;
         };
@@ -1164,6 +1189,7 @@ impl Board {
     /// `true` iff something was redone.
     pub fn redo(&mut self) -> bool {
         self.end_text_session();
+        self.forget_handwriting();
         let Some(entry) = self.undo.pop_redo() else {
             return false;
         };
@@ -1582,11 +1608,14 @@ impl Board {
                     self.stroke_index.remove(&sid);
                     self.cached_paths.remove(&sid);
                 }
+                self.glyph_paths
+                    .retain(|id, _| self.doc.locate_glyph(*id).is_some());
             }
             DocOp::Clear => {
                 self.doc.emit(DocOp::Clear);
                 self.spatial.clear();
                 self.cached_paths.clear();
+                self.glyph_paths.clear();
                 self.stroke_index.clear();
             }
             DocOp::PushStroke { layer_id, stroke } => {
@@ -1613,6 +1642,14 @@ impl Board {
                         .unwrap_or(layer.strokes.len().saturating_sub(1));
                     self.stroke_index.insert(id, (layer_id, idx));
                 }
+            }
+            DocOp::AddGlyph { layer_id, glyph } => {
+                self.doc.emit(DocOp::AddGlyph { layer_id, glyph });
+                self.cache_glyph(&glyph);
+            }
+            DocOp::DeleteGlyph { id } => {
+                self.doc.emit(DocOp::DeleteGlyph { id });
+                self.glyph_paths.remove(&id);
             }
             // Layer attr, brush registry and bookmark ops don't touch
             // the stroke-derived indices.
@@ -1737,6 +1774,15 @@ impl Board {
                 }
             }
         }
+        let mut glyphs: Vec<InkGlyphId> = Vec::new();
+        for &(cx, cy, r) in &session.circles {
+            for id in self.glyphs_touching_circle(cx, cy, r) {
+                if !glyphs.contains(&id) {
+                    glyphs.push(id);
+                }
+            }
+        }
+        self.erase_glyphs(&glyphs);
         self.erase_texts(&texts);
         if session.originals.is_empty() {
             return;
@@ -1873,6 +1919,8 @@ impl Board {
         let Some((_, id)) = best else {
             if let Some(&text) = self.texts_touching_circle(x, y, radius).last() {
                 self.erase_texts(&[text]);
+            } else if let Some(&glyph) = self.glyphs_touching_circle(x, y, radius).last() {
+                self.erase_glyphs(&[glyph]);
             }
             return;
         };
@@ -1909,7 +1957,8 @@ impl Board {
             }
         }
         let texts = self.texts_in_rect(min_x, min_y, max_x, max_y);
-        if targets.is_empty() && texts.is_empty() {
+        let glyphs = self.glyphs_in_rect(min_x, min_y, max_x, max_y);
+        if targets.is_empty() && texts.is_empty() && glyphs.is_empty() {
             return;
         }
         self.undo.begin();
@@ -1917,6 +1966,7 @@ impl Board {
             self.apply_op(DocOp::RemoveStroke { id });
         }
         self.erase_texts(&texts);
+        self.erase_glyphs(&glyphs);
         self.undo.commit();
     }
 
@@ -2081,6 +2131,7 @@ impl Board {
                 }
                 canvas.draw_path(cached, &paint);
             }
+            self.paint_glyphs(canvas, layer, opacity);
             if mask_this {
                 if let Some(circles) = mask_circles {
                     let mut mask = Paint::default();

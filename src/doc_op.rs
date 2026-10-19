@@ -14,6 +14,7 @@
 use crate::bookmark::{Bookmark, Rgba, SourceRef, StrokeAnchor, TimestampMs};
 use crate::brush::{BrushPreset, Stroke};
 use crate::ids::{BookmarkId, StrokeId};
+use crate::ink_glyph::{InkGlyph, InkGlyphId};
 use crate::op::OpId;
 use crate::text_box::{TextBox, TextBoxId, TextFrame};
 
@@ -109,5 +110,13 @@ pub enum DocOp {
     },
     DeleteText {
         id: TextBoxId,
+    },
+    /// Insert a recognized handwritten character on `layer_id`.
+    AddGlyph {
+        layer_id: u32,
+        glyph: InkGlyph,
+    },
+    DeleteGlyph {
+        id: InkGlyphId,
     },
 }

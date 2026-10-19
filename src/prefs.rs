@@ -40,6 +40,7 @@ use crate::library::bodies;
 const CODEC: Configuration = config::standard();
 const PREFS_FILE: &str = "prefs.bin";
 const EDITOR_PREFS_FILE: &str = "editor.bin";
+const HANDWRITING_PREFS_FILE: &str = "handwriting.bin";
 const VIEWS_SUBDIR: &str = "views";
 const VIEW_EXT: &str = "bin";
 /// Suffix for the DocLinked canvas-side viewport sidecar — kept apart
@@ -84,6 +85,15 @@ impl Prefs {
 pub struct EditorPrefs {
     /// Show the markdown source of formatting around the caret.
     pub show_markdown_syntax: bool,
+}
+
+/// Handwriting smoothing prefs. Own file, like [`EditorPrefs`].
+#[istmo::message]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HandwritingPrefs {
+    /// Replace written letters with font glyphs.
+    pub enabled: bool,
+    pub font: crate::ink_glyph::GlyphFont,
 }
 
 /// Per-doc view state (pan + zoom). Primitive fields so the encoded shape
@@ -176,6 +186,27 @@ pub fn save_editor_prefs(prefs: EditorPrefs) -> io::Result<()> {
     let bytes = bincode::encode_to_vec(prefs, CODEC)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     write_atomic(&bodies::root_dir().join(EDITOR_PREFS_FILE), &bytes)
+}
+
+/// Read [`HandwritingPrefs`]. Missing / corrupt payload → defaults.
+#[must_use]
+pub fn load_handwriting_prefs() -> HandwritingPrefs {
+    let Ok(bytes) = fs::read(bodies::root_dir().join(HANDWRITING_PREFS_FILE)) else {
+        return HandwritingPrefs::default();
+    };
+    bincode::decode_from_slice::<HandwritingPrefs, _>(&bytes, CODEC)
+        .map(|(p, _)| p)
+        .unwrap_or_default()
+}
+
+/// Atomically overwrite the handwriting prefs file.
+///
+/// # Errors
+/// Encode / fs failures.
+pub fn save_handwriting_prefs(prefs: HandwritingPrefs) -> io::Result<()> {
+    let bytes = bincode::encode_to_vec(prefs, CODEC)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    write_atomic(&bodies::root_dir().join(HANDWRITING_PREFS_FILE), &bytes)
 }
 
 /// Read the view sidecar for `id`. `None` when missing / corrupt.

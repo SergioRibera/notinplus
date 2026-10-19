@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use freya::animation::{AnimNum, Ease, Function, use_animation_transition};
 use freya::icons::lucide::{
-    arrow_left, hand, layers, panel_left, pencil, redo, sliders_horizontal,
+    arrow_left, hand, layers, panel_left, pencil, redo, signature, sliders_horizontal,
     square_split_horizontal, square_split_vertical, text_select, undo, x,
 };
 use freya::prelude::*;
@@ -398,6 +398,8 @@ pub(crate) struct ChromeState {
     /// `false`; nothing else is a mounted hook so toggling is cheap.
     pub(crate) layers_visible: State<bool>,
     pub(crate) mode: State<InputMode>,
+    /// Mirrors [`Board::handwriting_enabled`] for the top-right toggle.
+    pub(crate) handwriting: State<bool>,
     pub(crate) selected_bookmark: State<Option<crate::ids::BookmarkId>>,
     pub(crate) bookmark_body: State<String>,
     pub(crate) sidebar_open: State<bool>,
@@ -452,6 +454,7 @@ pub(crate) fn use_chrome_state() -> ChromeState {
         layers_ver: use_state(|| 0_u32),
         layers_visible: use_state(|| false),
         mode: use_state(|| InputMode::Draw),
+        handwriting: use_state(|| false),
         selected_bookmark: use_state(|| Option::<crate::ids::BookmarkId>::None),
         bookmark_body: use_state(String::new),
         sidebar_open: use_state(|| false),
@@ -602,6 +605,7 @@ pub(crate) fn mount_board(mount: CanvasMount, state: ChromeState) -> Arc<Mutex<B
     let mut selected_setter = state.selected;
     let mut scale_setter = state.scale;
     let mut mode_setter = state.mode;
+    let mut handwriting_setter = state.handwriting;
     let mut active_setter = state.active_board;
     let mut active_item_setter = state.active_item;
 
@@ -627,7 +631,11 @@ pub(crate) fn mount_board(mount: CanvasMount, state: ChromeState) -> Arc<Mutex<B
         }
         g.set_input_mode(saved.input_mode());
         g.set_prefs_sink(prefs_tx);
+        let handwriting = prefs::load_handwriting_prefs();
+        handwriting.font.select();
+        g.set_handwriting(handwriting.enabled);
     }
+    spawn_handwriting_timer(Arc::clone(&board));
     // Seed chrome signals from the restored board state. Done after
     // the prefs apply so overlays open on the correct preset / size
     // / mode on first paint.
@@ -636,6 +644,7 @@ pub(crate) fn mount_board(mount: CanvasMount, state: ChromeState) -> Arc<Mutex<B
         selected_setter.set(palette_index_for(g.current_kind()).unwrap_or(0));
         scale_setter.set(g.current_size());
         mode_setter.set(g.input_mode());
+        handwriting_setter.set(g.handwriting_enabled());
         can_undo.set(g.undo_depth() > 0);
         can_redo.set(g.redo_depth() > 0);
     }
@@ -681,6 +690,31 @@ pub(crate) fn mount_board(mount: CanvasMount, state: ChromeState) -> Arc<Mutex<B
     board
 }
 
+/// Close a handwritten letter once the pen rests. The board sends the
+/// pending letter's generation after every stroke; a newer one arriving
+/// during the wait restarts it. Exits when the board (and its sender)
+/// drops.
+fn spawn_handwriting_timer(board: Arc<Mutex<Board>>) {
+    let (tx, rx) = flume::unbounded::<u64>();
+    lock(&board).set_handwriting_waker(tx);
+    let board = Arc::downgrade(&board);
+    spawn(async move {
+        while let Ok(mut generation) = rx.recv_async().await {
+            loop {
+                async_io::Timer::after(crate::canvas::LETTER_IDLE).await;
+                match rx.try_recv() {
+                    Ok(newer) => generation = newer,
+                    Err(_) => break,
+                }
+            }
+            let Some(board) = board.upgrade() else {
+                return;
+            };
+            lock(&board).flush_handwriting(generation);
+        }
+    });
+}
+
 /// Reuse-path helper: seed a fresh `ChromeState`'s signals from an
 /// existing `Board` published by [`mount_board`] at an ancestor
 /// scope. Mirror of the signal-seeding block inside `mount_board` —
@@ -694,6 +728,7 @@ fn seed_chrome_from_board(board: &Arc<Mutex<Board>>, state: &mut ChromeState, mo
             .set(palette_index_for(g.current_kind()).unwrap_or(0));
         state.scale.set(g.current_size());
         state.mode.set(g.input_mode());
+        state.handwriting.set(g.handwriting_enabled());
         state.can_undo.set(g.undo_depth() > 0);
         state.can_redo.set(g.redo_depth() > 0);
         state.zoom.set(g.viewport().scale);
@@ -1511,6 +1546,22 @@ fn top_right_toolbar(board: &Arc<Mutex<Board>>, state: &ChromeState) -> impl Int
         }
     });
 
+    let mut handwriting = state.handwriting;
+    let handwriting_active = *handwriting.read();
+    let toggle_handwriting: NoArgCallback<()> = NoArgCallback::new({
+        let board = Arc::clone(board);
+        move || {
+            let next = !*handwriting.peek();
+            lock(&board).set_handwriting(next);
+            handwriting.set(next);
+            let mut saved = prefs::load_handwriting_prefs();
+            saved.enabled = next;
+            if let Err(err) = prefs::save_handwriting_prefs(saved) {
+                log::error!("save_handwriting_prefs: {err}");
+            }
+        }
+    });
+
     let mut layers_vis = state.layers_visible;
     let toggle_layers: NoArgCallback<()> = NoArgCallback::new(move || {
         let next = !*layers_vis.peek();
@@ -1548,9 +1599,14 @@ fn top_right_toolbar(board: &Arc<Mutex<Board>>, state: &ChromeState) -> impl Int
                 .child(icon_button(square_split_vertical(), ext.on_split_vertical));
         }
     }
-    row.child(icon_toggle(square_dashed_text(), text_active, toggle_text))
-        .child(icon_button(layers(), toggle_layers))
-        .child(icon_button(sliders_horizontal(), open_doc_config))
+    row.child(icon_toggle(
+        signature(),
+        handwriting_active,
+        toggle_handwriting,
+    ))
+    .child(icon_toggle(square_dashed_text(), text_active, toggle_text))
+    .child(icon_button(layers(), toggle_layers))
+    .child(icon_button(sliders_horizontal(), open_doc_config))
 }
 
 /// Lucide `square-dashed-text`, newer than the icon set freya ships.

@@ -333,7 +333,7 @@ impl Board {
 
     /// Emit `ops` as a single undo entry and ping autosave. No-op when
     /// empty.
-    fn apply_ops_as_one(&mut self, ops: Vec<DocOp>) {
+    pub(super) fn apply_ops_as_one(&mut self, ops: Vec<DocOp>) {
         if ops.is_empty() {
             return;
         }
