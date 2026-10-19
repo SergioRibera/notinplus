@@ -19,7 +19,7 @@ use crate::home::{LibHandle, open_library};
 use crate::hooks::{provide_safe_area_override, use_safe_area_insets};
 use crate::library::{
     BackgroundStyle, DocKind, ItemId, Library, PaneId, PaneTab, SplitOrientation, SplitSide,
-    Workspace, WorkspaceId,
+    TabTarget, Workspace, WorkspaceId,
 };
 use crate::route::Route;
 
@@ -27,6 +27,8 @@ use crate::route::Route;
 /// (e.g. the item was deleted on another device and the tab snapshot
 /// did not yet catch up).
 const MISSING_TITLE: &str = "(elemento no disponible)";
+/// Tab title for a scratch canvas.
+const SCRATCH_TITLE: &str = "Borrador";
 
 #[derive(Clone, PartialEq, Debug)]
 struct WorkspaceSnapshot {
@@ -135,17 +137,17 @@ fn snapshot_workspace(lib: &Library, id: WorkspaceId) -> Option<WorkspaceSnapsho
     let mut titles = HashMap::new();
     let mut kinds = HashMap::new();
     for pane in ws.layout.leaves() {
-        for tab in &pane.tabs {
-            if titles.contains_key(&tab.item) {
+        for id in pane.tabs.iter().filter_map(PaneTab::item) {
+            if titles.contains_key(&id) {
                 continue;
             }
-            match lib.index().item(tab.item) {
+            match lib.index().item(id) {
                 Some(item) => {
-                    titles.insert(tab.item, item.name.clone());
-                    kinds.insert(tab.item, item.kind.clone());
+                    titles.insert(id, item.name.clone());
+                    kinds.insert(id, item.kind.clone());
                 }
                 None => {
-                    titles.insert(tab.item, MISSING_TITLE.to_owned());
+                    titles.insert(id, MISSING_TITLE.to_owned());
                 }
             }
         }
@@ -449,16 +451,17 @@ fn pane_tree(
         on_tab_split: tab_split_cb(workspace_id, handle.clone(), load_state),
         on_pane_close: pane_close_cb(workspace_id, handle, load_state),
     };
-    let label_cb = Callback::<PaneTab, String>::new(move |tab: PaneTab| {
-        titles
-            .get(&tab.item)
+    let label_cb = Callback::<PaneTab, String>::new(move |tab: PaneTab| match tab.target {
+        TabTarget::Item(id) => titles
+            .get(&id)
             .cloned()
-            .unwrap_or_else(|| MISSING_TITLE.to_owned())
+            .unwrap_or_else(|| MISSING_TITLE.to_owned()),
+        TabTarget::Scratch => SCRATCH_TITLE.to_owned(),
     });
     let body_kinds = kinds;
     let body_cb =
         Callback::<(PaneId, PaneTab), Element>::new(move |(_, tab): (PaneId, PaneTab)| {
-            tab_body_element(tab.item, body_kinds.get(&tab.item).cloned())
+            tab_body_element(&tab, &body_kinds)
         });
     rect()
         .width(Size::fill())
@@ -478,12 +481,18 @@ fn pane_tree(
 /// pane's chrome is scoped to its own body area — tab bars stay
 /// untouched. DocLinked and SourcePdf ship their own self-contained
 /// shells with the same per-pane scope.
-fn tab_body_element(id: ItemId, kind: Option<DocKind>) -> Element {
+fn tab_body_element(tab: &PaneTab, kinds: &HashMap<ItemId, DocKind>) -> Element {
     use crate::app::{CanvasMount, CanvasPane};
-    match kind {
-        Some(kind) => crate::faces::render(id, &kind),
-        None => CanvasPane {
-            mount: CanvasMount::Item(id),
+    match tab.target {
+        TabTarget::Item(id) => match kinds.get(&id) {
+            Some(kind) => crate::faces::render(id, kind),
+            None => CanvasPane {
+                mount: CanvasMount::Item(id),
+            }
+            .into_element(),
+        },
+        TabTarget::Scratch => CanvasPane {
+            mount: CanvasMount::Ephemeral,
         }
         .into_element(),
     }

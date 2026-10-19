@@ -646,7 +646,7 @@ mod tests {
     use crate::library::{ItemId, Pane, PaneId};
 
     fn stub_label_cb() -> Callback<PaneTab, String> {
-        Callback::new(|tab: PaneTab| format!("Item {}", tab.item))
+        Callback::new(|tab: PaneTab| format!("Item {:?}", tab.item()))
     }
 
     fn stub_callbacks() -> PaneTreeCallbacks {

@@ -31,8 +31,8 @@ use istmo_data_store::{DataStoreClient, DataStoreConfig};
 pub use self::error::{LibraryError, NotFoundKind, Result};
 pub use self::model::{
     BackgroundStyle, DocKind, Folder, FolderId, INDEX_VERSION, Item, ItemId, LibraryIndex, Pane,
-    PaneId, PaneLayout, PaneTab, ROOT_FOLDER, Rgba, SplitOrientation, SplitSide, Tag, TagId,
-    WORKSPACE_INDEX_VERSION, Workspace, WorkspaceId, WorkspaceIndex,
+    PaneId, PaneLayout, PaneTab, ROOT_FOLDER, Rgba, SplitOrientation, SplitSide, TabTarget, Tag,
+    TagId, WORKSPACE_INDEX_VERSION, Workspace, WorkspaceId, WorkspaceIndex,
 };
 
 use crate::doc::Doc;
@@ -836,6 +836,19 @@ impl Library {
         pane: PaneId,
         item: ItemId,
     ) -> Result<()> {
+        self.push_tab(workspace, pane, PaneTab::new(item)).await
+    }
+
+    /// Open a scratch canvas tab in `pane` and focus it.
+    ///
+    /// # Errors
+    /// * [`LibraryError::NotFound`] when the workspace or pane is
+    ///   unknown.
+    pub async fn add_scratch_tab(&mut self, workspace: WorkspaceId, pane: PaneId) -> Result<()> {
+        self.push_tab(workspace, pane, PaneTab::scratch()).await
+    }
+
+    async fn push_tab(&mut self, workspace: WorkspaceId, pane: PaneId, tab: PaneTab) -> Result<()> {
         let now = now_millis();
         let w = self
             .workspaces
@@ -845,7 +858,7 @@ impl Library {
             .layout
             .find_leaf_mut(pane)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
-        leaf.tabs.push(PaneTab::new(item));
+        leaf.tabs.push(tab);
         leaf.active_tab = u32::try_from(leaf.tabs.len().saturating_sub(1)).unwrap_or(u32::MAX);
         w.updated_at = now;
         self.persist_workspaces().await
@@ -1296,7 +1309,7 @@ mod tests {
                 leaf.active_tab = u32::try_from(new_len.saturating_sub(1)).unwrap_or(0);
             }
             assert_eq!(leaf.tabs.len(), 1);
-            assert_eq!(leaf.tabs[0].item, mk_item(11));
+            assert_eq!(leaf.tabs[0].item(), Some(mk_item(11)));
             assert_eq!(leaf.active_tab, 0);
         }
     }
@@ -1399,13 +1412,13 @@ mod tests {
         assert!(layout.move_tab(left, 1, right));
         let src = layout.find_leaf(left).unwrap();
         assert_eq!(src.tabs.len(), 1);
-        assert_eq!(src.tabs[0].item, mk_item(10));
+        assert_eq!(src.tabs[0].item(), Some(mk_item(10)));
         // The removed tab was the active one; clamp drops to the only
         // remaining tab.
         assert_eq!(src.active_tab, 0);
         let dst = layout.find_leaf(right).unwrap();
         assert_eq!(dst.tabs.len(), 2);
-        assert_eq!(dst.tabs[1].item, mk_item(11));
+        assert_eq!(dst.tabs[1].item(), Some(mk_item(11)));
         // Destination focuses the just-arrived tab.
         assert_eq!(dst.active_tab, 1);
     }
@@ -1424,6 +1437,6 @@ mod tests {
         assert!(!layout.move_tab(only, 0, mk_pane(99)));
         let src = layout.find_leaf(only).unwrap();
         assert_eq!(src.tabs.len(), 1);
-        assert_eq!(src.tabs[0].item, mk_item(10));
+        assert_eq!(src.tabs[0].item(), Some(mk_item(10)));
     }
 }

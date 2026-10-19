@@ -704,7 +704,7 @@ fn schedule_split_to(workspace: WorkspaceId, item: ItemId, orientation: SplitOri
             .layout
             .leaves()
             .iter()
-            .any(|p| p.tabs.iter().any(|t| t.item == item));
+            .any(|p| p.tabs.iter().any(|t| t.item() == Some(item)));
         if already_open {
             log::info!("item {item} already in workspace tree; skipping split");
             return;

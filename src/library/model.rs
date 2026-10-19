@@ -192,7 +192,7 @@ pub struct Item {
     pub thumbnail: Option<Vec<u8>>,
 }
 
-/// One open tab inside a pane. References the underlying item by id;
+/// One open tab inside a pane. Names what it shows via [`TabTarget`];
 /// per-tab viewport state continues to live in `prefs::DocView`.
 ///
 /// `plugin_id` names which plugin renders this leaf when the tab mounts.
@@ -202,15 +202,35 @@ pub struct Item {
 #[istmo::message]
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct PaneTab {
-    pub item: ItemId,
+    pub target: TabTarget,
     pub plugin_id: Option<String>,
+}
+
+/// What a tab shows.
+#[istmo::message]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum TabTarget {
+    /// A library item.
+    Item(ItemId),
+    /// A scratch canvas that never reaches the library. Closing the
+    /// tab discards it; a persisted workspace keeps the tab but the
+    /// canvas starts blank on the next mount.
+    Scratch,
 }
 
 impl PaneTab {
     #[must_use]
     pub const fn new(item: ItemId) -> Self {
         Self {
-            item,
+            target: TabTarget::Item(item),
+            plugin_id: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn scratch() -> Self {
+        Self {
+            target: TabTarget::Scratch,
             plugin_id: None,
         }
     }
@@ -218,8 +238,17 @@ impl PaneTab {
     #[must_use]
     pub fn with_plugin(item: ItemId, plugin_id: impl Into<String>) -> Self {
         Self {
-            item,
+            target: TabTarget::Item(item),
             plugin_id: Some(plugin_id.into()),
+        }
+    }
+
+    /// Library item behind the tab; `None` for a scratch canvas.
+    #[must_use]
+    pub const fn item(&self) -> Option<ItemId> {
+        match self.target {
+            TabTarget::Item(id) => Some(id),
+            TabTarget::Scratch => None,
         }
     }
 }
@@ -622,7 +651,7 @@ impl WorkspaceIndex {
 
 /// Schema version for [`WorkspaceIndex`]. Bump on any breaking change
 /// to the surrounding types.
-pub const WORKSPACE_INDEX_VERSION: u32 = 2;
+pub const WORKSPACE_INDEX_VERSION: u32 = 3;
 
 /// The single blob persisted under `library.index.v2` in data-store.
 ///

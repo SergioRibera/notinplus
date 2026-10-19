@@ -26,7 +26,7 @@ use bincode::config::{self, Configuration};
 use crate::bookmark::SourceRef;
 use crate::doc::Doc;
 use crate::library::{
-    DocKind, Folder, FolderId, Item, ItemId, Library, LibraryError, Tag, TagId, Workspace,
+    DocKind, Folder, FolderId, Item, ItemId, Library, LibraryError, PaneTab, Tag, TagId, Workspace,
     WorkspaceId, bodies,
 };
 use notein_plugin::PluginRegistry;
@@ -450,9 +450,9 @@ fn plan_export(lib: &Library, selection: &ExportSelection) -> Result<ExportPlan>
             .ok_or(BundleError::MissingWorkspace(*wid))?;
         workspace_ids.insert(*wid);
         for leaf in ws.layout.leaves() {
-            for tab in &leaf.tabs {
-                if lib.item(tab.item).is_some() {
-                    item_ids.insert(tab.item);
+            for id in leaf.tabs.iter().filter_map(PaneTab::item) {
+                if lib.item(id).is_some() {
+                    item_ids.insert(id);
                 }
             }
         }

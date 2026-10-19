@@ -21,7 +21,7 @@ pub const INDEX_KEY: &str = "library.index.v3";
 
 /// data-store key for the [`WorkspaceIndex`] blob. Kept on its own key
 /// so introducing workspaces does not force a bump of [`INDEX_KEY`].
-pub const WORKSPACES_KEY: &str = "library.workspaces.v3";
+pub const WORKSPACES_KEY: &str = "library.workspaces.v4";
 
 /// data-store namespace used for the library. Matches the app id
 /// declared in `istmo.toml` so backends can partition per-app data
