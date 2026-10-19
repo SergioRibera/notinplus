@@ -30,8 +30,11 @@ use crate::app::ChromeState;
 use crate::bookmark_ui::BookmarkSort;
 use crate::canvas::{Board, lock};
 use crate::hooks::use_safe_area_insets;
-use crate::library::{DocKind, Item, ItemId, SplitOrientation, SplitSide, Tag, TagId, WorkspaceId};
+use crate::library::{
+    DocKind, Item, ItemId, SplitOrientation, SplitSide, TabTarget, Tag, TagId, WorkspaceId,
+};
 use crate::route::Route;
+use crate::space::OpenHint;
 
 use super::{FormInput, theme::*};
 use super::{Modal, ModalController};
@@ -65,10 +68,6 @@ const ROW_SIZE: f32 = 56.0;
 pub struct SidebarModal {
     state: ChromeState,
     contents: SidebarContents,
-    /// Captured at the open site so the modal body — which renders
-    /// inside `ModalPortal`, a sibling of `Router` — can navigate
-    /// without panicking on a missing `RouterContext`.
-    router: RouterContext,
     /// Snapshot of the active workspace at open time (if any). The
     /// context menu's split actions need a workspace to grow a pane
     /// tree inside; outside one they stay hidden.
@@ -104,18 +103,17 @@ impl SidebarModal {
     pub(crate) fn open(
         state: ChromeState,
         board: Arc<Mutex<Board>>,
-        router: RouterContext,
         workspace: Option<WorkspaceId>,
     ) {
-        Self::open_with(state, SidebarContents::Board(board), router, workspace);
+        Self::open_with(state, SidebarContents::Board(board), workspace);
     }
 
     /// Sidebar for a page rendered by the plugin canvas `plugin_id`,
     /// opened on its Contents tab.
     pub(crate) fn open_plugin(state: ChromeState, plugin_id: &str, item: ItemId, router: RouterContext) {
         let workspace = match router.current::<Route>() {
-            Route::WorkspaceView { id } => Some(id),
-            _ => None,
+            Route::Space { id } => Some(id),
+            Route::Home => None,
         };
         let mut tab = state.sidebar_tab;
         tab.set(SidebarTab::Contents);
@@ -123,20 +121,14 @@ impl SidebarModal {
             plugin_id: plugin_id.to_owned(),
             item,
         };
-        Self::open_with(state, contents, router, workspace);
+        Self::open_with(state, contents, workspace);
     }
 
-    fn open_with(
-        state: ChromeState,
-        contents: SidebarContents,
-        router: RouterContext,
-        workspace: Option<WorkspaceId>,
-    ) {
+    fn open_with(state: ChromeState, contents: SidebarContents, workspace: Option<WorkspaceId>) {
         ModalController::get().open(
             Modal::new(Self {
                 state,
                 contents,
-                router,
                 workspace,
             })
             .manual()
@@ -214,10 +206,9 @@ impl Component for SidebarModal {
 
         let header = sidebar_header(current_tab, query, sort, move |next| tab_state.set(next));
 
-        let router = self.router;
         let workspace = self.workspace;
         let body = match current_tab {
-            SidebarTab::Docs => docs_body(library_snapshot, query, menu_target, router),
+            SidebarTab::Docs => docs_body(library_snapshot, query, menu_target),
             SidebarTab::Contents => contents_body(contents, query, collapsed),
             SidebarTab::Bookmarks => match contents {
                 SidebarContents::Board(board) => {
@@ -257,7 +248,6 @@ impl Component for SidebarModal {
                 target,
                 pad.top,
                 menu_target,
-                router,
                 workspace,
             ));
         }
@@ -422,7 +412,6 @@ fn docs_body(
     snapshot: State<LibrarySnapshot>,
     query: State<String>,
     menu_target: State<Option<DocMenuTarget>>,
-    router: RouterContext,
 ) -> Element {
     let needle = query.read().trim().to_ascii_lowercase();
     let filtered: Vec<DocEntry> = snapshot
@@ -452,7 +441,7 @@ fn docs_body(
     let length = filtered.len();
     VirtualScrollView::new_with_data(filtered, move |item, data: &Vec<DocEntry>| {
         let entry = data[item.index].clone();
-        doc_row(entry, menu_target, router).into_element()
+        doc_row(entry, menu_target).into_element()
     })
     .length(length)
     .width(Size::fill())
@@ -463,7 +452,6 @@ fn docs_body(
 fn doc_row(
     entry: DocEntry,
     menu_target: State<Option<DocMenuTarget>>,
-    router: RouterContext,
 ) -> Element {
     let DocEntry {
         id,
@@ -481,8 +469,7 @@ fn doc_row(
         format!("{} · {}", kind_label(&kind), tags.join(", "))
     };
     let on_press = move |_: Event<PressEventData>| {
-        let route = route_for_kind(&kind, id);
-        let _ = router.push(route);
+        crate::space::open(TabTarget::Item(id), OpenHint::Focused);
         ModalController::get().close();
     };
     let title = if name.is_empty() {
@@ -565,7 +552,6 @@ fn doc_context_overlay(
     target: DocMenuTarget,
     pad_top: f32,
     menu_setter: State<Option<DocMenuTarget>>,
-    router: RouterContext,
     workspace: Option<WorkspaceId>,
 ) -> Element {
     // Sidebar-local y of the ellipsis button. Clamp above the header +
@@ -581,7 +567,7 @@ fn doc_context_overlay(
         .position(Position::new_absolute().top(0.0).left(0.0))
         .on_press(move |_: Event<PressEventData>| close_setter.set(None));
 
-    let card = doc_context_card(entry, workspace, menu_setter, router).position(
+    let card = doc_context_card(entry, workspace, menu_setter).position(
         Position::new_absolute()
             .top(anchor_y)
             .left(12.0)
@@ -608,7 +594,6 @@ fn doc_context_card(
     entry: DocEntry,
     workspace: Option<WorkspaceId>,
     menu_setter: State<Option<DocMenuTarget>>,
-    router: RouterContext,
 ) -> Rect {
     let mut card = rect()
         .direction(Direction::Vertical)
@@ -620,14 +605,22 @@ fn doc_context_card(
     // "Abrir" — navigate the top-level route for the item's kind.
     {
         let id = entry.id;
-        let kind = entry.kind.clone();
         let mut setter = menu_setter;
         card = card.child(menu_row(
             file_text(),
             "Abrir",
             move |_: Event<PressEventData>| {
-                let route = route_for_kind(&kind, id);
-                let _ = router.push(route);
+                crate::space::open(TabTarget::Item(id), OpenHint::Focused);
+                setter.set(None);
+                ModalController::get().close();
+            },
+        ));
+        let mut setter = menu_setter;
+        card = card.child(menu_row(
+            square_split_horizontal(),
+            "Abrir al lado",
+            move |_: Event<PressEventData>| {
+                crate::space::open(TabTarget::Item(id), OpenHint::Beside);
                 setter.set(None);
                 ModalController::get().close();
             },
@@ -731,10 +724,6 @@ fn schedule_split_to(workspace: WorkspaceId, item: ItemId, orientation: SplitOri
 
 fn kind_label(kind: &DocKind) -> &'static str {
     crate::faces::kind_label(kind)
-}
-
-fn route_for_kind(kind: &DocKind, id: ItemId) -> Route {
-    crate::route::route_for_kind(kind, id)
 }
 
 // ---------- Contents tab --------------------------------------------------

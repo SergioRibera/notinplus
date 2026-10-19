@@ -52,6 +52,7 @@ pub mod route;
 pub mod shell_builtins;
 pub mod soft_keyboard;
 pub mod source_ref_nav;
+pub mod space;
 pub mod spatial;
 pub mod text_box;
 pub mod ui_mask;

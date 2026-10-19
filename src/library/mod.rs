@@ -944,6 +944,24 @@ impl Library {
         self.push_tab(workspace, pane, PaneTab::scratch()).await
     }
 
+    /// Open a tab showing `target` in `pane` and focus it.
+    ///
+    /// # Errors
+    /// * [`LibraryError::NotFound`] when the workspace or pane is
+    ///   unknown.
+    pub async fn add_tab(
+        &mut self,
+        workspace: WorkspaceId,
+        pane: PaneId,
+        target: TabTarget,
+    ) -> Result<()> {
+        let tab = match target {
+            TabTarget::Item(id) => PaneTab::new(id),
+            TabTarget::Scratch => PaneTab::scratch(),
+        };
+        self.push_tab(workspace, pane, tab).await
+    }
+
     async fn push_tab(&mut self, workspace: WorkspaceId, pane: PaneId, tab: PaneTab) -> Result<()> {
         let now = now_millis();
         let w = self

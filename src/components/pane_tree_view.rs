@@ -11,8 +11,8 @@
 use freya::prelude::*;
 
 use super::drag_drop::{DropZone, use_drag};
-use super::tab_bar::{TabBar, TabBarEntry, TabDragPayload};
-use crate::library::{Pane, PaneId, PaneLayout, SplitOrientation, SplitSide};
+use super::tab_bar::{SCRATCH_ACCENT, TabBar, TabBarEntry, TabDragPayload};
+use crate::library::{Pane, PaneId, PaneLayout, SplitOrientation, SplitSide, TabTarget};
 
 /// Which edge of a leaf a dragged tab was dropped on. Determines both
 /// the split orientation and which child the newly-created pane takes
@@ -428,21 +428,30 @@ impl Component for LeafNode {
 
         let pane_id = self.pane.id;
         let active_tab = self.pane.tabs.get(self.pane.active_tab as usize).cloned();
+        let active_is_scratch = active_tab
+            .as_ref()
+            .is_some_and(|tab| tab.target == TabTarget::Scratch);
         let body_inner = match active_tab {
             Some(tab) => self.tab_body.call((self.pane.id, tab)),
             None => leaf_body_empty(self.pane.id).into_element(),
         };
 
         if !self.show_tabs {
-            // Tabs disabled: skip the tab bar + the drag/edge-drop
-            // overlay entirely. Embedders that still need "close the
-            // split" semantics render that chrome inside the body.
+            // Tabs hidden: no tab bar, no drag/edge-drop overlay. A
+            // scratch canvas still shows its tint as a thin strip so
+            // the user knows nothing here is being saved.
             return rect()
                 .vertical()
                 .width(Size::percent(100.))
                 .height(Size::percent(100.))
                 .content(Content::Flex)
                 .background(Color::from_rgb(22, 22, 28))
+                .maybe_child(active_is_scratch.then(|| {
+                    rect()
+                        .width(Size::percent(100.))
+                        .height(Size::px(3.0))
+                        .background(SCRATCH_ACCENT)
+                }))
                 .child(
                     rect()
                         .width(Size::percent(100.))
@@ -462,6 +471,7 @@ impl Component for LeafNode {
                 label: self.tab_labels.call(tab.clone()).into(),
                 icon: None,
                 is_active: i == self.pane.active_tab as usize,
+                accent: (tab.target == TabTarget::Scratch).then_some(SCRATCH_ACCENT),
             })
             .collect();
         let select = self.callbacks.on_tab_select.clone();

@@ -3,25 +3,24 @@
 //! and installs the desktop keyboard shortcuts (Ctrl+T / Ctrl+W /
 //! Ctrl+Tab) targeted at the focused pane.
 //!
-//! Loaded by [`crate::route::Route::WorkspaceView`]. The route value
+//! Loaded by [`crate::route::Route::Space`]. The route value
 //! carries the workspace id as a plain `u32` so the deeplink surface
 //! stays serde-free; the view promotes it to [`WorkspaceId`] on open.
 
 use std::collections::HashMap;
 
 use freya::prelude::*;
-use freya::router::*;
 use istmo::plugins::EdgeInsets;
 
 use crate::components::pane_tree_view::SplitEdge;
-use crate::components::{PaneTreeCallbacks, PaneTreeView};
+use crate::components::{ItemPicker, PaneTreeCallbacks, PaneTreeView, PickerChoice};
 use crate::home::{LibHandle, open_library};
 use crate::hooks::{provide_safe_area_override, use_safe_area_insets};
 use crate::library::{
-    BackgroundStyle, DocKind, ItemId, Library, PaneId, PaneTab, SplitOrientation, SplitSide,
-    TabTarget, Workspace, WorkspaceId,
+    BackgroundStyle, DocKind, ItemId, Library, PaneId, PaneTab, ROOT_FOLDER, SplitSide, TabTarget,
+    Workspace, WorkspaceId,
 };
-use crate::route::Route;
+use crate::space::{self, OpenHint};
 
 /// Fallback title for a tab whose underlying library item is missing
 /// (e.g. the item was deleted on another device and the tab snapshot
@@ -54,7 +53,6 @@ impl Component for WorkspaceView {
     fn render(&self) -> impl IntoElement {
         let workspace_id = self.id;
         let load_state = use_state(|| LoadState::Loading);
-        let router = RouterContext::get();
         let edge = use_safe_area_insets();
         let edge = *edge.read();
         // The shell carves out the physical safe area at its outer
@@ -83,6 +81,28 @@ impl Component for WorkspaceView {
                             }
                         }
                         Err(err) => load_state.set(LoadState::Error(err)),
+                    }
+                });
+            }
+        });
+        // Opens made elsewhere (Home, chips, the sidebar) mutate the
+        // library behind this view's back; refresh on every tick.
+        use_hook({
+            let mut load_state = load_state;
+            move || {
+                let changes = space::changes();
+                spawn(async move {
+                    while changes.recv_async().await.is_ok() {
+                        let Ok(handle) = open_library().await else {
+                            continue;
+                        };
+                        let snap = {
+                            let lib = handle.lock().await;
+                            snapshot_workspace(&lib, workspace_id)
+                        };
+                        if let Some(snap) = snap {
+                            load_state.set(LoadState::Ready(handle, snap));
+                        }
                     }
                 });
             }
@@ -166,8 +186,6 @@ fn workspace_shell(
     load_state: State<LoadState>,
     edge: EdgeInsets,
 ) -> Rect {
-    let focused = snap.workspace.focused_pane;
-    // let header = header_bar(workspace_id, handle.clone(), focused, load_state, router, &snap);
     let body = pane_tree(workspace_id, handle, load_state, &snap);
     let keyboard = keyboard_shortcuts(workspace_id, handle_clone_for_keys(&snap, &load_state));
 
@@ -176,7 +194,6 @@ fn workspace_shell(
         .vertical()
         .content(Content::Flex)
         .on_global_key_down(keyboard)
-        // .child(header)
         .child(body)
 }
 
@@ -225,27 +242,7 @@ fn keyboard_shortcuts(
             Key::Character(ch) if ch == "t" || ch == "T" => {
                 e.stop_propagation();
                 e.prevent_default();
-                spawn(async move {
-                    if let Ok(handle) = open_library().await {
-                        let mut lib = handle.lock().await;
-                        if let Ok(item) = lib
-                            .create_item(
-                                crate::library::ROOT_FOLDER,
-                                DocKind::plugin(crate::builtin::stroke_canvas::KIND_ID),
-                                "Borrador",
-                                None,
-                                Vec::new(),
-                                BackgroundStyle::default(),
-                            )
-                            .await
-                            && lib.add_pane_tab(workspace_id, pane, item).await.is_ok()
-                        {
-                            if let Some(snap) = snapshot_workspace(&lib, workspace_id) {
-                                load_state.set(LoadState::Ready(handle.clone(), snap));
-                            }
-                        }
-                    }
-                });
+                open_tab_picker(workspace_id, pane, load_state);
             }
             Key::Character(ch) if ch == "w" || ch == "W" => {
                 if ctx.tab_count == 0 {
@@ -286,125 +283,6 @@ fn keyboard_shortcuts(
     }
 }
 
-fn header_bar(
-    workspace_id: WorkspaceId,
-    handle: LibHandle,
-    focused: Option<PaneId>,
-    load_state: State<LoadState>,
-    router: RouterContext,
-    snap: &WorkspaceSnapshot,
-) -> Rect {
-    let name = snap.workspace.name.clone();
-    let bg = Color::from_rgb(18, 18, 22);
-    let back_handle = handle.clone();
-    let back_router = router;
-    let back = text_button("← Home").on_press(move |_| {
-        let _ = back_router.push(Route::Home);
-        drop(back_handle.clone());
-    });
-    let split_h_handle = handle.clone();
-    let split_h = text_button("Dividir ↔").on_press(move |_| {
-        if let Some(target) = focused {
-            schedule_split(
-                workspace_id,
-                target,
-                SplitOrientation::Horizontal,
-                split_h_handle.clone(),
-                load_state,
-            );
-        }
-    });
-    let split_v_handle = handle.clone();
-    let split_v = text_button("Dividir ↕").on_press(move |_| {
-        if let Some(target) = focused {
-            schedule_split(
-                workspace_id,
-                target,
-                SplitOrientation::Vertical,
-                split_v_handle.clone(),
-                load_state,
-            );
-        }
-    });
-    let close_handle = handle.clone();
-    let close_pane = text_button("Cerrar pane").on_press(move |_| {
-        if let Some(target) = focused {
-            schedule_close_pane(workspace_id, target, close_handle.clone(), load_state);
-        }
-    });
-    let export_handle = handle.clone();
-    let export_name = snap.workspace.name.clone();
-    let export_btn = text_button("Exportar").on_press(move |_| {
-        crate::home::open_export_bundle_flow(
-            export_handle.clone(),
-            crate::bundle::ExportSelection {
-                workspaces: vec![workspace_id],
-                ..Default::default()
-            },
-            export_name.clone(),
-        );
-    });
-
-    rect()
-        .horizontal()
-        .width(Size::fill())
-        .height(Size::px(48.0))
-        .padding((0.0, 12.0))
-        .background(bg)
-        .cross_align(Alignment::Center)
-        .spacing(8.0)
-        .child(back)
-        .content(Content::Flex)
-        .child(
-            label()
-                .color(Color::from_rgb(230, 230, 240))
-                .font_size(14.0)
-                .text(name),
-        )
-        .child(rect().width(Size::flex(1.0)).height(Size::px(1.0)))
-        .child(split_h)
-        .child(split_v)
-        .child(close_pane)
-        .child(export_btn)
-}
-
-fn text_button(text: &str) -> Rect {
-    rect()
-        .height(Size::px(32.0))
-        .padding((0.0, 12.0))
-        .center()
-        .with_corner_radius(8.0)
-        .background(Color::from_rgb(28, 28, 32))
-        .child(
-            label()
-                .color(Color::from_rgb(220, 220, 230))
-                .font_size(13.0)
-                .text(text.to_owned()),
-        )
-}
-
-fn schedule_split(
-    workspace_id: WorkspaceId,
-    target: PaneId,
-    orientation: SplitOrientation,
-    handle: LibHandle,
-    mut load_state: State<LoadState>,
-) {
-    spawn(async move {
-        let mut lib = handle.lock().await;
-        if let Err(err) = lib
-            .split_workspace_pane(workspace_id, target, orientation, SplitSide::Second)
-            .await
-        {
-            log::error!("split_workspace_pane: {err}");
-            return;
-        }
-        if let Some(snap) = snapshot_workspace(&lib, workspace_id) {
-            load_state.set(LoadState::Ready(handle.clone(), snap));
-        }
-    });
-}
-
 fn schedule_close_pane(
     workspace_id: WorkspaceId,
     target: PaneId,
@@ -440,12 +318,18 @@ fn pane_tree(
     snap: &WorkspaceSnapshot,
 ) -> Rect {
     let layout = snap.workspace.layout.clone();
+    // One pane with at most one tab reads as a plain document: no
+    // tab strip until a second tab or pane appears.
+    let show_tabs = {
+        let leaves = layout.leaves();
+        !(leaves.len() == 1 && leaves[0].tabs.len() <= 1)
+    };
     let titles = snap.titles.clone();
     let kinds = snap.kinds.clone();
     let callbacks = PaneTreeCallbacks {
         on_tab_select: tab_select_cb(workspace_id, handle.clone(), load_state),
         on_tab_close: tab_close_cb(workspace_id, handle.clone(), load_state),
-        on_tab_new: tab_new_cb(workspace_id, handle.clone(), load_state),
+        on_tab_new: tab_new_cb(workspace_id, load_state),
         on_split_resize: split_resize_cb(workspace_id, handle.clone(), load_state),
         on_tab_move: tab_move_cb(workspace_id, handle.clone(), load_state),
         on_tab_split: tab_split_cb(workspace_id, handle.clone(), load_state),
@@ -467,7 +351,7 @@ fn pane_tree(
         .width(Size::fill())
         .height(Size::fill())
         .content(Content::Flex)
-        .child(PaneTreeView::new(layout, callbacks, label_cb, body_cb))
+        .child(PaneTreeView::new(layout, callbacks, label_cb, body_cb).show_tabs(show_tabs))
 }
 
 /// Dispatch a per-tab body [`Element`] based on the item's kind. Each
@@ -538,34 +422,41 @@ fn tab_close_cb(
     })
 }
 
-fn tab_new_cb(
-    workspace_id: WorkspaceId,
-    handle: LibHandle,
-    mut load_state: State<LoadState>,
-) -> Callback<PaneId, ()> {
-    Callback::new(move |pane: PaneId| {
-        let handle = handle.clone();
-        spawn(async move {
+fn tab_new_cb(workspace_id: WorkspaceId, load_state: State<LoadState>) -> Callback<PaneId, ()> {
+    Callback::new(move |pane: PaneId| open_tab_picker(workspace_id, pane, load_state))
+}
+
+/// Ask what the new tab in `pane` should show, then open it there.
+fn open_tab_picker(workspace_id: WorkspaceId, pane: PaneId, mut load_state: State<LoadState>) {
+    ItemPicker::new(move |choice: PickerChoice| {
+        spawn_forever(async move {
+            let Ok(handle) = open_library().await else {
+                return;
+            };
             let mut lib = handle.lock().await;
-            let item = match lib
-                .create_item(
-                    crate::library::ROOT_FOLDER,
-                    DocKind::plugin(crate::builtin::stroke_canvas::KIND_ID),
-                    "Borrador",
-                    None,
-                    Vec::new(),
-                    BackgroundStyle::default(),
-                )
-                .await
-            {
-                Ok(id) => id,
-                Err(err) => {
-                    log::error!("create_item: {err}");
-                    return;
+            let target = match choice {
+                PickerChoice::Existing(id) => TabTarget::Item(id),
+                PickerChoice::Scratch => TabTarget::Scratch,
+                PickerChoice::NewCanvas => {
+                    let kind = DocKind::plugin(crate::builtin::stroke_canvas::KIND_ID);
+                    match create_blank(&mut lib, kind, "Lienzo").await {
+                        Some(id) => TabTarget::Item(id),
+                        None => return,
+                    }
+                }
+                PickerChoice::NewNote => {
+                    let kind = DocKind::plugin(notein_notes::KIND_ID);
+                    match create_blank(&mut lib, kind, "Nota").await {
+                        Some(id) => {
+                            crate::builtin::prime_notes(lib.index().items.iter());
+                            TabTarget::Item(id)
+                        }
+                        None => return,
+                    }
                 }
             };
-            if let Err(err) = lib.add_pane_tab(workspace_id, pane, item).await {
-                log::error!("add_pane_tab: {err}");
+            if let Err(err) = space::open_in(&mut lib, target, OpenHint::InPane(pane)).await {
+                log::error!("open in pane: {err}");
                 return;
             }
             if let Some(snap) = snapshot_workspace(&lib, workspace_id) {
@@ -573,6 +464,28 @@ fn tab_new_cb(
             }
         });
     })
+    .title("Nueva pestaña")
+    .open();
+}
+
+async fn create_blank(lib: &mut Library, kind: DocKind, name: &str) -> Option<ItemId> {
+    match lib
+        .create_item(
+            ROOT_FOLDER,
+            kind,
+            name,
+            None,
+            Vec::new(),
+            BackgroundStyle::default(),
+        )
+        .await
+    {
+        Ok(id) => Some(id),
+        Err(err) => {
+            log::error!("create_item: {err}");
+            None
+        }
+    }
 }
 
 fn split_resize_cb(

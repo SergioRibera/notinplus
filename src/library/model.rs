@@ -591,6 +591,17 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    /// Pane and tab index showing `target`, if any leaf does.
+    #[must_use]
+    pub fn find_tab(&self, target: TabTarget) -> Option<(PaneId, usize)> {
+        self.layout.leaves().iter().find_map(|pane| {
+            pane.tabs
+                .iter()
+                .position(|t| t.target == target)
+                .map(|idx| (pane.id, idx))
+        })
+    }
+
     /// Fresh single-leaf workspace with a freshly-minted root pane
     /// focused.
     #[must_use]

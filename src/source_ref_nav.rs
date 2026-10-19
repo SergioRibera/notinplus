@@ -21,7 +21,8 @@ use crate::app::CanvasMount;
 use crate::bookmark::SourceRef;
 use crate::canvas::lock;
 use crate::ids::BookmarkId;
-use crate::library::ItemId;
+use crate::library::{ItemId, TabTarget};
+use crate::space::OpenHint;
 use crate::pdf_viewer::PDF_PLUGIN_ID;
 
 /// Human-readable one-liner for a chip's visible label. For PDF
@@ -112,40 +113,27 @@ fn navigate_canvas_bookmark(bookmark: BookmarkId) {
             log::warn!("navigate_canvas: library handle unavailable");
             return;
         };
-        let (found, workspace, focused_pane) = {
+        let found = {
             let lib = handle.lock().await;
-            let mut hit = None;
-            for item in &lib.index().items {
-                if let Ok(doc) = lib.load_doc(item.id).await
-                    && doc.bookmark(bookmark).is_some()
-                {
-                    hit = Some(item.id);
-                    break;
+            let mut hit = crate::library::refs::bookmark_owner(bookmark.0)
+                .filter(|id| lib.item(*id).is_some());
+            if hit.is_none() {
+                for item in &lib.index().items {
+                    if let Ok(doc) = lib.load_doc(item.id).await
+                        && doc.bookmark(bookmark).is_some()
+                    {
+                        hit = Some(item.id);
+                        break;
+                    }
                 }
             }
-            let workspace = lib.active_workspace();
-            let focused_pane = workspace
-                .and_then(|wid| lib.workspace(wid).and_then(|w| w.focused_pane));
-            (hit, workspace, focused_pane)
+            hit
         };
         let Some(item_id) = found else {
             log::warn!("navigate_canvas: bookmark {bookmark:?} not found in any item");
             return;
         };
-        let (Some(workspace), Some(pane)) = (workspace, focused_pane) else {
-            log::warn!(
-                "navigate_canvas: bookmark lives in item {item_id:?} but no \
-                 active workspace / focused pane to host the tab"
-            );
-            return;
-        };
-        {
-            let mut lib = handle.lock().await;
-            if let Err(err) = lib.add_pane_tab(workspace, pane, item_id).await {
-                log::error!("navigate_canvas: add_pane_tab failed: {err}");
-                return;
-            }
-        }
+        crate::space::open(TabTarget::Item(item_id), OpenHint::Beside);
         // Poll for mount — the pane re-renders, the canvas registers
         // its board under `CanvasMount::Item(item_id)`, and then we
         // can centre. 3 s budget.
@@ -219,12 +207,11 @@ fn navigate_pdf(item: ItemId, anchor: Vec<u8>) {
         lock(&board).center_on_world(wx, wy);
         return;
     }
-    // Slow path — not mounted. Route to the item's PDF canvas view
-    // and poll `active_boards` until the mount lands, then centre +
-    // re-pulse so the pulse window isn't exhausted by the route /
-    // asset-load latency.
-    let router = crate::app::global_router();
-    let _ = router.push(crate::route::Route::CanvasPdfView { id: item });
+    // Slow path — not mounted. Open the item beside what the user is
+    // reading and poll `active_boards` until the mount lands, then
+    // centre + re-pulse so the pulse window isn't exhausted by the
+    // route / asset-load latency.
+    crate::space::open(TabTarget::Item(item), OpenHint::Beside);
     freya::prelude::spawn_forever(async move {
         for _ in 0..30 {
             async_io::Timer::after(std::time::Duration::from_millis(100)).await;
@@ -249,8 +236,7 @@ fn navigate_pdf(item: ItemId, anchor: Vec<u8>) {
 /// 2. Find any library item whose kind names the plugin.
 /// 3. Queue the payload on the host under `(plugin_id, item_id)` and
 ///    broadcast so a live viewer on the same item re-applies.
-/// 4. Route to the item's native face via
-///    [`crate::route::route_for_kind`].
+/// 4. Open the item beside what the user is reading.
 ///
 /// No fallback item-creation: when the plugin opts into chip nav but
 /// no library item of its kind exists, we log + stop. Opening a
@@ -280,11 +266,6 @@ fn navigate_plugin(plugin_id: &str, target: ItemId, anchor: &[u8]) {
     // right id. For single-id plugins the default returns
     // `self.kind_id()`, keeping behaviour transparent.
     let viewer_id = plugin.viewer_kind_id().to_string();
-    // Capture the launch-installed router — reaching through
-    // `RouterContext::get()` would panic on chips rendered outside
-    // the Router subtree (e.g. the host-level `BookmarkEditModal`
-    // lives in `HostOverlay`, a sibling of Outlet).
-    let router = crate::app::global_router();
     freya::prelude::spawn_forever(async move {
         let Ok(handle) = crate::home::open_library().await else {
             log::warn!("navigate_plugin: library handle unavailable");
@@ -299,9 +280,9 @@ fn navigate_plugin(plugin_id: &str, target: ItemId, anchor: &[u8]) {
                 .filter(hosts)
                 .find(|item| item.id == target)
                 .or_else(|| items.iter().find(hosts))
-                .map(|item| (item.id, crate::route::route_for_kind(&item.kind, item.id)))
+                .map(|item| item.id)
         };
-        let Some((item_id, route)) = found else {
+        let Some(item_id) = found else {
             log::warn!(
                 "navigate_plugin: no library item hosts {viewer_id}; chip \
                  target unreachable"
@@ -309,7 +290,7 @@ fn navigate_plugin(plugin_id: &str, target: ItemId, anchor: &[u8]) {
             return;
         };
         crate::host_api::host_handle().queue_source_anchor(&viewer_id, item_id.0, payload);
-        let _ = router.push(route);
+        crate::space::open(TabTarget::Item(item_id), OpenHint::Beside);
     });
 }
 

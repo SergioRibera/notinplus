@@ -24,6 +24,8 @@ pub struct TabBarEntry {
     pub label: Cow<'static, str>,
     pub icon: Option<Bytes>,
     pub is_active: bool,
+    /// Background tint marking a special tab (a scratch canvas).
+    pub accent: Option<Color>,
 }
 
 impl std::fmt::Debug for TabBarEntry {
@@ -168,10 +170,11 @@ fn tab_cell(
     on_select: Callback<usize, ()>,
     on_close: Callback<usize, ()>,
 ) -> Rect {
-    let bg = if entry.is_active {
-        Color::from_rgb(32, 32, 38)
-    } else {
-        Color::TRANSPARENT
+    let bg = match (entry.accent, entry.is_active) {
+        (Some(accent), true) => accent,
+        (Some(accent), false) => Color::from_argb(90, accent.r(), accent.g(), accent.b()),
+        (None, true) => Color::from_rgb(32, 32, 38),
+        (None, false) => Color::TRANSPARENT,
     };
     let label_color = if entry.is_active {
         Color::from_rgb(240, 240, 245)
@@ -254,3 +257,7 @@ fn close_pane_button(on_close: NoArgCallback<()>) -> Rect {
                 .height(Size::px(14.0)),
         )
 }
+
+/// Tint of a scratch-canvas tab, so the private, unsaved surface is
+/// told apart at a glance.
+pub const SCRATCH_ACCENT: Color = Color::from_rgb(112, 66, 190);

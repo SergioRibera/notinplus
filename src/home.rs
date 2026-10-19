@@ -14,8 +14,7 @@
 //! Navigation is single-view: a `nav` [`Vec<FolderId>`] tracks the
 //! stack of entered folders. Tapping a folder pushes it; a breadcrumb
 //! crumb truncates the stack to that depth. Tapping an item pushes
-//! [`Route::CanvasView`] (both canvas and PDF-backed items go there
-//! for now — per-item body loading is a follow-up).
+//! the mesa (every open document lands as a tab there).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,9 +36,9 @@ use crate::components::{
 use crate::hooks::use_safe_area_insets;
 use crate::library::{
     BackgroundStyle, DocKind, Folder, FolderId, Item, ItemId, Library, LibraryIndex, ROOT_FOLDER,
-    Rgba, TagId, Workspace, WorkspaceId,
+    Rgba, TabTarget, TagId, Workspace, WorkspaceId,
 };
-use crate::route::Route;
+use crate::space::OpenHint;
 
 /// Identifier for a home card. Lets the shared rename / drag state key by
 /// the concrete row without knowing whether it's a folder or an item.
@@ -110,14 +109,6 @@ impl Component for Home {
         let renaming = use_state(|| Option::<CardId>::None);
         let rename_buffer = use_state(String::new);
         let pad = *use_safe_area_insets().read();
-        // Capture the `RouterContext` from Home's render scope (which
-        // lives inside `Router`). Modal / FabMenu bodies render under
-        // `ModalPortal`, a *sibling* of the Router in `AppShell` — any
-        // `RouterContext::get()` call from those scopes panics. The
-        // captured handle is `Copy`, so cloning it into every downstream
-        // closure is free.
-        let router = RouterContext::get();
-
         use_hook({
             let mut lib_state = lib_state;
             let mut snap = snap;
@@ -184,7 +175,7 @@ impl Component for Home {
                         renaming,
                         rename_buffer,
                     ));
-                fab_slot = Some(fab_stack(handle, snap, current, pad, router));
+                fab_slot = Some(fab_stack(handle, snap, current, pad));
             }
             (LibState::Ready(_), None) => {
                 column = column.child(centered("Preparando…"));
@@ -221,7 +212,7 @@ fn top_bar(
     let router = RouterContext::get();
     let open_workspace = active_workspace_id.map(|id| {
         icon_button(icons::square_arrow_out_up_right()).on_press(move |_| {
-            _ = router.push(crate::route::Route::WorkspaceView { id });
+            _ = router.push(crate::route::Route::Space { id });
         })
     });
     rect()
@@ -584,7 +575,6 @@ fn grid(
             .unwrap_or_else(|| color_to_rgba(auto_color(&item.name)));
         wrap = wrap.child(ItemCard {
             id: item.id,
-            kind: item.kind.clone(),
             title: item.name.clone(),
             subtitle,
             tint,
@@ -611,7 +601,6 @@ fn grid(
 #[derive(Clone)]
 struct ItemCard {
     id: ItemId,
-    kind: DocKind,
     title: String,
     subtitle: String,
     tint: Rgba,
@@ -647,7 +636,6 @@ impl Component for ItemCard {
         let press_start = use_state(|| Option::<CursorPoint>::None);
 
         let id = self.id;
-        let kind = self.kind.clone();
         let bg_style = self.bg_style;
         let tint = self.tint;
         let title = self.title.clone();
@@ -656,11 +644,6 @@ impl Component for ItemCard {
         let snap = self.snap;
         let renaming = self.renaming;
         let rename_buffer = self.rename_buffer;
-        // Capture at render time: on_press fires in-scope here, but
-        // long-press opens a `ContextMenu` whose entries run under the
-        // menu overlay — outside Router. Pre-captured handle sidesteps
-        // the ambiguity.
-        let router = RouterContext::get();
 
         let focus = use_a11y();
         let focus_status = use_focus(focus);
@@ -677,7 +660,7 @@ impl Component for ItemCard {
 
         let open = move || {
             crate::route::queue_canvas_background(bg_style, rgba_to_color(tint).into());
-            let _ = router.push(crate::route::route_for_kind(&kind, id));
+            crate::space::open(TabTarget::Item(id), OpenHint::Focused);
         };
 
         let menu_builder = {
@@ -1440,7 +1423,6 @@ struct FabCtx {
     handle: LibHandle,
     snap: State<Option<LibraryIndex>>,
     current: FolderId,
-    router: RouterContext,
 }
 
 fn fab_stack(
@@ -1448,13 +1430,11 @@ fn fab_stack(
     snap: State<Option<LibraryIndex>>,
     current: FolderId,
     pad: EdgeInsets,
-    router: RouterContext,
 ) -> Rect {
     let ctx = FabCtx {
         handle,
         snap,
         current,
-        router,
     };
 
     let plus_bg = Color::from_rgb(65, 105, 220);
@@ -1620,7 +1600,6 @@ fn flow_new_note(ctx: FabCtx) {
         handle,
         snap,
         current,
-        router,
     } = ctx;
     let mut snap = snap;
     spawn_forever(async move {
@@ -1639,7 +1618,7 @@ fn flow_new_note(ctx: FabCtx) {
             Ok(id) => {
                 snap.set(Some(lib.index().clone()));
                 crate::builtin::prime_notes(lib.index().items.iter());
-                let _ = router.push(Route::NotesView { id });
+                crate::space::open(TabTarget::Item(id), OpenHint::Focused);
             }
             Err(e) => log::warn!("notes: create_item failed: {e}"),
         }
@@ -1653,7 +1632,6 @@ fn flow_import_markdown(ctx: FabCtx) {
         handle,
         snap,
         current,
-        router,
     } = ctx;
     let mut snap = snap;
     spawn_forever(async move {
@@ -1690,7 +1668,7 @@ fn flow_import_markdown(ctx: FabCtx) {
         snap.set(Some(lib.index().clone()));
         crate::builtin::prime_notes(lib.index().items.iter());
         drop(lib);
-        let _ = router.push(Route::NotesView { id });
+        crate::space::open(TabTarget::Item(id), OpenHint::Focused);
     });
 }
 
@@ -1746,7 +1724,6 @@ fn flow_open_bible(ctx: FabCtx) {
         handle,
         snap,
         current,
-        router,
     } = ctx;
     let mut snap = snap;
     spawn_forever(async move {
@@ -1766,7 +1743,7 @@ fn flow_open_bible(ctx: FabCtx) {
         {
             Ok(id) => {
                 snap.set(Some(lib.index().clone()));
-                let _ = router.push(Route::BibleView { id });
+                crate::space::open(TabTarget::Item(id), OpenHint::Focused);
             }
             Err(e) => log::warn!("bible: create_item failed: {e}"),
         }
@@ -1780,9 +1757,9 @@ pub fn fab_install_bible() {
     crate::bible_install_modal::open_install_modal();
 }
 
-fn flow_new_ephemeral(ctx: FabCtx) {
+fn flow_new_ephemeral(_ctx: FabCtx) {
     crate::route::queue_canvas_background(BackgroundStyle::default(), crate::route::DEFAULT_PAPER);
-    let _ = ctx.router.push(Route::CanvasEphemeral);
+    crate::space::open(TabTarget::Scratch, OpenHint::Focused);
 }
 
 fn flow_quick_sketch(ctx: FabCtx) {
@@ -1790,7 +1767,6 @@ fn flow_quick_sketch(ctx: FabCtx) {
         handle,
         snap,
         current,
-        router,
     } = ctx;
     let mut snap = snap;
     spawn_forever(async move {
@@ -1812,7 +1788,7 @@ fn flow_quick_sketch(ctx: FabCtx) {
                     BackgroundStyle::default(),
                     crate::route::DEFAULT_PAPER,
                 );
-                let _ = router.push(Route::CanvasView { id });
+                crate::space::open(TabTarget::Item(id), OpenHint::Focused);
             }
             Err(err) => log::error!("create_item: {err}"),
         }
@@ -1825,7 +1801,6 @@ fn flow_new_canvas(ctx: FabCtx) {
         handle,
         snap,
         current,
-        router,
     } = ctx;
     let available = current_tag_names(snap);
     CanvasCreateSheet::new(move |req: CreateCanvasRequest| {
@@ -1858,7 +1833,7 @@ fn flow_new_canvas(ctx: FabCtx) {
                     log::info!("canvas created id={id:?}");
                     snap.set(Some(lib.index().clone()));
                     crate::route::queue_canvas_background(bg_style, surface.into());
-                    let _ = router.push(Route::CanvasView { id });
+                    crate::space::open(TabTarget::Item(id), OpenHint::Focused);
                 }
                 Err(err) => log::error!("create_item: {err}"),
             }
@@ -1875,7 +1850,6 @@ fn flow_new_folder(ctx: FabCtx) {
         handle,
         snap,
         current,
-        router: _,
     } = ctx;
     let available = current_tag_names(snap);
     FolderCreateSheet::new(move |req: CreateFolderRequest| {
@@ -1911,9 +1885,8 @@ fn flow_import_pdf(ctx: FabCtx) {
         handle,
         snap,
         current,
-        router,
     } = ctx;
-    spawn_forever(pick_and_open_pdf(handle, snap, current, router));
+    spawn_forever(pick_and_open_pdf(handle, snap, current));
 }
 
 fn flow_import_bundle(ctx: FabCtx) {
@@ -2355,14 +2328,11 @@ pub(crate) fn open_folder_edit_sheet(
 }
 
 /// Launch the platform file-picker, read the picked PDF into memory,
-/// and open the canvas-create sheet pre-filled with its name. `router`
-/// must be captured in the caller's component scope — this async body
-/// runs on the root task scope and cannot look it up itself.
+/// and open the canvas-create sheet pre-filled with its name.
 async fn pick_and_open_pdf(
     handle: LibHandle,
     snap: State<Option<LibraryIndex>>,
     parent: FolderId,
-    router: RouterContext,
 ) {
     use std::io::Read;
     use std::sync::Arc as StdArc;
@@ -2445,7 +2415,7 @@ async fn pick_and_open_pdf(
                         log::error!("attach_pdf: {err}");
                     }
                     snap.set(Some(lib.index().clone()));
-                    let _ = router.push(Route::CanvasPdfView { id });
+                    crate::space::open(TabTarget::Item(id), OpenHint::Focused);
                 }
                 Err(err) => log::error!("create_item: {err}"),
             }

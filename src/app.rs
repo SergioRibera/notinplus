@@ -846,10 +846,6 @@ pub(crate) fn canvas_chrome(
         ))
 }
 
-pub(crate) fn canvas_root(mount: CanvasMount) -> impl IntoElement {
-    CanvasPane { mount }
-}
-
 fn left_top(
     board: &Arc<Mutex<Board>>,
     state: &ChromeState,
@@ -884,6 +880,7 @@ fn left_top(
                 .horizontal()
                 .child(icon_button(arrow_left(), {
                     let board = Arc::clone(board);
+                    let active_item = state.active_item;
                     move || {
                         let snapshot = {
                             let mut guard = lock(&board);
@@ -892,9 +889,7 @@ fn left_top(
                             doc.snapshot_bytes()
                                 .map(|bytes| (bytes, crate::library::refs::capture(doc)))
                         };
-                        let item_id = RouterContext::get()
-                            .current::<crate::route::Route>()
-                            .canvas_item();
+                        let item_id = *active_item.peek();
                         spawn(async move {
                             match (item_id, snapshot) {
                                 (Some(id), Ok((bytes, captured))) => {
@@ -926,10 +921,10 @@ fn left_top(
                         // `RouterContext::get()` would panic.
                         let router = RouterContext::get();
                         let workspace = match router.current::<crate::route::Route>() {
-                            crate::route::Route::WorkspaceView { id } => Some(id),
-                            _ => None,
+                            crate::route::Route::Space { id } => Some(id),
+                            crate::route::Route::Home => None,
                         };
-                        SidebarModal::open(state, board.clone(), router, workspace);
+                        SidebarModal::open(state, board.clone(), workspace);
                     }
                 }))
                 .child(icon_button(input_mode_icon, {

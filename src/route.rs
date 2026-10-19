@@ -1,22 +1,18 @@
-//! Mobile navigation shell.
+//! Navigation shell.
 //!
-//! Wires [`freya_router`] into the mobile entry point so the shell can
-//! flip between a landing page, a persisted canvas, an ephemeral
-//! ("incognito") canvas, or a PDF-backed canvas. Desktop still uses
-//! [`crate::app::root`] directly since the router adds no value until
-//! we grow more views.
+//! Two routes: the Home grid and the mesa (`Space`) that shows every
+//! open document as a tab. Opening anything goes through
+//! [`crate::space::open`], which lands the tab and navigates here.
 //!
 //! Route ↔ component convention: `#[derive(Routable)]` materialises
 //! each variant by constructing a struct of the same name — so
-//! `Route::Home` builds `Home { }`, `Route::CanvasView { id }` builds
-//! `CanvasView { id }`, etc. The item id travels on the route itself
-//! (dynamic segment); the ephemeral variant has no id and skips all
-//! persistence.
+//! `Route::Home` builds `Home { }` and `Route::Space { id }` builds
+//! `Space { id }`.
 //!
 //! Background handoff: per-item background selection travels through
 //! [`queue_canvas_background`] as a one-shot hint — `home` sets it
-//! immediately before pushing the canvas route and the mount hook on
-//! the canvas components drains the slot and installs the matching
+//! immediately before opening a freshly created item and the mount
+//! hook on the canvas pane drains the slot and installs the matching
 //! background. Falls back to a blank off-white surface when nothing is
 //! queued (fresh start / cold URL entry).
 
@@ -29,142 +25,41 @@ use freya_canvas_bg::{
 };
 use freya_engine::prelude::Color as SkColor;
 
-use crate::app::{CanvasMount, canvas_root};
-use crate::builtin::{pdf_source, stroke_canvas};
+use crate::app::CanvasMount;
 use crate::canvas::{Board, Viewport, lock};
 use crate::doc::Doc;
 use crate::home::Home;
-use crate::library::{BackgroundStyle, DocKind, ItemId, LibraryError};
+use crate::library::{BackgroundStyle, ItemId, LibraryError, WorkspaceId};
 use crate::prefs;
 use crate::workspace_view::WorkspaceView;
 
 /// Off-white paper used when the caller does not override the surface.
 pub const DEFAULT_PAPER: SkColor = SkColor::from_rgb(250, 250, 248);
 
-/// Mobile app router. `Home` is the initial route. `CanvasView { id }`
-/// opens a persisted canvas item; `CanvasEphemeral` opens an in-memory
-/// scratch canvas (no autosave, no view sidecar); `CanvasPdfView { id }`
-/// opens a canvas overlaid on a PDF previously loaded via the
-/// file-picker plugin. `WorkspaceView { id }` opens the pane-tree
-/// shell for a persisted workspace.
+/// App router. `Home` is the landing grid; `Space { id }` is the one
+/// editing surface — a mesa holding every open document as a tab.
 #[derive(Routable, Clone, Debug, PartialEq)]
 #[rustfmt::skip]
 pub enum Route {
     #[route("/")]
     Home,
-    #[route("/canvas")]
-    CanvasEphemeral,
-    #[route("/canvas/:id")]
-    CanvasView { id: ItemId },
-    #[route("/pdf/:id")]
-    CanvasPdfView { id: ItemId },
-    #[route("/workspace/:id")]
-    WorkspaceView { id: crate::library::WorkspaceId },
-    #[route("/bible/:id")]
-    BibleView { id: ItemId },
-    #[route("/notes/:id")]
-    NotesView { id: ItemId },
+    #[route("/space/:id")]
+    Space { id: WorkspaceId },
 }
 
-impl Route {
-    /// Item id attached to the current canvas-ish route, if any.
-    /// `Home` and `CanvasEphemeral` return `None`.
-    #[must_use]
-    pub fn canvas_item(&self) -> Option<ItemId> {
-        match self {
-            Route::CanvasView { id }
-            | Route::CanvasPdfView { id }
-            | Route::BibleView { id }
-            | Route::NotesView { id } => Some(*id),
-            Route::Home | Route::CanvasEphemeral | Route::WorkspaceView { .. } => None,
-        }
-    }
-}
-
-/// Native route for an item of `kind`. Keeps shell-side navigation
-/// (chip taps, sidebar jumps, slow-path auto-opens) free of per-plugin
-/// branching. Plugins without a standalone route fall back to `Home`.
-#[must_use]
-pub fn route_for_kind(kind: &DocKind, id: ItemId) -> Route {
-    match kind.plugin_id.as_str() {
-        stroke_canvas::KIND_ID => Route::CanvasView { id },
-        pdf_source::KIND_ID => Route::CanvasPdfView { id },
-        notein_bible::canvas::KIND_ID => Route::BibleView { id },
-        notein_notes::KIND_ID => Route::NotesView { id },
-        other => {
-            log::warn!("no shell route registered for plugin {other}");
-            Route::Home
-        }
-    }
-}
-
-/// Persisted infinite canvas — installs whichever background was queued
-/// by the caller (or the default off-white when nothing was queued) so
-/// freshly opened items pick up their persisted pattern.
+/// The mesa route: every open document of one workspace as tabs.
 #[derive(Debug, PartialEq)]
-pub struct CanvasView {
-    pub id: ItemId,
+pub struct Space {
+    pub id: WorkspaceId,
 }
 
-impl Component for CanvasView {
+impl Component for Space {
     fn render(&self) -> impl IntoElement {
-        canvas_root(CanvasMount::Item(self.id))
+        WorkspaceView { id: self.id }
     }
 }
 
-/// Ephemeral ("incognito") infinite canvas. No library item, no
-/// autosave, no view sidecar — strokes and viewport live only in this
-/// mount's [`Board`] until the user navigates away.
-#[derive(Debug, PartialEq)]
-pub struct CanvasEphemeral;
-
-impl Component for CanvasEphemeral {
-    fn render(&self) -> impl IntoElement {
-        canvas_root(CanvasMount::Ephemeral)
-    }
-}
-
-/// Bible reader bound to a library item. The item carries the chosen
-/// translation id in its [`DocKind::init_bytes`]; highlights + view
-/// state live in a notein-managed plugin snapshot sidecar.
-#[derive(Debug, PartialEq)]
-pub struct BibleView {
-    pub id: ItemId,
-}
-
-impl Component for BibleView {
-    fn render(&self) -> impl IntoElement {
-        crate::bible_face::BibleFace { item: self.id }
-    }
-}
-
-/// Text note bound to a library item.
-#[derive(Debug, PartialEq)]
-pub struct NotesView {
-    pub id: ItemId,
-}
-
-impl Component for NotesView {
-    fn render(&self) -> impl IntoElement {
-        crate::notes_face::NotesFace { item: self.id }
-    }
-}
-
-/// PDF-backed canvas route. Delegates to the PDF face which installs
-/// the PDF background + the anchor-source closure around a plain
-/// `CanvasMount::Item(id)` strokes mount.
-#[derive(Debug, PartialEq)]
-pub struct CanvasPdfView {
-    pub id: ItemId,
-}
-
-impl Component for CanvasPdfView {
-    fn render(&self) -> impl IntoElement {
-        crate::builtin::PdfFace { item: self.id }
-    }
-}
-
-/// Entry point driven by [`crate::app::canvas_root`] on mount. Runs the
+/// Entry point driven by [`crate::app::CanvasPane`] on mount. Runs the
 /// per-board side effects: install queued background, hydrate the doc +
 /// autosave sinks, and (for PDF-backed mounts) load the PDF into the
 /// background slot off the UI thread.
