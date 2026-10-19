@@ -28,7 +28,7 @@ use crate::ui_mask::{MaskSlot, use_mask_slot};
 /// Family name of the default canvas text font.
 pub const FONT_FAMILY: &str = "Excalifont";
 /// Excalifont (by Excalidraw), registered at launch.
-pub const FONT_BYTES: &[u8] = include_bytes!("../assets/fonts/Excalifont-Regular.ttf");
+pub const FONT_BYTES: &[u8] = include_bytes!("../assets/fonts/Excalifont.ttf");
 
 /// Diameter of the move / rotate / resize handles, in screen pixels.
 const HANDLE: f32 = 26.0;
