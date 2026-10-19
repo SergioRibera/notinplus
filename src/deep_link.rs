@@ -85,6 +85,19 @@ impl DeepLink for SourceRef {
     }
 }
 
+/// Every `notein://` link found anywhere in `text`, in order. Links end at
+/// whitespace or at the characters markdown and HTML use to close a
+/// link; anything that fails to parse is skipped.
+pub fn scan_links(text: &str) -> impl Iterator<Item = SourceRef> + '_ {
+    text.match_indices(PREFIX).filter_map(move |(start, _)| {
+        let rest = &text[start..];
+        let end = rest
+            .find(|c: char| c.is_whitespace() || matches!(c, ')' | ']' | '>' | '"' | '\''))
+            .unwrap_or(rest.len());
+        SourceRef::from_url(&rest[..end])
+    })
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -142,5 +155,30 @@ mod tests {
         assert_eq!(SourceRef::from_url("notein://canvas/nope"), None);
         assert_eq!(SourceRef::from_url("notein://plugin/x/abc"), None);
         assert_eq!(SourceRef::from_url("notein://other/1"), None);
+    }
+}
+
+#[cfg(test)]
+mod scan_tests {
+    use super::*;
+
+    #[test]
+    fn scan_finds_every_link_in_markdown() {
+        let canvas = SourceRef::Canvas {
+            bookmark: BookmarkId::from_bytes([3; 16]),
+        };
+        let plugin = SourceRef::Plugin {
+            plugin_id: "io.notein.notes".into(),
+            item: [4; 16],
+            anchor: vec![1, 2],
+            selection: None,
+        };
+        let text = format!(
+            "see [pin]({}) and <{}> plus https://x.dev and notein://bogus",
+            canvas.to_url(),
+            plugin.to_url()
+        );
+        let found: Vec<SourceRef> = scan_links(&text).collect();
+        assert_eq!(found, vec![canvas, plugin]);
     }
 }

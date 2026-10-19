@@ -182,6 +182,7 @@ fn save(item: ItemId, body: &str, title: &str) {
     {
         log::warn!("notes: snapshot write failed: {err}");
     }
+    crate::library::refs::record_note(item, body);
     if let Some(index) = crate::builtin::notes_index()
         && !title.is_empty()
     {

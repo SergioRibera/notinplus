@@ -1686,6 +1686,7 @@ fn flow_import_markdown(ctx: FabCtx) {
         ) {
             log::warn!("notes import: snapshot write failed: {err}");
         }
+        crate::library::refs::record_note(id, &markdown);
         snap.set(Some(lib.index().clone()));
         crate::builtin::prime_notes(lib.index().items.iter());
         drop(lib);

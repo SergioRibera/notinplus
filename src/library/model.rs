@@ -85,6 +85,10 @@ uuid_newtype!(
     WorkspaceId
 );
 uuid_newtype!(
+    /// Stable identifier for an explicit link between two items.
+    LinkId
+);
+uuid_newtype!(
     /// Stable identifier for a pane within a single workspace. Scoped
     /// per workspace — a [`PaneId`] from workspace A has no meaning in
     /// B. Default is the nil UUID used by transient layout snapshots

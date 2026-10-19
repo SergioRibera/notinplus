@@ -20,7 +20,9 @@
 pub mod bodies;
 pub mod error;
 pub mod index;
+pub mod links;
 pub mod model;
+pub mod refs;
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -29,11 +31,13 @@ use istmo::Runtime;
 use istmo_data_store::{DataStoreClient, DataStoreConfig};
 
 pub use self::error::{LibraryError, NotFoundKind, Result};
+pub use self::links::{Link, LinkIndex, LinkKind};
 pub use self::model::{
-    BackgroundStyle, DocKind, Folder, FolderId, INDEX_VERSION, Item, ItemId, LibraryIndex, Pane,
-    PaneId, PaneLayout, PaneTab, ROOT_FOLDER, Rgba, SplitOrientation, SplitSide, TabTarget, Tag,
-    TagId, WORKSPACE_INDEX_VERSION, Workspace, WorkspaceId, WorkspaceIndex,
+    BackgroundStyle, DocKind, Folder, FolderId, INDEX_VERSION, Item, ItemId, LibraryIndex, LinkId,
+    Pane, PaneId, PaneLayout, PaneTab, ROOT_FOLDER, Rgba, SplitOrientation, SplitSide, TabTarget,
+    Tag, TagId, WORKSPACE_INDEX_VERSION, Workspace, WorkspaceId, WorkspaceIndex,
 };
+pub use self::refs::{RefEntry, RefOrigin};
 
 use crate::doc::Doc;
 
@@ -51,6 +55,7 @@ pub struct Library {
     client: DataStoreClient,
     index: LibraryIndex,
     workspaces: WorkspaceIndex,
+    links: LinkIndex,
 }
 
 impl Library {
@@ -76,10 +81,12 @@ impl Library {
             }
         };
         let workspaces = index::load_workspaces(&client).await?;
+        let links = index::load_links(&client).await?;
         let mut lib = Self {
             client,
             index,
             workspaces,
+            links,
         };
         lib.ensure_default_workspace().await?;
         Ok(lib)
@@ -488,6 +495,10 @@ impl Library {
             return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
         }
         bodies::purge(id);
+        refs::forget(id);
+        if self.links.retire_item(id, now_millis()) > 0 {
+            self.persist_links().await?;
+        }
         self.persist().await
     }
 
@@ -572,11 +583,75 @@ impl Library {
             return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
         }
         bodies::write_doc(id, doc)?;
+        refs::record_doc(id, doc);
         let now = now_millis();
         if let Some(item) = self.index.item_mut(id) {
             item.updated_at = now;
         }
         self.persist().await
+    }
+
+    // ---------- Links --------------------------------------------------
+
+    /// Every live link touching `item`, either direction.
+    pub fn links_of(&self, item: ItemId) -> impl Iterator<Item = &Link> {
+        self.links.of(item)
+    }
+
+    /// Items that are notebooks of `item`.
+    pub fn companions_of(&self, item: ItemId) -> impl Iterator<Item = ItemId> + '_ {
+        self.links.companions_of(item)
+    }
+
+    /// Items that `item` is a notebook of.
+    pub fn companion_parents_of(&self, item: ItemId) -> impl Iterator<Item = ItemId> + '_ {
+        self.links.companion_parents_of(item)
+    }
+
+    /// Live link by id.
+    #[must_use]
+    pub fn link(&self, id: LinkId) -> Option<&Link> {
+        self.links.get(id)
+    }
+
+    /// Relate `from` and `to`. Returns the existing link id when the
+    /// same edge is already live.
+    ///
+    /// # Errors
+    /// [`LibraryError::NotFound`] when either item is unknown,
+    /// [`LibraryError::SelfLink`] when both ends are the same item.
+    pub async fn create_link(
+        &mut self,
+        from: ItemId,
+        to: ItemId,
+        kind: LinkKind,
+    ) -> Result<LinkId> {
+        for id in [from, to] {
+            if self.index.item(id).is_none() {
+                return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
+            }
+        }
+        let id = self
+            .links
+            .insert(from, to, kind, now_millis())
+            .ok_or(LibraryError::SelfLink)?;
+        self.persist_links().await?;
+        Ok(id)
+    }
+
+    /// Remove a link.
+    ///
+    /// # Errors
+    /// [`LibraryError::NotFound`] when no live link has that id.
+    pub async fn delete_link(&mut self, id: LinkId) -> Result<()> {
+        if !self.links.remove(id, now_millis()) {
+            return Err(LibraryError::NotFound(NotFoundKind::Link(id)));
+        }
+        self.persist_links().await
+    }
+
+    async fn persist_links(&self) -> Result<()> {
+        index::save_links(&self.client, &self.links).await
     }
 
     /// Attach raw PDF bytes to `id`. Overwrites any prior attachment.

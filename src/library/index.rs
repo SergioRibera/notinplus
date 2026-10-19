@@ -10,6 +10,7 @@ use bincode::config::{self, Configuration};
 use istmo_data_store::DataStoreClient;
 
 use super::error::{LibraryError, Result};
+use super::links::LinkIndex;
 use super::model::{INDEX_VERSION, LibraryIndex, WorkspaceIndex};
 
 const CODEC: Configuration = config::standard();
@@ -84,5 +85,33 @@ pub async fn save_workspaces(client: &DataStoreClient, snapshot: &WorkspaceIndex
     let bytes =
         bincode::encode_to_vec(snapshot, CODEC).map_err(|e| LibraryError::Codec(e.to_string()))?;
     client.set_bytes(WORKSPACES_KEY.to_owned(), bytes).await?;
+    Ok(())
+}
+
+/// data-store key for the [`LinkIndex`] blob.
+pub const LINKS_KEY: &str = "library.links.v1";
+
+/// Fetch the persisted link index or return a fresh default.
+///
+/// # Errors
+/// Runtime / data-store / codec failures.
+pub async fn load_links(client: &DataStoreClient) -> Result<LinkIndex> {
+    let raw = client.get_bytes(LINKS_KEY.to_owned()).await?;
+    let Some(bytes) = raw else {
+        return Ok(LinkIndex::default());
+    };
+    let (index, _) = bincode::decode_from_slice::<LinkIndex, _>(&bytes, CODEC)
+        .map_err(|e| LibraryError::Codec(e.to_string()))?;
+    Ok(index)
+}
+
+/// Overwrite the persisted link index.
+///
+/// # Errors
+/// Runtime / data-store / codec failures.
+pub async fn save_links(client: &DataStoreClient, snapshot: &LinkIndex) -> Result<()> {
+    let bytes =
+        bincode::encode_to_vec(snapshot, CODEC).map_err(|e| LibraryError::Codec(e.to_string()))?;
+    client.set_bytes(LINKS_KEY.to_owned(), bytes).await?;
     Ok(())
 }

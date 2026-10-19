@@ -8,7 +8,7 @@ use std::io;
 use istmo::IstmoError;
 use istmo_data_store::DataStoreError;
 
-use super::model::{FolderId, ItemId, TagId, WorkspaceId};
+use super::model::{FolderId, ItemId, LinkId, TagId, WorkspaceId};
 
 /// One-off result alias so call sites don't have to spell the error
 /// type on every method.
@@ -38,6 +38,8 @@ pub enum LibraryError {
     /// Root folder is implicit; user cannot rename / delete / colour
     /// it.
     RootImmutable,
+    /// A link whose two ends are the same item.
+    SelfLink,
 }
 
 /// Which id-space produced a [`LibraryError::NotFound`].
@@ -47,6 +49,7 @@ pub enum NotFoundKind {
     Item(ItemId),
     Tag(TagId),
     Workspace(WorkspaceId),
+    Link(LinkId),
 }
 
 impl fmt::Display for LibraryError {
@@ -61,9 +64,11 @@ impl fmt::Display for LibraryError {
                 NotFoundKind::Item(id) => write!(f, "item {id} not found"),
                 NotFoundKind::Tag(id) => write!(f, "tag {id} not found"),
                 NotFoundKind::Workspace(id) => write!(f, "workspace {id} not found"),
+                NotFoundKind::Link(id) => write!(f, "link {id} not found"),
             },
             Self::Cycle => f.write_str("folder move would form a cycle"),
             Self::RootImmutable => f.write_str("root folder is read-only"),
+            Self::SelfLink => f.write_str("a link needs two different items"),
         }
     }
 }
