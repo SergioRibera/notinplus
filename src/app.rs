@@ -40,7 +40,7 @@ use crate::palette_popup::{HOVER_DELAY, brush_popup};
 use crate::pen_pump;
 use crate::plugins;
 use crate::prefs;
-use crate::ui_mask::{self, UiRegion, publish_mask};
+use crate::ui_mask::{self, MaskSlot, UiRegion, use_mask_slot};
 
 /// Which flavour of mount the surrounding [`canvas_root`] call represents.
 /// Drives per-mount side effects (doc load, viewport sidecar routing)
@@ -410,6 +410,31 @@ pub(crate) struct ChromeState {
     /// Last window area of the canvas text toolbar. Bottom overlays add its
     /// height to their offset while a box is edited so they sit above it.
     pub(crate) text_toolbar_area: State<Area>,
+    /// Pen mask entries of this pane's overlays.
+    pub(crate) masks: ChromeMasks,
+}
+
+/// Pen mask entries owned by one pane's chrome, so split panes do not
+/// overwrite each other's (see [`crate::ui_mask`]).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) struct ChromeMasks {
+    pub(crate) left: MaskSlot,
+    pub(crate) palette: MaskSlot,
+    pub(crate) zoom: MaskSlot,
+    pub(crate) right: MaskSlot,
+    pub(crate) bookmark_card: MaskSlot,
+}
+
+impl ChromeMasks {
+    fn use_masks() -> Self {
+        Self {
+            left: use_mask_slot(),
+            palette: use_mask_slot(),
+            zoom: use_mask_slot(),
+            right: use_mask_slot(),
+            bookmark_card: use_mask_slot(),
+        }
+    }
 }
 
 /// Allocate the chrome signals. Call once per shell that hosts a chrome
@@ -435,6 +460,7 @@ pub(crate) fn use_chrome_state() -> ChromeState {
         sidebar_tab: use_state(SidebarTab::default),
         text_editor: crate::canvas_text::TextEditorSlot::use_slot(),
         text_toolbar_area: use_state(Area::default),
+        masks: ChromeMasks::use_masks(),
     }
 }
 
@@ -457,6 +483,7 @@ impl Component for CanvasPane {
     fn render(&self) -> impl IntoElement {
         let state = use_chrome_state();
         let coords = use_chrome_coords();
+        use_provide_context(move || state.text_editor.popup_reporter());
         let insets = use_safe_area_insets();
         let pad = *insets.read();
         rect()
@@ -775,11 +802,13 @@ pub(crate) fn canvas_chrome(
                     0.0
                 },
             pad.right,
+            state.masks.zoom,
         ))
         .child(crate::bookmark_ui::bookmark_card_overlay(
             &board,
             state.selected_bookmark,
             state.bookmark_body,
+            state.masks.bookmark_card,
         ))
         .child(crate::canvas_text::text_toolbar(
             &board,
@@ -817,7 +846,10 @@ fn left_top(
         .vertical()
         .layer(Layer::Overlay)
         .spacing(6.)
-        .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Back, e.area))
+        .on_sized({
+            let mask = state.masks.left;
+            move |e: Event<SizedEventData>| mask.publish(e.area)
+        })
         .child(
             rect()
                 .spacing(6.)
@@ -896,6 +928,7 @@ fn left_top(
             state.scale,
             coords,
             palette_progress,
+            state.masks.palette,
         ))
 }
 
@@ -949,7 +982,6 @@ fn icon_button_gated(
         .layer(Layer::Overlay)
         .background(bg)
         .with_corner_radius(8.0)
-        .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Back, e.area))
         .on_press(move |_| {
             if enabled {
                 cb.call();
@@ -970,6 +1002,7 @@ fn zoom_overlay(
     zoom: State<f32>,
     bottom: f32,
     right: f32,
+    mask: MaskSlot,
 ) -> impl IntoElement {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let pct = (*zoom.read() * 100.0).round() as i32;
@@ -998,7 +1031,7 @@ fn zoom_overlay(
         .layer(Layer::Overlay)
         .background(Color::from_rgb(30, 30, 34))
         .with_corner_radius(8.0)
-        .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Zoom, e.area))
+        .on_sized(move |e: Event<SizedEventData>| mask.publish(e.area))
         .child(label().color(Color::WHITE).font_size(12.0).text(text))
         .child(reset)
 }
@@ -1009,6 +1042,7 @@ fn palette_overlay(
     scale: State<f32>,
     coords: PopupCoords,
     progress: f32,
+    mask: MaskSlot,
 ) -> impl IntoElement {
     dispatch_pen_hover(board, selected, scale, coords);
     let selected_idx = (*selected.read()).min(PALETTE.len() - 1);
@@ -1022,7 +1056,7 @@ fn palette_overlay(
         .padding(10.0)
         .background(Color::from_rgb(30, 30, 34))
         .with_corner_radius(10.0)
-        .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Palette, e.area));
+        .on_sized(move |e: Event<SizedEventData>| mask.publish(e.area));
 
     // Always render every brush. The selected one stays at full size;
     // the rest scale their width + opacity by `progress` so the row
@@ -1451,7 +1485,10 @@ fn top_right_stack(
         .cross_align(Alignment::End)
         .spacing(8.0)
         .layer(Layer::Overlay)
-        .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Layers, e.area))
+        .on_sized({
+            let mask = state.masks.right;
+            move |e: Event<SizedEventData>| mask.publish(e.area)
+        })
         .child(top_right_toolbar(board, state));
     if layers_visible {
         stack = stack.child(layers_panel_body(board, state.layers_ver));

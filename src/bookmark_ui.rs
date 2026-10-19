@@ -38,6 +38,7 @@ pub fn bookmark_card_overlay(
     board: &Arc<Mutex<Board>>,
     mut selected: State<Option<BookmarkId>>,
     body_buffer: State<String>,
+    mask: crate::ui_mask::MaskSlot,
 ) -> impl IntoElement {
     // Hooks must run on every render regardless of the selection /
     // presence state — otherwise the hook index drifts when a bookmark
@@ -62,6 +63,7 @@ pub fn bookmark_card_overlay(
         // Nothing selected — render a zero-area placeholder so the
         // overlay slot in `app::root` always has a child regardless
         // of state.
+        mask.clear();
         return rect().width(Size::px(0.0)).height(Size::px(0.0));
     };
 
@@ -176,6 +178,8 @@ pub fn bookmark_card_overlay(
         .opacity(opacity)
         .on_sized(move |e: Event<SizedEventData>| {
             let new_area = e.area;
+            // A pen tap on the card must not draw on the canvas below.
+            mask.publish(new_area);
             if *card_area.peek() != new_area {
                 card_area.set(new_area);
             }

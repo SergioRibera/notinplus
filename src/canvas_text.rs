@@ -23,7 +23,7 @@ use crate::canvas::{Board, PaintPass, SceneText, SurfaceBounds, TextLayerView, T
 use crate::components::note_editor::{note_theme, notein_editor, use_note_keyboard};
 use crate::components::theme::{BORDER, PRIMARY, SURFACE_PRIMARY, TEXT_PRIMARY, TEXT_SECONDARY};
 use crate::text_box::{TEXT_BASE_SIZE, TEXT_MIN_WIDTH, TextBoxId, TextFrame};
-use crate::ui_mask::{UiRegion, publish_mask};
+use crate::ui_mask::{MaskSlot, use_mask_slot};
 
 /// Family name of the default canvas text font.
 pub const FONT_FAMILY: &str = "Excalifont";
@@ -51,6 +51,12 @@ pub struct TextEditorSlot {
     pub controller: EditorController,
     /// Box currently mounted as an editor; the toolbar shows while set.
     pub editing: State<Option<TextBoxId>>,
+    /// Pen mask of the box under edit.
+    edit_mask: MaskSlot,
+    /// Pen mask of the formatting bar.
+    toolbar_mask: MaskSlot,
+    /// Pen mask of the open editor or toolbar popup (menus, pickers).
+    popup_mask: MaskSlot,
 }
 
 impl std::fmt::Debug for TextEditorSlot {
@@ -68,7 +74,21 @@ impl TextEditorSlot {
         Self {
             controller: use_editor_controller(),
             editing: use_state(|| None),
+            edit_mask: use_mask_slot(),
+            toolbar_mask: use_mask_slot(),
+            popup_mask: use_mask_slot(),
         }
+    }
+
+    /// Reporter the editor and toolbar call with the area of their open
+    /// popup, so a pen tap on a menu does not reach the canvas below.
+    #[must_use]
+    pub fn popup_reporter(self) -> PopupReporter {
+        let mask = self.popup_mask;
+        PopupReporter::new(move |area| match area {
+            Some(area) => mask.publish(area),
+            None => mask.clear(),
+        })
     }
 }
 
@@ -164,6 +184,8 @@ impl Component for CanvasLayers {
         rect()
             .width(Size::fill())
             .height(Size::fill())
+            // Boxes past the pane edge must not draw over a split neighbour.
+            .overflow(Overflow::Clip)
             .on_sized(move |event: Event<SizedEventData>| {
                 let next = (event.area.min_x(), event.area.min_y());
                 if *origin.peek() != next {
@@ -328,7 +350,9 @@ impl Component for CanvasTextBox {
             .position(Position::new_absolute().left(left).top(top))
             .width(Size::px(frame.width * view.scale))
             .rotate(frame.rotation)
-            .interactive(self.editing)
+            // Idle boxes keep links and chips live, except in text mode,
+            // where a tap on a box means "edit it".
+            .interactive(self.editing || !self.outlined)
             .on_sized(move |event: Event<SizedEventData>| {
                 lock(&board).set_text_height(id, event.area.height() / view.scale);
             })
@@ -425,6 +449,7 @@ impl Component for TextBoxEditor {
             }
         });
         let mut editing = self.editor.editing;
+        let mask = self.editor.edit_mask;
         let id = self.id;
         use_hook(move || {
             editing.set(Some(id));
@@ -439,13 +464,13 @@ impl Component for TextBoxEditor {
             // Switching boxes mounts the next editor before this one drops.
             if *editing.peek() == Some(id) {
                 editing.set(None);
-                crate::ui_mask::set(UiRegion::TextEdit, None);
+                mask.clear();
             }
         });
 
         rect()
             .width(Size::fill())
-            .on_sized(|event: Event<SizedEventData>| publish_mask(UiRegion::TextEdit, event.area))
+            .on_sized(move |event: Event<SizedEventData>| mask.publish(event.area))
             .child(
                 notein_editor(
                     value,
@@ -699,7 +724,7 @@ pub fn text_toolbar(
 ) -> Element {
     let controller = editor.controller;
     if editor.editing.read().is_none() {
-        crate::ui_mask::set(UiRegion::TextToolbar, None);
+        editor.toolbar_mask.clear();
         return rect().into_element();
     }
     let mut theme = note_theme();
@@ -761,7 +786,7 @@ pub fn text_toolbar(
                 .fill(BORDER),
         )
         .on_sized(move |event: Event<SizedEventData>| {
-            publish_mask(UiRegion::TextToolbar, event.area);
+            editor.toolbar_mask.publish(event.area);
             area.set_if_modified(event.area);
         })
         .child(SideScroll {

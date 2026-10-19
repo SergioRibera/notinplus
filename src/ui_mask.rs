@@ -13,9 +13,6 @@
 //!   pen sweeps over an overlay. The alternative would interrupt a
 //!   live gesture, which is worse UX than the current behaviour of
 //!   letting the finished stroke land where the user aimed.
-//! - **Fixed slot array over a `HashMap`.** Handful of overlays, each
-//!   with a stable identity — indexing an array is cheaper than
-//!   hashing and avoids reallocation on layout changes.
 //! - **`RwLock` with poison-transparent recovery.** Reads happen on
 //!   the pen thread at gesture start; writes happen on the UI thread
 //!   during layout. Reader-heavy access + zero coordination between
@@ -25,35 +22,62 @@
 //!   [`freya::prelude::SizedEventData::area`] delivers and the pen
 //!   backend emits samples in, so no viewport projection is needed
 //!   for the containment check.
+//! - **Slots per overlay instance.** Every canvas pane has its own
+//!   palette, zoom HUD, toolbars, …; with split panes two of them are on
+//!   screen at once, so each instance owns a [`MaskSlot`] (see
+//!   [`use_mask_slot`]) instead of sharing one slot per kind of overlay.
+//!   [`UiRegion`] stays for the app-wide singletons.
 
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{OnceLock, RwLock};
 
+use freya::prelude::{use_drop, use_hook};
 use torin::prelude::Area;
 
-/// Which overlay owns a given slot in the mask. Ordering here is only
-/// used as the array index; new overlays append.
+/// App-wide overlays that exist once, whatever the pane layout.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum UiRegion {
-    Palette,
     Popup,
-    Zoom,
-    Layers,
-    Back,
-    Mode,
     Modal,
-    /// Canvas text box under edit.
-    TextEdit,
-    /// Formatting bar of the canvas text box under edit.
-    TextToolbar,
 }
 
-impl UiRegion {
-    const fn slot(self) -> usize {
-        self as usize
+/// Mask entry owned by one overlay instance. Copy it into handlers;
+/// [`use_mask_slot`] clears it when the owner unmounts.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct MaskSlot(u64);
+
+/// First id handed to [`MaskSlot`]s; ids below belong to [`UiRegion`]s.
+const FIRST_SLOT: u64 = 1024;
+static NEXT_SLOT: AtomicU64 = AtomicU64::new(FIRST_SLOT);
+
+impl MaskSlot {
+    fn next() -> Self {
+        Self(NEXT_SLOT.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Mask `area` (window coordinates). An empty area clears the slot.
+    pub fn publish(self, area: Area) {
+        write(self.0, rect_of(area));
+    }
+
+    pub fn clear(self) {
+        write(self.0, None);
     }
 }
 
-const N_REGIONS: usize = 9;
+impl From<UiRegion> for MaskSlot {
+    fn from(region: UiRegion) -> Self {
+        Self(region as u64)
+    }
+}
+
+/// Allocate a slot for the calling component, cleared when it unmounts.
+pub fn use_mask_slot() -> MaskSlot {
+    let slot = use_hook(MaskSlot::next);
+    use_drop(move || slot.clear());
+    slot
+}
 
 /// Axis-aligned rectangle in surface-logical pixels: `(min_x, min_y,
 /// max_x, max_y)`. Kept as a tuple so [`crate::canvas::Board`] does
@@ -61,41 +85,38 @@ const N_REGIONS: usize = 9;
 /// mask.
 pub type Rect = (f32, f32, f32, f32);
 
-struct MaskInner {
-    slots: RwLock<[Option<Rect>; N_REGIONS]>,
+static MASK: OnceLock<RwLock<HashMap<u64, Rect>>> = OnceLock::new();
+
+fn mask() -> &'static RwLock<HashMap<u64, Rect>> {
+    MASK.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-static MASK: OnceLock<MaskInner> = OnceLock::new();
-
-fn mask() -> &'static MaskInner {
-    MASK.get_or_init(|| MaskInner {
-        slots: RwLock::new([None; N_REGIONS]),
-    })
+/// `area` as a mask rect, `None` when it collapses to zero — a
+/// still-laying-out element publishing an empty rect would leave a
+/// phantom hole in the mask.
+fn rect_of(area: Area) -> Option<Rect> {
+    (area.width() > 0.0 && area.height() > 0.0)
+        .then(|| (area.min_x(), area.min_y(), area.max_x(), area.max_y()))
 }
 
-/// Translate a Freya `on_sized` event area into the surface-pixel
-/// tuple [`crate::ui_mask`] expects. Skips writing when the resolved
-/// area collapses to zero — a still-laying-out element publishing an
-/// empty rect would leave a phantom hole in the mask.
-pub fn publish_mask(region: UiRegion, area: Area) {
-    let w = area.max_x() - area.min_x();
-    let h = area.max_y() - area.min_y();
-    if w <= 0.0 || h <= 0.0 {
-        set(region, None);
-        return;
+fn write(key: u64, rect: Option<Rect>) {
+    if let Ok(mut slots) = mask().write() {
+        match rect {
+            Some(rect) => slots.insert(key, rect),
+            None => slots.remove(&key),
+        };
     }
-    set(
-        region,
-        Some((area.min_x(), area.min_y(), area.max_x(), area.max_y())),
-    );
+}
+
+/// Mask `area` for a singleton overlay. An empty area clears it.
+pub fn publish_mask(region: UiRegion, area: Area) {
+    MaskSlot::from(region).publish(area);
 }
 
 /// Replace the rect associated with `region`. `None` clears the slot
 /// — call this when an overlay hides so the mask does not linger.
 pub fn set(region: UiRegion, rect: Option<Rect>) {
-    if let Ok(mut g) = mask().slots.write() {
-        g[region.slot()] = rect;
-    }
+    write(MaskSlot::from(region).0, rect);
 }
 
 /// Does any registered overlay rect contain the surface-pixel point
@@ -104,8 +125,8 @@ pub fn set(region: UiRegion, rect: Option<Rect>) {
 /// forever.
 #[must_use]
 pub fn contains(x: f32, y: f32) -> bool {
-    mask().slots.read().is_ok_and(|g| {
-        g.iter().flatten().any(|(min_x, min_y, max_x, max_y)| {
+    mask().read().is_ok_and(|slots| {
+        slots.values().any(|(min_x, min_y, max_x, max_y)| {
             x >= *min_x && x <= *max_x && y >= *min_y && y <= *max_y
         })
     })

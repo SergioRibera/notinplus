@@ -43,9 +43,13 @@ impl Component for HostOverlay {
             }
         });
 
+        let toast_mask = crate::ui_mask::use_mask_slot();
         let _ = *tick.read();
         let bars = host.snapshot_progress();
         let toasts = host.snapshot_notifications();
+        if toasts.is_empty() {
+            toast_mask.clear();
+        }
         let pending_edit = host.snapshot_bookmark_edit();
 
         let mut root = rect()
@@ -59,7 +63,7 @@ impl Component for HostOverlay {
             .width(Size::fill())
             .height(Size::fill())
             .child(progress_bar_stack(&bars))
-            .child(toast_stack(&toasts, host.clone()));
+            .child(toast_stack(&toasts, host.clone(), toast_mask));
         if let Some((id, _plugin, request)) = pending_edit {
             root = root.child(BookmarkEditModal {
                 id,
@@ -107,11 +111,18 @@ fn progress_bar(entry: &ProgressEntry) -> impl IntoElement {
         )
 }
 
-fn toast_stack(toasts: &[Notification], host: std::sync::Arc<HostInner>) -> impl IntoElement {
+/// Toasts in the bottom-right corner. `mask` keeps a pen tap on them off
+/// the canvas below.
+fn toast_stack(
+    toasts: &[Notification],
+    host: std::sync::Arc<HostInner>,
+    mask: crate::ui_mask::MaskSlot,
+) -> impl IntoElement {
     let mut root = rect()
         .position(Position::new_absolute().bottom(16.).right(16.))
         .width(Size::px(TOAST_WIDTH_PX))
-        .spacing(8.0);
+        .spacing(8.0)
+        .on_sized(move |e: Event<SizedEventData>| mask.publish(e.area));
     for n in toasts {
         root = root.child(toast(n.clone(), host.clone()));
     }
@@ -189,6 +200,7 @@ impl Component for BookmarkEditModal {
         let host = self.host.clone();
         let preview_sink = self.request.on_preview.clone();
 
+        let mask = crate::ui_mask::use_mask_slot();
         let body: State<String> = use_state(move || seed_body.clone());
         let color: State<Option<Rgba>> = use_state(move || seed_color);
         let refs: State<Vec<SourceRef>> = use_state(move || seed_refs.clone());
@@ -333,6 +345,7 @@ impl Component for BookmarkEditModal {
             .spacing(10.0)
             .on_sized(move |e: Event<SizedEventData>| {
                 let new_area = e.data().area;
+                mask.publish(new_area);
                 if *card_area.peek() != new_area {
                     card_area.set(new_area);
                 }

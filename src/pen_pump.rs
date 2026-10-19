@@ -15,7 +15,7 @@ use istmo::{StreamItem, TypedStream};
 use istmo_pen::{PenClient, PenConfig, PenEvent, PenHoverEvent, PenSample};
 
 use crate::brush::InkPoint;
-use crate::canvas::{Board, InputMode};
+use crate::canvas::{Board, InputMode, PIN_TAP_RADIUS_PX};
 
 /// Latest known pen-hover sample published by the backend.
 ///
@@ -410,6 +410,11 @@ fn apply(event: PenEvent, dt: &mut DtTracker) {
             let mut guard = lock_board(&board);
             guard.set_pointer(Some((lx, ly)));
             match guard.input_mode() {
+                // A tap on a bookmark pin opens it; it must not ink a dot.
+                InputMode::Draw
+                    if guard
+                        .bookmark_near_screen(lx, ly, PIN_TAP_RADIUS_PX)
+                        .is_some() => {}
                 InputMode::Draw => guard.begin_screen(point),
                 InputMode::Pan => guard.pan_begin(lx, ly),
                 // Pen is deferred to the sibling overlay; pump is inert.

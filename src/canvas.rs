@@ -2253,7 +2253,7 @@ const PIN_LONG_PRESS_SLOP_PX: f32 = 12.0;
 /// Tap radius used to decide whether an initial pointer_down lands
 /// on an existing pin — matches `PIN_RADIUS_PX` plus a small comfort
 /// margin so slightly imprecise taps still select the pin.
-const PIN_TAP_RADIUS_PX: f32 = 20.0;
+pub(crate) const PIN_TAP_RADIUS_PX: f32 = 20.0;
 /// World-space sticky radius used when a new pin is dropped — the
 /// `Board::add_bookmark` resolver snaps to a stroke within this
 /// radius. 40 world units ≈ a thick stroke's half-width at default
@@ -2265,6 +2265,137 @@ const PIN_STICKY_WORLD_RADIUS: f32 = 40.0;
 /// page attachment reported by [`CanvasBackground::locate`] and returns
 /// the typed [`SourceRef`] the pin should carry.
 pub type AnchorSourceRef = Arc<dyn Fn(PageAttachment) -> SourceRef + Send + Sync + 'static>;
+
+/// Press on the canvas that may open or drop a bookmark.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PinPress {
+    x: f32,
+    y: f32,
+    at: std::time::Instant,
+}
+
+/// Long press that drops a bookmark, and tap that opens an existing one.
+///
+/// A press only counts while it stays put: moving past the slop, a second
+/// finger, a pan or a cancel ends it. Opening an existing pin waits for the
+/// lift, so a drag that happens to start on a pin pans the canvas instead
+/// of opening its card.
+#[derive(Clone, Copy)]
+struct PinGesture {
+    press: freya::prelude::State<Option<PinPress>>,
+    selected: freya::prelude::State<Option<crate::ids::BookmarkId>>,
+    body: freya::prelude::State<String>,
+}
+
+impl PinGesture {
+    fn use_gesture(
+        selected: freya::prelude::State<Option<crate::ids::BookmarkId>>,
+        body: freya::prelude::State<String>,
+    ) -> Self {
+        Self {
+            press: freya::prelude::use_state(|| None),
+            selected,
+            body,
+        }
+    }
+
+    /// Start a press at `(x, y)` (surface pixels). The pin drops after
+    /// [`PIN_LONG_PRESS`] unless the press ends first.
+    fn down(mut self, board: &Arc<Mutex<Board>>, x: f32, y: f32, anchor: Option<AnchorSourceRef>) {
+        let press = PinPress {
+            x,
+            y,
+            at: std::time::Instant::now(),
+        };
+        self.press.set(Some(press));
+        let board = Arc::clone(board);
+        freya::prelude::spawn(async move {
+            async_io::Timer::after(PIN_LONG_PRESS).await;
+            // Copied out first: a guard alive across `set` would panic.
+            let current = *self.press.peek();
+            if current == Some(press) {
+                self.press.set(None);
+                self.hold(&board, press, anchor.as_ref());
+            }
+        });
+    }
+
+    /// The pointer moved to `(x, y)`: past the slop the press is a drag.
+    fn moved(self, x: f32, y: f32) {
+        let current = *self.press.peek();
+        if let Some(press) = current
+            && (x - press.x).hypot(y - press.y) >= PIN_LONG_PRESS_SLOP_PX
+        {
+            self.cancel();
+        }
+    }
+
+    /// Forget the press: second finger, pan, cancelled touch.
+    fn cancel(mut self) {
+        if self.press.peek().is_some() {
+            self.press.set(None);
+        }
+    }
+
+    /// The pointer lifted. A still, short press on a pin opens it.
+    fn lift(mut self, board: &Arc<Mutex<Board>>) {
+        let Some(press) = *self.press.peek() else {
+            return;
+        };
+        self.press.set(None);
+        let hit = lock(board).bookmark_near_screen(press.x, press.y, PIN_TAP_RADIUS_PX);
+        if let Some(id) = hit {
+            self.open(board, id);
+        }
+    }
+
+    fn open(mut self, board: &Arc<Mutex<Board>>, id: crate::ids::BookmarkId) {
+        let body = lock(board)
+            .doc()
+            .bookmark(id)
+            .map(|bm| bm.body.clone())
+            .unwrap_or_default();
+        self.body.set(body);
+        self.selected.set(Some(id));
+    }
+
+    /// The press was held long enough: open the pin under it, or drop one.
+    fn hold(
+        mut self,
+        board: &Arc<Mutex<Board>>,
+        press: PinPress,
+        anchor: Option<&AnchorSourceRef>,
+    ) {
+        let hit = lock(board).bookmark_near_screen(press.x, press.y, PIN_TAP_RADIUS_PX);
+        if let Some(id) = hit {
+            self.open(board, id);
+            return;
+        }
+        let (world, refs) = {
+            let guard = lock(board);
+            let (wx, wy) = guard.viewport().screen_to_world(press.x, press.y);
+            let refs = match anchor {
+                Some(builder)
+                    if guard.background().attribution_mode() == AttributionMode::PerPage =>
+                {
+                    guard
+                        .background()
+                        .locate(wx, wy)
+                        .map(|att| vec![builder(att)])
+                        .unwrap_or_default()
+                }
+                _ => Vec::new(),
+            };
+            drop(guard);
+            (crate::bookmark::WorldPoint::new(wx, wy), refs)
+        };
+        let created_at = crate::bookmark_ui::now_ms();
+        let id =
+            lock(board).add_bookmark_with_refs(world, PIN_STICKY_WORLD_RADIUS, created_at, refs);
+        self.body.set(String::new());
+        self.selected.set(Some(id));
+    }
+}
 
 pub fn drawing_surface(
     board: &Arc<Mutex<Board>>,
@@ -2329,19 +2460,10 @@ pub fn drawing_surface(
     // moves far enough or leaves the surface; press_start records the
     // down-event location so the timer can create the pin at the
     // right world coord even if the pointer drifts a few pixels.
-    let press_token = freya::prelude::use_state(|| 0u64);
-    let press_start = freya::prelude::use_state(|| Option::<(f32, f32)>::None);
+    let pin = PinGesture::use_gesture(selected_bookmark, body_buffer);
     let press_down_board = Arc::clone(board);
-    // A pending long press dies as soon as the gesture turns into
-    // something else: a lift, a drag, a second finger.
-    let mut press_token_cancel = press_token;
-    let mut press_start_cancel = press_start;
-    let mut cancel_press = move || {
-        if press_start_cancel.peek().is_some() {
-            press_token_cancel.set(0);
-            press_start_cancel.set(None);
-        }
-    };
+    let lift_board = Arc::clone(board);
+    let touch_lift_board = Arc::clone(board);
 
     let mut surface_origin_setter = surface_origin;
     rect()
@@ -2436,7 +2558,7 @@ pub fn drawing_surface(
             if matches!(e.data(), PointerEventData::Touch(_)) {
                 return;
             }
-            cancel_press();
+            pin.lift(&lift_board);
             let loc = e.global_location();
             let (ox, oy) = *surface_origin.peek();
             let mut guard = lock(&up_board);
@@ -2468,7 +2590,7 @@ pub fn drawing_surface(
                 let mut guard = lock(&touch_start_board);
                 guard.touch_down(e.finger_id, x, y);
                 if guard.is_gesture_active() {
-                    cancel_press();
+                    pin.cancel();
                 }
             }
         })
@@ -2478,28 +2600,19 @@ pub fn drawing_surface(
             #[allow(clippy::cast_possible_truncation)]
             let y = e.element_location.y as f32;
             // Freya does not route finger drags through `on_pointer_move`,
-            // so a pan has to cancel the long press here. Copy the start out
-            // first: an `if let` keeps the `peek` guard alive through its
-            // body, and `cancel_press` writes the same state.
-            let start = *press_start.peek();
-            if let Some((sx, sy)) = start
-                && (x - sx).hypot(y - sy) >= PIN_LONG_PRESS_SLOP_PX
-            {
-                cancel_press();
-            }
+            // so a pan has to end the press here.
+            pin.moved(x, y);
             lock(&touch_move_board).touch_move(e.finger_id, x, y);
         })
         .on_touch_end(move |e: Event<TouchEventData>| {
-            cancel_press();
+            pin.lift(&touch_lift_board);
             lock(&touch_end_board).touch_up(e.finger_id);
         })
         .on_touch_cancel(move |e: Event<TouchEventData>| {
-            cancel_press();
+            pin.cancel();
             lock(&touch_cancel_board).touch_up(e.finger_id);
         })
         .on_pointer_move({
-            let mut press_token_move = press_token;
-            let mut press_start_move = press_start;
             move |e: Event<PointerEventData>| {
                 // Mouse / trackpad cursor feeds the overlay the same
                 // way pen hover does. Pen contact overrides via
@@ -2513,107 +2626,17 @@ pub fn drawing_surface(
                 #[allow(clippy::cast_possible_truncation)]
                 let y = loc.y as f32;
                 lock(&pointer_move_board).set_pointer(Some((x, y)));
-                // Invalidate the long-press timer if the pointer has
-                // drifted past the slop — static hold is the whole
-                // point, a dragging gesture should not create a pin.
-                let start = *press_start_move.peek();
-                if let Some((sx, sy)) = start {
-                    let dx = x - sx;
-                    let dy = y - sy;
-                    if dx.hypot(dy) >= PIN_LONG_PRESS_SLOP_PX {
-                        press_token_move.set(0);
-                        press_start_move.set(None);
-                    }
-                }
+                pin.moved(x, y);
             }
         })
         .on_pointer_leave(move |_: Event<PointerEventData>| {
             lock(&pointer_leave_board).set_pointer(None);
         })
-        .on_pointer_down({
-            let mut press_token = press_token;
-            let mut press_start = press_start;
-            let mut selected = selected_bookmark;
-            let mut body_buffer = body_buffer;
-            move |e: Event<PointerEventData>| {
-                let loc = e.element_location();
-                #[allow(clippy::cast_possible_truncation)]
-                let x = loc.x as f32;
-                #[allow(clippy::cast_possible_truncation)]
-                let y = loc.y as f32;
-                // Immediate hit test — a tap on an existing pin
-                // selects it without waiting for the long-press
-                // dwell so the card feels responsive.
-                let hit = {
-                    let guard = lock(&press_down_board);
-                    guard.bookmark_near_screen(x, y, PIN_TAP_RADIUS_PX)
-                };
-                if let Some(id) = hit {
-                    let body = lock(&press_down_board)
-                        .doc()
-                        .bookmark(id)
-                        .map(|bm| bm.body.clone())
-                        .unwrap_or_default();
-                    body_buffer.set(body);
-                    selected.set(Some(id));
-                    // Short-circuit: don't schedule a long-press timer
-                    // on top of an existing-pin tap.
-                    let prev = *press_token.peek();
-                    press_token.set(prev.wrapping_add(1));
-                    press_start.set(None);
-                    return;
-                }
-                let prev = *press_token.peek();
-                let token = prev.wrapping_add(1);
-                press_token.set(token);
-                press_start.set(Some((x, y)));
-                let timer_board = Arc::clone(&press_down_board);
-                let mut timer_token = press_token;
-                let mut timer_start = press_start;
-                let mut timer_selected = selected;
-                let mut timer_body = body_buffer;
-                let timer_anchor = anchor_source.clone();
-                freya::prelude::spawn(async move {
-                    async_io::Timer::after(PIN_LONG_PRESS).await;
-                    if *timer_token.peek() != token {
-                        return;
-                    }
-                    let Some((px, py)) = *timer_start.peek() else {
-                        return;
-                    };
-                    let (world, refs) = {
-                        let guard = lock(&timer_board);
-                        let (wx, wy) = guard.viewport().screen_to_world(px, py);
-                        let refs = match timer_anchor.as_ref() {
-                            Some(builder)
-                                if guard.background().attribution_mode()
-                                    == AttributionMode::PerPage =>
-                            {
-                                guard
-                                    .background()
-                                    .locate(wx, wy)
-                                    .map(|att| vec![builder(att)])
-                                    .unwrap_or_default()
-                            }
-                            _ => Vec::new(),
-                        };
-                        (crate::bookmark::WorldPoint::new(wx, wy), refs)
-                    };
-                    let created_at = crate::bookmark_ui::now_ms();
-                    let id = lock(&timer_board).add_bookmark_with_refs(
-                        world,
-                        PIN_STICKY_WORLD_RADIUS,
-                        created_at,
-                        refs,
-                    );
-                    timer_body.set(String::new());
-                    timer_selected.set(Some(id));
-                    // Consume the pending press so a sibling pointer_up
-                    // doesn't try to re-trigger anything.
-                    timer_token.set(0);
-                    timer_start.set(None);
-                });
-            }
+        .on_pointer_down(move |e: Event<PointerEventData>| {
+            let loc = e.element_location();
+            #[allow(clippy::cast_possible_truncation)]
+            let (x, y) = (loc.x as f32, loc.y as f32);
+            pin.down(&press_down_board, x, y, anchor_source.clone());
         })
         .child(inner)
 }
