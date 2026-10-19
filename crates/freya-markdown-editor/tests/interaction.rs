@@ -255,6 +255,18 @@ fn read_only_ignores_typing() {
 }
 
 #[test]
+fn read_only_press_neither_focuses_nor_selects() {
+    let mut harness = Harness::new("locked text");
+    let controller = harness.controller;
+    harness.runner.run_in(|| controller.set_read_only(true));
+    harness.settle();
+    harness.runner.click_cursor((40., 22.));
+    harness.settle();
+    assert!(!harness.runner.run_in(|| controller.has_focus()));
+    assert_eq!(harness.runner.run_in(|| controller.selection()), None);
+}
+
+#[test]
 fn undo_reverts_a_typing_burst() {
     let mut harness = Harness::new("start");
     let first = harness.block(0);

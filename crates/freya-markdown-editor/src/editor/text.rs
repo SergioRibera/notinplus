@@ -23,6 +23,7 @@ use crate::document::{
     Atom, BlockType, HeadingLevel, Inline, MarkFamily, MarkKind, OBJECT_REPLACEMENT, TextRole,
     TextTarget, byte_index, utf16_len,
 };
+use crate::popup::ReportedPopup;
 
 /// Base look of a text block, before inline marks apply.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -535,12 +536,21 @@ impl Component for TextBlock {
         let shared_for_press = shared.clone();
         let command_for_press = command_held;
         let on_focus_press = move |event: Event<FocusPressEventData>| {
-            event.stop_propagation();
-            event.prevent_default();
             let location = event.element_location();
             let link = link_at(&holder.read(), location, &content_for_press);
-            let command = command_for_press.get();
-            if let Some(url) = link.filter(|_| read_only || command) {
+            // Read only text is not a field: no focus, caret or selection,
+            // and presses outside links reach whatever lies below.
+            if read_only {
+                if let Some(url) = link {
+                    event.stop_propagation();
+                    event.prevent_default();
+                    shared_for_press.on_link.call(&url);
+                }
+                return;
+            }
+            event.stop_propagation();
+            event.prevent_default();
+            if let Some(url) = link.filter(|_| command_for_press.get()) {
                 shared_for_press.on_link.call(&url);
                 return;
             }
@@ -680,11 +690,14 @@ impl Component for TextBlock {
             rect()
                 .layer(Layer::Overlay)
                 .position(Position::new_absolute().top(open.top).left(open.left))
-                .child(SuggestionMenu {
-                    rows,
-                    selected: open.selected,
-                    theme: theme.clone(),
-                    on_pick,
+                .child(ReportedPopup {
+                    child: SuggestionMenu {
+                        rows,
+                        selected: open.selected,
+                        theme: theme.clone(),
+                        on_pick,
+                    }
+                    .into_element(),
                 })
         });
 
@@ -708,7 +721,13 @@ impl Component for TextBlock {
                 rect()
                     .a11y_id(a11y_id)
                     .a11y_focusable(!read_only)
-                    .a11y_role(AccessibilityRole::MultilineTextInput)
+                    // A text input role makes the platform raise its input
+                    // method; read only text is a plain paragraph.
+                    .a11y_role(if read_only {
+                        AccessibilityRole::Paragraph
+                    } else {
+                        AccessibilityRole::MultilineTextInput
+                    })
                     .width(Size::fill())
                     .cursor(if read_only {
                         CursorIcon::Default

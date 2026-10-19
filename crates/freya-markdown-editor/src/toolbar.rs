@@ -9,6 +9,7 @@ use crate::controller::{ActiveFormat, EditorController};
 use crate::document::{
     Align, BlockKind, BlockType, CalloutKind, HeadingLevel, Inline, MarkFamily, MarkKind, Rgba,
 };
+use crate::popup::ReportedPopup;
 use crate::theme::EditorTheme;
 
 const BUTTON: f32 = 30.0;
@@ -599,7 +600,7 @@ impl Component for Anchored {
                 .on_sized(move |event: Event<SizedEventData>| {
                     measured.set_if_modified(event.area);
                 })
-                .child(popup)
+                .child(ReportedPopup { child: popup })
         });
         rect()
             .on_sized(move |event: Event<SizedEventData>| anchor.set_if_modified(event.area))
