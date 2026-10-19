@@ -21,7 +21,7 @@ use crate::ids::StrokeId;
 use crate::ink_glyph::{GlyphFont, InkGlyph, InkGlyphId};
 
 /// Pen rest that closes the pending letter.
-pub const LETTER_IDLE: Duration = Duration::from_millis(1200);
+pub const LETTER_IDLE: Duration = Duration::from_millis(650);
 /// Distance of the best match past which the ink is not a character.
 /// Around the 99th percentile of correct matches in `glyph-bake eval`.
 const REJECT_DISTANCE: f32 = 3.0;
