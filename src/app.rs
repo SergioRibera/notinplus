@@ -20,6 +20,7 @@ use freya::icons::lucide::{
 };
 use freya::prelude::*;
 use freya::router::*;
+
 use istmo::plugins::EdgeInsets;
 
 use crate::components::theme::{
@@ -226,6 +227,10 @@ pub fn run() {
         install_global_router();
         launch(
             LaunchConfig::new()
+                .with_font(
+                    crate::canvas_text::FONT_FAMILY,
+                    crate::canvas_text::FONT_BYTES,
+                )
                 .with_event_loop(event_loop)
                 .with_window(WindowConfig::new(router_root).with_title("notinplus")),
         );
@@ -234,28 +239,34 @@ pub fn run() {
     #[cfg(not(target_os = "android"))]
     {
         install_global_router();
-        let cfg = LaunchConfig::new().with_window(
-            WindowConfig::new(router_root)
-                .with_title("notinplus")
-                .with_window_handle(|window| {
-                    // Freya hands us the live winit `Window` exactly once at
-                    // creation. Upgrade the symbolic pen registration to a
-                    // real handle attach so the Linux Wayland / XInput2
-                    // backends can bind to the compositor; macOS / Windows
-                    // find their native view through the same call.
-                    if let Some(publisher) = crate::desktop::PEN_PUBLISHER.get() {
-                        if let Err(err) = publisher.register_window(crate::WINDOW_ID, &*window) {
-                            log::warn!("pen register_window failed: {err}");
+        let cfg = LaunchConfig::new()
+            .with_font(
+                crate::canvas_text::FONT_FAMILY,
+                crate::canvas_text::FONT_BYTES,
+            )
+            .with_window(
+                WindowConfig::new(router_root)
+                    .with_title("notinplus")
+                    .with_window_handle(|window| {
+                        // Freya hands us the live winit `Window` exactly once at
+                        // creation. Upgrade the symbolic pen registration to a
+                        // real handle attach so the Linux Wayland / XInput2
+                        // backends can bind to the compositor; macOS / Windows
+                        // find their native view through the same call.
+                        if let Some(publisher) = crate::desktop::PEN_PUBLISHER.get() {
+                            if let Err(err) = publisher.register_window(crate::WINDOW_ID, &*window)
+                            {
+                                log::warn!("pen register_window failed: {err}");
+                            }
                         }
-                    }
-                    // The share sheet anchors on the window on macOS / Windows.
-                    if let Err(err) = istmo_window::WindowRegistry::global()
-                        .register(istmo_window::WindowId(crate::WINDOW_ID), &*window)
-                    {
-                        log::warn!("share window registration failed: {err}");
-                    }
-                }),
-        );
+                        // The share sheet anchors on the window on macOS / Windows.
+                        if let Err(err) = istmo_window::WindowRegistry::global()
+                            .register(istmo_window::WindowId(crate::WINDOW_ID), &*window)
+                        {
+                            log::warn!("share window registration failed: {err}");
+                        }
+                    }),
+            );
         launch(cfg);
     }
 }
@@ -393,6 +404,12 @@ pub(crate) struct ChromeState {
     pub(crate) sidebar_query: State<String>,
     pub(crate) sidebar_sort: State<crate::bookmark_ui::BookmarkSort>,
     pub(crate) sidebar_tab: State<SidebarTab>,
+    /// Editor of the canvas text box under edit, shared by the boxes and
+    /// the formatting bar the chrome docks.
+    pub(crate) text_editor: crate::canvas_text::TextEditorSlot,
+    /// Last window area of the canvas text toolbar. Bottom overlays add its
+    /// height to their offset while a box is edited so they sit above it.
+    pub(crate) text_toolbar_area: State<Area>,
 }
 
 /// Allocate the chrome signals. Call once per shell that hosts a chrome
@@ -416,6 +433,8 @@ pub(crate) fn use_chrome_state() -> ChromeState {
         sidebar_query: use_state(String::new),
         sidebar_sort: use_state(|| crate::bookmark_ui::BookmarkSort::Recent),
         sidebar_tab: use_state(SidebarTab::default),
+        text_editor: crate::canvas_text::TextEditorSlot::use_slot(),
+        text_toolbar_area: use_state(Area::default),
     }
 }
 
@@ -501,8 +520,11 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoEl
             crate::active_boards::clear_if(mount, &board);
             // Drop any in-flight stroke so a tap mid-navigation does
             // not deliver a trailing Up into the mounted board after
-            // its view has already unmounted.
-            lock(&board).cancel();
+            // its view has already unmounted. An open text edit is kept.
+            let mut guard = lock(&board);
+            guard.end_text_session();
+            guard.cancel();
+            drop(guard);
             // Pointer-equality guard: a newer mount may already have
             // claimed the slot during the route transition.
             let same = active_setter
@@ -527,6 +549,7 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoEl
             &board,
             state.selected_bookmark,
             state.bookmark_body,
+            state.text_editor,
             anchor_source,
         ))
 }
@@ -742,11 +765,27 @@ pub(crate) fn canvas_chrome(
         })
         .child(top_right_stack(&board, &state, pad))
         .child(left_top(&board, &state, coords, pad, palette_progress))
-        .child(zoom_overlay(&board, state.zoom, pad))
+        .child(zoom_overlay(
+            &board,
+            state.zoom,
+            pad.bottom
+                + if state.text_editor.editing.read().is_some() {
+                    state.text_toolbar_area.read().height()
+                } else {
+                    0.0
+                },
+            pad.right,
+        ))
         .child(crate::bookmark_ui::bookmark_card_overlay(
             &board,
             state.selected_bookmark,
             state.bookmark_body,
+        ))
+        .child(crate::canvas_text::text_toolbar(
+            &board,
+            state.text_editor,
+            state.text_toolbar_area,
+            pad,
         ))
 }
 
@@ -766,6 +805,7 @@ fn left_top(
         InputMode::Draw => pencil(),
         InputMode::Pan => hand(),
         InputMode::Select => text_select(),
+        InputMode::Text => square_dashed_text(),
     };
 
     rect()
@@ -786,7 +826,8 @@ fn left_top(
                     let board = Arc::clone(board);
                     move || {
                         let mut doc_snapshot = {
-                            let guard = lock(&board);
+                            let mut guard = lock(&board);
+                            guard.end_text_session();
                             guard.doc().clone()
                         };
                         let item_id = RouterContext::get()
@@ -830,7 +871,7 @@ fn left_top(
                         let next = match *current_input_mode.read() {
                             InputMode::Draw => InputMode::Pan,
                             InputMode::Pan => InputMode::Select,
-                            InputMode::Select => InputMode::Draw,
+                            InputMode::Select | InputMode::Text => InputMode::Draw,
                         };
                         lock(&press_board).set_input_mode(next);
                         current_input_mode.set(next);
@@ -860,6 +901,30 @@ fn left_top(
 
 fn icon_button(icon: Bytes, cb: impl Into<NoArgCallback<()>>) -> impl IntoElement {
     icon_button_gated(icon, true, cb)
+}
+
+/// Icon button for an on / off mode; tinted while `active`.
+fn icon_toggle(icon: Bytes, active: bool, cb: impl Into<NoArgCallback<()>>) -> impl IntoElement {
+    let cb = cb.into();
+    let (bg, glyph) = if active {
+        (crate::components::theme::PRIMARY, Color::WHITE)
+    } else {
+        (Color::from_rgb(30, 30, 34), Color::WHITE)
+    };
+    rect()
+        .center()
+        .width(Size::px(30.))
+        .height(Size::px(30.))
+        .layer(Layer::Overlay)
+        .background(bg)
+        .with_corner_radius(8.0)
+        .on_press(move |_| cb.call())
+        .child(
+            SvgViewer::new(icon)
+                .color(glyph)
+                .width(Size::px(15.))
+                .height(Size::px(15.)),
+        )
 }
 
 /// Like `icon_button` but with an `enabled` gate. Dim glyph + press is
@@ -898,7 +963,14 @@ fn icon_button_gated(
         )
 }
 
-fn zoom_overlay(board: &Arc<Mutex<Board>>, zoom: State<f32>, pad: EdgeInsets) -> impl IntoElement {
+/// Zoom HUD in the bottom-right corner, `bottom` / `right` pixels from the
+/// pane edges.
+fn zoom_overlay(
+    board: &Arc<Mutex<Board>>,
+    zoom: State<f32>,
+    bottom: f32,
+    right: f32,
+) -> impl IntoElement {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let pct = (*zoom.read() * 100.0).round() as i32;
     let text = format!("{pct}%");
@@ -916,8 +988,8 @@ fn zoom_overlay(board: &Arc<Mutex<Board>>, zoom: State<f32>, pad: EdgeInsets) ->
     rect()
         .position(
             Position::new_absolute()
-                .bottom(pad.bottom + 8.0)
-                .right(pad.right + 8.0),
+                .bottom(bottom + 8.0)
+                .right(right + 8.0),
         )
         .horizontal()
         .center()
@@ -1380,7 +1452,7 @@ fn top_right_stack(
         .spacing(8.0)
         .layer(Layer::Overlay)
         .on_sized(move |e: Event<SizedEventData>| publish_mask(UiRegion::Layers, e.area))
-        .child(top_right_toolbar(state));
+        .child(top_right_toolbar(board, state));
     if layers_visible {
         stack = stack.child(layers_panel_body(board, state.layers_ver));
     }
@@ -1391,7 +1463,17 @@ fn top_right_stack(
 /// Current slots (in order): optional DocLinked split controls when an
 /// ancestor provided [`DocLinkedChromeExt`], toggle layers panel, open
 /// the document-config edit sheet.
-fn top_right_toolbar(state: &ChromeState) -> impl IntoElement {
+fn top_right_toolbar(board: &Arc<Mutex<Board>>, state: &ChromeState) -> impl IntoElement {
+    let mut mode = state.mode;
+    let text_active = *mode.read() == InputMode::Text;
+    let toggle_text: NoArgCallback<()> = NoArgCallback::new({
+        let board = Arc::clone(board);
+        move || {
+            let next = lock(&board).toggle_text_mode();
+            mode.set(next);
+        }
+    });
+
     let mut layers_vis = state.layers_visible;
     let toggle_layers: NoArgCallback<()> = NoArgCallback::new(move || {
         let next = !*layers_vis.peek();
@@ -1429,8 +1511,14 @@ fn top_right_toolbar(state: &ChromeState) -> impl IntoElement {
                 .child(icon_button(square_split_vertical(), ext.on_split_vertical));
         }
     }
-    row.child(icon_button(layers(), toggle_layers))
+    row.child(icon_toggle(square_dashed_text(), text_active, toggle_text))
+        .child(icon_button(layers(), toggle_layers))
         .child(icon_button(sliders_horizontal(), open_doc_config))
+}
+
+/// Lucide `square-dashed-text`, newer than the icon set freya ships.
+fn square_dashed_text() -> Bytes {
+    Bytes::from_static(include_bytes!("../assets/icons/square-dashed-text.svg"))
 }
 
 /// Floating layer-stack body — just the card. Positioning now lives in

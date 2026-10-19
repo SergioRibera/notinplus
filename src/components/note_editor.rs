@@ -195,6 +195,7 @@ pub(crate) fn notein_editor(
         .decorator(SchemeEmbed::new(deep_link::SCHEME, |embed| {
             ChipWidget {
                 src: SourceRef::from_link(embed.url),
+                zoom: embed.theme.zoom,
             }
             .into_element()
         }))
@@ -276,6 +277,9 @@ pub(crate) fn note_theme() -> EditorTheme {
 #[derive(Clone, PartialEq)]
 struct ChipWidget {
     src: SourceRef,
+    /// Editor zoom (see [`EditorTheme::zoom`]), so chips scale with text
+    /// laid out on a canvas.
+    zoom: f32,
 }
 
 impl Component for ChipWidget {
@@ -305,26 +309,27 @@ impl Component for ChipWidget {
                 _ => None,
             }
         };
+        let zoom = self.zoom;
         let svg = icon.map(|bytes| {
             SvgViewer::new(bytes)
                 .color(CHIP_FG)
-                .width(Size::px(CHIP_ICON_SIZE))
-                .height(Size::px(CHIP_ICON_SIZE))
+                .width(Size::px(CHIP_ICON_SIZE * zoom))
+                .height(Size::px(CHIP_ICON_SIZE * zoom))
         });
         let emoji = svg
             .is_none()
             .then(|| view.icon.clone())
             .flatten()
-            .map(|icon| label().font_size(11.5).color(CHIP_FG).text(icon));
+            .map(|icon| label().font_size(11.5 * zoom).color(CHIP_FG).text(icon));
 
         let target = self.src.clone();
         // Inline children need explicit sizes, and `on_pointer_down`
         // fires reliably on a pill this small where `on_press` may not.
         rect()
-            .height(Size::px(20.))
-            .padding((2., 8.))
+            .height(Size::px(20. * zoom))
+            .padding((2. * zoom, 8. * zoom))
             .background(background)
-            .corner_radius(10.)
+            .corner_radius(10. * zoom)
             .border(
                 Border::new()
                     .width(1.)
@@ -334,7 +339,7 @@ impl Component for ChipWidget {
             .cursor(CursorIcon::Pointer)
             .direction(Direction::Horizontal)
             .cross_align(Alignment::center())
-            .spacing(6.0)
+            .spacing(6.0 * zoom)
             .on_pointer_enter(move |_| hover.set(true))
             .on_pointer_leave(move |_| hover.set_if_modified(false))
             .on_pointer_down(move |event: Event<PointerEventData>| {
@@ -347,7 +352,12 @@ impl Component for ChipWidget {
             })
             .maybe_child(svg)
             .maybe_child(emoji)
-            .child(label().font_size(11.5).color(CHIP_FG).text(view.label))
+            .child(
+                label()
+                    .font_size(11.5 * zoom)
+                    .color(CHIP_FG)
+                    .text(view.label),
+            )
     }
 }
 

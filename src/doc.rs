@@ -18,6 +18,7 @@ use crate::doc_op::{DocOp, OpRecord};
 use crate::identity::global_actor;
 use crate::ids::{BookmarkId, StrokeId};
 use crate::op::OpId;
+use crate::text_box::{TextBox, TextBoxId};
 
 const CODEC: Configuration = config::standard();
 
@@ -36,6 +37,8 @@ pub struct Layer {
     pub locked: bool,
     pub opacity: f32,
     pub strokes: Vec<Stroke>,
+    /// Text boxes painted above this layer's strokes, in insertion order.
+    pub texts: Vec<TextBox>,
 }
 
 impl Layer {
@@ -48,6 +51,7 @@ impl Layer {
             locked: false,
             opacity: 1.0,
             strokes: Vec::new(),
+            texts: Vec::new(),
         }
     }
 }
@@ -220,6 +224,36 @@ impl Doc {
                     bm.lamport = bm.lamport.max(self.lamport);
                 }
             }
+            DocOp::AddText { layer_id, text } => {
+                if self.text(text.id).is_none()
+                    && let Some(layer) = self.layers.iter_mut().find(|l| l.id == *layer_id)
+                {
+                    layer.texts.push(text.clone());
+                }
+            }
+            DocOp::UpdateText {
+                id,
+                markdown,
+                color,
+            } => {
+                if let Some(text) = self.text_mut(*id) {
+                    text.markdown.clone_from(markdown);
+                    text.color = *color;
+                }
+            }
+            DocOp::SetTextFrame { id, frame } => {
+                if let Some(text) = self.text_mut(*id) {
+                    text.frame = *frame;
+                }
+            }
+            DocOp::DeleteText { id } => {
+                for layer in &mut self.layers {
+                    if let Some(pos) = layer.texts.iter().position(|t| t.id == *id) {
+                        layer.texts.remove(pos);
+                        return;
+                    }
+                }
+            }
         }
     }
 
@@ -282,6 +316,12 @@ impl Doc {
                             stroke: stroke.clone(),
                         });
                     }
+                    for text in &layer.texts {
+                        ops.push(DocOp::AddText {
+                            layer_id: layer.id,
+                            text: text.clone(),
+                        });
+                    }
                 }
                 if !had_zero {
                     // The clear-seeded default layer was not in the
@@ -325,6 +365,12 @@ impl Doc {
                     ops.push(DocOp::PushStroke {
                         layer_id: *id,
                         stroke: stroke.clone(),
+                    });
+                }
+                for text in &layer.texts {
+                    ops.push(DocOp::AddText {
+                        layer_id: *id,
+                        text: text.clone(),
                     });
                 }
                 if self.active_layer == *id {
@@ -397,7 +443,59 @@ impl Doc {
                     }]
                 })
                 .unwrap_or_default(),
+            DocOp::AddText { text, .. } => vec![DocOp::DeleteText { id: text.id }],
+            DocOp::UpdateText { id, .. } => self
+                .text(*id)
+                .map(|text| {
+                    vec![DocOp::UpdateText {
+                        id: *id,
+                        markdown: text.markdown.clone(),
+                        color: text.color,
+                    }]
+                })
+                .unwrap_or_default(),
+            DocOp::SetTextFrame { id, .. } => self
+                .text(*id)
+                .map(|text| {
+                    vec![DocOp::SetTextFrame {
+                        id: *id,
+                        frame: text.frame,
+                    }]
+                })
+                .unwrap_or_default(),
+            DocOp::DeleteText { id } => self
+                .locate_text(*id)
+                .map(|(layer_id, text)| {
+                    vec![DocOp::AddText {
+                        layer_id,
+                        text: text.clone(),
+                    }]
+                })
+                .unwrap_or_default(),
         }
+    }
+
+    /// `(layer_id, text)` for the text box carrying `id`.
+    #[must_use]
+    pub fn locate_text(&self, id: TextBoxId) -> Option<(u32, &TextBox)> {
+        self.layers.iter().find_map(|layer| {
+            layer
+                .texts
+                .iter()
+                .find(|t| t.id == id)
+                .map(|text| (layer.id, text))
+        })
+    }
+
+    #[must_use]
+    pub fn text(&self, id: TextBoxId) -> Option<&TextBox> {
+        self.locate_text(id).map(|(_, text)| text)
+    }
+
+    fn text_mut(&mut self, id: TextBoxId) -> Option<&mut TextBox> {
+        self.layers
+            .iter_mut()
+            .find_map(|layer| layer.texts.iter_mut().find(|t| t.id == id))
     }
 
     /// Immutable lookup of a bookmark by id.

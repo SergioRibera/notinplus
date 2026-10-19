@@ -51,6 +51,16 @@ pub fn input_context(context: &InputContext) {
     android::set_text(context);
 }
 
+/// Ask for the soft keyboard when a text field holds the focus but the
+/// keyboard is hidden, e.g. after focusing an editor from code.
+#[allow(
+    clippy::missing_const_for_fn,
+    reason = "only the desktop stub of the Android call is const"
+)]
+pub fn show() {
+    android::reshow();
+}
+
 /// Pointer-up handler for the app root: show the keyboard again when a
 /// text field has the focus but the keyboard was dismissed.
 pub fn reshow_on_tap(_: Event<PointerEventData>) {

@@ -41,7 +41,12 @@ use crate::doc_op::DocOp;
 use crate::ids::{BookmarkId, StrokeId};
 use crate::render::{BrushRegistry, HighlighterBrush, HighlighterState, PointerStyle};
 use crate::spatial::SpatialIndex;
+use crate::text_box::TextBoxId;
 use crate::undo::UndoStack;
+
+mod text;
+
+pub use text::{SceneText, TextLayerView, TextScene};
 
 const SIZE_SCALE_MIN: f32 = 0.25;
 const SIZE_SCALE_MAX: f32 = 4.0;
@@ -257,6 +262,20 @@ pub struct Board {
     /// stable reference — a zero pair means "no paint has landed yet"
     /// and disables clamping entirely.
     last_surface_size: (f32, f32),
+    /// Text box under edit. See [`text`].
+    text_session: Option<text::TextSession>,
+    /// Laid-out height of every text box the UI has measured, in world
+    /// units.
+    text_heights: HashMap<TextBoxId, f32>,
+    /// Press that may become a tap while in [`InputMode::Text`].
+    tap: Option<text::TapTrack>,
+    /// Mode [`Board::toggle_text_mode`] returns to.
+    mode_before_text: InputMode,
+    /// Bumped whenever [`Board::text_scene`] may change.
+    text_rev: u64,
+    /// Wakeups for UI watchers (see [`Board::watch`]), pinged with every
+    /// redraw request.
+    watchers: Vec<Sender<()>>,
 }
 
 /// Anchor snapshot for a pinch gesture — centroid + pair-distance of
@@ -316,6 +335,9 @@ pub enum InputMode {
     /// drives the active source plugin's `pointer_*` API instead. Only
     /// meaningful on PDF-backed mounts for now; no-op otherwise.
     Select,
+    /// Taps (pen, finger or mouse) create text boxes or open existing
+    /// ones for editing; a finger drag still pans.
+    Text,
 }
 
 impl Default for Board {
@@ -359,6 +381,12 @@ impl Default for Board {
             background: Arc::new(SolidColorBackground::new(SkColor::from_rgb(250, 250, 248))),
             redraw_handle: RedrawHandle::noop(),
             last_surface_size: (0.0, 0.0),
+            text_session: None,
+            text_heights: HashMap::new(),
+            tap: None,
+            mode_before_text: InputMode::Draw,
+            text_rev: 0,
+            watchers: Vec::new(),
         }
     }
 }
@@ -391,10 +419,20 @@ impl Board {
         &self.background
     }
 
-    fn notify(&self) {
+    fn notify(&mut self) {
         if let Some(n) = &self.notifier {
             n.ping();
         }
+        self.watchers
+            .retain(|tx| !matches!(tx.try_send(()), Err(flume::TrySendError::Disconnected(()))));
+    }
+
+    /// Wake up whenever the board asks for a redraw. Bursts collapse into
+    /// one wakeup; dropping the receiver unsubscribes.
+    pub fn watch(&mut self) -> Receiver<()> {
+        let (tx, rx) = flume::bounded(1);
+        self.watchers.push(tx);
+        rx
     }
 
     /// Install (or replace) the autosave sink. Called by the canvas-view
@@ -471,7 +509,7 @@ impl Board {
         }
     }
 
-    fn notify_commit(&self) {
+    fn notify_commit(&mut self) {
         self.notify();
         self.ping_commit();
     }
@@ -488,9 +526,14 @@ impl Board {
         if self.input_mode == mode {
             return;
         }
+        if self.input_mode == InputMode::Text {
+            self.end_text_session();
+        }
         self.input_mode = mode;
         self.cancel();
         self.pan_end();
+        self.text_press_cancel();
+        self.touch_text_scene();
         self.notify();
         self.ping_prefs();
     }
@@ -777,7 +820,13 @@ impl Board {
             // Pen stays on the pen pump; this just moves the viewport.
             self.touch_pan_finger = Some(id);
             self.pan_begin(sx, sy);
-        } else if n >= 2 && !self.gesture_active {
+            if self.input_mode == InputMode::Text {
+                self.text_press_down(sx, sy);
+            }
+        } else {
+            self.text_press_cancel();
+        }
+        if n >= 2 && !self.gesture_active {
             self.gesture_active = true;
             self.cancel();
             // Drop any pan anchor so the second finger lands a clean
@@ -816,6 +865,7 @@ impl Board {
         }
         if self.touch_pan_finger == Some(id) {
             self.pan_move(sx, sy);
+            self.text_press_move(sx, sy);
         }
     }
 
@@ -824,7 +874,11 @@ impl Board {
     /// still down, so a 2→1 lift transitions seamlessly from pinch
     /// back to drag.
     pub fn touch_up(&mut self, id: u64) {
-        self.finger_positions.remove(&id);
+        if let Some((sx, sy)) = self.finger_positions.remove(&id)
+            && self.touch_pan_finger == Some(id)
+        {
+            self.text_press_up(sx, sy);
+        }
         if self.touch_pan_finger == Some(id) {
             self.touch_pan_finger = None;
             self.pan_end();
@@ -879,6 +933,9 @@ impl Board {
         self.active = None;
         self.active_layer_at_begin = None;
         self.erase_session = None;
+        self.text_session = None;
+        self.text_heights.clear();
+        self.touch_text_scene();
         self.undo.clear();
         self.spatial.clear();
         self.cached_paths.clear();
@@ -1076,6 +1133,7 @@ impl Board {
     /// forward ops on the redo stack. Returns `true` iff something
     /// was undone.
     pub fn undo(&mut self) -> bool {
+        self.end_text_session();
         let Some(entry) = self.undo.pop_undo() else {
             return false;
         };
@@ -1105,6 +1163,7 @@ impl Board {
     /// `Doc::emit`, parks the entry back on the undo stack. Returns
     /// `true` iff something was redone.
     pub fn redo(&mut self) -> bool {
+        self.end_text_session();
         let Some(entry) = self.undo.pop_redo() else {
             return false;
         };
@@ -1490,6 +1549,7 @@ impl Board {
     /// recording — used by both the forward path (indirectly via
     /// [`Self::apply_op`]) and the undo / redo replays.
     fn apply_op_untracked(&mut self, op: DocOp) {
+        self.touch_text_scene();
         match op {
             DocOp::RemoveStroke { id } => {
                 // Capture spatial payload + index position before the
@@ -1565,7 +1625,11 @@ impl Board {
             | DocOp::AddBookmark { .. }
             | DocOp::UpdateBookmark { .. }
             | DocOp::DeleteBookmark { .. }
-            | DocOp::StickBookmark { .. }) => {
+            | DocOp::StickBookmark { .. }
+            | DocOp::AddText { .. }
+            | DocOp::UpdateText { .. }
+            | DocOp::SetTextFrame { .. }
+            | DocOp::DeleteText { .. }) => {
                 self.doc.emit(op);
             }
         }
@@ -1665,6 +1729,15 @@ impl Board {
     /// [`UndoStack`] transaction, so the whole gesture rolls back as
     /// one undo entry.
     fn finalize_erase_session(&mut self, session: &mut EraseAccum) {
+        let mut texts: Vec<TextBoxId> = Vec::new();
+        for &(cx, cy, r) in &session.circles {
+            for id in self.texts_touching_circle(cx, cy, r) {
+                if !texts.contains(&id) {
+                    texts.push(id);
+                }
+            }
+        }
+        self.erase_texts(&texts);
         if session.originals.is_empty() {
             return;
         }
@@ -1798,9 +1871,11 @@ impl Board {
             }
         }
         let Some((_, id)) = best else {
+            if let Some(&text) = self.texts_touching_circle(x, y, radius).last() {
+                self.erase_texts(&[text]);
+            }
             return;
         };
-        let _ = active_layer;
         self.apply_op(DocOp::RemoveStroke { id });
     }
 
@@ -1833,13 +1908,15 @@ impl Board {
                 targets.push(id);
             }
         }
-        if targets.is_empty() {
+        let texts = self.texts_in_rect(min_x, min_y, max_x, max_y);
+        if targets.is_empty() && texts.is_empty() {
             return;
         }
         self.undo.begin();
         for id in targets {
             self.apply_op(DocOp::RemoveStroke { id });
         }
+        self.erase_texts(&texts);
         self.undo.commit();
     }
 
@@ -1851,7 +1928,31 @@ impl Board {
     /// cannot be composed incrementally without reintroducing seams,
     /// and the per-frame cost is negligible for realistic sample
     /// counts.
-    pub fn paint(&mut self, canvas: &freya_engine::prelude::Canvas, surface: SurfaceBounds) {
+    pub fn paint(
+        &mut self,
+        canvas: &freya_engine::prelude::Canvas,
+        surface: SurfaceBounds,
+        pass: &PaintPass,
+    ) {
+        if pass.base {
+            self.paint_base(canvas, surface);
+        }
+        canvas.save();
+        canvas.translate((self.viewport.tx, self.viewport.ty));
+        canvas.scale((self.viewport.scale, self.viewport.scale));
+        self.paint_layers(canvas, surface, pass.layers.clone());
+        if pass.overlays {
+            self.paint_world_overlays(canvas);
+        }
+        canvas.restore();
+        if pass.overlays {
+            self.paint_screen_overlays(canvas);
+        }
+    }
+
+    /// Backdrop and background (PDF pages, paper, …): everything below the
+    /// first layer.
+    fn paint_base(&mut self, canvas: &freya_engine::prelude::Canvas, surface: SurfaceBounds) {
         // Cache surface size so off-paint mutators (`pan_move`,
         // `viewport_zoom_at`, `viewport_zoom_by`) can consult it when
         // clamping against the current background's content bounds.
@@ -1910,7 +2011,23 @@ impl Board {
         };
         self.background.paint(&mut bg_ctx);
         self.background.tick(bg_visible, self.viewport.scale);
+        canvas.restore();
+    }
 
+    /// Committed strokes of the layers at `range` (paint order indices), in
+    /// world coordinates.
+    fn paint_layers(
+        &self,
+        canvas: &freya_engine::prelude::Canvas,
+        surface: SurfaceBounds,
+        range: std::ops::Range<usize>,
+    ) {
+        let Some(layers) = self.doc.layers.get(range) else {
+            return;
+        };
+        if layers.is_empty() {
+            return;
+        }
         // Cull committed strokes to the visible world rect via the
         // spatial index. Skia culls per primitive anyway, but skipping
         // the Paint construction + `draw_path` bookkeeping for
@@ -1931,7 +2048,7 @@ impl Board {
             .filter(|c| !c.is_empty());
         let active_layer = self.doc.active_layer;
 
-        for layer in &self.doc.layers {
+        for layer in layers {
             if !layer.visible {
                 continue;
             }
@@ -1977,6 +2094,10 @@ impl Board {
                 canvas.restore();
             }
         }
+    }
+
+    /// In-flight stroke and eraser marquee, in world coordinates.
+    fn paint_world_overlays(&self, canvas: &freya_engine::prelude::Canvas) {
         if let Some(active) = &self.active {
             if let Some(preset) = self.doc.preset(active.brush) {
                 let layer_opacity = self
@@ -1998,8 +2119,10 @@ impl Board {
         if let Some((ax, ay, cx, cy)) = self.selection_rect {
             draw_selection_rect(canvas, ax, ay, cx, cy);
         }
-        canvas.restore();
+    }
 
+    /// Pointer disc and bookmark pins, in surface pixels.
+    fn paint_screen_overlays(&self, canvas: &freya_engine::prelude::Canvas) {
         // Pointer overlay paints in surface-pixel space — the brush's
         // world-unit radius multiplied by the current zoom matches the
         // on-screen stroke width exactly. Suppressed during multi-touch
@@ -2009,6 +2132,7 @@ impl Board {
         if let Some((px, py)) = self.pointer
             && !self.gesture_active
             && !self.is_panning()
+            && self.input_mode != InputMode::Text
         {
             let preset = self.current_preset;
             let color = self.current_color;
@@ -2069,6 +2193,37 @@ impl Board {
     }
 }
 
+/// Slice of the paint order one canvas element draws. Splitting the paint
+/// lets text boxes, which are UI elements, sit between the layers they
+/// belong to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaintPass {
+    /// Layer indices (paint order) whose strokes this pass draws.
+    pub layers: std::ops::Range<usize>,
+    /// Draw the backdrop and the background first.
+    pub base: bool,
+    /// Draw the in-flight stroke, marquee, pointer and pins last.
+    pub overlays: bool,
+}
+
+impl PaintPass {
+    /// Passes for `ranges`, the first one with the base and the last one
+    /// with the overlays.
+    #[must_use]
+    pub fn split(ranges: Vec<std::ops::Range<usize>>) -> Vec<Self> {
+        let last = ranges.len().saturating_sub(1);
+        ranges
+            .into_iter()
+            .enumerate()
+            .map(|(index, layers)| Self {
+                layers,
+                base: index == 0,
+                overlays: index == last,
+            })
+            .collect()
+    }
+}
+
 /// Axis-aligned surface-pixel bounds handed to [`Board::paint`]. The
 /// rect is projected into world coordinates via the current
 /// [`Viewport`] to drive stroke culling.
@@ -2115,9 +2270,9 @@ pub fn drawing_surface(
     board: &Arc<Mutex<Board>>,
     selected_bookmark: freya::prelude::State<Option<crate::ids::BookmarkId>>,
     body_buffer: freya::prelude::State<String>,
+    text_editor: crate::canvas_text::TextEditorSlot,
     anchor_source: Option<AnchorSourceRef>,
 ) -> impl IntoElement {
-    let render_board = Arc::clone(board);
     // Read the current background's surface backdrop once at element
     // construction. Swapping backgrounds at runtime requires re-mounting
     // this element for the backdrop color to refresh — acceptable while
@@ -2137,25 +2292,12 @@ pub fn drawing_surface(
         backdrop_sk.b(),
     );
 
-    let inner = canvas(RenderCallback::new(move |ctx| {
-        let mut guard = match render_board.lock() {
-            Ok(g) => g,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        // Canvas paints in element-local coordinates — origin at
-        // (0, 0), extent given by `ctx.size` in logical pixels. This
-        // matches the surface space our pen samples arrive in, so the
-        // culling rect projects cleanly through the viewport.
-        let bounds = SurfaceBounds {
-            min_x: 0.0,
-            min_y: 0.0,
-            max_x: ctx.size.width,
-            max_y: ctx.size.height,
-        };
-        guard.paint(ctx.canvas, bounds);
-    }))
-    .width(Size::fill())
-    .height(Size::fill());
+    // Canvases paint in element-local coordinates, the space pen samples
+    // arrive in. Text boxes sit between the canvas passes of their layers.
+    let inner = crate::canvas_text::CanvasLayers {
+        board: Arc::clone(board),
+        editor: text_editor,
+    };
 
     let wheel_board = Arc::clone(board);
     let down_board = Arc::clone(board);
@@ -2190,6 +2332,16 @@ pub fn drawing_surface(
     let press_token = freya::prelude::use_state(|| 0u64);
     let press_start = freya::prelude::use_state(|| Option::<(f32, f32)>::None);
     let press_down_board = Arc::clone(board);
+    // A pending long press dies as soon as the gesture turns into
+    // something else: a lift, a drag, a second finger.
+    let mut press_token_cancel = press_token;
+    let mut press_start_cancel = press_start;
+    let mut cancel_press = move || {
+        if press_start_cancel.peek().is_some() {
+            press_token_cancel.set(0);
+            press_start_cancel.set(None);
+        }
+    };
 
     let mut surface_origin_setter = surface_origin;
     rect()
@@ -2223,7 +2375,25 @@ pub fn drawing_surface(
             lock(&wheel_board).viewport_zoom_at(x, y, factor);
         })
         .on_mouse_down(move |e: Event<MouseEventData>| {
-            // Middle only. Left is reserved: pen tablets (Wacom et al.)
+            // Left only matters to text mode, and only when it is not the
+            // pen's own contact echoed as a mouse press (libinput does so
+            // for tablets); the pen pump handles that one.
+            if e.button == Some(MouseButton::Left) {
+                #[allow(clippy::cast_possible_truncation)]
+                let (gx, gy) = (e.global_location.x as f32, e.global_location.y as f32);
+                if !crate::pen_pump::is_pen_near(gx, gy, crate::pen_pump::PEN_TOUCH_FILTER_RADIUS) {
+                    let mut guard = lock(&down_board);
+                    if guard.input_mode() == InputMode::Text {
+                        #[allow(clippy::cast_possible_truncation)]
+                        guard.text_press_down(
+                            e.element_location.x as f32,
+                            e.element_location.y as f32,
+                        );
+                    }
+                }
+                return;
+            }
+            // Middle pans. Left is reserved: pen tablets (Wacom et al.)
             // deliver pen-tip contact as a left-button press through
             // libinput, so panning on left would hijack every drawing
             // stroke. Finger pan runs through `on_touch_*` instead.
@@ -2249,22 +2419,30 @@ pub fn drawing_surface(
             if matches!(e.data(), PointerEventData::Touch(_)) {
                 return;
             }
-            let mut guard = lock(&move_board);
-            if !guard.is_panning() {
-                return;
-            }
             let loc = e.global_location();
             #[allow(clippy::cast_possible_truncation)]
             let x = loc.x as f32;
             #[allow(clippy::cast_possible_truncation)]
             let y = loc.y as f32;
+            let mut guard = lock(&move_board);
+            if !guard.is_panning() {
+                let (ox, oy) = *surface_origin.peek();
+                guard.text_press_move(x - ox, y - oy);
+                return;
+            }
             guard.pan_move(x, y);
         })
         .on_global_pointer_up(move |e: Event<PointerEventData>| {
             if matches!(e.data(), PointerEventData::Touch(_)) {
                 return;
             }
-            lock(&up_board).pan_end();
+            cancel_press();
+            let loc = e.global_location();
+            let (ox, oy) = *surface_origin.peek();
+            let mut guard = lock(&up_board);
+            guard.pan_end();
+            #[allow(clippy::cast_possible_truncation)]
+            guard.text_press_up(loc.x as f32 - ox, loc.y as f32 - oy);
         })
         .on_touch_start({
             let origin = surface_origin;
@@ -2287,7 +2465,11 @@ pub fn drawing_surface(
                 ) {
                     return;
                 }
-                lock(&touch_start_board).touch_down(e.finger_id, x, y);
+                let mut guard = lock(&touch_start_board);
+                guard.touch_down(e.finger_id, x, y);
+                if guard.is_gesture_active() {
+                    cancel_press();
+                }
             }
         })
         .on_touch_move(move |e: Event<TouchEventData>| {
@@ -2295,12 +2477,24 @@ pub fn drawing_surface(
             let x = e.element_location.x as f32;
             #[allow(clippy::cast_possible_truncation)]
             let y = e.element_location.y as f32;
+            // Freya does not route finger drags through `on_pointer_move`,
+            // so a pan has to cancel the long press here. Copy the start out
+            // first: an `if let` keeps the `peek` guard alive through its
+            // body, and `cancel_press` writes the same state.
+            let start = *press_start.peek();
+            if let Some((sx, sy)) = start
+                && (x - sx).hypot(y - sy) >= PIN_LONG_PRESS_SLOP_PX
+            {
+                cancel_press();
+            }
             lock(&touch_move_board).touch_move(e.finger_id, x, y);
         })
         .on_touch_end(move |e: Event<TouchEventData>| {
+            cancel_press();
             lock(&touch_end_board).touch_up(e.finger_id);
         })
         .on_touch_cancel(move |e: Event<TouchEventData>| {
+            cancel_press();
             lock(&touch_cancel_board).touch_up(e.finger_id);
         })
         .on_pointer_move({

@@ -41,6 +41,10 @@ pub enum UiRegion {
     Back,
     Mode,
     Modal,
+    /// Canvas text box under edit.
+    TextEdit,
+    /// Formatting bar of the canvas text box under edit.
+    TextToolbar,
 }
 
 impl UiRegion {
@@ -49,7 +53,7 @@ impl UiRegion {
     }
 }
 
-const N_REGIONS: usize = 7;
+const N_REGIONS: usize = 9;
 
 /// Axis-aligned rectangle in surface-logical pixels: `(min_x, min_y,
 /// max_x, max_y)`. Kept as a tuple so [`crate::canvas::Board`] does

@@ -15,6 +15,7 @@ use crate::bookmark::{Bookmark, Rgba, SourceRef, StrokeAnchor, TimestampMs};
 use crate::brush::{BrushPreset, Stroke};
 use crate::ids::{BookmarkId, StrokeId};
 use crate::op::OpId;
+use crate::text_box::{TextBox, TextBoxId, TextFrame};
 
 /// Wrapper carrying the `OpId` stamp alongside the op payload.
 #[istmo::message]
@@ -89,5 +90,24 @@ pub enum DocOp {
     StickBookmark {
         id: BookmarkId,
         to: Option<StrokeAnchor>,
+    },
+    /// Insert a text box on top of `layer_id`'s other texts.
+    AddText {
+        layer_id: u32,
+        text: TextBox,
+    },
+    /// LWW on the body and its base colour.
+    UpdateText {
+        id: TextBoxId,
+        markdown: String,
+        color: [u8; 4],
+    },
+    /// Move, resize or rotate a text box.
+    SetTextFrame {
+        id: TextBoxId,
+        frame: TextFrame,
+    },
+    DeleteText {
+        id: TextBoxId,
     },
 }
