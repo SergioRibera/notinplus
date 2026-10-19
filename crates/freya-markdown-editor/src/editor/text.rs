@@ -1162,9 +1162,9 @@ fn atom_element(atom: Option<&Atom>, shared: &Shared, base_size: f32) -> Element
     let colors = &theme.colors;
     let pill = |text: String, background: Color, color: Color| {
         rect()
-            .height(Size::px((base_size + 6.0).max(18.0)))
-            .padding((1., 7.))
-            .corner_radius(6.)
+            .height(Size::px((base_size + theme.px(6.0)).max(theme.px(18.0))))
+            .padding((theme.px(1.), theme.px(7.)))
+            .corner_radius(theme.px(6.))
             .background(background)
             .center()
             .child(

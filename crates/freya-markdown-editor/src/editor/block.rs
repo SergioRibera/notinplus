@@ -16,6 +16,7 @@ use crate::document::{
     Align, Block, BlockId, BlockKind, CalloutKind, CellPos, ColumnAlign, HeadingLevel, Inline,
     ListKind, Table, TextRole, TextTarget,
 };
+use crate::theme::EditorTheme;
 
 const GUTTER: f32 = 24.0;
 
@@ -64,10 +65,14 @@ impl Frame {
         }
     }
 
-    fn render(self) -> Element {
-        let gutter_width = if self.gutter.is_some() { GUTTER } else { 0. };
+    fn render(self, theme: &EditorTheme) -> Element {
+        let gutter_width = if self.gutter.is_some() {
+            theme.px(GUTTER)
+        } else {
+            0.
+        };
         let bar = self.bar.unwrap_or(Color::TRANSPARENT);
-        let bar_width = if self.bar.is_some() { 3. } else { 0. };
+        let bar_width = if self.bar.is_some() { theme.px(3.) } else { 0. };
         rect()
             .width(Size::fill())
             .padding((0., 0., 0., self.indent))
@@ -96,7 +101,7 @@ impl Frame {
                             .child(
                                 rect()
                                     .width(Size::px(gutter_width))
-                                    .padding((2., 0., 0., 0.))
+                                    .padding((theme.px(2.), 0., 0., 0.))
                                     .cross_align(Alignment::center())
                                     .maybe_child(self.gutter),
                             )
@@ -170,14 +175,14 @@ impl BlockView {
                 let controller = self.shared.controller;
                 let id = self.block.id;
                 rect()
-                    .width(Size::px(16.))
-                    .height(Size::px(16.))
-                    .margin((2., 0., 0., 0.))
-                    .corner_radius(4.)
+                    .width(Size::px(theme.px(16.)))
+                    .height(Size::px(theme.px(16.)))
+                    .margin((theme.px(2.), 0., 0., 0.))
+                    .corner_radius(theme.px(4.))
                     .center()
                     .border(
                         Border::new()
-                            .width(1.5)
+                            .width(theme.px(1.5))
                             .alignment(BorderAlignment::Inner)
                             .fill(if checked { colors.accent } else { colors.muted }),
                     )
@@ -190,7 +195,7 @@ impl BlockView {
                     .on_press(move |_| controller.toggle_task(id))
                     .maybe_child(checked.then(|| {
                         label()
-                            .font_size(11.)
+                            .font_size(theme.px(11.))
                             .color(colors.surface)
                             .font_weight(FontWeight::BOLD)
                             .text("✓")
@@ -221,16 +226,16 @@ impl BlockView {
             )
         };
         let panel = |text: TextBlock, title: Option<String>| Frame {
-            padding: (8., 12., 8., 12.),
+            padding: (theme.px(8.), theme.px(12.), theme.px(8.), theme.px(12.)),
             background: colors.code_background,
-            radius: 8.,
-            header: title.map(|title| caption(title, colors.muted)),
+            radius: theme.px(8.),
+            header: title.map(|title| caption(title, colors.muted, theme)),
             ..Frame::new(text)
         };
         Some(match &self.block.kind {
             BlockKind::Paragraph(content) => Frame::new(rich(content, self.look())),
             BlockKind::Heading { level, content, .. } => Frame {
-                padding: (heading_gap(*level), 0., 2., 0.),
+                padding: (theme.px(heading_gap(*level)), 0., theme.px(2.), 0.),
                 ..Frame::new(rich(
                     content,
                     TextLook {
@@ -241,7 +246,7 @@ impl BlockView {
                 ))
             },
             BlockKind::Quote(content) => Frame {
-                padding: (2., 12., 2., 12.),
+                padding: (theme.px(2.), theme.px(12.), theme.px(2.), theme.px(12.)),
                 bar: Some(colors.quote_bar),
                 ..Frame::new(rich(
                     content,
@@ -260,28 +265,28 @@ impl BlockView {
                 let accent = colors.callout(*kind);
                 let header = rect()
                     .horizontal()
-                    .spacing(6.)
-                    .margin((0., 0., 4., 0.))
+                    .spacing(theme.px(6.))
+                    .margin((0., 0., theme.px(4.), 0.))
                     .cross_align(Alignment::center())
                     .child(
                         label()
                             .color(accent)
-                            .font_size(13.)
+                            .font_size(theme.px(13.))
                             .text(callout_icon(*kind)),
                     )
                     .child(
                         label()
                             .color(accent)
-                            .font_size(13.)
+                            .font_size(theme.px(13.))
                             .font_weight(FontWeight::BOLD)
                             .text(title.clone().unwrap_or_else(|| kind.title().to_owned())),
                     )
                     .into_element();
                 Frame {
-                    padding: (8., 12., 8., 12.),
+                    padding: (theme.px(8.), theme.px(12.), theme.px(8.), theme.px(12.)),
                     background: accent.with_a(22),
                     bar: Some(accent),
-                    radius: 4.,
+                    radius: theme.px(4.),
                     header: Some(header),
                     ..Frame::new(rich(content, self.look()))
                 }
@@ -293,7 +298,7 @@ impl BlockView {
             } => {
                 let checked = matches!(kind, ListKind::Task { checked: true });
                 Frame {
-                    indent: f32::from(*depth) * GUTTER,
+                    indent: f32::from(*depth) * theme.px(GUTTER),
                     gutter: Some(self.marker(*kind, *depth)),
                     ..Frame::new(self.block_text(
                         content,
@@ -343,7 +348,7 @@ impl BlockView {
                 },
             )),
             BlockKind::Definition(content) => Frame {
-                indent: GUTTER,
+                indent: theme.px(GUTTER),
                 ..Frame::new(rich(content, self.look()))
             },
             BlockKind::Divider | BlockKind::Table(_) | BlockKind::TableOfContents => return None,
@@ -368,7 +373,8 @@ impl BlockView {
     }
 
     fn table(&self, table: &Table) -> Element {
-        let colors = &self.shared.theme.colors;
+        let theme = &self.shared.theme;
+        let colors = &theme.colors;
         let controller = self.shared.controller;
         let in_table = self
             .focused
@@ -398,10 +404,10 @@ impl BlockView {
                     rect()
                         .key(column)
                         .width(Size::flex(1.))
-                        .padding((6., 8.))
+                        .padding((theme.px(6.), theme.px(8.)))
                         .border(
                             Border::new()
-                                .width(0.5)
+                                .width(theme.px(0.5))
                                 .alignment(BorderAlignment::Center)
                                 .fill(colors.border),
                         )
@@ -443,11 +449,11 @@ impl BlockView {
         });
         rect()
             .width(Size::fill())
-            .spacing(6.)
+            .spacing(theme.px(6.))
             .child(
                 rect()
                     .width(Size::fill())
-                    .corner_radius(6.)
+                    .corner_radius(theme.px(6.))
                     .overflow(Overflow::Clip)
                     .border(
                         Border::new()
@@ -462,7 +468,8 @@ impl BlockView {
     }
 
     fn table_of_contents(&self) -> Element {
-        let colors = &self.shared.theme.colors;
+        let theme = &self.shared.theme;
+        let colors = &theme.colors;
         let controller = self.shared.controller;
         let min_level = self
             .toc
@@ -474,7 +481,7 @@ impl BlockView {
             vec![
                 label()
                     .color(colors.muted)
-                    .font_size(13.)
+                    .font_size(theme.px(13.))
                     .text("Add headings to build the table of contents")
                     .into_element(),
             ]
@@ -485,13 +492,18 @@ impl BlockView {
                     let block = entry.block;
                     rect()
                         .key(entry.block)
-                        .padding((2., 0., 2., f32::from(entry.level.get() - min_level) * 16.))
+                        .padding((
+                            theme.px(2.),
+                            0.,
+                            theme.px(2.),
+                            theme.px(f32::from(entry.level.get() - min_level) * 16.),
+                        ))
                         .cursor(CursorIcon::Pointer)
                         .on_press(move |_| controller.focus(block, 0))
                         .child(
                             label()
                                 .color(colors.accent)
-                                .font_size(14.)
+                                .font_size(theme.px(14.))
                                 .text(entry.text.clone()),
                         )
                         .into_element()
@@ -500,8 +512,8 @@ impl BlockView {
         };
         rect()
             .width(Size::fill())
-            .padding((8., 12.))
-            .corner_radius(8.)
+            .padding((theme.px(8.), theme.px(12.)))
+            .corner_radius(theme.px(8.))
             .border(
                 Border::new()
                     .width(1.)
@@ -511,7 +523,7 @@ impl BlockView {
             .child(
                 label()
                     .color(colors.muted)
-                    .font_size(11.)
+                    .font_size(theme.px(11.))
                     .font_weight(FontWeight::BOLD)
                     .text("CONTENTS"),
             )
@@ -529,11 +541,11 @@ impl Component for BlockView {
             BlockKind::TableOfContents => self.table_of_contents(),
             _ => rect()
                 .width(Size::fill())
-                .padding((10., 0.))
+                .padding((theme.px(10.), 0.))
                 .child(
                     rect()
                         .width(Size::fill())
-                        .height(Size::px(1.))
+                        .height(Size::px(theme.px(1.)))
                         .background(theme.colors.border),
                 )
                 .into_element(),
@@ -542,7 +554,7 @@ impl Component for BlockView {
         let mut drop_target = use_state(|| false);
         let body = self
             .decorated()
-            .or_else(|| self.framed().map(Frame::render))
+            .or_else(|| self.framed().map(|frame| frame.render(&theme)))
             .unwrap_or_else(fallback);
         let block = rect()
             .width(Size::fill())
@@ -665,11 +677,11 @@ const fn heading_gap(level: HeadingLevel) -> f32 {
     }
 }
 
-fn caption(text: String, color: Color) -> Element {
+fn caption(text: String, color: Color, theme: &EditorTheme) -> Element {
     label()
         .color(color)
-        .font_size(11.)
-        .margin((0., 0., 4., 0.))
+        .font_size(theme.px(11.))
+        .margin((0., 0., theme.px(4.), 0.))
         .text(text)
         .into_element()
 }

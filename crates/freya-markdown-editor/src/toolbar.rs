@@ -13,6 +13,27 @@ use crate::theme::EditorTheme;
 
 const BUTTON: f32 = 30.0;
 const ICON: f32 = 16.0;
+/// Space between a button and its popup.
+const POPUP_GAP: f32 = 4.0;
+/// Space kept between a popup and the window edges.
+const POPUP_MARGIN: f32 = 8.0;
+/// Room a tooltip needs under its button before it flips above.
+const TOOLTIP_ROOM: f32 = 44.0;
+
+/// Region menus, pickers and tooltips must stay inside, provided by
+/// [`MarkdownToolbar`] to its buttons. `None` means the whole window.
+#[derive(Clone, Copy, PartialEq)]
+struct PopupArea(Option<Area>);
+
+/// Area popups may use: the toolbar's [`PopupArea`], else the window.
+fn popup_bounds() -> Area {
+    try_consume_context::<PopupArea>()
+        .and_then(|area| area.0)
+        .unwrap_or_else(|| {
+            let window = *Platform::get().root_size.read();
+            Area::new((0., 0.).into(), (window.width, window.height).into())
+        })
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Menu {
@@ -35,6 +56,8 @@ pub struct MarkdownToolbar {
     controller: EditorController,
     theme: Option<EditorTheme>,
     show_mode_toggle: bool,
+    wrap: bool,
+    popup_area: Option<Area>,
     layout: LayoutData,
     key: DiffKey,
 }
@@ -52,6 +75,8 @@ impl MarkdownToolbar {
             controller,
             theme: None,
             show_mode_toggle: true,
+            wrap: true,
+            popup_area: None,
             layout: LayoutData::default(),
             key: DiffKey::None,
         }
@@ -67,6 +92,24 @@ impl MarkdownToolbar {
     #[must_use]
     pub const fn mode_toggle(mut self, show: bool) -> Self {
         self.show_mode_toggle = show;
+        self
+    }
+
+    /// Wrap the groups onto more rows when they do not fit. On by default;
+    /// turn it off when the bar sits in a horizontal scroll view, which
+    /// hands its visible width down as the wrapping limit.
+    #[must_use]
+    pub const fn wrap(mut self, wrap: bool) -> Self {
+        self.wrap = wrap;
+        self
+    }
+
+    /// Region (window coordinates) that menus, pickers and tooltips must
+    /// stay inside. Defaults to the window; pass the part left visible when
+    /// something covers it, like a soft keyboard drawn over the window.
+    #[must_use]
+    pub const fn popup_area(mut self, area: Area) -> Self {
+        self.popup_area = Some(area);
         self
     }
 }
@@ -91,6 +134,7 @@ impl Component for MarkdownToolbar {
         let context_theme = use_try_consume::<EditorTheme>();
         let theme = self.theme.clone().or(context_theme).unwrap_or_default();
         let controller = self.controller;
+        provide_context(PopupArea(self.popup_area));
         let format = controller.active_format();
         let mut menu = use_state(|| None::<Menu>);
         let link_draft = use_state(String::new);
@@ -394,7 +438,7 @@ impl Component for MarkdownToolbar {
         rect()
             .layout(self.layout.clone())
             .horizontal()
-            .content(Content::wrap_spacing(4.))
+            .maybe(self.wrap, |bar| bar.content(Content::wrap_spacing(4.)))
             .cross_align(Alignment::center())
             .spacing(4.)
             .child(history)
@@ -524,19 +568,70 @@ fn separator(colors: &crate::EditorColors) -> Element {
         .into_element()
 }
 
-/// Child with an optional popup anchored right under it.
+/// Child with an optional popup. See [`Anchored`].
 fn anchored(child: Element, popup: Option<Element>) -> Element {
-    rect()
-        .child(child)
-        .maybe_child(popup.map(|popup| {
-            rect().width(Size::px(0.)).height(Size::px(0.)).child(
-                rect()
-                    .layer(Layer::Overlay)
-                    .position(Position::new_absolute().top(4.).left(0.))
-                    .child(popup),
-            )
-        }))
-        .into_element()
+    Anchored { child, popup }.into_element()
+}
+
+/// Child with an optional popup that opens right under it, or right above
+/// it when there is no room below, and never leaves the window: the bar can
+/// sit anywhere (top of a page, docked above a soft keyboard, scrolled
+/// sideways).
+#[derive(Clone, PartialEq)]
+struct Anchored {
+    child: Element,
+    popup: Option<Element>,
+}
+
+impl Component for Anchored {
+    fn render(&self) -> impl IntoElement {
+        let mut anchor = use_state(Area::default);
+        let mut measured = use_state(Area::default);
+        let bounds = popup_bounds();
+        let popup = self.popup.clone().map(|popup| {
+            let size = *measured.read();
+            let (top, left) = popup_origin(*anchor.read(), (size.width(), size.height()), bounds);
+            rect()
+                .layer(Layer::Overlay)
+                .position(Position::new_global().top(top).left(left))
+                // Hidden until measured, so it never flashes off screen.
+                .opacity(if size.height() > 0. { 1. } else { 0. })
+                .on_sized(move |event: Event<SizedEventData>| {
+                    measured.set_if_modified(event.area);
+                })
+                .child(popup)
+        });
+        rect()
+            .on_sized(move |event: Event<SizedEventData>| anchor.set_if_modified(event.area))
+            .child(self.child.clone())
+            .maybe_child(popup)
+    }
+}
+
+/// Window position `(top, left)` of a `popup` sized `(width, height)` for a
+/// button at `anchor`, kept inside `bounds`.
+fn popup_origin(anchor: Area, popup: (f32, f32), bounds: Area) -> (f32, f32) {
+    let (width, height) = popup;
+    let below = anchor.max_y() + POPUP_GAP;
+    let above = anchor.min_y() - POPUP_GAP - height;
+    let (min_top, max_bottom) = (bounds.min_y() + POPUP_MARGIN, bounds.max_y() - POPUP_MARGIN);
+    let top = if bounds.height() <= 0. || below + height <= max_bottom {
+        below
+    } else if above >= min_top {
+        above
+    } else {
+        (max_bottom - height).max(min_top)
+    };
+    let (min_left, max_left) = (
+        bounds.min_x() + POPUP_MARGIN,
+        (bounds.max_x() - width - POPUP_MARGIN).max(bounds.min_x() + POPUP_MARGIN),
+    );
+    let left = if bounds.width() <= 0. {
+        anchor.min_x()
+    } else {
+        anchor.min_x().clamp(min_left, max_left)
+    };
+    (top, left)
 }
 
 fn popup_frame(colors: &crate::EditorColors) -> Rect {
@@ -787,9 +882,20 @@ impl Component for ToolButton {
                     .corner_radius(2.)
                     .background(swatch)
             }));
+        let mut area = use_state(Area::default);
+        let position = if area.read().max_y() + TOOLTIP_ROOM > popup_bounds().max_y() {
+            AttachedPosition::Top
+        } else {
+            AttachedPosition::Bottom
+        };
         TooltipContainer::new(Tooltip::new_text(self.tip))
             .delay(Duration::from_millis(450))
-            .child(button)
+            .position(position)
+            .child(
+                rect()
+                    .on_sized(move |event: Event<SizedEventData>| area.set_if_modified(event.area))
+                    .child(button),
+            )
     }
 }
 
@@ -929,5 +1035,47 @@ impl ActiveFormat {
     #[must_use]
     pub const fn block_label(&self) -> &'static str {
         block_label(self.block_type)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use freya::prelude::Area;
+
+    use super::popup_origin;
+
+    fn button(top: f32) -> Area {
+        Area::new((100., top).into(), (30., 30.).into())
+    }
+
+    fn window(width: f32, height: f32) -> Area {
+        Area::new((0., 0.).into(), (width, height).into())
+    }
+
+    #[test]
+    fn opens_below_when_it_fits() {
+        let (top, left) = popup_origin(button(10.), (150., 200.), window(800., 600.));
+        assert!((top - 44.).abs() < f32::EPSILON);
+        assert!((left - 100.).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn flips_above_near_the_bottom() {
+        let (top, _) = popup_origin(button(550.), (150., 200.), window(800., 600.));
+        assert!((top - 346.).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn flips_above_a_covered_bottom() {
+        // Window 600 tall, but only the top 400 visible above a keyboard.
+        let (top, _) = popup_origin(button(330.), (150., 200.), window(800., 400.));
+        assert!((top - 126.).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn stays_inside_the_window() {
+        let (top, left) = popup_origin(button(100.), (300., 580.), window(320., 600.));
+        assert!((top - 12.).abs() < f32::EPSILON);
+        assert!((left - 12.).abs() < f32::EPSILON);
     }
 }

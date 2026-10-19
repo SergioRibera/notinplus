@@ -112,6 +112,11 @@ pub struct EditorTheme {
     pub fonts: Vec<Cow<'static, str>>,
     /// Sizes offered by the toolbar font size picker.
     pub font_sizes: Vec<u16>,
+    /// Factor applied to every length the editor lays out (fonts, paddings,
+    /// markers, embeds). Hosts that zoom the editor, like a canvas, set it
+    /// with [`Self::zoomed`] so layout and hit testing stay native instead
+    /// of going through a render-only scale effect.
+    pub zoom: f32,
 }
 
 impl Default for EditorTheme {
@@ -130,6 +135,7 @@ impl From<EditorColors> for EditorTheme {
             heading_sizes: [28.0, 23.0, 19.0, 17.0, 15.5, 14.5],
             monospace: Cow::Borrowed("monospace"),
             palette: vec![
+                Rgba::rgb(0, 0, 0),
                 Rgba::rgb(239, 68, 68),
                 Rgba::rgb(249, 115, 22),
                 Rgba::rgb(234, 179, 8),
@@ -146,6 +152,7 @@ impl From<EditorColors> for EditorTheme {
                 Cow::Borrowed("monospace"),
             ],
             font_sizes: vec![10, 12, 14, 15, 16, 18, 20, 24, 30, 36],
+            zoom: 1.0,
         }
     }
 }
@@ -164,6 +171,25 @@ impl EditorTheme {
     #[must_use]
     pub const fn heading_size(&self, level: HeadingLevel) -> f32 {
         self.heading_sizes[level.get() as usize - 1]
+    }
+
+    /// Copy of the theme with every length multiplied by `zoom`.
+    #[must_use]
+    pub fn zoomed(mut self, zoom: f32) -> Self {
+        let factor = zoom / self.zoom;
+        self.body_size *= factor;
+        self.block_spacing *= factor;
+        for size in &mut self.heading_sizes {
+            *size *= factor;
+        }
+        self.zoom = zoom;
+        self
+    }
+
+    /// `length` scaled by [`Self::zoom`].
+    #[must_use]
+    pub const fn px(&self, length: f32) -> f32 {
+        length * self.zoom
     }
 }
 

@@ -211,7 +211,9 @@ impl PaintContext<'_> {
                 MarkKind::FontFamily(family) => {
                     style.font_family = Some(Cow::Owned(family.clone()));
                 }
-                MarkKind::FontSize(size) => style.font_size = Some(f32::from(*size)),
+                MarkKind::FontSize(size) => {
+                    style.font_size = Some(self.theme.px(f32::from(*size)));
+                }
             }
         }
         for (_, style) in matches
