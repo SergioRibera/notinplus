@@ -708,6 +708,12 @@ impl Library {
 
     // ---------- Workspaces ---------------------------------------------
 
+    /// Borrow the raw link index.
+    #[must_use]
+    pub const fn links(&self) -> &LinkIndex {
+        &self.links
+    }
+
     /// Borrow the raw workspace index.
     #[must_use]
     pub const fn workspaces_index(&self) -> &WorkspaceIndex {

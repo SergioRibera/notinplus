@@ -15,8 +15,8 @@ use std::time::Duration;
 
 use freya::animation::{AnimNum, Ease, Function, use_animation_transition};
 use freya::icons::lucide::{
-    arrow_left, hand, layers, panel_left, pencil, redo, signature, sliders_horizontal, text_select,
-    undo,
+    arrow_left, hand, layers, link, notebook_text, panel_left, pencil, redo, signature,
+    sliders_horizontal, text_select, undo,
 };
 use freya::prelude::*;
 use freya::router::*;
@@ -1575,9 +1575,38 @@ fn top_right_toolbar(board: &Arc<Mutex<Board>>, state: &ChromeState) -> impl Int
         crate::home::open_canvas_edit_sheet(id, None);
     });
 
+    let open_notebook: NoArgCallback<()> = NoArgCallback::new(move || {
+        if let Some(id) = *active_item.peek() {
+            crate::notebooks::open_notebook(id);
+        }
+    });
+    let open_actions: NoArgCallback<()> = NoArgCallback::new({
+        let board = Arc::clone(board);
+        let state = state.clone();
+        move || {
+            let item = *active_item.peek();
+            let router = RouterContext::get();
+            let workspace = match router.current::<crate::route::Route>() {
+                crate::route::Route::Space { id } => Some(id),
+                crate::route::Route::Home => None,
+            };
+            let board = board.clone();
+            let state = state.clone();
+            crate::components::DocActionsMenu::new(item)
+                .on_show_links(move || {
+                    let mut tab = state.sidebar_tab;
+                    tab.set(SidebarTab::Links);
+                    SidebarModal::open(state.clone(), board.clone(), workspace);
+                })
+                .open();
+        }
+    });
+
     rect()
         .horizontal()
         .spacing(6.0)
+        .child(icon_button(notebook_text(), open_notebook))
+        .child(icon_button(link(), open_actions))
         .child(icon_toggle(
             signature(),
             handwriting_active,

@@ -9,7 +9,7 @@ use freya::prelude::*;
 
 use crate::components::theme::{CARD_BG, PANEL_BG, TEXT_MUTED, TEXT_PRIMARY};
 use crate::faces;
-use crate::library::{DocKind, ItemId};
+use crate::library::{BackgroundStyle, DocKind, ItemId, Library, ROOT_FOLDER, TabTarget};
 
 use super::form_input::FormInput;
 use super::modal::{Modal, ModalController};
@@ -35,11 +35,56 @@ struct Entry {
     color: Option<[u8; 4]>,
 }
 
+impl PickerChoice {
+    /// Turn the choice into something a tab can show, creating the
+    /// item when the user asked for a new one. `None` when creation
+    /// failed (already logged).
+    pub async fn resolve(self, lib: &mut Library) -> Option<TabTarget> {
+        match self {
+            Self::Existing(id) => Some(TabTarget::Item(id)),
+            Self::Scratch => Some(TabTarget::Scratch),
+            Self::NewCanvas => {
+                let kind = DocKind::plugin(crate::builtin::stroke_canvas::KIND_ID);
+                create_blank(lib, kind, "Lienzo").await.map(TabTarget::Item)
+            }
+            Self::NewNote => {
+                let kind = DocKind::plugin(notein_notes::KIND_ID);
+                let id = create_blank(lib, kind, "Nota").await?;
+                crate::builtin::prime_notes(lib.index().items.iter());
+                Some(TabTarget::Item(id))
+            }
+        }
+    }
+}
+
+async fn create_blank(lib: &mut Library, kind: DocKind, name: &str) -> Option<ItemId> {
+    match lib
+        .create_item(
+            ROOT_FOLDER,
+            kind,
+            name,
+            None,
+            Vec::new(),
+            BackgroundStyle::default(),
+        )
+        .await
+    {
+        Ok(id) => Some(id),
+        Err(err) => {
+            log::error!("create_item: {err}");
+            None
+        }
+    }
+}
+
 /// Builder for the picker. Configure, then [`ItemPicker::open`].
 #[derive(Clone)]
 pub struct ItemPicker {
     title: String,
     on_pick: Callback<PickerChoice, ()>,
+    only_plugin: Option<&'static str>,
+    exclude: Vec<ItemId>,
+    quick_actions: bool,
 }
 
 impl PartialEq for ItemPicker {
@@ -62,12 +107,36 @@ impl ItemPicker {
         Self {
             title: "Abrir".to_owned(),
             on_pick: on_pick.into(),
+            only_plugin: None,
+            exclude: Vec::new(),
+            quick_actions: true,
         }
     }
 
     #[must_use]
     pub fn title(mut self, title: impl Into<String>) -> Self {
         self.title = title.into();
+        self
+    }
+
+    /// List only items rendered by `plugin_id`.
+    #[must_use]
+    pub const fn only_plugin(mut self, plugin_id: &'static str) -> Self {
+        self.only_plugin = Some(plugin_id);
+        self
+    }
+
+    /// Leave `item` out of the list.
+    #[must_use]
+    pub fn exclude(mut self, item: ItemId) -> Self {
+        self.exclude.push(item);
+        self
+    }
+
+    /// Whether the scratch / new-canvas / new-note shortcuts show.
+    #[must_use]
+    pub const fn quick_actions(mut self, show: bool) -> Self {
+        self.quick_actions = show;
         self
     }
 
@@ -118,9 +187,13 @@ impl Component for ItemPicker {
         };
 
         let needle = query.read().trim().to_lowercase();
+        let only_plugin = self.only_plugin;
+        let exclude = self.exclude.clone();
         let filtered: Vec<Entry> = entries
             .read()
             .iter()
+            .filter(|e| only_plugin.is_none_or(|p| e.kind.is(p)))
+            .filter(|e| !exclude.contains(&e.id))
             .filter(|e| needle.is_empty() || e.name.to_lowercase().contains(&needle))
             .cloned()
             .collect();
@@ -193,7 +266,7 @@ impl Component for ItemPicker {
                     .font_size(16.0)
                     .text(self.title.clone()),
             )
-            .child(quick)
+            .maybe_child(self.quick_actions.then_some(quick))
             .child(
                 FormInput::new(query)
                     .left_icon(lucide::search())

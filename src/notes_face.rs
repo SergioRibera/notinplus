@@ -85,7 +85,20 @@ impl Component for NotesFace {
                 crate::notes_share::open_menu(controller, title.peek().clone(), at, window);
             })),
             on_toggle_mode: Some(action(move || controller.toggle_read_only())),
-            ..TopbarActions::default()
+            on_notebook: Some(action(move || crate::notebooks::open_notebook(item))),
+            on_links: Some(action(move || {
+                crate::components::DocActionsMenu::new(Some(item))
+                    .on_show_links(move || {
+                        crate::components::SidebarModal::open_plugin_tab(
+                            chrome,
+                            KIND_ID,
+                            item,
+                            router,
+                            crate::components::SidebarTab::Links,
+                        );
+                    })
+                    .open();
+            })),
         };
 
         let editor = notein_editor(

@@ -38,6 +38,7 @@ pub mod identity;
 pub mod ids;
 pub mod ink_glyph;
 pub mod library;
+pub mod notebooks;
 pub mod notes_face;
 pub mod notes_share;
 pub mod palette_popup;

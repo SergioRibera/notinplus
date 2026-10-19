@@ -564,9 +564,21 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                 on_sidebar: Some(Box::new(on_sidebar)),
                 on_back: has_back.then(|| Box::new(on_back_cb) as toolbar::BackHandler),
                 on_forward: has_forward.then(|| Box::new(on_forward_cb) as toolbar::BackHandler),
-                on_split_horizontal: None,
-                on_split_vertical: None,
-                on_close_split: None,
+                on_notebook: Some(Box::new(move || crate::notebooks::open_notebook(item))
+                    as toolbar::BackHandler),
+                on_links: Some(Box::new(move || {
+                    crate::components::DocActionsMenu::new(Some(item))
+                        .on_show_links(move || {
+                            crate::components::SidebarModal::open_plugin_tab(
+                                chrome,
+                                BIBLE_PLUGIN_ID,
+                                item,
+                                router,
+                                crate::components::SidebarTab::Links,
+                            );
+                        })
+                        .open();
+                }) as toolbar::BackHandler),
                 search_query: Writable::<String>::from(search_query),
                 on_search,
                 search_suggestions,

@@ -35,8 +35,8 @@ use crate::components::{
 };
 use crate::hooks::use_safe_area_insets;
 use crate::library::{
-    BackgroundStyle, DocKind, Folder, FolderId, Item, ItemId, Library, LibraryIndex, ROOT_FOLDER,
-    Rgba, TabTarget, TagId, Workspace, WorkspaceId,
+    BackgroundStyle, DocKind, Folder, FolderId, Item, ItemId, Library, LibraryIndex, LinkIndex,
+    ROOT_FOLDER, Rgba, TabTarget, TagId, Workspace, WorkspaceId,
 };
 use crate::space::OpenHint;
 
@@ -104,6 +104,7 @@ impl Component for Home {
     fn render(&self) -> impl IntoElement {
         let lib_state = use_state(|| LibState::Loading);
         let snap = use_state(|| Option::<LibraryIndex>::None);
+        let links = use_state(LinkIndex::default);
         let ws_snap = use_state(|| Option::<WorkspaceSnapshot>::None);
         let nav = use_state(Vec::<FolderId>::new);
         let renaming = use_state(|| Option::<CardId>::None);
@@ -112,6 +113,7 @@ impl Component for Home {
         use_hook({
             let mut lib_state = lib_state;
             let mut snap = snap;
+            let mut links = links;
             let mut ws_snap = ws_snap;
             move || {
                 spawn(async move {
@@ -119,6 +121,7 @@ impl Component for Home {
                         Ok(handle) => {
                             let lib = handle.lock().await;
                             snap.set(Some(lib.index().clone()));
+                            links.set(lib.links().clone());
                             ws_snap.set(Some(snapshot_workspaces(&lib)));
                             drop(lib);
                             lib_state.set(LibState::Ready(handle));
@@ -132,9 +135,32 @@ impl Component for Home {
             }
         });
 
+        // Links and tabs change from faces and chips while Home is
+        // mounted; follow them so cards and the mesa strip stay true.
+        use_hook({
+            let mut snap = snap;
+            let mut links = links;
+            let mut ws_snap = ws_snap;
+            move || {
+                let changes = crate::space::changes();
+                spawn(async move {
+                    while changes.recv_async().await.is_ok() {
+                        let Ok(handle) = open_library().await else {
+                            continue;
+                        };
+                        let lib = handle.lock().await;
+                        snap.set(Some(lib.index().clone()));
+                        links.set(lib.links().clone());
+                        ws_snap.set(Some(snapshot_workspaces(&lib)));
+                    }
+                });
+            }
+        });
+
         let bg = Color::from_rgb(15, 15, 18);
         let state_val = lib_state.read().clone();
         let snapshot = snap.read().clone();
+        let links_now = links.read().clone();
         let ws_snapshot = ws_snap.read().clone();
         let nav_stack = nav.read().clone();
         let current = nav_stack.last().copied().unwrap_or(ROOT_FOLDER);
@@ -168,8 +194,10 @@ impl Component for Home {
                     ))
                     .child(grid(
                         &index,
+                        &links_now,
                         current,
                         snap,
+                        links,
                         nav,
                         handle.clone(),
                         renaming,
@@ -505,8 +533,10 @@ fn sort_pill() -> impl IntoElement {
 #[allow(clippy::too_many_arguments)]
 fn grid(
     index: &LibraryIndex,
+    links_now: &LinkIndex,
     current: FolderId,
     snap: State<Option<LibraryIndex>>,
+    links: State<LinkIndex>,
     nav: State<Vec<FolderId>>,
     handle: LibHandle,
     renaming: State<Option<CardId>>,
@@ -568,8 +598,17 @@ fn grid(
     }
 
     for item in items {
-        let kind_label = crate::faces::kind_label(&item.kind);
-        let subtitle = format!("{} · {}", kind_label, format_date(item.updated_at));
+        let notebooks = links_now.companions_of(item.id).count();
+        let parents: Vec<String> = links_now
+            .companion_parents_of(item.id)
+            .filter_map(|p| index.item(p).map(|i| i.name.clone()))
+            .collect();
+        let role = match parents.as_slice() {
+            [] => crate::faces::kind_label(&item.kind).to_owned(),
+            [only] => format!("Cuaderno de {only}"),
+            [first, rest @ ..] => format!("Cuaderno de {first} +{}", rest.len()),
+        };
+        let subtitle = format!("{role} · {}", format_date(item.updated_at));
         let tint = item
             .color
             .unwrap_or_else(|| color_to_rgba(auto_color(&item.name)));
@@ -577,10 +616,12 @@ fn grid(
             id: item.id,
             title: item.name.clone(),
             subtitle,
+            notebooks,
             tint,
             bg_style: item.background,
             handle: handle.clone(),
             snap,
+            links,
             renaming,
             rename_buffer,
         });
@@ -603,10 +644,13 @@ struct ItemCard {
     id: ItemId,
     title: String,
     subtitle: String,
+    /// How many notebooks hang off this document (badge).
+    notebooks: usize,
     tint: Rgba,
     bg_style: BackgroundStyle,
     handle: LibHandle,
     snap: State<Option<LibraryIndex>>,
+    links: State<LinkIndex>,
     renaming: State<Option<CardId>>,
     rename_buffer: State<String>,
 }
@@ -677,23 +721,10 @@ impl Component for ItemCard {
             };
             let ask_delete = {
                 let handle = handle.clone();
-                let mut snap = snap;
+                let snap = snap;
+                let links = self.links;
                 let name = title.clone();
-                move || {
-                    confirm_delete_modal(name.clone(), {
-                        let handle = handle.clone();
-                        move || {
-                            let handle = handle.clone();
-                            spawn_forever(async move {
-                                let mut lib = handle.lock().await;
-                                if let Err(err) = lib.delete_item(id).await {
-                                    log::error!("delete_item: {err}");
-                                }
-                                snap.set(Some(lib.index().clone()));
-                            });
-                        }
-                    });
-                }
+                move || ask_delete_item(id, name.clone(), handle.clone(), snap, links)
             };
             let on_export = {
                 let handle = handle.clone();
@@ -713,7 +744,20 @@ impl Component for ItemCard {
                 let snap = snap;
                 move || open_canvas_edit_sheet(id, Some(snap))
             };
-            build_card_menu(start_rename, on_edit_item, on_export, ask_delete)
+            build_item_menu(ItemMenuActions {
+                open_beside: Box::new(move || {
+                    crate::space::open(TabTarget::Item(id), OpenHint::Beside);
+                }),
+                open_in_new_space: Box::new(move || {
+                    crate::space::open(TabTarget::Item(id), OpenHint::NewSpace);
+                }),
+                notebook: Box::new(move || crate::notebooks::open_notebook(id)),
+                link_with: Box::new(move || crate::notebooks::link_related(id)),
+                rename: Box::new(start_rename),
+                edit: Box::new(on_edit_item),
+                export: Box::new(on_export),
+                delete: Box::new(ask_delete),
+            })
         };
 
         let on_commit_rename = {
@@ -734,6 +778,7 @@ impl Component for ItemCard {
         let body = card_body_view(
             title.clone(),
             subtitle,
+            self.notebooks,
             tint,
             false,
             is_editing,
@@ -900,6 +945,7 @@ impl Component for FolderCard {
         let body = card_body_view(
             title.clone(),
             subtitle,
+            0,
             tint,
             true,
             is_editing,
@@ -945,6 +991,7 @@ impl Component for FolderCard {
 fn card_body_view<Open, Commit>(
     title: String,
     subtitle: String,
+    notebooks: usize,
     tint: Rgba,
     is_folder: bool,
     is_editing: bool,
@@ -976,7 +1023,8 @@ where
             .fill(rgba_to_color(tint))
             .width(Size::percent(80.0))
             .height(Size::percent(80.0)),
-        );
+        )
+        .maybe_child((notebooks > 0).then(|| notebook_badge(notebooks)));
 
     let mut column = rect()
         .vertical()
@@ -1232,6 +1280,227 @@ fn sanitize_filename(stem: &str) -> String {
     } else {
         cleaned
     }
+}
+
+/// Pill over a card's cover showing how many notebooks it has.
+fn notebook_badge(count: usize) -> Rect {
+    rect()
+        .position(Position::new_absolute().top(6.0).right(6.0))
+        .horizontal()
+        .cross_align(Alignment::Center)
+        .spacing(4.0)
+        .padding((3.0, 7.0))
+        .with_corner_radius(10.0)
+        .background(Color::from_rgb(40, 40, 48))
+        .child(
+            SvgViewer::new(icons::notebook_text())
+                .color(Color::from_rgb(230, 230, 240))
+                .width(Size::px(12.0))
+                .height(Size::px(12.0)),
+        )
+        .child(
+            label()
+                .color(Color::from_rgb(230, 230, 240))
+                .font_size(11.0)
+                .text(count.to_string()),
+        )
+}
+
+/// Every action the long-press menu of a document card offers.
+struct ItemMenuActions {
+    open_beside: Box<dyn FnMut()>,
+    open_in_new_space: Box<dyn FnMut()>,
+    notebook: Box<dyn FnMut()>,
+    link_with: Box<dyn FnMut()>,
+    rename: Box<dyn FnMut()>,
+    edit: Box<dyn FnMut()>,
+    export: Box<dyn FnMut()>,
+    delete: Box<dyn FnMut()>,
+}
+
+fn build_item_menu(actions: ItemMenuActions) -> Menu {
+    let ItemMenuActions {
+        mut open_beside,
+        mut open_in_new_space,
+        mut notebook,
+        mut link_with,
+        mut rename,
+        mut edit,
+        mut export,
+        mut delete,
+    } = actions;
+    Menu::new()
+        .child(
+            MenuButton::new()
+                .on_press(move |_: Event<PressEventData>| open_beside())
+                .child("Abrir al lado"),
+        )
+        .child(
+            MenuButton::new()
+                .on_press(move |_: Event<PressEventData>| open_in_new_space())
+                .child("Abrir en mesa nueva"),
+        )
+        .child(
+            MenuButton::new()
+                .on_press(move |_: Event<PressEventData>| notebook())
+                .child("Cuaderno"),
+        )
+        .child(
+            MenuButton::new()
+                .on_press(move |_: Event<PressEventData>| link_with())
+                .child("Vincular con…"),
+        )
+        .child(
+            MenuButton::new()
+                .on_press(move |_: Event<PressEventData>| rename())
+                .child("Renombrar"),
+        )
+        .child(
+            MenuButton::new()
+                .on_press(move |_: Event<PressEventData>| edit())
+                .child("Editar"),
+        )
+        .child(
+            MenuButton::new()
+                .on_press(move |_: Event<PressEventData>| export())
+                .child("Exportar"),
+        )
+        .child(
+            MenuButton::new()
+                .on_press(move |_: Event<PressEventData>| delete())
+                .child("Borrar"),
+        )
+}
+
+/// Confirm deleting a document; notebooks that would be left without
+/// any document get offered for deletion alongside it.
+fn ask_delete_item(
+    id: ItemId,
+    name: String,
+    handle: LibHandle,
+    mut snap: State<Option<LibraryIndex>>,
+    mut links: State<LinkIndex>,
+) {
+    spawn_forever(async move {
+        let orphans: Vec<(ItemId, String)> = {
+            let lib = handle.lock().await;
+            lib.companions_of(id)
+                .filter(|c| lib.companion_parents_of(*c).all(|p| p == id))
+                .filter_map(|c| lib.item(c).map(|it| (c, it.name.clone())))
+                .collect()
+        };
+        let delete = {
+            let handle = handle.clone();
+            move |also: Vec<ItemId>| {
+                let handle = handle.clone();
+                spawn_forever(async move {
+                    let mut lib = handle.lock().await;
+                    for extra in also {
+                        if let Err(err) = lib.delete_item(extra).await {
+                            log::error!("delete_item (notebook): {err}");
+                        }
+                    }
+                    if let Err(err) = lib.delete_item(id).await {
+                        log::error!("delete_item: {err}");
+                    }
+                    snap.set(Some(lib.index().clone()));
+                    links.set(lib.links().clone());
+                });
+            }
+        };
+        if orphans.is_empty() {
+            let delete = delete;
+            confirm_delete_modal(name, move || delete(Vec::new()));
+        } else {
+            confirm_delete_with_notebooks_modal(name, orphans, delete);
+        }
+    });
+}
+
+fn confirm_delete_with_notebooks_modal(
+    name: String,
+    notebooks: Vec<(ItemId, String)>,
+    on_delete: impl FnMut(Vec<ItemId>) + Clone + 'static,
+) {
+    let names: Vec<&str> = notebooks.iter().map(|(_, n)| n.as_str()).collect();
+    let ids: Vec<ItemId> = notebooks.iter().map(|(id, _)| *id).collect();
+    let only_doc = {
+        let mut on_delete = on_delete.clone();
+        move |_: Event<PressEventData>| {
+            on_delete(Vec::new());
+            ModalController::get().close();
+        }
+    };
+    let everything = {
+        let mut on_delete = on_delete;
+        move |_: Event<PressEventData>| {
+            on_delete(ids.clone());
+            ModalController::get().close();
+        }
+    };
+    let body = rect()
+        .vertical()
+        .width(Size::px(320.0))
+        .padding((20.0, 20.0))
+        .background(Color::from_rgb(30, 30, 34))
+        .with_corner_radius(14.0)
+        .spacing(16.0)
+        .child(
+            label()
+                .color(Color::from_rgb(240, 240, 245))
+                .font_size(14.0)
+                .text(format!("¿Borrar “{name}”?")),
+        )
+        .child(
+            label()
+                .color(Color::from_rgb(170, 170, 180))
+                .font_size(12.0)
+                .text(format!(
+                    "Tiene {} cuaderno{} que quedarían sueltos: {}.",
+                    names.len(),
+                    if names.len() == 1 { "" } else { "s" },
+                    names.join(", ")
+                )),
+        )
+        .child(
+            rect()
+                .vertical()
+                .spacing(8.0)
+                .child(modal_button("Cancelar", Color::from_rgb(60, 60, 68), |_| {
+                    ModalController::get().close();
+                }))
+                .child(modal_button(
+                    "Borrar solo el documento",
+                    Color::from_rgb(60, 60, 68),
+                    only_doc,
+                ))
+                .child(modal_button(
+                    "Borrar todo",
+                    Color::from_rgb(200, 70, 70),
+                    everything,
+                )),
+        );
+    ModalController::get().open(Modal::new(body).center().width(320.0));
+}
+
+fn modal_button(
+    text: &'static str,
+    bg: Color,
+    on_press: impl FnMut(Event<PressEventData>) + 'static,
+) -> Rect {
+    rect()
+        .width(Size::fill())
+        .padding((8.0, 14.0))
+        .with_corner_radius(8.0)
+        .background(bg)
+        .center()
+        .child(
+            label()
+                .color(Color::from_rgb(240, 240, 245))
+                .font_size(12.0)
+                .text(text),
+        )
+        .on_press(on_press)
 }
 
 fn build_card_menu(

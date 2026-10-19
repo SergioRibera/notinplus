@@ -33,9 +33,10 @@ where
     pub on_sidebar: Option<BackHandler>,
     pub on_back: Option<BackHandler>,
     pub on_forward: Option<BackHandler>,
-    pub on_split_horizontal: Option<BackHandler>,
-    pub on_split_vertical: Option<BackHandler>,
-    pub on_close_split: Option<BackHandler>,
+    /// Opens (or creates) the notebook beside the reader.
+    pub on_notebook: Option<BackHandler>,
+    /// Opens the document actions (open beside, link with, links).
+    pub on_links: Option<BackHandler>,
     /// Reactive buffer bound to the inline search input. The caller
     /// owns the signal + reacts to its value in a `use_side_effect`
     /// (so the toolbar doesn't need an explicit submit callback).
@@ -63,9 +64,8 @@ where
         on_sidebar,
         on_back,
         on_forward,
-        on_split_horizontal,
-        on_split_vertical,
-        on_close_split,
+        on_notebook,
+        on_links,
         search_query,
         on_search,
         search_suggestions,
@@ -117,20 +117,14 @@ where
                 .suggestions_unfiltered()
                 .on_change(on_search),
         );
-    if let Some(mut cb) = on_split_horizontal {
+    if let Some(mut cb) = on_notebook {
         right = right.child(icon_button(
-            freya::icons::lucide::square_split_horizontal(),
+            freya::icons::lucide::notebook_text(),
             move || cb(),
         ));
     }
-    if let Some(mut cb) = on_split_vertical {
-        right = right.child(icon_button(
-            freya::icons::lucide::square_split_vertical(),
-            move || cb(),
-        ));
-    }
-    if let Some(mut cb) = on_close_split {
-        right = right.child(icon_button(freya::icons::lucide::x(), move || cb()));
+    if let Some(mut cb) = on_links {
+        right = right.child(icon_button(freya::icons::lucide::link(), move || cb()));
     }
     right = right.child(translation_chip(translation_abbrev, on_translation));
 

@@ -17,8 +17,7 @@ use crate::components::{ItemPicker, PaneTreeCallbacks, PaneTreeView, PickerChoic
 use crate::home::{LibHandle, open_library};
 use crate::hooks::{provide_safe_area_override, use_safe_area_insets};
 use crate::library::{
-    BackgroundStyle, DocKind, ItemId, Library, PaneId, PaneTab, ROOT_FOLDER, SplitSide, TabTarget,
-    Workspace, WorkspaceId,
+    DocKind, ItemId, Library, PaneId, PaneTab, SplitSide, TabTarget, Workspace, WorkspaceId,
 };
 use crate::space::{self, OpenHint};
 
@@ -434,26 +433,8 @@ fn open_tab_picker(workspace_id: WorkspaceId, pane: PaneId, mut load_state: Stat
                 return;
             };
             let mut lib = handle.lock().await;
-            let target = match choice {
-                PickerChoice::Existing(id) => TabTarget::Item(id),
-                PickerChoice::Scratch => TabTarget::Scratch,
-                PickerChoice::NewCanvas => {
-                    let kind = DocKind::plugin(crate::builtin::stroke_canvas::KIND_ID);
-                    match create_blank(&mut lib, kind, "Lienzo").await {
-                        Some(id) => TabTarget::Item(id),
-                        None => return,
-                    }
-                }
-                PickerChoice::NewNote => {
-                    let kind = DocKind::plugin(notein_notes::KIND_ID);
-                    match create_blank(&mut lib, kind, "Nota").await {
-                        Some(id) => {
-                            crate::builtin::prime_notes(lib.index().items.iter());
-                            TabTarget::Item(id)
-                        }
-                        None => return,
-                    }
-                }
+            let Some(target) = choice.resolve(&mut lib).await else {
+                return;
             };
             if let Err(err) = space::open_in(&mut lib, target, OpenHint::InPane(pane)).await {
                 log::error!("open in pane: {err}");
@@ -466,26 +447,6 @@ fn open_tab_picker(workspace_id: WorkspaceId, pane: PaneId, mut load_state: Stat
     })
     .title("Nueva pestaña")
     .open();
-}
-
-async fn create_blank(lib: &mut Library, kind: DocKind, name: &str) -> Option<ItemId> {
-    match lib
-        .create_item(
-            ROOT_FOLDER,
-            kind,
-            name,
-            None,
-            Vec::new(),
-            BackgroundStyle::default(),
-        )
-        .await
-    {
-        Ok(id) => Some(id),
-        Err(err) => {
-            log::error!("create_item: {err}");
-            None
-        }
-    }
 }
 
 fn split_resize_cb(

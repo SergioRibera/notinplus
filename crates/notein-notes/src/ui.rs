@@ -26,12 +26,13 @@ pub struct TopbarActions {
     pub on_sidebar: Option<Action>,
     pub on_share: Option<PointAction>,
     pub on_toggle_mode: Option<Action>,
-    pub on_split_horizontal: Option<Action>,
-    pub on_split_vertical: Option<Action>,
-    pub on_close_split: Option<Action>,
+    /// Opens (or creates) the note's notebook beside it.
+    pub on_notebook: Option<Action>,
+    /// Opens the document actions (open beside, link with, links).
+    pub on_links: Option<Action>,
 }
 
-/// `[home][sidebar] title ............ [split][share][mode]`
+/// `[home][sidebar] title ............ [notebook][links][share][mode]`
 #[must_use]
 pub fn topbar(title: &str, read_only: bool, actions: TopbarActions) -> impl IntoElement {
     let TopbarActions {
@@ -39,9 +40,8 @@ pub fn topbar(title: &str, read_only: bool, actions: TopbarActions) -> impl Into
         on_sidebar,
         on_share,
         on_toggle_mode,
-        on_split_horizontal,
-        on_split_vertical,
-        on_close_split,
+        on_notebook,
+        on_links,
     } = actions;
 
     let title = if title.trim().is_empty() {
@@ -71,15 +71,8 @@ pub fn topbar(title: &str, read_only: bool, actions: TopbarActions) -> impl Into
                 .text_overflow(TextOverflow::Ellipsis)
                 .text(title),
         )
-        .maybe_child(
-            on_split_horizontal
-                .map(|on_press| icon_button(lucide::square_split_horizontal(), on_press)),
-        )
-        .maybe_child(
-            on_split_vertical
-                .map(|on_press| icon_button(lucide::square_split_vertical(), on_press)),
-        )
-        .maybe_child(on_close_split.map(|on_press| icon_button(lucide::x(), on_press)))
+        .maybe_child(on_notebook.map(|on_press| icon_button(lucide::notebook_text(), on_press)))
+        .maybe_child(on_links.map(|on_press| icon_button(lucide::link(), on_press)))
         .maybe_child(on_share.map(share_button))
         .maybe_child(on_toggle_mode.map(|on_press| mode_chip(read_only, on_press)))
 }

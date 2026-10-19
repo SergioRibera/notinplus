@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 
 use freya::animation::{AnimNum, Ease, Function, OnCreation, use_animation};
 use freya::icons::lucide::{
-    bookmark, chevron_down, chevron_right, ellipsis_vertical, file_text, layers, search,
+    bookmark, chevron_down, chevron_right, ellipsis_vertical, file_text, layers, link, search,
     square_split_horizontal, square_split_vertical,
 };
 use freya::prelude::*;
@@ -31,7 +31,8 @@ use crate::bookmark_ui::BookmarkSort;
 use crate::canvas::{Board, lock};
 use crate::hooks::use_safe_area_insets;
 use crate::library::{
-    DocKind, Item, ItemId, SplitOrientation, SplitSide, TabTarget, Tag, TagId, WorkspaceId,
+    DocKind, Item, ItemId, LinkId, LinkKind, SplitOrientation, SplitSide, TabTarget, Tag, TagId,
+    WorkspaceId,
 };
 use crate::route::Route;
 use crate::space::OpenHint;
@@ -47,6 +48,7 @@ pub enum SidebarTab {
     Docs,
     Contents,
     Bookmarks,
+    Links,
 }
 
 impl SidebarTab {
@@ -55,6 +57,7 @@ impl SidebarTab {
             Self::Docs => "Documentos",
             Self::Contents => "Contenido",
             Self::Bookmarks => "Marcadores",
+            Self::Links => "Vínculos",
         }
     }
 }
@@ -111,12 +114,23 @@ impl SidebarModal {
     /// Sidebar for a page rendered by the plugin canvas `plugin_id`,
     /// opened on its Contents tab.
     pub(crate) fn open_plugin(state: ChromeState, plugin_id: &str, item: ItemId, router: RouterContext) {
+        Self::open_plugin_tab(state, plugin_id, item, router, SidebarTab::Contents);
+    }
+
+    /// Sidebar for a plugin page, opened on `tab`.
+    pub(crate) fn open_plugin_tab(
+        state: ChromeState,
+        plugin_id: &str,
+        item: ItemId,
+        router: RouterContext,
+        initial: SidebarTab,
+    ) {
         let workspace = match router.current::<Route>() {
             Route::Space { id } => Some(id),
             Route::Home => None,
         };
         let mut tab = state.sidebar_tab;
-        tab.set(SidebarTab::Contents);
+        tab.set(initial);
         let contents = SidebarContents::Plugin {
             plugin_id: plugin_id.to_owned(),
             item,
@@ -207,8 +221,14 @@ impl Component for SidebarModal {
         let header = sidebar_header(current_tab, query, sort, move |next| tab_state.set(next));
 
         let workspace = self.workspace;
+        let links_item = match contents {
+            SidebarContents::Board(_) => *self.state.active_item.read(),
+            SidebarContents::Plugin { item, .. } => Some(*item),
+        };
+        let link_rows = use_links_rows(links_item);
         let body = match current_tab {
             SidebarTab::Docs => docs_body(library_snapshot, query, menu_target),
+            SidebarTab::Links => links_body(links_item, link_rows, query),
             SidebarTab::Contents => contents_body(contents, query, collapsed),
             SidebarTab::Bookmarks => match contents {
                 SidebarContents::Board(board) => {
@@ -267,6 +287,7 @@ fn sidebar_header(
         (SidebarTab::Docs, file_text()),
         (SidebarTab::Contents, layers()),
         (SidebarTab::Bookmarks, bookmark()),
+        (SidebarTab::Links, link()),
     ];
     let mut tab_row = rect()
         .direction(Direction::Horizontal)
@@ -331,6 +352,7 @@ fn search_input(query: State<String>, tab: SidebarTab, sort: State<BookmarkSort>
         SidebarTab::Docs => "Buscar por nombre o etiqueta",
         SidebarTab::Bookmarks => "Buscar marcadores",
         SidebarTab::Contents => "Buscar en el contenido",
+        SidebarTab::Links => "Buscar en los vínculos",
     };
     let mut row = rect()
         .direction(Direction::Horizontal)
@@ -1361,6 +1383,228 @@ where
                 ),
         )
         .into_element()
+}
+
+// ---------- Links tab -----------------------------------------------------
+
+/// One row of the Links tab.
+#[derive(Clone, PartialEq)]
+enum LinkRow {
+    Section(String),
+    Doc {
+        id: ItemId,
+        title: String,
+        subtitle: String,
+        /// Explicit link behind the row; `None` for references that
+        /// follow from content and cannot be removed here.
+        link: Option<LinkId>,
+    },
+}
+
+fn use_links_rows(item: Option<ItemId>) -> State<Option<Vec<LinkRow>>> {
+    let rows = use_state(|| Option::<Vec<LinkRow>>::None);
+    use_hook(move || load_link_rows(item, rows));
+    rows
+}
+
+/// Rebuild the rows for `item` from the library. `None` item (a
+/// scratch canvas) has nothing to link.
+fn load_link_rows(item: Option<ItemId>, mut rows: State<Option<Vec<LinkRow>>>) {
+    let Some(item) = item else {
+        rows.set(Some(Vec::new()));
+        return;
+    };
+    spawn(async move {
+        let Ok(handle) = crate::home::open_library().await else {
+            return;
+        };
+        let lib = handle.lock().await;
+        let describe = |id: ItemId, link: Option<LinkId>| LinkRow::Doc {
+            id,
+            title: lib.item(id).map_or_else(
+                || "(elemento no disponible)".to_owned(),
+                |it| it.name.clone(),
+            ),
+            subtitle: lib
+                .item(id)
+                .map(|it| crate::faces::kind_label(&it.kind).to_owned())
+                .unwrap_or_default(),
+            link,
+        };
+        let mut out = Vec::new();
+        let mut section = |title: &str, docs: Vec<(ItemId, Option<LinkId>)>| {
+            if docs.is_empty() {
+                return;
+            }
+            out.push(LinkRow::Section(title.to_owned()));
+            for (id, link) in docs {
+                out.push(describe(id, link));
+            }
+        };
+        section(
+            "Cuadernos",
+            lib.links_of(item)
+                .filter(|l| l.kind == LinkKind::Companion && l.from == item)
+                .map(|l| (l.to, Some(l.id)))
+                .collect(),
+        );
+        section(
+            "Cuaderno de",
+            lib.links_of(item)
+                .filter(|l| l.kind == LinkKind::Companion && l.to == item)
+                .map(|l| (l.from, Some(l.id)))
+                .collect(),
+        );
+        section(
+            "Vinculados",
+            lib.links_of(item)
+                .filter(|l| l.kind == LinkKind::Related)
+                .filter_map(|l| l.other_end(item).map(|other| (other, Some(l.id))))
+                .collect(),
+        );
+        let mut seen = HashSet::new();
+        section(
+            "Referencias",
+            crate::library::refs::refs_from(item)
+                .into_iter()
+                .filter(|r| seen.insert(r.to))
+                .map(|r| (r.to, None))
+                .collect(),
+        );
+        let mut seen = HashSet::new();
+        section(
+            "Menciones",
+            crate::library::refs::refs_to(item)
+                .into_iter()
+                .filter(|r| seen.insert(r.from))
+                .map(|r| (r.from, None))
+                .collect(),
+        );
+        rows.set(Some(out));
+    });
+}
+
+fn links_body(
+    item: Option<ItemId>,
+    rows: State<Option<Vec<LinkRow>>>,
+    query: State<String>,
+) -> Element {
+    let Some(all) = rows.read().clone() else {
+        return empty_state("Cargando…");
+    };
+    if all.is_empty() {
+        return empty_state(if item.is_some() {
+            "Sin vínculos todavía."
+        } else {
+            "Un borrador no se puede vincular."
+        });
+    }
+    let needle = query.read().trim().to_ascii_lowercase();
+    let filtered: Vec<LinkRow> = all
+        .into_iter()
+        .filter(|row| match row {
+            LinkRow::Section(_) => true,
+            LinkRow::Doc { title, .. } => {
+                needle.is_empty() || title.to_ascii_lowercase().contains(&needle)
+            }
+        })
+        .collect();
+    let length = filtered.len();
+    VirtualScrollView::new_with_data(filtered, move |row, data: &Vec<LinkRow>| {
+        link_row(data[row.index].clone(), item, rows)
+    })
+    .length(length)
+    .width(Size::fill())
+    .item_size(ROW_SIZE)
+    .into_element()
+}
+
+fn link_row(row: LinkRow, owner: Option<ItemId>, rows: State<Option<Vec<LinkRow>>>) -> Element {
+    match row {
+        LinkRow::Section(title) => rect()
+            .direction(Direction::Horizontal)
+            .cross_align(Alignment::Center)
+            .padding((6.0, 10.0))
+            .margin((2.0, 6.0))
+            .width(Size::fill())
+            .height(Size::px(ROW_SIZE - 4.0))
+            .child(
+                label()
+                    .color(TEXT_MUTED)
+                    .font_size(11.0)
+                    .text(title.to_ascii_uppercase()),
+            )
+            .into_element(),
+        LinkRow::Doc {
+            id,
+            title,
+            subtitle,
+            link,
+        } => {
+            let open = move |_: Event<PressEventData>| {
+                crate::space::open(TabTarget::Item(id), OpenHint::Beside);
+                ModalController::get().close();
+            };
+            let mut row = rect()
+                .direction(Direction::Horizontal)
+                .cross_align(Alignment::Center)
+                .spacing(10.0)
+                .padding((8.0, 10.0))
+                .margin((2.0, 6.0))
+                .width(Size::fill())
+                .height(Size::px(ROW_SIZE - 4.0))
+                .background(CARD_BG)
+                .with_corner_radius(6.0)
+                .on_press(open)
+                .content(Content::Flex)
+                .child(
+                    rect()
+                        .direction(Direction::Vertical)
+                        .width(Size::flex(1.))
+                        .spacing(2.0)
+                        .child(label().color(TEXT_PRIMARY).font_size(13.0).text(title))
+                        .child(label().color(TEXT_MUTED).font_size(11.0).text(subtitle)),
+                );
+            if let Some(link_id) = link {
+                let unlink = move |e: Event<PressEventData>| {
+                    e.stop_propagation();
+                    spawn(async move {
+                        let Ok(handle) = crate::home::open_library().await else {
+                            return;
+                        };
+                        {
+                            let mut lib = handle.lock().await;
+                            if let Err(err) = lib.delete_link(link_id).await {
+                                log::error!("delete_link: {err}");
+                                return;
+                            }
+                        }
+                        crate::space::notify_changed();
+                        load_link_rows(owner, rows);
+                    });
+                };
+                row = row.child(
+                    rect()
+                        .width(Size::px(28.0))
+                        .height(Size::px(28.0))
+                        .center()
+                        .with_corner_radius(6.0)
+                        .on_press(unlink)
+                        .child(
+                            SvgViewer::new(unlink_icon())
+                                .fill(TEXT_MUTED)
+                                .width(Size::px(16.))
+                                .height(Size::px(16.)),
+                        ),
+                );
+            }
+            row.into_element()
+        }
+    }
+}
+
+fn unlink_icon() -> Bytes {
+    freya::icons::lucide::unlink()
 }
 
 // ---------- Shared bits ---------------------------------------------------
