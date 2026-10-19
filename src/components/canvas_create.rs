@@ -12,7 +12,7 @@ use freya::prelude::*;
 use freya_canvas_bg::{PatternKind, Rect as BgRect, paint_preview, pattern::DEFAULT_INK};
 use freya_engine::prelude::Color as SkColor;
 
-use crate::library::{BackgroundStyle, ItemKind};
+use crate::library::{BackgroundStyle, DocKind};
 
 use super::color_wheel::{ColorWheel, DEFAULT_SWATCHES, auto_color, color_swatch_strip};
 use super::form_input::FormInput;
@@ -30,7 +30,7 @@ const PATTERN_OPTIONS: [(BackgroundStyle, &str); 4] = [
 /// doesn't have to remember which flow launched the sheet.
 #[derive(Clone, Debug)]
 pub struct CreateCanvasRequest {
-    pub kind: ItemKind,
+    pub kind: DocKind,
     pub name: String,
     pub color: Color,
     pub background: BackgroundStyle,
@@ -40,7 +40,7 @@ pub struct CreateCanvasRequest {
 /// Builder for the sheet.
 #[derive(Clone)]
 pub struct CanvasCreateSheet {
-    kind: ItemKind,
+    kind: DocKind,
     default_name: String,
     available_tags: Vec<String>,
     default_color: Option<Color>,
@@ -71,7 +71,7 @@ impl CanvasCreateSheet {
     #[must_use]
     pub fn new(on_confirm: impl Into<Callback<CreateCanvasRequest, ()>>) -> Self {
         Self {
-            kind: ItemKind::Canvas,
+            kind: DocKind::plugin(crate::builtin::stroke_canvas::KIND_ID),
             default_name: "Sin título".to_owned(),
             available_tags: Vec::new(),
             default_color: None,
@@ -134,7 +134,7 @@ impl CanvasCreateSheet {
     /// The sheet hides the paper-pattern grid for `PdfCanvas` since a
     /// PDF supplies its own page background.
     #[must_use]
-    pub fn kind(mut self, kind: ItemKind) -> Self {
+    pub fn kind(mut self, kind: DocKind) -> Self {
         self.kind = kind;
         self
     }
@@ -188,16 +188,10 @@ impl Component for CanvasCreateSheet {
         let submit_disabled = cur_name.trim().is_empty();
         let submit_cb = self.on_confirm.clone();
         let kind = self.kind.clone();
-        let title_label: String = self.title_override.clone().unwrap_or_else(|| {
-            match &kind {
-                ItemKind::Canvas => "Nuevo lienzo",
-                ItemKind::PdfCanvas => "Importar PDF",
-                ItemKind::SourcePdf => "Agregar fuente PDF",
-                ItemKind::DocLinked { .. } => "Nuevo documento ligado",
-                ItemKind::PluginCanvas { .. } => "Nuevo documento del plugin",
-            }
-            .to_owned()
-        });
+        let title_label: String = self
+            .title_override
+            .clone()
+            .unwrap_or_else(|| default_title(&kind).to_owned());
         let submit_label = self
             .submit_label
             .clone()
@@ -253,13 +247,7 @@ impl Component for CanvasCreateSheet {
                 effective_color,
                 cur_background,
                 background,
-                matches!(
-                    kind,
-                    ItemKind::PdfCanvas
-                        | ItemKind::SourcePdf
-                        | ItemKind::DocLinked { .. }
-                        | ItemKind::PluginCanvas { .. }
-                ),
+                !kind.is(crate::builtin::stroke_canvas::KIND_ID),
             ))
             .child(
                 TagPicker::new(tag_names)
@@ -514,4 +502,15 @@ where
                 .font_size(12.0)
                 .text(name),
         )
+}
+
+/// Sheet title when the caller did not override it.
+fn default_title(kind: &DocKind) -> &'static str {
+    if kind.is(crate::builtin::stroke_canvas::KIND_ID) {
+        "Nuevo lienzo"
+    } else if kind.is(crate::builtin::pdf_source::KIND_ID) {
+        "Importar PDF"
+    } else {
+        "Nuevo documento"
+    }
 }

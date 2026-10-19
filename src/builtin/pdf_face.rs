@@ -1,7 +1,6 @@
-//! PDF implementation of
-//! [`crate::linked_source::LinkedDocSource`].
+//! PDF face: a stroke canvas painted over the item's PDF attachment.
 //!
-//! Owns everything PDF-specific that used to live in the shell:
+//! Owns everything PDF-specific:
 //!
 //! * Loading the PDF blob from
 //!   [`crate::library::bodies::pdf_path`] off the UI thread.
@@ -22,29 +21,13 @@ use std::sync::Arc;
 use freya::prelude::*;
 use freya_pdf::{PdfBackground, PdfDocument};
 
-use crate::active_boards;
 use crate::app::{AnchorSourceCtx, CanvasMount, CanvasPane};
 use crate::bookmark::SourceRef;
 use crate::builtin::pdf_source;
 use crate::canvas::{AnchorSourceRef, lock};
 use crate::library::{ItemId, bodies};
-use crate::linked_source::LinkedDocSource;
 use crate::pdf_select_overlay::PdfSelectOverlay;
 use crate::pdf_viewer::{PdfAnchor, encode_pdf_anchor};
-
-/// Builtin PDF source backend for linked-doc bundles.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct PdfLinkedSource;
-
-impl LinkedDocSource for PdfLinkedSource {
-    fn plugin_id(&self) -> &'static str {
-        pdf_source::KIND_ID
-    }
-
-    fn render_face(&self, item: ItemId) -> Element {
-        PdfFace { item }.into_element()
-    }
-}
 
 /// Freya component that renders the PDF face. Mounts a shell
 /// [`CanvasPane`] over a plain [`CanvasMount::Item`] (strokes against

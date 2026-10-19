@@ -18,7 +18,7 @@ use crate::components::{PaneTreeCallbacks, PaneTreeView};
 use crate::home::{LibHandle, open_library};
 use crate::hooks::{provide_safe_area_override, use_safe_area_insets};
 use crate::library::{
-    BackgroundStyle, ItemId, ItemKind, Library, PaneId, PaneTab, SplitOrientation, SplitSide,
+    BackgroundStyle, DocKind, ItemId, Library, PaneId, PaneTab, SplitOrientation, SplitSide,
     Workspace, WorkspaceId,
 };
 use crate::route::Route;
@@ -32,7 +32,7 @@ const MISSING_TITLE: &str = "(elemento no disponible)";
 struct WorkspaceSnapshot {
     workspace: Workspace,
     titles: HashMap<ItemId, String>,
-    kinds: HashMap<ItemId, ItemKind>,
+    kinds: HashMap<ItemId, DocKind>,
 }
 
 #[derive(Clone)]
@@ -229,7 +229,7 @@ fn keyboard_shortcuts(
                         if let Ok(item) = lib
                             .create_item(
                                 crate::library::ROOT_FOLDER,
-                                ItemKind::Canvas,
+                                DocKind::plugin(crate::builtin::stroke_canvas::KIND_ID),
                                 "Borrador",
                                 None,
                                 Vec::new(),
@@ -478,30 +478,11 @@ fn pane_tree(
 /// pane's chrome is scoped to its own body area — tab bars stay
 /// untouched. DocLinked and SourcePdf ship their own self-contained
 /// shells with the same per-pane scope.
-fn tab_body_element(id: ItemId, kind: Option<ItemKind>) -> Element {
+fn tab_body_element(id: ItemId, kind: Option<DocKind>) -> Element {
     use crate::app::{CanvasMount, CanvasPane};
-    use crate::builtin::pdf_linked::PdfFace;
-    use crate::doc_linked::{DocLinkedView, SourcePdfView};
     match kind {
-        Some(ItemKind::PdfCanvas) => PdfFace { item: id }.into_element(),
-        Some(ItemKind::SourcePdf) => SourcePdfView { id }.into_element(),
-        Some(ItemKind::DocLinked { .. }) => DocLinkedView { id }.into_element(),
-        Some(ItemKind::PluginCanvas { plugin_id, .. })
-            if plugin_id == "io.notein.bible.viewer" =>
-        {
-            crate::bible_face::BibleFace { item: id }.into_element()
-        }
-        Some(ItemKind::PluginCanvas { plugin_id, .. }) if plugin_id == notein_notes::KIND_ID => {
-            crate::notes_face::NotesFace { item: id }.into_element()
-        }
-        Some(ItemKind::PluginCanvas { .. }) => {
-            log::warn!("workspace: no pane mount registered for this plugin");
-            CanvasPane {
-                mount: CanvasMount::Item(id),
-            }
-            .into_element()
-        }
-        Some(ItemKind::Canvas) | None => CanvasPane {
+        Some(kind) => crate::faces::render(id, &kind),
+        None => CanvasPane {
             mount: CanvasMount::Item(id),
         }
         .into_element(),
@@ -560,7 +541,7 @@ fn tab_new_cb(
             let item = match lib
                 .create_item(
                     crate::library::ROOT_FOLDER,
-                    ItemKind::Canvas,
+                    DocKind::plugin(crate::builtin::stroke_canvas::KIND_ID),
                     "Borrador",
                     None,
                     Vec::new(),

@@ -1,7 +1,7 @@
 //! Slide-in left sidebar modal with three tabs:
 //!
 //! * **Docs** — library-wide item list with name + tag search; tapping a
-//!   row pushes the appropriate `Route` for the item's `ItemKind`.
+//!   row pushes the appropriate `Route` for the item's plugin.
 //! * **Contents** — hierarchical table-of-contents of the currently
 //!   open doc. Primary source is `CanvasBackground::outline()` so
 //!   plugins describe their own structure (PDF bookmarks, future
@@ -30,9 +30,7 @@ use crate::app::ChromeState;
 use crate::bookmark_ui::BookmarkSort;
 use crate::canvas::{Board, lock};
 use crate::hooks::use_safe_area_insets;
-use crate::library::{
-    Item, ItemId, ItemKind, SplitOrientation, SplitSide, Tag, TagId, WorkspaceId,
-};
+use crate::library::{DocKind, Item, ItemId, SplitOrientation, SplitSide, Tag, TagId, WorkspaceId};
 use crate::route::Route;
 
 use super::{FormInput, theme::*};
@@ -154,7 +152,7 @@ impl SidebarModal {
 #[derive(Clone, PartialEq)]
 struct DocEntry {
     id: ItemId,
-    kind: ItemKind,
+    kind: DocKind,
     name: String,
     color: Option<[u8; 4]>,
     tags: Vec<String>,
@@ -731,21 +729,11 @@ fn schedule_split_to(workspace: WorkspaceId, item: ItemId, orientation: SplitOri
     });
 }
 
-fn kind_label(kind: &ItemKind) -> &'static str {
-    match kind {
-        ItemKind::Canvas => "Lienzo",
-        ItemKind::PdfCanvas => "PDF + lienzo",
-        ItemKind::SourcePdf => "PDF",
-        ItemKind::DocLinked { .. } => "Bundle",
-        ItemKind::PluginCanvas { plugin_id, .. } if plugin_id == notein_notes::KIND_ID => "Nota",
-        ItemKind::PluginCanvas { plugin_id, .. } if plugin_id == "io.notein.bible.viewer" => {
-            "Biblia"
-        }
-        ItemKind::PluginCanvas { .. } => "Plugin",
-    }
+fn kind_label(kind: &DocKind) -> &'static str {
+    crate::faces::kind_label(kind)
 }
 
-fn route_for_kind(kind: &ItemKind, id: ItemId) -> Route {
+fn route_for_kind(kind: &DocKind, id: ItemId) -> Route {
     crate::route::route_for_kind(kind, id)
 }
 

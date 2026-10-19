@@ -246,9 +246,7 @@ fn navigate_pdf(item: ItemId, anchor: Vec<u8>) {
 ///
 /// 1. Ask the plugin for the payload it wants its viewer to receive.
 ///    `None` → chip is inert for this plugin; abort.
-/// 2. Find any library item citing the plugin (via
-///    [`crate::library::ItemKind::hosting_plugin`]). Covers
-///    standalone `PluginCanvas` + `DocLinked` bundles in one scan.
+/// 2. Find any library item whose kind names the plugin.
 /// 3. Queue the payload on the host under `(plugin_id, item_id)` and
 ///    broadcast so a live viewer on the same item re-applies.
 /// 4. Route to the item's native face via
@@ -294,7 +292,7 @@ fn navigate_plugin(plugin_id: &str, target: ItemId, anchor: &[u8]) {
         };
         let found = {
             let lib = handle.lock().await;
-            let hosts = |item: &&crate::library::Item| item.kind.hosting_plugin() == Some(viewer_id.as_str());
+            let hosts = |item: &&crate::library::Item| item.kind.is(&viewer_id);
             let items = &lib.index().items;
             items
                 .iter()

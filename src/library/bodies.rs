@@ -1,12 +1,11 @@
 //! On-disk layout for doc bodies + PDF attachments.
 //!
-//! Each library item owns a directory under
-//! [`item_root`]. Inside it the canonical stroke-canvas doc lives as a
-//! snapshot + Lamport anchor + append-only log, so Phase 10 sync can
-//! diff by `OpId` and the log can be compacted independently from the
-//! materialised state. DocLinked bundles carry a sibling
-//! canvas-side split; the raw PDF attachment lives in the same item
-//! directory so a purge sweeps everything at once.
+//! Each library item owns a directory under [`item_root`]. Inside it
+//! the stroke doc lives as a snapshot + Lamport anchor + append-only
+//! log, so sync can diff by `OpId` and the log can be compacted
+//! independently from the materialised state. A raw PDF attachment
+//! lives in the same item directory so a purge sweeps everything at
+//! once.
 //!
 //! ```text
 //! <data_dir>/notinplus/
@@ -14,15 +13,9 @@
 //!     ├── snapshot.bincode              // Doc with log cleared
 //!     ├── snapshot_at.bincode           // OpId the snapshot reflects
 //!     ├── log/00001.bincode             // Vec<OpRecord>, append-only
-//!     ├── canvas_snapshot.bincode       // DocLinked canvas face
-//!     ├── canvas_snapshot_at.bincode
-//!     ├── canvas_log/00001.bincode
-//!     └── attachment.pdf                // PdfCanvas / DocLinked blob
+//!     ├── attachment.pdf                // raw PDF blob
+//!     └── plugin_snapshots/<plugin>.bincode
 //! ```
-//!
-//! A one-shot migration folds the legacy
-//! `docs/<id>.notinplus` + `pdfs/<id>.pdf` layout into the new tree on
-//! first read of an item. Writes always target the new tree.
 //!
 //! Writes are atomic within a directory: bytes land in a sibling
 //! `.tmp` first, then `rename`. `fsync` is skipped (the platform
@@ -52,27 +45,20 @@ const ITEMS_SUBDIR: &str = "items";
 const SNAPSHOT_FILE: &str = "snapshot.bincode";
 const SNAPSHOT_AT_FILE: &str = "snapshot_at.bincode";
 const LOG_SUBDIR: &str = "log";
-const CANVAS_SNAPSHOT_FILE: &str = "canvas_snapshot.bincode";
-const CANVAS_SNAPSHOT_AT_FILE: &str = "canvas_snapshot_at.bincode";
-const CANVAS_LOG_SUBDIR: &str = "canvas_log";
 const PDF_FILE: &str = "attachment.pdf";
 /// Subdir holding per-plugin snapshot blobs under each item root.
 /// Keyed by plugin id (sanitised to a filesystem-safe form) so a
 /// single item can carry snapshots from several plugins without any
 /// name collision at the shell level.
 const PLUGIN_SNAPSHOTS_SUBDIR: &str = "plugin_snapshots";
-/// First (and today only) log segment. Phase 10 compaction will
-/// rotate to `00002.bincode`, `00003.bincode`, … and glob the dir in
-/// sorted order on read.
+/// First (and today only) log segment. Compaction will rotate to
+/// `00002.bincode`, `00003.bincode`, … and glob the dir in sorted
+/// order on read.
 const LOG_SEGMENT_0: &str = "00001.bincode";
 
-/// Legacy layout — resident on-disk before the per-item directory
-/// split. Looked up on read and migrated on write.
-const LEGACY_DOCS_SUBDIR: &str = "docs";
-const LEGACY_PDFS_SUBDIR: &str = "pdfs";
-const LEGACY_DOC_EXT: &str = "notinplus";
-const LEGACY_PDF_EXT: &str = "pdf";
-const LEGACY_CANVAS_DOC_EXT: &str = "canvas.notinplus";
+/// Subdirectories under [`root_dir`] that hold per-item state and are
+/// wiped when the library starts over.
+const ITEM_STATE_SUBDIRS: [&str; 4] = [ITEMS_SUBDIR, "views", "doc_linked", "pane_layouts"];
 
 /// Absolute path to the library root. Created on demand — call sites
 /// that go on to write also call [`ensure_dir`].
@@ -89,42 +75,24 @@ pub fn item_root(id: ItemId) -> PathBuf {
     root_dir().join(ITEMS_SUBDIR).join(id.to_string())
 }
 
-/// Absolute path of the stroke-canvas snapshot (= [`Doc`] with the
-/// log stripped). Pair with [`snapshot_at_path`] / [`log_dir`].
+/// Absolute path of the stroke doc snapshot (= [`Doc`] with the log
+/// stripped). Pair with [`snapshot_at_path`] / [`log_dir`].
 #[must_use]
 pub fn doc_path(id: ItemId) -> PathBuf {
     item_root(id).join(SNAPSHOT_FILE)
 }
 
-/// Absolute path of the bincoded [`OpId`] anchoring the stroke-canvas
+/// Absolute path of the bincoded [`OpId`] anchoring the stroke doc
 /// snapshot. Written next to [`doc_path`] on each save.
 #[must_use]
 pub fn snapshot_at_path(id: ItemId) -> PathBuf {
     item_root(id).join(SNAPSHOT_AT_FILE)
 }
 
-/// Absolute path of the stroke-canvas log directory.
+/// Absolute path of the stroke doc log directory.
 #[must_use]
 pub fn log_dir(id: ItemId) -> PathBuf {
     item_root(id).join(LOG_SUBDIR)
-}
-
-/// Absolute path of the DocLinked bundle's canvas-face snapshot.
-#[must_use]
-pub fn canvas_doc_path(id: ItemId) -> PathBuf {
-    item_root(id).join(CANVAS_SNAPSHOT_FILE)
-}
-
-/// Absolute path of the DocLinked bundle's canvas-face OpId anchor.
-#[must_use]
-pub fn canvas_snapshot_at_path(id: ItemId) -> PathBuf {
-    item_root(id).join(CANVAS_SNAPSHOT_AT_FILE)
-}
-
-/// Absolute path of the DocLinked bundle's canvas-face log dir.
-#[must_use]
-pub fn canvas_log_dir(id: ItemId) -> PathBuf {
-    item_root(id).join(CANVAS_LOG_SUBDIR)
 }
 
 /// Absolute path of the raw PDF attachment.
@@ -145,6 +113,9 @@ pub fn plugin_snapshot_path(id: ItemId, plugin_id: &str) -> PathBuf {
 }
 
 /// Write a plugin snapshot blob. Creates the subdir on first call.
+///
+/// # Errors
+/// Filesystem failure.
 pub fn write_plugin_snapshot(id: ItemId, plugin_id: &str, bytes: &[u8]) -> io::Result<()> {
     let path = plugin_snapshot_path(id, plugin_id);
     if let Some(parent) = path.parent() {
@@ -155,6 +126,9 @@ pub fn write_plugin_snapshot(id: ItemId, plugin_id: &str, bytes: &[u8]) -> io::R
 
 /// Read a plugin snapshot blob. `Ok(None)` on missing file; IO errors
 /// on other failures.
+///
+/// # Errors
+/// Filesystem failure other than a missing file.
 pub fn read_plugin_snapshot(id: ItemId, plugin_id: &str) -> io::Result<Option<Vec<u8>>> {
     let path = plugin_snapshot_path(id, plugin_id);
     if !path.exists() {
@@ -180,8 +154,22 @@ fn ensure_dir(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Remove every per-item directory and sidecar under [`root_dir`].
+/// Global preferences survive. Missing directories are not an error.
+pub fn discard_store() {
+    let root = root_dir();
+    for sub in ITEM_STATE_SUBDIRS {
+        let path = root.join(sub);
+        if path.exists() {
+            if let Err(err) = fs::remove_dir_all(&path) {
+                log::warn!("discard {}: {err}", path.display());
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
-// Stroke-canvas face
+// Stroke doc
 // ---------------------------------------------------------------------------
 
 /// Encode `doc` into the per-item split layout. Compacts first so the
@@ -199,36 +187,25 @@ pub fn write_doc(id: ItemId, doc: &mut Doc) -> Result<()> {
     write_blob(&doc_path(id), &snapshot_bytes)?;
     write_blob(&snapshot_at_path(id), &at_bytes)?;
     write_blob(&log_dir(id).join(LOG_SEGMENT_0), &log_bytes)?;
-    retire_legacy_doc(id);
     Ok(())
 }
 
-/// Reconstruct a [`Doc`] from the split layout. Falls back to the
-/// legacy single-blob file when the new tree is absent — a one-shot
-/// migration path for installs that pre-date the split.
+/// Reconstruct a [`Doc`] from the split layout.
 ///
 /// # Errors
-/// [`LibraryError::Io`] when neither layout holds the id,
-/// [`LibraryError::Codec`] on decode failure.
+/// [`LibraryError::Io`] with `NotFound` when no doc has been written
+/// for `id`, [`LibraryError::Codec`] on decode failure.
 pub fn read_doc(id: ItemId) -> Result<Doc> {
-    if doc_path(id).exists() {
-        return decode_doc_parts(
-            &fs::read(doc_path(id))?,
-            &read_log_dir(&log_dir(id))?,
-        );
+    if !doc_path(id).exists() {
+        return Err(LibraryError::Io(io::Error::from(io::ErrorKind::NotFound)));
     }
-    if let Some(bytes) = read_legacy_doc_bytes(id) {
-        let (doc, _) = bincode::decode_from_slice::<Doc, _>(&bytes, CODEC)
-            .map_err(|e| LibraryError::Codec(e.to_string()))?;
-        return Ok(doc);
-    }
-    Err(LibraryError::Io(io::Error::from(io::ErrorKind::NotFound)))
+    decode_doc_parts(&fs::read(doc_path(id))?, &read_log_dir(&log_dir(id))?)
 }
 
 /// Persist raw bincoded [`Doc`] bytes verbatim — the bundle importer
 /// hands us a payload the exporter already encoded, and we split it
-/// into the new layout here. Internally this still goes through the
-/// typed [`write_doc`] path so the split happens exactly once per
+/// into the on-disk layout here. Internally this still goes through
+/// the typed [`write_doc`] path so the split happens exactly once per
 /// save.
 ///
 /// # Errors
@@ -243,57 +220,12 @@ pub fn write_doc_bytes(id: ItemId, bytes: &[u8]) -> Result<()> {
 /// needs a single-blob round-trip even though the item lives split on
 /// disk.
 ///
-/// Returns `None` when the item has no stroke-canvas face persisted
-/// (missing files, or a bare `SourcePdf` that only owns an
-/// attachment).
+/// Returns `None` when the item has no stroke doc persisted (missing
+/// files, or an item that only owns an attachment).
 #[must_use]
 pub fn read_doc_bytes(id: ItemId) -> Option<Vec<u8>> {
     let doc = read_doc(id).ok()?;
     bincode::encode_to_vec(&doc, CODEC).ok()
-}
-
-// ---------------------------------------------------------------------------
-// DocLinked canvas face (mirror of the stroke-canvas functions above)
-// ---------------------------------------------------------------------------
-
-/// # Errors
-/// Codec / filesystem failures (see [`write_doc`]).
-pub fn write_canvas_doc(id: ItemId, doc: &mut Doc) -> Result<()> {
-    doc.maybe_compact_log();
-    let (snapshot_bytes, at_bytes, log_bytes) = encode_doc_parts(doc)?;
-    let root = item_root(id);
-    fs::create_dir_all(&root)?;
-    fs::create_dir_all(root.join(CANVAS_LOG_SUBDIR))?;
-    write_blob(&canvas_doc_path(id), &snapshot_bytes)?;
-    write_blob(&canvas_snapshot_at_path(id), &at_bytes)?;
-    write_blob(&canvas_log_dir(id).join(LOG_SEGMENT_0), &log_bytes)?;
-    retire_legacy_canvas_doc(id);
-    Ok(())
-}
-
-/// # Errors
-/// Same shape as [`read_doc`].
-pub fn read_canvas_doc(id: ItemId) -> Result<Doc> {
-    if canvas_doc_path(id).exists() {
-        return decode_doc_parts(
-            &fs::read(canvas_doc_path(id))?,
-            &read_log_dir(&canvas_log_dir(id))?,
-        );
-    }
-    if let Some(bytes) = read_legacy_canvas_doc_bytes(id) {
-        let (doc, _) = bincode::decode_from_slice::<Doc, _>(&bytes, CODEC)
-            .map_err(|e| LibraryError::Codec(e.to_string()))?;
-        return Ok(doc);
-    }
-    Err(LibraryError::Io(io::Error::from(io::ErrorKind::NotFound)))
-}
-
-/// # Errors
-/// Codec / filesystem failures.
-pub fn write_canvas_doc_bytes(id: ItemId, bytes: &[u8]) -> Result<()> {
-    let (mut doc, _) = bincode::decode_from_slice::<Doc, _>(bytes, CODEC)
-        .map_err(|e| LibraryError::Codec(e.to_string()))?;
-    write_canvas_doc(id, &mut doc)
 }
 
 // ---------------------------------------------------------------------------
@@ -304,31 +236,20 @@ pub fn write_canvas_doc_bytes(id: ItemId, bytes: &[u8]) -> Result<()> {
 /// Filesystem failure.
 pub fn write_pdf(id: ItemId, bytes: &[u8]) -> Result<()> {
     fs::create_dir_all(item_root(id))?;
-    write_blob(&pdf_path(id), bytes)?;
-    retire_legacy_pdf(id);
-    Ok(())
+    write_blob(&pdf_path(id), bytes)
 }
 
 /// # Errors
-/// Filesystem failure.
+/// Filesystem failure, `NotFound` when the item has no attachment.
 pub fn read_pdf(id: ItemId) -> Result<Vec<u8>> {
-    if let Ok(bytes) = fs::read(pdf_path(id)) {
-        return Ok(bytes);
-    }
-    if let Some(bytes) = read_legacy_pdf_bytes(id) {
-        return Ok(bytes);
-    }
-    Err(LibraryError::Io(io::Error::from(io::ErrorKind::NotFound)))
+    Ok(fs::read(pdf_path(id))?)
 }
 
-/// Remove every on-disk blob owned by `id`. Missing files + missing
-/// per-item directory are ignored so the caller can prune orphaned
-/// metadata idempotently.
+/// Remove every on-disk blob owned by `id`. A missing per-item
+/// directory is ignored so the caller can prune orphaned metadata
+/// idempotently.
 pub fn purge(id: ItemId) {
     let _ = fs::remove_dir_all(item_root(id));
-    retire_legacy_doc(id);
-    retire_legacy_canvas_doc(id);
-    retire_legacy_pdf(id);
 }
 
 // ---------------------------------------------------------------------------
@@ -341,12 +262,12 @@ fn encode_doc_parts(doc: &Doc) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
         log: Vec::new(),
         ..doc.clone()
     };
-    let snapshot_bytes = bincode::encode_to_vec(&snapshot, CODEC)
-        .map_err(|e| LibraryError::Codec(e.to_string()))?;
-    let at_bytes = bincode::encode_to_vec(&at, CODEC)
-        .map_err(|e| LibraryError::Codec(e.to_string()))?;
-    let log_bytes = bincode::encode_to_vec(doc.log(), CODEC)
-        .map_err(|e| LibraryError::Codec(e.to_string()))?;
+    let snapshot_bytes =
+        bincode::encode_to_vec(&snapshot, CODEC).map_err(|e| LibraryError::Codec(e.to_string()))?;
+    let at_bytes =
+        bincode::encode_to_vec(&at, CODEC).map_err(|e| LibraryError::Codec(e.to_string()))?;
+    let log_bytes =
+        bincode::encode_to_vec(doc.log(), CODEC).map_err(|e| LibraryError::Codec(e.to_string()))?;
     Ok((snapshot_bytes, at_bytes, log_bytes))
 }
 
@@ -384,48 +305,6 @@ fn read_log_dir(dir: &Path) -> Result<Vec<u8>> {
         combined.extend(chunk);
     }
     bincode::encode_to_vec(&combined, CODEC).map_err(|e| LibraryError::Codec(e.to_string()))
-}
-
-fn legacy_doc_path(id: ItemId) -> PathBuf {
-    root_dir()
-        .join(LEGACY_DOCS_SUBDIR)
-        .join(format!("{id}.{LEGACY_DOC_EXT}"))
-}
-
-fn legacy_canvas_doc_path(id: ItemId) -> PathBuf {
-    root_dir()
-        .join(LEGACY_DOCS_SUBDIR)
-        .join(format!("{id}.{LEGACY_CANVAS_DOC_EXT}"))
-}
-
-fn legacy_pdf_path(id: ItemId) -> PathBuf {
-    root_dir()
-        .join(LEGACY_PDFS_SUBDIR)
-        .join(format!("{id}.{LEGACY_PDF_EXT}"))
-}
-
-fn read_legacy_doc_bytes(id: ItemId) -> Option<Vec<u8>> {
-    fs::read(legacy_doc_path(id)).ok()
-}
-
-fn read_legacy_canvas_doc_bytes(id: ItemId) -> Option<Vec<u8>> {
-    fs::read(legacy_canvas_doc_path(id)).ok()
-}
-
-fn read_legacy_pdf_bytes(id: ItemId) -> Option<Vec<u8>> {
-    fs::read(legacy_pdf_path(id)).ok()
-}
-
-fn retire_legacy_doc(id: ItemId) {
-    let _ = fs::remove_file(legacy_doc_path(id));
-}
-
-fn retire_legacy_canvas_doc(id: ItemId) {
-    let _ = fs::remove_file(legacy_canvas_doc_path(id));
-}
-
-fn retire_legacy_pdf(id: ItemId) {
-    let _ = fs::remove_file(legacy_pdf_path(id));
 }
 
 fn write_blob(dest: &Path, bytes: &[u8]) -> Result<()> {

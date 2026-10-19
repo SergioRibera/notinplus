@@ -30,11 +30,11 @@ use freya_canvas_bg::{
 use freya_engine::prelude::Color as SkColor;
 
 use crate::app::{CanvasMount, canvas_root};
+use crate::builtin::{pdf_source, stroke_canvas};
 use crate::canvas::{Board, Viewport, lock};
 use crate::doc::Doc;
-use crate::doc_linked::{DocLinkedView, SourcePdfView};
 use crate::home::Home;
-use crate::library::{BackgroundStyle, ItemId, ItemKind, LibraryError, bodies};
+use crate::library::{BackgroundStyle, DocKind, ItemId, LibraryError};
 use crate::prefs;
 use crate::workspace_view::WorkspaceView;
 
@@ -58,10 +58,6 @@ pub enum Route {
     CanvasView { id: ItemId },
     #[route("/pdf/:id")]
     CanvasPdfView { id: ItemId },
-    #[route("/source/pdf/:id")]
-    SourcePdfView { id: ItemId },
-    #[route("/linked/:id")]
-    DocLinkedView { id: ItemId },
     #[route("/workspace/:id")]
     WorkspaceView { id: crate::library::WorkspaceId },
     #[route("/bible/:id")]
@@ -78,38 +74,27 @@ impl Route {
         match self {
             Route::CanvasView { id }
             | Route::CanvasPdfView { id }
-            | Route::DocLinkedView { id } => Some(*id),
-            Route::BibleView { id } => Some(*id),
-            Route::NotesView { id } => Some(*id),
-            Route::Home
-            | Route::CanvasEphemeral
-            | Route::SourcePdfView { .. }
-            | Route::WorkspaceView { .. } => None,
+            | Route::BibleView { id }
+            | Route::NotesView { id } => Some(*id),
+            Route::Home | Route::CanvasEphemeral | Route::WorkspaceView { .. } => None,
         }
     }
 }
 
-/// Native route for an item of `kind`. Covers every `ItemKind`
-/// variant exhaustively — new kinds must extend this map or ship
-/// a dedicated route. Keeps shell-side navigation (chip taps,
-/// sidebar jumps, slow-path auto-opens) free of per-kind
-/// branching.
+/// Native route for an item of `kind`. Keeps shell-side navigation
+/// (chip taps, sidebar jumps, slow-path auto-opens) free of per-plugin
+/// branching. Plugins without a standalone route fall back to `Home`.
 #[must_use]
-pub fn route_for_kind(kind: &ItemKind, id: ItemId) -> Route {
-    match kind {
-        ItemKind::Canvas => Route::CanvasView { id },
-        ItemKind::PdfCanvas => Route::CanvasPdfView { id },
-        ItemKind::SourcePdf => Route::SourcePdfView { id },
-        ItemKind::DocLinked { .. } => Route::DocLinkedView { id },
-        ItemKind::PluginCanvas { plugin_id, .. }
-            if plugin_id == "io.notein.bible.viewer" =>
-        {
-            Route::BibleView { id }
+pub fn route_for_kind(kind: &DocKind, id: ItemId) -> Route {
+    match kind.plugin_id.as_str() {
+        stroke_canvas::KIND_ID => Route::CanvasView { id },
+        pdf_source::KIND_ID => Route::CanvasPdfView { id },
+        notein_bible::canvas::KIND_ID => Route::BibleView { id },
+        notein_notes::KIND_ID => Route::NotesView { id },
+        other => {
+            log::warn!("no shell route registered for plugin {other}");
+            Route::Home
         }
-        ItemKind::PluginCanvas { plugin_id, .. } if plugin_id == notein_notes::KIND_ID => {
-            Route::NotesView { id }
-        }
-        ItemKind::PluginCanvas { .. } => Route::Home,
     }
 }
 
@@ -140,10 +125,8 @@ impl Component for CanvasEphemeral {
 }
 
 /// Bible reader bound to a library item. The item carries the chosen
-/// translation id ([`crate::library::ItemKind::Bible`]); highlights +
-/// view state live in a notein-managed snapshot sidecar at
-/// [`crate::library::bodies::bible_snapshot_path`], ready to travel
-/// with bundle export + Phase 10 CRDT sync.
+/// translation id in its [`DocKind::init_bytes`]; highlights + view
+/// state live in a notein-managed plugin snapshot sidecar.
 #[derive(Debug, PartialEq)]
 pub struct BibleView {
     pub id: ItemId,
@@ -167,9 +150,9 @@ impl Component for NotesView {
     }
 }
 
-/// PDF-backed canvas route. Delegates to the PDF linked-source plugin
-/// which installs the PDF background + the anchor-source closure
-/// around a plain `CanvasMount::Item(id)` strokes mount.
+/// PDF-backed canvas route. Delegates to the PDF face which installs
+/// the PDF background + the anchor-source closure around a plain
+/// `CanvasMount::Item(id)` strokes mount.
 #[derive(Debug, PartialEq)]
 pub struct CanvasPdfView {
     pub id: ItemId,
@@ -177,7 +160,7 @@ pub struct CanvasPdfView {
 
 impl Component for CanvasPdfView {
     fn render(&self) -> impl IntoElement {
-        crate::builtin::pdf_linked::PdfFace { item: self.id }
+        crate::builtin::PdfFace { item: self.id }
     }
 }
 
@@ -220,9 +203,6 @@ pub(crate) fn init_canvas_mount(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
     match mount {
         CanvasMount::Item(id) => load_doc_into_board(Some(id), Arc::clone(board)),
         CanvasMount::Ephemeral => load_doc_into_board(None, Arc::clone(board)),
-        CanvasMount::DocLinkedCanvas(id) => {
-            load_canvas_doc_into_board(id, Arc::clone(board));
-        }
     }
 }
 
@@ -357,90 +337,6 @@ fn spawn_view_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Receiver<(
             };
             if let Err(err) = prefs::save_view(id, view) {
                 log::error!("save_view id={id:?}: {err}");
-            }
-        }
-    });
-}
-
-/// Hydrate the DocLinked canvas side. Parallel of [`load_doc_into_board`]
-/// but routed through [`crate::library::Library::load_canvas_doc`] and
-/// the canvas-side view sidecar so the PDF-annotation and infinite
-/// canvas faces of a DocLinked item autosave to independent files
-/// without stomping each other's pan/zoom.
-fn load_canvas_doc_into_board(id: ItemId, board: Arc<Mutex<Board>>) {
-    spawn(async move {
-        let doc = match crate::home::open_library().await {
-            Ok(handle) => {
-                let lib = handle.lock().await;
-                match lib.load_canvas_doc(id).await {
-                    Ok(doc) => doc,
-                    Err(LibraryError::Io(ref e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                        Doc::default()
-                    }
-                    Err(err) => {
-                        log::error!("load_canvas_doc id={id:?}: {err}");
-                        return;
-                    }
-                }
-            }
-            Err(err) => {
-                log::error!("open library on canvas enter (canvas-side): {err}");
-                return;
-            }
-        };
-        let saved_view = prefs::load_view_canvas(id);
-        {
-            let mut guard = lock(&board);
-            guard.replace_doc(doc);
-            let next_view = saved_view
-                .map(|v| Viewport {
-                    tx: v.tx,
-                    ty: v.ty,
-                    scale: v.scale,
-                })
-                .unwrap_or_default();
-            guard.set_viewport(next_view);
-            let (tx, rx) = flume::unbounded::<()>();
-            let (view_tx, view_rx) = flume::unbounded::<()>();
-            guard.set_commit_sink(tx);
-            guard.set_view_sink(view_tx);
-            spawn_canvas_autosave_worker(id, Arc::clone(&board), rx);
-            spawn_canvas_view_worker(id, Arc::clone(&board), view_rx);
-        }
-    });
-}
-
-fn spawn_canvas_autosave_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
-    spawn(async move {
-        while rx.recv_async().await.is_ok() {
-            while rx.try_recv().is_ok() {}
-            let mut doc_snapshot = {
-                let guard = lock(&board);
-                guard.doc().clone()
-            };
-            match crate::home::open_library().await {
-                Ok(handle) => {
-                    let mut lib = handle.lock().await;
-                    if let Err(err) = lib.save_canvas_doc(id, &mut doc_snapshot).await {
-                        log::error!("autosave save_canvas_doc id={id:?}: {err}");
-                    }
-                }
-                Err(err) => log::error!("autosave open library (canvas-side): {err}"),
-            }
-        }
-    });
-}
-
-fn spawn_canvas_view_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
-    spawn(async move {
-        while rx.recv_async().await.is_ok() {
-            while rx.try_recv().is_ok() {}
-            let view = {
-                let guard = lock(&board);
-                prefs::DocView::from_viewport(guard.viewport())
-            };
-            if let Err(err) = prefs::save_view_canvas(id, view) {
-                log::error!("save_view_canvas id={id:?}: {err}");
             }
         }
     });

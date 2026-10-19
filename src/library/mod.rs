@@ -30,7 +30,7 @@ use istmo_data_store::{DataStoreClient, DataStoreConfig};
 
 pub use self::error::{LibraryError, NotFoundKind, Result};
 pub use self::model::{
-    BackgroundStyle, Folder, FolderId, INDEX_VERSION, Item, ItemId, ItemKind, LibraryIndex, Pane,
+    BackgroundStyle, DocKind, Folder, FolderId, INDEX_VERSION, Item, ItemId, LibraryIndex, Pane,
     PaneId, PaneLayout, PaneTab, ROOT_FOLDER, Rgba, SplitOrientation, SplitSide, Tag, TagId,
     WORKSPACE_INDEX_VERSION, Workspace, WorkspaceId, WorkspaceIndex,
 };
@@ -66,7 +66,15 @@ impl Library {
             DataStoreConfig::new(index::NAMESPACE.to_owned()),
         )
         .await?;
-        let index = index::load(&client).await?;
+        let index = match index::load(&client).await? {
+            Some(index) => index,
+            None => {
+                // Nothing readable under the current key: whatever the
+                // item store holds belongs to an older schema.
+                bodies::discard_store();
+                LibraryIndex::default()
+            }
+        };
         let workspaces = index::load_workspaces(&client).await?;
         let mut lib = Self {
             client,
@@ -333,7 +341,7 @@ impl Library {
     pub async fn create_item(
         &mut self,
         folder: FolderId,
-        kind: ItemKind,
+        kind: DocKind,
         name: &str,
         color: Option<Rgba>,
         mut tags: Vec<TagId>,
@@ -571,62 +579,15 @@ impl Library {
         self.persist().await
     }
 
-    /// Decode and return the DocLinked canvas-side [`Doc`] body for
-    /// `id`. Only [`ItemKind::DocLinked`] items own this file — any
-    /// other kind rejects with [`LibraryError::NotFound`].
-    ///
-    /// # Errors
-    /// [`LibraryError::NotFound`] when the item is unknown or not a
-    /// DocLinked bundle, [`LibraryError::Io`] when no canvas-side body
-    /// has been written yet, [`LibraryError::Codec`] on decode failure.
-    #[allow(clippy::unused_async)]
-    pub async fn load_canvas_doc(&self, id: ItemId) -> Result<Doc> {
-        let item = self
-            .index
-            .item(id)
-            .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
-        if !matches!(item.kind, ItemKind::DocLinked { .. }) {
-            return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
-        }
-        bodies::read_canvas_doc(id)
-    }
-
-    /// Persist `doc` as the DocLinked canvas-side body for `id`. Pair
-    /// of [`save_doc`] routed to [`bodies::canvas_doc_path`].
-    ///
-    /// # Errors
-    /// [`LibraryError::NotFound`] / body I/O.
-    pub async fn save_canvas_doc(&mut self, id: ItemId, doc: &mut Doc) -> Result<()> {
-        let item = self
-            .index
-            .item(id)
-            .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
-        if !matches!(item.kind, ItemKind::DocLinked { .. }) {
-            return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
-        }
-        bodies::write_canvas_doc(id, doc)?;
-        let now = now_millis();
-        if let Some(m) = self.index.item_mut(id) {
-            m.updated_at = now;
-        }
-        self.persist().await
-    }
-
     /// Attach raw PDF bytes to `id`. Overwrites any prior attachment.
+    /// Which plugins read the attachment is their business; the
+    /// library only stores it next to the item.
     ///
     /// # Errors
-    /// [`LibraryError::NotFound`] when the item is unknown or does not
-    /// own a PDF body ([`ItemKind::PdfCanvas`], [`ItemKind::SourcePdf`],
-    /// [`ItemKind::DocLinked`]), plus body I/O failures.
+    /// [`LibraryError::NotFound`] when the item is unknown, plus body
+    /// I/O failures.
     pub async fn attach_pdf(&mut self, id: ItemId, bytes: &[u8]) -> Result<()> {
-        let item = self
-            .index
-            .item(id)
-            .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
-        if !matches!(
-            item.kind,
-            ItemKind::PdfCanvas | ItemKind::SourcePdf | ItemKind::DocLinked { .. }
-        ) {
+        if self.index.item(id).is_none() {
             return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
         }
         bodies::write_pdf(id, bytes)?;
@@ -635,52 +596,6 @@ impl Library {
             m.updated_at = now;
         }
         self.persist().await
-    }
-
-    /// Create a generic [`ItemKind::DocLinked`] bundle backed by
-    /// `source_plugin` on the source face. The canvas-side body is
-    /// written lazily on first stroke; the source plugin owns its own
-    /// backing store (PDF uses [`bodies::pdf_path`]).
-    ///
-    /// # Errors
-    /// [`LibraryError::NotFound`] when `folder` is unknown.
-    pub async fn create_doc_linked(
-        &mut self,
-        folder: FolderId,
-        name: &str,
-        source_plugin: &str,
-    ) -> Result<ItemId> {
-        self.create_item(
-            folder,
-            ItemKind::DocLinked {
-                source_plugin: source_plugin.to_owned(),
-            },
-            name,
-            None,
-            Vec::new(),
-            BackgroundStyle::default(),
-        )
-        .await
-    }
-
-    /// PDF-specific convenience: mint a [`ItemKind::DocLinked`] with
-    /// the PDF source plugin and land the pdf blob at
-    /// [`bodies::pdf_path`] in one step.
-    ///
-    /// # Errors
-    /// [`LibraryError::NotFound`] when `folder` is unknown; body I/O
-    /// failures when the PDF cannot be written.
-    pub async fn create_doc_linked_pdf(
-        &mut self,
-        folder: FolderId,
-        name: &str,
-        pdf_bytes: &[u8],
-    ) -> Result<ItemId> {
-        let linked = self
-            .create_doc_linked(folder, name, crate::builtin::pdf_source::KIND_ID)
-            .await?;
-        bodies::write_pdf(linked, pdf_bytes)?;
-        Ok(linked)
     }
 
     /// Read the PDF attachment as raw bytes.
@@ -1241,7 +1156,7 @@ mod tests {
         idx.items.push(Item {
             id: item,
             folder,
-            kind: ItemKind::Canvas,
+            kind: DocKind::plugin("io.notein.canvas.stroke"),
             name: "Untitled".into(),
             color: None,
             tags: vec![tag],

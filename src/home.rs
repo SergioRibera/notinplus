@@ -36,7 +36,7 @@ use crate::components::{
 };
 use crate::hooks::use_safe_area_insets;
 use crate::library::{
-    BackgroundStyle, Folder, FolderId, Item, ItemId, ItemKind, Library, LibraryIndex, ROOT_FOLDER,
+    BackgroundStyle, DocKind, Folder, FolderId, Item, ItemId, Library, LibraryIndex, ROOT_FOLDER,
     Rgba, TagId, Workspace, WorkspaceId,
 };
 use crate::route::Route;
@@ -577,21 +577,7 @@ fn grid(
     }
 
     for item in items {
-        let kind_label = match &item.kind {
-            ItemKind::Canvas => "Lienzo",
-            ItemKind::PdfCanvas => "PDF",
-            ItemKind::SourcePdf => "Fuente PDF",
-            ItemKind::DocLinked { .. } => "Documento ligado",
-            ItemKind::PluginCanvas { plugin_id, .. } => {
-                if plugin_id == "io.notein.bible.viewer" {
-                    "Biblia"
-                } else if plugin_id == notein_notes::KIND_ID {
-                    "Nota"
-                } else {
-                    "Documento del plugin"
-                }
-            }
-        };
+        let kind_label = crate::faces::kind_label(&item.kind);
         let subtitle = format!("{} · {}", kind_label, format_date(item.updated_at));
         let tint = item
             .color
@@ -625,7 +611,7 @@ fn grid(
 #[derive(Clone)]
 struct ItemCard {
     id: ItemId,
-    kind: ItemKind,
+    kind: DocKind,
     title: String,
     subtitle: String,
     tint: Rgba,
@@ -691,25 +677,7 @@ impl Component for ItemCard {
 
         let open = move || {
             crate::route::queue_canvas_background(bg_style, rgba_to_color(tint).into());
-            let route = match &kind {
-                ItemKind::Canvas => Route::CanvasView { id },
-                ItemKind::PdfCanvas => Route::CanvasPdfView { id },
-                ItemKind::SourcePdf => Route::SourcePdfView { id },
-                ItemKind::DocLinked { .. } => Route::DocLinkedView { id },
-                ItemKind::PluginCanvas { plugin_id, .. }
-                    if plugin_id == "io.notein.bible.viewer" =>
-                {
-                    Route::BibleView { id }
-                }
-                ItemKind::PluginCanvas { plugin_id, .. } if plugin_id == notein_notes::KIND_ID => {
-                    Route::NotesView { id }
-                }
-                ItemKind::PluginCanvas { plugin_id, .. } => {
-                    log::warn!("no shell route registered for plugin {plugin_id}");
-                    Route::Home
-                }
-            };
-            let _ = router.push(route);
+            let _ = router.push(crate::route::route_for_kind(&kind, id));
         };
 
         let menu_builder = {
@@ -1614,14 +1582,12 @@ fn trigger_entry(entry: &crate::plugins::AvailableEntry, ctx: &FabCtx) {
         EntrySource::Plugin(_) if entry.plugin_id == pdf_source::KIND_ID => {
             match entry.entry.id.as_str() {
                 pdf_source::IMPORT_PDF => flow_import_pdf(ctx.clone()),
-                pdf_source::IMPORT_PDF_LINKED => flow_import_pdf_linked(ctx.clone()),
                 other => log::warn!("unknown pdf source entry: {other}"),
             }
         }
         EntrySource::Plugin(_) if entry.plugin_id == "io.notein.bible.viewer" => {
             match entry.entry.id.as_str() {
                 "new-bible-viewer" => flow_open_bible(ctx.clone()),
-                "new-bible-linked" => flow_open_bible_linked(ctx.clone()),
                 other => log::warn!("unknown bible viewer entry: {other}"),
             }
         }
@@ -1648,41 +1614,8 @@ fn trigger_entry(entry: &crate::plugins::AvailableEntry, ctx: &FabCtx) {
     }
 }
 
-fn flow_open_bible_linked(ctx: FabCtx) {
-    use crate::library::{BackgroundStyle, ItemKind};
-    let FabCtx {
-        handle,
-        snap,
-        current,
-        router,
-    } = ctx;
-    let mut snap = snap;
-    spawn_forever(async move {
-        let mut lib = handle.lock().await;
-        match lib
-            .create_item(
-                current,
-                ItemKind::DocLinked {
-                    source_plugin: "io.notein.bible.viewer".into(),
-                },
-                "Biblia + lienzo",
-                None,
-                Vec::new(),
-                BackgroundStyle::default(),
-            )
-            .await
-        {
-            Ok(id) => {
-                snap.set(Some(lib.index().clone()));
-                let _ = router.push(Route::DocLinkedView { id });
-            }
-            Err(e) => log::warn!("bible linked: create_item failed: {e}"),
-        }
-    });
-}
-
 fn flow_new_note(ctx: FabCtx) {
-    use crate::library::{BackgroundStyle, ItemKind};
+    use crate::library::{BackgroundStyle, DocKind};
     let FabCtx {
         handle,
         snap,
@@ -1695,10 +1628,7 @@ fn flow_new_note(ctx: FabCtx) {
         match lib
             .create_item(
                 current,
-                ItemKind::PluginCanvas {
-                    plugin_id: notein_notes::KIND_ID.into(),
-                    init_bytes: Vec::new(),
-                },
+                DocKind::plugin(notein_notes::KIND_ID),
                 "Nota",
                 None,
                 Vec::new(),
@@ -1718,7 +1648,7 @@ fn flow_new_note(ctx: FabCtx) {
 
 /// Pick a markdown file and open it as a new text note.
 fn flow_import_markdown(ctx: FabCtx) {
-    use crate::library::{BackgroundStyle, ItemKind};
+    use crate::library::{BackgroundStyle, DocKind};
     let FabCtx {
         handle,
         snap,
@@ -1735,10 +1665,7 @@ fn flow_import_markdown(ctx: FabCtx) {
         let created = lib
             .create_item(
                 current,
-                ItemKind::PluginCanvas {
-                    plugin_id: notein_notes::KIND_ID.into(),
-                    init_bytes: Vec::new(),
-                },
+                DocKind::plugin(notein_notes::KIND_ID),
                 &name,
                 None,
                 Vec::new(),
@@ -1813,7 +1740,7 @@ async fn pick_markdown() -> Option<(String, String)> {
 }
 
 fn flow_open_bible(ctx: FabCtx) {
-    use crate::library::{BackgroundStyle, ItemKind};
+    use crate::library::{BackgroundStyle, DocKind};
     let FabCtx {
         handle,
         snap,
@@ -1828,10 +1755,7 @@ fn flow_open_bible(ctx: FabCtx) {
         match lib
             .create_item(
                 current,
-                ItemKind::PluginCanvas {
-                    plugin_id: "io.notein.bible.viewer".into(),
-                    init_bytes,
-                },
+                DocKind::plugin(notein_bible::canvas::KIND_ID).with_init(init_bytes),
                 "Biblia",
                 None,
                 Vec::new(),
@@ -1873,7 +1797,7 @@ fn flow_quick_sketch(ctx: FabCtx) {
         match lib
             .create_item(
                 current,
-                ItemKind::Canvas,
+                DocKind::plugin(crate::builtin::stroke_canvas::KIND_ID),
                 "Borrador",
                 None,
                 Vec::new(),
@@ -1939,7 +1863,7 @@ fn flow_new_canvas(ctx: FabCtx) {
             }
         });
     })
-    .kind(ItemKind::Canvas)
+    .kind(DocKind::plugin(crate::builtin::stroke_canvas::KIND_ID))
     .available_tags(available)
     .open();
 }
@@ -1989,16 +1913,6 @@ fn flow_import_pdf(ctx: FabCtx) {
         router,
     } = ctx;
     spawn_forever(pick_and_open_pdf(handle, snap, current, router));
-}
-
-fn flow_import_pdf_linked(ctx: FabCtx) {
-    let FabCtx {
-        handle,
-        snap,
-        current,
-        router,
-    } = ctx;
-    spawn_forever(pick_and_open_pdf_linked(handle, snap, current, router));
 }
 
 fn flow_import_bundle(ctx: FabCtx) {
@@ -2516,7 +2430,7 @@ async fn pick_and_open_pdf(
             match lib
                 .create_item(
                     parent,
-                    ItemKind::PdfCanvas,
+                    DocKind::plugin(crate::builtin::pdf_source::KIND_ID),
                     &req.name,
                     Some(color_to_rgba(req.color)),
                     tag_ids,
@@ -2536,84 +2450,10 @@ async fn pick_and_open_pdf(
             }
         });
     })
-    .kind(ItemKind::PdfCanvas)
+    .kind(DocKind::plugin(crate::builtin::pdf_source::KIND_ID))
     .default_name(default_name)
     .available_tags(available)
     .open();
-}
-
-/// Modo B counterpart to [`pick_and_open_pdf`]. Imports the picked PDF
-/// into a fresh [`ItemKind::SourcePdf`] item and spawns a sibling
-/// [`ItemKind::DocLinked`] canvas pointing at it, then jumps straight
-/// into the linked-view route — no `CanvasCreateSheet` since the
-/// user already picked the file and the pair always lands at root.
-async fn pick_and_open_pdf_linked(
-    handle: LibHandle,
-    snap: State<Option<LibraryIndex>>,
-    parent: FolderId,
-    router: RouterContext,
-) {
-    use std::io::Read;
-    use std::sync::Arc as StdArc;
-
-    use istmo_file_picker::{FileFilter, FilePickerClient, PickConfig};
-
-    let picker = match FilePickerClient::acquire() {
-        Ok(p) => p,
-        Err(err) => {
-            log::error!("file picker unavailable: {err:?}");
-            return;
-        }
-    };
-    let config = PickConfig {
-        dialog_title: Some("Elegí un PDF para ligar a un lienzo".into()),
-        filter: FileFilter {
-            mime_types: vec!["application/pdf".into()],
-            extensions: vec!["pdf".into()],
-            uti_types: vec!["com.adobe.pdf".into()],
-        },
-        start_directory_hint: None,
-        allow_multiple: false,
-    };
-    let picked = match picker.pick_file_owned(config).await {
-        Ok(Some(f)) => f,
-        Ok(None) => return,
-        Err(err) => {
-            log::error!("picker call error: {err:?}");
-            return;
-        }
-    };
-    let display = picked.display_name.clone();
-    let owned = StdArc::new(picked);
-    let mut reader = match owned.open_reader(&picker).await {
-        Ok(r) => r,
-        Err(err) => {
-            log::error!("open reader: {err:?}");
-            return;
-        }
-    };
-    let mut bytes = Vec::new();
-    if let Err(err) = reader.read_to_end(&mut bytes) {
-        log::error!("read pdf: {err}");
-        return;
-    }
-    drop(reader);
-    drop(owned);
-
-    let default_name = strip_pdf_ext(&display);
-    let mut snap = snap;
-    let mut lib = handle.lock().await;
-    match lib
-        .create_doc_linked_pdf(parent, &default_name, &bytes)
-        .await
-    {
-        Ok(linked) => {
-            log::info!("doc-linked bundle created id={linked:?}");
-            snap.set(Some(lib.index().clone()));
-            let _ = router.push(Route::DocLinkedView { id: linked });
-        }
-        Err(err) => log::error!("create_doc_linked_pdf: {err}"),
-    }
 }
 
 fn strip_pdf_ext(name: &str) -> String {

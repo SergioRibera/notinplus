@@ -35,12 +35,6 @@ pub const KIND_ID: &str = "io.notein.source.pdf";
 /// `shell_builtins::IMPORT_PDF` constant so persisted FAB shortcuts
 /// keep resolving after the migration.
 pub const IMPORT_PDF: &str = "import-pdf";
-
-/// Modo B counterpart to [`IMPORT_PDF`] — imports the PDF as a
-/// standalone source item and spawns a sibling canvas item linked to
-/// it. Handled by the shell's `flow_import_pdf_linked` flow.
-pub const IMPORT_PDF_LINKED: &str = "import-pdf-linked";
-
 /// Default render DPI. Matches the legacy `freya-pdf` setting.
 const DEFAULT_RENDER_DPI: f64 = 150.0;
 const MIN_RENDER_DPI: f64 = 72.0;
@@ -761,30 +755,17 @@ impl Source for PdfSourcePlugin {
     }
 
     fn creation_entries(&self) -> Vec<CreationEntry> {
-        vec![
-            CreationEntry {
-                id: IMPORT_PDF.to_owned(),
-                label: "Importar PDF".to_owned(),
-                icon: lucide::file_text(),
-                category: CreationCategory::Source,
-                kind: CreationKind::Import {
-                    dialog_title: "Elegí un PDF".to_owned(),
-                    extensions: vec!["pdf".to_owned()],
-                    mime_types: vec!["application/pdf".to_owned()],
-                },
+        vec![CreationEntry {
+            id: IMPORT_PDF.to_owned(),
+            label: "Importar PDF".to_owned(),
+            icon: lucide::file_text(),
+            category: CreationCategory::Source,
+            kind: CreationKind::Import {
+                dialog_title: "Elegí un PDF".to_owned(),
+                extensions: vec!["pdf".to_owned()],
+                mime_types: vec!["application/pdf".to_owned()],
             },
-            CreationEntry {
-                id: IMPORT_PDF_LINKED.to_owned(),
-                label: "Importar PDF ligado".to_owned(),
-                icon: lucide::file_symlink(),
-                category: CreationCategory::Source,
-                kind: CreationKind::Import {
-                    dialog_title: "Elegí un PDF para ligar a un lienzo".to_owned(),
-                    extensions: vec!["pdf".to_owned()],
-                    mime_types: vec!["application/pdf".to_owned()],
-                },
-            },
-        ]
+        }]
     }
 
     fn execute_creation(
@@ -793,7 +774,7 @@ impl Source for PdfSourcePlugin {
         import_bytes: Option<&[u8]>,
         name_hint: Option<&str>,
     ) -> Result<ItemCreationResult, CreationError> {
-        if entry_id != IMPORT_PDF && entry_id != IMPORT_PDF_LINKED {
+        if entry_id != IMPORT_PDF {
             return Err(CreationError::UnknownEntry(entry_id.to_owned()));
         }
         let bytes = import_bytes.ok_or(CreationError::MissingImportBytes)?;

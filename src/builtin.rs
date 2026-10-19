@@ -3,22 +3,17 @@
 //! Each submodule implements one of the plugin traits
 //! ([`notein_plugin::CanvasKind`], [`notein_plugin::Source`]) and
 //! [`register_all`] wires them into the shared [`PluginRegistry`] at
-//! startup. Dynamic (dlopen) plugins land in a later phase; the trait
-//! surface is identical.
+//! startup. Dynamic (dlopen) plugins use the same trait surface.
 
 use std::sync::{Arc, OnceLock};
 
 use notein_plugin::PluginRegistry;
 
-pub mod bible_linked;
-pub mod pdf_canvas;
-pub mod pdf_linked;
+pub mod pdf_face;
 pub mod pdf_source;
 pub mod stroke_canvas;
 
-pub use bible_linked::BibleLinkedSource;
-pub use pdf_canvas::PdfCanvasPlugin;
-pub use pdf_linked::PdfLinkedSource;
+pub use pdf_face::PdfFace;
 pub use pdf_source::PdfSourcePlugin;
 pub use stroke_canvas::StrokeCanvasPlugin;
 
@@ -45,7 +40,7 @@ pub fn prime_notes<'a, I: IntoIterator<Item = &'a crate::library::Item>>(items: 
     };
     index.clear();
     for item in items {
-        if item.kind.hosting_plugin() != Some(notein_notes::KIND_ID) {
+        if !item.kind.is(notein_notes::KIND_ID) {
             continue;
         }
         let body = crate::library::bodies::read_plugin_snapshot(item.id, notein_notes::KIND_ID)
@@ -67,9 +62,6 @@ pub fn bible_canvas() -> Option<Arc<notein_bible::BibleCanvas>> {
 pub fn register_all(reg: &mut PluginRegistry) {
     if let Err(err) = reg.register_canvas(Arc::new(StrokeCanvasPlugin::default())) {
         log::warn!("register StrokeCanvasPlugin: {err}");
-    }
-    if let Err(err) = reg.register_canvas(Arc::new(PdfCanvasPlugin::default())) {
-        log::warn!("register PdfCanvasPlugin: {err}");
     }
     if let Err(err) = reg.register_source(Arc::new(PdfSourcePlugin::default())) {
         log::warn!("register PdfSourcePlugin: {err}");

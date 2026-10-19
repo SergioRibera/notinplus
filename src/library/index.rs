@@ -10,22 +10,17 @@ use bincode::config::{self, Configuration};
 use istmo_data_store::DataStoreClient;
 
 use super::error::{LibraryError, Result};
-use super::model::{LibraryIndex, WorkspaceIndex};
+use super::model::{INDEX_VERSION, LibraryIndex, WorkspaceIndex};
 
 const CODEC: Configuration = config::standard();
 
-/// data-store key the whole blob lives under. Suffix version bumps
-/// track breaking schema changes so a stale key can be detected /
-/// migrated instead of silently misread.
-pub const INDEX_KEY: &str = "library.index.v2";
+/// data-store key the whole blob lives under. The suffix tracks the
+/// on-disk schema: a blob written under an older key is never read, so
+/// a schema break simply starts the library over.
+pub const INDEX_KEY: &str = "library.index.v3";
 
 /// data-store key for the [`WorkspaceIndex`] blob. Kept on its own key
 /// so introducing workspaces does not force a bump of [`INDEX_KEY`].
-///
-/// v1 held a flat `Pane` per workspace; v2 persists a recursive
-/// `PaneLayout` enum. Pre-release dev installs that still carry a v1
-/// payload silently fall back to the default empty index (bincode
-/// decode error → fresh "Workspace 1" minted at startup).
 pub const WORKSPACES_KEY: &str = "library.workspaces.v3";
 
 /// data-store namespace used for the library. Matches the app id
@@ -33,20 +28,27 @@ pub const WORKSPACES_KEY: &str = "library.workspaces.v3";
 /// on shared surfaces (Android multi-user, iOS App Groups).
 pub const NAMESPACE: &str = "rs.sergioribera.notinplus";
 
-/// Fetch the persisted index or return a fresh default when the key
-/// has never been written.
+/// Fetch the persisted index. `None` when the key has never been
+/// written or the stored blob carries a schema version this build does
+/// not read — the caller starts from a fresh index in both cases.
 ///
 /// # Errors
-/// Runtime / data-store / codec failures. A missing key is not an
-/// error — the library starts empty on first launch.
-pub async fn load(client: &DataStoreClient) -> Result<LibraryIndex> {
+/// Runtime / data-store / codec failures.
+pub async fn load(client: &DataStoreClient) -> Result<Option<LibraryIndex>> {
     let raw = client.get_bytes(INDEX_KEY.to_owned()).await?;
     let Some(bytes) = raw else {
-        return Ok(LibraryIndex::default());
+        return Ok(None);
     };
     let (index, _) = bincode::decode_from_slice::<LibraryIndex, _>(&bytes, CODEC)
         .map_err(|e| LibraryError::Codec(e.to_string()))?;
-    Ok(index)
+    if index.version != INDEX_VERSION {
+        log::warn!(
+            "library index version {} does not match {INDEX_VERSION}; starting over",
+            index.version
+        );
+        return Ok(None);
+    }
+    Ok(Some(index))
 }
 
 /// Overwrite the persisted index with `snapshot`.

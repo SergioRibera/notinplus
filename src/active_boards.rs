@@ -6,9 +6,7 @@
 //! clears on drop; readers get `None` when nothing is mounted.
 //!
 //! Keyed on the full [`CanvasMount`] rather than the raw [`ItemId`]
-//! so a split-view bundle (two faces sharing one item id — see
-//! [`crate::doc_linked`]) does not collide: each face publishes under
-//! its own mount key. [`get_item`] exists for callers that only know
+//! so an ephemeral surface never collides with a persisted item. [`get_item`] exists for callers that only know
 //! the id and want "any" face currently mounted for it.
 
 use std::collections::HashMap;

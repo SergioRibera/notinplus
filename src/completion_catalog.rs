@@ -32,7 +32,7 @@ use std::sync::{Mutex, OnceLock};
 use notein_plugin::{Completion, SourceRef};
 
 use crate::builtin::pdf_source::KIND_ID as PDF_PLUGIN_ID;
-use crate::library::{Item, ItemId, ItemKind};
+use crate::library::{DocKind, Item, ItemId};
 use crate::pdf_viewer::{PdfAnchor, encode_pdf_anchor};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -207,10 +207,6 @@ pub fn ensure_pdf_entry(item: ItemId, page_count: usize) {
     });
 }
 
-fn is_pdf_item(kind: &ItemKind) -> bool {
-    match kind {
-        ItemKind::PdfCanvas | ItemKind::SourcePdf => true,
-        ItemKind::DocLinked { source_plugin } => source_plugin == PDF_PLUGIN_ID,
-        ItemKind::Canvas | ItemKind::PluginCanvas { .. } => false,
-    }
+fn is_pdf_item(kind: &DocKind) -> bool {
+    kind.is(PDF_PLUGIN_ID)
 }

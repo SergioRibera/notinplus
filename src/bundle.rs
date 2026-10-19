@@ -26,7 +26,7 @@ use bincode::config::{self, Configuration};
 use crate::bookmark::SourceRef;
 use crate::doc::Doc;
 use crate::library::{
-    Folder, FolderId, Item, ItemId, ItemKind, Library, LibraryError, Tag, TagId, Workspace,
+    DocKind, Folder, FolderId, Item, ItemId, Library, LibraryError, Tag, TagId, Workspace,
     WorkspaceId, bodies,
 };
 use notein_plugin::PluginRegistry;
@@ -549,11 +549,8 @@ fn load_doc_opt(id: ItemId) -> Option<Doc> {
     bodies::read_doc(id).ok()
 }
 
-fn item_carries_pdf(kind: &ItemKind) -> bool {
-    matches!(
-        kind,
-        ItemKind::PdfCanvas | ItemKind::SourcePdf | ItemKind::DocLinked { .. }
-    )
+fn item_carries_pdf(kind: &DocKind) -> bool {
+    crate::faces::carries_pdf(kind)
 }
 
 fn now_ms() -> u64 {
@@ -584,7 +581,7 @@ mod tests {
                 items: vec![Item {
                     id: item,
                     folder: crate::library::ROOT_FOLDER,
-                    kind: ItemKind::Canvas,
+                    kind: DocKind::plugin("io.notein.canvas.stroke"),
                     name: "x".into(),
                     color: None,
                     tags: Vec::new(),

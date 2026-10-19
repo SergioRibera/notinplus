@@ -141,7 +141,7 @@ impl PaneTreeView {
     /// chrome. Each leaf renders its active tab's body only. Intended
     /// for embedders that reuse the resize/split machinery but handle
     /// tab semantics externally (or have no concept of tabs at all —
-    /// see [`crate::doc_linked`] for a two-face split-view shell).
+    /// so the tree is a plain resizable layout).
     #[must_use]
     pub const fn show_tabs(mut self, show: bool) -> Self {
         self.show_tabs = show;

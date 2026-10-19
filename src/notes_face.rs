@@ -53,7 +53,6 @@ impl Component for NotesFace {
         let scroll = use_scroll_controller(ScrollConfig::default);
         let chrome = crate::app::use_chrome_state();
         let router = RouterContext::get();
-        let doc_linked = try_consume_context::<crate::doc_linked::DocLinkedChromeExt>();
         let viewport_area = try_consume_context::<notein_ui_kit::ViewportArea>();
         let insets = *use_safe_area_insets().read();
         provide_safe_area_override(istmo::plugins::EdgeInsets::default());
@@ -74,7 +73,7 @@ impl Component for NotesFace {
         });
 
         let read_only = controller.active_format().read_only;
-        let mut actions = TopbarActions {
+        let actions = TopbarActions {
             on_home: Some(action(move || {
                 let _ = router.push(crate::route::Route::Home);
             })),
@@ -88,17 +87,6 @@ impl Component for NotesFace {
             on_toggle_mode: Some(action(move || controller.toggle_read_only())),
             ..TopbarActions::default()
         };
-        if let Some(chrome) = &doc_linked {
-            if chrome.is_split {
-                let close = chrome.on_close.clone();
-                actions.on_close_split = Some(action(move || close.call()));
-            } else {
-                let horizontal = chrome.on_split_horizontal.clone();
-                let vertical = chrome.on_split_vertical.clone();
-                actions.on_split_horizontal = Some(action(move || horizontal.call()));
-                actions.on_split_vertical = Some(action(move || vertical.call()));
-            }
-        }
 
         let editor = notein_editor(
             markdown,

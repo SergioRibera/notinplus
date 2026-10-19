@@ -221,16 +221,13 @@ fn selection_menu(item: ItemId, mut visible: State<bool>) -> impl IntoElement {
 
 /// Dispatch "create bookmark from current selection":
 /// - Pulls `Selection { anchor, snippet }` from the plugin.
-/// - Walks preference-ordered mount keys to pick a target canvas (the
-///   sibling [`CanvasMount::DocLinkedCanvas`] for a DocLinked bundle,
-///   otherwise the same-item mount).
+/// - Targets the board mounted for the same item.
 /// - Emits a single [`crate::doc_op::DocOp::AddBookmark`] carrying the
 ///   snippet in the body and a `SourceRef::Plugin` pointing back at the
 ///   PDF anchor.
 fn create_bookmark_from_selection(item: ItemId, handle: &PdfSourceHandle) -> Option<BookmarkId> {
     let selection = handle.plugin.current_selection(handle.instance)?;
-    let target = active_boards::get(CanvasMount::DocLinkedCanvas(item))
-        .or_else(|| active_boards::get(CanvasMount::Item(item)))?;
+    let target = active_boards::get(CanvasMount::Item(item))?;
     let now = now_ms();
     let source_ref = SourceRef::Plugin {
         plugin_id: PDF_PLUGIN_ID.to_owned(),

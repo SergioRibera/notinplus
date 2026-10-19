@@ -1,6 +1,6 @@
 //! Bible reader page bound to a library item.
 //!
-//! The item carries [`ItemKind::PluginCanvas`] with `plugin_id =
+//! The item carries a [`crate::library::DocKind`] with `plugin_id =
 //! "io.notein.bible.viewer"` + `init_bytes` holding the chosen
 //! translation id. Highlights + the user's last-read coordinates live
 //! in a notein-managed snapshot sidecar
@@ -497,11 +497,6 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
         .map(|v| std::borrow::Cow::Owned(v.suggestion_label.clone()))
         .collect();
 
-    // Read the DocLinked chrome extension so the Bible toolbar can
-    // surface split H/V (overlay mode) or close-split (split mode) in
-    // sync with the shell. Standalone `BibleView` mounts see `None` and
-    // the toolbar renders without split buttons.
-    let doc_linked_chrome = try_consume_context::<crate::doc_linked::DocLinkedChromeExt>();
     let router = RouterContext::get();
     let chrome = crate::app::use_chrome_state();
     let on_sidebar = move || {
@@ -569,18 +564,9 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                 on_sidebar: Some(Box::new(on_sidebar)),
                 on_back: has_back.then(|| Box::new(on_back_cb) as toolbar::BackHandler),
                 on_forward: has_forward.then(|| Box::new(on_forward_cb) as toolbar::BackHandler),
-                on_split_horizontal: doc_linked_chrome.as_ref().filter(|c| !c.is_split).map(|c| {
-                    let cb = c.on_split_horizontal.clone();
-                    Box::new(move || cb.call()) as toolbar::BackHandler
-                }),
-                on_split_vertical: doc_linked_chrome.as_ref().filter(|c| !c.is_split).map(|c| {
-                    let cb = c.on_split_vertical.clone();
-                    Box::new(move || cb.call()) as toolbar::BackHandler
-                }),
-                on_close_split: doc_linked_chrome.as_ref().filter(|c| c.is_split).map(|c| {
-                    let cb = c.on_close.clone();
-                    Box::new(move || cb.call()) as toolbar::BackHandler
-                }),
+                on_split_horizontal: None,
+                on_split_vertical: None,
+                on_close_split: None,
                 search_query: Writable::<String>::from(search_query),
                 on_search,
                 search_suggestions,

@@ -13,7 +13,7 @@ pub const ROOT_FOLDER: FolderId = FolderId([0u8; 16]);
 
 /// Schema version encoded into the index blob. Bump on any breaking
 /// change to the surrounding types.
-pub const INDEX_VERSION: u32 = 2;
+pub const INDEX_VERSION: u32 = 3;
 
 macro_rules! uuid_newtype {
     ($(#[$meta:meta])* $name:ident) => {
@@ -97,68 +97,37 @@ uuid_newtype!(
 /// user-defined translucency.
 pub type Rgba = [u8; 4];
 
-/// What kind of doc an [`Item`] represents. Drives which body files
-/// the library expects to find on disk for the id.
+/// Which plugin renders an [`Item`] and the opaque payload that plugin
+/// receives when the item opens.
 #[istmo::message]
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub enum ItemKind {
-    /// Blank infinite canvas.
-    Canvas,
-    /// Canvas overlaid on a PDF; the PDF blob lives at
-    /// [`super::bodies::pdf_path`].
-    PdfCanvas,
-    /// Readonly PDF-source item (standalone viewer, no linked canvas).
-    /// Reserved for future flows that import a bare PDF without the
-    /// Modo B canvas pairing.
-    SourcePdf,
-    /// Generic linked-doc bundle: one item owns a "source" face
-    /// rendered by an arbitrary plugin (identified by `source_plugin`)
-    /// paired with a free-form "infinite canvas" face whose strokes
-    /// land at [`super::bodies::canvas_doc_path`]. The source plugin
-    /// decides how its own body is stored (PDF uses
-    /// [`super::bodies::pdf_path`]; future plugins may bring their own
-    /// backing store). The split shell at [`crate::doc_linked`] looks
-    /// up the plugin via [`crate::linked_source::get`] and defers face
-    /// rendering to it.
-    DocLinked { source_plugin: String },
-    /// Generic plugin-canvas item. The shell knows nothing about the
-    /// item's contents — it dispatches rendering + persistence to the
-    /// plugin identified by `plugin_id`. `init_bytes` is passed to
-    /// `CanvasKind::open` on mount so the plugin can hydrate instance
-    /// metadata (which translation to open, which document id, etc.);
-    /// the per-item snapshot blob lives at
-    /// [`super::bodies::plugin_snapshot_path`].
-    PluginCanvas {
-        plugin_id: String,
-        init_bytes: Vec<u8>,
-    },
+pub struct DocKind {
+    /// Id of the plugin that owns the item's face.
+    pub plugin_id: String,
+    /// Opaque bytes handed to the plugin on open (chosen translation,
+    /// document id, …). Empty for plugins that need nothing.
+    pub init_bytes: Vec<u8>,
 }
 
-impl ItemKind {
-    /// Plugin id owning the source face of a [`ItemKind::DocLinked`]
-    /// bundle, if any. Other kinds return `None`.
+impl DocKind {
     #[must_use]
-    pub fn source_plugin(&self) -> Option<&str> {
-        match self {
-            Self::DocLinked { source_plugin } => Some(source_plugin),
-            Self::Canvas
-            | Self::PdfCanvas
-            | Self::SourcePdf
-            | Self::PluginCanvas { .. } => None,
+    pub fn plugin(plugin_id: impl Into<String>) -> Self {
+        Self {
+            plugin_id: plugin_id.into(),
+            init_bytes: Vec::new(),
         }
     }
 
-    /// Plugin id citing this item in either the `PluginCanvas`
-    /// standalone form or the `DocLinked` bundle. Used by chip-nav /
-    /// cross-item routing to find an item of a specific plugin kind
-    /// without hardcoding kind-shape in the shell.
     #[must_use]
-    pub fn hosting_plugin(&self) -> Option<&str> {
-        match self {
-            Self::DocLinked { source_plugin } => Some(source_plugin),
-            Self::PluginCanvas { plugin_id, .. } => Some(plugin_id),
-            Self::Canvas | Self::PdfCanvas | Self::SourcePdf => None,
-        }
+    pub fn with_init(mut self, bytes: Vec<u8>) -> Self {
+        self.init_bytes = bytes;
+        self
+    }
+
+    /// Whether `plugin_id` owns this kind.
+    #[must_use]
+    pub fn is(&self, plugin_id: &str) -> bool {
+        self.plugin_id == plugin_id
     }
 }
 
@@ -204,14 +173,14 @@ pub struct Folder {
 }
 
 /// Item metadata. The corresponding doc body lives on disk at
-/// [`super::bodies::doc_path`] and (for [`ItemKind::PdfCanvas`]) a
+/// [`super::bodies::doc_path`] and, when the plugin carries one, a
 /// sibling PDF at [`super::bodies::pdf_path`].
 #[istmo::message]
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Item {
     pub id: ItemId,
     pub folder: FolderId,
-    pub kind: ItemKind,
+    pub kind: DocKind,
     pub name: String,
     pub color: Option<Rgba>,
     pub tags: Vec<TagId>,
@@ -227,12 +196,9 @@ pub struct Item {
 /// per-tab viewport state continues to live in `prefs::DocView`.
 ///
 /// `plugin_id` names which plugin renders this leaf when the tab mounts.
-/// `None` → shell falls back to the item's default plugin derived from
-/// its [`ItemKind`] (e.g. `DocLinked` resolves to the stroke-canvas
-/// plugin). `Some(id)` is an explicit override — the same item id can
-/// appear in sibling leaves rendered by different plugins (e.g. a
-/// DocLinked bundle mounting the PDF viewer plugin on one side and the
-/// stroke-canvas plugin on the other).
+/// `None` → shell uses the plugin named by the item's [`DocKind`].
+/// `Some(id)` is an explicit override — the same item id can appear in
+/// sibling leaves rendered by different plugins.
 #[istmo::message]
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct PaneTab {

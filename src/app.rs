@@ -15,8 +15,8 @@ use std::time::Duration;
 
 use freya::animation::{AnimNum, Ease, Function, use_animation_transition};
 use freya::icons::lucide::{
-    arrow_left, hand, layers, panel_left, pencil, redo, signature, sliders_horizontal,
-    square_split_horizontal, square_split_vertical, text_select, undo, x,
+    arrow_left, hand, layers, panel_left, pencil, redo, signature, sliders_horizontal, text_select,
+    undo,
 };
 use freya::prelude::*;
 use freya::router::*;
@@ -47,8 +47,8 @@ use crate::ui_mask::{self, MaskSlot, UiRegion, use_mask_slot};
 /// without forcing every caller to re-implement the hook plumbing.
 ///
 /// Plugin-specific concerns (PDF background install, Bible viewer,
-/// …) live in the plugin crate — [`crate::linked_source`]. The shell
-/// only knows about generic doc flavours.
+/// …) live with each face — [`crate::faces`]. The shell only knows
+/// about generic doc flavours.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum CanvasMount {
     /// Persisted canvas item — doc + viewport sidecar load from
@@ -56,20 +56,13 @@ pub(crate) enum CanvasMount {
     Item(ItemId),
     /// Scratch surface. No library item, no autosave, no view sidecar.
     Ephemeral,
-    /// DocLinked bundle's secondary face: a free-form "infinite
-    /// canvas" sitting next to the plugin-rendered source face. Strokes
-    /// persist to [`crate::library::bodies::canvas_doc_path`]
-    /// independently from the source-side doc, so each face autosaves
-    /// to its own file. The paper pattern on the item drives the
-    /// backdrop.
-    DocLinkedCanvas(ItemId),
 }
 
 impl CanvasMount {
     /// Item id to drive autosave + viewport sidecar against, if any.
     pub(crate) const fn item(self) -> Option<ItemId> {
         match self {
-            Self::Item(id) | Self::DocLinkedCanvas(id) => Some(id),
+            Self::Item(id) => Some(id),
             Self::Ephemeral => None,
         }
     }
@@ -1532,9 +1525,8 @@ fn top_right_stack(
 }
 
 /// Horizontal row of icon buttons that lives above the layers panel.
-/// Current slots (in order): optional DocLinked split controls when an
-/// ancestor provided [`DocLinkedChromeExt`], toggle layers panel, open
-/// the document-config edit sheet.
+/// Current slots (in order): handwriting toggle, text mode, toggle
+/// layers panel, open the document-config edit sheet.
 fn top_right_toolbar(board: &Arc<Mutex<Board>>, state: &ChromeState) -> impl IntoElement {
     let mut mode = state.mode;
     let text_active = *mode.read() == InputMode::Text;
@@ -1581,32 +1573,17 @@ fn top_right_toolbar(board: &Arc<Mutex<Board>>, state: &ChromeState) -> impl Int
         crate::home::open_canvas_edit_sheet(id, None);
     });
 
-    let doc_linked_ext = use_try_consume::<crate::doc_linked::DocLinkedChromeExt>();
-
-    let mut row = rect().horizontal().spacing(6.0);
-    if let Some(ext) = doc_linked_ext {
-        if ext.is_split {
-            // Canvas side of a live split: offer the close `×` only.
-            // Split buttons disappear — the shell is already in the
-            // split state they would toggle into.
-            row = row.child(icon_button(x(), ext.on_close));
-        } else {
-            row = row
-                .child(icon_button(
-                    square_split_horizontal(),
-                    ext.on_split_horizontal,
-                ))
-                .child(icon_button(square_split_vertical(), ext.on_split_vertical));
-        }
-    }
-    row.child(icon_toggle(
-        signature(),
-        handwriting_active,
-        toggle_handwriting,
-    ))
-    .child(icon_toggle(square_dashed_text(), text_active, toggle_text))
-    .child(icon_button(layers(), toggle_layers))
-    .child(icon_button(sliders_horizontal(), open_doc_config))
+    rect()
+        .horizontal()
+        .spacing(6.0)
+        .child(icon_toggle(
+            signature(),
+            handwriting_active,
+            toggle_handwriting,
+        ))
+        .child(icon_toggle(square_dashed_text(), text_active, toggle_text))
+        .child(icon_button(layers(), toggle_layers))
+        .child(icon_button(sliders_horizontal(), open_doc_config))
 }
 
 /// Lucide `square-dashed-text`, newer than the icon set freya ships.

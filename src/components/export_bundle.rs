@@ -17,7 +17,7 @@ use std::collections::HashSet;
 use freya::prelude::*;
 
 use crate::bundle::{ExportOptions, ExportPreview};
-use crate::library::{Item, ItemId, ItemKind};
+use crate::library::{DocKind, Item, ItemId};
 
 use super::modal::{Modal, ModalController};
 
@@ -242,17 +242,22 @@ fn item_row(item: Item, selected: State<HashSet<ItemId>>) -> impl IntoElement {
         .on_press(on_press)
         .child(check_indicator(checked))
         .child(
-            rect().vertical().width(Size::fill()).spacing(2.0).child(
-                label()
-                    .color(Color::from_rgb(230, 230, 240))
-                    .font_size(14.0)
-                    .text(item.name.clone()),
-            ).child(
-                label()
-                    .color(Color::from_rgb(130, 130, 140))
-                    .font_size(11.0)
-                    .text(kind_label),
-            ),
+            rect()
+                .vertical()
+                .width(Size::fill())
+                .spacing(2.0)
+                .child(
+                    label()
+                        .color(Color::from_rgb(230, 230, 240))
+                        .font_size(14.0)
+                        .text(item.name.clone()),
+                )
+                .child(
+                    label()
+                        .color(Color::from_rgb(130, 130, 140))
+                        .font_size(11.0)
+                        .text(kind_label),
+                ),
         )
 }
 
@@ -297,25 +302,30 @@ fn attachments_row(include: State<bool>, any_pdf: bool) -> impl IntoElement {
         .on_press(on_press)
         .child(check_indicator(on))
         .child(
-            rect().vertical().width(Size::fill()).spacing(2.0).child(
-                label()
-                    .color(if disabled {
-                        Color::from_rgb(120, 120, 130)
-                    } else {
-                        Color::from_rgb(220, 220, 230)
-                    })
-                    .font_size(14.0)
-                    .text("Incluir attachments PDF"),
-            ).child(
-                label()
-                    .color(Color::from_rgb(130, 130, 140))
-                    .font_size(11.0)
-                    .text(if disabled {
-                        "Esta selección no contiene PDFs."
-                    } else {
-                        "Si lo dejás apagado, el bundle sólo lleva refs."
-                    }),
-            ),
+            rect()
+                .vertical()
+                .width(Size::fill())
+                .spacing(2.0)
+                .child(
+                    label()
+                        .color(if disabled {
+                            Color::from_rgb(120, 120, 130)
+                        } else {
+                            Color::from_rgb(220, 220, 230)
+                        })
+                        .font_size(14.0)
+                        .text("Incluir attachments PDF"),
+                )
+                .child(
+                    label()
+                        .color(Color::from_rgb(130, 130, 140))
+                        .font_size(11.0)
+                        .text(if disabled {
+                            "Esta selección no contiene PDFs."
+                        } else {
+                            "Si lo dejás apagado, el bundle sólo lleva refs."
+                        }),
+                ),
         )
 }
 
@@ -337,19 +347,10 @@ fn plugins_row(requires: &[String]) -> impl IntoElement {
         )
 }
 
-const fn kind_label(kind: &ItemKind) -> &'static str {
-    match kind {
-        ItemKind::Canvas => "Lienzo",
-        ItemKind::PdfCanvas => "PDF + lienzo",
-        ItemKind::SourcePdf => "PDF",
-        ItemKind::DocLinked { .. } => "Documento ligado",
-        ItemKind::PluginCanvas { .. } => "Plugin",
-    }
+fn kind_label(kind: &DocKind) -> &'static str {
+    crate::faces::kind_label(kind)
 }
 
-const fn item_carries_pdf(kind: &ItemKind) -> bool {
-    matches!(
-        kind,
-        ItemKind::PdfCanvas | ItemKind::SourcePdf | ItemKind::DocLinked { .. }
-    )
+fn item_carries_pdf(kind: &DocKind) -> bool {
+    crate::faces::carries_pdf(kind)
 }
