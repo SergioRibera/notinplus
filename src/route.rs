@@ -29,7 +29,7 @@ use crate::app::CanvasMount;
 use crate::canvas::{Board, Viewport, lock};
 use crate::doc::Doc;
 use crate::home::Home;
-use crate::library::{BackgroundStyle, ItemId, LibraryError, WorkspaceId};
+use crate::library::{BackgroundStyle, ItemId, LibraryError, TabTarget, WorkspaceId};
 use crate::prefs;
 use crate::workspace_view::WorkspaceView;
 
@@ -64,7 +64,7 @@ impl Component for Space {
 /// autosave sinks, and (for PDF-backed mounts) load the PDF into the
 /// background slot off the UI thread.
 pub(crate) fn init_canvas_mount(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
-    let had_pending = apply_pending_canvas_background(board);
+    let had_pending = apply_pending_canvas_background(board, mount);
     // No pending slot — this mount did not come through the home open
     // path (e.g. re-opening the split in a DocLinked bundle). Pull the
     // item's persisted color + pattern from the library so the canvas
@@ -101,17 +101,23 @@ pub(crate) fn init_canvas_mount(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
     }
 }
 
-/// Queue a background for the next canvas-route mount. Callers invoke
-/// this immediately before `router.push(Route::CanvasView { id })` — the
-/// mount hook drains the queue and installs the matching backend.
-pub fn queue_canvas_background(style: BackgroundStyle, surface: SkColor) {
+/// Queue a background for the next mount of `target`. Callers invoke
+/// this immediately before opening the tab — the mount hook of that
+/// target drains the slot and installs the matching backend; other
+/// panes mounting at the same time leave it alone.
+pub fn queue_canvas_background(target: TabTarget, style: BackgroundStyle, surface: SkColor) {
     if let Ok(mut slot) = pending().lock() {
-        *slot = Some(PendingBackground { style, surface });
+        *slot = Some(PendingBackground {
+            target,
+            style,
+            surface,
+        });
     }
 }
 
 #[derive(Clone, Copy)]
 struct PendingBackground {
+    target: TabTarget,
     style: BackgroundStyle,
     surface: SkColor,
 }
@@ -244,8 +250,18 @@ fn spawn_view_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Receiver<(
     });
 }
 
-fn apply_pending_canvas_background(board: &Arc<Mutex<Board>>) -> bool {
-    let queued = pending().lock().ok().and_then(|mut slot| slot.take());
+fn apply_pending_canvas_background(board: &Arc<Mutex<Board>>, mount: CanvasMount) -> bool {
+    let wanted = match mount {
+        CanvasMount::Item(id) => TabTarget::Item(id),
+        CanvasMount::Ephemeral => TabTarget::Scratch,
+    };
+    let queued = pending().lock().ok().and_then(|mut slot| {
+        if slot.is_some_and(|p| p.target == wanted) {
+            slot.take()
+        } else {
+            None
+        }
+    });
     let had_queued = queued.is_some();
     let (style, surface) = queued.map_or((BackgroundStyle::default(), DEFAULT_PAPER), |p| {
         (p.style, p.surface)

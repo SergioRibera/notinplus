@@ -727,7 +727,11 @@ impl Component for ItemCard {
         });
 
         let open = move || {
-            crate::route::queue_canvas_background(bg_style, rgba_to_color(tint).into());
+            crate::route::queue_canvas_background(
+                TabTarget::Item(id),
+                bg_style,
+                rgba_to_color(tint).into(),
+            );
             crate::space::open(TabTarget::Item(id), OpenHint::Focused);
         };
 
@@ -2051,7 +2055,11 @@ pub fn fab_install_bible() {
 }
 
 fn flow_new_ephemeral(_ctx: FabCtx) {
-    crate::route::queue_canvas_background(BackgroundStyle::default(), crate::route::DEFAULT_PAPER);
+    crate::route::queue_canvas_background(
+        TabTarget::Scratch,
+        BackgroundStyle::default(),
+        crate::route::DEFAULT_PAPER,
+    );
     crate::space::open(TabTarget::Scratch, OpenHint::Focused);
 }
 
@@ -2078,6 +2086,7 @@ fn flow_quick_sketch(ctx: FabCtx) {
             Ok(id) => {
                 snap.set(Some(lib.index().clone()));
                 crate::route::queue_canvas_background(
+                    TabTarget::Item(id),
                     BackgroundStyle::default(),
                     crate::route::DEFAULT_PAPER,
                 );
@@ -2125,7 +2134,11 @@ fn flow_new_canvas(ctx: FabCtx) {
                 Ok(id) => {
                     log::info!("canvas created id={id:?}");
                     snap.set(Some(lib.index().clone()));
-                    crate::route::queue_canvas_background(bg_style, surface.into());
+                    crate::route::queue_canvas_background(
+                        TabTarget::Item(id),
+                        bg_style,
+                        surface.into(),
+                    );
                     crate::space::open(TabTarget::Item(id), OpenHint::Focused);
                 }
                 Err(err) => log::error!("create_item: {err}"),
