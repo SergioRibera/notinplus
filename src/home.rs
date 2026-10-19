@@ -24,14 +24,13 @@ use freya::animation::*;
 use freya::icons::lucide as icons;
 
 use freya::prelude::*;
-use freya::router::*;
 use istmo::plugins::EdgeInsets;
 
 use crate::components::FormInput;
 use crate::components::drag_drop::{DragZone, DropZone};
 use crate::components::{
-    CanvasCreateSheet, CreateCanvasRequest, Modal, ModalController, SettingsModal,
-    WorkspaceSwitcher, WorkspaceSwitcherEntry, auto_color,
+    CanvasCreateSheet, CreateCanvasRequest, Modal, ModalController, SettingsModal, SpaceCardData,
+    SpaceEditRequest, SpaceEditSheet, SpaceStrip, auto_color,
 };
 use crate::hooks::use_safe_area_insets;
 use crate::library::{
@@ -86,14 +85,6 @@ enum LibState {
 struct WorkspaceSnapshot {
     active: Option<WorkspaceId>,
     workspaces: Vec<Workspace>,
-}
-
-impl WorkspaceSnapshot {
-    fn active_name(&self) -> Option<&str> {
-        self.active
-            .and_then(|id| self.workspaces.iter().find(|w| w.id == id))
-            .map(|w| w.name.as_str())
-    }
 }
 
 /// Landing page.
@@ -165,15 +156,11 @@ impl Component for Home {
         let nav_stack = nav.read().clone();
         let current = nav_stack.last().copied().unwrap_or(ROOT_FOLDER);
 
-        let ws_pill_target = match (&state_val, ws_snapshot.as_ref()) {
-            (LibState::Ready(handle), Some(snap)) => Some((handle.clone(), snap.clone())),
-            _ => None,
-        };
         let mut column = rect()
             .vertical()
             .expanded()
             .padding((pad.top, pad.right, 0.0, pad.left))
-            .child(top_bar(ws_pill_target, ws_snap));
+            .child(top_bar());
         let mut fab_slot: Option<Rect> = None;
 
         match (state_val, snapshot) {
@@ -184,6 +171,9 @@ impl Component for Home {
                 column = column.child(centered(&format!("No pude abrir la biblioteca: {msg}")));
             }
             (LibState::Ready(handle), Some(index)) => {
+                if let Some(ws) = ws_snapshot.as_ref() {
+                    column = column.child(space_strip(handle.clone(), ws, ws_snap));
+                }
                 column = column
                     .child(breadcrumb_bar(
                         &index,
@@ -226,23 +216,9 @@ impl Component for Home {
 // Top bar
 // ---------------------------------------------------------------------------
 
-fn top_bar(
-    workspace_pill: Option<(LibHandle, WorkspaceSnapshot)>,
-    ws_snap: State<Option<WorkspaceSnapshot>>,
-) -> impl IntoElement {
+fn top_bar() -> impl IntoElement {
     let bg = Color::from_rgb(15, 15, 18);
     let search_value = use_state(String::default);
-    let active_workspace_id = workspace_pill.as_ref().and_then(|(_, ws)| ws.active);
-    let left = match workspace_pill {
-        Some((handle, ws)) => workspace_pill_button(handle, ws, ws_snap).into_element(),
-        None => icon_button(icons::menu()).into_element(),
-    };
-    let router = RouterContext::get();
-    let open_workspace = active_workspace_id.map(|id| {
-        icon_button(icons::square_arrow_out_up_right()).on_press(move |_| {
-            _ = router.push(crate::route::Route::Space { id });
-        })
-    });
     rect()
         .horizontal()
         .width(Size::fill())
@@ -251,9 +227,12 @@ fn top_bar(
         .background(bg)
         .content(Content::Flex)
         .cross_align(Alignment::Center)
-        .child(left)
-        .child(spacer_px(6.0))
-        .maybe_child(open_workspace)
+        .child(
+            label()
+                .color(Color::from_rgb(230, 230, 240))
+                .font_size(15.0)
+                .text("notinplus"),
+        )
         .child(flexible_spacer())
         .child(
             FormInput::new(search_value)
@@ -270,83 +249,128 @@ fn top_bar(
         .child(icon_button(icons::settings()).on_press(|_| SettingsModal::open()))
 }
 
-/// Pill rendered where the hamburger lived: shows the active workspace
-/// name and opens the switcher dropdown on press.
-fn workspace_pill_button(
+/// Row of mesas under the top bar. Tap opens one; long press edits,
+/// duplicates, exports or deletes it.
+fn space_strip(
     handle: LibHandle,
-    ws: WorkspaceSnapshot,
+    ws: &WorkspaceSnapshot,
     ws_snap: State<Option<WorkspaceSnapshot>>,
-) -> Rect {
-    let name = ws.active_name().unwrap_or("Sin workspace").to_owned();
-    let entries: Vec<WorkspaceSwitcherEntry> = ws
+) -> SpaceStrip {
+    let spaces: Vec<SpaceCardData> = ws
         .workspaces
         .iter()
-        .map(|w| WorkspaceSwitcherEntry {
+        .map(|w| SpaceCardData {
             id: w.id,
-            label: w.name.clone().into(),
-            swatch: w.color.map(|c| Color::from_rgb(c[0], c[1], c[2])),
-            is_active: ws.active == Some(w.id),
+            name: w.name.clone(),
+            color: w.color,
+            layout: w.layout.clone(),
+            active: ws.active == Some(w.id),
         })
         .collect();
-    let handle_for_pick = handle.clone();
-    let handle_for_create = handle;
-    rect()
-        .horizontal()
-        .cross_align(Alignment::Center)
-        .height(Size::px(32.0))
-        .padding((0.0, 12.0))
-        .with_corner_radius(16.0)
-        .background(Color::from_rgb(28, 28, 32))
-        .spacing(6.0)
-        .on_press(move |_| {
-            let entries = entries.clone();
-            let pick_handle = handle_for_pick.clone();
-            let create_handle = handle_for_create.clone();
-            let ws_snap_pick = ws_snap;
-            let ws_snap_create = ws_snap;
-            WorkspaceSwitcher::new(
-                entries,
-                Callback::new(move |id: WorkspaceId| {
-                    let handle = pick_handle.clone();
-                    let mut ws_snap = ws_snap_pick;
-                    spawn(async move {
-                        let mut lib = handle.lock().await;
-                        if let Err(err) = lib.set_active_workspace(Some(id)).await {
-                            log::error!("set active workspace: {err}");
-                            return;
-                        }
-                        ws_snap.set(Some(snapshot_workspaces(&lib)));
-                    });
-                }),
-                NoArgCallback::new(move || {
-                    let handle = create_handle.clone();
-                    let mut ws_snap = ws_snap_create;
-                    spawn(async move {
-                        let mut lib = handle.lock().await;
-                        let count = lib.workspaces().len();
-                        let name = format!("Workspace {}", count + 1);
-                        if let Err(err) = lib.create_workspace(&name, None).await {
-                            log::error!("create workspace: {err}");
-                            return;
-                        }
-                        ws_snap.set(Some(snapshot_workspaces(&lib)));
-                    });
-                }),
-            )
-            .open();
+    let on_open = Callback::new(|id: WorkspaceId| crate::space::open_space(id));
+    let on_create = {
+        let handle = handle.clone();
+        NoArgCallback::new(move || {
+            let handle = handle.clone();
+            spawn_forever(async move {
+                let created = {
+                    let mut lib = handle.lock().await;
+                    let name = format!("Mesa {}", lib.workspaces().len() + 1);
+                    lib.create_workspace(&name, None).await
+                };
+                match created {
+                    Ok(id) => crate::space::open_space(id),
+                    Err(err) => log::error!("create workspace: {err}"),
+                }
+            });
         })
-        .child(
-            label()
-                .color(Color::from_rgb(230, 230, 240))
-                .font_size(13.0)
-                .text(name),
-        )
-        .child(
-            SvgViewer::new(freya::icons::lucide::chevron_down())
-                .color(Color::from_rgb(170, 170, 180))
-                .width(Size::px(12.0))
-                .height(Size::px(12.0)),
-        )
+    };
+    let menu_for = {
+        let ws = ws.clone();
+        Callback::new(move |id: WorkspaceId| space_menu(id, &ws, handle.clone(), ws_snap))
+    };
+    SpaceStrip::new(spaces, on_open, on_create, menu_for)
+}
+
+fn space_menu(
+    id: WorkspaceId,
+    ws: &WorkspaceSnapshot,
+    handle: LibHandle,
+    mut ws_snap: State<Option<WorkspaceSnapshot>>,
+) -> Menu {
+    let Some(space) = ws.workspaces.iter().find(|w| w.id == id).cloned() else {
+        return Menu::new();
+    };
+    let edit = {
+        let handle = handle.clone();
+        let name = space.name.clone();
+        let color = space.color;
+        move |_: Event<PressEventData>| {
+            let handle = handle.clone();
+            SpaceEditSheet::new(name.clone(), color, move |req: SpaceEditRequest| {
+                let handle = handle.clone();
+                spawn_forever(async move {
+                    let mut lib = handle.lock().await;
+                    if let Err(err) = lib.rename_workspace(id, &req.name).await {
+                        log::error!("rename_workspace: {err}");
+                    }
+                    if let Err(err) = lib.set_workspace_color(id, req.color).await {
+                        log::error!("set_workspace_color: {err}");
+                    }
+                    ws_snap.set(Some(snapshot_workspaces(&lib)));
+                });
+            })
+            .open();
+        }
+    };
+    let duplicate = {
+        let handle = handle.clone();
+        move |_: Event<PressEventData>| {
+            let handle = handle.clone();
+            spawn_forever(async move {
+                let mut lib = handle.lock().await;
+                if let Err(err) = lib.duplicate_workspace(id).await {
+                    log::error!("duplicate_workspace: {err}");
+                }
+                ws_snap.set(Some(snapshot_workspaces(&lib)));
+            });
+        }
+    };
+    let export = {
+        let handle = handle.clone();
+        let name = space.name.clone();
+        move |_: Event<PressEventData>| {
+            open_export_bundle_flow(
+                handle.clone(),
+                crate::bundle::ExportSelection {
+                    workspaces: vec![id],
+                    ..Default::default()
+                },
+                name.clone(),
+            );
+        }
+    };
+    let delete = {
+        let name = space.name;
+        move |_: Event<PressEventData>| {
+            let handle = handle.clone();
+            confirm_delete_modal(name.clone(), move || {
+                let handle = handle.clone();
+                spawn_forever(async move {
+                    let mut lib = handle.lock().await;
+                    if let Err(err) = lib.delete_workspace(id).await {
+                        log::error!("delete_workspace: {err}");
+                    }
+                    ws_snap.set(Some(snapshot_workspaces(&lib)));
+                });
+            });
+        }
+    };
+    Menu::new()
+        .child(MenuButton::new().on_press(edit).child("Renombrar / color"))
+        .child(MenuButton::new().on_press(duplicate).child("Duplicar"))
+        .child(MenuButton::new().on_press(export).child("Exportar"))
+        .child(MenuButton::new().on_press(delete).child("Eliminar"))
 }
 
 /// Snapshot the library's workspace index into a UI-side struct. Keeps

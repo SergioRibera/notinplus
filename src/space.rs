@@ -75,6 +75,26 @@ pub fn open(target: TabTarget, hint: OpenHint) {
     });
 }
 
+/// Make `workspace` the active mesa and navigate to it.
+pub fn open_space(workspace: WorkspaceId) {
+    freya::prelude::spawn_forever(async move {
+        let Ok(handle) = open_library().await else {
+            return;
+        };
+        let switched = {
+            let mut lib = handle.lock().await;
+            lib.set_active_workspace(Some(workspace)).await
+        };
+        match switched {
+            Ok(()) => {
+                notify_changed();
+                let _ = crate::app::global_router().push(Route::Space { id: workspace });
+            }
+            Err(err) => log::error!("space::open_space: {err}"),
+        }
+    });
+}
+
 /// Apply the opening rules on `lib`. Callers that already hold the
 /// library lock (view callbacks) use this directly and refresh
 /// themselves; everything else goes through [`open`].

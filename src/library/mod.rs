@@ -762,6 +762,32 @@ impl Library {
         Ok(id)
     }
 
+    /// Copy a workspace — layout, tabs and colour — under a new id
+    /// named "Copia de <name>". The copy is not activated.
+    ///
+    /// # Errors
+    /// [`LibraryError::NotFound`].
+    pub async fn duplicate_workspace(&mut self, id: WorkspaceId) -> Result<WorkspaceId> {
+        let now = now_millis();
+        let source = self
+            .workspaces
+            .workspace(id)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(id)))?;
+        let copy = Workspace {
+            id: self.workspaces.alloc_workspace_id(),
+            name: format!("Copia de {}", source.name),
+            color: source.color,
+            layout: source.layout.clone(),
+            focused_pane: source.focused_pane,
+            created_at: now,
+            updated_at: now,
+        };
+        let new_id = copy.id;
+        self.workspaces.workspaces.push(copy);
+        self.persist_workspaces().await?;
+        Ok(new_id)
+    }
+
     /// # Errors
     /// [`LibraryError::NotFound`].
     pub async fn rename_workspace(&mut self, id: WorkspaceId, name: &str) -> Result<()> {
