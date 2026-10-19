@@ -1188,8 +1188,22 @@ impl Library {
             self.workspaces.workspaces.push(ws.clone());
         }
 
+        for incoming in &bundle.manifest.links {
+            match self.links.links.iter_mut().find(|l| l.id == incoming.id) {
+                Some(existing) => {
+                    if incoming.updated_at > existing.updated_at {
+                        *existing = incoming.clone();
+                    }
+                }
+                None => self.links.links.push(incoming.clone()),
+            }
+        }
+
         for (id, bytes) in &bundle.docs {
             bodies::write_doc_bytes(*id, bytes)?;
+            if let Ok(doc) = bodies::read_doc(*id) {
+                refs::record_doc(*id, &doc);
+            }
         }
         for (id, bytes) in &bundle.pdfs {
             bodies::write_pdf(*id, bytes)?;
@@ -1197,6 +1211,7 @@ impl Library {
 
         self.persist().await?;
         self.persist_workspaces().await?;
+        self.persist_links().await?;
         Ok(())
     }
 

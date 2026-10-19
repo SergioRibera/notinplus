@@ -107,6 +107,11 @@ impl Component for ExportBundleSheet {
             use_state(move || initial)
         };
         let include_attachments = use_state(|| true);
+        let include_related = use_state(|| false);
+        let include_referenced = use_state(|| false);
+        let include_external_links = use_state(|| false);
+        let related = self.preview.related.clone();
+        let referenced = self.preview.referenced.clone();
 
         let selected_count = selected.read().len();
         let total = items.len();
@@ -117,25 +122,39 @@ impl Component for ExportBundleSheet {
         let submit = {
             let selected = selected;
             let include = include_attachments;
+            let related = related.clone();
+            let referenced = referenced.clone();
             move |_| {
                 if submit_disabled {
                     return;
                 }
                 let sel = selected.read();
-                let picked: Vec<ItemId> = items_for_submit
+                let mut picked: Vec<ItemId> = items_for_submit
                     .iter()
                     .map(|i| i.id)
                     .filter(|id| sel.contains(id))
                     .collect();
+                if *include_related.read() {
+                    picked.extend(related.iter().map(|i| i.id));
+                }
+                if *include_referenced.read() {
+                    picked.extend(referenced.iter().map(|i| i.id));
+                }
+                picked.sort();
+                picked.dedup();
                 submit_cb.call(ExportBundleRequest {
                     items: picked,
                     options: ExportOptions {
                         include_attachments: *include.read(),
+                        include_external_links: *include_external_links.read(),
                     },
                 });
                 ModalController::get().close();
             }
         };
+        let related_subtitle = format!("Agrega {} documento(s) vinculados.", related.len());
+        let referenced_subtitle =
+            format!("Agrega {} documento(s) referenciados.", referenced.len());
         let cancel = move |_| ModalController::get().close();
 
         rect()
@@ -160,7 +179,34 @@ impl Component for ExportBundleSheet {
                     )),
             )
             .child(item_list(items, selected))
-            .child(attachments_row(include_attachments, any_pdf))
+            .child(toggle_row(
+                include_attachments,
+                any_pdf,
+                "Incluir attachments PDF",
+                "Los PDFs viajan completos.",
+                "Esta selección no contiene PDFs.",
+            ))
+            .child(toggle_row(
+                include_related,
+                !related.is_empty(),
+                "Incluir vinculados",
+                &related_subtitle,
+                "Nada vinculado fuera de la selección.",
+            ))
+            .child(toggle_row(
+                include_referenced,
+                !referenced.is_empty(),
+                "Incluir referenciados",
+                &referenced_subtitle,
+                "Nada referenciado fuera de la selección.",
+            ))
+            .child(toggle_row(
+                include_external_links,
+                true,
+                "Incluir vínculos externos",
+                "Los vínculos a documentos no incluidos viajan y se ven como no disponibles.",
+                "",
+            ))
             .child(plugins_row(&requires))
             .child(
                 rect()
@@ -282,17 +328,23 @@ fn check_indicator(on: bool) -> impl IntoElement {
         }))
 }
 
-fn attachments_row(include: State<bool>, any_pdf: bool) -> impl IntoElement {
-    let on = *include.read() && any_pdf;
-    let disabled = !any_pdf;
-    let mut toggle = include;
+fn toggle_row(
+    state: State<bool>,
+    enabled: bool,
+    title: &str,
+    subtitle_on: &str,
+    subtitle_off: &str,
+) -> impl IntoElement {
+    let on = *state.read() && enabled;
+    let mut toggle = state;
     let on_press = move |_: Event<PressEventData>| {
-        if disabled {
+        if !enabled {
             return;
         }
         let cur = *toggle.read();
         toggle.set(!cur);
     };
+    let subtitle = if enabled { subtitle_on } else { subtitle_off }.to_owned();
     rect()
         .horizontal()
         .width(Size::fill())
@@ -308,23 +360,19 @@ fn attachments_row(include: State<bool>, any_pdf: bool) -> impl IntoElement {
                 .spacing(2.0)
                 .child(
                     label()
-                        .color(if disabled {
-                            Color::from_rgb(120, 120, 130)
-                        } else {
+                        .color(if enabled {
                             Color::from_rgb(220, 220, 230)
+                        } else {
+                            Color::from_rgb(120, 120, 130)
                         })
                         .font_size(14.0)
-                        .text("Incluir attachments PDF"),
+                        .text(title.to_owned()),
                 )
                 .child(
                     label()
                         .color(Color::from_rgb(130, 130, 140))
                         .font_size(11.0)
-                        .text(if disabled {
-                            "Esta selección no contiene PDFs."
-                        } else {
-                            "Si lo dejás apagado, el bundle sólo lleva refs."
-                        }),
+                        .text(subtitle),
                 ),
         )
 }

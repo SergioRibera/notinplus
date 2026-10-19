@@ -26,8 +26,8 @@ use bincode::config::{self, Configuration};
 use crate::bookmark::SourceRef;
 use crate::doc::Doc;
 use crate::library::{
-    DocKind, Folder, FolderId, Item, ItemId, Library, LibraryError, PaneTab, Tag, TagId, Workspace,
-    WorkspaceId, bodies,
+    DocKind, Folder, FolderId, Item, ItemId, Library, LibraryError, Link, LinkIndex, LinkKind,
+    PaneTab, Tag, TagId, Workspace, WorkspaceId, bodies, refs,
 };
 use notein_plugin::PluginRegistry;
 
@@ -36,7 +36,7 @@ const CODEC: Configuration = config::standard();
 /// Schema version carried in [`BundleManifest::version`]. Bumped on any
 /// breaking payload change — the reader rejects unknown versions so a
 /// future bundle can't be misinterpreted by an older build.
-pub const BUNDLE_VERSION: u32 = 1;
+pub const BUNDLE_VERSION: u32 = 2;
 
 const MANIFEST_ENTRY: &str = "manifest.bin";
 const DOCS_PREFIX: &str = "docs/";
@@ -62,12 +62,17 @@ pub struct ExportOptions {
     /// bundle. When `false`, only the manifest + canvas doc bodies
     /// travel — the receiver sees chips but no re-openable PDFs.
     pub include_attachments: bool,
+    /// When `true`, links with one end outside the bundle travel too
+    /// and show up as unavailable on the receiving side. When `false`
+    /// only links between bundled items are written.
+    pub include_external_links: bool,
 }
 
 impl Default for ExportOptions {
     fn default() -> Self {
         Self {
             include_attachments: true,
+            include_external_links: false,
         }
     }
 }
@@ -80,10 +85,16 @@ impl Default for ExportOptions {
 /// the comparison bottoms out as `PartialEq`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ExportPreview {
+    /// Selected items plus every notebook attached to them.
     pub items: Vec<Item>,
     pub folders: Vec<Folder>,
     pub workspaces: Vec<Workspace>,
     pub requires_plugins: Vec<String>,
+    /// Items related to the selection that the user may add.
+    pub related: Vec<Item>,
+    /// Items the selection references (chips, bookmarks) that the
+    /// user may add.
+    pub referenced: Vec<Item>,
 }
 
 /// Bundle manifest. One per `.notein` file, serialised via `bincode` at
@@ -100,6 +111,9 @@ pub struct BundleManifest {
     pub items: Vec<Item>,
     pub tags: Vec<Tag>,
     pub workspaces: Vec<Workspace>,
+    /// Live links between bundled items (plus dangling ones when the
+    /// exporter asked for them).
+    pub links: Vec<Link>,
 }
 
 impl bincode::Encode for BundleManifest {
@@ -114,6 +128,7 @@ impl bincode::Encode for BundleManifest {
         self.items.encode(encoder)?;
         self.tags.encode(encoder)?;
         self.workspaces.encode(encoder)?;
+        self.links.encode(encoder)?;
         Ok(())
     }
 }
@@ -130,6 +145,7 @@ impl<Ctx> bincode::Decode<Ctx> for BundleManifest {
             items: bincode::Decode::decode(decoder)?,
             tags: bincode::Decode::decode(decoder)?,
             workspaces: bincode::Decode::decode(decoder)?,
+            links: bincode::Decode::decode(decoder)?,
         })
     }
 }
@@ -205,8 +221,8 @@ pub fn write_bundle<W: Write>(
     selection: &ExportSelection,
     options: ExportOptions,
 ) -> Result<()> {
-    let plan = plan_export(lib, selection)?;
-    let manifest = build_manifest(lib, &plan)?;
+    let plan = plan_export(lib, selection, false)?;
+    let manifest = build_manifest(lib, &plan, options.include_external_links)?;
 
     let encoder = zstd::stream::write::Encoder::new(sink, ZSTD_LEVEL)?.auto_finish();
     let mut tar = tar::Builder::new(encoder);
@@ -404,17 +420,60 @@ struct ExportPlan {
 /// [`BundleError::MissingWorkspace`] when `selection` names an id the
 /// library does not know.
 pub fn preview_export(lib: &Library, selection: &ExportSelection) -> Result<ExportPreview> {
-    let plan = plan_export(lib, selection)?;
-    let manifest = build_manifest(lib, &plan)?;
+    let plan = plan_export(lib, selection, true)?;
+    let manifest = build_manifest(lib, &plan, false)?;
+    let in_bundle: HashSet<ItemId> = plan.item_ids.iter().copied().collect();
+    let related = extra_items(lib, &in_bundle, |id| {
+        lib.links_of(id)
+            .filter(|l| l.kind == LinkKind::Related)
+            .filter_map(|l| l.other_end(id))
+            .collect()
+    });
+    let referenced = extra_items(lib, &in_bundle, |id| {
+        refs::refs_from(id).into_iter().map(|r| r.to).collect()
+    });
     Ok(ExportPreview {
         items: manifest.items,
         folders: manifest.folders,
         workspaces: manifest.workspaces,
         requires_plugins: manifest.requires_plugins,
+        related,
+        referenced,
     })
 }
 
-fn plan_export(lib: &Library, selection: &ExportSelection) -> Result<ExportPlan> {
+/// Items one hop away from `in_bundle` through `neighbours`, in
+/// library order, that are not bundled yet.
+fn extra_items(
+    lib: &Library,
+    in_bundle: &HashSet<ItemId>,
+    neighbours: impl Fn(ItemId) -> Vec<ItemId>,
+) -> Vec<Item> {
+    let mut seen: HashSet<ItemId> = HashSet::new();
+    let mut out = Vec::new();
+    for id in in_bundle {
+        for other in neighbours(*id) {
+            if in_bundle.contains(&other) || !seen.insert(other) {
+                continue;
+            }
+            if let Some(item) = lib.item(other) {
+                out.push(item.clone());
+            }
+        }
+    }
+    out.sort_by(|a, b| a.id.cmp(&b.id));
+    out
+}
+
+/// Resolve the selection axes into id lists. With `with_notebooks`
+/// every notebook attached to a selected item (transitively) joins the
+/// plan; the writer passes `false` because its selection is already
+/// the user-trimmed final list.
+fn plan_export(
+    lib: &Library,
+    selection: &ExportSelection,
+    with_notebooks: bool,
+) -> Result<ExportPlan> {
     let mut item_ids: HashSet<ItemId> = HashSet::new();
     let mut folder_ids: HashSet<FolderId> = HashSet::new();
     let mut workspace_ids: HashSet<WorkspaceId> = HashSet::new();
@@ -458,6 +517,10 @@ fn plan_export(lib: &Library, selection: &ExportSelection) -> Result<ExportPlan>
         }
     }
 
+    if with_notebooks {
+        expand_notebooks(&mut item_ids, lib.links());
+    }
+
     let mut items: Vec<ItemId> = item_ids.into_iter().collect();
     items.sort();
     let mut folders: Vec<FolderId> = folder_ids.into_iter().collect();
@@ -471,7 +534,24 @@ fn plan_export(lib: &Library, selection: &ExportSelection) -> Result<ExportPlan>
     })
 }
 
-fn build_manifest(lib: &Library, plan: &ExportPlan) -> Result<BundleManifest> {
+/// Grow `items` with every notebook hanging off any of them, following
+/// notebooks of notebooks until nothing new appears.
+fn expand_notebooks(items: &mut HashSet<ItemId>, links: &LinkIndex) {
+    let mut queue: Vec<ItemId> = items.iter().copied().collect();
+    while let Some(id) = queue.pop() {
+        for notebook in links.companions_of(id) {
+            if items.insert(notebook) {
+                queue.push(notebook);
+            }
+        }
+    }
+}
+
+fn build_manifest(
+    lib: &Library,
+    plan: &ExportPlan,
+    include_external_links: bool,
+) -> Result<BundleManifest> {
     let items: Vec<Item> = plan
         .item_ids
         .iter()
@@ -520,6 +600,21 @@ fn build_manifest(lib: &Library, plan: &ExportPlan) -> Result<BundleManifest> {
     let mut requires_plugins: Vec<String> = requires_plugins.into_iter().collect();
     requires_plugins.sort();
 
+    let in_bundle: HashSet<ItemId> = plan.item_ids.iter().copied().collect();
+    let mut links: Vec<Link> = lib
+        .links()
+        .links
+        .iter()
+        .filter(|l| !l.deleted)
+        .filter(|l| {
+            let ends =
+                usize::from(in_bundle.contains(&l.from)) + usize::from(in_bundle.contains(&l.to));
+            ends == 2 || (include_external_links && ends == 1)
+        })
+        .cloned()
+        .collect();
+    links.sort_by(|a, b| a.id.0.cmp(&b.id.0));
+
     Ok(BundleManifest {
         version: BUNDLE_VERSION,
         exported_at_ms: now_ms(),
@@ -528,6 +623,7 @@ fn build_manifest(lib: &Library, plan: &ExportPlan) -> Result<BundleManifest> {
         items,
         tags,
         workspaces,
+        links,
     })
 }
 
@@ -592,6 +688,7 @@ mod tests {
                 }],
                 tags: Vec::new(),
                 workspaces: Vec::new(),
+                links: Vec::new(),
             },
             docs: HashMap::new(),
             pdfs: HashMap::new(),
@@ -618,6 +715,7 @@ mod tests {
             items: Vec::new(),
             tags: Vec::new(),
             workspaces: Vec::new(),
+            links: Vec::new(),
         };
         let bytes = bincode::encode_to_vec(&manifest, CODEC).expect("encode");
         let (back, _) =
@@ -635,6 +733,7 @@ mod tests {
             items: Vec::new(),
             tags: Vec::new(),
             workspaces: Vec::new(),
+            links: Vec::new(),
         };
         let mut buf = Vec::<u8>::new();
         {
@@ -654,5 +753,50 @@ mod tests {
         assert_eq!(parsed.manifest, manifest);
         assert!(parsed.docs.is_empty());
         assert!(parsed.pdfs.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod closure_tests {
+    use super::*;
+    use crate::library::LinkKind;
+
+    fn item(seed: u8) -> ItemId {
+        ItemId([seed; 16])
+    }
+
+    #[test]
+    fn notebooks_follow_their_documents_transitively() {
+        let mut links = LinkIndex::default();
+        links.insert(item(1), item(2), LinkKind::Companion, 1);
+        links.insert(item(2), item(3), LinkKind::Companion, 1);
+        links.insert(item(1), item(4), LinkKind::Related, 1);
+        links.insert(item(5), item(1), LinkKind::Companion, 1);
+        let mut set: HashSet<ItemId> = [item(1)].into_iter().collect();
+        expand_notebooks(&mut set, &links);
+        let mut got: Vec<ItemId> = set.into_iter().collect();
+        got.sort();
+        assert_eq!(got, vec![item(1), item(2), item(3)]);
+    }
+
+    #[test]
+    fn manifest_round_trips_links() {
+        let mut links = LinkIndex::default();
+        links.insert(item(1), item(2), LinkKind::Companion, 7);
+        let manifest = BundleManifest {
+            version: BUNDLE_VERSION,
+            exported_at_ms: 1,
+            requires_plugins: Vec::new(),
+            folders: Vec::new(),
+            items: Vec::new(),
+            tags: Vec::new(),
+            workspaces: Vec::new(),
+            links: links.links.clone(),
+        };
+        let bytes = bincode::encode_to_vec(&manifest, CODEC).expect("encode");
+        let (back, _) =
+            bincode::decode_from_slice::<BundleManifest, _>(&bytes, CODEC).expect("decode");
+        assert_eq!(back.links.len(), 1);
+        assert_eq!(back.links[0].from, item(1));
     }
 }
