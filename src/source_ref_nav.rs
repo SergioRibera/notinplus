@@ -203,7 +203,7 @@ fn navigate_pdf(item: ItemId, anchor: Vec<u8>) {
     let Some((wx, wy)) = target else {
         return;
     };
-    if let Some(board) = active_boards::get(CanvasMount::Item(item)) {
+    if let Some(board) = active_boards::get_item(item) {
         lock(&board).center_on_world(wx, wy);
         return;
     }
@@ -215,7 +215,7 @@ fn navigate_pdf(item: ItemId, anchor: Vec<u8>) {
     freya::prelude::spawn_forever(async move {
         for _ in 0..30 {
             async_io::Timer::after(std::time::Duration::from_millis(100)).await;
-            if let Some(board) = active_boards::get(CanvasMount::Item(item)) {
+            if let Some(board) = active_boards::get_item(item) {
                 lock(&board).center_on_world(wx, wy);
                 active_pdf_sources::pulse(item, anchor);
                 return;

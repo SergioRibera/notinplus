@@ -2055,12 +2055,13 @@ pub fn fab_install_bible() {
 }
 
 fn flow_new_ephemeral(_ctx: FabCtx) {
+    let target = TabTarget::Scratch(crate::library::ScratchId::fresh());
     crate::route::queue_canvas_background(
-        TabTarget::Scratch,
+        target,
         BackgroundStyle::default(),
         crate::route::DEFAULT_PAPER,
     );
-    crate::space::open(TabTarget::Scratch, OpenHint::Focused);
+    crate::space::open(target, OpenHint::Focused);
 }
 
 fn flow_quick_sketch(ctx: FabCtx) {

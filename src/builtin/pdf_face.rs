@@ -25,7 +25,7 @@ use crate::app::{AnchorSourceCtx, CanvasMount, CanvasPane};
 use crate::bookmark::SourceRef;
 use crate::builtin::pdf_source;
 use crate::canvas::{AnchorSourceRef, lock};
-use crate::library::{ItemId, bodies};
+use crate::library::{ItemId, ViewSlot, bodies};
 use crate::pdf_select_overlay::PdfSelectOverlay;
 use crate::pdf_viewer::{PdfAnchor, encode_pdf_anchor};
 
@@ -36,11 +36,16 @@ use crate::pdf_viewer::{PdfAnchor, encode_pdf_anchor};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PdfFace {
     pub item: ItemId,
+    pub slot: Option<ViewSlot>,
 }
 
 impl Component for PdfFace {
     fn render(&self) -> impl IntoElement {
         let item = self.item;
+        let mount = CanvasMount::Item {
+            id: item,
+            slot: self.slot,
+        };
 
         // Publish the long-press anchor-ref for this item. Any
         // descendant `canvas_body` picks it up via `try_consume_context`
@@ -64,7 +69,7 @@ impl Component for PdfFace {
                         return;
                     }
                 };
-                let Some(board) = crate::active_boards::get(CanvasMount::Item(item)) else {
+                let Some(board) = crate::active_boards::get(mount) else {
                     log::warn!("PdfFace install_background: no board registered for {item:?}",);
                     return;
                 };
@@ -80,12 +85,9 @@ impl Component for PdfFace {
             .height(Size::fill())
             .content(Content::Flex)
             .child(
-                CanvasPane {
-                    mount: CanvasMount::Item(item),
-                }
-                .into_element(),
+                CanvasPane { mount }.into_element(),
             )
-            .child(PdfSelectOverlay { item }.into_element())
+            .child(PdfSelectOverlay { item, mount }.into_element())
     }
 }
 

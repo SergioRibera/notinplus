@@ -17,7 +17,8 @@ use crate::components::{ItemPicker, PaneTreeCallbacks, PaneTreeView, PickerChoic
 use crate::home::{LibHandle, open_library};
 use crate::hooks::{provide_safe_area_override, use_safe_area_insets};
 use crate::library::{
-    DocKind, ItemId, Library, PaneId, PaneTab, SplitSide, TabTarget, Workspace, WorkspaceId,
+    DocKind, ItemId, Library, PaneId, PaneTab, SplitSide, TabTarget, ViewSlot, Workspace,
+    WorkspaceId,
 };
 use crate::space::{self, OpenHint};
 
@@ -339,12 +340,16 @@ fn pane_tree(
             .get(&id)
             .cloned()
             .unwrap_or_else(|| MISSING_TITLE.to_owned()),
-        TabTarget::Scratch => SCRATCH_TITLE.to_owned(),
+        TabTarget::Scratch(_) => SCRATCH_TITLE.to_owned(),
     });
     let body_kinds = kinds;
     let body_cb =
-        Callback::<(PaneId, PaneTab), Element>::new(move |(_, tab): (PaneId, PaneTab)| {
-            tab_body_element(&tab, &body_kinds)
+        Callback::<(PaneId, PaneTab), Element>::new(move |(pane, tab): (PaneId, PaneTab)| {
+            let slot = ViewSlot {
+                workspace: workspace_id,
+                pane,
+            };
+            tab_body_element(&tab, &body_kinds, slot)
         });
     rect()
         .width(Size::fill())
@@ -364,18 +369,21 @@ fn pane_tree(
 /// pane's chrome is scoped to its own body area — tab bars stay
 /// untouched. DocLinked and SourcePdf ship their own self-contained
 /// shells with the same per-pane scope.
-fn tab_body_element(tab: &PaneTab, kinds: &HashMap<ItemId, DocKind>) -> Element {
+fn tab_body_element(tab: &PaneTab, kinds: &HashMap<ItemId, DocKind>, slot: ViewSlot) -> Element {
     use crate::app::{CanvasMount, CanvasPane};
     match tab.target {
         TabTarget::Item(id) => match kinds.get(&id) {
-            Some(kind) => crate::faces::render(id, kind),
+            Some(kind) => crate::faces::render(id, kind, Some(slot)),
             None => CanvasPane {
-                mount: CanvasMount::Item(id),
+                mount: CanvasMount::Item {
+                    id,
+                    slot: Some(slot),
+                },
             }
             .into_element(),
         },
-        TabTarget::Scratch => CanvasPane {
-            mount: CanvasMount::Ephemeral,
+        TabTarget::Scratch(id) => CanvasPane {
+            mount: CanvasMount::Ephemeral(id),
         }
         .into_element(),
     }

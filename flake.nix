@@ -20,6 +20,7 @@
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             just
+            gcc
             claude-code-bin
             dioxus-cli
             pkg-config

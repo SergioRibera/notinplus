@@ -430,7 +430,7 @@ impl Component for LeafNode {
         let active_tab = self.pane.tabs.get(self.pane.active_tab as usize).cloned();
         let active_is_scratch = active_tab
             .as_ref()
-            .is_some_and(|tab| tab.target == TabTarget::Scratch);
+            .is_some_and(|tab| matches!(tab.target, TabTarget::Scratch(_)));
         let body_inner = match active_tab {
             Some(tab) => self.tab_body.call((self.pane.id, tab)),
             None => leaf_body_empty(self.pane.id).into_element(),
@@ -471,7 +471,7 @@ impl Component for LeafNode {
                 label: self.tab_labels.call(tab.clone()).into(),
                 icon: None,
                 is_active: i == self.pane.active_tab as usize,
-                accent: (tab.target == TabTarget::Scratch).then_some(SCRATCH_ACCENT),
+                accent: matches!(tab.target, TabTarget::Scratch(_)).then_some(SCRATCH_ACCENT),
             })
             .collect();
         let select = self.callbacks.on_tab_select.clone();

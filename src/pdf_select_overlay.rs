@@ -34,8 +34,8 @@ use notein_plugin::{SelectMode, Source as _};
 /// Freya re-renders on mode change) but each handler short-circuits
 /// here when the user is in Draw / Pan — strokes stay owned by the
 /// pen pump.
-fn in_select_mode(item: ItemId) -> bool {
-    active_boards::get(CanvasMount::Item(item))
+fn in_select_mode(mount: CanvasMount) -> bool {
+    active_boards::get(mount)
         .map(|b| lock(&b).input_mode())
         .is_some_and(|m| matches!(m, InputMode::Select))
 }
@@ -55,11 +55,14 @@ const PULSE_RGBA: (u8, u8, u8, u8) = (255, 193, 86, 150);
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PdfSelectOverlay {
     pub item: ItemId,
+    /// Board this overlay drives (the pane it is mounted in).
+    pub(crate) mount: CanvasMount,
 }
 
 impl Component for PdfSelectOverlay {
     fn render(&self) -> impl IntoElement {
         let item = self.item;
+        let mount = self.mount;
         let mut dragging = use_state(|| false);
         let mut last_down_at = use_state(|| Option::<Instant>::None);
         // Bumping this signal forces the paint child to re-render.
@@ -74,13 +77,13 @@ impl Component for PdfSelectOverlay {
         });
 
         let on_pointer_down = move |evt: Event<PointerEventData>| {
-            if !in_select_mode(item) {
+            if !in_select_mode(mount) {
                 return;
             }
             let Some(handle) = active_pdf_sources::ensure_registered(item) else {
                 return;
             };
-            let Some(board) = active_boards::get(CanvasMount::Item(item)) else {
+            let Some(board) = active_boards::get(mount) else {
                 return;
             };
             let el = evt.element_location();
@@ -112,7 +115,7 @@ impl Component for PdfSelectOverlay {
             let Some(handle) = active_pdf_sources::get(item) else {
                 return;
             };
-            let Some(board) = active_boards::get(CanvasMount::Item(item)) else {
+            let Some(board) = active_boards::get(mount) else {
                 return;
             };
             let el = evt.element_location();
@@ -143,7 +146,7 @@ impl Component for PdfSelectOverlay {
             paint_tick.set(cur.wrapping_add(1));
         };
 
-        let interactive = in_select_mode(item);
+        let interactive = in_select_mode(mount);
         let show_menu = *menu_visible.read();
         rect()
             .width(Size::fill())
@@ -154,9 +157,9 @@ impl Component for PdfSelectOverlay {
             .on_pointer_down(on_pointer_down)
             .on_pointer_move(on_pointer_move)
             .on_global_pointer_up(on_pointer_up)
-            .child(selection_paint(item, paint_tick))
+            .child(selection_paint(item, mount, paint_tick))
             .child(if show_menu {
-                selection_menu(item, menu_visible).into_element()
+                selection_menu(item, mount, menu_visible).into_element()
             } else {
                 rect().width(Size::px(0.0)).height(Size::px(0.0)).into_element()
             })
@@ -167,10 +170,10 @@ impl Component for PdfSelectOverlay {
 /// Currently exposes a single "Crear bookmark" action; the clipboard
 /// "Copiar como ref" flow lands with Phase 6 once the `[[…]]` body
 /// chip format is settled.
-fn selection_menu(item: ItemId, mut visible: State<bool>) -> impl IntoElement {
+fn selection_menu(item: ItemId, mount: CanvasMount, mut visible: State<bool>) -> impl IntoElement {
     let on_create = move |_: Event<PressEventData>| {
         let created = active_pdf_sources::get(item)
-            .and_then(|h| create_bookmark_from_selection(item, &h));
+            .and_then(|h| create_bookmark_from_selection(item, mount, &h));
         if created.is_some() {
             if let Some(handle) = active_pdf_sources::get(item) {
                 handle.plugin.clear_selection(handle.instance);
@@ -225,9 +228,13 @@ fn selection_menu(item: ItemId, mut visible: State<bool>) -> impl IntoElement {
 /// - Emits a single [`crate::doc_op::DocOp::AddBookmark`] carrying the
 ///   snippet in the body and a `SourceRef::Plugin` pointing back at the
 ///   PDF anchor.
-fn create_bookmark_from_selection(item: ItemId, handle: &PdfSourceHandle) -> Option<BookmarkId> {
+fn create_bookmark_from_selection(
+    item: ItemId,
+    mount: CanvasMount,
+    handle: &PdfSourceHandle,
+) -> Option<BookmarkId> {
     let selection = handle.plugin.current_selection(handle.instance)?;
-    let target = active_boards::get(CanvasMount::Item(item))?;
+    let target = active_boards::get(mount)?;
     let now = now_ms();
     let source_ref = SourceRef::Plugin {
         plugin_id: PDF_PLUGIN_ID.to_owned(),
@@ -253,14 +260,14 @@ fn create_bookmark_from_selection(item: ItemId, handle: &PdfSourceHandle) -> Opt
 /// Freya canvas whose paint callback reads the plugin's selection
 /// world-space rects + maps them through the current viewport to
 /// paint translucent highlights.
-fn selection_paint(item: ItemId, tick: State<u64>) -> impl IntoElement {
+fn selection_paint(item: ItemId, mount: CanvasMount, tick: State<u64>) -> impl IntoElement {
     // Re-read triggers a Freya re-run whenever paint_tick bumps.
     let _ = *tick.read();
     canvas(RenderCallback::new(move |ctx| {
         let Some(handle) = active_pdf_sources::get(item) else {
             return;
         };
-        let Some(board) = active_boards::get(CanvasMount::Item(item)) else {
+        let Some(board) = active_boards::get(mount) else {
             return;
         };
         let guard = lock(&board);

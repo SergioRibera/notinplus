@@ -35,7 +35,7 @@ use crate::canvas::{
     AnchorSourceRef, Board, InputMode, LayerSnapshot, RedrawNotifier, drawing_surface, lock,
 };
 use crate::hooks::use_safe_area_insets;
-use crate::library::ItemId;
+use crate::library::{ItemId, ScratchId, TabTarget, ViewSlot};
 use crate::palette_popup::{HOVER_DELAY, brush_popup};
 use crate::pen_pump;
 use crate::plugins;
@@ -53,17 +53,27 @@ use crate::ui_mask::{self, MaskSlot, UiRegion, use_mask_slot};
 pub(crate) enum CanvasMount {
     /// Persisted canvas item — doc + viewport sidecar load from
     /// [`crate::library`] by id; autosave worker spawned on mount.
-    Item(ItemId),
+    /// `slot` names the pane showing it so two panes of the same item
+    /// keep their own viewport and board.
+    Item { id: ItemId, slot: Option<ViewSlot> },
     /// Scratch surface. No library item, no autosave, no view sidecar.
-    Ephemeral,
+    Ephemeral(ScratchId),
 }
 
 impl CanvasMount {
     /// Item id to drive autosave + viewport sidecar against, if any.
     pub(crate) const fn item(self) -> Option<ItemId> {
         match self {
-            Self::Item(id) => Some(id),
-            Self::Ephemeral => None,
+            Self::Item { id, .. } => Some(id),
+            Self::Ephemeral(_) => None,
+        }
+    }
+
+    /// What a tab showing this mount would name.
+    pub(crate) const fn target(self) -> TabTarget {
+        match self {
+            Self::Item { id, .. } => TabTarget::Item(id),
+            Self::Ephemeral(id) => TabTarget::Scratch(id),
         }
     }
 }

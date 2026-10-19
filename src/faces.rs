@@ -15,7 +15,7 @@ use freya::icons::lucide;
 use freya::prelude::*;
 
 use crate::app::{CanvasMount, CanvasPane};
-use crate::library::{DocKind, ItemId};
+use crate::library::{DocKind, ItemId, ViewSlot};
 
 /// Label used for items whose plugin is not installed.
 pub const UNKNOWN_LABEL: &str = "Documento del plugin";
@@ -34,8 +34,9 @@ pub trait Face: Send + Sync {
     fn carries_pdf(&self) -> bool {
         false
     }
-    /// Element mounted in a pane (or a standalone route) for `item`.
-    fn render(&self, item: ItemId) -> Element;
+    /// Element mounted in a pane for `item`. `slot` names the pane so
+    /// faces with their own board keep per-pane state.
+    fn render(&self, item: ItemId, slot: Option<ViewSlot>) -> Element;
 }
 
 type Registry = Mutex<HashMap<&'static str, Arc<dyn Face>>>;
@@ -96,8 +97,11 @@ pub fn supports_ink(kind: &DocKind) -> bool {
 
 /// Pane body for `item`. Unknown plugins get a placeholder.
 #[must_use]
-pub fn render(item: ItemId, kind: &DocKind) -> Element {
-    get(&kind.plugin_id).map_or_else(|| missing_plugin(&kind.plugin_id), |face| face.render(item))
+pub fn render(item: ItemId, kind: &DocKind, slot: Option<ViewSlot>) -> Element {
+    get(&kind.plugin_id).map_or_else(
+        || missing_plugin(&kind.plugin_id),
+        |face| face.render(item, slot),
+    )
 }
 
 fn missing_plugin(plugin_id: &str) -> Element {
@@ -115,7 +119,7 @@ fn missing_plugin(plugin_id: &str) -> Element {
 }
 
 mod builtin {
-    use super::{Arc, Bytes, CanvasMount, CanvasPane, Element, Face, ItemId, lucide};
+    use super::{Arc, Bytes, CanvasMount, CanvasPane, Element, Face, ItemId, ViewSlot, lucide};
     use freya::prelude::IntoElement;
 
     pub(super) fn all() -> [Arc<dyn Face>; 4] {
@@ -146,9 +150,9 @@ mod builtin {
             true
         }
 
-        fn render(&self, item: ItemId) -> Element {
+        fn render(&self, item: ItemId, slot: Option<ViewSlot>) -> Element {
             CanvasPane {
-                mount: CanvasMount::Item(item),
+                mount: CanvasMount::Item { id: item, slot },
             }
             .into_element()
         }
@@ -177,8 +181,8 @@ mod builtin {
             true
         }
 
-        fn render(&self, item: ItemId) -> Element {
-            crate::builtin::pdf_face::PdfFace { item }.into_element()
+        fn render(&self, item: ItemId, slot: Option<ViewSlot>) -> Element {
+            crate::builtin::pdf_face::PdfFace { item, slot }.into_element()
         }
     }
 
@@ -201,7 +205,7 @@ mod builtin {
             false
         }
 
-        fn render(&self, item: ItemId) -> Element {
+        fn render(&self, item: ItemId, _slot: Option<ViewSlot>) -> Element {
             crate::bible_face::BibleFace { item }.into_element()
         }
     }
@@ -225,7 +229,7 @@ mod builtin {
             false
         }
 
-        fn render(&self, item: ItemId) -> Element {
+        fn render(&self, item: ItemId, _slot: Option<ViewSlot>) -> Element {
             crate::notes_face::NotesFace { item }.into_element()
         }
     }

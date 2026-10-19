@@ -9,7 +9,7 @@ use freya::prelude::*;
 
 use crate::components::theme::{CARD_BG, PANEL_BG, TEXT_MUTED, TEXT_PRIMARY};
 use crate::faces;
-use crate::library::{BackgroundStyle, DocKind, ItemId, Library, ROOT_FOLDER, TabTarget};
+use crate::library::{BackgroundStyle, DocKind, ItemId, Library, ROOT_FOLDER, ScratchId, TabTarget};
 
 use super::form_input::FormInput;
 use super::modal::{Modal, ModalController};
@@ -42,7 +42,7 @@ impl PickerChoice {
     pub async fn resolve(self, lib: &mut Library) -> Option<TabTarget> {
         match self {
             Self::Existing(id) => Some(TabTarget::Item(id)),
-            Self::Scratch => Some(TabTarget::Scratch),
+            Self::Scratch => Some(TabTarget::Scratch(ScratchId::fresh())),
             Self::NewCanvas => {
                 let kind = DocKind::plugin(crate::builtin::stroke_canvas::KIND_ID);
                 create_blank(lib, kind, "Lienzo").await.map(TabTarget::Item)

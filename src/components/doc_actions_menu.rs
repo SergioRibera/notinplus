@@ -87,6 +87,16 @@ impl Component for DocActionsMenu {
             crate::notebooks::open_beside_picker();
         }));
         column = column.child(row(
+            lucide::copy(),
+            "Duplicar vista",
+            item.is_some(),
+            move || {
+                if let Some(id) = item {
+                    crate::space::open_copy(id);
+                }
+            },
+        ));
+        column = column.child(row(
             lucide::link(),
             "Vincular con…",
             item.is_some(),

@@ -18,6 +18,8 @@ const STRIP_HEIGHT: f32 = CHIP_HEIGHT + 16.0;
 const THUMB_WIDTH: f32 = 72.0;
 const THUMB_HEIGHT: f32 = 44.0;
 const LONG_PRESS: Duration = Duration::from_millis(450);
+/// Finger travel that turns a press into a scroll instead of a menu.
+const LONG_PRESS_SLOP_PX: f64 = 8.0;
 
 /// What the strip knows about one mesa.
 #[derive(Clone, Debug, PartialEq)]
@@ -128,6 +130,7 @@ impl Component for SpaceChip {
     fn render(&self) -> impl IntoElement {
         let press_token = use_state(|| 0u64);
         let long_fired = use_state(|| false);
+        let press_start = use_state(|| Option::<CursorPoint>::None);
 
         let id = self.space.id;
         let tint = self
@@ -163,8 +166,10 @@ impl Component for SpaceChip {
             .on_pointer_down({
                 let mut long_fired = long_fired;
                 let mut press_token = press_token;
-                move |_: Event<PointerEventData>| {
+                let mut press_start = press_start;
+                move |e: Event<PointerEventData>| {
                     long_fired.set(false);
+                    press_start.set(Some(e.global_location()));
                     let token = press_token.peek().wrapping_add(1);
                     press_token.set(token);
                     let menu_for = menu_for_long.clone();
@@ -177,9 +182,29 @@ impl Component for SpaceChip {
                     });
                 }
             })
+            .on_pointer_move({
+                let mut press_token = press_token;
+                let mut press_start = press_start;
+                move |e: Event<PointerEventData>| {
+                    let Some(start) = *press_start.peek() else {
+                        return;
+                    };
+                    let current = e.global_location();
+                    let dx = current.x - start.x;
+                    let dy = current.y - start.y;
+                    if (dx * dx + dy * dy).sqrt() >= LONG_PRESS_SLOP_PX {
+                        press_token.set(0);
+                        press_start.set(None);
+                    }
+                }
+            })
             .on_pointer_leave({
                 let mut press_token = press_token;
-                move |_| press_token.set(0)
+                let mut press_start = press_start;
+                move |_| {
+                    press_token.set(0);
+                    press_start.set(None);
+                }
             })
             .on_press({
                 let mut press_token = press_token;

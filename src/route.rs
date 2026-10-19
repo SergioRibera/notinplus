@@ -95,10 +95,7 @@ pub(crate) fn init_canvas_mount(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
             });
         }
     }
-    match mount {
-        CanvasMount::Item(id) => load_doc_into_board(Some(id), Arc::clone(board)),
-        CanvasMount::Ephemeral => load_doc_into_board(None, Arc::clone(board)),
-    }
+    load_doc_into_board(mount, Arc::clone(board));
 }
 
 /// Queue a background for the next mount of `target`. Callers invoke
@@ -133,8 +130,13 @@ fn pending() -> &'static Mutex<Option<PendingBackground>> {
 /// board. Each mount gets its own worker pair; dropping the previous
 /// sender (via the next `set_commit_sink` / unmount) wakes the old
 /// worker with `Disconnected` so it exits cleanly.
-fn load_doc_into_board(id: Option<ItemId>, board: Arc<Mutex<Board>>) {
+fn load_doc_into_board(mount: CanvasMount, board: Arc<Mutex<Board>>) {
     spawn(async move {
+        let id = mount.item();
+        let slot = match mount {
+            CanvasMount::Item { slot, .. } => slot,
+            CanvasMount::Ephemeral(_) => None,
+        };
         let doc = match id {
             Some(id) => match crate::home::open_library().await {
                 Ok(handle) => {
@@ -162,7 +164,7 @@ fn load_doc_into_board(id: Option<ItemId>, board: Arc<Mutex<Board>>) {
             },
             None => Doc::default(),
         };
-        let saved_view = id.and_then(prefs::load_view);
+        let saved_view = id.and_then(|item| prefs::load_view(prefs::ViewKey { item, slot }));
         {
             let mut guard = lock(&board);
             guard.replace_doc(doc);
@@ -185,7 +187,11 @@ fn load_doc_into_board(id: Option<ItemId>, board: Arc<Mutex<Board>>) {
                     guard.set_commit_sink(tx);
                     guard.set_view_sink(view_tx);
                     spawn_autosave_worker(id, Arc::clone(&board), rx);
-                    spawn_view_worker(id, Arc::clone(&board), view_rx);
+                    spawn_view_worker(
+                        prefs::ViewKey { item: id, slot },
+                        Arc::clone(&board),
+                        view_rx,
+                    );
                 }
                 None => {
                     // Ephemeral: no sinks installed; previous mount's
@@ -229,13 +235,14 @@ fn spawn_autosave_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Receiv
                 }
                 Err(err) => log::error!("autosave open library: {err}"),
             }
+            sync_siblings(id, &board);
         }
     });
 }
 
 /// Drive one view-sidecar write per ping. Same drain pattern as the doc
 /// autosave worker — a pan burst collapses into a single write.
-fn spawn_view_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
+fn spawn_view_worker(key: prefs::ViewKey, board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
     spawn(async move {
         while rx.recv_async().await.is_ok() {
             while rx.try_recv().is_ok() {}
@@ -243,18 +250,15 @@ fn spawn_view_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Receiver<(
                 let guard = lock(&board);
                 prefs::DocView::from_viewport(guard.viewport())
             };
-            if let Err(err) = prefs::save_view(id, view) {
-                log::error!("save_view id={id:?}: {err}");
+            if let Err(err) = prefs::save_view(key, view) {
+                log::error!("save_view item={:?}: {err}", key.item);
             }
         }
     });
 }
 
 fn apply_pending_canvas_background(board: &Arc<Mutex<Board>>, mount: CanvasMount) -> bool {
-    let wanted = match mount {
-        CanvasMount::Item(id) => TabTarget::Item(id),
-        CanvasMount::Ephemeral => TabTarget::Scratch,
-    };
+    let wanted = mount.target();
     let queued = pending().lock().ok().and_then(|mut slot| {
         if slot.is_some_and(|p| p.target == wanted) {
             slot.take()
@@ -285,4 +289,26 @@ pub fn apply_canvas_background(
         BackgroundStyle::DotGrid => Arc::new(DotGridBackground::new(surface)),
     };
     lock(board).set_background(bg);
+}
+
+/// Push what `board` knows about `item` into every other board showing
+/// the same item, so two panes of one document stay identical while
+/// each keeps its own viewport and undo history.
+fn sync_siblings(item: ItemId, board: &Arc<Mutex<Board>>) {
+    for (_, sibling) in crate::active_boards::for_item(item) {
+        if Arc::ptr_eq(&sibling, board) {
+            continue;
+        }
+        let version = lock(&sibling).doc().version();
+        let updates = match lock(board).doc().updates_since(&version) {
+            Ok(updates) => updates,
+            Err(err) => {
+                log::error!("sibling sync export id={item:?}: {err}");
+                continue;
+            }
+        };
+        if let Err(err) = lock(&sibling).merge_updates(&updates) {
+            log::error!("sibling sync import id={item:?}: {err}");
+        }
+    }
 }

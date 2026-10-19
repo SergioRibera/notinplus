@@ -34,8 +34,9 @@ pub use self::error::{LibraryError, NotFoundKind, Result};
 pub use self::links::{Link, LinkIndex, LinkKind};
 pub use self::model::{
     BackgroundStyle, DocKind, Folder, FolderId, INDEX_VERSION, Item, ItemId, LibraryIndex, LinkId,
-    Pane, PaneId, PaneLayout, PaneTab, ROOT_FOLDER, Rgba, SplitOrientation, SplitSide, TabTarget,
-    Tag, TagId, WORKSPACE_INDEX_VERSION, Workspace, WorkspaceId, WorkspaceIndex,
+    Pane, PaneId, PaneLayout, PaneTab, ROOT_FOLDER, Rgba, ScratchId, SplitOrientation, SplitSide,
+    TabTarget, Tag, TagId, ViewSlot, WORKSPACE_INDEX_VERSION, Workspace, WorkspaceId,
+    WorkspaceIndex,
 };
 pub use self::refs::{RefEntry, RefOrigin};
 
@@ -987,11 +988,7 @@ impl Library {
         pane: PaneId,
         target: TabTarget,
     ) -> Result<()> {
-        let tab = match target {
-            TabTarget::Item(id) => PaneTab::new(id),
-            TabTarget::Scratch => PaneTab::scratch(),
-        };
-        self.push_tab(workspace, pane, tab).await
+        self.push_tab(workspace, pane, PaneTab::showing(target)).await
     }
 
     async fn push_tab(&mut self, workspace: WorkspaceId, pane: PaneId, tab: PaneTab) -> Result<()> {

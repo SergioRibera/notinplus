@@ -77,3 +77,14 @@ pub fn snapshot() -> Vec<(CanvasMount, Arc<Mutex<Board>>)> {
         .map(|(k, v)| (*k, Arc::clone(v)))
         .collect()
 }
+
+/// Every board currently showing `item`, in no particular order. Two
+/// panes of the same document each have one.
+#[must_use]
+pub(crate) fn for_item(item: ItemId) -> Vec<(CanvasMount, Arc<Mutex<Board>>)> {
+    lock()
+        .iter()
+        .filter(|(k, _)| k.item() == Some(item))
+        .map(|(k, v)| (*k, Arc::clone(v)))
+        .collect()
+}

@@ -23,8 +23,8 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::home::open_library;
 use crate::library::{
-    Library, LibraryError, NotFoundKind, PaneId, PaneLayout, Result, SplitOrientation, SplitSide,
-    TabTarget, WorkspaceId,
+    ItemId, Library, LibraryError, NotFoundKind, PaneId, PaneLayout, Result, SplitOrientation,
+    SplitSide, TabTarget, WorkspaceId,
 };
 use crate::route::Route;
 
@@ -47,6 +47,10 @@ pub struct Opened {
 /// Open `target` on the active mesa and navigate to it. Fire and
 /// forget: failures are logged.
 pub fn open(target: TabTarget, hint: OpenHint) {
+    open_with(target, hint, true);
+}
+
+fn open_with(target: TabTarget, hint: OpenHint, dedupe: bool) {
     freya::prelude::spawn_forever(async move {
         let Ok(handle) = open_library().await else {
             log::warn!("space::open: library unavailable");
@@ -54,7 +58,7 @@ pub fn open(target: TabTarget, hint: OpenHint) {
         };
         let opened = {
             let mut lib = handle.lock().await;
-            open_in(&mut lib, target, hint).await
+            open_in_with(&mut lib, target, hint, dedupe).await
         };
         match opened {
             Ok(opened) => {
@@ -102,6 +106,22 @@ pub fn open_space(workspace: WorkspaceId) {
 /// # Errors
 /// Library persistence failures, or a hint naming a pane that is gone.
 pub async fn open_in(lib: &mut Library, target: TabTarget, hint: OpenHint) -> Result<Opened> {
+    open_in_with(lib, target, hint, true).await
+}
+
+/// Open a second view of `item` beside the current one even though it
+/// is already on the mesa. Both views share the document; each keeps
+/// its own viewport.
+pub fn open_copy(item: ItemId) {
+    open_with(TabTarget::Item(item), OpenHint::Beside, false);
+}
+
+async fn open_in_with(
+    lib: &mut Library,
+    target: TabTarget,
+    hint: OpenHint,
+    dedupe: bool,
+) -> Result<Opened> {
     if hint == OpenHint::NewSpace {
         let name = format!("Mesa {}", lib.workspaces().len() + 1);
         let workspace = lib.create_workspace(&name, None).await?;
@@ -123,9 +143,7 @@ pub async fn open_in(lib: &mut Library, target: TabTarget, hint: OpenHint) -> Re
         .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
 
     // Already shown somewhere on this mesa: bring it forward.
-    if target != TabTarget::Scratch
-        && let Some((pane, index)) = ws.find_tab(target)
-    {
+    if dedupe && let Some((pane, index)) = ws.find_tab(target) {
         lib.focus_workspace_pane(workspace, Some(pane)).await?;
         lib.focus_pane_tab(workspace, pane, index).await?;
         return Ok(Opened { workspace, pane });

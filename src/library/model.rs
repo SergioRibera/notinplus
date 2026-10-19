@@ -210,6 +210,33 @@ pub struct PaneTab {
     pub plugin_id: Option<String>,
 }
 
+/// Identity of one scratch canvas. Two scratch tabs are two different
+/// surfaces, so each carries its own id.
+#[istmo::message]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ScratchId(pub u64);
+
+impl ScratchId {
+    /// Random id for a new scratch canvas.
+    #[must_use]
+    pub fn fresh() -> Self {
+        let bytes = uuid::Uuid::new_v4().into_bytes();
+        let mut raw = [0u8; 8];
+        raw.copy_from_slice(&bytes[..8]);
+        Self(u64::from_le_bytes(raw))
+    }
+}
+
+/// Where a tab lives: which pane of which workspace. Keys per-view
+/// state (viewport) so the same document can sit on two mesas, or two
+/// panes, with independent pan and zoom.
+#[istmo::message]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ViewSlot {
+    pub workspace: WorkspaceId,
+    pub pane: PaneId,
+}
+
 /// What a tab shows.
 #[istmo::message]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -219,7 +246,7 @@ pub enum TabTarget {
     /// A scratch canvas that never reaches the library. Closing the
     /// tab discards it; a persisted workspace keeps the tab but the
     /// canvas starts blank on the next mount.
-    Scratch,
+    Scratch(ScratchId),
 }
 
 impl PaneTab {
@@ -232,9 +259,14 @@ impl PaneTab {
     }
 
     #[must_use]
-    pub const fn scratch() -> Self {
+    pub fn scratch() -> Self {
+        Self::showing(TabTarget::Scratch(ScratchId::fresh()))
+    }
+
+    #[must_use]
+    pub const fn showing(target: TabTarget) -> Self {
         Self {
-            target: TabTarget::Scratch,
+            target,
             plugin_id: None,
         }
     }
@@ -252,7 +284,7 @@ impl PaneTab {
     pub const fn item(&self) -> Option<ItemId> {
         match self.target {
             TabTarget::Item(id) => Some(id),
-            TabTarget::Scratch => None,
+            TabTarget::Scratch(_) => None,
         }
     }
 }

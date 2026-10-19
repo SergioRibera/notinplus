@@ -36,7 +36,7 @@ use crate::bookmark::{Bookmark, Rgba, SourceRef, StrokeAnchor, TimestampMs, Worl
 use crate::brush::{
     BrushConfig, BrushKind, BrushPreset, CapStyle, EraserMode, InkPoint, ShapeMode, Stroke,
 };
-use crate::doc::Doc;
+use crate::doc::{Doc, DocError};
 use crate::doc_op::DocOp;
 use crate::ids::{BookmarkId, StrokeId};
 use crate::ink_glyph::InkGlyphId;
@@ -947,9 +947,28 @@ impl Board {
         self.text_heights.clear();
         self.touch_text_scene();
         self.undo.clear();
+        self.forget_handwriting();
+        self.rebuild_derived();
+    }
+
+    /// Merge changes made on another replica of the same document (a
+    /// sibling pane, another device) and refresh every cache derived
+    /// from the strokes. Undo history and the viewport stay.
+    ///
+    /// # Errors
+    /// Corrupt update bytes.
+    pub fn merge_updates(&mut self, updates: &[u8]) -> Result<(), DocError> {
+        self.doc.import_updates(updates)?;
+        self.touch_text_scene();
+        self.rebuild_derived();
+        Ok(())
+    }
+
+    /// Rebuild the spatial index, cached paths, glyph paths and stroke
+    /// positions from the current doc, then ask for a repaint.
+    fn rebuild_derived(&mut self) {
         self.spatial.clear();
         self.glyph_paths.clear();
-        self.forget_handwriting();
         let glyphs: Vec<crate::ink_glyph::InkGlyph> = self
             .doc
             .layers

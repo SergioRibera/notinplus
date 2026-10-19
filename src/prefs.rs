@@ -34,7 +34,7 @@ use bincode::config::{self, Configuration};
 
 use crate::brush::{BrushKind, BrushPreset};
 use crate::canvas::{InputMode, Viewport};
-use crate::library::ItemId;
+use crate::library::{ItemId, ViewSlot};
 use crate::library::bodies;
 
 const CODEC: Configuration = config::standard();
@@ -126,11 +126,23 @@ fn prefs_path() -> PathBuf {
     bodies::root_dir().join(PREFS_FILE)
 }
 
+/// Which view a viewport sidecar belongs to: the item alone (a
+/// standalone mount) or the item as shown by one pane of one mesa.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ViewKey {
+    pub item: ItemId,
+    pub slot: Option<ViewSlot>,
+}
+
 #[must_use]
-fn view_path(id: ItemId) -> PathBuf {
-    bodies::root_dir()
-        .join(VIEWS_SUBDIR)
-        .join(format!("{id}.{VIEW_EXT}"))
+fn view_path(key: ViewKey) -> PathBuf {
+    let views = bodies::root_dir().join(VIEWS_SUBDIR);
+    match key.slot {
+        None => views.join(format!("{}.{VIEW_EXT}", key.item)),
+        Some(slot) => views
+            .join(key.item.to_string())
+            .join(format!("{}-{}.{VIEW_EXT}", slot.workspace, slot.pane)),
+    }
 }
 
 /// Read [`Prefs`] from disk. Missing / corrupt payload → `Prefs::default`
@@ -197,23 +209,23 @@ pub fn save_handwriting_prefs(prefs: HandwritingPrefs) -> io::Result<()> {
     write_atomic(&bodies::root_dir().join(HANDWRITING_PREFS_FILE), &bytes)
 }
 
-/// Read the view sidecar for `id`. `None` when missing / corrupt.
+/// Read the view sidecar for `key`. `None` when missing / corrupt.
 #[must_use]
-pub fn load_view(id: ItemId) -> Option<DocView> {
-    let bytes = fs::read(view_path(id)).ok()?;
+pub fn load_view(key: ViewKey) -> Option<DocView> {
+    let bytes = fs::read(view_path(key)).ok()?;
     bincode::decode_from_slice::<DocView, _>(&bytes, CODEC)
         .ok()
         .map(|(v, _)| v)
 }
 
-/// Atomically overwrite the view sidecar for `id`.
+/// Atomically overwrite the view sidecar for `key`.
 ///
 /// # Errors
 /// Encode / fs failures.
-pub fn save_view(id: ItemId, view: DocView) -> io::Result<()> {
+pub fn save_view(key: ViewKey, view: DocView) -> io::Result<()> {
     let bytes = bincode::encode_to_vec(view, CODEC)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    write_atomic(&view_path(id), &bytes)
+    write_atomic(&view_path(key), &bytes)
 }
 
 fn write_atomic(dest: &std::path::Path, bytes: &[u8]) -> io::Result<()> {
