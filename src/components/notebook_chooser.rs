@@ -15,7 +15,7 @@ const ROW_SIZE: f32 = 44.0;
 const LIST_HEIGHT: f32 = 220.0;
 
 /// Chooser for the notebooks of one document.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NotebookChooser {
     item: ItemId,
     notebooks: Vec<(ItemId, String)>,
@@ -45,7 +45,7 @@ impl Component for NotebookChooser {
         )
         .length(length)
         .width(Size::fill())
-        .height(Size::px(LIST_HEIGHT.min(ROW_SIZE * length as f32)))
+        .height(Size::px(list_height(length)))
         .item_size(ROW_SIZE);
 
         rect()
@@ -83,6 +83,12 @@ impl Component for NotebookChooser {
                     )),
             )
     }
+}
+
+/// Height that fits `rows` rows without exceeding the sheet budget.
+fn list_height(rows: usize) -> f32 {
+    let rows = u16::try_from(rows).unwrap_or(u16::MAX);
+    LIST_HEIGHT.min(ROW_SIZE * f32::from(rows))
 }
 
 fn notebook_row(id: ItemId, name: String) -> Rect {

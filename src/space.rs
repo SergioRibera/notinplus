@@ -111,13 +111,12 @@ pub async fn open_in(lib: &mut Library, target: TabTarget, hint: OpenHint) -> Re
         return Ok(Opened { workspace, pane });
     }
 
-    let workspace = match lib.active_workspace() {
-        Some(id) => id,
-        None => {
-            let id = lib.create_workspace("Mesa 1", None).await?;
-            lib.set_active_workspace(Some(id)).await?;
-            id
-        }
+    let workspace = if let Some(id) = lib.active_workspace() {
+        id
+    } else {
+        let id = lib.create_workspace("Mesa 1", None).await?;
+        lib.set_active_workspace(Some(id)).await?;
+        id
     };
     let ws = lib
         .workspace(workspace)

@@ -151,6 +151,7 @@ impl ItemPicker {
 }
 
 impl Component for ItemPicker {
+    #[allow(clippy::too_many_lines)]
     fn render(&self) -> impl IntoElement {
         let query = use_state(String::new);
         let entries = use_state(Vec::<Entry>::new);
@@ -174,7 +175,7 @@ impl Component for ItemPicker {
                             })
                             .collect()
                     };
-                    list.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                    list.sort_by_key(|e| e.name.to_lowercase());
                     entries.set(list);
                 });
             }
@@ -240,10 +241,8 @@ impl Component for ItemPicker {
                 .into_element()
         } else {
             let length = filtered.len();
-            let choose = choose.clone();
             VirtualScrollView::new_with_data(filtered, move |item, data: &Vec<Entry>| {
-                let entry = data[item.index].clone();
-                entry_row(entry, choose.clone()).into_element()
+                entry_row(&data[item.index], choose.clone()).into_element()
             })
             .length(length)
             .width(Size::fill())
@@ -302,12 +301,11 @@ fn quick_button(
         .child(label().color(TEXT_PRIMARY).font_size(13.0).text(text))
 }
 
-fn entry_row(entry: Entry, choose: impl Fn(PickerChoice) + 'static) -> Rect {
+fn entry_row(entry: &Entry, choose: impl Fn(PickerChoice) + 'static) -> Rect {
     let id = entry.id;
     let dot = entry
         .color
-        .map(|[r, g, b, _]| Color::from_rgb(r, g, b))
-        .unwrap_or(TEXT_MUTED);
+        .map_or(TEXT_MUTED, |[r, g, b, _]| Color::from_rgb(r, g, b));
     let title = if entry.name.is_empty() {
         "(sin título)".to_owned()
     } else {
