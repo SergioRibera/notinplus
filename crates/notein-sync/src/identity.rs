@@ -9,7 +9,7 @@ use blake2::{Blake2s256, Digest};
 
 use crate::error::IdentityError;
 
-const PROFILE_VERSION: u32 = 1;
+const PROFILE_VERSION: u32 = 2;
 
 /// Stable identifier of a device: the hash of its public key.
 #[derive(bincode::Encode, bincode::Decode, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -165,10 +165,22 @@ pub struct DeviceProfile {
     key: DeviceKey,
     name: String,
     trusted: Vec<TrustedDevice>,
+    relay: Option<String>,
 }
 
 #[derive(bincode::Encode, bincode::Decode)]
 struct ProfileFile {
+    version: u32,
+    public: [u8; 32],
+    private: [u8; 32],
+    name: String,
+    trusted: Vec<TrustedDevice>,
+    relay: Option<String>,
+}
+
+/// The first layout, without a relay.
+#[derive(bincode::Decode)]
+struct ProfileFileV1 {
     version: u32,
     public: [u8; 32],
     private: [u8; 32],
@@ -184,6 +196,7 @@ impl DeviceProfile {
             key: DeviceKey::generate(),
             name: name.into(),
             trusted: Vec::new(),
+            relay: None,
         }
     }
 
@@ -218,23 +231,52 @@ impl DeviceProfile {
             private: self.key.keypair.private,
             name: self.name.clone(),
             trusted: self.trusted.clone(),
+            relay: self.relay.clone(),
         };
         bincode::encode_to_vec(file, bincode::config::standard())
             .map_err(|err| IdentityError::Codec(err.to_string()))
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, IdentityError> {
-        let (file, _): (ProfileFile, usize) =
-            bincode::decode_from_slice(bytes, bincode::config::standard())
-                .map_err(|err| IdentityError::Codec(err.to_string()))?;
-        if file.version != PROFILE_VERSION {
-            return Err(IdentityError::Version(file.version));
-        }
+        let config = bincode::config::standard();
+        let current: Option<ProfileFile> = bincode::decode_from_slice(bytes, config)
+            .ok()
+            .map(|(file, _): (ProfileFile, usize)| file)
+            .filter(|file| file.version == PROFILE_VERSION);
+        let file = match current {
+            Some(file) => file,
+            None => {
+                let (old, _): (ProfileFileV1, usize) = bincode::decode_from_slice(bytes, config)
+                    .map_err(|err| IdentityError::Codec(err.to_string()))?;
+                if old.version != 1 {
+                    return Err(IdentityError::Version(old.version));
+                }
+                ProfileFile {
+                    version: PROFILE_VERSION,
+                    public: old.public,
+                    private: old.private,
+                    name: old.name,
+                    trusted: old.trusted,
+                    relay: None,
+                }
+            }
+        };
         Ok(Self {
             key: DeviceKey::from_parts(file.public, file.private),
             name: file.name,
             trusted: file.trusted,
+            relay: file.relay,
         })
+    }
+
+    /// Relay this device meets others at, as `host:port/<key>`.
+    #[must_use]
+    pub fn relay(&self) -> Option<&str> {
+        self.relay.as_deref()
+    }
+
+    pub fn set_relay(&mut self, relay: Option<String>) {
+        self.relay = relay.filter(|s| !s.trim().is_empty());
     }
 
     #[must_use]
@@ -351,6 +393,7 @@ mod tests {
             private: [0; 32],
             name: String::new(),
             trusted: Vec::new(),
+            relay: None,
         };
         let bytes = bincode::encode_to_vec(file, bincode::config::standard()).unwrap();
         assert!(matches!(

@@ -24,6 +24,7 @@ const APP_STREAM: u16 = 1;
 
 enum Cmd {
     Connect { addr: SocketAddr, public: [u8; 32] },
+    ConnectHost { host: String, public: [u8; 32] },
     Send { device: DeviceId, bytes: Vec<u8> },
     SetName(String),
     Disconnect(DeviceId),
@@ -90,6 +91,23 @@ impl LanNode {
         self.command(Cmd::Connect { addr, public })
     }
 
+    /// Like [`Self::connect`] for a `host:port` that still needs
+    /// resolving.
+    pub fn connect_host(&self, host: impl Into<String>, public: [u8; 32]) -> Result<(), NetError> {
+        self.command(Cmd::ConnectHost {
+            host: host.into(),
+            public,
+        })
+    }
+
+    /// A handle that only sends, for threads that do not own the node.
+    #[must_use]
+    pub fn sender(&self) -> LanSender {
+        LanSender {
+            cmds: self.cmds.clone(),
+        }
+    }
+
     /// Deliver an application payload to a connected device.
     pub fn send(&self, device: DeviceId, bytes: Vec<u8>) -> Result<(), NetError> {
         self.command(Cmd::Send { device, bytes })
@@ -115,6 +133,20 @@ impl Drop for LanNode {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+    }
+}
+
+/// Send-only handle to a [`LanNode`].
+#[derive(Clone, Debug)]
+pub struct LanSender {
+    cmds: flume::Sender<Cmd>,
+}
+
+impl LanSender {
+    pub fn send(&self, device: DeviceId, bytes: Vec<u8>) -> Result<(), NetError> {
+        self.cmds
+            .send(Cmd::Send { device, bytes })
+            .map_err(|_| NetError::Stopped)
     }
 }
 
@@ -257,6 +289,29 @@ impl Node {
 
     async fn on_cmd(&mut self, cmd: Cmd, internal: &tmpsc::UnboundedSender<Internal>) -> bool {
         match cmd {
+            Cmd::ConnectHost { host, public } => {
+                let internal = internal.clone();
+                let keypair = self.config.key.keypair().clone();
+                let timeout = self.config.connect_timeout;
+                tokio::spawn(async move {
+                    let resolved = match tokio::net::lookup_host(host.as_str()).await {
+                        Ok(mut addrs) => addrs.next(),
+                        Err(err) => {
+                            tracing::warn!(target: "notein-sync", "resolve {host}: {err}");
+                            None
+                        }
+                    };
+                    match resolved {
+                        Some(addr) => run_outbound(keypair, addr, public, timeout, internal).await,
+                        None => {
+                            let _ = internal.send(Internal::OutboundFailed {
+                                addr: SocketAddr::from(([0, 0, 0, 0], 0)),
+                                reason: format!("could not resolve {host}"),
+                            });
+                        }
+                    }
+                });
+            }
             Cmd::Connect { addr, public } => {
                 if self.by_addr.contains_key(&addr) || self.outbound.contains_key(&addr) {
                     return true;
@@ -346,7 +401,17 @@ fn spawn_outbound(
     timeout: Duration,
     internal: tmpsc::UnboundedSender<Internal>,
 ) {
-    tokio::spawn(async move {
+    tokio::spawn(run_outbound(keypair, addr, public, timeout, internal));
+}
+
+async fn run_outbound(
+    keypair: zudp::Keypair,
+    addr: SocketAddr,
+    public: [u8; 32],
+    timeout: Duration,
+    internal: tmpsc::UnboundedSender<Internal>,
+) {
+    {
         let conn = zudp::Zudp::default()
             .port(0)
             .security(keypair)
@@ -391,7 +456,7 @@ fn spawn_outbound(
                 return;
             }
         }
-    });
+    }
 }
 
 fn spawn_listener(mut socket: ZudpSocket<Vec<u8>>, internal: tmpsc::UnboundedSender<Internal>) {

@@ -111,6 +111,9 @@ pub struct Share {
     pub key: ShareKey,
     pub created_at: u64,
     pub updated_at: u64,
+    /// Last relay record applied here; the mailbox is read from the
+    /// next one.
+    pub relay_cursor: u64,
 }
 
 impl bincode::Encode for ShareKey {
@@ -147,6 +150,7 @@ impl Share {
             key: ShareKey::generate(),
             created_at: now,
             updated_at: now,
+            relay_cursor: 0,
         }
     }
 
@@ -245,7 +249,10 @@ impl Share {
     /// the member already holds the key from the invitation.
     #[must_use]
     pub fn for_member(&self) -> Self {
-        self.clone()
+        Self {
+            relay_cursor: 0,
+            ..self.clone()
+        }
     }
 }
 

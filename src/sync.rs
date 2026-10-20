@@ -14,7 +14,8 @@ use std::time::{Duration, Instant};
 use notein_sync::{
     Action, BlobKey, BlobKind, DeviceId, DeviceProfile, DocId, DocStatus, DriverEvent, Invite,
     JoinFailure, LanConfig, LanNode, Member, NetEvent, PairFailure, PairingCode, PairingOffer,
-    PeerInfo, Share, ShareBook, ShareId, ShareMode, SharePolicy, SyncDriver, TrustedDevice,
+    PeerInfo, RelayAddr, Share, ShareBook, ShareId, ShareMode, SharePolicy, SyncDriver,
+    TrustedDevice,
 };
 
 use crate::library::{ItemId, Library, bodies};
@@ -65,6 +66,9 @@ pub struct SyncSnapshot {
     /// Titles of shares we asked into and are still waiting for.
     pub pending_joins: Vec<String>,
     pub last_join_failure: Option<JoinFailure>,
+    /// Relay in use, as configured.
+    pub relay: Option<String>,
+    pub relay_online: bool,
     pub error: Option<String>,
 }
 
@@ -91,6 +95,7 @@ enum Cmd {
     End(ShareId),
     Expel(ShareId, DeviceId),
     SetPolicy(ShareId, SharePolicy),
+    SetRelay(Option<String>),
 }
 
 static CMDS: OnceLock<flume::Sender<Cmd>> = OnceLock::new();
@@ -206,6 +211,11 @@ pub fn expel(id: ShareId, device: DeviceId) {
 
 pub fn set_share_policy(id: ShareId, policy: SharePolicy) {
     command(Cmd::SetPolicy(id, policy));
+}
+
+/// Use a relay (`host:port/<key>`), or none.
+pub fn set_relay(relay: Option<String>) {
+    command(Cmd::SetRelay(relay));
 }
 
 /// Spawn the service once. Safe to call from any thread, any number
@@ -326,6 +336,11 @@ impl Service {
                         log::warn!("sync connect: {err}");
                     }
                 }
+                Action::ConnectHost { host, public } => {
+                    if let Err(err) = self.node.connect_host(host, public) {
+                        log::warn!("sync connect: {err}");
+                    }
+                }
                 Action::Event(event) => self.on_driver_event(event),
             }
         }
@@ -364,6 +379,7 @@ impl Service {
             DriverEvent::JoinFailed { reason, .. } => {
                 self.last_join_failure = Some(reason);
             }
+            DriverEvent::RelayOnline(_) => {}
         }
     }
 
@@ -449,6 +465,25 @@ impl Service {
             Cmd::End(id) => self.driver.end_share(id),
             Cmd::Expel(id, device) => self.driver.expel(id, device),
             Cmd::SetPolicy(id, policy) => self.driver.update_share(id, |s| s.policy = policy),
+            Cmd::SetRelay(relay) => {
+                let parsed = relay.as_deref().map(str::parse::<RelayAddr>);
+                match parsed {
+                    Some(Err(err)) => {
+                        self.error = Some(format!("servidor: {err}"));
+                        Vec::new()
+                    }
+                    Some(Ok(addr)) => {
+                        self.driver.profile_mut().set_relay(relay);
+                        self.save_profile();
+                        self.driver.set_relay(Some(addr))
+                    }
+                    None => {
+                        self.driver.profile_mut().set_relay(None);
+                        self.save_profile();
+                        self.driver.set_relay(None)
+                    }
+                }
+            }
         };
         self.perform(actions);
         Ok(())
@@ -473,7 +508,10 @@ impl Service {
                     .map(|m| (m.clone(), online.contains(&m.device)))
                     .collect(),
                 owner_online: online.contains(&share.owner.device),
-                invite_link: share.invite().to_link(),
+                invite_link: self
+                    .driver
+                    .invite_for(share.id)
+                    .map_or_else(|| share.invite().to_link(), |i| i.to_link()),
                 can_edit: share.can_edit(me),
             })
             .collect()
@@ -504,6 +542,8 @@ impl Service {
                 .map(|i| i.title.clone())
                 .collect(),
             last_join_failure: self.last_join_failure,
+            relay: self.driver.relay().map(ToString::to_string),
+            relay_online: self.driver.relay_online(),
             error: self.error.clone(),
         }
     }
@@ -574,6 +614,13 @@ fn run(cmds: flume::Receiver<Cmd>) {
         error: None,
     };
     service.remember_shares();
+    let relay = service
+        .driver
+        .profile()
+        .relay()
+        .and_then(|text| text.parse::<RelayAddr>().ok());
+    let actions = service.driver.set_relay(relay);
+    service.perform(actions);
     publish(service.snapshot());
 
     let mut next_tick = Instant::now() + notein_sync::driver::TICK;

@@ -16,8 +16,9 @@ use crate::engine::{Message, SyncEngine};
 use crate::error::SyncError;
 use crate::identity::{DeviceId, DeviceProfile, PairingCode, TrustedDevice};
 use crate::net::{NetEvent, PeerInfo};
-use crate::replica::{BlobKey, BlobKind, DocId, Replica, Scope};
-use crate::share::{Invite, Member, Share, ShareId, ShareMessage, proof_is_valid};
+use crate::relay::{RecordKind, RelayAddr, RelayMessage};
+use crate::replica::{BlobKey, BlobKind, DocId, Replica, Scope, Version};
+use crate::share::{Invite, Member, Share, ShareId, ShareMessage, ShareMode, proof_is_valid};
 
 /// How long a pairing offer stays valid.
 pub const OFFER_TTL: Duration = Duration::from_secs(5 * 60);
@@ -48,6 +49,8 @@ pub enum Payload {
         share: ShareId,
         sealed: Vec<u8>,
     },
+    /// A [`RelayMessage`] between a device and a relay.
+    Relay(Vec<u8>),
 }
 
 impl Payload {
@@ -173,13 +176,26 @@ pub enum DriverEvent {
         share: ShareId,
         reason: JoinFailure,
     },
+    /// The relay came within reach or went away.
+    RelayOnline(bool),
 }
 
 /// What the app must carry out.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Action {
-    Send { device: DeviceId, bytes: Vec<u8> },
-    Connect { addr: SocketAddr, public: [u8; 32] },
+    Send {
+        device: DeviceId,
+        bytes: Vec<u8>,
+    },
+    Connect {
+        addr: SocketAddr,
+        public: [u8; 32],
+    },
+    /// Dial a `host:port` that still needs resolving.
+    ConnectHost {
+        host: String,
+        public: [u8; 32],
+    },
     Event(DriverEvent),
 }
 
@@ -196,6 +212,24 @@ struct PairIntent {
 struct JoinIntent {
     invite: Invite,
     since: Instant,
+}
+
+/// What was last handed to the relay for one share, so only new
+/// content travels.
+#[derive(Default, Debug)]
+struct Published {
+    docs: HashMap<DocId, Version>,
+    blobs: HashMap<BlobKey, u64>,
+    meta_at: u64,
+}
+
+/// The relay this device meets others at.
+#[derive(Debug)]
+struct RelayLink {
+    addr: RelayAddr,
+    device: DeviceId,
+    connected: bool,
+    published: HashMap<ShareId, Published>,
 }
 
 /// A share this device takes part in, with its own exchange.
@@ -215,6 +249,10 @@ pub struct SyncDriver<R> {
     offer: Option<(PairingCode, Instant)>,
     intent: Option<PairIntent>,
     joins: HashMap<ShareId, JoinIntent>,
+    relay: Option<RelayLink>,
+    /// Public keys of every device heard of, so a message can be
+    /// routed through the relay when no direct channel exists.
+    known_keys: HashMap<DeviceId, [u8; 32]>,
 }
 
 impl<R> std::fmt::Debug for SyncDriver<R> {
@@ -249,6 +287,8 @@ impl<R: Replica> SyncDriver<R> {
             offer: None,
             intent: None,
             joins: HashMap::new(),
+            relay: None,
+            known_keys: HashMap::new(),
         }
     }
 
@@ -407,7 +447,9 @@ impl<R: Replica> SyncDriver<R> {
         let id = share.id;
         let engine = SyncEngine::new(Arc::clone(&self.replica), share.scope());
         self.shares.insert(id, ShareLink { share, engine });
-        vec![Action::Event(DriverEvent::ShareChanged(id))]
+        let mut out = self.relay_register(id);
+        out.push(Action::Event(DriverEvent::ShareChanged(id)));
+        out
     }
 
     /// Owner-side change of scope, policy or title; members learn it
@@ -420,6 +462,7 @@ impl<R: Replica> SyncDriver<R> {
         link.share.updated_at = now_ms();
         link.engine.set_scope(link.share.scope());
         let mut out = self.broadcast_meta(id);
+        out.extend(self.relay_register(id));
         out.push(Action::Event(DriverEvent::ShareChanged(id)));
         out
     }
@@ -442,6 +485,7 @@ impl<R: Replica> SyncDriver<R> {
             },
         )];
         out.extend(self.broadcast_meta(id));
+        out.extend(self.relay_register(id));
         out.push(Action::Event(DriverEvent::ShareChanged(id)));
         out
     }
@@ -452,6 +496,7 @@ impl<R: Replica> SyncDriver<R> {
             return Vec::new();
         };
         let mut out = Vec::new();
+        out.extend(self.relay_send(&RelayMessage::Unregister { share: id }));
         for member in &link.share.members {
             if self.connected.contains_key(&member.device) {
                 out.push(send(
@@ -488,8 +533,21 @@ impl<R: Replica> SyncDriver<R> {
 
     /// Accept an invitation: connect to the owner and ask in.
     pub fn join(&mut self, invite: Invite) -> Vec<Action> {
+        let mut out = Vec::new();
+        if self.relay.is_none()
+            && let Some(server) = invite.server.as_deref()
+            && let Ok(addr) = server.parse::<RelayAddr>()
+        {
+            out.extend(self.set_relay(Some(addr)));
+        }
+        out.extend(self.join_inner(invite));
+        out
+    }
+
+    fn join_inner(&mut self, invite: Invite) -> Vec<Action> {
         let owner = invite.owner.device;
         let share = invite.share;
+        self.known_keys.insert(owner, invite.owner.public);
         if self.shares.contains_key(&share) {
             return Vec::new();
         }
@@ -500,20 +558,15 @@ impl<R: Replica> SyncDriver<R> {
                 since: Instant::now(),
             },
         );
-        if self.connected.contains_key(&owner) {
-            return vec![self.join_request(share)];
+        if let Some(request) = self.join_request(share) {
+            return vec![request];
         }
         self.connect_to(owner).into_iter().collect()
     }
 
-    fn join_request(&self, share: ShareId) -> Action {
-        let Some(intent) = self.joins.get(&share) else {
-            return Action::Event(DriverEvent::JoinFailed {
-                share,
-                reason: JoinFailure::Refused,
-            });
-        };
-        send(
+    fn join_request(&self, share: ShareId) -> Option<Action> {
+        let intent = self.joins.get(&share)?;
+        self.route(
             intent.invite.owner.device,
             &Payload::Join {
                 share,
@@ -521,6 +574,19 @@ impl<R: Replica> SyncDriver<R> {
                 proof: intent.invite.proof(),
             },
         )
+    }
+
+    /// Deliver `payload` to `device`: straight down an open channel,
+    /// or through the relay when its key is known.
+    fn route(&self, device: DeviceId, payload: &Payload) -> Option<Action> {
+        if self.connected.contains_key(&device) {
+            return Some(send(device, payload));
+        }
+        let public = *self.known_keys.get(&device)?;
+        self.relay_send(&RelayMessage::Forward {
+            to: public,
+            bytes: payload.to_bytes(),
+        })
     }
 
     /// Owner's current view sent to every connected member.
@@ -564,6 +630,7 @@ impl<R: Replica> SyncDriver<R> {
         match event {
             NetEvent::Discovered(peer) => {
                 let device = peer.device;
+                self.known_keys.insert(device, peer.public);
                 let wants_pair = self.intent.as_ref().is_some_and(|i| i.device == device);
                 let wants_join = self.joins.values().any(|j| j.invite.owner.device == device);
                 let related =
@@ -581,7 +648,15 @@ impl<R: Replica> SyncDriver<R> {
             }
             NetEvent::Connected(peer) => {
                 let device = peer.device;
+                self.known_keys.insert(device, peer.public);
                 self.connected.insert(device, peer);
+                if let Some(relay) = self.relay.as_mut()
+                    && relay.device == device
+                {
+                    relay.connected = true;
+                    out.extend(self.relay_hello()?);
+                    return Ok(out);
+                }
                 let related =
                     self.profile.is_trusted(device) || !self.shares_with(device).is_empty();
                 if related {
@@ -606,12 +681,19 @@ impl<R: Replica> SyncDriver<R> {
                     .map(|(id, _)| *id)
                     .collect();
                 for share in pending {
-                    out.push(self.join_request(share));
+                    out.extend(self.join_request(share));
                 }
             }
             NetEvent::Disconnected(device) => {
                 self.connected.remove(&device);
                 self.engine.forget_peer(device);
+                if let Some(relay) = self.relay.as_mut()
+                    && relay.device == device
+                {
+                    relay.connected = false;
+                    relay.published.clear();
+                    out.push(Action::Event(DriverEvent::RelayOnline(false)));
+                }
                 let related =
                     self.profile.is_trusted(device) || !self.shares_with(device).is_empty();
                 for link in self.shares.values_mut() {
@@ -644,6 +726,7 @@ impl<R: Replica> SyncDriver<R> {
                     Payload::JoinReply { share, sealed } => {
                         self.on_join_reply(from, share, &sealed, &mut out)?;
                     }
+                    Payload::Relay(bytes) => self.on_relay(from, &bytes, &mut out)?,
                 }
             }
             NetEvent::ConnectFailed { addr, .. } => {
@@ -755,9 +838,18 @@ impl<R: Replica> SyncDriver<R> {
                 }
             }
             ShareMessage::Meta(share) => {
-                if link.share.is_owner(from) && !link.share.is_owner(me) && share.id == id {
+                if link.share.is_owner(from)
+                    && !link.share.is_owner(me)
+                    && share.id == id
+                    && share.updated_at >= link.share.updated_at
+                {
                     let key = link.share.key.clone();
-                    link.share = Share { key, ..share };
+                    let cursor = link.share.relay_cursor;
+                    link.share = Share {
+                        key,
+                        relay_cursor: cursor,
+                        ..share
+                    };
                     link.engine.set_scope(link.share.scope());
                     out.push(Action::Event(DriverEvent::ShareChanged(id)));
                     if !link.share.is_member(me) {
@@ -792,7 +884,7 @@ impl<R: Replica> SyncDriver<R> {
         proof: &[u8],
         out: &mut Vec<Action>,
     ) -> Result<(), SyncError<R::Error>> {
-        let Some(peer) = self.connected.get(&from).cloned() else {
+        let Some(public) = self.known_keys.get(&from).copied() else {
             return Ok(());
         };
         let me = self.profile.id();
@@ -800,14 +892,17 @@ impl<R: Replica> SyncDriver<R> {
             Some(link) if link.share.is_owner(me) && proof_is_valid(&link.share, proof) => {
                 link.share.admit(Member {
                     device: from,
-                    public: peer.public,
+                    public,
                     name,
                     joined_at: now_ms(),
                 });
                 link.share.updated_at = now_ms();
                 let welcome = JoinAnswer::Welcome(link.share.for_member());
                 let sealed = seal_answer(&link.share, &welcome);
-                out.push(send(from, &Payload::JoinReply { share: id, sealed }));
+                // The relay learns the new member before the welcome goes
+                // out, so the member's first subscription is accepted.
+                out.extend(self.relay_register(id));
+                out.extend(self.route(from, &Payload::JoinReply { share: id, sealed }));
                 true
             }
             _ => false,
@@ -820,10 +915,11 @@ impl<R: Replica> SyncDriver<R> {
                 online: true,
             }));
             out.extend(self.share_round_for(id, from)?);
+            out.extend(self.relay_publish()?);
         } else {
             // Without the key we cannot seal a refusal the joiner can
             // read; an unsealed empty reply means "no".
-            out.push(send(
+            out.extend(self.route(
                 from,
                 &Payload::JoinReply {
                     share: id,
@@ -859,8 +955,15 @@ impl<R: Replica> SyncDriver<R> {
                     key: invite.key,
                     ..share
                 };
+                for member in share.participants() {
+                    self.known_keys.insert(member.device, member.public);
+                }
                 let engine = SyncEngine::new(Arc::clone(&self.replica), share.scope());
                 self.shares.insert(id, ShareLink { share, engine });
+                out.extend(self.relay_send(&RelayMessage::Subscribe {
+                    share: id,
+                    after: 0,
+                }));
                 out.push(Action::Event(DriverEvent::ShareChanged(id)));
                 out.push(Action::Event(DriverEvent::PeerOnline {
                     device: from,
@@ -967,7 +1070,7 @@ impl<R: Replica> SyncDriver<R> {
         messages.push(link.engine.inventory());
         let mut out = Vec::with_capacity(messages.len());
         for message in messages {
-            out.push(send(
+            out.extend(self.route(
                 device,
                 &Payload::Share {
                     share: id,
@@ -1000,6 +1103,7 @@ impl<R: Replica> SyncDriver<R> {
         for (share, device) in pairs {
             out.extend(self.share_round_for(share, device)?);
         }
+        out.extend(self.relay_publish()?);
         Ok(out)
     }
 
@@ -1031,6 +1135,21 @@ impl<R: Replica> SyncDriver<R> {
                 reason: JoinFailure::Unreachable,
             }));
         }
+        out.extend(self.relay_reconnect());
+        let pending: Vec<ShareId> = self.joins.keys().copied().collect();
+        for share in pending {
+            out.extend(self.join_request(share));
+        }
+        // Subscriptions are cheap to repeat and heal a refused one once
+        // the owner's registration has landed.
+        let held: Vec<(ShareId, u64)> = self
+            .shares
+            .values()
+            .map(|l| (l.share.id, l.share.relay_cursor))
+            .collect();
+        for (share, after) in held {
+            out.extend(self.relay_send(&RelayMessage::Subscribe { share, after }));
+        }
         out.extend(self.announce()?);
         Ok(out)
     }
@@ -1038,6 +1157,365 @@ impl<R: Replica> SyncDriver<R> {
     /// Shares we are still waiting to be let into.
     pub fn pending_joins(&self) -> impl Iterator<Item = &Invite> {
         self.joins.values().map(|j| &j.invite)
+    }
+}
+
+// ---------- Relay ---------------------------------------------------
+
+/// Wire bytes of a relay message, as the transport carries them.
+#[must_use]
+pub fn relay_payload(message: &RelayMessage) -> Vec<u8> {
+    Payload::Relay(message.to_bytes()).to_bytes()
+}
+
+/// Reverse of [`relay_payload`]; `None` for any other payload.
+#[must_use]
+pub fn relay_message(bytes: &[u8]) -> Option<RelayMessage> {
+    match Payload::from_bytes(bytes)? {
+        Payload::Relay(inner) => RelayMessage::from_bytes(&inner),
+        Payload::Sync(_)
+        | Payload::Pair(_)
+        | Payload::Share { .. }
+        | Payload::Join { .. }
+        | Payload::JoinReply { .. } => None,
+    }
+}
+
+impl<R: Replica> SyncDriver<R> {
+    /// Use (or drop) a relay. Connecting happens on the next tick or
+    /// right away when the relay is already known.
+    pub fn set_relay(&mut self, addr: Option<RelayAddr>) -> Vec<Action> {
+        self.relay = addr.map(|addr| RelayLink {
+            device: addr.device(),
+            addr,
+            connected: false,
+            published: HashMap::new(),
+        });
+        self.relay_reconnect().into_iter().collect()
+    }
+
+    #[must_use]
+    pub fn relay(&self) -> Option<&RelayAddr> {
+        self.relay.as_ref().map(|r| &r.addr)
+    }
+
+    #[must_use]
+    pub fn relay_online(&self) -> bool {
+        self.relay.as_ref().is_some_and(|r| r.connected)
+    }
+
+    /// The invitation for a share we own, pointing at our relay.
+    #[must_use]
+    pub fn invite_for(&self, id: ShareId) -> Option<Invite> {
+        let share = self.share(id)?;
+        let mut invite = share.invite();
+        invite.server = self.relay().map(ToString::to_string);
+        Some(invite)
+    }
+
+    fn relay_reconnect(&self) -> Option<Action> {
+        let relay = self.relay.as_ref()?;
+        if relay.connected || self.connected.contains_key(&relay.device) {
+            return None;
+        }
+        Some(Action::ConnectHost {
+            host: relay.addr.host.clone(),
+            public: relay.addr.public,
+        })
+    }
+
+    fn relay_send(&self, message: &RelayMessage) -> Option<Action> {
+        let relay = self.relay.as_ref()?;
+        relay.connected.then(|| Action::Send {
+            device: relay.device,
+            bytes: relay_payload(message),
+        })
+    }
+
+    /// Owner tells the relay who may use the share's mailbox.
+    fn relay_register(&self, id: ShareId) -> Vec<Action> {
+        let Some(share) = self.share(id) else {
+            return Vec::new();
+        };
+        if !share.is_owner(self.profile.id()) {
+            return Vec::new();
+        }
+        self.relay_send(&RelayMessage::Register {
+            share: id,
+            members: share.members.iter().map(|m| m.public).collect(),
+            retain: share.mode == ShareMode::Permanent,
+        })
+        .into_iter()
+        .collect()
+    }
+
+    /// Just connected to the relay: register what we own, subscribe to
+    /// everything, hand in what the relay has not seen.
+    fn relay_hello(&mut self) -> Result<Vec<Action>, SyncError<R::Error>> {
+        let mut out = vec![Action::Event(DriverEvent::RelayOnline(true))];
+        let ids: Vec<ShareId> = self.shares.keys().copied().collect();
+        for id in ids {
+            out.extend(self.relay_register(id));
+            if let Some(share) = self.share(id)
+                && let Some(action) = self.relay_send(&RelayMessage::Subscribe {
+                    share: id,
+                    after: share.relay_cursor,
+                })
+            {
+                out.push(action);
+            }
+        }
+        let pending: Vec<ShareId> = self.joins.keys().copied().collect();
+        for share in pending {
+            out.extend(self.join_request(share));
+        }
+        out.extend(self.relay_publish()?);
+        Ok(out)
+    }
+
+    /// Hand the relay whatever changed since the last time.
+    fn relay_publish(&mut self) -> Result<Vec<Action>, SyncError<R::Error>> {
+        let mut out = Vec::new();
+        if !self.relay_online() {
+            return Ok(out);
+        }
+        let me = self.profile.id();
+        let ids: Vec<ShareId> = self.shares.keys().copied().collect();
+        for id in ids {
+            let Some(link) = self.shares.get(&id) else {
+                continue;
+            };
+            let share = link.share.clone();
+            let Some(relay) = self.relay.as_mut() else {
+                break;
+            };
+            let published = relay.published.entry(id).or_default();
+            let mut records: Vec<(RecordKind, Message)> = Vec::new();
+            if share.can_edit(me) {
+                for doc in &share.docs {
+                    let Some(version) = self.replica.doc_version(*doc) else {
+                        continue;
+                    };
+                    match published.docs.get(doc) {
+                        Some(known) if *known == version => continue,
+                        Some(known) => {
+                            let bytes = self
+                                .replica
+                                .doc_updates_since(*doc, known)
+                                .map_err(SyncError::Replica)?;
+                            if !bytes.is_empty() {
+                                records.push((
+                                    RecordKind::Update { doc: *doc },
+                                    Message::DocUpdates { doc: *doc, bytes },
+                                ));
+                            }
+                        }
+                        None => {
+                            let bytes = self
+                                .replica
+                                .doc_snapshot(*doc)
+                                .map_err(SyncError::Replica)?;
+                            records.push((
+                                RecordKind::Snapshot { doc: *doc },
+                                Message::DocSnapshot { doc: *doc, bytes },
+                            ));
+                        }
+                    }
+                    published.docs.insert(*doc, version);
+                }
+            }
+            let scope = share.scope();
+            for head in self.replica.blob_heads() {
+                let key = head.key();
+                if !scope.covers_blob(key) {
+                    continue;
+                }
+                let allowed = match key.kind {
+                    BlobKind::Item => share.can_edit(me),
+                    BlobKind::Link => share.can_link(me),
+                    BlobKind::Folder | BlobKind::Tag | BlobKind::Workspace => false,
+                };
+                if !allowed
+                    || published
+                        .blobs
+                        .get(&key)
+                        .is_some_and(|&at| at >= head.updated_at)
+                {
+                    continue;
+                }
+                let blobs = self.replica.blobs(&[key]);
+                if blobs.is_empty() {
+                    continue;
+                }
+                records.push((RecordKind::Blob { key }, Message::Blobs(blobs)));
+                published.blobs.insert(key, head.updated_at);
+            }
+            for (kind, message) in records {
+                let sealed = ShareMessage::Sync(message.to_bytes()?).seal(&share.key);
+                out.push(Action::Send {
+                    device: relay.device,
+                    bytes: relay_payload(&RelayMessage::Publish {
+                        share: id,
+                        kind,
+                        sealed,
+                    }),
+                });
+            }
+            if share.is_owner(me) && published.meta_at < share.updated_at {
+                published.meta_at = share.updated_at;
+                out.push(Action::Send {
+                    device: relay.device,
+                    bytes: relay_payload(&RelayMessage::Publish {
+                        share: id,
+                        kind: RecordKind::Meta,
+                        sealed: ShareMessage::Meta(share.for_member()).seal(&share.key),
+                    }),
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    fn on_relay(
+        &mut self,
+        from: DeviceId,
+        bytes: &[u8],
+        out: &mut Vec<Action>,
+    ) -> Result<(), SyncError<R::Error>> {
+        if !self.relay.as_ref().is_some_and(|r| r.device == from) {
+            return Ok(());
+        }
+        let Some(message) = RelayMessage::from_bytes(bytes) else {
+            return Ok(());
+        };
+        match message {
+            RelayMessage::Records { share, records } => {
+                let mut touched = false;
+                for record in records {
+                    touched |= self.apply_record(share, record, out)?;
+                }
+                if touched {
+                    out.push(Action::Event(DriverEvent::ShareChanged(share)));
+                }
+            }
+            RelayMessage::Gone { share } => {
+                let me = self.profile.id();
+                if self.share(share).is_some_and(|s| s.is_owner(me)) {
+                    out.extend(self.relay_register(share));
+                } else if self.shares.remove(&share).is_some() {
+                    out.push(Action::Event(DriverEvent::ShareRemoved(share)));
+                }
+            }
+            RelayMessage::Registered { share } => {
+                if let Some(s) = self.share(share)
+                    && let Some(action) = self.relay_send(&RelayMessage::Subscribe {
+                        share,
+                        after: s.relay_cursor,
+                    })
+                {
+                    out.push(action);
+                }
+            }
+            RelayMessage::Forwarded {
+                from: public,
+                bytes,
+            } => {
+                let device = DeviceId::of_public_key(&public);
+                self.known_keys.insert(device, public);
+                match Payload::from_bytes(&bytes) {
+                    Some(Payload::Join { share, name, proof }) => {
+                        self.on_join(device, share, name, &proof, out)?;
+                    }
+                    Some(Payload::JoinReply { share, sealed }) => {
+                        self.on_join_reply(device, share, &sealed, out)?;
+                    }
+                    Some(Payload::Share { share, sealed }) => {
+                        self.on_share(device, share, &sealed, out)?;
+                    }
+                    Some(Payload::Sync(_) | Payload::Pair(_) | Payload::Relay(_)) | None => {}
+                }
+            }
+            RelayMessage::Refused { .. }
+            | RelayMessage::Forward { .. }
+            | RelayMessage::Register { .. }
+            | RelayMessage::Unregister { .. }
+            | RelayMessage::Subscribe { .. }
+            | RelayMessage::Publish { .. } => {}
+        }
+        Ok(())
+    }
+
+    /// Apply one mailbox record; returns whether the share changed.
+    fn apply_record(
+        &mut self,
+        id: ShareId,
+        record: crate::relay::Record,
+        out: &mut Vec<Action>,
+    ) -> Result<bool, SyncError<R::Error>> {
+        let me = self.profile.id();
+        let Some(link) = self.shares.get_mut(&id) else {
+            return Ok(false);
+        };
+        if record.seq <= link.share.relay_cursor {
+            return Ok(false);
+        }
+        link.share.relay_cursor = record.seq;
+        if record.from == me || !link.share.is_member(record.from) {
+            return Ok(true);
+        }
+        let Some(message) = ShareMessage::open(&link.share.key, &record.sealed) else {
+            return Ok(true);
+        };
+        match message {
+            ShareMessage::Sync(bytes) => {
+                let message = Message::from_bytes(&bytes)?;
+                if let Some(message) = permitted(&link.share, record.from, message) {
+                    let handled = link.engine.handle(record.from, message)?;
+                    if !handled.imported.is_empty() {
+                        out.push(Action::Event(DriverEvent::Imported(handled.imported)));
+                    }
+                    if !handled.merged.is_empty() {
+                        out.push(Action::Event(DriverEvent::Merged(handled.merged)));
+                    }
+                }
+            }
+            ShareMessage::Meta(share) => {
+                if link.share.is_owner(record.from)
+                    && !link.share.is_owner(me)
+                    && share.id == id
+                    && share.updated_at >= link.share.updated_at
+                {
+                    let key = link.share.key.clone();
+                    let cursor = link.share.relay_cursor;
+                    link.share = Share {
+                        key,
+                        relay_cursor: cursor,
+                        ..share
+                    };
+                    link.engine.set_scope(link.share.scope());
+                    if !link.share.is_member(me) {
+                        self.shares.remove(&id);
+                        out.push(Action::Event(DriverEvent::ShareRemoved(id)));
+                        return Ok(false);
+                    }
+                }
+            }
+            ShareMessage::Ended => {
+                if link.share.is_owner(record.from) {
+                    self.shares.remove(&id);
+                    out.push(Action::Event(DriverEvent::ShareRemoved(id)));
+                    return Ok(false);
+                }
+            }
+            ShareMessage::Left => {
+                if link.share.is_owner(me) && link.share.expel(record.from) {
+                    link.share.updated_at = now_ms();
+                    out.extend(self.broadcast_meta(id));
+                    out.extend(self.relay_register(id));
+                }
+            }
+        }
+        Ok(true)
     }
 }
 
@@ -1147,7 +1625,7 @@ mod tests {
                     let replies = receiver.on_event(event).unwrap();
                     queue.extend(replies.into_iter().map(|a| (!forward, a)));
                 }
-                Action::Connect { .. } => {}
+                Action::Connect { .. } | Action::ConnectHost { .. } => {}
                 Action::Event(event) => events.push(event),
             }
         }

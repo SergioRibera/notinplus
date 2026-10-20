@@ -33,6 +33,7 @@ impl Component for DevicesPanel {
         });
         let snapshot = sync::snapshot();
         let name = use_state(|| snapshot.name.clone());
+        let relay = use_state(|| snapshot.relay.clone().unwrap_or_default());
         let link = use_state(String::new);
         let code = use_state(String::new);
         let chosen = use_state(|| Option::<DeviceId>::None);
@@ -48,6 +49,7 @@ impl Component for DevicesPanel {
         column
             .child(pairing_card(&snapshot, link, code, chosen))
             .child(trusted_card(&snapshot))
+            .child(relay_card(&snapshot, relay))
     }
 }
 
@@ -312,6 +314,40 @@ fn trusted_row(device: &TrustedDevice, online: bool) -> Rect {
         }))
         .child(rect().width(Size::flex(1.0)))
         .child(pill("Quitar", move |_| sync::revoke(id)))
+}
+
+fn relay_card(snapshot: &SyncSnapshot, relay: State<String>) -> Rect {
+    let status = match (&snapshot.relay, snapshot.relay_online) {
+        (None, _) => "Sin servidor: solo funciona en la misma red.".to_owned(),
+        (Some(_), true) => "Conectado.".to_owned(),
+        (Some(_), false) => "Configurado, sin conexión por ahora.".to_owned(),
+    };
+    card()
+        .child(card_title("Servidor"))
+        .child(hint_text(
+            "Un relevo siempre encendido guarda los cambios cifrados de los compartidos permanentes y los entrega cuando cada persona vuelve. Pegá su dirección como `host:puerto/clave`.",
+        ))
+        .child(
+            rect()
+                .horizontal()
+                .width(Size::fill())
+                .spacing(10.0)
+                .cross_align(Alignment::Center)
+                .child(
+                    FormInput::new(relay)
+                        .placeholder("relay.ejemplo.org:7720/…")
+                        .width(Size::flex(1.0)),
+                )
+                .child(pill("Guardar", move |_| {
+                    let value = relay.read().trim().to_owned();
+                    sync::set_relay((!value.is_empty()).then_some(value));
+                })),
+        )
+        .child(hint_text(status))
+}
+
+fn hint_text(text: impl Into<String>) -> Label {
+    label().color(TEXT_MUTED).font_size(12.0).text(text.into())
 }
 
 fn divider() -> Rect {

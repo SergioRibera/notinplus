@@ -18,6 +18,7 @@ pub mod engine;
 pub mod error;
 pub mod identity;
 pub mod net;
+pub mod relay;
 pub mod replica;
 pub mod share;
 #[cfg(test)]
@@ -30,6 +31,7 @@ pub use error::{CipherError, IdentityError, SyncError};
 pub use identity::{DeviceId, DeviceKey, DeviceProfile, PairingCode, TrustedDevice};
 pub use net::lan::LanNode;
 pub use net::{Beacon, LanConfig, NetError, NetEvent, PeerInfo};
+pub use relay::{RelayAddr, RelayConfig, RelayMessage, RelayServer, Store as RelayStore};
 pub use replica::{Blob, BlobHead, BlobKey, BlobKind, DocId, Replica, Scope, Version};
 pub use share::{
     Invite, Member, Share, ShareBook, ShareId, ShareMessage, ShareMode, SharePolicy, Who,
