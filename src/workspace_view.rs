@@ -372,7 +372,7 @@ fn pane_tree(
 /// shells with the same per-pane scope.
 fn tab_body_element(tab: &PaneTab, kinds: &HashMap<ItemId, DocKind>, slot: ViewSlot) -> Element {
     use crate::app::{CanvasMount, CanvasPane};
-    match tab.target {
+    let body = match tab.target {
         TabTarget::Item(id) => match kinds.get(&id) {
             Some(kind) => crate::faces::render(id, kind, Some(slot)),
             None => CanvasPane {
@@ -387,7 +387,17 @@ fn tab_body_element(tab: &PaneTab, kinds: &HashMap<ItemId, DocKind>, slot: ViewS
             mount: CanvasMount::Ephemeral(id),
         }
         .into_element(),
-    }
+    };
+    // Keyed by target so switching tabs in a pane mounts a fresh body:
+    // components diff by position, and a reused `CanvasPane` would keep
+    // the previous document's board and workers alive under the new tab.
+    rect()
+        .key(tab.target)
+        .width(Size::fill())
+        .height(Size::fill())
+        .content(Content::Flex)
+        .child(body)
+        .into_element()
 }
 
 fn tab_select_cb(
