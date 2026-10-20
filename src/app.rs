@@ -1603,6 +1603,7 @@ fn top_right_toolbar(board: &Arc<Mutex<Board>>, state: &ChromeState) -> impl Int
             let board = board.clone();
             let state = state.clone();
             crate::components::DocActionsMenu::new(item)
+                .workspace(workspace)
                 .on_show_links(move || {
                     let mut tab = state.sidebar_tab;
                     tab.set(SidebarTab::Links);

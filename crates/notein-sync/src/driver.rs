@@ -312,7 +312,9 @@ impl<R: Replica> SyncDriver<R> {
         self.shares.get(&share).map(|link| link.engine.status(doc))
     }
 
-    fn me(&self) -> Member {
+    /// This device as a share member.
+    #[must_use]
+    pub fn me(&self) -> Member {
         Member {
             device: self.profile.id(),
             public: *self.profile.key().public(),

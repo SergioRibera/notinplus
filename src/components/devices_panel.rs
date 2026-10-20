@@ -148,7 +148,7 @@ fn pairing_card(
         label()
             .color(TEXT_PRIMARY)
             .font_size(13.0)
-            .text("Pegar enlace de vinculación"),
+            .text("Pegar enlace de vinculación o invitación"),
     );
     card = card.child(
         rect()
@@ -158,12 +158,15 @@ fn pairing_card(
             .cross_align(Alignment::Center)
             .child(
                 FormInput::new(link)
-                    .placeholder("notein://pair?…")
+                    .placeholder("notein://pair?… o notein://join?…")
                     .width(Size::flex(1.0)),
             )
             .child(pill("Vincular", move |_| {
                 let text = link.read().clone();
-                if let Some(offer) = PairingOffer::parse_link(&text) {
+                if let Some(invite) = notein_sync::Invite::parse_link(&text) {
+                    sync::join(invite);
+                    link.set(String::new());
+                } else if let Some(offer) = PairingOffer::parse_link(&text) {
                     sync::pair_with(offer);
                     link.set(String::new());
                 }

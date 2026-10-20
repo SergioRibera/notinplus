@@ -5,7 +5,7 @@ use freya::icons::lucide;
 use freya::prelude::*;
 
 use crate::components::theme::{CARD_BG, PANEL_BG, TEXT_MUTED, TEXT_PRIMARY};
-use crate::library::ItemId;
+use crate::library::{ItemId, WorkspaceId};
 
 use super::modal::{Modal, ModalController};
 
@@ -16,6 +16,7 @@ const SHEET_WIDTH: f32 = 300.0;
 #[derive(Clone)]
 pub struct DocActionsMenu {
     item: Option<ItemId>,
+    workspace: Option<WorkspaceId>,
     on_show_links: Option<NoArgCallback<()>>,
 }
 
@@ -38,8 +39,17 @@ impl DocActionsMenu {
     pub const fn new(item: Option<ItemId>) -> Self {
         Self {
             item,
+            workspace: None,
             on_show_links: None,
         }
+    }
+
+    /// The mesa the document is open in, so sharing can offer the
+    /// whole mesa.
+    #[must_use]
+    pub const fn workspace(mut self, workspace: Option<WorkspaceId>) -> Self {
+        self.workspace = workspace;
+        self
     }
 
     /// Called when the user asks to see the document's links; the
@@ -63,6 +73,7 @@ impl DocActionsMenu {
 impl Component for DocActionsMenu {
     fn render(&self) -> impl IntoElement {
         let item = self.item;
+        let workspace = self.workspace;
         let show_links = self.on_show_links.clone();
         let mut column = rect()
             .vertical()
@@ -103,6 +114,16 @@ impl Component for DocActionsMenu {
             move || {
                 if let Some(id) = item {
                     crate::notebooks::link_related(id);
+                }
+            },
+        ));
+        column = column.child(row(
+            lucide::users(),
+            "Compartir…",
+            item.is_some(),
+            move || {
+                if let Some(id) = item {
+                    crate::components::ShareSheet::open(id, workspace);
                 }
             },
         ));

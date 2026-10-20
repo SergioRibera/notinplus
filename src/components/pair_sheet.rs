@@ -31,8 +31,9 @@ impl PairSheet {
     }
 }
 
-fn qr_svg(offer: &PairingOffer) -> Option<Bytes> {
-    let code = qrcode::QrCode::new(offer.to_link().as_bytes()).ok()?;
+/// SVG bytes of a QR code carrying `text`, styled for the dark theme.
+pub(crate) fn qr_bytes(text: &str) -> Option<Bytes> {
+    let code = qrcode::QrCode::new(text.as_bytes()).ok()?;
     let svg = code
         .render::<qrcode::render::svg::Color>()
         .min_dimensions(200, 200)
@@ -88,7 +89,7 @@ impl Component for PairSheet {
 
         match snapshot.offer {
             Some(offer) => {
-                if let Some(svg) = qr_svg(&offer) {
+                if let Some(svg) = qr_bytes(&offer.to_link()) {
                     card = card.child(
                         rect()
                             .width(Size::px(QR_SIZE))

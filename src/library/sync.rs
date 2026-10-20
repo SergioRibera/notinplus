@@ -217,8 +217,11 @@ impl Library {
             return Ok(false);
         }
         match record {
-            SyncRecord::Item(item) => {
+            SyncRecord::Item(mut item) => {
                 yard.revive(Buried::Item, item.id.0);
+                if item.folder != super::ROOT_FOLDER && self.index.folder(item.folder).is_none() {
+                    item.folder = super::ROOT_FOLDER;
+                }
                 upsert(&mut self.index.items, item, |i| i.id);
                 self.persist().await?;
             }

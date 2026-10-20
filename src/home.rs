@@ -661,6 +661,7 @@ fn grid(
             subtitle,
             notebooks,
             pending: crate::sync::doc_status(item.id) == notein_sync::DocStatus::Pending,
+            shared: crate::sync::share_of(item.id).is_some(),
             tint,
             bg_style: item.background,
             handle: handle.clone(),
@@ -692,6 +693,8 @@ struct ItemCard {
     notebooks: usize,
     /// Whether another device holds edits this one has not seen yet.
     pending: bool,
+    /// Whether the document is shared with other people.
+    shared: bool,
     tint: Rgba,
     bg_style: BackgroundStyle,
     handle: LibHandle,
@@ -803,6 +806,7 @@ impl Component for ItemCard {
                 }),
                 notebook: Box::new(move || crate::notebooks::open_notebook(id)),
                 link_with: Box::new(move || crate::notebooks::link_related(id)),
+                share: Box::new(move || crate::components::ShareSheet::open(id, None)),
                 rename: Box::new(start_rename),
                 edit: Box::new(on_edit_item),
                 export: Box::new(on_export),
@@ -830,6 +834,7 @@ impl Component for ItemCard {
             subtitle,
             self.notebooks,
             self.pending,
+            self.shared,
             tint,
             false,
             is_editing,
@@ -998,6 +1003,7 @@ impl Component for FolderCard {
             subtitle,
             0,
             false,
+            false,
             tint,
             true,
             is_editing,
@@ -1045,6 +1051,7 @@ fn card_body_view<Open, Commit>(
     subtitle: String,
     notebooks: usize,
     pending: bool,
+    shared: bool,
     tint: Rgba,
     is_folder: bool,
     is_editing: bool,
@@ -1078,7 +1085,8 @@ where
             .height(Size::percent(80.0)),
         )
         .maybe_child((notebooks > 0).then(|| notebook_badge(notebooks)))
-        .maybe_child(pending.then(sync_badge));
+        .maybe_child(shared.then(|| shared_badge(6.0)))
+        .maybe_child(pending.then(|| sync_badge(if shared { 32.0 } else { 6.0 })));
 
     let mut column = rect()
         .vertical()
@@ -1362,9 +1370,9 @@ fn notebook_badge(count: usize) -> Rect {
 
 /// Small mark for a document whose latest edits live on another
 /// device and have not arrived yet.
-fn sync_badge() -> Rect {
+fn sync_badge(left: f32) -> Rect {
     rect()
-        .position(Position::new_absolute().top(6.0).left(6.0))
+        .position(Position::new_absolute().top(6.0).left(left))
         .padding(4.0)
         .with_corner_radius(10.0)
         .background(Color::from_rgb(40, 40, 48))
@@ -1376,12 +1384,28 @@ fn sync_badge() -> Rect {
         )
 }
 
+/// Mark for a document shared with other people.
+fn shared_badge(left: f32) -> Rect {
+    rect()
+        .position(Position::new_absolute().top(6.0).left(left))
+        .padding(4.0)
+        .with_corner_radius(10.0)
+        .background(Color::from_rgb(40, 40, 48))
+        .child(
+            SvgViewer::new(icons::users())
+                .color(Color::from_rgb(140, 200, 255))
+                .width(Size::px(12.0))
+                .height(Size::px(12.0)),
+        )
+}
+
 /// Every action the long-press menu of a document card offers.
 struct ItemMenuActions {
     open_beside: Box<dyn FnMut()>,
     open_in_new_space: Box<dyn FnMut()>,
     notebook: Box<dyn FnMut()>,
     link_with: Box<dyn FnMut()>,
+    share: Box<dyn FnMut()>,
     rename: Box<dyn FnMut()>,
     edit: Box<dyn FnMut()>,
     export: Box<dyn FnMut()>,
@@ -1394,6 +1418,7 @@ fn build_item_menu(actions: ItemMenuActions) -> Menu {
         mut open_in_new_space,
         mut notebook,
         mut link_with,
+        mut share,
         mut rename,
         mut edit,
         mut export,
@@ -1419,6 +1444,11 @@ fn build_item_menu(actions: ItemMenuActions) -> Menu {
             MenuButton::new()
                 .on_press(move |_: Event<PressEventData>| link_with())
                 .child("Vincular con…"),
+        )
+        .child(
+            MenuButton::new()
+                .on_press(move |_: Event<PressEventData>| share())
+                .child("Compartir…"),
         )
         .child(
             MenuButton::new()
