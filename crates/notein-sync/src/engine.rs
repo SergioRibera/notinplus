@@ -72,12 +72,30 @@ pub enum DocStatus {
     Pending,
 }
 
+/// What applying one message did.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct Handled {
+    /// Messages to send back to the peer.
+    pub replies: Vec<Message>,
+    /// Documents that received new content.
+    pub imported: Vec<DocId>,
+    /// Blobs that were replaced by a newer copy.
+    pub merged: Vec<BlobKey>,
+}
+
+/// The last inventory a peer announced.
+#[derive(Debug, Default)]
+struct Heard {
+    docs: HashMap<DocId, Version>,
+    blobs: HashMap<BlobKey, u64>,
+}
+
 /// One side of an exchange over one [`Scope`].
 #[derive(Debug)]
 pub struct SyncEngine<R> {
     replica: R,
     scope: Scope,
-    heard: HashMap<DeviceId, HashMap<DocId, Version>>,
+    heard: HashMap<DeviceId, Heard>,
 }
 
 impl<R: Replica> SyncEngine<R> {
@@ -131,31 +149,37 @@ impl<R: Replica> SyncEngine<R> {
         Message::Inventory { docs, blobs }
     }
 
-    /// Apply a message from `peer`; returns what to send back.
+    /// Apply a message from `peer`.
     pub fn handle(
         &mut self,
         peer: DeviceId,
         message: Message,
-    ) -> Result<Vec<Message>, SyncError<R::Error>> {
+    ) -> Result<Handled, SyncError<R::Error>> {
+        let mut handled = Handled::default();
         match message {
-            Message::Inventory { docs, blobs } => self.answer_inventory(peer, docs, &blobs),
+            Message::Inventory { docs, blobs } => {
+                handled.replies = self.answer_inventory(peer, docs, &blobs)?;
+            }
             Message::DocUpdates { doc, bytes } | Message::DocSnapshot { doc, bytes } => {
                 if self.scope.covers_doc(doc) {
                     self.replica
                         .doc_import(doc, &bytes)
                         .map_err(SyncError::Replica)?;
+                    handled.imported.push(doc);
                 }
-                Ok(Vec::new())
             }
             Message::Blobs(blobs) => {
                 for blob in blobs {
-                    if self.scope.covers_blob(blob.head.key()) {
-                        self.replica.blob_merge(blob).map_err(SyncError::Replica)?;
+                    let key = blob.head.key();
+                    if self.scope.covers_blob(key)
+                        && self.replica.blob_merge(blob).map_err(SyncError::Replica)?
+                    {
+                        handled.merged.push(key);
                     }
                 }
-                Ok(Vec::new())
             }
         }
+        Ok(handled)
     }
 
     fn answer_inventory(
@@ -164,8 +188,28 @@ impl<R: Replica> SyncEngine<R> {
         remote_docs: Vec<(DocId, Version)>,
         remote_blobs: &[BlobHead],
     ) -> Result<Vec<Message>, SyncError<R::Error>> {
+        self.heard.insert(
+            peer,
+            Heard {
+                docs: remote_docs.into_iter().collect(),
+                blobs: remote_blobs
+                    .iter()
+                    .map(|h| (h.key(), h.updated_at))
+                    .collect(),
+            },
+        );
+        self.push_for(peer)
+    }
+
+    /// Everything `peer` lacks according to its last announcement.
+    /// Empty when the peer never announced. Send after local edits so
+    /// they land without waiting for the peer's next round.
+    pub fn push_for(&self, peer: DeviceId) -> Result<Vec<Message>, SyncError<R::Error>> {
+        let Some(heard) = self.heard.get(&peer) else {
+            return Ok(Vec::new());
+        };
         let mut out = Vec::new();
-        let remote: HashMap<DocId, Version> = remote_docs.into_iter().collect();
+        let remote = &heard.docs;
         for (doc, local) in self.replica.docs() {
             if !self.scope.covers_doc(doc) {
                 continue;
@@ -187,10 +231,7 @@ impl<R: Replica> SyncEngine<R> {
                 }
             }
         }
-        let theirs: HashMap<BlobKey, u64> = remote_blobs
-            .iter()
-            .map(|h| (h.key(), h.updated_at))
-            .collect();
+        let theirs = &heard.blobs;
         let newer: Vec<BlobKey> = self
             .replica
             .blob_heads()
@@ -205,7 +246,6 @@ impl<R: Replica> SyncEngine<R> {
                 out.push(Message::Blobs(blobs));
             }
         }
-        self.heard.insert(peer, remote);
         Ok(out)
     }
 
@@ -216,8 +256,8 @@ impl<R: Replica> SyncEngine<R> {
             return DocStatus::Unknown;
         };
         let mut heard_any = false;
-        for versions in self.heard.values() {
-            let Some(theirs) = versions.get(&doc) else {
+        for heard in self.heard.values() {
+            let Some(theirs) = heard.docs.get(&doc) else {
                 continue;
             };
             heard_any = true;
@@ -235,116 +275,12 @@ impl<R: Replica> SyncEngine<R> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet, HashSet};
+    use std::collections::HashSet;
     use std::convert::Infallible;
 
     use super::*;
     use crate::replica::BlobKind;
-
-    /// Toy mergeable document: a set of `(author, counter)` marks.
-    /// Version = the sorted set; updates = marks the other side lacks.
-    #[derive(Default, Debug)]
-    struct MemReplica {
-        docs: BTreeMap<DocId, BTreeSet<(u64, u64)>>,
-        blobs: BTreeMap<BlobKey, Blob>,
-    }
-
-    fn encode<T: bincode::Encode>(value: T) -> Vec<u8> {
-        bincode::encode_to_vec(value, bincode::config::standard()).unwrap()
-    }
-
-    fn decode<T: bincode::Decode<()>>(bytes: &[u8]) -> T {
-        bincode::decode_from_slice(bytes, bincode::config::standard())
-            .unwrap()
-            .0
-    }
-
-    impl MemReplica {
-        fn mark(&mut self, doc: DocId, author: u64, counter: u64) {
-            self.docs.entry(doc).or_default().insert((author, counter));
-        }
-
-        fn put_blob(&mut self, kind: BlobKind, id: u8, updated_at: u64, body: &str) {
-            let head = BlobHead {
-                kind,
-                id: [id; 16],
-                updated_at,
-            };
-            self.blobs.insert(
-                head.key(),
-                Blob {
-                    head,
-                    bytes: body.as_bytes().to_vec(),
-                },
-            );
-        }
-
-        fn blob_text(&self, kind: BlobKind, id: u8) -> Option<String> {
-            self.blobs
-                .get(&BlobKey { kind, id: [id; 16] })
-                .map(|b| String::from_utf8(b.bytes.clone()).unwrap())
-        }
-    }
-
-    impl Replica for MemReplica {
-        type Error = Infallible;
-
-        fn docs(&self) -> Vec<(DocId, Version)> {
-            self.docs
-                .keys()
-                .map(|doc| (*doc, self.doc_version(*doc).unwrap()))
-                .collect()
-        }
-
-        fn doc_version(&self, doc: DocId) -> Option<Version> {
-            self.docs
-                .get(&doc)
-                .map(|marks| Version(encode(marks.iter().copied().collect::<Vec<_>>())))
-        }
-
-        fn doc_updates_since(&self, doc: DocId, since: &Version) -> Result<Vec<u8>, Infallible> {
-            let seen: BTreeSet<(u64, u64)> =
-                decode::<Vec<(u64, u64)>>(&since.0).into_iter().collect();
-            let missing: Vec<(u64, u64)> = self.docs[&doc].difference(&seen).copied().collect();
-            Ok(if missing.is_empty() {
-                Vec::new()
-            } else {
-                encode(missing)
-            })
-        }
-
-        fn doc_snapshot(&self, doc: DocId) -> Result<Vec<u8>, Infallible> {
-            Ok(encode(self.docs[&doc].iter().copied().collect::<Vec<_>>()))
-        }
-
-        fn doc_import(&mut self, doc: DocId, bytes: &[u8]) -> Result<(), Infallible> {
-            let marks: Vec<(u64, u64)> = decode(bytes);
-            self.docs.entry(doc).or_default().extend(marks);
-            Ok(())
-        }
-
-        fn blob_heads(&self) -> Vec<BlobHead> {
-            self.blobs.values().map(|b| b.head).collect()
-        }
-
-        fn blobs(&self, keys: &[BlobKey]) -> Vec<Blob> {
-            keys.iter()
-                .filter_map(|k| self.blobs.get(k).cloned())
-                .collect()
-        }
-
-        fn blob_merge(&mut self, blob: Blob) -> Result<bool, Infallible> {
-            let key = blob.head.key();
-            let newer = self
-                .blobs
-                .get(&key)
-                .is_none_or(|held| held.head.updated_at < blob.head.updated_at);
-            if newer {
-                self.blobs.insert(key, blob);
-            }
-            Ok(newer)
-        }
-    }
+    use crate::testing::{MemReplica, encode};
 
     const A: DeviceId = DeviceId([1; 32]);
     const B: DeviceId = DeviceId([2; 32]);
@@ -358,11 +294,11 @@ mod tests {
         let wire = |m: &Message| {
             Message::from_bytes::<Infallible>(&m.to_bytes::<Infallible>().unwrap()).unwrap()
         };
-        for reply in b.handle(A, wire(&from_a)).unwrap() {
-            assert!(a.handle(B, wire(&reply)).unwrap().is_empty());
+        for reply in b.handle(A, wire(&from_a)).unwrap().replies {
+            assert!(a.handle(B, wire(&reply)).unwrap().replies.is_empty());
         }
-        for reply in a.handle(B, wire(&from_b)).unwrap() {
-            assert!(b.handle(A, wire(&reply)).unwrap().is_empty());
+        for reply in a.handle(B, wire(&from_b)).unwrap().replies {
+            assert!(b.handle(A, wire(&reply)).unwrap().replies.is_empty());
         }
     }
 
@@ -396,8 +332,8 @@ mod tests {
         let mut b = SyncEngine::new(MemReplica::default(), Scope::All);
         a.replica_mut().mark(D1, 1, 1);
         b.replica_mut().mark(D1, 1, 1);
-        let replies = b.handle(A, a.inventory()).unwrap();
-        assert!(replies.is_empty());
+        let handled = b.handle(A, a.inventory()).unwrap();
+        assert_eq!(handled, Handled::default());
     }
 
     #[test]
@@ -408,8 +344,8 @@ mod tests {
         // B answers A's inventory but the reply never arrives.
         let _dropped = b.handle(A, a.inventory()).unwrap();
         // A answers B's inventory; B has nothing yet so it gets a snapshot.
-        for reply in a.handle(B, b.inventory()).unwrap() {
-            b.handle(A, reply).unwrap();
+        for reply in a.handle(B, b.inventory()).unwrap().replies {
+            assert_eq!(b.handle(A, reply).unwrap().imported, vec![D1]);
         }
         assert_eq!(marks(&b, D1), vec![(1, 1)]);
         round(&mut a, &mut b);
@@ -478,7 +414,7 @@ mod tests {
             blobs: HashSet::new(),
         };
         let mut guest = SyncEngine::new(MemReplica::default(), scope);
-        let replies = guest
+        let handled = guest
             .handle(
                 A,
                 Message::DocSnapshot {
@@ -487,7 +423,7 @@ mod tests {
                 },
             )
             .unwrap();
-        assert!(replies.is_empty());
+        assert_eq!(handled, Handled::default());
         assert!(!guest.replica().docs.contains_key(&D2));
     }
 
