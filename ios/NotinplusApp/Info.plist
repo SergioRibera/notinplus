@@ -12,6 +12,8 @@
     <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
     <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
     <key>LSRequiresIPhoneOS</key><true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Notein busca tus otros dispositivos y a las personas con quienes compartís en esta red para sincronizar sin servidor.</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>

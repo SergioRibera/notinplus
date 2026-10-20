@@ -63,6 +63,13 @@ targets:
       - name: cargo build notinplus (staticlib per arch)
         path: build-rust.sh
         runOnlyWhenInstalling: false
+    # Receiving the UDP broadcast that devices use to find each other on
+    # the LAN needs this entitlement on iOS 14+, and Apple grants it per
+    # app on request (developer.apple.com/contact/request/networking-multicast).
+    entitlements:
+      path: NotinplusApp/NotinplusApp.entitlements
+      properties:
+        com.apple.developer.networking.multicast: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: rs.sergioribera.notinplus

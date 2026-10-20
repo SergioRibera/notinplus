@@ -33,6 +33,8 @@ use crate::plugins;
 
 const MODAL_WIDTH: f32 = 820.0;
 const MODAL_HEIGHT: f32 = 580.0;
+/// Space kept between the modal and the window edges when clamping.
+const VIEWPORT_MARGIN: f32 = 16.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Section {
@@ -66,12 +68,7 @@ pub struct SettingsModal;
 
 impl SettingsModal {
     pub fn open() {
-        ModalController::get().open(
-            Modal::new(Self)
-                .center()
-                .width(MODAL_WIDTH)
-                .dismiss_on_backdrop(true),
-        );
+        ModalController::get().open(Modal::new(Self).center().dismiss_on_backdrop(true));
     }
 }
 
@@ -86,10 +83,22 @@ impl Component for SettingsModal {
         let _ = *tick.read();
         let registry = plugins::registry();
 
+        // Never wider or taller than the window: phones and small
+        // laptops would otherwise clip the right and bottom edges.
+        let viewport = try_consume_context::<notein_ui_kit::ViewportArea>()
+            .map(notein_ui_kit::ViewportArea::get)
+            .filter(|area| area.width() > 0.0 && area.height() > 0.0);
+        let (max_w, max_h) = viewport.map_or((MODAL_WIDTH, MODAL_HEIGHT), |area| {
+            (
+                area.width() - 2.0 * VIEWPORT_MARGIN,
+                area.height() - 2.0 * VIEWPORT_MARGIN,
+            )
+        });
         rect()
             .horizontal()
-            .width(Size::px(MODAL_WIDTH))
-            .height(Size::px(MODAL_HEIGHT))
+            .content(Content::Flex)
+            .width(Size::px(MODAL_WIDTH.min(max_w).max(320.0)))
+            .height(Size::px(MODAL_HEIGHT.min(max_h).max(320.0)))
             .background(PANEL_BG)
             .overflow(Overflow::Clip)
             .with_corner_radius(18.0)
@@ -168,7 +177,7 @@ fn content(
     };
     rect()
         .vertical()
-        .width(Size::fill())
+        .width(Size::flex(1.0))
         .height(Size::fill())
         .padding((24.0, 28.0))
         .child(header_row(current))
@@ -232,7 +241,7 @@ impl Component for GeneralSection {
         let open = use_state(|| Option::<usize>::None);
         let slots = crate::plugins::fab_shortcut_slots();
         rect()
-            .vertical()
+            .vertical().width(Size::fill())
             .spacing(12.0)
             .child(settings_row(
                 "Modo de entrada",
@@ -507,7 +516,11 @@ fn plugins_section(tick: State<u64>, registry: Arc<Mutex<PluginRegistry>>) -> im
         (schemas, disabled, origins)
     };
 
-    let mut col = rect().vertical().spacing(14.0).child(install_row());
+    let mut col = rect()
+        .vertical()
+        .width(Size::fill())
+        .spacing(14.0)
+        .child(install_row());
 
     if schemas.is_empty() {
         col = col.child(empty_state());
@@ -535,7 +548,7 @@ fn install_row() -> impl IntoElement {
         .child(
             rect()
                 .vertical()
-                .content(Content::Flex)
+                .width(Size::flex(1.0))
                 .child(
                     label()
                         .color(TEXT_PRIMARY)
@@ -668,6 +681,7 @@ fn plugin_card(
                 .child({
                     let mut meta = rect()
                         .vertical()
+                        .width(Size::flex(1.0))
                         .child(
                             label()
                                 .color(TEXT_PRIMARY)
@@ -686,7 +700,6 @@ fn plugin_card(
                     }
                     meta
                 })
-                .child(flex_spacer())
                 .child(toggle_switch(enabled, tick, toggle_cb)),
         );
 
@@ -753,6 +766,7 @@ fn field_row(
                 .child(
                     rect()
                         .vertical()
+                        .width(Size::flex(1.0))
                         .child(
                             label()
                                 .color(TEXT_PRIMARY)
@@ -769,7 +783,6 @@ fn field_row(
                                 .into_element()
                         }),
                 )
-                .child(flex_spacer())
                 .child(control),
         )
         .child(divider())
@@ -1229,6 +1242,7 @@ fn settings_row(
         .child(
             rect()
                 .vertical()
+                .width(Size::flex(1.0))
                 .child(label().color(TEXT_PRIMARY).font_size(14.0).text(title))
                 .child(
                     label()
@@ -1237,7 +1251,6 @@ fn settings_row(
                         .text(subtitle.into()),
                 ),
         )
-        .child(flex_spacer())
         .child(control)
 }
 
