@@ -1535,6 +1535,7 @@ fn permitted(share: &Share, from: DeviceId, message: Message) -> Option<Message>
             let kept: Vec<_> = blobs
                 .into_iter()
                 .filter(|blob| match blob.head.kind {
+                    BlobKind::Item if blob.head.gone => share.can_delete(from),
                     BlobKind::Item => share.can_edit(from),
                     BlobKind::Link => share.can_link(from),
                     BlobKind::Folder | BlobKind::Tag | BlobKind::Workspace => false,
@@ -1570,7 +1571,7 @@ mod tests {
 
     use super::*;
     use crate::replica::BlobKind;
-    use crate::share::{ShareMode, SharePolicy};
+    use crate::share::{ShareMode, SharePolicy, Who};
     use crate::testing::MemReplica;
 
     const D1: DocId = DocId([1; 16]);
@@ -1918,5 +1919,58 @@ mod tests {
         deliver(actions, &mut owner, &mut guest);
         assert!(!guest.share(id).unwrap().can_edit(guest.profile.id()));
         assert_eq!(guest.share(id).unwrap().key, owner.share(id).unwrap().key);
+    }
+
+    /// A guest that dropped its copy announces a tombstone. Relaxing
+    /// "read only" lets its edits through but must not let that
+    /// tombstone delete the owner's document: deletions follow
+    /// `delete_docs`, which stays owner-only by default.
+    #[test]
+    fn guest_tombstones_follow_the_delete_policy_not_the_edit_policy() {
+        let mut owner = driver("Sergio");
+        let mut guest = driver("Ana");
+        let mut share = shared_doc(&mut owner);
+        share.policy = SharePolicy::read_only();
+        let id = share.id;
+        let invite = share.invite();
+        owner.create_share(share);
+        connect_both(&mut owner, &mut guest);
+        deliver(guest.join(invite), &mut guest, &mut owner);
+        assert_eq!(
+            owner.with_replica(|r| r.blob_text(BlobKind::Item, 1)),
+            Some("doc-1".to_owned())
+        );
+
+        guest.with_replica(|r| r.put_gone(BlobKind::Item, 1, 9));
+        deliver(guest.announce().unwrap(), &mut guest, &mut owner);
+        assert_eq!(
+            owner.with_replica(|r| r.blob_text(BlobKind::Item, 1)),
+            Some("doc-1".to_owned())
+        );
+
+        let actions = owner.update_share(id, |s| s.policy = SharePolicy::default());
+        deliver(actions, &mut owner, &mut guest);
+        deliver(guest.announce().unwrap(), &mut guest, &mut owner);
+        deliver(owner.announce().unwrap(), &mut owner, &mut guest);
+        assert_eq!(
+            owner.with_replica(|r| r.blob_text(BlobKind::Item, 1)),
+            Some("doc-1".to_owned()),
+            "an editable share still keeps deletions owner-only"
+        );
+
+        let actions = owner.update_share(id, |s| s.policy.delete_docs = Who::Everyone);
+        deliver(actions, &mut owner, &mut guest);
+        deliver(guest.announce().unwrap(), &mut guest, &mut owner);
+        assert!(
+            owner.with_replica(|r| r
+                .blobs
+                .get(&BlobKey {
+                    kind: BlobKind::Item,
+                    id: [1; 16]
+                })
+                .map(|b| b.head.gone))
+                == Some(true),
+            "once members may delete, the tombstone lands"
+        );
     }
 }

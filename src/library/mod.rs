@@ -537,6 +537,23 @@ impl Library {
         self.persist().await
     }
 
+    /// Drop this library's copy of `id` without recording a deletion:
+    /// the document still exists elsewhere, this device just stops
+    /// holding it. Used when a shared session ends for a guest.
+    ///
+    /// # Errors
+    /// [`LibraryError::NotFound`].
+    pub async fn forget_item(&mut self, id: ItemId) -> Result<()> {
+        let before = self.index.items.len();
+        self.index.items.retain(|i| i.id != id);
+        if self.index.items.len() == before {
+            return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
+        }
+        bodies::purge(id);
+        refs::forget(id);
+        self.persist().await
+    }
+
     // ---------- Tag mutations ------------------------------------------
 
     /// # Errors

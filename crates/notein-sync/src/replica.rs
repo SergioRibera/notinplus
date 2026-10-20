@@ -45,6 +45,10 @@ pub struct BlobHead {
     pub id: [u8; 16],
     /// Unix milliseconds of the last write.
     pub updated_at: u64,
+    /// The record is a deletion marker, not content. Carried in the
+    /// head so a peer can refuse deletions by policy without opening
+    /// the blob.
+    pub gone: bool,
 }
 
 impl BlobHead {

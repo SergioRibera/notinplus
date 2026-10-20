@@ -41,12 +41,31 @@ impl MemReplica {
             kind,
             id: [id; 16],
             updated_at,
+            gone: false,
         };
         self.blobs.insert(
             head.key(),
             Blob {
                 head,
                 bytes: body.as_bytes().to_vec(),
+            },
+        );
+    }
+
+    /// A deletion marker for a blob, as a device that dropped the record
+    /// would announce it.
+    pub(crate) fn put_gone(&mut self, kind: BlobKind, id: u8, at: u64) {
+        let head = BlobHead {
+            kind,
+            id: [id; 16],
+            updated_at: at,
+            gone: true,
+        };
+        self.blobs.insert(
+            head.key(),
+            Blob {
+                head,
+                bytes: Vec::new(),
             },
         );
     }

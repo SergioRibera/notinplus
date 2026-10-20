@@ -59,6 +59,16 @@ fn head(kind: BlobKind, id: [u8; 16], updated_at: u64) -> BlobHead {
         kind,
         id,
         updated_at,
+        gone: false,
+    }
+}
+
+fn gone(kind: BlobKind, id: [u8; 16], at: u64) -> BlobHead {
+    BlobHead {
+        kind,
+        id,
+        updated_at: at,
+        gone: true,
     }
 }
 
@@ -105,8 +115,8 @@ impl Library {
                 .find(|h| h.kind == kind && h.id == stone.id)
             {
                 Some(live) if live.updated_at >= stone.at => {}
-                Some(live) => live.updated_at = stone.at,
-                None => heads.push(head(kind, stone.id, stone.at)),
+                Some(live) => *live = gone(kind, stone.id, stone.at),
+                None => heads.push(gone(kind, stone.id, stone.at)),
             }
         }
         heads

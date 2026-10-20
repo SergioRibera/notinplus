@@ -590,7 +590,7 @@ fn forget_session_docs(docs: &[ItemId]) {
         return;
     };
     for item in docs {
-        if let Err(err) = pollster::block_on(lib.delete_item(*item)) {
+        if let Err(err) = pollster::block_on(lib.forget_item(*item)) {
             log::warn!("sync: drop session doc {item}: {err}");
         }
     }
