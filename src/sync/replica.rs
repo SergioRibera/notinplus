@@ -14,7 +14,7 @@ use crate::canvas::lock;
 use crate::doc::Doc;
 use crate::library::graveyard::Graveyard;
 use crate::library::sync::SyncRecord;
-use crate::library::{ItemId, Library, bodies, refs};
+use crate::library::{DocKind, ItemId, Library, bodies, refs};
 use crate::sync::open_docs;
 
 /// A step against the library failed.
@@ -81,6 +81,12 @@ fn stamp(item: ItemId) -> Option<Stamp> {
     })
 }
 
+/// Whether items of `kind` carry a document body of their own, as
+/// opposed to a plugin snapshot only.
+fn owns_doc(kind: &DocKind) -> bool {
+    kind.is(crate::builtin::stroke_canvas::KIND_ID) || kind.is(notein_notes::KIND_ID)
+}
+
 /// Library-backed [`Replica`].
 #[derive(Default)]
 pub struct LibraryReplica {
@@ -108,8 +114,14 @@ impl LibraryReplica {
         pollster::block_on(Library::open(&runtime)).map_err(ReplicaError::Library)
     }
 
-    fn version_of(&mut self, item: ItemId) -> Option<Version> {
-        let current = stamp(item)?;
+    fn version_of(&mut self, item: ItemId, lib: &Library) -> Option<Version> {
+        let Some(current) = stamp(item) else {
+            // Created but never saved: the document exists and is empty.
+            // Announcing it at the version every empty document shares
+            // lets a peer hold it before the first stroke lands.
+            let kind = &lib.index().item(item)?.kind;
+            return owns_doc(kind).then(|| Version(live_doc(item).unwrap_or_default().version()));
+        };
         if let Some((cached, version)) = self.versions.get(&item)
             && *cached == current
         {
@@ -157,7 +169,7 @@ impl Replica for LibraryReplica {
         };
         let mut out = Vec::new();
         for item in &lib.index().items {
-            if let Some(version) = scratch.version_of(item.id) {
+            if let Some(version) = scratch.version_of(item.id, &lib) {
                 out.push((DocId(item.id.0), version));
             }
         }
@@ -169,7 +181,10 @@ impl Replica for LibraryReplica {
             versions: self.versions.clone(),
             known: Vec::new(),
         };
-        scratch.version_of(ItemId(doc.0))
+        let Ok(lib) = self.open() else {
+            return None;
+        };
+        scratch.version_of(ItemId(doc.0), &lib)
     }
 
     fn doc_updates_since(&self, doc: DocId, since: &Version) -> Result<Vec<u8>, ReplicaError> {
@@ -185,7 +200,10 @@ impl Replica for LibraryReplica {
     fn doc_snapshot(&self, doc: DocId) -> Result<Vec<u8>, ReplicaError> {
         match live_doc(ItemId(doc.0)) {
             Some(doc) => Ok(doc.snapshot_bytes()?),
-            None => Ok(bodies::read_doc_bytes(ItemId(doc.0)).unwrap_or_default()),
+            None => match bodies::read_doc_bytes(ItemId(doc.0)) {
+                Some(bytes) => Ok(bytes),
+                None => Ok(Doc::default().snapshot_bytes()?),
+            },
         }
     }
 
