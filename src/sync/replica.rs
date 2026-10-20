@@ -15,6 +15,7 @@ use crate::doc::Doc;
 use crate::library::graveyard::Graveyard;
 use crate::library::sync::SyncRecord;
 use crate::library::{ItemId, Library, bodies, refs};
+use crate::sync::open_docs;
 
 /// A step against the library failed.
 #[derive(Debug)]
@@ -124,9 +125,12 @@ impl LibraryReplica {
     }
 }
 
-/// The document as an open board holds it, when the item is on screen.
+/// The document as an open board or face holds it, when the item is
+/// on screen.
 fn live_doc(item: ItemId) -> Option<Doc> {
-    active_boards::get_item(item).map(|board| lock(&board).doc().clone())
+    active_boards::get_item(item)
+        .map(|board| lock(&board).doc().clone())
+        .or_else(|| open_docs::get(item).map(|doc| open_docs::lock(&doc).clone()))
 }
 
 fn load_doc(item: ItemId) -> Result<Option<Doc>, ReplicaError> {
@@ -188,7 +192,15 @@ impl Replica for LibraryReplica {
     fn doc_import(&mut self, doc: DocId, bytes: &[u8]) -> Result<(), ReplicaError> {
         let item = ItemId(doc.0);
         let boards = active_boards::for_item(item);
-        let merged = if boards.is_empty() {
+        let open = open_docs::get(item);
+        let merged = if let Some(open) = open.filter(|_| boards.is_empty()) {
+            let mut doc = open_docs::lock(&open);
+            doc.import_updates(bytes)?;
+            let merged = doc.clone();
+            drop(doc);
+            open_docs::notify(item);
+            merged
+        } else if boards.is_empty() {
             let mut merged = match bodies::read_doc_bytes(item) {
                 Some(existing) => Doc::from_snapshot(&existing)?,
                 None => Doc::from_snapshot(bytes)?,

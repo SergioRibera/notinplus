@@ -21,6 +21,7 @@ use notein_sync::{
 use crate::library::{ItemId, Library, bodies};
 
 pub mod live;
+pub mod open_docs;
 pub mod replica;
 
 use live::{LiveEvent, LiveMessage};

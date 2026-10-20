@@ -488,6 +488,34 @@ impl EditorController {
         });
     }
 
+    /// Replace the document with parsed markdown that arrived from
+    /// elsewhere while this editor may be in use: history goes, the
+    /// caret stays on the same text in reading order, clamped to what
+    /// is there now.
+    pub fn merge_markdown(&self, markdown: &str) {
+        self.update(|state| {
+            let kept = state.selection.map(|selection| {
+                let index = state
+                    .document
+                    .targets()
+                    .iter()
+                    .position(|target| *target == selection.target);
+                (index, selection.head)
+            });
+            state.document = Document::parse_with(markdown, &state.parse);
+            state.history = History::default();
+            state.pending.clear();
+            state.selection = None;
+            if let Some((Some(index), offset)) = kept {
+                let targets = state.document.targets();
+                if let Some(target) = targets.get(index).or(targets.last()).copied() {
+                    state.request_caret(clamp(&state.document, Selection::caret(target, offset)));
+                }
+            }
+            state.changed();
+        });
+    }
+
     /// Replace the document, keeping it undoable.
     pub fn set_document(&self, document: Document) {
         self.update(|state| {

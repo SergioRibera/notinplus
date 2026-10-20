@@ -216,6 +216,26 @@ impl Doc {
         Ok(())
     }
 
+    /// The markdown body, for documents that are text. Empty for a
+    /// drawing.
+    #[must_use]
+    pub fn body(&self) -> String {
+        self.store.body()
+    }
+
+    /// Replace the markdown body; returns whether it changed. The store
+    /// records the smallest edit, so two people typing merge per
+    /// character.
+    pub fn set_body(&mut self, text: &str) -> bool {
+        match self.store.set_body(text) {
+            Ok(changed) => changed,
+            Err(err) => {
+                log::error!("doc body update: {err}");
+                false
+            }
+        }
+    }
+
     /// Record `op` in the store and mirror it into the materialised
     /// state. A store failure is logged and the materialised state
     /// still moves, so the user never loses the edit on screen.
@@ -1068,5 +1088,24 @@ mod tests {
             d.emit(op);
         }
         assert!(d.bookmark(bid).unwrap().stuck_to.is_none());
+    }
+    /// Two people typing in different places of the same note both keep
+    /// their words after the exchange.
+    #[test]
+    fn body_edits_from_two_replicas_merge_per_character() {
+        let mut a = Doc::default();
+        assert!(a.set_body("hola mundo"));
+        let mut b = Doc::from_snapshot(&a.snapshot_bytes().unwrap()).unwrap();
+        assert_eq!(b.body(), "hola mundo");
+
+        assert!(a.set_body("hola querido mundo"));
+        assert!(b.set_body("hola mundo cruel"));
+        let from_a = a.updates_since(&b.version()).unwrap();
+        let from_b = b.updates_since(&a.version()).unwrap();
+        a.import_updates(&from_b).unwrap();
+        b.import_updates(&from_a).unwrap();
+        assert_eq!(a.body(), "hola querido mundo cruel");
+        assert_eq!(b.body(), a.body());
+        assert!(!a.set_body(&a.body()), "same text is not an edit");
     }
 }

@@ -1,6 +1,8 @@
 //! Text note page bound to a library item.
 //!
-//! The note body is the item's plugin snapshot: raw markdown, edited with
+//! The note body lives in the item's document as a Loro text, so two
+//! people typing merge per character; the plugin snapshot keeps a plain
+//! markdown copy for the index and older builds. Edited with
 //! the same editor notein uses for bookmarks (chips, `/ref` references,
 //! the user's markdown syntax setting) plus block reordering. The page
 //! saves the body as it changes, keeps the notes index fresh so other
@@ -10,7 +12,8 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use freya::prelude::*;
 use freya::router::RouterContext;
@@ -20,8 +23,14 @@ use notein_notes::ui::{self, Action, TopbarActions};
 use notein_notes::{KIND_ID, NoteAnchor};
 
 use crate::components::note_editor::{note_theme, notein_editor, use_note_keyboard};
+use crate::doc::Doc;
 use crate::hooks::{provide_safe_area_override, use_safe_area_insets};
 use crate::library::ItemId;
+use crate::sync::live::{LiveEvent, LiveMessage};
+use crate::sync::open_docs;
+
+/// A remote author is shown as typing this long after their last key.
+const TYPING_TTL: Duration = Duration::from_millis(2500);
 
 /// Width of the reading column.
 const COLUMN_WIDTH: f32 = 760.0;
@@ -47,7 +56,12 @@ pub struct NotesFace {
 impl Component for NotesFace {
     fn render(&self) -> impl IntoElement {
         let item = self.item;
-        let markdown = use_state(move || read_body(item));
+        let doc = use_hook(move || open_note_doc(item));
+        let markdown = use_state({
+            let doc = Arc::clone(&doc);
+            move || open_docs::lock(&doc).body()
+        });
+        let typing = use_state(Vec::<(String, Instant)>::new);
         let title = use_state(String::new);
         let controller = use_editor_controller();
         let scroll = use_scroll_controller(ScrollConfig::default);
@@ -58,10 +72,26 @@ impl Component for NotesFace {
         provide_safe_area_override(istmo::plugins::EdgeInsets::default());
         let (mut viewport, content_top) = use_follow_typing(controller, scroll);
         use_hook(move || load_title(item, title));
-        use_side_effect(move || save(item, &markdown.read(), &title.read()));
+        use_side_effect({
+            let doc = Arc::clone(&doc);
+            move || save(item, &doc, &markdown.read(), &title.read())
+        });
+        use_hook({
+            let doc = Arc::clone(&doc);
+            let mut markdown = markdown;
+            move || follow_remote(item, doc, markdown)
+        });
+        use_hook({
+            let mut typing = typing;
+            move || follow_typing(item, typing)
+        });
         use_hook(move || listen_for_jumps(item, controller, scroll));
         use_hook(move || {
             OPEN_NOTES.with(|open| open.borrow_mut().insert(item, controller));
+        });
+        use_drop({
+            let doc = Arc::clone(&doc);
+            move || open_docs::unregister(item, &doc)
         });
         use_drop(move || {
             OPEN_NOTES.with(|open| {
@@ -118,6 +148,7 @@ impl Component for NotesFace {
             .background(ui::BACKGROUND)
             .content(Content::flex())
             .child(ui::topbar(&title.read(), read_only, actions))
+            .maybe_child(typing_banner(&typing.read()))
             .maybe_child((!read_only).then(|| {
                 rect()
                     .width(Size::fill())
@@ -182,6 +213,106 @@ fn action(on_press: impl FnMut() + 'static) -> Action {
     Box::new(on_press)
 }
 
+/// Load the note's document and publish it as the live copy. A note
+/// from before bodies lived in the document takes its markdown from
+/// the plugin snapshot once.
+fn open_note_doc(item: ItemId) -> Arc<Mutex<Doc>> {
+    let mut doc = crate::library::bodies::read_doc_bytes(item)
+        .and_then(|bytes| Doc::from_snapshot(&bytes).ok())
+        .unwrap_or_default();
+    if doc.body().is_empty() {
+        let legacy = read_body(item);
+        if !legacy.is_empty() && doc.set_body(&legacy) {
+            write_doc(item, &doc);
+        }
+    }
+    let doc = Arc::new(Mutex::new(doc));
+    open_docs::register(item, Arc::clone(&doc));
+    doc
+}
+
+fn write_doc(item: ItemId, doc: &Doc) {
+    match doc.snapshot_bytes() {
+        Ok(bytes) => {
+            if let Err(err) = crate::library::bodies::write_doc_bytes(item, &bytes) {
+                log::warn!("notes: doc write failed: {err}");
+            }
+        }
+        Err(err) => log::warn!("notes: doc snapshot failed: {err}"),
+    }
+}
+
+/// Put what other devices typed into the editor as it lands.
+fn follow_remote(item: ItemId, doc: Arc<Mutex<Doc>>, mut markdown: State<String>) {
+    let changes = open_docs::watch(item);
+    spawn(async move {
+        while changes.recv_async().await.is_ok() {
+            let body = open_docs::lock(&doc).body();
+            if *markdown.peek() != body {
+                markdown.set(body);
+            }
+        }
+    });
+}
+
+/// Keep the list of people typing in this note right now.
+fn follow_typing(item: ItemId, mut typing: State<Vec<(String, Instant)>>) {
+    let events = crate::sync::live::watch(item);
+    spawn(async move {
+        while let Ok(LiveEvent { name, message, .. }) = events.recv_async().await {
+            let LiveMessage::Caret { typing: active, .. } = message else {
+                continue;
+            };
+            let now = Instant::now();
+            let mut list = typing.peek().clone();
+            list.retain(|(who, at)| *who != name && now.duration_since(*at) < TYPING_TTL);
+            if active {
+                list.push((name, now));
+            }
+            typing.set(list);
+            // Clear the banner once the author pauses.
+            let mut typing = typing;
+            spawn(async move {
+                async_io::Timer::after(TYPING_TTL).await;
+                let now = Instant::now();
+                let list: Vec<(String, Instant)> = typing
+                    .peek()
+                    .iter()
+                    .filter(|(_, at)| now.duration_since(*at) < TYPING_TTL)
+                    .cloned()
+                    .collect();
+                if list.len() != typing.peek().len() {
+                    typing.set(list);
+                }
+            });
+        }
+    });
+}
+
+/// "Ana está escribiendo…" under the top bar while someone else types.
+fn typing_banner(typing: &[(String, Instant)]) -> Option<Rect> {
+    let now = Instant::now();
+    let names: Vec<&str> = typing
+        .iter()
+        .filter(|(_, at)| now.duration_since(*at) < TYPING_TTL)
+        .map(|(name, _)| name.as_str())
+        .collect();
+    if names.is_empty() {
+        return None;
+    }
+    let text = if names.len() == 1 {
+        format!("{} está escribiendo…", names[0])
+    } else {
+        format!("{} están escribiendo…", names.join(", "))
+    };
+    Some(
+        rect()
+            .width(Size::fill())
+            .padding((2., 20., 6., 20.))
+            .child(label().font_size(12.).color(ui::MUTED).text(text)),
+    )
+}
+
 fn read_body(item: ItemId) -> String {
     crate::library::bodies::read_plugin_snapshot(item, KIND_ID)
         .ok()
@@ -190,7 +321,19 @@ fn read_body(item: ItemId) -> String {
         .unwrap_or_default()
 }
 
-fn save(item: ItemId, body: &str, title: &str) {
+fn save(item: ItemId, doc: &Arc<Mutex<Doc>>, body: &str, title: &str) {
+    let changed = open_docs::lock(doc).set_body(body);
+    if changed {
+        write_doc(item, &open_docs::lock(doc));
+        crate::sync::doc_changed(item);
+        crate::sync::live(
+            item,
+            &LiveMessage::Caret {
+                offset: 0,
+                typing: true,
+            },
+        );
+    }
     if let Err(err) = crate::library::bodies::write_plugin_snapshot(item, KIND_ID, body.as_bytes())
     {
         log::warn!("notes: snapshot write failed: {err}");

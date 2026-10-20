@@ -17,6 +17,7 @@
 //!               glyphs:  MovableList [ Binary(InkGlyph) … ],
 //!           } … ]
 //! bookmarks Map  { "<uuid>": Binary(Bookmark) … }
+//! body      Text                                   // markdown of a note, merged per character
 //! ```
 //!
 //! Domain payloads stay bincode blobs: Loro only needs identity and
@@ -29,7 +30,7 @@ use std::fmt;
 use bincode::config::{self, Configuration};
 use loro::{
     Container, ExportMode, LoroDoc, LoroEncodeError, LoroError, LoroMap, LoroMovableList,
-    LoroValue, ValueOrContainer, VersionVector,
+    LoroValue, UpdateOptions, ValueOrContainer, VersionVector,
 };
 
 use super::{Doc, DocError, Layer};
@@ -46,6 +47,7 @@ const META: &str = "meta";
 const BRUSHES: &str = "brushes";
 const LAYERS: &str = "layers";
 const BOOKMARKS: &str = "bookmarks";
+const BODY: &str = "body";
 
 const ACTIVE_LAYER: &str = "active_layer";
 const NEXT_LAYER_ID: &str = "next_layer_id";
@@ -140,6 +142,25 @@ impl DocStore {
     pub(super) fn import(&self, bytes: &[u8]) -> Result<(), DocError> {
         self.doc.import(bytes)?;
         Ok(())
+    }
+
+    /// The text body, for documents that are text (notes).
+    pub(super) fn body(&self) -> String {
+        self.doc.get_text(BODY).to_string()
+    }
+
+    /// Replace the text body with `text`, recorded as the smallest edit
+    /// that gets there so concurrent typing on other devices merges per
+    /// character. Returns whether anything changed.
+    pub(super) fn set_body(&self, text: &str) -> Result<bool, DocError> {
+        let body = self.doc.get_text(BODY);
+        if body.to_string() == text {
+            return Ok(false);
+        }
+        body.update(text, UpdateOptions::default())
+            .map_err(|err| DocError::Store(err.to_string()))?;
+        self.doc.commit();
+        Ok(true)
     }
 
     /// Translate `op` into container edits. `state` is the

@@ -499,7 +499,7 @@ fn use_value_sync(value: Option<Writable<String>>, controller: EditorController,
             sync.text.is_none() && controller.peek(|state| state.markdown(*dialect.peek())) == text;
         sync.text = Some(text.clone());
         if !fresh {
-            controller.load_markdown(&text);
+            controller.merge_markdown(&text);
         }
         sync.revision = controller.peek(EditorState::revision);
     });
