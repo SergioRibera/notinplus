@@ -182,3 +182,35 @@ mod scan_tests {
         assert_eq!(found, vec![canvas, plugin]);
     }
 }
+
+/// Route a URL the operating system handed to the app.
+pub fn open(url: &str) {
+    if crate::sync::open_link(url) {
+        return;
+    }
+    match SourceRef::from_url(url) {
+        Some(src) => crate::source_ref_nav::navigate(&src),
+        None => log::warn!("deep link ignored: {url}"),
+    }
+}
+
+/// Listen for URLs delivered through the platform, cold-start intents
+/// included, for as long as the app runs.
+pub fn listen() {
+    let stream = match istmo::plugins::DeepLinks::acquire() {
+        Ok(plugin) => plugin.stream(),
+        Err(err) => {
+            log::warn!("deep links unavailable: {err}");
+            return;
+        }
+    };
+    freya::prelude::spawn_forever(async move {
+        loop {
+            match stream.recv_async().await {
+                Ok(link) => open(&link.uri),
+                Err(istmo::IstmoError::ChannelClosed) => break,
+                Err(err) => log::warn!("deep link: {err}"),
+            }
+        }
+    });
+}

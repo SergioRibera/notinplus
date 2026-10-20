@@ -3,7 +3,7 @@
 
 use freya::icons::lucide;
 use freya::prelude::*;
-use notein_sync::{DeviceId, PairFailure, PairingCode, PairingOffer, PeerInfo, TrustedDevice};
+use notein_sync::{DeviceId, PairFailure, PairingCode, PeerInfo, TrustedDevice};
 
 use crate::components::form_input::FormInput;
 use crate::components::theme::{ACCENT, BORDER, CARD_BG, ERROR, TEXT_MUTED, TEXT_PRIMARY};
@@ -167,11 +167,7 @@ fn pairing_card(
             )
             .child(pill("Vincular", move |_| {
                 let text = link.read().clone();
-                if let Some(invite) = notein_sync::Invite::parse_link(&text) {
-                    sync::join(invite);
-                    link.set(String::new());
-                } else if let Some(offer) = PairingOffer::parse_link(&text) {
-                    sync::pair_with(offer);
+                if sync::open_link(&text) {
                     link.set(String::new());
                 }
             })),

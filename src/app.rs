@@ -338,6 +338,7 @@ impl Component for AppShell {
             crate::host_api::flush_pending_fonts();
         });
         use_hook(crate::sync::start);
+        use_hook(crate::deep_link::listen);
         rect()
             .expanded()
             .on_global_pointer_up(crate::soft_keyboard::reshow_on_tap)

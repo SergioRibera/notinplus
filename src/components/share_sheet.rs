@@ -374,7 +374,7 @@ fn manage(view: &ShareView) -> Rect {
                             .width(Size::px(QR_SIZE))
                             .height(Size::px(QR_SIZE))
                             .with_corner_radius(12.0)
-                            .background(Color::from_rgb(21, 21, 26))
+                            .background(Color::from_rgb(255, 255, 255))
                             .center()
                             .child(
                                 SvgViewer::new(svg)

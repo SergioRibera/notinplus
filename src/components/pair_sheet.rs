@@ -3,7 +3,6 @@
 
 use freya::icons::lucide;
 use freya::prelude::*;
-use notein_sync::PairingOffer;
 
 use crate::components::theme::{ACCENT, CARD_BG, PANEL_BG, TEXT_MUTED, TEXT_PRIMARY};
 
@@ -31,14 +30,15 @@ impl PairSheet {
     }
 }
 
-/// SVG bytes of a QR code carrying `text`, styled for the dark theme.
+/// SVG bytes of a QR code carrying `text`: black on white, because
+/// most phone cameras refuse inverted codes.
 pub(crate) fn qr_bytes(text: &str) -> Option<Bytes> {
     let code = qrcode::QrCode::new(text.as_bytes()).ok()?;
     let svg = code
         .render::<qrcode::render::svg::Color>()
         .min_dimensions(200, 200)
-        .dark_color(qrcode::render::svg::Color("#f0f0f8"))
-        .light_color(qrcode::render::svg::Color("#15151a"))
+        .dark_color(qrcode::render::svg::Color("#000000"))
+        .light_color(qrcode::render::svg::Color("#ffffff"))
         .build();
     Some(Bytes::from(svg.into_bytes()))
 }
@@ -95,7 +95,7 @@ impl Component for PairSheet {
                             .width(Size::px(QR_SIZE))
                             .height(Size::px(QR_SIZE))
                             .with_corner_radius(12.0)
-                            .background(Color::from_rgb(21, 21, 26))
+                            .background(Color::from_rgb(255, 255, 255))
                             .center()
                             .child(
                                 SvgViewer::new(svg)

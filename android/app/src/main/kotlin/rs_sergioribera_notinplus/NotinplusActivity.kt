@@ -1,5 +1,6 @@
 package rs.sergioribera.notinplus
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.MotionEvent
 import androidx.core.view.ViewCompat
@@ -9,10 +10,12 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.google.androidgamesdk.GameActivity
 import dev.istmo.plugins.pen.PenCaptureView
 import dev.istmo.plugins.pen.PenFactoryImpl
+import dev.istmo.runtime.Bincode
 import dev.istmo.runtime.IstmoHost
 import dev.istmo.runtime.IstmoRuntime
 import dev.istmo.runtime.PenCodecsImpl
 import dev.istmo.runtime.PenDispatcher
+import java.io.ByteArrayOutputStream
 
 /**
  * GameActivity (androidx.games:games-activity) forwards every
@@ -54,6 +57,13 @@ class NotinplusActivity : GameActivity() {
             isAppearanceLightStatusBars = true
         }
         installSafeAreaListener()
+        publishDeepLink(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        publishDeepLink(intent)
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
@@ -83,8 +93,28 @@ class NotinplusActivity : GameActivity() {
         ViewCompat.requestApplyInsets(root)
     }
 
+    /**
+     * Hand a `notein://` URL to the Rust side. Cold-start intents and
+     * hot opens go through the same early-event queue, so a link that
+     * arrives before the router listens is kept until it does.
+     */
+    private fun publishDeepLink(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val uri = intent.dataString ?: return
+        val out = ByteArrayOutputStream()
+        Bincode.writeString(out, uri)
+        Bincode.writeOption(out, "intent") { o, s -> Bincode.writeString(o, s) }
+        Bincode.writeOption(out, System.currentTimeMillis()) { o, ms -> Bincode.writeVarintU64(o, ms) }
+        IstmoRuntime.publishEarlyQueue(DEEPLINKS_CHANNEL, DEEPLINKS_CAPACITY, out.toByteArray())
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         IstmoHost.onDestroy(this)
+    }
+
+    private companion object {
+        const val DEEPLINKS_CHANNEL = "istmo.deeplinks"
+        const val DEEPLINKS_CAPACITY = 16
     }
 }

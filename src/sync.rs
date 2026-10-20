@@ -197,6 +197,20 @@ pub fn join(invite: Invite) {
     command(Cmd::Join(invite));
 }
 
+/// Act on a pairing or invitation link; `false` when `text` is neither.
+pub fn open_link(text: &str) -> bool {
+    let text = text.trim();
+    if let Some(invite) = Invite::parse_link(text) {
+        join(invite);
+        true
+    } else if let Some(offer) = PairingOffer::parse_link(text) {
+        pair_with(offer);
+        true
+    } else {
+        false
+    }
+}
+
 pub fn leave_share(id: ShareId) {
     command(Cmd::Leave(id));
 }

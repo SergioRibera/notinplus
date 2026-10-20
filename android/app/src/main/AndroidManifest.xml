@@ -27,6 +27,14 @@
                 <action   android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Pairing and invitation links (`notein://pair`, `notein://join`)
+                 scanned from another device's QR code open the app here. -->
+            <intent-filter>
+                <action   android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="notein" />
+            </intent-filter>
         </activity>
     </application>
 </manifest>
