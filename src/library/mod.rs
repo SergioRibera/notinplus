@@ -32,6 +32,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use istmo::Runtime;
 use istmo_data_store::{DataStoreClient, DataStoreConfig};
 
+/// How long a deletion marker is kept: ninety days, longer than any
+/// device is expected to stay away.
+const TOMBSTONE_TTL_MS: u64 = 90 * 24 * 60 * 60 * 1000;
+
 pub use self::error::{LibraryError, NotFoundKind, Result};
 pub use self::links::{Link, LinkIndex, LinkKind};
 pub use self::model::{
@@ -89,7 +93,24 @@ impl Library {
             links,
         };
         lib.ensure_default_workspace().await?;
+        lib.compact_tombstones().await?;
         Ok(lib)
+    }
+
+    /// Drop deletion markers old enough that no device is expected to
+    /// still carry the record they cancel.
+    async fn compact_tombstones(&mut self) -> Result<()> {
+        let now = now_millis();
+        if self.links.compact(now, TOMBSTONE_TTL_MS) > 0 {
+            self.persist_links().await?;
+        }
+        let mut yard = graveyard::Graveyard::load();
+        if yard.compact(now, TOMBSTONE_TTL_MS) > 0
+            && let Err(err) = yard.save()
+        {
+            log::error!("graveyard save: {err}");
+        }
+        Ok(())
     }
 
     /// Guarantee a non-empty [`WorkspaceIndex`]: the switcher assumes

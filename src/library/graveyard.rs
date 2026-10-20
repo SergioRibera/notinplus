@@ -83,6 +83,14 @@ impl Graveyard {
     pub fn get(&self, kind: Buried, id: [u8; 16]) -> Option<&Tombstone> {
         self.stones.iter().find(|s| s.kind == kind && s.id == id)
     }
+
+    /// Forget stones older than `max_age` milliseconds. Returns how
+    /// many went.
+    pub fn compact(&mut self, now: u64, max_age: u64) -> usize {
+        let before = self.stones.len();
+        self.stones.retain(|s| now.saturating_sub(s.at) <= max_age);
+        before - self.stones.len()
+    }
 }
 
 /// Load, bury and save in one go; failures are logged, never fatal.
@@ -109,6 +117,16 @@ mod tests {
         assert_eq!(yard.stones.len(), 1);
         yard.revive(Buried::Item, [1; 16]);
         assert!(yard.get(Buried::Item, [1; 16]).is_none());
+    }
+
+    #[test]
+    fn compact_drops_old_stones() {
+        let mut yard = Graveyard::default();
+        yard.bury(Buried::Item, [1; 16], 10);
+        yard.bury(Buried::Tag, [2; 16], 990);
+        assert_eq!(yard.compact(1000, 100), 1);
+        assert!(yard.get(Buried::Item, [1; 16]).is_none());
+        assert!(yard.get(Buried::Tag, [2; 16]).is_some());
     }
 
     #[test]

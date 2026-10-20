@@ -1298,18 +1298,23 @@ impl<R: Replica> SyncDriver<R> {
                     };
                     match published.docs.get(doc) {
                         Some(known) if *known == version => continue,
-                        Some(known) => {
-                            let bytes = self
-                                .replica
-                                .doc_updates_since(*doc, known)
-                                .map_err(SyncError::Replica)?;
-                            if !bytes.is_empty() {
+                        Some(known) => match self.replica.doc_updates_since(*doc, known) {
+                            Ok(bytes) if bytes.is_empty() => {}
+                            Ok(bytes) => records.push((
+                                RecordKind::Update { doc: *doc },
+                                Message::DocUpdates { doc: *doc, bytes },
+                            )),
+                            Err(_) => {
+                                let bytes = self
+                                    .replica
+                                    .doc_snapshot(*doc)
+                                    .map_err(SyncError::Replica)?;
                                 records.push((
-                                    RecordKind::Update { doc: *doc },
-                                    Message::DocUpdates { doc: *doc, bytes },
+                                    RecordKind::Snapshot { doc: *doc },
+                                    Message::DocSnapshot { doc: *doc, bytes },
                                 ));
                             }
-                        }
+                        },
                         None => {
                             let bytes = self
                                 .replica

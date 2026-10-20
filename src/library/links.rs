@@ -162,6 +162,16 @@ impl LinkIndex {
         }
         count
     }
+
+    /// Forget tombstones older than `max_age` milliseconds. Returns how
+    /// many went. A device away longer than that may bring a deleted
+    /// link back, which is the accepted price of a bounded index.
+    pub fn compact(&mut self, now: u64, max_age: u64) -> usize {
+        let before = self.links.len();
+        self.links
+            .retain(|l| !l.deleted || now.saturating_sub(l.updated_at) <= max_age);
+        before - self.links.len()
+    }
 }
 
 #[cfg(test)]
@@ -248,5 +258,22 @@ mod tests {
         assert_eq!(idx.retire_item(item(2), 5), 2);
         assert_eq!(idx.of(item(1)).count(), 0);
         assert_eq!(idx.of(item(3)).count(), 1);
+    }
+
+    #[test]
+    fn compact_forgets_only_old_tombstones() {
+        let mut index = LinkIndex::default();
+        let a = ItemId([1; 16]);
+        let b = ItemId([2; 16]);
+        let c = ItemId([3; 16]);
+        let old = index.insert(a, b, LinkKind::Related, 10).unwrap();
+        let fresh = index.insert(a, c, LinkKind::Related, 10).unwrap();
+        let live = index.insert(b, c, LinkKind::Related, 10).unwrap();
+        assert!(index.remove(old, 100));
+        assert!(index.remove(fresh, 900));
+        assert_eq!(index.compact(1000, 500), 1);
+        assert!(index.links.iter().all(|l| l.id != old));
+        assert!(index.links.iter().any(|l| l.id == fresh && l.deleted));
+        assert!(index.get(live).is_some());
     }
 }

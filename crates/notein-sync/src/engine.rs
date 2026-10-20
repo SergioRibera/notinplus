@@ -216,15 +216,17 @@ impl<R: Replica> SyncEngine<R> {
             }
             match remote.get(&doc) {
                 Some(theirs) if *theirs == local => {}
-                Some(theirs) => {
-                    let bytes = self
-                        .replica
-                        .doc_updates_since(doc, theirs)
-                        .map_err(SyncError::Replica)?;
-                    if !bytes.is_empty() {
-                        out.push(Message::DocUpdates { doc, bytes });
+                Some(theirs) => match self.replica.doc_updates_since(doc, theirs) {
+                    Ok(bytes) if bytes.is_empty() => {}
+                    Ok(bytes) => out.push(Message::DocUpdates { doc, bytes }),
+                    // A version this replica can no longer diff against
+                    // (history trimmed, foreign marker): the whole document
+                    // still gets the peer there.
+                    Err(_) => {
+                        let bytes = self.replica.doc_snapshot(doc).map_err(SyncError::Replica)?;
+                        out.push(Message::DocSnapshot { doc, bytes });
                     }
-                }
+                },
                 None => {
                     let bytes = self.replica.doc_snapshot(doc).map_err(SyncError::Replica)?;
                     out.push(Message::DocSnapshot { doc, bytes });
