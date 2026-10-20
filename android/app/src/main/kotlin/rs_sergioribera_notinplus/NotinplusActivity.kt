@@ -1,6 +1,8 @@
 package rs.sergioribera.notinplus
 
+import android.content.Context
 import android.content.Intent
+import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.view.MotionEvent
 import androidx.core.view.ViewCompat
@@ -40,8 +42,15 @@ class NotinplusActivity : GameActivity() {
 
     private lateinit var penView: PenCaptureView
 
+    /**
+     * Devices on the same Wi-Fi find each other through UDP broadcast,
+     * which Android filters out unless the app holds a multicast lock.
+     */
+    private var multicastLock: WifiManager.MulticastLock? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         IstmoHost.onCreate(this)
+        acquireMulticastLock()
 
         penView = PenCaptureView(this)
         IstmoRuntime.registerHandler(
@@ -108,8 +117,18 @@ class NotinplusActivity : GameActivity() {
         IstmoRuntime.publishEarlyQueue(DEEPLINKS_CHANNEL, DEEPLINKS_CAPACITY, out.toByteArray())
     }
 
+    private fun acquireMulticastLock() {
+        val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return
+        multicastLock = wifi.createMulticastLock("notinplus-discovery").apply {
+            setReferenceCounted(false)
+            acquire()
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        multicastLock?.takeIf { it.isHeld }?.release()
+        multicastLock = null
         IstmoHost.onDestroy(this)
     }
 

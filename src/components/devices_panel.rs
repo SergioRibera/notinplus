@@ -167,7 +167,7 @@ fn pairing_card(
             )
             .child(pill("Vincular", move |_| {
                 let text = link.read().clone();
-                if sync::open_link(&text) {
+                if sync::open_link(&text).is_some() {
                     link.set(String::new());
                 }
             })),

@@ -17,6 +17,7 @@ pub mod folder_create;
 pub mod form_input;
 pub mod graph_view;
 pub mod item_picker;
+pub mod join_sheet;
 pub mod modal;
 pub mod note_editor;
 pub mod notebook_chooser;
@@ -44,6 +45,7 @@ pub use folder_create::{CreateFolderRequest, FolderCreateSheet};
 pub use form_input::FormInput;
 pub use graph_view::GraphView;
 pub use item_picker::{ItemPicker, PickerChoice};
+pub use join_sheet::JoinSheet;
 pub use modal::{Modal, ModalController, ModalPlacement, ModalPortal};
 pub use note_editor::{
     ChipTapCloseCallback, NoteEditor, set_show_markdown_syntax, show_markdown_syntax,

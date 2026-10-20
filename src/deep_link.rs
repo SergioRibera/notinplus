@@ -13,6 +13,9 @@
 
 use notein_plugin::{BookmarkId, SourceRef};
 
+use crate::components::{JoinSheet, SettingsModal};
+use crate::sync::LinkTarget;
+
 pub const SCHEME: &str = "notein";
 const PREFIX: &str = "notein://";
 
@@ -185,8 +188,15 @@ mod scan_tests {
 
 /// Route a URL the operating system handed to the app.
 pub fn open(url: &str) {
-    if crate::sync::open_link(url) {
-        return;
+    log::info!("deep link: {url}");
+    match crate::sync::open_link(url) {
+        Some(LinkTarget::Join {
+            share,
+            title,
+            owner,
+        }) => return JoinSheet::open(share, title, owner),
+        Some(LinkTarget::Pair { .. }) => return SettingsModal::open(),
+        None => {}
     }
     match SourceRef::from_url(url) {
         Some(src) => crate::source_ref_nav::navigate(&src),

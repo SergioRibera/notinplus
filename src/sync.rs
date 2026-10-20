@@ -197,17 +197,38 @@ pub fn join(invite: Invite) {
     command(Cmd::Join(invite));
 }
 
-/// Act on a pairing or invitation link; `false` when `text` is neither.
-pub fn open_link(text: &str) -> bool {
+/// What a pairing or invitation link asked for, once acted on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LinkTarget {
+    Join {
+        share: ShareId,
+        title: String,
+        owner: String,
+    },
+    Pair {
+        name: String,
+    },
+}
+
+/// Act on a pairing or invitation link; `None` when `text` is neither.
+pub fn open_link(text: &str) -> Option<LinkTarget> {
     let text = text.trim();
     if let Some(invite) = Invite::parse_link(text) {
+        let target = LinkTarget::Join {
+            share: invite.share,
+            title: invite.title.clone(),
+            owner: invite.owner.name.clone(),
+        };
         join(invite);
-        true
+        Some(target)
     } else if let Some(offer) = PairingOffer::parse_link(text) {
+        let target = LinkTarget::Pair {
+            name: offer.name.clone(),
+        };
         pair_with(offer);
-        true
+        Some(target)
     } else {
-        false
+        None
     }
 }
 
