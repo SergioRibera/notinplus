@@ -236,6 +236,7 @@ fn spawn_autosave_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Receiv
                 Err(err) => log::error!("autosave open library: {err}"),
             }
             sync_siblings(id, &board);
+            crate::sync::doc_changed(id);
         }
     });
 }

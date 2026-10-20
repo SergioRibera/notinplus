@@ -1107,6 +1107,54 @@ impl<R: Replica> SyncDriver<R> {
         Ok(out)
     }
 
+    /// Push one document's new changes to everyone who may hold it,
+    /// without waiting for a round: trusted devices in the clear, share
+    /// members sealed, offline members through the relay mailbox.
+    ///
+    /// # Errors
+    /// Replica failure while exporting.
+    pub fn push_doc(&mut self, doc: DocId) -> Result<Vec<Action>, SyncError<R::Error>> {
+        let mut out = Vec::new();
+        let devices: Vec<DeviceId> = self.online().map(|p| p.device).collect();
+        for device in devices {
+            if let Some(message) = self.engine.push_doc(device, doc)? {
+                out.push(send(device, &Payload::Sync(message.to_bytes()?)));
+            }
+        }
+        let me = self.profile.id();
+        let ids: Vec<ShareId> = self.shares.keys().copied().collect();
+        for id in ids {
+            let Some((members, key)) = self.shares.get(&id).and_then(|link| {
+                let share = &link.share;
+                if !share.docs.contains(&doc) || !share.can_edit(me) {
+                    return None;
+                }
+                let members: Vec<DeviceId> = share
+                    .participants()
+                    .filter(|m| m.device != me)
+                    .filter(|m| self.connected.contains_key(&m.device))
+                    .map(|m| m.device)
+                    .collect();
+                Some((members, share.key.clone()))
+            }) else {
+                continue;
+            };
+            let mut sealed = Vec::with_capacity(members.len());
+            if let Some(link) = self.shares.get_mut(&id) {
+                for device in members {
+                    if let Some(message) = link.engine.push_doc(device, doc)? {
+                        sealed.push((device, ShareMessage::Sync(message.to_bytes()?).seal(&key)));
+                    }
+                }
+            }
+            for (device, sealed) in sealed {
+                out.extend(self.route(device, &Payload::Share { share: id, sealed }));
+            }
+        }
+        out.extend(self.relay_publish()?);
+        Ok(out)
+    }
+
     /// Periodic housekeeping plus an announcement round.
     pub fn tick(&mut self) -> Result<Vec<Action>, SyncError<R::Error>> {
         let mut out = Vec::new();
@@ -1972,5 +2020,37 @@ mod tests {
                 == Some(true),
             "once members may delete, the tombstone lands"
         );
+    }
+    /// After one round each side knows what the other holds, so a local
+    /// edit travels on its own without another inventory exchange, and
+    /// nothing is resent once it landed.
+    #[test]
+    fn a_local_edit_is_pushed_right_away_and_only_once() {
+        let mut a = driver("a");
+        let mut b = driver("b");
+        let a_dev = TrustedDevice::new(*a.profile.key().public(), "a", 1);
+        let b_dev = TrustedDevice::new(*b.profile.key().public(), "b", 1);
+        a.profile_mut().trust(b_dev);
+        b.profile_mut().trust(a_dev);
+        mark(&mut a, D1, 1, 1);
+        connect_both(&mut a, &mut b);
+        deliver(a.announce().unwrap(), &mut a, &mut b);
+        deliver(b.announce().unwrap(), &mut b, &mut a);
+        assert_eq!(marks(&b, D1), vec![(1, 1)]);
+
+        mark(&mut a, D1, 1, 2);
+        let actions = a.push_doc(D1).unwrap();
+        assert_eq!(
+            actions
+                .iter()
+                .filter(|x| matches!(x, Action::Send { .. }))
+                .count(),
+            1
+        );
+        deliver(actions, &mut a, &mut b);
+        assert_eq!(marks(&b, D1), vec![(1, 1), (1, 2)]);
+
+        let again = a.push_doc(D1).unwrap();
+        assert!(again.iter().all(|x| !matches!(x, Action::Send { .. })));
     }
 }

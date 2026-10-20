@@ -251,6 +251,49 @@ impl<R: Replica> SyncEngine<R> {
         Ok(out)
     }
 
+    /// New changes of `doc` for `peer` since what it last announced, and
+    /// a note that it now holds them, so a burst of edits does not resend
+    /// the same bytes. `None` when `peer` never announced `doc` (the
+    /// next round covers it) or already has everything.
+    ///
+    /// # Errors
+    /// Replica failure while exporting.
+    pub fn push_doc(
+        &mut self,
+        peer: DeviceId,
+        doc: DocId,
+    ) -> Result<Option<Message>, SyncError<R::Error>> {
+        if !self.scope.covers_doc(doc) {
+            return Ok(None);
+        }
+        let Some(theirs) = self
+            .heard
+            .get(&peer)
+            .and_then(|h| h.docs.get(&doc))
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let Some(mine) = self.replica.doc_version(doc) else {
+            return Ok(None);
+        };
+        if mine == theirs {
+            return Ok(None);
+        }
+        let message = match self.replica.doc_updates_since(doc, &theirs) {
+            Ok(bytes) if bytes.is_empty() => return Ok(None),
+            Ok(bytes) => Message::DocUpdates { doc, bytes },
+            Err(_) => Message::DocSnapshot {
+                doc,
+                bytes: self.replica.doc_snapshot(doc).map_err(SyncError::Replica)?,
+            },
+        };
+        if let Some(heard) = self.heard.get_mut(&peer) {
+            heard.docs.insert(doc, mine);
+        }
+        Ok(Some(message))
+    }
+
     /// Where `doc` stands against every peer heard from.
     #[must_use]
     pub fn status(&self, doc: DocId) -> DocStatus {

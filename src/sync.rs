@@ -83,6 +83,7 @@ pub struct ShareRequest {
 
 enum Cmd {
     LocalChanged,
+    DocChanged(DocId),
     BeginPairing,
     CancelPairing,
     PairWith(PairingOffer),
@@ -154,6 +155,11 @@ fn command(cmd: Cmd) {
     if let Some(tx) = CMDS.get() {
         let _ = tx.send(cmd);
     }
+}
+
+/// A document body changed; push it to everyone right away.
+pub fn doc_changed(item: ItemId) {
+    command(Cmd::DocChanged(DocId(item.0)));
 }
 
 /// Something in the library changed; announce it soon.
@@ -470,6 +476,7 @@ impl Service {
     fn on_cmd(&mut self, cmd: Cmd) -> Result<(), String> {
         let actions = match cmd {
             Cmd::LocalChanged => self.driver.announce().map_err(|e| e.to_string())?,
+            Cmd::DocChanged(doc) => self.driver.push_doc(doc).map_err(|e| e.to_string())?,
             Cmd::BeginPairing => {
                 self.last_failure = None;
                 self.driver.begin_pairing();
