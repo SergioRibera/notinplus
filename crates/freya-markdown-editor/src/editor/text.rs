@@ -86,18 +86,20 @@ impl Component for TextBlock {
 
         let is_focused = focus().is_focused();
         use_side_effect(move || {
+            // The probe outlives this block when a paste or a split
+            // replaces it, so every state access is fallible: a dropped
+            // or borrowed state means "no caret here" rather than a panic.
             let probe = Rc::new(move || {
-                let editor = editable.editor().peek();
-                let (top, bottom) = caret_rect(
-                    &holder.peek(),
-                    &editor.rope().to_string(),
-                    editor.cursor_pos(),
-                )?;
-                let origin = area.peek().min_y();
+                let editor = editable.editor().try_peek()?;
+                let holder = holder.try_peek()?;
+                let (top, bottom) =
+                    caret_rect(&holder, &editor.rope().to_string(), editor.cursor_pos())?;
+                let origin = area.try_peek()?.min_y();
                 Some((origin + top, origin + bottom))
             });
             controller.track_focus(target, focus().is_focused(), probe);
         });
+        use_drop(move || controller.track_focus(target, false, Rc::new(|| None)));
         let request = self
             .caret
             .filter(|request| request.seq > applied_caret.get());
