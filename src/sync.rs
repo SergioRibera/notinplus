@@ -6,7 +6,7 @@
 //! commands and reads a snapshot that the thread refreshes after every
 //! step; subscribers of [`changes`] wake whenever the snapshot moved.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -320,9 +320,33 @@ struct Service {
     last_failure: Option<(DeviceId, PairFailure)>,
     last_join_failure: Option<JoinFailure>,
     error: Option<String>,
+    /// Devices that spoke another protocol version; each is reported once.
+    outdated: HashSet<DeviceId>,
 }
 
 impl Service {
+    /// A peer runs a build with another sync protocol. Said once per
+    /// device, and shown in settings so the user knows what to update.
+    fn report_outdated(&mut self, from: Option<DeviceId>, version: u16) {
+        let Some(from) = from else {
+            return;
+        };
+        let name = self
+            .driver
+            .connected()
+            .find(|p| p.device == from)
+            .map_or_else(|| from.short(), |p| p.name.clone());
+        if self.outdated.insert(from) {
+            log::warn!(
+                "sync: {name} speaks protocol {version}, this build speaks {}",
+                notein_sync::PROTOCOL_VERSION
+            );
+        }
+        self.error = Some(format!(
+            "{name} usa otra versión de Notein (protocolo {version}); actualizalo para sincronizar."
+        ));
+    }
+
     fn save_profile(&mut self) {
         if let Err(err) = self.driver.profile().save(&self.profile_path) {
             log::error!("device profile save: {err}");
@@ -647,6 +671,7 @@ fn run(cmds: flume::Receiver<Cmd>) {
         last_failure: None,
         last_join_failure: None,
         error: None,
+        outdated: HashSet::new(),
     };
     service.remember_shares();
     let relay = service
@@ -681,13 +706,22 @@ fn run(cmds: flume::Receiver<Cmd>) {
                     service.error = Some(err);
                 }
             }
-            Ok(Ok(Step::Net(event))) => match service.driver.on_event(event) {
-                Ok(actions) => service.perform(actions),
-                Err(err) => {
-                    log::error!("sync: {err}");
-                    service.error = Some(err.to_string());
+            Ok(Ok(Step::Net(event))) => {
+                let from = match &event {
+                    NetEvent::Message { from, .. } => Some(*from),
+                    _ => None,
+                };
+                match service.driver.on_event(event) {
+                    Ok(actions) => service.perform(actions),
+                    Err(notein_sync::SyncError::Version(version)) => {
+                        service.report_outdated(from, version);
+                    }
+                    Err(err) => {
+                        log::error!("sync: {err}");
+                        service.error = Some(err.to_string());
+                    }
                 }
-            },
+            }
             Ok(Err(_)) => break,
             Err(_) => {}
         }
