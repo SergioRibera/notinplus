@@ -126,6 +126,23 @@ impl Component for Home {
             }
         });
 
+        // Sync state moves on its own thread; re-render when it does so
+        // the pending marks on cards stay honest.
+        let sync_tick = use_state(|| 0u64);
+        let _ = *sync_tick.read();
+        use_hook({
+            let mut sync_tick = sync_tick;
+            move || {
+                let changes = crate::sync::changes();
+                spawn(async move {
+                    while changes.recv_async().await.is_ok() {
+                        let next = sync_tick.peek().wrapping_add(1);
+                        sync_tick.set(next);
+                    }
+                });
+            }
+        });
+
         // Links and tabs change from faces and chips while Home is
         // mounted; follow them so cards and the mesa strip stay true.
         use_hook({
@@ -643,6 +660,7 @@ fn grid(
             title: item.name.clone(),
             subtitle,
             notebooks,
+            pending: crate::sync::doc_status(item.id) == notein_sync::DocStatus::Pending,
             tint,
             bg_style: item.background,
             handle: handle.clone(),
@@ -672,6 +690,8 @@ struct ItemCard {
     subtitle: String,
     /// How many notebooks hang off this document (badge).
     notebooks: usize,
+    /// Whether another device holds edits this one has not seen yet.
+    pending: bool,
     tint: Rgba,
     bg_style: BackgroundStyle,
     handle: LibHandle,
@@ -809,6 +829,7 @@ impl Component for ItemCard {
             title.clone(),
             subtitle,
             self.notebooks,
+            self.pending,
             tint,
             false,
             is_editing,
@@ -976,6 +997,7 @@ impl Component for FolderCard {
             title.clone(),
             subtitle,
             0,
+            false,
             tint,
             true,
             is_editing,
@@ -1022,6 +1044,7 @@ fn card_body_view<Open, Commit>(
     title: String,
     subtitle: String,
     notebooks: usize,
+    pending: bool,
     tint: Rgba,
     is_folder: bool,
     is_editing: bool,
@@ -1054,7 +1077,8 @@ where
             .width(Size::percent(80.0))
             .height(Size::percent(80.0)),
         )
-        .maybe_child((notebooks > 0).then(|| notebook_badge(notebooks)));
+        .maybe_child((notebooks > 0).then(|| notebook_badge(notebooks)))
+        .maybe_child(pending.then(sync_badge));
 
     let mut column = rect()
         .vertical()
@@ -1336,6 +1360,22 @@ fn notebook_badge(count: usize) -> Rect {
         )
 }
 
+/// Small mark for a document whose latest edits live on another
+/// device and have not arrived yet.
+fn sync_badge() -> Rect {
+    rect()
+        .position(Position::new_absolute().top(6.0).left(6.0))
+        .padding(4.0)
+        .with_corner_radius(10.0)
+        .background(Color::from_rgb(40, 40, 48))
+        .child(
+            SvgViewer::new(icons::refresh_cw())
+                .color(Color::from_rgb(230, 200, 120))
+                .width(Size::px(12.0))
+                .height(Size::px(12.0)),
+        )
+}
+
 /// Every action the long-press menu of a document card offers.
 struct ItemMenuActions {
     open_beside: Box<dyn FnMut()>,
@@ -1496,9 +1536,13 @@ fn confirm_delete_with_notebooks_modal(
             rect()
                 .vertical()
                 .spacing(8.0)
-                .child(modal_button("Cancelar", Color::from_rgb(60, 60, 68), |_| {
-                    ModalController::get().close();
-                }))
+                .child(modal_button(
+                    "Cancelar",
+                    Color::from_rgb(60, 60, 68),
+                    |_| {
+                        ModalController::get().close();
+                    },
+                ))
                 .child(modal_button(
                     "Borrar solo el documento",
                     Color::from_rgb(60, 60, 68),
@@ -2536,11 +2580,7 @@ pub(crate) fn open_canvas_edit_sheet(
                 // its background right away instead of waiting for the
                 // next route mount.
                 if let Some(board) = crate::active_boards::get_item(item_id) {
-                    crate::route::apply_canvas_background(
-                        &board,
-                        req.background,
-                        req.color.into(),
-                    );
+                    crate::route::apply_canvas_background(&board, req.background, req.color.into());
                 }
                 // Refresh the home grid snapshot so the renamed title /
                 // retinted swatch / new tags land on screen immediately
@@ -2638,11 +2678,7 @@ pub(crate) fn open_folder_edit_sheet(
 
 /// Launch the platform file-picker, read the picked PDF into memory,
 /// and open the canvas-create sheet pre-filled with its name.
-async fn pick_and_open_pdf(
-    handle: LibHandle,
-    snap: State<Option<LibraryIndex>>,
-    parent: FolderId,
-) {
+async fn pick_and_open_pdf(handle: LibHandle, snap: State<Option<LibraryIndex>>, parent: FolderId) {
     use std::io::Read;
     use std::sync::Arc as StdArc;
 

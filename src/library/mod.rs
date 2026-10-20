@@ -19,10 +19,12 @@
 
 pub mod bodies;
 pub mod error;
+pub mod graveyard;
 pub mod index;
 pub mod links;
 pub mod model;
 pub mod refs;
+pub mod sync;
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -320,17 +322,29 @@ impl Library {
             return Err(LibraryError::NotFound(NotFoundKind::Folder(id)));
         }
         let condemned = self.collect_subtree(id);
+        let now = now_millis();
+        let mut yard = graveyard::Graveyard::load();
         // Wipe items whose folder falls inside the condemned subtree.
         let mut kept_items = Vec::with_capacity(self.index.items.len());
         for item in std::mem::take(&mut self.index.items) {
             if condemned.contains(&item.folder) {
                 bodies::purge(item.id);
+                refs::forget(item.id);
+                self.links.retire_item(item.id, now);
+                yard.bury(graveyard::Buried::Item, item.id.0, now);
             } else {
                 kept_items.push(item);
             }
         }
         self.index.items = kept_items;
         self.index.folders.retain(|f| !condemned.contains(&f.id));
+        for folder in &condemned {
+            yard.bury(graveyard::Buried::Folder, folder.0, now);
+        }
+        if let Err(err) = yard.save() {
+            log::error!("graveyard save: {err}");
+        }
+        self.persist_links().await?;
         self.persist().await
     }
 
@@ -494,7 +508,9 @@ impl Library {
         }
         bodies::purge(id);
         refs::forget(id);
-        if self.links.retire_item(id, now_millis()) > 0 {
+        let now = now_millis();
+        graveyard::bury(graveyard::Buried::Item, id.0, now);
+        if self.links.retire_item(id, now) > 0 {
             self.persist_links().await?;
         }
         self.persist().await
@@ -510,6 +526,7 @@ impl Library {
             id,
             name: name.to_owned(),
             color,
+            updated_at: now_millis(),
         });
         self.persist().await?;
         Ok(id)
@@ -523,6 +540,7 @@ impl Library {
             .tag_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Tag(id)))?;
         name.clone_into(&mut tag.name);
+        tag.updated_at = now_millis();
         self.persist().await
     }
 
@@ -534,6 +552,7 @@ impl Library {
             .tag_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Tag(id)))?;
         tag.color = color;
+        tag.updated_at = now_millis();
         self.persist().await
     }
 
@@ -550,6 +569,7 @@ impl Library {
         for item in &mut self.index.items {
             item.tags.retain(|t| *t != id);
         }
+        graveyard::bury(graveyard::Buried::Tag, id.0, now_millis());
         self.persist().await
     }
 
@@ -673,7 +693,9 @@ impl Library {
     }
 
     async fn persist_links(&self) -> Result<()> {
-        index::save_links(&self.client, &self.links).await
+        index::save_links(&self.client, &self.links).await?;
+        crate::sync::local_changed();
+        Ok(())
     }
 
     /// Attach raw PDF bytes to `id`. Overwrites any prior attachment.
@@ -988,7 +1010,8 @@ impl Library {
         pane: PaneId,
         target: TabTarget,
     ) -> Result<()> {
-        self.push_tab(workspace, pane, PaneTab::showing(target)).await
+        self.push_tab(workspace, pane, PaneTab::showing(target))
+            .await
     }
 
     async fn push_tab(&mut self, workspace: WorkspaceId, pane: PaneId, tab: PaneTab) -> Result<()> {
@@ -1133,6 +1156,7 @@ impl Library {
         if self.workspaces.active == Some(id) {
             self.workspaces.active = self.workspaces.workspaces.first().map(|w| w.id);
         }
+        graveyard::bury(graveyard::Buried::Workspace, id.0, now_millis());
         self.persist_workspaces().await
     }
 
@@ -1215,11 +1239,15 @@ impl Library {
     // ---------- Internal helpers ---------------------------------------
 
     async fn persist(&self) -> Result<()> {
-        index::save(&self.client, &self.index).await
+        index::save(&self.client, &self.index).await?;
+        crate::sync::local_changed();
+        Ok(())
     }
 
     async fn persist_workspaces(&self) -> Result<()> {
-        index::save_workspaces(&self.client, &self.workspaces).await
+        index::save_workspaces(&self.client, &self.workspaces).await?;
+        crate::sync::local_changed();
+        Ok(())
     }
 
     fn ensure_folder_target(&self, id: FolderId) -> Result<()> {
@@ -1311,6 +1339,7 @@ mod tests {
             id: tag,
             name: "urgent".into(),
             color: [255, 0, 0, 255],
+            updated_at: 0,
         });
         let folder = idx.alloc_folder_id();
         idx.folders.push(Folder {

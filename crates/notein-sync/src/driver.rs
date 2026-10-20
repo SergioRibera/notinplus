@@ -464,6 +464,22 @@ impl<R: Replica> SyncDriver<R> {
     pub fn pairing_target(&self) -> Option<&str> {
         self.intent.as_ref().map(|i| i.name.as_str())
     }
+
+    /// The offer currently open, if [`Self::begin_pairing`] ran and
+    /// it has not expired or been consumed.
+    #[must_use]
+    pub fn current_offer(&self) -> Option<PairingOffer> {
+        let (code, since) = self.offer?;
+        if since.elapsed() > OFFER_TTL {
+            return None;
+        }
+        Some(PairingOffer {
+            device: self.profile.id(),
+            public: *self.profile.key().public(),
+            name: self.profile.name().to_owned(),
+            code,
+        })
+    }
 }
 
 fn send(device: DeviceId, payload: &Payload) -> Action {

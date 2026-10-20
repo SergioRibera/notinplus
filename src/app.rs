@@ -293,8 +293,7 @@ fn install_global_router() {
     GLOBAL_ROUTER.with(|cell| {
         let _ = cell.get_or_init(|| {
             freya::router::RouterContext::create_global::<crate::route::Route>(
-                freya::router::RouterConfig::default()
-                    .with_initial_path(crate::route::Route::Home),
+                freya::router::RouterConfig::default().with_initial_path(crate::route::Route::Home),
             )
         });
     });
@@ -338,6 +337,7 @@ impl Component for AppShell {
         use_hook(|| {
             crate::host_api::flush_pending_fonts();
         });
+        use_hook(crate::sync::start);
         rect()
             .expanded()
             .on_global_pointer_up(crate::soft_keyboard::reshow_on_tap)

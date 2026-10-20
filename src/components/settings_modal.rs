@@ -3,7 +3,7 @@
 //! Opened from the home toolbar's gear button via
 //! [`SettingsModal::open`]. The sidebar hosts three sections:
 //!
-//! * **Account** — placeholder, pending auth plumbing.
+//! * **Dispositivos** — this device, pairing and the trusted set.
 //! * **General** — app-wide prefs (input mode toggle for now).
 //! * **Plugins** — one card per registered plugin with an origin badge
 //!   (built-in or dynamic + library path), an enable toggle, and a
@@ -36,7 +36,7 @@ const MODAL_HEIGHT: f32 = 580.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Section {
-    Account,
+    Devices,
     General,
     Plugins,
 }
@@ -44,7 +44,7 @@ enum Section {
 impl Section {
     const fn label(self) -> &'static str {
         match self {
-            Self::Account => "Cuenta",
+            Self::Devices => "Dispositivos",
             Self::General => "General",
             Self::Plugins => "Plugins",
         }
@@ -52,7 +52,7 @@ impl Section {
 
     fn icon(self) -> Bytes {
         match self {
-            Self::Account => icons::user(),
+            Self::Devices => icons::smartphone(),
             Self::General => icons::settings(),
             Self::Plugins => icons::puzzle(),
         }
@@ -114,7 +114,7 @@ fn sidebar(mut section: State<Section>) -> impl IntoElement {
                 .text("Ajustes")
                 .margin((0.0, 0.0, 14.0, 6.0)),
         );
-    for s in [Section::Account, Section::General, Section::Plugins] {
+    for s in [Section::General, Section::Devices, Section::Plugins] {
         let active = s == current;
         col = col.child(sidebar_row(s, active, move |_| section.set(s)));
     }
@@ -162,7 +162,7 @@ fn content(
     // rather than growing/shrinking the parent's hook list, which
     // would violate freya's "same number of hooks per render" rule.
     let body: Element = match current {
-        Section::Account => AccountSection.into_element(),
+        Section::Devices => crate::components::DevicesPanel.into_element(),
         Section::General => GeneralSection { tick }.into_element(),
         Section::Plugins => PluginsSection { tick, registry }.into_element(),
     };
@@ -179,32 +179,6 @@ fn content(
                 .width(Size::fill())
                 .height(Size::fill()),
         )
-}
-
-#[derive(Debug, PartialEq)]
-struct AccountSection;
-
-impl Component for AccountSection {
-    fn render(&self) -> impl IntoElement {
-        rect().vertical().spacing(12.0).child(
-            rect()
-                .vertical()
-                .width(Size::fill())
-                .padding((20.0, 20.0))
-                .spacing(10.0)
-                .background(CARD_BG)
-                .with_corner_radius(14.0)
-                .child(
-                    label()
-                        .color(TEXT_PRIMARY)
-                        .font_size(16.0)
-                        .text("Cuenta — próximamente"),
-                )
-                .child(label().color(TEXT_MUTED).font_size(13.0).text(
-                    "Sign-in, sincronización y colaboración llegarán en una fase posterior.",
-                )),
-        )
-    }
 }
 
 #[derive(Clone)]
@@ -850,7 +824,10 @@ fn render_control(
         ConfigFieldKind::FilePath { .. } => {
             string_control(plugin_id, role, field, current, 1024, tick, registry)
         }
-        ConfigFieldKind::Action { button_label, confirm } => action_control(
+        ConfigFieldKind::Action {
+            button_label,
+            confirm,
+        } => action_control(
             plugin_id,
             role,
             field,
@@ -875,7 +852,14 @@ fn action_control(
     // immediately so users can exercise the trigger end-to-end.
     let key = field.key.clone();
     let on_press = move |_: Event<PressEventData>| {
-        write_value(&registry, &plugin_id, role, &key, ConfigValue::Trigger, tick);
+        write_value(
+            &registry,
+            &plugin_id,
+            role,
+            &key,
+            ConfigValue::Trigger,
+            tick,
+        );
     };
     rect()
         .padding((8., 14.))

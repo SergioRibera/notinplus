@@ -160,6 +160,7 @@ pub struct Tag {
     pub id: TagId,
     pub name: String,
     pub color: Rgba,
+    pub updated_at: u64,
 }
 
 /// Folder metadata. `parent == ROOT_FOLDER` marks a top-level folder.

@@ -57,6 +57,8 @@ tar = { version = "0.4", default-features = false }
 zstd = "0.13"
 notein-plugin = { version = "0.1.0", path = "crates/notein-plugin" }
 notein-ui-kit = { path = "crates/notein-ui-kit" }
+notein-sync = { path = "crates/notein-sync" }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 freya-markdown-editor = { path = "crates/freya-markdown-editor" }
 notein-bible = { path = "crates/notein-bible", features = ["ui", "importer"] }
 notein-notes = { path = "crates/notein-notes" }

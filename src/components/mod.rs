@@ -8,6 +8,7 @@
 pub mod canvas_create;
 pub mod chip;
 pub mod color_wheel;
+pub mod devices_panel;
 pub mod doc_actions_menu;
 pub mod drag_drop;
 pub mod export_bundle;
@@ -19,6 +20,7 @@ pub mod item_picker;
 pub mod modal;
 pub mod note_editor;
 pub mod notebook_chooser;
+pub mod pair_sheet;
 pub mod pane_tree_view;
 pub mod settings_modal;
 pub mod sidebar_modal;
@@ -32,6 +34,7 @@ pub mod theme;
 pub use canvas_create::{CanvasCreateSheet, CreateCanvasRequest};
 pub use chip::Chip;
 pub use color_wheel::{ColorWheel, DEFAULT_SWATCHES, auto_color};
+pub use devices_panel::DevicesPanel;
 pub use doc_actions_menu::DocActionsMenu;
 pub use drag_drop::{DragZone, DropZone, use_drag};
 pub use export_bundle::{ExportBundleRequest, ExportBundleSheet};
@@ -45,6 +48,7 @@ pub use note_editor::{
     ChipTapCloseCallback, NoteEditor, set_show_markdown_syntax, show_markdown_syntax,
 };
 pub use notebook_chooser::NotebookChooser;
+pub use pair_sheet::PairSheet;
 pub use pane_tree_view::{PaneTreeCallbacks, PaneTreeView};
 pub use settings_modal::SettingsModal;
 pub use sidebar_modal::{SidebarModal, SidebarTab};
