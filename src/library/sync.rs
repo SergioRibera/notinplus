@@ -19,6 +19,13 @@ pub enum SyncRecord {
     Link(Link),
     Workspace(Workspace),
     Gone(Tombstone),
+    /// A plugin's state for an item: last writer wins.
+    Snapshot {
+        item: super::ItemId,
+        plugin_id: String,
+        updated_at: u64,
+        bytes: Vec<u8>,
+    },
 }
 
 impl SyncRecord {
@@ -50,7 +57,7 @@ const fn buried_of(kind: BlobKind) -> Option<Buried> {
         BlobKind::Folder => Some(Buried::Folder),
         BlobKind::Tag => Some(Buried::Tag),
         BlobKind::Workspace => Some(Buried::Workspace),
-        BlobKind::Link => None,
+        BlobKind::Link | BlobKind::Snapshot => None,
     }
 }
 
@@ -108,6 +115,10 @@ impl Library {
                 .iter()
                 .map(|w| head(BlobKind::Workspace, w.id.0, w.updated_at)),
         );
+        heads.extend(self.index.items.iter().filter_map(|i| {
+            let at = bodies::plugin_snapshot_stamp(i.id, &i.kind.plugin_id)?;
+            Some(head(BlobKind::Snapshot, i.id.0, at))
+        }));
         for stone in &yard.stones {
             let kind = kind_of(stone.kind);
             match heads
@@ -157,6 +168,7 @@ impl Library {
                 .iter()
                 .find(|w| w.id.0 == key.id)
                 .map(|w| (w.updated_at, SyncRecord::Workspace(w.clone()))),
+            BlobKind::Snapshot => self.snapshot_record(super::ItemId(key.id)),
         };
         match (live, stone) {
             (Some((at, record)), Some(stone)) if at >= stone.at => Some(record),
@@ -164,6 +176,22 @@ impl Library {
             (Some((_, record)), None) => Some(record),
             (None, None) => None,
         }
+    }
+
+    fn snapshot_record(&self, item: super::ItemId) -> Option<(u64, SyncRecord)> {
+        let entry = self.index.item(item)?;
+        let plugin_id = entry.kind.plugin_id.clone();
+        let updated_at = bodies::plugin_snapshot_stamp(item, &plugin_id)?;
+        let bytes = bodies::read_plugin_snapshot(item, &plugin_id).ok()??;
+        Some((
+            updated_at,
+            SyncRecord::Snapshot {
+                item,
+                plugin_id,
+                updated_at,
+                bytes,
+            },
+        ))
     }
 
     /// Freshness of what is held locally under `key`, if anything.
@@ -200,6 +228,10 @@ impl Library {
                 .iter()
                 .find(|w| w.id.0 == key.id)
                 .map(|w| w.updated_at),
+            BlobKind::Snapshot => self
+                .index
+                .item(super::ItemId(key.id))
+                .and_then(|i| bodies::plugin_snapshot_stamp(i.id, &i.kind.plugin_id)),
         };
         match (live, stone) {
             (Some(a), Some(b)) => Some(a.max(b)),
@@ -256,6 +288,25 @@ impl Library {
                     self.workspaces.active = self.workspaces.workspaces.first().map(|w| w.id);
                 }
                 self.persist_workspaces().await?;
+            }
+            SyncRecord::Snapshot {
+                item,
+                plugin_id,
+                updated_at,
+                bytes,
+            } => {
+                if self.index.item(item).is_none() {
+                    return Ok(false);
+                }
+                bodies::write_plugin_snapshot_at(item, &plugin_id, &bytes, updated_at)?;
+                if plugin_id == notein_notes::KIND_ID {
+                    let body = notein_notes::body_from_snapshot(&bytes);
+                    refs::record_note(item, &body);
+                    if let Some(index) = crate::builtin::notes_index() {
+                        index.update_body(item.0, &body);
+                    }
+                }
+                crate::sync::open_docs::notify_snapshot(item);
             }
             SyncRecord::Gone(stone) => {
                 yard.bury(stone.kind, stone.id, stone.at);

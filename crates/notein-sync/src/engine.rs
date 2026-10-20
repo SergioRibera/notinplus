@@ -294,6 +294,46 @@ impl<R: Replica> SyncEngine<R> {
         Ok(Some(message))
     }
 
+    /// The blob under `key` for `peer` when it announced an older one,
+    /// and a note that it now holds this one. `None` when `peer` never
+    /// announced or already has it.
+    ///
+    /// # Errors
+    /// Replica failure while reading.
+    pub fn push_blob(
+        &mut self,
+        peer: DeviceId,
+        key: BlobKey,
+    ) -> Result<Option<Message>, SyncError<R::Error>> {
+        if !self.scope.covers_blob(key) || !self.heard.contains_key(&peer) {
+            return Ok(None);
+        }
+        let Some(head) = self
+            .replica
+            .blob_heads()
+            .into_iter()
+            .find(|h| h.key() == key)
+        else {
+            return Ok(None);
+        };
+        let stale = self
+            .heard
+            .get(&peer)
+            .and_then(|h| h.blobs.get(&key))
+            .is_none_or(|&theirs| theirs < head.updated_at);
+        if !stale {
+            return Ok(None);
+        }
+        let blobs = self.replica.blobs(&[key]);
+        if blobs.is_empty() {
+            return Ok(None);
+        }
+        if let Some(heard) = self.heard.get_mut(&peer) {
+            heard.blobs.insert(key, head.updated_at);
+        }
+        Ok(Some(Message::Blobs(blobs)))
+    }
+
     /// Where `doc` stands against every peer heard from.
     #[must_use]
     pub fn status(&self, doc: DocId) -> DocStatus {

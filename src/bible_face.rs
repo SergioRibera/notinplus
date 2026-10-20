@@ -133,8 +133,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                 .take_source_anchor(BIBLE_PLUGIN_ID, item.0)
                 .and_then(|bytes| notein_bible::BibleAnchor::decode(&bytes));
             jump_cell_setter.set(initial_jump.as_ref().map(|j| j.start_verse));
-            let mut st =
-                BibleViewerState::new(&starting_bible, &starting_book, starting_chapter);
+            let mut st = BibleViewerState::new(&starting_bible, &starting_book, starting_chapter);
             if let Some(snap) = snap_for_init {
                 snap.apply_to(&mut st);
             }
@@ -148,8 +147,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                 // versa) — mismatch would surface as `MissingBible`
                 // down inside `load_chapter`.
                 st.bible_id = jump.bible_id.clone();
-                st.current_book =
-                    canonicalise_book_id(&db_for_init, &jump.bible_id, &jump.book_id);
+                st.current_book = canonicalise_book_id(&db_for_init, &jump.bible_id, &jump.book_id);
                 st.current_chapter = jump.start_chapter;
             }
             if let Ok(chap) =
@@ -186,9 +184,8 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
     // the chapter container so inline `VerseMarker::on_sized` can
     // compute a content-relative scroll target. Both signals + the
     // controller travel together via `VerseScrollCtx`.
-    let scroll_controller = freya::components::use_scroll_controller(
-        freya::components::ScrollConfig::default,
-    );
+    let scroll_controller =
+        freya::components::use_scroll_controller(freya::components::ScrollConfig::default);
     let viewport_top: State<f32> = use_state(|| 0.0_f32);
     // Verse to bring into view, separate from the 3 s flash so the scroll
     // happens once and then leaves the user in control.
@@ -240,8 +237,8 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                 if target_item != item.0 {
                     continue;
                 }
-                let Some(bytes) = crate::host_api::host_handle()
-                    .take_source_anchor(BIBLE_PLUGIN_ID, item.0)
+                let Some(bytes) =
+                    crate::host_api::host_handle().take_source_anchor(BIBLE_PLUGIN_ID, item.0)
                 else {
                     continue;
                 };
@@ -258,14 +255,18 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                 );
                 let current_bible = { state_setter.peek().bible_id.clone() };
                 if current_bible != jump.bible_id
-                    && let Err(e) = state_setter.write().switch_bible(&db_notify, &jump.bible_id)
+                    && let Err(e) = state_setter
+                        .write()
+                        .switch_bible(&db_notify, &jump.bible_id)
                 {
                     log::warn!("bible chip: switch_bible failed: {e}");
                 }
                 let canonical_book =
                     canonicalise_book_id(&db_notify, &jump.bible_id, &jump.book_id);
                 if let Err(e) =
-                    state_setter.write().jump_to(&db_notify, &canonical_book, jump.start_chapter)
+                    state_setter
+                        .write()
+                        .jump_to(&db_notify, &canonical_book, jump.start_chapter)
                 {
                     log::warn!(
                         "bible chip: jump_to failed (bible={}, book={}, chap={}): {e}",
@@ -307,6 +308,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
         {
             log::warn!("bible: snapshot write failed: {e}");
         }
+        crate::sync::snapshot_changed(item);
     });
 
     // Kick a lazy helloao fetch each time the viewer settles on a new
@@ -564,8 +566,9 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                 on_sidebar: Some(Box::new(on_sidebar)),
                 on_back: has_back.then(|| Box::new(on_back_cb) as toolbar::BackHandler),
                 on_forward: has_forward.then(|| Box::new(on_forward_cb) as toolbar::BackHandler),
-                on_notebook: Some(Box::new(move || crate::notebooks::open_notebook(item))
-                    as toolbar::BackHandler),
+                on_notebook: Some(
+                    Box::new(move || crate::notebooks::open_notebook(item)) as toolbar::BackHandler
+                ),
                 on_links: Some(Box::new(move || {
                     crate::components::DocActionsMenu::new(Some(item))
                         .on_show_links(move || {
@@ -590,7 +593,6 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
             st_snapshot.chapter.as_ref(),
             &st_snapshot.highlights,
             *flash_verse.read(),
-
             {
                 let pending = *pending_highlight.read();
                 let color = *preview_color.read();

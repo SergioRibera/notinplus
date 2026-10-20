@@ -9,6 +9,7 @@ use crate::library::ItemId;
 
 static DOCS: Mutex<Vec<(ItemId, Arc<Mutex<Doc>>)>> = Mutex::new(Vec::new());
 static WATCHERS: Mutex<Vec<(ItemId, flume::Sender<()>)>> = Mutex::new(Vec::new());
+static SNAPSHOT_WATCHERS: Mutex<Vec<(ItemId, flume::Sender<()>)>> = Mutex::new(Vec::new());
 
 fn docs() -> std::sync::MutexGuard<'static, Vec<(ItemId, Arc<Mutex<Doc>>)>> {
     DOCS.lock()
@@ -62,4 +63,24 @@ pub fn watch(item: ItemId) -> flume::Receiver<()> {
 /// Remote changes landed in the live copy of `item`.
 pub(crate) fn notify(item: ItemId) {
     watchers().retain(|(i, tx)| *i != item || tx.send(()).is_ok());
+}
+
+fn snapshot_watchers() -> std::sync::MutexGuard<'static, Vec<(ItemId, flume::Sender<()>)>> {
+    SNAPSHOT_WATCHERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Wake whenever another device replaced the plugin snapshot of `item`.
+#[must_use]
+pub fn watch_snapshot(item: ItemId) -> flume::Receiver<()> {
+    let (tx, rx) = flume::unbounded();
+    snapshot_watchers().push((item, tx));
+    rx
+}
+
+/// Another device's plugin snapshot of `item` is now on disk.
+pub(crate) fn notify_snapshot(item: ItemId) {
+    snapshot_watchers().retain(|(i, tx)| *i != item || tx.send(()).is_ok());
+    crate::space::notify_changed();
 }

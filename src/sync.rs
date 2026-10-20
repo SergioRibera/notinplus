@@ -87,6 +87,7 @@ pub struct ShareRequest {
 enum Cmd {
     LocalChanged,
     DocChanged(DocId),
+    BlobChanged(BlobKey),
     Live(DocId, Vec<u8>),
     BeginPairing,
     CancelPairing,
@@ -164,6 +165,14 @@ fn command(cmd: Cmd) {
 /// Ephemeral state of `item` for whoever is looking at it right now.
 pub fn live(item: ItemId, message: &LiveMessage) {
     command(Cmd::Live(DocId(item.0), message.to_bytes()));
+}
+
+/// A plugin wrote its snapshot for `item`; push it right away.
+pub fn snapshot_changed(item: ItemId) {
+    command(Cmd::BlobChanged(BlobKey {
+        kind: BlobKind::Snapshot,
+        id: item.0,
+    }));
 }
 
 /// A document body changed; push it to everyone right away.
@@ -508,6 +517,7 @@ impl Service {
         let actions = match cmd {
             Cmd::LocalChanged => self.driver.announce().map_err(|e| e.to_string())?,
             Cmd::DocChanged(doc) => self.driver.push_doc(doc).map_err(|e| e.to_string())?,
+            Cmd::BlobChanged(key) => self.driver.push_blob(key).map_err(|e| e.to_string())?,
             Cmd::Live(doc, bytes) => self.driver.live(doc, bytes),
             Cmd::BeginPairing => {
                 self.last_failure = None;

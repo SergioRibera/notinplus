@@ -36,6 +36,9 @@ pub enum BlobKind {
     Tag,
     Link,
     Workspace,
+    /// A plugin's own state for a document, keyed by the document id;
+    /// which plugin travels inside the record.
+    Snapshot,
 }
 
 /// Identity plus freshness of a blob; enough to decide who is newer.
@@ -107,7 +110,10 @@ impl Scope {
     pub fn covers_blob(&self, key: BlobKey) -> bool {
         match self {
             Self::All => true,
-            Self::Subset { blobs, .. } => blobs.contains(&key),
+            Self::Subset { docs, blobs } => {
+                blobs.contains(&key)
+                    || (key.kind == BlobKind::Snapshot && docs.contains(&DocId(key.id)))
+            }
         }
     }
 }

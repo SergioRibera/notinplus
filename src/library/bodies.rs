@@ -97,6 +97,37 @@ pub fn write_plugin_snapshot(id: ItemId, plugin_id: &str, bytes: &[u8]) -> io::R
     fs::write(path, bytes)
 }
 
+/// When the plugin snapshot of `id` was last written, in Unix
+/// milliseconds; `None` without one. Doubles as its sync freshness.
+#[must_use]
+pub fn plugin_snapshot_stamp(id: ItemId, plugin_id: &str) -> Option<u64> {
+    let modified = fs::metadata(plugin_snapshot_path(id, plugin_id))
+        .ok()?
+        .modified()
+        .ok()?;
+    let since = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+    u64::try_from(since.as_millis()).ok()
+}
+
+/// Store a plugin snapshot that came from another device, stamped with
+/// the time it was written there so it is neither older nor newer than
+/// what that device holds.
+///
+/// # Errors
+/// Filesystem failure.
+pub fn write_plugin_snapshot_at(
+    id: ItemId,
+    plugin_id: &str,
+    bytes: &[u8],
+    written_at_ms: u64,
+) -> io::Result<()> {
+    write_plugin_snapshot(id, plugin_id, bytes)?;
+    let file = fs::File::options()
+        .write(true)
+        .open(plugin_snapshot_path(id, plugin_id))?;
+    file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_millis(written_at_ms))
+}
+
 /// Read a plugin snapshot blob. `Ok(None)` on missing file; IO errors
 /// on other failures.
 ///

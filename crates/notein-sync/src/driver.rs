@@ -1191,6 +1191,55 @@ impl<R: Replica> SyncDriver<R> {
         Ok(out)
     }
 
+    /// Push one blob to everyone who may hold it, like [`Self::push_doc`].
+    ///
+    /// # Errors
+    /// Replica failure while reading.
+    pub fn push_blob(&mut self, key: BlobKey) -> Result<Vec<Action>, SyncError<R::Error>> {
+        let mut out = Vec::new();
+        let devices: Vec<DeviceId> = self.online().map(|p| p.device).collect();
+        for device in devices {
+            if let Some(message) = self.engine.push_blob(device, key)? {
+                out.push(send(device, &Payload::Sync(message.to_bytes()?)));
+            }
+        }
+        let me = self.profile.id();
+        let ids: Vec<ShareId> = self.shares.keys().copied().collect();
+        for id in ids {
+            let Some((members, share_key)) = self.shares.get(&id).and_then(|link| {
+                let share = &link.share;
+                if !share.can_edit(me) {
+                    return None;
+                }
+                let members: Vec<DeviceId> = share
+                    .participants()
+                    .filter(|m| m.device != me)
+                    .filter(|m| self.connected.contains_key(&m.device))
+                    .map(|m| m.device)
+                    .collect();
+                Some((members, share.key.clone()))
+            }) else {
+                continue;
+            };
+            let mut sealed = Vec::with_capacity(members.len());
+            if let Some(link) = self.shares.get_mut(&id) {
+                for device in members {
+                    if let Some(message) = link.engine.push_blob(device, key)? {
+                        sealed.push((
+                            device,
+                            ShareMessage::Sync(message.to_bytes()?).seal(&share_key),
+                        ));
+                    }
+                }
+            }
+            for (device, sealed) in sealed {
+                out.extend(self.route(device, &Payload::Share { share: id, sealed }));
+            }
+        }
+        out.extend(self.relay_publish()?);
+        Ok(out)
+    }
+
     /// Hand ephemeral state of `doc` to everyone looking at it right
     /// now: trusted devices in the clear, share members sealed. Nothing
     /// is queued for whoever is away.
@@ -1480,7 +1529,7 @@ impl<R: Replica> SyncDriver<R> {
                     continue;
                 }
                 let allowed = match key.kind {
-                    BlobKind::Item => share.can_edit(me),
+                    BlobKind::Item | BlobKind::Snapshot => share.can_edit(me),
                     BlobKind::Link => share.can_link(me),
                     BlobKind::Folder | BlobKind::Tag | BlobKind::Workspace => false,
                 };
@@ -1695,6 +1744,7 @@ fn permitted(share: &Share, from: DeviceId, message: Message) -> Option<Message>
                     BlobKind::Item if blob.head.gone => share.can_delete(from),
                     BlobKind::Item => share.can_edit(from),
                     BlobKind::Link => share.can_link(from),
+                    BlobKind::Snapshot => share.can_edit(from),
                     BlobKind::Folder | BlobKind::Tag | BlobKind::Workspace => false,
                 })
                 .collect();

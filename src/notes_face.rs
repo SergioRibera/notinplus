@@ -338,6 +338,7 @@ fn save(item: ItemId, doc: &Arc<Mutex<Doc>>, body: &str, title: &str) {
     {
         log::warn!("notes: snapshot write failed: {err}");
     }
+    crate::sync::snapshot_changed(item);
     crate::library::refs::record_note(item, body);
     if let Some(index) = crate::builtin::notes_index()
         && !title.is_empty()
