@@ -409,6 +409,9 @@ pub enum ShareMessage {
     Ended,
     /// A member walked away.
     Left,
+    /// Ephemeral state of one of the share's documents, see
+    /// `SyncDriver::live`.
+    Live { doc: DocId, bytes: Vec<u8> },
 }
 
 impl ShareMessage {

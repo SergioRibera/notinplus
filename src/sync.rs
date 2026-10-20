@@ -20,8 +20,10 @@ use notein_sync::{
 
 use crate::library::{ItemId, Library, bodies};
 
+pub mod live;
 pub mod replica;
 
+use live::{LiveEvent, LiveMessage};
 use replica::LibraryReplica;
 
 /// Coalescing window for local change bursts.
@@ -84,6 +86,7 @@ pub struct ShareRequest {
 enum Cmd {
     LocalChanged,
     DocChanged(DocId),
+    Live(DocId, Vec<u8>),
     BeginPairing,
     CancelPairing,
     PairWith(PairingOffer),
@@ -155,6 +158,11 @@ fn command(cmd: Cmd) {
     if let Some(tx) = CMDS.get() {
         let _ = tx.send(cmd);
     }
+}
+
+/// Ephemeral state of `item` for whoever is looking at it right now.
+pub fn live(item: ItemId, message: &LiveMessage) {
+    command(Cmd::Live(DocId(item.0), message.to_bytes()));
 }
 
 /// A document body changed; push it to everyone right away.
@@ -445,6 +453,28 @@ impl Service {
                 self.last_join_failure = Some(reason);
             }
             DriverEvent::RelayOnline(_) => {}
+            DriverEvent::Live {
+                from,
+                name,
+                doc,
+                bytes,
+            } => {
+                let Some(message) = LiveMessage::from_bytes(&bytes) else {
+                    return;
+                };
+                let item = ItemId(doc.0);
+                for (_, board) in crate::active_boards::for_item(item) {
+                    crate::canvas::lock(&board).apply_live(from, &name, message.clone());
+                }
+                live::dispatch(
+                    item,
+                    &LiveEvent {
+                        from,
+                        name,
+                        message,
+                    },
+                );
+            }
         }
     }
 
@@ -477,6 +507,7 @@ impl Service {
         let actions = match cmd {
             Cmd::LocalChanged => self.driver.announce().map_err(|e| e.to_string())?,
             Cmd::DocChanged(doc) => self.driver.push_doc(doc).map_err(|e| e.to_string())?,
+            Cmd::Live(doc, bytes) => self.driver.live(doc, bytes),
             Cmd::BeginPairing => {
                 self.last_failure = None;
                 self.driver.begin_pairing();

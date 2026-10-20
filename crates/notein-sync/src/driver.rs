@@ -51,6 +51,13 @@ pub enum Payload {
     },
     /// A [`RelayMessage`] between a device and a relay.
     Relay(Vec<u8>),
+    /// Ephemeral state of one document between trusted devices: ink
+    /// still being drawn, a pointer, a caret. Never stored, never
+    /// retried; the next frame supersedes it.
+    Live {
+        doc: DocId,
+        bytes: Vec<u8>,
+    },
 }
 
 impl Payload {
@@ -178,6 +185,14 @@ pub enum DriverEvent {
     },
     /// The relay came within reach or went away.
     RelayOnline(bool),
+    /// Ephemeral state of a document from another device, see
+    /// [`SyncDriver::live`]. Opaque to the driver.
+    Live {
+        from: DeviceId,
+        name: String,
+        doc: DocId,
+        bytes: Vec<u8>,
+    },
 }
 
 /// What the app must carry out.
@@ -727,6 +742,16 @@ impl<R: Replica> SyncDriver<R> {
                         self.on_join_reply(from, share, &sealed, &mut out)?;
                     }
                     Payload::Relay(bytes) => self.on_relay(from, &bytes, &mut out)?,
+                    Payload::Live { doc, bytes } => {
+                        if self.profile.is_trusted(from) {
+                            out.push(Action::Event(DriverEvent::Live {
+                                from,
+                                name: self.peer_name(from),
+                                doc,
+                                bytes,
+                            }));
+                        }
+                    }
                 }
             }
             NetEvent::ConnectFailed { addr, .. } => {
@@ -804,6 +829,7 @@ impl<R: Replica> SyncDriver<R> {
         sealed: &[u8],
         out: &mut Vec<Action>,
     ) -> Result<(), SyncError<R::Error>> {
+        let name = self.peer_name(from);
         let Some(link) = self.shares.get_mut(&id) else {
             return Ok(());
         };
@@ -815,6 +841,16 @@ impl<R: Replica> SyncDriver<R> {
         };
         let me = self.profile.id();
         match message {
+            ShareMessage::Live { doc, bytes } => {
+                if link.share.docs.contains(&doc) {
+                    out.push(Action::Event(DriverEvent::Live {
+                        from,
+                        name,
+                        doc,
+                        bytes,
+                    }));
+                }
+            }
             ShareMessage::Sync(bytes) => {
                 let message = Message::from_bytes(&bytes)?;
                 let Some(message) = permitted(&link.share, from, message) else {
@@ -1155,6 +1191,65 @@ impl<R: Replica> SyncDriver<R> {
         Ok(out)
     }
 
+    /// Hand ephemeral state of `doc` to everyone looking at it right
+    /// now: trusted devices in the clear, share members sealed. Nothing
+    /// is queued for whoever is away.
+    #[must_use]
+    pub fn live(&self, doc: DocId, bytes: Vec<u8>) -> Vec<Action> {
+        let mut out: Vec<Action> = self
+            .online()
+            .map(|p| {
+                send(
+                    p.device,
+                    &Payload::Live {
+                        doc,
+                        bytes: bytes.clone(),
+                    },
+                )
+            })
+            .collect();
+        let me = self.profile.id();
+        for link in self.shares.values() {
+            if !link.share.docs.contains(&doc) {
+                continue;
+            }
+            let sealed = ShareMessage::Live {
+                doc,
+                bytes: bytes.clone(),
+            }
+            .seal(&link.share.key);
+            for member in link.share.participants() {
+                if member.device == me || !self.connected.contains_key(&member.device) {
+                    continue;
+                }
+                out.push(send(
+                    member.device,
+                    &Payload::Share {
+                        share: link.share.id,
+                        sealed: sealed.clone(),
+                    },
+                ));
+            }
+        }
+        out
+    }
+
+    /// What to call `device` in the UI: its hello name, its trusted
+    /// name, or the short id.
+    fn peer_name(&self, device: DeviceId) -> String {
+        self.connected
+            .get(&device)
+            .map(|p| p.name.clone())
+            .or_else(|| {
+                self.profile
+                    .trusted()
+                    .iter()
+                    .find(|t| t.id == device)
+                    .map(|t| t.name.clone())
+            })
+            .unwrap_or_else(|| device.short())
+    }
+
     /// Periodic housekeeping plus an announcement round.
     pub fn tick(&mut self) -> Result<Vec<Action>, SyncError<R::Error>> {
         let mut out = Vec::new();
@@ -1225,7 +1320,8 @@ pub fn relay_message(bytes: &[u8]) -> Option<RelayMessage> {
         | Payload::Pair(_)
         | Payload::Share { .. }
         | Payload::Join { .. }
-        | Payload::JoinReply { .. } => None,
+        | Payload::JoinReply { .. }
+        | Payload::Live { .. } => None,
     }
 }
 
@@ -1485,6 +1581,17 @@ impl<R: Replica> SyncDriver<R> {
                     Some(Payload::Share { share, sealed }) => {
                         self.on_share(device, share, &sealed, out)?;
                     }
+                    Some(Payload::Live { doc, bytes }) => {
+                        // Relayed ephemera reach members that only meet here.
+                        if self.profile.is_trusted(device) {
+                            out.push(Action::Event(DriverEvent::Live {
+                                from: device,
+                                name: self.peer_name(device),
+                                doc,
+                                bytes,
+                            }));
+                        }
+                    }
                     Some(Payload::Sync(_) | Payload::Pair(_) | Payload::Relay(_)) | None => {}
                 }
             }
@@ -1520,6 +1627,8 @@ impl<R: Replica> SyncDriver<R> {
             return Ok(true);
         };
         match message {
+            // Mailboxes never hold ephemera; nothing to apply.
+            ShareMessage::Live { .. } => {}
             ShareMessage::Sync(bytes) => {
                 let message = Message::from_bytes(&bytes)?;
                 if let Some(message) = permitted(&link.share, record.from, message) {

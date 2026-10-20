@@ -21,6 +21,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use flume::{Receiver, Sender};
 use freya::prelude::*;
@@ -34,7 +35,7 @@ use freya_engine::prelude::{
 
 use crate::bookmark::{Bookmark, Rgba, SourceRef, StrokeAnchor, TimestampMs, WorldPoint};
 use crate::brush::{
-    BrushConfig, BrushKind, BrushPreset, CapStyle, EraserMode, InkPoint, ShapeMode, Stroke,
+    BrushConfig, BrushId, BrushKind, BrushPreset, CapStyle, EraserMode, InkPoint, ShapeMode, Stroke,
 };
 use crate::doc::{Doc, DocError};
 use crate::doc_op::DocOp;
@@ -42,6 +43,7 @@ use crate::ids::{BookmarkId, StrokeId};
 use crate::ink_glyph::InkGlyphId;
 use crate::render::{BrushRegistry, HighlighterBrush, HighlighterState, PointerStyle};
 use crate::spatial::SpatialIndex;
+use crate::sync::live::LiveMessage;
 use crate::text_box::TextBoxId;
 use crate::undo::UndoStack;
 
@@ -284,7 +286,56 @@ pub struct Board {
     /// Wakeups for UI watchers (see [`Board::watch`]), pinged with every
     /// redraw request.
     watchers: Vec<Sender<()>>,
+    /// Where ephemeral state of this document goes while it is being
+    /// drawn; see [`Board::set_live_sink`].
+    live_sink: Option<LiveSink>,
+    /// Points of the active stroke already handed to the live sink.
+    live_sent: usize,
+    live_last: Option<Instant>,
+    pointer_last: Option<Instant>,
+    /// What other people are doing on this document right now.
+    remote: HashMap<notein_sync::DeviceId, RemoteHand>,
 }
+
+/// Where live messages go; a closure, so the board never names the
+/// sync service.
+#[derive(Clone)]
+struct LiveSink(Arc<dyn Fn(LiveMessage) + Send + Sync>);
+
+impl std::fmt::Debug for LiveSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LiveSink")
+    }
+}
+
+/// Another person's pen on this document: the stroke under it and
+/// where it hovers.
+#[derive(Debug, Clone)]
+pub struct RemoteHand {
+    pub name: String,
+    stroke: Option<RemoteStroke>,
+    pointer: Option<(f32, f32)>,
+    seen: Instant,
+}
+
+#[derive(Debug, Clone)]
+struct RemoteStroke {
+    stroke: Stroke,
+    preset: BrushPreset,
+    opacity: f32,
+    /// Set once the author lifted the pen; the ghost stays until the
+    /// committed stroke lands or a moment passes.
+    done_at: Option<Instant>,
+}
+
+/// How often ink under the pen travels to other devices.
+const LIVE_INK_INTERVAL: Duration = Duration::from_millis(33);
+/// How often a hovering pointer travels.
+const LIVE_POINTER_INTERVAL: Duration = Duration::from_millis(80);
+/// A remote hand silent this long is gone.
+const REMOTE_TTL: Duration = Duration::from_secs(6);
+/// A finished ghost stroke whose commit never arrived is dropped after this.
+const REMOTE_DONE_TTL: Duration = Duration::from_secs(3);
 
 /// Anchor snapshot for a pinch gesture — centroid + pair-distance of
 /// the two lowest finger ids. Rebuilt after every touch sample so pan
@@ -397,6 +448,11 @@ impl Default for Board {
             mode_before_text: InputMode::Draw,
             text_rev: 0,
             watchers: Vec::new(),
+            live_sink: None,
+            live_sent: 0,
+            live_last: None,
+            pointer_last: None,
+            remote: HashMap::new(),
         }
     }
 }
@@ -487,6 +543,7 @@ impl Board {
             return;
         }
         self.pointer = pos;
+        self.emit_live_pointer();
         self.notify();
     }
 
@@ -943,6 +1000,7 @@ impl Board {
         self.active = None;
         self.active_layer_at_begin = None;
         self.erase_session = None;
+        self.remote.clear();
         self.text_session = None;
         self.text_heights.clear();
         self.touch_text_scene();
@@ -959,6 +1017,7 @@ impl Board {
     /// Corrupt update bytes.
     pub fn merge_updates(&mut self, updates: &[u8]) -> Result<(), DocError> {
         self.doc.import_updates(updates)?;
+        self.settle_remote();
         self.touch_text_scene();
         self.rebuild_derived();
         Ok(())
@@ -1042,6 +1101,9 @@ impl Board {
         // toggle does not switch a live stroke between rubber-band and
         // freehand halfway through.
         self.two_point_active = self.is_two_point_stroke_mode();
+        self.live_sent = 0;
+        self.live_last = None;
+        self.emit_live_ink(false);
         self.notify();
     }
 
@@ -1072,6 +1134,7 @@ impl Board {
         } else {
             active.points.push(point);
         }
+        self.emit_live_ink(false);
         self.notify();
     }
 
@@ -1127,6 +1190,7 @@ impl Board {
             return;
         }
         if let Some(active) = self.active.take() {
+            self.emit_live_ink_for(&active, true);
             let (id, kind) = (active.id, self.current_kind());
             self.commit_stroke(active);
             self.two_point_active = false;
@@ -1148,7 +1212,8 @@ impl Board {
             self.notify();
             return;
         }
-        if self.active.take().is_some() {
+        if let Some(active) = self.active.take() {
+            self.emit_live_ink_for(&active, true);
             self.active_layer_at_begin = None;
             self.two_point_active = false;
             self.notify();
@@ -2167,6 +2232,21 @@ impl Board {
 
     /// In-flight stroke and eraser marquee, in world coordinates.
     fn paint_world_overlays(&self, canvas: &freya_engine::prelude::Canvas) {
+        for hand in self.remote.values() {
+            let Some(remote) = &hand.stroke else {
+                continue;
+            };
+            let renderer = self.brush_registry.brush(remote.preset.kind);
+            let mut paint = renderer.paint(&remote.preset, remote.stroke.color);
+            let base = paint.color();
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let scaled = (f32::from(base.a()) * remote.opacity.clamp(0.0, 1.0) * REMOTE_INK_ALPHA)
+                .clamp(0.0, 255.0) as u8;
+            paint.set_color(base.with_a(scaled));
+            let path =
+                renderer.build_path(&remote.preset, &remote.stroke, self.brush_registry.caps());
+            canvas.draw_path(&path, &paint);
+        }
         if let Some(active) = &self.active {
             if let Some(preset) = self.doc.preset(active.brush) {
                 let layer_opacity = self
@@ -2210,6 +2290,13 @@ impl Board {
                 .brush(preset.kind)
                 .pointer_style(&preset, color);
             draw_pointer_overlay(canvas, px, py, self.viewport.scale, style);
+        }
+
+        for (device, hand) in &self.remote {
+            if let Some((wx, wy)) = hand.pointer {
+                let (sx, sy) = self.viewport.world_to_screen(wx, wy);
+                draw_remote_pointer(canvas, sx, sy, device_color(*device));
+            }
         }
 
         // Bookmark pins. Rendered after the overlay so pins sit on
@@ -2713,6 +2800,207 @@ pub fn drawing_surface(
 /// Lock the shared board, recovering transparently from mutex
 /// poisoning. Every mutation site is a short vec push with no
 /// panic-prone code — forward progress beats an unactionable error.
+/// Ghost ink from other devices is painted this much fainter than the
+/// author sees it.
+const REMOTE_INK_ALPHA: f32 = 0.7;
+
+impl Board {
+    /// Route ephemeral state (ink under the pen, pointer) to `sink`
+    /// while this board shows a document others may be looking at.
+    pub fn set_live_sink(&mut self, sink: impl Fn(LiveMessage) + Send + Sync + 'static) {
+        self.live_sink = Some(LiveSink(Arc::new(sink)));
+    }
+
+    pub fn clear_live_sink(&mut self) {
+        self.live_sink = None;
+    }
+
+    /// Everyone else working on this document right now.
+    pub fn remote_hands(&self) -> impl Iterator<Item = (&notein_sync::DeviceId, &RemoteHand)> {
+        self.remote.iter()
+    }
+
+    /// Apply what another device is doing: extend or finish its ghost
+    /// stroke, move its pointer. Silent hands expire here too.
+    pub fn apply_live(&mut self, from: notein_sync::DeviceId, name: &str, message: LiveMessage) {
+        let now = Instant::now();
+        self.remote
+            .retain(|_, hand| now.duration_since(hand.seen) < REMOTE_TTL);
+        let hand = self.remote.entry(from).or_insert_with(|| RemoteHand {
+            name: name.to_owned(),
+            stroke: None,
+            pointer: None,
+            seen: now,
+        });
+        hand.seen = now;
+        hand.name = name.to_owned();
+        match message {
+            LiveMessage::Ink {
+                stroke,
+                preset,
+                color,
+                opacity,
+                points,
+                done,
+            } => {
+                let same = hand
+                    .stroke
+                    .as_ref()
+                    .is_some_and(|r| r.stroke.id == stroke && r.done_at.is_none());
+                if !same {
+                    let Some(first) = points.first().copied() else {
+                        if done {
+                            hand.stroke = None;
+                        }
+                        self.notify();
+                        return;
+                    };
+                    let mut ghost = Stroke::new(stroke, BrushId::default(), color, first);
+                    ghost.points.extend(points.iter().skip(1).copied());
+                    hand.stroke = Some(RemoteStroke {
+                        stroke: ghost,
+                        preset,
+                        opacity,
+                        done_at: None,
+                    });
+                } else if let Some(remote) = hand.stroke.as_mut() {
+                    remote.stroke.points.extend(points);
+                    remote.preset = preset;
+                    remote.opacity = opacity;
+                }
+                if done && let Some(remote) = hand.stroke.as_mut() {
+                    remote.done_at = Some(now);
+                }
+            }
+            LiveMessage::Pointer { x, y, shown } => {
+                hand.pointer = shown.then_some((x, y));
+            }
+            LiveMessage::Caret { .. } => {}
+        }
+        self.settle_remote();
+        self.notify();
+    }
+
+    /// Drop ghost strokes whose committed twin is in the document, or
+    /// that finished a while ago without one.
+    fn settle_remote(&mut self) {
+        let now = Instant::now();
+        for hand in self.remote.values_mut() {
+            let gone = hand.stroke.as_ref().is_some_and(|remote| {
+                self.doc.find_stroke(remote.stroke.id).is_some()
+                    || remote
+                        .done_at
+                        .is_some_and(|at| now.duration_since(at) > REMOTE_DONE_TTL)
+            });
+            if gone {
+                hand.stroke = None;
+            }
+        }
+    }
+
+    fn emit_live_ink(&mut self, done: bool) {
+        if self.live_sink.is_none() {
+            return;
+        }
+        let Some(active) = self.active.take() else {
+            return;
+        };
+        self.emit_live_ink_for(&active, done);
+        self.active = Some(active);
+    }
+
+    fn emit_live_ink_for(&mut self, stroke: &Stroke, done: bool) {
+        let Some(sink) = self.live_sink.clone() else {
+            return;
+        };
+        let due = done
+            || self
+                .live_last
+                .is_none_or(|last| last.elapsed() >= LIVE_INK_INTERVAL);
+        if !due {
+            return;
+        }
+        // Rubber-band strokes rewrite their last point: resend them whole.
+        let from = if self.two_point_active {
+            0
+        } else {
+            self.live_sent.min(stroke.points.len())
+        };
+        let points = stroke.points[from..].to_vec();
+        if points.is_empty() && !done {
+            return;
+        }
+        let opacity = self
+            .active_layer_at_begin
+            .and_then(|id| self.doc.layer(id))
+            .map_or(1.0, |l| l.opacity);
+        (sink.0)(LiveMessage::Ink {
+            stroke: stroke.id,
+            preset: self.current_preset,
+            color: stroke.color,
+            opacity,
+            points,
+            done,
+        });
+        self.live_sent = stroke.points.len();
+        self.live_last = Some(Instant::now());
+    }
+
+    fn emit_live_pointer(&mut self) {
+        let Some(sink) = self.live_sink.clone() else {
+            return;
+        };
+        let shown = self.pointer.is_some() && !self.gesture_active;
+        let due = !shown
+            || self
+                .pointer_last
+                .is_none_or(|last| last.elapsed() >= LIVE_POINTER_INTERVAL);
+        if !due {
+            return;
+        }
+        let (x, y) = self
+            .pointer
+            .map_or((0.0, 0.0), |(sx, sy)| self.viewport.screen_to_world(sx, sy));
+        (sink.0)(LiveMessage::Pointer { x, y, shown });
+        self.pointer_last = Some(Instant::now());
+    }
+}
+
+/// A stable, readable colour for a device, from its id.
+fn device_color(device: notein_sync::DeviceId) -> [u8; 4] {
+    let hue = f32::from(device.0[0]) / 255.0 * 6.0;
+    let sector = hue.floor();
+    let frac = hue - sector;
+    let (v, p, q, t) = (0.92_f32, 0.35_f32, 0.92 - 0.57 * frac, 0.35 + 0.57 * frac);
+    let (r, g, b) = match sector as u8 {
+        0 => (v, t, p),
+        1 => (q, v, p),
+        2 => (p, v, t),
+        3 => (p, q, v),
+        4 => (t, p, v),
+        _ => (v, p, q),
+    };
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let to_u8 = |c: f32| (c * 255.0).round().clamp(0.0, 255.0) as u8;
+    [to_u8(r), to_u8(g), to_u8(b), 255]
+}
+
+/// Another person's pointer: a small disc in their colour with a
+/// white halo so it reads on any paper.
+fn draw_remote_pointer(canvas: &freya_engine::prelude::Canvas, cx: f32, cy: f32, color: [u8; 4]) {
+    const RADIUS: f32 = 5.0;
+    let mut halo = Paint::default();
+    halo.set_color(SkColor::from_argb(200, 255, 255, 255));
+    halo.set_style(PaintStyle::Fill);
+    halo.set_anti_alias(true);
+    canvas.draw_circle((cx, cy), RADIUS + 2.0, &halo);
+    let mut dot = Paint::default();
+    dot.set_color(SkColor::from_argb(color[3], color[0], color[1], color[2]));
+    dot.set_style(PaintStyle::Fill);
+    dot.set_anti_alias(true);
+    canvas.draw_circle((cx, cy), RADIUS, &dot);
+}
+
 pub fn lock(board: &Arc<Mutex<Board>>) -> std::sync::MutexGuard<'_, Board> {
     match board.lock() {
         Ok(g) => g,

@@ -186,6 +186,7 @@ fn load_doc_into_board(mount: CanvasMount, board: Arc<Mutex<Board>>) {
                     let (view_tx, view_rx) = flume::unbounded::<()>();
                     guard.set_commit_sink(tx);
                     guard.set_view_sink(view_tx);
+                    guard.set_live_sink(move |message| crate::sync::live(id, &message));
                     spawn_autosave_worker(id, Arc::clone(&board), rx);
                     spawn_view_worker(
                         prefs::ViewKey { item: id, slot },
@@ -198,6 +199,7 @@ fn load_doc_into_board(mount: CanvasMount, board: Arc<Mutex<Board>>) {
                     // sinks already dropped with its board.
                     guard.clear_commit_sink();
                     guard.clear_view_sink();
+                    guard.clear_live_sink();
                 }
             }
         }
