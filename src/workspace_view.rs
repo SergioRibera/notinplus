@@ -318,11 +318,12 @@ fn pane_tree(
     snap: &WorkspaceSnapshot,
 ) -> Rect {
     let layout = snap.workspace.layout.clone();
-    // One pane with at most one tab reads as a plain document: no
-    // tab strip until a second tab or pane appears.
+    // One pane with exactly one tab reads as a plain document: no
+    // tab strip until a second tab or pane appears. An empty pane keeps
+    // the strip so its `+` stays reachable.
     let show_tabs = {
         let leaves = layout.leaves();
-        !(leaves.len() == 1 && leaves[0].tabs.len() <= 1)
+        !(leaves.len() == 1 && leaves[0].tabs.len() == 1)
     };
     let titles = snap.titles.clone();
     let kinds = snap.kinds.clone();

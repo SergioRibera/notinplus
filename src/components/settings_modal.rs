@@ -305,6 +305,7 @@ impl Component for PluginsSection {
 fn header_row(sec: Section) -> impl IntoElement {
     rect()
         .horizontal()
+        .content(Content::Flex)
         .width(Size::fill())
         .cross_align(Alignment::Center)
         .child(

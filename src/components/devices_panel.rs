@@ -97,6 +97,7 @@ fn this_device(snapshot: &SyncSnapshot, name: State<String>) -> Rect {
         .child(
             rect()
                 .horizontal()
+                .content(Content::Flex)
                 .width(Size::fill())
                 .spacing(10.0)
                 .cross_align(Alignment::Center)
@@ -155,6 +156,7 @@ fn pairing_card(
     card = card.child(
         rect()
             .horizontal()
+            .content(Content::Flex)
             .width(Size::fill())
             .spacing(10.0)
             .cross_align(Alignment::Center)
@@ -205,6 +207,7 @@ fn pairing_card(
             .child(
                 rect()
                     .horizontal()
+                    .content(Content::Flex)
                     .width(Size::fill())
                     .spacing(10.0)
                     .cross_align(Alignment::Center)
@@ -291,6 +294,7 @@ fn trusted_row(device: &TrustedDevice, online: bool) -> Rect {
     };
     rect()
         .horizontal()
+        .content(Content::Flex)
         .width(Size::fill())
         .spacing(10.0)
         .cross_align(Alignment::Center)
@@ -330,6 +334,7 @@ fn relay_card(snapshot: &SyncSnapshot, relay: State<String>) -> Rect {
         .child(
             rect()
                 .horizontal()
+                .content(Content::Flex)
                 .width(Size::fill())
                 .spacing(10.0)
                 .cross_align(Alignment::Center)

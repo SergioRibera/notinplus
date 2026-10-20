@@ -242,6 +242,7 @@ fn create(
     column.child(
         rect()
             .horizontal()
+            .content(Content::Flex)
             .width(Size::fill())
             .spacing(10.0)
             .child(rect().width(Size::flex(1.0)))
@@ -405,6 +406,7 @@ fn manage(view: &ShareView) -> Rect {
     column.child(
         rect()
             .horizontal()
+            .content(Content::Flex)
             .width(Size::fill())
             .spacing(10.0)
             .child(rect().width(Size::flex(1.0)))
@@ -438,6 +440,7 @@ fn person_row(
     };
     let mut row = rect()
         .horizontal()
+        .content(Content::Flex)
         .width(Size::fill())
         .spacing(10.0)
         .cross_align(Alignment::Center)

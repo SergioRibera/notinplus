@@ -326,6 +326,7 @@ fn header(nodes: usize, edges: usize) -> Rect {
         .width(Size::fill())
         .height(Size::px(HEADER_HEIGHT))
         .horizontal()
+        .content(Content::Flex)
         .cross_align(Alignment::Center)
         .padding((0.0, 16.0))
         .background(CARD_BG)
