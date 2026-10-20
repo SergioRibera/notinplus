@@ -295,6 +295,8 @@ pub struct Board {
     pointer_last: Option<Instant>,
     /// What other people are doing on this document right now.
     remote: HashMap<notein_sync::DeviceId, RemoteHand>,
+    /// Edits are refused: the document is shared with us to look at.
+    read_only: bool,
 }
 
 /// Where live messages go; a closure, so the board never names the
@@ -453,6 +455,7 @@ impl Default for Board {
             live_last: None,
             pointer_last: None,
             remote: HashMap::new(),
+            read_only: false,
         }
     }
 }
@@ -1060,6 +1063,9 @@ impl Board {
     }
 
     pub fn begin(&mut self, point: InkPoint) {
+        if self.read_only {
+            return;
+        }
         let point = self.shape_sample(point);
         if let Some(active) = self.active.take() {
             self.commit_stroke(active);
@@ -1240,6 +1246,9 @@ impl Board {
     /// forward ops on the redo stack. Returns `true` iff something
     /// was undone.
     pub fn undo(&mut self) -> bool {
+        if self.read_only {
+            return false;
+        }
         self.end_text_session();
         self.forget_handwriting();
         let Some(entry) = self.undo.pop_undo() else {
@@ -1271,6 +1280,9 @@ impl Board {
     /// `Doc::emit`, parks the entry back on the undo stack. Returns
     /// `true` iff something was redone.
     pub fn redo(&mut self) -> bool {
+        if self.read_only {
+            return false;
+        }
         self.end_text_session();
         self.forget_handwriting();
         let Some(entry) = self.undo.pop_redo() else {
@@ -1648,6 +1660,9 @@ impl Board {
     /// so re-applying a pre-captured inverse / forward op does not
     /// append another entry.
     fn apply_op(&mut self, op: DocOp) {
+        if self.read_only {
+            return;
+        }
         let inverse = self.doc.inverse_before_apply(&op);
         self.apply_op_untracked(op.clone());
         self.undo.record(op, inverse);
@@ -2815,6 +2830,24 @@ impl Board {
         self.live_sink = None;
     }
 
+    /// Refuse every edit while `read_only`; what others do still lands.
+    pub fn set_read_only(&mut self, read_only: bool) {
+        if self.read_only == read_only {
+            return;
+        }
+        self.read_only = read_only;
+        if read_only {
+            self.cancel();
+            self.end_text_session();
+        }
+        self.notify();
+    }
+
+    #[must_use]
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
     /// Everyone else working on this document right now.
     pub fn remote_hands(&self) -> impl Iterator<Item = (&notein_sync::DeviceId, &RemoteHand)> {
         self.remote.iter()
@@ -3839,6 +3872,41 @@ mod tests {
         b.extend(pt(10.0, 0.0));
         b.end();
         assert!(b.doc().layer(0).unwrap().strokes.is_empty());
+    }
+
+    #[test]
+    fn read_only_board_refuses_strokes_and_undo_but_takes_remote_changes() {
+        let mut b = Board::default();
+        b.set_current_preset(BrushPreset::pen());
+        b.begin(pt(0.0, 0.0));
+        b.extend(pt(10.0, 0.0));
+        b.end();
+        assert_eq!(b.doc().layer(0).unwrap().strokes.len(), 1);
+
+        b.set_read_only(true);
+        b.begin(pt(0.0, 20.0));
+        b.extend(pt(10.0, 20.0));
+        b.end();
+        assert_eq!(b.doc().layer(0).unwrap().strokes.len(), 1);
+        assert!(!b.undo());
+        b.clear();
+        assert_eq!(b.doc().layer(0).unwrap().strokes.len(), 1);
+
+        let mut other = Board::default();
+        other.replace_doc(Doc::from_snapshot(&b.doc().snapshot_bytes().unwrap()).unwrap());
+        other.set_current_preset(BrushPreset::pen());
+        other.begin(pt(0.0, 40.0));
+        other.extend(pt(10.0, 40.0));
+        other.end();
+        let updates = other.doc().updates_since(&b.doc().version()).unwrap();
+        b.merge_updates(&updates).unwrap();
+        assert_eq!(b.doc().layer(0).unwrap().strokes.len(), 2);
+
+        b.set_read_only(false);
+        b.begin(pt(0.0, 60.0));
+        b.extend(pt(10.0, 60.0));
+        b.end();
+        assert_eq!(b.doc().layer(0).unwrap().strokes.len(), 3);
     }
 
     #[test]

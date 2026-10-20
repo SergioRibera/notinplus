@@ -138,6 +138,17 @@ pub fn share_of(item: ItemId) -> Option<ShareView> {
         .and_then(|s| s.shares.iter().find(|v| v.docs.contains(&item)).cloned())
 }
 
+/// Whether this device may edit `item`: false while a share holds
+/// it for us to look at only.
+#[must_use]
+pub fn can_edit(item: ItemId) -> bool {
+    snapshot()
+        .shares
+        .iter()
+        .filter(|share| share.docs.contains(&item))
+        .all(|share| share.can_edit)
+}
+
 /// A receiver that fires whenever the snapshot changes.
 #[must_use]
 pub fn changes() -> flume::Receiver<()> {

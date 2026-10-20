@@ -395,6 +395,9 @@ pub(crate) struct ChromeState {
     pub(crate) can_undo: State<bool>,
     /// Mirrors `Board::redo_depth() > 0`. See `can_undo`.
     pub(crate) can_redo: State<bool>,
+    /// Mirrors `Board::is_read_only()`: the document is shared with
+    /// us to look at, every tool is inert.
+    pub(crate) read_only: State<bool>,
     pub(crate) selected: State<usize>,
     pub(crate) scale: State<f32>,
     pub(crate) layers_ver: State<u32>,
@@ -454,6 +457,7 @@ pub(crate) fn use_chrome_state() -> ChromeState {
         zoom: use_state(|| 1.0_f32),
         can_undo: use_state(|| false),
         can_redo: use_state(|| false),
+        read_only: use_state(|| false),
         selected: use_state(|| 0_usize),
         scale: use_state(|| 1.0_f32),
         layers_ver: use_state(|| 0_u32),
@@ -607,6 +611,7 @@ pub(crate) fn mount_board(mount: CanvasMount, state: ChromeState) -> Arc<Mutex<B
     let mut zoom = state.zoom;
     let mut can_undo = state.can_undo;
     let mut can_redo = state.can_redo;
+    let mut read_only = state.read_only;
     let mut selected_setter = state.selected;
     let mut scale_setter = state.scale;
     let mut mode_setter = state.mode;
@@ -662,9 +667,14 @@ pub(crate) fn mount_board(mount: CanvasMount, state: ChromeState) -> Arc<Mutex<B
             // signal off the freshest viewport so the HUD label
             // stays in step with pinch / wheel gestures without
             // needing its own notifier plumbing.
-            let (s, u, r) = {
+            let (s, u, r, ro) = {
                 let g = lock(&zoom_board);
-                (g.viewport().scale, g.undo_depth() > 0, g.redo_depth() > 0)
+                (
+                    g.viewport().scale,
+                    g.undo_depth() > 0,
+                    g.redo_depth() > 0,
+                    g.is_read_only(),
+                )
             };
             // 0.1% threshold — the HUD label rounds to whole percent,
             // so a stricter epsilon would push zoom.set (and the
@@ -678,6 +688,9 @@ pub(crate) fn mount_board(mount: CanvasMount, state: ChromeState) -> Arc<Mutex<B
             }
             if r != *can_redo.read() {
                 can_redo.set(r);
+            }
+            if ro != *read_only.read() {
+                read_only.set(ro);
             }
         }
     });
@@ -736,6 +749,7 @@ fn seed_chrome_from_board(board: &Arc<Mutex<Board>>, state: &mut ChromeState, mo
         state.handwriting.set(g.handwriting_enabled());
         state.can_undo.set(g.undo_depth() > 0);
         state.can_redo.set(g.redo_depth() > 0);
+        state.read_only.set(g.is_read_only());
         state.zoom.set(g.viewport().scale);
     }
     state.active_board.set(Some(Arc::clone(board)));
@@ -831,6 +845,7 @@ pub(crate) fn canvas_chrome(
             }
         })
         .child(top_right_stack(&board, &state, pad))
+        .maybe_child(state.read_only.read().then(|| read_only_overlay(pad.top)))
         .child(left_top(&board, &state, coords, pad, palette_progress))
         .child(zoom_overlay(
             &board,
@@ -1039,6 +1054,38 @@ fn icon_button_gated(
 
 /// Zoom HUD in the bottom-right corner, `bottom` / `right` pixels from the
 /// pane edges.
+/// Top-centre pill telling the guest the document is theirs to look
+/// at only. No handlers, so pointer events fall through to the canvas.
+fn read_only_overlay(top: f32) -> impl IntoElement {
+    rect()
+        .position(Position::new_absolute().top(top + 8.0).left(0.0).right(0.0))
+        .width(Size::fill())
+        .horizontal()
+        .main_align(Alignment::Center)
+        .layer(Layer::Overlay)
+        .child(
+            rect()
+                .horizontal()
+                .center()
+                .spacing(6.0)
+                .padding((6.0, 10.0))
+                .background(Color::from_rgb(30, 30, 34))
+                .with_corner_radius(8.0)
+                .child(
+                    SvgViewer::new(freya::icons::lucide::lock())
+                        .color(Color::WHITE)
+                        .width(Size::px(12.0))
+                        .height(Size::px(12.0)),
+                )
+                .child(
+                    label()
+                        .color(Color::WHITE)
+                        .font_size(12.0)
+                        .text("Solo lectura · podés mirar, no editar"),
+                ),
+        )
+}
+
 fn zoom_overlay(
     board: &Arc<Mutex<Board>>,
     zoom: State<f32>,

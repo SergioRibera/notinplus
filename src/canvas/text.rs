@@ -216,6 +216,9 @@ impl Board {
     /// Start editing a stored box.
     pub fn begin_text_edit(&mut self, id: TextBoxId) {
         self.end_text_session();
+        if self.is_read_only() {
+            return;
+        }
         let Some((layer_id, text)) = self.doc.locate_text(id) else {
             return;
         };
@@ -233,6 +236,9 @@ impl Board {
     /// the world point. Ignored when the active layer is hidden or locked.
     pub fn begin_text_draft(&mut self, wx: f32, wy: f32) {
         self.end_text_session();
+        if self.is_read_only() {
+            return;
+        }
         let layer_id = self.doc.active_layer;
         if !self
             .doc

@@ -16,7 +16,7 @@
 //! background. Falls back to a blank off-white surface when nothing is
 //! queued (fresh start / cold URL entry).
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use freya::prelude::*;
 use freya::router::*;
@@ -187,7 +187,9 @@ fn load_doc_into_board(mount: CanvasMount, board: Arc<Mutex<Board>>) {
                     guard.set_commit_sink(tx);
                     guard.set_view_sink(view_tx);
                     guard.set_live_sink(move |message| crate::sync::live(id, &message));
+                    guard.set_read_only(!crate::sync::can_edit(id));
                     spawn_autosave_worker(id, Arc::clone(&board), rx);
+                    spawn_policy_worker(id, Arc::downgrade(&board));
                     spawn_view_worker(
                         prefs::ViewKey { item: id, slot },
                         Arc::clone(&board),
@@ -245,6 +247,22 @@ fn spawn_autosave_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Receiv
 
 /// Drive one view-sidecar write per ping. Same drain pattern as the doc
 /// autosave worker — a pan burst collapses into a single write.
+/// Keep the board's read-only gate in step with the share policy for
+/// as long as the board lives: the owner may lift or impose it while
+/// the document is open here.
+fn spawn_policy_worker(id: ItemId, board: Weak<Mutex<Board>>) {
+    let changes = crate::sync::changes();
+    spawn(async move {
+        while changes.recv_async().await.is_ok() {
+            while changes.try_recv().is_ok() {}
+            let Some(board) = board.upgrade() else {
+                return;
+            };
+            lock(&board).set_read_only(!crate::sync::can_edit(id));
+        }
+    });
+}
+
 fn spawn_view_worker(key: prefs::ViewKey, board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
     spawn(async move {
         while rx.recv_async().await.is_ok() {

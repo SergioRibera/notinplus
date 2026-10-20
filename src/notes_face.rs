@@ -62,6 +62,7 @@ impl Component for NotesFace {
             move || open_docs::lock(&doc).body()
         });
         let typing = use_state(Vec::<(String, Instant)>::new);
+        let locked = use_state(move || !crate::sync::can_edit(item));
         let title = use_state(String::new);
         let controller = use_editor_controller();
         let scroll = use_scroll_controller(ScrollConfig::default);
@@ -86,6 +87,11 @@ impl Component for NotesFace {
             move || follow_typing(item, typing)
         });
         use_hook(move || listen_for_jumps(item, controller, scroll));
+        use_hook({
+            let mut locked = locked;
+            move || follow_policy(item, locked)
+        });
+        use_side_effect(move || controller.set_read_only(*locked.read()));
         use_hook(move || {
             OPEN_NOTES.with(|open| open.borrow_mut().insert(item, controller));
         });
@@ -102,7 +108,8 @@ impl Component for NotesFace {
             });
         });
 
-        let read_only = controller.active_format().read_only;
+        let locked_now = *locked.read();
+        let read_only = controller.active_format().read_only || locked_now;
         let actions = TopbarActions {
             on_home: Some(action(move || {
                 let _ = router.push(crate::route::Route::Home);
@@ -114,7 +121,7 @@ impl Component for NotesFace {
                 let window = viewport_area.map(|area| *area.0.peek());
                 crate::notes_share::open_menu(controller, title.peek().clone(), at, window);
             })),
-            on_toggle_mode: Some(action(move || controller.toggle_read_only())),
+            on_toggle_mode: (!locked_now).then(|| action(move || controller.toggle_read_only())),
             on_notebook: Some(action(move || crate::notebooks::open_notebook(item))),
             on_links: Some(action(move || {
                 crate::components::DocActionsMenu::new(Some(item))
@@ -148,6 +155,7 @@ impl Component for NotesFace {
             .background(ui::BACKGROUND)
             .content(Content::flex())
             .child(ui::topbar(&title.read(), read_only, actions))
+            .maybe_child(locked_now.then(|| banner("Solo lectura: podés mirar, no editar.")))
             .maybe_child(typing_banner(&typing.read()))
             .maybe_child((!read_only).then(|| {
                 rect()
@@ -305,12 +313,26 @@ fn typing_banner(typing: &[(String, Instant)]) -> Option<Rect> {
     } else {
         format!("{} están escribiendo…", names.join(", "))
     };
-    Some(
-        rect()
-            .width(Size::fill())
-            .padding((2., 20., 6., 20.))
-            .child(label().font_size(12.).color(ui::MUTED).text(text)),
-    )
+    Some(banner(text))
+}
+
+/// One muted line under the top bar.
+fn banner(text: impl Into<String>) -> Rect {
+    rect()
+        .width(Size::fill())
+        .padding((2., 20., 6., 20.))
+        .child(label().font_size(12.).color(ui::MUTED).text(text.into()))
+}
+
+/// Keep `locked` in step with the share policy while the face lives.
+fn follow_policy(item: ItemId, mut locked: State<bool>) {
+    let changes = crate::sync::changes();
+    spawn(async move {
+        while changes.recv_async().await.is_ok() {
+            while changes.try_recv().is_ok() {}
+            locked.set_if_modified(!crate::sync::can_edit(item));
+        }
+    });
 }
 
 fn read_body(item: ItemId) -> String {
