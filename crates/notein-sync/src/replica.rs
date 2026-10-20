@@ -138,3 +138,56 @@ pub trait Replica {
     /// it was applied.
     fn blob_merge(&mut self, blob: Blob) -> Result<bool, Self::Error>;
 }
+
+/// A replica behind a lock, so several engines can share one library.
+impl<R: Replica> Replica for std::sync::Arc<std::sync::Mutex<R>> {
+    type Error = R::Error;
+
+    fn docs(&self) -> Vec<(DocId, Version)> {
+        self.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .docs()
+    }
+
+    fn doc_version(&self, doc: DocId) -> Option<Version> {
+        self.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .doc_version(doc)
+    }
+
+    fn doc_updates_since(&self, doc: DocId, since: &Version) -> Result<Vec<u8>, Self::Error> {
+        self.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .doc_updates_since(doc, since)
+    }
+
+    fn doc_snapshot(&self, doc: DocId) -> Result<Vec<u8>, Self::Error> {
+        self.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .doc_snapshot(doc)
+    }
+
+    fn doc_import(&mut self, doc: DocId, bytes: &[u8]) -> Result<(), Self::Error> {
+        self.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .doc_import(doc, bytes)
+    }
+
+    fn blob_heads(&self) -> Vec<BlobHead> {
+        self.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .blob_heads()
+    }
+
+    fn blobs(&self, keys: &[BlobKey]) -> Vec<Blob> {
+        self.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .blobs(keys)
+    }
+
+    fn blob_merge(&mut self, blob: Blob) -> Result<bool, Self::Error> {
+        self.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .blob_merge(blob)
+    }
+}
