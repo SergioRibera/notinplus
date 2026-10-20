@@ -412,6 +412,8 @@ pub enum ShareMessage {
     /// Ephemeral state of one of the share's documents, see
     /// `SyncDriver::live`.
     Live { doc: DocId, bytes: Vec<u8> },
+    /// The owner threw this member out.
+    Expelled,
 }
 
 impl ShareMessage {

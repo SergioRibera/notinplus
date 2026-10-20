@@ -339,6 +339,7 @@ impl Component for AppShell {
         });
         use_hook(crate::sync::start);
         use_hook(crate::deep_link::listen);
+        use_hook(crate::session_end::listen);
         rect()
             .expanded()
             .on_global_pointer_up(crate::soft_keyboard::reshow_on_tap)

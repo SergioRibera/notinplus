@@ -25,7 +25,9 @@ pub mod share;
 mod testing;
 
 pub use cipher::ShareKey;
-pub use driver::{Action, DriverEvent, JoinFailure, PairFailure, PairingOffer, SyncDriver};
+pub use driver::{
+    Action, DriverEvent, JoinFailure, PairFailure, PairingOffer, Removal, SyncDriver,
+};
 pub use engine::{DocStatus, Handled, Message, PROTOCOL_VERSION, SyncEngine};
 pub use error::{CipherError, IdentityError, SyncError};
 pub use identity::{DeviceId, DeviceKey, DeviceProfile, PairingCode, TrustedDevice};

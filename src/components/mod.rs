@@ -23,6 +23,7 @@ pub mod note_editor;
 pub mod notebook_chooser;
 pub mod pair_sheet;
 pub mod pane_tree_view;
+pub mod session_ended_sheet;
 pub mod settings_modal;
 pub mod share_sheet;
 pub mod sidebar_modal;
@@ -53,6 +54,7 @@ pub use note_editor::{
 pub use notebook_chooser::NotebookChooser;
 pub use pair_sheet::PairSheet;
 pub use pane_tree_view::{PaneTreeCallbacks, PaneTreeView};
+pub use session_ended_sheet::SessionEndedSheet;
 pub use settings_modal::SettingsModal;
 pub use share_sheet::ShareSheet;
 pub use sidebar_modal::{SidebarModal, SidebarTab};

@@ -157,6 +157,17 @@ pub enum JoinFailure {
     Unreachable,
 }
 
+/// Why a share is no longer held here.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Removal {
+    /// The owner closed it for everyone.
+    Ended,
+    /// The owner threw this device out.
+    Expelled,
+    /// This device walked away.
+    Left,
+}
+
 /// Something the app should react to.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum DriverEvent {
@@ -177,8 +188,11 @@ pub enum DriverEvent {
     Merged(Vec<BlobKey>),
     /// A share was created, joined, updated or lost; the book changed.
     ShareChanged(ShareId),
-    /// The share is gone here: ended by its owner, left, or revoked.
-    ShareRemoved(ShareId),
+    /// The share is gone here, and why.
+    ShareRemoved {
+        share: ShareId,
+        reason: Removal,
+    },
     JoinFailed {
         share: ShareId,
         reason: JoinFailure,
@@ -496,7 +510,7 @@ impl<R: Replica> SyncDriver<R> {
             device,
             &Payload::Share {
                 share: id,
-                sealed: ShareMessage::Ended.seal(&link.share.key),
+                sealed: ShareMessage::Expelled.seal(&link.share.key),
             },
         )];
         out.extend(self.broadcast_meta(id));
@@ -523,7 +537,10 @@ impl<R: Replica> SyncDriver<R> {
                 ));
             }
         }
-        out.push(Action::Event(DriverEvent::ShareRemoved(id)));
+        out.push(Action::Event(DriverEvent::ShareRemoved {
+            share: id,
+            reason: Removal::Ended,
+        }));
         out
     }
 
@@ -533,16 +550,17 @@ impl<R: Replica> SyncDriver<R> {
             return Vec::new();
         };
         let mut out = Vec::new();
-        if self.connected.contains_key(&link.share.owner.device) {
-            out.push(send(
-                link.share.owner.device,
-                &Payload::Share {
-                    share: id,
-                    sealed: ShareMessage::Left.seal(&link.share.key),
-                },
-            ));
-        }
-        out.push(Action::Event(DriverEvent::ShareRemoved(id)));
+        out.extend(self.route(
+            link.share.owner.device,
+            &Payload::Share {
+                share: id,
+                sealed: ShareMessage::Left.seal(&link.share.key),
+            },
+        ));
+        out.push(Action::Event(DriverEvent::ShareRemoved {
+            share: id,
+            reason: Removal::Left,
+        }));
         out
     }
 
@@ -890,15 +908,18 @@ impl<R: Replica> SyncDriver<R> {
                     out.push(Action::Event(DriverEvent::ShareChanged(id)));
                     if !link.share.is_member(me) {
                         self.shares.remove(&id);
-                        out.push(Action::Event(DriverEvent::ShareRemoved(id)));
+                        out.push(Action::Event(DriverEvent::ShareRemoved {
+                            share: id,
+                            reason: Removal::Expelled,
+                        }));
                     }
                 }
             }
             ShareMessage::Ended => {
-                if link.share.is_owner(from) {
-                    self.shares.remove(&id);
-                    out.push(Action::Event(DriverEvent::ShareRemoved(id)));
-                }
+                self.removed_by_owner(from, id, Removal::Ended, out);
+            }
+            ShareMessage::Expelled => {
+                self.removed_by_owner(from, id, Removal::Expelled, out);
             }
             ShareMessage::Left => {
                 if link.share.is_owner(me) && link.share.expel(from) {
@@ -910,6 +931,26 @@ impl<R: Replica> SyncDriver<R> {
             }
         }
         Ok(())
+    }
+
+    /// The owner closed the share for this device: drop it and say
+    /// why. Returns whether anything was dropped.
+    fn removed_by_owner(
+        &mut self,
+        from: DeviceId,
+        id: ShareId,
+        reason: Removal,
+        out: &mut Vec<Action>,
+    ) -> bool {
+        if !self.share(id).is_some_and(|s| s.is_owner(from)) {
+            return false;
+        }
+        self.shares.remove(&id);
+        out.push(Action::Event(DriverEvent::ShareRemoved {
+            share: id,
+            reason,
+        }));
+        true
     }
 
     fn on_join(
@@ -1601,7 +1642,10 @@ impl<R: Replica> SyncDriver<R> {
                 if self.share(share).is_some_and(|s| s.is_owner(me)) {
                     out.extend(self.relay_register(share));
                 } else if self.shares.remove(&share).is_some() {
-                    out.push(Action::Event(DriverEvent::ShareRemoved(share)));
+                    out.push(Action::Event(DriverEvent::ShareRemoved {
+                        share,
+                        reason: Removal::Ended,
+                    }));
                 }
             }
             RelayMessage::Registered { share } => {
@@ -1706,15 +1750,21 @@ impl<R: Replica> SyncDriver<R> {
                     link.engine.set_scope(link.share.scope());
                     if !link.share.is_member(me) {
                         self.shares.remove(&id);
-                        out.push(Action::Event(DriverEvent::ShareRemoved(id)));
+                        out.push(Action::Event(DriverEvent::ShareRemoved {
+                            share: id,
+                            reason: Removal::Expelled,
+                        }));
                         return Ok(false);
                     }
                 }
             }
             ShareMessage::Ended => {
-                if link.share.is_owner(record.from) {
-                    self.shares.remove(&id);
-                    out.push(Action::Event(DriverEvent::ShareRemoved(id)));
+                if self.removed_by_owner(record.from, id, Removal::Ended, out) {
+                    return Ok(false);
+                }
+            }
+            ShareMessage::Expelled => {
+                if self.removed_by_owner(record.from, id, Removal::Expelled, out) {
                     return Ok(false);
                 }
             }
@@ -2094,7 +2144,10 @@ mod tests {
         deliver(guest.join(invite), &mut guest, &mut owner);
 
         let events = deliver(owner.expel(id, guest.profile.id()), &mut owner, &mut guest);
-        assert!(events.contains(&DriverEvent::ShareRemoved(id)));
+        assert!(events.contains(&DriverEvent::ShareRemoved {
+            share: id,
+            reason: Removal::Expelled,
+        }));
         assert!(guest.share(id).is_none());
         assert!(owner.share(id).unwrap().members.is_empty());
 
@@ -2106,8 +2159,33 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert!(events.contains(&DriverEvent::ShareRemoved(id)));
+        assert!(events.contains(&DriverEvent::ShareRemoved {
+            share: id,
+            reason: Removal::Ended,
+        }));
         assert!(owner.share(id).is_none());
+    }
+
+    #[test]
+    fn a_guest_leaving_drops_out_of_the_owners_member_list() {
+        let mut owner = driver("Sergio");
+        let mut guest = driver("Ana");
+        let share = shared_doc(&mut owner);
+        let id = share.id;
+        let invite = share.invite();
+        owner.create_share(share);
+        connect_both(&mut owner, &mut guest);
+        deliver(guest.join(invite), &mut guest, &mut owner);
+        assert_eq!(owner.share(id).unwrap().members.len(), 1);
+
+        let events = deliver(guest.leave_share(id), &mut guest, &mut owner);
+        assert!(events.contains(&DriverEvent::ShareRemoved {
+            share: id,
+            reason: Removal::Left,
+        }));
+        assert!(events.contains(&DriverEvent::ShareChanged(id)));
+        assert!(guest.share(id).is_none());
+        assert!(owner.share(id).unwrap().members.is_empty());
     }
 
     #[test]

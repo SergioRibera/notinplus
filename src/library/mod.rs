@@ -1107,6 +1107,38 @@ impl Library {
         self.persist_workspaces().await
     }
 
+    /// Close every tab showing one of `items`, in every workspace. A
+    /// pane left without tabs stays alive. Nothing is written when no
+    /// tab matched.
+    ///
+    /// # Errors
+    /// Runtime / codec / backend failure.
+    pub async fn close_item_tabs(&mut self, items: &[ItemId]) -> Result<()> {
+        let now = now_millis();
+        let mut touched = false;
+        for workspace in &mut self.workspaces.workspaces {
+            for pane in workspace.layout.leaves_mut() {
+                let before = pane.tabs.len();
+                pane.tabs.retain(
+                    |tab| !matches!(tab.target, TabTarget::Item(id) if items.contains(&id)),
+                );
+                if pane.tabs.len() == before {
+                    continue;
+                }
+                let last = pane.tabs.len().saturating_sub(1);
+                if pane.active_tab as usize > last {
+                    pane.active_tab = u32::try_from(last).unwrap_or(u32::MAX);
+                }
+                workspace.updated_at = now;
+                touched = true;
+            }
+        }
+        if touched {
+            self.persist_workspaces().await?;
+        }
+        Ok(())
+    }
+
     /// Flip the active tab inside `pane`. Out-of-range `index` is
     /// clamped to the last valid tab.
     ///

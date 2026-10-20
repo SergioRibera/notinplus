@@ -19,6 +19,7 @@ use notein_sync::{
 };
 
 use crate::library::{ItemId, Library, bodies};
+use crate::session_end::SessionEnd;
 
 pub mod live;
 pub mod open_docs;
@@ -330,6 +331,7 @@ fn open_library() -> Option<Library> {
 /// What to remember about a share once the driver forgot it.
 #[derive(Clone, Debug)]
 struct ShareMemo {
+    title: String,
     mode: ShareMode,
     is_owner: bool,
     docs: Vec<ItemId>,
@@ -397,6 +399,7 @@ impl Service {
                 (
                     s.id,
                     ShareMemo {
+                        title: s.title.clone(),
                         mode: s.mode,
                         is_owner: s.is_owner(me),
                         docs: s.docs.iter().map(|d| ItemId(d.0)).collect(),
@@ -449,13 +452,17 @@ impl Service {
                 self.remember_shares();
                 crate::space::notify_changed();
             }
-            DriverEvent::ShareRemoved(id) => {
+            DriverEvent::ShareRemoved { share, reason } => {
                 self.save_shares();
-                if let Some(memo) = self.memos.remove(&id)
+                if let Some(memo) = self.memos.remove(&share)
                     && memo.mode == ShareMode::Session
                     && !memo.is_owner
                 {
-                    forget_session_docs(&memo.docs);
+                    crate::session_end::announce(SessionEnd {
+                        title: memo.title,
+                        docs: memo.docs,
+                        reason,
+                    });
                 }
                 crate::space::notify_changed();
             }
@@ -653,18 +660,6 @@ impl Service {
             relay: self.driver.relay().map(ToString::to_string),
             relay_online: self.driver.relay_online(),
             error: self.error.clone(),
-        }
-    }
-}
-
-/// A session ended for a guest: its documents leave this library.
-fn forget_session_docs(docs: &[ItemId]) {
-    let Some(mut lib) = open_library() else {
-        return;
-    };
-    for item in docs {
-        if let Err(err) = pollster::block_on(lib.forget_item(*item)) {
-            log::warn!("sync: drop session doc {item}: {err}");
         }
     }
 }

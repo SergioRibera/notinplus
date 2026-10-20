@@ -382,6 +382,23 @@ impl PaneLayout {
         out
     }
 
+    /// Every leaf, mutably, in the same order as [`Self::leaves`].
+    pub fn leaves_mut(&mut self) -> Vec<&mut Pane> {
+        let mut out = Vec::new();
+        self.collect_leaves_mut(&mut out);
+        out
+    }
+
+    fn collect_leaves_mut<'a>(&'a mut self, out: &mut Vec<&'a mut Pane>) {
+        match self {
+            Self::Leaf(p) => out.push(p),
+            Self::Split { first, second, .. } => {
+                first.collect_leaves_mut(out);
+                second.collect_leaves_mut(out);
+            }
+        }
+    }
+
     fn collect_leaves<'a>(&'a self, out: &mut Vec<&'a Pane>) {
         match self {
             Self::Leaf(p) => out.push(p),
