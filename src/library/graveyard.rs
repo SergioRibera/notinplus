@@ -58,7 +58,9 @@ impl Graveyard {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(path, bytes)
+        let tmp = path.with_extension("bin.tmp");
+        std::fs::write(&tmp, bytes)?;
+        std::fs::rename(tmp, path)
     }
 
     /// Record a deletion. A later deletion of the same record keeps

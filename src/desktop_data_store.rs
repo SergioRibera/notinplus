@@ -13,8 +13,8 @@
 //! surfaces as [`DataStoreError::Corrupted`].
 
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::Mutex;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use bincode::config::standard;
 use bincode::{Decode, Encode};
@@ -54,21 +54,38 @@ enum Value {
 /// Namespaced key-value store. All mutations flush the whole map back
 /// to disk — fine for UI-side config volumes, wrong choice for
 /// large-value or high-frequency workloads.
+///
+/// Every instance of a namespace shares one in-process map: the
+/// library is opened many times per session, from the UI and from the
+/// sync thread, and two instances each flushing their own copy would
+/// lose the other one's writes. The file is loaded once and replaced
+/// through a rename so a reader never sees a half-written map.
 #[derive(Debug)]
 pub struct DesktopStore {
     path: PathBuf,
-    map: Mutex<HashMap<String, Value>>,
+    map: SharedMap,
+}
+
+type SharedMap = Arc<Mutex<HashMap<String, Value>>>;
+
+fn shared_map(path: &Path) -> SharedMap {
+    static MAPS: OnceLock<Mutex<HashMap<PathBuf, SharedMap>>> = OnceLock::new();
+    let mut maps = MAPS
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    Arc::clone(
+        maps.entry(path.to_path_buf())
+            .or_insert_with(|| Arc::new(Mutex::new(load(path).unwrap_or_default()))),
+    )
 }
 
 impl DesktopStore {
     fn open(namespace: String) -> Self {
         let dir = istmo::path::data_dir().join("data_store");
         let path = dir.join(format!("{namespace}.bin"));
-        let map = load(&path).unwrap_or_default();
-        Self {
-            path,
-            map: Mutex::new(map),
-        }
+        let map = shared_map(&path);
+        Self { path, map }
     }
 
     fn with_map<R>(&self, f: impl FnOnce(&mut HashMap<String, Value>) -> R) -> R {
@@ -76,17 +93,24 @@ impl DesktopStore {
         f(&mut guard)
     }
 
+    /// Write the map while holding its lock, so two instances flushing
+    /// at once cannot land an older snapshot after a newer one.
     fn flush(&self) -> Result<(), DataStoreError> {
-        let bytes = self.with_map(|m| {
-            bincode::encode_to_vec(&*m, standard())
-                .map_err(|e| DataStoreError::Backend(format!("encode: {e}")))
-        })?;
-        if let Some(parent) = self.path.parent() {
+        self.with_map(|m| Self::write_map(&self.path, m))
+    }
+
+    fn write_map(path: &Path, map: &HashMap<String, Value>) -> Result<(), DataStoreError> {
+        let bytes = bincode::encode_to_vec(map, standard())
+            .map_err(|e| DataStoreError::Backend(format!("encode: {e}")))?;
+        if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| DataStoreError::Backend(format!("mkdir {}: {e}", parent.display())))?;
         }
-        std::fs::write(&self.path, bytes)
-            .map_err(|e| DataStoreError::Backend(format!("write {}: {e}", self.path.display())))
+        let tmp = path.with_extension("bin.tmp");
+        std::fs::write(&tmp, bytes)
+            .map_err(|e| DataStoreError::Backend(format!("write {}: {e}", tmp.display())))?;
+        std::fs::rename(&tmp, path)
+            .map_err(|e| DataStoreError::Backend(format!("rename {}: {e}", path.display())))
     }
 }
 
