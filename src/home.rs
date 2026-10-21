@@ -17,7 +17,6 @@
 //! the mesa (every open document lands as a tab there).
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_lock::Mutex as AsyncMutex;
 use freya::animation::*;
@@ -29,8 +28,9 @@ use istmo::plugins::EdgeInsets;
 use crate::components::FormInput;
 use crate::components::drag_drop::{DragZone, DropZone};
 use crate::components::{
-    CanvasCreateSheet, CreateCanvasRequest, GraphView, Modal, ModalController, SettingsModal,
-    SpaceCardData, SpaceEditRequest, SpaceEditSheet, SpaceStrip, auto_color,
+    CanvasCreateSheet, CreateCanvasRequest, GraphView, MenuGesture, Modal, ModalController,
+    SettingsModal, SpaceCardData, SpaceEditRequest, SpaceEditSheet, SpaceStrip, auto_color,
+    use_menu_gesture,
 };
 use crate::hooks::use_safe_area_insets;
 use crate::library::{
@@ -53,16 +53,6 @@ enum MoveTarget {
     Item(ItemId),
     Folder(FolderId),
 }
-
-/// Long-press dwell (both mouse hold and touch) that opens the context
-/// menu on platforms without a right mouse button.
-const LONG_PRESS: Duration = Duration::from_millis(550);
-
-/// Movement tolerance before a pending long-press is cancelled. Touch
-/// and stylus emit tiny `PointerMove`s during a static hold; a strict
-/// "any move cancels" rule meant the context menu never opened for
-/// finger/pen input.
-const LONG_PRESS_SLOP_PX: f64 = 10.0;
 
 /// Shared library handle. Wrapped in an async-aware mutex so every
 /// `spawn`ed handler can `.await` the lock without blocking the freya
@@ -724,9 +714,7 @@ impl Component for ItemCard {
         let card_id = CardId::Item(self.id);
         let is_editing = *self.renaming.read() == Some(card_id);
 
-        let press_token = use_state(|| 0u64);
-        let long_fired = use_state(|| false);
-        let press_start = use_state(|| Option::<CursorPoint>::None);
+        let gesture = use_menu_gesture();
 
         let id = self.id;
         let bg_style = self.bg_style;
@@ -844,9 +832,7 @@ impl Component for ItemCard {
             on_commit_rename,
             open,
             menu_builder,
-            press_token,
-            long_fired,
-            press_start,
+            gesture,
         );
 
         DragZone::new(MoveTarget::Item(id), body.into_element())
@@ -897,9 +883,7 @@ impl Component for FolderCard {
         let card_id = CardId::Folder(self.id);
         let is_editing = *self.renaming.read() == Some(card_id);
 
-        let press_token = use_state(|| 0u64);
-        let long_fired = use_state(|| false);
-        let press_start = use_state(|| Option::<CursorPoint>::None);
+        let gesture = use_menu_gesture();
 
         let id = self.id;
         let tint = self.tint;
@@ -1013,9 +997,7 @@ impl Component for FolderCard {
             on_commit_rename,
             open,
             menu_builder,
-            press_token,
-            long_fired,
-            press_start,
+            gesture,
         );
 
         let drop = DropZone::new(body.into_element(), {
@@ -1043,8 +1025,8 @@ impl Component for FolderCard {
 }
 
 /// Shared visual + gesture wiring for both card types. Not a component —
-/// takes the per-card hook slots (`press_token`, `long_fired`) by
-/// argument so the calling `Component::render` owns their scoping.
+/// takes the per-card [`MenuGesture`] by argument so the calling
+/// `Component::render` owns its scoping.
 #[allow(clippy::too_many_arguments)]
 fn card_body_view<Open, Commit>(
     title: String,
@@ -1061,9 +1043,7 @@ fn card_body_view<Open, Commit>(
     on_commit_rename: Commit,
     open: Open,
     menu_builder: Menu,
-    press_token: State<u64>,
-    long_fired: State<bool>,
-    press_start: State<Option<CursorPoint>>,
+    gesture: MenuGesture,
 ) -> impl IntoElement
 where
     Open: Fn() + Clone + 'static,
@@ -1152,69 +1132,15 @@ where
             .text(subtitle),
     );
 
-    let menu_for_secondary = menu_builder.clone();
-    let column = column.on_secondary_down(move |_: Event<PressEventData>| {
-        ContextMenu::open(menu_for_secondary.clone());
-    });
-
-    let menu_for_long = menu_builder.clone();
-    let column = column.on_pointer_down({
-        let mut long_fired = long_fired;
-        let mut press_token = press_token;
-        let mut press_start = press_start;
-        move |e: Event<PointerEventData>| {
-            long_fired.set(false);
-            press_start.set(Some(e.global_location()));
-            let token = press_token.peek().wrapping_add(1);
-            press_token.set(token);
-            let menu = menu_for_long.clone();
-            spawn(async move {
-                async_io::Timer::after(LONG_PRESS).await;
-                if *press_token.peek() == token {
-                    long_fired.set(true);
-                    ContextMenu::open(menu);
-                }
-            });
-        }
-    });
-
-    let column = column.on_press({
-        let open = open.clone();
-        let mut press_token = press_token;
-        let mut press_start = press_start;
-        let long_fired = long_fired;
-        let editing_now = is_editing;
-        move |_e: Event<PressEventData>| {
-            press_token.set(0);
-            press_start.set(None);
-            if editing_now || *long_fired.peek() {
-                return;
+    gesture.apply(
+        column,
+        move || menu_builder.clone(),
+        move || {
+            if !is_editing {
+                open();
             }
-            open();
-        }
-    });
-
-    let mut press_token_move = press_token;
-    let mut press_start_move = press_start;
-    let mut press_token_leave = press_token;
-    let mut press_start_leave = press_start;
-    column
-        .on_pointer_move(move |e: Event<PointerEventData>| {
-            let Some(start) = *press_start_move.peek() else {
-                return;
-            };
-            let current = e.global_location();
-            let dx = current.x - start.x;
-            let dy = current.y - start.y;
-            if (dx * dx + dy * dy).sqrt() >= LONG_PRESS_SLOP_PX {
-                press_token_move.set(0);
-                press_start_move.set(None);
-            }
-        })
-        .on_pointer_leave(move |_| {
-            press_token_leave.set(0);
-            press_start_leave.set(None);
-        })
+        },
+    )
 }
 
 /// Resolve `selection` into an [`crate::bundle::ExportPreview`],

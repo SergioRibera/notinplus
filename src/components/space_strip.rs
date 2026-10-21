@@ -5,11 +5,10 @@
 //! opens the menu the caller builds for it. The last chip creates a
 //! new mesa.
 
-use std::time::Duration;
-
 use freya::icons::lucide;
 use freya::prelude::*;
 
+use super::menu_gesture::use_menu_gesture;
 use crate::library::{PaneLayout, Rgba, SplitOrientation, WorkspaceId};
 
 const CHIP_WIDTH: f32 = 148.0;
@@ -17,9 +16,6 @@ const CHIP_HEIGHT: f32 = 92.0;
 const STRIP_HEIGHT: f32 = CHIP_HEIGHT + 16.0;
 const THUMB_WIDTH: f32 = 72.0;
 const THUMB_HEIGHT: f32 = 44.0;
-const LONG_PRESS: Duration = Duration::from_millis(450);
-/// Finger travel that turns a press into a scroll instead of a menu.
-const LONG_PRESS_SLOP_PX: f64 = 8.0;
 
 /// What the strip knows about one mesa.
 #[derive(Clone, Debug, PartialEq)]
@@ -128,9 +124,7 @@ impl std::fmt::Debug for SpaceChip {
 
 impl Component for SpaceChip {
     fn render(&self) -> impl IntoElement {
-        let press_token = use_state(|| 0u64);
-        let long_fired = use_state(|| false);
-        let press_start = use_state(|| Option::<CursorPoint>::None);
+        let gesture = use_menu_gesture();
 
         let id = self.space.id;
         let tint = self
@@ -151,9 +145,8 @@ impl Component for SpaceChip {
         };
         let on_open = self.on_open.clone();
         let menu_for = self.menu_for.clone();
-        let menu_for_long = menu_for.clone();
 
-        rect()
+        let chip = rect()
             .width(Size::px(CHIP_WIDTH))
             .height(Size::px(CHIP_HEIGHT))
             .margin((8.0, 6.0))
@@ -163,62 +156,6 @@ impl Component for SpaceChip {
             .background(bg)
             .border(Border::new().width(1.5).fill(border))
             .with_corner_radius(12.0)
-            .on_pointer_down({
-                let mut long_fired = long_fired;
-                let mut press_token = press_token;
-                let mut press_start = press_start;
-                move |e: Event<PointerEventData>| {
-                    long_fired.set(false);
-                    press_start.set(Some(e.global_location()));
-                    let token = press_token.peek().wrapping_add(1);
-                    press_token.set(token);
-                    let menu_for = menu_for_long.clone();
-                    spawn(async move {
-                        async_io::Timer::after(LONG_PRESS).await;
-                        if *press_token.peek() == token {
-                            long_fired.set(true);
-                            ContextMenu::open(menu_for.call(id));
-                        }
-                    });
-                }
-            })
-            .on_pointer_move({
-                let mut press_token = press_token;
-                let mut press_start = press_start;
-                move |e: Event<PointerEventData>| {
-                    let Some(start) = *press_start.peek() else {
-                        return;
-                    };
-                    let current = e.global_location();
-                    let dx = current.x - start.x;
-                    let dy = current.y - start.y;
-                    if (dx * dx + dy * dy).sqrt() >= LONG_PRESS_SLOP_PX {
-                        press_token.set(0);
-                        press_start.set(None);
-                    }
-                }
-            })
-            .on_pointer_leave({
-                let mut press_token = press_token;
-                let mut press_start = press_start;
-                move |_| {
-                    press_token.set(0);
-                    press_start.set(None);
-                }
-            })
-            .on_press({
-                let mut press_token = press_token;
-                move |_: Event<PressEventData>| {
-                    press_token.set(0);
-                    if *long_fired.peek() {
-                        return;
-                    }
-                    on_open.call(id);
-                }
-            })
-            .on_secondary_down(move |_: Event<PressEventData>| {
-                ContextMenu::open(menu_for.call(id));
-            })
             .child(layout_thumb(&self.space.layout, tint))
             .child(
                 label()
@@ -227,7 +164,8 @@ impl Component for SpaceChip {
                     .max_lines(1)
                     .text_overflow(TextOverflow::Ellipsis)
                     .text(self.space.name.clone()),
-            )
+            );
+        gesture.apply(chip, move || menu_for.call(id), move || on_open.call(id))
     }
 }
 
