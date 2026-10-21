@@ -491,22 +491,26 @@ fn split_resize_cb(
     })
 }
 
+// Drop handlers run in the scope of the drop zone that caught the
+// release, and the zone clears the drag right after — the edge overlay
+// unmounts with it, taking any task spawned there. The library work
+// below is therefore spawned at the root so it outlives the zone, and
+// the view refresh tolerates the shell having gone away meanwhile.
+
 fn tab_move_cb(
     workspace_id: WorkspaceId,
     handle: LibHandle,
-    mut load_state: State<LoadState>,
+    load_state: State<LoadState>,
 ) -> Callback<(PaneId, usize, PaneId), ()> {
     Callback::new(move |(src, idx, dst): (PaneId, usize, PaneId)| {
         let handle = handle.clone();
-        spawn(async move {
+        spawn_forever(async move {
             let mut lib = handle.lock().await;
             if let Err(err) = lib.move_workspace_tab(workspace_id, src, idx, dst).await {
                 log::error!("move_workspace_tab: {err}");
                 return;
             }
-            if let Some(snap) = snapshot_workspace(&lib, workspace_id) {
-                load_state.set(LoadState::Ready(handle.clone(), snap));
-            }
+            publish_snapshot(&lib, workspace_id, &handle, load_state);
         });
     })
 }
@@ -514,34 +518,45 @@ fn tab_move_cb(
 fn tab_split_cb(
     workspace_id: WorkspaceId,
     handle: LibHandle,
-    mut load_state: State<LoadState>,
+    load_state: State<LoadState>,
 ) -> Callback<(PaneId, usize, PaneId, SplitEdge), ()> {
     Callback::new(
         move |(src, idx, dst, edge): (PaneId, usize, PaneId, SplitEdge)| {
             let handle = handle.clone();
-            spawn(async move {
+            spawn_forever(async move {
                 let mut lib = handle.lock().await;
-                let new_pane = match lib
-                    .split_workspace_pane(workspace_id, dst, edge.orientation(), edge.new_side())
-                    .await
-                {
-                    Ok(id) => id,
-                    Err(err) => {
-                        log::error!("split_workspace_pane (edge drop): {err}");
-                        return;
-                    }
-                };
                 if let Err(err) = lib
-                    .move_workspace_tab(workspace_id, src, idx, new_pane)
+                    .move_workspace_tab_to_split(
+                        workspace_id,
+                        src,
+                        idx,
+                        dst,
+                        edge.orientation(),
+                        edge.new_side(),
+                    )
                     .await
                 {
-                    log::error!("move_workspace_tab (edge drop): {err}");
+                    log::error!("move_workspace_tab_to_split: {err}");
                     return;
                 }
-                if let Some(snap) = snapshot_workspace(&lib, workspace_id) {
-                    load_state.set(LoadState::Ready(handle.clone(), snap));
-                }
+                publish_snapshot(&lib, workspace_id, &handle, load_state);
             });
         },
     )
+}
+
+/// Push a fresh workspace snapshot into the shell, if it is still
+/// mounted.
+fn publish_snapshot(
+    lib: &Library,
+    workspace_id: WorkspaceId,
+    handle: &LibHandle,
+    mut load_state: State<LoadState>,
+) {
+    let Some(snap) = snapshot_workspace(lib, workspace_id) else {
+        return;
+    };
+    if let Some(mut state) = load_state.try_write() {
+        *state = LoadState::Ready(handle.clone(), snap);
+    }
 }

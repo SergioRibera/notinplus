@@ -598,6 +598,32 @@ impl PaneLayout {
         true
     }
 
+    /// Split the leaf `target` and carry the tab at `src_index` of pane
+    /// `src` into the fresh leaf (id `new_id`) in one step — what a tab
+    /// dropped on a pane edge asks for. Nothing changes unless both the
+    /// source tab and the target leaf exist, so a bad drop never leaves
+    /// an empty pane behind.
+    ///
+    /// Returns `true` if the layout changed.
+    pub fn move_tab_to_split(
+        &mut self,
+        src: PaneId,
+        src_index: usize,
+        target: PaneId,
+        orientation: SplitOrientation,
+        new_id: PaneId,
+        new_side: SplitSide,
+    ) -> bool {
+        let has_tab = self
+            .find_leaf(src)
+            .is_some_and(|leaf| src_index < leaf.tabs.len());
+        if !has_tab || self.find_leaf(target).is_none() || self.find_leaf(new_id).is_some() {
+            return false;
+        }
+        self.split_leaf(target, orientation, new_id, new_side)
+            && self.move_tab(src, src_index, new_id)
+    }
+
     /// Clamp every split ratio into `0.05..=0.95` in-place so a bogus
     /// payload cannot drive the divider off-screen.
     pub fn clamp_ratios(&mut self) {

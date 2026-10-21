@@ -985,6 +985,41 @@ impl Library {
         self.persist_workspaces().await
     }
 
+    /// Split pane `target` along `orientation` and move the tab at
+    /// `src_index` of pane `src` into the fresh pane on `new_side`,
+    /// which takes focus. One persisted step: a tab dropped on a pane
+    /// edge either lands in its new pane or nothing changes.
+    ///
+    /// # Errors
+    /// * [`LibraryError::NotFound`] when the workspace, either pane or
+    ///   the source index is unknown.
+    pub async fn move_workspace_tab_to_split(
+        &mut self,
+        workspace: WorkspaceId,
+        src: PaneId,
+        src_index: usize,
+        target: PaneId,
+        orientation: SplitOrientation,
+        new_side: SplitSide,
+    ) -> Result<PaneId> {
+        let now = now_millis();
+        let w = self
+            .workspaces
+            .workspace_mut(workspace)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
+        let new_id = w.alloc_pane_id();
+        if !w
+            .layout
+            .move_tab_to_split(src, src_index, target, orientation, new_id, new_side)
+        {
+            return Err(LibraryError::NotFound(NotFoundKind::Workspace(workspace)));
+        }
+        w.focused_pane = Some(new_id);
+        w.updated_at = now;
+        self.persist_workspaces().await?;
+        Ok(new_id)
+    }
+
     /// Close the pane with id `target`. The sibling collapses up to
     /// take its place. The last pane in a workspace cannot be closed
     /// through this call — the user deletes the workspace instead.
@@ -1695,5 +1730,68 @@ mod tests {
         let src = layout.find_leaf(only).unwrap();
         assert_eq!(src.tabs.len(), 1);
         assert_eq!(src.tabs[0].item(), Some(mk_item(10)));
+    }
+
+    #[test]
+    fn move_tab_to_split_lands_the_tab_in_the_fresh_pane() {
+        let only = mk_pane(1);
+        let fresh = mk_pane(2);
+        let mut layout = PaneLayout::Leaf(Pane {
+            id: only,
+            tabs: vec![PaneTab::new(mk_item(10)), PaneTab::new(mk_item(11))],
+            active_tab: 1,
+        });
+        assert!(layout.move_tab_to_split(
+            only,
+            0,
+            only,
+            SplitOrientation::Horizontal,
+            fresh,
+            SplitSide::Second,
+        ));
+        let PaneLayout::Split { first, second, .. } = &layout else {
+            panic!("no split");
+        };
+        let PaneLayout::Leaf(left) = &**first else {
+            panic!("left is not a leaf");
+        };
+        let PaneLayout::Leaf(right) = &**second else {
+            panic!("right is not a leaf");
+        };
+        assert_eq!(left.id, only);
+        assert_eq!(left.tabs.len(), 1);
+        assert_eq!(left.tabs[0].item(), Some(mk_item(11)));
+        assert_eq!(left.active_tab, 0);
+        assert_eq!(right.id, fresh);
+        assert_eq!(right.tabs.len(), 1);
+        assert_eq!(right.tabs[0].item(), Some(mk_item(10)));
+    }
+
+    #[test]
+    fn move_tab_to_split_leaves_the_layout_alone_on_a_bad_drop() {
+        let only = mk_pane(1);
+        let mut layout = PaneLayout::Leaf(Pane {
+            id: only,
+            tabs: vec![PaneTab::new(mk_item(10))],
+            active_tab: 0,
+        });
+        assert!(!layout.move_tab_to_split(
+            only,
+            5,
+            only,
+            SplitOrientation::Horizontal,
+            mk_pane(2),
+            SplitSide::Second,
+        ));
+        assert!(!layout.move_tab_to_split(
+            only,
+            0,
+            mk_pane(99),
+            SplitOrientation::Horizontal,
+            mk_pane(2),
+            SplitSide::Second,
+        ));
+        assert!(matches!(layout, PaneLayout::Leaf(_)));
+        assert_eq!(layout.leaves()[0].tabs.len(), 1);
     }
 }
