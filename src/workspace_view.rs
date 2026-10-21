@@ -333,6 +333,7 @@ fn pane_tree(
         on_tab_new: tab_new_cb(workspace_id, load_state),
         on_split_resize: split_resize_cb(workspace_id, handle.clone(), load_state),
         on_tab_move: tab_move_cb(workspace_id, handle.clone(), load_state),
+        on_tab_reorder: tab_reorder_cb(workspace_id, handle.clone(), load_state),
         on_tab_split: tab_split_cb(workspace_id, handle.clone(), load_state),
         on_pane_close: pane_close_cb(workspace_id, handle, load_state),
     };
@@ -508,6 +509,24 @@ fn tab_move_cb(
             let mut lib = handle.lock().await;
             if let Err(err) = lib.move_workspace_tab(workspace_id, src, idx, dst).await {
                 log::error!("move_workspace_tab: {err}");
+                return;
+            }
+            publish_snapshot(&lib, workspace_id, &handle, load_state);
+        });
+    })
+}
+
+fn tab_reorder_cb(
+    workspace_id: WorkspaceId,
+    handle: LibHandle,
+    load_state: State<LoadState>,
+) -> Callback<(PaneId, usize, usize), ()> {
+    Callback::new(move |(pane, from, to): (PaneId, usize, usize)| {
+        let handle = handle.clone();
+        spawn_forever(async move {
+            let mut lib = handle.lock().await;
+            if let Err(err) = lib.reorder_pane_tab(workspace_id, pane, from, to).await {
+                log::error!("reorder_pane_tab: {err}");
                 return;
             }
             publish_snapshot(&lib, workspace_id, &handle, load_state);

@@ -73,6 +73,8 @@ pub struct PaneTreeCallbacks {
     /// Tab dropped onto another pane. `(src_pane, src_index, dst_pane)`.
     /// Same-pane drops are filtered out before this fires.
     pub on_tab_move: Callback<(PaneId, usize, PaneId), ()>,
+    /// Tab dropped onto another tab of its own pane. `(pane, from, to)`.
+    pub on_tab_reorder: Callback<(PaneId, usize, usize), ()>,
     /// Tab dropped on an *edge* of a leaf. The shell splits the target
     /// leaf along [`SplitEdge::orientation`] and moves the tab into
     /// the fresh pane sitting on [`SplitEdge::new_side`].
@@ -478,6 +480,7 @@ impl Component for LeafNode {
         let close = self.callbacks.on_tab_close.clone();
         let new = self.callbacks.on_tab_new.clone();
         let move_cb = self.callbacks.on_tab_move.clone();
+        let reorder_cb = self.callbacks.on_tab_reorder.clone();
         let close_pane = self.callbacks.on_pane_close.clone();
         let mut bar = TabBar::new(
             pane_id,
@@ -488,6 +491,9 @@ impl Component for LeafNode {
         )
         .on_tab_drop(Callback::new(move |payload: TabDragPayload| {
             move_cb.call((payload.source_pane, payload.source_index, pane_id));
+        }))
+        .on_tab_reorder(Callback::new(move |(from, to): (usize, usize)| {
+            reorder_cb.call((pane_id, from, to));
         }));
         if self.can_close_pane {
             bar = bar.on_pane_close(NoArgCallback::new(move || close_pane.call(pane_id)));
@@ -666,6 +672,7 @@ mod tests {
             on_tab_new: Callback::new(|_| {}),
             on_split_resize: Callback::new(|_| {}),
             on_tab_move: Callback::new(|_| {}),
+            on_tab_reorder: Callback::new(|_| {}),
             on_tab_split: Callback::new(|_| {}),
             on_pane_close: Callback::new(|_| {}),
         }

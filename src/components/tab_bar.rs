@@ -7,9 +7,11 @@
 //! owns the pane's layout state.
 //!
 //! Each cell is wrapped in a [`DragZone`] so tabs can be dragged
-//! between panes. The whole bar doubles as a [`DropZone`] accepting
-//! incoming [`TabDragPayload`]s — on drop, `on_tab_drop` fires with
-//! the payload so the shell can mutate the layout.
+//! between panes, and is itself a [`DropZone`]: a tab of the same
+//! pane released over it asks for a reorder (`on_tab_reorder`), one
+//! from another pane for a move (`on_tab_drop`). The whole bar is a
+//! [`DropZone`] too, so a drop past the last tab still moves the tab
+//! in.
 
 use std::borrow::Cow;
 
@@ -60,6 +62,7 @@ pub struct TabBar {
     on_close: Callback<usize, ()>,
     on_new: NoArgCallback<()>,
     on_tab_drop: Option<Callback<TabDragPayload, ()>>,
+    on_tab_reorder: Option<Callback<(usize, usize), ()>>,
     on_pane_close: Option<NoArgCallback<()>>,
 }
 
@@ -94,8 +97,18 @@ impl TabBar {
             on_close: on_close.into(),
             on_new: on_new.into(),
             on_tab_drop: None,
+            on_tab_reorder: None,
             on_pane_close: None,
         }
+    }
+
+    /// Install a reorder handler, fired as `(from, to)` when a tab of
+    /// this bar is released over another of its tabs. Without it,
+    /// such drops do nothing.
+    #[must_use]
+    pub fn on_tab_reorder(mut self, cb: impl Into<Callback<(usize, usize), ()>>) -> Self {
+        self.on_tab_reorder = Some(cb.into());
+        self
     }
 
     /// Install a drop handler so tabs dragged from another pane can
@@ -131,8 +144,32 @@ impl Component for TabBar {
             .cross_align(Alignment::Center)
             .spacing(2.0);
 
+        let on_cell_drop = {
+            let pane_id = self.pane_id;
+            let reorder = self.on_tab_reorder.clone();
+            let move_in = self.on_tab_drop.clone();
+            Callback::new(move |(payload, index): (TabDragPayload, usize)| {
+                if payload.source_pane == pane_id {
+                    if let Some(cb) = &reorder {
+                        cb.call((payload.source_index, index));
+                    }
+                } else if let Some(cb) = &move_in {
+                    cb.call(payload);
+                }
+            })
+        };
         for (i, entry) in self.entries.iter().enumerate() {
-            let cell = tab_cell(i, entry, self.on_select.clone(), self.on_close.clone());
+            let on_drop = {
+                let on_cell_drop = on_cell_drop.clone();
+                Callback::new(move |payload: TabDragPayload| on_cell_drop.call((payload, i)))
+            };
+            let cell = TabCell {
+                index: i,
+                entry: entry.clone(),
+                on_select: self.on_select.clone(),
+                on_close: self.on_close.clone(),
+                on_drop,
+            };
             row = row.child(DragZone::new(
                 TabDragPayload {
                     source_pane: self.pane_id,
@@ -164,47 +201,87 @@ impl Component for TabBar {
     }
 }
 
-fn tab_cell(
+/// One tab of the strip. A component of its own so the drop highlight
+/// can hold state without hooks running inside the bar's loop.
+#[derive(Clone)]
+struct TabCell {
     index: usize,
-    entry: &TabBarEntry,
+    entry: TabBarEntry,
     on_select: Callback<usize, ()>,
     on_close: Callback<usize, ()>,
-) -> Rect {
-    let bg = match (entry.accent, entry.is_active) {
-        (Some(accent), true) => accent,
-        (Some(accent), false) => Color::from_argb(90, accent.r(), accent.g(), accent.b()),
-        (None, true) => Color::from_rgb(32, 32, 38),
-        (None, false) => Color::TRANSPARENT,
-    };
-    let label_color = if entry.is_active {
-        Color::from_rgb(240, 240, 245)
-    } else {
-        Color::from_rgb(180, 180, 190)
-    };
-    let label_text = entry.label.to_string();
-    let close_cb = on_close.clone();
-    let mut cell = rect()
-        .horizontal()
-        .height(Size::px(28.0))
-        .cross_align(Alignment::Center)
-        .padding((0.0, 10.0))
-        .with_corner_radius(8.0)
-        .background(bg)
-        .spacing(8.0)
-        .on_press(move |_| {
-            on_select.call(index);
-        });
-    if let Some(icon) = entry.icon.clone() {
-        cell = cell.child(
-            SvgViewer::new(icon)
-                .color(label_color)
-                .width(Size::px(14.0))
-                .height(Size::px(14.0)),
-        );
+    /// A dragged tab released over this cell.
+    on_drop: Callback<TabDragPayload, ()>,
+}
+
+impl std::fmt::Debug for TabCell {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TabCell")
+            .field("index", &self.index)
+            .field("entry", &self.entry)
+            .finish_non_exhaustive()
     }
-    cell = cell.child(label().color(label_color).font_size(13.0).text(label_text));
-    cell = cell.child(close_glyph(index, close_cb));
-    cell
+}
+
+impl PartialEq for TabCell {
+    fn eq(&self, _other: &Self) -> bool {
+        false
+    }
+}
+
+impl Component for TabCell {
+    fn render(&self) -> impl IntoElement {
+        let hovered = use_state(|| false);
+        let entry = &self.entry;
+        let index = self.index;
+        let bg = match (entry.accent, entry.is_active, *hovered.read()) {
+            (_, _, true) => Color::from_rgb(64, 64, 78),
+            (Some(accent), true, false) => accent,
+            (Some(accent), false, false) => {
+                Color::from_argb(90, accent.r(), accent.g(), accent.b())
+            }
+            (None, true, false) => Color::from_rgb(32, 32, 38),
+            (None, false, false) => Color::TRANSPARENT,
+        };
+        let label_color = if entry.is_active {
+            Color::from_rgb(240, 240, 245)
+        } else {
+            Color::from_rgb(180, 180, 190)
+        };
+        let label_text = entry.label.to_string();
+        let on_select = self.on_select.clone();
+        let mut cell = rect()
+            .horizontal()
+            .height(Size::px(28.0))
+            .cross_align(Alignment::Center)
+            .padding((0.0, 10.0))
+            .with_corner_radius(8.0)
+            .background(bg)
+            .spacing(8.0)
+            .on_press(move |_| {
+                on_select.call(index);
+            });
+        if let Some(icon) = entry.icon.clone() {
+            cell = cell.child(
+                SvgViewer::new(icon)
+                    .color(label_color)
+                    .width(Size::px(14.0))
+                    .height(Size::px(14.0)),
+            );
+        }
+        cell = cell.child(label().color(label_color).font_size(13.0).text(label_text));
+        cell = cell.child(close_glyph(index, self.on_close.clone()));
+
+        let on_drop = self.on_drop.clone();
+        let on_drag_over = {
+            let mut hovered = hovered;
+            EventHandler::new(move |over: bool| hovered.set(over))
+        };
+        DropZone::new(
+            cell,
+            EventHandler::new(move |payload: TabDragPayload| on_drop.call(payload)),
+        )
+        .on_drag_over(on_drag_over)
+    }
 }
 
 fn close_glyph(index: usize, on_close: Callback<usize, ()>) -> Rect {

@@ -1024,6 +1024,39 @@ impl Library {
         Ok(new_id)
     }
 
+    /// Move the tab at `from` inside `pane` to slot `to` (clamped to the
+    /// last tab). The pane takes focus.
+    ///
+    /// # Errors
+    /// * [`LibraryError::NotFound`] when the workspace or pane is
+    ///   unknown, or `from` is out of range.
+    pub async fn reorder_pane_tab(
+        &mut self,
+        workspace: WorkspaceId,
+        pane: PaneId,
+        from: usize,
+        to: usize,
+    ) -> Result<()> {
+        let now = now_millis();
+        let w = self
+            .workspaces
+            .workspace_mut(workspace)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
+        let in_range = w
+            .layout
+            .find_leaf(pane)
+            .is_some_and(|leaf| from < leaf.tabs.len());
+        if !in_range {
+            return Err(LibraryError::NotFound(NotFoundKind::Workspace(workspace)));
+        }
+        if !w.layout.reorder_tab(pane, from, to) {
+            return Ok(());
+        }
+        w.focused_pane = Some(pane);
+        w.updated_at = now;
+        self.persist_workspaces().await
+    }
+
     /// Close the pane with id `target`. The sibling collapses up to
     /// take its place. The last pane in a workspace cannot be closed
     /// through this call — the user deletes the workspace instead.
@@ -1109,7 +1142,8 @@ impl Library {
 
     /// Close the tab at `index` within the given pane. The next tab
     /// up (or down when the removed one was last) takes focus. A pane
-    /// with no tabs stays alive — close the pane itself to drop it.
+    /// left with no tabs closes too, unless it is the only one; focus
+    /// then moves to the first remaining pane.
     ///
     /// # Errors
     /// * [`LibraryError::NotFound`] when the workspace or pane is
@@ -1142,6 +1176,9 @@ impl Library {
         } else {
             leaf.active_tab
         };
+        if w.layout.prune_empty_leaf(pane) && w.focused_pane == Some(pane) {
+            w.focused_pane = w.layout.leaves().first().map(|p| p.id);
+        }
         w.updated_at = now;
         self.persist_workspaces().await
     }
@@ -1826,5 +1863,50 @@ mod tests {
         let mut root = PaneLayout::leaf(left);
         assert!(!root.prune_empty_leaf(left));
         assert!(matches!(root, PaneLayout::Leaf(_)));
+    }
+
+    #[test]
+    fn reorder_tab_moves_within_the_pane_and_keeps_the_active_tab() {
+        let pane = mk_pane(1);
+        let mut layout = PaneLayout::Leaf(Pane {
+            id: pane,
+            tabs: vec![
+                PaneTab::new(mk_item(10)),
+                PaneTab::new(mk_item(11)),
+                PaneTab::new(mk_item(12)),
+            ],
+            active_tab: 1,
+        });
+        let items = |layout: &PaneLayout| -> Vec<Option<ItemId>> {
+            layout.leaves()[0].tabs.iter().map(PaneTab::item).collect()
+        };
+        // Drag the first tab onto the last: it lands after it, and the
+        // active tab (11) slides left to keep its identity.
+        assert!(layout.reorder_tab(pane, 0, 2));
+        assert_eq!(
+            items(&layout),
+            vec![Some(mk_item(11)), Some(mk_item(12)), Some(mk_item(10))]
+        );
+        assert_eq!(layout.leaves()[0].active_tab, 0);
+        // Drag the active tab itself to the end.
+        assert!(layout.reorder_tab(pane, 0, 2));
+        assert_eq!(
+            items(&layout),
+            vec![Some(mk_item(12)), Some(mk_item(10)), Some(mk_item(11))]
+        );
+        assert_eq!(layout.leaves()[0].active_tab, 2);
+        // Dragging back to the left pushes the others right.
+        assert!(layout.reorder_tab(pane, 2, 0));
+        assert_eq!(
+            items(&layout),
+            vec![Some(mk_item(11)), Some(mk_item(12)), Some(mk_item(10))]
+        );
+        assert_eq!(layout.leaves()[0].active_tab, 0);
+        // Same slot or out-of-range source: nothing changes.
+        assert!(!layout.reorder_tab(pane, 1, 1));
+        assert!(!layout.reorder_tab(pane, 7, 0));
+        // Out-of-range destination clamps to the last slot.
+        assert!(layout.reorder_tab(pane, 0, 99));
+        assert_eq!(items(&layout)[2], Some(mk_item(11)));
     }
 }

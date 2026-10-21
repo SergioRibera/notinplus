@@ -636,6 +636,38 @@ impl PaneLayout {
         empty && self.remove_leaf(pane)
     }
 
+    /// Move the tab at `from` inside `pane` so it sits at `to` (clamped
+    /// to the last slot). The active tab stays the same tab, whatever
+    /// index it ends up at.
+    ///
+    /// Returns `true` if the order changed.
+    pub fn reorder_tab(&mut self, pane: PaneId, from: usize, to: usize) -> bool {
+        let Some(leaf) = self.find_leaf_mut(pane) else {
+            return false;
+        };
+        if from >= leaf.tabs.len() {
+            return false;
+        }
+        let to = to.min(leaf.tabs.len() - 1);
+        if from == to {
+            return false;
+        }
+        let tab = leaf.tabs.remove(from);
+        leaf.tabs.insert(to, tab);
+        let active = leaf.active_tab as usize;
+        let active = if active == from {
+            to
+        } else if from < active && active <= to {
+            active - 1
+        } else if to <= active && active < from {
+            active + 1
+        } else {
+            active
+        };
+        leaf.active_tab = u32::try_from(active).unwrap_or(u32::MAX);
+        true
+    }
+
     /// Clamp every split ratio into `0.05..=0.95` in-place so a bogus
     /// payload cannot drive the divider off-screen.
     pub fn clamp_ratios(&mut self) {
