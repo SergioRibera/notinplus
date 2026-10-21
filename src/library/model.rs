@@ -624,6 +624,18 @@ impl PaneLayout {
             && self.move_tab(src, src_index, new_id)
     }
 
+    /// Remove the leaf `pane` if it holds no tabs — the usual aftermath
+    /// of dragging a pane's last tab elsewhere. The root leaf stays
+    /// whatever its state: the shell always keeps one pane.
+    ///
+    /// Returns `true` if a leaf went away.
+    pub fn prune_empty_leaf(&mut self, pane: PaneId) -> bool {
+        let empty = self
+            .find_leaf(pane)
+            .is_some_and(|leaf| leaf.tabs.is_empty());
+        empty && self.remove_leaf(pane)
+    }
+
     /// Clamp every split ratio into `0.05..=0.95` in-place so a bogus
     /// payload cannot drive the divider off-screen.
     pub fn clamp_ratios(&mut self) {

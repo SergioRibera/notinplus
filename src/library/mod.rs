@@ -959,8 +959,9 @@ impl Library {
     }
 
     /// Move the tab at `src_index` in pane `src` to the end of pane
-    /// `dst`, flipping focus to that pane. Same-pane and missing-pane
-    /// hits are rejected as [`LibraryError::NotFound`].
+    /// `dst`, flipping focus to that pane. A source pane left with no
+    /// tabs closes (unless it is the only one). Same-pane and
+    /// missing-pane hits are rejected as [`LibraryError::NotFound`].
     ///
     /// # Errors
     /// * [`LibraryError::NotFound`] when the workspace / either pane /
@@ -980,6 +981,7 @@ impl Library {
         if !w.layout.move_tab(src, src_index, dst) {
             return Err(LibraryError::NotFound(NotFoundKind::Workspace(workspace)));
         }
+        w.layout.prune_empty_leaf(src);
         w.focused_pane = Some(dst);
         w.updated_at = now;
         self.persist_workspaces().await
@@ -987,8 +989,9 @@ impl Library {
 
     /// Split pane `target` along `orientation` and move the tab at
     /// `src_index` of pane `src` into the fresh pane on `new_side`,
-    /// which takes focus. One persisted step: a tab dropped on a pane
-    /// edge either lands in its new pane or nothing changes.
+    /// which takes focus. A source pane left with no tabs closes. One
+    /// persisted step: a tab dropped on a pane edge either lands in its
+    /// new pane or nothing changes.
     ///
     /// # Errors
     /// * [`LibraryError::NotFound`] when the workspace, either pane or
@@ -1014,6 +1017,7 @@ impl Library {
         {
             return Err(LibraryError::NotFound(NotFoundKind::Workspace(workspace)));
         }
+        w.layout.prune_empty_leaf(src);
         w.focused_pane = Some(new_id);
         w.updated_at = now;
         self.persist_workspaces().await?;
@@ -1793,5 +1797,34 @@ mod tests {
         ));
         assert!(matches!(layout, PaneLayout::Leaf(_)));
         assert_eq!(layout.leaves()[0].tabs.len(), 1);
+    }
+
+    #[test]
+    fn prune_empty_leaf_collapses_a_drained_pane_but_never_the_root() {
+        let left = mk_pane(1);
+        let right = mk_pane(2);
+        let mut layout = PaneLayout::Split {
+            orientation: SplitOrientation::Horizontal,
+            ratio: 0.5,
+            first: Box::new(PaneLayout::Leaf(Pane {
+                id: left,
+                tabs: vec![PaneTab::new(mk_item(10))],
+                active_tab: 0,
+            })),
+            second: Box::new(PaneLayout::leaf(right)),
+        };
+        // Still has a tab: nothing happens.
+        assert!(!layout.prune_empty_leaf(left));
+        assert!(layout.move_tab(left, 0, right));
+        assert!(layout.prune_empty_leaf(left));
+        let PaneLayout::Leaf(only) = &layout else {
+            panic!("did not collapse");
+        };
+        assert_eq!(only.id, right);
+        assert_eq!(only.tabs.len(), 1);
+        // Root leaf, even empty, is kept.
+        let mut root = PaneLayout::leaf(left);
+        assert!(!root.prune_empty_leaf(left));
+        assert!(matches!(root, PaneLayout::Leaf(_)));
     }
 }
