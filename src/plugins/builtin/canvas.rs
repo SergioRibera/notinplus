@@ -329,3 +329,85 @@ mod tests {
         assert_eq!(kind.search(&query).count(), 0);
     }
 }
+
+impl CanvasContent {
+    /// Summary of an ink document.
+    #[must_use]
+    pub fn of(doc: &crate::doc::Doc) -> Self {
+        Self {
+            layers: doc
+                .layers
+                .iter()
+                .map(|layer| LayerSummary {
+                    name: layer.name.clone(),
+                    visible: layer.visible,
+                })
+                .collect(),
+            marks: doc
+                .bookmarks()
+                .iter()
+                .map(|bookmark| CanvasMark {
+                    bookmark: bookmark.id.0,
+                    body: bookmark.body.clone(),
+                    color: bookmark.color.map(|[r, g, b, _]| [r, g, b]),
+                    updated_at: bookmark.updated_at,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Shortest pause between two cover renders of the same canvas.
+const COVER_INTERVAL: std::time::Duration = std::time::Duration::from_secs(4);
+
+static LAST_COVER: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<crate::library::ItemId, std::time::Instant>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// After a canvas was saved: refresh its summary (layers, bookmarks),
+/// search index and, at most every few seconds, its cover.
+pub fn after_save(item: crate::library::ItemId, snapshot: Vec<u8>) {
+    let due = {
+        let mut last = LAST_COVER.lock().unwrap_or_else(PoisonError::into_inner);
+        let now = std::time::Instant::now();
+        let due = last
+            .get(&item)
+            .is_none_or(|at| now.duration_since(*at) >= COVER_INTERVAL);
+        if due {
+            last.insert(item, now);
+        }
+        due
+    };
+    let spawned = std::thread::Builder::new()
+        .name("notein-cover".to_owned())
+        .spawn(move || {
+            let Ok(doc) = crate::doc::Doc::from_snapshot(&snapshot) else {
+                return;
+            };
+            let content = CanvasContent::of(&doc);
+            crate::plugins::content::write(
+                item,
+                KIND,
+                &notein_plugin::payload::Payload::to_bytes(&content),
+            );
+            crate::plugins::content::reindex(item);
+            if !due {
+                return;
+            }
+            let Ok(handle) = crate::library::shared_blocking() else {
+                return;
+            };
+            let paper = pollster::block_on(handle.lock())
+                .item(item)
+                .and_then(|i| i.color)
+                .unwrap_or([247, 245, 240, 255]);
+            let cover = crate::thumbnail::canvas(&doc, paper);
+            let mut lib = pollster::block_on(handle.lock());
+            if let Err(err) = pollster::block_on(lib.set_item_thumbnail(item, cover)) {
+                log::error!("cover {item}: {err}");
+            }
+        });
+    if let Err(err) = spawned {
+        log::error!("cover thread: {err}");
+    }
+}

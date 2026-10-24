@@ -66,6 +66,7 @@ pub mod spatial;
 pub mod state;
 pub mod sync;
 pub mod text_box;
+pub mod thumbnail;
 pub mod ui_mask;
 pub mod undo;
 pub mod workspace_view;

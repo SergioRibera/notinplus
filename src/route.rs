@@ -239,6 +239,7 @@ fn spawn_autosave_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Receiv
                 }
                 Err(err) => log::error!("autosave open library: {err}"),
             }
+            crate::plugins::builtin::canvas::after_save(id, bytes);
             sync_siblings(id, &board);
             crate::sync::doc_changed(id);
         }
