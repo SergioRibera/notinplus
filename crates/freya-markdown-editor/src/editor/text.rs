@@ -7,7 +7,8 @@ use freya::clipboard::Clipboard;
 use freya::prelude::*;
 use freya_core::elements::paragraph::{ParagraphCursorExt, ParagraphHolderInner};
 use freya_edit::{
-    EditableConfig, EditableEvent, EditorLine, TextEditor as _, TextSelection, use_editable,
+    EditableConfig, EditableEvent, EditorLine, LONG_PRESS_TIMEOUT, TextEditor as _, TextSelection,
+    TouchEditEvent, use_editable,
 };
 use freya_engine::prelude::{
     Paint, PaintStyle, PathEffect, RectHeightStyle, RectWidthStyle, SkRect,
@@ -67,6 +68,8 @@ impl Component for TextBlock {
         let holder = use_state(ParagraphHolder::default);
         let mut area = use_state(Area::default);
         let mut dragging = use_state(|| false);
+        let mut long_press = use_state(|| None::<TaskHandle>);
+        let scroll_views = use_hook(EnclosingScrollViews::get);
         let mut menu = use_state(|| None::<OpenMenu>);
         let menu_cache = use_hook(|| Rc::new(RefCell::new(None::<(String, Rc<Vec<MenuRow>>)>)));
         let applied_caret = use_hook(|| Rc::new(Cell::new(0u64)));
@@ -161,7 +164,7 @@ impl Component for TextBlock {
         let shared_for_keys = shared.clone();
         let command_for_keys = command_held.clone();
         let reveal_for_keys = reveal.clone();
-        let input_for_keys = input_shown;
+        let input_for_keys = input_shown.clone();
         let on_key_down = move |event: Event<KeyboardEventData>| {
             let key = enter_from_text(event.key.clone());
             let modifiers = event.modifiers;
@@ -533,6 +536,49 @@ impl Component for TextBlock {
             }
         };
 
+        let reveal_for_ime = reveal.clone();
+        let input_for_ime = input_shown;
+        let on_ime_edit = move |event: Event<ImeEditEventData>| {
+            event.stop_propagation();
+            if read_only {
+                return;
+            }
+            let hint = {
+                let editor = editable.editor().peek();
+                editor
+                    .get_selection()
+                    .map_or_else(|| editor.cursor_pos(), |(from, to)| from.min(to))
+            };
+            match *event.data() {
+                ImeEditEventData::DeleteSurrounding {
+                    before_bytes,
+                    after_bytes,
+                } => {
+                    editable
+                        .editor_mut()
+                        .write()
+                        .delete_surrounding(before_bytes, after_bytes);
+                    commit_rope(&editable, controller, target, hint, &reveal_for_ime);
+                }
+                ImeEditEventData::Selection {
+                    cursor_bytes,
+                    anchor_bytes,
+                } => {
+                    editable
+                        .editor_mut()
+                        .write()
+                        .move_selection_by_bytes(cursor_bytes, anchor_bytes);
+                    controller.set_selection(rope_selection(
+                        &editable,
+                        target,
+                        reveal_for_ime.borrow().as_ref(),
+                    ));
+                }
+            }
+            // The input method made this change itself, so it already knows it.
+            *input_for_ime.borrow_mut() = Some(input_context(&editable));
+        };
+
         let content_for_press = shown.clone();
         let reveal_for_press = reveal.clone();
         let shared_for_press = shared.clone();
@@ -548,6 +594,16 @@ impl Component for TextBlock {
                     event.prevent_default();
                     shared_for_press.on_link.call(&url);
                 }
+                return;
+            }
+            if let FocusPressEventData::Touch(_) = event.data() {
+                // Touches edit the text when the finger lifts, see `on_global_pointer_up`. The
+                // press keeps going up so the note can scroll with it.
+                if content_for_press.is_empty() {
+                    editable.editor_mut().write().move_cursor_to(0);
+                }
+                a11y_id.request_focus();
+                menu.set_if_modified(None);
                 return;
             }
             event.stop_propagation();
@@ -575,7 +631,68 @@ impl Component for TextBlock {
             ));
         };
 
+        // Touch editing as on mobile platforms, see `freya_edit::TouchSelection`.
+        let content_for_touch = shown.clone();
+        let reveal_for_touch = reveal.clone();
+        // A touch handler of its own: the pointer down slot belongs to `on_focus_press`.
+        let on_touch_start = move |event: Event<TouchEventData>| {
+            if read_only || content_for_touch.is_empty() {
+                return;
+            }
+            let location = event.element_location;
+            editable.process_touch(TouchEditEvent::Down { location });
+            let scroll_views = scroll_views.clone();
+            let reveal = reveal_for_touch.clone();
+            let task = spawn(async move {
+                timer(LONG_PRESS_TIMEOUT).await;
+                editable.process_touch(TouchEditEvent::LongPress {
+                    location,
+                    editor_line: EditorLine::SingleParagraph,
+                    holder: &holder.read(),
+                });
+                if editable.touch().peek().is_selecting() {
+                    scroll_views.take_over_drag();
+                    a11y_id.request_focus();
+                    controller.set_selection(rope_selection(
+                        &editable,
+                        target,
+                        reveal.borrow().as_ref(),
+                    ));
+                }
+            });
+            if let Some(previous) = long_press.write().replace(task) {
+                previous.cancel();
+            }
+        };
+
+        let reveal_for_move = reveal.clone();
         let on_global_pointer_move = move |event: Event<PointerEventData>| {
+            if let PointerEventData::Touch(_) = event.data() {
+                let touch = editable.touch().peek().clone();
+                // Handles report their own moves.
+                if !touch.is_active() || touch.dragged_handle().is_some() {
+                    return;
+                }
+                let origin = area.read().to_f64();
+                editable.process_touch(TouchEditEvent::Move {
+                    location: (event.global_location() - origin.min()).to_point(),
+                    editor_line: EditorLine::SingleParagraph,
+                    holder: &holder.read(),
+                });
+                if !editable.touch().peek().is_pressed()
+                    && let Some(task) = long_press.write().take()
+                {
+                    task.cancel();
+                }
+                if editable.touch().peek().is_selecting() {
+                    controller.set_selection(rope_selection(
+                        &editable,
+                        target,
+                        reveal_for_move.borrow().as_ref(),
+                    ));
+                }
+                return;
+            }
             if a11y_id.is_focused() && *dragging.read() {
                 let origin = area.read().to_f64();
                 let location = (event.global_location() - origin.min()).to_point();
@@ -588,7 +705,31 @@ impl Component for TextBlock {
         };
 
         let reveal_for_up = reveal.clone();
-        let on_global_pointer_up = move |_: Event<PointerEventData>| {
+        let on_global_pointer_up = move |event: Event<PointerEventData>| {
+            if let PointerEventData::Touch(_) = event.data() {
+                if let Some(task) = long_press.write().take() {
+                    task.cancel();
+                }
+                let touch = editable.touch().peek().clone();
+                if !touch.is_active() {
+                    return;
+                }
+                let origin = area.read().to_f64();
+                editable.process_touch(TouchEditEvent::Up {
+                    location: (event.global_location() - origin.min()).to_point(),
+                    editor_line: EditorLine::SingleParagraph,
+                    holder: &holder.read(),
+                });
+                if touch.is_pressed() {
+                    a11y_id.request_focus();
+                }
+                controller.set_selection(rope_selection(
+                    &editable,
+                    target,
+                    reveal_for_up.borrow().as_ref(),
+                ));
+                return;
+            }
             if *dragging.peek() {
                 editable.process_event(EditableEvent::Release);
                 dragging.set(false);
@@ -601,6 +742,49 @@ impl Component for TextBlock {
         };
 
         let on_sized = move |event: Event<SizedEventData>| area.set_if_modified(event.area);
+
+        let shared_for_toolbar = shared.clone();
+        let reveal_for_toolbar = reveal.clone();
+        let on_toolbar_action = move |action: TextToolbarAction| {
+            let (selection, hint) = {
+                let editor = editable.editor().peek();
+                let selection = editor.get_selection();
+                let hint = selection.map_or_else(|| editor.cursor_pos(), |(from, to)| from.min(to));
+                (selection, hint)
+            };
+            let model = |display: usize| model_offset(&reveal_for_toolbar, display);
+            if let (TextToolbarAction::Copy | TextToolbarAction::Cut, Some((from, to))) =
+                (action, selection)
+            {
+                controller.remember_copy(target, model(from.min(to))..model(from.max(to)));
+            }
+            if action == TextToolbarAction::Paste && paste(&shared_for_toolbar, role, place) {
+                return;
+            }
+            let (key, modifiers) = action.shortcut();
+            editable.process_event(EditableEvent::KeyDown {
+                key: &key,
+                modifiers,
+                editor_line: Some(EditorLine::SingleParagraph),
+                holder: Some(&holder.read()),
+            });
+            match action {
+                TextToolbarAction::Cut | TextToolbarAction::Paste => {
+                    commit_rope(&editable, controller, target, hint, &reveal_for_toolbar);
+                }
+                TextToolbarAction::Copy | TextToolbarAction::SelectAll => {
+                    controller.set_selection(rope_selection(
+                        &editable,
+                        target,
+                        reveal_for_toolbar.borrow().as_ref(),
+                    ));
+                    // The toolbar stays around what was selected or copied.
+                    let mut touch = editable.touch_mut().write();
+                    touch.show();
+                    touch.set_toolbar_visible(action == TextToolbarAction::SelectAll);
+                }
+            }
+        };
 
         let theme = shared.theme.clone();
         let colors = &theme.colors;
@@ -739,13 +923,21 @@ impl Component for TextBlock {
                     .on_key_down(on_key_down)
                     .on_key_up(on_key_up)
                     .on_ime_preedit(on_ime_preedit)
+                    .on_ime_edit(on_ime_edit)
                     .on_focus_press(on_focus_press)
+                    .on_touch_start(on_touch_start)
                     .on_global_pointer_move(on_global_pointer_move)
                     .on_global_pointer_up(on_global_pointer_up)
                     .maybe_child(background)
                     .child(paragraph.layer(Layer::Relative(1))),
             )
             .maybe_child(popup)
+            .maybe_child((is_focused && !read_only).then(|| {
+                TextSelectionControls::new(editable, holder, rope_text.clone(), on_toolbar_action)
+                    .paragraph_area(area())
+                    .visible_area(area())
+                    .text_align(self.look.align)
+            }))
     }
 }
 
