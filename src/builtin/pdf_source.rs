@@ -18,9 +18,9 @@ use freya::icons::lucide;
 use freya_canvas_bg::Rect;
 use freya_pdf::PdfDocument;
 use notein_plugin::{
-    AnchorView, ChipView, Completion, ConfigError, ConfigField, ConfigFieldKind, ConfigSchema,
+    AnchorView, ChipView, ConfigError, ConfigField, ConfigFieldKind, ConfigSchema,
     ConfigValue, CreationCategory, CreationEntry, CreationError, CreationKind,
-    ItemCreationResult, SearchHit, SelectMode, Selection, Source, SourceError, SourceRef, Tile,
+    ItemCreationResult, SearchHit, SelectMode, Selection, Source, SourceError, Tile,
     TileRequest,
 };
 

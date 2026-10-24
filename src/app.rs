@@ -85,6 +85,8 @@ impl CanvasMount {
 #[derive(Clone)]
 pub struct AnchorSourceCtx {
     pub source: AnchorSourceRef,
+    /// What a long press on the page does before it drops a bookmark.
+    pub text_press: Option<crate::canvas::TextPressRef>,
 }
 
 impl PartialEq for AnchorSourceCtx {
@@ -484,8 +486,9 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoEl
             }
         }
     });
-    let anchor_source =
-        freya::prelude::try_consume_context::<AnchorSourceCtx>().map(|ctx| Arc::clone(&ctx.source));
+    let anchor_ctx = freya::prelude::try_consume_context::<AnchorSourceCtx>();
+    let anchor_source = anchor_ctx.as_ref().map(|ctx| Arc::clone(&ctx.source));
+    let text_press = anchor_ctx.and_then(|ctx| ctx.text_press);
     rect()
         .width(Size::fill())
         .height(Size::fill())
@@ -496,6 +499,7 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoEl
             state.bookmark_body,
             state.text_editor,
             anchor_source,
+            text_press,
         ))
 }
 

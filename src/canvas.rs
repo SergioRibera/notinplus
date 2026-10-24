@@ -2366,11 +2366,17 @@ const PIN_STICKY_WORLD_RADIUS: f32 = 40.0;
 /// the typed [`SourceRef`] the pin should carry.
 pub type AnchorSourceRef = Arc<dyn Fn(PageAttachment) -> SourceRef + Send + Sync + 'static>;
 
+/// A long press on the page, as `(world, window)` points: `true` when the
+/// face handled it (a word got selected) and no bookmark should drop.
+pub type TextPressRef = Arc<dyn Fn((f32, f32), (f32, f32)) -> bool + Send + Sync + 'static>;
+
 /// Press on the canvas that may open or drop a bookmark.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct PinPress {
     x: f32,
     y: f32,
+    /// The same point in window coordinates.
+    window: (f32, f32),
     at: std::time::Instant,
 }
 
@@ -2401,10 +2407,18 @@ impl PinGesture {
 
     /// Start a press at `(x, y)` (surface pixels). The pin drops after
     /// [`PIN_LONG_PRESS`] unless the press ends first.
-    fn down(mut self, board: &Arc<Mutex<Board>>, x: f32, y: f32, anchor: Option<AnchorSourceRef>) {
+    fn down(
+        mut self,
+        board: &Arc<Mutex<Board>>,
+        (x, y): (f32, f32),
+        window: (f32, f32),
+        anchor: Option<AnchorSourceRef>,
+        text_press: Option<TextPressRef>,
+    ) {
         let press = PinPress {
             x,
             y,
+            window,
             at: std::time::Instant::now(),
         };
         self.press.set(Some(press));
@@ -2415,7 +2429,7 @@ impl PinGesture {
             let current = *self.press.peek();
             if current == Some(press) {
                 self.press.set(None);
-                self.hold(&board, press, anchor.as_ref());
+                self.hold(&board, press, anchor.as_ref(), text_press.as_ref());
             }
         });
     }
@@ -2465,11 +2479,18 @@ impl PinGesture {
         board: &Arc<Mutex<Board>>,
         press: PinPress,
         anchor: Option<&AnchorSourceRef>,
+        text_press: Option<&TextPressRef>,
     ) {
         let hit = lock(board).bookmark_near_screen(press.x, press.y, PIN_TAP_RADIUS_PX);
         if let Some(id) = hit {
             self.open(board, id);
             return;
+        }
+        if let Some(on_text) = text_press {
+            let world = lock(board).viewport().screen_to_world(press.x, press.y);
+            if on_text(world, press.window) {
+                return;
+            }
         }
         let (world, refs) = {
             let guard = lock(board);
@@ -2503,6 +2524,7 @@ pub fn drawing_surface(
     body_buffer: freya::prelude::State<String>,
     text_editor: crate::canvas_text::TextEditorSlot,
     anchor_source: Option<AnchorSourceRef>,
+    text_press: Option<TextPressRef>,
 ) -> impl IntoElement {
     // Read the current background's surface backdrop once at element
     // construction. Swapping backgrounds at runtime requires re-mounting
@@ -2743,7 +2765,16 @@ pub fn drawing_surface(
             let loc = e.element_location();
             #[allow(clippy::cast_possible_truncation)]
             let (x, y) = (loc.x as f32, loc.y as f32);
-            pin.down(&press_down_board, x, y, anchor_source.clone());
+            let global = e.global_location();
+            #[allow(clippy::cast_possible_truncation)]
+            let window = (global.x as f32, global.y as f32);
+            pin.down(
+                &press_down_board,
+                (x, y),
+                window,
+                anchor_source.clone(),
+                text_press.clone(),
+            );
         })
         .child(inner)
 }
@@ -2764,6 +2795,11 @@ impl Board {
 
     pub fn clear_live_sink(&mut self) {
         self.live_sink = None;
+    }
+
+    /// Ask for a repaint (an overlay painted over the board changed).
+    pub fn request_repaint(&mut self) {
+        self.notify();
     }
 
     /// Refuse every edit while `read_only`; what others do still lands.

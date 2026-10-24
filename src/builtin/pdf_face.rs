@@ -52,6 +52,9 @@ impl Component for PdfFace {
         // and threads it through `drawing_surface`.
         use_provide_context(move || AnchorSourceCtx {
             source: pdf_anchor_source(item),
+            text_press: Some(Arc::new(move |world, window| {
+                crate::pdf_select_overlay::select_word_at(item, mount, world, window)
+            })),
         });
 
         // Install the PDF background on whichever `Board` the inner

@@ -64,6 +64,7 @@ pub mod soft_keyboard;
 pub mod source_ref_nav;
 pub mod screens;
 pub mod search;
+pub mod selection;
 pub mod session_end;
 pub mod settings;
 pub mod space;

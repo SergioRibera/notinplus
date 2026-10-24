@@ -51,6 +51,8 @@ pub enum Tool {
     Shape,
     Lasso,
     Text,
+    /// Select PDF text with the pen or mouse.
+    Select,
 }
 
 impl Tool {
@@ -62,7 +64,8 @@ impl Tool {
         match board.input_mode() {
             InputMode::Lasso => Self::Lasso,
             InputMode::Text => Self::Text,
-            InputMode::Draw | InputMode::Pan | InputMode::Select => match board.current_kind() {
+            InputMode::Select => Self::Select,
+            InputMode::Draw | InputMode::Pan => match board.current_kind() {
                 BrushKind::Pencil => Self::Pencil,
                 BrushKind::Marker => Self::Marker,
                 BrushKind::Highlighter => Self::Highlighter,
@@ -84,6 +87,7 @@ impl Tool {
             Self::Shape => lucide::shapes(),
             Self::Lasso => lucide::lasso(),
             Self::Text => lucide::icon_type(),
+            Self::Select => lucide::text_cursor_input(),
         }
     }
 
@@ -97,6 +101,7 @@ impl Tool {
             Self::Shape => "Formas",
             Self::Lasso => "Lazo",
             Self::Text => "Texto",
+            Self::Select => "Seleccionar texto",
         }
     }
 
@@ -108,7 +113,7 @@ impl Tool {
             Self::Highlighter => Some(BrushPreset::highlighter()),
             Self::Eraser => Some(BrushPreset::eraser()),
             Self::Shape => Some(BrushPreset::shape(ShapeMode::Line)),
-            Self::Lasso | Self::Text => None,
+            Self::Lasso | Self::Text | Self::Select => None,
         }
     }
 
@@ -118,6 +123,7 @@ impl Tool {
         match self {
             Self::Lasso => guard.set_input_mode(InputMode::Lasso),
             Self::Text => guard.set_input_mode(InputMode::Text),
+            Self::Select => guard.set_input_mode(InputMode::Select),
             _ => {
                 if let Some(preset) = self.preset() {
                     let keep_shape = matches!(
@@ -134,7 +140,7 @@ impl Tool {
     }
 
     const fn tunable(self) -> bool {
-        !matches!(self, Self::Lasso | Self::Text)
+        !matches!(self, Self::Lasso | Self::Text | Self::Select)
     }
 }
 
@@ -160,6 +166,8 @@ pub struct InkState {
     pub handwriting: State<bool>,
     /// Lasso selection bounds in surface pixels.
     pub selection: State<Option<(f32, f32, f32, f32)>>,
+    /// The canvas is over a PDF: text can be selected.
+    pub pdf: State<bool>,
 }
 
 impl std::fmt::Debug for InkState {
@@ -180,6 +188,7 @@ impl InkState {
             read_only: use_state(|| false),
             handwriting: use_state(|| false),
             selection: use_state(|| None),
+            pdf: use_state(|| false),
         }
     }
 
@@ -209,6 +218,10 @@ impl InkState {
         }
         if *self.handwriting.peek() != board.handwriting_enabled() {
             self.handwriting.set(board.handwriting_enabled());
+        }
+        let pdf = board.background().attribution_mode() == freya_canvas_bg::AttributionMode::PerPage;
+        if *self.pdf.peek() != pdf {
+            self.pdf.set(pdf);
         }
         let selection = board.selection_screen_bounds();
         if *self.selection.peek() != selection {
@@ -444,6 +457,9 @@ impl Component for Dock {
             items.push(tool_button(Tool::Shape));
             items.push(divider().into_element());
             items.push(tool_button(Tool::Lasso));
+            if *self.state.pdf.read() {
+                items.push(tool_button(Tool::Select));
+            }
             items.push(tool_button(Tool::Text));
             let signature = {
                 let board = Arc::clone(board);
@@ -501,7 +517,10 @@ impl Component for Dock {
 /// The tools the phone dock leaves out.
 fn more_sheet(board: Arc<Mutex<Board>>, state: InkState) {
     use freya::icons::lucide;
-    let tools = [Tool::Pencil, Tool::Marker, Tool::Shape, Tool::Text];
+    let mut tools = vec![Tool::Pencil, Tool::Marker, Tool::Shape, Tool::Text];
+    if *state.pdf.peek() {
+        tools.push(Tool::Select);
+    }
     let rows: Vec<Element> = tools
         .into_iter()
         .map(|t| {

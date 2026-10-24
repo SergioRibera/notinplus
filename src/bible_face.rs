@@ -16,7 +16,7 @@ use freya::icons::lucide::arrow_left;
 use freya::prelude::*;
 use freya::router::RouterContext;
 
-use notein_bible::db::{BibleRow, BookRow, ChapterRow, Db};
+use notein_bible::db::{BibleRow, ChapterRow, Db};
 use notein_bible::plugin_config;
 use notein_bible::state::{BibleBookmark, BibleSnapshot, BibleViewerState};
 use notein_bible::ui::chapter::plan_chapter;
@@ -175,7 +175,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
     // Live preview tracks the ColorWheel's current colour so the
     // paragraph updates in real time as the user drags. Commit happens
     // only on explicit "Guardar"; Cancel discards.
-    let mut preview_color: State<Option<freya::prelude::Color>> = use_state(|| None);
+    let preview_color: State<Option<freya::prelude::Color>> = use_state(|| None);
     // Transient highlight on the destination verse of a TSK / xref jump
     // — set on click, cleared by a spawned timer after a few seconds so
     // the user eye lands on the referenced text before the colour fades.
@@ -394,8 +394,6 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
     let bible_for_search = st_snapshot.bible_id.clone();
     let books_for_search = db.list_books(&bible_for_search).unwrap_or_default();
     let db_jump = db.clone();
-    let db_ref = db.clone();
-    let bible_for_ref = st_snapshot.bible_id.clone();
     let on_search = EventHandler::<String>::new(move |query: String| {
         // Pick path: query exactly matches an existing hit's label →
         // jump + reset. Reference-shaped queries (`"Juan 3:16"`) land
@@ -634,33 +632,27 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                 }
             },
             move |target: notein_bible::ui::reader::HighlightTarget| {
-                // Delegate the full bookmark UX to the shell. The
-                // plugin only owns the paint + the (book, chapter,
-                // range) anchor; everything else — body + colour
-                // picker + autocomplete chips — comes from
-                // `host.request_bookmark_edit`, which returns the
-                // edited draft when the user commits.
                 use notein_bible::ui::reader::HighlightKind;
                 let (lo, hi) = match target.kind {
                     HighlightKind::Verse(v) => (v, v),
                     HighlightKind::Range(a, b) => (a, b),
                 };
-                // Flag the preview as active for THIS range —
-                // chapter_body only paints the live-preview overlay
-                // when both `pending_highlight` and `preview_color`
-                // are set. Cleared on commit / cancel below.
                 pending_highlight.set(Some(target));
-                let book = {
+                let (bible_id, book, chapter_num, quote) = {
                     let st = state.read();
-                    st.current_book.clone()
+                    let quote = ReaderSnapshot::from_state(&st)
+                        .chapter
+                        .map(|c| {
+                            c.verses
+                                .iter()
+                                .filter(|v| v.verse >= lo && v.verse <= hi)
+                                .map(|v| v.text.clone())
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        })
+                        .unwrap_or_default();
+                    (st.bible_id.clone(), st.current_book.clone(), st.current_chapter, quote)
                 };
-                let chapter_num = {
-                    let st = state.read();
-                    st.current_chapter
-                };
-                // Seed the modal with the existing bookmark's colour +
-                // note if the target range overlaps one so editing
-                // never clobbers prior data.
                 let existing = {
                     let st = state.read();
                     st.highlights_on(&book, chapter_num)
@@ -668,68 +660,99 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                         .find(|h| h.start_verse <= hi && h.end_verse >= lo)
                         .cloned()
                 };
-                let draft = notein_plugin::BookmarkDraft {
-                    body: existing
-                        .as_ref()
-                        .map(|h| h.note.clone())
-                        .unwrap_or_default(),
-                    color: existing
-                        .as_ref()
-                        .and_then(|h| h.color)
-                        .map(|c| notein_bible::state::u32_to_rgba(c)),
-                    refs: Vec::new(),
+                let anchor = notein_bible::BibleAnchor {
+                    bible_id,
+                    book_id: book.clone(),
+                    start_chapter: chapter_num,
+                    start_verse: lo,
+                    end_chapter: chapter_num,
+                    end_verse: hi,
+                    start_char: None,
+                    end_char: None,
                 };
-                let title = if lo == hi {
-                    format!("Resaltar verso {lo}")
-                } else {
-                    format!("Resaltar versos {lo}–{hi}")
+                let reference = notein_plugin::bookmark::SourceRef::Plugin {
+                    plugin_id: BIBLE_PLUGIN_ID.to_owned(),
+                    item: item.0,
+                    anchor: anchor.encode(),
+                    selection: (!quote.is_empty()).then(|| quote.clone()),
                 };
-                // Shell callback crosses threads via a `Send + Sync`
-                // bound; Freya `State` isn't Send so we forward
-                // commit result + preview updates through flume
-                // channels and apply them from UI-thread listeners.
-                let host = crate::host_api::host_handle();
-                let book_cb = book.clone();
-                let (tx, rx) = flume::bounded::<Option<notein_plugin::BookmarkDraft>>(1);
-                spawn(async move {
-                    if let Ok(Some(draft)) = rx.recv_async().await {
-                        let packed = draft.color.map(notein_bible::state::rgba_to_u32);
-                        let mut st = state.write();
-                        st.upsert_highlight(&book_cb, chapter_num, lo, hi, packed, draft.body);
-                    }
-                    // Preview is per-session; drop it on commit AND
-                    // on cancel (recv returning Ok(None)).
-                    preview_color.set(None);
-                    pending_highlight.set(None);
-                });
-                // Preview sink mirrors wheel drags into the plugin's
-                // live-preview state so the paragraph bg rect tracks
-                // the user's choice before the Save button fires.
-                let (preview_tx, preview_rx) = flume::unbounded::<notein_plugin::BookmarkDraft>();
-                spawn_forever(async move {
-                    while let Ok(draft) = preview_rx.recv_async().await {
-                        if let Some(rgba) = draft.color {
-                            preview_color.set(Some(freya::prelude::Color::from_rgb(
-                                rgba[0], rgba[1], rgba[2],
-                            )));
-                        }
-                    }
-                });
-                let request = notein_plugin::BookmarkEditRequest {
-                    draft,
-                    title: title.into(),
-                    anchor: Some((target.anchor_x, target.anchor_y)),
-                    on_preview: Some(std::sync::Arc::new(move |draft| {
-                        let _ = preview_tx.send(draft);
-                    })),
-                };
-                host.request_bookmark_edit(
-                    BIBLE_PLUGIN_ID,
-                    request,
-                    std::sync::Arc::new(move |result| {
-                        let _ = tx.send(result);
+                let label = crate::selection::label_of(&reference);
+                let existing_rgb = existing
+                    .as_ref()
+                    .and_then(|h| h.color)
+                    .map(notein_bible::state::u32_to_rgba)
+                    .map(|c| [c[0], c[1], c[2]]);
+                let active = existing_rgb.and_then(|c| crate::selection::inks().iter().position(|ink| *ink == c));
+                let note = existing.as_ref().map(|h| h.note.clone()).unwrap_or_default();
+                let (color_book, note_book) = (book.clone(), book.clone());
+                let color_note = note.clone();
+                let state_color = state;
+                let mut state_note = state;
+                let mut pending_end = pending_highlight;
+                let mut preview_end = preview_color;
+                crate::selection::SelectionMenu {
+                    at: (target.anchor_x, target.anchor_y),
+                    active,
+                    on_color: std::rc::Rc::new(move |rgb: Option<[u8; 3]>| {
+                        let packed = rgb.map(|c| notein_bible::state::rgba_to_u32([c[0], c[1], c[2], 0xFF]));
+                        let (mut state_color, mut pending_end) = (state_color, pending_end);
+                        state_color.write().upsert_highlight(&color_book, chapter_num, lo, hi, packed, color_note.clone());
+                        pending_end.set(None);
                     }),
-                );
+                    on_note: std::rc::Rc::new(move || {
+                        let (tx, rx) = flume::bounded::<notein_plugin::services::AnnotationOutcome>(1);
+                        let (preview_tx, preview_rx) = flume::unbounded::<Option<[u8; 3]>>();
+                        let book = note_book.clone();
+                        let existing_id = existing.as_ref().map(|h| h.id);
+                        spawn_forever(async move {
+                            while let Ok(rgb) = preview_rx.recv_async().await {
+                                preview_end.set(rgb.map(|c| freya::prelude::Color::from_rgb(c[0], c[1], c[2])));
+                            }
+                        });
+                        spawn_forever(async move {
+                            match rx.recv_async().await {
+                                Ok(notein_plugin::services::AnnotationOutcome::Saved { color, body }) => {
+                                    let packed = color.map(|c| notein_bible::state::rgba_to_u32([c[0], c[1], c[2], 0xFF]));
+                                    state_note.write().upsert_highlight(&book, chapter_num, lo, hi, packed, body);
+                                }
+                                Ok(notein_plugin::services::AnnotationOutcome::Deleted) => {
+                                    if let Some(id) = existing_id {
+                                        state_note.write().remove_highlight(id);
+                                    }
+                                }
+                                Ok(notein_plugin::services::AnnotationOutcome::Cancelled) | Err(_) => {}
+                            }
+                            preview_end.set(None);
+                            pending_end.set(None);
+                        });
+                        crate::annotation::AnnotationPopover::open(
+                            notein_plugin::services::AnnotationRequest {
+                                doc: crate::plugins::content::doc_id(item),
+                                kind: BIBLE_PLUGIN_ID.to_owned(),
+                                title: if lo == hi { format!("Verso {lo}") } else { format!("Versos {lo}–{hi}") },
+                                quote: (!quote.is_empty()).then(|| quote.clone()),
+                                color: existing_rgb,
+                                body: note.clone(),
+                                target: Some((target.anchor_x, target.anchor_y, 1.0, 1.0)),
+                                existing: existing_id.is_some(),
+                            },
+                            Some(std::sync::Arc::new(move |rgb| {
+                                let _ = preview_tx.send(rgb);
+                            })),
+                            std::sync::Arc::new(move |outcome| {
+                                let _ = tx.send(outcome);
+                            }),
+                        );
+                    }),
+                    reference: Some((reference, label)),
+                    document: Some(item),
+                    extra: Vec::new(),
+                    on_dismiss: std::rc::Rc::new(move || {
+                        let mut pending = pending_highlight;
+                        pending.set(None);
+                    }),
+                }
+                .show();
             },
             Some(verse_scroll_ctx.clone()),
         ))
