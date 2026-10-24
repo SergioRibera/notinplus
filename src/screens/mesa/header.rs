@@ -137,122 +137,13 @@ impl PaneHeader {
 
 impl Component for PaneHeader {
     fn render(&self) -> impl IntoElement {
-        use freya::icons::lucide;
         let p = palette();
         let pane = self.pane.id;
         let ops = self.ops;
-        let single = self.pane.tabs.len() == 1;
-        let active = self.pane.active_tab as usize;
-
-        let face_actions = self
-            .pane
-            .tabs
-            .get(active)
-            .and_then(PaneTab::item)
-            .map(|item| self.face_actions(item))
-            .unwrap_or_default();
-        let trailing = rect()
-            .horizontal()
-            .cross_align(Alignment::Center)
-            .spacing(2.0)
-            .children(face_actions)
-            .maybe_child(self.next.map(|next| {
-                IconButton::new(lucide::columns_2(), "Otro panel")
-                    .size(tokens::size::BUTTON_SM)
-                    .on_press(move |_| ops.focus(next))
-            }))
-            .child(
-                IconButton::new(lucide::plus(), "Nueva pestaña")
-                    .size(tokens::size::BUTTON_SM)
-                    .on_press(move |_| ops.new_tab(pane)),
-            )
-            .maybe_child(
-                self.pane
-                    .tabs
-                    .get(active)
-                    .filter(|t| t.item().is_some())
-                    .map(|tab| {
-                        let tab = tab.clone();
-                        let data = Arc::clone(&self.data);
-                        IconButton::new(lucide::ellipsis(), "Más acciones")
-                            .size(tokens::size::BUTTON_SM)
-                            .on_press(move |e: Event<PressEventData>| {
-                                menu_for(&tab, &data, anchor(&e));
-                            })
-                    }),
-            )
-            .maybe_child(self.can_close.then(|| {
-                IconButton::new(lucide::panel_right_close(), "Cerrar el panel")
-                    .size(tokens::size::BUTTON_SM)
-                    .on_press(move |_| ops.close_pane(pane))
-            }));
-
-        let strip: Element = if single {
-            let tab = &self.pane.tabs[0];
-            let look = TabLook::of(tab, &self.data);
-            let close_tab = tab.clone();
-            rect()
-                .width(Size::flex(1.0))
-                .horizontal()
-                .cross_align(Alignment::Center)
-                .content(Content::Flex)
-                .spacing(8.0)
-                .padding((0.0, 8.0))
-                .child(
-                    rect()
-                        .width(Size::px(8.0))
-                        .height(Size::px(8.0))
-                        .corner_radius(tokens::radius::FULL)
-                        .background(look.tint),
-                )
-                .child(
-                    rect()
-                        .width(Size::flex(1.0))
-                        .child(Text::new(look.title).role(TextRole::Strong).lines(1)),
-                )
-                .child(
-                    IconButton::new(lucide::x(), "Cerrar")
-                        .size(tokens::size::BUTTON_SM)
-                        .on_press(move |_| ops.close_tab(pane, 0, &close_tab)),
-                )
-                .into_element()
+        let strip = if self.pane.tabs.len() == 1 {
+            self.single_tab()
         } else {
-            let cells: Vec<Element> = self
-                .pane
-                .tabs
-                .iter()
-                .enumerate()
-                .map(|(index, tab)| {
-                    DragZone::new(
-                        TabDrag { pane, index },
-                        TabCell {
-                            look_title: TabLook::of(tab, &self.data).title,
-                            tab: tab.clone(),
-                            data: Arc::clone(&self.data),
-                            pane,
-                            index,
-                            active: index == active,
-                            ops,
-                        },
-                    )
-                    .into_element()
-                })
-                .collect();
-            ScrollView::new()
-                .direction(Direction::Horizontal)
-                .width(Size::flex(1.0))
-                .height(Size::px(tokens::size::TAB_BAR))
-                .show_scrollbar(false)
-                .child(
-                    rect()
-                        .height(Size::fill())
-                        .horizontal()
-                        .cross_align(Alignment::Center)
-                        .spacing(2.0)
-                        .padding((0.0, 4.0))
-                        .children(cells),
-                )
-                .into_element()
+            self.tab_strip()
         };
         let row = rect()
             .width(Size::fill())
@@ -268,7 +159,7 @@ impl Component for PaneHeader {
                     .alignment(BorderAlignment::Inner),
             )
             .child(strip)
-            .child(trailing);
+            .child(self.trailing());
         DropZone::new(
             row,
             EventHandler::new(move |drag: TabDrag| {
@@ -277,6 +168,122 @@ impl Component for PaneHeader {
                 }
             }),
         )
+    }
+}
+
+impl PaneHeader {
+    /// The face's buttons, then other pane, new tab, more and close.
+    fn trailing(&self) -> Rect {
+        use freya::icons::lucide;
+        let pane = self.pane.id;
+        let ops = self.ops;
+        let active = self.pane.tabs.get(self.pane.active_tab as usize);
+        let face_actions = active
+            .and_then(PaneTab::item)
+            .map(|item| self.face_actions(item))
+            .unwrap_or_default();
+        rect()
+            .horizontal()
+            .cross_align(Alignment::Center)
+            .spacing(2.0)
+            .children(face_actions)
+            .maybe_child(self.next.map(|next| {
+                IconButton::new(lucide::columns_2(), "Otro panel")
+                    .size(tokens::size::BUTTON_SM)
+                    .on_press(move |_| ops.focus(next))
+            }))
+            .child(
+                IconButton::new(lucide::plus(), "Nueva pestaña")
+                    .size(tokens::size::BUTTON_SM)
+                    .on_press(move |_| ops.new_tab(pane)),
+            )
+            .maybe_child(active.filter(|t| t.item().is_some()).map(|tab| {
+                let tab = tab.clone();
+                let data = Arc::clone(&self.data);
+                IconButton::new(lucide::ellipsis(), "Más acciones")
+                    .size(tokens::size::BUTTON_SM)
+                    .on_press(move |e: Event<PressEventData>| menu_for(&tab, &data, anchor(&e)))
+            }))
+            .maybe_child(self.can_close.then(|| {
+                IconButton::new(lucide::panel_right_close(), "Cerrar el panel")
+                    .size(tokens::size::BUTTON_SM)
+                    .on_press(move |_| ops.close_pane(pane))
+            }))
+    }
+
+    /// One document: its colour, its title and close.
+    fn single_tab(&self) -> Element {
+        let (pane, ops) = (self.pane.id, self.ops);
+        let tab = &self.pane.tabs[0];
+        let look = TabLook::of(tab, &self.data);
+        let close_tab = tab.clone();
+        rect()
+            .width(Size::flex(1.0))
+            .horizontal()
+            .cross_align(Alignment::Center)
+            .content(Content::Flex)
+            .spacing(8.0)
+            .padding((0.0, 8.0))
+            .child(
+                rect()
+                    .width(Size::px(8.0))
+                    .height(Size::px(8.0))
+                    .corner_radius(tokens::radius::FULL)
+                    .background(look.tint),
+            )
+            .child(
+                rect()
+                    .width(Size::flex(1.0))
+                    .child(Text::new(look.title).role(TextRole::Strong).lines(1)),
+            )
+            .child(
+                IconButton::new(freya::icons::lucide::x(), "Cerrar")
+                    .size(tokens::size::BUTTON_SM)
+                    .on_press(move |_| ops.close_tab(pane, 0, &close_tab)),
+            )
+            .into_element()
+    }
+
+    /// Several documents: draggable tabs that scroll sideways.
+    fn tab_strip(&self) -> Element {
+        let (pane, ops) = (self.pane.id, self.ops);
+        let active = self.pane.active_tab as usize;
+        let cells: Vec<Element> = self
+            .pane
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(index, tab)| {
+                DragZone::new(
+                    TabDrag { pane, index },
+                    TabCell {
+                        look_title: TabLook::of(tab, &self.data).title,
+                        tab: tab.clone(),
+                        data: Arc::clone(&self.data),
+                        pane,
+                        index,
+                        active: index == active,
+                        ops,
+                    },
+                )
+                .into_element()
+            })
+            .collect();
+        ScrollView::new()
+            .direction(Direction::Horizontal)
+            .width(Size::flex(1.0))
+            .height(Size::px(tokens::size::TAB_BAR))
+            .show_scrollbar(false)
+            .child(
+                rect()
+                    .height(Size::fill())
+                    .horizontal()
+                    .cross_align(Alignment::Center)
+                    .spacing(2.0)
+                    .padding((0.0, 4.0))
+                    .children(cells),
+            )
+            .into_element()
     }
 }
 

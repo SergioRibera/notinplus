@@ -149,45 +149,143 @@ struct PanelBody {
     tab: State<PanelTab>,
 }
 
+/// The tabs and, except on Vínculos, a search field.
+fn panel_head(mut tab: State<PanelTab>, query: State<String>) -> Rect {
+    let current = *tab.read();
+    let index = PanelTab::ALL
+        .iter()
+        .position(|t| *t == current)
+        .unwrap_or(0);
+    rect()
+        .width(Size::fill())
+        .spacing(8.0)
+        .child(
+            Segmented::new(PanelTab::ALL.map(PanelTab::label), index)
+                .full_width()
+                .height(32.0)
+                .on_select(move |i: usize| tab.set(PanelTab::ALL[i])),
+        )
+        .maybe_child((current != PanelTab::Links).then(|| {
+            SearchField::new(
+                query,
+                if current == PanelTab::Contents {
+                    "Buscar en el contenido"
+                } else {
+                    "Buscar marcadores"
+                },
+            )
+            .height(34.0)
+        }))
+}
+
+/// The document's own outline, filtered by `text`.
+fn contents(outline: &[OutlineNode<Vec<u8>>], text: &str, kind_id: &str, id: ItemId) -> Element {
+    let mut rows = Vec::new();
+    outline_rows(outline, 0, text, kind_id, id, &mut rows);
+    if rows.is_empty() {
+        return Text::new(if text.is_empty() {
+            "Este documento no tiene índice."
+        } else {
+            "Nada con ese nombre."
+        })
+        .role(TextRole::Hint)
+        .into_element();
+    }
+    Group::default().children(rows).into_element()
+}
+
+/// The document's marks, newest first, filtered by colour and `text`.
+fn bookmarks(
+    marks: Vec<notein_plugin::kind::Mark<Vec<u8>>>,
+    text: &str,
+    kind_id: &str,
+    id: ItemId,
+    mut color: State<Option<[u8; 3]>>,
+) -> Element {
+    let p = palette();
+    let mut colors: Vec<[u8; 3]> = marks.iter().filter_map(|m| m.color).collect();
+    colors.sort_unstable();
+    colors.dedup();
+    let chosen = *color.read();
+    let mut marks: Vec<_> = marks
+        .into_iter()
+        .filter(|m| chosen.is_none() || m.color == chosen)
+        .filter(|m| {
+            text.is_empty()
+                || m.title.to_lowercase().contains(text)
+                || m.snippet.to_lowercase().contains(text)
+        })
+        .collect();
+    marks.sort_by_key(|m| std::cmp::Reverse(m.updated_at));
+    let rows: Vec<Element> = marks
+        .into_iter()
+        .map(|mark| {
+            let anchor = mark.anchor.clone();
+            let kind_id = kind_id.to_owned();
+            let dot = mark
+                .color
+                .map_or(p.t3, |[r, g, b]| Color::from_rgb(r, g, b));
+            ListRow::new(mark.title.clone())
+                .subtitle(mark.snippet)
+                .leading(notein_ui_kit::Leading::Element(
+                    rect()
+                        .width(Size::px(10.0))
+                        .height(Size::px(10.0))
+                        .corner_radius(tokens::radius::FULL)
+                        .background(dot)
+                        .into_element(),
+                ))
+                .dense(true)
+                .on_press(move |_| jump(&kind_id, id, anchor.clone()))
+                .into_element()
+        })
+        .collect();
+    rect()
+        .width(Size::fill())
+        .spacing(10.0)
+        .maybe_child((colors.len() > 1).then(|| {
+            rect()
+                .width(Size::fill())
+                .horizontal()
+                .content(Content::wrap_spacing(6.0))
+                .spacing(6.0)
+                .child(
+                    Tag::new("Todos")
+                        .active(chosen.is_none())
+                        .on_press(move |_| color.set(None)),
+                )
+                .children(colors.into_iter().map(|c| {
+                    Tag::new("")
+                        .dot(Color::from_rgb(c[0], c[1], c[2]))
+                        .active(chosen == Some(c))
+                        .on_press(move |_| color.set(Some(c)))
+                        .into_element()
+                }))
+        }))
+        .child(if rows.is_empty() {
+            Text::new("Sin marcadores. Mantené apretado sobre el texto o la hoja para marcar.")
+                .role(TextRole::Hint)
+                .into_element()
+        } else {
+            Group::default().children(rows).into_element()
+        })
+        .into_element()
+}
+
 impl Component for PanelBody {
     fn render(&self) -> impl IntoElement {
-        use freya::icons::lucide;
-        let mut tab = self.tab;
-        let current = *tab.read();
+        let current = *self.tab.read();
         let query = use_state(String::new);
-        let mut color = use_state(|| None::<[u8; 3]>);
+        let color = use_state(|| None::<[u8; 3]>);
         let text = query.read().trim().to_lowercase();
-        let index = PanelTab::ALL
-            .iter()
-            .position(|t| *t == current)
-            .unwrap_or(0);
-        let head = rect()
-            .width(Size::fill())
-            .spacing(8.0)
-            .child(
-                Segmented::new(PanelTab::ALL.map(PanelTab::label), index)
-                    .full_width()
-                    .height(32.0)
-                    .on_select(move |i: usize| tab.set(PanelTab::ALL[i])),
-            )
-            .maybe_child((current != PanelTab::Links).then(|| {
-                SearchField::new(
-                    query,
-                    if current == PanelTab::Contents {
-                        "Buscar en el contenido"
-                    } else {
-                        "Buscar marcadores"
-                    },
-                )
-                .height(34.0)
-            }));
+        let head = panel_head(self.tab, query);
         let Some(item) = self.item.and_then(|id| self.data.item(id)) else {
             return rect()
                 .width(Size::fill())
                 .spacing(12.0)
                 .child(head)
                 .child(
-                    EmptyState::new(lucide::panel_left(), "Elegí un documento")
+                    EmptyState::new(freya::icons::lucide::panel_left(), "Elegí un documento")
                         .body("El panel muestra el documento del panel enfocado."),
                 )
                 .into_element();
@@ -197,93 +295,14 @@ impl Component for PanelBody {
         let kind = crate::plugins::kind(&kind_id);
         let content = crate::plugins::content::read(id, &kind_id)
             .unwrap_or_else(|| kind.as_ref().map(|k| k.empty_content()).unwrap_or_default());
-        let body: Element = match current {
+        let body = match current {
             PanelTab::Contents => {
-                let outline = kind
-                    .as_ref()
-                    .map(|k| k.outline(&content))
-                    .unwrap_or_default();
-                let mut rows = Vec::new();
-                outline_rows(&outline, 0, &text, &kind_id, id, &mut rows);
-                if rows.is_empty() {
-                    Text::new(if text.is_empty() {
-                        "Este documento no tiene índice."
-                    } else {
-                        "Nada con ese nombre."
-                    })
-                    .role(TextRole::Hint)
-                    .into_element()
-                } else {
-                    Group::default().children(rows).into_element()
-                }
+                let outline = kind.as_ref().map(|k| k.outline(&content)).unwrap_or_default();
+                contents(&outline, &text, &kind_id, id)
             }
             PanelTab::Bookmarks => {
-                let p = palette();
                 let marks = kind.as_ref().map(|k| k.marks(&content)).unwrap_or_default();
-                let mut colors: Vec<[u8; 3]> = marks.iter().filter_map(|m| m.color).collect();
-                colors.dedup();
-                colors.sort_unstable();
-                colors.dedup();
-                let chosen = *color.read();
-                let mut marks: Vec<_> = marks
-                    .into_iter()
-                    .filter(|m| chosen.is_none() || m.color == chosen)
-                    .filter(|m| {
-                        text.is_empty()
-                            || m.title.to_lowercase().contains(&text)
-                            || m.snippet.to_lowercase().contains(&text)
-                    })
-                    .collect();
-                marks.sort_by_key(|m| std::cmp::Reverse(m.updated_at));
-                let rows: Vec<Element> = marks
-                    .into_iter()
-                    .map(|mark| {
-                        let anchor = mark.anchor.clone();
-                        let kind_id = kind_id.clone();
-                        let dot = mark
-                            .color
-                            .map_or(p.t3, |[r, g, b]| Color::from_rgb(r, g, b));
-                        ListRow::new(mark.title.clone())
-                            .subtitle(mark.snippet)
-                            .leading(notein_ui_kit::Leading::Element(
-                                rect()
-                                    .width(Size::px(10.0))
-                                    .height(Size::px(10.0))
-                                    .corner_radius(tokens::radius::FULL)
-                                    .background(dot)
-                                    .into_element(),
-                            ))
-                            .dense(true)
-                            .on_press(move |_| jump(&kind_id, id, anchor.clone()))
-                            .into_element()
-                    })
-                    .collect();
-                rect()
-                    .width(Size::fill())
-                    .spacing(10.0)
-                    .maybe_child((colors.len() > 1).then(|| {
-                        rect()
-                            .width(Size::fill())
-                            .horizontal()
-                            .content(Content::wrap_spacing(6.0))
-                            .spacing(6.0)
-                            .child(Tag::new("Todos").active(chosen.is_none()).on_press(move |_| color.set(None)))
-                            .children(colors.into_iter().map(|c| {
-                                Tag::new("")
-                                    .dot(Color::from_rgb(c[0], c[1], c[2]))
-                                    .active(chosen == Some(c))
-                                    .on_press(move |_| color.set(Some(c)))
-                                    .into_element()
-                            }))
-                    }))
-                    .child(if rows.is_empty() {
-                        Text::new("Sin marcadores. Mantené apretado sobre el texto o la hoja para marcar.")
-                            .role(TextRole::Hint)
-                            .into_element()
-                    } else {
-                        Group::default().children(rows).into_element()
-                    })
-                    .into_element()
+                bookmarks(marks, &text, &kind_id, id, color)
             }
             PanelTab::Links => Links {
                 data: Arc::clone(&self.data),
