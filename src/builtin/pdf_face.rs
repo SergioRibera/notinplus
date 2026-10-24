@@ -60,9 +60,19 @@ impl Component for PdfFace {
         // mounts share the same item id. First render spawns the
         // async load; later renders no-op because `use_hook` runs once
         // per component instance.
+        let pages = use_hook(|| Arc::new(std::sync::Mutex::new(None::<Vec<(f32, f32, f32, f32)>>)));
+        crate::plugins::faces::use_jumps(
+            crate::plugins::builtin::pdf::KIND,
+            item,
+            PageTarget {
+                mount,
+                pages: Arc::clone(&pages),
+            },
+        );
+        let loaded_pages = Arc::clone(&pages);
         use_hook(move || {
             spawn(async move {
-                let bg = match load_pdf_background(item) {
+                let bg = match load_pdf_background(item, &loaded_pages) {
                     Ok(bg) => bg,
                     Err(err) => {
                         log::error!("load pdf id={item:?}: {err}");
@@ -93,9 +103,16 @@ impl Component for PdfFace {
 
 /// Decode the PDF blob at [`bodies::pdf_path`] into a
 /// [`PdfBackground`] usable by the stroke canvas as its backdrop.
-fn load_pdf_background(id: ItemId) -> Result<Arc<dyn freya_canvas_bg::CanvasBackground>, String> {
+fn load_pdf_background(
+    id: ItemId,
+    pages: &std::sync::Mutex<Option<Vec<(f32, f32, f32, f32)>>>,
+) -> Result<Arc<dyn freya_canvas_bg::CanvasBackground>, String> {
     let bytes = bodies::read_pdf(id).map_err(|e| format!("read pdf: {e}"))?;
     let doc = PdfDocument::open_bytes(bytes).map_err(|e| format!("open pdf: {e:?}"))?;
+    *pages.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(freya_pdf::write::page_world_rects(
+        doc.page_sizes(),
+        freya_pdf::write::PAGE_GAP,
+    ));
     Ok(Arc::new(PdfBackground::new(doc)))
 }
 
@@ -116,4 +133,35 @@ fn pdf_anchor_source(item: ItemId) -> AnchorSourceRef {
             selection: None,
         }
     })
+}
+
+/// Where a PDF jump lands: the page rectangles once the document is
+/// loaded.
+#[derive(Clone)]
+struct PageTarget {
+    mount: CanvasMount,
+    pages: Arc<std::sync::Mutex<Option<Vec<(f32, f32, f32, f32)>>>>,
+}
+
+impl crate::plugins::faces::Apply for PageTarget {
+    fn apply(&self, anchor: &[u8]) -> bool {
+        use notein_plugin::payload::Payload;
+        let Ok(anchor) = crate::plugins::builtin::pdf::PdfAnchor::from_bytes(anchor) else {
+            return true;
+        };
+        let rect = {
+            let pages = self.pages.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let Some(pages) = pages.as_ref() else {
+                return false;
+            };
+            pages.get(anchor.page as usize).copied()
+        };
+        let Some(board) = crate::active_boards::get(self.mount) else {
+            return false;
+        };
+        if let Some((x, y, w, h)) = rect {
+            lock(&board).center_on_world(x + w / 2.0, y + h / 2.0);
+        }
+        true
+    }
 }

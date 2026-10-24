@@ -77,11 +77,13 @@ impl Face for CanvasFace {
     type Kind = CanvasKind;
 
     fn render(&self, ctx: FaceContext<CanvasKind>) -> Element {
-        CanvasPane {
+        let item = item_of(&ctx);
+        CanvasWithJumps {
             mount: CanvasMount::Item {
-                id: item_of(&ctx),
+                id: item,
                 slot: ctx.pane.map(view_slot),
             },
+            item,
         }
         .into_element()
     }
@@ -130,5 +132,90 @@ impl Face for BibleFace {
             item: item_of(&ctx),
         }
         .into_element()
+    }
+}
+
+/// How often, and how many times, a jump waits for the board of a
+/// freshly opened face to mount.
+const MOUNT_POLL: std::time::Duration = std::time::Duration::from_millis(80);
+const MOUNT_TRIES: usize = 25;
+
+/// Something a face does with an anchor of its kind.
+pub(crate) trait Apply: Clone + 'static {
+    /// Apply `anchor`; `false` while the face is not ready yet.
+    fn apply(&self, anchor: &[u8]) -> bool;
+}
+
+/// Follow the jumps queued for one document of `kind`: the one that
+/// opened it, then those sent while it is on screen.
+pub(crate) fn use_jumps(kind: &'static str, item: ItemId, target: impl Apply) {
+    use notein_plugin::services::HostServices;
+    use_hook(move || {
+        let doc = doc_id(item);
+        let host = super::host::shell();
+        let first = host.take_jump(kind, doc);
+        let rx = host.jumps(kind);
+        spawn(async move {
+            let apply = |anchor: Vec<u8>| {
+                let target = target.clone();
+                async move {
+                    for _ in 0..MOUNT_TRIES {
+                        if target.apply(&anchor) {
+                            return;
+                        }
+                        async_io::Timer::after(MOUNT_POLL).await;
+                    }
+                    log::info!("jump: {kind} face never became ready");
+                }
+            };
+            if let Some(anchor) = first {
+                apply(anchor).await;
+            }
+            while let Ok(jump) = rx.recv_async().await {
+                if jump.doc == doc {
+                    super::host::shell().take_jump(kind, doc);
+                    apply(jump.anchor).await;
+                }
+            }
+        });
+    });
+}
+
+#[derive(Clone, Copy)]
+struct CanvasTarget {
+    mount: CanvasMount,
+}
+
+impl Apply for CanvasTarget {
+    fn apply(&self, anchor: &[u8]) -> bool {
+        use notein_plugin::payload::Payload;
+        let Some(board) = crate::active_boards::get(self.mount) else {
+            return false;
+        };
+        let Ok(anchor) = super::builtin::canvas::CanvasAnchor::from_bytes(anchor) else {
+            return true;
+        };
+        let mut guard = crate::canvas::lock(&board);
+        if let Some(layer) = anchor.layer {
+            guard.set_active_layer(layer);
+        }
+        if let Some(bookmark) = anchor.bookmark {
+            guard.center_on_bookmark(crate::ids::BookmarkId(bookmark));
+        }
+        true
+    }
+}
+
+/// Canvas face with its jumps.
+#[derive(Clone, Copy, PartialEq)]
+struct CanvasWithJumps {
+    mount: CanvasMount,
+    item: ItemId,
+}
+
+impl Component for CanvasWithJumps {
+    fn render(&self) -> impl IntoElement {
+        use_jumps(super::builtin::canvas::KIND, self.item, CanvasTarget { mount: self.mount });
+        CanvasPane { mount: self.mount }
     }
 }

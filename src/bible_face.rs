@@ -118,7 +118,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
         .map(|s| s.current_chapter)
         .unwrap_or(1);
 
-    // Chip-tap jump queued via `HostApi::queue_source_anchor`. Pull
+    // Jump queued on the host (chip tap, panel, search). Pull
     // it once at init so a re-render inside the same mount doesn't
     // re-trigger the jump. Captured by the init closure below (which
     // Freya runs exactly once per mount) and stashed in
@@ -129,8 +129,11 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
         let jump_cell: State<Option<u16>> = use_state(|| None);
         let mut jump_cell_setter = jump_cell;
         let state = use_state(move || {
-            let initial_jump = crate::host_api::host_handle()
-                .take_source_anchor(BIBLE_PLUGIN_ID, item.0)
+            let initial_jump = notein_plugin::services::HostServices::take_jump(
+                &*crate::plugins::host::shell(),
+                BIBLE_PLUGIN_ID,
+                crate::plugins::content::doc_id(item),
+            )
                 .and_then(|bytes| notein_bible::BibleAnchor::decode(&bytes));
             jump_cell_setter.set(initial_jump.as_ref().map(|j| j.start_verse));
             let mut st = BibleViewerState::new(&starting_bible, &starting_book, starting_chapter);
@@ -214,7 +217,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
     // Live chip-tap subscription — when the user clicks a Bible chip
     // while this mount is already on screen, the router dedupe
     // suppresses a remount so the snapshot-override path above never
-    // re-runs. Subscribe to `HostApi::subscribe_source_anchor` and
+    // re-runs. Subscribe to the host jumps for this kind and
     // apply the jump in-place; mirrors the fresh-mount path
     // (snapshot override + verse flash + flash-clear timer). Uses
     // `spawn` (scope-bound) so the receiver drops on unmount and the
@@ -226,22 +229,26 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
     let notify_scroll = scroll_controller;
     let notify_scroll_to = scroll_to;
     use_hook(move || {
-        let host = crate::host_api::host_handle();
-        let rx = host.subscribe_source_anchor(BIBLE_PLUGIN_ID);
+        let rx = notein_plugin::services::HostServices::jumps(
+            &*crate::plugins::host::shell(),
+            BIBLE_PLUGIN_ID,
+        );
+        let doc = crate::plugins::content::doc_id(item);
         let mut state_setter = notify_state;
         let mut flash_setter = notify_flash;
         let mut scroll_setter = notify_scroll_to;
         let db_notify = db_notify;
         spawn(async move {
-            while let Ok(target_item) = rx.recv_async().await {
-                if target_item != item.0 {
+            while let Ok(target) = rx.recv_async().await {
+                if target.doc != doc {
                     continue;
                 }
-                let Some(bytes) =
-                    crate::host_api::host_handle().take_source_anchor(BIBLE_PLUGIN_ID, item.0)
-                else {
-                    continue;
-                };
+                notein_plugin::services::HostServices::take_jump(
+                    &*crate::plugins::host::shell(),
+                    BIBLE_PLUGIN_ID,
+                    doc,
+                );
+                let bytes = target.anchor;
                 let Some(jump) = notein_bible::BibleAnchor::decode(&bytes) else {
                     log::warn!("bible chip: anchor decode failed");
                     continue;

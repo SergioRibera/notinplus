@@ -384,20 +384,20 @@ fn load_title(item: ItemId, mut title: State<String>) {
 /// Apply anchors queued for this note: the one that opened it, then the
 /// ones sent while it is on screen (sidebar outline, chip taps).
 fn listen_for_jumps(item: ItemId, controller: EditorController, scroll: ScrollController) {
-    let host = crate::host_api::host_handle();
-    if let Some(anchor) = host.take_source_anchor(KIND_ID, item.0) {
+    use notein_plugin::services::HostServices;
+    let host = crate::plugins::host::shell();
+    let doc = crate::plugins::content::doc_id(item);
+    if let Some(anchor) = host.take_jump(KIND_ID, doc) {
         jump(controller, scroll, &anchor);
     }
-    let pending = host.subscribe_source_anchor(KIND_ID);
+    let pending = host.jumps(KIND_ID);
     spawn(async move {
         while let Ok(target) = pending.recv_async().await {
-            if target != item.0 {
+            if target.doc != doc {
                 continue;
             }
-            if let Some(anchor) = crate::host_api::host_handle().take_source_anchor(KIND_ID, item.0)
-            {
-                jump(controller, scroll, &anchor);
-            }
+            crate::plugins::host::shell().take_jump(KIND_ID, doc);
+            jump(controller, scroll, &target.anchor);
         }
     });
 }
