@@ -33,19 +33,19 @@ pub const TINTS: [Rgba; 6] = [
     [154, 149, 140, 255],
 ];
 
-/// What Papelera does in an edit sheet.
+/// What a secondary button of a form does (Papelera, Reemplazar).
 #[derive(Clone)]
-pub struct OnTrash(pub Rc<dyn Fn()>);
+pub struct FormAction(pub Rc<dyn Fn()>);
 
-impl PartialEq for OnTrash {
+impl PartialEq for FormAction {
     fn eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.0, &other.0)
     }
 }
 
-impl std::fmt::Debug for OnTrash {
+impl std::fmt::Debug for FormAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("OnTrash")
+        f.write_str("FormAction")
     }
 }
 
@@ -70,13 +70,15 @@ pub struct FormSpec {
     pub choice_label: String,
     /// File summary line (PDF / markdown import).
     pub file_line: Option<String>,
+    /// Button beside the file line, with its label (Reemplazar).
+    pub file_action: Option<(&'static str, FormAction)>,
     /// Rendered preview of imported text.
     pub preview: Option<String>,
     pub placeholder: String,
     pub hint: String,
     pub submit: String,
     /// Edit sheets show Papelera on the left.
-    pub trash: Option<OnTrash>,
+    pub trash: Option<FormAction>,
     /// "Mover N documentos seleccionados adentro" (new folder).
     pub move_selected: Option<usize>,
 }
@@ -160,6 +162,34 @@ fn footer(
     }
 }
 
+impl FormSpec {
+    /// The file summary, with its button (Reemplazar) when there is one.
+    fn file_line(&self) -> Option<Rect> {
+        let line = self.file_line.clone()?;
+        Some(
+            rect()
+                .width(Size::fill())
+                .horizontal()
+                .content(Content::Flex)
+                .cross_align(Alignment::Center)
+                .spacing(8.0)
+                .child(
+                    label()
+                        .width(Size::flex(1.0))
+                        .text(line)
+                        .font_size(tokens::text::META)
+                        .color(palette().t2),
+                )
+                .maybe_child(self.file_action.clone().map(|(text, action)| {
+                    Button::new(text).ghost().small().on_press(move |_| {
+                        ModalController::get().close();
+                        (action.0)();
+                    })
+                })),
+        )
+    }
+}
+
 #[derive(Clone, PartialEq)]
 struct Form {
     spec: FormSpec,
@@ -183,12 +213,7 @@ impl Component for Form {
         rect()
             .width(Size::fill())
             .spacing(18.0)
-            .maybe_child(spec.file_line.clone().map(|line| {
-                label()
-                    .text(line)
-                    .font_size(tokens::text::META)
-                    .color(palette().t2)
-            }))
+            .maybe_child(spec.file_line())
             .maybe_child(spec.preview.clone().map(|preview| {
                 rect()
                     .width(Size::fill())
@@ -610,10 +635,14 @@ pub fn edit_item(item: ItemId) {
         location: false,
         placeholder: "Sin título".to_owned(),
         submit: "Guardar".to_owned(),
-        trash: Some(OnTrash(Rc::new(move || super::trash_item(item)))),
+        trash: Some(FormAction(Rc::new(move || super::trash_item(item)))),
         ..FormSpec::default()
     };
     if is_pdf {
+        spec.file_action = Some((
+            "Reemplazar",
+            FormAction(Rc::new(move || super::create::replace_pdf(item))),
+        ));
         spec.file_line = crate::plugins::content::read(item, crate::plugins::builtin::pdf::KIND)
             .and_then(|b| <crate::plugins::builtin::pdf::PdfContent as notein_plugin::payload::Payload>::from_bytes(&b).ok())
             .map(|c| format!("{} · {} · {}", c.file_name, crate::format::count(c.page_count as usize, "página", "páginas"), crate::format::size(c.size_bytes)));
@@ -684,7 +713,7 @@ pub fn edit_folder(folder: FolderId) {
         tags: true,
         placeholder: "Sin nombre".to_owned(),
         submit: "Guardar".to_owned(),
-        trash: Some(OnTrash(Rc::new(move || super::trash_folder(folder)))),
+        trash: Some(FormAction(Rc::new(move || super::trash_folder(folder)))),
         ..FormSpec::default()
     };
     let initial = FormValues {
@@ -720,7 +749,7 @@ pub fn edit_mesa(workspace: WorkspaceId) {
         pin_toggle: true,
         placeholder: data.workspace_title(workspace),
         submit: "Guardar".to_owned(),
-        trash: Some(OnTrash(Rc::new(move || super::delete_mesa(workspace)))),
+        trash: Some(FormAction(Rc::new(move || super::delete_mesa(workspace)))),
         ..FormSpec::default()
     };
     let initial = FormValues {

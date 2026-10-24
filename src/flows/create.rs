@@ -822,6 +822,70 @@ fn prepare_attachment(item: ItemId, kind: &str, bytes: Vec<u8>) {
     }
 }
 
+/// Swap the file under PDF `item` for another one. Ink, bookmarks and
+/// notebooks stay: they belong to the document, not to the file.
+pub fn replace_pdf(item: ItemId) {
+    use crate::plugins::builtin::pdf::{KIND, PdfContent, PdfKind};
+    spawn(async move {
+        let picked = match crate::files::pick("Reemplazar PDF", &["pdf"], &["application/pdf"]).await
+        {
+            Ok(Some(picked)) => picked,
+            Ok(None) => return,
+            Err(err) => {
+                log::warn!("pick pdf: {err}");
+                return;
+            }
+        };
+        let mut fresh = match PdfKind::read_file(&picked.name, &picked.bytes) {
+            Ok((_, fresh)) => fresh,
+            Err(err) => {
+                replace_failed(item, &picked.name, &err.to_string());
+                return;
+            }
+        };
+        if let Some(old) = content::read(item, KIND).and_then(|b| PdfContent::from_bytes(&b).ok()) {
+            fresh.marks = old.marks;
+        }
+        let Ok(handle) = crate::library::shared().await else {
+            return;
+        };
+        if let Err(err) = handle.lock().await.attach_pdf(item, &picked.bytes).await {
+            log::error!("replace pdf: {err}");
+            Toasts::get().show(Toast::new("No se pudo reemplazar el archivo").tone(ToastTone::Error));
+            return;
+        }
+        content::write(item, KIND, &fresh.to_bytes());
+        crate::builtin::pdf_face::reload(item);
+        prepare_attachment(item, KIND, picked.bytes);
+        Toasts::get().show(Toast::new(format!("Ahora muestra «{}»", picked.name)));
+    });
+}
+
+fn replace_failed(item: ItemId, file: &str, why: &str) {
+    Sheet::titled("Reemplazar PDF")
+        .child(
+            notein_ui_kit::Notice::new(
+                notein_ui_kit::NoticeTone::Danger,
+                format!("No se pudo leer «{file}»"),
+            )
+            .detail(why.to_owned()),
+        )
+        .footer(SheetFooter::new([
+            Button::new("Cancelar")
+                .ghost()
+                .on_press(|_| ModalController::get().close())
+                .into_element(),
+            Button::new("Elegir otro archivo")
+                .primary()
+                .on_press(move |_| {
+                    ModalController::get().close();
+                    replace_pdf(item);
+                })
+                .into_element(),
+        ]))
+        .open();
+}
+
 /// A new folder, optionally taking the selected documents along.
 pub fn new_folder(context: Context) {
     let p = palette();

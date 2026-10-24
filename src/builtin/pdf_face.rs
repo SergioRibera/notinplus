@@ -16,7 +16,7 @@
 //! `doc_path(id)` through the standard autosave worker. Everything
 //! else is this plugin's business.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use freya::prelude::*;
 use freya_pdf::{PdfBackground, PdfDocument};
@@ -73,19 +73,14 @@ impl Component for PdfFace {
         );
         let loaded_pages = Arc::clone(&pages);
         use_hook(move || {
+            let replaced = Reloads::subscribe(item);
             spawn(async move {
-                let bg = match load_pdf_background(item, &loaded_pages) {
-                    Ok(bg) => bg,
-                    Err(err) => {
-                        log::error!("load pdf id={item:?}: {err}");
+                loop {
+                    install_background(item, mount, &loaded_pages);
+                    if replaced.recv_async().await.is_err() {
                         return;
                     }
-                };
-                let Some(board) = crate::active_boards::get(mount) else {
-                    log::warn!("PdfFace install_background: no board registered for {item:?}");
-                    return;
-                };
-                lock(&board).set_background(bg);
+                }
             });
         });
 
@@ -101,6 +96,49 @@ impl Component for PdfFace {
             )
             .child(PdfSelectOverlay { item, mount }.into_element())
     }
+}
+
+/// Load `item`'s file and put it under the ink of `mount`'s board.
+fn install_background(item: ItemId, mount: CanvasMount, pages: &PageRects) {
+    let bg = match load_pdf_background(item, pages) {
+        Ok(bg) => bg,
+        Err(err) => {
+            log::error!("load pdf id={item:?}: {err}");
+            return;
+        }
+    };
+    let Some(board) = crate::active_boards::get(mount) else {
+        log::warn!("PdfFace install_background: no board registered for {item:?}");
+        return;
+    };
+    lock(&board).set_background(bg);
+}
+
+/// Open faces per PDF, told to load the file again when it is replaced.
+struct Reloads;
+
+impl Reloads {
+    fn registry() -> &'static Mutex<Vec<(ItemId, flume::Sender<()>)>> {
+        static FACES: Mutex<Vec<(ItemId, flume::Sender<()>)>> = Mutex::new(Vec::new());
+        &FACES
+    }
+
+    fn subscribe(item: ItemId) -> flume::Receiver<()> {
+        let (tx, rx) = flume::unbounded();
+        Self::registry()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((item, tx));
+        rx
+    }
+}
+
+/// Reload every open view of `item`, after its file changed.
+pub fn reload(item: ItemId) {
+    Reloads::registry()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .retain(|(id, tx)| !tx.is_disconnected() && (*id != item || tx.send(()).is_ok()));
 }
 
 /// World rectangles `(x, y, w, h)` of the pages, once the PDF is open.
