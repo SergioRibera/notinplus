@@ -11,6 +11,7 @@ use notein_ui_kit::{
 };
 
 use crate::sync::{LinkTarget, SyncSnapshot};
+use notein_sync::TrustedDevice;
 
 /// A pairing code is renewed after this long.
 const CODE_LIFETIME: Duration = Duration::from_secs(5 * 60);
@@ -35,166 +36,187 @@ fn qr_svg(text: &str) -> Option<Bytes> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Devices;
 
+/// A row being edited in place: a field and Guardar.
+fn edit_row(
+    title: &'static str,
+    icon: Bytes,
+    field: TextField,
+    text: State<String>,
+    width: f32,
+    mut save: impl FnMut(String) + Clone + 'static,
+) -> ListRow {
+    let mut save_typed = save.clone();
+    ListRow::new(title).icon(icon).trailing(Trailing::Element(
+        rect()
+            .horizontal()
+            .cross_align(Alignment::Center)
+            .spacing(6.0)
+            .child(
+                rect()
+                    .width(Size::px(width))
+                    .child(field.auto_focus(true).on_submit(move |typed: String| save_typed(typed))),
+            )
+            .child(
+                Button::new("Guardar")
+                    .primary()
+                    .small()
+                    .on_press(move |_| save(text.peek().clone())),
+            )
+            .into_element(),
+    ))
+}
+
+/// This device's name, renamed in place.
+fn this_device(snapshot: &SyncSnapshot, mut renaming: State<bool>, name: State<String>) -> ListRow {
+    use freya::icons::lucide;
+    if renaming() {
+        return edit_row(
+            "Este dispositivo",
+            lucide::monitor_smartphone(),
+            TextField::new(name).max_len(40),
+            name,
+            200.0,
+            move |text: String| {
+                if !text.trim().is_empty() {
+                    crate::sync::set_device_name(text.trim());
+                }
+                renaming.set(false);
+            },
+        );
+    }
+    let current = snapshot.name.clone();
+    ListRow::new(if snapshot.name.is_empty() {
+        "Este dispositivo".to_owned()
+    } else {
+        snapshot.name.clone()
+    })
+    .subtitle("Este dispositivo · así te ven los demás")
+    .icon(lucide::monitor_smartphone())
+    .trailing(Trailing::Element(
+        Button::new("Renombrar")
+            .ghost()
+            .small()
+            .on_press(move |_| {
+                let mut name = name;
+                name.set(current.clone());
+                renaming.set(true);
+            })
+            .into_element(),
+    ))
+}
+
+/// A linked device; Quitar asks for a second tap.
+fn linked_device(
+    snapshot: &SyncSnapshot,
+    device: &TrustedDevice,
+    mut confirm: State<Option<(String, Instant)>>,
+) -> Element {
+    let p = palette();
+    let online = snapshot.online.contains(&device.id);
+    let id = device.id;
+    let key = format!("{id:?}");
+    let armed = confirm
+        .read()
+        .as_ref()
+        .is_some_and(|(k, at)| *k == key && at.elapsed() < CONFIRM_WINDOW);
+    let since = crate::format::day(device.since, crate::format::now());
+    ListRow::new(device.name.clone())
+        .subtitle(if online {
+            format!("Conectado · vinculado el {since}")
+        } else {
+            format!("Sin conexión · vinculado el {since}")
+        })
+        .leading(notein_ui_kit::Leading::Element(
+            rect()
+                .width(Size::px(10.0))
+                .height(Size::px(10.0))
+                .corner_radius(tokens::radius::FULL)
+                .background(if online { p.ok } else { p.t3 })
+                .into_element(),
+        ))
+        .trailing(Trailing::Element(
+            Button::new(if armed {
+                "¿Seguro? Tocá de nuevo"
+            } else {
+                "Quitar"
+            })
+            .variant(if armed {
+                ButtonVariant::DangerFill
+            } else {
+                ButtonVariant::Ghost
+            })
+            .small()
+            .on_press(move |_| {
+                if armed {
+                    confirm.set(None);
+                    crate::sync::revoke(id);
+                } else {
+                    confirm.set(Some((key.clone(), Instant::now())));
+                }
+            })
+            .into_element(),
+        ))
+        .into_element()
+}
+
+/// The relay server, edited in place.
+fn server_row(snapshot: &SyncSnapshot, mut editing: State<bool>, server: State<String>) -> ListRow {
+    use freya::icons::lucide;
+    if editing() {
+        return edit_row(
+            "Servidor",
+            lucide::server(),
+            TextField::new(server).placeholder("relay.ejemplo.com:7400"),
+            server,
+            240.0,
+            move |text: String| {
+                let text = text.trim().to_owned();
+                crate::sync::set_relay((!text.is_empty()).then_some(text));
+                editing.set(false);
+            },
+        );
+    }
+    let relay = snapshot.relay.clone();
+    let current = relay.clone().unwrap_or_default();
+    ListRow::new("Servidor")
+        .subtitle(match &relay {
+            Some(addr) if snapshot.relay_online => format!("{addr} · conectado"),
+            Some(addr) => format!("{addr} · sin conexión"),
+            None => "Ninguno · solo en la misma red".to_owned(),
+        })
+        .icon(lucide::server())
+        .trailing(Trailing::Element(
+            Button::new("Cambiar")
+                .ghost()
+                .small()
+                .on_press(move |_| {
+                    let mut server = server;
+                    server.set(current.clone());
+                    editing.set(true);
+                })
+                .into_element(),
+        ))
+}
+
 impl Component for Devices {
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
-        let p = palette();
-        let sync = crate::sync::use_sync();
-        let snapshot = sync.read().clone();
-        let mut renaming = use_state(|| false);
+        let snapshot = crate::sync::use_sync().read().clone();
+        let renaming = use_state(|| false);
         let name = use_state(String::new);
-        let mut confirm = use_state(|| None::<(String, Instant)>);
-        let mut editing_server = use_state(|| false);
+        let confirm = use_state(|| None::<(String, Instant)>);
+        let editing_server = use_state(|| false);
         let server = use_state(String::new);
-
-        let this_device = if renaming() {
-            ListRow::new("Este dispositivo")
-                .icon(lucide::monitor_smartphone())
-                .trailing(Trailing::Element(
-                    rect()
-                        .horizontal()
-                        .cross_align(Alignment::Center)
-                        .spacing(6.0)
-                        .child(rect().width(Size::px(200.0)).child(
-                            TextField::new(name).auto_focus(true).max_len(40).on_submit(
-                                move |text: String| {
-                                    if !text.trim().is_empty() {
-                                        crate::sync::set_device_name(text.trim());
-                                    }
-                                    renaming.set(false);
-                                },
-                            ),
-                        ))
-                        .child(Button::new("Guardar").primary().small().on_press(move |_| {
-                            let text = name.peek().trim().to_owned();
-                            if !text.is_empty() {
-                                crate::sync::set_device_name(text);
-                            }
-                            renaming.set(false);
-                        }))
-                        .into_element(),
-                ))
-        } else {
-            let current = snapshot.name.clone();
-            ListRow::new(if snapshot.name.is_empty() {
-                "Este dispositivo".to_owned()
-            } else {
-                snapshot.name.clone()
-            })
-            .subtitle("Este dispositivo · así te ven los demás")
-            .icon(lucide::monitor_smartphone())
-            .trailing(Trailing::Element(
-                Button::new("Renombrar")
-                    .ghost()
-                    .small()
-                    .on_press(move |_| {
-                        let mut name = name;
-                        name.set(current.clone());
-                        renaming.set(true);
-                    })
-                    .into_element(),
-            ))
-        };
-
-        let linked = snapshot.trusted.iter().map(|device| {
-            let online = snapshot.online.contains(&device.id);
-            let id = device.id;
-            let key = format!("{id:?}");
-            let armed = confirm
-                .read()
-                .as_ref()
-                .is_some_and(|(k, at)| *k == key && at.elapsed() < CONFIRM_WINDOW);
-            let since = crate::format::day(device.since, crate::format::now());
-            ListRow::new(device.name.clone())
-                .subtitle(if online {
-                    format!("Conectado · vinculado el {since}")
-                } else {
-                    format!("Sin conexión · vinculado el {since}")
-                })
-                .leading(notein_ui_kit::Leading::Element(
-                    rect()
-                        .width(Size::px(10.0))
-                        .height(Size::px(10.0))
-                        .corner_radius(tokens::radius::FULL)
-                        .background(if online { p.ok } else { p.t3 })
-                        .into_element(),
-                ))
-                .trailing(Trailing::Element(
-                    Button::new(if armed {
-                        "¿Seguro? Tocá de nuevo"
-                    } else {
-                        "Quitar"
-                    })
-                    .variant(if armed {
-                        ButtonVariant::DangerFill
-                    } else {
-                        ButtonVariant::Ghost
-                    })
-                    .small()
-                    .on_press(move |_| {
-                        if armed {
-                            confirm.set(None);
-                            crate::sync::revoke(id);
-                        } else {
-                            confirm.set(Some((key.clone(), Instant::now())));
-                        }
-                    })
-                    .into_element(),
-                ))
-                .into_element()
-        });
-        let linked: Vec<Element> = linked.collect();
+        let linked: Vec<Element> = snapshot
+            .trusted
+            .iter()
+            .map(|device| linked_device(&snapshot, device, confirm))
+            .collect();
         let none_linked = linked.is_empty();
-
-        let relay = snapshot.relay.clone();
-        let server_row = if editing_server() {
-            ListRow::new("Servidor")
-                .icon(lucide::server())
-                .trailing(Trailing::Element(
-                    rect()
-                        .horizontal()
-                        .cross_align(Alignment::Center)
-                        .spacing(6.0)
-                        .child(
-                            rect().width(Size::px(240.0)).child(
-                                TextField::new(server)
-                                    .placeholder("relay.ejemplo.com:7400")
-                                    .auto_focus(true),
-                            ),
-                        )
-                        .child(Button::new("Guardar").primary().small().on_press(move |_| {
-                            let text = server.peek().trim().to_owned();
-                            crate::sync::set_relay((!text.is_empty()).then_some(text));
-                            editing_server.set(false);
-                        }))
-                        .into_element(),
-                ))
-        } else {
-            let current = relay.clone().unwrap_or_default();
-            ListRow::new("Servidor")
-                .subtitle(match &relay {
-                    Some(addr) if snapshot.relay_online => format!("{addr} · conectado"),
-                    Some(addr) => format!("{addr} · sin conexión"),
-                    None => "Ninguno · solo en la misma red".to_owned(),
-                })
-                .icon(lucide::server())
-                .trailing(Trailing::Element(
-                    Button::new("Cambiar")
-                        .ghost()
-                        .small()
-                        .on_press(move |_| {
-                            let mut server = server;
-                            server.set(current.clone());
-                            editing_server.set(true);
-                        })
-                        .into_element(),
-                ))
-        };
-
         rect()
             .width(Size::fill())
             .spacing(24.0)
-            .child(Group::default().child(this_device))
+            .child(Group::default().child(this_device(&snapshot, renaming, name)))
             .child(
                 Section::new("Vinculados")
                     .maybe_child(none_linked.then(|| {
@@ -218,7 +240,10 @@ impl Component for Devices {
                             ),
                     ),
             )
-            .child(Section::new("Sincronización").child(Group::default().child(server_row)))
+            .child(
+                Section::new("Sincronización")
+                    .child(Group::default().child(server_row(&snapshot, editing_server, server))),
+            )
             .maybe_child(snapshot.error.clone().map(|err| Notice::new(NoticeTone::Warning, err)))
             .into_element()
     }

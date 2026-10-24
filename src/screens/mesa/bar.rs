@@ -51,15 +51,91 @@ pub(super) struct MesaBar {
     pub(super) focus: Option<Focus>,
 }
 
-impl Component for MesaBar {
-    fn render(&self) -> impl IntoElement {
-        use freya::icons::lucide;
+impl MesaBar {
+    fn open_palette(&self) -> impl FnMut(Event<PressEventData>) + 'static {
+        let (data, focus) = (Arc::clone(&self.data), self.focus.clone());
+        let (mesa, ui) = (self.mesa, self.ui);
+        move |_| super::palette::open(Arc::clone(&data), super::Ops { mesa }, ui, focus.as_ref())
+    }
+
+    /// The mesa's colour and name; pressing it shows the mesa actions.
+    fn name(&self, compact: bool) -> Rect {
         let p = palette();
-        let _sync = crate::sync::use_sync().read().shares.len();
-        let compact = width_class().is_compact();
         let mesa = self.mesa;
-        let ui = self.ui;
-        let title = self.data.workspace_title(mesa);
+        let data = Arc::clone(&self.data);
+        let dot = self
+            .data
+            .workspace(mesa)
+            .and_then(|w| w.color)
+            .map_or(p.accent, |c| Color::from_argb(c[3], c[0], c[1], c[2]));
+        rect()
+            .horizontal()
+            .cross_align(Alignment::Center)
+            .spacing(8.0)
+            .padding((6.0, 10.0))
+            .corner_radius(tokens::radius::MD)
+            .a11y_role(AccessibilityRole::Button)
+            .a11y_alt("Opciones de la mesa")
+            .on_press(move |e: Event<PressEventData>| {
+                crate::actions::show(crate::actions::for_mesa(&data, mesa), anchor(&e));
+            })
+            .child(
+                rect()
+                    .width(Size::px(9.0))
+                    .height(Size::px(9.0))
+                    .corner_radius(tokens::radius::FULL)
+                    .background(dot),
+            )
+            .child(
+                rect()
+                    .max_width(Size::px(if compact { 150.0 } else { 320.0 }))
+                    .child(
+                        Text::new(self.data.workspace_title(mesa))
+                            .role(TextRole::Strong)
+                            .lines(1),
+                    ),
+            )
+            .child(
+                notein_ui_kit::Icon::new(freya::icons::lucide::chevron_down())
+                    .size(14.0)
+                    .color(p.t3),
+            )
+    }
+
+    /// The search field look-alike that opens the palette.
+    fn search(&self) -> Rect {
+        let p = palette();
+        rect()
+            .width(Size::px(260.0))
+            .height(Size::px(tokens::size::BUTTON_SM))
+            .padding((0.0, 10.0))
+            .corner_radius(tokens::radius::MD)
+            .background(p.s2)
+            .horizontal()
+            .cross_align(Alignment::Center)
+            .content(Content::Flex)
+            .spacing(8.0)
+            .a11y_role(AccessibilityRole::SearchInput)
+            .a11y_focusable(true)
+            .on_press(self.open_palette())
+            .child(
+                notein_ui_kit::Icon::new(freya::icons::lucide::search())
+                    .size(14.0)
+                    .color(p.t3),
+            )
+            .child(
+                Text::new("Buscar en la mesa")
+                    .role(TextRole::Meta)
+                    .color(p.t3)
+                    .fill(),
+            )
+            .child(Kbd::new("Ctrl K"))
+    }
+
+    /// Who else is on the mesa's documents; pressing opens sharing.
+    fn avatars(&self) -> Option<Rect> {
+        let p = palette();
+        let mesa = self.mesa;
         let docs: Vec<ItemId> = self
             .data
             .workspace(mesa)
@@ -74,84 +150,19 @@ impl Component for MesaBar {
             .unwrap_or_default();
         let present = people(&docs);
         let more = present.len().saturating_sub(AVATARS);
-        let dot = self
-            .data
-            .workspace(mesa)
-            .and_then(|w| w.color)
-            .map_or(p.accent, |c| Color::from_argb(c[3], c[0], c[1], c[2]));
-        let data_menu = Arc::clone(&self.data);
-        let data_palette = Arc::clone(&self.data);
-        let focus_palette = self.focus.clone();
-        let name = rect()
-            .horizontal()
-            .cross_align(Alignment::Center)
-            .spacing(8.0)
-            .padding((6.0, 10.0))
-            .corner_radius(tokens::radius::MD)
-            .a11y_role(AccessibilityRole::Button)
-            .a11y_alt("Opciones de la mesa")
-            .on_press(move |e: Event<PressEventData>| {
-                crate::actions::show(crate::actions::for_mesa(&data_menu, mesa), anchor(&e));
-            })
-            .child(
-                rect()
-                    .width(Size::px(9.0))
-                    .height(Size::px(9.0))
-                    .corner_radius(tokens::radius::FULL)
-                    .background(dot),
-            )
-            .child(
-                rect()
-                    .max_width(Size::px(if compact { 150.0 } else { 320.0 }))
-                    .child(Text::new(title).role(TextRole::Strong).lines(1)),
-            )
-            .child(
-                notein_ui_kit::Icon::new(lucide::chevron_down())
-                    .size(14.0)
-                    .color(p.t3),
-            );
-        let search = rect()
-            .width(Size::px(260.0))
-            .height(Size::px(tokens::size::BUTTON_SM))
-            .padding((0.0, 10.0))
-            .corner_radius(tokens::radius::MD)
-            .background(p.s2)
-            .horizontal()
-            .cross_align(Alignment::Center)
-            .content(Content::Flex)
-            .spacing(8.0)
-            .a11y_role(AccessibilityRole::SearchInput)
-            .a11y_focusable(true)
-            .on_press(move |_| {
-                super::palette::open(
-                    Arc::clone(&data_palette),
-                    super::Ops { mesa },
-                    ui,
-                    focus_palette.as_ref(),
-                );
-            })
-            .child(
-                notein_ui_kit::Icon::new(lucide::search())
-                    .size(14.0)
-                    .color(p.t3),
-            )
-            .child(
-                Text::new("Buscar en la mesa")
-                    .role(TextRole::Meta)
-                    .color(p.t3)
-                    .fill(),
-            )
-            .child(Kbd::new("Ctrl K"));
-        let avatars =
-            (!present.is_empty()).then(|| {
-                rect()
-                    .horizontal()
-                    .cross_align(Alignment::Center)
-                    .spacing(-6.0)
-                    .a11y_alt(format!("{} en la mesa", present.len()))
-                    .on_press(move |_| crate::flows::share_mesa(mesa))
-                    .children(present.iter().take(AVATARS).enumerate().map(
-                        |(i, (name, online))| {
+        (!present.is_empty()).then(|| {
+            rect()
+                .horizontal()
+                .cross_align(Alignment::Center)
+                .spacing(-6.0)
+                .a11y_alt(format!("{} en la mesa", present.len()))
+                .on_press(move |_| crate::flows::share_mesa(mesa))
+                .children(
+                    present
+                        .iter()
+                        .take(AVATARS)
+                        .enumerate()
+                        .map(|(i, (name, online))| {
                             let initials: String = name
                                 .split_whitespace()
                                 .filter_map(|w| w.chars().next())
@@ -169,18 +180,28 @@ impl Component for MesaBar {
                                     .presence(*online),
                                 )
                                 .into_element()
-                        },
-                    ))
-                    .maybe_child((more > 0).then(|| {
-                        rect()
-                            .width(Size::px(28.0))
-                            .height(Size::px(28.0))
-                            .corner_radius(tokens::radius::FULL)
-                            .background(p.s3)
-                            .center()
-                            .child(Text::new(format!("+{more}")).role(TextRole::Meta))
-                    }))
-            });
+                        }),
+                )
+                .maybe_child((more > 0).then(|| {
+                    rect()
+                        .width(Size::px(28.0))
+                        .height(Size::px(28.0))
+                        .corner_radius(tokens::radius::FULL)
+                        .background(p.s3)
+                        .center()
+                        .child(Text::new(format!("+{more}")).role(TextRole::Meta))
+                }))
+        })
+    }
+}
+
+impl Component for MesaBar {
+    fn render(&self) -> impl IntoElement {
+        use freya::icons::lucide;
+        // Re-render when shares change, for the avatars.
+        let _sync = crate::sync::use_sync().read().shares.len();
+        let compact = width_class().is_compact();
+        let (mesa, ui) = (self.mesa, self.ui);
         let panel_open = *self.ui.panel.read();
         rect()
             .width(Size::fill())
@@ -205,24 +226,16 @@ impl Component for MesaBar {
                     .width(Size::flex(1.0))
                     .horizontal()
                     .cross_align(Alignment::Center)
-                    .child(name),
+                    .child(self.name(compact)),
             )
-            .maybe_child((!compact).then_some(search))
-            .maybe_child(compact.then(|| {
-                IconButton::new(lucide::search(), "Buscar en la mesa").on_press({
-                    let data = Arc::clone(&self.data);
-                    let focus = self.focus.clone();
-                    move |_| {
-                        super::palette::open(
-                            Arc::clone(&data),
-                            super::Ops { mesa },
-                            ui,
-                            focus.as_ref(),
-                        );
-                    }
-                })
-            }))
-            .maybe_child(avatars)
+            .child(if compact {
+                IconButton::new(lucide::search(), "Buscar en la mesa")
+                    .on_press(self.open_palette())
+                    .into_element()
+            } else {
+                self.search().into_element()
+            })
+            .maybe_child(self.avatars())
             .child(if compact {
                 IconButton::new(lucide::share_2(), "Compartir")
                     .on_press(move |_| crate::flows::share_mesa(mesa))
