@@ -32,11 +32,9 @@ pub mod doc;
 pub mod doc_op;
 pub mod editor;
 pub mod dynamic_plugins;
-pub mod faces;
 pub mod files;
 pub mod flows;
 pub mod format;
-pub mod home;
 pub mod hooks;
 pub mod ink;
 pub mod host_api;
@@ -58,7 +56,6 @@ pub mod readable;
 pub mod references;
 pub mod render;
 pub mod route;
-pub mod shell_builtins;
 pub mod soft_keyboard;
 pub mod source_ref_nav;
 pub mod screens;
@@ -75,7 +72,6 @@ pub mod text_box;
 pub mod thumbnail;
 pub mod ui_mask;
 pub mod undo;
-pub mod workspace_view;
 
 #[cfg(not(any(
     target_os = "android",

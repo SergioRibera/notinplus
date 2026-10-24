@@ -13,8 +13,6 @@
 
 use notein_plugin::{BookmarkId, SourceRef};
 
-use crate::components::{JoinSheet, SettingsModal};
-use crate::sync::LinkTarget;
 
 pub const SCHEME: &str = "notein";
 const PREFIX: &str = "notein://";

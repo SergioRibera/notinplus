@@ -6,7 +6,7 @@ mod header;
 mod notices;
 mod palette;
 mod panel;
-mod panes;
+pub(crate) mod panes;
 
 use std::sync::Arc;
 
@@ -14,7 +14,7 @@ use freya::prelude::*;
 use notein_ui_kit::theme::palette as theme;
 use notein_ui_kit::{Button, EmptyState, ModalController, Toast, Toasts, tokens, width_class};
 
-use crate::components::pane_tree_view::SplitEdge;
+use panes::SplitEdge;
 use crate::library::{
     ItemId, LibraryData, PaneId, PaneTab, SplitOrientation, SplitSide, TabTarget, Workspace,
     WorkspaceId,

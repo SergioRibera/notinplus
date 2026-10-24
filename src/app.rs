@@ -17,7 +17,6 @@ use freya::router::*;
 
 use istmo::plugins::EdgeInsets;
 
-use crate::components::SidebarTab;
 use crate::route::Route;
 
 use crate::brush::BrushKind;
@@ -130,7 +129,6 @@ fn spawn_prefs_worker(board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
 }
 
 pub fn run() {
-    plugins::hydrate_from_disk();
 
     #[cfg(target_os = "android")]
     {
@@ -326,10 +324,6 @@ pub(crate) struct ChromeState {
     pub(crate) active_item: State<Option<ItemId>>,
     pub(crate) selected_bookmark: State<Option<crate::ids::BookmarkId>>,
     pub(crate) bookmark_body: State<String>,
-    pub(crate) sidebar_open: State<bool>,
-    pub(crate) sidebar_query: State<String>,
-    pub(crate) sidebar_sort: State<crate::bookmark_ui::BookmarkSort>,
-    pub(crate) sidebar_tab: State<SidebarTab>,
     /// Editor of the canvas text box under edit, shared by the boxes and
     /// the formatting bar the chrome docks.
     pub(crate) text_editor: crate::canvas_text::TextEditorSlot,
@@ -374,10 +368,6 @@ pub(crate) fn use_chrome_state() -> ChromeState {
         active_item: use_state(|| Option::<ItemId>::None),
         selected_bookmark: use_state(|| Option::<crate::ids::BookmarkId>::None),
         bookmark_body: use_state(String::new),
-        sidebar_open: use_state(|| false),
-        sidebar_query: use_state(String::new),
-        sidebar_sort: use_state(|| crate::bookmark_ui::BookmarkSort::Recent),
-        sidebar_tab: use_state(SidebarTab::default),
         text_editor: crate::canvas_text::TextEditorSlot::use_slot(),
         text_toolbar_area: use_state(Area::default),
         masks: ChromeMasks::use_masks(),

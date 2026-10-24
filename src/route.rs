@@ -32,7 +32,6 @@ use crate::screens::home::Home;
 use crate::screens::trash::Trash;
 use crate::library::{BackgroundStyle, ItemId, LibraryError, TabTarget, WorkspaceId};
 use crate::prefs;
-use crate::workspace_view::WorkspaceView;
 
 /// Off-white paper used when the caller does not override the surface.
 pub const DEFAULT_PAPER: SkColor = SkColor::from_rgb(250, 250, 248);
@@ -77,7 +76,7 @@ pub(crate) fn init_canvas_mount(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
         if let Some(id) = mount.item() {
             let board = Arc::clone(board);
             spawn(async move {
-                let handle = match crate::home::open_library().await {
+                let handle = match crate::library::shared().await {
                     Ok(h) => h,
                     Err(err) => {
                         log::warn!("init_canvas_mount: open_library: {err}");
@@ -141,7 +140,7 @@ fn load_doc_into_board(mount: CanvasMount, board: Arc<Mutex<Board>>) {
             CanvasMount::Ephemeral(_) => None,
         };
         let doc = match id {
-            Some(id) => match crate::home::open_library().await {
+            Some(id) => match crate::library::shared().await {
                 Ok(handle) => {
                     let lib = handle.lock().await;
                     match lib.load_doc(id).await {
@@ -233,7 +232,7 @@ fn spawn_autosave_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Receiv
                     }
                 }
             };
-            match crate::home::open_library().await {
+            match crate::library::shared().await {
                 Ok(handle) => {
                     let mut lib = handle.lock().await;
                     if let Err(err) = lib.save_doc_snapshot(id, &bytes, captured).await {

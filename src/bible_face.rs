@@ -504,14 +504,6 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
         .map(|v| std::borrow::Cow::Owned(v.suggestion_label.clone()))
         .collect();
 
-    let router = RouterContext::get();
-    let chrome = crate::app::use_chrome_state();
-    let on_sidebar = move || {
-        crate::components::SidebarModal::open_plugin(chrome, BIBLE_PLUGIN_ID, item, router);
-    };
-    let on_home = move || {
-        let _ = router.push(crate::route::Route::Home);
-    };
     let db_back = db.clone();
     let has_back = state.read().has_back();
     let on_back_cb = move || {
@@ -567,26 +559,12 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
         .child(toolbar::top_toolbar(
             &abbrev,
             toolbar::ToolbarCallbacks {
-                on_home: Some(Box::new(on_home)),
-                on_sidebar: Some(Box::new(on_sidebar)),
+                on_home: None,
+                on_sidebar: None,
                 on_back: has_back.then(|| Box::new(on_back_cb) as toolbar::BackHandler),
                 on_forward: has_forward.then(|| Box::new(on_forward_cb) as toolbar::BackHandler),
-                on_notebook: Some(
-                    Box::new(move || crate::notebooks::open_notebook(item)) as toolbar::BackHandler
-                ),
-                on_links: Some(Box::new(move || {
-                    crate::components::DocActionsMenu::new(Some(item))
-                        .on_show_links(move || {
-                            crate::components::SidebarModal::open_plugin_tab(
-                                chrome,
-                                BIBLE_PLUGIN_ID,
-                                item,
-                                router,
-                                crate::components::SidebarTab::Links,
-                            );
-                        })
-                        .open();
-                }) as toolbar::BackHandler),
+                on_notebook: None,
+                on_links: None,
                 search_query: Writable::<String>::from(search_query),
                 on_search,
                 search_suggestions,

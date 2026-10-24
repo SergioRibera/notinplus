@@ -109,7 +109,7 @@ fn navigate_canvas_bookmark(bookmark: BookmarkId) {
     // Slow path — spawn an async task so the UI stays responsive while
     // the library scan + tab-open sequence runs.
     freya::prelude::spawn_forever(async move {
-        let Ok(handle) = crate::home::open_library().await else {
+        let Ok(handle) = crate::library::shared().await else {
             log::warn!("navigate_canvas: library handle unavailable");
             return;
         };
@@ -267,7 +267,7 @@ fn navigate_plugin(plugin_id: &str, target: ItemId, anchor: &[u8]) {
     // `self.kind_id()`, keeping behaviour transparent.
     let viewer_id = plugin.viewer_kind_id().to_string();
     freya::prelude::spawn_forever(async move {
-        let Ok(handle) = crate::home::open_library().await else {
+        let Ok(handle) = crate::library::shared().await else {
             log::warn!("navigate_plugin: library handle unavailable");
             return;
         };

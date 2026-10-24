@@ -110,32 +110,18 @@ impl Component for NotesFace {
 
         let locked_now = *locked.read();
         let read_only = controller.active_format().read_only || locked_now;
+        // The mesa header and document panel own going home, the outline,
+        // notebooks and links; the note keeps share and reading mode.
         let actions = TopbarActions {
-            on_home: Some(action(move || {
-                let _ = router.push(crate::route::Route::Home);
-            })),
-            on_sidebar: Some(action(move || {
-                crate::components::SidebarModal::open_plugin(chrome, KIND_ID, item, router);
-            })),
+            on_home: None,
+            on_sidebar: None,
             on_share: Some(Box::new(move |at| {
                 let window = viewport_area.map(|area| *area.0.peek());
                 crate::notes_share::open_menu(controller, title.peek().clone(), at, window);
             })),
             on_toggle_mode: (!locked_now).then(|| action(move || controller.toggle_read_only())),
-            on_notebook: Some(action(move || crate::notebooks::open_notebook(item))),
-            on_links: Some(action(move || {
-                crate::components::DocActionsMenu::new(Some(item))
-                    .on_show_links(move || {
-                        crate::components::SidebarModal::open_plugin_tab(
-                            chrome,
-                            KIND_ID,
-                            item,
-                            router,
-                            crate::components::SidebarTab::Links,
-                        );
-                    })
-                    .open();
-            })),
+            on_notebook: None,
+            on_links: None,
         };
 
         let editor = notein_editor(
@@ -371,7 +357,7 @@ fn save(item: ItemId, doc: &Arc<Mutex<Doc>>, body: &str, title: &str) {
 
 fn load_title(item: ItemId, mut title: State<String>) {
     spawn(async move {
-        let Ok(handle) = crate::home::open_library().await else {
+        let Ok(handle) = crate::library::shared().await else {
             return;
         };
         let lib = handle.lock().await;

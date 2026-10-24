@@ -11,7 +11,6 @@ use super::Ops;
 use super::header::{PaneHeader, TabDrag};
 use super::notices::TabNotice;
 use crate::components::drag_drop::{DropZone, use_drag};
-use crate::components::pane_tree_view::SplitEdge;
 use crate::library::{
     LibraryData, Pane, PaneId, PaneLayout, PaneTab, SplitOrientation, SplitSide, TabTarget,
     ViewSlot, Workspace,
@@ -414,5 +413,49 @@ impl Component for EdgeBand {
                 .width(Size::fill())
                 .height(Size::fill()),
             )
+    }
+}
+
+/// Which edge of a pane a dragged tab was dropped on: the side of the
+/// split and where the new pane goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SplitEdge {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl SplitEdge {
+    #[must_use]
+    pub const fn orientation(self) -> SplitOrientation {
+        match self {
+            Self::Left | Self::Right => SplitOrientation::Horizontal,
+            Self::Top | Self::Bottom => SplitOrientation::Vertical,
+        }
+    }
+
+    /// The side of the new split the pane with the dropped tab takes.
+    #[must_use]
+    pub const fn new_side(self) -> SplitSide {
+        match self {
+            Self::Left | Self::Top => SplitSide::First,
+            Self::Right | Self::Bottom => SplitSide::Second,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SplitEdge;
+    use crate::library::{SplitOrientation, SplitSide};
+
+    #[test]
+    fn split_edge_encodes_orientation_and_side() {
+        assert_eq!(SplitEdge::Right.orientation(), SplitOrientation::Horizontal);
+        assert_eq!(SplitEdge::Right.new_side(), SplitSide::Second);
+        assert_eq!(SplitEdge::Left.new_side(), SplitSide::First);
+        assert_eq!(SplitEdge::Bottom.orientation(), SplitOrientation::Vertical);
+        assert_eq!(SplitEdge::Top.new_side(), SplitSide::First);
     }
 }

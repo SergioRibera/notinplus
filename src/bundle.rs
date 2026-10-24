@@ -726,7 +726,7 @@ fn load_doc_opt(id: ItemId) -> Option<Doc> {
 }
 
 fn item_carries_pdf(kind: &DocKind) -> bool {
-    crate::faces::carries_pdf(kind)
+    kind.is(crate::plugins::builtin::pdf::KIND)
 }
 
 fn now_ms() -> u64 {

@@ -21,7 +21,7 @@
 
 use std::sync::{Mutex, OnceLock};
 
-use crate::home::open_library;
+use crate::library::shared as open_library;
 use crate::library::{
     ItemId, Library, LibraryError, NotFoundKind, PaneId, PaneLayout, Result, SplitOrientation,
     SplitSide, TabTarget, WorkspaceId,
