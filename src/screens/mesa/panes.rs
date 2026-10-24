@@ -35,17 +35,30 @@ pub(super) struct Panes {
 impl Component for Panes {
     fn render(&self) -> impl IntoElement {
         let focused = super::Focus::of(&self.mesa).map(|f| f.pane);
-        let can_close = self.mesa.layout.leaves().len() > 1;
-        node(
-            &self.mesa.layout,
-            Vec::new(),
-            &Ctx {
-                data: Arc::clone(&self.data),
-                ops: self.ops,
-                focused,
-                can_close,
-            },
-        )
+        let leaves = self.mesa.layout.leaves();
+        let can_close = leaves.len() > 1;
+        // Phones show one pane at a time; its header steps to the next.
+        let next = focused.and_then(|f| {
+            let at = leaves.iter().position(|p| p.id == f)?;
+            (leaves.len() > 1).then(|| leaves[(at + 1) % leaves.len()].id)
+        });
+        let ctx = Ctx {
+            data: Arc::clone(&self.data),
+            ops: self.ops,
+            focused,
+            can_close,
+            next: None,
+        };
+        if notein_ui_kit::width_class().is_compact()
+            && let Some(pane) = focused.and_then(|f| leaves.iter().find(|p| p.id == f))
+        {
+            return Leaf {
+                pane: (*pane).clone(),
+                ctx: Ctx { next, ..ctx },
+            }
+            .into_element();
+        }
+        node(&self.mesa.layout, Vec::new(), &ctx)
     }
 }
 
@@ -55,6 +68,8 @@ struct Ctx {
     ops: Ops,
     focused: Option<PaneId>,
     can_close: bool,
+    /// On phones, the pane the header's switcher goes to.
+    next: Option<PaneId>,
 }
 
 fn node(layout: &PaneLayout, path: Vec<SplitSide>, ctx: &Ctx) -> Element {
@@ -301,6 +316,7 @@ impl Component for Leaf {
                         ops,
                         focused,
                         can_close: self.ctx.can_close,
+                        next: self.ctx.next,
                     })
                     .maybe_child(active.clone().map(|tab| TabNotice {
                         data: Arc::clone(&self.ctx.data),

@@ -59,8 +59,8 @@ pub use handwriting::LETTER_IDLE;
 
 pub use text::{SceneText, TextLayerView, TextScene};
 
-const SIZE_SCALE_MIN: f32 = 0.25;
-const SIZE_SCALE_MAX: f32 = 4.0;
+pub const SIZE_SCALE_MIN: f32 = 0.25;
+pub const SIZE_SCALE_MAX: f32 = 4.0;
 
 /// Minimum and maximum canvas zoom. Outside these the viewport clamps —
 /// below 5% the strokes become unhittable, above 32× the cached Skia

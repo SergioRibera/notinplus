@@ -90,6 +90,8 @@ pub(super) struct PaneHeader {
     pub(super) ops: Ops,
     pub(super) focused: bool,
     pub(super) can_close: bool,
+    /// Phones: the pane the switcher steps to.
+    pub(super) next: Option<PaneId>,
 }
 
 impl Component for PaneHeader {
@@ -105,6 +107,11 @@ impl Component for PaneHeader {
             .horizontal()
             .cross_align(Alignment::Center)
             .spacing(2.0)
+            .maybe_child(self.next.map(|next| {
+                IconButton::new(lucide::columns_2(), "Otro panel")
+                    .size(tokens::size::BUTTON_SM)
+                    .on_press(move |_| ops.focus(next))
+            }))
             .child(
                 IconButton::new(lucide::plus(), "Nueva pestaña")
                     .size(tokens::size::BUTTON_SM)
