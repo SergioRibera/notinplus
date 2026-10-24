@@ -299,23 +299,28 @@ impl Component for SheetFooter {
         rect()
             .width(Size::fill())
             .min_height(Size::px(40.0))
-            .horizontal()
-            .cross_align(Alignment::Center)
-            .content(Content::Flex)
-            .spacing(8.0)
-            .maybe_child(self.leading.clone())
+            .main_align(Alignment::Center)
             .child(
                 rect()
-                    .width(Size::flex(1.0))
-                    .maybe_child(self.hint.clone().map(|hint| {
-                        label()
-                            .text(hint)
-                            .font_size(text::LABEL)
-                            .color(p.t3)
-                            .max_lines(2)
-                    })),
+                    .width(Size::fill())
+                    .horizontal()
+                    .cross_align(Alignment::Center)
+                    .content(Content::Flex)
+                    .spacing(8.0)
+                    .maybe_child(self.leading.clone())
+                    .child(
+                        rect()
+                            .width(Size::flex(1.0))
+                            .maybe_child(self.hint.clone().map(|hint| {
+                                label()
+                                    .text(hint)
+                                    .font_size(text::LABEL)
+                                    .color(p.t3)
+                                    .max_lines(2)
+                            })),
+                    )
+                    .children(self.actions.clone()),
             )
-            .children(self.actions.clone())
     }
 }
 
@@ -403,7 +408,8 @@ impl Popover {
         self
     }
 
-    /// Open (replacing the top modal).
+    /// Open above whatever is showing; a popover never replaces the
+    /// sheet it was opened from.
     pub fn open(self) {
         if width_class() == WidthClass::Compact {
             let mut sheet = self
@@ -413,10 +419,10 @@ impl Popover {
             if self.sheet_title.is_none() {
                 sheet = sheet.without_close();
             }
-            sheet.child(self.body).open();
+            sheet.child(self.body).push();
             return;
         }
-        ModalController::get().open(
+        ModalController::get().push(
             Modal::new(PopoverCard { popover: self })
                 .manual()
                 .backdrop_alpha(0),

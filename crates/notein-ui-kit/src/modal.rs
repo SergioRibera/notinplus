@@ -63,6 +63,19 @@ pub enum ModalPlacement {
     Manual,
 }
 
+impl ModalPlacement {
+    /// Card scale and vertical offset at entrance progress `settle`
+    /// (0 just opened, 1 at rest).
+    fn entrance(self, settle: f32) -> (f32, f32) {
+        let rest = 1.0 - settle;
+        match self {
+            Self::Center => (0.04f32.mul_add(-rest, 1.0), 0.0),
+            Self::BottomSheet => (1.0, 48.0 * rest),
+            Self::Manual => (0.02f32.mul_add(-rest, 1.0), -6.0 * rest),
+        }
+    }
+}
+
 /// Modal descriptor. Cheap to clone (only holds an `Element` and a
 /// handful of `Copy` fields), safe to stash inside a `State` for the
 /// controller to read/write.
@@ -320,17 +333,60 @@ impl Component for ModalPortal {
         let controller = ModalController::get();
         let stack = controller.state.read().stack.clone();
         let top = stack.len().saturating_sub(1);
+        let mut veiled = false;
         rect()
             .position(Position::new_absolute().top(0.0).left(0.0))
             .children(stack.into_iter().enumerate().map(|(depth, model)| {
-            ModalOverlay {
-                model,
-                area: self.area,
-                depth,
-                is_top: depth == top,
-            }
-            .into_element()
-        }))
+                let veil = Veil::for_layer(model.backdrop_alpha, veiled);
+                veiled |= veil == Veil::Blur;
+                ModalOverlay {
+                    model,
+                    area: self.area,
+                    depth,
+                    is_top: depth == top,
+                    veil,
+                }
+                .into_element()
+            }))
+    }
+}
+
+/// What a modal paints over the layers beneath it. Only the lowest
+/// modal of a stack blurs; the ones above dim lightly so the blur is
+/// never applied twice.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Veil {
+    Blur,
+    Dim,
+    /// Popovers: nothing visible, but still solid so the pointer does
+    /// not hover what lies under it.
+    Clear,
+}
+
+impl Veil {
+    const BLUR: f32 = 10.0;
+
+    const fn for_layer(alpha: u8, below_is_veiled: bool) -> Self {
+        match (alpha, below_is_veiled) {
+            (0, _) => Self::Clear,
+            (_, false) => Self::Blur,
+            (_, true) => Self::Dim,
+        }
+    }
+
+    /// Scrim colour and blur radius at animation progress `t`.
+    fn paint(self, alpha: u8, t: f32) -> (Color, f32) {
+        let scaled = |a: f32| {
+            // Clamped to 1..=255 so the scrim stays solid for hit testing.
+            #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let a = (a * t).round().clamp(1.0, 255.0) as u8;
+            Color::from_argb(a, 0, 0, 0)
+        };
+        match self {
+            Self::Blur => (scaled(f32::from(alpha)), Self::BLUR * t),
+            Self::Dim => (scaled(f32::from(alpha) / 3.0), 0.0),
+            Self::Clear => (Color::from_argb(1, 0, 0, 0), 0.0),
+        }
     }
 }
 
@@ -340,6 +396,7 @@ struct ModalOverlay {
     area: State<Area>,
     depth: usize,
     is_top: bool,
+    veil: Veil,
 }
 
 impl std::fmt::Debug for ModalOverlay {
@@ -366,6 +423,10 @@ impl Component for ModalOverlay {
             }
         });
 
+        // The card is never faded: freya applies opacity to every node on
+        // its own, so a half-transparent card shows its own panels and the
+        // veil through each other. It grows (centred), rises (sheets) or
+        // drops in (popovers) while the veil fades in behind it.
         let animations = use_animation(|conf| {
             conf.on_creation(OnCreation::Run);
             (
@@ -373,18 +434,14 @@ impl Component for ModalOverlay {
                     .time(180)
                     .ease(Ease::Out)
                     .function(Function::Cubic),
-                AnimNum::new(0.94, 1.)
-                    .time(220)
+                AnimNum::new(0., 1.)
+                    .time(240)
                     .ease(Ease::Out)
                     .function(Function::Expo),
-                AnimNum::new(0., 10.)
-                    .time(180)
-                    .ease(Ease::Out)
-                    .function(Function::Cubic),
             )
         });
-        let (opacity, scale, blur) = if crate::theme::reduce_motion() {
-            (1.0, 1.0, 10.0)
+        let (fade, settle) = if crate::theme::reduce_motion() {
+            (1.0, 1.0)
         } else {
             animations.get().value()
         };
@@ -398,10 +455,13 @@ impl Component for ModalOverlay {
         let placement = model.placement;
         let dismiss = model.dismiss_on_backdrop;
         let dismiss_on_escape = model.dismiss_on_escape && self.is_top;
-        let level = 4 + 2 * u8::try_from(self.depth.min(20)).unwrap_or(20);
-        let backdrop_alpha = model.backdrop_alpha;
+        // Two overlay levels per modal, capped below freya's 16.
+        let level = 4 + 2 * u8::try_from(self.depth.min(5)).unwrap_or(5);
+        let (scrim, blur) = self.veil.paint(model.backdrop_alpha, fade);
+        let (scale, rise) = placement.entrance(settle);
         let opened_at = model.opened_at;
-        let body_width = model.width;
+        // A pinned width never runs past the window's side gutters.
+        let body_width = model.width.map(|w| w.min((width - 32.0).max(0.0)));
         let body = model.body;
 
         // Backdrop and card are rendered as **siblings** under the
@@ -425,7 +485,7 @@ impl Component for ModalOverlay {
             .maybe(body_width.is_some(), |r| {
                 r.width(Size::px(body_width.unwrap_or_default()))
             })
-            .opacity(opacity)
+            .offset_y(rise)
             .scale((scale, scale))
             .child(body);
 
@@ -468,8 +528,8 @@ impl Component for ModalOverlay {
                     .position(Position::new_absolute().top(0.0).left(0.0))
                     .width(Size::px(width))
                     .height(Size::px(height))
-                    .background(Color::from_argb(backdrop_alpha, 0, 0, 0))
-                    .backdrop_blur(blur)
+                    .background(scrim)
+                    .maybe(blur > 0.0, |r| r.backdrop_blur(blur))
                     .maybe(dismiss && self.is_top, |r| {
                         r.on_press(move |_| {
                             if opened_at.elapsed() >= DISMISS_GRACE {
