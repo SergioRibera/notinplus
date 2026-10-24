@@ -614,8 +614,9 @@ pub fn import() {
             }
         };
         let reading = Sheet::default().without_close().child(
-            ListRow::new(format!("Revisando «{}»…", picked.name))
-                .icon(freya::icons::lucide::loader_circle()),
+            ListRow::new(format!("Revisando «{}»…", picked.name)).leading(
+                notein_ui_kit::Leading::Element(notein_ui_kit::Spinner::default().into_element()),
+            ),
         );
         // Over whatever asked for it (Ajustes stays underneath).
         reading.push();

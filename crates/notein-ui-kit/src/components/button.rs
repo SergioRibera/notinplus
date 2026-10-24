@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use freya::prelude::*;
 
 use super::icon::Icon;
+use super::spinner::Spinner;
 use crate::theme::{Palette, palette};
 use crate::tokens::{radius, size, text};
 
@@ -215,9 +216,11 @@ impl Component for Button {
         };
         let on_press = self.on_press.clone();
         let leading = if self.loading {
-            Some(Icon::new(freya::icons::lucide::loader_circle()))
+            Some(Spinner::default().color(foreground).into_element())
         } else {
-            self.icon.clone().map(Icon::new)
+            self.icon
+                .clone()
+                .map(|icon| Icon::new(icon).size(18.0).color(foreground).into_element())
         };
 
         rect()
@@ -252,7 +255,7 @@ impl Component for Button {
                     .on_pointer_press(move |_| pressed.set(false))
                     .map(on_press, |r, handler| r.on_press(move |e| handler.call(e)))
             })
-            .maybe_child(leading.map(|icon| icon.size(18.0).color(foreground)))
+            .maybe_child(leading)
             .child(
                 label()
                     .text(self.label.clone())
