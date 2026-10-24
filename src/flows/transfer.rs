@@ -108,7 +108,7 @@ pub fn export(scope: ExportScope) {
             scope: footer_scope,
             choices,
         })
-        .open();
+        .push();
 }
 
 #[derive(Clone, PartialEq)]
@@ -617,7 +617,8 @@ pub fn import() {
             ListRow::new(format!("Revisando «{}»…", picked.name))
                 .icon(freya::icons::lucide::loader_circle()),
         );
-        reading.open();
+        // Over whatever asked for it (Ajustes stays underneath).
+        reading.push();
         let name = picked.name.clone();
         let (tx, rx) = flume::bounded(1);
         std::thread::spawn(move || {

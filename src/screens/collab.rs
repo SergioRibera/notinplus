@@ -940,7 +940,7 @@ pub fn session_ended(end: &SessionEnd) {
                 })
                 .into_element(),
         ]))
-        .open();
+        .push();
 }
 
 fn save_copy(end: SessionEnd) {
