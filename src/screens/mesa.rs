@@ -390,14 +390,10 @@ impl Shortcuts {
                     true
                 }
                 ("n", false) => {
-                    let size = *Platform::get().root_size.read();
-                    crate::flows::create::open_menu(
-                        Area::new((size.width / 2.0, 80.0).into(), (1.0, 1.0).into()),
-                        crate::flows::create::Context {
-                            folder: crate::screens::home::Browse::get().folder(),
-                            selection: Vec::new(),
-                        },
-                    );
+                    crate::flows::create::open_menu_from_keyboard(crate::flows::create::Context {
+                        folder: crate::screens::home::Browse::get().folder(),
+                        selection: Vec::new(),
+                    });
                     true
                 }
                 ("n", true) => {

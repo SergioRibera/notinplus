@@ -94,6 +94,15 @@ fn tiles() -> (Vec<CatalogEntry>, bool) {
     (tiles, UsageLog::load().is_cold())
 }
 
+/// Open the create menu from the keyboard (Ctrl+N): near the top centre.
+pub fn open_menu_from_keyboard(context: Context) {
+    let size = *Platform::get().root_size.read();
+    open_menu(
+        Area::new((size.width / 2.0, 80.0).into(), (1.0, 1.0).into()),
+        context,
+    );
+}
+
 /// Open the create menu hanging from `anchor` (the + button).
 pub fn open_menu(anchor: Area, context: Context) {
     let body = Menu { context };

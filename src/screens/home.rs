@@ -283,18 +283,56 @@ impl Component for Loaded {
         rect()
             .expanded()
             .a11y_role(AccessibilityRole::Main)
-            .on_global_key_down(move |e: Event<KeyboardEventData>| {
-                if e.key == Key::Named(NamedKey::Escape) && selection.peek().active {
-                    selection.write().clear();
-                } else if e.key == Key::Named(NamedKey::Backspace)
-                    && e.modifiers.alt()
-                    && !notein_ui_kit::ModalController::get().is_open()
-                {
-                    up_one(folder);
-                }
-            })
+            .on_global_key_down(move |e: Event<KeyboardEventData>| on_key(&e, selection, folder))
             .child(scroll)
             .child(bottom(selection, folder, insets.bottom))
+    }
+}
+
+/// Esc leaves the selection, Alt+Backspace goes up a folder, and Ctrl+K
+/// (search), Ctrl+N (create), Ctrl+Shift+N (new mesa) and Ctrl+,
+/// (settings) work as in a mesa.
+fn on_key(e: &Event<KeyboardEventData>, mut selection: State<Selection>, folder: FolderId) {
+    if notein_ui_kit::ModalController::get().is_open() {
+        return;
+    }
+    let command = e.modifiers.ctrl() || e.modifiers.meta();
+    let handled = match &e.key {
+        Key::Named(NamedKey::Escape) if selection.peek().active => {
+            selection.write().clear();
+            true
+        }
+        Key::Named(NamedKey::Backspace) if e.modifiers.alt() => {
+            up_one(folder);
+            true
+        }
+        Key::Character(c) if command => match (c.to_lowercase().as_str(), e.modifiers.shift()) {
+            ("k", _) => {
+                crate::screens::search::open(String::new());
+                true
+            }
+            ("n", false) => {
+                crate::flows::create::open_menu_from_keyboard(crate::flows::create::Context {
+                    folder,
+                    selection: selection.peek().items.clone(),
+                });
+                true
+            }
+            ("n", true) => {
+                crate::flows::create::new_mesa();
+                true
+            }
+            (",", _) => {
+                crate::screens::settings::open();
+                true
+            }
+            _ => false,
+        },
+        _ => false,
+    };
+    if handled {
+        e.stop_propagation();
+        e.prevent_default();
     }
 }
 
