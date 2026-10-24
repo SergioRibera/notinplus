@@ -10,6 +10,17 @@ use crate::references::kind_color;
 
 /// Cover aspect ratio (height / width).
 pub const COVER_RATIO: f32 = 1.28;
+/// Room under a cover for two lines of name and one of details, so
+/// every card in a row is as tall as the others.
+const CAPTION: f32 = 58.0;
+/// Gap between a cover and its caption.
+const CAPTION_GAP: f32 = 8.0;
+
+/// Height of a document or folder card `width` px wide.
+#[must_use]
+pub fn card_height(width: f32) -> f32 {
+    (width * COVER_RATIO).round() + CAPTION_GAP + CAPTION
+}
 
 /// What a document card shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -347,6 +358,7 @@ fn caption(data: &DocCardData) -> Rect {
     let p = palette();
     rect()
         .width(Size::fill())
+        .height(Size::px(CAPTION))
         .spacing(2.0)
         .child(
             label()
@@ -431,7 +443,7 @@ impl Component for DocCard {
         let menu = self.actions.on_menu.clone();
         let card = rect()
             .width(Size::px(self.width))
-            .spacing(8.0)
+            .spacing(CAPTION_GAP)
             .a11y_role(AccessibilityRole::Button)
             .a11y_alt(self.data.name.clone())
             .on_pointer_enter(move |_| hovering.set(true))
@@ -509,12 +521,14 @@ impl Component for FolderCard {
             .maybe_child((self.selecting != Selecting::No).then(|| select_mark(selected)));
         let card = rect()
             .width(Size::px(w))
-            .spacing(8.0)
+            .spacing(CAPTION_GAP)
             .a11y_role(AccessibilityRole::Button)
             .a11y_alt(self.data.name.clone())
             .child(cover)
             .child(
                 rect()
+                    .width(Size::fill())
+                    .height(Size::px(CAPTION))
                     .spacing(2.0)
                     .child(
                         label()

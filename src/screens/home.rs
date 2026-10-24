@@ -18,8 +18,8 @@ use notein_ui_kit::{Button, EmptyState, Skeleton, WidthClass, tokens, width_clas
 
 use self::app_bar::AppBar;
 use self::fab::Fab;
-use self::library::{Columns, EmptyShelf, Grid, LibraryBar, PinnedRow, Rows};
-use self::mesas::{ContinueHero, MesaList};
+use self::library::{Columns, EmptyShelf, GridRow, LibraryBar, PinnedRow, ShelfRow};
+use self::mesas::{MESAS_BLOCK, MesaStrip};
 use self::selection::{Selection, SelectionActions};
 use self::shelf::{Filter, Shelf};
 use crate::library::{FolderId, LibraryData, ROOT_FOLDER};
@@ -194,76 +194,119 @@ struct Loaded {
     data: Arc<LibraryData>,
 }
 
-impl Loaded {
-    /// At the root: the mesa to continue and the other mesas.
-    fn mesas(&self, class: WidthClass) -> Element {
-        let data = &self.data;
-        let compact = class.is_compact();
-        let Some(id) = mesas::continue_target(data) else {
-            return MesaList {
-                data: Arc::clone(data),
-                except: None,
-                compact,
-            }
-            .into_element();
-        };
-        let hero = ContinueHero {
-            data: Arc::clone(data),
-            workspace: id,
-        };
-        let others = MesaList {
-            data: Arc::clone(data),
-            except: Some(id),
-            compact,
-        };
-        if compact {
-            return rect()
-                .width(Size::fill())
-                .spacing(16.0)
-                .child(hero)
-                .child(others)
-                .into_element();
+/// One stretch of Home's scrolling body. Each has a known height, so
+/// only the ones on screen are built.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Block {
+    Top,
+    Mesas,
+    Pinned,
+    Bar,
+    /// A row of cards.
+    Row(usize),
+    /// A row of the list layout.
+    Item(usize),
+    Empty,
+    /// Room for the + button and the system bar.
+    End,
+}
+
+/// Everything the body's blocks are built from.
+#[derive(Clone, PartialEq)]
+struct Body {
+    data: Arc<LibraryData>,
+    shelf: Arc<Shelf>,
+    blocks: Vec<Block>,
+    columns: Columns,
+    selection: State<Selection>,
+    filter: State<Filter>,
+    folder: FolderId,
+    filtered: bool,
+    pad: f32,
+    width: f32,
+    compact: bool,
+    pinned_card: f32,
+    bottom: f32,
+}
+
+impl Body {
+    /// Space between the sections.
+    const GAP: f32 = 24.0;
+    const EMPTY: f32 = 320.0;
+
+    fn height(&self, block: Block) -> f32 {
+        match block {
+            Block::Top => 8.0,
+            Block::Mesas => MESAS_BLOCK + Self::GAP,
+            Block::Pinned => PinnedRow::height(self.pinned_card) + Self::GAP,
+            Block::Bar => LibraryBar::height(self.compact) + 16.0,
+            Block::Row(_) => GridRow::height(self.columns),
+            Block::Item(_) => ShelfRow::HEIGHT,
+            Block::Empty => Self::EMPTY,
+            Block::End => 120.0 + self.bottom,
         }
-        rect()
-            .width(Size::fill())
-            .horizontal()
-            .content(Content::Flex)
-            .spacing(20.0)
-            .child(
-                rect()
-                    .width(Size::flex(if class == WidthClass::Expanded { 1.4 } else { 1.0 }))
-                    .child(hero),
-            )
-            .child(rect().width(Size::flex(1.0)).child(others))
-            .into_element()
     }
 
-    /// The folder's contents as cards or rows, or why there are none.
-    fn listing(
-        &self,
-        listed: &Arc<Shelf>,
-        (folder, filtered): (FolderId, bool),
-        columns: Columns,
-        selection: State<Selection>,
-    ) -> Element {
-        if listed.is_empty() {
-            return EmptyShelf { folder, filtered }.into_element();
-        }
-        if SettingsStore::get().read().library.layout == ShelfLayout::List {
-            return Rows {
-                data: Arc::clone(&self.data),
-                shelf: Arc::clone(listed),
-                selection,
-            }
-            .into_element();
-        }
-        Grid {
-            data: Arc::clone(&self.data),
-            shelf: Arc::clone(listed),
-            columns,
-            selection,
-        }
-        .into_element()
+    fn build(&self, block: Block, height: f32) -> Element {
+        let content = match block {
+            Block::Top | Block::End => None,
+            Block::Mesas => Some(
+                MesaStrip {
+                    data: Arc::clone(&self.data),
+                    width: self.width,
+                    compact: self.compact,
+                }
+                .into_element(),
+            ),
+            Block::Pinned => Some(
+                PinnedRow {
+                    data: Arc::clone(&self.data),
+                    card: self.pinned_card,
+                    selection: self.selection,
+                }
+                .into_element(),
+            ),
+            Block::Bar => Some(
+                LibraryBar {
+                    data: Arc::clone(&self.data),
+                    filter: self.filter,
+                    selection: self.selection,
+                }
+                .into_element(),
+            ),
+            Block::Row(row) => Some(
+                GridRow {
+                    data: Arc::clone(&self.data),
+                    shelf: Arc::clone(&self.shelf),
+                    columns: self.columns,
+                    selection: self.selection,
+                    row,
+                }
+                .into_element(),
+            ),
+            Block::Item(index) => Some(
+                ShelfRow {
+                    data: Arc::clone(&self.data),
+                    shelf: Arc::clone(&self.shelf),
+                    selection: self.selection,
+                    index,
+                }
+                .into_element(),
+            ),
+            Block::Empty => Some(
+                EmptyShelf {
+                    folder: self.folder,
+                    filtered: self.filtered,
+                }
+                .into_element(),
+            ),
+        };
+        rect()
+            .width(Size::fill())
+            .height(Size::px(height))
+            .padding((0.0, self.pad))
+            .maybe_child(content)
+            .into_element()
     }
 }
 
@@ -284,6 +327,29 @@ fn bottom(selection: State<Selection>, folder: FolderId, inset: f32) -> Element 
         .main_align(Alignment::Center)
         .child(SelectionActions { selection, folder })
         .into_element()
+}
+
+impl Loaded {
+    /// The blocks of the body, top to bottom.
+    fn blocks(shelf: &Shelf, columns: Columns, (at_root, pinned): (bool, bool)) -> Vec<Block> {
+        let mut blocks = vec![Block::Top];
+        if at_root {
+            blocks.push(Block::Mesas);
+        }
+        if pinned {
+            blocks.push(Block::Pinned);
+        }
+        blocks.push(Block::Bar);
+        if shelf.is_empty() {
+            blocks.push(Block::Empty);
+        } else if SettingsStore::get().read().library.layout == ShelfLayout::List {
+            blocks.extend((0..ShelfRow::count(shelf)).map(Block::Item));
+        } else {
+            blocks.extend((0..GridRow::count(shelf, columns)).map(Block::Row));
+        }
+        blocks.push(Block::End);
+        blocks
+    }
 }
 
 impl Component for Loaded {
@@ -313,39 +379,48 @@ impl Component for Loaded {
         let current_filter = filter.read().clone();
         let listed = Arc::new(Shelf::build(data, folder, &current_filter, sort));
         let at_root = folder == ROOT_FOLDER;
-        let pinned = (at_root && !data.pinned().is_empty()).then(|| PinnedRow {
+        let columns = Columns::fit(content_width);
+        let body = Body {
+            blocks: Self::blocks(&listed, columns, (at_root, at_root && !data.pinned().is_empty())),
             data: Arc::clone(data),
-            card: if class.is_compact() { 132.0 } else { 148.0 },
+            shelf: listed,
+            columns,
             selection,
-        });
-        let listing = self.listing(
-            &listed,
-            (folder, current_filter != Filter::All),
-            Columns::fit(content_width),
-            selection,
-        );
-        let scroll = ScrollView::new()
-            .width(Size::fill())
-            .height(Size::fill())
+            filter,
+            folder,
+            filtered: current_filter != Filter::All,
+            pad,
+            width: content_width,
+            compact: class.is_compact(),
+            pinned_card: if class.is_compact() { 132.0 } else { 148.0 },
+            bottom: insets.bottom,
+        };
+        let heights: Vec<f32> = body.blocks.iter().map(|b| body.height(*b)).collect();
+        let length = heights.len();
+        let trash = crate::screens::trash::groups(data).len();
+        // Only the body scrolls: the bar with search, sync state and the
+        // trash stays in reach.
+        let scroll = VirtualScrollView::new_with_data(body, |item, body: &Body| {
+            body.blocks.get(item.index).map_or_else(
+                || rect().into_element(),
+                |block| body.build(*block, item.size),
+            )
+        })
+        .length(length)
+        .item_size(move |index: usize| heights.get(index).copied().unwrap_or_default())
+        .width(Size::fill())
+        .height(Size::flex(1.0));
+        rect()
+            .expanded()
+            .content(Content::Flex)
+            .a11y_role(AccessibilityRole::Main)
+            .on_global_key_down(move |e: Event<KeyboardEventData>| on_key(&e, selection, folder))
             .child(
                 rect()
                     .width(Size::fill())
-                    .padding((8.0, pad, 120.0 + insets.bottom, pad))
-                    .spacing(24.0)
-                    .child(AppBar)
-                    .maybe_child(at_root.then(|| self.mesas(class)))
-                    .maybe_child(pinned)
-                    .child(LibraryBar {
-                        data: Arc::clone(data),
-                        filter,
-                        selection,
-                    })
-                    .child(listing),
-            );
-        rect()
-            .expanded()
-            .a11y_role(AccessibilityRole::Main)
-            .on_global_key_down(move |e: Event<KeyboardEventData>| on_key(&e, selection, folder))
+                    .padding((8.0, pad, 0.0, pad))
+                    .child(AppBar { trash }),
+            )
             .child(scroll)
             .child(bottom(selection, folder, insets.bottom))
     }

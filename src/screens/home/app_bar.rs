@@ -1,5 +1,5 @@
-//! The top of Home: name, the one search field, sync state and
-//! settings.
+//! The top of Home: name, the one search field, sync state, the trash
+//! and settings.
 
 use freya::prelude::*;
 use notein_ui_kit::theme::palette;
@@ -46,7 +46,10 @@ impl SyncState {
 
 /// Home's app bar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AppBar;
+pub struct AppBar {
+    /// Things in the trash, counted on its button.
+    pub trash: usize,
+}
 
 impl SyncState {
     /// A dot on phones, a tag with the label on wider screens.
@@ -165,6 +168,11 @@ impl Component for AppBar {
                     .child(search_field(compact)),
             )
             .maybe_child(state.map(|s| s.indicator(compact)))
+            .child(
+                IconButton::new(lucide::trash_2(), "Papelera")
+                    .badge(u32::try_from(self.trash).unwrap_or(u32::MAX))
+                    .on_press(|_| crate::screens::trash::open()),
+            )
             .child(
                 IconButton::new(lucide::waypoints(), "Mapa de vínculos")
                     .on_press(|_| crate::screens::map::open()),

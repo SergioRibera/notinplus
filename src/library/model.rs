@@ -755,6 +755,9 @@ pub struct Workspace {
     pub focused_pane: Option<PaneId>,
     pub created_at: u64,
     pub updated_at: u64,
+    /// The device the mesa was made on; `None` when it was made before
+    /// this device had a sync identity.
+    pub device: Option<notein_sync::DeviceId>,
 }
 
 impl Workspace {
@@ -784,6 +787,7 @@ impl Workspace {
             focused_pane: Some(root),
             created_at: now,
             updated_at: now,
+            device: None,
         }
     }
 

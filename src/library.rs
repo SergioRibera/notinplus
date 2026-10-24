@@ -770,6 +770,7 @@ impl Library {
         let id = WorkspaceId::new_v4();
         let mut workspace = Workspace::fresh(id, name.trim().to_owned(), color, now);
         workspace.named = !workspace.name.is_empty();
+        workspace.device = crate::sync::snapshot().device;
         self.data.workspaces.workspaces.push(workspace);
         if self.data.workspaces.active.is_none() {
             self.data.workspaces.active = Some(id);
@@ -800,6 +801,7 @@ impl Library {
             focused_pane: source.focused_pane,
             created_at: now,
             updated_at: now,
+            device: crate::sync::snapshot().device,
         };
         let new_id = copy.id;
         self.data.workspaces.workspaces.push(copy);
@@ -1760,6 +1762,7 @@ mod tests {
             focused_pane: Some(right),
             created_at: 10,
             updated_at: 20,
+            device: Some(notein_sync::DeviceId([7; 32])),
         });
         idx.active = Some(a);
         let bytes = bincode::encode_to_vec(&idx, config::standard()).unwrap();

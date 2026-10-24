@@ -114,19 +114,14 @@ fn chips(mut filter: State<Filter>) -> Vec<Element> {
         .collect()
 }
 
-/// The sort menu.
-fn sort_button(sort: SortOrder) -> Button {
-    Button::new(sort.label())
+/// The sort menu, hanging from the button.
+fn sort_button(sort: SortOrder, mut area: State<Area>) -> Rect {
+    let button = Button::new(sort.label())
         .ghost()
         .small()
         .icon(freya::icons::lucide::arrow_down_wide_narrow())
-        .on_press(move |e: Event<PressEventData>| {
-            let at = match e.data() {
-                PressEventData::Mouse(m) => m.global_location,
-                _ => CursorPoint::new(0.0, 0.0),
-            };
-            #[allow(clippy::cast_possible_truncation)] // window coordinates
-            let anchor = Area::new((at.x as f32, at.y as f32).into(), (1.0, 1.0).into());
+        .on_press(move |_| {
+            let anchor = *area.peek();
             let entries = SortOrder::ALL.iter().map(|order| {
                 let order = *order;
                 ActionEntry::Item(
@@ -139,23 +134,33 @@ fn sort_button(sort: SortOrder) -> Button {
             });
             Popover::new(anchor, notein_ui_kit::ActionList::new(entries).width(200.0))
                 .width(200.0)
+                .estimated_height(170.0)
                 .side(PopoverSide::Below)
                 .align(PopoverAlign::End)
                 .sheet_title("Ordenar por")
                 .open();
-        })
+        });
+    rect()
+        .on_sized(move |e: Event<SizedEventData>| area.set_if_modified(e.area))
+        .child(button)
 }
 
-/// Sort, grid or list, trash and Seleccionar.
-fn tools(layout: ShelfLayout, sort: SortOrder, trash: usize, mut selection: State<Selection>) -> Rect {
+/// Sort, grid or list, and Seleccionar, all one height.
+fn tools(
+    layout: ShelfLayout,
+    sort: SortOrder,
+    sort_area: State<Area>,
+    mut selection: State<Selection>,
+) -> Rect {
     use freya::icons::lucide;
     let as_list = layout == ShelfLayout::List;
     let selecting = selection.read().active;
     rect()
         .horizontal()
+        .height(Size::px(TOOL))
         .cross_align(Alignment::Center)
         .spacing(4.0)
-        .child(sort_button(sort))
+        .child(sort_button(sort, sort_area))
         .child(
             IconButton::new(
                 if as_list {
@@ -169,6 +174,7 @@ fn tools(layout: ShelfLayout, sort: SortOrder, trash: usize, mut selection: Stat
                     "Ver como lista"
                 },
             )
+            .size(TOOL)
             .on_press(move |_| {
                 SettingsStore::get().update(|s| {
                     s.library.layout = if as_list {
@@ -178,11 +184,6 @@ fn tools(layout: ShelfLayout, sort: SortOrder, trash: usize, mut selection: Stat
                     };
                 });
             }),
-        )
-        .child(
-            IconButton::new(lucide::trash_2(), "Papelera")
-                .badge(u32::try_from(trash).unwrap_or(u32::MAX))
-                .on_press(|_| crate::screens::trash::open()),
         )
         .child(
             Button::new(if selecting { "Listo" } else { "Seleccionar" })
@@ -199,13 +200,38 @@ fn tools(layout: ShelfLayout, sort: SortOrder, trash: usize, mut selection: Stat
         )
 }
 
+/// Height of the toolbar's controls.
+const TOOL: f32 = tokens::size::BUTTON_SM;
+/// Height of the row holding the breadcrumb.
+const CRUMBS: f32 = 40.0;
+/// Height of the filter chips.
+const CHIPS: f32 = 36.0;
+
+impl LibraryBar {
+    /// The bar's height: one row with the breadcrumb and the tools, or
+    /// two on phones, then the chips.
+    #[must_use]
+    pub const fn height(compact: bool) -> f32 {
+        if compact {
+            CRUMBS + 8.0 + TOOL + 10.0 + CHIPS
+        } else {
+            CRUMBS + 10.0 + CHIPS
+        }
+    }
+}
+
 impl Component for LibraryBar {
     fn render(&self) -> impl IntoElement {
         let library = SettingsStore::get().read().library;
-        let trash = crate::screens::trash::groups(&self.data).len();
-        let breadcrumb = breadcrumb(&self.data, Browse::get());
-        let tools = tools(library.layout, library.sort, trash, self.selection);
-        let head = if width_class().is_compact() {
+        let sort_area = use_state(Area::default);
+        let compact = width_class().is_compact();
+        let breadcrumb = rect()
+            .height(Size::px(CRUMBS))
+            .cross_align(Alignment::Center)
+            .horizontal()
+            .child(breadcrumb(&self.data, Browse::get()));
+        let tools = tools(library.layout, library.sort, sort_area, self.selection);
+        let head = if compact {
             rect()
                 .width(Size::fill())
                 .spacing(8.0)
@@ -214,26 +240,33 @@ impl Component for LibraryBar {
         } else {
             rect()
                 .width(Size::fill())
+                .height(Size::px(CRUMBS))
                 .horizontal()
                 .cross_align(Alignment::Center)
                 .content(Content::Flex)
                 .child(rect().width(Size::flex(1.0)).child(breadcrumb))
                 .child(tools)
         };
-        rect().width(Size::fill()).spacing(10.0).child(head).child(
-            ScrollView::new()
-                .direction(Direction::Horizontal)
-                .width(Size::fill())
-                .height(Size::px(36.0))
-                .show_scrollbar(false)
-                .child(
-                    rect()
-                        .horizontal()
-                        .cross_align(Alignment::Center)
-                        .spacing(6.0)
-                        .children(chips(self.filter)),
-                ),
-        )
+        rect()
+            .width(Size::fill())
+            .height(Size::px(Self::height(compact)))
+            .spacing(10.0)
+            .child(head)
+            .child(
+                ScrollView::new()
+                    .direction(Direction::Horizontal)
+                    .width(Size::fill())
+                    .height(Size::px(CHIPS))
+                    .show_scrollbar(false)
+                    .child(
+                        rect()
+                            .horizontal()
+                            .height(Size::px(CHIPS))
+                            .cross_align(Alignment::Center)
+                            .spacing(6.0)
+                            .children(chips(self.filter)),
+                    ),
+            )
     }
 }
 
@@ -313,24 +346,37 @@ fn doc_menu(
     }
 }
 
-/// Folder and document cards in columns.
+/// One row of folder and document cards, the `row`-th of the shelf.
 #[derive(Clone, PartialEq)]
-pub struct Grid {
+pub struct GridRow {
     pub data: Arc<LibraryData>,
     pub shelf: Arc<Shelf>,
     pub columns: Columns,
     pub selection: State<Selection>,
+    pub row: usize,
 }
 
-impl std::fmt::Debug for Grid {
+impl std::fmt::Debug for GridRow {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Grid")
-            .field("columns", &self.columns)
+        f.debug_struct("GridRow")
+            .field("row", &self.row)
             .finish_non_exhaustive()
     }
 }
 
-impl Grid {
+impl GridRow {
+    /// Rows the shelf takes with `columns` cards across.
+    #[must_use]
+    pub fn count(shelf: &Shelf, columns: Columns) -> usize {
+        (shelf.folders.len() + shelf.docs.len()).div_ceil(columns.count)
+    }
+
+    /// Height of a row, with the gap under it.
+    #[must_use]
+    pub fn height(columns: Columns) -> f32 {
+        super::card::card_height(columns.card) + columns.gap
+    }
+
     fn folder_card(&self, entry: &FolderEntry, state: &Selection) -> Element {
         let id = entry.id;
         let selection = self.selection;
@@ -370,89 +416,141 @@ impl Grid {
     }
 }
 
-impl Component for Grid {
+impl Component for GridRow {
     fn render(&self) -> impl IntoElement {
         let state = self.selection.read().clone();
-        let cards: Vec<Element> = self
-            .shelf
-            .folders
-            .iter()
-            .map(|f| self.folder_card(f, &state))
-            .chain(self.shelf.docs.iter().map(|d| self.doc_card(d, &state)))
+        let start = self.row * self.columns.count;
+        let folders = self.shelf.folders.len();
+        let cards: Vec<Element> = (start..start + self.columns.count)
+            .filter_map(|at| {
+                if at < folders {
+                    Some(self.folder_card(&self.shelf.folders[at], &state))
+                } else {
+                    self.shelf
+                        .docs
+                        .get(at - folders)
+                        .map(|d| self.doc_card(d, &state))
+                }
+            })
             .collect();
         rect()
             .width(Size::fill())
             .horizontal()
-            .content(Content::wrap_spacing(self.columns.gap + 8.0))
             .spacing(self.columns.gap)
             .children(cards)
     }
 }
 
-/// Documents as rows (the list layout).
+/// One folder or document of the shelf as a row (the list layout).
 #[derive(Clone, PartialEq)]
-pub struct Rows {
+pub struct ShelfRow {
     pub data: Arc<LibraryData>,
     pub shelf: Arc<Shelf>,
     pub selection: State<Selection>,
+    pub index: usize,
 }
 
-impl std::fmt::Debug for Rows {
+impl std::fmt::Debug for ShelfRow {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Rows").finish_non_exhaustive()
+        f.debug_struct("ShelfRow")
+            .field("index", &self.index)
+            .finish_non_exhaustive()
     }
 }
 
-impl Component for Rows {
-    fn render(&self) -> impl IntoElement {
+impl ShelfRow {
+    /// Height of a row.
+    pub const HEIGHT: f32 = 60.0;
+
+    /// Rows the shelf takes.
+    #[must_use]
+    pub fn count(shelf: &Shelf) -> usize {
+        shelf.folders.len() + shelf.docs.len()
+    }
+
+    fn folder_row(&self, f: &FolderEntry, state: &Selection) -> ListRow {
         use freya::icons::lucide;
         let p = palette();
-        let state = self.selection.read().clone();
+        let id = f.id;
         let selection = self.selection;
-        let folders = self.shelf.folders.iter().map(|f| {
-            let id = f.id;
-            let checked = state.of_folder(id);
-            let row = ListRow::new(f.card.name.clone())
-                .subtitle(crate::format::count(f.card.count, "elemento", "elementos"))
-                .kind(lucide::folder(), p.kinds.folder)
-                .on_press(move |_| open_folder(selection, id))
-                .on_secondary(move |e: Event<PressEventData>| {
-                    if let PressEventData::Mouse(m) = e.data() {
-                        crate::actions::show(crate::actions::for_folder(id), m.global_location);
-                    }
-                });
-            match checked {
-                Selecting::No => row.chevron(),
-                Selecting::Selected | Selecting::Unselected => row.leading(
-                    notein_ui_kit::Leading::Check(checked == Selecting::Selected),
-                ),
+        let checked = state.of_folder(id);
+        let row = ListRow::new(f.card.name.clone())
+            .subtitle(crate::format::count(f.card.count, "elemento", "elementos"))
+            .kind(lucide::folder(), p.kinds.folder)
+            .on_press(move |_| open_folder(selection, id))
+            .on_secondary(move |e: Event<PressEventData>| {
+                if let PressEventData::Mouse(m) = e.data() {
+                    crate::actions::show(crate::actions::for_folder(id), m.global_location);
+                }
+            });
+        match checked {
+            Selecting::No => row.chevron(),
+            Selecting::Selected | Selecting::Unselected => {
+                row.leading(notein_ui_kit::Leading::Check(checked == Selecting::Selected))
             }
-            .into_element()
-        });
-        let docs = self.shelf.docs.iter().map(|d| {
-            let id = d.id;
-            let checked = state.of_item(id);
-            let info = crate::plugins::kind_info(&d.card.kind);
-            let icon = info.as_ref().map_or_else(lucide::file, |k| k.icon.clone());
-            let tint = info.as_ref().map_or(p.t3, |k| kind_color(&p, k.color));
-            let menu = doc_menu(&self.data, selection, id);
-            let row = ListRow::new(d.card.name.clone())
-                .subtitle(d.card.meta.clone())
-                .on_press(move |_| open_item(selection, id))
-                .on_secondary(move |e: Event<PressEventData>| {
-                    if let PressEventData::Mouse(m) = e.data() {
-                        menu(m.global_location);
-                    }
-                });
-            match checked {
-                Selecting::No => row.kind(icon, tint),
-                Selecting::Selected | Selecting::Unselected => row.leading(
-                    notein_ui_kit::Leading::Check(checked == Selecting::Selected),
-                ),
+        }
+    }
+
+    fn doc_row(&self, d: &DocEntry, state: &Selection) -> ListRow {
+        use freya::icons::lucide;
+        let p = palette();
+        let id = d.id;
+        let selection = self.selection;
+        let checked = state.of_item(id);
+        let info = crate::plugins::kind_info(&d.card.kind);
+        let icon = info.as_ref().map_or_else(lucide::file, |k| k.icon.clone());
+        let tint = info.as_ref().map_or(p.t3, |k| kind_color(&p, k.color));
+        let menu = doc_menu(&self.data, selection, id);
+        let row = ListRow::new(d.card.name.clone())
+            .subtitle(d.card.meta.clone())
+            .on_press(move |_| open_item(selection, id))
+            .on_secondary(move |e: Event<PressEventData>| {
+                if let PressEventData::Mouse(m) = e.data() {
+                    menu(m.global_location);
+                }
+            });
+        match checked {
+            Selecting::No => row.kind(icon, tint),
+            Selecting::Selected | Selecting::Unselected => {
+                row.leading(notein_ui_kit::Leading::Check(checked == Selecting::Selected))
             }
+        }
+    }
+}
+
+impl Component for ShelfRow {
+    fn render(&self) -> impl IntoElement {
+        let p = palette();
+        let state = self.selection.read().clone();
+        let folders = self.shelf.folders.len();
+        let last = Self::count(&self.shelf).saturating_sub(1);
+        let row = if self.index < folders {
+            self.folder_row(&self.shelf.folders[self.index], &state)
+        } else {
+            match self.shelf.docs.get(self.index - folders) {
+                Some(d) => self.doc_row(d, &state),
+                None => return rect().into_element(),
+            }
+        };
+        // The rows of one shelf read as a single rounded group.
+        let (top, bottom) = (
+            if self.index == 0 { tokens::radius::XL } else { 0.0 },
+            if self.index == last { tokens::radius::XL } else { 0.0 },
+        );
+        rect()
+            .width(Size::fill())
+            .height(Size::px(Self::HEIGHT))
+            .padding((
+                if self.index == 0 { 4.0 } else { 0.0 },
+                4.0,
+                if self.index == last { 4.0 } else { 0.0 },
+                4.0,
+            ))
+            .main_align(Alignment::Center)
+            .background(p.s1)
+            .corner_radius(CornerRadius::new(top, top, bottom, bottom))
+            .child(row)
             .into_element()
-        });
-        notein_ui_kit::Group::default().children(folders.chain(docs).collect::<Vec<_>>())
     }
 }
 
@@ -519,6 +617,17 @@ pub struct PinnedRow {
 impl std::fmt::Debug for PinnedRow {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PinnedRow").finish_non_exhaustive()
+    }
+}
+
+/// Height of the label over the pinned cards.
+const PINNED_LABEL: f32 = 16.0;
+
+impl PinnedRow {
+    /// Height of the row for cards `card` px wide.
+    #[must_use]
+    pub fn height(card: f32) -> f32 {
+        PINNED_LABEL + 8.0 + super::card::card_height(card)
     }
 }
 
@@ -594,14 +703,16 @@ impl Component for PinnedRow {
         rect()
             .width(Size::fill())
             .spacing(8.0)
-            .child(Text::new("FIJADOS").role(TextRole::Label).color(p.t3))
+            .child(
+                rect()
+                    .height(Size::px(PINNED_LABEL))
+                    .child(Text::new("FIJADOS").role(TextRole::Label).color(p.t3)),
+            )
             .child(
                 ScrollView::new()
                     .direction(Direction::Horizontal)
                     .width(Size::fill())
-                    .height(Size::px(
-                        (self.card * super::card::COVER_RATIO).round() + 64.0,
-                    ))
+                    .height(Size::px(super::card::card_height(self.card)))
                     .show_scrollbar(false)
                     .child(rect().horizontal().spacing(12.0).children(cards)),
             )
