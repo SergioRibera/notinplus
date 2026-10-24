@@ -278,7 +278,6 @@ impl Component for AppShell {
         rect()
             .expanded()
             .background(notein_ui_kit::palette().bg)
-            .on_global_pointer_up(crate::soft_keyboard::reshow_on_tap)
             .on_sized({
                 let mut area = area;
                 move |e: Event<SizedEventData>| area.set(e.area)

@@ -438,7 +438,6 @@ impl PartialEq for TextBoxEditor {
 impl Component for TextBoxEditor {
     fn render(&self) -> impl IntoElement {
         let controller = self.editor.controller;
-        crate::editor::use_soft_keyboard(controller);
         let value = use_state(|| self.markdown.clone());
         use_side_effect({
             let board = Arc::clone(&self.board);

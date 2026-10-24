@@ -384,7 +384,6 @@ fn use_follow_typing(
 ) -> (State<Option<Area>>, Rc<Cell<f32>>) {
     let viewport = use_state(|| None::<Area>);
     let content_top = use_hook(|| Rc::new(Cell::new(0.0_f32)));
-    crate::editor::use_soft_keyboard(controller);
     {
         let content_top = content_top.clone();
         // Revision, viewport height and focus at the last run: following only

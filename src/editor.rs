@@ -9,7 +9,6 @@
 mod labels;
 
 use std::borrow::Cow;
-use std::cell::Cell;
 use std::rc::Rc;
 
 use freya::prelude::*;
@@ -214,7 +213,6 @@ impl Component for EditorField {
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let controller = use_editor_controller();
-        use_soft_keyboard(controller);
         let auto_focus = self.auto_focus;
         use_hook(move || {
             if auto_focus {
@@ -244,21 +242,3 @@ impl Component for EditorField {
     }
 }
 
-/// Ask the soft keyboard for a return key while `controller` has focus.
-pub fn use_soft_keyboard(controller: EditorController) {
-    let reported = use_hook(|| Rc::new(Cell::new(false)));
-    {
-        let reported = reported.clone();
-        use_side_effect(move || {
-            let focused = controller.has_focus();
-            if reported.replace(focused) != focused {
-                crate::soft_keyboard::note_editor_focus(focused);
-            }
-        });
-    }
-    use_drop(move || {
-        if reported.get() {
-            crate::soft_keyboard::note_editor_focus(false);
-        }
-    });
-}
