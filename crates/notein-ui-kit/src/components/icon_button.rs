@@ -4,6 +4,7 @@ use std::borrow::Cow;
 
 use freya::prelude::*;
 
+use super::hint::use_hint;
 use super::icon::Icon;
 use crate::theme::palette;
 use crate::tokens::{radius, size};
@@ -107,6 +108,7 @@ impl Component for IconButton {
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let mut hovering = use_state(|| false);
+        let hint = use_hint();
         let a11y_id = use_a11y();
         let focus = use_focus(a11y_id);
         let side = self.size;
@@ -151,12 +153,21 @@ impl Component for IconButton {
                         .alignment(BorderAlignment::Outer),
                 )
             })
+            .on_sized(move |e: Event<SizedEventData>| hint.track(&e))
+            .on_pointer_enter(move |e: Event<PointerEventData>| {
+                hovering.set(true);
+                hint.enter(&e);
+            })
+            .on_pointer_leave(move |_| {
+                hovering.set(false);
+                hint.leave();
+            })
+            .on_pointer_down(move |_| hint.leave())
             .maybe(self.enabled, |r| {
-                r.on_pointer_enter(move |_| hovering.set(true))
-                    .on_pointer_leave(move |_| hovering.set(false))
-                    .map(on_press, |r, handler| r.on_press(move |e| handler.call(e)))
+                r.map(on_press, |r, handler| r.on_press(move |e| handler.call(e)))
             })
             .child(Icon::new(self.icon.clone()).size(icon_size).color(color))
+            .maybe_child(hint.render(self.label.clone(), side))
             .map(self.dot, |r, dot| {
                 r.child(
                     rect()
