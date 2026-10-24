@@ -1010,7 +1010,15 @@ impl Component for MesaForm {
                     }),
                 ),
             )
-            .maybe_child((current == StartWith::Pick).then(|| {
+            .maybe_child((current == StartWith::Pick && recent.is_empty()).then(|| {
+                notein_ui_kit::EmptyState::new(
+                    freya::icons::lucide::files(),
+                    "Todavía no hay documentos",
+                )
+                .body("Creá un lienzo, una nota o importá un PDF; después vas a poder ponerlos en la mesa.")
+                .dashed()
+            }))
+            .maybe_child((current == StartWith::Pick && !recent.is_empty()).then(|| {
                 Group::default().children(recent.into_iter().map(|(id, name)| {
                     let on = chosen.contains(&id);
                     ListRow::new(name)
