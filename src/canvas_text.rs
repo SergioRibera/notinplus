@@ -146,6 +146,8 @@ impl View {
 impl Component for CanvasLayers {
     fn render(&self) -> impl IntoElement {
         let board = Arc::clone(&self.board);
+        let accent = notein_ui_kit::palette().accent;
+        lock(&board).set_lasso_accent([accent.r(), accent.g(), accent.b()]);
         let scene = use_state({
             let board = Arc::clone(&board);
             move || lock(&board).text_scene()

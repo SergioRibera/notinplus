@@ -49,6 +49,8 @@ impl Selection {
 pub(super) struct LassoState {
     path: Vec<(f32, f32)>,
     pub(super) selection: Option<Selection>,
+    /// Theme accent the loop and frame are drawn in, once the host set it.
+    accent: Option<SkColor>,
 }
 
 /// Even-odd point in polygon.
@@ -423,14 +425,23 @@ impl Board {
             .map(|s| s.offset)
     }
 
+    /// Draw the lasso in the theme accent `[r, g, b]`.
+    pub const fn set_lasso_accent(&mut self, [r, g, b]: [u8; 3]) {
+        self.lasso.accent = Some(SkColor::from_rgb(r, g, b));
+    }
+
     /// The loop being drawn and the selection frame, in world space.
     pub(super) fn paint_lasso(&self, canvas: &Canvas) {
         let scale = self.viewport.scale.max(f32::EPSILON);
+        let accent = self
+            .lasso
+            .accent
+            .unwrap_or_else(|| SkColor::from_rgb(0x7B, 0x8C, 0xFF));
         let mut line = Paint::default();
         line.set_anti_alias(true);
         line.set_style(PaintStyle::Stroke);
         line.set_stroke_width(1.5 / scale);
-        line.set_color(SkColor::from_argb(230, 0x7B, 0x8C, 0xFF));
+        line.set_color(accent.with_a(230));
         line.set_path_effect(PathEffect::dash(&[6.0 / scale, 4.0 / scale], 0.0));
         if self.lasso.path.len() > 1 {
             let mut builder = PathBuilder::new();
@@ -450,7 +461,7 @@ impl Board {
                 s.bounds.3 + s.offset.1 + pad,
             );
             let mut fill = Paint::default();
-            fill.set_color(SkColor::from_argb(24, 0x7B, 0x8C, 0xFF));
+            fill.set_color(accent.with_a(24));
             canvas.draw_rect(freya_engine::prelude::Rect::new(x0, y0, x1, y1), &fill);
             canvas.draw_rect(freya_engine::prelude::Rect::new(x0, y0, x1, y1), &line);
         }
