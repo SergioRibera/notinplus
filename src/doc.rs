@@ -852,6 +852,16 @@ impl Doc {
     pub fn stroke_count(&self) -> usize {
         self.layers.iter().map(|l| l.strokes.len()).sum()
     }
+
+    /// Nothing written on it: no strokes, text, glyphs or bookmarks.
+    #[must_use]
+    pub fn is_blank(&self) -> bool {
+        self.bookmarks.is_empty()
+            && self
+                .layers
+                .iter()
+                .all(|l| l.strokes.is_empty() && l.texts.is_empty() && l.glyphs.is_empty())
+    }
 }
 
 #[cfg(test)]

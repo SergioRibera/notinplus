@@ -268,3 +268,18 @@ fn settings_renders() {
 fn search_renders() {
     render("search-desktop", (1280.0, 860.0), search_empty);
 }
+
+fn mesa() -> Element {
+    let data = crate::state::LibraryView::get().data();
+    let id = data.and_then(|d| d.active_workspace());
+    match id {
+        Some(id) => crate::screens::mesa::Mesa { id }.into_element(),
+        None => rect().into_element(),
+    }
+}
+
+#[test]
+fn mesa_renders() {
+    render("mesa-desktop", (1440.0, 900.0), mesa);
+    render("mesa-phone", (390.0, 844.0), mesa);
+}

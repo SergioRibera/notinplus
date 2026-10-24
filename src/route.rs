@@ -58,7 +58,7 @@ pub struct Space {
 
 impl Component for Space {
     fn render(&self) -> impl IntoElement {
-        WorkspaceView { id: self.id }
+        crate::screens::mesa::Mesa { id: self.id }
     }
 }
 
