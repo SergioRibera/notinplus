@@ -1018,8 +1018,10 @@ impl Board {
             Some(layer) if !layer.locked => {}
             _ => return,
         }
+        let Some(brush) = self.doc.register_brush(self.current_preset) else {
+            return;
+        };
         self.active_layer_at_begin = Some(target);
-        let brush = self.doc.register_brush(self.current_preset);
         let id = self.doc.allocate_stroke_id();
         self.active = Some(Stroke::new(id, brush, self.current_color, point));
         // Latch straight-mode at gesture start so an in-flight tip
@@ -1728,10 +1730,9 @@ impl Board {
         // borrows, then hand them to the session under a mutable one.
         let mut fresh: Vec<(u32, Stroke)> = Vec::new();
         {
-            let session = self
-                .erase_session
-                .as_ref()
-                .expect("erase_session presence checked at fn entry");
+            let Some(session) = self.erase_session.as_ref() else {
+                return;
+            };
             for id in candidates {
                 if session.contains(id) {
                     continue;
@@ -1767,10 +1768,9 @@ impl Board {
             }
         }
 
-        let session = self
-            .erase_session
-            .as_mut()
-            .expect("erase_session presence checked at fn entry");
+        let Some(session) = self.erase_session.as_mut() else {
+            return;
+        };
         session.push_circle(sample.x, sample.y, radius);
         for (layer_id, stroke) in fresh {
             session.snapshot(layer_id, stroke);

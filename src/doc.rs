@@ -113,7 +113,7 @@ impl Default for Doc {
                 // The seed only touches containers this build created;
                 // failure would mean the store itself is broken.
                 log::error!("seed doc store: {err}");
-                DocStore::seeded().unwrap_or_else(|_| unreachable!("fresh store cannot fail twice"))
+                DocStore::unseeded()
             }
         };
         Self {
@@ -685,17 +685,15 @@ impl Doc {
     /// [`BrushId`]. Deduping by structural equality keeps identical
     /// palette entries from bloating the registry when a doc is loaded
     /// and edited across sessions.
-    /// # Panics
-    /// If the registry already holds `u16::MAX` presets and the new
-    /// entry would overflow. In practice a document never approaches
-    /// this ceiling.
-    pub fn register_brush(&mut self, preset: BrushPreset) -> BrushId {
+    /// `None` once the registry holds `u16::MAX` presets, which no real
+    /// document reaches.
+    pub fn register_brush(&mut self, preset: BrushPreset) -> Option<BrushId> {
         if let Some(idx) = self.brushes.iter().position(|b| *b == preset) {
-            return BrushId(u16::try_from(idx).expect("brush registry overflow"));
+            return u16::try_from(idx).ok().map(BrushId);
         }
-        let id = BrushId(u16::try_from(self.brushes.len()).expect("brush registry overflow"));
+        let id = BrushId(u16::try_from(self.brushes.len()).ok()?);
         self.emit(DocOp::RegisterBrush { preset });
-        id
+        Some(id)
     }
 
     #[must_use]
@@ -877,7 +875,7 @@ mod tests {
     #[test]
     fn snapshot_round_trips_every_kind_of_content() {
         let mut d = Doc::default();
-        let bid = d.register_brush(BrushPreset::pen());
+        let bid = d.register_brush(BrushPreset::pen()).expect("brush slot");
         let sid = d.push_stroke(bid, [1, 2, 3, 4], vec![point(0.0, 0.0)]);
         let l2 = d.add_layer("L2");
         d.set_active_layer(l2);
@@ -916,9 +914,9 @@ mod tests {
         let va = a.version();
         let vb = b.version();
 
-        let brush_a = a.register_brush(BrushPreset::pen());
+        let brush_a = a.register_brush(BrushPreset::pen()).expect("brush slot");
         let sa = a.push_stroke(brush_a, [1; 4], vec![point(0.0, 0.0)]);
-        let brush_b = b.register_brush(BrushPreset::marker());
+        let brush_b = b.register_brush(BrushPreset::marker()).expect("brush slot");
         let sb = b.push_stroke(brush_b, [2; 4], vec![point(5.0, 5.0)]);
         let lb = b.add_layer("from b");
 
@@ -937,7 +935,7 @@ mod tests {
     #[test]
     fn remote_removal_drops_the_stroke_here() {
         let mut a = Doc::default();
-        let bid = a.register_brush(BrushPreset::pen());
+        let bid = a.register_brush(BrushPreset::pen()).expect("brush slot");
         let sid = a.push_stroke(bid, [1; 4], vec![point(0.0, 0.0)]);
         let mut b = Doc::from_snapshot(&a.snapshot_bytes().unwrap()).unwrap();
         let before = a.version();
@@ -951,7 +949,7 @@ mod tests {
     #[test]
     fn clone_is_an_independent_replica() {
         let mut a = Doc::default();
-        let bid = a.register_brush(BrushPreset::pen());
+        let bid = a.register_brush(BrushPreset::pen()).expect("brush slot");
         let mut c = a.clone();
         let only_in_clone = c.push_stroke(bid, [1; 4], vec![point(0.0, 0.0)]);
         assert!(a.find_stroke(only_in_clone).is_none());
@@ -964,8 +962,8 @@ mod tests {
     #[test]
     fn register_dedupes() {
         let mut d = Doc::default();
-        let a = d.register_brush(BrushPreset::pen());
-        let b = d.register_brush(BrushPreset::pen());
+        let a = d.register_brush(BrushPreset::pen()).expect("brush slot");
+        let b = d.register_brush(BrushPreset::pen()).expect("brush slot");
         assert_eq!(a, b);
         assert_eq!(d.brushes.len(), 1);
     }
@@ -973,7 +971,7 @@ mod tests {
     #[test]
     fn strokes_iterator_flattens_layers() {
         let mut d = Doc::default();
-        let bid = d.register_brush(BrushPreset::pen());
+        let bid = d.register_brush(BrushPreset::pen()).expect("brush slot");
         d.push_stroke(bid, [0; 4], vec![point(0.0, 0.0)]);
         let l2 = d.add_layer("Layer 2");
         d.set_active_layer(l2);
@@ -988,7 +986,7 @@ mod tests {
         let l2 = d.add_layer("Layer 2");
         assert!(d.set_active_layer(l2));
         assert_eq!(d.active_layer, l2);
-        let bid = d.register_brush(BrushPreset::pen());
+        let bid = d.register_brush(BrushPreset::pen()).expect("brush slot");
         let sid = d.push_stroke(bid, [0, 0, 0, 255], vec![point(0.0, 0.0)]);
         assert!(d.layer(l2).unwrap().strokes.iter().any(|s| s.id == sid));
         assert!(d.layer(0).unwrap().strokes.is_empty());
@@ -1008,7 +1006,7 @@ mod tests {
     #[test]
     fn clear_resets_store_and_state_alike() {
         let mut d = Doc::default();
-        let bid = d.register_brush(BrushPreset::pen());
+        let bid = d.register_brush(BrushPreset::pen()).expect("brush slot");
         d.push_stroke(bid, [0; 4], vec![point(0.0, 0.0)]);
         d.add_layer("Layer 2");
         d.clear();

@@ -129,7 +129,6 @@ fn spawn_prefs_worker(board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
 }
 
 pub fn run() {
-
     #[cfg(target_os = "android")]
     {
         use freya::prelude::NativeEvent;
@@ -141,12 +140,20 @@ pub fn run() {
         // Android. Pre-build the event loop ourselves, hand off the app
         // handle that `#[istmo::mobile_app]` stashed, and pass the loop
         // in via `with_event_loop`.
-        let app = istmo::android::android_app()
-            .expect("AndroidApp not set; #[istmo::mobile_app] must run before app::run_mobile");
-        let event_loop = EventLoop::<NativeEvent>::with_user_event()
+        let Some(app) = istmo::android::android_app() else {
+            log::error!("no AndroidApp: #[istmo::mobile_app] must run before app::run");
+            return;
+        };
+        let event_loop = match EventLoop::<NativeEvent>::with_user_event()
             .with_android_app(app)
             .build()
-            .expect("failed to build Android event loop");
+        {
+            Ok(event_loop) => event_loop,
+            Err(err) => {
+                log::error!("android event loop: {err}");
+                return;
+            }
+        };
         install_global_router();
         launch(
             LaunchConfig::new()
@@ -209,23 +216,23 @@ thread_local! {
         const { std::cell::OnceCell::new() };
 }
 
+fn new_router() -> freya::router::RouterContext {
+    freya::router::RouterContext::create_global::<crate::route::Route>(
+        freya::router::RouterConfig::default().with_initial_path(crate::route::Route::Home),
+    )
+}
+
+/// Create the router before launch, so every scope shares it.
 fn install_global_router() {
     GLOBAL_ROUTER.with(|cell| {
-        let _ = cell.get_or_init(|| {
-            freya::router::RouterContext::create_global::<crate::route::Route>(
-                freya::router::RouterConfig::default().with_initial_path(crate::route::Route::Home),
-            )
-        });
+        cell.get_or_init(new_router);
     });
 }
 
+/// The app's router.
 #[must_use]
 pub fn global_router() -> freya::router::RouterContext {
-    GLOBAL_ROUTER.with(|cell| {
-        cell.get()
-            .cloned()
-            .expect("global_router: install_global_router must run before any route push")
-    })
+    GLOBAL_ROUTER.with(|cell| cell.get_or_init(new_router).clone())
 }
 
 /// Root layout that measures its own area and hosts the shared

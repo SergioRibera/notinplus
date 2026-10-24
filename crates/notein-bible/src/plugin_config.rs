@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, PoisonError, RwLock};
 
 use notein_sdk::{
     ConfigEnumOption, ConfigError, ConfigField, ConfigSchema, ConfigValue,
@@ -134,12 +134,12 @@ pub fn apply_set(
         ) => return Err(ConfigError::TypeMismatch),
         _ => return Err(ConfigError::UnknownKey(key.into())),
     }
-    config.write().unwrap().values.insert(key.into(), value);
+    config.write().unwrap_or_else(PoisonError::into_inner).values.insert(key.into(), value);
     Ok(())
 }
 
 pub fn get_value(config: &SharedConfig, key: &str) -> Option<ConfigValue> {
-    config.read().unwrap().values.get(key).cloned()
+    config.read().unwrap_or_else(PoisonError::into_inner).values.get(key).cloned()
 }
 
 pub fn string(config: &SharedConfig, key: &str) -> Option<String> {

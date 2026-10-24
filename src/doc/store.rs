@@ -106,6 +106,14 @@ impl DocStore {
         Ok(store)
     }
 
+    /// An empty store, without the default layer; only for when
+    /// [`Self::seeded`] fails.
+    pub(super) fn unseeded() -> Self {
+        Self {
+            doc: LoroDoc::new(),
+        }
+    }
+
     /// Store decoded from a full snapshot.
     pub(super) fn from_snapshot(bytes: &[u8]) -> Result<Self, DocError> {
         let doc = LoroDoc::new();

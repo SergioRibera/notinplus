@@ -26,8 +26,9 @@ pub struct ParsedRef {
 }
 
 /// `(\d+\s+)?([a-záéíóúñ.]+)\s+(\d+)(?:[:.](\d+)(?:\s*[-–]\s*(\d+))?)?`
-fn re() -> &'static Regex {
-    static R: OnceLock<Regex> = OnceLock::new();
+/// `None` only if the pattern failed to build, which tests rule out.
+fn re() -> Option<&'static Regex> {
+    static R: OnceLock<Option<Regex>> = OnceLock::new();
     R.get_or_init(|| {
         Regex::new(
             r"(?xi)
@@ -46,13 +47,14 @@ fn re() -> &'static Regex {
              \s*$
             ",
         )
-        .expect("ref parser regex must compile")
+        .ok()
     })
+    .as_ref()
 }
 
 #[must_use]
 pub fn parse(input: &str) -> Option<ParsedRef> {
-    let caps = re().captures(input)?;
+    let caps = re()?.captures(input)?;
     let prefix = caps.name("prefix").map(|m| m.as_str().trim());
     let book_raw = caps.name("book")?.as_str().trim_end_matches('.');
     let book_token = prefix.map_or_else(

@@ -116,6 +116,15 @@ pub fn open_copy(item: ItemId) {
     open_with(TabTarget::Item(item), OpenHint::Beside, false);
 }
 
+/// Open `target` on a mesa of its own.
+async fn open_in_new_space(lib: &mut Library, target: TabTarget) -> Result<Opened> {
+    let workspace = lib.create_workspace("", None).await?;
+    lib.set_active_workspace(Some(workspace)).await?;
+    let pane = root_pane(lib, workspace)?;
+    lib.add_tab(workspace, pane, target).await?;
+    Ok(Opened { workspace, pane })
+}
+
 async fn open_in_with(
     lib: &mut Library,
     target: TabTarget,
@@ -123,11 +132,7 @@ async fn open_in_with(
     dedupe: bool,
 ) -> Result<Opened> {
     if hint == OpenHint::NewSpace {
-        let workspace = lib.create_workspace("", None).await?;
-        lib.set_active_workspace(Some(workspace)).await?;
-        let pane = root_pane(lib, workspace)?;
-        lib.add_tab(workspace, pane, target).await?;
-        return Ok(Opened { workspace, pane });
+        return open_in_new_space(lib, target).await;
     }
 
     let workspace = if let Some(id) = lib.active_workspace() {
@@ -175,7 +180,7 @@ async fn open_in_with(
                 .await?
             }
         },
-        OpenHint::NewSpace => unreachable!("handled above"),
+        OpenHint::NewSpace => return open_in_new_space(lib, target).await,
     };
 
     lib.add_tab(workspace, pane, target).await?;

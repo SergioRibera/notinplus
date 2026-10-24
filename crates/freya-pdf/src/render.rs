@@ -79,11 +79,14 @@ impl RenderPool {
             let rx = rx.clone();
             let pending = Arc::clone(&pending);
             let redraw = Arc::clone(&redraw);
-            let handle = std::thread::Builder::new()
+            match std::thread::Builder::new()
                 .name(format!("freya-pdf-worker-{i}"))
                 .spawn(move || worker_loop(&rx, &doc, &cache, &pending, &redraw))
-                .expect("spawn freya-pdf worker thread");
-            workers.push(handle);
+            {
+                Ok(handle) => workers.push(handle),
+                // Fewer workers only render slower.
+                Err(err) => log::warn!("freya-pdf: worker {i} not started: {err}"),
+            }
         }
         *lock(&this.workers) = workers;
 

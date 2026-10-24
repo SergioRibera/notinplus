@@ -155,7 +155,7 @@ fn out(name: &str) -> PathBuf {
 fn shell(body: fn() -> Element, size: (f32, f32)) -> impl Fn() -> Element {
     move || {
         let area = use_state(move || Area::new((0.0, 0.0).into(), size.into()));
-        crate::settings::use_settings_root();
+        let _settings = crate::settings::use_settings_root();
         use_hook(|| {
             if let Some(mut theme) = notein_ui_kit::theme::try_theme() {
                 theme.update(|a| a.reduce_motion = true);

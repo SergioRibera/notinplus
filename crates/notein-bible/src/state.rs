@@ -125,8 +125,7 @@ impl BibleSnapshot {
 
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
-        bincode::encode_to_vec(self, bincode::config::standard())
-            .expect("BibleSnapshot encode: standard config cannot fail")
+        notein_sdk::Payload::to_bytes(self)
     }
 
     #[must_use]

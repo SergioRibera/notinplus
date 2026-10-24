@@ -59,13 +59,9 @@ impl Browse {
 }
 
 /// Install the browse state at the app root.
-pub fn use_browse_root() -> Browse {
+pub fn use_browse_root() {
     let folder = use_state(|| ROOT_FOLDER);
-    use_hook(|| {
-        let browse = Browse { folder };
-        provide_context_for_scope_id(browse, ScopeId::ROOT);
-        browse
-    })
+    use_hook(|| provide_context_for_scope_id(Browse { folder }, ScopeId::ROOT));
 }
 
 /// Go Home and show `folder`.

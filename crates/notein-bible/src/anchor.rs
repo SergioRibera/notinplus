@@ -55,8 +55,7 @@ impl BibleAnchor {
     /// Bincode-encode for storage inside `SourceRef::Plugin::anchor`.
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
-        bincode::encode_to_vec(self, bincode::config::standard())
-            .expect("BibleAnchor encode: standard bincode config cannot fail")
+        notein_sdk::Payload::to_bytes(self)
     }
 
     /// Decode a payload previously produced by [`Self::encode`]. Returns
