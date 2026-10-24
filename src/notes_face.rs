@@ -185,14 +185,12 @@ pub(crate) fn pin_heading(item: ItemId, slug: &str) {
         return;
     };
     if let Err(err) =
-        crate::library::bodies::write_plugin_snapshot(item, KIND_ID, pinned.as_bytes())
+        crate::library::bodies::write_plugin_snapshot(item, KIND_ID, &notein_notes::kind::NoteContent::encode(&pinned))
     {
         log::warn!("notes: pin heading write failed: {err}");
         return;
     }
-    if let Some(index) = crate::builtin::notes_index() {
-        index.update_body(item.0, &pinned);
-    }
+    crate::plugins::content::reindex(item);
 }
 
 fn action(on_press: impl FnMut() + 'static) -> Action {
@@ -317,7 +315,7 @@ fn read_body(item: ItemId) -> String {
     crate::library::bodies::read_plugin_snapshot(item, KIND_ID)
         .ok()
         .flatten()
-        .map(|bytes| notein_notes::body_from_snapshot(&bytes))
+        .map(|bytes| notein_notes::kind::NoteContent::markdown_of(&bytes))
         .unwrap_or_default()
 }
 
@@ -334,16 +332,14 @@ fn save(item: ItemId, doc: &Arc<Mutex<Doc>>, body: &str, title: &str) {
             },
         );
     }
-    if let Err(err) = crate::library::bodies::write_plugin_snapshot(item, KIND_ID, body.as_bytes())
+    if let Err(err) = crate::library::bodies::write_plugin_snapshot(item, KIND_ID, &notein_notes::kind::NoteContent::encode(body))
     {
         log::warn!("notes: snapshot write failed: {err}");
     }
     crate::sync::snapshot_changed(item);
     crate::library::refs::record_note(item, body);
-    if let Some(index) = crate::builtin::notes_index()
-        && !title.is_empty()
-    {
-        index.update(item.0, title, body);
+    if !title.is_empty() {
+        crate::plugins::content::reindex(item);
     }
 }
 

@@ -143,11 +143,9 @@ impl Library {
                 }
                 bodies::write_plugin_snapshot_at(item, &plugin_id, &bytes, updated_at)?;
                 if plugin_id == notein_notes::KIND_ID {
-                    let body = notein_notes::body_from_snapshot(&bytes);
+                    let body = notein_notes::kind::NoteContent::markdown_of(&bytes);
                     refs::record_note(item, &body);
-                    if let Some(index) = crate::builtin::notes_index() {
-                        index.update_body(item.0, &body);
-                    }
+                    crate::plugins::content::reindex(item);
                 }
                 crate::sync::open_docs::notify_snapshot(item);
             }

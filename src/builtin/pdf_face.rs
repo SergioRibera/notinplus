@@ -23,11 +23,9 @@ use freya_pdf::{PdfBackground, PdfDocument};
 
 use crate::app::{AnchorSourceCtx, CanvasMount, CanvasPane};
 use crate::bookmark::SourceRef;
-use crate::builtin::pdf_source;
 use crate::canvas::{AnchorSourceRef, lock};
 use crate::library::{ItemId, ViewSlot, bodies};
 use crate::pdf_select_overlay::PdfSelectOverlay;
-use crate::pdf_viewer::{PdfAnchor, encode_pdf_anchor};
 
 /// Freya component that renders the PDF face. Mounts a shell
 /// [`CanvasPane`] over a plain [`CanvasMount::Item`] (strokes against
@@ -125,12 +123,15 @@ fn load_pdf_background(
 /// navigation can resolve back to this bundle + page.
 fn pdf_anchor_source(item: ItemId) -> AnchorSourceRef {
     Arc::new(move |att| {
-        let anchor = encode_pdf_anchor(PdfAnchor::Page {
-            source: item,
-            page: att.page.0 as u32,
-        });
+        use notein_plugin::payload::Payload;
+        let anchor = crate::plugins::builtin::pdf::PdfAnchor {
+            page: u32::try_from(att.page.0).unwrap_or(u32::MAX),
+            text: None,
+            range: None,
+        }
+        .to_bytes();
         SourceRef::Plugin {
-            plugin_id: pdf_source::KIND_ID.to_owned(),
+            plugin_id: crate::plugins::builtin::pdf::KIND.to_owned(),
             item: item.0,
             anchor,
             selection: None,

@@ -34,9 +34,9 @@ impl Glance {
         let summary = read(item.id, kind)
             .and_then(|bytes| crate::plugins::kind(kind).and_then(|k| k.summary(&bytes)));
         let preview = (kind == notein_notes::kind::KIND)
-            .then(|| bodies::read_doc(item.id).ok())
+            .then(|| read(item.id, kind))
             .flatten()
-            .map(|doc| doc.body().chars().take(PREVIEW_CHARS).collect::<String>())
+            .map(|bytes| notein_notes::kind::NoteContent::markdown_of(&bytes).chars().take(PREVIEW_CHARS).collect::<String>())
             .filter(|text| !text.trim().is_empty());
         Self { summary, preview }
     }

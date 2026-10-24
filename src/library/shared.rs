@@ -26,8 +26,6 @@ pub async fn shared() -> Result<LibHandle> {
         .get_or_try_init(|| async {
             let runtime = istmo::Runtime::global().map_err(LibraryError::Runtime)?;
             let lib = Library::open(&runtime).await?;
-            crate::completion_catalog::prime_pdf_entries(lib.index().items.iter());
-            crate::builtin::prime_notes(lib.index().items.iter());
             Ok(Arc::new(AsyncMutex::new(lib)))
         })
         .await

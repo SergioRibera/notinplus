@@ -226,9 +226,13 @@ pub fn build(
                 canvas_pdf(item.id, item.color.unwrap_or([247, 245, 240, 255]))
                     .map(|b| (format!("{base}.pdf"), b))
             }
-            notein_notes::kind::KIND => bodies::read_doc(item.id)
+            notein_notes::kind::KIND => bodies::read_plugin_snapshot(item.id, notein_notes::kind::KIND)
                 .ok()
-                .map(|d| (format!("{base}.md"), d.body().into_bytes())),
+                .flatten()
+                .map(|bytes| {
+                    let markdown = notein_notes::kind::NoteContent::markdown_of(&bytes);
+                    (format!("{base}.md"), markdown.into_bytes())
+                }),
             notein_bible::kind::KIND => {
                 bible_markdown(item.id).map(|m| (format!("{base} — resaltados.md"), m.into_bytes()))
             }

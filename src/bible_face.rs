@@ -80,7 +80,7 @@ impl Component for BibleViewer {
         // migrations on every render. Fall back to a fresh open only
         // if the registry isn't wired yet (should never happen inside
         // a mounted viewer, but keeps the match total).
-        let db = crate::builtin::bible_canvas()
+        let db = crate::plugins::builtin::bible_kind()
             .map(|c| c.db().clone())
             .or_else(|| Db::open_default().ok())
             .expect("bible db available when viewer mounts");
@@ -326,7 +326,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
         let book = st.current_book.clone();
         let chap = st.current_chapter;
         drop(st);
-        if let Some(canvas) = crate::builtin::bible_canvas() {
+        if let Some(canvas) = crate::plugins::builtin::bible_kind() {
             notein_bible::install_background::spawn_fetch_footnotes(
                 canvas.db().clone(),
                 canvas.config().clone(),
@@ -990,7 +990,7 @@ fn chapter_body(
         Some(data) => {
             let plan = plan_chapter(data);
             let hl_refs: Vec<&BibleBookmark> = highlights.iter().collect();
-            let enabled = crate::builtin::bible_canvas()
+            let enabled = crate::plugins::builtin::bible_kind()
                 .map(|c| plugin_config::effective_enable_crossref(c.config()))
                 .unwrap_or(true);
             let refs = if enabled {
@@ -1054,7 +1054,7 @@ fn extract_target_from_note_text(text: &str) -> Option<(String, u16, u16)> {
     use notein_bible::reference;
     use notein_bible::resolver;
     let parsed = reference::parse(text)?;
-    let db_bible = crate::builtin::bible_canvas()?.db().clone();
+    let db_bible = crate::plugins::builtin::bible_kind()?.db().clone();
     let bibles = db_bible.list_bibles().ok()?;
     let first_bible = bibles.first()?.id.clone();
     let anchor = resolver::resolve_parsed(&db_bible, &first_bible, &parsed)?;

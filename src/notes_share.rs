@@ -5,7 +5,6 @@ use freya::icons::lucide;
 use freya::prelude::*;
 use freya_markdown_editor::prelude::*;
 use istmo_share::{ShareClient, ShareFile, ShareRequest};
-use notein_plugin::NotificationKind;
 
 use crate::components::{FabMenu, FabMenuEntry};
 
@@ -94,23 +93,24 @@ fn send(request: ShareRequest) {
         };
         if let Err(err) = result {
             log::warn!("notes: share failed: {err}");
-            notify(NotificationKind::Error, "No se pudo compartir la nota");
+            notify(true, "No se pudo compartir la nota");
         }
     });
 }
 
 fn copy_markdown(controller: EditorController, dialect: Dialect) {
     match freya::clipboard::Clipboard::set(controller.markdown(dialect)) {
-        Ok(()) => notify(NotificationKind::Success, "Markdown copiado"),
+        Ok(()) => notify(false, "Markdown copiado"),
         Err(err) => {
             log::warn!("notes: copy failed: {err:?}");
-            notify(NotificationKind::Error, "No se pudo copiar");
+            notify(true, "No se pudo copiar");
         }
     }
 }
 
-fn notify(kind: NotificationKind, message: &str) {
-    crate::host_api::host_handle().notify(notein_notes::KIND_ID, kind, message.to_owned());
+fn notify(error: bool, message: &str) {
+    let toast = notein_ui_kit::Toast::new(message.to_owned());
+    notein_ui_kit::Toasts::get().show(if error { toast.tone(notein_ui_kit::ToastTone::Error) } else { toast });
 }
 
 /// `title` as a file name: path separators and reserved characters out,

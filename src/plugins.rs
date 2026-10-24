@@ -7,8 +7,6 @@ pub mod content;
 pub mod dynamic;
 pub mod faces;
 pub mod host;
-mod legacy;
 pub mod navigate;
 
 pub use catalog::{catalog, kind, kind_info};
-pub use legacy::*;

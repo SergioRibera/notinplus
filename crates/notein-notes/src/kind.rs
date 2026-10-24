@@ -37,6 +37,25 @@ pub struct NoteContent {
     pub markdown: String,
 }
 
+impl NoteContent {
+    /// Stored bytes of a note with `markdown`.
+    #[must_use]
+    pub fn encode(markdown: &str) -> Vec<u8> {
+        use notein_sdk::payload::Payload;
+        Self {
+            markdown: markdown.to_owned(),
+        }
+        .to_bytes()
+    }
+
+    /// The markdown of stored note bytes; empty when they are not a note.
+    #[must_use]
+    pub fn markdown_of(bytes: &[u8]) -> String {
+        use notein_sdk::payload::Payload;
+        Self::from_bytes(bytes).map(|c| c.markdown).unwrap_or_default()
+    }
+}
+
 /// The note kind. Shares its index with whoever renders notes.
 #[derive(Debug, Default)]
 pub struct NotesKind {
