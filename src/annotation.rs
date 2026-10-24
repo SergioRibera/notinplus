@@ -201,6 +201,166 @@ struct AnnotationCard {
     expanded: bool,
 }
 
+impl AnnotationCard {
+    /// Close the popover, or the tab when expanded.
+    fn dismiss(self) {
+        if self.expanded {
+            crate::space::close_tab(TabTarget::Annotation(self.id));
+        } else {
+            ModalController::get().close();
+        }
+    }
+
+    /// Colour, title, expand / collapse and close.
+    fn header(self, title: String, dot: Color, item: ItemId) -> Rect {
+        let id = self.id;
+        rect()
+            .width(Size::fill())
+            .height(Size::px(32.0))
+            .horizontal()
+            .cross_align(Alignment::Center)
+            .content(Content::Flex)
+            .spacing(8.0)
+            .child(
+                rect()
+                    .width(Size::px(10.0))
+                    .height(Size::px(10.0))
+                    .corner_radius(3.0)
+                    .background(dot),
+            )
+            .child(
+                label()
+                    .text(title)
+                    .font_size(tokens::text::BODY_LG)
+                    .font_weight(FontWeight::BOLD)
+                    .color(palette().t1)
+                    .max_lines(1),
+            )
+            .child(Spacer)
+            .child(if self.expanded {
+                IconButton::new(freya::icons::lucide::minimize_2(), "Volver al popup")
+                    .size(32.0)
+                    .on_press(move |_| AnnotationPopover::collapse(id, item))
+            } else {
+                IconButton::new(freya::icons::lucide::maximize_2(), "Expandir")
+                    .size(32.0)
+                    .on_press(move |_| AnnotationPopover::expand(id))
+            })
+            .maybe_child((!self.expanded).then(|| {
+                IconButton::new(freya::icons::lucide::x(), "Cerrar")
+                    .size(32.0)
+                    .on_press(|_| ModalController::get().close())
+            }))
+    }
+
+    /// The quoted text, with a bar in the highlight colour.
+    fn quote(self, quote: String, dot: Color) -> Rect {
+        let p = palette();
+        rect()
+            .width(Size::fill())
+            .padding((10.0, 12.0))
+            .corner_radius(tokens::radius::MD)
+            .background(p.s1)
+            .horizontal()
+            .spacing(10.0)
+            .child(
+                rect()
+                    .width(Size::px(3.0))
+                    .height(Size::fill())
+                    .min_height(Size::px(28.0))
+                    .corner_radius(2.0)
+                    .background(dot),
+            )
+            .child(
+                label()
+                    .text(quote)
+                    .font_size(tokens::text::BODY)
+                    .font_slant(FontSlant::Italic)
+                    .color(p.t2)
+                    .max_lines(if self.expanded { 6 } else { 3 })
+                    .text_overflow(TextOverflow::Ellipsis),
+            )
+    }
+
+    /// The five inks, another colour and no colour.
+    fn swatches(
+        current: Option<[u8; 3]>,
+        pick: impl FnMut(Option<[u8; 3]>) + Clone + 'static,
+        mut picking: State<bool>,
+    ) -> Rect {
+        let p = palette();
+        let mut clear = pick.clone();
+        rect()
+            .width(Size::fill())
+            .horizontal()
+            .cross_align(Alignment::Center)
+            .content(Content::Flex)
+            .spacing(10.0)
+            .children(p.highlighters.iter().map(|color| {
+                let rgb = [color.r(), color.g(), color.b()];
+                let mut pick = pick.clone();
+                rect()
+                    .key(color.to_hex_string())
+                    .a11y_role(AccessibilityRole::Button)
+                    .a11y_alt("Color de resaltado")
+                    .width(Size::px(28.0))
+                    .height(Size::px(28.0))
+                    .corner_radius(tokens::radius::FULL)
+                    .background(*color)
+                    .maybe(current == Some(rgb), |r| {
+                        r.border(
+                            Border::new()
+                                .fill(p.t1)
+                                .width(2.0)
+                                .alignment(BorderAlignment::Outer),
+                        )
+                    })
+                    .on_press(move |_| pick(Some(rgb)))
+                    .into_element()
+            }))
+            .child(
+                IconButton::new(freya::icons::lucide::palette(), "Otro color")
+                    .size(32.0)
+                    .active(picking())
+                    .on_press(move |_| picking.toggle()),
+            )
+            .child(Spacer)
+            .child(Button::new("Sin color").ghost().small().on_press(move |_| clear(None)))
+    }
+
+    /// Cancelar and Guardar, with Borrar for an existing annotation.
+    fn footer(self, existing: bool) -> SheetFooter {
+        let id = self.id;
+        let footer = SheetFooter::new([
+            Button::new("Cancelar")
+                .ghost()
+                .on_press(move |_| {
+                    finish(id, AnnotationOutcome::Cancelled);
+                    self.dismiss();
+                })
+                .into_element(),
+            Button::new("Guardar")
+                .primary()
+                .on_press(move |_| {
+                    settle_saving(id);
+                    self.dismiss();
+                })
+                .into_element(),
+        ]);
+        if !existing {
+            return footer;
+        }
+        footer.leading(
+            Button::new("Borrar")
+                .variant(ButtonVariant::Danger)
+                .on_press(move |_| {
+                    finish(id, AnnotationOutcome::Deleted);
+                    self.dismiss();
+                }),
+        )
+    }
+}
+
 impl Component for AnnotationCard {
     fn render(&self) -> impl IntoElement {
         let p = palette();
@@ -212,7 +372,7 @@ impl Component for AnnotationCard {
         provide_context(CloseOnNavigate(Rc::new(move || settle(id))));
         let mut draft = session.draft;
         let current = draft.read().clone();
-        let mut picking = use_state(|| false);
+        let picking = use_state(|| false);
         let body = use_state(move || current.body);
         use_side_effect(move || {
             let text = body.read().clone();
@@ -231,163 +391,13 @@ impl Component for AnnotationCard {
         let dot = current
             .color
             .map_or(p.line_strong, |[r, g, b]| Color::from_rgb(r, g, b));
-        let item = ItemId(request.doc.0);
-        let mut pick_clear = pick.clone();
-
-        let header = rect()
-            .width(Size::fill())
-            .height(Size::px(32.0))
-            .horizontal()
-            .cross_align(Alignment::Center)
-            .content(Content::Flex)
-            .spacing(8.0)
-            .child(
-                rect()
-                    .width(Size::px(10.0))
-                    .height(Size::px(10.0))
-                    .corner_radius(3.0)
-                    .background(dot),
-            )
-            .child(
-                label()
-                    .text(request.title.clone())
-                    .font_size(tokens::text::BODY_LG)
-                    .font_weight(FontWeight::BOLD)
-                    .color(p.t1)
-                    .max_lines(1),
-            )
-            .child(Spacer)
-            .child(if expanded {
-                IconButton::new(freya::icons::lucide::minimize_2(), "Volver al popup")
-                    .size(32.0)
-                    .on_press(move |_| AnnotationPopover::collapse(id, item))
-            } else {
-                IconButton::new(freya::icons::lucide::maximize_2(), "Expandir")
-                    .size(32.0)
-                    .on_press(move |_| AnnotationPopover::expand(id))
-            })
-            .maybe_child((!expanded).then(|| {
-                IconButton::new(freya::icons::lucide::x(), "Cerrar")
-                    .size(32.0)
-                    .on_press(|_| ModalController::get().close())
-            }));
-
-        let swatches = rect()
-            .width(Size::fill())
-            .horizontal()
-            .cross_align(Alignment::Center)
-            .content(Content::Flex)
-            .spacing(10.0)
-            .children(p.highlighters.iter().map(|color| {
-                let rgb = [color.r(), color.g(), color.b()];
-                let selected = current.color == Some(rgb);
-                let mut pick = pick.clone();
-                rect()
-                    .key(color.to_hex_string())
-                    .a11y_role(AccessibilityRole::Button)
-                    .a11y_alt("Color de resaltado")
-                    .width(Size::px(28.0))
-                    .height(Size::px(28.0))
-                    .corner_radius(tokens::radius::FULL)
-                    .background(*color)
-                    .maybe(selected, |r| {
-                        r.border(
-                            Border::new()
-                                .fill(p.t1)
-                                .width(2.0)
-                                .alignment(BorderAlignment::Outer),
-                        )
-                    })
-                    .on_press(move |_| pick(Some(rgb)))
-                    .into_element()
-            }))
-            .child(
-                IconButton::new(freya::icons::lucide::palette(), "Otro color")
-                    .size(32.0)
-                    .active(picking())
-                    .on_press(move |_| picking.toggle()),
-            )
-            .child(Spacer)
-            .child(
-                Button::new("Sin color")
-                    .ghost()
-                    .small()
-                    .on_press(move |_| pick_clear(None)),
-            );
-
-        let footer = SheetFooter::new([
-            Button::new("Cancelar")
-                .ghost()
-                .on_press(move |_| {
-                    finish(id, AnnotationOutcome::Cancelled);
-                    if expanded {
-                        crate::space::close_tab(TabTarget::Annotation(id));
-                    } else {
-                        ModalController::get().close();
-                    }
-                })
-                .into_element(),
-            Button::new("Guardar")
-                .primary()
-                .on_press(move |_| {
-                    settle_saving(id);
-                    if expanded {
-                        crate::space::close_tab(TabTarget::Annotation(id));
-                    } else {
-                        ModalController::get().close();
-                    }
-                })
-                .into_element(),
-        ]);
-        let footer = if request.existing {
-            footer.leading(
-                Button::new("Borrar")
-                    .variant(ButtonVariant::Danger)
-                    .on_press(move |_| {
-                        finish(id, AnnotationOutcome::Deleted);
-                        if expanded {
-                            crate::space::close_tab(TabTarget::Annotation(id));
-                        } else {
-                            ModalController::get().close();
-                        }
-                    }),
-            )
-        } else {
-            footer
-        };
-
         rect()
             .width(Size::fill())
             .padding(if expanded { 0.0 } else { 16.0 })
             .spacing(14.0)
-            .child(header)
-            .maybe_child(request.quote.clone().map(|quote| {
-                rect()
-                    .width(Size::fill())
-                    .padding((10.0, 12.0))
-                    .corner_radius(tokens::radius::MD)
-                    .background(p.s1)
-                    .horizontal()
-                    .spacing(10.0)
-                    .child(
-                        rect()
-                            .width(Size::px(3.0))
-                            .height(Size::fill())
-                            .min_height(Size::px(28.0))
-                            .corner_radius(2.0)
-                            .background(dot),
-                    )
-                    .child(
-                        label()
-                            .text(quote)
-                            .font_size(tokens::text::BODY)
-                            .font_slant(FontSlant::Italic)
-                            .color(p.t2)
-                            .max_lines(if expanded { 6 } else { 3 })
-                            .text_overflow(TextOverflow::Ellipsis),
-                    )
-            }))
-            .child(swatches)
+            .child(self.header(request.title.clone(), dot, ItemId(request.doc.0)))
+            .maybe_child(request.quote.clone().map(|quote| self.quote(quote, dot)))
+            .child(Self::swatches(current.color, pick.clone(), picking))
             .maybe_child(picking().then(|| {
                 let mut pick = pick.clone();
                 ColorWheel::new()
@@ -400,7 +410,7 @@ impl Component for AnnotationCard {
                     .min_height(if expanded { 360.0 } else { 96.0 })
                     .auto_focus(),
             )
-            .child(footer)
+            .child(self.footer(request.existing))
             .into_element()
     }
 }
