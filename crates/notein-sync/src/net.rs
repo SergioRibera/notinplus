@@ -78,6 +78,8 @@ pub enum NetEvent {
     Discovered(PeerInfo),
     /// An authenticated channel is open and both sides said hello.
     Connected(PeerInfo),
+    /// A device with an open channel announced a new name.
+    Renamed(PeerInfo),
     /// The channel closed, by request or by silence.
     Disconnected(DeviceId),
     /// An application payload arrived.

@@ -28,6 +28,8 @@ enum Cmd {
     Send { device: DeviceId, bytes: Vec<u8> },
     SetName(String),
     Disconnect(DeviceId),
+    Pause,
+    Resume,
     Shutdown,
 }
 
@@ -122,6 +124,18 @@ impl LanNode {
         self.command(Cmd::Disconnect(device))
     }
 
+    /// Leave the network for now: say goodbye on every channel, stop
+    /// advertising and refuse new channels until [`Self::resume`]. For
+    /// an app sent to the background, which must not look present.
+    pub fn pause(&self) -> Result<(), NetError> {
+        self.command(Cmd::Pause)
+    }
+
+    /// Advertise and accept channels again after [`Self::pause`].
+    pub fn resume(&self) -> Result<(), NetError> {
+        self.command(Cmd::Resume)
+    }
+
     fn command(&self, cmd: Cmd) -> Result<(), NetError> {
         self.cmds.send(cmd).map_err(|_| NetError::Stopped)
     }
@@ -187,6 +201,8 @@ struct Node {
     outbound: HashMap<SocketAddr, ([u8; 32], ZudpSender)>,
     listen_sender: ZudpSender,
     events: flume::Sender<NetEvent>,
+    /// Away: no channels, no hellos answered, nothing discovered.
+    paused: bool,
 }
 
 impl Node {
@@ -235,6 +251,11 @@ impl Node {
             tracing::warn!(target: "notein-sync", peer = %addr, "hello with inconsistent identity");
             return;
         }
+        if self.by_addr.get(&addr) == Some(&beacon.device) && key == Some(beacon.public) {
+            // A hello on a channel already open: the device renamed itself.
+            self.emit(NetEvent::Renamed(PeerInfo::from_beacon(&beacon, addr)));
+            return;
+        }
         let (sender, reply) = if let Some((pinned, sender)) = self.outbound.remove(&addr) {
             if pinned != beacon.public {
                 tracing::warn!(target: "notein-sync", peer = %addr, "hello key differs from pinned key");
@@ -248,7 +269,7 @@ impl Node {
             }
             (self.listen_sender.clone(), true)
         };
-        if beacon.device == self.beacon.device {
+        if beacon.device == self.beacon.device || self.paused {
             return;
         }
         if let Some(previous) = self.links.remove(&beacon.device) {
@@ -285,6 +306,7 @@ impl Node {
 
     async fn on_cmd(&mut self, cmd: Cmd, internal: &tmpsc::UnboundedSender<Internal>) -> bool {
         match cmd {
+            Cmd::ConnectHost { .. } if self.paused => {}
             Cmd::ConnectHost { host, public } => {
                 let internal = internal.clone();
                 let keypair = self.config.key.keypair().clone();
@@ -309,7 +331,10 @@ impl Node {
                 });
             }
             Cmd::Connect { addr, public } => {
-                if self.by_addr.contains_key(&addr) || self.outbound.contains_key(&addr) {
+                if self.paused
+                    || self.by_addr.contains_key(&addr)
+                    || self.outbound.contains_key(&addr)
+                {
                     return true;
                 }
                 spawn_outbound(
@@ -327,7 +352,21 @@ impl Node {
             }
             Cmd::SetName(name) => {
                 self.beacon.name = name;
+                let hello = Frame::Hello(self.beacon.clone());
+                for link in self.links.values() {
+                    Self::send_frame(&link.sender, link.addr, &hello, CONTROL_STREAM).await;
+                }
             }
+            Cmd::Pause => {
+                self.say_goodbye().await;
+                let devices: Vec<DeviceId> = self.links.keys().copied().collect();
+                for device in devices {
+                    self.drop_link(device);
+                }
+                self.outbound.clear();
+                self.paused = true;
+            }
+            Cmd::Resume => self.paused = false,
             Cmd::Disconnect(device) => {
                 if let Some(link) = self.links.get(&device) {
                     Self::send_frame(&link.sender, link.addr, &Frame::Bye, CONTROL_STREAM).await;
@@ -529,13 +568,17 @@ async fn run(
         listen_sender: socket.sender(),
         events,
         config,
+        paused: false,
     };
     spawn_listener(socket, internal_tx.clone());
 
-    let advertise = if node.config.advertise {
+    let start_advertising = |node: &Node| {
+        if !node.config.advertise {
+            return None;
+        }
         let cfg = DiscoveryConfig::new(APP_ID, local_addr.port())
             .discovery_port(node.config.discovery_port)
-            .meta(beacon_bytes(&beacon));
+            .meta(beacon_bytes(&node.beacon));
         match Discovery::advertise(cfg) {
             Ok(handle) => Some(handle),
             Err(err) => {
@@ -543,9 +586,8 @@ async fn run(
                 None
             }
         }
-    } else {
-        None
     };
+    let mut advertise = start_advertising(&node);
     let mut scan = if node.config.scan {
         let cfg = DiscoveryConfig::new(APP_ID, 0)
             .discovery_port(node.config.discovery_port)
@@ -570,12 +612,21 @@ async fn run(
         tokio::select! {
             cmd = cmds.recv_async() => {
                 let Ok(cmd) = cmd else { break };
-                let rename = matches!(cmd, Cmd::SetName(_));
+                let (rename, pause, resume) = (
+                    matches!(cmd, Cmd::SetName(_)),
+                    matches!(cmd, Cmd::Pause),
+                    matches!(cmd, Cmd::Resume),
+                );
                 if !node.on_cmd(cmd, &internal_tx).await {
                     break;
                 }
                 if rename && let Some(handle) = &advertise {
                     handle.set_meta(beacon_bytes(&node.beacon));
+                }
+                if pause {
+                    advertise = None;
+                } else if resume && advertise.is_none() {
+                    advertise = start_advertising(&node);
                 }
             }
             internal = internal_rx.recv() => {
@@ -587,7 +638,7 @@ async fn run(
             _ = ticker.tick() => node.on_tick().await,
             found = next_peer(&mut scan) => {
                 let Some(beacon) = decode_beacon(&found.meta) else { continue };
-                if beacon.is_valid() && beacon.device != node.beacon.device {
+                if beacon.is_valid() && beacon.device != node.beacon.device && !node.paused {
                     node.emit(NetEvent::Discovered(PeerInfo::from_beacon(&beacon, found.data_addr)));
                 }
             }
@@ -731,6 +782,62 @@ mod tests {
             _ => None,
         });
         assert_eq!(gone, key_a.id());
+    }
+
+    #[test]
+    fn a_rename_reaches_open_channels() {
+        let key_a = DeviceKey::generate();
+        let key_b = DeviceKey::generate();
+        let a = LanNode::start(quiet(key_a.clone(), "A")).unwrap();
+        let b = LanNode::start(quiet(key_b.clone(), "B")).unwrap();
+        a.connect(loopback(&b), *key_b.public()).unwrap();
+        wait_for(&b, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
+        wait_for(&a, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
+        a.set_name("A nuevo").unwrap();
+        let renamed = wait_for(&b, |e| match e {
+            NetEvent::Renamed(p) => Some(p),
+            _ => None,
+        });
+        assert_eq!(renamed.device, key_a.id());
+        assert_eq!(renamed.name, "A nuevo");
+        // The channel is still the same one: messages keep flowing.
+        a.send(key_b.id(), b"sigo".to_vec()).unwrap();
+        let bytes = wait_for(&b, |e| match e {
+            NetEvent::Message { bytes, .. } => Some(bytes),
+            _ => None,
+        });
+        assert_eq!(bytes, b"sigo");
+    }
+
+    #[test]
+    fn a_paused_node_leaves_and_comes_back() {
+        let key_a = DeviceKey::generate();
+        let key_b = DeviceKey::generate();
+        let a = LanNode::start(quiet(key_a.clone(), "A")).unwrap();
+        let b = LanNode::start(quiet(key_b.clone(), "B")).unwrap();
+        a.connect(loopback(&b), *key_b.public()).unwrap();
+        wait_for(&b, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
+        a.pause().unwrap();
+        let gone = wait_for(&b, |e| match e {
+            NetEvent::Disconnected(d) => Some(d),
+            _ => None,
+        });
+        assert_eq!(gone, key_a.id());
+        // While away nobody gets in.
+        b.connect(loopback(&a), *key_a.public()).unwrap();
+        let until = Instant::now() + Duration::from_millis(800);
+        while let Ok(event) = b
+            .events()
+            .recv_timeout(until.saturating_duration_since(Instant::now()))
+        {
+            assert!(
+                !matches!(event, NetEvent::Connected(_)),
+                "joined a paused node"
+            );
+        }
+        a.resume().unwrap();
+        a.connect(loopback(&b), *key_b.public()).unwrap();
+        wait_for(&b, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
     }
 
     #[test]

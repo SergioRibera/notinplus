@@ -177,6 +177,11 @@ pub enum DriverEvent {
         device: DeviceId,
         reason: PairFailure,
     },
+    /// A trusted device took a new name; the profile changed.
+    Renamed {
+        device: DeviceId,
+        name: String,
+    },
     /// A trusted device or share member came online or went away.
     PeerOnline {
         device: DeviceId,
@@ -733,6 +738,12 @@ impl<R: Replica> SyncDriver<R> {
             NetEvent::Discovered(peer) => self.on_discovered(peer, &mut out),
             NetEvent::Connected(peer) => self.on_connected(peer, &mut out)?,
             NetEvent::Disconnected(device) => self.on_disconnected(device, &mut out),
+            NetEvent::Renamed(peer) => {
+                if let Some(open) = self.connected.get_mut(&peer.device) {
+                    open.name.clone_from(&peer.name);
+                }
+                self.refresh_name(&peer, &mut out);
+            }
             NetEvent::Message { from, bytes } => self.on_message(from, &bytes, &mut out)?,
             NetEvent::ConnectFailed { addr, .. } => self.on_connect_failed(addr, &mut out),
             NetEvent::Stopped(_) => self.on_stopped(&mut out),
@@ -754,7 +765,31 @@ impl<R: Replica> SyncDriver<R> {
             .collect()
     }
 
+    /// Keep a trusted device's stored name in step with the one it
+    /// announces.
+    fn refresh_name(&mut self, peer: &PeerInfo, out: &mut Vec<Action>) {
+        let Some(known) = self
+            .profile
+            .trusted()
+            .iter()
+            .find(|d| d.id == peer.device)
+            .filter(|d| d.name != peer.name && !peer.name.is_empty())
+            .cloned()
+        else {
+            return;
+        };
+        self.profile.trust(TrustedDevice {
+            name: peer.name.clone(),
+            ..known
+        });
+        out.push(Action::Event(DriverEvent::Renamed {
+            device: peer.device,
+            name: peer.name.clone(),
+        }));
+    }
+
     fn on_discovered(&mut self, peer: PeerInfo, out: &mut Vec<Action>) {
+        self.refresh_name(&peer, out);
         let device = peer.device;
         self.known_keys.insert(device, peer.public);
         let wants_pair = self.intent.as_ref().is_some_and(|i| i.device == device);
@@ -777,6 +812,7 @@ impl<R: Replica> SyncDriver<R> {
         peer: PeerInfo,
         out: &mut Vec<Action>,
     ) -> Result<(), SyncError<R::Error>> {
+        self.refresh_name(&peer, out);
         let device = peer.device;
         self.known_keys.insert(device, peer.public);
         self.connected.insert(device, peer);
@@ -2041,6 +2077,27 @@ mod tests {
                 online: false
             })]
         );
+    }
+
+    #[test]
+    fn a_trusted_device_renaming_itself_updates_its_stored_name() {
+        let mut a = driver("Tablet");
+        let b = driver("PC");
+        a.profile_mut()
+            .trust(TrustedDevice::new(*b.profile.key().public(), "PC", 1));
+        a.on_event(NetEvent::Connected(info(&b, 2))).unwrap();
+        let renamed = PeerInfo {
+            name: "PC del estudio".into(),
+            ..info(&b, 2)
+        };
+        let out = a.on_event(NetEvent::Renamed(renamed.clone())).unwrap();
+        assert_eq!(a.profile.trusted()[0].name, "PC del estudio");
+        assert!(out.contains(&Action::Event(DriverEvent::Renamed {
+            device: b.profile.id(),
+            name: "PC del estudio".into(),
+        })));
+        // The same name again changes nothing.
+        assert!(a.on_event(NetEvent::Renamed(renamed)).unwrap().is_empty());
     }
 
     #[test]

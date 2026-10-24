@@ -499,7 +499,7 @@ fn serve(events: &flume::Receiver<NetEvent>, sender: crate::net::lan::LanSender,
                     serving.on_message(from, message);
                 }
             }
-            NetEvent::Discovered(_) | NetEvent::ConnectFailed { .. } => {}
+            NetEvent::Discovered(_) | NetEvent::Renamed(_) | NetEvent::ConnectFailed { .. } => {}
             NetEvent::Stopped(reason) => {
                 tracing::error!(target: "notein-relay", "transport stopped: {reason}");
                 return;
