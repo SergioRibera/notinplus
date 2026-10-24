@@ -53,6 +53,19 @@ pub struct ShareView {
     pub viewers: Vec<DeviceId>,
 }
 
+impl ShareView {
+    /// Whether someone else in the session is connected to this device
+    /// (`me`): the owner, for a guest, or any other member.
+    #[must_use]
+    pub fn anyone_here(&self, me: Option<DeviceId>) -> bool {
+        (!self.is_owner && self.owner_online)
+            || self
+                .members
+                .iter()
+                .any(|(member, online)| *online && Some(member.device) != me)
+    }
+}
+
 /// What the UI reads.
 #[derive(Clone, Debug, Default)]
 pub struct SyncSnapshot {
@@ -765,12 +778,28 @@ impl Service {
 
     fn snapshot(&self) -> SyncSnapshot {
         let profile = self.driver.profile();
-        let docs = self
+        let mut docs: HashMap<ItemId, DocStatus> = self
             .driver
             .with_replica(|r| r.known_docs().to_vec())
             .into_iter()
             .map(|doc| (ItemId(doc.0), self.driver.engine().status(doc)))
             .collect();
+        // A shared document travels on its share, not between this
+        // user's devices: its share knows where it stands.
+        for share in self.driver.shares() {
+            for doc in &share.docs {
+                let Some(status) = self.driver.share_status(share.id, *doc) else {
+                    continue;
+                };
+                docs.entry(ItemId(doc.0))
+                    .and_modify(|known| {
+                        if *known == DocStatus::Unknown {
+                            *known = status;
+                        }
+                    })
+                    .or_insert(status);
+            }
+        }
         SyncSnapshot {
             device: Some(profile.id()),
             name: profile.name().to_owned(),

@@ -823,8 +823,6 @@ fn join_progress(snapshot: &SyncSnapshot, joined: Option<&ShareView>) -> (String
 
 impl Component for Joining {
     fn render(&self) -> impl IntoElement {
-        use freya::icons::lucide;
-        let p = palette();
         let snapshot = crate::sync::use_sync().read().clone();
         // Shares that existed before this join; the new one is the other.
         let known = use_hook(|| {
@@ -868,7 +866,7 @@ impl Component for Joining {
                     .horizontal()
                     .cross_align(Alignment::Center)
                     .spacing(8.0)
-                    .child(Icon::new(lucide::loader_circle()).size(18.0).color(p.accent))
+                    .child(notein_ui_kit::Spinner::default())
                     .child(
                         Text::new(if title.is_empty() {
                             "Uniéndose…".to_owned()
