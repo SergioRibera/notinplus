@@ -70,143 +70,163 @@ impl Line {
     }
 }
 
-/// The commands for the focused document and the mesa.
-fn commands(data: &LibraryData, ops: Ops, ui: MesaUi, focus: Option<&Focus>) -> Vec<Command> {
-    use freya::icons::lucide;
-    let mut out = Vec::new();
-    let mut push = |label: &str, shortcut: Option<&'static str>, icon: Bytes, run: Rc<dyn Fn()>| {
-        out.push(Command {
-            label: label.to_owned(),
+impl Command {
+    fn new(
+        label: impl Into<String>,
+        shortcut: Option<&'static str>,
+        icon: Bytes,
+        run: impl Fn() + 'static,
+    ) -> Self {
+        Self {
+            label: label.into(),
             shortcut,
             icon,
-            run,
-        });
-    };
+            run: Rc::new(run),
+        }
+    }
+}
+
+/// The commands for the focused document and the mesa.
+fn commands(data: &LibraryData, ops: Ops, ui: MesaUi, focus: Option<&Focus>) -> Vec<Command> {
+    let mut out = Vec::new();
     if let Some(focus) = focus {
-        let pane = focus.pane;
-        push(
+        out.extend(pane_commands(focus, ops));
+        if let Some(item) = focus.item().filter(|i| data.item(*i).is_some()) {
+            out.extend(document_commands(data, item));
+        }
+    }
+    out.extend(mesa_commands(ui));
+    out
+}
+
+/// What can be done with the focused pane.
+fn pane_commands(focus: &Focus, ops: Ops) -> Vec<Command> {
+    use freya::icons::lucide;
+    let pane = focus.pane;
+    let mut out = vec![
+        Command::new(
             "Nueva pestaña",
             Some("Ctrl T"),
             lucide::plus(),
-            Rc::new(move || ops.new_tab(pane)),
-        );
-        push(
+            move || {
+                ops.new_tab(pane);
+            },
+        ),
+        Command::new(
             "Dividir el panel",
             Some("Ctrl \\"),
             lucide::columns_2(),
-            Rc::new(move || ops.split(pane, SplitOrientation::Horizontal)),
-        );
-        push(
+            move || {
+                ops.split(pane, SplitOrientation::Horizontal);
+            },
+        ),
+        Command::new(
             "Borrador en este panel",
             None,
             lucide::pen_line(),
-            Rc::new(move || ops.new_scratch(pane)),
-        );
-        if let Some(tab) = focus.tab.clone() {
-            let index = focus.index;
-            push(
-                "Cerrar pestaña",
-                Some("Ctrl W"),
-                lucide::x(),
-                Rc::new(move || ops.close_tab(pane, index, &tab)),
-            );
-        }
-        if let Some(item) = focus.item().filter(|i| data.item(*i).is_some()) {
-            push(
-                "Abrir al lado",
-                None,
-                lucide::columns_2(),
-                Rc::new(move || crate::flows::open_beside(item)),
-            );
-            push(
-                "Cuaderno",
-                None,
-                lucide::notebook_pen(),
-                Rc::new(move || crate::flows::notebook(item)),
-            );
-            push(
-                "Vincular con…",
-                None,
-                lucide::link(),
-                Rc::new(move || crate::flows::link_with(item)),
-            );
-            push(
-                "Compartir…",
-                None,
-                lucide::share_2(),
-                Rc::new(move || crate::flows::share_item(item)),
-            );
-            push(
-                "Exportar…",
-                None,
-                lucide::download(),
-                Rc::new(move || crate::flows::export_items(vec![item])),
-            );
-            push(
-                "Editar…",
-                None,
-                lucide::square_pen(),
-                Rc::new(move || crate::flows::edit_item(item)),
-            );
-            if let Some(kind) = data
-                .item(item)
-                .and_then(|i| crate::plugins::kind(&i.kind.plugin_id))
-            {
-                for action in kind.actions() {
-                    let id = action.id.to_string();
-                    push(
-                        &action.label,
-                        None,
-                        action.icon.clone(),
-                        Rc::new(move || crate::flows::run_kind_action(item, &id)),
-                    );
-                }
-            }
-            push(
-                "Mover a la papelera",
-                None,
-                lucide::trash_2(),
-                Rc::new(move || crate::flows::trash_item(item)),
-            );
-        }
+            move || {
+                ops.new_scratch(pane);
+            },
+        ),
+    ];
+    if let Some(tab) = focus.tab.clone() {
+        let index = focus.index;
+        out.push(Command::new(
+            "Cerrar pestaña",
+            Some("Ctrl W"),
+            lucide::x(),
+            move || {
+                ops.close_tab(pane, index, &tab);
+            },
+        ));
     }
-    push(
-        "Panel del documento",
-        Some("Ctrl B"),
-        lucide::panel_left(),
-        Rc::new(move || ui.toggle_panel()),
-    );
-    push(
-        "Marcadores",
-        None,
-        lucide::bookmark(),
-        Rc::new(move || ui.show_panel(PanelTab::Bookmarks)),
-    );
-    push(
-        "Vínculos",
-        None,
-        lucide::link(),
-        Rc::new(move || ui.show_panel(PanelTab::Links)),
-    );
-    push(
-        "Mapa de vínculos",
-        None,
-        lucide::waypoints(),
-        Rc::new(crate::screens::map::open),
-    );
-    push(
-        "Nueva mesa",
-        Some("Ctrl Shift N"),
-        lucide::layout_grid(),
-        Rc::new(crate::flows::create::new_mesa),
-    );
-    push(
-        "Ajustes",
-        Some("Ctrl ,"),
-        lucide::settings(),
-        Rc::new(crate::screens::settings::open),
-    );
     out
+}
+
+/// What can be done with document `item`, its kind's own actions
+/// included.
+fn document_commands(data: &LibraryData, item: ItemId) -> Vec<Command> {
+    use crate::flows;
+    use freya::icons::lucide;
+    let mut out = vec![
+        Command::new("Abrir al lado", None, lucide::columns_2(), move || {
+            flows::open_beside(item);
+        }),
+        Command::new("Cuaderno", None, lucide::notebook_pen(), move || {
+            flows::notebook(item);
+        }),
+        Command::new("Vincular con…", None, lucide::link(), move || {
+            flows::link_with(item)
+        }),
+        Command::new("Compartir…", None, lucide::share_2(), move || {
+            flows::share_item(item);
+        }),
+        Command::new("Exportar…", None, lucide::download(), move || {
+            flows::export_items(vec![item]);
+        }),
+        Command::new("Editar…", None, lucide::square_pen(), move || {
+            flows::edit_item(item)
+        }),
+    ];
+    if let Some(kind) = data
+        .item(item)
+        .and_then(|i| crate::plugins::kind(&i.kind.plugin_id))
+    {
+        out.extend(kind.actions().into_iter().map(|action| {
+            let id = action.id.to_string();
+            Command::new(action.label.clone(), None, action.icon.clone(), move || {
+                flows::run_kind_action(item, &id);
+            })
+        }));
+    }
+    out.push(Command::new(
+        "Mover a la papelera",
+        None,
+        lucide::trash_2(),
+        move || {
+            flows::trash_item(item);
+        },
+    ));
+    out
+}
+
+/// What can be done with the mesa itself.
+fn mesa_commands(ui: MesaUi) -> Vec<Command> {
+    use freya::icons::lucide;
+    vec![
+        Command::new(
+            "Panel del documento",
+            Some("Ctrl B"),
+            lucide::panel_left(),
+            move || {
+                ui.toggle_panel();
+            },
+        ),
+        Command::new("Marcadores", None, lucide::bookmark(), move || {
+            ui.show_panel(PanelTab::Bookmarks);
+        }),
+        Command::new("Vínculos", None, lucide::link(), move || {
+            ui.show_panel(PanelTab::Links);
+        }),
+        Command::new(
+            "Mapa de vínculos",
+            None,
+            lucide::waypoints(),
+            crate::screens::map::open,
+        ),
+        Command::new(
+            "Nueva mesa",
+            Some("Ctrl Shift N"),
+            lucide::layout_grid(),
+            crate::flows::create::new_mesa,
+        ),
+        Command::new(
+            "Ajustes",
+            Some("Ctrl ,"),
+            lucide::settings(),
+            crate::screens::settings::open,
+        ),
+    ]
 }
 
 /// Split "/pdf romanos" into the kind filter and the query.
@@ -252,154 +272,23 @@ impl Component for Palette {
     fn render(&self) -> impl IntoElement {
         let p = theme();
         let query = use_state(String::new);
-        let mut results = use_state(Results::default);
-        let mut highlighted = use_state(|| 0usize);
-        let data = Arc::clone(&self.data);
-        use_side_effect(move || {
-            let (_, text) = parse(&query.read());
-            highlighted.set(0);
-            if text.trim().is_empty() {
-                results.set(Results::default());
-                return;
-            }
-            let data = Arc::clone(&data);
-            spawn(async move {
-                async_io::Timer::after(DEBOUNCE).await;
-                if parse(&query.peek()).1 != text {
-                    return;
-                }
-                let found = crate::search::run_async(text.clone(), data).await;
-                if parse(&query.peek()).1 == text {
-                    results.set(found);
-                }
-            });
-        });
+        let (results, mut highlighted) = use_palette_search(query, &self.data);
         let raw = query.read().clone();
         let (kind_filter, text) = parse(&raw);
-        let needle = text.trim().to_lowercase();
-        let current = results.read().clone();
-        let keep_kind = |kind: &str| kind_filter.as_deref().is_none_or(|k| k == kind);
-
-        let docs: Vec<Line> = if needle.is_empty() {
-            let mut recent: Vec<_> = self
-                .data
-                .live_items()
-                .filter(|i| keep_kind(&i.kind.plugin_id))
-                .collect();
-            recent.sort_by_key(|i| std::cmp::Reverse(i.updated_at));
-            recent
-                .into_iter()
-                .take(5)
-                .map(|i| Line::Doc(i.id))
-                .collect()
-        } else {
-            current
-                .documents
-                .iter()
-                .filter(|d| keep_kind(&d.kind))
-                .map(|d| Line::Doc(d.item))
-                .collect()
-        };
-        let places: Vec<(String, Vec<Line>)> = current
-            .groups
-            .iter()
-            .filter(|g| keep_kind(&g.kind))
-            .map(|g| {
-                (
-                    g.label.clone(),
-                    g.hits.iter().cloned().map(Line::Place).collect(),
-                )
-            })
-            .collect();
-        let commands: Vec<Line> = if kind_filter.is_some() {
-            Vec::new()
-        } else {
-            self.commands
-                .iter()
-                .filter(|c| needle.is_empty() || c.label.to_lowercase().contains(&needle))
-                .cloned()
-                .map(Line::Command)
-                .collect()
-        };
-        let all: Vec<Line> = commands
-            .iter()
-            .chain(docs.iter())
-            .chain(places.iter().flat_map(|(_, l)| l.iter()))
-            .cloned()
-            .collect();
+        let found = self.found(
+            kind_filter.as_deref(),
+            &text.trim().to_lowercase(),
+            &results.read(),
+        );
+        let all = found.all();
         let count = all.len();
         let selected = (*highlighted.read()).min(count.saturating_sub(1));
-
-        let mut index = 0usize;
-        let mut row = |line: &Line| -> Element {
-            let on = index == selected;
-            index += 1;
-            let action = line.clone();
-            let base = match line {
-                Line::Command(c) => {
-                    let row = ListRow::new(c.label.clone()).icon(c.icon.clone());
-                    match c.shortcut {
-                        Some(keys) => {
-                            row.trailing(Trailing::Element(Kbd::new(keys).into_element()))
-                        }
-                        None => row,
-                    }
-                }
-                Line::Doc(item) => self.data.item(*item).map_or_else(
-                    || ListRow::new("Documento"),
-                    |found| {
-                        let info = crate::plugins::kind_info(&found.kind.plugin_id);
-                        ListRow::new(found.name.clone())
-                            .subtitle(crate::flows::forms::folder_path(&self.data, found.folder))
-                            .kind(
-                                info.as_ref()
-                                    .map_or_else(freya::icons::lucide::file, |k| k.icon.clone()),
-                                info.map_or(p.t3, |k| kind_color(&p, k.color)),
-                            )
-                    },
-                ),
-                Line::Place(place) => {
-                    ListRow::new(place.title.clone()).subtitle(if place.snippet.is_empty() {
-                        place.doc_name.clone()
-                    } else {
-                        format!("{} · {}", place.doc_name, place.snippet)
-                    })
-                }
-            };
-            base.dense(true)
-                .selected(on)
-                .on_press(move |_| action.run(false))
-                .into_element()
+        let mut rows = PaletteRows {
+            selected,
+            data: &self.data,
+            next: 0,
         };
-        let mut sections: Vec<Element> = Vec::new();
-        if !commands.is_empty() {
-            let rows: Vec<Element> = commands.iter().map(&mut row).collect();
-            sections.push(
-                Section::new("Acciones")
-                    .child(notein_ui_kit::Group::default().children(rows))
-                    .into_element(),
-            );
-        }
-        if !docs.is_empty() {
-            let rows: Vec<Element> = docs.iter().map(&mut row).collect();
-            sections.push(
-                Section::new(if needle.is_empty() {
-                    "Recientes"
-                } else {
-                    "Documentos"
-                })
-                .child(notein_ui_kit::Group::default().children(rows))
-                .into_element(),
-            );
-        }
-        for (label, lines) in &places {
-            let rows: Vec<Element> = lines.iter().map(&mut row).collect();
-            sections.push(
-                Section::new(label.clone())
-                    .child(notein_ui_kit::Group::default().children(rows))
-                    .into_element(),
-            );
-        }
+        let mut sections = found.sections(&mut rows, text.trim().is_empty());
         if sections.is_empty() {
             sections.push(
                 Text::new(format!("Nada con «{}»", text.trim()))
@@ -408,7 +297,6 @@ impl Component for Palette {
             );
         }
 
-        let key_lines = all;
         let compact = width_class().is_compact();
         let size = *Platform::get().root_size.read();
         let width = if compact {
@@ -452,7 +340,7 @@ impl Component for Palette {
                     highlighted.set(selected.saturating_sub(1));
                 }
                 Key::Named(NamedKey::Enter) => {
-                    if let Some(line) = key_lines.get(selected) {
+                    if let Some(line) = all.get(selected) {
                         e.stop_propagation();
                         line.run(e.modifiers.ctrl() || e.modifiers.meta());
                     }
@@ -484,5 +372,181 @@ impl Component for Palette {
                     .height(Size::flex(1.0))
                     .child(rect().width(Size::fill()).spacing(12.0).children(sections)),
             )
+    }
+}
+
+/// Search the query (without its "/kind" filter) a moment after it
+/// stops changing. Returns the results and the highlighted line.
+fn use_palette_search(
+    query: State<String>,
+    data: &Arc<LibraryData>,
+) -> (State<Results>, State<usize>) {
+    let mut results = use_state(Results::default);
+    let mut highlighted = use_state(|| 0usize);
+    let data = Arc::clone(data);
+    use_side_effect(move || {
+        let (_, text) = parse(&query.read());
+        highlighted.set(0);
+        if text.trim().is_empty() {
+            results.set(Results::default());
+            return;
+        }
+        let data = Arc::clone(&data);
+        spawn(async move {
+            async_io::Timer::after(DEBOUNCE).await;
+            if parse(&query.peek()).1 != text {
+                return;
+            }
+            let found = crate::search::run_async(text.clone(), data).await;
+            if parse(&query.peek()).1 == text {
+                results.set(found);
+            }
+        });
+    });
+    (results, highlighted)
+}
+
+/// What the palette lists for one query.
+struct Found {
+    commands: Vec<Line>,
+    docs: Vec<Line>,
+    places: Vec<(String, Vec<Line>)>,
+}
+
+impl Palette {
+    /// Lines for `needle` (lower-cased), only of `kind` when given.
+    fn found(&self, kind: Option<&str>, needle: &str, current: &Results) -> Found {
+        let keep_kind = |k: &str| kind.is_none_or(|wanted| wanted == k);
+        let docs = if needle.is_empty() {
+            let mut recent: Vec<_> = self
+                .data
+                .live_items()
+                .filter(|i| keep_kind(&i.kind.plugin_id))
+                .collect();
+            recent.sort_by_key(|i| std::cmp::Reverse(i.updated_at));
+            recent
+                .into_iter()
+                .take(5)
+                .map(|i| Line::Doc(i.id))
+                .collect()
+        } else {
+            current
+                .documents
+                .iter()
+                .filter(|d| keep_kind(&d.kind))
+                .map(|d| Line::Doc(d.item))
+                .collect()
+        };
+        let places = current
+            .groups
+            .iter()
+            .filter(|g| keep_kind(&g.kind))
+            .map(|g| {
+                (
+                    g.label.clone(),
+                    g.hits.iter().cloned().map(Line::Place).collect(),
+                )
+            })
+            .collect();
+        // A kind filter is about documents; actions would only get in the way.
+        let commands = if kind.is_some() {
+            Vec::new()
+        } else {
+            self.commands
+                .iter()
+                .filter(|c| needle.is_empty() || c.label.to_lowercase().contains(needle))
+                .cloned()
+                .map(Line::Command)
+                .collect()
+        };
+        Found {
+            commands,
+            docs,
+            places,
+        }
+    }
+}
+
+impl Found {
+    /// Every line in the order the arrow keys walk them.
+    fn all(&self) -> Vec<Line> {
+        self.commands
+            .iter()
+            .chain(self.docs.iter())
+            .chain(self.places.iter().flat_map(|(_, l)| l.iter()))
+            .cloned()
+            .collect()
+    }
+
+    fn sections(&self, rows: &mut PaletteRows<'_>, idle: bool) -> Vec<Element> {
+        let mut sections = Vec::new();
+        if !self.commands.is_empty() {
+            sections.push(rows.section("Acciones".to_owned(), &self.commands));
+        }
+        if !self.docs.is_empty() {
+            let title = if idle { "Recientes" } else { "Documentos" };
+            sections.push(rows.section(title.to_owned(), &self.docs));
+        }
+        for (label, lines) in &self.places {
+            sections.push(rows.section(label.clone(), lines));
+        }
+        sections
+    }
+}
+
+/// Builds the rows in the order the arrow keys walk them.
+struct PaletteRows<'a> {
+    selected: usize,
+    data: &'a LibraryData,
+    /// Index of the next row.
+    next: usize,
+}
+
+impl PaletteRows<'_> {
+    fn section(&mut self, title: String, lines: &[Line]) -> Element {
+        let rows: Vec<Element> = lines.iter().map(|l| self.row(l)).collect();
+        Section::new(title)
+            .child(notein_ui_kit::Group::default().children(rows))
+            .into_element()
+    }
+
+    fn row(&mut self, line: &Line) -> Element {
+        let p = theme();
+        let on = self.next == self.selected;
+        self.next += 1;
+        let action = line.clone();
+        let base = match line {
+            Line::Command(c) => {
+                let row = ListRow::new(c.label.clone()).icon(c.icon.clone());
+                match c.shortcut {
+                    Some(keys) => row.trailing(Trailing::Element(Kbd::new(keys).into_element())),
+                    None => row,
+                }
+            }
+            Line::Doc(item) => self.data.item(*item).map_or_else(
+                || ListRow::new("Documento"),
+                |found| {
+                    let info = crate::plugins::kind_info(&found.kind.plugin_id);
+                    ListRow::new(found.name.clone())
+                        .subtitle(crate::flows::forms::folder_path(self.data, found.folder))
+                        .kind(
+                            info.as_ref()
+                                .map_or_else(freya::icons::lucide::file, |k| k.icon.clone()),
+                            info.map_or(p.t3, |k| kind_color(&p, k.color)),
+                        )
+                },
+            ),
+            Line::Place(place) => {
+                ListRow::new(place.title.clone()).subtitle(if place.snippet.is_empty() {
+                    place.doc_name.clone()
+                } else {
+                    format!("{} · {}", place.doc_name, place.snippet)
+                })
+            }
+        };
+        base.dense(true)
+            .selected(on)
+            .on_press(move |_| action.run(false))
+            .into_element()
     }
 }
