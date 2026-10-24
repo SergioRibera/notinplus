@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use notein_sdk::{
-    ConfigEnumOption, ConfigError, ConfigField, ConfigFieldKind, ConfigSchema, ConfigValue,
+    ConfigEnumOption, ConfigError, ConfigField, ConfigSchema, ConfigValue,
 };
 
 use crate::db::Db;
@@ -63,79 +63,47 @@ pub fn platform_cache_dir() -> PathBuf {
 /// `db` so `default_bible_id` always shows the real options available
 /// to the user right now.
 pub fn build_schema(db: &Db) -> ConfigSchema {
-    let bibles = db.list_bibles().unwrap_or_default();
-    let options: Vec<ConfigEnumOption> = bibles
+    let options: Vec<ConfigEnumOption> = db
+        .list_bibles()
+        .unwrap_or_default()
         .into_iter()
-        .map(|b| ConfigEnumOption {
-            value: b.id.clone(),
-            label: if b.name_local.is_empty() {
-                b.id
+        .map(|b| {
+            let label = if b.name_local.is_empty() {
+                b.id.clone()
             } else {
                 format!("{} ({})", b.name_local, b.abbrev)
-            },
+            };
+            ConfigEnumOption::new(b.id, label)
         })
         .collect();
+    let default_bible = options.first().map(|o| o.value.clone()).unwrap_or_default();
+    let bible = if options.is_empty() {
+        // Nothing installed yet: a text row, the catalog is the next step.
+        ConfigField::string(KEY_DEFAULT_BIBLE, "Biblia por defecto", 64, "")
+    } else {
+        ConfigField::choice(KEY_DEFAULT_BIBLE, "Biblia por defecto", options, &default_bible)
+    };
 
-    let default_bible_default = options
-        .first()
-        .map(|o| ConfigValue::String(o.value.clone()))
-        .unwrap_or_else(|| ConfigValue::String(String::new()));
-
-    ConfigSchema {
-        version: 1,
-        fields: vec![
-            ConfigField {
-                key: KEY_DEFAULT_BIBLE.into(),
-                label: "Biblia por defecto".into(),
-                help: "Traducción abierta al crear una pestaña nueva.".into(),
-                kind: if options.is_empty() {
-                    // No installed Bibles yet — surface as a string
-                    // field so the user can see something while the
-                    // install modal is their actual next step.
-                    ConfigFieldKind::String { max_len: 64 }
-                } else {
-                    ConfigFieldKind::Enum { options }
-                },
-                default: default_bible_default,
-                aliases: Vec::new(),
-            },
-            ConfigField {
-                key: KEY_MANIFEST_URL.into(),
-                label: "URL del catálogo".into(),
-                help: "Endpoint del manifest biblionlabs / fetch.bible.".into(),
-                kind: ConfigFieldKind::String { max_len: 256 },
-                default: ConfigValue::String(DEFAULT_MANIFEST_URL.into()),
-                aliases: Vec::new(),
-            },
-            ConfigField {
-                key: KEY_FONT_SIZE.into(),
-                label: "Tamaño del texto".into(),
-                help: "Tamaño en píxeles del cuerpo del versículo.".into(),
-                kind: ConfigFieldKind::Float { min: 14.0, max: 32.0, step: 1.0 },
-                default: ConfigValue::Float(DEFAULT_FONT_SIZE),
-                aliases: Vec::new(),
-            },
-            ConfigField {
-                key: KEY_LINE_HEIGHT.into(),
-                label: "Interlineado".into(),
-                help: "Multiplicador de altura de línea del párrafo.".into(),
-                kind: ConfigFieldKind::Float { min: 1.2, max: 2.2, step: 0.05 },
-                default: ConfigValue::Float(DEFAULT_LINE_HEIGHT),
-                aliases: Vec::new(),
-            },
-            ConfigField {
-                key: KEY_ENABLE_CROSSREF.into(),
-                label: "Referencias cruzadas avanzadas".into(),
-                help: "Muestra el ícono + popup con todas las referencias \
-                       de fetch.bible. Las notas TSK (letras a/b/c) se ven \
-                       siempre sin importar esta opción."
-                    .into(),
-                kind: ConfigFieldKind::Bool,
-                default: ConfigValue::Bool(true),
-                aliases: Vec::new(),
-            },
-        ],
-    }
+    ConfigSchema::new(1)
+        .field(bible.help("Traducción abierta al crear una pestaña nueva."))
+        .field(
+            ConfigField::string(KEY_MANIFEST_URL, "URL del catálogo", 256, DEFAULT_MANIFEST_URL)
+                .help("Endpoint del manifest biblionlabs / fetch.bible."),
+        )
+        .field(
+            ConfigField::float(KEY_FONT_SIZE, "Tamaño del texto", 14.0..=32.0, 1.0, DEFAULT_FONT_SIZE)
+                .help("Tamaño en píxeles del cuerpo del versículo."),
+        )
+        .field(
+            ConfigField::float(KEY_LINE_HEIGHT, "Interlineado", 1.2..=2.2, 0.05, DEFAULT_LINE_HEIGHT)
+                .help("Multiplicador de altura de línea del párrafo."),
+        )
+        .field(
+            ConfigField::boolean(KEY_ENABLE_CROSSREF, "Referencias cruzadas avanzadas", true).help(
+                "Muestra el ícono y la lista con todas las referencias de fetch.bible. \
+                 Las notas TSK (letras a/b/c) se ven siempre.",
+            ),
+        )
 }
 
 pub fn apply_set(

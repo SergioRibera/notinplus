@@ -6,14 +6,10 @@
 //! embedded PDF attachments, and a manifest describing every library
 //! entity carried inside.
 //!
-//! On import, the host performs a preflight against the current
-//! library:
-//!
-//! * Any UUID collision (item, folder, tag, workspace) is a hard stop
-//!   — the user cancels or picks a different bundle.
-//! * Missing plugins surface as a warning; bookmarks referencing them
-//!   stay in the merged library with a dangling `SourceRef::Plugin`
-//!   payload. Installing the plugin later normalises those chips.
+//! On import the user reviews the bundle first: items already in the
+//! library are kept, replaced or copied one by one, and items of kinds
+//! no installed plugin provides are imported anyway and open once the
+//! plugin is installed.
 
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -30,7 +26,6 @@ use crate::library::{
     DocKind, Folder, FolderId, Item, ItemId, Library, LibraryError, Link, LinkIndex, LinkKind,
     PaneTab, Tag, TagId, Workspace, WorkspaceId, bodies, refs,
 };
-use notein_plugin::PluginRegistry;
 
 const CODEC: Configuration = config::standard();
 
@@ -115,8 +110,7 @@ pub struct BundleManifest {
     /// Device that made the copy.
     pub exported_by: String,
     /// Distinct `SourceRef::Plugin::plugin_id` values the bookmarks
-    /// inside the bundle reference. Importers cross-check against the
-    /// live [`PluginRegistry`] and warn when any entry is unknown.
+    /// inside the bundle reference.
     pub requires_plugins: Vec<String>,
     pub folders: Vec<Folder>,
     pub items: Vec<Item>,
@@ -309,27 +303,6 @@ pub struct ParsedBundle {
     pub snapshots: HashMap<ItemId, Vec<u8>>,
 }
 
-/// Preflight outcome. The caller refuses to merge when `collisions` is
-/// non-empty and surfaces `missing_plugins` as a non-blocking warning.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Preflight {
-    pub colliding_items: Vec<ItemId>,
-    pub colliding_folders: Vec<FolderId>,
-    pub colliding_tags: Vec<TagId>,
-    pub colliding_workspaces: Vec<WorkspaceId>,
-    pub missing_plugins: Vec<String>,
-}
-
-impl Preflight {
-    #[must_use]
-    pub fn has_collisions(&self) -> bool {
-        !self.colliding_items.is_empty()
-            || !self.colliding_folders.is_empty()
-            || !self.colliding_tags.is_empty()
-            || !self.colliding_workspaces.is_empty()
-    }
-}
-
 /// Decode a bundle from any [`Read`] source into memory. Callers with
 /// a filesystem path should use [`parse_bundle_from_path`].
 ///
@@ -394,43 +367,7 @@ pub fn parse_bundle_from_path(src: &Path) -> Result<ParsedBundle> {
 }
 
 impl ParsedBundle {
-    /// Compare the bundle against the current library + plugin
-    /// registry. Collisions mean "cancel". Missing plugins mean "warn
-    /// but keep going".
-    #[must_use]
-    pub fn preflight(&self, lib: &LibraryData, registry: &PluginRegistry) -> Preflight {
-        let mut out = Preflight::default();
-        for item in &self.manifest.items {
-            if lib.item(item.id).is_some() {
-                out.colliding_items.push(item.id);
-            }
-        }
-        for folder in &self.manifest.folders {
-            if lib.folder(folder.id).is_some() {
-                out.colliding_folders.push(folder.id);
-            }
-        }
-        for tag in &self.manifest.tags {
-            if lib.tag(tag.id).is_some() {
-                out.colliding_tags.push(tag.id);
-            }
-        }
-        for ws in &self.manifest.workspaces {
-            if lib.workspace(ws.id).is_some() {
-                out.colliding_workspaces.push(ws.id);
-            }
-        }
-        for pid in &self.manifest.requires_plugins {
-            if registry.get_source(pid).is_none() && registry.get_canvas(pid).is_none() {
-                out.missing_plugins.push(pid.clone());
-            }
-        }
-        out
-    }
-
-    /// Commit the bundle into `lib`. The caller is expected to have
-    /// run [`ParsedBundle::preflight`] and seen `has_collisions() ==
-    /// false`.
+    /// Commit the bundle into `lib`.
     ///
     /// Missing plugins are not blocking — the merge still writes every
     /// bookmark payload verbatim, so a later plugin install picks the
@@ -744,41 +681,6 @@ fn parse_id<Id: core::str::FromStr>(name: &str, ext: &str) -> Option<Id> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn preflight_detects_item_collision() {
-        let item = ItemId::new_v4();
-        let bundle = ParsedBundle {
-            manifest: BundleManifest {
-                version: BUNDLE_VERSION,
-                exported_at_ms: 0,
-                exported_by: String::new(),
-                requires_plugins: vec!["io.notein.pdf".into()],
-                folders: Vec::new(),
-                items: vec![Item {
-                    id: item,
-                    folder: crate::library::ROOT_FOLDER,
-                    kind: DocKind::plugin(crate::plugins::builtin::canvas::KIND),
-                    name: "x".into(),
-                    color: None,
-                    tags: Vec::new(),
-                    background: Default::default(),
-                    created_at: 0,
-                    updated_at: 0,
-                    thumbnail: None,
-                    trashed: None,
-                }],
-                tags: Vec::new(),
-                workspaces: Vec::new(),
-                links: Vec::new(),
-            },
-            docs: HashMap::new(),
-            pdfs: HashMap::new(),
-            snapshots: HashMap::new(),
-        };
-        assert_eq!(bundle.manifest.items[0].id, item);
-        assert_eq!(bundle.manifest.requires_plugins.len(), 1);
-    }
 
     #[test]
     fn parse_id_round_trips_uuid() {

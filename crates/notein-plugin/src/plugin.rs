@@ -2,9 +2,8 @@
 
 use std::sync::Arc;
 
-use crate::config::{ConfigSchema, ConfigValue};
+use crate::config::{ConfigError, ConfigSchema, ConfigValue};
 use crate::erased::{ErasedKind, KindAdapter};
-use crate::error::ConfigError;
 use crate::face::{ErasedFace, Face, FaceAdapter};
 use crate::info::PluginInfo;
 use crate::kind::DocumentKind;
