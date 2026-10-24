@@ -270,11 +270,55 @@ impl TrashRetention {
     }
 }
 
-/// Settings › Biblioteca.
+/// Order of the library grid.
+#[istmo::message]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum SortOrder {
+    #[default]
+    Modified,
+    Created,
+    Name,
+    Kind,
+}
+
+impl SortOrder {
+    pub const ALL: [Self; 4] = [Self::Modified, Self::Created, Self::Name, Self::Kind];
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Modified => "Modificado",
+            Self::Created => "Creado",
+            Self::Name => "Nombre",
+            Self::Kind => "Tipo",
+        }
+    }
+}
+
+/// How the library shows its documents.
+#[istmo::message]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ShelfLayout {
+    #[default]
+    Grid,
+    List,
+}
+
+/// Settings › Plugins.
+#[istmo::message]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct PluginPrefs {
+    /// Ids of plugins the user turned off.
+    pub disabled: Vec<String>,
+}
+
+/// Settings › Biblioteca, plus how Home was last arranged.
 #[istmo::message]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct LibrarySettings {
     pub trash_retention: TrashRetention,
+    pub sort: SortOrder,
+    pub layout: ShelfLayout,
 }
 
 /// Every user setting.
@@ -285,6 +329,7 @@ pub struct Settings {
     pub pen: PenSettings,
     pub notes: NotesSettings,
     pub library: LibrarySettings,
+    pub plugins: PluginPrefs,
 }
 
 impl Persisted for Settings {

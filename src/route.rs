@@ -28,7 +28,8 @@ use freya_engine::prelude::Color as SkColor;
 use crate::app::CanvasMount;
 use crate::canvas::{Board, Viewport, lock};
 use crate::doc::Doc;
-use crate::home::Home;
+use crate::screens::home::Home;
+use crate::screens::trash::Trash;
 use crate::library::{BackgroundStyle, ItemId, LibraryError, TabTarget, WorkspaceId};
 use crate::prefs;
 use crate::workspace_view::WorkspaceView;
@@ -43,6 +44,8 @@ pub const DEFAULT_PAPER: SkColor = SkColor::from_rgb(250, 250, 248);
 pub enum Route {
     #[route("/")]
     Home,
+    #[route("/trash")]
+    Trash,
     #[route("/space/:id")]
     Space { id: WorkspaceId },
 }

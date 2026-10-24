@@ -7,7 +7,6 @@ use std::sync::Mutex;
 
 use notein_sync::Removal;
 
-use crate::components::SessionEndedSheet;
 use crate::library::ItemId;
 
 /// One session that ended for a guest.
@@ -50,7 +49,7 @@ pub fn listen() {
             for end in ends {
                 match end.reason {
                     Removal::Left => resolve(end),
-                    Removal::Ended | Removal::Expelled => SessionEndedSheet::open(end),
+                    Removal::Ended | Removal::Expelled => crate::screens::collab::session_ended(end),
                 }
             }
             if rx.recv_async().await.is_err() {
@@ -63,7 +62,7 @@ pub fn listen() {
 /// Close the session's tabs, drop its copies and go home.
 pub fn resolve(end: SessionEnd) {
     freya::prelude::spawn_forever(async move {
-        let Ok(handle) = crate::home::open_library().await else {
+        let Ok(handle) = crate::library::shared().await else {
             log::warn!("session end: library unavailable");
             return;
         };

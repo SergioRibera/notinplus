@@ -127,7 +127,7 @@ impl SidebarModal {
     ) {
         let workspace = match router.current::<Route>() {
             Route::Space { id } => Some(id),
-            Route::Home => None,
+            Route::Home | Route::Trash => None,
         };
         let mut tab = state.sidebar_tab;
         tab.set(initial);

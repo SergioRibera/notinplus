@@ -50,6 +50,10 @@ pub fn install() -> Result<(), Box<dyn std::error::Error>> {
     picker.install_release_hook(&runtime);
     runtime.register_host(FilePickerHost::new(picker));
 
+    runtime.register_host(istmo_barcode_scanner::BarcodeScannerHost::new(
+        istmo_barcode_scanner::DesktopBarcodeScanner,
+    ));
+
     match istmo_share::DesktopShare::with_global_registry() {
         Ok(share) => runtime.register_host(istmo_share::ShareHost::new(share)),
         Err(err) => log::warn!("share backend unavailable: {err}"),

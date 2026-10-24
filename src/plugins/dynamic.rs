@@ -79,6 +79,8 @@ pub enum InstallError {
     Load(LoaderError),
     Copy(std::io::Error),
     Catalog(notein_plugin::catalog::CatalogError),
+    Package(zip::result::ZipError),
+    NoManifest,
 }
 
 impl std::fmt::Display for InstallError {
@@ -87,6 +89,8 @@ impl std::fmt::Display for InstallError {
             Self::Load(err) => f.write_str(&err.user_message()),
             Self::Copy(err) => write!(f, "No se pudo copiar el plugin: {err}"),
             Self::Catalog(err) => write!(f, "{err}"),
+            Self::Package(err) => write!(f, "El archivo no es un plugin de Notein: {err}"),
+            Self::NoManifest => f.write_str("El paquete no trae plugin.ntp.kdl"),
         }
     }
 }
@@ -145,4 +149,65 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// A plugin package unpacked into a temporary folder, removed on drop.
+#[derive(Debug)]
+pub struct Staged {
+    root: PathBuf,
+    plugin: PathBuf,
+}
+
+impl Staged {
+    /// Unpack a `.ntp` package (a zip holding the plugin folder).
+    ///
+    /// # Errors
+    /// [`InstallError::Package`] when it is not a readable package, or
+    /// [`InstallError::Copy`] when the files cannot be written.
+    pub fn unpack(bytes: &[u8]) -> Result<Self, InstallError> {
+        let root = plugins_dir()
+            .join(".staging")
+            .join(format!("{:x}", rand_suffix()));
+        std::fs::create_dir_all(&root).map_err(InstallError::Copy)?;
+        let staged = Self {
+            plugin: root.clone(),
+            root,
+        };
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+            .map_err(InstallError::Package)?;
+        archive.extract(&staged.root).map_err(InstallError::Package)?;
+        if staged.root.join(MANIFEST).exists() {
+            return Ok(staged);
+        }
+        let inner = std::fs::read_dir(&staged.root)
+            .map_err(InstallError::Copy)?
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.join(MANIFEST).exists())
+            .ok_or(InstallError::NoManifest)?;
+        Ok(Self {
+            plugin: inner,
+            root: staged.root.clone(),
+        })
+    }
+
+    /// Folder holding the plugin manifest.
+    #[must_use]
+    pub fn folder(&self) -> &Path {
+        &self.plugin
+    }
+}
+
+impl Drop for Staged {
+    fn drop(&mut self) {
+        if let Err(err) = std::fs::remove_dir_all(&self.root) {
+            log::warn!("plugin staging {}: {err}", self.root.display());
+        }
+    }
+}
+
+fn rand_suffix() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos())
 }

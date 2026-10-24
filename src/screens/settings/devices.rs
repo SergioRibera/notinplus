@@ -1,0 +1,678 @@
+//! Ajustes › Dispositivos, and the two modals that link devices and
+//! act on links: Vincular, and Escanear o pegar enlace.
+
+use std::time::{Duration, Instant};
+
+use freya::prelude::*;
+use notein_ui_kit::theme::palette;
+use notein_ui_kit::{
+    Button, ButtonVariant, Group, Icon, IconButton, ListRow, ModalController, Notice, NoticeTone,
+    Section, Segmented, Sheet, SheetFooter, Text, TextField, TextRole, Trailing, tokens,
+};
+
+use crate::sync::{LinkTarget, SyncSnapshot};
+
+/// A pairing code is renewed after this long.
+const CODE_LIFETIME: Duration = Duration::from_secs(5 * 60);
+/// A second tap within this long confirms a destructive row action.
+const CONFIRM_WINDOW: Duration = Duration::from_secs(3);
+/// Side of the QR code.
+const QR: f32 = 208.0;
+
+/// SVG of a QR code carrying `text`, black on white for cameras.
+fn qr_svg(text: &str) -> Option<Bytes> {
+    let code = qrcode::QrCode::new(text.as_bytes()).ok()?;
+    let svg = code
+        .render::<qrcode::render::svg::Color>()
+        .min_dimensions(200, 200)
+        .dark_color(qrcode::render::svg::Color("#000000"))
+        .light_color(qrcode::render::svg::Color("#ffffff"))
+        .build();
+    Some(Bytes::from(svg.into_bytes()))
+}
+
+/// The Dispositivos section.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Devices;
+
+impl Component for Devices {
+    fn render(&self) -> impl IntoElement {
+        use freya::icons::lucide;
+        let p = palette();
+        let sync = crate::sync::use_sync();
+        let snapshot = sync.read().clone();
+        let mut renaming = use_state(|| false);
+        let name = use_state(String::new);
+        let mut confirm = use_state(|| None::<(String, Instant)>);
+        let mut editing_server = use_state(|| false);
+        let server = use_state(String::new);
+
+        let this_device = if renaming() {
+            ListRow::new("Este dispositivo")
+                .icon(lucide::monitor_smartphone())
+                .trailing(Trailing::Element(
+                    rect()
+                        .horizontal()
+                        .cross_align(Alignment::Center)
+                        .spacing(6.0)
+                        .child(rect().width(Size::px(200.0)).child(
+                            TextField::new(name).auto_focus(true).max_len(40).on_submit(
+                                move |text: String| {
+                                    if !text.trim().is_empty() {
+                                        crate::sync::set_device_name(text.trim());
+                                    }
+                                    renaming.set(false);
+                                },
+                            ),
+                        ))
+                        .child(Button::new("Guardar").primary().small().on_press(move |_| {
+                            let text = name.peek().trim().to_owned();
+                            if !text.is_empty() {
+                                crate::sync::set_device_name(text);
+                            }
+                            renaming.set(false);
+                        }))
+                        .into_element(),
+                ))
+        } else {
+            let current = snapshot.name.clone();
+            ListRow::new(snapshot.name.clone())
+                .subtitle("Este dispositivo · así te ven los demás")
+                .icon(lucide::monitor_smartphone())
+                .trailing(Trailing::Element(
+                    Button::new("Renombrar")
+                        .ghost()
+                        .small()
+                        .on_press(move |_| {
+                            let mut name = name;
+                            name.set(current.clone());
+                            renaming.set(true);
+                        })
+                        .into_element(),
+                ))
+        };
+
+        let linked = snapshot.trusted.iter().map(|device| {
+            let online = snapshot.online.contains(&device.id);
+            let id = device.id;
+            let key = format!("{id:?}");
+            let armed = confirm
+                .read()
+                .as_ref()
+                .is_some_and(|(k, at)| *k == key && at.elapsed() < CONFIRM_WINDOW);
+            let since = crate::format::day(device.since, crate::format::now());
+            ListRow::new(device.name.clone())
+                .subtitle(if online {
+                    format!("Conectado · vinculado el {since}")
+                } else {
+                    format!("Sin conexión · vinculado el {since}")
+                })
+                .leading(notein_ui_kit::Leading::Element(
+                    rect()
+                        .width(Size::px(10.0))
+                        .height(Size::px(10.0))
+                        .corner_radius(tokens::radius::FULL)
+                        .background(if online { p.ok } else { p.t3 })
+                        .into_element(),
+                ))
+                .trailing(Trailing::Element(
+                    Button::new(if armed {
+                        "¿Seguro? Tocá de nuevo"
+                    } else {
+                        "Quitar"
+                    })
+                    .variant(if armed {
+                        ButtonVariant::DangerFill
+                    } else {
+                        ButtonVariant::Ghost
+                    })
+                    .small()
+                    .on_press(move |_| {
+                        if armed {
+                            confirm.set(None);
+                            crate::sync::revoke(id);
+                        } else {
+                            confirm.set(Some((key.clone(), Instant::now())));
+                        }
+                    })
+                    .into_element(),
+                ))
+                .into_element()
+        });
+        let linked: Vec<Element> = linked.collect();
+        let none_linked = linked.is_empty();
+
+        let relay = snapshot.relay.clone();
+        let server_row = if editing_server() {
+            ListRow::new("Servidor")
+                .icon(lucide::server())
+                .trailing(Trailing::Element(
+                    rect()
+                        .horizontal()
+                        .cross_align(Alignment::Center)
+                        .spacing(6.0)
+                        .child(
+                            rect().width(Size::px(240.0)).child(
+                                TextField::new(server)
+                                    .placeholder("relay.ejemplo.com:7400")
+                                    .auto_focus(true),
+                            ),
+                        )
+                        .child(Button::new("Guardar").primary().small().on_press(move |_| {
+                            let text = server.peek().trim().to_owned();
+                            crate::sync::set_relay((!text.is_empty()).then_some(text));
+                            editing_server.set(false);
+                        }))
+                        .into_element(),
+                ))
+        } else {
+            let current = relay.clone().unwrap_or_default();
+            ListRow::new("Servidor")
+                .subtitle(match &relay {
+                    Some(addr) if snapshot.relay_online => format!("{addr} · conectado"),
+                    Some(addr) => format!("{addr} · sin conexión"),
+                    None => "Ninguno · solo en la misma red".to_owned(),
+                })
+                .icon(lucide::server())
+                .trailing(Trailing::Element(
+                    Button::new("Cambiar")
+                        .ghost()
+                        .small()
+                        .on_press(move |_| {
+                            let mut server = server;
+                            server.set(current.clone());
+                            editing_server.set(true);
+                        })
+                        .into_element(),
+                ))
+        };
+
+        rect()
+            .width(Size::fill())
+            .spacing(24.0)
+            .child(Group::default().child(this_device))
+            .child(
+                Section::new("Vinculados")
+                    .maybe_child(none_linked.then(|| {
+                        Text::new("Todavía no vinculaste otro dispositivo. Tus documentos se sincronizan entre los dispositivos vinculados.")
+                            .role(TextRole::Hint)
+                    }))
+                    .maybe_child((!none_linked).then(|| Group::default().children(linked)))
+                    .child(
+                        Group::default()
+                            .child(
+                                ListRow::new("Vincular otro dispositivo")
+                                    .icon(lucide::link())
+                                    .chevron()
+                                    .on_press(|_| open_pairing()),
+                            )
+                            .child(
+                                ListRow::new("Escanear o pegar enlace")
+                                    .icon(lucide::scan_qr_code())
+                                    .chevron()
+                                    .on_press(|_| open_link_sheet()),
+                            ),
+                    ),
+            )
+            .child(Section::new("Sincronización").child(Group::default().child(server_row)))
+            .maybe_child(snapshot.error.clone().map(|err| Notice::new(NoticeTone::Warning, err)))
+            .into_element()
+    }
+}
+
+/// Open Vincular: show this device's code, or type another's.
+pub fn open_pairing() {
+    crate::sync::begin_pairing();
+    ModalController::get().push(
+        notein_ui_kit::Modal::new(Pairing)
+            .center()
+            .width(460.0)
+            .dismiss_on_backdrop(true)
+            .on_close(crate::sync::cancel_pairing),
+    );
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Pairing;
+
+impl Component for Pairing {
+    fn render(&self) -> impl IntoElement {
+        use freya::icons::lucide;
+        let p = palette();
+        let sync = crate::sync::use_sync();
+        let snapshot = sync.read().clone();
+        let mut tab = use_state(|| 0usize);
+        let trusted_before = use_hook(|| crate::sync::snapshot().trusted.len());
+        let paired = snapshot.trusted.len() > trusted_before;
+        let mut minted = use_state(Instant::now);
+        let mut now = use_state(Instant::now);
+        use_hook(move || {
+            spawn(async move {
+                loop {
+                    async_io::Timer::after(Duration::from_secs(1)).await;
+                    now.set(Instant::now());
+                    if minted.peek().elapsed() >= CODE_LIFETIME {
+                        crate::sync::begin_pairing();
+                        minted.set(Instant::now());
+                    }
+                }
+            });
+        });
+        let left =
+            CODE_LIFETIME.saturating_sub(now.read().saturating_duration_since(*minted.read()));
+
+        let body = if paired {
+            let name = snapshot
+                .trusted
+                .last()
+                .map_or_else(String::new, |d| d.name.clone());
+            rect()
+                .width(Size::fill())
+                .cross_align(Alignment::Center)
+                .spacing(12.0)
+                .padding(12.0)
+                .child(Icon::new(lucide::circle_check()).size(44.0).color(p.ok))
+                .child(Text::new(format!("Vinculado con {name}")).role(TextRole::Title))
+                .child(
+                    Text::new(
+                        "Tus documentos se van a sincronizar cuando los dos estén conectados.",
+                    )
+                    .role(TextRole::Hint)
+                    .align(TextAlign::Center),
+                )
+                .into_element()
+        } else if *tab.read() == 0 {
+            show_code(&snapshot, left)
+        } else {
+            EnterCode.into_element()
+        };
+        rect()
+            .width(Size::fill())
+            .padding(20.0)
+            .spacing(16.0)
+            .child(
+                rect()
+                    .width(Size::fill())
+                    .horizontal()
+                    .cross_align(Alignment::Center)
+                    .content(Content::Flex)
+                    .child(
+                        Text::new("Vincular dispositivo")
+                            .role(TextRole::Title)
+                            .fill(),
+                    )
+                    .child(
+                        IconButton::new(lucide::x(), "Cerrar")
+                            .on_press(|_| ModalController::get().close()),
+                    ),
+            )
+            .maybe_child((!paired).then(|| {
+                Segmented::new(["Mostrar mi código", "Tengo un código"], *tab.read())
+                    .full_width()
+                    .on_select(move |i: usize| tab.set(i))
+            }))
+            .child(body)
+            .child(
+                rect()
+                    .width(Size::fill())
+                    .horizontal()
+                    .main_align(Alignment::End)
+                    .child(
+                        Button::new(if paired { "Listo" } else { "Cancelar" })
+                            .variant(if paired {
+                                ButtonVariant::Primary
+                            } else {
+                                ButtonVariant::Ghost
+                            })
+                            .on_press(|_| ModalController::get().close()),
+                    ),
+            )
+    }
+}
+
+fn show_code(snapshot: &SyncSnapshot, left: Duration) -> Element {
+    let p = palette();
+    let Some(offer) = snapshot.offer.as_ref() else {
+        return rect()
+            .width(Size::fill())
+            .padding(24.0)
+            .cross_align(Alignment::Center)
+            .child(
+                Text::new(
+                    snapshot
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "Preparando el código…".to_owned()),
+                )
+                .role(TextRole::Meta),
+            )
+            .into_element();
+    };
+    let link = offer.to_link();
+    let digits = offer.code.to_string();
+    let minutes = left.as_secs() / 60;
+    let seconds = left.as_secs() % 60;
+    rect()
+        .width(Size::fill())
+        .cross_align(Alignment::Center)
+        .spacing(12.0)
+        .child(
+            Text::new("En el otro dispositivo abrí Ajustes › Dispositivos › Escanear o pegar enlace, o elegí «Tengo un código».")
+                .role(TextRole::Hint)
+                .align(TextAlign::Center),
+        )
+        .maybe_child(qr_svg(&link).map(|svg| {
+            rect()
+                .width(Size::px(QR))
+                .height(Size::px(QR))
+                .corner_radius(tokens::radius::LG)
+                .background(Color::WHITE)
+                .center()
+                .child(SvgViewer::new(svg).width(Size::px(QR - 16.0)).height(Size::px(QR - 16.0)))
+        }))
+        .child(
+            rect()
+                .horizontal()
+                .spacing(6.0)
+                .children(digits.chars().enumerate().map(|(i, d)| {
+                    rect()
+                        .key(i)
+                        .width(Size::px(38.0))
+                        .height(Size::px(48.0))
+                        .corner_radius(tokens::radius::MD)
+                        .background(p.s2)
+                        .center()
+                        .child(label().text(d.to_string()).font_size(26.0).font_weight(FontWeight::BOLD).color(p.t1))
+                        .into_element()
+                })),
+        )
+        .child(
+            Text::new(format!("Se renueva en {minutes}:{seconds:02}"))
+                .role(TextRole::Meta),
+        )
+        .child(
+            Button::new("Copiar enlace")
+                .ghost()
+                .small()
+                .icon(freya::icons::lucide::copy())
+                .on_press(move |_| {
+                    if freya::clipboard::Clipboard::set(link.clone()).is_ok() {
+                        notein_ui_kit::Toasts::get().show(notein_ui_kit::Toast::new("Enlace copiado"));
+                    }
+                }),
+        )
+        .into_element()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct EnterCode;
+
+impl Component for EnterCode {
+    fn render(&self) -> impl IntoElement {
+        let p = palette();
+        let sync = crate::sync::use_sync();
+        let snapshot = sync.read().clone();
+        let code = use_state(String::new);
+        let mut device = use_state(|| None::<notein_sync::DeviceId>);
+        let mut sent = use_state(|| false);
+        let digits: String = code
+            .read()
+            .chars()
+            .filter(char::is_ascii_digit)
+            .take(6)
+            .collect();
+        let chosen = (*device.read())
+            .or_else(|| (snapshot.discovered.len() == 1).then(|| snapshot.discovered[0].device));
+        let mut submit = move |digits: String| {
+            if let (Some(target), Some(parsed)) = (chosen, notein_sync::PairingCode::parse(&digits))
+            {
+                sent.set(true);
+                crate::sync::pair_discovered(target, parsed);
+            }
+        };
+        if digits.len() == 6 && !sent() && chosen.is_some() {
+            submit(digits.clone());
+        }
+        let failure = snapshot.last_pair_failure.map(|(_, why)| match why {
+            notein_sync::PairFailure::Rejected => {
+                "El código no coincide. Revisalo en el otro dispositivo."
+            }
+            notein_sync::PairFailure::Unreachable => {
+                "No encontramos ese dispositivo. Tienen que estar en la misma red."
+            }
+        });
+        let peers = snapshot.discovered.iter().map(|peer| {
+            let id = peer.device;
+            ListRow::new(peer.name.clone())
+                .icon(freya::icons::lucide::monitor_smartphone())
+                .leading(notein_ui_kit::Leading::Check(chosen == Some(id)))
+                .selected(chosen == Some(id))
+                .on_press(move |_| device.set(Some(id)))
+                .into_element()
+        });
+        let peers: Vec<Element> = peers.collect();
+        let no_peers = peers.is_empty();
+        let mut code_field = code;
+        rect()
+            .width(Size::fill())
+            .spacing(12.0)
+            .child(
+                Text::new("Elegí el dispositivo que muestra el código y escribí sus seis dígitos.")
+                    .role(TextRole::Hint),
+            )
+            .maybe_child(
+                no_peers
+                    .then(|| Notice::new(NoticeTone::Info, "Buscando dispositivos en esta red…")),
+            )
+            .maybe_child((!no_peers).then(|| Group::default().children(peers)))
+            .child(
+                rect()
+                    .width(Size::fill())
+                    .horizontal()
+                    .main_align(Alignment::Center)
+                    .spacing(6.0)
+                    .children((0..6).map(|i| {
+                        let digit = digits.chars().nth(i).map(String::from).unwrap_or_default();
+                        let active = i == digits.len();
+                        rect()
+                            .key(i)
+                            .width(Size::px(40.0))
+                            .height(Size::px(50.0))
+                            .corner_radius(tokens::radius::MD)
+                            .background(p.s2)
+                            .border(
+                                Border::new()
+                                    .fill(if active { p.accent } else { p.line })
+                                    .width(if active { 2.0 } else { 1.0 })
+                                    .alignment(BorderAlignment::Inner),
+                            )
+                            .center()
+                            .child(
+                                label()
+                                    .text(digit)
+                                    .font_size(24.0)
+                                    .font_weight(FontWeight::BOLD)
+                                    .color(p.t1),
+                            )
+                            .into_element()
+                    })),
+            )
+            .child(
+                TextField::new(code)
+                    .label("Código")
+                    .placeholder("123456")
+                    .max_len(12)
+                    .auto_focus(true)
+                    .on_change(move |text: String| {
+                        let clean: String =
+                            text.chars().filter(char::is_ascii_digit).take(6).collect();
+                        if clean != text {
+                            code_field.set(clean);
+                        }
+                        sent.set(false);
+                    }),
+            )
+            .maybe_child(sent().then(|| Text::new("Vinculando…").role(TextRole::Meta)))
+            .maybe_child(failure.map(|why| Notice::new(NoticeTone::Danger, why)))
+    }
+}
+
+/// Open Escanear o pegar enlace.
+pub fn open_link_sheet() {
+    Sheet::titled("Escanear o pegar enlace")
+        .child(LinkSheet)
+        .push();
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LinkSheet;
+
+/// A link the sheet understood.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Recognized {
+    Sync(LinkTarget),
+    Document(String),
+}
+
+fn recognize(text: &str) -> Option<Recognized> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    crate::sync::recognize_link(text)
+        .map(Recognized::Sync)
+        .or_else(|| {
+            crate::deep_link::scan_links(text)
+                .next()
+                .map(|_| Recognized::Document(text.to_owned()))
+        })
+}
+
+impl Component for LinkSheet {
+    fn render(&self) -> impl IntoElement {
+        use freya::icons::lucide;
+        let p = palette();
+        let pasted = use_state(String::new);
+        let mut scan_error = use_state(|| None::<&'static str>);
+        let clipboard = use_hook(|| {
+            freya::clipboard::Clipboard::get()
+                .ok()
+                .filter(|text| recognize(text).is_some())
+        });
+        let text = pasted.read().clone();
+        let found = recognize(&text);
+        let typed_unknown = !text.trim().is_empty() && found.is_none();
+
+        let card = found.map(|target| {
+            let (icon, title, subtitle, action) = match &target {
+                Recognized::Sync(LinkTarget::Join { title, owner, .. }) => (
+                    lucide::users(),
+                    format!("«{title}»"),
+                    format!("Invitación de {owner}"),
+                    "Unirse",
+                ),
+                Recognized::Sync(LinkTarget::Pair { name }) => (
+                    lucide::link(),
+                    name.clone(),
+                    "Vincular este dispositivo".to_owned(),
+                    "Vincular",
+                ),
+                Recognized::Document(_) => (
+                    lucide::file_text(),
+                    "Enlace a un documento".to_owned(),
+                    "Se abre en tu biblioteca si lo tenés".to_owned(),
+                    "Abrir",
+                ),
+            };
+            let raw = text.clone();
+            rect()
+                .width(Size::fill())
+                .padding(14.0)
+                .corner_radius(tokens::radius::LG)
+                .background(p.accent_soft)
+                .horizontal()
+                .cross_align(Alignment::Center)
+                .content(Content::Flex)
+                .spacing(12.0)
+                .child(Icon::new(icon).size(22.0).color(p.accent_text))
+                .child(
+                    rect()
+                        .width(Size::flex(1.0))
+                        .child(Text::new(title).role(TextRole::Strong).lines(1))
+                        .child(Text::new(subtitle).role(TextRole::Meta)),
+                )
+                .child(Button::new(action).primary().on_press(move |_| {
+                    ModalController::get().close();
+                    match recognize(&raw) {
+                        Some(Recognized::Sync(_)) => {
+                            if let Some(LinkTarget::Join { .. }) = crate::sync::open_link(&raw) {
+                                crate::screens::collab::joining();
+                            }
+                        }
+                        Some(Recognized::Document(url)) => crate::deep_link::open(&url),
+                        None => {}
+                    }
+                }))
+        });
+
+        let mut paste_target = pasted;
+        rect()
+            .width(Size::fill())
+            .spacing(14.0)
+            .child(
+                Button::new("Escanear un código QR")
+                    .tonal()
+                    .full_width()
+                    .icon(lucide::scan_qr_code())
+                    .on_press(move |_| {
+                        spawn(async move {
+                            match crate::scan::scan_qr("Apuntá al código del otro dispositivo").await {
+                                Ok(Some(text)) => {
+                                    scan_error.set(None);
+                                    paste_target.set(text);
+                                }
+                                Ok(None) => {}
+                                Err(crate::scan::ScanError::Denied) => {
+                                    scan_error.set(Some("Notein no tiene permiso para usar la cámara. Podés dárselo en los ajustes del sistema, o pegar el enlace."));
+                                }
+                                Err(crate::scan::ScanError::Unavailable) => {
+                                    scan_error.set(Some("Este dispositivo no tiene cámara. Pegá el enlace."));
+                                }
+                                Err(crate::scan::ScanError::Failed(why)) => {
+                                    log::warn!("scan: {why}");
+                                    scan_error.set(Some("No se pudo abrir la cámara. Pegá el enlace."));
+                                }
+                            }
+                        });
+                    }),
+            )
+            .maybe_child(scan_error().map(|why| Notice::new(NoticeTone::Warning, why)))
+            .maybe_child(clipboard.clone().filter(|_| text.trim().is_empty()).map(|link| {
+                ListRow::new("Hay un enlace copiado")
+                    .subtitle(link.clone())
+                    .icon(lucide::clipboard())
+                    .trailing(Trailing::Element(
+                        Button::new("Usar")
+                            .tonal()
+                            .small()
+                            .on_press(move |_| paste_target.set(link.clone()))
+                            .into_element(),
+                    ))
+            }))
+            .child(
+                TextField::new(pasted)
+                    .label("O pegá el enlace")
+                    .placeholder("notein://…")
+                    .icon(lucide::link()),
+            )
+            .maybe_child(card)
+            .maybe_child(typed_unknown.then(|| {
+                Notice::new(NoticeTone::Danger, "Ese enlace no es de Notein o ya venció.")
+                    .detail("Pedí uno nuevo: las invitaciones y los códigos duran unos minutos.")
+            }))
+            .child(SheetFooter::new([Button::new("Cerrar")
+                .ghost()
+                .on_press(|_| ModalController::get().close())
+                .into_element()]))
+    }
+}

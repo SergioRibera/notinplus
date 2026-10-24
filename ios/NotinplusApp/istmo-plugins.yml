@@ -7,6 +7,12 @@
 targets:
   NotinplusApp:
     sources:
+      - path: "../../../istmo/plugins/barcode-scanner/native/ios"
+        name: ISTMO_BARCODE_SCANNER
+        type: group
+        createIntermediateGroups: true
+        excludes:
+          - "*.fragment"
       - path: "../../../istmo/plugins/data-store/native/ios"
         name: ISTMO_DATA_STORE
         type: group

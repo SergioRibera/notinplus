@@ -236,7 +236,7 @@ fn create_named(name: &str, purpose: Purpose) -> Element {
         .into_element()
 }
 
-fn create_quick(entry: notein_plugin::catalog::CatalogEntry, name: String, purpose: Purpose) {
+pub fn create_quick(entry: notein_plugin::catalog::CatalogEntry, name: String, purpose: Purpose) {
     spawn_forever(async move {
         let Some(kind) = crate::plugins::kind(&entry.kind) else {
             return;

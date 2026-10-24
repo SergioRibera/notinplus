@@ -69,6 +69,7 @@ pub mod settings;
 pub mod space;
 pub mod spatial;
 pub mod state;
+pub mod scan;
 pub mod sync;
 pub mod text_box;
 pub mod thumbnail;
@@ -102,10 +103,11 @@ use istmo::plugins::{DeepLinks, SafeArea};
 use istmo_data_store::DataStoreClient;
 use istmo_file_picker::FilePickerClient;
 use istmo_pen::PenClient;
+use istmo_barcode_scanner::BarcodeScannerClient;
 use istmo_share::ShareClient;
 
 istmo::runtime!(
-    plugins: [PenClient, SafeArea, DeepLinks, FilePickerClient, DataStoreClient, ShareClient],
+    plugins: [PenClient, SafeArea, DeepLinks, FilePickerClient, DataStoreClient, ShareClient, BarcodeScannerClient],
 );
 
 #[cfg(any(

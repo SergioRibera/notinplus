@@ -963,7 +963,7 @@ fn left_top(
                         let router = RouterContext::get();
                         let workspace = match router.current::<crate::route::Route>() {
                             crate::route::Route::Space { id } => Some(id),
-                            crate::route::Route::Home => None,
+                            crate::route::Route::Home | crate::route::Route::Trash => None,
                         };
                         SidebarModal::open(state, board.clone(), workspace);
                     }
@@ -1661,7 +1661,7 @@ fn top_right_toolbar(board: &Arc<Mutex<Board>>, state: &ChromeState) -> impl Int
             let router = RouterContext::get();
             let workspace = match router.current::<crate::route::Route>() {
                 crate::route::Route::Space { id } => Some(id),
-                crate::route::Route::Home => None,
+                crate::route::Route::Home | crate::route::Route::Trash => None,
             };
             let board = board.clone();
             let state = state.clone();

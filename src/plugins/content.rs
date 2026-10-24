@@ -13,8 +13,59 @@ type Listeners = Mutex<HashMap<ItemId, Vec<flume::Sender<()>>>>;
 
 static LISTENERS: std::sync::LazyLock<Listeners> = std::sync::LazyLock::new(Listeners::default);
 
+/// What a card shows about a document's content.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Glance {
+    /// The kind's one-line summary ("248 páginas").
+    pub summary: Option<String>,
+    /// First lines of text, for kinds whose cover is their text.
+    pub preview: Option<String>,
+}
+
+/// Characters of a text preview on a card.
+const PREVIEW_CHARS: usize = 180;
+
+static GLANCES: std::sync::LazyLock<Mutex<HashMap<ItemId, (u64, Glance)>>> =
+    std::sync::LazyLock::new(Mutex::default);
+
+impl Glance {
+    fn compute(item: &Item) -> Self {
+        let kind = &item.kind.plugin_id;
+        let summary = read(item.id, kind)
+            .and_then(|bytes| crate::plugins::kind(kind).and_then(|k| k.summary(&bytes)));
+        let preview = (kind == notein_notes::kind::KIND)
+            .then(|| bodies::read_doc(item.id).ok())
+            .flatten()
+            .map(|doc| doc.body().chars().take(PREVIEW_CHARS).collect::<String>())
+            .filter(|text| !text.trim().is_empty());
+        Self { summary, preview }
+    }
+
+    fn forget(item: ItemId) {
+        GLANCES
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&item);
+    }
+
+    /// The glance of `item`, recomputed only when it changed.
+    #[must_use]
+    pub fn of(item: &Item) -> Self {
+        let mut cache = GLANCES.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((at, glance)) = cache.get(&item.id)
+            && *at == item.updated_at
+        {
+            return glance.clone();
+        }
+        let glance = Self::compute(item);
+        cache.insert(item.id, (item.updated_at, glance.clone()));
+        glance
+    }
+}
+
 /// Tell open faces of `item` that its content changed elsewhere.
 pub fn notify_remote(item: ItemId) {
+    Glance::forget(item);
     if let Some(list) = LISTENERS
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
@@ -36,6 +87,7 @@ pub fn write(item: ItemId, kind: &str, bytes: &[u8]) {
         log::error!("content write {item}: {err}");
         return;
     }
+    Glance::forget(item);
     crate::sync::local_changed();
 }
 

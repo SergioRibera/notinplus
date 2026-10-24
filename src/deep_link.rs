@@ -189,14 +189,9 @@ mod scan_tests {
 /// Route a URL the operating system handed to the app.
 pub fn open(url: &str) {
     log::info!("deep link: {url}");
-    match crate::sync::open_link(url) {
-        Some(LinkTarget::Join {
-            share,
-            title,
-            owner,
-        }) => return JoinSheet::open(share, title, owner),
-        Some(LinkTarget::Pair { .. }) => return SettingsModal::open(),
-        None => {}
+    if crate::sync::recognize_link(url).is_some() {
+        crate::screens::collab::invitation(url.to_owned());
+        return;
     }
     match SourceRef::from_url(url) {
         Some(src) => crate::source_ref_nav::navigate(&src),

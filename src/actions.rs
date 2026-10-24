@@ -131,7 +131,18 @@ pub fn for_item(data: &LibraryData, item: ItemId, origin: Origin) -> Vec<ActionE
 #[must_use]
 pub fn for_folder(folder: FolderId) -> Vec<ActionEntry> {
     use freya::icons::lucide;
-    vec![
+    let mut entries = Vec::new();
+    if let Some(receipt) = flows::transfer::undoable_import(folder) {
+        entries.push(ActionEntry::Item(
+            Action::new(
+                "Deshacer la importación",
+                run(move || flows::transfer::undo_import(receipt.clone())),
+            )
+            .icon(lucide::undo_2()),
+        ));
+        entries.push(ActionEntry::Divider);
+    }
+    entries.extend([
         ActionEntry::Item(
             Action::new("Editar…", run(move || flows::edit_folder(folder)))
                 .icon(lucide::square_pen()),
@@ -156,7 +167,8 @@ pub fn for_folder(folder: FolderId) -> Vec<ActionEntry> {
             .icon(lucide::trash_2())
             .danger(),
         ),
-    ]
+    ]);
+    entries
 }
 
 /// Actions for mesa `workspace`.

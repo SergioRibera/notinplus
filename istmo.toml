@@ -17,6 +17,11 @@ android_package = "dev.istmo.runtime"
 
 # Oldest OS releases we ship to. Android 26 = Oreo (first ART-only + first
 # storage-scoped SDK); iOS 14 matches the rest of the workspace examples.
+# Usage strings shown by iOS, in the app's language.
+[app.info_plist]
+NSCameraUsageDescription = "Para escanear el código QR de otro dispositivo o de una invitación."
+NSPhotoLibraryAddUsageDescription = "Para guardar en Fotos las imágenes que compartís."
+
 [min_versions]
 android = 26
 ios     = "14.0"

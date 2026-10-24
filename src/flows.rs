@@ -72,26 +72,17 @@ pub fn pin_items(items: Vec<ItemId>) {
 
 /// The share sheet for `item`.
 pub fn share_item(item: ItemId) {
-    crate::components::ShareSheet::open(item, None);
+    crate::screens::collab::share(crate::screens::collab::ShareTarget {
+        item: Some(item),
+        mesa: None,
+    });
 }
 
 /// The share sheet for a whole mesa.
 pub fn share_mesa(workspace: WorkspaceId) {
-    spawn_forever(async move {
-        let Ok(handle) = crate::library::shared().await else {
-            return;
-        };
-        let first = handle.lock().await.workspace(workspace).and_then(|w| {
-            w.layout
-                .leaves()
-                .into_iter()
-                .flat_map(|p| p.tabs.iter())
-                .find_map(crate::library::PaneTab::item)
-        });
-        match first {
-            Some(item) => crate::components::ShareSheet::open(item, Some(workspace)),
-            None => toast("Esta mesa no tiene documentos para compartir"),
-        }
+    crate::screens::collab::share(crate::screens::collab::ShareTarget {
+        item: None,
+        mesa: Some(workspace),
     });
 }
 
@@ -258,36 +249,49 @@ pub fn trash_items(items: Vec<ItemId>, fate: NotebookFate) {
 
 /// Move `item` to the trash. Asks only when it has notebooks.
 pub fn trash_item(item: ItemId) {
+    trash_documents(vec![item]);
+}
+
+/// Move `items` to the trash. Asks once when any of them has notebooks.
+pub fn trash_documents(items: Vec<ItemId>) {
     spawn_forever(async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };
-        let (name, notebooks) = {
+        let (title, notebooks) = {
             let lib = handle.lock().await;
-            let Some(found) = lib.item(item) else {
-                return;
+            let notebooks: usize = items.iter().map(|i| lib.live_notebooks_of(*i).len()).sum();
+            let title = match items.as_slice() {
+                [one] => match lib.item(*one) {
+                    Some(found) => format!("Mover «{}» a la papelera", found.name),
+                    None => return,
+                },
+                many => format!(
+                    "Mover {} a la papelera",
+                    crate::format::count(many.len(), "documento", "documentos")
+                ),
             };
-            (found.name.clone(), lib.live_notebooks_of(item).len())
+            (title, notebooks)
         };
         if notebooks == 0 {
-            trash_items(vec![item], NotebookFate::Keep);
+            trash_items(items, NotebookFate::Keep);
             return;
         }
-        ask_notebook_fate(item, name, notebooks);
+        ask_notebook_fate(items, title, notebooks);
     });
 }
 
-/// "Mover a la papelera" for a document with notebooks: one question,
+/// "Mover a la papelera" for documents with notebooks: one question,
 /// keeping them preselected.
-fn ask_notebook_fate(item: ItemId, name: String, notebooks: usize) {
+fn ask_notebook_fate(items: Vec<ItemId>, title: String, notebooks: usize) {
     use freya::icons::lucide;
     let fate = State::create_in_scope(NotebookFate::Keep, ScopeId::ROOT);
     let subtitle = if notebooks == 1 {
         "Tiene 1 cuaderno con tus apuntes.".to_owned()
     } else {
-        format!("Tiene {notebooks} cuadernos con tus apuntes.")
+        format!("Tienen {notebooks} cuadernos con tus apuntes.")
     };
-    Sheet::titled(format!("Mover «{name}» a la papelera"))
+    Sheet::titled(title)
         .kind(lucide::trash_2(), notein_ui_kit::palette().danger)
         .subtitle(subtitle)
         .child(NotebookFateChoice { fate })
@@ -300,7 +304,7 @@ fn ask_notebook_fate(item: ItemId, name: String, notebooks: usize) {
                 .variant(ButtonVariant::DangerFill)
                 .on_press(move |_| {
                     ModalController::get().close();
-                    trash_items(vec![item], *fate.peek());
+                    trash_items(items.clone(), *fate.peek());
                 })
                 .into_element(),
         ]))
