@@ -128,7 +128,7 @@ impl Component for Failed {
                 Button::new("Reintentar")
                     .primary()
                     .icon(freya::icons::lucide::rotate_ccw())
-                    .on_press(|_| crate::library::shared::notify()),
+                    .on_press(|_| LibraryView::get().retry()),
             );
         rect()
             .expanded()

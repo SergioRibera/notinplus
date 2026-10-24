@@ -51,6 +51,41 @@ impl LibraryView {
         }
     }
 
+    /// Ask [`use_library_root`] to try opening the library again after it
+    /// failed.
+    pub fn retry(&self) {
+        library::shared::notify();
+    }
+
+    /// Open the library, showing each failure and waiting for
+    /// [`Self::retry`] before trying again. A retry that fails again says
+    /// so, since the screen alone would not change.
+    #[allow(clippy::future_not_send)] // runs on the UI executor, never sent
+    async fn open(mut self) -> LibHandle {
+        let mut retried = false;
+        loop {
+            match library::shared().await {
+                Ok(handle) => return handle,
+                Err(err) => {
+                    log::error!("library open: {err}");
+                    if retried {
+                        Toasts::get().show(
+                            Toast::new("Todavía no se puede abrir la biblioteca")
+                                .tone(ToastTone::Error),
+                        );
+                    }
+                    let retry = library::changes();
+                    self.state.set(LibraryState::Failed(err.to_string()));
+                    if retry.recv_async().await.is_err() {
+                        std::future::pending::<()>().await;
+                    }
+                    self.state.set(LibraryState::Loading);
+                    retried = true;
+                }
+            }
+        }
+    }
+
     #[allow(clippy::future_not_send)] // runs on the UI executor, never sent
     async fn refresh(mut self, handle: &LibHandle) {
         let data = handle.lock().await.snapshot();
@@ -79,15 +114,7 @@ pub fn use_library_root() {
     });
     use_hook(move || {
         spawn_forever(async move {
-            let handle = match library::shared().await {
-                Ok(handle) => handle,
-                Err(err) => {
-                    log::error!("library open: {err}");
-                    let mut state = state;
-                    state.set(LibraryState::Failed(err.to_string()));
-                    return;
-                }
-            };
+            let handle = view.open().await;
             view.refresh(&handle).await;
             let changes = library::changes();
             while changes.recv_async().await.is_ok() {
