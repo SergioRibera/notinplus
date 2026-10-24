@@ -9,8 +9,8 @@ use freya_markdown_editor::document::{Document, HeadingRef};
 use notein_sdk::create::{Created, CreationEntry, CreationError, CreationRequest};
 use notein_sdk::doc::{DocId, DocMeta};
 use notein_sdk::kind::{
-    ChipView, DocumentKind, Hit, IndexReport, KindColor, KindInfo, OutlineIcon, OutlineNode,
-    SearchQuery, SelectionSupport,
+    ActionEffect, ChipView, DocumentKind, Hit, IndexReport, KindAction, KindColor, KindInfo,
+    OutlineIcon, OutlineNode, SearchQuery, SelectionSupport,
 };
 use notein_sdk::text::Folded;
 
@@ -24,6 +24,10 @@ pub const KIND: &str = "io.notein.note";
 pub const ENTRY_NOTE: &str = "note";
 /// Create entry of a markdown import.
 pub const ENTRY_IMPORT_MARKDOWN: &str = "import-markdown";
+/// Document action: copy the note as markdown.
+pub const ACTION_COPY_MARKDOWN: &str = "copy-markdown";
+/// Document action: share the note as a `.md` file.
+pub const ACTION_SHARE_FILE: &str = "share-md";
 
 const SNIPPET_CONTEXT: usize = 40;
 
@@ -198,6 +202,7 @@ impl DocumentKind for NotesKind {
             id: KIND.into(),
             label: "Nota".into(),
             plural: "Notas".into(),
+            search_group: "En notas".into(),
             icon: lucide::sticky_note(),
             color: KindColor::Note,
             supports_ink: false,
@@ -257,6 +262,36 @@ impl DocumentKind for NotesKind {
             annotate: false,
             copy_reference: true,
             to_notebook: false,
+        }
+    }
+
+    fn actions(&self) -> Vec<KindAction> {
+        vec![
+            KindAction {
+                id: ACTION_COPY_MARKDOWN.into(),
+                label: "Copiar como markdown".into(),
+                icon: lucide::clipboard_copy(),
+            },
+            KindAction {
+                id: ACTION_SHARE_FILE.into(),
+                label: "Enviar como archivo .md".into(),
+                icon: lucide::share_2(),
+            },
+        ]
+    }
+
+    fn run_action(&self, id: &str, doc: DocMeta<'_>, content: &NoteContent) -> ActionEffect {
+        match id {
+            ACTION_COPY_MARKDOWN => ActionEffect::Copy {
+                text: content.markdown.clone(),
+                toast: "Nota copiada como markdown".to_owned(),
+            },
+            ACTION_SHARE_FILE => ActionEffect::Share {
+                file_name: format!("{}.md", doc.name.trim()),
+                mime: "text/markdown".to_owned(),
+                bytes: content.markdown.clone().into_bytes(),
+            },
+            _ => ActionEffect::Done,
         }
     }
 

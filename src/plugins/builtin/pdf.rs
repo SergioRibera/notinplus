@@ -250,6 +250,7 @@ impl DocumentKind for PdfKind {
             id: KIND.into(),
             label: "PDF".into(),
             plural: "PDF".into(),
+            search_group: "En PDFs".into(),
             icon: lucide::file_text(),
             color: KindColor::Pdf,
             supports_ink: true,

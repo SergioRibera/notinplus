@@ -44,6 +44,8 @@ pub struct KindInfo {
     pub label: Cow<'static, str>,
     /// Plural for the filter chip ("Lienzos").
     pub plural: Cow<'static, str>,
+    /// Header of this kind's group in search results ("En la Biblia").
+    pub search_group: Cow<'static, str>,
     /// Lucide-style single colour SVG.
     pub icon: Bytes,
     pub color: KindColor,
@@ -259,6 +261,32 @@ impl IndexReport {
     }
 }
 
+/// An action only documents of one kind have, listed in the document
+/// menu in a group with the kind's colour.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KindAction {
+    pub id: Cow<'static, str>,
+    pub label: Cow<'static, str>,
+    pub icon: Bytes,
+}
+
+/// What the shell does after a kind action ran.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ActionEffect {
+    /// Nothing more.
+    Done,
+    /// Put text on the clipboard and say so.
+    Copy { text: String, toast: String },
+    /// Hand a file to the system share sheet.
+    Share {
+        file_name: String,
+        mime: String,
+        bytes: Vec<u8>,
+    },
+    /// Open the document's edit sheet.
+    Edit,
+}
+
 /// A kind of document.
 ///
 /// Implement this on a plugin type and register it through
@@ -329,6 +357,17 @@ pub trait DocumentKind: Send + Sync + 'static {
     /// What the selection bar offers.
     fn selection(&self) -> SelectionSupport {
         SelectionSupport::NONE
+    }
+
+    /// Actions only this kind offers in the document menu.
+    fn actions(&self) -> Vec<KindAction> {
+        Vec::new()
+    }
+
+    /// Run action `id` on a document.
+    fn run_action(&self, id: &str, doc: DocMeta<'_>, content: &Self::Content) -> ActionEffect {
+        let _ = (id, doc, content);
+        ActionEffect::Done
     }
 
     /// Entries this kind adds to the create menu.

@@ -134,6 +134,7 @@ impl DocumentKind for CanvasKind {
             id: KIND.into(),
             label: "Lienzo".into(),
             plural: "Lienzos".into(),
+            search_group: "Marcadores".into(),
             icon: lucide::pen_line(),
             color: KindColor::Canvas,
             supports_ink: true,

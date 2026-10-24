@@ -9,8 +9,8 @@ use std::sync::Arc;
 use crate::create::{Created, CreationEntry, CreationError, CreationRequest};
 use crate::doc::{DocId, DocMeta};
 use crate::kind::{
-    ChipView, DocumentKind, Hit, IndexReport, KindInfo, Mark, OutlineNode, SearchQuery,
-    SelectionSupport,
+    ActionEffect, ChipView, DocumentKind, Hit, IndexReport, KindAction, KindInfo, Mark,
+    OutlineNode, SearchQuery, SelectionSupport,
 };
 use crate::payload::Payload;
 
@@ -26,6 +26,8 @@ pub trait ErasedKind: Send + Sync {
     fn summary(&self, content: &[u8]) -> Option<String>;
     fn chip(&self, doc: DocMeta<'_>, anchor: &[u8]) -> ChipView;
     fn selection(&self) -> SelectionSupport;
+    fn actions(&self) -> Vec<KindAction>;
+    fn run_action(&self, id: &str, doc: DocMeta<'_>, content: &[u8]) -> ActionEffect;
     fn creation_entries(&self) -> Vec<CreationEntry>;
     fn create(
         &self,
@@ -116,6 +118,14 @@ impl<K: DocumentKind> ErasedKind for KindAdapter<K> {
 
     fn selection(&self) -> SelectionSupport {
         self.0.selection()
+    }
+
+    fn actions(&self) -> Vec<KindAction> {
+        self.0.actions()
+    }
+
+    fn run_action(&self, id: &str, doc: DocMeta<'_>, content: &[u8]) -> ActionEffect {
+        self.0.run_action(id, doc, &Self::content(content))
     }
 
     fn creation_entries(&self) -> Vec<CreationEntry> {

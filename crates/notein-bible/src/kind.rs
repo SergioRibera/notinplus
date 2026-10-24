@@ -9,8 +9,8 @@ use notein_sdk::create::{
 };
 use notein_sdk::doc::DocMeta;
 use notein_sdk::kind::{
-    ChipView, DocumentKind, Hit, KindColor, KindInfo, Mark, OutlineIcon, OutlineNode, SearchQuery,
-    SelectionSupport,
+    ActionEffect, ChipView, DocumentKind, Hit, KindAction, KindColor, KindInfo, Mark, OutlineIcon,
+    OutlineNode, SearchQuery, SelectionSupport,
 };
 
 use crate::anchor::BibleAnchor;
@@ -128,6 +128,7 @@ impl DocumentKind for BibleKind {
             id: KIND.into(),
             label: "Biblia".into(),
             plural: "Biblia".into(),
+            search_group: "En la Biblia".into(),
             icon: lucide::book_open(),
             color: KindColor::Bible,
             supports_ink: false,
@@ -232,6 +233,18 @@ impl DocumentKind for BibleKind {
 
     fn selection(&self) -> SelectionSupport {
         SelectionSupport::TEXT
+    }
+
+    fn actions(&self) -> Vec<KindAction> {
+        vec![KindAction {
+            id: "change-translation".into(),
+            label: "Cambiar traducción".into(),
+            icon: lucide::languages(),
+        }]
+    }
+
+    fn run_action(&self, _id: &str, _doc: DocMeta<'_>, _content: &BibleContent) -> ActionEffect {
+        ActionEffect::Edit
     }
 
     fn creation_entries(&self) -> Vec<CreationEntry> {
