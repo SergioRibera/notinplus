@@ -106,6 +106,11 @@ enum Cmd {
     SetPolicy(ShareId, SharePolicy),
     SetViewer(ShareId, DeviceId, bool),
     SetRelay(Option<String>),
+    /// The app came to the front (`true`) or went to the background.
+    Present(bool),
+    /// Say goodbye and end the service; answered once the network is
+    /// down.
+    Quit(flume::Sender<()>),
 }
 
 static CMDS: OnceLock<flume::Sender<Cmd>> = OnceLock::new();
@@ -237,6 +242,55 @@ pub fn pair_discovered(device: DeviceId, code: PairingCode) {
 
 pub fn set_device_name(name: impl Into<String>) {
     command(Cmd::SetName(name.into()));
+}
+
+/// Whether this device should look present to the others: an app in
+/// the background leaves the network until it comes back.
+pub fn set_present(present: bool) {
+    command(Cmd::Present(present));
+}
+
+/// On phones and tablets an app in the background stays alive with
+/// its sockets open; after this long out of sight it leaves the
+/// network so the other devices stop showing it as connected.
+const AWAY_AFTER: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Follow the window to the background and back, from the app root.
+/// Desktop windows lose focus all the time without the app going
+/// anywhere, so only mobile targets leave.
+pub fn follow_presence() {
+    if !cfg!(any(target_os = "android", target_os = "ios")) {
+        return;
+    }
+    freya::prelude::spawn_forever(async {
+        let focused = freya::prelude::Platform::get().is_app_focused;
+        let mut present = true;
+        loop {
+            let away = !*focused.peek();
+            if away == present {
+                if away {
+                    // Coming back within the grace keeps the channels.
+                    async_io::Timer::after(AWAY_AFTER).await;
+                    if *focused.peek() {
+                        continue;
+                    }
+                }
+                present = !away;
+                set_present(present);
+            }
+            async_io::Timer::after(std::time::Duration::from_millis(500)).await;
+        }
+    });
+}
+
+/// Leave the network before the process ends, so the other devices see
+/// this one go at once instead of after a silence. Waits a moment for
+/// the goodbye to go out.
+pub fn stop() {
+    let (tx, rx) = flume::bounded(1);
+    command(Cmd::Quit(tx));
+    // Nothing to do if the service never started or is already gone.
+    let _ = rx.recv_timeout(std::time::Duration::from_secs(1));
 }
 
 pub fn revoke(device: DeviceId) {
@@ -493,6 +547,10 @@ impl Service {
                 self.last_failure = None;
                 self.save_profile();
             }
+            DriverEvent::Renamed { device, name } => {
+                log::info!("sync: {device:?} is now {name}");
+                self.save_profile();
+            }
             DriverEvent::PairFailed { device, reason } => {
                 self.last_failure = Some((device, reason));
             }
@@ -639,6 +697,19 @@ impl Service {
                     s.viewers.push(device);
                 }
             }),
+            Cmd::Present(present) => {
+                let result = if present {
+                    self.node.resume()
+                } else {
+                    self.node.pause()
+                };
+                if let Err(err) = result {
+                    log::warn!("sync presence: {err}");
+                }
+                Vec::new()
+            }
+            // Handled by the service loop before it gets here.
+            Cmd::Quit(_) => Vec::new(),
             Cmd::SetRelay(relay) => {
                 let parsed = relay.as_deref().map(str::parse::<RelayAddr>);
                 match parsed {
@@ -838,6 +909,12 @@ fn run(cmds: &flume::Receiver<Cmd>) {
         match step {
             Ok(Ok(Step::Cmd(Cmd::LocalChanged))) => {
                 pending_change.get_or_insert_with(|| Instant::now() + DEBOUNCE);
+            }
+            Ok(Ok(Step::Cmd(Cmd::Quit(done)))) => {
+                // Dropping the node says goodbye on every channel.
+                drop(service);
+                let _ = done.send(());
+                return;
             }
             Ok(Ok(Step::Cmd(cmd))) => {
                 if let Err(err) = service.on_cmd(cmd) {
