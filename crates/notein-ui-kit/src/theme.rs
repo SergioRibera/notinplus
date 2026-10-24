@@ -6,7 +6,6 @@
 
 mod context;
 mod kind;
-mod legacy;
 mod palette;
 
 pub use context::{
@@ -14,7 +13,6 @@ pub use context::{
     use_theme_root,
 };
 pub use kind::{ThemeChoice, ThemeKind};
-pub use legacy::*;
 pub use palette::{
     ACCENT_MIN_CONTRAST, Highlighters, KindColors, Palette, contrast_ratio, on_color,
     relative_luminance,

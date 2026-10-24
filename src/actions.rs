@@ -19,7 +19,8 @@ pub enum Origin {
     Header,
 }
 
-fn run(f: impl Fn() + 'static) -> EventHandler<()> {
+/// A press handler that closes the menu, then runs `f`.
+pub(crate) fn run(f: impl Fn() + 'static) -> EventHandler<()> {
     EventHandler::new(move |()| {
         ModalController::get().close();
         f();
@@ -217,6 +218,11 @@ pub fn for_mesa(data: &LibraryData, workspace: WorkspaceId) -> Vec<ActionEntry> 
 pub fn show(entries: Vec<ActionEntry>, at: CursorPoint) {
     #[allow(clippy::cast_possible_truncation)] // window coordinates
     let anchor = Area::new((at.x as f32, at.y as f32).into(), (1.0, 1.0).into());
+    show_at(entries, anchor);
+}
+
+/// Show `entries` hanging from `anchor`, in window coordinates.
+pub fn show_at(entries: Vec<ActionEntry>, anchor: Area) {
     let height = entries
         .iter()
         .map(|e| match e {

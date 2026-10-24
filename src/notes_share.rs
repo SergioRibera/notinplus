@@ -5,13 +5,9 @@ use freya::icons::lucide;
 use freya::prelude::*;
 use freya_markdown_editor::prelude::*;
 use istmo_share::{ShareClient, ShareFile, ShareRequest};
+use notein_ui_kit::{Action, ActionEntry};
 
-use crate::components::{FabMenu, FabMenuEntry};
-
-/// Width of the menu card.
-const MENU_WIDTH: f32 = 280.0;
-/// Gap between the share button and the menu.
-const MENU_GAP: f32 = 22.0;
+use crate::actions::{run, show_at};
 
 /// Open the share menu for the note in `controller`, below the press at
 /// `at` in `window` coordinates, or under the top-right corner without one.
@@ -21,10 +17,12 @@ pub(crate) fn open_menu(
     at: Option<(f32, f32)>,
     window: Option<Area>,
 ) {
-    let (right, top) = match (at, window) {
-        (Some((x, y)), Some(window)) => ((window.max_x() - x - MENU_GAP).max(8.0), y + MENU_GAP),
-        _ => (16.0, 72.0),
+    let (x, y) = match (at, window) {
+        (Some(at), _) => at,
+        (None, Some(window)) => (window.max_x() - 16.0, 72.0),
+        (None, None) => (16.0, 72.0),
     };
+    let anchor = Area::new((x, y).into(), (1.0, 1.0).into());
     spawn(async move {
         let can_share = match ShareClient::acquire() {
             Ok(client) => client
@@ -33,35 +31,40 @@ pub(crate) fn open_menu(
                 .is_ok_and(|capabilities| capabilities.send),
             Err(_) => false,
         };
-        let mut menu = FabMenu::new().width(MENU_WIDTH).anchor_top(right, top);
+        let mut entries = Vec::new();
         if can_share {
             let text_title = title.clone();
-            menu = menu
-                .entry(FabMenuEntry::new(
-                    lucide::share_2(),
+            entries.push(ActionEntry::Item(
+                Action::new(
                     "Compartir como texto",
-                    move || share_text(controller, text_title.clone()),
-                ))
-                .entry(FabMenuEntry::new(
-                    lucide::file_down(),
+                    run(move || share_text(controller, text_title.clone())),
+                )
+                .icon(lucide::share_2()),
+            ));
+            entries.push(ActionEntry::Item(
+                Action::new(
                     "Compartir archivo .md",
-                    move || share_file(controller, title.clone()),
-                ));
+                    run(move || share_file(controller, title.clone())),
+                )
+                .icon(lucide::file_down()),
+            ));
+            entries.push(ActionEntry::Divider);
         }
-        let copy = FabMenuEntry::new(lucide::copy(), "Copiar markdown", move || {
-            copy_markdown(controller, Dialect::Portable);
-        });
-        menu.entry(if can_share {
-            copy.with_divider_above()
-        } else {
-            copy
-        })
-        .entry(FabMenuEntry::new(
-            lucide::clipboard_copy(),
-            "Copiar markdown enriquecido",
-            move || copy_markdown(controller, Dialect::Rich),
-        ))
-        .open();
+        entries.push(ActionEntry::Item(
+            Action::new(
+                "Copiar markdown",
+                run(move || copy_markdown(controller, Dialect::Portable)),
+            )
+            .icon(lucide::copy()),
+        ));
+        entries.push(ActionEntry::Item(
+            Action::new(
+                "Copiar markdown enriquecido",
+                run(move || copy_markdown(controller, Dialect::Rich)),
+            )
+            .icon(lucide::clipboard_copy()),
+        ));
+        show_at(entries, anchor);
     });
 }
 

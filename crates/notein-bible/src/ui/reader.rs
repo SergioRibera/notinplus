@@ -15,7 +15,7 @@ use freya_engine::prelude::{RectHeightStyle, RectWidthStyle};
 use crate::state::{BibleBookmark, u32_to_rgba};
 
 use super::chapter::{Block, ChapterPlan, ParagraphSpan};
-use super::theme;
+use notein_ui_kit::theme::palette;
 use super::typography;
 
 /// Context the host installs so verse-level widgets can scroll the
@@ -144,7 +144,7 @@ pub fn style_map(highlights: &[&BibleBookmark]) -> HashMap<u16, VerseStyle> {
         let tint = h
             .color
             .map(|c| rgba_to_freya(u32_to_rgba(c)))
-            .or_else(|| Some(parse_rgb(theme::HIGHLIGHT_YELLOW)));
+            .or_else(|| Some(palette().highlighters[0]));
         let has_note = !h.note.is_empty();
         for v in h.start_verse..=h.end_verse {
             let entry = out.entry(v).or_default();
@@ -304,7 +304,7 @@ pub fn chapter_view(
     rect()
         .width(Size::fill())
         .height(Size::fill())
-        .background(parse_rgb(theme::BG))
+        .background(palette().bg)
         .padding((0., 28., 12., 28.))
         .on_sized(move |e: Event<SizedEventData>| {
             if let Some(mut setter) = viewport_top_setter
@@ -348,7 +348,7 @@ fn book_title_header(plan: &ChapterPlan) -> impl IntoElement {
                 label()
                     .font_family(typography::FAMILY)
                     .font_size(28.0)
-                    .color(parse_rgb(theme::TEXT_PRIMARY))
+                    .color(palette().t1)
                     .text(plan.book_name.to_uppercase()),
             )
             .into_element()
@@ -519,7 +519,7 @@ impl Component for VerseParagraph {
         let mut p = paragraph()
             .width(Size::fill())
             .line_height(line_height)
-            .color(parse_rgb(theme::TEXT_PRIMARY))
+            .color(palette().t1)
             .font_family(typography::FAMILY)
             .font_size(font_size)
             .holder(holder.clone())
@@ -845,11 +845,11 @@ impl Component for VerseMarker {
             MarkerDisplay::Chapter(chap) => label()
                 .font_family(typography::FAMILY)
                 .font_size(self.font_size * 2.5)
-                .color(parse_rgb(theme::DROP_CAP))
+                .color(palette().line_strong)
                 .text(format!("{chap} ")),
             MarkerDisplay::Verse => label()
                 .font_size(self.font_size * 0.6)
-                .color(parse_rgb(theme::VERSE_NUM))
+                .color(palette().t3)
                 .text(format!(" {verse} ")),
         };
         // Scroll-into-view hook: when a chip-tap / TSK jump has
@@ -1003,7 +1003,7 @@ impl Component for FootnoteLetter {
                 .width(Size::px(popup_width))
                 .padding((10., 12.))
                 .with_corner_radius(8.0)
-                .background(parse_rgb(theme::CHIP_BG))
+                .background(palette().s2)
                 .on_sized(move |e: Event<SizedEventData>| {
                     let new_area = e.data().area;
                     if *popup_area.peek() != new_area {
@@ -1031,7 +1031,7 @@ impl Component for FootnoteLetter {
                 .child(
                     label()
                         .font_size(self.font_size * 0.65)
-                        .color(parse_rgb(theme::TEXT_PRIMARY))
+                        .color(palette().t1)
                         .text(text),
                 );
 
@@ -1262,7 +1262,7 @@ impl Component for RefHoverButton {
                 // outer rect only paints the chrome + padding.
                 .padding((6., 8.))
                 .with_corner_radius(10.0)
-                .background(parse_rgb(theme::CHIP_BG))
+                .background(palette().s2)
                 .spacing(4.0)
                 .on_sized(move |e: Event<SizedEventData>| {
                     let new_area = e.data().area;
@@ -1415,7 +1415,7 @@ impl Component for RefListRow {
             .cross_align(Alignment::Center)
             .main_align(Alignment::SpaceBetween)
             .with_corner_radius(6.0)
-            .background(parse_rgb(theme::BG))
+            .background(palette().bg)
             .on_press(on_header)
             .child(
                 label()
@@ -1443,7 +1443,7 @@ impl Component for RefListRow {
                 rect().width(Size::fill()).padding((8., 10., 8., 16.)).child(
                     label()
                         .font_size(self.font_size * 0.65)
-                        .color(parse_rgb(theme::TEXT_SECONDARY))
+                        .color(palette().t2)
                         .text(self.view.tooltip.clone()),
                 ),
             );
@@ -1460,7 +1460,7 @@ fn note_icon(font_size: f32) -> impl IntoElement {
         .center()
         .child(
             SvgViewer::new(freya::icons::lucide::file_text())
-                .color(parse_rgb(theme::VERSE_NUM))
+                .color(palette().t3)
                 .width(Size::px(size))
                 .height(Size::px(size)),
         )
@@ -1475,27 +1475,11 @@ fn section_header(text: &str) -> impl IntoElement {
             label()
                 .font_family(typography::FAMILY)
                 .font_size(typography::SECTION_HEADER_PX)
-                .color(parse_rgb(theme::HEADER))
+                .color(palette().t1)
                 .text(text.to_string()),
         )
 }
 
 fn spacer(height: f32) -> impl IntoElement {
     rect().width(Size::fill()).height(Size::px(height))
-}
-
-/// Parse an `"rgb(r, g, b)"` string into a Freya `Color`. The theme
-/// module keeps the strings for parity with the inline markup used in
-/// other Freya components in this project.
-fn parse_rgb(s: &str) -> Color {
-    let trimmed = s.trim_start_matches("rgb(").trim_end_matches(')');
-    let parts: Vec<u8> = trimmed
-        .split(',')
-        .filter_map(|t| t.trim().parse::<u8>().ok())
-        .collect();
-    if parts.len() == 3 {
-        Color::from_rgb(parts[0], parts[1], parts[2])
-    } else {
-        Color::WHITE
-    }
 }

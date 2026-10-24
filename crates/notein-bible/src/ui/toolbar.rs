@@ -10,7 +10,7 @@ use std::borrow::Cow;
 
 use freya::prelude::*;
 
-use super::theme;
+use notein_ui_kit::theme::palette;
 
 const ICON_SIZE: f32 = 20.0;
 const BUTTON_SIZE: f32 = 36.0;
@@ -74,7 +74,7 @@ where
 
     let row = rect()
         .width(Size::fill())
-        .background(parse_rgb(theme::BG))
+        .background(palette().bg)
         .padding(16.)
         .direction(Direction::Horizontal)
         .cross_align(Alignment::Center)
@@ -141,7 +141,7 @@ pub fn empty_toolbar(on_home: impl FnMut() + 'static) -> impl IntoElement {
     rect()
         .width(Size::fill())
         .height(Size::px(56.0))
-        .background(parse_rgb(theme::BG))
+        .background(palette().bg)
         .padding((0., 16.))
         .direction(Direction::Horizontal)
         .cross_align(Alignment::Center)
@@ -189,7 +189,7 @@ fn muted_translation_chip() -> impl IntoElement {
         .spacing(6.0)
         .margin((0., 0., 0., 6.))
         .with_corner_radius(17.0)
-        .background(parse_rgb(theme::CHIP_BG))
+        .background(palette().s2)
         .child(
             SvgViewer::new(freya::icons::lucide::globe())
                 .color(Color::from_rgb(80, 80, 90))
@@ -216,7 +216,7 @@ where
         .on_press(move |_: Event<PressEventData>| on_press())
         .child(
             SvgViewer::new(icon)
-                .color(parse_rgb(theme::TEXT_PRIMARY))
+                .color(palette().t1)
                 .width(Size::px(ICON_SIZE))
                 .height(Size::px(ICON_SIZE)),
         )
@@ -235,7 +235,7 @@ fn nav_icon_button(icon: Bytes, handler: Option<BackHandler>) -> impl IntoElemen
             .on_press(move |_: Event<PressEventData>| cb())
             .child(
                 SvgViewer::new(icon)
-                    .color(parse_rgb(theme::TEXT_PRIMARY))
+                    .color(palette().t1)
                     .width(Size::px(ICON_SIZE))
                     .height(Size::px(ICON_SIZE)),
             ),
@@ -265,31 +265,18 @@ where
         .spacing(6.0)
         .margin((0., 0., 0., 6.))
         .with_corner_radius(17.0)
-        .background(parse_rgb(theme::CHIP_BG))
+        .background(palette().s2)
         .on_press(move |_: Event<PressEventData>| on_press())
         .child(
             SvgViewer::new(freya::icons::lucide::globe())
-                .color(parse_rgb(theme::TEXT_PRIMARY))
+                .color(palette().t1)
                 .width(Size::px(14.0))
                 .height(Size::px(14.0)),
         )
         .child(
             label()
                 .font_size(13.0)
-                .color(parse_rgb(theme::TEXT_PRIMARY))
+                .color(palette().t1)
                 .text(abbrev.to_string()),
         )
-}
-
-fn parse_rgb(s: &str) -> Color {
-    let trimmed = s.trim_start_matches("rgb(").trim_end_matches(')');
-    let parts: Vec<u8> = trimmed
-        .split(',')
-        .filter_map(|t| t.trim().parse::<u8>().ok())
-        .collect();
-    if parts.len() == 3 {
-        Color::from_rgb(parts[0], parts[1], parts[2])
-    } else {
-        Color::WHITE
-    }
 }

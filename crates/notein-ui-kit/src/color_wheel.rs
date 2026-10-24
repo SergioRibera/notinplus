@@ -8,7 +8,7 @@
 use freya::prelude::*;
 
 use crate::FormInput;
-use crate::theme::{BORDER, SURFACE_TERTIARY, TEXT_PRIMARY, TEXT_SECONDARY};
+use crate::theme::palette;
 
 /// Deterministically pick a swatch for `name`. Two callers passing the
 /// same string always get the same color.
@@ -487,12 +487,12 @@ impl Component for ColorWheel {
                     .background(current_color)
                     .border(
                         Border::new()
-                            .fill(BORDER)
+                            .fill(palette().line)
                             .width(1.0)
                             .alignment(BorderAlignment::Inner),
                     ),
             )
-            .child(label().color(TEXT_SECONDARY).font_size(12.0).text("Hex"))
+            .child(label().color(palette().t2).font_size(12.0).text("Hex"))
             .child(hex_field);
 
         let mut root = rect()
@@ -500,9 +500,9 @@ impl Component for ColorWheel {
             .width(Size::px(picker_width))
             .spacing(12.0)
             .padding(PANEL_PADDING)
-            .background(SURFACE_TERTIARY)
+            .background(palette().s3)
             .with_corner_radius(12.0)
-            .color(TEXT_PRIMARY)
+            .color(palette().t1)
             .on_global_pointer_move(on_global_pointer_move)
             .on_global_pointer_up(on_global_pointer_press);
 

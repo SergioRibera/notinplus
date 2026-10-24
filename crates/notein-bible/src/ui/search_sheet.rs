@@ -17,7 +17,7 @@ use freya::prelude::*;
 
 use crate::db::{SearchHit as DbSearchHit, snippet_markers};
 
-use super::theme;
+use notein_ui_kit::theme::palette;
 
 /// One rendered search hit — the UI-facing shape.
 #[derive(Clone, Debug)]
@@ -137,12 +137,12 @@ where
 {
     let mut snippet = paragraph()
         .width(Size::fill())
-        .color(parse_rgb(theme::TEXT_SECONDARY))
+        .color(palette().t2)
         .font_size(14.0);
     for run in view.snippet_runs {
         let mut span = Span::new(run.text);
         if run.bold {
-            span = span.color(parse_rgb(theme::TEXT_PRIMARY));
+            span = span.color(palette().t1);
         }
         snippet = snippet.span(span);
     }
@@ -150,29 +150,16 @@ where
         .width(Size::fill())
         .padding((10., 12.))
         .with_corner_radius(10.0)
-        .background(parse_rgb(theme::CHIP_BG))
+        .background(palette().s2)
         .spacing(4.0)
         .on_press(move |_: Event<PressEventData>| on_press())
         .child(
             label()
                 .font_size(12.0)
-                .color(parse_rgb(theme::VERSE_NUM))
+                .color(palette().t3)
                 .text(view.reference),
         )
         .child(snippet)
-}
-
-fn parse_rgb(s: &str) -> Color {
-    let trimmed = s.trim_start_matches("rgb(").trim_end_matches(')');
-    let parts: Vec<u8> = trimmed
-        .split(',')
-        .filter_map(|t| t.trim().parse::<u8>().ok())
-        .collect();
-    if parts.len() == 3 {
-        Color::from_rgb(parts[0], parts[1], parts[2])
-    } else {
-        Color::WHITE
-    }
 }
 
 #[cfg(test)]

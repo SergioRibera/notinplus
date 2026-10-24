@@ -18,10 +18,7 @@ use std::borrow::Cow;
 
 use freya::{animation::*, prelude::*};
 
-use crate::theme::{
-    BORDER, BORDER_FOCUS, ERROR, SURFACE_PRIMARY, SURFACE_SECONDARY, SURFACE_TERTIARY,
-    TEXT_PLACEHOLDER, TEXT_PRIMARY, TEXT_SECONDARY,
-};
+use crate::theme::palette;
 
 #[derive(Clone, PartialEq)]
 pub struct FormInput {
@@ -327,11 +324,11 @@ impl Component for FormInput {
         });
 
         let border_color = if has_error {
-            ERROR
+            palette().danger
         } else if is_focused {
-            BORDER_FOCUS
+            palette().focus
         } else {
-            BORDER
+            palette().line
         };
         let border_width = if is_focused { 2. } else { 1. };
 
@@ -379,8 +376,8 @@ impl Component for FormInput {
             focus_border_fill: Some(Color::TRANSPARENT.into()),
             background: Some(Color::TRANSPARENT.into()),
             focus_background: Some(Color::TRANSPARENT.into()),
-            color: Some(TEXT_PRIMARY.into()),
-            placeholder_color: Some(TEXT_PLACEHOLDER.into()),
+            color: Some(palette().t1.into()),
+            placeholder_color: Some(palette().t3.into()),
         });
 
         let mut paste_value = self.value.clone();
@@ -426,7 +423,7 @@ impl Component for FormInput {
                                 .font_size(self.label_size)
                                 .font_weight(self.label_weight)
                                 .max_lines(1)
-                                .color(TEXT_SECONDARY)
+                                .color(palette().t2)
                                 .text(label_text.to_string())
                         })
                     })
@@ -444,7 +441,7 @@ impl Component for FormInput {
                     .maybe(collapsible, |r| {
                         r.overflow(Overflow::Clip).height(Size::px(36.))
                     })
-                    .background(self.background.unwrap_or(SURFACE_TERTIARY))
+                    .background(self.background.unwrap_or(palette().s3))
                     .maybe(!self.flat, |r| {
                         r.border(
                             Border::new()
@@ -463,7 +460,7 @@ impl Component for FormInput {
                     })
                     .maybe_child(left_icon.map(|i| {
                         SvgViewer::new(i)
-                            .color(TEXT_PLACEHOLDER)
+                            .color(palette().t3)
                             .width(Size::px(14.))
                             .height(Size::px(14.))
                     }))
@@ -511,12 +508,12 @@ impl Component for FormInput {
                                     .height(Size::px(200.))
                                     .overflow(Overflow::Clip)
                                     .corner_radius(10.)
-                                    .background(SURFACE_PRIMARY)
+                                    .background(palette().s1)
                                     .border(
                                         Border::new()
                                             .width(1.)
                                             .alignment(BorderAlignment::Inner)
-                                            .fill(BORDER),
+                                            .fill(palette().line),
                                     )
                                     .child(
                                         ScrollView::new()
@@ -542,7 +539,7 @@ impl Component for FormInput {
             )
             .maybe_child(
                 active_error
-                    .map(|error| label().font_size(12.).color(ERROR).text(error.to_string())),
+                    .map(|error| label().font_size(12.).color(palette().danger).text(error.to_string())),
             )
     }
 }
@@ -576,7 +573,7 @@ impl Component for SuggestionItem {
             .width(Size::fill())
             .padding((10., 16.))
             .background(if is_hover() {
-                SURFACE_SECONDARY
+                palette().s2
             } else {
                 Color::TRANSPARENT
             })
@@ -594,7 +591,7 @@ impl Component for SuggestionItem {
             .child(
                 label()
                     .font_size(14.)
-                    .color(TEXT_PRIMARY)
+                    .color(palette().t1)
                     .text(self.suggestion.to_string()),
             )
     }

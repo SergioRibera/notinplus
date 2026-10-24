@@ -5,15 +5,8 @@
 //! implements [`Component`] (or `Into<Element>`) so it drops into
 //! `.child(...)` positions unchanged.
 
-pub mod color_wheel;
 pub mod drag_drop;
-pub mod fab_menu;
-pub mod form_input;
 pub mod modal;
-pub mod theme;
 
-pub use color_wheel::{ColorWheel, DEFAULT_SWATCHES, auto_color};
 pub use drag_drop::{DragZone, DropZone, use_drag};
-pub use fab_menu::{FabMenu, FabMenuEntry};
-pub use form_input::FormInput;
 pub use modal::{Modal, ModalController, ModalPlacement, ModalPortal};

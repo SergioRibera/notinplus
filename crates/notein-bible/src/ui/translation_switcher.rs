@@ -9,7 +9,7 @@ use freya::prelude::*;
 
 use crate::db::BibleRow;
 
-use super::theme;
+use notein_ui_kit::theme::palette;
 
 const CARD_WIDTH: f32 = 320.0;
 const ROW_HEIGHT: f32 = 56.0;
@@ -26,7 +26,7 @@ where
 {
     let mut card = rect()
         .width(Size::px(CARD_WIDTH))
-        .background(parse_rgb(theme::CHIP_BG))
+        .background(palette().s2)
         .with_corner_radius(14.0)
         .padding((6., 6.))
         .spacing(4.0);
@@ -47,9 +47,9 @@ where
 {
     let id = b.id.clone();
     let indicator_color = if is_current {
-        parse_rgb(theme::TEXT_PRIMARY)
+        palette().t1
     } else {
-        parse_rgb(theme::VERSE_NUM)
+        palette().t3
     };
     rect()
         .height(Size::px(ROW_HEIGHT))
@@ -72,7 +72,7 @@ where
                 .child(
                     label()
                         .font_size(14.0)
-                        .color(parse_rgb(theme::TEXT_PRIMARY))
+                        .color(palette().t1)
                         .text(if b.name_local.is_empty() {
                             b.id.clone()
                         } else {
@@ -82,7 +82,7 @@ where
                 .child(
                     label()
                         .font_size(11.0)
-                        .color(parse_rgb(theme::VERSE_NUM))
+                        .color(palette().t3)
                         .text(b.abbrev),
                 ),
         )
@@ -102,27 +102,14 @@ where
         .on_press(move |_: Event<PressEventData>| on_install())
         .child(
             SvgViewer::new(freya::icons::lucide::plus())
-                .color(parse_rgb(theme::TEXT_PRIMARY))
+                .color(palette().t1)
                 .width(Size::px(16.0))
                 .height(Size::px(16.0)),
         )
         .child(
             label()
                 .font_size(14.0)
-                .color(parse_rgb(theme::TEXT_PRIMARY))
+                .color(palette().t1)
                 .text("Agregar traducción…"),
         )
-}
-
-fn parse_rgb(s: &str) -> Color {
-    let trimmed = s.trim_start_matches("rgb(").trim_end_matches(')');
-    let parts: Vec<u8> = trimmed
-        .split(',')
-        .filter_map(|t| t.trim().parse::<u8>().ok())
-        .collect();
-    if parts.len() == 3 {
-        Color::from_rgb(parts[0], parts[1], parts[2])
-    } else {
-        Color::WHITE
-    }
 }

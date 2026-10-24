@@ -5,7 +5,7 @@
 
 use freya::prelude::*;
 
-use super::theme;
+use notein_ui_kit::theme::palette;
 
 const BAR_HEIGHT: f32 = 72.0;
 const PILL_HEIGHT: f32 = 48.0;
@@ -44,7 +44,7 @@ where
     rect()
         .width(Size::fill())
         .height(Size::px(BAR_HEIGHT))
-        .background(parse_rgb(theme::BG))
+        .background(palette().bg)
         .padding((0., 16.))
         .direction(Direction::Horizontal)
         .cross_align(Alignment::Center)
@@ -73,7 +73,7 @@ where
         .main_align(Alignment::SpaceBetween)
         .padding((0., 10.))
         .with_corner_radius(PILL_HEIGHT / 2.0)
-        .background(parse_rgb(theme::CHIP_BG))
+        .background(palette().s2)
         .child(
             rect()
                 .width(Size::px(36.0))
@@ -82,7 +82,7 @@ where
                 .on_press(move |_: Event<PressEventData>| on_prev())
                 .child(
                     SvgViewer::new(freya::icons::lucide::chevron_left())
-                        .color(parse_rgb(theme::TEXT_PRIMARY))
+                        .color(palette().t1)
                         .width(Size::px(18.0))
                         .height(Size::px(18.0)),
                 ),
@@ -98,7 +98,7 @@ where
                         .font_size(14.0)
                         .text_align(TextAlign::Center)
                         .text_overflow(TextOverflow::Ellipsis)
-                        .color(parse_rgb(theme::TEXT_PRIMARY))
+                        .color(palette().t1)
                         .text(caption),
                 ),
         )
@@ -110,22 +110,9 @@ where
                 .on_press(move |_: Event<PressEventData>| on_next())
                 .child(
                     SvgViewer::new(freya::icons::lucide::chevron_right())
-                        .color(parse_rgb(theme::TEXT_PRIMARY))
+                        .color(palette().t1)
                         .width(Size::px(18.0))
                         .height(Size::px(18.0)),
                 ),
         )
-}
-
-fn parse_rgb(s: &str) -> Color {
-    let trimmed = s.trim_start_matches("rgb(").trim_end_matches(')');
-    let parts: Vec<u8> = trimmed
-        .split(',')
-        .filter_map(|t| t.trim().parse::<u8>().ok())
-        .collect();
-    if parts.len() == 3 {
-        Color::from_rgb(parts[0], parts[1], parts[2])
-    } else {
-        Color::WHITE
-    }
 }
