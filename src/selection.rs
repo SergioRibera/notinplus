@@ -1,6 +1,6 @@
-//! The bar over a text selection, the same in the Bible, PDFs and
-//! notes: five highlighters one tap away, a note, copy as reference and
-//! send to the notebook.
+//! The bar over a text selection, the same in the Bible and PDFs: five
+//! highlighters one tap away, a note, copy as reference and send to the
+//! notebook. Notes get the editor's formatting bar instead.
 
 use std::rc::Rc;
 
