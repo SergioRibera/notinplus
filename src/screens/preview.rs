@@ -49,7 +49,7 @@ fn folder(name: &str, color: [u8; 4]) -> Folder {
     }
 }
 
-fn tab(id: ItemId) -> PaneTab {
+const fn tab(id: ItemId) -> PaneTab {
     PaneTab {
         target: TabTarget::Item(id),
         plugin_id: None,

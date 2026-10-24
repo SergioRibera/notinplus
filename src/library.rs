@@ -1411,7 +1411,7 @@ fn now_millis() -> u64 {
 
 impl LibraryData {
     /// Data assembled in memory, for screen previews.
-    #[cfg(test)]
+    #[cfg(all(test, not(feature = "hotreload")))]
     pub(crate) const fn from_parts(
         index: LibraryIndex,
         workspaces: WorkspaceIndex,

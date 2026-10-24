@@ -104,13 +104,17 @@ where
 /// A history button, or an empty slot of its size so the pill stays
 /// centred.
 fn history_button(icon: Bytes, label: &'static str, handler: Option<NavHandler>) -> Element {
-    match handler {
-        Some(mut handler) => IconButton::new(icon, label)
-            .on_press(move |_| handler())
-            .into_element(),
-        None => rect()
-            .width(Size::px(tokens::size::BUTTON))
-            .height(Size::px(tokens::size::BUTTON))
-            .into_element(),
-    }
+    handler.map_or_else(
+        || {
+            rect()
+                .width(Size::px(tokens::size::BUTTON))
+                .height(Size::px(tokens::size::BUTTON))
+                .into_element()
+        },
+        |mut handler| {
+            IconButton::new(icon, label)
+                .on_press(move |_| handler())
+                .into_element()
+        },
+    )
 }

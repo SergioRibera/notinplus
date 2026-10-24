@@ -59,7 +59,7 @@ impl LibraryView {
 }
 
 /// A view over fixed data, for screen previews.
-#[cfg(test)]
+#[cfg(all(test, not(feature = "hotreload")))]
 pub(crate) fn use_fixed_library(data: Arc<LibraryData>) -> LibraryView {
     let state = use_state(move || LibraryState::Ready(data));
     use_hook(|| {
