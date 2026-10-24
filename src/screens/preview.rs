@@ -234,6 +234,10 @@ fn settings_pen() -> Element {
     settings_at(crate::screens::settings::Section::Pen)
 }
 
+fn settings_notes() -> Element {
+    settings_at(crate::screens::settings::Section::Notes)
+}
+
 fn settings_library() -> Element {
     settings_at(crate::screens::settings::Section::Library)
 }
@@ -257,6 +261,7 @@ fn search_empty() -> Element {
 fn settings_renders() {
     render("settings-appearance", (1280.0, 860.0), settings_appearance);
     render("settings-pen", (1280.0, 860.0), settings_pen);
+    render("settings-notes", (1280.0, 860.0), settings_notes);
     render("settings-library", (1280.0, 860.0), settings_library);
     render("settings-devices", (1280.0, 860.0), settings_devices);
     render("settings-plugins", (1280.0, 860.0), settings_plugins);

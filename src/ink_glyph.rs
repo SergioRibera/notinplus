@@ -101,6 +101,52 @@ impl GlyphFont {
     }
 }
 
+impl GlyphFont {
+    /// `text` laid out on one line, its ink fitted to `height` inside
+    /// `(x, y)`, for previews of the font itself. Returns the outline
+    /// and its width.
+    #[must_use]
+    pub fn sample(self, text: &str, (x, y): (f32, f32), height: f32) -> Option<(Path, f32)> {
+        let ink = self.ink()?;
+        // Y grows downwards: `min` is the top of the tallest letter.
+        let (top, bottom) = text
+            .chars()
+            .filter_map(|c| ink.glyph(c))
+            .fold((i16::MAX, i16::MIN), |(top, bottom), g| {
+                (top.min(g.min[1]), bottom.max(g.max[1]))
+            });
+        let span = f32::from(bottom) - f32::from(top);
+        if span <= 0.0 {
+            return None;
+        }
+        let scale = height / span;
+        let baseline = f32::from(top).mul_add(-scale, y);
+        let space = f32::from(ink.units_per_em) / 4.0;
+        let mut builder = PathBuilder::new();
+        let mut pen = x;
+        for glyph in text.chars() {
+            let Some(outline) = ink.glyph(glyph) else {
+                pen = space.mul_add(scale, pen);
+                continue;
+            };
+            let glyph = InkGlyph {
+                id: InkGlyphId::default(),
+                glyph,
+                font: self,
+                x: pen,
+                y: baseline,
+                scale,
+                color: [0; 4],
+            };
+            if let Some(path) = glyph.path() {
+                builder.add_path(&path, None);
+            }
+            pen = f32::from(outline.advance).mul_add(scale, pen);
+        }
+        Some((builder.detach(), pen - x))
+    }
+}
+
 static SELECTED: AtomicU8 = AtomicU8::new(0);
 
 /// A recognized character drawn as ink.
