@@ -15,7 +15,7 @@ use notein_ui_kit::{
 use crate::library::{ItemId, LibraryData, WorkspaceId};
 use crate::session_end::SessionEnd;
 use crate::state::LibraryView;
-use crate::sync::{LinkTarget, ShareRequest, ShareView};
+use crate::sync::{LinkTarget, ShareRequest, ShareView, SyncSnapshot};
 
 /// Time a person action waits for its second tap.
 const CONFIRM_WINDOW: Duration = Duration::from_secs(3);
@@ -167,18 +167,99 @@ fn card(
         .into_element()
 }
 
+impl ShareForm {
+    /// What to share: the document, with its notebooks, or the mesa.
+    fn what(&self, data: &LibraryData) -> Section {
+        use freya::icons::lucide;
+        let target = self.target;
+        let scope = self.scope;
+        let current = *scope.read();
+        let notebooks = target.item.map_or(0, |i| data.live_notebooks_of(i).len());
+        let mesa_docs = target.mesa.map_or(0, |_| target.docs(Scope::Mesa, data).len());
+        let doc_name = target
+            .item
+            .and_then(|i| data.item(i))
+            .map_or_else(String::new, |i| i.name.clone());
+        let choose = move |chosen: Scope| {
+            move || {
+                let mut scope = scope;
+                scope.set(chosen);
+            }
+        };
+        Section::new("Qué").child(
+            rect()
+                .width(Size::fill())
+                .height(Size::px(112.0))
+                .horizontal()
+                .content(Content::Flex)
+                .spacing(10.0)
+                .child(card(
+                    current == Scope::Document,
+                    lucide::file_text(),
+                    "Este documento",
+                    doc_name,
+                    target.item.is_some(),
+                    choose(Scope::Document),
+                ))
+                .child(card(
+                    current == Scope::WithNotebooks,
+                    lucide::notebook_pen(),
+                    "Con sus cuadernos",
+                    crate::format::count(notebooks, "cuaderno", "cuadernos"),
+                    notebooks > 0,
+                    choose(Scope::WithNotebooks),
+                ))
+                .child(card(
+                    current == Scope::Mesa,
+                    lucide::layout_grid(),
+                    "Toda la mesa",
+                    crate::format::count(mesa_docs, "documento", "documentos"),
+                    mesa_docs > 0,
+                    choose(Scope::Mesa),
+                )),
+        )
+    }
+
+    /// For this session or for good, and whether guests may write.
+    fn how(&self) -> [Element; 2] {
+        let (mut permanent, mut read_only) = (self.permanent, self.read_only);
+        let lasting = *permanent.read();
+        [
+            Section::new("Cómo")
+                .child(
+                    Segmented::new(["Solo esta sesión", "Permanente"], usize::from(lasting))
+                        .full_width()
+                        .on_select(move |i: usize| permanent.set(i == 1)),
+                )
+                .child(
+                    Text::new(if lasting {
+                        "Cada uno guarda una copia y los cambios se juntan cuando vuelven a verse."
+                    } else {
+                        "Mientras estés conectado. Al terminar, los invitados pueden guardarse una copia."
+                    })
+                    .role(TextRole::Hint),
+                )
+                .into_element(),
+            Group::default()
+                .child(
+                    ListRow::new("Solo lectura")
+                        .subtitle("Los invitados miran y siguen tu página, pero no escriben.")
+                        .trailing(Trailing::Switch {
+                            on: *read_only.read(),
+                            on_toggle: EventHandler::new(move |on| read_only.set(on)),
+                        }),
+                )
+                .into_element(),
+        ]
+    }
+}
+
 impl Component for ShareForm {
     fn render(&self) -> impl IntoElement {
-        use freya::icons::lucide;
-        let sync = crate::sync::use_sync();
-        let snapshot = sync.read().clone();
+        let snapshot = crate::sync::use_sync().read().clone();
         let Some(data) = LibraryView::get().data() else {
             return rect().into_element();
         };
-        let scope = self.scope;
-        let mut permanent = self.permanent;
-        let mut read_only = self.read_only;
-        let current = *scope.read();
         if let Some(id) = *self.created.read() {
             return snapshot.shares.iter().find(|s| s.id == id).map_or_else(
                 || {
@@ -190,87 +271,11 @@ impl Component for ShareForm {
                 |view| Session { view: view.clone() }.into_element(),
             );
         }
-        let target = self.target;
-        let notebooks = target.item.map_or(0, |i| data.live_notebooks_of(i).len());
-        let mesa_docs = target
-            .mesa
-            .map_or(0, |_| target.docs(Scope::Mesa, &data).len());
-        let doc_name = target
-            .item
-            .and_then(|i| data.item(i))
-            .map_or_else(String::new, |i| i.name.clone());
         rect()
             .width(Size::fill())
             .spacing(18.0)
-            .child(
-                Section::new("Qué").child(
-                    rect()
-                        .width(Size::fill())
-                        .height(Size::px(112.0))
-                        .horizontal()
-                        .content(Content::Flex)
-                        .spacing(10.0)
-                        .child(card(
-                            current == Scope::Document,
-                            lucide::file_text(),
-                            "Este documento",
-                            doc_name,
-                            target.item.is_some(),
-                            move || {
-                                let mut scope = scope;
-                                scope.set(Scope::Document);
-                            },
-                        ))
-                        .child(card(
-                            current == Scope::WithNotebooks,
-                            lucide::notebook_pen(),
-                            "Con sus cuadernos",
-                            crate::format::count(notebooks, "cuaderno", "cuadernos"),
-                            notebooks > 0,
-                            move || {
-                                let mut scope = scope;
-                                scope.set(Scope::WithNotebooks);
-                            },
-                        ))
-                        .child(card(
-                            current == Scope::Mesa,
-                            lucide::layout_grid(),
-                            "Toda la mesa",
-                            crate::format::count(mesa_docs, "documento", "documentos"),
-                            mesa_docs > 0,
-                            move || {
-                                let mut scope = scope;
-                                scope.set(Scope::Mesa);
-                            },
-                        )),
-                ),
-            )
-            .child(
-                Section::new("Cómo")
-                    .child(
-                        Segmented::new(["Solo esta sesión", "Permanente"], usize::from(*permanent.read()))
-                            .full_width()
-                            .on_select(move |i: usize| permanent.set(i == 1)),
-                    )
-                    .child(
-                        Text::new(if *permanent.read() {
-                            "Cada uno guarda una copia y los cambios se juntan cuando vuelven a verse."
-                        } else {
-                            "Mientras estés conectado. Al terminar, los invitados pueden guardarse una copia."
-                        })
-                        .role(TextRole::Hint),
-                    ),
-            )
-            .child(
-                Group::default().child(
-                    ListRow::new("Solo lectura")
-                        .subtitle("Los invitados miran y siguen tu página, pero no escriben.")
-                        .trailing(Trailing::Switch {
-                            on: *read_only.read(),
-                            on_toggle: EventHandler::new(move |on| read_only.set(on)),
-                        }),
-                ),
-            )
+            .child(self.what(&data))
+            .children(self.how())
             .maybe_child(snapshot.trusted.is_empty().then(|| {
                 Notice::new(
                     NoticeTone::Info,
@@ -773,12 +778,55 @@ pub fn joining() {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Joining;
 
+/// Why the join did not work, and Entendido.
+fn join_failed(failure: notein_sync::JoinFailure) -> Element {
+    let why = match failure {
+        notein_sync::JoinFailure::Refused => {
+            "La invitación ya no vale o el organizador no te dejó entrar."
+        }
+        notein_sync::JoinFailure::Unreachable => {
+            "No encontramos a quien te invitó. Tienen que estar conectados al mismo tiempo."
+        }
+    };
+    rect()
+        .width(Size::fill())
+        .spacing(14.0)
+        .child(Notice::new(NoticeTone::Danger, "No se pudo entrar").detail(why))
+        .child(
+            rect()
+                .width(Size::fill())
+                .horizontal()
+                .main_align(Alignment::End)
+                .child(
+                    Button::new("Entendido")
+                        .primary()
+                        .on_press(|_| ModalController::get().close()),
+                ),
+        )
+        .into_element()
+}
+
+/// The share being joined: its title, and how many documents arrived.
+fn join_progress(snapshot: &SyncSnapshot, joined: Option<&ShareView>) -> (String, usize, usize) {
+    joined.map_or_else(
+        || (snapshot.pending_joins.first().cloned().unwrap_or_default(), 0, 0),
+        |view| {
+            let done = view
+                .docs
+                .iter()
+                .filter(|d| snapshot.docs.get(d) == Some(&notein_sync::DocStatus::Synced))
+                .count();
+            (view.title.clone(), done, view.docs.len())
+        },
+    )
+}
+
 impl Component for Joining {
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let p = palette();
-        let sync = crate::sync::use_sync();
-        let snapshot = sync.read().clone();
+        let snapshot = crate::sync::use_sync().read().clone();
+        // Shares that existed before this join; the new one is the other.
         let known = use_hook(|| {
             crate::sync::snapshot()
                 .shares
@@ -790,51 +838,13 @@ impl Component for Joining {
             .last_join_failure
             .filter(|_| snapshot.pending_joins.is_empty())
         {
-            let why = match failure {
-                notein_sync::JoinFailure::Refused => {
-                    "La invitación ya no vale o el organizador no te dejó entrar."
-                }
-                notein_sync::JoinFailure::Unreachable => {
-                    "No encontramos a quien te invitó. Tienen que estar conectados al mismo tiempo."
-                }
-            };
-            return rect()
-                .width(Size::fill())
-                .spacing(14.0)
-                .child(Notice::new(NoticeTone::Danger, "No se pudo entrar").detail(why))
-                .child(
-                    rect()
-                        .width(Size::fill())
-                        .horizontal()
-                        .main_align(Alignment::End)
-                        .child(
-                            Button::new("Entendido")
-                                .primary()
-                                .on_press(|_| ModalController::get().close()),
-                        ),
-                )
-                .into_element();
+            return join_failed(failure);
         }
         let joined = snapshot
             .shares
             .iter()
             .find(|s| !s.is_owner && !known.contains(&s.id));
-        let (title, done, total) = match joined {
-            Some(view) => {
-                let total = view.docs.len();
-                let done = view
-                    .docs
-                    .iter()
-                    .filter(|d| snapshot.docs.get(d) == Some(&notein_sync::DocStatus::Synced))
-                    .count();
-                (view.title.clone(), done, total)
-            }
-            None => (
-                snapshot.pending_joins.first().cloned().unwrap_or_default(),
-                0,
-                0,
-            ),
-        };
+        let (title, done, total) = join_progress(&snapshot, joined);
         if let Some(view) = joined
             && done == total
         {
@@ -858,11 +868,7 @@ impl Component for Joining {
                     .horizontal()
                     .cross_align(Alignment::Center)
                     .spacing(8.0)
-                    .child(
-                        Icon::new(lucide::loader_circle())
-                            .size(18.0)
-                            .color(p.accent),
-                    )
+                    .child(Icon::new(lucide::loader_circle()).size(18.0).color(p.accent))
                     .child(
                         Text::new(if title.is_empty() {
                             "Uniéndose…".to_owned()

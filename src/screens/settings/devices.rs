@@ -436,11 +436,44 @@ fn show_code(snapshot: &SyncSnapshot, left: Duration) -> Element {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct EnterCode;
 
+/// Six boxes showing the digits typed, the next one outlined.
+fn code_boxes(digits: &str) -> Rect {
+    let p = palette();
+    rect()
+        .width(Size::fill())
+        .horizontal()
+        .main_align(Alignment::Center)
+        .spacing(6.0)
+        .children((0..6).map(|i| {
+            let digit = digits.chars().nth(i).map(String::from).unwrap_or_default();
+            let active = i == digits.len();
+            rect()
+                .key(i)
+                .width(Size::px(40.0))
+                .height(Size::px(50.0))
+                .corner_radius(tokens::radius::MD)
+                .background(p.s2)
+                .border(
+                    Border::new()
+                        .fill(if active { p.accent } else { p.line })
+                        .width(if active { 2.0 } else { 1.0 })
+                        .alignment(BorderAlignment::Inner),
+                )
+                .center()
+                .child(
+                    label()
+                        .text(digit)
+                        .font_size(24.0)
+                        .font_weight(FontWeight::BOLD)
+                        .color(p.t1),
+                )
+                .into_element()
+        }))
+}
+
 impl Component for EnterCode {
     fn render(&self) -> impl IntoElement {
-        let p = palette();
-        let sync = crate::sync::use_sync();
-        let snapshot = sync.read().clone();
+        let snapshot = crate::sync::use_sync().read().clone();
         let code = use_state(String::new);
         let mut device = use_state(|| None::<notein_sync::DeviceId>);
         let mut sent = use_state(|| false);
@@ -494,38 +527,7 @@ impl Component for EnterCode {
                     .then(|| Notice::new(NoticeTone::Info, "Buscando dispositivos en esta red…")),
             )
             .maybe_child((!no_peers).then(|| Group::default().children(peers)))
-            .child(
-                rect()
-                    .width(Size::fill())
-                    .horizontal()
-                    .main_align(Alignment::Center)
-                    .spacing(6.0)
-                    .children((0..6).map(|i| {
-                        let digit = digits.chars().nth(i).map(String::from).unwrap_or_default();
-                        let active = i == digits.len();
-                        rect()
-                            .key(i)
-                            .width(Size::px(40.0))
-                            .height(Size::px(50.0))
-                            .corner_radius(tokens::radius::MD)
-                            .background(p.s2)
-                            .border(
-                                Border::new()
-                                    .fill(if active { p.accent } else { p.line })
-                                    .width(if active { 2.0 } else { 1.0 })
-                                    .alignment(BorderAlignment::Inner),
-                            )
-                            .center()
-                            .child(
-                                label()
-                                    .text(digit)
-                                    .font_size(24.0)
-                                    .font_weight(FontWeight::BOLD)
-                                    .color(p.t1),
-                            )
-                            .into_element()
-                    })),
-            )
+            .child(code_boxes(&digits))
             .child(
                 TextField::new(code)
                     .label("Código")
@@ -577,12 +579,94 @@ fn recognize(text: &str) -> Option<Recognized> {
         })
 }
 
+/// What a recognised link does, with the button that does it.
+fn link_card(target: &Recognized, raw: String) -> Rect {
+    use freya::icons::lucide;
+    let p = palette();
+    let (icon, title, subtitle, action) = match target {
+        Recognized::Sync(LinkTarget::Join { title, owner, .. }) => (
+            lucide::users(),
+            format!("«{title}»"),
+            format!("Invitación de {owner}"),
+            "Unirse",
+        ),
+        Recognized::Sync(LinkTarget::Pair { name }) => (
+            lucide::link(),
+            name.clone(),
+            "Vincular este dispositivo".to_owned(),
+            "Vincular",
+        ),
+        Recognized::Document(_) => (
+            lucide::file_text(),
+            "Enlace a un documento".to_owned(),
+            "Se abre en tu biblioteca si lo tenés".to_owned(),
+            "Abrir",
+        ),
+    };
+    rect()
+        .width(Size::fill())
+        .padding(14.0)
+        .corner_radius(tokens::radius::LG)
+        .background(p.accent_soft)
+        .horizontal()
+        .cross_align(Alignment::Center)
+        .content(Content::Flex)
+        .spacing(12.0)
+        .child(Icon::new(icon).size(22.0).color(p.accent_text))
+        .child(
+            rect()
+                .width(Size::flex(1.0))
+                .child(Text::new(title).role(TextRole::Strong).lines(1))
+                .child(Text::new(subtitle).role(TextRole::Meta)),
+        )
+        .child(Button::new(action).primary().on_press(move |_| {
+            ModalController::get().close();
+            match recognize(&raw) {
+                Some(Recognized::Sync(_)) => {
+                    if let Some(LinkTarget::Join { .. }) = crate::sync::open_link(&raw) {
+                        crate::screens::collab::joining();
+                    }
+                }
+                Some(Recognized::Document(url)) => crate::deep_link::open(&url),
+                None => {}
+            }
+        }))
+}
+
+/// Scan a QR code into `pasted`; a camera problem lands in `error`.
+fn scan_button(mut error: State<Option<&'static str>>, mut pasted: State<String>) -> Button {
+    Button::new("Escanear un código QR")
+        .tonal()
+        .full_width()
+        .icon(freya::icons::lucide::scan_qr_code())
+        .on_press(move |_| {
+            spawn(async move {
+                match crate::scan::scan_qr("Apuntá al código del otro dispositivo").await {
+                    Ok(Some(text)) => {
+                        error.set(None);
+                        pasted.set(text);
+                    }
+                    Ok(None) => {}
+                    Err(crate::scan::ScanError::Denied) => error.set(Some(
+                        "Notein no tiene permiso para usar la cámara. Podés dárselo en los ajustes del sistema, o pegar el enlace.",
+                    )),
+                    Err(crate::scan::ScanError::Unavailable) => {
+                        error.set(Some("Este dispositivo no tiene cámara. Pegá el enlace."));
+                    }
+                    Err(crate::scan::ScanError::Failed(why)) => {
+                        log::warn!("scan: {why}");
+                        error.set(Some("No se pudo abrir la cámara. Pegá el enlace."));
+                    }
+                }
+            });
+        })
+}
+
 impl Component for LinkSheet {
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
-        let p = palette();
         let pasted = use_state(String::new);
-        let mut scan_error = use_state(|| None::<&'static str>);
+        let scan_error = use_state(|| None::<&'static str>);
         let clipboard = use_hook(|| {
             freya::clipboard::Clipboard::get()
                 .ok()
@@ -592,89 +676,13 @@ impl Component for LinkSheet {
         let found = recognize(&text);
         let typed_unknown = !text.trim().is_empty() && found.is_none();
 
-        let card = found.map(|target| {
-            let (icon, title, subtitle, action) = match &target {
-                Recognized::Sync(LinkTarget::Join { title, owner, .. }) => (
-                    lucide::users(),
-                    format!("«{title}»"),
-                    format!("Invitación de {owner}"),
-                    "Unirse",
-                ),
-                Recognized::Sync(LinkTarget::Pair { name }) => (
-                    lucide::link(),
-                    name.clone(),
-                    "Vincular este dispositivo".to_owned(),
-                    "Vincular",
-                ),
-                Recognized::Document(_) => (
-                    lucide::file_text(),
-                    "Enlace a un documento".to_owned(),
-                    "Se abre en tu biblioteca si lo tenés".to_owned(),
-                    "Abrir",
-                ),
-            };
-            let raw = text.clone();
-            rect()
-                .width(Size::fill())
-                .padding(14.0)
-                .corner_radius(tokens::radius::LG)
-                .background(p.accent_soft)
-                .horizontal()
-                .cross_align(Alignment::Center)
-                .content(Content::Flex)
-                .spacing(12.0)
-                .child(Icon::new(icon).size(22.0).color(p.accent_text))
-                .child(
-                    rect()
-                        .width(Size::flex(1.0))
-                        .child(Text::new(title).role(TextRole::Strong).lines(1))
-                        .child(Text::new(subtitle).role(TextRole::Meta)),
-                )
-                .child(Button::new(action).primary().on_press(move |_| {
-                    ModalController::get().close();
-                    match recognize(&raw) {
-                        Some(Recognized::Sync(_)) => {
-                            if let Some(LinkTarget::Join { .. }) = crate::sync::open_link(&raw) {
-                                crate::screens::collab::joining();
-                            }
-                        }
-                        Some(Recognized::Document(url)) => crate::deep_link::open(&url),
-                        None => {}
-                    }
-                }))
-        });
+        let card = found.map(|target| link_card(&target, text.clone()));
 
         let mut paste_target = pasted;
         rect()
             .width(Size::fill())
             .spacing(14.0)
-            .child(
-                Button::new("Escanear un código QR")
-                    .tonal()
-                    .full_width()
-                    .icon(lucide::scan_qr_code())
-                    .on_press(move |_| {
-                        spawn(async move {
-                            match crate::scan::scan_qr("Apuntá al código del otro dispositivo").await {
-                                Ok(Some(text)) => {
-                                    scan_error.set(None);
-                                    paste_target.set(text);
-                                }
-                                Ok(None) => {}
-                                Err(crate::scan::ScanError::Denied) => {
-                                    scan_error.set(Some("Notein no tiene permiso para usar la cámara. Podés dárselo en los ajustes del sistema, o pegar el enlace."));
-                                }
-                                Err(crate::scan::ScanError::Unavailable) => {
-                                    scan_error.set(Some("Este dispositivo no tiene cámara. Pegá el enlace."));
-                                }
-                                Err(crate::scan::ScanError::Failed(why)) => {
-                                    log::warn!("scan: {why}");
-                                    scan_error.set(Some("No se pudo abrir la cámara. Pegá el enlace."));
-                                }
-                            }
-                        });
-                    }),
-            )
+            .child(scan_button(scan_error, paste_target))
             .maybe_child(scan_error().map(|why| Notice::new(NoticeTone::Warning, why)))
             .maybe_child(clipboard.filter(|_| text.trim().is_empty()).map(|link| {
                 ListRow::new("Hay un enlace copiado")
