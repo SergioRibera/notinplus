@@ -145,7 +145,10 @@ fn layout(count: usize, edges: &[Edge]) -> Vec<(f32, f32)> {
     let mut pos: Vec<(f32, f32)> = (0..count)
         .map(|i| {
             let angle = (i as f32) / (count as f32) * std::f32::consts::TAU;
-            (0.4f32.mul_add(angle.cos(), 0.5), 0.4f32.mul_add(angle.sin(), 0.5))
+            (
+                0.4f32.mul_add(angle.cos(), 0.5),
+                0.4f32.mul_add(angle.sin(), 0.5),
+            )
         })
         .collect();
     let k = (1.0 / count as f32).sqrt();

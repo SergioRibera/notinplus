@@ -72,8 +72,10 @@ uuid_newtype!(
     ItemId
 );
 uuid_newtype!(
-    /// Stable identifier for a folder. [`ROOT_FOLDER`] uses the nil
-    /// UUID; user-created folders carry random UUID v4 bytes.
+    /// Stable identifier for a folder.
+    ///
+    /// [`ROOT_FOLDER`] uses the nil UUID; user-created folders carry
+    /// random UUID v4 bytes.
     FolderId
 );
 uuid_newtype!(
@@ -89,9 +91,10 @@ uuid_newtype!(
     LinkId
 );
 uuid_newtype!(
-    /// Stable identifier for a pane within a single workspace. Scoped
-    /// per workspace — a [`PaneId`] from workspace A has no meaning in
-    /// B. Default is the nil UUID used by transient layout snapshots
+    /// Stable identifier for a pane within a single workspace.
+    ///
+    /// Scoped per workspace — a [`PaneId`] from workspace A has no
+    /// meaning in B. Default is the nil UUID used by transient layout snapshots
     /// that never persist; the [`Workspace`] allocator rewrites it on
     /// insertion.
     PaneId
@@ -357,11 +360,11 @@ pub enum SplitSide {
     Second,
 }
 
-/// Recursive binary tree describing a workspace's pane layout. Every
-/// leaf is a [`Pane`]; every internal node is a split along one axis
-/// with the drag position stored as `ratio` (fraction of the parent's
-/// extent allocated to the first child, clamped to `0.05..=0.95` by
-/// the shell).
+/// Recursive binary tree describing a workspace's pane layout.
+///
+/// Every leaf is a [`Pane`]; every internal node is a split along one axis with
+/// the drag position stored as `ratio` (fraction of the parent's extent
+/// allocated to the first child, clamped to `0.05..=0.95` by the shell).
 ///
 /// Not `Eq` / `Hash` because the `ratio` field is `f32`; the layout is
 /// compared structurally only via `PartialEq`.
@@ -402,7 +405,7 @@ impl PaneLayout {
     /// Walk every leaf, yielding a reference to each pane in a stable
     /// depth-first (first-then-second) order. The shell uses this to
     /// hand ids to the renderer / event router.
-    #[must_use] 
+    #[must_use]
     pub fn leaves(&self) -> Vec<&Pane> {
         let mut out = Vec::new();
         self.collect_leaves(&mut out);

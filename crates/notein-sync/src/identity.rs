@@ -243,7 +243,9 @@ impl DeviceProfile {
             .ok()
             .map(|(file, _): (ProfileFile, usize)| file)
             .filter(|file| file.version == PROFILE_VERSION);
-        let file = if let Some(file) = current { file } else {
+        let file = if let Some(file) = current {
+            file
+        } else {
             let (old, _): (ProfileFileV1, usize) = bincode::decode_from_slice(bytes, config)
                 .map_err(|err| IdentityError::Codec(err.to_string()))?;
             if old.version != 1 {

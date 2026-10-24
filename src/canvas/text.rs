@@ -575,7 +575,10 @@ impl Board {
         if sw <= 0.0 || sh <= 0.0 || self.viewport.scale <= 0.0 {
             return false;
         }
-        let wx = crate::text_box::TEXT_DEFAULT_WIDTH.mul_add(-0.5, sw.mul_add(0.5, -self.viewport.tx) / self.viewport.scale);
+        let wx = crate::text_box::TEXT_DEFAULT_WIDTH.mul_add(
+            -0.5,
+            sw.mul_add(0.5, -self.viewport.tx) / self.viewport.scale,
+        );
         let wy = sh.mul_add(0.5, -self.viewport.ty) / self.viewport.scale;
         self.begin_text_draft(wx, wy);
         if self.text_session.is_none() {

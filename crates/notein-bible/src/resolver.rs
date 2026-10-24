@@ -25,7 +25,7 @@ pub fn resolve(db: &Db, bible_id: &str, input: &str) -> Option<BibleAnchor> {
     resolve_parsed(db, bible_id, &parsed)
 }
 
-#[must_use] 
+#[must_use]
 pub fn resolve_parsed(db: &Db, bible_id: &str, parsed: &ParsedRef) -> Option<BibleAnchor> {
     let book_id = resolve_book_token(db, bible_id, &parsed.book_token)?;
     let start_verse = parsed.start_verse.unwrap_or(1);
@@ -45,7 +45,7 @@ pub fn resolve_parsed(db: &Db, bible_id: &str, parsed: &ParsedRef) -> Option<Bib
 /// Resolve a lowercase book token to an OSIS id. Walks the hardcoded
 /// Spanish alias map first, falls back to the installed catalogue, and
 /// finally accepts the token verbatim if it looks like an OSIS id.
-#[must_use] 
+#[must_use]
 pub fn resolve_book_token(db: &Db, bible_id: &str, token: &str) -> Option<String> {
     let normalised = normalise(token);
     let books = db.list_books(bible_id).ok()?;

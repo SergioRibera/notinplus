@@ -1,7 +1,8 @@
 //! A shared session is over for this device: the owner ended it, threw
-//! us out, or we walked away. The documents it brought stay on screen
-//! until the person acknowledges, then the tabs close, the copies go
-//! and the shell returns home.
+//! us out, or we walked away.
+//!
+//! The documents it brought stay on screen until the person acknowledges, then
+//! the tabs close, the copies go and the shell returns home.
 
 use std::sync::Mutex;
 

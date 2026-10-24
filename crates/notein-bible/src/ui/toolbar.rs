@@ -105,7 +105,7 @@ where
         .cross_align(Alignment::Center)
         .spacing(4.0)
         .child(
-            notein_ui_kit::FormInput::new(Writable::<String>::from(search_query))
+            notein_ui_kit::FormInput::new(search_query)
                 .flat()
                 .collapsible()
                 .left_icon(freya::icons::lucide::search())
@@ -132,10 +132,11 @@ where
 }
 
 /// Variant of [`top_toolbar`] rendered when no translations are
-/// installed. Keeps the full chrome visible (so the user can still
-/// navigate home) but every control except the home icon is muted +
-/// inert — the search box, translation chip and nav icons all
-/// render as decorations.
+/// installed.
+///
+/// Keeps the full chrome visible (so the user can still navigate home) but
+/// every control except the home icon is muted + inert — the search box,
+/// translation chip and nav icons all render as decorations.
 pub fn empty_toolbar(on_home: impl FnMut() + 'static) -> impl IntoElement {
     let on_home = on_home;
     rect()

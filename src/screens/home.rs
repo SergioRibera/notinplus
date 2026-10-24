@@ -59,7 +59,6 @@ impl Browse {
 }
 
 /// Install the browse state at the app root.
-#[must_use] 
 pub fn use_browse_root() -> Browse {
     let folder = use_state(|| ROOT_FOLDER);
     use_hook(|| {

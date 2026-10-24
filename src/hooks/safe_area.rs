@@ -16,10 +16,11 @@ use istmo::plugins::{EdgeInsets, SafeArea, SafeAreaInsets};
 
 /// Context override: when a parent provides this, descendants' calls to
 /// [`use_safe_area_insets`] see the overridden value instead of the live
-/// platform stream. Routes that have already carved out the physical
-/// safe area at an outer frame install `SafeAreaOverride(EdgeInsets::default())`
-/// so nested components do not re-apply the same padding and collapse
-/// the usable area twice.
+/// platform stream.
+///
+/// Routes that have already carved out the physical safe area at an outer frame
+/// install `SafeAreaOverride(EdgeInsets::default())` so nested components do
+/// not re-apply the same padding and collapse the usable area twice.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SafeAreaOverride(pub EdgeInsets);
 
@@ -38,7 +39,7 @@ pub fn provide_safe_area_override(insets: EdgeInsets) {
 /// [`provide_safe_area_override`] the state is seeded with the override
 /// value and the platform subscription is skipped — the override is
 /// authoritative for the whole subtree.
-#[must_use] 
+#[must_use]
 pub fn use_safe_area_insets() -> State<EdgeInsets> {
     let override_val = use_try_consume::<SafeAreaOverride>().map(|o| o.0);
     let mut insets = use_state(move || override_val.unwrap_or_default());
@@ -75,9 +76,10 @@ pub fn use_safe_area_insets() -> State<EdgeInsets> {
 
 /// Fold platform-published [`SafeAreaInsets`] (system bars + display
 /// cutout + IME) into a single set of edge padding the app applies.
+///
 /// IME only pushes bottom padding — top/left/right ignore it so
 /// floating overlays don't jump when the keyboard opens.
-#[must_use] 
+#[must_use]
 pub const fn fold_insets(insets: SafeAreaInsets) -> EdgeInsets {
     let base = insets.system_bars.max(insets.display_cutout);
     EdgeInsets {

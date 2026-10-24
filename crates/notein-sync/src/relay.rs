@@ -303,7 +303,7 @@ impl RelayServer {
         let sender = node.sender();
         std::thread::Builder::new()
             .name("notein-relay".into())
-            .spawn(move || serve(events, sender, store))
+            .spawn(move || serve(&events, sender, store))
             .map_err(NetError::Thread)?;
         Ok(Self { node })
     }
@@ -454,7 +454,7 @@ impl Serving {
     }
 }
 
-fn serve(events: flume::Receiver<NetEvent>, sender: crate::net::lan::LanSender, store: Store) {
+fn serve(events: &flume::Receiver<NetEvent>, sender: crate::net::lan::LanSender, store: Store) {
     let mut serving = Serving {
         sender,
         store,

@@ -1,8 +1,9 @@
-//! Shim — `Modal` + friends moved to `notein-ui-kit`. The host adds
-//! a thin wrapper installing the shell's safe-area insets and
-//! pen-mask sink into `ModalChrome` context so modals inside the main
-//! app behave identically while plugin-opened modals get the bare
-//! backdrop + card by default.
+//! Shim — `Modal` + friends moved to `notein-ui-kit`.
+//!
+//! The host adds a thin wrapper installing the shell's safe-area insets and
+//! pen-mask sink into `ModalChrome` context so modals inside the main app
+//! behave identically while plugin-opened modals get the bare backdrop + card
+//! by default.
 
 use freya::prelude::*;
 

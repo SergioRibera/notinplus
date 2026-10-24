@@ -16,6 +16,9 @@ use notein_sdk::{BookmarkId, Rgba};
 
 use crate::db::{BookRow, ChapterRow, Db, DbError};
 
+/// Back-navigation entries kept; older ones are dropped.
+const MAX_HISTORY: usize = 64;
+
 /// Everything a single open Bible tab needs to render + navigate.
 #[derive(Debug)]
 pub struct BibleViewerState {
@@ -68,6 +71,7 @@ pub struct BibleBookmark {
 }
 
 /// Snapshot payload the shell persists via `CanvasKind::serialize_snapshot`.
+///
 /// Carries the full viewer state (highlights + last position) so a
 /// subsequent `restore` lands the user exactly where they left off.
 ///
@@ -201,7 +205,6 @@ impl BibleViewerState {
         // sees stale forward entries after a side-step.
         self.nav_future.clear();
         // Cap depth so unbounded navigation doesn't balloon memory.
-        const MAX_HISTORY: usize = 64;
         if self.nav_history.len() > MAX_HISTORY {
             self.nav_history.drain(..self.nav_history.len() - MAX_HISTORY);
         }
@@ -295,7 +298,7 @@ impl BibleViewerState {
         }
         let prev = &books[idx - 1];
         let last_chapter = db.chapter_count(&self.bible_id, &prev.book_id)?.max(1);
-        self.current_book = prev.book_id.clone();
+        self.current_book.clone_from(&prev.book_id);
         self.current_chapter = last_chapter;
         self.ensure_current_loaded(db)?;
         self.scroll_y = 0.0;
@@ -320,7 +323,7 @@ impl BibleViewerState {
             return Ok(false);
         }
         let next = &books[idx + 1];
-        self.current_book = next.book_id.clone();
+        self.current_book.clone_from(&next.book_id);
         self.current_chapter = 1;
         self.ensure_current_loaded(db)?;
         self.scroll_y = 0.0;
@@ -363,14 +366,12 @@ impl BibleViewerState {
     /// current position — used by the back arrow so a repeated back
     /// click walks the stack monotonically.
     pub fn jump_to_entry(&mut self, db: &Db, entry: &NavEntry) -> Result<(), DbError> {
-        self.bible_id = entry.bible_id.clone();
-        self.current_book = entry.book_id.clone();
+        self.bible_id.clone_from(&entry.bible_id);
+        self.current_book.clone_from(&entry.book_id);
         self.current_chapter = entry.chapter;
-        self.chapter_cache.retain(|c| {
-            c.bible_id == self.bible_id
-                && c.book_id == self.current_book
-                && c.chapter == self.current_chapter
-        });
+        let current = (&self.bible_id, &self.current_book, self.current_chapter);
+        self.chapter_cache
+            .retain(|c| (&c.bible_id, &c.book_id, c.chapter) == current);
         self.selection = None;
         self.scroll_y = 0.0;
         self.ensure_current_loaded(db)
@@ -610,7 +611,7 @@ mod tests {
 
         st.switch_bible(&db, "spa_lbla").unwrap();
         assert_eq!(st.bible_id, "spa_lbla");
-        assert_eq!(st.scroll_y, 0.0);
+        assert!(st.scroll_y.abs() < f32::EPSILON);
         assert_eq!(st.chapter_cache.len(), 1);
         let chap = st.current_chapter_data().unwrap();
         assert!(chap.verses[0].text.contains("alt"));
@@ -622,7 +623,7 @@ mod tests {
         st.begin_selection("EPH", 6, 3);
         st.extend_selection(5);
         let id = st
-            .commit_selection_as_highlight(Some(0xffcc3399), "mi nota")
+            .commit_selection_as_highlight(Some(0xffcc_3399), "mi nota")
             .unwrap();
         assert!(st.selection.is_none());
         assert_eq!(st.highlights.len(), 1);

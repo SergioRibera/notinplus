@@ -199,7 +199,9 @@ fn apply(event: HostEvent, jobs: &mut HashMap<(String, String), ToastId>) {
                 let toast = Toast::new(label)
                     .tone(ToastTone::Download)
                     .progress(value, caption);
-                if let Some(id) = jobs.get(&key) { toasts.update(*id, toast) } else {
+                if let Some(id) = jobs.get(&key) {
+                    toasts.update(*id, toast)
+                } else {
                     let id = toasts.show(toast);
                     jobs.insert(key, id);
                 }

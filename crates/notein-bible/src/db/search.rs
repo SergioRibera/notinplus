@@ -70,7 +70,7 @@ pub(crate) fn search(
             LIMIT ?4
         ";
 
-        let limit_i = limit as i64;
+        let limit_i = i64::try_from(limit).unwrap_or(i64::MAX);
         let rows: Vec<SearchHit> = if let Some(bid) = bible_id {
             let mut stmt = conn.prepare(sql_scoped)?;
             stmt.query_map(
@@ -94,8 +94,8 @@ fn map_hit(r: &rusqlite::Row<'_>) -> rusqlite::Result<SearchHit> {
     Ok(SearchHit {
         bible_id: r.get(0)?,
         book_id: r.get(1)?,
-        chapter: r.get::<_, i64>(2)? as u16,
-        verse: r.get::<_, i64>(3)? as u16,
+        chapter: r.get::<_, u16>(2)?,
+        verse: r.get::<_, u16>(3)?,
         snippet: r.get(4)?,
         score: r.get(5)?,
     })

@@ -180,11 +180,12 @@ enum ContentItem {
     Raw(String),
 }
 
-/// Metadata overrides from the top-level catalogue. The per-bible
-/// biblionlabs manifest only carries `book_names` / `chapter_headings`
-/// / `sections` — the user-facing name, language, and abbreviation
-/// live on the catalogue entry, so the caller resolves them there and
-/// hands them in here. Any field left `None` falls back to a sensible
+/// Metadata overrides from the top-level catalogue.
+///
+/// The per-bible biblionlabs manifest only carries `book_names` /
+/// `chapter_headings` / `sections` — the user-facing name, language, and
+/// abbreviation live on the catalogue entry, so the caller resolves them there
+/// and hands them in here. Any field left `None` falls back to a sensible
 /// default (`bible_id` prefix for language, `bible_id` itself for name /
 /// abbrev).
 #[derive(Debug, Default, Clone)]
@@ -195,157 +196,189 @@ pub struct BibleMeta {
     pub abbrev: Option<String>,
 }
 
-/// Download the whole catalogue entry for `bible_id`, land JSON files
-/// into `cache_dir`, then populate `db`. The HTTP step is skipped per
-/// file when the cache is fresher than `cache_ttl`.
-pub fn install_bible(
-    db: &Db,
-    client: &Client,
-    bible_id: &str,
-    cache_dir: &Path,
-    desc_url: &str,
-    books_url_template: &str,
-    cache_ttl: Duration,
-    meta: BibleMeta,
-    mut on_progress: impl FnMut(Progress),
-) -> Result<usize> {
-    on_progress(Progress::Started { bible_id: bible_id.into() });
+/// One translation download: the catalogue entry `bible_id` lands as JSON
+/// files under `cache_dir` and is then written to `db`.
+///
+/// Each file is fetched again only when its cached copy is older than
+/// `cache_ttl`.
+#[derive(Debug)]
+pub struct Install<'a> {
+    pub db: &'a Db,
+    pub client: &'a Client,
+    pub bible_id: &'a str,
+    pub cache_dir: &'a Path,
+    pub desc_url: &'a str,
+    /// Book URL with `{bible_id}` and `{book}` placeholders.
+    pub books_url_template: &'a str,
+    pub cache_ttl: Duration,
+    pub meta: &'a BibleMeta,
+}
 
-    let bible_dir = cache_dir.join("bibles").join(bible_id);
-    std::fs::create_dir_all(&bible_dir)?;
+impl Install<'_> {
+    /// Download and store the translation; returns how many verses
+    /// were inserted.
+    pub fn run(&self, mut on_progress: impl FnMut(Progress)) -> Result<usize> {
+        let bible_id = self.bible_id;
+        on_progress(Progress::Started {
+            bible_id: bible_id.into(),
+        });
+        let bible_dir = self.cache_dir.join("bibles").join(bible_id);
+        let desc = self.manifest(&bible_dir)?;
+        let books_dir = bible_dir.join("books");
+        std::fs::create_dir_all(&books_dir)?;
+        on_progress(Progress::ManifestFetched {
+            total_books: desc.book_names.len(),
+        });
 
-    let desc_path = bible_dir.join("manifest.json");
-    fetch_if_stale(client, desc_url, &desc_path, cache_ttl)?;
-    let desc_bytes = std::fs::read(&desc_path)?;
-    let mut desc: BibleDesc = serde_json::from_slice(&desc_bytes)
-        .map_err(|e| ImportError::Json { context: format!("{bible_id} desc"), source: e })?;
-    // Catalogue-provided fields override the per-bible manifest when
-    // the latter is silent (which is the common case on biblionlabs —
-    // the per-bible manifest ships without name/language/abbrev).
-    if desc.name_local.is_none() {
-        desc.name_local = meta.name_local.clone().or_else(|| meta.name_english.clone());
-    }
-    if desc.name_english.is_none() {
-        desc.name_english = meta.name_english.clone();
-    }
-    if desc.language.is_none() {
-        desc.language = meta.language.clone();
-    }
-    if desc.abbrev.is_none() {
-        desc.abbrev = meta.abbrev.clone();
-    }
+        // The manifest keeps books in a map; sorting keeps the install
+        // deterministic.
+        let mut book_ids: Vec<&String> = desc.book_names.keys().collect();
+        book_ids.sort();
+        self.register_books(&desc, &book_ids)?;
 
-    let books_dir = bible_dir.join("books");
-    std::fs::create_dir_all(&books_dir)?;
-
-    on_progress(Progress::ManifestFetched { total_books: desc.book_names.len() });
-
-    // Collect + sort book ids by `order_num` later; biblionlabs stores
-    // them in a HashMap so iteration order is unstable, which would make
-    // the install non-deterministic.
-    let mut book_ids: Vec<&String> = desc.book_names.keys().collect();
-    book_ids.sort();
-
-    let mut inserted = 0usize;
-
-    db.with_conn_mut(|conn| {
-        upsert_bible(conn, bible_id, &desc).map_err(crate::db::DbError::from)?;
-        let tx = conn.transaction().map_err(crate::db::DbError::from)?;
-        for (order_num, book_id) in book_ids.iter().enumerate() {
-            upsert_book(&tx, bible_id, book_id, &desc, order_num as u16)
-                .map_err(crate::db::DbError::from)?;
+        let mut inserted = 0usize;
+        for book_id in &book_ids {
+            let Some(verses) = self.install_book(&books_dir, book_id, &desc)? else {
+                continue;
+            };
+            inserted += verses;
+            on_progress(Progress::BookDone {
+                book_id: (**book_id).clone(),
+                verses,
+            });
         }
-        tx.commit().map_err(crate::db::DbError::from)?;
+        self.install_cross_refs(&book_ids)?;
+
+        on_progress(Progress::Finished {
+            bible_id: bible_id.into(),
+            inserted_verses: inserted,
+        });
+        Ok(inserted)
+    }
+
+    /// The per-Bible manifest, with the catalogue's name, language and
+    /// abbreviation filling what it leaves out (it usually does).
+    fn manifest(&self, bible_dir: &Path) -> Result<BibleDesc> {
+        std::fs::create_dir_all(bible_dir)?;
+        let desc_path = bible_dir.join("manifest.json");
+        fetch_if_stale(self.client, self.desc_url, &desc_path, self.cache_ttl)?;
+        let desc_bytes = std::fs::read(&desc_path)?;
+        let mut desc: BibleDesc =
+            serde_json::from_slice(&desc_bytes).map_err(|e| ImportError::Json {
+                context: format!("{} desc", self.bible_id),
+                source: e,
+            })?;
+        let meta = self.meta;
+        if desc.name_local.is_none() {
+            desc.name_local.clone_from(&meta.name_local);
+            if desc.name_local.is_none() {
+                desc.name_local.clone_from(&meta.name_english);
+            }
+        }
+        if desc.name_english.is_none() {
+            desc.name_english.clone_from(&meta.name_english);
+        }
+        if desc.language.is_none() {
+            desc.language.clone_from(&meta.language);
+        }
+        if desc.abbrev.is_none() {
+            desc.abbrev.clone_from(&meta.abbrev);
+        }
+        Ok(desc)
+    }
+
+    /// The Bible row and one row per book, in `book_ids` order.
+    fn register_books(&self, desc: &BibleDesc, book_ids: &[&String]) -> Result<()> {
+        self.db.with_conn_mut(|conn| {
+            upsert_bible(conn, self.bible_id, desc).map_err(crate::db::DbError::from)?;
+            let tx = conn.transaction().map_err(crate::db::DbError::from)?;
+            for (order_num, book_id) in book_ids.iter().enumerate() {
+                let order_num = u16::try_from(order_num).unwrap_or(u16::MAX);
+                upsert_book(&tx, self.bible_id, book_id, desc, order_num)
+                    .map_err(crate::db::DbError::from)?;
+            }
+            tx.commit().map_err(crate::db::DbError::from)?;
+            Ok(())
+        })?;
         Ok(())
-    })?;
+    }
 
-    for (order_num, book_id) in book_ids.iter().enumerate() {
+    /// Verses and section headings of one book; `None` when the book
+    /// could not be fetched or parsed, which skips it without failing
+    /// the install.
+    fn install_book(
+        &self,
+        books_dir: &Path,
+        book_id: &str,
+        desc: &BibleDesc,
+    ) -> Result<Option<usize>> {
         let book_path = books_dir.join(format!("{book_id}.json"));
-        let url = books_url_template
-            .replace("{bible_id}", bible_id)
+        let url = self
+            .books_url_template
+            .replace("{bible_id}", self.bible_id)
             .replace("{book}", book_id);
-        if let Err(e) = fetch_if_stale(client, &url, &book_path, cache_ttl) {
-            // Keep going — missing books are tolerated so a slow network
-            // doesn't nuke an otherwise-complete install.
+        if let Err(e) = fetch_if_stale(self.client, &url, &book_path, self.cache_ttl) {
             log::warn!("biblionlabs: skipping {book_id}: {e}");
-            continue;
+            return Ok(None);
         }
-
         let book_bytes = std::fs::read(&book_path)?;
         let book_doc: BookDoc = match serde_json::from_slice(&book_bytes) {
             Ok(d) => d,
             Err(e) => {
                 log::warn!("biblionlabs: {book_id} parse failed: {e}");
-                continue;
+                return Ok(None);
             }
         };
-
-        let book_insert_count = db.with_conn_mut(|conn| {
+        let verses = self.db.with_conn_mut(|conn| {
             let tx = conn.transaction().map_err(crate::db::DbError::from)?;
-            let n = insert_book_contents(&tx, bible_id, book_id, &book_doc)
+            let n = insert_book_contents(&tx, self.bible_id, book_id, &book_doc)
                 .map_err(crate::db::DbError::from)?;
-            insert_headers(&tx, bible_id, book_id, &desc)
-                .map_err(crate::db::DbError::from)?;
-            let _ = order_num;
+            insert_headers(&tx, self.bible_id, book_id, desc).map_err(crate::db::DbError::from)?;
             tx.commit().map_err(crate::db::DbError::from)?;
             Ok(n)
         })?;
-
-        inserted += book_insert_count;
-        on_progress(Progress::BookDone {
-            book_id: (**book_id).clone(),
-            verses: book_insert_count,
-        });
+        Ok(Some(verses))
     }
 
-    // Cross-references land once per installed Bible. Each per-book
-    // file is small (~1-5 MB total across the canon) and the upstream
-    // caches at the HTTP layer, so a background re-install only pays
-    // the parse cost.
-    let xref_cache = cache_dir.join("crossrefs");
-    std::fs::create_dir_all(&xref_cache)?;
-    for book_id in &book_ids {
-        let xref_path = xref_cache.join(format!("{book_id}.json"));
-        let xref_url = CROSSREF_URL_TEMPLATE.replace("{book}", book_id);
-        if let Err(e) = fetch_if_stale(client, &xref_url, &xref_path, cache_ttl) {
-            log::debug!("biblionlabs: no cross-refs for {book_id}: {e}");
-            continue;
-        }
-        let bytes = match std::fs::read(&xref_path) {
-            Ok(b) => b,
-            Err(e) => {
-                log::debug!("biblionlabs: read {book_id} xrefs: {e}");
+    /// Cross-references for every book. They are optional: a book
+    /// without them is logged and skipped.
+    fn install_cross_refs(&self, book_ids: &[&String]) -> Result<()> {
+        let xref_cache = self.cache_dir.join("crossrefs");
+        std::fs::create_dir_all(&xref_cache)?;
+        for book_id in book_ids {
+            let xref_path = xref_cache.join(format!("{book_id}.json"));
+            let xref_url = CROSSREF_URL_TEMPLATE.replace("{book}", book_id);
+            if let Err(e) = fetch_if_stale(self.client, &xref_url, &xref_path, self.cache_ttl) {
+                log::debug!("biblionlabs: no cross-refs for {book_id}: {e}");
                 continue;
             }
-        };
-        let value: serde_json::Value = match serde_json::from_slice(&bytes) {
-            Ok(v) => v,
-            Err(e) => {
-                log::debug!("biblionlabs: parse {book_id} xrefs: {e}");
-                continue;
-            }
-        };
-        if let Err(e) = db.with_conn_mut(|conn| {
-            let tx = conn.transaction().map_err(crate::db::DbError::from)?;
-            tx.execute(
-                "DELETE FROM cross_refs WHERE bible_id = ?1 AND src_book = ?2",
-                rusqlite::params![bible_id, book_id],
-            )
-            .map_err(crate::db::DbError::from)?;
-            insert_crossrefs_for_book(&tx, bible_id, book_id, &value)
+            let value: serde_json::Value = match std::fs::read(&xref_path)
+                .map_err(|e| e.to_string())
+                .and_then(|bytes| serde_json::from_slice(&bytes).map_err(|e| e.to_string()))
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    log::debug!("biblionlabs: read {book_id} xrefs: {e}");
+                    continue;
+                }
+            };
+            if let Err(e) = self.db.with_conn_mut(|conn| {
+                let tx = conn.transaction().map_err(crate::db::DbError::from)?;
+                tx.execute(
+                    "DELETE FROM cross_refs WHERE bible_id = ?1 AND src_book = ?2",
+                    rusqlite::params![self.bible_id, book_id],
+                )
                 .map_err(crate::db::DbError::from)?;
-            tx.commit().map_err(crate::db::DbError::from)?;
-            Ok(())
-        }) {
-            log::debug!("biblionlabs: insert {book_id} xrefs: {e}");
+                insert_crossrefs_for_book(&tx, self.bible_id, book_id, &value)
+                    .map_err(crate::db::DbError::from)?;
+                tx.commit().map_err(crate::db::DbError::from)?;
+                Ok(())
+            }) {
+                log::debug!("biblionlabs: insert {book_id} xrefs: {e}");
+            }
         }
+        Ok(())
     }
-
-    on_progress(Progress::Finished {
-        bible_id: bible_id.into(),
-        inserted_verses: inserted,
-    });
-    Ok(inserted)
 }
 
 /// Walk the fetch.bible crossref payload for one book + emit rows. The
@@ -518,14 +551,14 @@ fn insert_book_contents(
         if chapter_idx == 0 {
             continue;
         }
-        let chapter_num = chapter_idx as u16;
+        let chapter_num = u16::try_from(chapter_idx).unwrap_or(u16::MAX);
         let mut pending_header: Option<String> = None;
         for (verse_idx, verse_contents) in chapter.iter().enumerate() {
             if verse_idx == 0 {
                 // Same 1-based convention for verses.
                 continue;
             }
-            let verse_num = verse_idx as u16;
+            let verse_num = u16::try_from(verse_idx).unwrap_or(u16::MAX);
             let mut text = String::new();
             let mut paragraph_break = false;
             for item in verse_contents {
@@ -597,7 +630,7 @@ fn insert_headers(
             if chapter_idx == 0 || heading.is_empty() {
                 continue;
             }
-            let chapter_num = chapter_idx as u16;
+            let chapter_num = u16::try_from(chapter_idx).unwrap_or(u16::MAX);
             insert_header.execute(params![
                 bible_id,
                 book_id,
@@ -840,7 +873,7 @@ pub(crate) fn populate_from_fixtures(
         upsert_bible(conn, bible_id, &desc_parsed).map_err(crate::db::DbError::from)?;
         let tx = conn.transaction().map_err(crate::db::DbError::from)?;
         for (order_num, book_id) in book_ids.iter().enumerate() {
-            upsert_book(&tx, bible_id, book_id, &desc_parsed, order_num as u16)
+            upsert_book(&tx, bible_id, book_id, &desc_parsed, u16::try_from(order_num).unwrap_or(u16::MAX))
                 .map_err(crate::db::DbError::from)?;
         }
         tx.commit().map_err(crate::db::DbError::from)?;

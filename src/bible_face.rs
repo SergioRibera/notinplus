@@ -990,17 +990,20 @@ fn chapter_body(
             let jump_handler = EventHandler::<(String, u16, u16)>::new(on_jump);
             let highlight_handler =
                 EventHandler::<notein_bible::ui::reader::HighlightTarget>::new(on_highlight);
+            let reading = reader::Reading {
+                cross_refs: refs_map,
+                footnotes: footnotes_map,
+                on_jump: jump_handler,
+                on_highlight: highlight_handler,
+                preview,
+                font_size: 22.0,
+                line_height: 1.65,
+            };
             base.child(reader::chapter_view(
                 &plan,
                 &hl_refs,
-                &refs_map,
-                &footnotes_map,
-                jump_handler,
-                highlight_handler,
+                &reading,
                 flash_verse,
-                preview,
-                22.0,
-                1.65,
                 scroll_ctx,
             ))
         }

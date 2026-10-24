@@ -1285,7 +1285,7 @@ impl<R: Replica> SyncDriver<R> {
     /// now: trusted devices in the clear, share members sealed. Nothing
     /// is queued for whoever is away.
     #[must_use]
-    pub fn live(&self, doc: DocId, bytes: Vec<u8>) -> Vec<Action> {
+    pub fn live(&self, doc: DocId, bytes: &[u8]) -> Vec<Action> {
         let mut out: Vec<Action> = self
             .online()
             .map(|p| {
@@ -1293,7 +1293,7 @@ impl<R: Replica> SyncDriver<R> {
                     p.device,
                     &Payload::Live {
                         doc,
-                        bytes: bytes.clone(),
+                        bytes: bytes.to_vec(),
                     },
                 )
             })
@@ -1305,7 +1305,7 @@ impl<R: Replica> SyncDriver<R> {
             }
             let sealed = ShareMessage::Live {
                 doc,
-                bytes: bytes.clone(),
+                bytes: bytes.to_vec(),
             }
             .seal(&link.share.key);
             for member in link.share.participants() {
@@ -1631,7 +1631,7 @@ impl<R: Replica> SyncDriver<R> {
             RelayMessage::Records { share, records } => {
                 let mut touched = false;
                 for record in records {
-                    touched |= self.apply_record(share, record, out)?;
+                    touched |= self.apply_record(share, &record, out)?;
                 }
                 if touched {
                     out.push(Action::Event(DriverEvent::ShareChanged(share)));
@@ -1702,7 +1702,7 @@ impl<R: Replica> SyncDriver<R> {
     fn apply_record(
         &mut self,
         id: ShareId,
-        record: crate::relay::Record,
+        record: &crate::relay::Record,
         out: &mut Vec<Action>,
     ) -> Result<bool, SyncError<R::Error>> {
         let me = self.profile.id();

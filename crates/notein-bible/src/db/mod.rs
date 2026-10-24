@@ -173,10 +173,10 @@ impl Db {
             let rows = stmt
                 .query_map(rusqlite::params![bible_id, book_id, i64::from(chapter)], |r| {
                     Ok(CrossRefRow {
-                        src_verse: r.get::<_, i64>(0)? as u16,
+                        src_verse: r.get::<_, u16>(0)?,
                         tgt_book: r.get(1)?,
-                        tgt_chap: r.get::<_, i64>(2)? as u16,
-                        tgt_verse: r.get::<_, i64>(3)? as u16,
+                        tgt_chap: r.get::<_, u16>(2)?,
+                        tgt_verse: r.get::<_, u16>(3)?,
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -249,7 +249,7 @@ impl Db {
                     rusqlite::params![bible_id, book_id, i64::from(chapter)],
                     |r| {
                         Ok(FootnoteRow {
-                            verse: r.get::<_, i64>(0)? as u16,
+                            verse: r.get::<_, u16>(0)?,
                             note_id: r.get(1)?,
                             caller: r.get(2)?,
                             text: r.get(3)?,

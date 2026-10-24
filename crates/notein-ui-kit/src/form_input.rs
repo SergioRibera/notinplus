@@ -16,7 +16,7 @@
 
 use std::borrow::Cow;
 
-use freya::{animation::{ReadAnimatedValue, AnimatedValue, use_animation, AnimNum, Function, Ease}, prelude::*};
+use freya::{animation::{use_animation, AnimNum, Function, Ease}, prelude::*};
 
 use crate::theme::palette;
 

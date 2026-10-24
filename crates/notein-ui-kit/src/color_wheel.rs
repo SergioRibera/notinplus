@@ -507,7 +507,7 @@ impl Component for ColorWheel {
             .on_global_pointer_up(on_global_pointer_press);
 
         if !self.swatches.is_empty() {
-            root = root.child(swatch_strip(&self.swatches, current_color, swatch_fire));
+            root = root.child(swatch_strip(&self.swatches, current_color, &swatch_fire));
         }
         if self.allow_custom {
             root = root
@@ -540,7 +540,7 @@ fn marker_dot(left: f32, top: f32, fill: Color) -> Rect {
 fn swatch_strip(
     swatches: &[Color],
     selected: Color,
-    fire: Callback<Color, ()>,
+    fire: &Callback<Color, ()>,
 ) -> impl IntoElement {
     let mut row = rect().horizontal().spacing(10.0);
     for &color in swatches {
@@ -556,9 +556,9 @@ where
     F: Fn(()) + 'static,
 {
     let ring = if selected {
-        Color::from_rgb(70, 140, 250)
+        palette().focus
     } else {
-        Color::from_rgb(70, 70, 78)
+        palette().line_strong
     };
     rect()
         .width(Size::px(30.0))

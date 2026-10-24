@@ -100,11 +100,12 @@ pub trait BrushRenderer: Send + Sync + Debug {
     }
 }
 
-/// How the live pointer indicator paints. Variants expose enough knob
-/// surface for the renderer to style the overlay without the paint
-/// pass hard-coding each brush family. Position + viewport-scaled
-/// radius come from the caller; the style only picks colour / stroke
-/// treatment.
+/// How the live pointer indicator paints.
+///
+/// Variants expose enough knob surface for the renderer to style the overlay
+/// without the paint pass hard-coding each brush family. Position +
+/// viewport-scaled radius come from the caller; the style only picks colour /
+/// stroke treatment.
 #[derive(Clone, Copy, Debug)]
 pub enum PointerStyle {
     /// Suppress the overlay entirely for this brush.

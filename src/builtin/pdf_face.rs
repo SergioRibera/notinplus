@@ -30,6 +30,7 @@ use crate::pdf_select_overlay::PdfSelectOverlay;
 /// Freya component that renders the PDF face. Mounts a shell
 /// [`CanvasPane`] over a plain [`CanvasMount::Item`] (strokes against
 /// `doc_path(id)`) and layers on the PDF-specific side effects:
+///
 /// background install + anchor-source context.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PdfFace {

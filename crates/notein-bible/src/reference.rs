@@ -55,10 +55,10 @@ pub fn parse(input: &str) -> Option<ParsedRef> {
     let caps = re().captures(input)?;
     let prefix = caps.name("prefix").map(|m| m.as_str().trim());
     let book_raw = caps.name("book")?.as_str().trim_end_matches('.');
-    let book_token = match prefix {
-        Some(p) => format!("{}{}", p, book_raw.to_lowercase()),
-        None => book_raw.to_lowercase(),
-    };
+    let book_token = prefix.map_or_else(
+        || book_raw.to_lowercase(),
+        |p| format!("{p}{}", book_raw.to_lowercase()),
+    );
     let chapter: u16 = caps.name("chapter")?.as_str().parse().ok()?;
     let start_verse = caps
         .name("verse_start")

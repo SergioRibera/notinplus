@@ -85,7 +85,7 @@ pub(crate) fn list_books(db: &Db, bible_id: &str) -> Result<Vec<BookRow>> {
                     book_id: r.get(0)?,
                     name: r.get(1)?,
                     abbrev: r.get(2)?,
-                    order_num: r.get::<_, i64>(3)? as u16,
+                    order_num: r.get::<_, u16>(3)?,
                     testament: r.get(4)?,
                 })
             })?
@@ -104,7 +104,7 @@ pub(crate) fn chapter_count(db: &Db, bible_id: &str, book_id: &str) -> Result<u1
             )
             .optional()?
             .flatten();
-        Ok(count.unwrap_or(0) as u16)
+        Ok(u16::try_from(count.unwrap_or(0)).unwrap_or(u16::MAX))
     })
 }
 
@@ -133,7 +133,7 @@ pub(crate) fn load_chapter(
         let verses = verses_stmt
             .query_map(params![bible_id, book_id, i64::from(chapter)], |r| {
                 Ok(VerseRow {
-                    verse: r.get::<_, i64>(0)? as u16,
+                    verse: r.get::<_, u16>(0)?,
                     text: r.get(1)?,
                     paragraph_break: r.get::<_, i64>(2)? != 0,
                 })
@@ -149,7 +149,7 @@ pub(crate) fn load_chapter(
         let headers = headers_stmt
             .query_map(params![bible_id, book_id, i64::from(chapter)], |r| {
                 Ok(HeaderRow {
-                    before_verse: r.get::<_, i64>(0)? as u16,
+                    before_verse: r.get::<_, u16>(0)?,
                     text: r.get(1)?,
                 })
             })?

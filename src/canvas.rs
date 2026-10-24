@@ -2361,9 +2361,11 @@ pub(crate) const PIN_TAP_RADIUS_PX: f32 = 20.0;
 const PIN_STICKY_WORLD_RADIUS: f32 = 40.0;
 
 /// Builder for the per-page anchor ref emitted when a long-press pin
-/// lands over an attribution-aware background. Takes the surface-level
-/// page attachment reported by [`CanvasBackground::locate`] and returns
-/// the typed [`SourceRef`] the pin should carry.
+/// lands over an attribution-aware background.
+///
+/// Takes the surface-level page attachment reported by
+/// [`CanvasBackground::locate`] and returns the typed [`SourceRef`] the pin
+/// should carry.
 pub type AnchorSourceRef = Arc<dyn Fn(PageAttachment) -> SourceRef + Send + Sync + 'static>;
 
 /// A long press on the page, as `(world, window)` points: `true` when the

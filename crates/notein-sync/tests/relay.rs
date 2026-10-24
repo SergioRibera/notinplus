@@ -8,8 +8,9 @@ use std::time::{Duration, Instant};
 
 use notein_sync::driver::DriverEvent;
 use notein_sync::{
-    Action, Blob, BlobHead, BlobKey, DeviceKey, DeviceProfile, DocId, Invite, LanConfig, LanNode, RelayAddr, RelayConfig, RelayServer, RelayStore, Replica, Share, ShareMode,
-    SyncDriver, Version,
+    Action, Blob, BlobHead, BlobKey, DeviceKey, DeviceProfile, DocId, Invite, LanConfig, LanNode,
+    RelayAddr, RelayConfig, RelayServer, RelayStore, Replica, Share, ShareMode, SyncDriver,
+    Version,
 };
 
 /// Toy mergeable document: a set of `(author, counter)` marks.

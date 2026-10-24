@@ -34,7 +34,9 @@ enum DragPhase {
 
 /// Access the global drag state for payloads of type `T`.
 pub fn use_drag<T: 'static>() -> State<Option<T>> {
-    if let Some(s) = try_consume_root_context() { s } else {
+    if let Some(s) = try_consume_root_context() {
+        s
+    } else {
         let state = State::<Option<T>>::create_in_scope(None, ScopeId::ROOT);
         provide_context_for_scope_id(state, ScopeId::ROOT);
         state
@@ -171,7 +173,10 @@ impl<T: Clone + PartialEq> Component for DragZone<T> {
                 |((position, offset), drag_element)| {
                     let size = *drag_element_size.read();
                     let anchor = size.map_or(offset, |size| {
-                        offset.min(CursorPoint::new(f64::from(size.width), f64::from(size.height)))
+                        offset.min(CursorPoint::new(
+                            f64::from(size.width),
+                            f64::from(size.height),
+                        ))
                     });
                     let (x, y) = (position - anchor).to_f32().to_tuple();
                     rect()
@@ -242,13 +247,13 @@ impl<T: PartialEq + Clone + 'static> DropZone<T> {
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn width(mut self, width: Size) -> Self {
         self.width = width;
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn height(mut self, height: Size) -> Self {
         self.height = height;
         self

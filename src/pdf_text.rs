@@ -1,7 +1,9 @@
 //! Selecting text in an open PDF: hit-testing a point to a character,
 //! extending a range while the pointer drags, and the rectangles and
-//! text of what is selected. Pages are laid out exactly as the PDF
-//! background paints them ([`freya_pdf::write::page_world_rects`]).
+//! text of what is selected.
+//!
+//! Pages are laid out exactly as the PDF background paints them
+//! ([`freya_pdf::write::page_world_rects`]).
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};

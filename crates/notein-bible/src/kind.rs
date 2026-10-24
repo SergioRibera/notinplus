@@ -179,7 +179,7 @@ impl DocumentKind for BibleKind {
                         .icon(OutlineIcon::Page)
                     })
                     .collect();
-                OutlineNode::new(book.name.clone(), None)
+                OutlineNode::new(book.name, None)
                     .icon(OutlineIcon::Book)
                     .children(children)
             })

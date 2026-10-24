@@ -5,7 +5,7 @@
 //! Gated behind the `importer` feature: the HTTP stack only pulls in
 //! when the host wants real downloads.
 
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
 use reqwest::blocking::Client;
@@ -13,7 +13,6 @@ use reqwest::blocking::Client;
 use crate::db::Db;
 use crate::import::{biblionlabs, helloao};
 use crate::plugin_config::{self, SharedConfig};
-
 
 /// 7-day TTL on cached manifests + per-book files. The installer walks
 /// the biblionlabs cache dir in the same shape the service does; a stale
@@ -58,21 +57,19 @@ pub fn new_shared_progress() -> SharedInstallProgress {
 pub fn load_catalogue(
     config: &SharedConfig,
 ) -> Result<biblionlabs::CatalogueView, biblionlabs::ImportError> {
-    let client = Client::builder()
-        .user_agent("notein-bible/0.1")
-        .build()
-        .map_err(biblionlabs::ImportError::from)?;
+    let client = http_client().map_err(biblionlabs::ImportError::from)?;
     let cache_dir = plugin_config::platform_cache_dir();
     std::fs::create_dir_all(&cache_dir)?;
     let manifest_url = plugin_config::effective_manifest_url(config);
     biblionlabs::load_catalogue(&client, &cache_dir, &manifest_url, CACHE_TTL)
 }
 
-/// Spawn a lazy footnote fetch for `(bible, book, chapter)`. Idempotent
-/// — the reader fires one per chapter open, the on-disk cache + the
-/// `footnotes` row count both short-circuit duplicate work. Silent on
-/// failure (we log at debug) so a 404 or empty response does not
-/// surface a user-visible error.
+/// Spawn a lazy footnote fetch for `(bible, book, chapter)`.
+///
+/// Idempotent — the reader fires one per chapter open, the on-disk cache +
+/// the `footnotes` row count both short-circuit duplicate work. Silent on
+/// failure (we log at debug) so a 404 or empty response does not surface a
+/// user-visible error.
 pub fn spawn_fetch_footnotes(db: Db, bible_id: String, book_id: String, chapter: u16) {
     std::thread::Builder::new()
         .name(format!("bible-footnotes-{book_id}-{chapter}"))
@@ -83,7 +80,7 @@ pub fn spawn_fetch_footnotes(db: Db, bible_id: String, book_id: String, chapter:
             {
                 return;
             }
-            let client = match Client::builder().user_agent("notein-bible/0.1").build() {
+            let client = match http_client() {
                 Ok(c) => c,
                 Err(e) => {
                     log::debug!("footnotes: client build: {e}");
@@ -95,15 +92,13 @@ pub fn spawn_fetch_footnotes(db: Db, bible_id: String, book_id: String, chapter:
                 log::debug!("footnotes: mkdir: {e}");
                 return;
             }
-            match helloao::install_footnotes_for_chapter(
-                &db,
-                &client,
-                &cache_dir,
-                &bible_id,
-                &book_id,
-                chapter,
-                CACHE_TTL,
-            ) {
+            let helloao = helloao::Helloao {
+                db: &db,
+                client: &client,
+                cache_dir: &cache_dir,
+                cache_ttl: CACHE_TTL,
+            };
+            match helloao.footnotes_for_chapter(&bible_id, &book_id, chapter) {
                 Ok(n) => {
                     log::debug!("footnotes: {book_id} {chapter} → {n} rows");
                 }
@@ -113,12 +108,13 @@ pub fn spawn_fetch_footnotes(db: Db, bible_id: String, book_id: String, chapter:
         .map_or_else(|e| log::warn!("footnotes thread: {e}"), drop);
 }
 
-/// Lazy section-heading fetch. Hits a sibling helloao translation
-/// chosen by [`helloao::helloao_headings_id_for_bible`] (e.g. RV1960
-/// → `spa_pdt` for the standard "Pablo es enviado a Roma" style
-/// apparatus) and inserts into the `headers` table so the reader
-/// renders them inline between paragraphs. Skipped when the chapter
-/// already has rows OR when no sibling id is mapped.
+/// Lazy section-heading fetch.
+///
+/// Hits a sibling helloao translation chosen by
+/// [`helloao::helloao_headings_id_for_bible`] (e.g. RV1960 → `spa_pdt` for
+/// the standard "Pablo es enviado a Roma" style apparatus) and inserts into the
+/// `headers` table so the reader renders them inline between paragraphs.
+/// Skipped when the chapter already has rows OR when no sibling id is mapped.
 pub fn spawn_fetch_headings(
     db: Db,
     bible_id: String,
@@ -137,7 +133,7 @@ pub fn spawn_fetch_headings(
             let Some(source) = helloao::helloao_headings_id_for_bible(&bible_id) else {
                 return;
             };
-            let client = match Client::builder().user_agent("notein-bible/0.1").build() {
+            let client = match http_client() {
                 Ok(c) => c,
                 Err(e) => {
                     log::debug!("headings: client build: {e}");
@@ -149,16 +145,13 @@ pub fn spawn_fetch_headings(
                 log::debug!("headings: mkdir: {e}");
                 return;
             }
-            match helloao::install_headings_for_chapter(
-                &db,
-                &client,
-                &cache_dir,
-                &bible_id,
-                source,
-                &book_id,
-                chapter,
-                CACHE_TTL,
-            ) {
+            let helloao = helloao::Helloao {
+                db: &db,
+                client: &client,
+                cache_dir: &cache_dir,
+                cache_ttl: CACHE_TTL,
+            };
+            match helloao.headings_for_chapter(&bible_id, source, &book_id, chapter) {
                 Ok(n) => log::debug!("headings: {book_id} {chapter} → {n} rows (via {source})"),
                 Err(e) => log::debug!("headings: fetch failed for {book_id} {chapter}: {e}"),
             }
@@ -167,123 +160,119 @@ pub fn spawn_fetch_headings(
 }
 
 
-pub(crate) fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallProgress) {
+/// Raw biblionlabs layout: `bibles/<id>/manifest.json` holds the book
+/// names and sections, `bibles/<id>/books/<book>.json` one book each.
+const BIBLIONLABS_BASE: &str =
+    "https://raw.githubusercontent.com/biblionlabs/extra_data_source/refs/heads/main";
+
+fn http_client() -> reqwest::Result<Client> {
+    Client::builder().user_agent("notein-bible/0.1").build()
+}
+
+/// Edit the shared progress slot; a writer that panicked leaves it usable.
+fn edit(progress: &SharedInstallProgress, f: impl FnOnce(&mut InstallProgress)) {
+    f(&mut progress.write().unwrap_or_else(PoisonError::into_inner));
+}
+
+/// Install `bible_id` into `db`, reporting through `progress`. Blocks
+/// until the download, the verses and the section headings are done.
+pub(crate) fn run(
+    bible_id: &str,
+    db: &Db,
+    config: &SharedConfig,
+    progress: &SharedInstallProgress,
+) {
     log::info!("bible install thread: starting for {bible_id}");
-    {
-        let mut p = progress.write().unwrap();
-        p.bible_id = bible_id.clone();
-        p.stage = InstallStage::Starting;
-        p.done_books = 0;
-        p.total_books = 0;
-        p.error = None;
-    }
+    edit(progress, |p| {
+        *p = InstallProgress {
+            bible_id: bible_id.to_owned(),
+            stage: InstallStage::Starting,
+            ..InstallProgress::default()
+        };
+    });
 
-
-    let client = match Client::builder().user_agent("notein-bible/0.1").build() {
+    let client = match http_client() {
         Ok(c) => c,
-        Err(e) => {
-            fail(&progress, format!("http client build: {e}"));
-            return;
-        }
+        Err(e) => return fail(progress, &format!("http client build: {e}")),
     };
-
     let cache_dir = plugin_config::platform_cache_dir();
-    log::info!("bible install: cache_dir={}", cache_dir.display());
     if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-        fail(&progress, format!("mkdir cache: {e}"));
-        return;
+        return fail(progress, &format!("mkdir cache: {e}"));
     }
 
-    // biblionlabs raw layout. The per-bible `manifest.json` holds
-    // `book_names` / `chapter_headings` / `sections`; per-book files
-    // live at `bibles/<id>/books/<book>.json`. The fetch.bible catalogue
-    // endpoint uses a different shape (`extra.json`) that this
-    // installer does NOT currently parse — switch here if we grow a
-    // fetch.bible path.
-    const BIBLIONLABS_BASE: &str =
-        "https://raw.githubusercontent.com/biblionlabs/extra_data_source/refs/heads/main";
     let desc_url = format!("{BIBLIONLABS_BASE}/bibles/{bible_id}/manifest.json");
-    let books_template =
-        format!("{BIBLIONLABS_BASE}/bibles/{{bible_id}}/books/{{book}}.json");
-    log::info!("bible install: desc_url={desc_url}");
-
-    let progress_cb_handle = progress.clone();
-    let progress_cb = move |ev: biblionlabs::Progress| {
-        let mut p = progress_cb_handle.write().unwrap();
-        match ev {
+    let books_template = format!("{BIBLIONLABS_BASE}/bibles/{{bible_id}}/books/{{book}}.json");
+    let meta = catalogue_meta(&client, &cache_dir, config, bible_id);
+    let install = biblionlabs::Install {
+        db,
+        client: &client,
+        bible_id,
+        cache_dir: &cache_dir,
+        desc_url: &desc_url,
+        books_url_template: &books_template,
+        cache_ttl: CACHE_TTL,
+        meta: &meta,
+    };
+    let on_progress = |event: biblionlabs::Progress| {
+        edit(progress, |p| match event {
             biblionlabs::Progress::ManifestFetched { total_books } => {
                 p.stage = InstallStage::Downloading;
                 p.total_books = total_books;
             }
-            biblionlabs::Progress::BookDone { .. } => {
-                p.done_books += 1;
-            }
+            biblionlabs::Progress::BookDone { .. } => p.done_books += 1,
             biblionlabs::Progress::Started { .. } | biblionlabs::Progress::Finished { .. } => {}
-        }
+        });
     };
 
-    // Resolve catalogue-side name / language / abbrev — the per-bible
-    // biblionlabs manifest is silent on these so without this lookup
-    // the DB ends up storing `bible_id` as the display name.
-    let meta = {
-        let manifest_url = plugin_config::effective_manifest_url(&config);
-        match biblionlabs::load_catalogue(&client, &cache_dir, &manifest_url, CACHE_TTL) {
-            Ok(cat) => cat
-                .bibles
-                .iter()
-                .find(|b| b.id == bible_id)
-                .map(|b| biblionlabs::BibleMeta {
-                    name_local: b.name_local.clone(),
-                    name_english: b.name_english.clone(),
-                    language: b.language.clone(),
-                    abbrev: None,
-                })
-                .unwrap_or_default(),
-            Err(e) => {
-                log::warn!("bible install: catalogue lookup failed, DB name will fall back to id: {e}");
-                biblionlabs::BibleMeta::default()
-            }
-        }
-    };
-
-    let result = biblionlabs::install_bible(
-        &db,
-        &client,
-        &bible_id,
-        &cache_dir,
-        &desc_url,
-        &books_template,
-        CACHE_TTL,
-        meta,
-        progress_cb,
-    );
-
-    match result {
+    match install.run(on_progress) {
         Ok(verses) => {
-            // Pre-fetch section headings for every (book, chapter)
-            // right after the main install so the reader renders
-            // subtitles the first time the user opens a passage —
-            // the lazy per-chapter fetch is only a fallback.
-            prefetch_all_headings(&db, &client, &cache_dir, &bible_id, &progress);
-
-            let mut p = progress.write().unwrap();
-            p.stage = InstallStage::Finished;
-            p.error = None;
-            drop(p);
+            // Headings come right after the verses so the first passage
+            // opened already shows them; the per-chapter fetch is only a
+            // fallback.
+            prefetch_all_headings(db, &client, &cache_dir, bible_id, progress);
+            edit(progress, |p| {
+                p.stage = InstallStage::Finished;
+                p.error = None;
+            });
             log::info!("bible install: {bible_id} done, {verses} verses");
         }
-        Err(e) => fail(&progress, format!("{e}")),
+        Err(e) => fail(progress, &e.to_string()),
     }
 }
 
-/// Walk every (book, chapter) in the newly installed Bible and
-/// populate the `headers` table from helloao's sibling translation.
-/// Idempotent — [`helloao::install_headings_for_chapter`] wipes +
-/// rewrites per chapter, and the per-chapter JSON cache stops
-/// re-downloads of unchanged payloads.
+/// Name, language and abbreviation of `bible_id` from the catalogue; the
+/// per-Bible manifest leaves them out.
+fn catalogue_meta(
+    client: &Client,
+    cache_dir: &std::path::Path,
+    config: &SharedConfig,
+    bible_id: &str,
+) -> biblionlabs::BibleMeta {
+    let manifest_url = plugin_config::effective_manifest_url(config);
+    match biblionlabs::load_catalogue(client, cache_dir, &manifest_url, CACHE_TTL) {
+        Ok(cat) => cat
+            .bibles
+            .iter()
+            .find(|b| b.id == bible_id)
+            .map(|b| biblionlabs::BibleMeta {
+                name_local: b.name_local.clone(),
+                name_english: b.name_english.clone(),
+                language: b.language.clone(),
+                abbrev: None,
+            })
+            .unwrap_or_default(),
+        Err(e) => {
+            log::warn!("bible install: catalogue lookup failed, the name falls back to the id: {e}");
+            biblionlabs::BibleMeta::default()
+        }
+    }
+}
+
+/// Section headings for every chapter of the new Bible, from its helloao
+/// sibling translation.
 ///
-/// Failures are logged + swallowed per chapter: a flaky network for
-/// one book must not fail the whole install.
+/// Each chapter is rewritten whole and cached on disk, so running it again
+/// is cheap. A chapter that fails is logged and skipped.
 fn prefetch_all_headings(
     db: &Db,
     client: &Client,
@@ -295,27 +284,23 @@ fn prefetch_all_headings(
         log::debug!("headings prefetch: no sibling id for {bible_id}; skipping");
         return;
     };
-    // Reset the shared counters so the install modal animates through
-    // the subtitle pass instead of looking frozen at the last state
-    // from `install_bible`.
-    {
-        let mut p = progress.write().unwrap();
+    // Restart the counters so the progress moves through this pass too.
+    edit(progress, |p| {
         p.stage = InstallStage::Downloading;
         p.done_books = 0;
         p.total_books = 66;
-    }
-    let progress_clone = progress.clone();
-    let result = helloao::install_all_headings(
+    });
+    let helloao = helloao::Helloao {
         db,
         client,
         cache_dir,
-        bible_id,
-        source,
-        CACHE_TTL,
-        move |done, total, _book_name| {
-            let mut p = progress_clone.write().unwrap();
-            p.done_books = done;
-            p.total_books = total;
+        cache_ttl: CACHE_TTL,
+    };
+    let result = helloao.all_headings(bible_id, source, |done, total, _book_name| {
+            edit(progress, |p| {
+                p.done_books = done;
+                p.total_books = total;
+            });
         },
     );
     match result {
@@ -324,10 +309,10 @@ fn prefetch_all_headings(
     }
 }
 
-fn fail(progress: &SharedInstallProgress, message: String) {
+fn fail(progress: &SharedInstallProgress, message: &str) {
     log::error!("bible: install failed: {message}");
-    let mut p = progress.write().unwrap();
-    p.stage = InstallStage::Failed;
-    p.error = Some(message.clone());
+    edit(progress, |p| {
+        p.stage = InstallStage::Failed;
+        p.error = Some(message.to_owned());
+    });
 }
-

@@ -5,25 +5,27 @@
 //! own state; chapter navigation and selection live on
 //! [`crate::state::BibleViewerState`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use freya::components::ScrollController;
 use freya::elements::paragraph::ParagraphCursorExt;
 use freya::prelude::*;
 use freya_engine::prelude::{RectHeightStyle, RectWidthStyle};
 
+use notein_ui_kit::theme::palette;
+
 use crate::state::{BibleBookmark, u32_to_rgba};
 
 use super::chapter::{Block, ChapterPlan, ParagraphSpan};
-use notein_ui_kit::theme::palette;
 use super::typography;
 
 /// Context the host installs so verse-level widgets can scroll the
 /// chapter viewport into focus when a chip-tap or TSK jump sets
-/// `flash_verse`. `viewport_top` is published by `chapter_view`'s
-/// outer rect `on_sized` and read inside `VerseMarker::on_sized` so
-/// scroll targets translate verse window-coords into content-coords
-/// without pulling in a shared layout crate.
+/// `flash_verse`.
+///
+/// `viewport_top` is published by `chapter_view`'s outer rect `on_sized` and
+/// read inside `VerseMarker::on_sized` so scroll targets translate verse
+/// window-coords into content-coords without pulling in a shared layout crate.
 ///
 /// Vertical margin applied so the target verse sits a comfortable
 /// distance below the chapter header + translation strip.
@@ -73,6 +75,7 @@ impl std::fmt::Debug for VerseScrollCtx {
 
 /// UI-side projection of a publisher footnote. `caller` is the display
 /// letter (publisher-assigned — "a", "b", "c" or "+" for autogen).
+///
 /// `text` is the footnote body shown in the hover popup. `target`, when
 /// present, lets the click handler navigate to the referenced verse.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -209,6 +212,38 @@ impl DragSelect {
         provide_context(fresh);
         fresh
     }
+
+    fn begin(mut self, verse: u16) {
+        self.start.set(Some(verse));
+        self.end.set(Some(verse));
+        self.pressing.set(true);
+    }
+
+    /// End the drag; returns the verses it spanned.
+    fn finish(mut self) -> (Option<u16>, Option<u16>) {
+        let ends = (*self.start.peek(), *self.end.peek());
+        self.start.set(None);
+        self.end.set(None);
+        self.pressing.set(false);
+        ends
+    }
+}
+
+/// Re-render a few times right after mount, so highlight rects computed
+/// from the laid-out paragraph appear even when `on_sized` fired before
+/// the handler was attached. At most three renders in the first 150 ms.
+fn use_settle_ticks() {
+    let tick: State<u32> = use_state(|| 0);
+    use_hook(move || {
+        let mut tick = tick;
+        spawn(async move {
+            for i in 1u32..=3 {
+                async_io::Timer::after(std::time::Duration::from_millis(40)).await;
+                tick.set(i);
+            }
+        });
+    });
+    let _ = *tick.read();
 }
 
 /// Which verse(s) a bookmark gesture targets. `Verse` fires for a
@@ -220,10 +255,11 @@ pub enum HighlightKind {
     Range(u16, u16),
 }
 
-/// Full gesture payload. `anchor` is the global (window-relative)
-/// pointer location where the gesture started, so the host can float
-/// the colour picker next to the touch point instead of pinning it to
-/// a fixed corner.
+/// Full gesture payload.
+///
+/// `anchor` is the global (window-relative) pointer location where the gesture
+/// started, so the host can float the colour picker next to the touch point
+/// instead of pinning it to a fixed corner.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HighlightTarget {
     pub kind: HighlightKind,
@@ -234,10 +270,11 @@ pub struct HighlightTarget {
 /// Callback the reader fires when a bookmark gesture completes.
 pub type OnHighlight = EventHandler<HighlightTarget>;
 
-/// Live-preview highlight shown while the colour picker is open. The
-/// shell forwards whatever colour the user is currently hovering /
-/// dragging on the wheel; the reader overrides those verses' tint so
-/// the paragraph updates in real time instead of only on commit.
+/// Live-preview highlight shown while the colour picker is open.
+///
+/// The shell forwards whatever colour the user is currently hovering / dragging
+/// on the wheel; the reader overrides those verses' tint so the paragraph
+/// updates in real time instead of only on commit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HighlightPreview {
     pub lo: u16,
@@ -245,25 +282,47 @@ pub struct HighlightPreview {
     pub color: Color,
 }
 
-#[must_use] 
+/// What every paragraph of a chapter shares: references, footnotes, the
+/// gesture callbacks and the type settings.
+#[derive(Clone, PartialEq)]
+pub struct Reading {
+    pub cross_refs: HashMap<u16, Vec<CrossRefView>>,
+    pub footnotes: HashMap<u16, Vec<FootnoteView>>,
+    pub on_jump: OnJump,
+    pub on_highlight: OnHighlight,
+    /// Colour being tried on a range while the picker is open.
+    pub preview: Option<HighlightPreview>,
+    pub font_size: f32,
+    pub line_height: f32,
+}
+
+impl std::fmt::Debug for Reading {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Reading")
+            .field("cross_refs", &self.cross_refs.len())
+            .field("footnotes", &self.footnotes.len())
+            .field("preview", &self.preview)
+            .field("font_size", &self.font_size)
+            .field("line_height", &self.line_height)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The whole chapter: title, sections and paragraphs, scrolled through
+/// `scroll_ctx` when the host drives it. `flash_verse` is washed over any
+/// highlight so a jump target stands out.
+#[must_use]
 pub fn chapter_view(
     plan: &ChapterPlan,
     highlights: &[&BibleBookmark],
-    cross_refs: &HashMap<u16, Vec<CrossRefView>>,
-    footnotes: &HashMap<u16, Vec<FootnoteView>>,
-    on_jump: OnJump,
-    on_highlight: OnHighlight,
+    reading: &Reading,
     flash_verse: Option<u16>,
-    preview: Option<HighlightPreview>,
-    font_size: f32,
-    line_height: f32,
     scroll_ctx: Option<VerseScrollCtx>,
 ) -> impl IntoElement {
     // Install the chapter-scoped drag-select cursor so every verse
     // marker rendered under this view shares one `(start, end)` state
     // for the drag-highlight gesture.
     let _drag = DragSelect::use_context();
-    let drop_cap_size = font_size * 4.5;
     let mut styles = style_map(highlights);
     if let Some(v) = flash_verse {
         // Transient wash — overrides any user highlight on the flash
@@ -276,7 +335,7 @@ pub fn chapter_view(
             },
         );
     }
-    if let Some(prev) = preview {
+    if let Some(prev) = reading.preview {
         for v in prev.lo..=prev.hi {
             styles.insert(
                 v,
@@ -288,7 +347,6 @@ pub fn chapter_view(
         }
     }
 
-    let _ = drop_cap_size;
     // Install the scroll context so inline VerseMarkers can snap the
     // chapter viewport onto a chip-tap / TSK flash target during
     // layout. Controller + flash signal travel together; the outer
@@ -298,10 +356,9 @@ pub fn chapter_view(
     if let Some(ctx) = scroll_ctx.as_ref() {
         provide_context(ctx.clone());
     }
-    let scroll = match scroll_ctx {
-        Some(ctx) => ScrollView::new_controlled(ctx.controller),
-        None => ScrollView::new(),
-    };
+    let scroll = scroll_ctx.map_or_else(ScrollView::new, |ctx| {
+        ScrollView::new_controlled(ctx.controller)
+    });
     rect()
         .width(Size::fill())
         .height(Size::fill())
@@ -321,17 +378,7 @@ pub fn chapter_view(
                     .padding(16.)
                     .spacing(14.)
                     .child(book_title_header(plan))
-                    .child(all_blocks(
-                        plan,
-                        &styles,
-                        cross_refs,
-                        footnotes,
-                        on_jump,
-                        on_highlight,
-                        font_size,
-                        line_height,
-                        preview,
-                    )),
+                    .child(all_blocks(plan, &styles, reading)),
             ),
         )
 }
@@ -364,35 +411,19 @@ fn book_title_header(plan: &ChapterPlan) -> impl IntoElement {
 fn all_blocks(
     plan: &ChapterPlan,
     styles: &HashMap<u16, VerseStyle>,
-    cross_refs: &HashMap<u16, Vec<CrossRefView>>,
-    footnotes: &HashMap<u16, Vec<FootnoteView>>,
-    on_jump: OnJump,
-    on_highlight: OnHighlight,
-    font_size: f32,
-    line_height: f32,
-    preview: Option<HighlightPreview>,
+    reading: &Reading,
 ) -> impl IntoElement {
     let mut root = rect().width(Size::fill()).spacing(14.);
     for block in &plan.blocks {
         match block {
             Block::Paragraph(spans) => {
                 let starts_chapter = spans.first().is_some_and(|s| s.verse == 1);
-                root = root.child(verse_paragraph(
-                    spans,
-                    styles,
-                    cross_refs,
-                    footnotes,
-                    on_jump.clone(),
-                    on_highlight.clone(),
-                    font_size,
-                    line_height,
-                    if starts_chapter {
-                        Some(plan.chapter)
-                    } else {
-                        None
-                    },
-                    preview,
-                ));
+                root = root.child(VerseParagraph {
+                    spans: spans.clone(),
+                    styles: styles.clone(),
+                    reading: reading.clone(),
+                    starts_chapter: starts_chapter.then_some(plan.chapter),
+                });
             }
             Block::Header(text) => {
                 root = root.child(section_header(text));
@@ -402,41 +433,27 @@ fn all_blocks(
     root
 }
 
-/// A single paragraph with inline superscript verse numbers.
-/// Highlighted verses get their text repainted in the stored tint and
-/// gain an inline note icon when the bookmark has a non-empty body.
-/// Cross-reference chips render as blue clickable widgets right after
-/// each verse that has at least one ref.
+/// A paragraph of verses with inline verse numbers, highlight tints,
+/// note icons, footnote letters and cross-reference buttons.
 ///
-/// `starts_chapter` carries the chapter number when this paragraph
-/// contains verse 1 — the "1" slot is then rendered as the chapter
-/// number at 2.5× body font (drop-cap style, inline).
-/// Paragraph wrapper that owns the bookmark gestures. Taps and drags
-/// hit the whole paragraph (not the tiny verse-number marker), map
-/// element-local coordinates to a UTF-16 offset via `ParagraphHolder::
-/// cursor_index_at_point`, and resolve the offset to a verse number
-/// via the per-verse span ranges computed at build time. Visual-only
-/// inline children (`VerseMarker`, `FootnoteLetter`, `RefHoverButton`)
-/// still render as before; they no longer carry gesture handlers.
+/// It owns the highlight gestures: a tap or drag anywhere on the text is
+/// hit-tested to a UTF-16 offset and mapped to its verse, so the small
+/// inline markers carry no handlers. `starts_chapter` holds the chapter
+/// number when the paragraph contains verse 1, whose number is then drawn
+/// as a large inline chapter number.
 #[derive(Clone, PartialEq)]
 pub(super) struct VerseParagraph {
     pub(super) spans: Vec<ParagraphSpan>,
     pub(super) styles: HashMap<u16, VerseStyle>,
-    pub(super) cross_refs: HashMap<u16, Vec<CrossRefView>>,
-    pub(super) footnotes: HashMap<u16, Vec<FootnoteView>>,
-    pub(super) on_jump: OnJump,
-    pub(super) on_highlight: OnHighlight,
-    pub(super) font_size: f32,
-    pub(super) line_height: f32,
+    pub(super) reading: Reading,
     pub(super) starts_chapter: Option<u16>,
-    pub(super) preview: Option<HighlightPreview>,
 }
 
 impl std::fmt::Debug for VerseParagraph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VerseParagraph")
             .field("spans", &self.spans.len())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -480,57 +497,15 @@ fn hit_offset(holder: &ParagraphHolder, global: CursorPoint, area: Area) -> Opti
     Some(data.paragraph.cursor_index_at_point((vis.x, vis.y)))
 }
 
-impl Component for VerseParagraph {
-    fn render(&self) -> impl IntoElement {
-        let holder = use_hook(ParagraphHolder::default);
-        let drag = use_consume::<DragSelect>();
-        // Global pointer location captured on `pointer_down`. The
-        // host anchors its colour picker here so the popup opens next
-        // to the finger / cursor instead of pinned to a fixed corner.
-        let anchor: State<(f32, f32)> = use_state(|| (0.0, 0.0));
-        // Paragraph area captured via `on_sized`. Flips 0 → real_size
-        // after first layout; subscribing to it forces a re-render once
-        // the holder has been populated, so the second-pass bg-rect
-        // compute reads a laid-out paragraph.
-        let mut area: State<Area> = use_state(Area::default);
-        // Belt-and-suspenders tick that bumps a few times right after
-        // mount, so the bg-rect compute re-runs even if `on_sized`
-        // misses (first layout before the handler was attached, size
-        // unchanged across frames, etc.). Cheap: at most three extra
-        // renders in the first ~150ms.
-        let tick: State<u32> = use_state(|| 0);
-        use_hook({
-            let mut tick = tick;
-            move || {
-                spawn(async move {
-                    for i in 1u32..=3 {
-                        async_io::Timer::after(std::time::Duration::from_millis(40)).await;
-                        tick.set(i);
-                    }
-                });
-            }
-        });
-        let _ = *tick.read();
-
-        let on_jump = self.on_jump.clone();
-        let on_highlight = self.on_highlight.clone();
-        let font_size = self.font_size;
-        let line_height = self.line_height;
-
-        let mut p = paragraph()
-            .width(Size::fill())
-            .line_height(line_height)
-            .color(palette().t1)
-            .font_family(typography::FAMILY)
-            .font_size(font_size)
-            .holder(holder.clone())
-            .on_sized(move |e: Event<SizedEventData>| {
-                let new_area = e.data().area;
-                if *area.peek() != new_area {
-                    area.set(new_area);
-                }
-            });
-
+impl VerseParagraph {
+    /// Add the verses to `p`; returns it with each verse's UTF-16 range
+    /// and the ranges to tint.
+    fn compose(
+        &self,
+        mut p: Paragraph,
+    ) -> (Paragraph, Vec<VerseRange>, Vec<(usize, usize, Color)>) {
+        let on_jump = &self.reading.on_jump;
+        let font_size = self.reading.font_size;
         // UTF-16 offsets drive both pointer hit-testing and the
         // per-verse bg rects we paint behind the text. Each `.child()`
         // adds one placeholder unit; each span contributes
@@ -547,6 +522,7 @@ impl Component for VerseParagraph {
         for span in &self.spans {
             let style = self.styles.get(&span.verse);
             let preview_color = self
+                .reading
                 .preview
                 .as_ref()
                 .filter(|p| span.verse >= p.lo && span.verse <= p.hi)
@@ -554,10 +530,9 @@ impl Component for VerseParagraph {
 
             p = p.child(VerseMarker {
                 verse: span.verse,
-                display: if span.verse == 1 && self.starts_chapter.is_some() {
-                    MarkerDisplay::Chapter(self.starts_chapter.unwrap())
-                } else {
-                    MarkerDisplay::Verse
+                display: match self.starts_chapter {
+                    Some(chapter) if span.verse == 1 => MarkerDisplay::Chapter(chapter),
+                    _ => MarkerDisplay::Verse,
                 },
                 font_size,
             });
@@ -583,7 +558,7 @@ impl Component for VerseParagraph {
                 p = p.child(note_icon(font_size));
                 utf16_offset += 1;
             }
-            if let Some(notes) = self.footnotes.get(&span.verse) {
+            if let Some(notes) = self.reading.footnotes.get(&span.verse) {
                 for (idx, note) in notes.iter().enumerate() {
                     p = p.child(FootnoteLetter {
                         letter: display_letter(&note.caller, idx),
@@ -595,7 +570,7 @@ impl Component for VerseParagraph {
                     utf16_offset += 1;
                 }
             }
-            if let Some(refs) = self.cross_refs.get(&span.verse) {
+            if let Some(refs) = self.reading.cross_refs.get(&span.verse) {
                 p = p.child(RefHoverButton {
                     refs: refs.clone(),
                     jump: on_jump.clone(),
@@ -604,6 +579,40 @@ impl Component for VerseParagraph {
                 utf16_offset += 1;
             }
         }
+        (p, verse_ranges, highlight_items)
+    }
+}
+
+impl Component for VerseParagraph {
+    fn render(&self) -> impl IntoElement {
+        let holder = use_hook(ParagraphHolder::default);
+        let drag = use_consume::<DragSelect>();
+        // Global pointer location captured on `pointer_down`. The
+        // host anchors its colour picker here so the popup opens next
+        // to the finger / cursor instead of pinned to a fixed corner.
+        let anchor: State<(f32, f32)> = use_state(|| (0.0, 0.0));
+        // Paragraph area captured via `on_sized`. Flips 0 → real_size
+        // after first layout; subscribing to it forces a re-render once
+        // the holder has been populated, so the second-pass bg-rect
+        // compute reads a laid-out paragraph.
+        let mut area: State<Area> = use_state(Area::default);
+        use_settle_ticks();
+
+        let on_highlight = self.reading.on_highlight.clone();
+        let p = paragraph()
+            .width(Size::fill())
+            .line_height(self.reading.line_height)
+            .color(palette().t1)
+            .font_family(typography::FAMILY)
+            .font_size(self.reading.font_size)
+            .holder(holder.clone())
+            .on_sized(move |e: Event<SizedEventData>| {
+                let new_area = e.data().area;
+                if *area.peek() != new_area {
+                    area.set(new_area);
+                }
+            });
+        let (p, verse_ranges, highlight_items) = self.compose(p);
 
         // Subscribe to the area signal so the second pass runs after
         // the paragraph publishes its laid-out form into the holder.
@@ -614,8 +623,8 @@ impl Component for VerseParagraph {
         // text — not just the tiny superscript marker — fires.
         let holder_for_down = holder.clone();
         let ranges_for_down = verse_ranges.clone();
-        let holder_for_move = holder.clone();
-        let ranges_for_move = verse_ranges.clone();
+        let holder_for_move = holder;
+        let ranges_for_move = verse_ranges;
 
         let p = p
             .on_pointer_down({
@@ -632,12 +641,11 @@ impl Component for VerseParagraph {
                         return;
                     };
 
+                    #[allow(clippy::cast_possible_truncation)] // window coordinates
                     let anchor_pt = (g.x as f32, g.y as f32);
                     anchor.set(anchor_pt);
 
-                    drag.start.set(Some(verse));
-                    drag.end.set(Some(verse));
-                    drag.pressing.set(true);
+                    drag.begin(verse);
 
                     // Double-tap on a verse is the only way to open the
                     // highlight picker now — the long-press path was
@@ -650,9 +658,7 @@ impl Component for VerseParagraph {
                             anchor_x: anchor_pt.0,
                             anchor_y: anchor_pt.1,
                         });
-                        drag.start.set(None);
-                        drag.end.set(None);
-                        drag.pressing.set(false);
+                        drag.finish();
                     }
                 }
             })
@@ -678,15 +684,9 @@ impl Component for VerseParagraph {
                 }
             })
             .on_global_pointer_up({
-                let on_highlight = on_highlight.clone();
                 let mut drag = drag;
-                let anchor = anchor;
                 move |_: Event<PointerEventData>| {
-                    let start = *drag.start.peek();
-                    let end = *drag.end.peek();
-                    drag.start.set(None);
-                    drag.end.set(None);
-                    drag.pressing.set(false);
+                    let (start, end) = drag.finish();
                     EventsCombos::<()>::released();
 
                     if let (Some(a), Some(b)) = (start, end)
@@ -725,7 +725,7 @@ fn build_bg_rects(
     holder: &ParagraphHolder,
     items: &[(usize, usize, Color)],
     paragraph_area: Area,
-) -> impl IntoElement {
+) -> impl IntoElement + use<> {
     // `Layer::Relative(-1)` pushes every bg rect one step behind the
     // paragraph sibling in the paint order. Hit-testing then prefers
     // the paragraph on top, so the gestures keep firing even over a
@@ -746,7 +746,8 @@ fn build_bg_rects(
     let Some(data) = inner.as_ref() else {
         return container;
     };
-    let scale = data.scale_factor.max(1e-3);
+    #[allow(clippy::cast_possible_truncation)] // a display scale factor
+    let scale = data.scale_factor.max(1e-3) as f32;
     for (start, end, color) in items {
         if start == end {
             continue;
@@ -757,10 +758,10 @@ fn build_bg_rects(
             RectWidthStyle::Tight,
         );
         for tb in boxes {
-            let left = (f64::from(tb.rect.left) / scale) as f32;
-            let top = (f64::from(tb.rect.top) / scale) as f32;
-            let width = (f64::from(tb.rect.right - tb.rect.left) / scale) as f32;
-            let height = (f64::from(tb.rect.bottom - tb.rect.top) / scale) as f32;
+            let left = tb.rect.left / scale;
+            let top = tb.rect.top / scale;
+            let width = (tb.rect.right - tb.rect.left) / scale;
+            let height = (tb.rect.bottom - tb.rect.top) / scale;
             if width <= 0.0 || height <= 0.0 {
                 continue;
             }
@@ -782,34 +783,6 @@ fn build_bg_rects(
         }
     }
     container
-}
-
-/// Legacy entry point. Preserved so `all_blocks` doesn't need to care
-/// about construction details; just forwards to the component.
-fn verse_paragraph(
-    spans: &[ParagraphSpan],
-    styles: &HashMap<u16, VerseStyle>,
-    cross_refs: &HashMap<u16, Vec<CrossRefView>>,
-    footnotes: &HashMap<u16, Vec<FootnoteView>>,
-    on_jump: OnJump,
-    on_highlight: OnHighlight,
-    font_size: f32,
-    line_height: f32,
-    starts_chapter: Option<u16>,
-    preview: Option<HighlightPreview>,
-) -> impl IntoElement {
-    VerseParagraph {
-        spans: spans.to_vec(),
-        styles: styles.clone(),
-        cross_refs: cross_refs.clone(),
-        footnotes: footnotes.clone(),
-        on_jump,
-        on_highlight,
-        font_size,
-        line_height,
-        starts_chapter,
-        preview,
-    }
 }
 
 /// What the clickable verse marker should display — the superscript
@@ -835,7 +808,7 @@ impl std::fmt::Debug for VerseMarker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VerseMarker")
             .field("verse", &self.verse)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -903,13 +876,107 @@ impl Component for VerseMarker {
 fn display_letter(caller: &str, idx: usize) -> String {
     let trimmed = caller.trim();
     if trimmed.is_empty() || trimmed == "+" || trimmed == "*" {
-        if idx < 26 {
-            char::from(b'a' + idx as u8).to_string()
-        } else {
-            format!("{idx}")
-        }
+        u8::try_from(idx)
+            .ok()
+            .filter(|i| *i < 26)
+            .map_or_else(|| idx.to_string(), |i| char::from(b'a' + i).to_string())
     } else {
         trimmed.to_string()
+    }
+}
+
+/// Open state of an inline hover popup. Leaving waits a moment before
+/// closing, and entering cancels that, so the pointer can travel from
+/// the trigger to the popup.
+#[derive(Clone, Copy, PartialEq)]
+struct Hover {
+    open: State<bool>,
+    /// Bumped on every change; a pending close only fires while it
+    /// still holds the value it saw.
+    version: State<u64>,
+}
+
+impl std::fmt::Debug for Hover {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Hover")
+            .field("open", &*self.open.peek())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Hover {
+    fn use_hover() -> Self {
+        Self {
+            open: use_state(|| false),
+            version: use_state(|| 0),
+        }
+    }
+
+    fn bump(mut self) -> u64 {
+        let next = self.version.peek().wrapping_add(1);
+        self.version.set(next);
+        next
+    }
+
+    fn enter(mut self) {
+        self.open.set(true);
+        self.bump();
+    }
+
+    fn close(mut self) {
+        self.open.set(false);
+        self.bump();
+    }
+
+    /// Close after a short delay unless the pointer comes back.
+    fn leave(self) {
+        let token = self.bump();
+        let mut open = self.open;
+        let version = self.version;
+        spawn(async move {
+            async_io::Timer::after(std::time::Duration::from_millis(350)).await;
+            if *version.peek() == token {
+                open.set(false);
+            }
+        });
+    }
+}
+
+/// Place a `width` × `height` popup under the trigger at `anchor`,
+/// clamped inside the viewport; until both are measured it sits
+/// `fallback_top` below the trigger.
+fn place_popup(
+    popup: Rect,
+    anchor: Area,
+    viewport: Option<notein_ui_kit::ViewportArea>,
+    (width, height): (f32, f32),
+    fallback_top: f32,
+) -> Rect {
+    const MARGIN: f32 = 8.0;
+    let viewport_area = viewport.map_or(anchor, notein_ui_kit::ViewportArea::get);
+    let has_viewport = viewport_area.width() > 0.0 && viewport_area.height() > 0.0;
+    if has_viewport && anchor.width() > 0.0 && height > 0.0 {
+        let top = notein_ui_kit::clamp_popup_top(
+            viewport_area,
+            anchor,
+            anchor.max_y() + 4.0,
+            height,
+            MARGIN,
+        );
+        let left = notein_ui_kit::clamp_popup_left(viewport_area, anchor.min_x(), width, MARGIN);
+        popup.position(Position::new_global().top(top).left(left))
+    } else {
+        popup.position(Position::new_absolute().top(fallback_top).left(0.))
+    }
+}
+
+/// A state that follows an element's area.
+fn track_area(mut area: State<Area>) -> impl FnMut(Event<SizedEventData>) + 'static {
+    move |e: Event<SizedEventData>| {
+        let new_area = e.data().area;
+        if *area.peek() != new_area {
+            area.set(new_area);
+        }
     }
 }
 
@@ -929,159 +996,86 @@ impl std::fmt::Debug for FootnoteLetter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FootnoteLetter")
             .field("letter", &self.letter)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
 impl Component for FootnoteLetter {
     fn render(&self) -> impl IntoElement {
-        let hover = use_state(|| false);
-        let version = use_state(|| 0u64);
-        let mut letter_area: State<Area> = use_state(Area::default);
-        let mut popup_area: State<Area> = use_state(Area::default);
+        const POPUP_WIDTH: f32 = 300.0;
+        let hover = Hover::use_hover();
+        let letter_area: State<Area> = use_state(Area::default);
+        let popup_area: State<Area> = use_state(Area::default);
         let viewport = try_consume_context::<notein_ui_kit::ViewportArea>();
-        let letter = self.letter.clone();
-        let text = self.text.clone();
         let target = self.target.clone();
         let on_jump = self.jump.clone();
         let marker_font = self.font_size * 0.55;
-        let blue = palette().accent_text;
-        let popup_width = 300.0_f32;
-        let popup_margin = 8.0_f32;
 
-        let mut container = rect()
+        let container = rect()
             .padding((0., 1.))
             .margin((0., 1.))
-            .on_sized(move |e: Event<SizedEventData>| {
-                let new_area = e.data().area;
-                if *letter_area.peek() != new_area {
-                    letter_area.set(new_area);
-                }
-            })
-            .on_pointer_enter({
-                let mut hover = hover;
-                let mut version = version;
-                move |_| {
-                    hover.set(true);
-                    let next = version.peek().wrapping_add(1);
-                    version.set(next);
-                }
-            })
-            .on_pointer_leave({
-                let mut hover = hover;
-                let mut version = version;
-                move |_| close_soon(&mut hover, &mut version)
-            })
+            .on_sized(track_area(letter_area))
+            .on_pointer_enter(move |_| hover.enter())
+            .on_pointer_leave(move |_| hover.leave())
             // Swallow pointer_down so a footnote tap does not seed
             // the paragraph's drag-highlight or double-tap gestures.
             .on_pointer_down(|e: Event<PointerEventData>| {
                 e.stop_propagation();
             })
-            .on_press({
-                let mut hover = hover;
-                let mut version = version;
-                move |_: Event<PressEventData>| {
-                    hover.set(false);
-                    let next = version.peek().wrapping_add(1);
-                    version.set(next);
-                    if let Some(t) = target.clone() {
-                        on_jump.call(t);
-                    }
+            .on_press(move |_: Event<PressEventData>| {
+                hover.close();
+                if let Some(t) = target.clone() {
+                    on_jump.call(t);
                 }
             })
-            .child(label().font_size(marker_font).color(blue).text(letter));
-
-        if *hover.read() && !text.is_empty() {
-            let icon = *letter_area.read();
-            let measured = *popup_area.read();
-            let popup_height = measured.height().max(0.0);
-            let viewport_area = viewport.map_or(icon, notein_ui_kit::ViewportArea::get);
-            let has_viewport = viewport_area.width() > 0.0 && viewport_area.height() > 0.0;
-            let is_measured = icon.width() > 0.0 && popup_height > 0.0;
-
-            let popup = rect()
-                .layer(Layer::Overlay)
-                .width(Size::px(popup_width))
-                .padding((10., 12.))
-                .with_corner_radius(8.0)
-                .background(palette().s2)
-                .on_sized(move |e: Event<SizedEventData>| {
-                    let new_area = e.data().area;
-                    if *popup_area.peek() != new_area {
-                        popup_area.set(new_area);
-                    }
-                })
-                .opacity(if is_measured { 1.0 } else { 0.0 })
-                .on_pointer_down(|e: Event<PointerEventData>| {
-                    e.stop_propagation();
-                })
-                .on_pointer_enter({
-                    let mut hover = hover;
-                    let mut version = version;
-                    move |_| {
-                        hover.set(true);
-                        let next = version.peek().wrapping_add(1);
-                        version.set(next);
-                    }
-                })
-                .on_pointer_leave({
-                    let mut hover = hover;
-                    let mut version = version;
-                    move |_| close_soon(&mut hover, &mut version)
-                })
-                .child(
-                    label()
-                        .font_size(self.font_size * 0.65)
-                        .color(palette().t1)
-                        .text(text),
-                );
-
-            let popup = if has_viewport && is_measured {
-                let below_top = icon.max_y() + 4.0;
-                let top = notein_ui_kit::clamp_popup_top(
-                    viewport_area,
-                    icon,
-                    below_top,
-                    popup_height,
-                    popup_margin,
-                );
-                let left = notein_ui_kit::clamp_popup_left(
-                    viewport_area,
-                    icon.min_x(),
-                    popup_width,
-                    popup_margin,
-                );
-                popup.position(Position::new_global().top(top).left(left))
-            } else {
-                popup.position(Position::new_absolute().top(marker_font * 1.6).left(0.))
-            };
-            container = container.child(popup);
+            .child(
+                label()
+                    .font_size(marker_font)
+                    .color(palette().accent_text)
+                    .text(self.letter.clone()),
+            );
+        if !*hover.open.read() || self.text.is_empty() {
+            return container;
         }
-        container
+
+        let anchor = *letter_area.read();
+        let height = popup_area.read().height().max(0.0);
+        let measured = anchor.width() > 0.0 && height > 0.0;
+        let popup = rect()
+            .layer(Layer::Overlay)
+            .width(Size::px(POPUP_WIDTH))
+            .padding((10., 12.))
+            .with_corner_radius(8.0)
+            .background(palette().s2)
+            .on_sized(track_area(popup_area))
+            .opacity(if measured { 1.0 } else { 0.0 })
+            .on_pointer_down(|e: Event<PointerEventData>| {
+                e.stop_propagation();
+            })
+            .on_pointer_enter(move |_| hover.enter())
+            .on_pointer_leave(move |_| hover.leave())
+            .child(
+                label()
+                    .font_size(self.font_size * 0.65)
+                    .color(palette().t1)
+                    .text(self.text.clone()),
+            );
+        container.child(place_popup(
+            popup,
+            anchor,
+            viewport,
+            (POPUP_WIDTH, height),
+            marker_font * 1.6,
+        ))
     }
 }
 
-/// Schedule a hover close that only fires if no `enter` event bumps
-/// `version` in the meantime. Shared by every hover-popup widget so
-/// the "move cursor from icon to popup body" gesture is reliable.
-fn close_soon(hover: &mut State<bool>, version: &mut State<u64>) {
-    let my_token = version.peek().wrapping_add(1);
-    version.set(my_token);
-    let mut hover = *hover;
-    let version = *version;
-    spawn(async move {
-        async_io::Timer::after(std::time::Duration::from_millis(350)).await;
-        if *version.peek() == my_token {
-            hover.set(false);
-        }
-    });
-}
-
 /// Inline bookmark icon rendered when a verse has at least one
-/// cross-ref. Hovering opens a floating list of collapsible refs;
-/// each row carries a "Ir a" button that drives `on_jump`. The icon
-/// stays single + unobtrusive so the paragraph flow is not broken by
-/// per-letter superscripts.
+/// cross-ref.
+///
+/// Hovering or tapping opens a floating list of collapsible refs; each
+/// row carries an "Ir a" button that drives `on_jump`. A single icon
+/// keeps the paragraph flow intact.
 #[derive(Clone, PartialEq)]
 struct RefHoverButton {
     refs: Vec<CrossRefView>,
@@ -1093,141 +1087,119 @@ impl std::fmt::Debug for RefHoverButton {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RefHoverButton")
             .field("ref_count", &self.refs.len())
-            .finish()
+            .finish_non_exhaustive()
+    }
+}
+
+impl RefHoverButton {
+    const POPUP_MAX_HEIGHT: f32 = 360.0;
+    const POPUP_WIDTH: f32 = 320.0;
+
+    /// The list of references, scrolled past [`Self::POPUP_MAX_HEIGHT`].
+    fn list(&self, hover: Hover, pinned: State<bool>, expanded: State<HashSet<usize>>) -> Rect {
+        let mut col = rect().width(Size::fill()).spacing(4.0);
+        for (idx, xref) in self.refs.iter().enumerate() {
+            col = col.child(RefListRow {
+                idx,
+                view: xref.clone(),
+                jump: self.jump.clone(),
+                expanded,
+                parent: hover,
+                font_size: self.font_size,
+            });
+        }
+        rect()
+            .layer(Layer::Overlay)
+            .width(Size::px(Self::POPUP_WIDTH))
+            .padding((6., 8.))
+            .with_corner_radius(10.0)
+            .background(palette().s2)
+            .spacing(4.0)
+            // Rows must not seed the paragraph's drag gesture, nor bubble
+            // a press up to the trigger, which would close the popup.
+            .on_pointer_down(|e: Event<PointerEventData>| {
+                e.stop_propagation();
+            })
+            .on_press(|e: Event<PressEventData>| {
+                e.stop_propagation();
+            })
+            .on_pointer_enter(move |_| hover.enter())
+            .on_pointer_leave(move |_| {
+                if !*pinned.peek() {
+                    hover.leave();
+                }
+            })
+            .child(
+                ScrollView::new()
+                    .height(Size::auto())
+                    .max_height(Size::px(Self::POPUP_MAX_HEIGHT))
+                    .child(col),
+            )
     }
 }
 
 impl Component for RefHoverButton {
     fn render(&self) -> impl IntoElement {
-        // `open` is the shared visibility signal; `pinned` marks it as
-        // tap-opened so hover-leave does not auto-close it on devices
-        // that fire `pointer_leave` right after the touch-up.
-        let open = use_state(|| false);
+        let hover = Hover::use_hover();
+        // Tap-opened: hover-leave does not close it, since touch devices
+        // fire `pointer_leave` right after lifting the finger.
         let pinned = use_state(|| false);
-        let version = use_state(|| 0u64);
-        let expanded = use_state(std::collections::HashSet::<usize>::new);
-        // Icon area in window coords — captured via `on_sized` on the
-        // trigger container so the popup can anchor against it with
-        // `Position::new_global`.
-        let mut icon_area: State<Area> = use_state(Area::default);
-        // Measured popup height so the first paint can flip above the
-        // trigger if below would clip. Falls back to `max_height` on
-        // the first frame (popup renders invisibly, then re-positions
-        // once `on_sized` publishes).
-        let mut popup_area: State<Area> = use_state(Area::default);
-        // Viewport bounds — provided by `AppShell` so popups can clamp
-        // themselves inside the window. Falls back to naive placement
-        // if the context is missing (plugin running under a shell that
-        // did not opt in).
+        let expanded = use_state(HashSet::<usize>::new);
+        let icon_area: State<Area> = use_state(Area::default);
+        let popup_area: State<Area> = use_state(Area::default);
         let viewport = try_consume_context::<notein_ui_kit::ViewportArea>();
-
         let icon_size = self.font_size * 0.55;
-        let popup_max_height = 360.0_f32;
-        let popup_width = 320.0_f32;
-        let popup_margin = 8.0_f32;
-        let blue = palette().accent_text;
-        let refs_for_list = self.refs.clone();
-        let jump_for_list = self.jump.clone();
-        let font_size = self.font_size;
 
-        // Tap on the icon flips the pinned flag — opens on first tap,
-        // closes on second. Touch devices do not fire hover reliably,
-        // and the hover-leave timer used to dismiss the popup before
-        // the user could reach it with their finger.
         let on_toggle = {
-            let mut open = open;
             let mut pinned = pinned;
-            let mut version = version;
             move |_: Event<PressEventData>| {
-                let next_pinned = !*pinned.peek();
-                pinned.set(next_pinned);
-                open.set(next_pinned || *open.peek());
-                if !next_pinned {
-                    open.set(false);
+                let next = !*pinned.peek();
+                pinned.set(next);
+                if next {
+                    hover.enter();
+                } else {
+                    hover.close();
                 }
-                let next = version.peek().wrapping_add(1);
-                version.set(next);
             }
         };
-
-        // Outside-tap close for the pinned popup. Focus-based dismissal
-        // conflicts with the collapsible rows inside — expanding a row
-        // moves focus and would snap the popup shut. Instead listen on
-        // the global pointer-up and compare the hit location against
-        // both the trigger icon and the popup rect; a release outside
-        // both areas tears the popup down. Pointer events inside the
-        // popup already `stop_propagation`, but global handlers still
-        // fire — the hit-test discriminates.
+        // A pinned popup closes on a release outside both the icon and
+        // the popup. Focus-based dismissal would close it whenever a row
+        // inside expands.
         let on_outside_up = {
-            let mut open = open;
             let mut pinned = pinned;
-            let mut version = version;
-            let icon_area = icon_area;
-            let popup_area = popup_area;
             move |e: Event<PointerEventData>| {
                 if !*pinned.peek() {
                     return;
                 }
                 let g = e.global_location();
-                #[allow(clippy::cast_possible_truncation)]
-                let gx = g.x as f32;
-                #[allow(clippy::cast_possible_truncation)]
-                let gy = g.y as f32;
-                let icon = *icon_area.peek();
-                let popup = *popup_area.peek();
-                let inside_icon = icon.width() > 0.0
-                    && gx >= icon.min_x()
-                    && gx <= icon.max_x()
-                    && gy >= icon.min_y()
-                    && gy <= icon.max_y();
-                let inside_popup = popup.width() > 0.0
-                    && gx >= popup.min_x()
-                    && gx <= popup.max_x()
-                    && gy >= popup.min_y()
-                    && gy <= popup.max_y();
-                if !inside_icon && !inside_popup {
+                #[allow(clippy::cast_possible_truncation)] // window coordinates
+                let at = (g.x as f32, g.y as f32);
+                let inside = |area: Area| {
+                    area.width() > 0.0
+                        && (area.min_x()..=area.max_x()).contains(&at.0)
+                        && (area.min_y()..=area.max_y()).contains(&at.1)
+                };
+                if !inside(*icon_area.peek()) && !inside(*popup_area.peek()) {
                     pinned.set(false);
-                    open.set(false);
-                    let next = version.peek().wrapping_add(1);
-                    version.set(next);
+                    hover.close();
                 }
             }
         };
 
-        let mut container = rect()
+        let container = rect()
             .padding((0., 2.))
             .margin((0., 2.))
             .cross_align(Alignment::Start)
             .main_align(Alignment::Start)
-            .on_sized(move |e: Event<SizedEventData>| {
-                let new_area = e.data().area;
-                if *icon_area.peek() != new_area {
-                    icon_area.set(new_area);
+            .on_sized(track_area(icon_area))
+            .on_pointer_enter(move |_| hover.enter())
+            .on_pointer_leave(move |_| {
+                if !*pinned.peek() {
+                    hover.leave();
                 }
             })
-            .on_pointer_enter({
-                let mut open = open;
-                let mut version = version;
-                move |_| {
-                    open.set(true);
-                    let next = version.peek().wrapping_add(1);
-                    version.set(next);
-                }
-            })
-            .on_pointer_leave({
-                let mut open = open;
-                let mut version = version;
-                let pinned = pinned;
-                move |_| {
-                    if !*pinned.peek() {
-                        close_soon(&mut open, &mut version);
-                    }
-                }
-            })
-            // Stop the pointer_down from bubbling into the enclosing
-            // paragraph — otherwise a tap on the icon registers as a
-            // verse hit and a second tap would double-tap into the
-            // highlight picker instead of closing the popup.
+            // A tap on the icon must not reach the paragraph, where a
+            // second tap would open the highlight picker.
             .on_pointer_down(|e: Event<PointerEventData>| {
                 e.stop_propagation();
             })
@@ -1235,123 +1207,34 @@ impl Component for RefHoverButton {
             .on_press(on_toggle)
             .child(
                 SvgViewer::new(freya::icons::lucide::trending_up_down())
-                    .color(blue)
+                    .color(palette().accent_text)
                     .width(Size::px(icon_size))
                     .height(Size::px(icon_size)),
             );
-
-        if *open.read() {
-            let icon = *icon_area.read();
-            let measured = *popup_area.read();
-            let popup_height = if measured.height() > 0.0 {
-                measured.height().min(popup_max_height)
-            } else {
-                popup_max_height
-            };
-            let viewport_area = viewport.map_or(icon, notein_ui_kit::ViewportArea::get);
-            let has_viewport = viewport_area.width() > 0.0 && viewport_area.height() > 0.0;
-            let is_measured = icon.width() > 0.0;
-
-            // Anchor the popup globally so it can escape the paragraph
-            // clip region. Without `has_viewport` (shell did not install
-            // the context) or before the icon has been measured, fall
-            // back to the historic absolute placement below the icon.
-            let popup = rect()
-                .layer(Layer::Overlay)
-                .width(Size::px(popup_width))
-                // ScrollView drives the actual height/scroll — the
-                // outer rect only paints the chrome + padding.
-                .padding((6., 8.))
-                .with_corner_radius(10.0)
-                .background(palette().s2)
-                .spacing(4.0)
-                .on_sized(move |e: Event<SizedEventData>| {
-                    let new_area = e.data().area;
-                    if *popup_area.peek() != new_area {
-                        popup_area.set(new_area);
-                    }
-                })
-                // Hide the first frame while measurements are stale so
-                // the user never sees the popup flash at its default
-                // (below-and-clipped) position before the clamp lands.
-                .opacity(if is_measured { 1.0 } else { 0.0 })
-                // Swallow pointer_down inside the popup so taps on
-                // rows do not seed the paragraph's drag-highlight
-                // gesture — the popup sits above an absolute-positioned
-                // overlay layer, but event bubbling still reaches the
-                // enclosing paragraph through the DOM tree.
-                .on_pointer_down(|e: Event<PointerEventData>| {
-                    e.stop_propagation();
-                })
-                // Press events bubble too — without stopping here, a
-                // tap on a row header (expand/collapse) or the "Ir a"
-                // button walks back up to the icon container's
-                // `on_toggle` and flips the popup shut.
-                .on_press(|e: Event<PressEventData>| {
-                    e.stop_propagation();
-                })
-                .on_pointer_enter({
-                    let mut open = open;
-                    let mut version = version;
-                    move |_| {
-                        open.set(true);
-                        let next = version.peek().wrapping_add(1);
-                        version.set(next);
-                    }
-                })
-                .on_pointer_leave({
-                    let mut open = open;
-                    let mut version = version;
-                    let pinned = pinned;
-                    move |_| {
-                        if !*pinned.peek() {
-                            close_soon(&mut open, &mut version);
-                        }
-                    }
-                })
-                .child(
-                    ScrollView::new()
-                        .height(Size::auto())
-                        .max_height(Size::px(popup_max_height))
-                        .child({
-                            let mut col = rect().width(Size::fill()).spacing(4.0);
-                            for (idx, xref) in refs_for_list.iter().enumerate() {
-                                col = col.child(RefListRow {
-                                    idx,
-                                    view: xref.clone(),
-                                    jump: jump_for_list.clone(),
-                                    expanded,
-                                    parent_hover: open,
-                                    parent_version: version,
-                                    font_size,
-                                });
-                            }
-                            col
-                        }),
-                );
-
-            let popup = if has_viewport && is_measured {
-                let below_top = icon.max_y() + 4.0;
-                let top = notein_ui_kit::clamp_popup_top(
-                    viewport_area,
-                    icon,
-                    below_top,
-                    popup_height,
-                    popup_margin,
-                );
-                let left = notein_ui_kit::clamp_popup_left(
-                    viewport_area,
-                    icon.min_x(),
-                    popup_width,
-                    popup_margin,
-                );
-                popup.position(Position::new_global().top(top).left(left))
-            } else {
-                popup.position(Position::new_absolute().top(icon_size * 1.4).left(0.))
-            };
-            container = container.child(popup);
+        if !*hover.open.read() {
+            return container;
         }
-        container
+
+        let anchor = *icon_area.read();
+        let measured = popup_area.read().height();
+        let height = if measured > 0.0 {
+            measured.min(Self::POPUP_MAX_HEIGHT)
+        } else {
+            Self::POPUP_MAX_HEIGHT
+        };
+        // Hidden until the icon is measured, so it never flashes at an
+        // unclamped position.
+        let popup = self
+            .list(hover, pinned, expanded)
+            .on_sized(track_area(popup_area))
+            .opacity(if anchor.width() > 0.0 { 1.0 } else { 0.0 });
+        container.child(place_popup(
+            popup,
+            anchor,
+            viewport,
+            (Self::POPUP_WIDTH, height),
+            icon_size * 1.4,
+        ))
     }
 }
 
@@ -1363,9 +1246,9 @@ struct RefListRow {
     idx: usize,
     view: CrossRefView,
     jump: OnJump,
-    expanded: State<std::collections::HashSet<usize>>,
-    parent_hover: State<bool>,
-    parent_version: State<u64>,
+    expanded: State<HashSet<usize>>,
+    /// The popup the row sits in; jumping closes it.
+    parent: Hover,
     font_size: f32,
 }
 
@@ -1373,7 +1256,7 @@ impl std::fmt::Debug for RefListRow {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RefListRow")
             .field("ref", &self.view.label)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -1384,9 +1267,7 @@ impl Component for RefListRow {
         let mut expanded = self.expanded;
         let on_header = move |_: Event<PressEventData>| {
             let mut set = expanded.write();
-            if set.contains(&idx) {
-                set.remove(&idx);
-            } else {
+            if !set.remove(&idx) {
                 set.insert(idx);
             }
         };
@@ -1396,16 +1277,13 @@ impl Component for RefListRow {
             self.view.tgt_verse,
         );
         let on_jump = self.jump.clone();
-        let mut parent_hover = self.parent_hover;
-        let mut parent_version = self.parent_version;
+        let parent = self.parent;
         let goto = move |e: Event<PressEventData>| {
             // "Ir a" sits inside the collapsible header; let its press
             // navigate but do not let the event bubble into the header
             // and toggle the expand state too.
             e.stop_propagation();
-            parent_hover.set(false);
-            let next = parent_version.peek().wrapping_add(1);
-            parent_version.set(next);
+            parent.close();
             on_jump.call(target.clone());
         };
 
@@ -1441,12 +1319,15 @@ impl Component for RefListRow {
         let mut body = rect().width(Size::fill()).spacing(2.0).child(header);
         if is_open && !self.view.tooltip.is_empty() {
             body = body.child(
-                rect().width(Size::fill()).padding((8., 10., 8., 16.)).child(
-                    label()
-                        .font_size(self.font_size * 0.65)
-                        .color(palette().t2)
-                        .text(self.view.tooltip.clone()),
-                ),
+                rect()
+                    .width(Size::fill())
+                    .padding((8., 10., 8., 16.))
+                    .child(
+                        label()
+                            .font_size(self.font_size * 0.65)
+                            .color(palette().t2)
+                            .text(self.view.tooltip.clone()),
+                    ),
             );
         }
         body

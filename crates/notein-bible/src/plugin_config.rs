@@ -1,7 +1,8 @@
 //! Plugin settings: the default Bible and the catalogue URL, shared
-//! behind an `Arc<RwLock<_>>` with every reader. Translations are
-//! installed through [`crate::installer`]; the cache dir comes from
-//! [`istmo_core::path::data_dir`].
+//! behind an `Arc<RwLock<_>>` with every reader.
+//!
+//! Translations are installed through [`crate::installer`]; the cache dir comes
+//! from [`istmo_core::path::data_dir`].
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -19,8 +20,10 @@ pub const KEY_FONT_SIZE: &str = "font_size";
 pub const KEY_LINE_HEIGHT: &str = "line_height";
 /// Toggle for the fetch.bible / "advanced" cross-reference overlay —
 /// the inline bookmark icon + hover popup with every xref the TSK
-/// doesn't surface. Default `true` so first-time users see the
-/// enriched set; power users who want a cleaner page turn it off.
+/// doesn't surface.
+///
+/// Default `true` so first-time users see the enriched set; power users who
+/// want a cleaner page turn it off.
 pub const KEY_ENABLE_CROSSREF: &str = "enable_crossref";
 
 pub const DEFAULT_FONT_SIZE: f64 = 22.0;
@@ -48,9 +51,11 @@ pub fn new_shared() -> SharedConfig {
 }
 
 /// Default platform cache directory, derived from the shared notinplus
-/// data root. Not user-configurable — the UI used to expose a `cache_dir`
-/// field but all callers now resolve the path directly through this
-/// helper so a single on-disk tree carries everything the plugin touches.
+/// data root.
+///
+/// Not user-configurable — the UI used to expose a `cache_dir` field but all
+/// callers now resolve the path directly through this helper so a single
+/// on-disk tree carries everything the plugin touches.
 #[must_use]
 pub fn platform_cache_dir() -> PathBuf {
     istmo_core::path::data_dir()
@@ -62,7 +67,7 @@ pub fn platform_cache_dir() -> PathBuf {
 /// Build the settings schema. Dynamic — reads installed Bibles from
 /// `db` so `default_bible_id` always shows the real options available
 /// to the user right now.
-#[must_use] 
+#[must_use]
 pub fn build_schema(db: &Db) -> ConfigSchema {
     let options: Vec<ConfigEnumOption> = db
         .list_bibles()
@@ -113,15 +118,20 @@ pub fn apply_set(
     value: ConfigValue,
 ) -> Result<(), ConfigError> {
     match (key, &value) {
-        (KEY_FONT_SIZE, ConfigValue::Float(v)) if (14.0..=32.0).contains(v) => {}
-        (KEY_LINE_HEIGHT, ConfigValue::Float(v)) if (1.2..=2.2).contains(v) => {}
-        (KEY_FONT_SIZE | KEY_LINE_HEIGHT, _) => return Err(ConfigError::TypeMismatch),
-        (KEY_ENABLE_CROSSREF, ConfigValue::Bool(_)) => {}
-        (KEY_ENABLE_CROSSREF, _) => return Err(ConfigError::TypeMismatch),
-        (KEY_DEFAULT_BIBLE | KEY_MANIFEST_URL, ConfigValue::String(_)) => {}
-        (KEY_DEFAULT_BIBLE | KEY_MANIFEST_URL, _) => {
-            return Err(ConfigError::TypeMismatch);
+        (KEY_FONT_SIZE, ConfigValue::Float(v)) if !(14.0..=32.0).contains(v) => {
+            return Err(ConfigError::OutOfRange);
         }
+        (KEY_LINE_HEIGHT, ConfigValue::Float(v)) if !(1.2..=2.2).contains(v) => {
+            return Err(ConfigError::OutOfRange);
+        }
+        (KEY_FONT_SIZE | KEY_LINE_HEIGHT, ConfigValue::Float(_))
+        | (KEY_ENABLE_CROSSREF, ConfigValue::Bool(_))
+        | (KEY_DEFAULT_BIBLE | KEY_MANIFEST_URL, ConfigValue::String(_)) => {}
+        (
+            KEY_FONT_SIZE | KEY_LINE_HEIGHT | KEY_ENABLE_CROSSREF | KEY_DEFAULT_BIBLE
+            | KEY_MANIFEST_URL,
+            _,
+        ) => return Err(ConfigError::TypeMismatch),
         _ => return Err(ConfigError::UnknownKey(key.into())),
     }
     config.write().unwrap().values.insert(key.into(), value);

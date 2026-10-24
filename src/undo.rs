@@ -18,10 +18,11 @@
 
 use crate::doc_op::DocOp;
 
-/// Hard cap on the retained user actions. Oldest entry evicted when
-/// a new transaction overflows the cap — tracked in `SOURCES_PLAN`
-/// §10 as the undo-stack blow-up mitigation. 100 user actions covers
-/// any realistic ink session.
+/// Hard cap on the retained user actions.
+///
+/// Oldest entry evicted when a new transaction overflows the cap — tracked in
+/// `SOURCES_PLAN` §10 as the undo-stack blow-up mitigation. 100 user actions
+/// covers any realistic ink session.
 pub const MAX_DEPTH: usize = 100;
 
 /// One undoable user action.

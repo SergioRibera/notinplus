@@ -73,9 +73,10 @@ impl CanvasMount {
 }
 
 /// Freya context wrapper carrying the long-press anchor-ref closure
-/// published by the enclosing linked-source plugin. [`canvas_body`]
-/// consumes it with `try_consume_context`; when `None` (the default
-/// for plain canvas routes) long-press pins land without a plugin
+/// published by the enclosing linked-source plugin.
+///
+/// [`canvas_body`] consumes it with `try_consume_context`; when `None` (the
+/// default for plain canvas routes) long-press pins land without a plugin
 /// `SourceRef` attribution.
 ///
 /// Clone / `PartialEq` are structural over the `Arc` pointer — two

@@ -8,9 +8,10 @@
 use crate::db::ChapterRow;
 
 /// Logical sections of the chapter view, assembled from a loaded
-/// `ChapterRow`. The rsx assembly consumes this on the UI thread;
-/// keeping the plan a plain data value lets the rendering layer stay
-/// thin + testable.
+/// `ChapterRow`.
+///
+/// The rsx assembly consumes this on the UI thread; keeping the plan a plain
+/// data value lets the rendering layer stay thin + testable.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChapterPlan {
     pub chapter: u16,

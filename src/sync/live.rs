@@ -1,6 +1,7 @@
 //! What a document looks like *while* someone is working on it: ink
-//! still under the pen, a pointer moving over the page. Sent as it
-//! happens, never stored; the committed change follows through the
+//! still under the pen, a pointer moving over the page.
+//!
+//! Sent as it happens, never stored; the committed change follows through the
 //! document itself.
 
 use std::sync::Mutex;

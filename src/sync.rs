@@ -284,7 +284,7 @@ pub fn recognize_link(text: &str) -> Option<LinkTarget> {
 }
 
 /// Act on a pairing or invitation link; `None` when `text` is neither.
-#[must_use] 
+#[must_use]
 pub fn open_link(text: &str) -> Option<LinkTarget> {
     let text = text.trim();
     if let Some(invite) = Invite::parse_link(text) {
@@ -579,7 +579,7 @@ impl Service {
             Cmd::LocalChanged => self.driver.announce().map_err(|e| e.to_string())?,
             Cmd::DocChanged(doc) => self.driver.push_doc(doc).map_err(|e| e.to_string())?,
             Cmd::BlobChanged(key) => self.driver.push_blob(key).map_err(|e| e.to_string())?,
-            Cmd::Live(doc, bytes) => self.driver.live(doc, bytes),
+            Cmd::Live(doc, bytes) => self.driver.live(doc, &bytes),
             Cmd::BeginPairing => {
                 self.last_failure = None;
                 self.driver.begin_pairing();

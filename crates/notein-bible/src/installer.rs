@@ -32,6 +32,18 @@ impl Queue {
     fn announce(&mut self) {
         self.listeners.retain(|tx| tx.send(()).is_ok());
     }
+
+    /// Start the next waiting install; `None` once the queue ran dry.
+    fn start_next(&mut self) -> Option<String> {
+        let Some(id) = self.waiting.pop_front() else {
+            self.running = false;
+            return None;
+        };
+        self.states
+            .insert(id.clone(), InstallState::Downloading { done: 0, total: 0 });
+        self.announce();
+        Some(id)
+    }
 }
 
 /// Downloads translations into the Bible database.
@@ -89,26 +101,11 @@ impl Installer {
 
     fn drain(&self) {
         loop {
-            let next = {
-                let mut queue = self.lock();
-                if let Some(id) = queue.waiting.pop_front() {
-                    queue
-                        .states
-                        .insert(id.clone(), InstallState::Downloading { done: 0, total: 0 });
-                    queue.announce();
-                    id
-                } else {
-                    queue.running = false;
-                    return;
-                }
+            let Some(next) = self.lock().start_next() else {
+                return;
             };
             let watcher = self.watch(&next);
-            install_background::run(
-                next.clone(),
-                self.db.clone(),
-                self.config.clone(),
-                self.progress.clone(),
-            );
+            install_background::run(&next, &self.db, &self.config, &self.progress);
             watcher.store(true, std::sync::atomic::Ordering::Relaxed);
             let finished = self
                 .progress

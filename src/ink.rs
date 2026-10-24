@@ -178,7 +178,7 @@ impl std::fmt::Debug for InkState {
 
 impl InkState {
     /// Allocate the state for one canvas.
-    #[must_use] 
+    #[must_use]
     pub fn use_state() -> Self {
         Self {
             tool: use_state(|| Tool::Pen),

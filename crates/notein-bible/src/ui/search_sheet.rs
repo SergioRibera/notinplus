@@ -3,7 +3,7 @@
 //! The sheet is split into two pure builders:
 //!
 //! - [`search_input`] — Freya [`Input`] with the plugin's placeholder
-//!   + submit handler. The host owns the `Writable<String>` so query
+//!   and submit handler. The host owns the `Writable<String>` so query
 //!   state outlives this component.
 //! - [`search_results_list`] — scrollable list of pre-parsed hits.
 //!   Each row shows the reference (`BOOK c:v`) + a snippet with bold
@@ -76,23 +76,28 @@ fn split_snippet(snippet: &str, open: &str, close: &str) -> Vec<SnippetRun> {
     let mut out: Vec<SnippetRun> = Vec::new();
     let mut buf = String::new();
     let mut bold = false;
-    let mut chars = snippet.chars().peekable();
-    while let Some(c) = chars.next() {
-        if open.starts_with(c) && std::iter::once(c).collect::<String>() == open {
-            if !buf.is_empty() {
-                out.push(SnippetRun { text: std::mem::take(&mut buf), bold });
+    let mut utf8 = [0u8; 4];
+    for c in snippet.chars() {
+        let token: &str = c.encode_utf8(&mut utf8);
+        let toggle = if token == open {
+            Some(true)
+        } else if token == close {
+            Some(false)
+        } else {
+            None
+        };
+        match toggle {
+            Some(next) => {
+                if !buf.is_empty() {
+                    out.push(SnippetRun {
+                        text: std::mem::take(&mut buf),
+                        bold,
+                    });
+                }
+                bold = next;
             }
-            bold = true;
-            continue;
+            None => buf.push(c),
         }
-        if close.starts_with(c) && std::iter::once(c).collect::<String>() == close {
-            if !buf.is_empty() {
-                out.push(SnippetRun { text: std::mem::take(&mut buf), bold });
-            }
-            bold = false;
-            continue;
-        }
-        buf.push(c);
     }
     if !buf.is_empty() {
         out.push(SnippetRun { text: buf, bold });

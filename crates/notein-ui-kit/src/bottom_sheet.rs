@@ -38,7 +38,9 @@
 //! Rendered as `Layer::OverlayLevel(5)` so it sits above every regular
 //! paint sibling without the consumer threading layer hints.
 
-use freya::animation::{AnimatedValue, use_animation, OnCreation, AnimNum, Ease, Function, ReadAnimatedValue, OnChange};
+use freya::animation::{
+    AnimNum, Ease, Function, OnChange, OnCreation, ReadAnimatedValue, use_animation,
+};
 use freya::prelude::*;
 
 /// Backdrop + card shell. `body` is placed inside the card; the sheet
@@ -74,19 +76,19 @@ impl BottomSheet {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub const fn open(mut self, open: State<bool>) -> Self {
         self.open = Some(open);
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub const fn height(mut self, height: f32) -> Self {
         self.height = height;
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub const fn dismiss_on_backdrop(mut self, dismiss: bool) -> Self {
         self.dismiss_on_backdrop = dismiss;
         self
@@ -97,7 +99,7 @@ impl BottomSheet {
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub const fn backdrop_alpha(mut self, alpha: u8) -> Self {
         self.backdrop_alpha = alpha;
         self
@@ -275,11 +277,12 @@ fn sheet_handle_bar() -> impl IntoElement {
         )
 }
 
-/// Horizontally-sliding pager inside a bottom sheet. `index` controls
-/// which page is visible; the pager animates between adjacent indices
-/// over a short cubic ease. Pages that aren't the current index render
-/// their body but shift off-screen (positive index → off right,
-/// negative → off left).
+/// Horizontally-sliding pager inside a bottom sheet.
+///
+/// `index` controls which page is visible; the pager animates between adjacent
+/// indices over a short cubic ease. Pages that aren't the current index render
+/// their body but shift off-screen (positive index → off right, negative →
+/// off left).
 #[derive(Clone, PartialEq)]
 pub struct SheetPager {
     index: State<usize>,
@@ -295,7 +298,7 @@ impl std::fmt::Debug for SheetPager {
 }
 
 impl SheetPager {
-    #[must_use] 
+    #[must_use]
     pub const fn new(index: State<usize>, pages: Vec<Element>) -> Self {
         Self { index, pages }
     }

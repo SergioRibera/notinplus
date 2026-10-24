@@ -85,9 +85,10 @@ pub fn pen_screen_pos_fresh() -> Option<(f32, f32)> {
 }
 
 /// `true` when a fresh pen sample sits within `radius` surface pixels
-/// of `(sx, sy)` — the heuristic the canvas uses to drop stylus events
-/// that leak through as touch on platforms without native tool-type
-/// disambiguation.
+/// of `(sx, sy)`.
+///
+/// The canvas drops touches near the pen: on platforms that cannot tell
+/// the tool type, stylus events also arrive as touch.
 #[must_use]
 pub fn is_pen_near(sx: f32, sy: f32, radius: f32) -> bool {
     pen_screen_pos_fresh().is_some_and(|(px, py)| (px - sx).hypot(py - sy) < radius)
@@ -108,10 +109,11 @@ pub fn hover_receiver() -> Receiver<Option<HoverPoint>> {
 }
 
 /// On-screen rect occupied by a mounted canvas, in surface-logical
-/// pixels. Published by `drawing_surface` from its `on_sized` handler so
-/// the pump can route pen samples (which arrive in window coordinates)
-/// to the canvas they land on and translate them into canvas-local
-/// space before dispatch.
+/// pixels.
+///
+/// Published by `drawing_surface` from its `on_sized` handler so the pump can
+/// route pen samples (which arrive in window coordinates) to the canvas they
+/// land on and translate them into canvas-local space before dispatch.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SurfaceRect {
     pub min_x: f32,
@@ -127,11 +129,12 @@ impl SurfaceRect {
     }
 }
 
-/// Opaque per-surface identifier. Each `drawing_surface` mount
-/// allocates one via [`allocate_canvas_surface_id`] and uses it as the
-/// key for register / unregister calls — multiple surfaces can share
-/// the same `Board` (`DocLinked` split view) without clobbering each
-/// other's rect on update.
+/// Opaque per-surface identifier.
+///
+/// Each `drawing_surface` mount allocates one via
+/// [`allocate_canvas_surface_id`] and uses it as the key for register /
+/// unregister calls — multiple surfaces can share the same `Board`
+/// (`DocLinked` split view) without clobbering each other's rect on update.
 pub type CanvasSurfaceId = u64;
 
 static NEXT_SURFACE_ID: AtomicU64 = AtomicU64::new(1);
@@ -168,9 +171,10 @@ static CANVAS_SURFACES: Mutex<Vec<SurfaceEntry>> = Mutex::new(Vec::new());
 static ACTIVE_STROKE: Mutex<Option<(Weak<Mutex<Board>>, SurfaceRect)>> = Mutex::new(None);
 
 /// Register or update the on-screen rect for the surface identified by
-/// `id`. Called from the surface's `on_sized` handler every time the
-/// layout engine resolves a new area — mount, resize, split-pane
-/// divider drag.
+/// `id`.
+///
+/// Called from the surface's `on_sized` handler every time the layout engine
+/// resolves a new area — mount, resize, split-pane divider drag.
 pub fn register_canvas_surface(id: CanvasSurfaceId, board: &Arc<Mutex<Board>>, rect: SurfaceRect) {
     let Ok(mut g) = CANVAS_SURFACES.lock() else {
         return;

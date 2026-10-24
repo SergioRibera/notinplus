@@ -99,10 +99,11 @@ pub(crate) fn init_canvas_mount(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
     load_doc_into_board(mount, Arc::clone(board));
 }
 
-/// Queue a background for the next mount of `target`. Callers invoke
-/// this immediately before opening the tab — the mount hook of that
-/// target drains the slot and installs the matching backend; other
-/// panes mounting at the same time leave it alone.
+/// Queue a background for the next mount of `target`.
+///
+/// Callers invoke this immediately before opening the tab — the mount hook of
+/// that target drains the slot and installs the matching backend; other panes
+/// mounting at the same time leave it alone.
 pub fn queue_canvas_background(target: TabTarget, style: BackgroundStyle, surface: SkColor) {
     if let Ok(mut slot) = pending().lock() {
         *slot = Some(PendingBackground {

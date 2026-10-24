@@ -19,7 +19,7 @@ fn app() -> impl IntoElement {
         .width(Size::fill())
 }
 
-fn key(runner: &mut TestingRunner, key: Key) {
+fn key(runner: &mut TestingRunner, key: &Key) {
     for name in [KeyboardEventName::KeyDown, KeyboardEventName::KeyUp] {
         runner.send_event(PlatformEvent::Keyboard {
             name,
@@ -67,8 +67,8 @@ fn input_context_follows_focus_and_jumps_but_not_typing() {
     assert_eq!(reports.borrow().last(), Some(&expected));
     let after_focus = reports.borrow().len();
 
-    key(&mut runner, Key::Character("x".to_owned()));
-    key(&mut runner, Key::Named(NamedKey::Backspace));
+    key(&mut runner, &Key::Character("x".to_owned()));
+    key(&mut runner, &Key::Named(NamedKey::Backspace));
     assert_eq!(
         reports.borrow().len(),
         after_focus,

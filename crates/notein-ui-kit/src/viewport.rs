@@ -30,7 +30,7 @@ impl ViewportArea {
     /// Read the current viewport area. Default (0×0) when the probe
     /// has not been laid out yet; callers should treat a zero-sized
     /// area as "unknown" and skip clamping.
-    #[must_use] 
+    #[must_use]
     pub fn get(self) -> Area {
         *self.0.read()
     }
@@ -38,9 +38,10 @@ impl ViewportArea {
 
 /// Scoped sibling of [`ViewportArea`] for popups that must stay inside
 /// a specific sub-region of the window (a canvas pane, a split-view
-/// half, etc.) instead of the whole viewport. Shells install one of
-/// these per pane; descendants consume it to clamp against the pane's
-/// bounds.
+/// half, etc.) instead of the whole viewport.
+///
+/// Shells install one of these per pane; descendants consume it to clamp
+/// against the pane's bounds.
 #[derive(Clone, Copy)]
 pub struct PaneArea(pub State<Area>);
 
@@ -71,7 +72,7 @@ impl PaneArea {
 /// viewport. When neither direction fits (popup larger than the whole
 /// viewport) the result clamps against the viewport top so at least
 /// the start of the popup stays visible.
-#[must_use] 
+#[must_use]
 pub fn clamp_popup_top(
     viewport: Area,
     trigger: Area,
@@ -98,7 +99,7 @@ pub fn clamp_popup_top(
 
 /// Horizontal clamp — pins the popup inside the viewport width with
 /// `margin` keep-out on both sides. Returns the adjusted left offset.
-#[must_use] 
+#[must_use]
 pub fn clamp_popup_left(viewport: Area, left: f32, popup_width: f32, margin: f32) -> f32 {
     if viewport.width() <= 0.0 {
         return left;
@@ -113,11 +114,12 @@ pub fn clamp_popup_left(viewport: Area, left: f32, popup_width: f32, margin: f32
 }
 
 /// Point-based variant for callers that only know the anchor Y
-/// (gesture location) and not a full trigger area. `anchor_y` is the
-/// trigger line in viewport coords; `below_top` is where the popup
-/// would sit when placed below. Flips above the anchor if below would
+/// (gesture location) and not a full trigger area.
+///
+/// `anchor_y` is the trigger line in viewport coords; `below_top` is where the
+/// popup would sit when placed below. Flips above the anchor if below would
 /// overflow.
-#[must_use] 
+#[must_use]
 pub fn clamp_popup_top_from_point(
     viewport: Area,
     anchor_y: f32,

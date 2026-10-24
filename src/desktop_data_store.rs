@@ -89,7 +89,10 @@ impl DesktopStore {
     }
 
     fn with_map<R>(&self, f: impl FnOnce(&mut HashMap<String, Value>) -> R) -> R {
-        let mut guard = self.map.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = self
+            .map
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         f(&mut guard)
     }
 
