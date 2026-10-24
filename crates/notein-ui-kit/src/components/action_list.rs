@@ -202,7 +202,6 @@ impl Component for ActionRow {
         let p = palette();
         let mut hovering = use_state(|| false);
         let action = &self.action;
-        let color = if action.danger { p.danger } else { p.t1 };
         let on_run = action.on_run.clone();
         let enabled = action.enabled;
         let background = (action.highlighted || hovering()).then_some(p.s4);
@@ -219,15 +218,29 @@ impl Component for ActionRow {
             .corner_radius(radius::SM)
             .map(background, Rect::background)
             .opacity(if enabled { 1.0 } else { 0.4 })
-            .horizontal()
-            .cross_align(Alignment::Center)
-            .content(Content::Flex)
-            .spacing(10.0)
+            .main_align(Alignment::Center)
             .maybe(enabled, |r| {
                 r.on_pointer_enter(move |_| hovering.set(true))
                     .on_pointer_leave(move |_| hovering.set(false))
                     .on_press(move |_| on_run.call(()))
             })
+            .child(self.content())
+    }
+}
+
+impl ActionRow {
+    /// Icon, labels and trailing marks. Its own row: a flex row with a
+    /// minimum height keeps its children at the top.
+    fn content(&self) -> Rect {
+        let p = palette();
+        let action = &self.action;
+        let color = if action.danger { p.danger } else { p.t1 };
+        rect()
+            .width(Size::fill())
+            .horizontal()
+            .cross_align(Alignment::Center)
+            .content(Content::Flex)
+            .spacing(10.0)
             .maybe_child(action.icon.clone().map(|icon| {
                 match action.kind_color {
                     Some(kind) => KindBadge::new(icon, kind).size(26.0).into_element(),

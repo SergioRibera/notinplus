@@ -1,9 +1,20 @@
 //! On/off toggle.
 
+use freya::animation::{
+    AnimColor, AnimNum, Ease, Function, OnChange, OnCreation, ReadAnimatedValue,
+    use_animation_with_dependencies,
+};
 use freya::prelude::*;
 
 use crate::theme::palette;
 use crate::tokens::radius;
+
+const TRACK_W: f32 = 40.0;
+const TRACK_H: f32 = 24.0;
+const PAD: f32 = 3.0;
+const THUMB: f32 = 18.0;
+/// How far the thumb grows while pressed, along the track.
+const STRETCH: f32 = 4.0;
 
 /// A switch that applies instantly. The parent owns the value.
 #[derive(Clone, PartialEq)]
@@ -50,20 +61,55 @@ impl Component for Switch {
         let p = palette();
         let a11y_id = use_a11y();
         let focus = use_focus(a11y_id);
+        let mut pressed = use_state(|| false);
         let on = self.on;
         let handler = self.on_toggle.clone();
+        let (off_track, on_track) = (p.s4, p.accent);
+        let (off_thumb, on_thumb) = (p.t2, Color::WHITE);
+        // Slides between the ends; the first frame already sits at `on`.
+        let motion = use_animation_with_dependencies(&on, move |conf, on| {
+            conf.on_creation(OnCreation::Finish);
+            conf.on_change(OnChange::Rerun);
+            let (from, to) = if *on { (0.0, 1.0) } else { (1.0, 0.0) };
+            let colors = |off: Color, on_color: Color| {
+                if *on {
+                    AnimColor::new(off, on_color)
+                } else {
+                    AnimColor::new(on_color, off)
+                }
+                .time(180)
+                .ease(Ease::Out)
+            };
+            (
+                AnimNum::new(from, to)
+                    .time(220)
+                    .ease(Ease::Out)
+                    .function(Function::Back),
+                colors(off_track, on_track),
+                colors(off_thumb, on_thumb),
+            )
+        });
+        let (at, track, thumb) = if crate::theme::reduce_motion() {
+            (
+                if on { 1.0 } else { 0.0 },
+                if on { on_track } else { off_track },
+                if on { on_thumb } else { off_thumb },
+            )
+        } else {
+            motion.get().value()
+        };
+        let stretch = if pressed() { STRETCH } else { 0.0 };
+        let travel = 2.0f32.mul_add(-PAD, TRACK_W) - THUMB - stretch;
         rect()
             .a11y_id(a11y_id)
             .a11y_focusable(self.enabled)
             .a11y_role(AccessibilityRole::Switch)
-            .width(Size::px(40.0))
-            .height(Size::px(24.0))
+            .a11y_alt(if on { "Activado" } else { "Desactivado" })
+            .width(Size::px(TRACK_W))
+            .height(Size::px(TRACK_H))
             .corner_radius(radius::FULL)
-            .background(if on { p.accent } else { p.s4 })
+            .background(track)
             .opacity(if self.enabled { 1.0 } else { 0.4 })
-            .padding(3.0)
-            .horizontal()
-            .main_align(if on { Alignment::End } else { Alignment::Start })
             .maybe(focus() == Focus::Keyboard, |r| {
                 r.border(
                     Border::new()
@@ -73,14 +119,34 @@ impl Component for Switch {
                 )
             })
             .maybe(self.enabled, |r| {
-                r.map(handler, |r, handler| r.on_press(move |_| handler.call(!on)))
+                r.on_pointer_down(move |_| pressed.set(true))
+                    .on_pointer_leave(move |_| pressed.set_if_modified(false))
+                    .map(handler, |r, handler| {
+                        r.on_press(move |e: Event<PressEventData>| {
+                            // The row around it toggles too; one toggle is enough.
+                            e.stop_propagation();
+                            pressed.set(false);
+                            handler.call(!on);
+                        })
+                    })
             })
             .child(
                 rect()
-                    .width(Size::px(18.0))
-                    .height(Size::px(18.0))
+                    .position(
+                        Position::new_absolute()
+                            .top(PAD)
+                            .left(at.clamp(0.0, 1.1).mul_add(travel, PAD)),
+                    )
+                    .width(Size::px(THUMB + stretch))
+                    .height(Size::px(THUMB))
                     .corner_radius(radius::FULL)
-                    .background(if on { Color::WHITE } else { p.t2 }),
+                    .background(thumb)
+                    .shadow(
+                        Shadow::new()
+                            .y(1.0)
+                            .blur(3.0)
+                            .color(Color::from_argb(60, 0, 0, 0)),
+                    ),
             )
     }
 }

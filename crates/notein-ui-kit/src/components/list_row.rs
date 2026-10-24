@@ -250,7 +250,15 @@ impl Component for ListRow {
         let mut hovering = use_state(|| false);
         let a11y_id = use_a11y();
         let focus = use_focus(a11y_id);
-        let clickable = self.on_press.is_some() && self.enabled;
+        // A row that ends in a switch toggles from anywhere on it.
+        let on_press = self.on_press.clone().or_else(|| match &self.trailing {
+            Some(Trailing::Switch { on, on_toggle }) => {
+                let (on, on_toggle) = (*on, on_toggle.clone());
+                Some(EventHandler::new(move |_| on_toggle.call(!on)))
+            }
+            _ => None,
+        });
+        let clickable = on_press.is_some() && self.enabled;
         let background = if self.selected {
             Some(p.s3)
         } else if hovering() && clickable {
@@ -259,7 +267,6 @@ impl Component for ListRow {
             None
         };
         let title_color = if self.danger { p.danger } else { p.t1 };
-        let on_press = self.on_press.clone();
         let on_secondary = self.on_secondary.clone();
         let height = if self.subtitle.is_some() {
             if self.dense { 48.0 } else { 56.0 }
@@ -292,10 +299,9 @@ impl Component for ListRow {
                         .alignment(BorderAlignment::Inner),
                 )
             })
-            .horizontal()
-            .cross_align(Alignment::Center)
-            .content(Content::Flex)
-            .spacing(12.0)
+            // Centred by the wrapper: a flex row with a minimum height
+            // keeps its children at the top.
+            .main_align(Alignment::Center)
             .maybe(clickable, |r| {
                 r.on_pointer_enter(move |_| hovering.set(true))
                     .on_pointer_leave(move |_| hovering.set(false))
@@ -304,13 +310,21 @@ impl Component for ListRow {
             .map(on_secondary, |r, handler| {
                 r.on_secondary_down(move |e| handler.call(e))
             })
-            .maybe_child(
-                self.leading
-                    .clone()
-                    .map(|leading| leading.render(self.danger)),
+            .child(
+                rect()
+                    .width(Size::fill())
+                    .horizontal()
+                    .cross_align(Alignment::Center)
+                    .content(Content::Flex)
+                    .spacing(12.0)
+                    .maybe_child(
+                        self.leading
+                            .clone()
+                            .map(|leading| leading.render(self.danger)),
+                    )
+                    .child(self.text(title_color))
+                    .maybe_child(self.trailing.clone().map(Trailing::render)),
             )
-            .child(self.text(title_color))
-            .maybe_child(self.trailing.clone().map(Trailing::render))
     }
 
     fn render_key(&self) -> DiffKey {
