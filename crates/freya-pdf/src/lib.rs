@@ -22,6 +22,7 @@ pub mod error;
 pub mod render;
 pub mod search;
 pub mod tiles;
+pub mod write;
 
 pub use backend::PdfBackground;
 pub use cache::{Cache, CachedTile};

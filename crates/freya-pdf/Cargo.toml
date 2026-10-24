@@ -43,6 +43,7 @@ pdfium-render = { version = "0.9", default-features = false, features = [
     "thread_safe",
 ] }
 log             = "0.4"
+image           = { version = "0.25", default-features = false }
 
 [lints.rust]
 missing_debug_implementations = "warn"

@@ -28,7 +28,7 @@ static PDFIUM: OnceLock<Result<Pdfium, String>> = OnceLock::new();
 /// that isn't on the default loader path.
 const ENV_PDFIUM_LIB_DIR: &str = "PDFIUM_LIB_PATH";
 
-fn pdfium() -> Result<&'static Pdfium, PdfError> {
+pub(crate) fn pdfium() -> Result<&'static Pdfium, PdfError> {
     match PDFIUM.get_or_init(load_pdfium) {
         Ok(p) => Ok(p),
         Err(msg) => Err(PdfError::PdfiumUnavailable(msg.clone())),
