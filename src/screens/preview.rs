@@ -111,6 +111,8 @@ pub(crate) fn demo() -> LibraryData {
     );
     clase.named = true;
     clase.pinned = true;
+    // Made on the tablet.
+    clase.device = Some(notein_sync::DeviceId([9; 32]));
     if let PaneLayout::Leaf(pane) = &mut clase.layout {
         pane.tabs = vec![tab(sermon.id), tab(plan.id)];
     }
@@ -171,7 +173,30 @@ fn shell(body: fn() -> Element, size: (f32, f32)) -> impl Fn() -> Element {
     }
 }
 
+/// Point the app's data folders at a scratch directory, so a preview
+/// that changes a setting never writes into the real data.
+fn sandbox() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let root = std::env::temp_dir().join(format!("notein-preview-{}", std::process::id()));
+        let dir = |name: &str| root.join(name);
+        istmo::path::install(istmo::path::PlatformPaths {
+            data_dir: dir("data"),
+            data_local_dir: dir("data-local"),
+            config_dir: dir("config"),
+            config_local_dir: dir("config-local"),
+            cache_dir: dir("cache"),
+            state_dir: dir("state"),
+            preference_dir: dir("preferences"),
+            documents_dir: dir("documents"),
+            runtime_dir: dir("runtime"),
+            temp_dir: dir("tmp"),
+        });
+    });
+}
+
 fn render(name: &str, size: (f32, f32), body: fn() -> Element) {
+    sandbox();
     let app = shell(body, size);
     let (mut runner, ()) = TestingRunner::new(app, size.into(), |_| (), 1.0);
     runner.poll_n(Duration::from_millis(40), 12);
