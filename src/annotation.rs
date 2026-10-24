@@ -221,7 +221,7 @@ impl Component for AnnotationCard {
             }
         });
         let preview = session.preview.clone();
-        let mut pick = move |color: Option<[u8; 3]>| {
+        let pick = move |color: Option<[u8; 3]>| {
             draft.write().color = color;
             if let Some(preview) = &preview {
                 preview(color);

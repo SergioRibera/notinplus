@@ -33,14 +33,14 @@ fn lock() -> std::sync::MutexGuard<'static, HashMap<CanvasMount, Arc<Mutex<Board
 /// Publish `board` as the active mount for `mount`. A second mount for
 /// the same key wins — matches Freya's "latest render keeps the
 /// handle" semantics.
-pub fn set(mount: CanvasMount, board: Arc<Mutex<Board>>) {
+pub(crate) fn set(mount: CanvasMount, board: Arc<Mutex<Board>>) {
     lock().insert(mount, board);
 }
 
 /// Drop the registration if `board` still matches what was stored.
 /// Pointer-equality guard so a stale `use_drop` cannot evict a newer
 /// mount's handle during a route transition that remounts.
-pub fn clear_if(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
+pub(crate) fn clear_if(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
     let mut g = lock();
     if let Some(current) = g.get(&mount) {
         if Arc::ptr_eq(current, board) {
@@ -51,7 +51,7 @@ pub fn clear_if(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
 
 /// Look up the currently mounted board for `mount`.
 #[must_use]
-pub fn get(mount: CanvasMount) -> Option<Arc<Mutex<Board>>> {
+pub(crate) fn get(mount: CanvasMount) -> Option<Arc<Mutex<Board>>> {
     lock().get(&mount).map(Arc::clone)
 }
 
@@ -71,7 +71,7 @@ pub fn get_item(item: ItemId) -> Option<Arc<Mutex<Board>>> {
 /// the registry lock is dropped before the caller does any Board
 /// work; no deadlock risk.
 #[must_use]
-pub fn snapshot() -> Vec<(CanvasMount, Arc<Mutex<Board>>)> {
+pub(crate) fn snapshot() -> Vec<(CanvasMount, Arc<Mutex<Board>>)> {
     lock()
         .iter()
         .map(|(k, v)| (*k, Arc::clone(v)))

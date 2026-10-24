@@ -25,7 +25,6 @@ use crate::canvas::{
 };
 use crate::hooks::use_safe_area_insets;
 use crate::library::{ItemId, ScratchId, TabTarget, ViewSlot};
-use crate::plugins;
 use crate::prefs;
 use crate::ui_mask::{MaskSlot, use_mask_slot};
 
@@ -266,9 +265,6 @@ impl Component for AppShell {
         // must run inside the freya scheduler context — `use_hook`
         // runs once per `AppShell` mount, exactly when `Platform::get`
         // becomes safe to call.
-        use_hook(|| {
-            crate::host_api::flush_pending_fonts();
-        });
         use_hook(crate::sync::start);
         use_hook(crate::deep_link::listen);
         use_hook(crate::session_end::listen);
@@ -298,7 +294,6 @@ impl Component for AppShell {
                 crate::components::modal::provide_host_modal_chrome();
                 crate::components::ModalPortal::new(area)
             })
-            .child(crate::host_overlay::HostOverlay)
             .child(notein_ui_kit::ToastHost::new(insets.bottom))
     }
 }
@@ -640,12 +635,15 @@ pub(crate) fn canvas_chrome(state: ChromeState, pad: EdgeInsets, slot: Option<Vi
             lift,
             slot,
         })
-        .child(crate::bookmark_ui::bookmark_card_overlay(
-            &board,
-            state.selected_bookmark,
-            state.bookmark_body,
-            state.masks.bookmark_card,
-        ))
+        .child(crate::ink::PinNotes {
+            board: Arc::clone(&board),
+            selected: state.selected_bookmark,
+            origin: {
+                let area = *pane_area_signal.read();
+                (area.min_x(), area.min_y())
+            },
+            item: *state.active_item.read(),
+        })
         .child(crate::canvas_text::text_toolbar(
             &board,
             state.text_editor,

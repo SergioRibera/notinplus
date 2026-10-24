@@ -2510,7 +2510,7 @@ impl PinGesture {
             drop(guard);
             (crate::bookmark::WorldPoint::new(wx, wy), refs)
         };
-        let created_at = crate::bookmark_ui::now_ms();
+        let created_at = crate::format::now();
         let id =
             lock(board).add_bookmark_with_refs(world, PIN_STICKY_WORLD_RADIUS, created_at, refs);
         self.body.set(String::new());

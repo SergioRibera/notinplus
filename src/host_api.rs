@@ -1,384 +1,138 @@
-//! Host-side implementation of [`notein_plugin::HostApi`].
-//!
-//! One process-wide [`HostInner`] stores every active progress bar +
-//! every live toast. Mutations bump an atomic version counter so UI
-//! components can react — the top-level app spawns a poller
-//! ([`spawn_version_poller`]) that mirrors the atomic into a Freya
-//! [`State<u64>`], and the dependent components re-render on bump.
-//!
-//! The HostApi methods are safe to call from any thread (background
-//! installers, download pumps, worker threads).
+//! The host handed to source plugins: everything they report goes
+//! through the shell host ([`crate::plugins::host`]) — toasts, progress,
+//! fonts and jumps — so there is one place that shows it.
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex, OnceLock};
 
+use notein_plugin::services::{HostServices, HostToast, Progress as JobProgress, ToastTone};
 use notein_plugin::{
-    BookmarkDraft, BookmarkEditCallback, BookmarkEditRequest, Host, HostApi, NotificationKind,
-    Progress,
+    BookmarkEditCallback, BookmarkEditRequest, Host, HostApi, NotificationKind, Progress,
 };
 
-/// Oldest-to-newest cap on retained notifications. Older entries get
-/// evicted so a chatty plugin cannot grow the toast list unbounded.
-const MAX_NOTIFICATIONS: usize = 16;
-
-/// Age at which a `Finished` progress bar entry drops out so the UI
-/// does not permanently display a 100%-full line.
-const FINISHED_LINGER: Duration = Duration::from_millis(900);
-
-/// Age at which a Success / Info notification auto-dismisses. Warning
-/// + Error toasts persist until the user clicks them.
-const AUTO_DISMISS: Duration = Duration::from_secs(4);
-
-#[derive(Debug)]
-pub struct HostInner {
-    version: AtomicU64,
-    progress: RwLock<HashMap<ProgressKey, ProgressEntry>>,
-    notifications: RwLock<VecDeque<Notification>>,
-    /// At most one bookmark edit modal is open at a time. The shell
-    /// renders when `Some`, drains + fires the callback on save/cancel.
-    pending_bookmark_edit: RwLock<Option<PendingBookmarkEdit>>,
-    /// Pending anchor payloads keyed by `(plugin_id, item)`. Queued
-    /// by [`HostApi::queue_source_anchor`] and drained via
-    /// [`HostApi::take_source_anchor`] when a plugin viewer mounts.
-    pending_anchors: Mutex<HashMap<(String, [u8; 16]), Vec<u8>>>,
-    /// Fan-out senders keyed by plugin id. A broadcast on
-    /// `queue_source_anchor` tells live viewers to re-check pending.
-    anchor_subs: Mutex<Vec<(String, flume::Sender<[u8; 16]>)>>,
+/// Source-plugin host.
+#[derive(Debug, Default)]
+pub struct SourceHost {
+    /// Label of each running job, kept so updates without one still read
+    /// well.
+    labels: Mutex<std::collections::HashMap<(String, String), String>>,
 }
 
-/// Live bookmark edit request pulled by the shell's modal.
-pub struct PendingBookmarkEdit {
-    pub id: u64,
-    pub plugin_id: String,
-    pub request: BookmarkEditRequest,
-    pub callback: BookmarkEditCallback,
-}
+static HOST: OnceLock<Arc<SourceHost>> = OnceLock::new();
 
-impl std::fmt::Debug for PendingBookmarkEdit {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PendingBookmarkEdit")
-            .field("id", &self.id)
-            .field("plugin_id", &self.plugin_id)
-            .finish_non_exhaustive()
-    }
-}
-
-static NEXT_BOOKMARK_EDIT_ID: AtomicU64 = AtomicU64::new(1);
-
-#[derive(Clone, Hash, PartialEq, Eq, Debug)]
-pub struct ProgressKey {
-    pub plugin_id: String,
-    pub token: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct ProgressEntry {
-    pub plugin_id: String,
-    pub token: String,
-    pub label: String,
-    pub done: u64,
-    pub total: Option<u64>,
-    pub finished: Option<FinishedState>,
-    pub updated_at: Instant,
-}
-
-#[derive(Clone, Debug)]
-pub struct FinishedState {
-    pub success: bool,
-    pub note: Option<String>,
-    pub shown_at: Instant,
-}
-
-#[derive(Clone, Debug)]
-pub struct Notification {
-    pub id: u64,
-    pub plugin_id: String,
-    pub kind: NotificationKind,
-    pub message: String,
-    pub created_at: Instant,
-}
-
-static HOST: OnceLock<Arc<HostInner>> = OnceLock::new();
-static NEXT_NOTIFICATION_ID: AtomicU64 = AtomicU64::new(1);
-
-/// Process-wide host state. Lazy-constructed on first access.
-#[must_use]
-pub fn host() -> Arc<HostInner> {
-    Arc::clone(HOST.get_or_init(|| {
-        Arc::new(HostInner {
-            version: AtomicU64::new(0),
-            progress: RwLock::new(HashMap::new()),
-            notifications: RwLock::new(VecDeque::new()),
-            pending_bookmark_edit: RwLock::new(None),
-            pending_anchors: Mutex::new(HashMap::new()),
-            anchor_subs: Mutex::new(Vec::new()),
-        })
-    }))
-}
-
-/// Shared `Host` handle the registry hands to every plugin. Thin
-/// trait-object wrapper around [`HostInner`].
+/// The source-plugin host handle.
 #[must_use]
 pub fn host_handle() -> Host {
-    host() as Host
+    Arc::clone(HOST.get_or_init(Arc::default)) as Host
 }
 
-impl HostInner {
-    pub fn version(&self) -> u64 {
-        self.version.load(Ordering::Acquire)
-    }
-
-    fn bump(&self) {
-        self.version.fetch_add(1, Ordering::AcqRel);
-    }
-
-    /// Snapshot every live progress entry — stale `Finished` entries
-    /// are dropped during the walk so callers always see fresh state.
-    pub fn snapshot_progress(&self) -> Vec<ProgressEntry> {
-        let now = Instant::now();
-        let mut guard = self.progress.write().unwrap();
-        guard.retain(|_, e| {
-            e.finished
-                .as_ref()
-                .map(|f| now.saturating_duration_since(f.shown_at) < FINISHED_LINGER)
-                .unwrap_or(true)
-        });
-        guard.values().cloned().collect()
-    }
-
-    /// Snapshot the retained notifications, evicting auto-dismiss
-    /// candidates (Info / Success older than [`AUTO_DISMISS`]).
-    pub fn snapshot_notifications(&self) -> Vec<Notification> {
-        let now = Instant::now();
-        let mut guard = self.notifications.write().unwrap();
-        guard.retain(|n| match n.kind {
-            NotificationKind::Info | NotificationKind::Success => {
-                now.saturating_duration_since(n.created_at) < AUTO_DISMISS
-            }
-            NotificationKind::Warning | NotificationKind::Error => true,
-        });
-        guard.iter().cloned().collect()
-    }
-
-    pub fn dismiss_notification(&self, id: u64) {
-        let mut guard = self.notifications.write().unwrap();
-        guard.retain(|n| n.id != id);
-        drop(guard);
-        self.bump();
-    }
-
-    /// Snapshot the currently open bookmark edit request, if any. The
-    /// shell polls this each tick and mounts its editor modal when
-    /// `Some`.
-    pub fn snapshot_bookmark_edit(&self) -> Option<(u64, String, BookmarkEditRequest)> {
-        let guard = self.pending_bookmark_edit.read().unwrap();
-        guard
-            .as_ref()
-            .map(|p| (p.id, p.plugin_id.clone(), p.request.clone()))
-    }
-
-    /// Resolve the pending bookmark edit by firing its callback with
-    /// `result` and clearing the slot. The shell calls this from the
-    /// modal's save (`Some(draft)`) + cancel (`None`) handlers. The
-    /// `id` guard prevents a stale modal from resolving a request that
-    /// was superseded by a new one.
-    pub fn resolve_bookmark_edit(&self, id: u64, result: Option<BookmarkDraft>) {
-        let callback = {
-            let mut guard = self.pending_bookmark_edit.write().unwrap();
-            match guard.as_ref() {
-                Some(p) if p.id == id => guard.take().map(|p| p.callback),
-                _ => None,
-            }
-        };
-        if let Some(cb) = callback {
-            cb(result);
-            self.bump();
-        }
-    }
+fn shell() -> Arc<crate::plugins::host::ShellHost> {
+    crate::plugins::host::shell()
 }
 
-impl HostApi for HostInner {
+impl HostApi for SourceHost {
     fn report_progress(&self, plugin_id: &str, token: &str, progress: Progress) {
-        let key = ProgressKey {
-            plugin_id: plugin_id.to_string(),
-            token: token.to_string(),
-        };
-        let mut guard = self.progress.write().unwrap();
-        let entry = guard.entry(key.clone()).or_insert(ProgressEntry {
-            plugin_id: key.plugin_id.clone(),
-            token: key.token.clone(),
-            label: String::new(),
-            done: 0,
-            total: None,
-            finished: None,
-            updated_at: Instant::now(),
-        });
-        match progress {
+        let key = (plugin_id.to_owned(), token.to_owned());
+        let mut labels = self.labels.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let job = match progress {
             Progress::Starting { label, total } => {
-                entry.label = label;
-                entry.done = 0;
-                entry.total = total;
-                entry.finished = None;
+                labels.insert(key, label.clone());
+                JobProgress::Running { label, done: 0, total }
             }
             Progress::Update { done, total, label } => {
-                entry.done = done;
-                if total.is_some() {
-                    entry.total = total;
-                }
-                if let Some(l) = label {
-                    entry.label = l;
-                }
+                let label = match label {
+                    Some(label) => {
+                        labels.insert(key, label.clone());
+                        label
+                    }
+                    None => labels.get(&key).cloned().unwrap_or_default(),
+                };
+                JobProgress::Running { label, done, total }
             }
             Progress::Finished { success, note } => {
-                entry.finished = Some(FinishedState {
-                    success,
-                    note,
-                    shown_at: Instant::now(),
-                });
+                labels.remove(&key);
+                JobProgress::Finished { success, note }
             }
-        }
-        entry.updated_at = Instant::now();
-        drop(guard);
-        self.bump();
+        };
+        drop(labels);
+        shell().progress(plugin_id, token, job);
     }
 
-    fn notify(&self, plugin_id: &str, kind: NotificationKind, message: String) {
-        let id = NEXT_NOTIFICATION_ID.fetch_add(1, Ordering::Relaxed);
-        let notification = Notification {
-            id,
-            plugin_id: plugin_id.to_string(),
-            kind,
-            message,
-            created_at: Instant::now(),
+    fn notify(&self, _plugin_id: &str, kind: NotificationKind, message: String) {
+        let tone = match kind {
+            NotificationKind::Info | NotificationKind::Warning => ToastTone::Info,
+            NotificationKind::Success => ToastTone::Done,
+            NotificationKind::Error => ToastTone::Error,
         };
-        let mut guard = self.notifications.write().unwrap();
-        guard.push_back(notification);
-        while guard.len() > MAX_NOTIFICATIONS {
-            guard.pop_front();
-        }
-        drop(guard);
-        self.bump();
+        shell().toast(HostToast {
+            text: message,
+            tone,
+            action: None,
+        });
     }
 
     fn open_url(&self, url: &str) {
-        // Reuse the shell's url opener — same path shell-side chip
-        // navigation goes through.
-        crate::source_ref_nav::open_external_url(url);
+        shell().open_url(url);
     }
 
     fn load_font(&self, font_name: &str, font_data: Vec<u8>) {
-        // Freya's `Platform::get()` panics outside the scheduler's
-        // root context — and most `install_host` calls fire during
-        // `plugins::hydrate_from_disk`, which runs *before* `launch`.
-        // So every registration lands in `PENDING_FONTS`; the root
-        // shell drains the buffer once per mount via
-        // [`flush_pending_fonts`] where `Platform::get()` is safe.
-        //
-        // Plugins loaded hot (post-launch) also funnel through here;
-        // the drain runs again on the next `AppShell` re-render.
-        let mut guard = pending_fonts().lock().unwrap_or_else(|e| e.into_inner());
-        guard.push((font_name.to_owned(), font_data));
+        shell().load_font(font_name, font_data);
     }
 
-    fn request_bookmark_edit(
-        &self,
-        plugin_id: &str,
-        request: BookmarkEditRequest,
-        on_done: BookmarkEditCallback,
-    ) {
-        let id = NEXT_BOOKMARK_EDIT_ID.fetch_add(1, Ordering::Relaxed);
-        // If a prior request is still open, release it with None so
-        // the previous plugin cleans up before the new one takes over.
-        let stale = {
-            let mut guard = self.pending_bookmark_edit.write().unwrap();
-            let stale = guard.take();
-            *guard = Some(PendingBookmarkEdit {
-                id,
-                plugin_id: plugin_id.to_string(),
-                request,
-                callback: on_done,
-            });
-            stale
-        };
-        if let Some(prev) = stale {
-            (prev.callback)(None);
-        }
-        self.bump();
+    fn request_bookmark_edit(&self, plugin_id: &str, request: BookmarkEditRequest, callback: BookmarkEditCallback) {
+        use notein_plugin::services::{AnnotationOutcome, AnnotationRequest};
+        let draft = request.draft.clone();
+        let done: notein_plugin::services::AnnotationDone = Arc::new(move |outcome| match outcome {
+            AnnotationOutcome::Saved { color, body } => callback(Some(notein_plugin::BookmarkDraft {
+                body,
+                color: color.map(|c| [c[0], c[1], c[2], 0xFF]),
+                refs: draft.refs.clone(),
+            })),
+            AnnotationOutcome::Deleted | AnnotationOutcome::Cancelled => callback(None),
+        });
+        shell().annotate(
+            AnnotationRequest {
+                doc: notein_plugin::doc::DocId([0; 16]),
+                kind: plugin_id.to_owned(),
+                title: request.title.to_string(),
+                quote: None,
+                color: request.draft.color.map(|c| [c[0], c[1], c[2]]),
+                body: request.draft.body.clone(),
+                target: request.anchor.map(|(x, y)| (x, y, 1.0, 1.0)),
+                existing: !request.draft.body.is_empty(),
+            },
+            None,
+            done,
+        );
     }
 
     fn queue_source_anchor(&self, plugin_id: &str, item: [u8; 16], payload: Vec<u8>) {
-        {
-            let mut guard = self
-                .pending_anchors
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            guard.insert((plugin_id.to_string(), item), payload);
-        }
-        let mut subs = self.anchor_subs.lock().unwrap_or_else(|e| e.into_inner());
-        subs.retain(|(sub_id, tx)| {
-            if sub_id != plugin_id {
-                return !tx.is_disconnected();
-            }
-            tx.try_send(item).is_ok() || !tx.is_disconnected()
-        });
+        shell().queue_jump(plugin_id, notein_plugin::doc::DocId(item), payload);
     }
 
     fn take_source_anchor(&self, plugin_id: &str, item: [u8; 16]) -> Option<Vec<u8>> {
-        let mut guard = self
-            .pending_anchors
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        guard.remove(&(plugin_id.to_string(), item))
+        shell().take_jump(plugin_id, notein_plugin::doc::DocId(item))
     }
 
     fn subscribe_source_anchor(&self, plugin_id: &str) -> flume::Receiver<[u8; 16]> {
-        let (tx, rx) = flume::bounded(8);
-        self.anchor_subs
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push((plugin_id.to_string(), tx));
+        let jumps = shell().jumps(plugin_id);
+        let (tx, rx) = flume::unbounded();
+        let spawned = std::thread::Builder::new()
+            .name("source-anchor-fanout".to_owned())
+            .spawn(move || {
+                while let Ok(jump) = jumps.recv() {
+                    if tx.send(jump.doc.0).is_err() {
+                        break;
+                    }
+                }
+            });
+        if let Err(err) = spawned {
+            log::warn!("source anchors: {err}");
+        }
         rx
     }
 }
 
-/// Font registrations queued by [`HostInner::load_font`] before the
-/// freya root context exists. Drained by [`flush_pending_fonts`].
-static PENDING_FONTS: OnceLock<Mutex<Vec<(String, Vec<u8>)>>> = OnceLock::new();
-
-fn pending_fonts() -> &'static Mutex<Vec<(String, Vec<u8>)>> {
-    PENDING_FONTS.get_or_init(|| Mutex::new(Vec::new()))
-}
-
-/// Push any buffered font registrations through `freya_core::Platform`
-/// so renderer windows pick up new typefaces. Must be called from
-/// inside a freya render / event-handler context (e.g. a root-scope
-/// `use_hook`) — [`freya_core::platform::Platform::get`] panics
-/// otherwise.
-///
-/// Idempotent: a second call after the buffer has been drained is a
-/// no-op, so wiring this into every `AppShell::render` is safe.
-pub fn flush_pending_fonts() {
-    let Some(buffer) = PENDING_FONTS.get() else {
-        return;
-    };
-    let drained: Vec<(String, Vec<u8>)> = {
-        let mut guard = buffer.lock().unwrap_or_else(|e| e.into_inner());
-        std::mem::take(&mut *guard)
-    };
-    if drained.is_empty() {
-        return;
-    }
-    let platform = freya_core::platform::Platform::get();
-    for (name, bytes) in drained {
-        platform.load_font(name, bytes);
-    }
-}
-
-/// Install `host_handle()` into every registered canvas / source
-/// trait object. Idempotent — call at startup right after
-/// [`crate::builtin::register_all`] + the dynamic plugin scan.
+/// Hand the host to every registered canvas and source plugin.
 pub fn install_host_in_registry(registry: &notein_plugin::PluginRegistry) {
     let handle = host_handle();
     for canvas in registry.canvases() {

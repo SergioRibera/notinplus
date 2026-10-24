@@ -14,7 +14,6 @@ use std::sync::Arc;
 
 use freya::icons::lucide::arrow_left;
 use freya::prelude::*;
-use freya::router::RouterContext;
 
 use notein_bible::db::{BibleRow, ChapterRow, Db};
 use notein_bible::plugin_config;

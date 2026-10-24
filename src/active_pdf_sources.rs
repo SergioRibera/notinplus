@@ -79,7 +79,7 @@ pub fn get(item: ItemId) -> Option<PdfSourceHandle> {
 /// Pulse highlight the overlay paints on top of the selection colour
 /// to signal chip navigation. Lives in a side registry (not on the
 /// plugin instance) because the pulse is a shell UX concern.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct PulseState {
     pub anchor: Vec<u8>,
     pub until: Instant,

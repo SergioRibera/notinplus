@@ -1093,3 +1093,94 @@ impl Component for Layers {
             )
     }
 }
+
+/// A bookmark picked on the canvas opens as an annotation: its note,
+/// its colour, and Borrar.
+#[derive(Clone)]
+pub struct PinNotes {
+    pub board: Arc<Mutex<Board>>,
+    pub selected: State<Option<crate::ids::BookmarkId>>,
+    /// Window position of the canvas, to point the popover at the pin.
+    pub origin: (f32, f32),
+    /// Document the canvas belongs to.
+    pub item: Option<crate::library::ItemId>,
+}
+
+impl PartialEq for PinNotes {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.board, &other.board) && self.selected == other.selected && self.origin == other.origin
+    }
+}
+
+impl std::fmt::Debug for PinNotes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PinNotes").finish_non_exhaustive()
+    }
+}
+
+impl Component for PinNotes {
+    fn render(&self) -> impl IntoElement {
+        let mut shown = use_state(|| None::<crate::ids::BookmarkId>);
+        let current = *self.selected.read();
+        if current != *shown.peek() {
+            shown.set(current);
+            if let Some(id) = current {
+                self.open(id);
+            }
+        }
+        rect()
+    }
+}
+
+impl PinNotes {
+    fn open(&self, id: crate::ids::BookmarkId) {
+        use notein_plugin::services::{AnnotationOutcome, AnnotationRequest};
+        let guard = lock(&self.board);
+        let Some(bookmark) = guard.doc().bookmark(id).cloned() else {
+            return;
+        };
+        let world = guard.bookmark_world_position(&bookmark);
+        let (sx, sy) = guard.world_to_screen(world.x, world.y);
+        drop(guard);
+        let quote = bookmark.refs.iter().find_map(|r| match r {
+            notein_plugin::bookmark::SourceRef::Plugin { selection, .. } => selection.clone(),
+            _ => None,
+        });
+        let (tx, rx) = flume::bounded::<AnnotationOutcome>(1);
+        let board = Arc::clone(&self.board);
+        let mut selected = self.selected;
+        let refs = bookmark.refs.clone();
+        spawn_forever(async move {
+            let outcome = rx.recv_async().await.unwrap_or(AnnotationOutcome::Cancelled);
+            {
+                let mut guard = lock(&board);
+                match outcome {
+                    AnnotationOutcome::Saved { color, body } => {
+                        guard.update_bookmark(id, body, refs, color.map(|c| [c[0], c[1], c[2], 0xFF]), crate::format::now());
+                    }
+                    AnnotationOutcome::Deleted => {
+                        guard.delete_bookmark(id);
+                    }
+                    AnnotationOutcome::Cancelled => {}
+                }
+            }
+            selected.set(None);
+        });
+        crate::annotation::AnnotationPopover::open(
+            AnnotationRequest {
+                doc: self.item.map_or(notein_plugin::doc::DocId([0; 16]), crate::plugins::content::doc_id),
+                kind: crate::plugins::builtin::canvas::KIND.to_owned(),
+                title: "Marcador".to_owned(),
+                quote,
+                color: bookmark.color.map(|c| [c[0], c[1], c[2]]),
+                body: bookmark.body,
+                target: Some((self.origin.0 + sx - 6.0, self.origin.1 + sy - 6.0, 12.0, 12.0)),
+                existing: true,
+            },
+            None,
+            std::sync::Arc::new(move |outcome| {
+                let _ = tx.send(outcome);
+            }),
+        );
+    }
+}

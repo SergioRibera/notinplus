@@ -17,7 +17,6 @@
 
 use crate::active_boards;
 use crate::active_pdf_sources;
-use crate::app::CanvasMount;
 use crate::bookmark::SourceRef;
 use crate::canvas::lock;
 use crate::ids::BookmarkId;

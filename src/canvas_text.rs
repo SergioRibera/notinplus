@@ -20,8 +20,6 @@ use freya_markdown_editor::prelude::*;
 use istmo::plugins::EdgeInsets;
 
 use crate::canvas::{Board, PaintPass, SceneText, SurfaceBounds, TextLayerView, TextScene, lock};
-use crate::components::note_editor::{note_theme, notein_editor, use_note_keyboard};
-use crate::components::theme::{BORDER, PRIMARY, SURFACE_PRIMARY, TEXT_PRIMARY, TEXT_SECONDARY};
 use crate::text_box::{TEXT_BASE_SIZE, TEXT_MIN_WIDTH, TextBoxId, TextFrame};
 use crate::ui_mask::{MaskSlot, use_mask_slot};
 
@@ -36,7 +34,6 @@ const HANDLE: f32 = 26.0;
 const ROTATE_OFFSET: f32 = 34.0;
 /// Rotations this close (degrees) to a multiple of 45° snap onto it.
 const ROTATE_SNAP: f32 = 4.0;
-const ACCENT: Color = PRIMARY;
 /// Inner space between a box's bounds and its text, in screen pixels.
 const BOX_PADDING: (f32, f32) = (4.0, 6.0);
 
@@ -94,7 +91,7 @@ impl TextEditorSlot {
 
 /// Theme for a box whose body colour is `color` (RGBA) at viewport `scale`.
 fn canvas_theme(color: [u8; 4], scale: f32) -> EditorTheme {
-    let base = note_theme();
+    let base = crate::editor::theme(&notein_ui_kit::palette());
     let mut theme = base.clone().zoomed(TEXT_BASE_SIZE / base.body_size * scale);
     let [r, g, b, a] = color;
     let text = Color::from_argb(a, r, g, b);
@@ -385,9 +382,9 @@ impl Component for CanvasTextBox {
 /// text mode is on, none otherwise.
 fn outline(editing: bool, outlined: bool) -> Option<(f32, Color)> {
     if editing {
-        Some((2.0, ACCENT))
+        Some((2.0, notein_ui_kit::palette().accent))
     } else if outlined {
-        Some((1.0, ACCENT.with_a(90)))
+        Some((1.0, notein_ui_kit::palette().accent.with_a(90)))
     } else {
         None
     }
@@ -407,7 +404,7 @@ impl Component for VisualText {
         if *value.peek() != self.markdown {
             value.set(self.markdown.clone());
         }
-        notein_editor(value, controller, None)
+        crate::editor::editor(value, controller)
             .read_only(true)
             .theme(self.theme.clone())
             .font_family(FONT_FAMILY)
@@ -439,7 +436,7 @@ impl PartialEq for TextBoxEditor {
 impl Component for TextBoxEditor {
     fn render(&self) -> impl IntoElement {
         let controller = self.editor.controller;
-        use_note_keyboard(controller);
+        crate::editor::use_soft_keyboard(controller);
         let value = use_state(|| self.markdown.clone());
         use_side_effect({
             let board = Arc::clone(&self.board);
@@ -472,11 +469,7 @@ impl Component for TextBoxEditor {
             .width(Size::fill())
             .on_sized(move |event: Event<SizedEventData>| mask.publish(event.area))
             .child(
-                notein_editor(
-                    value,
-                    controller,
-                    Some(crate::bookmark_ui::plugin_completions_provider().into()),
-                )
+                crate::editor::editor(value, controller)
                 .theme(self.theme.clone())
                 .font_family(FONT_FAMILY)
                 .placeholder("Escribí… (/ para insertar)")
@@ -678,12 +671,12 @@ fn handle_dot(
         })
         .center()
         .corner_radius(HANDLE * 0.5)
-        .background(SURFACE_PRIMARY)
+        .background(notein_ui_kit::palette().s2)
         .border(
             Border::new()
                 .width(1.5)
                 .alignment(BorderAlignment::Inner)
-                .fill(ACCENT),
+                .fill(notein_ui_kit::palette().accent),
         )
         .cursor(match handle {
             Handle::Move => CursorIcon::Move,
@@ -702,7 +695,7 @@ fn handle_dot(
         })
         .maybe_child(icon.map(|icon| {
             SvgViewer::new(icon)
-                .color(ACCENT)
+                .color(notein_ui_kit::palette().accent)
                 .width(Size::px(HANDLE * 0.55))
                 .height(Size::px(HANDLE * 0.55))
         }))
@@ -727,7 +720,7 @@ pub fn text_toolbar(
         editor.toolbar_mask.clear();
         return rect().into_element();
     }
-    let mut theme = note_theme();
+    let mut theme = crate::editor::theme(&notein_ui_kit::palette());
     theme.fonts.insert(0, FONT_FAMILY.into());
     // Menus must stay above the bar: below it there is only the soft
     // keyboard, which covers the window instead of shrinking it.
@@ -753,7 +746,7 @@ pub fn text_toolbar(
                 .width(Size::px(1.))
                 .height(Size::px(18.))
                 .margin((0., 4.))
-                .background(BORDER),
+                .background(notein_ui_kit::palette().line),
         )
         .child(
             MarkdownToolbar::new(controller)
@@ -773,7 +766,7 @@ pub fn text_toolbar(
         .width(Size::fill())
         .layer(Layer::Overlay)
         .padding((6., 8.))
-        .background(SURFACE_PRIMARY)
+        .background(notein_ui_kit::palette().s2)
         .border(
             Border::new()
                 .width(BorderWidth {
@@ -783,7 +776,7 @@ pub fn text_toolbar(
                     left: 0.,
                 })
                 .alignment(BorderAlignment::Inner)
-                .fill(BORDER),
+                .fill(notein_ui_kit::palette().line),
         )
         .on_sized(move |event: Event<SizedEventData>| {
             editor.toolbar_mask.publish(event.area);
@@ -827,7 +820,7 @@ impl Component for SideScroll {
                 .height(Size::px(3.))
                 .margin((0., 0., 0., current / max * (track - width)))
                 .corner_radius(2.)
-                .background(TEXT_SECONDARY)
+                .background(notein_ui_kit::palette().t2)
         });
         rect()
             .width(Size::fill())
@@ -889,7 +882,7 @@ fn toolbar_action(icon: Bytes, on_press: impl Fn() + 'static) -> Element {
         .on_press(move |_| on_press())
         .child(
             SvgViewer::new(icon)
-                .color(TEXT_PRIMARY)
+                .color(notein_ui_kit::palette().t1)
                 .width(Size::px(16.))
                 .height(Size::px(16.)),
         )

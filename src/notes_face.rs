@@ -16,13 +16,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use freya::prelude::*;
-use freya::router::RouterContext;
 use freya_markdown_editor::document::BlockId;
 use freya_markdown_editor::prelude::*;
 use notein_notes::ui::{self, Action, TopbarActions};
 use notein_notes::{KIND_ID, NoteAnchor};
 
-use crate::components::note_editor::{note_theme, notein_editor, use_note_keyboard};
 use crate::doc::Doc;
 use crate::hooks::{provide_safe_area_override, use_safe_area_insets};
 use crate::library::ItemId;
@@ -66,8 +64,6 @@ impl Component for NotesFace {
         let title = use_state(String::new);
         let controller = use_editor_controller();
         let scroll = use_scroll_controller(ScrollConfig::default);
-        let chrome = crate::app::use_chrome_state();
-        let router = RouterContext::get();
         let viewport_area = try_consume_context::<notein_ui_kit::ViewportArea>();
         let insets = *use_safe_area_insets().read();
         provide_safe_area_override(istmo::plugins::EdgeInsets::default());
@@ -79,16 +75,16 @@ impl Component for NotesFace {
         });
         use_hook({
             let doc = Arc::clone(&doc);
-            let mut markdown = markdown;
+            let markdown = markdown;
             move || follow_remote(item, doc, markdown)
         });
         use_hook({
-            let mut typing = typing;
+            let typing = typing;
             move || follow_typing(item, typing)
         });
         use_hook(move || listen_for_jumps(item, controller, scroll));
         use_hook({
-            let mut locked = locked;
+            let locked = locked;
             move || follow_policy(item, locked)
         });
         use_side_effect(move || controller.set_read_only(*locked.read()));
@@ -124,11 +120,7 @@ impl Component for NotesFace {
             on_links: None,
         };
 
-        let editor = notein_editor(
-            markdown,
-            controller,
-            Some(crate::bookmark_ui::plugin_completions_provider().into()),
-        )
+        let editor = crate::editor::editor(markdown, controller)
         .reorderable(true)
         .placeholder("Escribí tu nota… (/ para insertar)")
         .width(Size::fill())
@@ -149,7 +141,7 @@ impl Component for NotesFace {
                     .padding((0., 16., 8., 16.))
                     .child(
                         MarkdownToolbar::new(controller)
-                            .theme(note_theme())
+                            .theme(crate::editor::theme(&notein_ui_kit::palette()))
                             .mode_toggle(false),
                     )
             }))
@@ -396,7 +388,7 @@ fn use_follow_typing(
 ) -> (State<Option<Area>>, Rc<Cell<f32>>) {
     let viewport = use_state(|| None::<Area>);
     let content_top = use_hook(|| Rc::new(Cell::new(0.0_f32)));
-    use_note_keyboard(controller);
+    crate::editor::use_soft_keyboard(controller);
     {
         let content_top = content_top.clone();
         // Revision, viewport height and focus at the last run: following only
