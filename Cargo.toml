@@ -95,7 +95,27 @@ freya-testing = "=0.5.0-rc.8"
 istmo-build = { path = "../istmo/crates/build" }
 
 [patch.crates-io]
-winit = { git = "https://github.com/SergioRibera/winit", branch = "notein" }
+winit = { git = "https://github.com/SergioRibera/winit", branch = "notein-native-input" }
+# Touch editing and soft keyboard work, on top of freya 0.5.0-rc.8.
+freya = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-android = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-animation = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-clipboard = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-components = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-core = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-edit = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-engine = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-icons = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-markdown = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-metrics-plugin = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-router = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-router-macro = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-sdk = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-testing = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-winit = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+torin = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+ragnarok = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+pathgraph = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
 
 [lints.rust]
 missing_debug_implementations = "warn"
