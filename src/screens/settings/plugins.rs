@@ -136,25 +136,40 @@ impl PartialEq for Detail {
     }
 }
 
-impl Component for Detail {
-    fn render(&self) -> impl IntoElement {
-        use freya::icons::lucide;
-        let p = palette();
-        let mut technical = use_state(|| false);
+impl Detail {
+    /// Name, state, description and the on/off switch.
+    fn header(&self) -> Rect {
         let plugin = &self.plugin;
         let id = plugin.info.id.to_string();
-        let adds: Vec<Element> = plugin
+        rect()
+            .width(Size::fill())
+            .horizontal()
+            .cross_align(Alignment::Center)
+            .content(Content::Flex)
+            .spacing(12.0)
+            .child(
+                rect()
+                    .width(Size::flex(1.0))
+                    .spacing(4.0)
+                    .child(Text::new(plugin.info.name.clone()).role(TextRole::Heading))
+                    .child(
+                        Text::new(format!("{} · {}", status(plugin), plugin.info.description))
+                            .role(TextRole::Meta),
+                    ),
+            )
+            .child(Switch::new(plugin.is_active()).on_toggle(move |on| set_enabled(&id, on)))
+    }
+
+    /// The kinds the plugin adds and what each creates.
+    fn adds(&self) -> Vec<Element> {
+        let p = palette();
+        self.plugin
             .kinds
             .iter()
-            .map(|k| k.info())
-            .map(|info| {
-                let entries = plugin
-                    .kinds
-                    .iter()
-                    .find(|k| k.info().id == info.id)
-                    .map(|k| k.creation_entries())
-                    .unwrap_or_default();
-                let creates = entries
+            .map(|kind| {
+                let info = kind.info();
+                let creates = kind
+                    .creation_entries()
                     .iter()
                     .map(|e| e.label.to_string())
                     .collect::<Vec<_>>()
@@ -168,42 +183,62 @@ impl Component for Detail {
                     .kind(info.icon.clone(), kind_color(&p, info.color))
                     .into_element()
             })
-            .collect();
+            .collect()
+    }
+
+    /// Id, version, author, file and SDK, folded.
+    fn technical(&self, mut open: State<bool>) -> Group {
+        use freya::icons::lucide;
+        let plugin = &self.plugin;
         let file = match &plugin.origin {
             Origin::Builtin => "Incluido en Notein".to_owned(),
             Origin::ThirdParty { library, .. } => library.display().to_string(),
         };
+        let details = [
+            format!("Id: {}", plugin.info.id),
+            format!("Versión: {}", plugin.info.version),
+            format!("Autor: {}", plugin.info.author),
+            format!("Archivo: {file}"),
+            format!("SDK: {}", notein_plugin::loader::SDK_ABI_VERSION),
+        ];
+        Group::default()
+            .child(
+                ListRow::new("Detalles técnicos")
+                    .icon(lucide::code())
+                    .trailing(Trailing::Element(
+                        Icon::new(if open() {
+                            lucide::chevron_up()
+                        } else {
+                            lucide::chevron_down()
+                        })
+                        .size(16.0)
+                        .color(palette().t3)
+                        .into_element(),
+                    ))
+                    .on_press(move |_| {
+                        let next = !open();
+                        open.set(next);
+                    }),
+            )
+            .maybe_child(open().then(|| {
+                rect()
+                    .padding((4.0, 16.0, 14.0, 16.0))
+                    .spacing(4.0)
+                    .children(details.map(|d| Text::new(d).role(TextRole::Meta).into_element()))
+            }))
+    }
+}
+
+impl Component for Detail {
+    fn render(&self) -> impl IntoElement {
+        let technical = use_state(|| false);
         rect()
             .width(Size::fill())
             .spacing(18.0)
+            .child(self.header())
+            .child(Section::new("Qué agrega").child(Group::default().children(self.adds())))
             .child(
-                rect()
-                    .width(Size::fill())
-                    .horizontal()
-                    .cross_align(Alignment::Center)
-                    .content(Content::Flex)
-                    .spacing(12.0)
-                    .child(
-                        rect()
-                            .width(Size::flex(1.0))
-                            .spacing(4.0)
-                            .child(Text::new(plugin.info.name.clone()).role(TextRole::Heading))
-                            .child(
-                                Text::new(format!(
-                                    "{} · {}",
-                                    status(plugin),
-                                    plugin.info.description
-                                ))
-                                .role(TextRole::Meta),
-                            ),
-                    )
-                    .child(
-                        Switch::new(plugin.is_active()).on_toggle(move |on| set_enabled(&id, on)),
-                    ),
-            )
-            .child(Section::new("Qué agrega").child(Group::default().children(adds)))
-            .child(
-                Section::new("Ajustes").child(plugin.settings.as_ref().map_or_else(
+                Section::new("Ajustes").child(self.plugin.settings.as_ref().map_or_else(
                     || {
                         Text::new("Este plugin no tiene ajustes.")
                             .role(TextRole::Hint)
@@ -217,51 +252,7 @@ impl Component for Detail {
                     },
                 )),
             )
-            .child(
-                Group::default()
-                    .child(
-                        ListRow::new("Detalles técnicos")
-                            .icon(lucide::code())
-                            .trailing(Trailing::Element(
-                                Icon::new(if technical() {
-                                    lucide::chevron_up()
-                                } else {
-                                    lucide::chevron_down()
-                                })
-                                .size(16.0)
-                                .color(p.t3)
-                                .into_element(),
-                            ))
-                            .on_press(move |_| {
-                                let next = !technical();
-                                technical.set(next);
-                            }),
-                    )
-                    .maybe_child(technical().then(|| {
-                        rect()
-                            .padding((4.0, 16.0, 14.0, 16.0))
-                            .spacing(4.0)
-                            .child(
-                                Text::new(format!("Id: {}", plugin.info.id)).role(TextRole::Meta),
-                            )
-                            .child(
-                                Text::new(format!("Versión: {}", plugin.info.version))
-                                    .role(TextRole::Meta),
-                            )
-                            .child(
-                                Text::new(format!("Autor: {}", plugin.info.author))
-                                    .role(TextRole::Meta),
-                            )
-                            .child(Text::new(format!("Archivo: {file}")).role(TextRole::Meta))
-                            .child(
-                                Text::new(format!(
-                                    "SDK: {}",
-                                    notein_plugin::loader::SDK_ABI_VERSION
-                                ))
-                                .role(TextRole::Meta),
-                            )
-                    })),
-            )
+            .child(self.technical(technical))
     }
 }
 

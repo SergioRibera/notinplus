@@ -67,11 +67,78 @@ fn pick_shortcut(slot: usize, current: Option<&EntryKey>, anchor: Area) {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Pen;
 
+/// A font for smoothed handwriting, previewed in itself.
+fn font_row(font: GlyphFont, chosen: bool) -> Element {
+    let p = palette();
+    ListRow::new(font.name())
+        .leading(Leading::Element(
+            rect()
+                .width(Size::px(190.0))
+                .overflow(Overflow::Clip)
+                .child(
+                    label()
+                        .text("Hola, Romanos 8")
+                        .text_overflow(TextOverflow::Ellipsis)
+                        .font_family(font.name())
+                        .font_size(20.0)
+                        .color(p.t1)
+                        .max_lines(1),
+                )
+                .into_element(),
+        ))
+        .selected(chosen)
+        .trailing(if chosen {
+            Trailing::Element(
+                notein_ui_kit::Icon::new(freya::icons::lucide::check())
+                    .size(16.0)
+                    .color(p.accent)
+                    .into_element(),
+            )
+        } else {
+            Trailing::Text("".into())
+        })
+        .on_press(move |_| {
+            font.select();
+            SettingsStore::get().update(|s| s.pen.smooth_font = font);
+        })
+        .into_element()
+}
+
+/// What shortcut bubble `slot` creates.
+fn shortcut_row(slot: usize, title: &'static str, current: Option<EntryKey>) -> Element {
+    let p = palette();
+    let entry = current.as_ref().and_then(crate::flows::create::entry_for);
+    let value = entry
+        .as_ref()
+        .map_or_else(|| "Ninguno".to_owned(), |e| e.entry.label.to_string());
+    let row = ListRow::new(title).trailing(Trailing::Text(value.into()));
+    let row = match &entry {
+        Some(e) => row.kind(e.entry.icon.clone(), kind_color(&p, e.entry.color)),
+        None => row.icon(freya::icons::lucide::circle_plus()),
+    };
+    row.chevron()
+        .on_press(move |e: Event<PressEventData>| {
+            pick_shortcut(slot, current.as_ref(), anchor_of(&e));
+        })
+        .into_element()
+}
+
+/// A section with a choice and a hint under it.
+fn choice_section<const N: usize>(
+    title: &'static str,
+    labels: [&'static str; N],
+    selected: usize,
+    hint: &'static str,
+    on_select: impl FnMut(usize) + 'static,
+) -> Section {
+    Section::new(title)
+        .child(Segmented::new(labels, selected).full_width().on_select(on_select))
+        .child(Text::new(hint).role(TextRole::Hint))
+}
+
 impl Component for Pen {
     fn render(&self) -> impl IntoElement {
-        let p = palette();
-        let store = SettingsStore::get();
-        let pen = store.read().pen;
+        let pen = SettingsStore::get().read().pen;
         let finger_index = FingerDraw::ALL
             .iter()
             .position(|f| *f == pen.finger_draws)
@@ -80,115 +147,44 @@ impl Component for Pen {
             .iter()
             .position(|t| *t == pen.double_tap)
             .unwrap_or(0);
-        let fonts = GlyphFont::ALL.into_iter().map(|font| {
-            let chosen = font == pen.smooth_font;
-            ListRow::new(font.name())
-                .leading(Leading::Element(
-                    rect()
-                        .width(Size::px(190.0))
-                        .overflow(Overflow::Clip)
-                        .child(
-                            label()
-                                .text("Hola, Romanos 8")
-                                .text_overflow(TextOverflow::Ellipsis)
-                                .font_family(font.name())
-                                .font_size(20.0)
-                                .color(p.t1)
-                                .max_lines(1),
-                        )
-                        .into_element(),
-                ))
-                .selected(chosen)
-                .trailing(if chosen {
-                    Trailing::Element(
-                        notein_ui_kit::Icon::new(freya::icons::lucide::check())
-                            .size(16.0)
-                            .color(p.accent)
-                            .into_element(),
-                    )
-                } else {
-                    Trailing::Text("".into())
-                })
-                .on_press(move |_| {
-                    font.select();
-                    let mut store = store;
-                    store.update(|s| s.pen.smooth_font = font);
-                })
-                .into_element()
-        });
-        let shortcut_row = |slot: usize, title: &'static str| {
-            let current = pen.fab_shortcuts[slot].clone();
-            let entry = current.as_ref().and_then(crate::flows::create::entry_for);
-            let value = entry
-                .as_ref()
-                .map_or_else(|| "Ninguno".to_owned(), |e| e.entry.label.to_string());
-            let row = ListRow::new(title).trailing(Trailing::Text(value.into()));
-            let row = match &entry {
-                Some(e) => row.kind(e.entry.icon.clone(), kind_color(&p, e.entry.color)),
-                None => row.icon(freya::icons::lucide::circle_plus()),
-            };
-            row.chevron()
-                .on_press(move |e: Event<PressEventData>| {
-                    pick_shortcut(slot, current.as_ref(), anchor_of(&e));
-                })
-                .into_element()
-        };
         rect()
             .width(Size::fill())
             .spacing(24.0)
+            .child(choice_section(
+                "Dibujar con el dedo",
+                FingerDraw::ALL.map(FingerDraw::label),
+                finger_index,
+                "Automático: el dedo dibuja hasta que uses un lápiz en este dispositivo; después mueve la hoja.",
+                |i| SettingsStore::get().update(|s| s.pen.finger_draws = FingerDraw::ALL[i]),
+            ))
             .child(
-                Section::new("Dibujar con el dedo")
-                    .child(
-                        Segmented::new(FingerDraw::ALL.map(FingerDraw::label), finger_index)
-                            .full_width()
-                            .on_select(move |i: usize| {
-                                let mut store = store;
-                                store.update(|s| s.pen.finger_draws = FingerDraw::ALL[i]);
+                Group::default().child(
+                    ListRow::new("Ignorar la palma")
+                        .subtitle("Mientras el lápiz toca la pantalla, la mano no dibuja ni mueve.")
+                        .trailing(Trailing::Switch {
+                            on: pen.palm_rejection,
+                            on_toggle: EventHandler::new(|on| {
+                                SettingsStore::get().update(|s| s.pen.palm_rejection = on);
                             }),
-                    )
-                    .child(
-                        Text::new(
-                            "Automático: el dedo dibuja hasta que uses un lápiz en este dispositivo; después mueve la hoja.",
-                        )
-                        .role(TextRole::Hint),
-                    ),
+                        }),
+                ),
             )
-            .child(
-                Group::default()
-                    .child(
-                        ListRow::new("Ignorar la palma")
-                            .subtitle("Mientras el lápiz toca la pantalla, la mano no dibuja ni mueve.")
-                            .trailing(Trailing::Switch {
-                                on: pen.palm_rejection,
-                                on_toggle: EventHandler::new(move |on| {
-                                    let mut store = store;
-                                    store.update(|s| s.pen.palm_rejection = on);
-                                }),
-                            }),
-                    ),
-            )
-            .child(
-                Section::new("Doble toque del lápiz")
-                    .child(
-                        Segmented::new(PenDoubleTap::ALL.map(PenDoubleTap::label), tap_index)
-                            .full_width()
-                            .on_select(move |i: usize| {
-                                let mut store = store;
-                                store.update(|s| s.pen.double_tap = PenDoubleTap::ALL[i]);
-                            }),
-                    )
-                    .child(
-                        Text::new("En lápices que lo permiten (Apple Pencil 2, S Pen, lápices con botón).")
-                            .role(TextRole::Hint),
-                    ),
-            )
+            .child(choice_section(
+                "Doble toque del lápiz",
+                PenDoubleTap::ALL.map(PenDoubleTap::label),
+                tap_index,
+                "En lápices que lo permiten (Apple Pencil 2, S Pen, lápices con botón).",
+                |i| SettingsStore::get().update(|s| s.pen.double_tap = PenDoubleTap::ALL[i]),
+            ))
             .child(
                 Section::new("Escritura suavizada")
                     .child(
                         Text::new("La letra con la que la herramienta de firma redibuja lo que escribís.")
                             .role(TextRole::Hint),
                     )
-                    .child(Group::default().children(fonts)),
+                    .child(Group::default().children(
+                        GlyphFont::ALL.into_iter().map(|font| font_row(font, font == pen.smooth_font)),
+                    )),
             )
             .child(
                 Section::new("Atajos sobre el +")
@@ -198,8 +194,8 @@ impl Component for Pen {
                     )
                     .child(
                         Group::default()
-                            .child(shortcut_row(0, "Atajo de arriba"))
-                            .child(shortcut_row(1, "Atajo de abajo")),
+                            .child(shortcut_row(0, "Atajo de arriba", pen.fab_shortcuts[0].clone()))
+                            .child(shortcut_row(1, "Atajo de abajo", pen.fab_shortcuts[1].clone())),
                     ),
             )
             .child(rect().height(Size::px(tokens::space::SM)))

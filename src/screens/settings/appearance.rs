@@ -141,82 +141,118 @@ fn rgb(color: Color) -> [u8; 3] {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Appearance;
 
+/// An accent swatch; `None` is the theme's own accent.
+fn accent_swatch(color: Option<Color>, label: &'static str, accent: Option<Color>, theme_accent: Color) -> Element {
+    let p = palette();
+    let chosen = color == accent;
+    let fill = color.unwrap_or(theme_accent);
+    rect()
+        .width(Size::px(34.0))
+        .height(Size::px(34.0))
+        .corner_radius(tokens::radius::FULL)
+        .background(fill)
+        .center()
+        .a11y_role(AccessibilityRole::RadioButton)
+        .a11y_alt(label)
+        .border(
+            Border::new()
+                .fill(if chosen { p.t1 } else { Color::TRANSPARENT })
+                .width(2.0)
+                .alignment(BorderAlignment::Outer),
+        )
+        .on_press(move |_| {
+            SettingsStore::get().update(|s| s.appearance.accent = color.map(rgb));
+        })
+        .maybe_child(chosen.then(|| {
+            Icon::new(freya::icons::lucide::check())
+                .size(16.0)
+                .color(notein_ui_kit::theme::on_color(fill))
+        }))
+        .into_element()
+}
+
+/// The button that opens the free colour picker; filled with the
+/// accent when it is not one of the swatches.
+fn custom_swatch(accent: Option<Color>, mut open: State<bool>) -> Rect {
+    let p = palette();
+    let chosen = accent.is_some_and(|a| !ACCENT_SWATCHES.contains(&a));
+    rect()
+        .width(Size::px(34.0))
+        .height(Size::px(34.0))
+        .corner_radius(tokens::radius::FULL)
+        .background(if chosen { accent.unwrap_or(p.s3) } else { p.s3 })
+        .border(
+            Border::new()
+                .fill(if chosen { p.t1 } else { p.line_strong })
+                .width(if chosen { 2.0 } else { 1.0 })
+                .alignment(BorderAlignment::Outer),
+        )
+        .center()
+        .a11y_role(AccessibilityRole::Button)
+        .a11y_alt("Otro color")
+        .on_press(move |_| {
+            let next = !open();
+            open.set(next);
+        })
+        .child(Icon::new(freya::icons::lucide::pipette()).size(16.0).color(p.t1))
+}
+
+/// Swatches, the picker, and a note when the theme had to adjust it.
+fn accent_section(accent: Option<Color>, custom_open: State<bool>) -> Section {
+    let p = palette();
+    let resolved = try_theme().map(|t| t.resolved());
+    let theme_accent = resolved.map_or(p.accent, |r| r.kind.base().accent);
+    Section::new("Color de acento")
+        .child(
+            Text::new("Se usa en botones, selección, enlaces y la pestaña activa. Los documentos no cambian.")
+                .role(TextRole::Hint),
+        )
+        .child(
+            rect()
+                .width(Size::fill())
+                .horizontal()
+                .content(Content::wrap_spacing(10.0))
+                .spacing(10.0)
+                .child(accent_swatch(None, "Del tema", accent, theme_accent))
+                .children(
+                    ACCENT_SWATCHES
+                        .into_iter()
+                        .map(|c| accent_swatch(Some(c), "Color", accent, theme_accent)),
+                )
+                .child(custom_swatch(accent, custom_open)),
+        )
+        .maybe_child(custom_open().then(|| {
+            ColorWheel::new()
+                .swatches(Vec::new())
+                .allow_custom(true)
+                .initial(accent.unwrap_or(p.accent))
+                .width(300.0)
+                .on_change(move |color: Color| {
+                    SettingsStore::get().update(|s| s.appearance.accent = Some(rgb(color)));
+                })
+        }))
+        .maybe_child(resolved.filter(|r| r.accent_adjusted).map(|r| {
+            let theme = r.kind.label();
+            let verb = if r.palette.dark { "lo aclaramos" } else { "lo oscurecemos" };
+            Notice::new(NoticeTone::Info, format!("En {theme} {verb} para que se lea."))
+        }))
+}
+
 impl Component for Appearance {
     fn render(&self) -> impl IntoElement {
-        use freya::icons::lucide;
-        let p = palette();
         let store = SettingsStore::get();
         let settings = store.read().appearance;
-        let mut custom_open = use_state(|| false);
+        let custom_open = use_state(|| false);
         let accent = settings.accent.map(|[r, g, b]| Color::from_rgb(r, g, b));
-        let resolved = try_theme().map(|t| t.resolved());
-
         let themes = ThemePref::ALL.into_iter().map(|pref| {
             theme_card(pref, settings.theme == pref, accent, move || {
-                let mut store = store;
-                store.update(|s| s.appearance.theme = pref);
+                SettingsStore::get().update(|s| s.appearance.theme = pref);
             })
         });
-
-        let swatch = move |color: Option<Color>, label: &'static str| {
-            let chosen = color == accent;
-            let fill = color.unwrap_or_else(|| resolved.map_or(p.accent, |r| r.kind.base().accent));
-            rect()
-                .width(Size::px(34.0))
-                .height(Size::px(34.0))
-                .corner_radius(tokens::radius::FULL)
-                .background(fill)
-                .center()
-                .a11y_role(AccessibilityRole::RadioButton)
-                .a11y_alt(label)
-                .border(
-                    Border::new()
-                        .fill(if chosen { p.t1 } else { Color::TRANSPARENT })
-                        .width(2.0)
-                        .alignment(BorderAlignment::Outer),
-                )
-                .on_press(move |_| {
-                    let mut store = store;
-                    store.update(|s| s.appearance.accent = color.map(rgb));
-                })
-                .maybe_child(chosen.then(|| {
-                    Icon::new(lucide::check())
-                        .size(16.0)
-                        .color(notein_ui_kit::theme::on_color(fill))
-                }))
-                .into_element()
-        };
-        let custom_chosen = accent.is_some_and(|a| !ACCENT_SWATCHES.contains(&a));
-        let custom = rect()
-            .width(Size::px(34.0))
-            .height(Size::px(34.0))
-            .corner_radius(tokens::radius::FULL)
-            .background(if custom_chosen {
-                accent.unwrap_or(p.s3)
-            } else {
-                p.s3
-            })
-            .border(
-                Border::new()
-                    .fill(if custom_chosen { p.t1 } else { p.line_strong })
-                    .width(if custom_chosen { 2.0 } else { 1.0 })
-                    .alignment(BorderAlignment::Outer),
-            )
-            .center()
-            .a11y_role(AccessibilityRole::Button)
-            .a11y_alt("Otro color")
-            .on_press(move |_| {
-                let next = !custom_open();
-                custom_open.set(next);
-            })
-            .child(Icon::new(lucide::pipette()).size(16.0).color(p.t1));
-
-        let sizes = ["Chico", "Normal", "Grande", "Más grande"];
         let size_index = TextSizePref::ALL
             .iter()
             .position(|s| *s == settings.text_size)
             .unwrap_or(1);
-
         rect()
             .width(Size::fill())
             .spacing(24.0)
@@ -230,46 +266,16 @@ impl Component for Appearance {
                         .children(themes),
                 ),
             )
-            .child(
-                Section::new("Color de acento")
-                    .child(
-                        Text::new("Se usa en botones, selección, enlaces y la pestaña activa. Los documentos no cambian.")
-                            .role(TextRole::Hint),
-                    )
-                    .child(
-                        rect()
-                            .width(Size::fill())
-                            .horizontal()
-                            .content(Content::wrap_spacing(10.0))
-                            .spacing(10.0)
-                            .child(swatch(None, "Del tema"))
-                            .children(ACCENT_SWATCHES.into_iter().map(|c| swatch(Some(c), "Color")))
-                            .child(custom),
-                    )
-                    .maybe_child(custom_open().then(|| {
-                        ColorWheel::new()
-                            .swatches(Vec::new())
-                            .allow_custom(true)
-                            .initial(accent.unwrap_or(p.accent))
-                            .width(300.0)
-                            .on_change(move |color: Color| {
-                                let mut store = store;
-                                store.update(|s| s.appearance.accent = Some(rgb(color)));
-                            })
-                    }))
-                    .maybe_child(resolved.filter(|r| r.accent_adjusted).map(|r| {
-                        let theme = r.kind.label();
-                        let verb = if r.palette.dark { "lo aclaramos" } else { "lo oscurecemos" };
-                        Notice::new(NoticeTone::Info, format!("En {theme} {verb} para que se lea."))
-                    })),
-            )
+            .child(accent_section(accent, custom_open))
             .child(
                 Section::new("Tamaño del texto")
                     .child(
-                        Segmented::new(sizes, size_index).full_width().on_select(move |i: usize| {
-                            let mut store = store;
-                            store.update(|s| s.appearance.text_size = TextSizePref::ALL[i]);
-                        }),
+                        Segmented::new(["Chico", "Normal", "Grande", "Más grande"], size_index)
+                            .full_width()
+                            .on_select(move |i: usize| {
+                                SettingsStore::get()
+                                    .update(|s| s.appearance.text_size = TextSizePref::ALL[i]);
+                            }),
                     )
                     .child(Text::new("Así se ven los nombres de tus documentos.").role(TextRole::Meta)),
             )
@@ -280,8 +286,7 @@ impl Component for Appearance {
                         .trailing(Trailing::Switch {
                             on: settings.reduce_motion,
                             on_toggle: EventHandler::new(move |on| {
-                                let mut store = store;
-                                store.update(|s| s.appearance.reduce_motion = on);
+                                SettingsStore::get().update(|s| s.appearance.reduce_motion = on);
                             }),
                         }),
                 ),
