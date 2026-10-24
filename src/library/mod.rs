@@ -26,6 +26,7 @@ pub mod model;
 pub mod refs;
 pub mod sync;
 mod pins;
+pub mod shared;
 mod trash;
 
 use std::sync::Arc;
@@ -47,6 +48,7 @@ pub use self::model::{
     WorkspaceIndex,
 };
 pub use self::refs::{RefEntry, RefOrigin};
+pub use self::shared::{LibHandle, changes, shared, shared_blocking};
 pub use self::trash::{
     NotebookFate, TrashEntry, TrashReceipt, TrashedRecord, days_left, retention_millis,
 };
@@ -750,6 +752,7 @@ impl Library {
     async fn persist_links(&self) -> Result<()> {
         index::save_links(&self.client, &self.links).await?;
         crate::sync::local_changed();
+        shared::notify();
         Ok(())
     }
 
@@ -1449,12 +1452,14 @@ impl Library {
     async fn persist(&self) -> Result<()> {
         index::save(&self.client, &self.index).await?;
         crate::sync::local_changed();
+        shared::notify();
         Ok(())
     }
 
     async fn persist_workspaces(&self) -> Result<()> {
         index::save_workspaces(&self.client, &self.workspaces).await?;
         crate::sync::local_changed();
+        shared::notify();
         Ok(())
     }
 

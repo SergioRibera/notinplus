@@ -2453,16 +2453,9 @@ fn fab_button<F: Fn(()) + 'static>(icon: Bytes, bg: Color, handler: F) -> Rect {
 // ---------------------------------------------------------------------------
 
 pub(crate) async fn open_library() -> Result<LibHandle, String> {
-    let runtime = istmo::Runtime::global().map_err(|e| format!("runtime not started: {e}"))?;
-    let lib = Library::open(&runtime)
+    crate::library::shared()
         .await
-        .map_err(|e| format!("open library: {e}"))?;
-    // Rebuild the shell's completion catalog from the freshly-loaded
-    // library so the `[[` popup lists every PDF the user has
-    // imported, even those not opened yet this session.
-    crate::completion_catalog::prime_pdf_entries(lib.index().items.iter());
-    crate::builtin::prime_notes(lib.index().items.iter());
-    Ok(Arc::new(AsyncMutex::new(lib)))
+        .map_err(|e| format!("open library: {e}"))
 }
 
 /// Open the canvas-config sheet pre-filled with the current state of

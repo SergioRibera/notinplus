@@ -123,8 +123,7 @@ async fn open_in_with(
     dedupe: bool,
 ) -> Result<Opened> {
     if hint == OpenHint::NewSpace {
-        let name = format!("Mesa {}", lib.workspaces().len() + 1);
-        let workspace = lib.create_workspace(&name, None).await?;
+        let workspace = lib.create_workspace("", None).await?;
         lib.set_active_workspace(Some(workspace)).await?;
         let pane = root_pane(lib, workspace)?;
         lib.add_tab(workspace, pane, target).await?;
@@ -134,7 +133,7 @@ async fn open_in_with(
     let workspace = if let Some(id) = lib.active_workspace() {
         id
     } else {
-        let id = lib.create_workspace("Mesa 1", None).await?;
+        let id = lib.create_workspace("", None).await?;
         lib.set_active_workspace(Some(id)).await?;
         id
     };

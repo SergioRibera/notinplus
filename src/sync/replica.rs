@@ -109,9 +109,9 @@ impl LibraryReplica {
         &self.known
     }
 
-    fn open(&self) -> Result<Library, ReplicaError> {
-        let runtime = istmo::Runtime::global().map_err(ReplicaError::Runtime)?;
-        pollster::block_on(Library::open(&runtime)).map_err(ReplicaError::Library)
+    fn open(&self) -> Result<async_lock::MutexGuardArc<Library>, ReplicaError> {
+        let handle = crate::library::shared_blocking()?;
+        Ok(pollster::block_on(handle.lock_arc()))
     }
 
     fn version_of(&mut self, item: ItemId, lib: &Library) -> Option<Version> {

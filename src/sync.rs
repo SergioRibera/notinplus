@@ -328,10 +328,9 @@ fn now_ms() -> u64 {
         .unwrap_or_default()
 }
 
-fn open_library() -> Option<Library> {
-    let runtime = istmo::Runtime::global().ok()?;
-    match pollster::block_on(Library::open(&runtime)) {
-        Ok(lib) => Some(lib),
+fn open_library() -> Option<async_lock::MutexGuardArc<Library>> {
+    match crate::library::shared_blocking() {
+        Ok(handle) => Some(pollster::block_on(handle.lock_arc())),
         Err(err) => {
             log::error!("sync: open library: {err}");
             None
