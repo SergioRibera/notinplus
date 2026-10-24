@@ -336,6 +336,30 @@ impl Persisted for Settings {
     const FILE: &'static str = "settings.v2.bin";
 }
 
+static PEN_DOUBLE_TAP: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+impl Settings {
+    /// The pen shortcut action, readable off the UI thread (the pen
+    /// pump runs on its own).
+    #[must_use]
+    pub fn current_pen_double_tap() -> PenDoubleTap {
+        match PEN_DOUBLE_TAP.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => PenDoubleTap::LastBrush,
+            2 => PenDoubleTap::Nothing,
+            _ => PenDoubleTap::Eraser,
+        }
+    }
+
+    fn publish(&self) {
+        let code = match self.pen.double_tap {
+            PenDoubleTap::Eraser => 0,
+            PenDoubleTap::LastBrush => 1,
+            PenDoubleTap::Nothing => 2,
+        };
+        PEN_DOUBLE_TAP.store(code, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// Reactive settings, provided once at the app root.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct SettingsStore {
@@ -368,10 +392,17 @@ impl SettingsStore {
         self.state.read().clone()
     }
 
+    /// Current settings without subscribing (event handlers).
+    #[must_use]
+    pub fn peek(&self) -> Settings {
+        self.state.peek().clone()
+    }
+
     /// Edit, persist and re-apply.
     pub fn update(&mut self, edit: impl FnOnce(&mut Settings)) {
         edit(&mut self.state.write());
         let settings = self.state.peek().clone();
+        settings.publish();
         self.theme.set(settings.appearance.into());
         if let Err(err) = settings.save() {
             log::error!("settings save: {err}");
@@ -381,7 +412,11 @@ impl SettingsStore {
 
 /// Load settings and install both the store and the theme root.
 pub fn use_settings_root() -> SettingsStore {
-    let state = use_state(Settings::load);
+    let state = use_state(|| {
+        let settings = Settings::load();
+        settings.publish();
+        settings
+    });
     let theme = notein_ui_kit::theme::use_theme_root(move || state.peek().appearance.into());
     use_hook(move || {
         let store = SettingsStore { state, theme };

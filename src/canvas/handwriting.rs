@@ -49,7 +49,7 @@ fn fits_ink_size(glyph: char, pen_widths: f32) -> bool {
 
 /// Bundled recognizer, decoded once. `None` (logged) if the archive is
 /// stale; re-run `glyph-bake templates`.
-fn recognizer() -> Option<&'static Recognizer> {
+pub(super) fn recognizer() -> Option<&'static Recognizer> {
     static RECOGNIZER: OnceLock<Option<Recognizer>> = OnceLock::new();
     RECOGNIZER
         .get_or_init(|| {
@@ -332,6 +332,13 @@ impl Board {
             paint.set_anti_alias(true);
             paint.set_style(PaintStyle::Fill);
             paint.set_argb(alpha, r, g, b);
+            if let Some((dx, dy)) = self.drag_offset_of_glyph(glyph.id) {
+                canvas.save();
+                canvas.translate((dx, dy));
+                canvas.draw_path(path, &paint);
+                canvas.restore();
+                continue;
+            }
             canvas.draw_path(path, &paint);
         }
     }

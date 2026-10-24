@@ -899,7 +899,7 @@ fn left_top(
         InputMode::Draw => pencil(),
         InputMode::Pan => hand(),
         InputMode::Select => text_select(),
-        InputMode::Text => square_dashed_text(),
+        InputMode::Text | InputMode::Lasso => square_dashed_text(),
     };
 
     rect()
@@ -974,7 +974,7 @@ fn left_top(
                         let next = match *current_input_mode.read() {
                             InputMode::Draw => InputMode::Pan,
                             InputMode::Pan => InputMode::Select,
-                            InputMode::Select | InputMode::Text => InputMode::Draw,
+                            InputMode::Select | InputMode::Text | InputMode::Lasso => InputMode::Draw,
                         };
                         lock(&press_board).set_input_mode(next);
                         current_input_mode.set(next);

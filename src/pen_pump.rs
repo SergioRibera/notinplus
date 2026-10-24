@@ -420,7 +420,10 @@ fn apply(event: PenEvent, dt: &mut DtTracker) {
                 // Pen is deferred to the sibling overlay; pump is inert.
                 InputMode::Select => {}
                 InputMode::Text => guard.text_press_down(lx, ly),
+                InputMode::Lasso => guard.lasso_down(lx, ly),
             }
+            drop(guard);
+            mark_pen_seen();
         }
         PenEvent::Move(m) => {
             record_pen_pos(m.sample.x, m.sample.y);
@@ -464,6 +467,10 @@ fn apply(event: PenEvent, dt: &mut DtTracker) {
                     let _ = dt.advance(m.sample.timestamp_us);
                     guard.text_press_move(lx, ly);
                 }
+                InputMode::Lasso => {
+                    let _ = dt.advance(m.sample.timestamp_us);
+                    guard.lasso_move(lx, ly);
+                }
             }
         }
         PenEvent::Up(sample) => {
@@ -491,6 +498,10 @@ fn apply(event: PenEvent, dt: &mut DtTracker) {
                     }
                     InputMode::Select => {}
                     InputMode::Text => guard.text_press_up(lx, ly),
+                    InputMode::Lasso => {
+                        guard.lasso_move(lx, ly);
+                        guard.lasso_up();
+                    }
                 }
             }
             dt.clear();
@@ -506,12 +517,14 @@ fn apply(event: PenEvent, dt: &mut DtTracker) {
                     InputMode::Pan => guard.pan_end(),
                     InputMode::Select => {}
                     InputMode::Text => guard.text_press_cancel(),
+                    InputMode::Lasso => guard.lasso_cancel(),
                 }
             }
             dt.clear();
             clear_active_stroke();
         }
         PenEvent::ButtonChanged(_) => {}
+        PenEvent::Gesture(_) => shortcut(),
     }
 }
 
@@ -527,4 +540,84 @@ fn point_from_sample(sample: &PenSample, dt_us: u16) -> InkPoint {
     // 0.0..=1.0, but clamp defensively before quantising.
     let tilt = sample.tilt_x.hypot(sample.tilt_y);
     InkPoint::from_normalized(sample.x, sample.y, sample.pressure, tilt, dt_us)
+}
+
+/// Whether a pen was near the screen a moment ago: touches then are
+/// the writing hand, not a gesture.
+#[must_use]
+pub fn pen_in_use() -> bool {
+    pen_screen_pos_fresh().is_some()
+}
+
+/// The stylus shortcut (Apple Pencil double tap, S Pen button): run
+/// what Ajustes › Lápiz says on the canvas under the pen.
+fn shortcut() {
+    let action = crate::settings::Settings::current_pen_double_tap();
+    let Some((x, y)) = pen_screen_pos_fresh() else {
+        return;
+    };
+    if let Some((board, _)) = hover_target(x, y).or_else(|| hit_canvas(x, y)) {
+        lock_board(&board).pen_shortcut(action);
+    }
+}
+
+/// Whether this device has ever shown a pen, remembered across runs.
+#[istmo::message]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PenPresence {
+    pub seen: bool,
+}
+
+impl crate::persist::Persisted for PenPresence {
+    const FILE: &'static str = "pen-presence.v1.bin";
+}
+
+static PEN_SEEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static PEN_SEEN_LOADED: std::sync::Once = std::sync::Once::new();
+
+/// Whether a pen has been used on this device.
+#[must_use]
+pub fn pen_seen() -> bool {
+    use crate::persist::Persisted;
+    PEN_SEEN_LOADED.call_once(|| {
+        PEN_SEEN.store(PenPresence::load().seen, std::sync::atomic::Ordering::Relaxed);
+    });
+    PEN_SEEN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn mark_pen_seen() {
+    use crate::persist::Persisted;
+    if pen_seen() {
+        return;
+    }
+    PEN_SEEN.store(true, std::sync::atomic::Ordering::Relaxed);
+    if let Err(err) = (PenPresence { seen: true }).save() {
+        log::warn!("pen presence: {err}");
+    }
+    PEN_LISTENERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .retain(|tx| tx.send(()).is_ok());
+}
+
+static PEN_LISTENERS: Mutex<Vec<flume::Sender<()>>> = Mutex::new(Vec::new());
+
+/// [`pen_seen`] as reactive state: flips once the first pen touches.
+pub fn use_pen_seen() -> freya::prelude::State<bool> {
+    use freya::prelude::{WritableUtils, spawn, use_hook, use_state};
+    let state = use_state(pen_seen);
+    use_hook(move || {
+        let (tx, rx) = flume::unbounded();
+        PEN_LISTENERS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(tx);
+        let mut state = state;
+        spawn(async move {
+            if rx.recv_async().await.is_ok() {
+                state.set(true);
+            }
+        });
+    });
+    state
 }

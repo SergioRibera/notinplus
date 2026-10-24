@@ -48,6 +48,11 @@ use crate::text_box::TextBoxId;
 use crate::undo::UndoStack;
 
 mod handwriting;
+mod lasso;
+mod tools;
+mod touch;
+
+pub use lasso::Selection;
 mod text;
 
 pub use handwriting::LETTER_IDLE;
@@ -175,6 +180,9 @@ pub struct Board {
     glyph_paths: HashMap<InkGlyphId, Path>,
     /// Handwriting smoothing: pending letter, font, idle timer channel.
     handwriting: handwriting::Handwriting,
+    lasso: lasso::LassoState,
+    touch: touch::TouchState,
+    previous_preset: Option<BrushPreset>,
     /// `stroke_id → (layer_id, within-layer stroke index)`. Kills the
     /// O(N) `position` scan the eraser used to run per candidate hit
     /// and localises index shifting to the affected layer.
@@ -399,6 +407,8 @@ pub enum InputMode {
     /// Taps (pen, finger or mouse) create text boxes or open existing
     /// ones for editing; a finger drag still pans.
     Text,
+    /// The pen circles ink to select it; dragging the selection moves it.
+    Lasso,
 }
 
 impl Default for Board {
@@ -422,6 +432,9 @@ impl Default for Board {
             cached_paths: HashMap::new(),
             glyph_paths: HashMap::new(),
             handwriting: handwriting::Handwriting::default(),
+            lasso: lasso::LassoState::default(),
+            touch: touch::TouchState::default(),
+            previous_preset: None,
             stroke_index: HashMap::new(),
             undo: UndoStack::default(),
             erase_session: None,
@@ -598,6 +611,10 @@ impl Board {
         }
         if self.input_mode == InputMode::Text {
             self.end_text_session();
+        }
+        if self.input_mode == InputMode::Lasso {
+            self.lasso_cancel();
+            self.clear_selection();
         }
         self.input_mode = mode;
         self.cancel();
@@ -868,104 +885,6 @@ impl Board {
         self.gesture_active
     }
 
-    /// Register a new touch point. The first finger latches a
-    /// single-touch viewport pan so the user can drag the canvas while
-    /// the pen keeps drawing on its own channel. A second finger
-    /// promotes to pinch-zoom and rolls back any in-flight stroke.
-    ///
-    /// Touches landing within [`crate::pen_pump::PEN_TOUCH_FILTER_RADIUS`]
-    /// of a recent pen sample are dropped — some platforms deliver
-    /// stylus contact as both an istmo-pen event AND a freya touch
-    /// event, which would otherwise fire a spurious finger-pan on
-    /// every stroke.
-    pub fn touch_down(&mut self, id: u64, sx: f32, sy: f32) {
-        // Pen-vs-touch disambiguation runs upstream in
-        // `drawing_surface` so the pen pos (window-coord) and the
-        // touch sample (canvas-local) can be compared in matching
-        // spaces. Reaching this point means the caller already
-        // decided the finger is not a stylus artifact.
-        self.finger_positions.insert(id, (sx, sy));
-        let n = self.finger_positions.len();
-        if n == 1 {
-            // Pen stays on the pen pump; this just moves the viewport.
-            self.touch_pan_finger = Some(id);
-            self.pan_begin(sx, sy);
-            if self.input_mode == InputMode::Text {
-                self.text_press_down(sx, sy);
-            }
-        } else {
-            self.text_press_cancel();
-        }
-        if n >= 2 && !self.gesture_active {
-            self.gesture_active = true;
-            self.cancel();
-            // Drop any pan anchor so the second finger lands a clean
-            // pinch-zoom instead of fighting a stale translate (either
-            // from our own single-finger pan above or from the pen
-            // pump in `InputMode::Pan`).
-            self.pan_end();
-            self.touch_pan_finger = None;
-        }
-        self.gesture_baseline = self.compute_gesture_baseline();
-    }
-
-    /// Update a tracked finger. Single-finger moves pan the viewport;
-    /// two-finger moves pinch-zoom around the centroid.
-    pub fn touch_move(&mut self, id: u64, sx: f32, sy: f32) {
-        if !self.finger_positions.contains_key(&id) {
-            return;
-        }
-        self.finger_positions.insert(id, (sx, sy));
-        if self.gesture_active {
-            let Some(new) = self.compute_gesture_baseline() else {
-                return;
-            };
-            if let Some(prev) = self.gesture_baseline {
-                // Distances below one surface pixel are numerically noisy
-                // — a pair that near-collides would produce factor blowups.
-                if prev.distance > 1.0 && new.distance > 1.0 {
-                    let factor = new.distance / prev.distance;
-                    if (factor - 1.0).abs() > 1e-4 {
-                        self.viewport_zoom_at(new.centroid.0, new.centroid.1, factor);
-                    }
-                }
-            }
-            self.gesture_baseline = Some(new);
-            return;
-        }
-        if self.touch_pan_finger == Some(id) {
-            self.pan_move(sx, sy);
-            self.text_press_move(sx, sy);
-        }
-    }
-
-    /// Drop a finger from the tracker. Leaving multi-finger mode clears
-    /// pinch state and re-latches the pan onto whichever finger is
-    /// still down, so a 2→1 lift transitions seamlessly from pinch
-    /// back to drag.
-    pub fn touch_up(&mut self, id: u64) {
-        if let Some((sx, sy)) = self.finger_positions.remove(&id)
-            && self.touch_pan_finger == Some(id)
-        {
-            self.text_press_up(sx, sy);
-        }
-        if self.touch_pan_finger == Some(id) {
-            self.touch_pan_finger = None;
-            self.pan_end();
-        }
-        if self.finger_positions.len() < 2 {
-            self.gesture_active = false;
-            self.gesture_baseline = None;
-            if self.touch_pan_finger.is_none() {
-                if let Some((&remaining_id, &(sx, sy))) = self.finger_positions.iter().next() {
-                    self.touch_pan_finger = Some(remaining_id);
-                    self.pan_begin(sx, sy);
-                }
-            }
-        } else {
-            self.gesture_baseline = self.compute_gesture_baseline();
-        }
-    }
 
     fn compute_gesture_baseline(&self) -> Option<GestureBaseline> {
         if self.finger_positions.len() < 2 {
@@ -2206,10 +2125,12 @@ impl Board {
             }
             let opacity = layer.opacity.clamp(0.0, 1.0);
             for stroke in &layer.strokes {
-                if let Some(set) = visible.as_ref() {
-                    if !set.contains(&stroke.id) {
-                        continue;
-                    }
+                let dragged = self.drag_offset_of_stroke(stroke.id);
+                if dragged.is_none()
+                    && let Some(set) = visible.as_ref()
+                    && !set.contains(&stroke.id)
+                {
+                    continue;
                 }
                 let Some(cached) = self.cached_paths.get(&stroke.id) else {
                     continue;
@@ -2226,6 +2147,13 @@ impl Board {
                     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                     let scaled = (f32::from(base.a()) * opacity).clamp(0.0, 255.0) as u8;
                     paint.set_color(base.with_a(scaled));
+                }
+                if let Some((dx, dy)) = dragged {
+                    canvas.save();
+                    canvas.translate((dx, dy));
+                    canvas.draw_path(cached, &paint);
+                    canvas.restore();
+                    continue;
                 }
                 canvas.draw_path(cached, &paint);
             }
@@ -2283,6 +2211,7 @@ impl Board {
         if let Some((ax, ay, cx, cy)) = self.selection_rect {
             draw_selection_rect(canvas, ax, ay, cx, cy);
         }
+        self.paint_lasso(canvas);
     }
 
     /// Pointer disc and bookmark pins, in surface pixels.
@@ -2756,6 +2685,13 @@ pub fn drawing_surface(
                     y + oy,
                     crate::pen_pump::PEN_TOUCH_FILTER_RADIUS,
                 ) {
+                    return;
+                }
+                // Ignorar la palma: while the pen is in use, the resting
+                // hand must neither pan nor write.
+                let palm = crate::settings::SettingsStore::try_get()
+                    .is_some_and(|s| s.peek().pen.palm_rejection);
+                if palm && crate::pen_pump::pen_in_use() {
                     return;
                 }
                 let mut guard = lock(&touch_start_board);
