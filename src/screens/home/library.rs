@@ -500,7 +500,7 @@ impl Component for EmptyShelf {
                             anchor,
                             crate::flows::create::Context {
                                 folder,
-                                selection: Vec::new(),
+                                ..Default::default()
                             },
                         );
                     }),

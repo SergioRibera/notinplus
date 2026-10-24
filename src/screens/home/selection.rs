@@ -134,14 +134,17 @@ impl Component for SelectionActions {
                 flows::export_items(export.clone());
                 done();
             }));
-            let group = items.clone();
+        }
+        if current.count() > 0 {
+            let (group, group_folders) = (items.clone(), folders.clone());
             bar.push(BarItem::action(
-                format!("Nueva carpeta con {}", items.len()),
+                format!("Nueva carpeta con {}", current.count()),
                 lucide::folder_plus(),
                 move |()| {
                     flows::create::new_folder(flows::create::Context {
                         folder,
                         selection: group.clone(),
+                        folders: group_folders.clone(),
                     });
                     done();
                 },

@@ -48,7 +48,7 @@ impl Component for Fab {
         let bottom = MARGIN + self.bottom;
         let context = move || Context {
             folder,
-            selection: Vec::new(),
+            ..Context::default()
         };
         let bubbles = shortcuts
             .iter()

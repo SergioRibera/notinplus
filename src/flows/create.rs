@@ -30,6 +30,16 @@ pub struct Context {
     pub folder: FolderId,
     /// Documents selected in Home (a new folder can take them).
     pub selection: Vec<ItemId>,
+    /// Folders selected in Home, taken along like the documents.
+    pub folders: Vec<FolderId>,
+}
+
+impl Context {
+    /// Everything selected, documents and folders.
+    #[must_use]
+    pub fn selected(&self) -> usize {
+        self.selection.len() + self.folders.len()
+    }
 }
 
 fn key(entry: &CatalogEntry) -> EntryKey {
@@ -176,10 +186,10 @@ impl Menu {
         let context = &self.context;
         let mut list = vec![ActionEntry::Item(
             Action::new(
-                if context.selection.is_empty() {
+                if context.selected() == 0 {
                     "Carpeta".to_owned()
                 } else {
-                    format!("Carpeta con {} seleccionados", context.selection.len())
+                    format!("Carpeta con {} seleccionados", context.selected())
                 },
                 {
                     let context = context.clone();
@@ -889,7 +899,7 @@ fn replace_failed(item: ItemId, file: &str, why: &str) {
 /// A new folder, optionally taking the selected documents along.
 pub fn new_folder(context: Context) {
     let p = palette();
-    let selected = context.selection.len();
+    let selected = context.selected();
     let spec = FormSpec {
         title: "Nueva carpeta".to_owned(),
         kind_icon: Some(freya::icons::lucide::folder()),
@@ -909,6 +919,7 @@ pub fn new_folder(context: Context) {
     };
     forms::open(spec, initial, move |values| {
         let selection = context.selection.clone();
+        let folders = context.folders.clone();
         crate::state::edit("crear la carpeta", async move |lib| {
             let tags = forms::resolve_tags(lib, &values.tags).await;
             let name = if values.name.trim().is_empty() {
@@ -922,6 +933,9 @@ pub fn new_folder(context: Context) {
             if values.move_selected {
                 for item in selection {
                     lib.move_item(item, folder).await?;
+                }
+                for moved in folders {
+                    lib.move_folder(moved, folder).await?;
                 }
             }
             Ok(())

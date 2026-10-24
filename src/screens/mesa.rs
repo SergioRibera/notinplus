@@ -392,7 +392,7 @@ impl Shortcuts {
                 ("n", false) => {
                     crate::flows::create::open_menu_from_keyboard(crate::flows::create::Context {
                         folder: crate::screens::home::Browse::get().folder(),
-                        selection: Vec::new(),
+                        ..Default::default()
                     });
                     true
                 }

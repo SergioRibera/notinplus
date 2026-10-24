@@ -377,6 +377,7 @@ fn on_key(e: &Event<KeyboardEventData>, mut selection: State<Selection>, folder:
                 crate::flows::create::open_menu_from_keyboard(crate::flows::create::Context {
                     folder,
                     selection: selection.peek().items.clone(),
+                    folders: selection.peek().folders.clone(),
                 });
                 true
             }
