@@ -5,8 +5,8 @@
 //! portal ([`ModalPortal`]) sits as the last child of the app shell,
 //! and every consumer calls
 //! `ModalController::get().open(Modal::new(body).center())`.
-//! Only one modal is visible at a time — opening a second replaces the
-//! first — which keeps z-index reasoning trivial without a stack.
+//! `open` replaces the top modal; `push` stacks one above it (Settings
+//! › Vincular). Escape and backdrop taps only reach the top one.
 //!
 //! # Builder style
 //!
@@ -20,11 +20,13 @@
 //! to `Modal::new(body)`. Higher-level wrappers (Dialog, Sheet, …)
 //! live in sibling modules and delegate here.
 
-use freya::animation::*;
+use freya::animation::{AnimNum, Ease, Function, OnCreation, ReadAnimatedValue, use_animation};
 use freya::prelude::*;
 
-/// Host-provided chrome hooks: insets for the bottom gutter and a mask
-/// sink the modal publishes its area to. Installed via
+/// Host-provided chrome hooks.
+///
+/// Insets for the bottom gutter and a mask sink the modal publishes
+/// its area to. Installed via
 /// `use_provide_context(ModalChrome { … })` at app root; absent context
 /// means default (no insets, no mask) which is the common case for
 /// plugin-opened modals that do not need to block any underlying
@@ -178,14 +180,17 @@ impl Modal {
 
 #[derive(Clone, PartialEq, Default, Debug)]
 struct ModalState {
-    modal: Option<Modal>,
+    /// Open modals, bottom first. The last one is on top and receives
+    /// Escape / back.
+    stack: Vec<Modal>,
 }
 
-/// Root-scoped controller shared across the app. Look up with
-/// [`ModalController::get`] — the first call inside the process
+/// Root-scoped controller shared across the app.
+///
+/// Look up with [`ModalController::get`]: the first call inside the process
 /// installs the state on `ScopeId::ROOT` so subsequent calls in any
 /// scope observe the same slot.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ModalController {
     state: State<ModalState>,
 }
@@ -215,11 +220,18 @@ impl ModalController {
         controller
     }
 
-    /// Replace whatever modal is open with `modal`. Fires the previous
-    /// modal's `on_close` before installing the new one.
+    /// Replace the top modal with `modal` (or open it when none is
+    /// open). Fires the replaced modal's `on_close`.
     pub fn open(&mut self, modal: Modal) {
-        self.take_on_close_cb();
-        self.state.set(ModalState { modal: Some(modal) });
+        let replaced = self.state.write().stack.pop();
+        Self::fire_on_close(replaced);
+        self.state.write().stack.push(modal);
+    }
+
+    /// Open `modal` on top of the current one, which stays underneath
+    /// (Settings › Vincular, a confirmation over a sheet).
+    pub fn push(&mut self, modal: Modal) {
+        self.state.write().stack.push(modal);
     }
 
     /// Dismiss the current modal (fires `on_close` if set). No-op when
@@ -228,35 +240,41 @@ impl ModalController {
         if !self.is_open() {
             return;
         }
-        self.take_on_close_cb();
-        self.state.set(ModalState { modal: None });
+        let closed = self.state.write().stack.pop();
+        Self::fire_on_close(closed);
+    }
+
+    /// Dismiss every open modal, top first.
+    pub fn close_all(&mut self) {
+        while self.is_open() {
+            self.close();
+        }
     }
 
     /// Whether a modal is currently open. Useful for suppressing
     /// hotkeys or backdrop hits from outside handlers.
     #[must_use]
     pub fn is_open(&self) -> bool {
-        self.state.read().modal.is_some()
+        !self.state.read().stack.is_empty()
     }
 
-    fn take_on_close_cb(&mut self) -> Option<NoArgCallback<()>> {
-        let cb = self
-            .state
-            .read()
-            .modal
-            .as_ref()
-            .and_then(|m| m.on_close.clone());
-        if let Some(cb) = &cb {
+    /// How many modals are stacked.
+    #[must_use]
+    pub fn depth(&self) -> usize {
+        self.state.read().stack.len()
+    }
+
+    fn fire_on_close(modal: Option<Modal>) {
+        if let Some(cb) = modal.and_then(|m| m.on_close) {
             cb.call();
         }
-        cb
     }
 }
 
 /// Renders the currently open modal (if any) over the tracked `area`.
 /// Place as the **last child** of the app shell so it stacks above
 /// every route.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ModalPortal {
     area: State<Area>,
 }
@@ -277,15 +295,17 @@ impl ModalPortal {
 impl Component for ModalPortal {
     fn render(&self) -> impl IntoElement {
         let controller = ModalController::get();
-        let model = controller.state.read().modal.clone();
-        match model {
-            Some(m) => ModalOverlay {
-                model: m,
+        let stack = controller.state.read().stack.clone();
+        let top = stack.len().saturating_sub(1);
+        rect().children(stack.into_iter().enumerate().map(|(depth, model)| {
+            ModalOverlay {
+                model,
                 area: self.area,
+                depth,
+                is_top: depth == top,
             }
-            .into_element(),
-            None => rect().into_element(),
-        }
+            .into_element()
+        }))
     }
 }
 
@@ -293,6 +313,8 @@ impl Component for ModalPortal {
 struct ModalOverlay {
     model: Modal,
     area: State<Area>,
+    depth: usize,
+    is_top: bool,
 }
 
 impl std::fmt::Debug for ModalOverlay {
@@ -336,7 +358,11 @@ impl Component for ModalOverlay {
                     .function(Function::Cubic),
             )
         });
-        let (opacity, scale, blur) = animations.get().value();
+        let (opacity, scale, blur) = if crate::theme::reduce_motion() {
+            (1.0, 1.0, 10.0)
+        } else {
+            animations.get().value()
+        };
 
         let width = area.width();
         let height = area.height();
@@ -346,10 +372,11 @@ impl Component for ModalOverlay {
         let safe_height = (height - bottom_inset).max(0.0);
         let placement = model.placement;
         let dismiss = model.dismiss_on_backdrop;
-        let dismiss_on_escape = model.dismiss_on_escape;
+        let dismiss_on_escape = model.dismiss_on_escape && self.is_top;
+        let level = 4 + 2 * u8::try_from(self.depth.min(20)).unwrap_or(20);
         let backdrop_alpha = model.backdrop_alpha;
         let body_width = model.width;
-        let body = model.body.clone();
+        let body = model.body;
 
         // Backdrop and card are rendered as **siblings** under the
         // top-level layer-overlay rect. Freya bubbles press events up
@@ -368,31 +395,31 @@ impl Component for ModalOverlay {
         // rect would cover the full area and swallow empty-space
         // clicks that should have dismissed the popover.
         let body_node = rect()
-            .layer(Layer::OverlayLevel(5))
+            .layer(Layer::OverlayLevel(level + 1))
             .maybe(body_width.is_some(), |r| {
                 r.width(Size::px(body_width.unwrap_or_default()))
             })
-            .opacity(opacity as f32)
-            .scale((scale as f32, scale as f32))
+            .opacity(opacity)
+            .scale((scale, scale))
             .child(body);
 
         let card_layer = match placement {
             ModalPlacement::Manual => body_node.into_element(),
             ModalPlacement::Center | ModalPlacement::BottomSheet => {
                 card_container(placement, width, safe_height, bottom_inset)
-                    .layer(Layer::OverlayLevel(5))
+                    .layer(Layer::OverlayLevel(level + 1))
                     .child(body_node)
                     .into_element()
             }
         };
 
         rect()
-            .layer(Layer::OverlayLevel(4))
+            .layer(Layer::OverlayLevel(level))
             .position(Position::new_absolute().top(0.0).left(0.0))
             .width(Size::px(width))
             .height(Size::px(height))
             .on_sized({
-                let sink = chrome.on_sized.clone();
+                let sink = chrome.on_sized;
                 move |e: Event<SizedEventData>| {
                     if let Some(cb) = &sink {
                         cb.call(e.area);
@@ -403,7 +430,7 @@ impl Component for ModalOverlay {
                 r.on_global_key_down(|e: Event<KeyboardEventData>| {
                     if matches!(
                         e.key,
-                        Key::Named(NamedKey::Escape) | Key::Named(NamedKey::BrowserBack)
+                        Key::Named(NamedKey::Escape | NamedKey::BrowserBack)
                     ) {
                         e.stop_propagation();
                         ModalController::get().close();
@@ -417,7 +444,7 @@ impl Component for ModalOverlay {
                     .height(Size::px(height))
                     .background(Color::from_argb(backdrop_alpha, 0, 0, 0))
                     .backdrop_blur(blur)
-                    .maybe(dismiss, |r| r.on_press(|_| ModalController::get().close())),
+                    .maybe(dismiss && self.is_top, |r| r.on_press(|_| ModalController::get().close())),
             )
             .child(card_layer)
     }
