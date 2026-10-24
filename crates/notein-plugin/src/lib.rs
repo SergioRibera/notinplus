@@ -27,6 +27,16 @@
 //! CanvasKind>` with zero codec overhead.
 
 pub mod bookmark;
+pub mod catalog;
+pub mod create;
+pub mod doc;
+pub mod erased;
+pub mod face;
+pub mod info;
+pub mod kind;
+pub mod payload;
+pub mod plugin;
+pub mod services;
 pub mod canvas;
 pub mod config;
 pub mod creation;
