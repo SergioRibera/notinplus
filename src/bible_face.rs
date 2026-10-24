@@ -409,10 +409,13 @@ fn chapter_body(
     scroll_ctx: VerseScrollCtx,
 ) -> Element {
     let db = &reader.db;
-    let cross_refs = crate::plugins::builtin::bible_kind()
-        .is_none_or(|kind| plugin_config::effective_enable_crossref(kind.config()))
-        .then(|| cross_refs(db, data))
-        .unwrap_or_default();
+    let show_cross_refs = crate::plugins::builtin::bible_kind()
+        .is_none_or(|kind| plugin_config::effective_enable_crossref(kind.config()));
+    let cross_refs = if show_cross_refs {
+        cross_refs(db, data)
+    } else {
+        Vec::new()
+    };
     let reading = reader::Reading {
         cross_refs: cross_refs_by_verse(&cross_refs),
         footnotes: footnotes_by_verse(&footnotes(db, data)),

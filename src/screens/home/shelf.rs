@@ -77,7 +77,7 @@ pub struct DocEntry {
 }
 
 /// The listed folder.
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Shelf {
     pub folders: Vec<FolderEntry>,
     pub docs: Vec<DocEntry>,
@@ -155,10 +155,10 @@ pub fn card(data: &LibraryData, item: &Item, shared: bool, now: u64) -> DocCardD
     let when = crate::format::ago(item.updated_at, now);
     let label = crate::plugins::kind_info(&item.kind.plugin_id)
         .map_or_else(|| "Documento".to_owned(), |k| k.label.into_owned());
-    let meta = match glance.summary {
-        Some(summary) => format!("{summary} · {when}"),
-        None => format!("{label} · {when}"),
-    };
+    let meta = glance.summary.map_or_else(
+        || format!("{label} · {when}"),
+        |summary| format!("{summary} · {when}"),
+    );
     DocCardData {
         name: item.name.clone(),
         kind: item.kind.plugin_id.clone(),

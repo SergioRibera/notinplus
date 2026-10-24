@@ -131,12 +131,12 @@ impl Component for Panel {
 }
 
 /// The panel as a sheet, on phones.
-pub(super) fn open_sheet(data: Arc<LibraryData>, focus: Option<Focus>, start: PanelTab) {
+pub(super) fn open_sheet(data: Arc<LibraryData>, focus: Option<&Focus>, start: PanelTab) {
     let tab = State::create_in_scope(start, ScopeId::ROOT);
     Sheet::titled("Documento")
         .child(PanelBody {
             data,
-            item: focus.as_ref().and_then(Focus::item),
+            item: focus.and_then(Focus::item),
             tab,
         })
         .open();
@@ -244,7 +244,7 @@ impl Component for PanelBody {
                             .color
                             .map_or(p.t3, |[r, g, b]| Color::from_rgb(r, g, b));
                         ListRow::new(mark.title.clone())
-                            .subtitle(mark.snippet.clone())
+                            .subtitle(mark.snippet)
                             .leading(notein_ui_kit::Leading::Element(
                                 rect()
                                     .width(Size::px(10.0))

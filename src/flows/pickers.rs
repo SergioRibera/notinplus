@@ -303,7 +303,7 @@ pub fn notebook_sheet(item: ItemId) {
                 format!("También cuaderno de {}", others.join(", "))
             };
             let id = nb.id;
-            ListRow::new(nb.name.clone())
+            ListRow::new(nb.name)
                 .subtitle(subtitle)
                 .kind(freya::icons::lucide::pen_line(), p.kinds.canvas)
                 .on_press(move |_| {
@@ -357,31 +357,33 @@ struct FolderTree {
     on_pick: OnFolder,
 }
 
+/// Folders under `parent`, depth first and by name, with their depth.
+fn walk_folders(
+    data: &crate::library::LibraryData,
+    parent: FolderId,
+    depth: usize,
+    out: &mut Vec<(FolderId, String, usize)>,
+    excluded: &[FolderId],
+) {
+    let mut children: Vec<_> = data
+        .folders_of(parent)
+        .into_iter()
+        .filter(|f| !excluded.contains(&f.id))
+        .collect();
+    children.sort_by_key(|f| f.name.to_lowercase());
+    for folder in children {
+        out.push((folder.id, folder.name.clone(), depth));
+        walk_folders(data, folder.id, depth + 1, out, excluded);
+    }
+}
+
 impl Component for FolderTree {
     fn render(&self) -> impl IntoElement {
         let Some(data) = LibraryView::get().data() else {
             return rect().into_element();
         };
-        fn walk(
-            data: &crate::library::LibraryData,
-            parent: FolderId,
-            depth: usize,
-            out: &mut Vec<(FolderId, String, usize)>,
-            excluded: &[FolderId],
-        ) {
-            let mut children: Vec<_> = data
-                .folders_of(parent)
-                .into_iter()
-                .filter(|f| !excluded.contains(&f.id))
-                .collect();
-            children.sort_by_key(|f| f.name.to_lowercase());
-            for folder in children {
-                out.push((folder.id, folder.name.clone(), depth));
-                walk(data, folder.id, depth + 1, out, excluded);
-            }
-        }
         let mut rows = vec![(ROOT_FOLDER, "Biblioteca".to_owned(), 0)];
-        walk(&data, ROOT_FOLDER, 1, &mut rows, &self.excluded);
+        walk_folders(&data, ROOT_FOLDER, 1, &mut rows, &self.excluded);
         let current = self.current;
         Group::default()
             .children(rows.into_iter().map(|(id, name, depth)| {

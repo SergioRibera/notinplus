@@ -218,10 +218,10 @@ impl Component for Settings {
                     })
                     .child(Text::new(title).role(TextRole::Title).fill())
             };
-            let (head, content) = match current {
-                Some(section) => (header(section.label(), true), section.body()),
-                None => (header("Ajustes", false), list.into_element()),
-            };
+            let (head, content) = current.map_or_else(
+                || (header("Ajustes", false), list.into_element()),
+                |section| (header(section.label(), true), section.body()),
+            );
             return rect()
                 .position(Position::new_absolute().top(0.0).left(0.0))
                 .width(Size::px(size.width))

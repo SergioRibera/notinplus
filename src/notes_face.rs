@@ -85,18 +85,11 @@ impl Component for NotesFace {
         });
         use_hook({
             let doc = Arc::clone(&doc);
-            let markdown = markdown;
             move || follow_remote(item, doc, markdown)
         });
-        use_hook({
-            let typing = typing;
-            move || follow_typing(item, typing)
-        });
+        use_hook(move || follow_typing(item, typing));
         use_hook(move || listen_for_jumps(item, controller, scroll));
-        use_hook({
-            let locked = locked;
-            move || follow_policy(item, locked)
-        });
+        use_hook(move || follow_policy(item, locked));
         use_side_effect(move || controller.set_read_only(*locked.read()));
         use_hook(move || {
             OPEN_NOTES.with(|open| open.borrow_mut().insert(item, controller));

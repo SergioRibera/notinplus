@@ -157,7 +157,7 @@ impl Component for Loaded {
         });
 
         let current_filter = filter.read().clone();
-        let shelf = Arc::new(Shelf::build(&data, folder, &current_filter, library.sort));
+        let listed = Arc::new(Shelf::build(&data, folder, &current_filter, library.sort));
         let columns = Columns::fit(content_width);
         let at_root = folder == ROOT_FOLDER;
         let selecting = selection.read().active;
@@ -215,7 +215,7 @@ impl Component for Loaded {
             }
             .into_element()
         });
-        let listing = if shelf.is_empty() {
+        let listing = if listed.is_empty() {
             EmptyShelf {
                 folder,
                 filtered: current_filter != Filter::All,
@@ -224,14 +224,14 @@ impl Component for Loaded {
         } else if library.layout == ShelfLayout::List {
             Rows {
                 data: Arc::clone(&data),
-                shelf: Arc::clone(&shelf),
+                shelf: Arc::clone(&listed),
                 selection,
             }
             .into_element()
         } else {
             Grid {
                 data: Arc::clone(&data),
-                shelf: Arc::clone(&shelf),
+                shelf: Arc::clone(&listed),
                 columns,
                 selection,
             }

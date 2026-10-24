@@ -171,6 +171,7 @@ impl DocumentKind for CanvasKind {
             index
                 .docs
                 .push((doc.id, doc.name.to_owned(), content.marks.clone()));
+            drop(index);
         }
         IndexReport::complete(1)
     }
@@ -301,41 +302,6 @@ impl DocumentKind for CanvasKind {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn mark(body: &str) -> CanvasMark {
-        CanvasMark {
-            bookmark: [1; 16],
-            body: body.to_owned(),
-            color: None,
-            updated_at: 0,
-        }
-    }
-
-    #[test]
-    fn search_walks_bookmarks_of_every_canvas() {
-        let kind = CanvasKind::default();
-        let content = CanvasContent {
-            layers: Vec::new(),
-            marks: vec![mark("# Adopción\nde hijos"), mark("Otra cosa")],
-        };
-        let meta = DocMeta {
-            id: DocId([2; 16]),
-            name: "Mapa",
-            updated_at: 0,
-        };
-        kind.index(meta, &content, None);
-        let query = SearchQuery::new("ADOP", 10);
-        let hits: Vec<_> = kind.search(&query).collect();
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].title, "Adopción");
-        kind.forget(DocId([2; 16]));
-        assert_eq!(kind.search(&query).count(), 0);
-    }
-}
-
 impl CanvasContent {
     /// Summary of an ink document.
     #[must_use]
@@ -415,5 +381,40 @@ pub fn after_save(item: crate::library::ItemId, snapshot: Vec<u8>) {
         });
     if let Err(err) = spawned {
         log::error!("cover thread: {err}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mark(body: &str) -> CanvasMark {
+        CanvasMark {
+            bookmark: [1; 16],
+            body: body.to_owned(),
+            color: None,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn search_walks_bookmarks_of_every_canvas() {
+        let kind = CanvasKind::default();
+        let content = CanvasContent {
+            layers: Vec::new(),
+            marks: vec![mark("# Adopción\nde hijos"), mark("Otra cosa")],
+        };
+        let meta = DocMeta {
+            id: DocId([2; 16]),
+            name: "Mapa",
+            updated_at: 0,
+        };
+        kind.index(meta, &content, None);
+        let query = SearchQuery::new("ADOP", 10);
+        let hits: Vec<_> = kind.search(&query).collect();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].title, "Adopción");
+        kind.forget(DocId([2; 16]));
+        assert_eq!(kind.search(&query).count(), 0);
     }
 }

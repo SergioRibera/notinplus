@@ -127,7 +127,7 @@ impl Component for MesaBar {
                     Arc::clone(&data_palette),
                     super::Ops { mesa },
                     ui,
-                    focus_palette.clone(),
+                    focus_palette.as_ref(),
                 );
             })
             .child(
@@ -217,7 +217,7 @@ impl Component for MesaBar {
                             Arc::clone(&data),
                             super::Ops { mesa },
                             ui,
-                            focus.clone(),
+                            focus.as_ref(),
                         );
                     }
                 })

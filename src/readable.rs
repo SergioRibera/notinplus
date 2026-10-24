@@ -181,9 +181,12 @@ fn bible_markdown(item: ItemId) -> Option<String> {
     let kind = crate::plugins::builtin::bible_kind()?;
     let mut out = String::from("# Resaltados\n\n");
     for mark in kind.marks(&content) {
-        out.push_str(&format!("- **{}**", mark.title));
+        out.push_str("- **");
+        out.push_str(&mark.title);
+        out.push_str("**");
         if !mark.snippet.is_empty() {
-            out.push_str(&format!(": {}", mark.snippet));
+            out.push_str(": ");
+            out.push_str(&mark.snippet);
         }
         out.push('\n');
     }

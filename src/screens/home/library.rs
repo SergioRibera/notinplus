@@ -148,14 +148,14 @@ impl Component for LibraryBar {
                 })
         };
         let layout_toggle = {
-            let list = library.layout == ShelfLayout::List;
+            let as_list = library.layout == ShelfLayout::List;
             IconButton::new(
-                if list {
+                if as_list {
                     lucide::layout_grid()
                 } else {
                     lucide::list()
                 },
-                if list {
+                if as_list {
                     "Ver como cuadrícula"
                 } else {
                     "Ver como lista"
@@ -163,7 +163,7 @@ impl Component for LibraryBar {
             )
             .on_press(move |_| {
                 settings.update(|s| {
-                    s.library.layout = if list {
+                    s.library.layout = if as_list {
                         ShelfLayout::Grid
                     } else {
                         ShelfLayout::List

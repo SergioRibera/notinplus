@@ -17,7 +17,7 @@ use crate::settings::SettingsStore;
 use crate::state::LibraryView;
 
 /// Everything one action sent to the trash; it restores together.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrashGroup {
     pub batch: u64,
     pub entries: Vec<TrashEntry>,
@@ -172,16 +172,20 @@ impl Component for TrashList {
                     .width(Size::flex(1.0))
                     .child(Text::new("Papelera").role(TextRole::Heading))
                     .child(
-                        Text::new(match retention.days() {
-                            Some(days) => format!(
-                                "{} · {size} · se borran solos a los {days} días",
-                                crate::format::count(total, "documento", "documentos")
-                            ),
-                            None => format!(
-                                "{} · {size} · se guardan hasta que los borres",
-                                crate::format::count(total, "documento", "documentos")
-                            ),
-                        })
+                        Text::new(retention.days().map_or_else(
+                            || {
+                                format!(
+                                    "{} · {size} · se guardan hasta que los borres",
+                                    crate::format::count(total, "documento", "documentos")
+                                )
+                            },
+                            |days| {
+                                format!(
+                                    "{} · {size} · se borran solos a los {days} días",
+                                    crate::format::count(total, "documento", "documentos")
+                                )
+                            },
+                        ))
                         .role(TextRole::Meta),
                     ),
             )
@@ -269,7 +273,7 @@ impl Component for TrashList {
             .collect();
 
         let empty_all = {
-            let batches = all_batches.clone();
+            let batches = all_batches;
             if confirming() {
                 rect()
                     .width(Size::fill())

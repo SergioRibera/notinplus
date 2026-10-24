@@ -233,12 +233,10 @@ impl Board {
     }
 
     fn locate_glyph(&self, id: InkGlyphId) -> Option<(u32, crate::ink_glyph::InkGlyph)> {
-        self.doc.layers.iter().find_map(|l| {
-            l.glyphs
-                .iter()
-                .find(|g| g.id == id)
-                .map(|g| (l.id, g.clone()))
-        })
+        self.doc
+            .layers
+            .iter()
+            .find_map(|l| l.glyphs.iter().find(|g| g.id == id).map(|g| (l.id, *g)))
     }
 
     /// Paint the selected ink in `color`.

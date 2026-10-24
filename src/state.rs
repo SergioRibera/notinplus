@@ -51,6 +51,7 @@ impl LibraryView {
         }
     }
 
+    #[allow(clippy::future_not_send)] // runs on the UI executor, never sent
     async fn refresh(mut self, handle: &LibHandle) {
         let data = handle.lock().await.snapshot();
         self.state.set(LibraryState::Ready(Arc::new(data)));

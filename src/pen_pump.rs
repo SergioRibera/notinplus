@@ -79,8 +79,7 @@ fn clear_pen_pos() {
 /// a touch at the same coord is unlikely to be a stylus artifact.
 #[must_use]
 pub fn pen_screen_pos_fresh() -> Option<(f32, f32)> {
-    let g = PEN_SURFACE_POS.lock().ok()?;
-    let (x, y, t) = (*g)?;
+    let (x, y, t) = (*PEN_SURFACE_POS.lock().ok()?)?;
     (t.elapsed() < PEN_POS_FRESHNESS).then_some((x, y))
 }
 
@@ -206,21 +205,22 @@ pub fn unregister_canvas_surface(id: CanvasSurfaceId) {
 /// Window-coord hit-test. Walks the registry in reverse (last-mounted
 /// first) so an overlay canvas (future `PiP`) wins over the base layer.
 fn hit_canvas(x: f32, y: f32) -> Option<(Arc<Mutex<Board>>, SurfaceRect)> {
-    let g = CANVAS_SURFACES.lock().ok()?;
-    for entry in g.iter().rev() {
-        if let Some(b) = entry.board.upgrade()
-            && entry.rect.contains(x, y)
-        {
-            return Some((b, entry.rect));
-        }
-    }
-    None
+    CANVAS_SURFACES
+        .lock()
+        .ok()?
+        .iter()
+        .rev()
+        .filter(|entry| entry.rect.contains(x, y))
+        .find_map(|entry| Some((entry.board.upgrade()?, entry.rect)))
 }
 
 fn active_stroke() -> Option<(Arc<Mutex<Board>>, SurfaceRect)> {
-    let g = ACTIVE_STROKE.lock().ok()?;
-    let (w, r) = g.as_ref()?;
-    Some((w.upgrade()?, *r))
+    let (board, rect) = ACTIVE_STROKE
+        .lock()
+        .ok()?
+        .as_ref()
+        .map(|(board, rect)| (board.upgrade(), *rect))?;
+    Some((board?, rect))
 }
 
 fn set_active_stroke(board: &Arc<Mutex<Board>>, rect: SurfaceRect) {

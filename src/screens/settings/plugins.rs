@@ -25,13 +25,13 @@ fn status(plugin: &Installed) -> &'static str {
     }
 }
 
-fn set_enabled(id: String, on: bool) {
-    crate::plugins::catalog::catalog_mut().set_enabled(&id, on);
+fn set_enabled(id: &str, on: bool) {
+    crate::plugins::catalog::catalog_mut().set_enabled(id, on);
     let mut store = SettingsStore::get();
     store.update(|s| {
         s.plugins.disabled.retain(|d| *d != id);
         if !on {
-            s.plugins.disabled.push(id.clone());
+            s.plugins.disabled.push(id.to_owned());
         }
     });
     crate::plugins::content::index_library();
@@ -85,7 +85,7 @@ impl Component for Plugins {
                     )
                     .trailing(Trailing::Switch {
                         on: plugin.is_active(),
-                        on_toggle: EventHandler::new(move |on| set_enabled(toggle_id.clone(), on)),
+                        on_toggle: EventHandler::new(move |on| set_enabled(&toggle_id, on)),
                     })
                     .on_press(move |_| open.set(Some(id.clone())))
                     .into_element()
@@ -198,21 +198,24 @@ impl Component for Detail {
                             ),
                     )
                     .child(
-                        Switch::new(plugin.is_active())
-                            .on_toggle(move |on| set_enabled(id.clone(), on)),
+                        Switch::new(plugin.is_active()).on_toggle(move |on| set_enabled(&id, on)),
                     ),
             )
             .child(Section::new("Qué agrega").child(Group::default().children(adds)))
             .child(
-                Section::new("Ajustes").child(match &plugin.settings {
-                    Some(settings) => SchemaForm {
-                        settings: Arc::clone(settings),
-                    }
-                    .into_element(),
-                    None => Text::new("Este plugin no tiene ajustes.")
-                        .role(TextRole::Hint)
-                        .into_element(),
-                }),
+                Section::new("Ajustes").child(plugin.settings.as_ref().map_or_else(
+                    || {
+                        Text::new("Este plugin no tiene ajustes.")
+                            .role(TextRole::Hint)
+                            .into_element()
+                    },
+                    |settings| {
+                        SchemaForm {
+                            settings: Arc::clone(settings),
+                        }
+                        .into_element()
+                    },
+                )),
             )
             .child(
                 Group::default()
@@ -282,7 +285,7 @@ fn install() {
         let staged = match Staged::unpack(&picked.bytes) {
             Ok(staged) => staged,
             Err(err) => {
-                incompatible(picked.name, err.to_string());
+                incompatible(&picked.name, err.to_string());
                 return;
             }
         };
@@ -290,14 +293,14 @@ fn install() {
             Ok(loaded) => {
                 let review = loaded.review();
                 drop(loaded);
-                review_sheet(Arc::new(staged), review);
+                review_sheet(Arc::new(staged), &review);
             }
-            Err(err) => incompatible(picked.name, err.user_message()),
+            Err(err) => incompatible(&picked.name, err.user_message()),
         }
     });
 }
 
-fn incompatible(name: String, why: String) {
+fn incompatible(name: &str, why: String) {
     Sheet::titled(format!("No se puede instalar «{name}»"))
         .child(Notice::new(NoticeTone::Danger, why))
         .footer(SheetFooter::new([
@@ -316,7 +319,7 @@ fn incompatible(name: String, why: String) {
         .push();
 }
 
-fn review_sheet(staged: Arc<Staged>, review: Review) {
+fn review_sheet(staged: Arc<Staged>, review: &Review) {
     use freya::icons::lucide;
     let p = palette();
     let rows: Vec<Element> = review
@@ -362,7 +365,7 @@ fn review_sheet(staged: Arc<Staged>, review: Review) {
                             crate::plugins::content::index_library();
                             Toasts::get().show(Toast::new(format!("«{installed}» instalado")));
                         }
-                        Err(err) => incompatible(name.clone(), err.to_string()),
+                        Err(err) => incompatible(&name, err.to_string()),
                     }
                 })
                 .into_element(),

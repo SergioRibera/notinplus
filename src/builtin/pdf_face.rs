@@ -82,7 +82,7 @@ impl Component for PdfFace {
                     }
                 };
                 let Some(board) = crate::active_boards::get(mount) else {
-                    log::warn!("PdfFace install_background: no board registered for {item:?}",);
+                    log::warn!("PdfFace install_background: no board registered for {item:?}");
                     return;
                 };
                 lock(&board).set_background(bg);
@@ -103,14 +103,35 @@ impl Component for PdfFace {
     }
 }
 
+/// World rectangles `(x, y, w, h)` of the pages, once the PDF is open.
+type PageRects = std::sync::Mutex<Option<Vec<(f32, f32, f32, f32)>>>;
+
+/// Why a PDF could not become the canvas background.
+#[derive(Debug)]
+enum LoadError {
+    Read(crate::library::LibraryError),
+    Open(freya_pdf::PdfError),
+}
+
+impl std::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Read(err) => write!(f, "read pdf: {err}"),
+            Self::Open(err) => write!(f, "open pdf: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for LoadError {}
+
 /// Decode the PDF blob at [`bodies::pdf_path`] into a
 /// [`PdfBackground`] usable by the stroke canvas as its backdrop.
 fn load_pdf_background(
     id: ItemId,
-    pages: &std::sync::Mutex<Option<Vec<(f32, f32, f32, f32)>>>,
-) -> Result<Arc<dyn freya_canvas_bg::CanvasBackground>, String> {
-    let bytes = bodies::read_pdf(id).map_err(|e| format!("read pdf: {e}"))?;
-    let doc = PdfDocument::open_bytes(bytes).map_err(|e| format!("open pdf: {e:?}"))?;
+    pages: &PageRects,
+) -> Result<Arc<dyn freya_canvas_bg::CanvasBackground>, LoadError> {
+    let bytes = bodies::read_pdf(id).map_err(LoadError::Read)?;
+    let doc = PdfDocument::open_bytes(bytes).map_err(LoadError::Open)?;
     *pages.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(freya_pdf::write::page_world_rects(
         doc.page_sizes(),
         freya_pdf::write::PAGE_GAP,
@@ -145,7 +166,7 @@ fn pdf_anchor_source(item: ItemId) -> AnchorSourceRef {
 #[derive(Clone)]
 struct PageTarget {
     mount: CanvasMount,
-    pages: Arc<std::sync::Mutex<Option<Vec<(f32, f32, f32, f32)>>>>,
+    pages: Arc<PageRects>,
 }
 
 impl crate::plugins::faces::Apply for PageTarget {
@@ -154,12 +175,14 @@ impl crate::plugins::faces::Apply for PageTarget {
         let Ok(anchor) = crate::plugins::builtin::pdf::PdfAnchor::from_bytes(anchor) else {
             return true;
         };
-        let rect = {
-            let pages = self.pages.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let Some(pages) = pages.as_ref() else {
-                return false;
-            };
-            pages.get(anchor.page as usize).copied()
+        let rect = self
+            .pages
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .map(|pages| pages.get(anchor.page as usize).copied());
+        let Some(rect) = rect else {
+            return false;
         };
         let Some(board) = crate::active_boards::get(self.mount) else {
             return false;

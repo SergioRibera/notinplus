@@ -610,7 +610,7 @@ pub fn import() {
         let parsed = rx.recv_async().await;
         ModalController::get().close();
         match parsed {
-            Ok(Ok(bundle)) => review(name, bundle),
+            Ok(Ok(bundle)) => review(&name, bundle),
             Ok(Err(crate::bundle::BundleError::UnknownVersion(v)))
                 if v > crate::bundle::BUNDLE_VERSION =>
             {
@@ -618,9 +618,9 @@ pub fn import() {
             }
             Ok(Err(err)) => {
                 log::error!("bundle {name}: {err}");
-                damaged(name);
+                damaged(&name);
             }
-            Err(_) => damaged(name),
+            Err(_) => damaged(&name),
         }
     });
 }
@@ -654,7 +654,7 @@ fn newer_version() {
         .open();
 }
 
-fn damaged(name: String) {
+fn damaged(name: &str) {
     Sheet::default()
         .without_close()
         .child(
@@ -683,7 +683,7 @@ impl PartialEq for Pending {
     }
 }
 
-fn review(name: String, bundle: crate::bundle::ParsedBundle) {
+fn review(name: &str, bundle: crate::bundle::ParsedBundle) {
     let Some(data) = LibraryView::get().data() else {
         return;
     };

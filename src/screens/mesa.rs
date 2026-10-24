@@ -296,7 +296,7 @@ impl Component for Open {
         if *panel.read() && compact {
             let mut panel = panel;
             panel.set(false);
-            panel::open_sheet(Arc::clone(&self.data), focus.clone(), *panel_tab.peek());
+            panel::open_sheet(Arc::clone(&self.data), focus.as_ref(), *panel_tab.peek());
         }
         rect()
             .expanded()
@@ -362,7 +362,7 @@ impl Shortcuts {
                         Arc::clone(&self.data),
                         self.ops,
                         self.ui,
-                        self.focus.clone(),
+                        self.focus.as_ref(),
                     );
                     true
                 }
@@ -417,7 +417,7 @@ impl Shortcuts {
                 _ => false,
             },
             Key::Named(NamedKey::Tab) => self.next_tab(shift),
-            _ => false,
+            Key::Named(_) => false,
         };
         if handled {
             e.stop_propagation();

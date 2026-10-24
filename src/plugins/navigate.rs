@@ -45,9 +45,9 @@ pub fn open(target: &SourceRef, placement: Placement) {
                 layer: None,
             };
             open_at(
-                canvas::KIND.to_owned(),
+                canvas::KIND,
                 ItemId(doc.0),
-                anchor.to_bytes(),
+                &anchor.to_bytes(),
                 hint(placement),
             );
         }
@@ -89,13 +89,13 @@ fn open_plugin_ref(kind_id: String, item: ItemId, anchor: Vec<u8>, hint: OpenHin
             }
         };
         match target {
-            Some(doc) => open_at(kind_id, doc, anchor, hint),
+            Some(doc) => open_at(&kind_id, doc, &anchor, hint),
             None => missing("La referencia apunta a un documento que ya no existe"),
         }
     });
 }
 
-fn open_at(kind: String, doc: ItemId, anchor: Vec<u8>, hint: OpenHint) {
-    super::host::shell().queue_jump(&kind, doc_id(doc), anchor);
+fn open_at(kind: &str, doc: ItemId, anchor: &[u8], hint: OpenHint) {
+    super::host::shell().queue_jump(kind, doc_id(doc), anchor);
     crate::space::open(TabTarget::Item(doc), hint);
 }

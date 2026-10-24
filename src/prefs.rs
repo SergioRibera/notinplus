@@ -137,12 +137,14 @@ pub struct ViewKey {
 #[must_use]
 fn view_path(key: ViewKey) -> PathBuf {
     let views = bodies::root_dir().join(VIEWS_SUBDIR);
-    match key.slot {
-        None => views.join(format!("{}.{VIEW_EXT}", key.item)),
-        Some(slot) => views
-            .join(key.item.to_string())
-            .join(format!("{}-{}.{VIEW_EXT}", slot.workspace, slot.pane)),
-    }
+    key.slot.map_or_else(
+        || views.join(format!("{}.{VIEW_EXT}", key.item)),
+        |slot| {
+            views
+                .join(key.item.to_string())
+                .join(format!("{}-{}.{VIEW_EXT}", slot.workspace, slot.pane))
+        },
+    )
 }
 
 /// Read [`Prefs`] from disk. Missing / corrupt payload → `Prefs::default`

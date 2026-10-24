@@ -169,6 +169,7 @@ pub fn suggestions(query: &str, data: Option<&LibraryData>) -> Vec<Suggestion> {
             },
         }));
     }
+    drop(catalog);
     out
 }
 

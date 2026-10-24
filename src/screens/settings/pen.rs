@@ -21,7 +21,7 @@ fn anchor_of(e: &Event<PressEventData>) -> Area {
 }
 
 /// Pick what shortcut `slot` creates.
-fn pick_shortcut(slot: usize, current: Option<EntryKey>, anchor: Area) {
+fn pick_shortcut(slot: usize, current: Option<&EntryKey>, anchor: Area) {
     let p = palette();
     let mut entries = vec![ActionEntry::Item(
         Action::new("Ninguno", move |()| {
@@ -37,7 +37,7 @@ fn pick_shortcut(slot: usize, current: Option<EntryKey>, anchor: Area) {
             .into_iter()
             .map(|entry| {
                 let key = EntryKey::new(entry.plugin.clone(), entry.entry.id.to_string());
-                let chosen = current.as_ref() == Some(&key);
+                let chosen = current == Some(&key);
                 ActionEntry::Item(
                     Action::new(entry.entry.label.clone(), move |()| {
                         notein_ui_kit::ModalController::get().close();
@@ -129,7 +129,7 @@ impl Component for Pen {
             };
             row.chevron()
                 .on_press(move |e: Event<PressEventData>| {
-                    pick_shortcut(slot, current.clone(), anchor_of(&e));
+                    pick_shortcut(slot, current.as_ref(), anchor_of(&e));
                 })
                 .into_element()
         };

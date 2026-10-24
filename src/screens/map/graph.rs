@@ -156,13 +156,13 @@ fn layout(count: usize, edges: &[Edge]) -> Vec<(f32, f32)> {
     let cooling = temperature / ITERATIONS as f32;
     let mut disp = vec![(0.0f32, 0.0f32); count];
     for _ in 0..ITERATIONS {
-        disp.iter_mut().for_each(|d| *d = (0.0, 0.0));
+        disp.fill((0.0, 0.0));
         for i in 0..count {
             for j in (i + 1)..count {
                 let (dx, dy) = (pos[i].0 - pos[j].0, pos[i].1 - pos[j].1);
-                let dist = dx.hypot(dy).max(0.001);
-                let force = k * k / dist;
-                let (fx, fy) = (dx / dist * force, dy / dist * force);
+                let length = dx.hypot(dy).max(0.001);
+                let force = k * k / length;
+                let (fx, fy) = (dx / length * force, dy / length * force);
                 disp[i].0 += fx;
                 disp[i].1 += fy;
                 disp[j].0 -= fx;
@@ -171,9 +171,9 @@ fn layout(count: usize, edges: &[Edge]) -> Vec<(f32, f32)> {
         }
         for edge in edges {
             let (dx, dy) = (pos[edge.a].0 - pos[edge.b].0, pos[edge.a].1 - pos[edge.b].1);
-            let dist = dx.hypot(dy).max(0.001);
-            let force = dist * dist / k;
-            let (fx, fy) = (dx / dist * force, dy / dist * force);
+            let length = dx.hypot(dy).max(0.001);
+            let force = length * length / k;
+            let (fx, fy) = (dx / length * force, dy / length * force);
             disp[edge.a].0 -= fx;
             disp[edge.a].1 -= fy;
             disp[edge.b].0 += fx;

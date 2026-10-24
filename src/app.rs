@@ -13,13 +13,12 @@
 use std::sync::{Arc, Mutex};
 
 use freya::prelude::*;
-use freya::router::*;
+use freya::router::Outlet;
 
 use istmo::plugins::EdgeInsets;
 
 use crate::route::Route;
 
-use crate::brush::BrushKind;
 use crate::canvas::{
     AnchorSourceRef, Board, InputMode, RedrawNotifier, drawing_surface, lock,
 };
@@ -110,15 +109,11 @@ fn spawn_prefs_worker(board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
             while rx.try_recv().is_ok() {}
             let snapshot = {
                 let g = lock(&board);
-                let preset = *g.current_preset();
-                let color = g.current_color();
-                let mode = g.input_mode();
-                let scales: Vec<(BrushKind, f32)> = g.size_scales_snapshot();
                 prefs::Prefs {
-                    current_preset: Some(preset),
-                    current_color: Some(color),
-                    size_scales: scales,
-                    input_mode_pan: matches!(mode, InputMode::Pan),
+                    current_preset: Some(*g.current_preset()),
+                    current_color: Some(g.current_color()),
+                    size_scales: g.size_scales_snapshot(),
+                    input_mode_pan: matches!(g.input_mode(), InputMode::Pan),
                 }
             };
             if let Err(err) = prefs::save_prefs(&snapshot) {
@@ -232,7 +227,7 @@ fn install_global_router() {
 /// The app's router.
 #[must_use]
 pub fn global_router() -> freya::router::RouterContext {
-    GLOBAL_ROUTER.with(|cell| cell.get_or_init(new_router).clone())
+    GLOBAL_ROUTER.with(|cell| *cell.get_or_init(new_router))
 }
 
 /// Root layout that measures its own area and hosts the shared
@@ -403,8 +398,8 @@ impl Component for CanvasPane {
             .width(Size::fill())
             .height(Size::fill())
             .content(Content::Flex)
-            .child(canvas_body(self.mount, state))
-            .child(canvas_chrome(state, pad, self.mount.slot()))
+            .child(canvas_body(self.mount, &state))
+            .child(canvas_chrome(&state, pad, self.mount.slot()))
     }
 }
 
@@ -417,7 +412,7 @@ impl Component for CanvasPane {
 /// Prefer wrapping call sites inside [`CanvasPane`] when mounting from
 /// a dynamic container (pane tree, tab bar); the free fn is kept for
 /// single-pane routes that call it exactly once per render.
-pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoElement {
+pub(crate) fn canvas_body(mount: CanvasMount, state: &ChromeState) -> impl IntoElement {
     // When an ancestor hoisted the mount — e.g.
     // `DocLinkedView::render` creates the board at the shell level so
     // both halves of a split-view share it — pick up the provided
@@ -431,13 +426,13 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoEl
     let is_shared = shared_board.is_some();
     let board = use_hook({
         let shared_board = shared_board;
-        let mut state_copy = state;
+        let mut state_copy = *state;
         move || {
             if let Some(b) = shared_board {
                 seed_chrome_from_board(&b, &mut state_copy, mount);
                 return b;
             }
-            mount_board(mount, state_copy)
+            mount_board(mount, &state_copy)
         }
     });
     use_drop({
@@ -470,7 +465,7 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoEl
             let same = active_setter
                 .peek()
                 .as_ref()
-                .map_or(false, |cur| Arc::ptr_eq(cur, &board));
+                .is_some_and(|cur| Arc::ptr_eq(cur, &board));
             if same {
                 active_setter.set(None);
                 if *active_item_setter.peek() == mount.item() {
@@ -510,7 +505,7 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoEl
 ///
 /// Must be called inside a component render — spawn + `provide_context`
 /// resolve against the current scope.
-pub(crate) fn mount_board(mount: CanvasMount, state: ChromeState) -> Arc<Mutex<Board>> {
+pub(crate) fn mount_board(mount: CanvasMount, state: &ChromeState) -> Arc<Mutex<Board>> {
     let mut active_setter = state.active_board;
     let mut active_item_setter = state.active_item;
     let ink = state.ink;
@@ -541,7 +536,7 @@ pub(crate) fn mount_board(mount: CanvasMount, state: ChromeState) -> Arc<Mutex<B
         handwriting.font.select();
         g.set_handwriting(handwriting.enabled);
     }
-    spawn_handwriting_timer(Arc::clone(&board));
+    spawn_handwriting_timer(&board);
     // Seed chrome signals from the restored board state. Done after
     // the prefs apply so overlays open on the correct preset / size
     // / mode on first paint.
@@ -574,10 +569,10 @@ pub(crate) fn mount_board(mount: CanvasMount, state: ChromeState) -> Arc<Mutex<B
 /// pending letter's generation after every stroke; a newer one arriving
 /// during the wait restarts it. Exits when the board (and its sender)
 /// drops.
-fn spawn_handwriting_timer(board: Arc<Mutex<Board>>) {
+fn spawn_handwriting_timer(board: &Arc<Mutex<Board>>) {
     let (tx, rx) = flume::unbounded::<u64>();
-    lock(&board).set_handwriting_waker(tx);
-    let board = Arc::downgrade(&board);
+    lock(board).set_handwriting_waker(tx);
+    let board = Arc::downgrade(board);
     spawn(async move {
         while let Ok(mut generation) = rx.recv_async().await {
             loop {
@@ -606,7 +601,11 @@ fn seed_chrome_from_board(board: &Arc<Mutex<Board>>, state: &mut ChromeState, mo
     state.active_item.set(mount.item());
 }
 
-pub(crate) fn canvas_chrome(state: ChromeState, pad: EdgeInsets, slot: Option<ViewSlot>) -> impl IntoElement {
+pub(crate) fn canvas_chrome(
+    state: &ChromeState,
+    pad: EdgeInsets,
+    slot: Option<ViewSlot>,
+) -> impl IntoElement {
     // Per-pane area probe. Descendants (bookmark card overlay, popups)
     // consume `PaneArea` to clamp against the pane's own bounds instead
     // of the full window.

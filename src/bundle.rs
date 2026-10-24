@@ -54,6 +54,7 @@ pub struct ExportSelection {
 
 /// Flags toggled by the export dialog before the writer runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)] // independent switches of the export dialog
 pub struct ExportOptions {
     /// When `true`, PDF attachments are embedded verbatim in the
     /// bundle. When `false`, only the manifest + canvas doc bodies
@@ -231,8 +232,8 @@ pub fn write_bundle<W: Write>(
     mut progress: impl FnMut(usize),
 ) -> Result<()> {
     let plan = plan_export(lib, selection, false)?;
-    let mut manifest = build_manifest(lib, &plan, options.include_external_links)?;
-    manifest.exported_by = exported_by.to_owned();
+    let mut manifest = build_manifest(lib, &plan, options.include_external_links);
+    exported_by.clone_into(&mut manifest.exported_by);
     if !options.include_workspaces {
         manifest.workspaces.clear();
     }
@@ -385,9 +386,9 @@ impl ParsedBundle {
 // ---------------------------------------------------------------------------
 
 struct ExportPlan {
-    item_ids: Vec<ItemId>,
-    folder_ids: Vec<FolderId>,
-    workspace_ids: Vec<WorkspaceId>,
+    items: Vec<ItemId>,
+    folders: Vec<FolderId>,
+    workspaces: Vec<WorkspaceId>,
 }
 
 /// Resolve `selection` to a materialised preview without touching
@@ -400,8 +401,8 @@ struct ExportPlan {
 /// library does not know.
 pub fn preview_export(lib: &LibraryData, selection: &ExportSelection) -> Result<ExportPreview> {
     let plan = plan_export(lib, selection, true)?;
-    let manifest = build_manifest(lib, &plan, false)?;
-    let in_bundle: HashSet<ItemId> = plan.item_ids.iter().copied().collect();
+    let manifest = build_manifest(lib, &plan, false);
+    let in_bundle: HashSet<ItemId> = plan.items.iter().copied().collect();
     let related = extra_items(lib, &in_bundle, |id| {
         lib.links_of(id)
             .filter(|l| l.kind == LinkKind::Related)
@@ -440,7 +441,7 @@ fn extra_items(
             }
         }
     }
-    out.sort_by(|a, b| a.id.cmp(&b.id));
+    out.sort_by_key(|a| a.id);
     out
 }
 
@@ -507,9 +508,9 @@ fn plan_export(
     let mut workspaces: Vec<WorkspaceId> = workspace_ids.into_iter().collect();
     workspaces.sort();
     Ok(ExportPlan {
-        item_ids: items,
-        folder_ids: folders,
-        workspace_ids: workspaces,
+        items,
+        folders,
+        workspaces,
     })
 }
 
@@ -530,19 +531,19 @@ fn build_manifest(
     lib: &LibraryData,
     plan: &ExportPlan,
     include_external_links: bool,
-) -> Result<BundleManifest> {
+) -> BundleManifest {
     let items: Vec<Item> = plan
-        .item_ids
+        .items
         .iter()
         .filter_map(|id| lib.item(*id).cloned())
         .collect();
     let folders: Vec<Folder> = plan
-        .folder_ids
+        .folders
         .iter()
         .filter_map(|id| lib.folder(*id).cloned())
         .collect();
     let workspaces: Vec<Workspace> = plan
-        .workspace_ids
+        .workspaces
         .iter()
         .filter_map(|id| lib.workspace(*id).cloned())
         .collect();
@@ -562,7 +563,7 @@ fn build_manifest(
         .iter()
         .filter_map(|id| lib.tag(*id).cloned())
         .collect();
-    tags.sort_by(|a, b| a.id.0.cmp(&b.id.0));
+    tags.sort_by_key(|a| a.id.0);
 
     let mut requires_plugins: HashSet<String> = HashSet::new();
     for item in &items {
@@ -580,7 +581,7 @@ fn build_manifest(
     let mut requires_plugins: Vec<String> = requires_plugins.into_iter().collect();
     requires_plugins.sort();
 
-    let in_bundle: HashSet<ItemId> = plan.item_ids.iter().copied().collect();
+    let in_bundle: HashSet<ItemId> = plan.items.iter().copied().collect();
     let mut links: Vec<Link> = lib
         .links()
         .links
@@ -593,9 +594,9 @@ fn build_manifest(
         })
         .cloned()
         .collect();
-    links.sort_by(|a, b| a.id.0.cmp(&b.id.0));
+    links.sort_by_key(|a| a.id.0);
 
-    Ok(BundleManifest {
+    BundleManifest {
         version: BUNDLE_VERSION,
         exported_at_ms: now_ms(),
         exported_by: String::new(),
@@ -605,7 +606,7 @@ fn build_manifest(
         tags,
         workspaces,
         links,
-    })
+    }
 }
 
 /// Ink document bytes with every bookmark removed.
@@ -758,7 +759,7 @@ mod closure_tests {
         links.insert(item(2), item(3), LinkKind::Companion, 1);
         links.insert(item(1), item(4), LinkKind::Related, 1);
         links.insert(item(5), item(1), LinkKind::Companion, 1);
-        let mut set: HashSet<ItemId> = [item(1)].into_iter().collect();
+        let mut set: HashSet<ItemId> = HashSet::from([item(1)]);
         expand_notebooks(&mut set, &links);
         let mut got: Vec<ItemId> = set.into_iter().collect();
         got.sort();

@@ -181,7 +181,7 @@ impl Library {
         let mut folder_ids: HashMap<FolderId, FolderId> = HashMap::new();
         for folder in &manifest.folders {
             let id = if self.data.index.folder(folder.id).is_some() {
-                self.data.index.alloc_folder_id()
+                FolderId::new_v4()
             } else {
                 folder.id
             };
@@ -232,9 +232,7 @@ impl Library {
                     bodies::purge(item.id);
                     item.id
                 }
-                Resolution::KeepBoth if colliding.contains(&item.id) => {
-                    self.data.index.alloc_item_id()
-                }
+                Resolution::KeepBoth if colliding.contains(&item.id) => ItemId::new_v4(),
                 Resolution::KeepBoth => item.id,
             };
             item_ids.insert(item.id, id);
@@ -275,7 +273,7 @@ impl Library {
 
         for workspace in &manifest.workspaces {
             let mut copy = workspace.clone();
-            copy.id = self.data.workspaces.alloc_workspace_id();
+            copy.id = WorkspaceId::new_v4();
             copy.layout.retarget_items(&item_ids);
             copy.updated_at = now;
             receipt.workspaces.push(copy.id);

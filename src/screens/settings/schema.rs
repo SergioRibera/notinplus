@@ -56,7 +56,7 @@ impl Component for SchemaForm {
             .fields
             .into_iter()
             .map(|field| {
-                Field {
+                FieldRow {
                     settings: Arc::clone(&self.settings),
                     field,
                     revision,
@@ -74,19 +74,19 @@ impl Component for SchemaForm {
 }
 
 #[derive(Clone)]
-struct Field {
+struct FieldRow {
     settings: Arc<dyn PluginSettings>,
     field: ConfigField,
     revision: State<u32>,
 }
 
-impl PartialEq for Field {
+impl PartialEq for FieldRow {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.settings, &other.settings) && self.field == other.field
     }
 }
 
-impl Field {
+impl FieldRow {
     fn current(&self) -> ConfigValue {
         self.settings
             .get(&self.field.key)
@@ -110,7 +110,7 @@ impl Field {
     }
 }
 
-impl Component for Field {
+impl Component for FieldRow {
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let set = self.setter();

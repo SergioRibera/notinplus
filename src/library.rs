@@ -188,7 +188,7 @@ impl Library {
         tags.sort_unstable_by_key(|t| t.0);
         tags.dedup();
         let now = now_millis();
-        let id = self.data.index.alloc_folder_id();
+        let id = FolderId::new_v4();
         self.data.index.folders.push(Folder {
             id,
             parent,
@@ -365,7 +365,7 @@ impl Library {
         tags.sort_unstable_by_key(|t| t.0);
         tags.dedup();
         let now = now_millis();
-        let id = self.data.index.alloc_item_id();
+        let id = ItemId::new_v4();
         self.data.index.items.push(Item {
             id,
             folder,
@@ -506,7 +506,7 @@ impl Library {
             .cloned()
             .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
         let now = now_millis();
-        let copy = self.data.index.alloc_item_id();
+        let copy = ItemId::new_v4();
         bodies::copy_item(id, copy).map_err(LibraryError::from)?;
         self.data.index.items.push(Item {
             id: copy,
@@ -562,7 +562,7 @@ impl Library {
     /// # Errors
     /// Runtime / codec / backend failure.
     pub async fn create_tag(&mut self, name: &str, color: Rgba) -> Result<TagId> {
-        let id = self.data.index.alloc_tag_id();
+        let id = TagId::new_v4();
         self.data.index.tags.push(Tag {
             id,
             name: name.to_owned(),
@@ -767,7 +767,7 @@ impl Library {
         color: Option<Rgba>,
     ) -> Result<WorkspaceId> {
         let now = now_millis();
-        let id = self.data.workspaces.alloc_workspace_id();
+        let id = WorkspaceId::new_v4();
         let mut workspace = Workspace::fresh(id, name.trim().to_owned(), color, now);
         workspace.named = !workspace.name.is_empty();
         self.data.workspaces.workspaces.push(workspace);
@@ -791,7 +791,7 @@ impl Library {
             .workspace(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(id)))?;
         let copy = Workspace {
-            id: self.data.workspaces.alloc_workspace_id(),
+            id: WorkspaceId::new_v4(),
             name: format!("Copia de {}", source.name),
             named: true,
             pinned: false,
@@ -1409,6 +1409,217 @@ fn now_millis() -> u64 {
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
+impl LibraryData {
+    /// Data assembled in memory, for screen previews.
+    #[cfg(test)]
+    pub(crate) const fn from_parts(
+        index: LibraryIndex,
+        workspaces: WorkspaceIndex,
+        links: LinkIndex,
+    ) -> Self {
+        Self {
+            index,
+            workspaces,
+            links,
+        }
+    }
+
+    /// A copy of the in-memory state for a screen to render from.
+    #[must_use]
+    pub fn snapshot(&self) -> Self {
+        self.clone()
+    }
+
+    /// Borrow the raw index — convenient for UIs that render the full
+    /// tree in a single traversal.
+    #[must_use]
+    pub const fn index(&self) -> &LibraryIndex {
+        &self.index
+    }
+
+    /// Direct children of `parent`. Order preserved from creation
+    /// order; sort at the UI layer when the user picks a different
+    /// column.
+    #[must_use]
+    pub fn folders_of(&self, parent: FolderId) -> Vec<&Folder> {
+        self.index
+            .folders
+            .iter()
+            .filter(|f| f.parent == parent && f.trashed.is_none())
+            .collect()
+    }
+
+    /// Items whose parent folder is `folder`.
+    #[must_use]
+    pub fn items_of(&self, folder: FolderId) -> Vec<&Item> {
+        self.index
+            .items
+            .iter()
+            .filter(|i| i.folder == folder && i.trashed.is_none())
+            .collect()
+    }
+
+    /// Items carrying `tag` in their tag list.
+    #[must_use]
+    pub fn items_with_tag(&self, tag: TagId) -> Vec<&Item> {
+        self.index
+            .items
+            .iter()
+            .filter(|i| i.tags.contains(&tag) && i.trashed.is_none())
+            .collect()
+    }
+
+    /// Folders carrying `tag` in their tag list.
+    #[must_use]
+    pub fn folders_with_tag(&self, tag: TagId) -> Vec<&Folder> {
+        self.index
+            .folders
+            .iter()
+            .filter(|f| f.tags.contains(&tag) && f.trashed.is_none())
+            .collect()
+    }
+
+    /// Every item outside the trash.
+    pub fn live_items(&self) -> impl Iterator<Item = &Item> {
+        self.index.items.iter().filter(|i| i.trashed.is_none())
+    }
+
+    /// Every folder outside the trash.
+    pub fn live_folders(&self) -> impl Iterator<Item = &Folder> {
+        self.index.folders.iter().filter(|f| f.trashed.is_none())
+    }
+
+    /// Every tag the user has defined.
+    #[must_use]
+    pub fn tags(&self) -> &[Tag] {
+        &self.index.tags
+    }
+
+    /// Look up a folder by id.
+    #[must_use]
+    pub fn folder(&self, id: FolderId) -> Option<&Folder> {
+        self.index.folder(id)
+    }
+
+    /// Look up an item by id.
+    #[must_use]
+    pub fn item(&self, id: ItemId) -> Option<&Item> {
+        self.index.item(id)
+    }
+
+    /// Look up a tag by id.
+    #[must_use]
+    pub fn tag(&self, id: TagId) -> Option<&Tag> {
+        self.index.tag(id)
+    }
+
+    /// Every live link touching `item`, either direction.
+    pub fn links_of(&self, item: ItemId) -> impl Iterator<Item = &Link> {
+        self.links.of(item)
+    }
+
+    /// Items that are notebooks of `item`.
+    pub fn companions_of(&self, item: ItemId) -> impl Iterator<Item = ItemId> + '_ {
+        self.links.companions_of(item)
+    }
+
+    /// Items that `item` is a notebook of.
+    pub fn companion_parents_of(&self, item: ItemId) -> impl Iterator<Item = ItemId> + '_ {
+        self.links.companion_parents_of(item)
+    }
+
+    /// Live link by id.
+    #[must_use]
+    pub fn link(&self, id: LinkId) -> Option<&Link> {
+        self.links.get(id)
+    }
+
+    /// Borrow the raw link index.
+    #[must_use]
+    pub const fn links(&self) -> &LinkIndex {
+        &self.links
+    }
+
+    /// Borrow the raw workspace index.
+    #[must_use]
+    pub const fn workspaces_index(&self) -> &WorkspaceIndex {
+        &self.workspaces
+    }
+
+    /// Every persisted workspace, creation order.
+    #[must_use]
+    pub fn workspaces(&self) -> &[Workspace] {
+        &self.workspaces.workspaces
+    }
+
+    /// Look up a workspace by id.
+    #[must_use]
+    pub fn workspace(&self, id: WorkspaceId) -> Option<&Workspace> {
+        self.workspaces.workspace(id)
+    }
+
+    /// The workspace the user last had focus on, or `None` when the
+    /// index is empty.
+    #[must_use]
+    pub const fn active_workspace(&self) -> Option<WorkspaceId> {
+        self.workspaces.active
+    }
+
+    /// Name a mesa shows: what the user typed, or one derived from the
+    /// documents open in it ("Comentario de Romanos y 2 más").
+    #[must_use]
+    pub fn workspace_title(&self, id: WorkspaceId) -> String {
+        let Some(w) = self.workspaces.workspace(id) else {
+            return String::new();
+        };
+        if w.named {
+            return w.name.clone();
+        }
+        let mut names = w
+            .layout
+            .leaves()
+            .into_iter()
+            .flat_map(|pane| pane.tabs.iter())
+            .filter_map(crate::library::PaneTab::item)
+            .filter_map(|item| self.item(item).map(|i| i.name.clone()));
+        names.next().map_or_else(
+            || "Mesa vacía".to_owned(),
+            |first| match names.count() {
+                0 => first,
+                1 => format!("{first} y 1 más"),
+                more => format!("{first} y {more} más"),
+            },
+        )
+    }
+
+    fn ensure_folder_target(&self, id: FolderId) -> Result<()> {
+        if id == ROOT_FOLDER {
+            return Ok(());
+        }
+        if self.index.folder(id).is_none() {
+            return Err(LibraryError::NotFound(NotFoundKind::Folder(id)));
+        }
+        Ok(())
+    }
+
+    /// Every folder id that would be caught in a recursive delete
+    /// starting from `root` (inclusive).
+    fn collect_subtree(&self, root: FolderId) -> Vec<FolderId> {
+        let mut out = vec![root];
+        let mut cursor = 0;
+        while cursor < out.len() {
+            let parent = out[cursor];
+            cursor += 1;
+            for f in &self.index.folders {
+                if f.parent == parent && !out.contains(&f.id) {
+                    out.push(f.id);
+                }
+            }
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1419,7 +1630,7 @@ mod tests {
     #[test]
     fn folder_cycle_check_handles_root() {
         let mut idx = LibraryIndex::default();
-        let a = idx.alloc_folder_id();
+        let a = FolderId::new_v4();
         idx.folders.push(Folder {
             id: a,
             parent: ROOT_FOLDER,
@@ -1431,7 +1642,7 @@ mod tests {
             updated_at: 0,
             trashed: None,
         });
-        let b = idx.alloc_folder_id();
+        let b = FolderId::new_v4();
         idx.folders.push(Folder {
             id: b,
             parent: a,
@@ -1452,14 +1663,14 @@ mod tests {
     fn round_trip_bincode() {
         use bincode::config;
         let mut idx = LibraryIndex::default();
-        let tag = idx.alloc_tag_id();
+        let tag = TagId::new_v4();
         idx.tags.push(Tag {
             id: tag,
             name: "urgent".into(),
             color: [255, 0, 0, 255],
             updated_at: 0,
         });
-        let folder = idx.alloc_folder_id();
+        let folder = FolderId::new_v4();
         idx.folders.push(Folder {
             id: folder,
             parent: ROOT_FOLDER,
@@ -1471,7 +1682,7 @@ mod tests {
             updated_at: 2,
             trashed: None,
         });
-        let item = idx.alloc_item_id();
+        let item = ItemId::new_v4();
         idx.items.push(Item {
             id: item,
             folder,
@@ -1511,9 +1722,8 @@ mod tests {
 
     #[test]
     fn id_counters_never_reuse() {
-        let idx = LibraryIndex::default();
-        let a = idx.alloc_item_id();
-        let b = idx.alloc_item_id();
+        let a = ItemId::new_v4();
+        let b = ItemId::new_v4();
         assert_ne!(a, b);
         assert!(!a.is_nil());
         assert!(!b.is_nil());
@@ -1523,7 +1733,7 @@ mod tests {
     fn workspace_index_round_trip() {
         use bincode::config;
         let mut idx = WorkspaceIndex::default();
-        let a = idx.alloc_workspace_id();
+        let a = WorkspaceId::new_v4();
         let left = mk_pane(1);
         let right = mk_pane(2);
         let layout = PaneLayout::Split {
@@ -1641,9 +1851,8 @@ mod tests {
 
     #[test]
     fn workspace_ids_never_reuse() {
-        let idx = WorkspaceIndex::default();
-        let a = idx.alloc_workspace_id();
-        let b = idx.alloc_workspace_id();
+        let a = WorkspaceId::new_v4();
+        let b = WorkspaceId::new_v4();
         assert_ne!(a, b);
         assert!(!a.is_nil());
         assert!(!b.is_nil());
@@ -1884,216 +2093,5 @@ mod tests {
         // Out-of-range destination clamps to the last slot.
         assert!(layout.reorder_tab(pane, 0, 99));
         assert_eq!(items(&layout)[2], Some(mk_item(11)));
-    }
-}
-
-impl LibraryData {
-    /// Data assembled in memory, for screen previews.
-    #[cfg(test)]
-    pub(crate) const fn from_parts(
-        index: LibraryIndex,
-        workspaces: WorkspaceIndex,
-        links: LinkIndex,
-    ) -> Self {
-        Self {
-            index,
-            workspaces,
-            links,
-        }
-    }
-
-    /// A copy of the in-memory state for a screen to render from.
-    #[must_use]
-    pub fn snapshot(&self) -> Self {
-        self.clone()
-    }
-
-    /// Borrow the raw index — convenient for UIs that render the full
-    /// tree in a single traversal.
-    #[must_use]
-    pub const fn index(&self) -> &LibraryIndex {
-        &self.index
-    }
-
-    /// Direct children of `parent`. Order preserved from creation
-    /// order; sort at the UI layer when the user picks a different
-    /// column.
-    #[must_use]
-    pub fn folders_of(&self, parent: FolderId) -> Vec<&Folder> {
-        self.index
-            .folders
-            .iter()
-            .filter(|f| f.parent == parent && f.trashed.is_none())
-            .collect()
-    }
-
-    /// Items whose parent folder is `folder`.
-    #[must_use]
-    pub fn items_of(&self, folder: FolderId) -> Vec<&Item> {
-        self.index
-            .items
-            .iter()
-            .filter(|i| i.folder == folder && i.trashed.is_none())
-            .collect()
-    }
-
-    /// Items carrying `tag` in their tag list.
-    #[must_use]
-    pub fn items_with_tag(&self, tag: TagId) -> Vec<&Item> {
-        self.index
-            .items
-            .iter()
-            .filter(|i| i.tags.contains(&tag) && i.trashed.is_none())
-            .collect()
-    }
-
-    /// Folders carrying `tag` in their tag list.
-    #[must_use]
-    pub fn folders_with_tag(&self, tag: TagId) -> Vec<&Folder> {
-        self.index
-            .folders
-            .iter()
-            .filter(|f| f.tags.contains(&tag) && f.trashed.is_none())
-            .collect()
-    }
-
-    /// Every item outside the trash.
-    pub fn live_items(&self) -> impl Iterator<Item = &Item> {
-        self.index.items.iter().filter(|i| i.trashed.is_none())
-    }
-
-    /// Every folder outside the trash.
-    pub fn live_folders(&self) -> impl Iterator<Item = &Folder> {
-        self.index.folders.iter().filter(|f| f.trashed.is_none())
-    }
-
-    /// Every tag the user has defined.
-    #[must_use]
-    pub fn tags(&self) -> &[Tag] {
-        &self.index.tags
-    }
-
-    /// Look up a folder by id.
-    #[must_use]
-    pub fn folder(&self, id: FolderId) -> Option<&Folder> {
-        self.index.folder(id)
-    }
-
-    /// Look up an item by id.
-    #[must_use]
-    pub fn item(&self, id: ItemId) -> Option<&Item> {
-        self.index.item(id)
-    }
-
-    /// Look up a tag by id.
-    #[must_use]
-    pub fn tag(&self, id: TagId) -> Option<&Tag> {
-        self.index.tag(id)
-    }
-
-    /// Every live link touching `item`, either direction.
-    pub fn links_of(&self, item: ItemId) -> impl Iterator<Item = &Link> {
-        self.links.of(item)
-    }
-
-    /// Items that are notebooks of `item`.
-    pub fn companions_of(&self, item: ItemId) -> impl Iterator<Item = ItemId> + '_ {
-        self.links.companions_of(item)
-    }
-
-    /// Items that `item` is a notebook of.
-    pub fn companion_parents_of(&self, item: ItemId) -> impl Iterator<Item = ItemId> + '_ {
-        self.links.companion_parents_of(item)
-    }
-
-    /// Live link by id.
-    #[must_use]
-    pub fn link(&self, id: LinkId) -> Option<&Link> {
-        self.links.get(id)
-    }
-
-    /// Borrow the raw link index.
-    #[must_use]
-    pub const fn links(&self) -> &LinkIndex {
-        &self.links
-    }
-
-    /// Borrow the raw workspace index.
-    #[must_use]
-    pub const fn workspaces_index(&self) -> &WorkspaceIndex {
-        &self.workspaces
-    }
-
-    /// Every persisted workspace, creation order.
-    #[must_use]
-    pub fn workspaces(&self) -> &[Workspace] {
-        &self.workspaces.workspaces
-    }
-
-    /// Look up a workspace by id.
-    #[must_use]
-    pub fn workspace(&self, id: WorkspaceId) -> Option<&Workspace> {
-        self.workspaces.workspace(id)
-    }
-
-    /// The workspace the user last had focus on, or `None` when the
-    /// index is empty.
-    #[must_use]
-    pub const fn active_workspace(&self) -> Option<WorkspaceId> {
-        self.workspaces.active
-    }
-
-    /// Name a mesa shows: what the user typed, or one derived from the
-    /// documents open in it ("Comentario de Romanos y 2 más").
-    #[must_use]
-    pub fn workspace_title(&self, id: WorkspaceId) -> String {
-        let Some(w) = self.workspaces.workspace(id) else {
-            return String::new();
-        };
-        if w.named {
-            return w.name.clone();
-        }
-        let mut names = w
-            .layout
-            .leaves()
-            .into_iter()
-            .flat_map(|pane| pane.tabs.iter())
-            .filter_map(crate::library::PaneTab::item)
-            .filter_map(|item| self.item(item).map(|i| i.name.clone()));
-        match names.next() {
-            None => "Mesa vacía".to_owned(),
-            Some(first) => match names.count() {
-                0 => first,
-                1 => format!("{first} y 1 más"),
-                more => format!("{first} y {more} más"),
-            },
-        }
-    }
-
-    fn ensure_folder_target(&self, id: FolderId) -> Result<()> {
-        if id == ROOT_FOLDER {
-            return Ok(());
-        }
-        if self.index.folder(id).is_none() {
-            return Err(LibraryError::NotFound(NotFoundKind::Folder(id)));
-        }
-        Ok(())
-    }
-
-    /// Every folder id that would be caught in a recursive delete
-    /// starting from `root` (inclusive).
-    fn collect_subtree(&self, root: FolderId) -> Vec<FolderId> {
-        let mut out = vec![root];
-        let mut cursor = 0;
-        while cursor < out.len() {
-            let parent = out[cursor];
-            cursor += 1;
-            for f in &self.index.folders {
-                if f.parent == parent && !out.contains(&f.id) {
-                    out.push(f.id);
-                }
-            }
-        }
-        out
     }
 }

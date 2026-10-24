@@ -122,6 +122,7 @@ pub fn install(folder: &Path) -> Result<String, InstallError> {
     if let Some(installed) = catalog.plugin_by_name(&name) {
         installed.install_host(&super::host::handle());
     }
+    drop(catalog);
     Ok(name)
 }
 

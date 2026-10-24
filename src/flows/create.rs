@@ -198,7 +198,7 @@ impl Component for Menu {
         list.push(ActionEntry::Item(
             Action::new("Importar…", {
                 let context = context.clone();
-                EventHandler::new(move |()| import_submenu(imports.clone(), context.clone()))
+                EventHandler::new(move |()| import_submenu(&imports, &context))
             })
             .subtitle(import_names.join(" · "))
             .icon(lucide::file_up())
@@ -239,13 +239,13 @@ impl Component for Menu {
     }
 }
 
-fn import_submenu(imports: Vec<CatalogEntry>, context: Context) {
+fn import_submenu(imports: &[CatalogEntry], context: &Context) {
     use freya::icons::lucide;
     let p = palette();
     let mut entries: Vec<ActionEntry> = imports
-        .into_iter()
+        .iter()
         .map(|entry| {
-            let info = entry.entry.clone();
+            let (entry, info) = (entry.clone(), entry.entry.clone());
             let context = context.clone();
             ActionEntry::Item(
                 Action::new(
@@ -362,7 +362,7 @@ pub fn run(entry: CatalogEntry, context: Context) {
         CreationFlow::Direct | CreationFlow::Custom => create(entry, context, Request::default()),
         CreationFlow::Form => form(entry, context),
         CreationFlow::Choose { title, options } => {
-            choose(entry, context, title.to_string(), options);
+            choose(&entry, &context, title.to_string(), options);
         }
         CreationFlow::Import {
             title,
@@ -472,8 +472,8 @@ fn form(entry: CatalogEntry, context: Context) {
 }
 
 fn choose(
-    entry: CatalogEntry,
-    context: Context,
+    entry: &CatalogEntry,
+    context: &Context,
     title: String,
     options: Vec<notein_plugin::create::CreationChoice>,
 ) {
@@ -534,12 +534,12 @@ fn import_sheet(entry: CatalogEntry, context: Context, picked: crate::files::Pic
     let is_markdown = entry.kind == notein_notes::kind::KIND;
     let (name, file_line, preview) = if is_pdf {
         match crate::plugins::builtin::pdf::PdfKind::read_file(&picked.name, &picked.bytes) {
-            Ok((_, content)) => (
+            Ok((_, pdf)) => (
                 crate::plugins::builtin::pdf::name_from_file(&picked.name),
                 Some(format!(
                     "{} · {} · {}",
-                    crate::format::count(content.page_count as usize, "página", "páginas"),
-                    crate::format::size(content.size_bytes),
+                    crate::format::count(pdf.page_count as usize, "página", "páginas"),
+                    crate::format::size(pdf.size_bytes),
                     picked.name
                 )),
                 None,
@@ -721,11 +721,12 @@ fn create(entry: CatalogEntry, context: Context, request: Request) {
             {
                 log::error!("attach: {err}");
             }
+            drop(lib);
             item
         };
         record_use(&entry);
         if let Some(attachment) = created.attachment {
-            prepare_attachment(item, entry.kind.clone(), attachment);
+            prepare_attachment(item, &entry.kind, attachment);
         } else {
             crate::plugins::content::reindex(item);
         }
@@ -746,7 +747,7 @@ fn create(entry: CatalogEntry, context: Context, request: Request) {
 
 /// Index an attachment's text and render its cover in the background,
 /// showing progress for large files.
-fn prepare_attachment(item: ItemId, kind: String, bytes: Vec<u8>) {
+fn prepare_attachment(item: ItemId, kind: &str, bytes: Vec<u8>) {
     if kind != crate::plugins::builtin::pdf::KIND {
         crate::plugins::content::reindex(item);
         return;
@@ -1008,7 +1009,7 @@ pub fn set_bible_translation(item: ItemId, bible_id: &str) {
     if content.bible_id == bible_id {
         return;
     }
-    content.bible_id = bible_id.to_owned();
+    bible_id.clone_into(&mut content.bible_id);
     content::write(item, kind, &content.to_bytes());
     content::notify_remote(item);
 }

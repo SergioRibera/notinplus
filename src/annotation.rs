@@ -213,7 +213,7 @@ impl Component for AnnotationCard {
         let mut draft = session.draft;
         let current = draft.read().clone();
         let mut picking = use_state(|| false);
-        let body = use_state(move || current.body.clone());
+        let body = use_state(move || current.body);
         use_side_effect(move || {
             let text = body.read().clone();
             if draft.peek().body != text {

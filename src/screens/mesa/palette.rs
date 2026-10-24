@@ -232,8 +232,8 @@ fn parse(text: &str) -> (Option<String>, String) {
 }
 
 /// Open the palette.
-pub(super) fn open(data: Arc<LibraryData>, ops: Ops, ui: MesaUi, focus: Option<Focus>) {
-    let commands = commands(&data, ops, ui, focus.as_ref());
+pub(super) fn open(data: Arc<LibraryData>, ops: Ops, ui: MesaUi, focus: Option<&Focus>) {
+    let commands = commands(&data, ops, ui, focus);
     ModalController::get().open(
         Modal::new(Palette { data, commands })
             .manual()
@@ -345,8 +345,9 @@ impl Component for Palette {
                         None => row,
                     }
                 }
-                Line::Doc(item) => match self.data.item(*item) {
-                    Some(found) => {
+                Line::Doc(item) => self.data.item(*item).map_or_else(
+                    || ListRow::new("Documento"),
+                    |found| {
                         let info = crate::plugins::kind_info(&found.kind.plugin_id);
                         ListRow::new(found.name.clone())
                             .subtitle(crate::flows::forms::folder_path(&self.data, found.folder))
@@ -355,9 +356,8 @@ impl Component for Palette {
                                     .map_or_else(freya::icons::lucide::file, |k| k.icon.clone()),
                                 info.map_or(p.t3, |k| kind_color(&p, k.color)),
                             )
-                    }
-                    None => ListRow::new("Documento"),
-                },
+                    },
+                ),
                 Line::Place(place) => {
                     ListRow::new(place.title.clone()).subtitle(if place.snippet.is_empty() {
                         place.doc_name.clone()
@@ -408,7 +408,7 @@ impl Component for Palette {
             );
         }
 
-        let key_lines = all.clone();
+        let key_lines = all;
         let compact = width_class().is_compact();
         let size = *Platform::get().root_size.read();
         let width = if compact {

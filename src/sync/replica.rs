@@ -109,7 +109,7 @@ impl LibraryReplica {
         &self.known
     }
 
-    fn open(&self) -> Result<async_lock::MutexGuardArc<Library>, ReplicaError> {
+    fn open() -> Result<async_lock::MutexGuardArc<Library>, ReplicaError> {
         let handle = crate::library::shared_blocking()?;
         Ok(pollster::block_on(handle.lock_arc()))
     }
@@ -160,7 +160,7 @@ impl Replica for LibraryReplica {
     fn docs(&self) -> Vec<(DocId, Version)> {
         // `docs` takes `&self`; the cache refresh happens through
         // interior calls on a scratch copy so the trait stays simple.
-        let Ok(lib) = self.open() else {
+        let Ok(lib) = Self::open() else {
             return Vec::new();
         };
         let mut scratch = Self {
@@ -181,7 +181,7 @@ impl Replica for LibraryReplica {
             versions: self.versions.clone(),
             known: Vec::new(),
         };
-        let Ok(lib) = self.open() else {
+        let Ok(lib) = Self::open() else {
             return None;
         };
         scratch.version_of(ItemId(doc.0), &lib)
@@ -239,14 +239,14 @@ impl Replica for LibraryReplica {
     }
 
     fn blob_heads(&self) -> Vec<BlobHead> {
-        let Ok(lib) = self.open() else {
+        let Ok(lib) = Self::open() else {
             return Vec::new();
         };
         lib.sync_heads(&Graveyard::load())
     }
 
     fn blobs(&self, keys: &[BlobKey]) -> Vec<Blob> {
-        let Ok(lib) = self.open() else {
+        let Ok(lib) = Self::open() else {
             return Vec::new();
         };
         let yard = Graveyard::load();
@@ -272,9 +272,10 @@ impl Replica for LibraryReplica {
             log::warn!("sync: undecodable record for {:?}", blob.head.key());
             return Ok(false);
         };
-        let mut lib = self.open()?;
+        let mut lib = Self::open()?;
         let mut yard = Graveyard::load();
         let applied = pollster::block_on(lib.apply_sync_record(blob.head, record, &mut yard))?;
+        drop(lib);
         if applied {
             yard.save()?;
         }

@@ -7,7 +7,7 @@
 //! open the same way on every platform.
 //!
 //! Layout: one bincoded file per namespace under
-//! [`istmo::path::data_dir`]`/data_store/<namespace>.bin`. Each file
+//! `<data dir>/data_store/<namespace>.bin` (see [`istmo::path::data_dir`]). Each file
 //! carries a `HashMap<String, Value>` — the `Value` tag disambiguates
 //! the typed getters (`get_string`, `get_i64`, …). A wrong-type read
 //! surfaces as [`DataStoreError::Corrupted`].
@@ -38,7 +38,7 @@ impl DataStoreFactory for DesktopFactory {
     type Instance = DesktopStore;
 
     fn create(&self, config: DataStoreConfig) -> DesktopStore {
-        DesktopStore::open(config.namespace)
+        DesktopStore::open(&config.namespace)
     }
 }
 
@@ -81,7 +81,7 @@ fn shared_map(path: &Path) -> SharedMap {
 }
 
 impl DesktopStore {
-    fn open(namespace: String) -> Self {
+    fn open(namespace: &str) -> Self {
         let dir = istmo::path::data_dir().join("data_store");
         let path = dir.join(format!("{namespace}.bin"));
         let map = shared_map(&path);

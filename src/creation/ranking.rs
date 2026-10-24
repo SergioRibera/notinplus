@@ -176,8 +176,10 @@ mod tests {
     #[test]
     fn heavy_use_replaces_only_the_weakest_tile() {
         let now = 60 * DAY_MS;
-        let mut log = UsageLog::default();
-        log.tiles = defaults()[..4].to_vec();
+        let mut log = UsageLog {
+            tiles: defaults()[..4].to_vec(),
+            ..UsageLog::default()
+        };
         for day in 50..60 {
             log.record(key("notebook"), day * DAY_MS);
         }
@@ -194,8 +196,10 @@ mod tests {
     #[test]
     fn a_small_lead_does_not_move_tiles() {
         let now = 80 * DAY_MS;
-        let mut log = UsageLog::default();
-        log.tiles = defaults()[..4].to_vec();
+        let mut log = UsageLog {
+            tiles: defaults()[..4].to_vec(),
+            ..UsageLog::default()
+        };
         for k in ["canvas", "note", "pdf", "bible"] {
             log.record(key(k), now);
         }
@@ -209,8 +213,10 @@ mod tests {
     #[test]
     fn uninstalled_entry_gives_its_slot_to_the_next_best() {
         let now = 30 * DAY_MS;
-        let mut log = UsageLog::default();
-        log.tiles = defaults()[..4].to_vec();
+        let mut log = UsageLog {
+            tiles: defaults()[..4].to_vec(),
+            ..UsageLog::default()
+        };
         for k in ["canvas", "note", "pdf", "markdown", "markdown"] {
             log.record(key(k), now);
         }

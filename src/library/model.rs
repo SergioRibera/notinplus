@@ -456,13 +456,10 @@ impl PaneLayout {
         match self {
             Self::Leaf(p) if p.id == id => Some(p),
             Self::Leaf(_) => None,
-            Self::Split { first, second, .. } => {
-                if let Some(p) = first.find_leaf_mut(id) {
-                    Some(p)
-                } else {
-                    second.find_leaf_mut(id)
-                }
-            }
+            Self::Split { first, second, .. } => match first.find_leaf_mut(id) {
+                Some(p) => Some(p),
+                None => second.find_leaf_mut(id),
+            },
         }
     }
 
@@ -587,9 +584,8 @@ impl PaneLayout {
             return false;
         }
         let tab = {
-            let leaf = match self.find_leaf_mut(src) {
-                Some(leaf) => leaf,
-                None => return false,
+            let Some(leaf) = self.find_leaf_mut(src) else {
+                return false;
             };
             if src_index >= leaf.tabs.len() {
                 return false;
@@ -832,10 +828,6 @@ impl WorkspaceIndex {
     pub fn workspace_mut(&mut self, id: WorkspaceId) -> Option<&mut Workspace> {
         self.workspaces.iter_mut().find(|w| w.id == id)
     }
-
-    pub(super) fn alloc_workspace_id(&self) -> WorkspaceId {
-        WorkspaceId::new_v4()
-    }
 }
 
 /// Schema version for [`WorkspaceIndex`]. Bump on any breaking change
@@ -923,17 +915,5 @@ impl LibraryIndex {
             cursor = f.parent;
         }
         false
-    }
-
-    pub(super) fn alloc_folder_id(&self) -> FolderId {
-        FolderId::new_v4()
-    }
-
-    pub(super) fn alloc_item_id(&self) -> ItemId {
-        ItemId::new_v4()
-    }
-
-    pub(super) fn alloc_tag_id(&self) -> TagId {
-        TagId::new_v4()
     }
 }

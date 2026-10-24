@@ -345,7 +345,7 @@ pub fn start() {
     }
     let spawned = std::thread::Builder::new()
         .name("notein-sync".into())
-        .spawn(move || run(rx));
+        .spawn(move || run(&rx));
     if let Err(err) = spawned {
         publish(SyncSnapshot {
             error: Some(format!("sync thread: {err}")),
@@ -496,7 +496,6 @@ impl Service {
             DriverEvent::PairFailed { device, reason } => {
                 self.last_failure = Some((device, reason));
             }
-            DriverEvent::PeerOnline { .. } => {}
             DriverEvent::Imported(_) | DriverEvent::Merged(_) => {
                 crate::space::notify_changed();
             }
@@ -523,7 +522,7 @@ impl Service {
             DriverEvent::JoinFailed { reason, .. } => {
                 self.last_join_failure = Some(reason);
             }
-            DriverEvent::RelayOnline(_) => {}
+            DriverEvent::PeerOnline { .. } | DriverEvent::RelayOnline(_) => {}
             DriverEvent::Live {
                 from,
                 name,
@@ -739,7 +738,7 @@ enum Step {
     Net(NetEvent),
 }
 
-fn run(cmds: flume::Receiver<Cmd>) {
+fn run(cmds: &flume::Receiver<Cmd>) {
     let root = bodies::root_dir();
     let profile_path = root.join(PROFILE_FILE);
     let shares_path = root.join(SHARES_FILE);
@@ -798,12 +797,12 @@ fn run(cmds: flume::Receiver<Cmd>) {
         let wait = deadline.duration_since(now);
         let events = service.node.events().clone();
         let step = flume::Selector::new()
-            .recv(&cmds, |cmd| cmd.map(Step::Cmd))
+            .recv(cmds, |cmd| cmd.map(Step::Cmd))
             .recv(&events, |event| event.map(Step::Net))
             .wait_timeout(wait);
         match step {
             Ok(Ok(Step::Cmd(Cmd::LocalChanged))) => {
-                pending_change.get_or_insert(Instant::now() + DEBOUNCE);
+                pending_change.get_or_insert_with(|| Instant::now() + DEBOUNCE);
             }
             Ok(Ok(Step::Cmd(cmd))) => {
                 if let Err(err) = service.on_cmd(cmd) {

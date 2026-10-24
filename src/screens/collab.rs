@@ -180,13 +180,15 @@ impl Component for ShareForm {
         let mut read_only = self.read_only;
         let current = *scope.read();
         if let Some(id) = *self.created.read() {
-            return match snapshot.shares.iter().find(|s| s.id == id) {
-                Some(view) => Session { view: view.clone() }.into_element(),
-                None => rect()
-                    .padding(20.0)
-                    .child(Text::new("Preparando la invitación…").role(TextRole::Meta))
-                    .into_element(),
-            };
+            return snapshot.shares.iter().find(|s| s.id == id).map_or_else(
+                || {
+                    rect()
+                        .padding(20.0)
+                        .child(Text::new("Preparando la invitación…").role(TextRole::Meta))
+                        .into_element()
+                },
+                |view| Session { view: view.clone() }.into_element(),
+            );
         }
         let target = self.target;
         let notebooks = target.item.map_or(0, |i| data.live_notebooks_of(i).len());
@@ -406,6 +408,24 @@ fn person_color(device: DeviceId) -> Color {
     swatches[hash % swatches.len()]
 }
 
+/// What a person may do in a session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Role {
+    Owner,
+    Editor,
+    Viewer,
+}
+
+impl Role {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Owner => "Organiza",
+            Self::Editor => "Edita",
+            Self::Viewer => "Mira",
+        }
+    }
+}
+
 /// One person of a session, in display order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Participant {
@@ -413,8 +433,7 @@ struct Participant {
     name: String,
     online: bool,
     me: bool,
-    owner: bool,
-    viewer: bool,
+    role: Role,
 }
 
 fn participants(view: &ShareView, me: Option<DeviceId>) -> Vec<Participant> {
@@ -424,19 +443,21 @@ fn participants(view: &ShareView, me: Option<DeviceId>) -> Vec<Participant> {
         name: view.owner.name.clone(),
         online: view.owner_online || view.is_owner,
         me: Some(view.owner.device) == me,
-        owner: true,
-        viewer: false,
+        role: Role::Owner,
     })
     .chain(view.members.iter().map(|(m, online)| Participant {
         device: m.device,
         name: m.name.clone(),
         online: *online || Some(m.device) == me,
         me: Some(m.device) == me,
-        owner: false,
-        viewer: read_only || view.viewers.contains(&m.device),
+        role: if read_only || view.viewers.contains(&m.device) {
+            Role::Viewer
+        } else {
+            Role::Editor
+        },
     }))
     .collect();
-    people.sort_by_key(|p| (!p.me, p.viewer, !p.online));
+    people.sort_by_key(|p| (!p.me, p.role == Role::Viewer, !p.online));
     people
 }
 
@@ -465,11 +486,7 @@ impl Component for Session {
                     } else {
                         person.name.clone().into()
                     },
-                    status: if person.viewer {
-                        "Mira".into()
-                    } else {
-                        "Edita".into()
-                    },
+                    status: person.role.label().into(),
                     color: person_color(person.device),
                     live: person.online,
                 })
@@ -559,7 +576,7 @@ fn people_sheet(share: ShareId, people: Vec<Participant>, is_owner: bool) {
     Sheet::titled(format!("Personas · {}", people.len()))
         .child(People {
             share,
-            people,
+            participants: people,
             is_owner,
         })
         .push();
@@ -568,7 +585,7 @@ fn people_sheet(share: ShareId, people: Vec<Participant>, is_owner: bool) {
 #[derive(Clone, Debug, PartialEq)]
 struct People {
     share: ShareId,
-    people: Vec<Participant>,
+    participants: Vec<Participant>,
     is_owner: bool,
 }
 
@@ -580,7 +597,7 @@ impl Component for People {
         let text = query.read().trim().to_lowercase();
         let share = self.share;
         let rows: Vec<Element> = self
-            .people
+            .participants
             .iter()
             .filter(|person| text.is_empty() || person.name.to_lowercase().contains(&text))
             .map(|person| {
@@ -590,12 +607,10 @@ impl Component for People {
                     .read()
                     .as_ref()
                     .is_some_and(|(k, at)| *k == key && at.elapsed() < CONFIRM_WINDOW);
-                let status = match (person.owner, person.viewer, person.online) {
-                    (true, _, _) => "Organiza",
-                    (false, true, true) => "Mira · conectado",
-                    (false, true, false) => "Mira · sin conexión",
-                    (false, false, true) => "Edita · conectado",
-                    (false, false, false) => "Edita · sin conexión",
+                let status = match (person.role, person.online) {
+                    (Role::Owner, _) => Role::Owner.label().to_owned(),
+                    (role, true) => format!("{} · conectado", role.label()),
+                    (role, false) => format!("{} · sin conexión", role.label()),
                 };
                 let name = if person.me {
                     format!("{} (vos)", person.name)
@@ -613,8 +628,8 @@ impl Component for People {
                             .presence(person.online)
                             .into_element(),
                         ));
-                let row = if self.is_owner && !person.owner {
-                    let viewer = person.viewer;
+                let row = if self.is_owner && person.role != Role::Owner {
+                    let viewer = person.role == Role::Viewer;
                     row.trailing(Trailing::Element(
                         rect()
                             .horizontal()
@@ -887,7 +902,7 @@ impl Component for Joining {
 }
 
 /// "La sesión terminó": keep a copy of what was open, or let it go.
-pub fn session_ended(end: SessionEnd) {
+pub fn session_ended(end: &SessionEnd) {
     let reason = match end.reason {
         Removal::Ended => "El organizador terminó la sesión.",
         Removal::Expelled => "El organizador te quitó de la sesión.",

@@ -132,7 +132,6 @@ pub(crate) fn demo() -> LibraryData {
         ],
         tags: Vec::new(),
         pins,
-        ..LibraryIndex::default()
     };
     let workspaces = WorkspaceIndex {
         version: crate::library::WORKSPACE_INDEX_VERSION,
@@ -269,13 +268,16 @@ fn search_renders() {
     render("search-desktop", (1280.0, 860.0), search_empty);
 }
 
+fn mesa_view(id: Option<crate::library::WorkspaceId>) -> Element {
+    id.map_or_else(
+        || rect().into_element(),
+        |id| crate::screens::mesa::Mesa { id }.into_element(),
+    )
+}
+
 fn mesa() -> Element {
     let data = crate::state::LibraryView::get().data();
-    let id = data.and_then(|d| d.active_workspace());
-    match id {
-        Some(id) => crate::screens::mesa::Mesa { id }.into_element(),
-        None => rect().into_element(),
-    }
+    mesa_view(data.and_then(|d| d.active_workspace()))
 }
 
 #[test]
@@ -286,16 +288,7 @@ fn mesa_renders() {
 
 fn class_mesa() -> Element {
     let data = crate::state::LibraryView::get().data();
-    let id = data.and_then(|d| {
-        d.workspaces()
-            .iter()
-            .find(|w| w.named)
-            .map(|w| w.id)
-    });
-    match id {
-        Some(id) => crate::screens::mesa::Mesa { id }.into_element(),
-        None => rect().into_element(),
-    }
+    mesa_view(data.and_then(|d| d.workspaces().iter().find(|w| w.named).map(|w| w.id)))
 }
 
 #[test]

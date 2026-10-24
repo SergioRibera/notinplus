@@ -447,7 +447,7 @@ impl Component for Dock {
             let state = self.state;
             items.push(
                 IconButton::new(lucide::ellipsis(), "Más herramientas")
-                    .on_press(move |_| more_sheet(Arc::clone(&board), state))
+                    .on_press(move |_| more_sheet(&board, &state))
                     .into_element(),
             );
         } else {
@@ -516,7 +516,7 @@ impl Component for Dock {
 }
 
 /// The tools the phone dock leaves out.
-fn more_sheet(board: Arc<Mutex<Board>>, state: InkState) {
+fn more_sheet(board: &Arc<Mutex<Board>>, state: &InkState) {
     use freya::icons::lucide;
     let mut tools = vec![Tool::Pencil, Tool::Marker, Tool::Shape, Tool::Text];
     if *state.pdf.peek() {

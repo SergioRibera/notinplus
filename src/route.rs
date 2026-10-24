@@ -19,7 +19,7 @@
 use std::sync::{Arc, Mutex, Weak};
 
 use freya::prelude::*;
-use freya::router::*;
+use freya::router::Routable;
 use freya_canvas_bg::{
     CanvasBackground, DotGridBackground, GridBackground, LinedBackground, SolidColorBackground,
 };
@@ -83,12 +83,14 @@ pub(crate) fn init_canvas_mount(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
                         return;
                     }
                 };
-                let (color, bg) = {
-                    let lib = handle.lock().await;
-                    let Some(item) = lib.index().item(id) else {
-                        return;
-                    };
-                    (item.color, item.background)
+                let found = handle
+                    .lock()
+                    .await
+                    .index()
+                    .item(id)
+                    .map(|item| (item.color, item.background));
+                let Some((color, bg)) = found else {
+                    return;
                 };
                 let surface: SkColor = color
                     .map_or(DEFAULT_PAPER, |c| SkColor::from_argb(c[3], c[0], c[1], c[2]));
@@ -218,15 +220,17 @@ fn spawn_autosave_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Receiv
     spawn(async move {
         while rx.recv_async().await.is_ok() {
             while rx.try_recv().is_ok() {}
-            let (bytes, captured) = {
+            let snapshot = {
                 let guard = lock(&board);
                 let doc = guard.doc();
-                match doc.snapshot_bytes() {
-                    Ok(bytes) => (bytes, crate::library::refs::capture(doc)),
-                    Err(err) => {
-                        log::error!("autosave snapshot id={id:?}: {err}");
-                        continue;
-                    }
+                doc.snapshot_bytes()
+                    .map(|bytes| (bytes, crate::library::refs::capture(doc)))
+            };
+            let (bytes, captured) = match snapshot {
+                Ok(snapshot) => snapshot,
+                Err(err) => {
+                    log::error!("autosave snapshot id={id:?}: {err}");
+                    continue;
                 }
             };
             match crate::library::shared().await {
@@ -288,9 +292,10 @@ fn apply_pending_canvas_background(board: &Arc<Mutex<Board>>, mount: CanvasMount
         }
     });
     let had_queued = queued.is_some();
-    let (style, surface) = queued.map_or((BackgroundStyle::default(), DEFAULT_PAPER), |p| {
-        (p.style, p.surface)
-    });
+    let (style, surface) = queued.map_or_else(
+        || (BackgroundStyle::default(), DEFAULT_PAPER),
+        |p| (p.style, p.surface),
+    );
     apply_canvas_background(board, style, surface);
     had_queued
 }
@@ -321,14 +326,16 @@ fn sync_siblings(item: ItemId, board: &Arc<Mutex<Board>>) {
             continue;
         }
         let version = lock(&sibling).doc().version();
-        let updates = match lock(board).doc().updates_since(&version) {
+        let exported = lock(board).doc().updates_since(&version);
+        let updates = match exported {
             Ok(updates) => updates,
             Err(err) => {
                 log::error!("sibling sync export id={item:?}: {err}");
                 continue;
             }
         };
-        if let Err(err) = lock(&sibling).merge_updates(&updates) {
+        let merged = lock(&sibling).merge_updates(&updates);
+        if let Err(err) = merged {
             log::error!("sibling sync import id={item:?}: {err}");
         }
     }

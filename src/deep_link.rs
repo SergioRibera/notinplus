@@ -100,7 +100,12 @@ pub fn scan_links(text: &str) -> impl Iterator<Item = SourceRef> + '_ {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    use std::fmt::Write;
+    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut out, byte| {
+        // Writing to a String does not fail.
+        let _ = write!(out, "{byte:02x}");
+        out
+    })
 }
 
 fn unhex(text: &str) -> Option<Vec<u8>> {

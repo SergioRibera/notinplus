@@ -172,7 +172,7 @@ impl Component for Form {
         let spec = &self.spec;
         let mut values = self.values;
         let current = values.read().clone();
-        let name = use_state(move || current.name.clone());
+        let name = use_state(move || current.name);
         use_side_effect(move || {
             let typed = name.read().clone();
             if values.peek().name != typed {
@@ -452,7 +452,7 @@ impl Component for TagsField {
             let mut typed = typed;
             typed.set(String::new());
         };
-        let mut add_typed = add.clone();
+        let mut add_typed = add;
         Section::new("Etiquetas")
             .child(
                 rect()
@@ -481,7 +481,7 @@ impl Component for TagsField {
                     .spacing(6.0)
                     .children(suggestions.into_iter().map(|t| {
                         let name = t.clone();
-                        let mut add = add.clone();
+                        let mut add = add;
                         Tag::new(t)
                             .icon(freya::icons::lucide::plus())
                             .on_press(move |_| add(name.clone()))
@@ -618,9 +618,8 @@ pub fn edit_item(item: ItemId) {
             .and_then(|b| <crate::plugins::builtin::pdf::PdfContent as notein_plugin::payload::Payload>::from_bytes(&b).ok())
             .map(|c| format!("{} · {} · {}", c.file_name, crate::format::count(c.page_count as usize, "página", "páginas"), crate::format::size(c.size_bytes)));
     }
-    let mut initial_choice = None;
-    if is_bible && let Some(bible) = crate::plugins::builtin::bible_kind() {
-        spec.choice_label = "Traducción".to_owned();
+    let initial_choice = if is_bible && let Some(bible) = crate::plugins::builtin::bible_kind() {
+        "Traducción".clone_into(&mut spec.choice_label);
         spec.choices = bible
             .db()
             .list_bibles()
@@ -628,12 +627,14 @@ pub fn edit_item(item: ItemId) {
             .into_iter()
             .map(|b| (b.id.clone(), format!("{} · {}", b.abbrev, b.name_local)))
             .collect();
-        initial_choice = crate::plugins::content::read(item, notein_bible::kind::KIND)
+        crate::plugins::content::read(item, notein_bible::kind::KIND)
             .and_then(|b| {
                 <notein_bible::BibleContent as notein_plugin::payload::Payload>::from_bytes(&b).ok()
             })
-            .map(|c| c.bible_id);
-    }
+            .map(|c| c.bible_id)
+    } else {
+        None
+    };
     let initial = FormValues {
         name: found.name.clone(),
         paper: found.background,

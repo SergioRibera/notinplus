@@ -48,9 +48,10 @@ pub fn ago(ms: u64, now: u64) -> String {
         _ => {
             let shown = day(ms, now);
             let mut chars = shown.chars();
-            chars.next().map_or(shown.clone(), |first| {
-                first.to_uppercase().collect::<String>() + chars.as_str()
-            })
+            chars.next().map_or_else(
+                || shown.clone(),
+                |first| first.to_uppercase().collect::<String>() + chars.as_str(),
+            )
         }
     }
 }

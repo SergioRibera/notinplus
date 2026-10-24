@@ -20,7 +20,7 @@ pub fn provide_host_modal_chrome() {
     let on_sized = Callback::<Area, ()>::new(|area: Area| {
         publish_mask(UiRegion::Modal, area);
     });
-    let on_dismiss = Callback::<(), ()>::new(|_| {
+    let on_dismiss = Callback::<(), ()>::new(|()| {
         set_mask(UiRegion::Modal, None);
     });
     use_provide_context(move || ModalChrome {

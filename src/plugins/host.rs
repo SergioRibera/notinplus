@@ -79,11 +79,11 @@ impl ShellHost {
 
     /// Queue a move to `anchor` inside `doc` (a document of `kind`) and
     /// wake its open faces.
-    pub fn queue_jump(&self, kind: &str, doc: DocId, anchor: Vec<u8>) {
+    pub fn queue_jump(&self, kind: &str, doc: DocId, anchor: &[u8]) {
         self.pending_jumps
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert((kind.to_owned(), doc), anchor.clone());
+            .insert((kind.to_owned(), doc), anchor.to_vec());
         self.jump_listeners
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -92,7 +92,7 @@ impl ShellHost {
                     || tx
                         .send(Jump {
                             doc,
-                            anchor: anchor.clone(),
+                            anchor: anchor.to_vec(),
                         })
                         .is_ok()
             });
@@ -218,7 +218,7 @@ fn apply(event: HostEvent, jobs: &mut HashMap<(String, String), ToastId>) {
                     .tone(ToastTone::Download)
                     .progress(value, caption);
                 if let Some(id) = jobs.get(&key) {
-                    toasts.update(*id, toast)
+                    toasts.update(*id, toast);
                 } else {
                     let id = toasts.show(toast);
                     jobs.insert(key, id);

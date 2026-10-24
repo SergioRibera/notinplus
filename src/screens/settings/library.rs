@@ -84,9 +84,9 @@ impl Component for Library {
         let trash_count = data
             .as_deref()
             .map_or(0, |d| crate::screens::trash::groups(d).len());
-        let space = match *usage.read() {
-            None => Text::new("Midiendo…").role(TextRole::Meta).into_element(),
-            Some(u) => {
+        let space = (*usage.read()).map_or_else(
+            || Text::new("Midiendo…").role(TextRole::Meta).into_element(),
+            |u| {
                 let total = u.total().max(1);
                 #[allow(clippy::cast_precision_loss)] // byte counts as proportions
                 let share =
@@ -149,8 +149,8 @@ impl Component for Library {
                             .child(legend(p.t3, "Papelera", u.trash)),
                     )
                     .into_element()
-            }
-        };
+            },
+        );
         rect()
             .width(Size::fill())
             .spacing(24.0)

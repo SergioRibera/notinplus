@@ -64,18 +64,22 @@ pub(crate) fn use_header_presses(
 #[must_use]
 pub fn render(item: ItemId, kind: &DocKind, slot: Option<ViewSlot>) -> Element {
     let face = super::catalog().face(&kind.plugin_id);
-    match face {
-        Some(face) => face.render(FaceRequest {
-            doc: doc_id(item),
-            pane: slot.map(pane_key),
-            host: super::host::handle(),
-            store: SnapshotStore::new(item, kind.plugin_id.clone()),
-        }),
-        None => MissingFace {
-            kind: kind.plugin_id.clone(),
-        }
-        .into_element(),
-    }
+    face.map_or_else(
+        || {
+            MissingFace {
+                kind: kind.plugin_id.clone(),
+            }
+            .into_element()
+        },
+        |face| {
+            face.render(FaceRequest {
+                doc: doc_id(item),
+                pane: slot.map(pane_key),
+                host: super::host::handle(),
+                store: SnapshotStore::new(item, kind.plugin_id.clone()),
+            })
+        },
+    )
 }
 
 /// Placeholder for documents whose plugin is not available.

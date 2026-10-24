@@ -63,10 +63,7 @@ impl Component for Map {
         use freya::icons::lucide;
         let p = palette();
         let data = LibraryView::get().data();
-        let graph = use_memo({
-            let data = data.clone();
-            move || data.as_deref().map(Graph::of).unwrap_or_default()
-        });
+        let graph = use_memo(move || data.as_deref().map(Graph::of).unwrap_or_default());
         let mut hidden_kinds = use_state(Vec::<String>::new);
         let mut hidden_edges = use_state(Vec::<EdgeKind>::new);
         let mut selected = use_state(|| None::<usize>);

@@ -69,7 +69,7 @@ impl Cover {
                     .position(Position::new_absolute().top(22.0).left(0.0))
                     .width(Size::px(w))
                     .spacing(17.0)
-                    .children((0..((height / 18.0) as usize)).map(|i| {
+                    .children((0..fits(height, 18.0)).map(|i| {
                         rect()
                             .key(i)
                             .width(Size::fill())
@@ -95,7 +95,7 @@ impl Cover {
                                     rect()
                                         .horizontal()
                                         .spacing(14.0)
-                                        .children((0..((w / 16.0) as usize)).map(|c| {
+                                        .children((0..fits(w, 16.0)).map(|c| {
                                             rect()
                                                 .key(c)
                                                 .width(Size::px(2.0))
@@ -503,4 +503,10 @@ impl Component for FolderCard {
             );
         gesture.apply(card, move || open.call(()), move |at| menu.call(at))
     }
+}
+
+/// How many `pitch`-sized steps fit in `span`.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a small, non-negative count
+fn fits(span: f32, pitch: f32) -> usize {
+    (span / pitch).max(0.0) as usize
 }

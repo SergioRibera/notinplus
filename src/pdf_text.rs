@@ -184,10 +184,11 @@ impl PdfText {
 
     fn with<R>(&self, item: ItemId, f: impl FnOnce(&mut OpenPdf) -> R) -> Option<R> {
         let mut open = self.lock();
-        if !open.contains_key(&item) {
-            open.insert(item, OpenPdf::open(item)?);
-        }
-        open.get_mut(&item).map(f)
+        let pdf = match open.entry(item) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => entry.insert(OpenPdf::open(item)?),
+        };
+        Some(f(pdf))
     }
 
     /// Start a selection at world point `(x, y)`; `false` when it is not
@@ -291,7 +292,7 @@ impl PdfText {
         let Some(sel) = pdf.selection.map(PdfSelection::normalized).filter(|s| !s.is_empty()) else {
             return Vec::new();
         };
-        (sel.start_page..=sel.end_page)
+        let rects = (sel.start_page..=sel.end_page)
             .filter_map(|page| {
                 let (start, end) = pdf.range_on(page, sel)?;
                 let origin = pdf.pages.get(page as usize)?;
@@ -304,7 +305,9 @@ impl PdfText {
                 }))
             })
             .flatten()
-            .collect()
+            .collect();
+        drop(open);
+        rects
     }
 
     /// The selected text; pages joined with a line break.
@@ -319,6 +322,7 @@ impl PdfText {
                 page_slice(&pdf.doc, page, start, end)
             })
             .collect();
+        drop(open);
         Some(parts.join("\n"))
     }
 }

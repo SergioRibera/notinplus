@@ -55,7 +55,7 @@ pub struct Indexing {
 }
 
 /// Everything one query found.
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Results {
     pub query: String,
     pub documents: Vec<DocMatch>,

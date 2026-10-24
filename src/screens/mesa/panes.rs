@@ -256,27 +256,29 @@ impl Component for Leaf {
             workspace: ops.mesa,
             pane,
         };
-        let content = match &active {
-            Some(tab) => body(tab, &self.ctx.data, slot),
-            None => EmptyState::new(lucide::layout_panel_left(), "Panel vacío")
-                .body("Abrí un documento acá o un borrador para escribir rápido.")
-                .action(
-                    rect()
-                        .horizontal()
-                        .spacing(8.0)
-                        .child(
-                            Button::new("Abrir documento")
-                                .primary()
-                                .on_press(move |_| ops.new_tab(pane)),
-                        )
-                        .child(
-                            Button::new("Borrador")
-                                .tonal()
-                                .on_press(move |_| ops.new_scratch(pane)),
-                        ),
-                )
-                .into_element(),
-        };
+        let content = active.as_ref().map_or_else(
+            || {
+                EmptyState::new(lucide::layout_panel_left(), "Panel vacío")
+                    .body("Abrí un documento acá o un borrador para escribir rápido.")
+                    .action(
+                        rect()
+                            .horizontal()
+                            .spacing(8.0)
+                            .child(
+                                Button::new("Abrir documento")
+                                    .primary()
+                                    .on_press(move |_| ops.new_tab(pane)),
+                            )
+                            .child(
+                                Button::new("Borrador")
+                                    .tonal()
+                                    .on_press(move |_| ops.new_scratch(pane)),
+                            ),
+                    )
+                    .into_element()
+            },
+            |tab| body(tab, &self.ctx.data, slot),
+        );
         let dragging = drag.read().is_some();
         rect()
             .width(Size::fill())
@@ -317,7 +319,7 @@ impl Component for Leaf {
                         can_close: self.ctx.can_close,
                         next: self.ctx.next,
                     })
-                    .maybe_child(active.clone().map(|tab| TabNotice {
+                    .maybe_child(active.map(|tab| TabNotice {
                         data: Arc::clone(&self.ctx.data),
                         pane,
                         index,

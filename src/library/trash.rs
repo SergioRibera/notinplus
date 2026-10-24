@@ -261,12 +261,11 @@ impl Library {
             .iter()
             .filter(|f| f.trashed.is_some_and(|t| t.batch == batch))
             .filter(|f| {
-                !self
-                    .data
+                self.data
                     .index
                     .folder(f.parent)
                     .and_then(|p| p.trashed)
-                    .is_some_and(|t| t.batch == batch)
+                    .is_none_or(|t| t.batch != batch)
             })
             .map(|f| f.id)
             .collect();
@@ -353,23 +352,6 @@ pub const fn days_left(at: u64, now: u64, retention: Option<u64>) -> Option<u64>
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{days_left, retention_millis};
-
-    const DAY: u64 = 24 * 60 * 60 * 1000;
-
-    #[test]
-    fn days_left_rounds_up() {
-        let retention = retention_millis(Some(30));
-        assert_eq!(days_left(0, 0, retention), Some(30));
-        assert_eq!(days_left(0, DAY / 2, retention), Some(30));
-        assert_eq!(days_left(0, 29 * DAY + 1, retention), Some(1));
-        assert_eq!(days_left(0, 31 * DAY, retention), Some(0));
-        assert_eq!(days_left(0, 31 * DAY, None), None);
-    }
-}
-
 impl LibraryData {
     /// Notebooks (companion canvases) of `item` that are still live.
     #[must_use]
@@ -430,5 +412,22 @@ impl LibraryData {
             .filter(|i| i.trashed.is_some())
             .map(|i| super::bodies::disk_usage(i.id))
             .sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{days_left, retention_millis};
+
+    const DAY: u64 = 24 * 60 * 60 * 1000;
+
+    #[test]
+    fn days_left_rounds_up() {
+        let retention = retention_millis(Some(30));
+        assert_eq!(days_left(0, 0, retention), Some(30));
+        assert_eq!(days_left(0, DAY / 2, retention), Some(30));
+        assert_eq!(days_left(0, 29 * DAY + 1, retention), Some(1));
+        assert_eq!(days_left(0, 31 * DAY, retention), Some(0));
+        assert_eq!(days_left(0, 31 * DAY, None), None);
     }
 }

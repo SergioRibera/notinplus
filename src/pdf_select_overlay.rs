@@ -152,7 +152,7 @@ pub(crate) fn show_bar(item: ItemId, mount: CanvasMount, at: (f32, f32)) {
         })
     };
     let (color_mark, note_mark, plain_mark) = (mark.clone(), mark.clone(), mark);
-    let quote = snippet.clone();
+    let quote = snippet;
     crate::selection::SelectionMenu {
         at,
         active: None,
@@ -228,15 +228,23 @@ fn selection_paint(item: ItemId, mount: CanvasMount, tick: State<u64>) -> impl I
         let Some(board) = active_boards::get(mount) else {
             return;
         };
-        let guard = lock(&board);
+        let screen: Vec<SkRect> = {
+            let guard = lock(&board);
+            rects
+                .iter()
+                .map(|r| {
+                    let (sx0, sy0) = guard.world_to_screen(r.min_x, r.min_y);
+                    let (sx1, sy1) = guard.world_to_screen(r.max_x, r.max_y);
+                    SkRect::new(sx0, sy0, sx1, sy1)
+                })
+                .collect()
+        };
         let mut paint = Paint::default();
         paint.set_color(SkColor::from_argb(HIGHLIGHT_RGBA.3, HIGHLIGHT_RGBA.0, HIGHLIGHT_RGBA.1, HIGHLIGHT_RGBA.2));
         paint.set_style(PaintStyle::Fill);
         paint.set_anti_alias(true);
-        for r in rects {
-            let (sx0, sy0) = guard.world_to_screen(r.min_x, r.min_y);
-            let (sx1, sy1) = guard.world_to_screen(r.max_x, r.max_y);
-            ctx.canvas.draw_rect(SkRect::new(sx0, sy0, sx1, sy1), &paint);
+        for r in &screen {
+            ctx.canvas.draw_rect(r, &paint);
         }
     }))
     .width(Size::fill())

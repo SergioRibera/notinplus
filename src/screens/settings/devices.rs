@@ -651,7 +651,7 @@ impl Component for LinkSheet {
                     }),
             )
             .maybe_child(scan_error().map(|why| Notice::new(NoticeTone::Warning, why)))
-            .maybe_child(clipboard.clone().filter(|_| text.trim().is_empty()).map(|link| {
+            .maybe_child(clipboard.filter(|_| text.trim().is_empty()).map(|link| {
                 ListRow::new("Hay un enlace copiado")
                     .subtitle(link.clone())
                     .icon(lucide::clipboard())

@@ -95,13 +95,15 @@ impl Component for TabNotice {
             Notice::Trashed { name, days, batch } => (
                 lucide::trash_2(),
                 p.danger,
-                match days {
-                    Some(d) => format!(
-                        "«{name}» está en la papelera · {} más",
-                        crate::format::count(usize::try_from(d).unwrap_or(0), "día", "días")
-                    ),
-                    None => format!("«{name}» está en la papelera"),
-                },
+                days.map_or_else(
+                    || format!("«{name}» está en la papelera"),
+                    |d| {
+                        format!(
+                            "«{name}» está en la papelera · {} más",
+                            crate::format::count(usize::try_from(d).unwrap_or(0), "día", "días")
+                        )
+                    },
+                ),
                 vec![
                     Button::new("Restaurar")
                         .tonal()

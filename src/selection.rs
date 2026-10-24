@@ -11,6 +11,9 @@ use notein_ui_kit::{BarItem, Modal, ModalController, SelectionBar, width_class};
 
 use crate::library::ItemId;
 
+/// A kind specific button of the menu: label, icon and what it does.
+pub type ExtraAction = (&'static str, Bytes, Rc<dyn Fn()>);
+
 /// What the bar offers for one selection.
 #[derive(Clone)]
 pub struct SelectionMenu {
@@ -27,7 +30,7 @@ pub struct SelectionMenu {
     /// The document the selection is in, for Al cuaderno.
     pub document: Option<ItemId>,
     /// Kind specific extras ("Marcador" in PDFs).
-    pub extra: Vec<(&'static str, Bytes, Rc<dyn Fn()>)>,
+    pub extra: Vec<ExtraAction>,
     /// The bar went away without an action.
     pub on_dismiss: Rc<dyn Fn()>,
 }
@@ -111,7 +114,7 @@ impl Component for Bar {
                 act(move || crate::references::copy(&target, &label)),
             ));
             if let Some(document) = menu.document {
-                let target = target_clone(&menu.reference);
+                let target = menu.reference.as_ref().map(|(t, _)| t.clone());
                 items.push(BarItem::action(
                     "Al cuaderno",
                     lucide::notebook_pen(),
@@ -148,10 +151,6 @@ impl Component for Bar {
             .child(bar)
             .into_element()
     }
-}
-
-fn target_clone(reference: &Option<(SourceRef, String)>) -> Option<SourceRef> {
-    reference.as_ref().map(|(t, _)| t.clone())
 }
 
 /// The reference chip label of `target`.

@@ -271,6 +271,7 @@ pub fn trash_documents(items: Vec<ItemId>) {
                     crate::format::count(many.len(), "documento", "documentos")
                 ),
             };
+            drop(lib);
             (title, notebooks)
         };
         if notebooks == 0 {

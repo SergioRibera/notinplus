@@ -33,14 +33,13 @@ enum DragPhase {
 }
 
 /// Access the global drag state for payloads of type `T`.
+#[must_use]
 pub fn use_drag<T: 'static>() -> State<Option<T>> {
-    if let Some(s) = try_consume_root_context() {
-        s
-    } else {
+    try_consume_root_context().unwrap_or_else(|| {
         let state = State::<Option<T>>::create_in_scope(None, ScopeId::ROOT);
         provide_context_for_scope_id(state, ScopeId::ROOT);
         state
-    }
+    })
 }
 
 /// Draggable card. Mirrors freya's `DragZone` but accepts touch input.
@@ -85,21 +84,25 @@ impl<T: Clone + PartialEq + 'static> DragZone<T> {
         }
     }
 
+    #[must_use]
     pub const fn show_while_dragging(mut self, show_while_dragging: bool) -> Self {
         self.show_while_dragging = show_while_dragging;
         self
     }
 
+    #[must_use]
     pub fn drag_element(mut self, drag_element: impl Into<Element>) -> Self {
         self.drag_element = Some(drag_element.into());
         self
     }
 
+    #[must_use]
     pub const fn drag_threshold(mut self, drag_threshold: f64) -> Self {
         self.drag_threshold = drag_threshold;
         self
     }
 
+    #[must_use]
     pub const fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
@@ -129,7 +132,7 @@ impl<T: Clone + PartialEq> Component for DragZone<T> {
                 let dx = current.x - press_point.x;
                 let dy = current.y - press_point.y;
 
-                if (dx * dx + dy * dy).sqrt() >= drag_threshold {
+                if dx.hypot(dy) >= drag_threshold {
                     phase.set(DragPhase::Dragging {
                         position: current,
                         offset,
@@ -242,6 +245,7 @@ impl<T: PartialEq + Clone + 'static> DropZone<T> {
         }
     }
 
+    #[must_use]
     pub fn on_drag_over(mut self, on_drag_over: impl Into<EventHandler<bool>>) -> Self {
         self.on_drag_over = Some(on_drag_over.into());
         self
@@ -270,7 +274,6 @@ impl<T: Clone + PartialEq + 'static> Component for DropZone<T> {
         // a drop was dispatched so the caller can `stop_propagation`
         // uniformly across both event families.
         let commit = {
-            let on_drop = on_drop.clone();
             let on_drag_over = on_drag_over.clone();
             move || {
                 if let Some(payload) = &*drags.read() {

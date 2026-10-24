@@ -1658,7 +1658,7 @@ impl Board {
                         .strokes
                         .iter()
                         .rposition(|s| s.id == id)
-                        .unwrap_or(layer.strokes.len().saturating_sub(1));
+                        .unwrap_or_else(|| layer.strokes.len().saturating_sub(1));
                     self.stroke_index.insert(id, (layer_id, idx));
                 }
             }
@@ -2840,7 +2840,7 @@ impl Board {
             seen: now,
         });
         hand.seen = now;
-        hand.name = name.to_owned();
+        name.clone_into(&mut hand.name);
         match message {
             LiveMessage::Ink {
                 stroke,
@@ -2975,21 +2975,9 @@ impl Board {
 
 /// A stable, readable colour for a device, from its id.
 fn device_color(device: notein_sync::DeviceId) -> [u8; 4] {
-    let hue = f32::from(device.0[0]) / 255.0 * 6.0;
-    let sector = hue.floor();
-    let frac = hue - sector;
-    let (v, p, q, t) = (0.92_f32, 0.35_f32, 0.57f32.mul_add(-frac, 0.92), 0.57f32.mul_add(frac, 0.35));
-    let (r, g, b) = match sector as u8 {
-        0 => (v, t, p),
-        1 => (q, v, p),
-        2 => (p, v, t),
-        3 => (p, q, v),
-        4 => (t, p, v),
-        _ => (v, p, q),
-    };
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let to_u8 = |c: f32| (c * 255.0).round().clamp(0.0, 255.0) as u8;
-    [to_u8(r), to_u8(g), to_u8(b), 255]
+    let hue = f32::from(device.0[0]) / 255.0 * 360.0;
+    let color = freya::prelude::Color::from_hsv(hue, 0.62, 0.92);
+    [color.r(), color.g(), color.b(), 255]
 }
 
 /// Another person's pointer: a small disc in their colour with a
@@ -3131,31 +3119,23 @@ fn draw_pointer_overlay(
 /// every other one. Avoids depending on Skia's `PathEffect::dash`,
 /// which freya-engine's prelude does not re-export.
 fn pointer_dash_path(cx: f32, cy: f32, radius: f32) -> freya_engine::prelude::Path {
-    const SEGMENTS: u32 = 24;
-    const SUBSTEPS: u32 = 4;
-    let mut b = PathBuilder::new();
-    #[allow(clippy::cast_precision_loss)]
-    let seg = std::f32::consts::TAU / SEGMENTS as f32;
-    for i in 0..SEGMENTS {
-        if i & 1 == 1 {
-            continue;
-        }
-        #[allow(clippy::cast_precision_loss)]
-        let a0 = seg * i as f32;
-        for k in 0..=SUBSTEPS {
-            #[allow(clippy::cast_precision_loss)]
-            let t = k as f32 / SUBSTEPS as f32;
-            let a = t.mul_add(seg, a0);
-            let x = radius.mul_add(a.cos(), cx);
-            let y = radius.mul_add(a.sin(), cy);
-            if k == 0 {
-                b.move_to((x, y));
+    const SEGMENTS: u16 = 24;
+    const SUBSTEPS: u16 = 4;
+    let mut path = PathBuilder::new();
+    let step = std::f32::consts::TAU / f32::from(SEGMENTS);
+    for segment in (0..SEGMENTS).step_by(2) {
+        let start = step * f32::from(segment);
+        for sub in 0..=SUBSTEPS {
+            let angle = (f32::from(sub) / f32::from(SUBSTEPS)).mul_add(step, start);
+            let point = (radius.mul_add(angle.cos(), cx), radius.mul_add(angle.sin(), cy));
+            if sub == 0 {
+                path.move_to(point);
             } else {
-                b.line_to((x, y));
+                path.line_to(point);
             }
         }
     }
-    b.detach()
+    path.detach()
 }
 
 /// Marquee preview for an in-flight [`EraserMode::SelectionRect`]
@@ -3626,8 +3606,8 @@ mod tests {
         let mut b = Board::default();
         b.set_current_preset(BrushPreset::pen());
         b.begin(pt(0.0, 0.0));
-        for i in 1..=10 {
-            b.extend(pt(i as f32 * 10.0, 0.0));
+        for i in 1..=10_u8 {
+            b.extend(pt(f32::from(i) * 10.0, 0.0));
         }
         b.end();
         let stroke_count = |d: &Doc| d.layers.iter().map(|l| l.strokes.len()).sum::<usize>();
