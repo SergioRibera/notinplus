@@ -14,7 +14,7 @@ use notein_ui_kit::{
 
 use crate::bundle::{ExportOptions, ExportSelection};
 use crate::library::{
-    FolderId, ImportPlan, ImportReceipt, ItemId, ROOT_FOLDER, Resolution, Review,
+    FolderId, ImportPlan, ImportReceipt, ItemId, LibraryData, ROOT_FOLDER, Resolution, Review,
 };
 use crate::state::LibraryView;
 
@@ -117,75 +117,118 @@ struct ExportForm {
     choices: State<Choices>,
 }
 
-impl Component for ExportForm {
-    fn render(&self) -> impl IntoElement {
-        use freya::icons::lucide;
-        let p = palette();
-        let mut choices = self.choices;
-        let current = *choices.read();
-        let Some(data) = LibraryView::get().data() else {
-            return rect().into_element();
-        };
-        let items = item_ids(&self.scope, &data);
-        let (total, pdfs) = sizes(&items);
-        let card = move |purpose: Purpose, title: &'static str, sub: &'static str, icon: Bytes| {
-            let on = current.purpose == purpose;
+/// A purpose card: icon, title and what it gives.
+fn purpose_card(
+    mut choices: State<Choices>,
+    purpose: Purpose,
+    (title, sub): (&'static str, &'static str),
+    icon: Bytes,
+) -> Element {
+    let p = palette();
+    let on = choices.read().purpose == purpose;
+    rect()
+        .key(title)
+        .width(Size::flex(1.0))
+        .height(Size::px(100.0))
+        .padding((12.0, 14.0))
+        .corner_radius(tokens::radius::LG)
+        .background(if on { p.accent_soft } else { p.s3 })
+        .border(
+            Border::new()
+                .fill(if on { p.accent } else { Color::TRANSPARENT })
+                .width(1.5)
+                .alignment(BorderAlignment::Inner),
+        )
+        .spacing(4.0)
+        .a11y_role(AccessibilityRole::RadioButton)
+        .on_press(move |_| choices.write().purpose = purpose)
+        .child(
             rect()
-                .key(title)
-                .width(Size::flex(1.0))
-                .height(Size::px(100.0))
-                .padding((12.0, 14.0))
-                .corner_radius(tokens::radius::LG)
-                .background(if on { p.accent_soft } else { p.s3 })
-                .border(
-                    Border::new()
-                        .fill(if on { p.accent } else { Color::TRANSPARENT })
-                        .width(1.5)
-                        .alignment(BorderAlignment::Inner),
-                )
-                .spacing(4.0)
-                .a11y_role(AccessibilityRole::RadioButton)
-                .on_press(move |_| choices.write().purpose = purpose)
+                .horizontal()
+                .cross_align(Alignment::Center)
+                .spacing(8.0)
                 .child(
-                    rect()
-                        .horizontal()
-                        .cross_align(Alignment::Center)
-                        .spacing(8.0)
-                        .child(notein_ui_kit::Icon::new(icon).size(16.0).color(if on {
-                            p.accent_text
-                        } else {
-                            p.t1
-                        }))
-                        .child(
-                            label()
-                                .text(title)
-                                .font_size(tokens::text::BODY)
-                                .font_weight(FontWeight::BOLD)
-                                .color(if on { p.accent_text } else { p.t1 }),
-                        ),
+                    notein_ui_kit::Icon::new(icon)
+                        .size(16.0)
+                        .color(if on { p.accent_text } else { p.t1 }),
                 )
                 .child(
                     label()
-                        .text(sub)
-                        .font_size(tokens::text::LABEL)
-                        .color(p.t2)
-                        .line_height(1.4),
-                )
-                .into_element()
-        };
-        let what = match &self.scope {
+                        .text(title)
+                        .font_size(tokens::text::BODY)
+                        .font_weight(FontWeight::BOLD)
+                        .color(if on { p.accent_text } else { p.t1 }),
+                ),
+        )
+        .child(
+            label()
+                .text(sub)
+                .font_size(tokens::text::LABEL)
+                .color(p.t2)
+                .line_height(1.4),
+        )
+        .into_element()
+}
+
+impl ExportForm {
+    /// How the scope reads: the library, a document, a count, a folder.
+    fn what(&self, data: &LibraryData) -> String {
+        match &self.scope {
             ExportScope::Library => "Toda la biblioteca".to_owned(),
             ExportScope::Items(items) if items.len() == 1 => data
                 .item(items[0])
                 .map_or_else(|| "1 documento".to_owned(), |i| i.name.clone()),
-            ExportScope::Items(items) => {
-                crate::format::count(items.len(), "documento", "documentos")
-            }
+            ExportScope::Items(items) => crate::format::count(items.len(), "documento", "documentos"),
             ExportScope::Folder(folder) => data
                 .folder(*folder)
                 .map_or_else(|| "Carpeta".to_owned(), |f| f.name.clone()),
+        }
+    }
+
+    /// What goes in, with the backup's options.
+    fn contents(&self, data: &LibraryData) -> Group {
+        let mut choices = self.choices;
+        let current = *choices.read();
+        let items = item_ids(&self.scope, data);
+        let (total, pdfs) = sizes(&items);
+        let backup = current.purpose == Purpose::Backup;
+        Group::default()
+            .child(ListRow::new(self.what(data)).subtitle(format!(
+                "{} · {}",
+                crate::format::count(items.len(), "documento", "documentos"),
+                crate::format::size(total)
+            )))
+            .maybe_child(backup.then(|| {
+                ListRow::new("Incluir los PDF originales")
+                    .subtitle(format!(
+                        "{}. Sin ellos, la copia guarda solo lo escrito encima.",
+                        crate::format::size(pdfs)
+                    ))
+                    .trailing(Trailing::Switch {
+                        on: current.attachments,
+                        on_toggle: EventHandler::new(move |on| choices.write().attachments = on),
+                    })
+            }))
+            .maybe_child(backup.then(|| {
+                ListRow::new("Incluir mesas y marcadores")
+                    .subtitle(format!(
+                        "{} y todos los resaltados.",
+                        crate::format::count(data.workspaces().len(), "mesa", "mesas")
+                    ))
+                    .trailing(Trailing::Switch {
+                        on: current.mesas_and_marks,
+                        on_toggle: EventHandler::new(move |on| choices.write().mesas_and_marks = on),
+                    })
+            }))
+    }
+}
+
+impl Component for ExportForm {
+    fn render(&self) -> impl IntoElement {
+        use freya::icons::lucide;
+        let Some(data) = LibraryView::get().data() else {
+            return rect().into_element();
         };
-        let mesas = data.workspaces().len();
         rect()
             .width(Size::fill())
             .spacing(16.0)
@@ -196,52 +239,27 @@ impl Component for ExportForm {
                         .horizontal()
                         .content(Content::Flex)
                         .spacing(10.0)
-                        .child(card(
+                        .child(purpose_card(
+                            self.choices,
                             Purpose::Backup,
-                            "Copia de seguridad",
-                            "Todo tal cual: para volver a importarlo en Notein, acá o en otro dispositivo.",
+                            (
+                                "Copia de seguridad",
+                                "Todo tal cual: para volver a importarlo en Notein, acá o en otro dispositivo.",
+                            ),
                             lucide::archive(),
                         ))
-                        .child(card(
+                        .child(purpose_card(
+                            self.choices,
                             Purpose::Readable,
-                            "Leer en otras apps",
-                            "PDFs con lo escrito encima y notas en Markdown, en una carpeta.",
+                            (
+                                "Leer en otras apps",
+                                "PDFs con lo escrito encima y notas en Markdown, en una carpeta.",
+                            ),
                             lucide::folder(),
                         )),
                 ),
             )
-            .child(
-                Section::new("Qué").child(
-                    Group::default()
-                        .child(ListRow::new(what).subtitle(format!(
-                            "{} · {}",
-                            crate::format::count(items.len(), "documento", "documentos"),
-                            crate::format::size(total)
-                        )))
-                        .maybe_child((current.purpose == Purpose::Backup).then(|| {
-                            ListRow::new("Incluir los PDF originales")
-                                .subtitle(format!(
-                                    "{}. Sin ellos, la copia guarda solo lo escrito encima.",
-                                    crate::format::size(pdfs)
-                                ))
-                                .trailing(Trailing::Switch {
-                                    on: current.attachments,
-                                    on_toggle: EventHandler::new(move |on| choices.write().attachments = on),
-                                })
-                        }))
-                        .maybe_child((current.purpose == Purpose::Backup).then(|| {
-                            ListRow::new("Incluir mesas y marcadores")
-                                .subtitle(format!(
-                                    "{} y todos los resaltados.",
-                                    crate::format::count(mesas, "mesa", "mesas")
-                                ))
-                                .trailing(Trailing::Switch {
-                                    on: current.mesas_and_marks,
-                                    on_toggle: EventHandler::new(move |on| choices.write().mesas_and_marks = on),
-                                })
-                        })),
-                ),
-            )
+            .child(Section::new("Qué").child(self.contents(&data)))
             .into_element()
     }
 }

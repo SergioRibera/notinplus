@@ -114,43 +114,57 @@ struct Menu {
     context: Context,
 }
 
-impl Component for Menu {
-    fn render(&self) -> impl IntoElement {
+/// "Lo que más creás" (or "Para empezar" before there is history).
+fn tiles_heading(cold: bool) -> Rect {
+    let p = palette();
+    rect()
+        .width(Size::fill())
+        .horizontal()
+        .cross_align(Alignment::Center)
+        .content(Content::Flex)
+        .spacing(6.0)
+        .padding((0.0, 4.0))
+        .child(Icon::new(freya::icons::lucide::sparkles()).size(14.0).color(p.t3))
+        .child(
+            Text::new(if cold {
+                "Para empezar"
+            } else {
+                "Lo que más creás"
+            })
+            .role(TextRole::Label)
+            .fill(),
+        )
+        .child(Text::new("Se ordena solo").role(TextRole::Meta))
+}
+
+impl Menu {
+    /// The frequent entries as tiles, two per row.
+    fn tile_rows(&self, tiles: &[CatalogEntry]) -> Vec<Element> {
+        tiles
+            .chunks(2)
+            .map(|pair| {
+                rect()
+                    .width(Size::fill())
+                    .horizontal()
+                    .content(Content::Flex)
+                    .spacing(8.0)
+                    .children(pair.iter().map(|entry| {
+                        Tile {
+                            entry: entry.clone(),
+                            context: self.context.clone(),
+                        }
+                        .into_element()
+                    }))
+                    .into_element()
+            })
+            .collect()
+    }
+
+    /// Carpeta, every other entry, Mesa nueva and Importar….
+    fn list(&self, others: Vec<CatalogEntry>, imports: Vec<CatalogEntry>) -> Vec<ActionEntry> {
         use freya::icons::lucide;
         let p = palette();
-        let (tiles, cold) = tiles();
-        let all = crate::plugins::catalog().entries();
-        let rest: Vec<CatalogEntry> = all
-            .iter()
-            .filter(|e| !tiles.iter().any(|t| key(t) == key(e)))
-            .cloned()
-            .collect();
-        let (imports, others): (Vec<_>, Vec<_>) = rest
-            .into_iter()
-            .partition(|e| matches!(e.entry.flow, CreationFlow::Import { .. }));
-        let context = self.context.clone();
-        let compact = width_class().is_compact();
-        let tile_rows = tiles.chunks(2).map(|pair| {
-            rect()
-                .width(Size::fill())
-                .horizontal()
-                .content(Content::Flex)
-                .spacing(8.0)
-                .children(pair.iter().map(|entry| {
-                    Tile {
-                        entry: entry.clone(),
-                        context: context.clone(),
-                    }
-                    .into_element()
-                }))
-                .into_element()
-        });
-        let run_in = |entry: CatalogEntry, context: Context| {
-            EventHandler::new(move |()| {
-                ModalController::get().close();
-                run(entry.clone(), context.clone());
-            })
-        };
+        let context = &self.context;
         let mut list = vec![ActionEntry::Item(
             Action::new(
                 if context.selection.is_empty() {
@@ -169,16 +183,22 @@ impl Component for Menu {
             .icon(lucide::folder())
             .kind_color(p.kinds.folder),
         )];
-        for entry in others {
-            let info = &entry.entry;
-            let color = kind_color(&p, info.color);
-            list.push(ActionEntry::Item(
-                Action::new(info.label.clone(), run_in(entry.clone(), context.clone()))
-                    .subtitle(info.subtitle.clone())
-                    .icon(info.icon.clone())
-                    .kind_color(color),
-            ));
-        }
+        list.extend(others.into_iter().map(|entry| {
+            let info = entry.entry.clone();
+            let context = context.clone();
+            ActionEntry::Item(
+                Action::new(
+                    info.label.clone(),
+                    EventHandler::new(move |()| {
+                        ModalController::get().close();
+                        run(entry.clone(), context.clone());
+                    }),
+                )
+                .subtitle(info.subtitle.clone())
+                .icon(info.icon.clone())
+                .kind_color(kind_color(&p, info.color)),
+            )
+        }));
         list.push(ActionEntry::Item(
             Action::new(
                 "Mesa nueva",
@@ -195,47 +215,44 @@ impl Component for Menu {
             .map(|e| e.entry.label.to_string())
             .chain(std::iter::once("Bundle .notein".to_owned()))
             .collect();
+        let context = context.clone();
         list.push(ActionEntry::Item(
-            Action::new("Importar…", {
-                let context = context.clone();
-                EventHandler::new(move |()| import_submenu(&imports, &context))
-            })
+            Action::new(
+                "Importar…",
+                EventHandler::new(move |()| import_submenu(&imports, &context)),
+            )
             .subtitle(import_names.join(" · "))
             .icon(lucide::file_up())
             .submenu(),
         ));
+        list
+    }
+}
+
+impl Component for Menu {
+    fn render(&self) -> impl IntoElement {
+        let (tiles, cold) = tiles();
+        let rest: Vec<CatalogEntry> = crate::plugins::catalog()
+            .entries()
+            .into_iter()
+            .filter(|e| !tiles.iter().any(|t| key(t) == key(e)))
+            .collect();
+        let (imports, others): (Vec<_>, Vec<_>) = rest
+            .into_iter()
+            .partition(|e| matches!(e.entry.flow, CreationFlow::Import { .. }));
         rect()
             .width(Size::fill())
-            .padding(if compact { 0.0 } else { 12.0 })
+            .padding(if width_class().is_compact() { 0.0 } else { 12.0 })
             .spacing(10.0)
-            .child(
-                rect()
-                    .width(Size::fill())
-                    .horizontal()
-                    .cross_align(Alignment::Center)
-                    .content(Content::Flex)
-                    .spacing(6.0)
-                    .padding((0.0, 4.0))
-                    .child(Icon::new(lucide::sparkles()).size(14.0).color(p.t3))
-                    .child(
-                        Text::new(if cold {
-                            "Para empezar"
-                        } else {
-                            "Lo que más creás"
-                        })
-                        .role(TextRole::Label)
-                        .fill(),
-                    )
-                    .child(Text::new("Se ordena solo").role(TextRole::Meta)),
-            )
-            .children(tile_rows)
+            .child(tiles_heading(cold))
+            .children(self.tile_rows(&tiles))
             .child(
                 rect()
                     .width(Size::fill())
                     .height(Size::px(1.0))
-                    .background(p.line),
+                    .background(palette().line),
             )
-            .child(ActionList::new(list))
+            .child(ActionList::new(self.list(others, imports)))
     }
 }
 
