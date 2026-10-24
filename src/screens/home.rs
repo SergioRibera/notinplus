@@ -132,112 +132,136 @@ struct Loaded {
     data: Arc<LibraryData>,
 }
 
+impl Loaded {
+    /// At the root: the mesa to continue and the other mesas.
+    fn mesas(&self, class: WidthClass) -> Element {
+        let data = &self.data;
+        let compact = class.is_compact();
+        let Some(id) = mesas::continue_target(data) else {
+            return MesaList {
+                data: Arc::clone(data),
+                except: None,
+                compact,
+            }
+            .into_element();
+        };
+        let hero = ContinueHero {
+            data: Arc::clone(data),
+            workspace: id,
+        };
+        let others = MesaList {
+            data: Arc::clone(data),
+            except: Some(id),
+            compact,
+        };
+        if compact {
+            return rect()
+                .width(Size::fill())
+                .spacing(16.0)
+                .child(hero)
+                .child(others)
+                .into_element();
+        }
+        rect()
+            .width(Size::fill())
+            .horizontal()
+            .content(Content::Flex)
+            .spacing(20.0)
+            .child(
+                rect()
+                    .width(Size::flex(if class == WidthClass::Expanded { 1.4 } else { 1.0 }))
+                    .child(hero),
+            )
+            .child(rect().width(Size::flex(1.0)).child(others))
+            .into_element()
+    }
+
+    /// The folder's contents as cards or rows, or why there are none.
+    fn listing(
+        &self,
+        shelf: &Arc<Shelf>,
+        (folder, filtered): (FolderId, bool),
+        columns: Columns,
+        selection: State<Selection>,
+    ) -> Element {
+        if shelf.is_empty() {
+            return EmptyShelf { folder, filtered }.into_element();
+        }
+        if SettingsStore::get().read().library.layout == ShelfLayout::List {
+            return Rows {
+                data: Arc::clone(&self.data),
+                shelf: Arc::clone(shelf),
+                selection,
+            }
+            .into_element();
+        }
+        Grid {
+            data: Arc::clone(&self.data),
+            shelf: Arc::clone(shelf),
+            columns,
+            selection,
+        }
+        .into_element()
+    }
+}
+
+/// What floats at the bottom: the selection's actions, or the + button.
+fn bottom(selection: State<Selection>, folder: FolderId, inset: f32) -> Element {
+    if !selection.read().active {
+        return Fab {
+            folder,
+            bottom: inset,
+        }
+        .into_element();
+    }
+    rect()
+        .position(Position::new_absolute().left(0.0).bottom(inset + 16.0))
+        .width(Size::fill())
+        .layer(Layer::Relative(10))
+        .horizontal()
+        .main_align(Alignment::Center)
+        .child(SelectionActions { selection, folder })
+        .into_element()
+}
+
 impl Component for Loaded {
     fn render(&self) -> impl IntoElement {
         let class = width_class();
-        let compact = class.is_compact();
         let pad = gutter(class);
         let insets = *crate::hooks::use_safe_area_insets().read();
         let root_width = Platform::get().root_size.read().width;
         let content_width = pad.mul_add(-2.0, root_width - insets.left - insets.right).max(200.0);
         let folder = Browse::get().folder();
-        let library = SettingsStore::get().read().library;
+        let sort = SettingsStore::get().read().library.sort;
         let filter = use_state(Filter::default);
         let mut selection = use_state(Selection::default);
-        let data = Arc::clone(&self.data);
+        let data = &self.data;
 
         // A folder that went away (trashed, deleted elsewhere) sends Home
         // back to the root rather than showing nothing.
         if folder != ROOT_FOLDER && data.folder(folder).is_none() {
             Browse::get().enter(ROOT_FOLDER);
         }
+        // Entering another folder ends the selection made in this one.
         use_side_effect(move || {
-            let _ = Browse::get().folder();
+            let _entered = Browse::get().folder();
             selection.write().clear();
         });
 
         let current_filter = filter.read().clone();
-        let listed = Arc::new(Shelf::build(&data, folder, &current_filter, library.sort));
-        let columns = Columns::fit(content_width);
+        let listed = Arc::new(Shelf::build(data, folder, &current_filter, sort));
         let at_root = folder == ROOT_FOLDER;
-        let selecting = selection.read().active;
-
-        let continue_id = mesas::continue_target(&data);
-        let top = at_root.then(|| match continue_id {
-            Some(id) if compact => rect()
-                .width(Size::fill())
-                .spacing(16.0)
-                .child(ContinueHero {
-                    data: Arc::clone(&data),
-                    workspace: id,
-                })
-                .child(MesaList {
-                    data: Arc::clone(&data),
-                    except: Some(id),
-                    compact: true,
-                })
-                .into_element(),
-            Some(id) => rect()
-                .width(Size::fill())
-                .horizontal()
-                .content(Content::Flex)
-                .spacing(20.0)
-                .child(
-                    rect()
-                        .width(Size::flex(if class == WidthClass::Expanded {
-                            1.4
-                        } else {
-                            1.0
-                        }))
-                        .child(ContinueHero {
-                            data: Arc::clone(&data),
-                            workspace: id,
-                        }),
-                )
-                .child(rect().width(Size::flex(1.0)).child(MesaList {
-                    data: Arc::clone(&data),
-                    except: Some(id),
-                    compact: false,
-                }))
-                .into_element(),
-            None => MesaList {
-                data: Arc::clone(&data),
-                except: None,
-                compact,
-            }
-            .into_element(),
+        let pinned = (at_root && !data.pinned().is_empty()).then(|| PinnedRow {
+            data: Arc::clone(data),
+            card: if class.is_compact() { 132.0 } else { 148.0 },
+            selection,
         });
-        let pinned = (at_root && !data.pinned().is_empty()).then(|| {
-            PinnedRow {
-                data: Arc::clone(&data),
-                card: if compact { 132.0 } else { 148.0 },
-                selection,
-            }
-            .into_element()
-        });
-        let listing = if listed.is_empty() {
-            EmptyShelf {
-                folder,
-                filtered: current_filter != Filter::All,
-            }
-            .into_element()
-        } else if library.layout == ShelfLayout::List {
-            Rows {
-                data: Arc::clone(&data),
-                shelf: Arc::clone(&listed),
-                selection,
-            }
-            .into_element()
-        } else {
-            Grid {
-                data: Arc::clone(&data),
-                shelf: Arc::clone(&listed),
-                columns,
-                selection,
-            }
-            .into_element()
-        };
-
+        let listing = self.listing(
+            &listed,
+            (folder, current_filter != Filter::All),
+            Columns::fit(content_width),
+            selection,
+        );
         let scroll = ScrollView::new()
             .width(Size::fill())
             .height(Size::fill())
@@ -247,35 +271,15 @@ impl Component for Loaded {
                     .padding((8.0, pad, 120.0 + insets.bottom, pad))
                     .spacing(24.0)
                     .child(AppBar)
-                    .maybe_child(top)
+                    .maybe_child(at_root.then(|| self.mesas(class)))
                     .maybe_child(pinned)
                     .child(LibraryBar {
-                        data: Arc::clone(&data),
+                        data: Arc::clone(data),
                         filter,
                         selection,
                     })
                     .child(listing),
             );
-        let bottom = if selecting {
-            rect()
-                .position(
-                    Position::new_absolute()
-                        .left(0.0)
-                        .bottom(insets.bottom + 16.0),
-                )
-                .width(Size::fill())
-                .layer(Layer::Relative(10))
-                .horizontal()
-                .main_align(Alignment::Center)
-                .child(SelectionActions { selection, folder })
-                .into_element()
-        } else {
-            Fab {
-                folder,
-                bottom: insets.bottom,
-            }
-            .into_element()
-        };
         rect()
             .expanded()
             .a11y_role(AccessibilityRole::Main)
@@ -288,10 +292,9 @@ impl Component for Loaded {
                 {
                     up_one(folder);
                 }
-                let _ = filter.peek();
             })
             .child(scroll)
-            .child(bottom)
+            .child(bottom(selection, folder, insets.bottom))
     }
 }
 

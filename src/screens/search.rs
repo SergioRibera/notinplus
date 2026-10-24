@@ -135,7 +135,6 @@ struct SearchPanel {
 
 impl Component for SearchPanel {
     fn render(&self) -> impl IntoElement {
-        let p = palette();
         let initial = self.query.clone();
         let query = use_state(move || initial);
         let history = use_hook(|| History::load().recent);
@@ -161,18 +160,6 @@ impl Component for SearchPanel {
         };
 
         let compact = width_class().is_compact();
-        let size = *Platform::get().root_size.read();
-        let width = if compact {
-            size.width
-        } else {
-            WIDTH.min(size.width - 32.0)
-        };
-        let top = if compact { 0.0 } else { 72.0 };
-        let max_height = if compact {
-            size.height
-        } else {
-            (size.height - top - 48.0).max(240.0)
-        };
         let on_key = move |e: Event<KeyboardEventData>| match &e.key {
             Key::Named(NamedKey::ArrowDown) => {
                 e.stop_propagation();
@@ -191,26 +178,7 @@ impl Component for SearchPanel {
             _ => {}
         };
 
-        rect()
-            .position(
-                Position::new_absolute()
-                    .top(top)
-                    .left(((size.width - width) / 2.0).max(0.0)),
-            )
-            .width(Size::px(width))
-            .max_height(Size::px(max_height))
-            .corner_radius(if compact { 0.0 } else { tokens::radius::XL })
-            .background(p.s1)
-            .border(
-                Border::new()
-                    .fill(p.line)
-                    .width(1.0)
-                    .alignment(BorderAlignment::Inner),
-            )
-            .shadow(Shadow::new().y(18.0).blur(48.0).color(p.shadow))
-            .padding(tokens::space::MD)
-            .spacing(tokens::space::MD)
-            .content(Content::Flex)
+        overlay_frame(72.0)
             .on_global_key_down(on_key)
             .child(field_row(query, compact))
             .child(
@@ -430,4 +398,42 @@ impl Rows<'_> {
         }));
         sections
     }
+}
+
+/// The floating panel search and the command palette share: centred
+/// under the top on wide screens, the whole screen on phones.
+pub(crate) fn overlay_frame(top: f32) -> Rect {
+    let p = palette();
+    let compact = width_class().is_compact();
+    let size = *Platform::get().root_size.read();
+    let width = if compact {
+        size.width
+    } else {
+        WIDTH.min(size.width - 32.0)
+    };
+    let top = if compact { 0.0 } else { top };
+    rect()
+        .position(
+            Position::new_absolute()
+                .top(top)
+                .left(((size.width - width) / 2.0).max(0.0)),
+        )
+        .width(Size::px(width))
+        .max_height(Size::px(if compact {
+            size.height
+        } else {
+            (size.height - top - 48.0).max(240.0)
+        }))
+        .corner_radius(if compact { 0.0 } else { tokens::radius::XL })
+        .background(p.s1)
+        .border(
+            Border::new()
+                .fill(p.line)
+                .width(1.0)
+                .alignment(BorderAlignment::Inner),
+        )
+        .shadow(Shadow::new().y(18.0).blur(48.0).color(p.shadow))
+        .padding(tokens::space::MD)
+        .spacing(tokens::space::MD)
+        .content(Content::Flex)
 }

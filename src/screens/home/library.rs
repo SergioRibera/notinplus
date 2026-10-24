@@ -51,104 +51,112 @@ impl std::fmt::Debug for LibraryBar {
     }
 }
 
-impl Component for LibraryBar {
-    fn render(&self) -> impl IntoElement {
-        use freya::icons::lucide;
-        let p = palette();
-        let browse = Browse::get();
-        let folder = browse.folder();
-        let mut settings = SettingsStore::get();
-        let library = settings.read().library;
-        let mut filter = self.filter;
-        let current = filter.read().clone();
-        let mut selection = self.selection;
-        let selecting = selection.read().active;
-        let compact = width_class().is_compact();
-        let trash = crate::screens::trash::groups(&self.data).len();
-        let path = crumbs(&self.data, folder);
-        let last = path.len().saturating_sub(1);
-        let breadcrumb = rect()
-            .horizontal()
-            .cross_align(Alignment::Center)
-            .spacing(4.0)
-            .children(path.into_iter().enumerate().flat_map(|(i, (id, name))| {
-                let here = i == last;
-                let crumb = rect()
-                    .key(id.0)
-                    .padding((4.0, 6.0))
-                    .corner_radius(tokens::radius::XS)
-                    .a11y_role(AccessibilityRole::Link)
-                    .maybe(!here, |r| r.on_press(move |_| browse.enter(id)))
-                    .child(
-                        Text::new(name)
-                            .role(if here {
-                                TextRole::Heading
-                            } else {
-                                TextRole::Body
-                            })
-                            .color(if here { p.t1 } else { p.t2 })
-                            .lines(1),
-                    )
-                    .into_element();
-                let sep = (i > 0).then(|| {
-                    notein_ui_kit::Icon::new(lucide::chevron_right())
-                        .size(14.0)
-                        .color(p.t3)
-                        .into_element()
-                });
-                sep.into_iter().chain(std::iter::once(crumb))
-            }));
-        let chips = filter_chips().into_iter().map(|chip| {
-            let on = chip.filter == current;
+/// Where you are; every folder above is a link.
+fn breadcrumb(data: &LibraryData, browse: Browse) -> Rect {
+    let p = palette();
+    let path = crumbs(data, browse.folder());
+    let last = path.len().saturating_sub(1);
+    rect()
+        .horizontal()
+        .cross_align(Alignment::Center)
+        .spacing(4.0)
+        .children(path.into_iter().enumerate().flat_map(|(i, (id, name))| {
+            let here = i == last;
+            let crumb = rect()
+                .key(id.0)
+                .padding((4.0, 6.0))
+                .corner_radius(tokens::radius::XS)
+                .a11y_role(AccessibilityRole::Link)
+                .maybe(!here, |r| r.on_press(move |_| browse.enter(id)))
+                .child(
+                    Text::new(name)
+                        .role(if here {
+                            TextRole::Heading
+                        } else {
+                            TextRole::Body
+                        })
+                        .color(if here { p.t1 } else { p.t2 })
+                        .lines(1),
+                )
+                .into_element();
+            let sep = (i > 0).then(|| {
+                notein_ui_kit::Icon::new(freya::icons::lucide::chevron_right())
+                    .size(14.0)
+                    .color(p.t3)
+                    .into_element()
+            });
+            sep.into_iter().chain(std::iter::once(crumb))
+        }))
+}
+
+/// One chip per filter, kinds with their colour.
+fn chips(mut filter: State<Filter>) -> Vec<Element> {
+    let p = palette();
+    let current = filter.read().clone();
+    filter_chips()
+        .into_iter()
+        .map(|chip| {
             let tint = match &chip.filter {
                 Filter::Kind(kind) => {
                     crate::plugins::kind_info(kind).map(|k| kind_color(&p, k.color))
                 }
                 Filter::All | Filter::Folders => None,
             };
-            let value = chip.filter.clone();
-            let tag = Tag::new(chip.label).active(on);
+            let tag = Tag::new(chip.label).active(chip.filter == current);
             let tag = match tint {
                 Some(c) => tag.dot(c),
                 None => tag,
             };
+            let value = chip.filter;
             tag.on_press(move |_| filter.set(value.clone()))
                 .into_element()
-        });
-        let sort_button = {
-            let sort = library.sort;
-            Button::new(sort.label())
-                .ghost()
-                .small()
-                .icon(lucide::arrow_down_wide_narrow())
-                .on_press(move |e: Event<PressEventData>| {
-                    let at = match e.data() {
-                        PressEventData::Mouse(m) => m.global_location,
-                        _ => CursorPoint::new(0.0, 0.0),
-                    };
-                    #[allow(clippy::cast_possible_truncation)] // window coordinates
-                    let anchor = Area::new((at.x as f32, at.y as f32).into(), (1.0, 1.0).into());
-                    let entries = SortOrder::ALL.iter().map(|order| {
-                        let order = *order;
-                        ActionEntry::Item(
-                            notein_ui_kit::Action::new(order.label(), move |()| {
-                                notein_ui_kit::ModalController::get().close();
-                                let mut settings = settings;
-                                settings.update(|s| s.library.sort = order);
-                            })
-                            .checked(order == sort),
-                        )
-                    });
-                    Popover::new(anchor, notein_ui_kit::ActionList::new(entries).width(200.0))
-                        .width(200.0)
-                        .side(PopoverSide::Below)
-                        .align(PopoverAlign::End)
-                        .sheet_title("Ordenar por")
-                        .open();
-                })
-        };
-        let layout_toggle = {
-            let as_list = library.layout == ShelfLayout::List;
+        })
+        .collect()
+}
+
+/// The sort menu.
+fn sort_button(sort: SortOrder) -> Button {
+    Button::new(sort.label())
+        .ghost()
+        .small()
+        .icon(freya::icons::lucide::arrow_down_wide_narrow())
+        .on_press(move |e: Event<PressEventData>| {
+            let at = match e.data() {
+                PressEventData::Mouse(m) => m.global_location,
+                _ => CursorPoint::new(0.0, 0.0),
+            };
+            #[allow(clippy::cast_possible_truncation)] // window coordinates
+            let anchor = Area::new((at.x as f32, at.y as f32).into(), (1.0, 1.0).into());
+            let entries = SortOrder::ALL.iter().map(|order| {
+                let order = *order;
+                ActionEntry::Item(
+                    notein_ui_kit::Action::new(order.label(), move |()| {
+                        notein_ui_kit::ModalController::get().close();
+                        SettingsStore::get().update(|s| s.library.sort = order);
+                    })
+                    .checked(order == sort),
+                )
+            });
+            Popover::new(anchor, notein_ui_kit::ActionList::new(entries).width(200.0))
+                .width(200.0)
+                .side(PopoverSide::Below)
+                .align(PopoverAlign::End)
+                .sheet_title("Ordenar por")
+                .open();
+        })
+}
+
+/// Sort, grid or list, trash and Seleccionar.
+fn tools(layout: ShelfLayout, sort: SortOrder, trash: usize, mut selection: State<Selection>) -> Rect {
+    use freya::icons::lucide;
+    let as_list = layout == ShelfLayout::List;
+    let selecting = selection.read().active;
+    rect()
+        .horizontal()
+        .cross_align(Alignment::Center)
+        .spacing(4.0)
+        .child(sort_button(sort))
+        .child(
             IconButton::new(
                 if as_list {
                     lucide::layout_grid()
@@ -162,38 +170,42 @@ impl Component for LibraryBar {
                 },
             )
             .on_press(move |_| {
-                settings.update(|s| {
+                SettingsStore::get().update(|s| {
                     s.library.layout = if as_list {
                         ShelfLayout::Grid
                     } else {
                         ShelfLayout::List
                     };
                 });
-            })
-        };
-        let trash_button = IconButton::new(lucide::trash_2(), "Papelera")
-            .badge(u32::try_from(trash).unwrap_or(u32::MAX))
-            .on_press(|_| crate::screens::trash::open());
-        let select_button = Button::new(if selecting { "Listo" } else { "Seleccionar" })
-            .ghost()
-            .small()
-            .on_press(move |_| {
-                let mut s = selection.write();
-                if s.active {
-                    s.clear();
-                } else {
-                    s.active = true;
-                }
-            });
-        let tools = rect()
-            .horizontal()
-            .cross_align(Alignment::Center)
-            .spacing(4.0)
-            .child(sort_button)
-            .child(layout_toggle)
-            .child(trash_button)
-            .child(select_button);
-        let head = if compact {
+            }),
+        )
+        .child(
+            IconButton::new(lucide::trash_2(), "Papelera")
+                .badge(u32::try_from(trash).unwrap_or(u32::MAX))
+                .on_press(|_| crate::screens::trash::open()),
+        )
+        .child(
+            Button::new(if selecting { "Listo" } else { "Seleccionar" })
+                .ghost()
+                .small()
+                .on_press(move |_| {
+                    let mut s = selection.write();
+                    if s.active {
+                        s.clear();
+                    } else {
+                        s.active = true;
+                    }
+                }),
+        )
+}
+
+impl Component for LibraryBar {
+    fn render(&self) -> impl IntoElement {
+        let library = SettingsStore::get().read().library;
+        let trash = crate::screens::trash::groups(&self.data).len();
+        let breadcrumb = breadcrumb(&self.data, Browse::get());
+        let tools = tools(library.layout, library.sort, trash, self.selection);
+        let head = if width_class().is_compact() {
             rect()
                 .width(Size::fill())
                 .spacing(8.0)
@@ -219,7 +231,7 @@ impl Component for LibraryBar {
                         .horizontal()
                         .cross_align(Alignment::Center)
                         .spacing(6.0)
-                        .children(chips),
+                        .children(chips(self.filter)),
                 ),
         )
     }

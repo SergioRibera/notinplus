@@ -9,8 +9,7 @@ use freya::prelude::*;
 use notein_plugin::services::Placement;
 use notein_ui_kit::theme::palette as theme;
 use notein_ui_kit::{
-    Kbd, ListRow, Modal, ModalController, SearchField, Section, Text, TextRole, Trailing, tokens,
-    width_class,
+    Kbd, ListRow, Modal, ModalController, SearchField, Section, Text, TextRole, Trailing,
 };
 
 use super::{Focus, MesaUi, Ops, PanelTab};
@@ -19,7 +18,6 @@ use crate::references::kind_color;
 use crate::search::{PlaceMatch, Results};
 
 const DEBOUNCE: Duration = Duration::from_millis(120);
-const WIDTH: f32 = 640.0;
 
 /// Something the palette can do.
 #[derive(Clone)]
@@ -156,7 +154,7 @@ fn document_commands(data: &LibraryData, item: ItemId) -> Vec<Command> {
             flows::notebook(item);
         }),
         Command::new("Vincular con…", None, lucide::link(), move || {
-            flows::link_with(item)
+            flows::link_with(item);
         }),
         Command::new("Compartir…", None, lucide::share_2(), move || {
             flows::share_item(item);
@@ -165,7 +163,7 @@ fn document_commands(data: &LibraryData, item: ItemId) -> Vec<Command> {
             flows::export_items(vec![item]);
         }),
         Command::new("Editar…", None, lucide::square_pen(), move || {
-            flows::edit_item(item)
+            flows::edit_item(item);
         }),
     ];
     if let Some(kind) = data
@@ -297,39 +295,8 @@ impl Component for Palette {
             );
         }
 
-        let compact = width_class().is_compact();
-        let size = *Platform::get().root_size.read();
-        let width = if compact {
-            size.width
-        } else {
-            WIDTH.min(size.width - 32.0)
-        };
-        let top = if compact { 0.0 } else { 64.0 };
         let mut field_query = query;
-        rect()
-            .position(
-                Position::new_absolute()
-                    .top(top)
-                    .left(((size.width - width) / 2.0).max(0.0)),
-            )
-            .width(Size::px(width))
-            .max_height(Size::px(if compact {
-                size.height
-            } else {
-                (size.height - top - 48.0).max(240.0)
-            }))
-            .padding(tokens::space::MD)
-            .spacing(tokens::space::MD)
-            .corner_radius(if compact { 0.0 } else { tokens::radius::XL })
-            .background(p.s1)
-            .border(
-                Border::new()
-                    .fill(p.line)
-                    .width(1.0)
-                    .alignment(BorderAlignment::Inner),
-            )
-            .shadow(Shadow::new().y(18.0).blur(48.0).color(p.shadow))
-            .content(Content::Flex)
+        crate::screens::search::overlay_frame(64.0)
             .on_global_key_down(move |e: Event<KeyboardEventData>| match &e.key {
                 Key::Named(NamedKey::ArrowDown) => {
                     e.stop_propagation();
