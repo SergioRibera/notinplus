@@ -288,6 +288,7 @@ pub struct DocCard {
 fn notebooks_badge(count: usize) -> Rect {
     rect()
         .position(Position::new_absolute().bottom(8.0).right(8.0))
+        .layer(MARKS)
         .height(Size::px(24.0))
         .padding((0.0, 7.0))
         .corner_radius(tokens::radius::FULL)
@@ -309,11 +310,17 @@ fn notebooks_badge(count: usize) -> Rect {
         )
 }
 
+/// Layer of the marks over a cover, above anything the cover nests.
+/// Siblings on one layer paint in no particular order, so a cover drawn
+/// later would otherwise hide them.
+const MARKS: Layer = Layer::Relative(12);
+
 /// The check over a card while selecting.
 fn select_mark(selected: bool) -> Rect {
     let p = palette();
     rect()
         .position(Position::new_absolute().top(8.0).left(8.0))
+        .layer(MARKS)
         .width(Size::px(24.0))
         .height(Size::px(24.0))
         .corner_radius(tokens::radius::FULL)
@@ -393,12 +400,14 @@ impl DocCard {
             .child(
                 rect()
                     .position(Position::new_absolute().bottom(8.0).left(8.0))
+                    .layer(MARKS)
                     .child(cover_badge(kind_icon, kind_fill)),
             )
             .maybe_child((data.notebooks > 0).then(|| notebooks_badge(data.notebooks)))
             .child(
                 rect()
                     .position(Position::new_absolute().top(8.0).right(8.0))
+                    .layer(MARKS)
                     .horizontal()
                     .spacing(4.0)
                     .maybe_child(
@@ -494,8 +503,10 @@ impl Component for FolderCard {
             .child(
                 rect()
                     .position(Position::new_absolute().bottom(8.0).left(8.0))
+                    .layer(MARKS)
                     .child(cover_badge(freya::icons::lucide::folder(), Color::WHITE)),
-            );
+            )
+            .maybe_child((self.selecting != Selecting::No).then(|| select_mark(selected)));
         let card = rect()
             .width(Size::px(w))
             .spacing(8.0)
