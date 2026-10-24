@@ -301,7 +301,7 @@ impl Component for Chrome {
             }))
             .child(Zoom {
                 board: Arc::clone(&self.board),
-                zoom: self.state.zoom,
+                level: self.state.zoom,
                 mask: self.zoom_mask,
                 lift: self.lift,
             })
@@ -525,7 +525,7 @@ fn more_sheet(board: &Arc<Mutex<Board>>, state: &InkState) {
     let rows: Vec<Element> = tools
         .into_iter()
         .map(|t| {
-            let board = Arc::clone(&board);
+            let board = Arc::clone(board);
             notein_ui_kit::ListRow::new(t.label())
                 .icon(t.icon())
                 .selected(*state.tool.peek() == t)
@@ -537,7 +537,7 @@ fn more_sheet(board: &Arc<Mutex<Board>>, state: &InkState) {
         })
         .chain([
             {
-                let board = Arc::clone(&board);
+                let board = Arc::clone(board);
                 notein_ui_kit::ListRow::new("Rehacer")
                     .icon(lucide::redo_2())
                     .enabled(*state.can_redo.peek())
@@ -548,7 +548,7 @@ fn more_sheet(board: &Arc<Mutex<Board>>, state: &InkState) {
                     .into_element()
             },
             {
-                let board = Arc::clone(&board);
+                let board = Arc::clone(board);
                 notein_ui_kit::ListRow::new("Escritura suavizada")
                     .icon(lucide::signature())
                     .trailing(notein_ui_kit::Trailing::Switch {
@@ -558,7 +558,7 @@ fn more_sheet(board: &Arc<Mutex<Board>>, state: &InkState) {
                     .into_element()
             },
             {
-                let board = Arc::clone(&board);
+                let board = Arc::clone(board);
                 notein_ui_kit::ListRow::new("Capas")
                     .icon(lucide::layers())
                     .chevron()
@@ -923,7 +923,8 @@ impl Component for LassoBar {
 #[derive(Clone)]
 struct Zoom {
     board: Arc<Mutex<Board>>,
-    zoom: State<f32>,
+    /// Current zoom factor, 1.0 = 100 %.
+    level: State<f32>,
     mask: MaskSlot,
     lift: f32,
 }
@@ -938,7 +939,7 @@ impl Component for Zoom {
     fn render(&self) -> impl IntoElement {
         let p = palette();
         #[allow(clippy::cast_possible_truncation)] // a percentage
-        let pct = (*self.zoom.read() * 100.0).round() as i32;
+        let pct = (*self.level.read() * 100.0).round() as i32;
         let board = Arc::clone(&self.board);
         let mask = self.mask;
         rect()

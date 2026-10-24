@@ -456,10 +456,9 @@ impl PaneLayout {
         match self {
             Self::Leaf(p) if p.id == id => Some(p),
             Self::Leaf(_) => None,
-            Self::Split { first, second, .. } => match first.find_leaf_mut(id) {
-                Some(p) => Some(p),
-                None => second.find_leaf_mut(id),
-            },
+            Self::Split { first, second, .. } => {
+                first.find_leaf_mut(id).or_else(|| second.find_leaf_mut(id))
+            }
         }
     }
 

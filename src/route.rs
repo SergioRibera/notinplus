@@ -220,6 +220,8 @@ fn spawn_autosave_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Receiv
     spawn(async move {
         while rx.recv_async().await.is_ok() {
             while rx.try_recv().is_ok() {}
+            // The guard lives exactly as long as the snapshot reads the doc.
+            #[allow(clippy::significant_drop_tightening)]
             let snapshot = {
                 let guard = lock(&board);
                 let doc = guard.doc();

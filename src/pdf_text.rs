@@ -183,12 +183,12 @@ impl PdfText {
     }
 
     fn with<R>(&self, item: ItemId, f: impl FnOnce(&mut OpenPdf) -> R) -> Option<R> {
-        let mut open = self.lock();
-        let pdf = match open.entry(item) {
-            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-            std::collections::hash_map::Entry::Vacant(entry) => entry.insert(OpenPdf::open(item)?),
-        };
-        Some(f(pdf))
+        match self.lock().entry(item) {
+            std::collections::hash_map::Entry::Occupied(entry) => Some(f(entry.into_mut())),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                Some(f(entry.insert(OpenPdf::open(item)?)))
+            }
+        }
     }
 
     /// Start a selection at world point `(x, y)`; `false` when it is not

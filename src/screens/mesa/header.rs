@@ -34,8 +34,14 @@ impl TabLook {
         use freya::icons::lucide;
         let p = palette();
         match tab.target {
-            TabTarget::Item(id) => match data.item(id) {
-                Some(item) => {
+            TabTarget::Item(id) => data.item(id).map_or_else(
+                || Self {
+                    title: "Ya no está".to_owned(),
+                    icon: lucide::file_x(),
+                    tint: p.t3,
+                    scratch: false,
+                },
+                |item| {
                     let info = crate::plugins::kind_info(&item.kind.plugin_id);
                     Self {
                         title: item.name.clone(),
@@ -43,14 +49,8 @@ impl TabLook {
                         tint: info.map_or(p.t3, |k| kind_color(&p, k.color)),
                         scratch: false,
                     }
-                }
-                None => Self {
-                    title: "Ya no está".to_owned(),
-                    icon: lucide::file_x(),
-                    tint: p.t3,
-                    scratch: false,
                 },
-            },
+            ),
             TabTarget::Scratch(_) => Self {
                 title: "Borrador".to_owned(),
                 icon: lucide::pen_line(),

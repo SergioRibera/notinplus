@@ -295,3 +295,13 @@ fn class_mesa() -> Element {
 fn note_mesa_renders() {
     render("mesa-note-tablet", (1024.0, 768.0), class_mesa);
 }
+
+fn map() -> Element {
+    use_hook(crate::screens::map::open);
+    rect().into_element()
+}
+
+#[test]
+fn map_renders() {
+    render("map-desktop", (1280.0, 800.0), map);
+}
