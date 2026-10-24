@@ -1,19 +1,14 @@
-//! Shared configuration between `BibleCanvas` and `BibleSource`.
-//!
-//! The host persists plugin settings per `(plugin_id, key)` tuple via
-//! the generic settings panel. Both trait objects need the same values
-//! (which Bible is the default, which catalogue URL to hit) so they
-//! share an `Arc<RwLock<_>>`. Install flow + cache dir are no longer
-//! exposed as config — installs go through the dedicated install
-//! modal + [`crate::BibleCanvas::request_install`], and the cache dir
-//! is derived from [`istmo_core::path::data_dir`].
+//! Plugin settings: the default Bible and the catalogue URL, shared
+//! behind an `Arc<RwLock<_>>` with every reader. Translations are
+//! installed through [`crate::installer`]; the cache dir comes from
+//! [`istmo_core::path::data_dir`].
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use notein_sdk::{
-    ConfigEnumOption, ConfigError, ConfigField, ConfigFieldKind, ConfigSchema, ConfigValue, Host,
+    ConfigEnumOption, ConfigError, ConfigField, ConfigFieldKind, ConfigSchema, ConfigValue,
 };
 
 use crate::db::Db;
@@ -38,9 +33,6 @@ pub type SharedConfig = Arc<RwLock<Inner>>;
 #[derive(Debug, Default)]
 pub struct Inner {
     pub values: HashMap<String, ConfigValue>,
-    /// Host handle received through [`notein_sdk::CanvasKind::install_host`].
-    /// Only populated once the shell has registered the plugin.
-    pub host: Option<Host>,
 }
 
 impl Inner {
@@ -53,15 +45,6 @@ impl Inner {
 #[must_use]
 pub fn new_shared() -> SharedConfig {
     Arc::new(RwLock::new(Inner::new()))
-}
-
-pub fn set_host(config: &SharedConfig, host: Host) {
-    config.write().unwrap().host = Some(host);
-}
-
-#[must_use]
-pub fn host(config: &SharedConfig) -> Option<Host> {
-    config.read().unwrap().host.clone()
 }
 
 /// Default platform cache directory, derived from the shared notinplus

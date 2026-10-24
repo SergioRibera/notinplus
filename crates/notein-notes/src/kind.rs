@@ -87,6 +87,16 @@ pub struct NoteHits<'a> {
     heading: usize,
 }
 
+impl std::fmt::Debug for NoteHits<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NoteHits")
+            .field("needle", &self.needle)
+            .field("pass", &self.pass)
+            .field("note", &self.note)
+            .finish_non_exhaustive()
+    }
+}
+
 impl NoteHits<'_> {
     fn hit(
         doc: [u8; 16],

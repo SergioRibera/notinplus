@@ -1,26 +1,19 @@
-//! Fire-and-forget installer thread.
+//! Download threads: a translation install, run by
+//! [`crate::installer`], and the lazy footnote / heading fetches for one
+//! chapter. Each writes straight into the shared [`crate::db::Db`].
 //!
-//! The install modal calls [`crate::BibleCanvas::request_install`],
-//! which lands here. We spawn a dedicated OS thread, load the
-//! catalogue, resolve the per-Bible endpoints and populate the shared
-//! [`crate::db::Db`]. Progress is written to a shared
-//! [`InstallProgress`] slot that the modal polls.
-//!
-//! Gated behind the `importer` feature — the HTTP stack only pulls in
+//! Gated behind the `importer` feature: the HTTP stack only pulls in
 //! when the host wants real downloads.
 
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use notein_sdk::{NotificationKind, Progress as HostProgress};
 use reqwest::blocking::Client;
 
 use crate::db::Db;
 use crate::import::{biblionlabs, helloao};
 use crate::plugin_config::{self, SharedConfig};
 
-const PLUGIN_ID: &str = "io.notein.bible";
-const PROGRESS_TOKEN: &str = "install";
 
 /// 7-day TTL on cached manifests + per-book files. The installer walks
 /// the biblionlabs cache dir in the same shape the service does; a stale
@@ -75,27 +68,12 @@ pub fn load_catalogue(
     biblionlabs::load_catalogue(&client, &cache_dir, &manifest_url, CACHE_TTL)
 }
 
-/// Spawn an install thread. Returns immediately. Safe to call multiple
-/// times — each call races; the shared progress reflects the last one
-/// to update.
-pub fn spawn_install(
-    bible_id: String,
-    db: Db,
-    config: SharedConfig,
-    progress: SharedInstallProgress,
-) {
-    std::thread::Builder::new()
-        .name(format!("bible-install-{bible_id}"))
-        .spawn(move || run(bible_id, db, config, progress))
-        .expect("failed to spawn bible installer thread");
-}
-
 /// Spawn a lazy footnote fetch for `(bible, book, chapter)`. Idempotent
 /// — the reader fires one per chapter open, the on-disk cache + the
 /// `footnotes` row count both short-circuit duplicate work. Silent on
 /// failure (we log at debug) so a 404 or empty response does not
 /// surface a user-visible error.
-pub fn spawn_fetch_footnotes(db: Db, config: SharedConfig, bible_id: String, book_id: String, chapter: u16) {
+pub fn spawn_fetch_footnotes(db: Db, bible_id: String, book_id: String, chapter: u16) {
     std::thread::Builder::new()
         .name(format!("bible-footnotes-{book_id}-{chapter}"))
         .spawn(move || {
@@ -132,7 +110,7 @@ pub fn spawn_fetch_footnotes(db: Db, config: SharedConfig, bible_id: String, boo
                 Err(e) => log::debug!("footnotes: fetch failed for {book_id} {chapter}: {e}"),
             }
         })
-        .expect("failed to spawn footnotes fetch thread");
+        .map_or_else(|e| log::warn!("footnotes thread: {e}"), drop);
 }
 
 /// Lazy section-heading fetch. Hits a sibling helloao translation
@@ -143,7 +121,6 @@ pub fn spawn_fetch_footnotes(db: Db, config: SharedConfig, bible_id: String, boo
 /// already has rows OR when no sibling id is mapped.
 pub fn spawn_fetch_headings(
     db: Db,
-    config: SharedConfig,
     bible_id: String,
     book_id: String,
     chapter: u16,
@@ -186,7 +163,7 @@ pub fn spawn_fetch_headings(
                 Err(e) => log::debug!("headings: fetch failed for {book_id} {chapter}: {e}"),
             }
         })
-        .expect("failed to spawn headings fetch thread");
+        .map_or_else(|e| log::warn!("headings thread: {e}"), drop);
 }
 
 
@@ -201,30 +178,11 @@ pub(crate) fn run(bible_id: String, db: Db, config: SharedConfig, progress: Shar
         p.error = None;
     }
 
-    let host = plugin_config::host(&config);
-    if host.is_none() {
-        log::warn!("bible install: host handle not installed; progress + notifications disabled");
-    }
-    if let Some(h) = &host {
-        h.report_progress(
-            PLUGIN_ID,
-            PROGRESS_TOKEN,
-            HostProgress::Starting {
-                label: format!("Descargando {bible_id}…"),
-                total: None,
-            },
-        );
-        h.notify(
-            PLUGIN_ID,
-            NotificationKind::Info,
-            format!("Descarga iniciada: {bible_id}"),
-        );
-    }
 
     let client = match Client::builder().user_agent("notein-bible/0.1").build() {
         Ok(c) => c,
         Err(e) => {
-            fail(&progress, host.as_ref(), format!("http client build: {e}"));
+            fail(&progress, format!("http client build: {e}"));
             return;
         }
     };
@@ -232,7 +190,7 @@ pub(crate) fn run(bible_id: String, db: Db, config: SharedConfig, progress: Shar
     let cache_dir = plugin_config::platform_cache_dir();
     log::info!("bible install: cache_dir={}", cache_dir.display());
     if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-        fail(&progress, host.as_ref(), format!("mkdir cache: {e}"));
+        fail(&progress, format!("mkdir cache: {e}"));
         return;
     }
 
@@ -250,43 +208,15 @@ pub(crate) fn run(bible_id: String, db: Db, config: SharedConfig, progress: Shar
     log::info!("bible install: desc_url={desc_url}");
 
     let progress_cb_handle = progress.clone();
-    let host_cb = host.clone();
     let progress_cb = move |ev: biblionlabs::Progress| {
         let mut p = progress_cb_handle.write().unwrap();
         match ev {
             biblionlabs::Progress::ManifestFetched { total_books } => {
                 p.stage = InstallStage::Downloading;
                 p.total_books = total_books;
-                if let Some(h) = &host_cb {
-                    h.report_progress(
-                        PLUGIN_ID,
-                        PROGRESS_TOKEN,
-                        HostProgress::Update {
-                            done: 0,
-                            total: Some(total_books as u64),
-                            label: Some("Descargando libros…".into()),
-                        },
-                    );
-                    h.notify(
-                        PLUGIN_ID,
-                        NotificationKind::Info,
-                        format!("Catálogo listo — descargando {total_books} libros"),
-                    );
-                }
             }
             biblionlabs::Progress::BookDone { .. } => {
                 p.done_books += 1;
-                if let Some(h) = &host_cb {
-                    h.report_progress(
-                        PLUGIN_ID,
-                        PROGRESS_TOKEN,
-                        HostProgress::Update {
-                            done: p.done_books as u64,
-                            total: Some(p.total_books as u64),
-                            label: None,
-                        },
-                    );
-                }
             }
             biblionlabs::Progress::Started { .. } | biblionlabs::Progress::Finished { .. } => {}
         }
@@ -334,26 +264,15 @@ pub(crate) fn run(bible_id: String, db: Db, config: SharedConfig, progress: Shar
             // right after the main install so the reader renders
             // subtitles the first time the user opens a passage —
             // the lazy per-chapter fetch is only a fallback.
-            prefetch_all_headings(&db, &client, &cache_dir, &bible_id, &progress, host.as_ref());
+            prefetch_all_headings(&db, &client, &cache_dir, &bible_id, &progress);
 
             let mut p = progress.write().unwrap();
             p.stage = InstallStage::Finished;
             p.error = None;
             drop(p);
-            if let Some(h) = &host {
-                h.report_progress(
-                    PLUGIN_ID,
-                    PROGRESS_TOKEN,
-                    HostProgress::Finished { success: true, note: None },
-                );
-                h.notify(
-                    PLUGIN_ID,
-                    NotificationKind::Success,
-                    format!("Biblia {bible_id} instalada ({verses} versículos)"),
-                );
-            }
+            log::info!("bible install: {bible_id} done, {verses} verses");
         }
-        Err(e) => fail(&progress, host.as_ref(), format!("{e}")),
+        Err(e) => fail(&progress, format!("{e}")),
     }
 }
 
@@ -371,7 +290,6 @@ fn prefetch_all_headings(
     cache_dir: &std::path::Path,
     bible_id: &str,
     progress: &SharedInstallProgress,
-    host: Option<&notein_sdk::Host>,
 ) {
     let Some(source) = helloao::helloao_headings_id_for_bible(bible_id) else {
         log::debug!("headings prefetch: no sibling id for {bible_id}; skipping");
@@ -386,19 +304,7 @@ fn prefetch_all_headings(
         p.done_books = 0;
         p.total_books = 66;
     }
-    if let Some(h) = host {
-        h.report_progress(
-            PLUGIN_ID,
-            PROGRESS_TOKEN,
-            HostProgress::Update {
-                done: 0,
-                total: Some(66),
-                label: Some("Descargando subtítulos…".into()),
-            },
-        );
-    }
     let progress_clone = progress.clone();
-    let host_clone = host.cloned();
     let result = helloao::install_all_headings(
         db,
         client,
@@ -406,23 +312,10 @@ fn prefetch_all_headings(
         bible_id,
         source,
         CACHE_TTL,
-        move |done, total, book_name| {
-            {
-                let mut p = progress_clone.write().unwrap();
-                p.done_books = done;
-                p.total_books = total;
-            }
-            if let Some(h) = &host_clone {
-                h.report_progress(
-                    PLUGIN_ID,
-                    PROGRESS_TOKEN,
-                    HostProgress::Update {
-                        done: done as u64,
-                        total: Some(total as u64),
-                        label: Some(format!("Subtítulos — {book_name}")),
-                    },
-                );
-            }
+        move |done, total, _book_name| {
+            let mut p = progress_clone.write().unwrap();
+            p.done_books = done;
+            p.total_books = total;
         },
     );
     match result {
@@ -431,26 +324,10 @@ fn prefetch_all_headings(
     }
 }
 
-fn fail(progress: &SharedInstallProgress, host: Option<&notein_sdk::Host>, message: String) {
+fn fail(progress: &SharedInstallProgress, message: String) {
     log::error!("bible: install failed: {message}");
     let mut p = progress.write().unwrap();
     p.stage = InstallStage::Failed;
     p.error = Some(message.clone());
-    drop(p);
-    if let Some(h) = host {
-        h.report_progress(
-            PLUGIN_ID,
-            PROGRESS_TOKEN,
-            HostProgress::Finished {
-                success: false,
-                note: Some(message.clone()),
-            },
-        );
-        h.notify(
-            PLUGIN_ID,
-            NotificationKind::Error,
-            format!("Instalación falló: {message}"),
-        );
-    }
 }
 

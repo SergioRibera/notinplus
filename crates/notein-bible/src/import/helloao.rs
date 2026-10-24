@@ -139,8 +139,6 @@ struct FootnoteEntry {
 #[derive(Debug, Deserialize)]
 struct FootnoteRef {
     #[serde(default)]
-    chapter: i64,
-    #[serde(default)]
     verse: i64,
 }
 

@@ -326,10 +326,9 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
         let book = st.current_book.clone();
         let chap = st.current_chapter;
         drop(st);
-        if let Some(canvas) = crate::plugins::builtin::bible_kind() {
+        if let Some(kind) = crate::plugins::builtin::bible_kind() {
             notein_bible::install_background::spawn_fetch_footnotes(
-                canvas.db().clone(),
-                canvas.config().clone(),
+                kind.db().clone(),
                 bid,
                 book,
                 chap,
