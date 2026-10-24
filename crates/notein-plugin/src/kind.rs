@@ -52,6 +52,9 @@ pub struct KindInfo {
     /// Has a paper background the user picks (create / edit sheets).
     pub has_paper: bool,
     pub attachment: Option<Attachment>,
+    /// One document of this kind is enough (the Bible): the create menu
+    /// opens the existing one instead of making another.
+    pub singleton: bool,
 }
 
 /// One full-text match.
@@ -286,6 +289,11 @@ pub trait DocumentKind: Send + Sync + 'static {
     ) -> IndexReport {
         let _ = (doc, content, attachment);
         IndexReport::default()
+    }
+
+    /// Documents whose index is still being built (PDF text).
+    fn index_status(&self) -> Vec<(DocId, IndexReport)> {
+        Vec::new()
     }
 
     /// Forget a document that left the library.

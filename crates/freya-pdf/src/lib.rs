@@ -26,7 +26,7 @@ pub mod tiles;
 pub use backend::PdfBackground;
 pub use cache::{Cache, CachedTile};
 pub use cancel::CancelToken;
-pub use doc::PdfDocument;
+pub use doc::{PdfDocument, TocEntry};
 pub use error::PdfError;
 pub use render::RenderPool;
 pub use search::{PdfSearchIndex, SearchHit, SearchOptions};

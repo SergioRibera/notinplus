@@ -244,6 +244,22 @@ impl ModalController {
         Self::fire_on_close(closed);
     }
 
+    /// Run `f` when the top modal closes for any reason (backdrop,
+    /// Escape, `close`).
+    pub fn set_top_on_close(&mut self, f: impl Into<NoArgCallback<()>>) {
+        if let Some(top) = self.state.write().stack.last_mut() {
+            top.on_close = Some(f.into());
+        }
+    }
+
+    /// Forget the top modal's close callback (it is being handed over
+    /// elsewhere, not dismissed).
+    pub fn clear_top_on_close(&mut self) {
+        if let Some(top) = self.state.write().stack.last_mut() {
+            top.on_close = None;
+        }
+    }
+
     /// Dismiss every open modal, top first.
     pub fn close_all(&mut self) {
         while self.is_open() {

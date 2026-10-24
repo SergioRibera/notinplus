@@ -82,6 +82,18 @@ pub struct BibleSnapshot {
     pub highlights: Vec<BibleBookmark>,
 }
 
+impl Default for BibleSnapshot {
+    fn default() -> Self {
+        Self {
+            version: Self::VERSION,
+            bible_id: String::new(),
+            current_book: String::new(),
+            current_chapter: 1,
+            highlights: Vec::new(),
+        }
+    }
+}
+
 impl BibleSnapshot {
     pub const VERSION: u16 = 1;
 

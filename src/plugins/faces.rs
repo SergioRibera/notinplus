@@ -1,0 +1,134 @@
+//! Faces of the builtin kinds, and the shell's entry point to render
+//! any document through the catalog.
+
+use freya::prelude::*;
+use notein_plugin::face::{Face, FaceContext, FaceRequest, PaneKey};
+
+use super::builtin::{canvas::CanvasKind, pdf::PdfKind};
+use super::content::{SnapshotStore, doc_id};
+use crate::app::{CanvasMount, CanvasPane};
+use crate::library::{DocKind, ItemId, PaneId, ViewSlot, WorkspaceId};
+
+/// Library pane slot → plugin pane key.
+#[must_use]
+pub fn pane_key(slot: ViewSlot) -> PaneKey {
+    let mut bytes = [0u8; 32];
+    bytes[..16].copy_from_slice(&slot.workspace.0);
+    bytes[16..].copy_from_slice(&slot.pane.0);
+    PaneKey(bytes)
+}
+
+/// Plugin pane key → library pane slot.
+#[must_use]
+pub fn view_slot(key: PaneKey) -> ViewSlot {
+    let mut workspace = [0u8; 16];
+    let mut pane = [0u8; 16];
+    workspace.copy_from_slice(&key.0[..16]);
+    pane.copy_from_slice(&key.0[16..]);
+    ViewSlot {
+        workspace: WorkspaceId(workspace),
+        pane: PaneId(pane),
+    }
+}
+
+fn item_of<K: notein_plugin::kind::DocumentKind>(ctx: &FaceContext<K>) -> ItemId {
+    ItemId(ctx.doc.0)
+}
+
+/// Pane body for `item`; a notice when its plugin is missing or off.
+#[must_use]
+pub fn render(item: ItemId, kind: &DocKind, slot: Option<ViewSlot>) -> Element {
+    let face = super::catalog().face(&kind.plugin_id);
+    match face {
+        Some(face) => face.render(FaceRequest {
+            doc: doc_id(item),
+            pane: slot.map(pane_key),
+            host: super::host::handle(),
+            store: SnapshotStore::new(item, kind.plugin_id.clone()),
+        }),
+        None => MissingFace {
+            kind: kind.plugin_id.clone(),
+        }
+        .into_element(),
+    }
+}
+
+/// Placeholder for documents whose plugin is not available.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MissingFace {
+    kind: String,
+}
+
+impl Component for MissingFace {
+    fn render(&self) -> impl IntoElement {
+        notein_ui_kit::EmptyState::new(freya::icons::lucide::puzzle(), "Necesita un plugin")
+            .body(format!(
+                "Este documento se abre con un plugin que no está instalado o está desactivado ({}). Instalalo desde Ajustes › Plugins.",
+                self.kind
+            ))
+    }
+}
+
+/// Lienzo.
+#[derive(Debug, Default)]
+pub struct CanvasFace;
+
+impl Face for CanvasFace {
+    type Kind = CanvasKind;
+
+    fn render(&self, ctx: FaceContext<CanvasKind>) -> Element {
+        CanvasPane {
+            mount: CanvasMount::Item {
+                id: item_of(&ctx),
+                slot: ctx.pane.map(view_slot),
+            },
+        }
+        .into_element()
+    }
+}
+
+/// PDF.
+#[derive(Debug, Default)]
+pub struct PdfFace;
+
+impl Face for PdfFace {
+    type Kind = PdfKind;
+
+    fn render(&self, ctx: FaceContext<PdfKind>) -> Element {
+        crate::builtin::pdf_face::PdfFace {
+            item: item_of(&ctx),
+            slot: ctx.pane.map(view_slot),
+        }
+        .into_element()
+    }
+}
+
+/// Nota.
+#[derive(Debug, Default)]
+pub struct NoteFace;
+
+impl Face for NoteFace {
+    type Kind = notein_notes::NotesKind;
+
+    fn render(&self, ctx: FaceContext<notein_notes::NotesKind>) -> Element {
+        crate::notes_face::NotesFace {
+            item: item_of(&ctx),
+        }
+        .into_element()
+    }
+}
+
+/// Biblia.
+#[derive(Debug, Default)]
+pub struct BibleFace;
+
+impl Face for BibleFace {
+    type Kind = notein_bible::BibleKind;
+
+    fn render(&self, ctx: FaceContext<notein_bible::BibleKind>) -> Element {
+        crate::bible_face::BibleFace {
+            item: item_of(&ctx),
+        }
+        .into_element()
+    }
+}

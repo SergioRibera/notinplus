@@ -446,3 +446,73 @@ mod tests {
         assert!(!same_line(&line(100.0, 12.0), &line(112.0, 12.0)));
     }
 }
+
+/// One entry of a document's table of contents (its PDF bookmarks).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TocEntry {
+    /// Entry title as written in the file.
+    pub title: String,
+    /// Zero-based page the entry points at, if it points anywhere.
+    pub page: Option<usize>,
+    /// Vertical offset inside the page from its top edge, in points.
+    pub y_from_top: Option<f32>,
+    /// Nested entries.
+    pub children: Vec<TocEntry>,
+}
+
+impl PdfDocument {
+    /// The document's table of contents. Empty when the file has none.
+    #[must_use]
+    pub fn table_of_contents(&self) -> Vec<TocEntry> {
+        use pdfium_render::prelude::PdfBookmark;
+
+        fn walk(node: &PdfBookmark<'_>, heights: &[f32]) -> TocEntry {
+            let destination = node.destination();
+            let page = destination
+                .as_ref()
+                .and_then(|d| d.page_index().ok())
+                .and_then(|index| usize::try_from(index).ok());
+            let y_from_top = destination
+                .and_then(|d| d.view_settings().ok())
+                .and_then(extract_dest_y_bottom)
+                .and_then(|y| page.and_then(|p| heights.get(p)).map(|h| (h - y).max(0.0)));
+            let mut children = Vec::new();
+            let mut child = node.first_child();
+            while let Some(c) = child {
+                children.push(walk(&c, heights));
+                child = c.next_sibling();
+            }
+            TocEntry {
+                title: node.title().unwrap_or_else(|| "(sin título)".to_owned()),
+                page,
+                y_from_top,
+                children,
+            }
+        }
+
+        let heights: Vec<f32> = self.page_sizes().iter().map(|&(_, h)| h).collect();
+        let bookmarks = self.pdfium_doc().bookmarks();
+        let mut entries = Vec::new();
+        let mut sibling = bookmarks.root();
+        while let Some(node) = sibling {
+            entries.push(walk(&node, &heights));
+            sibling = node.next_sibling();
+        }
+        entries
+    }
+}
+
+/// Pull a bottom-up y (PDF points) out of a destination view setting
+/// when the variant specifies one. Fit-type destinations pin the whole
+/// page and carry none.
+pub(crate) fn extract_dest_y_bottom(
+    settings: pdfium_render::prelude::PdfDestinationViewSettings,
+) -> Option<f32> {
+    use pdfium_render::prelude::PdfDestinationViewSettings as V;
+    match settings {
+        V::SpecificCoordinatesAndZoom(_, Some(y), _)
+        | V::FitPageHorizontallyToWindow(Some(y))
+        | V::FitBoundsHorizontallyToWindow(Some(y)) => Some(y.value),
+        _ => None,
+    }
+}

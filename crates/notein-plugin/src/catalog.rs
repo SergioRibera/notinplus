@@ -54,6 +54,11 @@ impl std::fmt::Debug for Installed {
 }
 
 impl Installed {
+    /// Hand `host` to this plugin (installed while the app runs).
+    pub fn install_host(&self, host: &Host) {
+        self.plugin.install(host);
+    }
+
     #[must_use]
     pub fn is_active(&self) -> bool {
         self.state == PluginState::Active
@@ -173,6 +178,11 @@ impl PluginCatalog {
     #[must_use]
     pub fn failed(&self) -> &[Failed] {
         &self.failed
+    }
+
+    #[must_use]
+    pub fn plugin_by_name(&self, name: &str) -> Option<&Installed> {
+        self.plugins.iter().find(|p| p.info.name == name)
     }
 
     #[must_use]

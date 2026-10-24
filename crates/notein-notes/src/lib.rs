@@ -22,12 +22,14 @@ use notein_sdk::{PluginRegistry, RegistryError};
 
 pub mod anchor;
 pub mod canvas;
+pub mod kind;
 pub mod index;
 pub mod source;
 pub mod ui;
 
 pub use anchor::NoteAnchor;
 pub use canvas::NotesCanvas;
+pub use kind::{NoteContent, NotesKind};
 pub use index::NotesIndex;
 pub use source::NotesSource;
 

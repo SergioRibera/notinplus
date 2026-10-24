@@ -222,3 +222,22 @@ pub fn notify_changed() {
         list.retain(|tx| tx.send(()).is_ok());
     }
 }
+
+/// Close the tab showing `target` on the active mesa, if any.
+pub fn close_tab(target: TabTarget) {
+    freya::prelude::spawn_forever(async move {
+        let Ok(handle) = open_library().await else {
+            return;
+        };
+        let mut lib = handle.lock().await;
+        let Some(workspace) = lib.active_workspace() else {
+            return;
+        };
+        let found = lib.workspace(workspace).and_then(|w| w.find_tab(target));
+        if let Some((pane, index)) = found
+            && let Err(err) = lib.close_pane_tab(workspace, pane, index).await
+        {
+            log::error!("close_tab: {err}");
+        }
+    });
+}

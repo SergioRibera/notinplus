@@ -23,8 +23,22 @@ pub enum CreationFlow {
         extensions: Vec<Cow<'static, str>>,
         mime_types: Vec<Cow<'static, str>>,
     },
+    /// Pick one option first (a Bible translation). The chosen id
+    /// arrives as [`CreationRequest::choice`].
+    Choose {
+        title: Cow<'static, str>,
+        options: Vec<CreationChoice>,
+    },
     /// The plugin shows its own UI from its face (Biblia first use).
     Custom,
+}
+
+/// One option of a [`CreationFlow::Choose`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CreationChoice {
+    pub id: Cow<'static, str>,
+    pub label: Cow<'static, str>,
+    pub subtitle: Cow<'static, str>,
 }
 
 /// One entry of the create menu.
@@ -127,6 +141,8 @@ pub struct CreationRequest<'a> {
     pub paper_color: Option<[u8; 3]>,
     /// The imported file, for import flows.
     pub file: Option<ImportedFile<'a>>,
+    /// The option picked in a [`CreationFlow::Choose`].
+    pub choice: Option<&'a str>,
 }
 
 /// A file chosen in the system picker.

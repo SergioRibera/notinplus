@@ -12,11 +12,14 @@ use crate::anchor::NoteAnchor;
 /// Most completions offered for one query.
 const COMPLETION_LIMIT: usize = 60;
 
+/// What the index knows about one note.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct IndexedNote {
-    title: String,
+pub struct IndexedNote {
+    pub title: String,
     /// `(slug, text)` in document order.
-    headings: Vec<(String, String)>,
+    pub headings: Vec<(String, String)>,
+    /// Plain text of the body, for full-text search.
+    pub body: String,
 }
 
 /// Shared, thread safe map of library item id to note title + headings.
@@ -35,6 +38,7 @@ impl NotesIndex {
         let note = IndexedNote {
             title: title.to_owned(),
             headings,
+            body: markdown.to_owned(),
         };
         self.0
             .write()
@@ -53,6 +57,11 @@ impl NotesIndex {
         if let Some(title) = title {
             self.update(item, &title, markdown);
         }
+    }
+
+    /// Read access for search.
+    pub fn read(&self) -> std::sync::RwLockReadGuard<'_, HashMap<[u8; 16], IndexedNote>> {
+        self.0.read().unwrap_or_else(PoisonError::into_inner)
     }
 
     pub fn remove(&self, item: [u8; 16]) {

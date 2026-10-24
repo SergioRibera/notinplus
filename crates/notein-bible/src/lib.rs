@@ -39,6 +39,7 @@ pub mod canvas;
 pub mod db;
 pub mod fonts;
 pub mod import;
+pub mod kind;
 #[cfg(feature = "importer")]
 pub mod install_background;
 pub mod plugin_config;
@@ -58,6 +59,7 @@ pub mod ui {
 
 pub use anchor::BibleAnchor;
 pub use canvas::BibleCanvas;
+pub use kind::{BibleContent, BibleKind};
 pub use db::Db;
 pub use plugin_config::{SharedConfig, new_shared};
 pub use source::BibleSource;

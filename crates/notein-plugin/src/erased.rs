@@ -20,6 +20,7 @@ pub trait ErasedKind: Send + Sync {
     fn search(&self, query: &SearchQuery) -> Vec<Hit<Vec<u8>>>;
     fn index(&self, doc: DocMeta<'_>, content: &[u8], attachment: Option<&[u8]>) -> IndexReport;
     fn forget(&self, doc: DocId);
+    fn index_status(&self) -> Vec<(DocId, IndexReport)>;
     fn outline(&self, content: &[u8]) -> Vec<OutlineNode<Vec<u8>>>;
     fn marks(&self, content: &[u8]) -> Vec<Mark<Vec<u8>>>;
     fn summary(&self, content: &[u8]) -> Option<String>;
@@ -74,6 +75,10 @@ impl<K: DocumentKind> ErasedKind for KindAdapter<K> {
 
     fn forget(&self, doc: DocId) {
         self.0.forget(doc);
+    }
+
+    fn index_status(&self) -> Vec<(DocId, IndexReport)> {
+        self.0.index_status()
     }
 
     fn outline(&self, content: &[u8]) -> Vec<OutlineNode<Vec<u8>>> {

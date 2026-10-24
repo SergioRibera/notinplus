@@ -547,7 +547,7 @@ fn compute_layout(doc: &PdfDocument, gap: f32) -> (Vec<PageLayout>, Rect) {
 /// as section headers (still useful for navigation hierarchy) but
 /// omitted from the `targets` lookup, so clicking them is a no-op.
 fn build_outline(doc: &PdfDocument) -> CachedOutline {
-    use pdfium_render::prelude::{PdfBookmark, PdfDestinationViewSettings};
+    use pdfium_render::prelude::PdfBookmark;
 
     let pdoc = doc.pdfium_doc();
     let bookmarks = pdoc.bookmarks();
@@ -586,7 +586,7 @@ fn build_outline(doc: &PdfDocument) -> CachedOutline {
             // view-setting variants that carry a y, translate once.
             let y_from_top = destination
                 .and_then(|d| d.view_settings().ok())
-                .and_then(|s| extract_dest_y_bottom(s))
+                .and_then(|s| crate::doc::extract_dest_y_bottom(s))
                 .and_then(|y_from_bottom| {
                     page_heights
                         .get(idx as usize)
@@ -637,21 +637,6 @@ fn build_outline(doc: &PdfDocument) -> CachedOutline {
     }
 }
 
-/// Pull a bottom-up y (PDF points) out of a destination view setting
-/// when the variant specifies one. Returns `None` for Fit-type
-/// destinations that pin the whole page / bounds — the caller then
-/// falls back to a small top margin.
-fn extract_dest_y_bottom(
-    settings: pdfium_render::prelude::PdfDestinationViewSettings,
-) -> Option<f32> {
-    use pdfium_render::prelude::PdfDestinationViewSettings as V;
-    match settings {
-        V::SpecificCoordinatesAndZoom(_, Some(y), _)
-        | V::FitPageHorizontallyToWindow(Some(y))
-        | V::FitBoundsHorizontallyToWindow(Some(y)) => Some(y.value),
-        _ => None,
-    }
-}
 
 /// Sub-rect of the placeholder bitmap covering `dst_world`'s slice of
 /// `page_rect`. Returns `None` when `dst_world` matches `page_rect` —

@@ -565,3 +565,49 @@ mod tests {
         assert_eq!(passes, vec![0..1, 1..2]);
     }
 }
+
+impl Board {
+    /// Add a text box holding `markdown` at the centre of what the pane
+    /// shows, as one undo step. Returns `false` when the canvas cannot
+    /// take text (read only, hidden or locked layer, size unknown).
+    pub fn insert_text_at_view_center(&mut self, markdown: &str) -> bool {
+        let (sw, sh) = self.last_surface_size;
+        if sw <= 0.0 || sh <= 0.0 || self.viewport.scale <= 0.0 {
+            return false;
+        }
+        let wx = (sw * 0.5 - self.viewport.tx) / self.viewport.scale
+            - crate::text_box::TEXT_DEFAULT_WIDTH * 0.5;
+        let wy = (sh * 0.5 - self.viewport.ty) / self.viewport.scale;
+        self.begin_text_draft(wx, wy);
+        if self.text_session.is_none() {
+            return false;
+        }
+        self.set_session_markdown(markdown);
+        self.end_text_session();
+        true
+    }
+}
+
+impl crate::doc::Doc {
+    /// Append a text box with `markdown` below the existing ones on the
+    /// active layer (for documents that are not open).
+    pub fn append_text(&mut self, markdown: &str, color: [u8; 4]) {
+        let layer_id = self.active_layer;
+        let below = self.layer(layer_id).map_or(0.0, |layer| {
+            layer
+                .texts
+                .iter()
+                .map(|t| t.frame.y + crate::text_box::TEXT_FALLBACK_HEIGHT * 3.0)
+                .fold(0.0_f32, f32::max)
+        });
+        self.emit(crate::doc_op::DocOp::AddText {
+            layer_id,
+            text: crate::text_box::TextBox {
+                id: crate::text_box::TextBoxId::new_v4(),
+                frame: crate::text_box::TextFrame::at(0.0, below),
+                markdown: markdown.to_owned(),
+                color,
+            },
+        });
+    }
+}

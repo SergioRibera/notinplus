@@ -266,7 +266,15 @@ pub enum TabTarget {
     /// tab discards it; a persisted workspace keeps the tab but the
     /// canvas starts blank on the next mount.
     Scratch(ScratchId),
+    /// An annotation opened from its popover with the full editor. Lives
+    /// only while the app runs; reopening a mesa drops these tabs.
+    Annotation(AnnotationId),
 }
+
+/// Identifies an annotation being edited (see `crate::annotation`).
+#[istmo::message]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub struct AnnotationId(pub u64);
 
 impl PaneTab {
     #[must_use]
@@ -303,7 +311,7 @@ impl PaneTab {
     pub const fn item(&self) -> Option<ItemId> {
         match self.target {
             TabTarget::Item(id) => Some(id),
-            TabTarget::Scratch(_) => None,
+            TabTarget::Scratch(_) | TabTarget::Annotation(_) => None,
         }
     }
 }

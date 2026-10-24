@@ -311,6 +311,12 @@ impl SettingsStore {
         consume_context::<Self>()
     }
 
+    /// The store, when called inside the app.
+    #[must_use]
+    pub fn try_get() -> Option<Self> {
+        try_consume_context::<Self>()
+    }
+
     /// Current settings; subscribes the caller.
     #[must_use]
     pub fn read(&self) -> Settings {

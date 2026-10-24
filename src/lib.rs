@@ -11,6 +11,7 @@
 
 pub mod active_boards;
 pub mod active_pdf_sources;
+pub mod annotation;
 #[cfg(target_os = "android")]
 pub mod android_clipboard;
 pub mod app;
@@ -29,6 +30,7 @@ pub mod components;
 pub mod deep_link;
 pub mod doc;
 pub mod doc_op;
+pub mod editor;
 pub mod dynamic_plugins;
 pub mod faces;
 pub mod home;
@@ -49,6 +51,7 @@ pub mod persist;
 pub mod plugin_settings;
 pub mod plugins;
 pub mod prefs;
+pub mod references;
 pub mod render;
 pub mod route;
 pub mod shell_builtins;
@@ -58,6 +61,7 @@ pub mod session_end;
 pub mod settings;
 pub mod space;
 pub mod spatial;
+pub mod state;
 pub mod sync;
 pub mod text_box;
 pub mod ui_mask;

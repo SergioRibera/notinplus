@@ -42,7 +42,7 @@ const TOMBSTONE_TTL_MS: u64 = 90 * 24 * 60 * 60 * 1000;
 pub use self::error::{LibraryError, NotFoundKind, Result};
 pub use self::links::{Link, LinkIndex, LinkKind};
 pub use self::model::{
-    BackgroundStyle, DocKind, Folder, FolderId, INDEX_VERSION, Item, ItemId, LibraryIndex, LinkId,
+    AnnotationId,     BackgroundStyle, DocKind, Folder, FolderId, INDEX_VERSION, Item, ItemId, LibraryIndex, LinkId,
     Pane, PaneId, PaneLayout, PaneTab, ROOT_FOLDER, Rgba, ScratchId, SplitOrientation, SplitSide,
     TabTarget, Tag, TagId, Trashed, ViewSlot, WORKSPACE_INDEX_VERSION, Workspace, WorkspaceId,
     WorkspaceIndex,

@@ -45,6 +45,7 @@ ui = [
 ]
 
 [dependencies]
+freya-icons = { version = "=0.5.0-rc.8", features = ["lucide"] }
 notein-sdk = { path = "../notein-sdk" }
 # `istmo-core` is pulled in strictly for its `path::data_dir()`
 # resolver so the plugin writes its DB + cache alongside every other
@@ -57,11 +58,6 @@ regex = "1.12"
 bincode = { version = "2", features = ["derive", "std"] }
 log = "0.4"
 quick-xml = "0.37"
-# Standalone icons crate (no Freya runtime pulled in). `creation_entries`
-# needs real SVG bytes the host's SvgViewer can render; emoji text in
-# the icon field silently fails to decode.
-freya-icons = { version = "=0.4.0", features = ["lucide"] }
-
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "blocking",

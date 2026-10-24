@@ -343,6 +343,7 @@ fn pane_tree(
             .cloned()
             .unwrap_or_else(|| MISSING_TITLE.to_owned()),
         TabTarget::Scratch(_) => SCRATCH_TITLE.to_owned(),
+        TabTarget::Annotation(id) => crate::annotation::tab_title(id),
     });
     let body_kinds = kinds;
     let body_cb =
@@ -375,7 +376,7 @@ fn tab_body_element(tab: &PaneTab, kinds: &HashMap<ItemId, DocKind>, slot: ViewS
     use crate::app::{CanvasMount, CanvasPane};
     let body = match tab.target {
         TabTarget::Item(id) => match kinds.get(&id) {
-            Some(kind) => crate::faces::render(id, kind, Some(slot)),
+            Some(kind) => crate::plugins::faces::render(id, kind, Some(slot)),
             None => CanvasPane {
                 mount: CanvasMount::Item {
                     id,
@@ -388,6 +389,7 @@ fn tab_body_element(tab: &PaneTab, kinds: &HashMap<ItemId, DocKind>, slot: ViewS
             mount: CanvasMount::Ephemeral(id),
         }
         .into_element(),
+        TabTarget::Annotation(id) => crate::annotation::ExpandedAnnotation { id }.into_element(),
     };
     // Keyed by target so switching tabs in a pane mounts a fresh body:
     // components diff by position, and a reused `CanvasPane` would keep
