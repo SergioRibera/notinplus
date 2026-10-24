@@ -411,7 +411,6 @@ impl SettingsStore {
 }
 
 /// Load settings and install both the store and the theme root.
-#[must_use]
 pub fn use_settings_root() -> SettingsStore {
     let state = use_state(|| {
         let settings = Settings::load();

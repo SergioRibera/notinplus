@@ -86,6 +86,92 @@ impl SelectionBar {
     }
 }
 
+impl BarItem {
+    fn render(&self, index: usize) -> Element {
+        let p = palette();
+        match self {
+            Self::Action {
+                label: text_value,
+                icon,
+                on_press,
+            } => {
+                let handler = on_press.clone();
+                rect()
+                    .key(index)
+                    .height(Size::px(40.0))
+                    .padding((0.0, 10.0))
+                    .corner_radius(radius::SM)
+                    .horizontal()
+                    .center()
+                    .spacing(6.0)
+                    .a11y_role(AccessibilityRole::Button)
+                    .on_press(move |_| handler.call(()))
+                    .maybe_child(
+                        icon.clone()
+                            .map(|i| Icon::new(i).size(16.0).color(p.inv_text)),
+                    )
+                    .maybe_child(text_value.clone().map(|t| {
+                        label()
+                            .text(t)
+                            .font_size(text::META)
+                            .font_weight(FontWeight::MEDIUM)
+                            .color(p.inv_text)
+                    }))
+                    .into_element()
+            }
+            Self::Swatches {
+                colors,
+                active,
+                on_pick,
+            } => rect()
+                .key(index)
+                .padding((0.0, 8.0))
+                .horizontal()
+                .cross_align(Alignment::Center)
+                .spacing(8.0)
+                .children(colors.iter().enumerate().map(|(ci, color)| {
+                    let handler = on_pick.clone();
+                    let selected = *active == Some(ci);
+                    rect()
+                        .key(ci)
+                        .a11y_role(AccessibilityRole::Button)
+                        .width(Size::px(24.0))
+                        .height(Size::px(24.0))
+                        .corner_radius(radius::FULL)
+                        .background(*color)
+                        .maybe(selected, |r| {
+                            r.border(
+                                Border::new()
+                                    .fill(p.inv_text)
+                                    .width(2.0)
+                                    .alignment(BorderAlignment::Outer),
+                            )
+                        })
+                        .on_press(move |_| handler.call(ci))
+                        .into_element()
+                }))
+                .into_element(),
+            Self::Caption(caption) => rect()
+                .key(index)
+                .padding((0.0, 10.0))
+                .child(
+                    label()
+                        .text(caption.clone())
+                        .font_size(text::META)
+                        .font_weight(FontWeight::SEMI_BOLD)
+                        .color(p.inv_text),
+                )
+                .into_element(),
+            Self::Divider => rect()
+                .key(index)
+                .width(Size::px(1.0))
+                .height(Size::px(20.0))
+                .background(p.inv_line)
+                .into_element(),
+        }
+    }
+}
+
 impl Component for SelectionBar {
     fn render(&self) -> impl IntoElement {
         let p = palette();
@@ -108,87 +194,11 @@ impl Component for SelectionBar {
             .horizontal()
             .cross_align(Alignment::Center)
             .spacing(2.0)
-            .children(self.items.iter().enumerate().map(|(index, item)| {
-                match item {
-                    BarItem::Action {
-                        label: text_value,
-                        icon,
-                        on_press,
-                    } => {
-                        let handler = on_press.clone();
-                        rect()
-                            .key(index)
-                            .height(Size::px(40.0))
-                            .padding((0.0, 10.0))
-                            .corner_radius(radius::SM)
-                            .horizontal()
-                            .center()
-                            .spacing(6.0)
-                            .a11y_role(AccessibilityRole::Button)
-                            .on_press(move |_| handler.call(()))
-                            .maybe_child(
-                                icon.clone()
-                                    .map(|i| Icon::new(i).size(16.0).color(p.inv_text)),
-                            )
-                            .maybe_child(text_value.clone().map(|t| {
-                                label()
-                                    .text(t)
-                                    .font_size(text::META)
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .color(p.inv_text)
-                            }))
-                            .into_element()
-                    }
-                    BarItem::Swatches {
-                        colors,
-                        active,
-                        on_pick,
-                    } => rect()
-                        .key(index)
-                        .padding((0.0, 8.0))
-                        .horizontal()
-                        .cross_align(Alignment::Center)
-                        .spacing(8.0)
-                        .children(colors.iter().enumerate().map(|(ci, color)| {
-                            let handler = on_pick.clone();
-                            let selected = *active == Some(ci);
-                            rect()
-                                .key(ci)
-                                .a11y_role(AccessibilityRole::Button)
-                                .width(Size::px(24.0))
-                                .height(Size::px(24.0))
-                                .corner_radius(radius::FULL)
-                                .background(*color)
-                                .maybe(selected, |r| {
-                                    r.border(
-                                        Border::new()
-                                            .fill(p.inv_text)
-                                            .width(2.0)
-                                            .alignment(BorderAlignment::Outer),
-                                    )
-                                })
-                                .on_press(move |_| handler.call(ci))
-                                .into_element()
-                        }))
-                        .into_element(),
-                    BarItem::Caption(caption) => rect()
-                        .key(index)
-                        .padding((0.0, 10.0))
-                        .child(
-                            label()
-                                .text(caption.clone())
-                                .font_size(text::META)
-                                .font_weight(FontWeight::SEMI_BOLD)
-                                .color(p.inv_text),
-                        )
-                        .into_element(),
-                    BarItem::Divider => rect()
-                        .key(index)
-                        .width(Size::px(1.0))
-                        .height(Size::px(20.0))
-                        .background(p.inv_line)
-                        .into_element(),
-                }
-            }))
+            .children(
+                self.items
+                    .iter()
+                    .enumerate()
+                    .map(|(index, item)| item.render(index)),
+            )
     }
 }

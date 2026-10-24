@@ -1981,9 +1981,9 @@ mod tests {
 
     #[test]
     fn untrusted_sync_payloads_are_ignored() {
-        let mut a = driver("Tablet");
+        let a = driver("Tablet");
         let mut b = driver("PC");
-        mark(&mut a, D1, 1, 1);
+        mark(&a, D1, 1, 1);
         b.on_event(NetEvent::Connected(info(&a, 1))).unwrap();
         let inventory = a
             .engine()
@@ -2007,8 +2007,8 @@ mod tests {
         let b_dev = TrustedDevice::new(*b.profile.key().public(), "PC", 1);
         a.profile_mut().trust(b_dev);
         b.profile_mut().trust(a_dev);
-        mark(&mut a, D1, 1, 1);
-        mark(&mut b, D1, 2, 1);
+        mark(&a, D1, 1, 1);
+        mark(&b, D1, 2, 1);
 
         let a_sees_b = a.on_event(NetEvent::Discovered(info(&b, 2))).unwrap();
         let b_sees_a = b.on_event(NetEvent::Discovered(info(&a, 1))).unwrap();
@@ -2028,7 +2028,7 @@ mod tests {
         assert_eq!(marks(&b, D1), vec![(1, 1), (2, 1)]);
         assert!(events.contains(&DriverEvent::Imported(vec![D1])));
 
-        mark(&mut a, D1, 1, 2);
+        mark(&a, D1, 1, 2);
         let round = a.announce().unwrap();
         deliver(round, &mut a, &mut b);
         assert_eq!(marks(&b, D1), vec![(1, 1), (1, 2), (2, 1)]);
@@ -2052,7 +2052,7 @@ mod tests {
         );
     }
 
-    fn shared_doc(owner: &mut SyncDriver<MemReplica>) -> Share {
+    fn shared_doc(owner: &SyncDriver<MemReplica>) -> Share {
         mark(owner, D1, 1, 1);
         mark(owner, D2, 1, 1);
         owner.with_replica(|r| r.put_blob(BlobKind::Item, 1, 5, "doc-1"));
@@ -2069,7 +2069,7 @@ mod tests {
     fn guest_joins_with_the_invite_and_receives_only_the_share() {
         let mut owner = driver("Sergio");
         let mut guest = driver("Ana");
-        let share = shared_doc(&mut owner);
+        let share = shared_doc(&owner);
         let id = share.id;
         let invite = Invite::parse_link(&share.invite().to_link()).unwrap();
         owner.create_share(share);
@@ -2104,8 +2104,8 @@ mod tests {
         assert!(!guest.profile.is_trusted(owner.profile.id()));
 
         // Guest edits flow back; a guest edit outside the share stays home.
-        mark(&mut guest, D1, 2, 1);
-        mark(&mut guest, D2, 2, 9);
+        mark(&guest, D1, 2, 1);
+        mark(&guest, D2, 2, 9);
         let round = guest.announce().unwrap();
         deliver(round, &mut guest, &mut owner);
         assert_eq!(marks(&owner, D1), vec![(1, 1), (2, 1)]);
@@ -2116,7 +2116,7 @@ mod tests {
     fn wrong_key_is_refused() {
         let mut owner = driver("Sergio");
         let mut guest = driver("Ana");
-        let share = shared_doc(&mut owner);
+        let share = shared_doc(&owner);
         let id = share.id;
         let mut invite = share.invite();
         invite.key = crate::cipher::ShareKey::generate();
@@ -2136,7 +2136,7 @@ mod tests {
     fn read_only_members_cannot_push_edits() {
         let mut owner = driver("Sergio");
         let mut guest = driver("Ana");
-        let mut share = shared_doc(&mut owner);
+        let mut share = shared_doc(&owner);
         share.policy = SharePolicy::read_only();
         let id = share.id;
         let invite = share.invite();
@@ -2151,12 +2151,12 @@ mod tests {
                 .is_read_only_for(guest.profile.id())
         );
 
-        mark(&mut guest, D1, 2, 1);
+        mark(&guest, D1, 2, 1);
         deliver(guest.announce().unwrap(), &mut guest, &mut owner);
         assert_eq!(marks(&owner, D1), vec![(1, 1)]);
 
         // Owner edits still arrive.
-        mark(&mut owner, D1, 1, 2);
+        mark(&owner, D1, 1, 2);
         deliver(owner.announce().unwrap(), &mut owner, &mut guest);
         assert_eq!(marks(&guest, D1), vec![(1, 1), (1, 2), (2, 1)]);
     }
@@ -2165,7 +2165,7 @@ mod tests {
     fn owner_ending_or_expelling_removes_the_share_on_the_guest() {
         let mut owner = driver("Sergio");
         let mut guest = driver("Ana");
-        let share = shared_doc(&mut owner);
+        let share = shared_doc(&owner);
         let id = share.id;
         let invite = share.invite();
         owner.create_share(share);
@@ -2197,7 +2197,7 @@ mod tests {
     fn a_guest_leaving_drops_out_of_the_owners_member_list() {
         let mut owner = driver("Sergio");
         let mut guest = driver("Ana");
-        let share = shared_doc(&mut owner);
+        let share = shared_doc(&owner);
         let id = share.id;
         let invite = share.invite();
         owner.create_share(share);
@@ -2219,7 +2219,7 @@ mod tests {
     fn policy_updates_reach_members() {
         let mut owner = driver("Sergio");
         let mut guest = driver("Ana");
-        let share = shared_doc(&mut owner);
+        let share = shared_doc(&owner);
         let id = share.id;
         let invite = share.invite();
         owner.create_share(share);
@@ -2241,7 +2241,7 @@ mod tests {
     fn guest_tombstones_follow_the_delete_policy_not_the_edit_policy() {
         let mut owner = driver("Sergio");
         let mut guest = driver("Ana");
-        let mut share = shared_doc(&mut owner);
+        let mut share = shared_doc(&owner);
         share.policy = SharePolicy::read_only();
         let id = share.id;
         let invite = share.invite();
@@ -2296,13 +2296,13 @@ mod tests {
         let b_dev = TrustedDevice::new(*b.profile.key().public(), "b", 1);
         a.profile_mut().trust(b_dev);
         b.profile_mut().trust(a_dev);
-        mark(&mut a, D1, 1, 1);
+        mark(&a, D1, 1, 1);
         connect_both(&mut a, &mut b);
         deliver(a.announce().unwrap(), &mut a, &mut b);
         deliver(b.announce().unwrap(), &mut b, &mut a);
         assert_eq!(marks(&b, D1), vec![(1, 1)]);
 
-        mark(&mut a, D1, 1, 2);
+        mark(&a, D1, 1, 2);
         let actions = a.push_doc(D1).unwrap();
         assert_eq!(
             actions

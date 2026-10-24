@@ -423,11 +423,11 @@ impl Serving {
 
     /// The owner closed `share`: drop its mailbox and tell the others.
     fn unregister(&mut self, from: DeviceId, public: [u8; 32], share: ShareId) {
-        if !self
+        if self
             .store
             .boxes
             .get(&share)
-            .is_some_and(|m| m.owner == public)
+            .is_none_or(|m| m.owner != public)
         {
             return;
         }

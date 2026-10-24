@@ -183,6 +183,67 @@ impl ListRow {
     }
 }
 
+impl Leading {
+    fn render(self, danger: bool) -> Element {
+        let p = palette();
+        match self {
+            Self::Icon(icon) => Icon::new(icon)
+                .size(18.0)
+                .color(if danger { p.danger } else { p.t2 })
+                .into_element(),
+            Self::Kind { icon, color } => KindBadge::new(icon, color).into_element(),
+            Self::Check(on) => Checkbox::new(on).into_element(),
+            Self::Element(element) => element,
+        }
+    }
+}
+
+impl Trailing {
+    fn render(self) -> Element {
+        let p = palette();
+        match self {
+            Self::Text(t) => label()
+                .text(t)
+                .font_size(text::LABEL)
+                .color(p.t3)
+                .max_lines(1)
+                .into_element(),
+            Self::Chevron => Icon::new(freya::icons::lucide::chevron_right())
+                .size(16.0)
+                .color(p.t3)
+                .into_element(),
+            Self::Switch { on, on_toggle } => Switch::new(on).on_toggle(on_toggle).into_element(),
+            Self::Element(element) => element,
+        }
+    }
+}
+
+impl ListRow {
+    /// Title and subtitle.
+    fn text(&self, title_color: Color) -> Rect {
+        rect()
+            .width(Size::flex(1.0))
+            .spacing(2.0)
+            .child(
+                label()
+                    .text(self.title.clone())
+                    .font_size(text::BODY)
+                    .font_weight(FontWeight::MEDIUM)
+                    .color(title_color)
+                    .max_lines(1)
+                    .text_overflow(TextOverflow::Ellipsis),
+            )
+            .maybe_child(self.subtitle.clone().map(|sub| {
+                label()
+                    .text(sub)
+                    .font_size(text::LABEL)
+                    .color(palette().t3)
+                    .max_lines(2)
+                    .text_overflow(TextOverflow::Ellipsis)
+            }))
+    }
+}
+
 impl Component for ListRow {
     fn render(&self) -> impl IntoElement {
         let p = palette();
@@ -243,57 +304,13 @@ impl Component for ListRow {
             .map(on_secondary, |r, handler| {
                 r.on_secondary_down(move |e| handler.call(e))
             })
-            .maybe_child(self.leading.clone().map(|leading| {
-                match leading {
-                    Leading::Icon(icon) => Icon::new(icon)
-                        .size(18.0)
-                        .color(if self.danger { p.danger } else { p.t2 })
-                        .into_element(),
-                    Leading::Kind { icon, color } => KindBadge::new(icon, color).into_element(),
-                    Leading::Check(on) => Checkbox::new(on).into_element(),
-                    Leading::Element(element) => element,
-                }
-            }))
-            .child(
-                rect()
-                    .width(Size::flex(1.0))
-                    .spacing(2.0)
-                    .child(
-                        label()
-                            .text(self.title.clone())
-                            .font_size(text::BODY)
-                            .font_weight(FontWeight::MEDIUM)
-                            .color(title_color)
-                            .max_lines(1)
-                            .text_overflow(TextOverflow::Ellipsis),
-                    )
-                    .maybe_child(self.subtitle.clone().map(|sub| {
-                        label()
-                            .text(sub)
-                            .font_size(text::LABEL)
-                            .color(p.t3)
-                            .max_lines(2)
-                            .text_overflow(TextOverflow::Ellipsis)
-                    })),
+            .maybe_child(
+                self.leading
+                    .clone()
+                    .map(|leading| leading.render(self.danger)),
             )
-            .maybe_child(self.trailing.clone().map(|trailing| {
-                match trailing {
-                    Trailing::Text(t) => label()
-                        .text(t)
-                        .font_size(text::LABEL)
-                        .color(p.t3)
-                        .max_lines(1)
-                        .into_element(),
-                    Trailing::Chevron => Icon::new(freya::icons::lucide::chevron_right())
-                        .size(16.0)
-                        .color(p.t3)
-                        .into_element(),
-                    Trailing::Switch { on, on_toggle } => {
-                        Switch::new(on).on_toggle(on_toggle).into_element()
-                    }
-                    Trailing::Element(element) => element,
-                }
-            }))
+            .child(self.text(title_color))
+            .maybe_child(self.trailing.clone().map(Trailing::render))
     }
 
     fn render_key(&self) -> DiffKey {
