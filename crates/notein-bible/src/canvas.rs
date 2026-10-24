@@ -26,7 +26,7 @@ use crate::state::BibleSnapshot;
 use crate::state::{BibleBookmark, BibleViewerState, u32_to_rgba};
 
 /// Canvas kind id used by the shell to route open requests.
-pub const KIND_ID: &str = "io.notein.bible.viewer";
+pub const KIND_ID: &str = crate::kind::KIND;
 
 /// Capability list — the shell reads this to feature-gate stroke tools
 /// off. Keep it in sync with the ui/toolbar visibility rules.

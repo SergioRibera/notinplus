@@ -171,7 +171,7 @@ mod scan_tests {
             bookmark: BookmarkId::from_bytes([3; 16]),
         };
         let plugin = SourceRef::Plugin {
-            plugin_id: "io.notein.notes".into(),
+            plugin_id: notein_notes::kind::KIND.into(),
             item: [4; 16],
             anchor: vec![1, 2],
             selection: None,

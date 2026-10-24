@@ -29,7 +29,7 @@ use std::time::Duration;
 
 use crate::library::ItemId;
 
-const BIBLE_PLUGIN_ID: &str = "io.notein.bible.viewer";
+const BIBLE_PLUGIN_ID: &str = notein_bible::kind::KIND;
 
 #[derive(Debug, PartialEq)]
 pub struct BibleFace {

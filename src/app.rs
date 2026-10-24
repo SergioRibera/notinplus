@@ -319,6 +319,17 @@ impl Component for AppShell {
         #[cfg(target_os = "android")]
         use_hook(crate::android_clipboard::install);
         let area = use_state(Area::default);
+        let settings = crate::settings::use_settings_root();
+        crate::state::use_library_root();
+        crate::plugins::host::use_host_pump();
+        use_hook(move || {
+            crate::plugins::content::index_library();
+            let retention = settings.read().library.trash_retention.millis();
+            crate::state::edit("vaciar la papelera", async move |lib| {
+                lib.purge_expired(retention).await.map(drop)
+            });
+        });
+        let insets = *crate::hooks::use_safe_area_insets().read();
         // Share the measured window area with any descendant that
         // wants to clamp its own popup/overlay inside the viewport —
         // see `notein_ui_kit::ViewportArea` + `clamp_popup_top`.
@@ -342,6 +353,7 @@ impl Component for AppShell {
         use_hook(crate::session_end::listen);
         rect()
             .expanded()
+            .background(notein_ui_kit::palette().bg)
             .on_global_pointer_up(crate::soft_keyboard::reshow_on_tap)
             .on_sized({
                 let mut area = area;
@@ -366,6 +378,7 @@ impl Component for AppShell {
                 crate::components::ModalPortal::new(area)
             })
             .child(crate::host_overlay::HostOverlay)
+            .child(notein_ui_kit::ToastHost::new(insets.bottom))
     }
 }
 

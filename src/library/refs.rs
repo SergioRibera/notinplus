@@ -321,7 +321,7 @@ mod tests {
 
     fn plugin_ref(to: ItemId) -> SourceRef {
         SourceRef::Plugin {
-            plugin_id: "io.notein.notes".into(),
+            plugin_id: notein_notes::kind::KIND.into(),
             item: to.0,
             anchor: Vec::new(),
             selection: None,

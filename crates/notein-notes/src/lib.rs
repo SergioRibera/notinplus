@@ -34,10 +34,10 @@ pub use index::NotesIndex;
 pub use source::NotesSource;
 
 /// Kind id of the note page (`PluginCanvas` items and their snapshots).
-pub const KIND_ID: &str = "io.notein.notes.viewer";
+pub const KIND_ID: &str = kind::KIND;
 
 /// Id of the reference source (`SourceRef::Plugin::plugin_id`).
-pub const SOURCE_ID: &str = "io.notein.notes";
+pub const SOURCE_ID: &str = kind::KIND;
 
 /// Register both plugin halves. The returned index is shared with them:
 /// the shell feeds it note titles and bodies.

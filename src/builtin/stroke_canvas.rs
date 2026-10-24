@@ -25,7 +25,7 @@ use crate::doc::Doc;
 
 /// Stable id this plugin registers under. Referenced by persisted FAB
 /// shortcuts and by `DocKind::plugin_id`.
-pub const KIND_ID: &str = "io.notein.canvas.stroke";
+pub const KIND_ID: &str = crate::plugins::builtin::canvas::KIND;
 
 /// Creation entry ids. Kept identical to the historical shell builtins
 /// so persisted shortcuts (modulo the plugin-id migration in

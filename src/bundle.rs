@@ -677,7 +677,7 @@ mod tests {
                 items: vec![Item {
                     id: item,
                     folder: crate::library::ROOT_FOLDER,
-                    kind: DocKind::plugin("io.notein.canvas.stroke"),
+                    kind: DocKind::plugin(crate::plugins::builtin::canvas::KIND),
                     name: "x".into(),
                     color: None,
                     tags: Vec::new(),

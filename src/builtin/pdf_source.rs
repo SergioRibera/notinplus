@@ -29,7 +29,7 @@ use crate::pdf_viewer::{PdfAnchor, PdfSelection, decode_pdf_anchor, encode_pdf_a
 
 /// Stable id this plugin registers under. Referenced by future
 /// `SourceRef::Plugin` anchors.
-pub const KIND_ID: &str = "io.notein.source.pdf";
+pub const KIND_ID: &str = crate::plugins::builtin::pdf::KIND;
 
 /// Shell-wide creation entry id. Preserved from the old
 /// `shell_builtins::IMPORT_PDF` constant so persisted FAB shortcuts

@@ -1864,7 +1864,7 @@ fn trigger_entry(entry: &crate::plugins::AvailableEntry, ctx: &FabCtx) {
                 other => log::warn!("unknown pdf source entry: {other}"),
             }
         }
-        EntrySource::Plugin(_) if entry.plugin_id == "io.notein.bible.viewer" => {
+        EntrySource::Plugin(_) if entry.plugin_id == notein_bible::kind::KIND => {
             match entry.entry.id.as_str() {
                 "new-bible-viewer" => flow_open_bible(ctx.clone()),
                 other => log::warn!("unknown bible viewer entry: {other}"),

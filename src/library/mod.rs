@@ -1441,7 +1441,7 @@ mod tests {
         idx.items.push(Item {
             id: item,
             folder,
-            kind: DocKind::plugin("io.notein.canvas.stroke"),
+            kind: DocKind::plugin(crate::plugins::builtin::canvas::KIND),
             name: "Untitled".into(),
             color: None,
             tags: vec![tag],
