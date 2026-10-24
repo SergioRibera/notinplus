@@ -7,7 +7,7 @@ use super::error::Result;
 use super::graveyard::{Buried, Graveyard, Tombstone};
 use super::links::Link;
 use super::model::{Folder, Item, Tag, Workspace};
-use super::{Library, bodies, now_millis, refs};
+use super::{Library, LibraryData, bodies, now_millis, refs};
 
 /// One record as it travels between devices.
 #[istmo::message]
@@ -80,6 +80,139 @@ fn gone(kind: BlobKind, id: [u8; 16], at: u64) -> BlobHead {
 }
 
 impl Library {
+    /// Keep `record` if it is newer than what is held. Returns whether
+    /// anything changed. Persists what it touched.
+    ///
+    /// # Errors
+    /// Store failure while persisting.
+    pub async fn apply_sync_record(
+        &mut self,
+        incoming: BlobHead,
+        record: SyncRecord,
+        yard: &mut Graveyard,
+    ) -> Result<bool> {
+        let key = incoming.key();
+        if self
+            .local_freshness(key, yard)
+            .is_some_and(|held| held >= incoming.updated_at)
+        {
+            return Ok(false);
+        }
+        match record {
+            SyncRecord::Item(mut item) => {
+                yard.revive(Buried::Item, item.id.0);
+                if item.folder != super::ROOT_FOLDER
+                    && self.data.index.folder(item.folder).is_none()
+                {
+                    item.folder = super::ROOT_FOLDER;
+                }
+                upsert(&mut self.data.index.items, item, |i| i.id);
+                self.persist().await?;
+            }
+            SyncRecord::Folder(folder) => {
+                yard.revive(Buried::Folder, folder.id.0);
+                upsert(&mut self.data.index.folders, folder, |f| f.id);
+                self.persist().await?;
+            }
+            SyncRecord::Tag(tag) => {
+                yard.revive(Buried::Tag, tag.id.0);
+                upsert(&mut self.data.index.tags, tag, |t| t.id);
+                self.persist().await?;
+            }
+            SyncRecord::Link(link) => {
+                upsert(&mut self.data.links.links, link, |l| l.id);
+                self.persist_links().await?;
+            }
+            SyncRecord::Workspace(workspace) => {
+                yard.revive(Buried::Workspace, workspace.id.0);
+                upsert(&mut self.data.workspaces.workspaces, workspace, |w| w.id);
+                if self.data.workspaces.active.is_none() {
+                    self.data.workspaces.active =
+                        self.data.workspaces.workspaces.first().map(|w| w.id);
+                }
+                self.persist_workspaces().await?;
+            }
+            SyncRecord::Snapshot {
+                item,
+                plugin_id,
+                updated_at,
+                bytes,
+            } => {
+                if self.data.index.item(item).is_none() {
+                    return Ok(false);
+                }
+                bodies::write_plugin_snapshot_at(item, &plugin_id, &bytes, updated_at)?;
+                if plugin_id == notein_notes::KIND_ID {
+                    let body = notein_notes::body_from_snapshot(&bytes);
+                    refs::record_note(item, &body);
+                    if let Some(index) = crate::builtin::notes_index() {
+                        index.update_body(item.0, &body);
+                    }
+                }
+                crate::sync::open_docs::notify_snapshot(item);
+            }
+            SyncRecord::Gone(stone) => {
+                yard.bury(stone.kind, stone.id, stone.at);
+                match stone.kind {
+                    Buried::Item => {
+                        let id = super::ItemId(stone.id);
+                        self.data.index.items.retain(|i| i.id != id);
+                        bodies::purge(id);
+                        refs::forget(id);
+                        if self.data.links.retire_item(id, now_millis()) > 0 {
+                            self.persist_links().await?;
+                        }
+                        self.persist().await?;
+                    }
+                    Buried::Folder => {
+                        let id = super::FolderId(stone.id);
+                        self.data.index.folders.retain(|f| f.id != id);
+                        for item in &mut self.data.index.items {
+                            if item.folder == id {
+                                item.folder = super::ROOT_FOLDER;
+                            }
+                        }
+                        self.persist().await?;
+                    }
+                    Buried::Tag => {
+                        let id = super::TagId(stone.id);
+                        self.data.index.tags.retain(|t| t.id != id);
+                        for item in &mut self.data.index.items {
+                            item.tags.retain(|t| *t != id);
+                        }
+                        self.persist().await?;
+                    }
+                    Buried::Workspace => {
+                        let id = super::WorkspaceId(stone.id);
+                        self.data.workspaces.workspaces.retain(|w| w.id != id);
+                        if self.data.workspaces.active == Some(id) {
+                            self.data.workspaces.active =
+                                self.data.workspaces.workspaces.first().map(|w| w.id);
+                        }
+                        self.persist_workspaces().await?;
+                    }
+                }
+            }
+        }
+        Ok(true)
+    }
+}
+
+fn upsert<T, K: PartialEq>(list: &mut Vec<T>, record: T, id: impl Fn(&T) -> K) -> bool {
+    let key = id(&record);
+    match list.iter_mut().find(|r| id(r) == key) {
+        Some(slot) => {
+            *slot = record;
+            false
+        }
+        None => {
+            list.push(record);
+            true
+        }
+    }
+}
+
+impl LibraryData {
     /// Freshness of every record, live or buried. When a tombstone and
     /// a live record share an id the newer one speaks.
     #[must_use]
@@ -237,134 +370,6 @@ impl Library {
             (Some(a), Some(b)) => Some(a.max(b)),
             (Some(a), None) | (None, Some(a)) => Some(a),
             (None, None) => None,
-        }
-    }
-
-    /// Keep `record` if it is newer than what is held. Returns whether
-    /// anything changed. Persists what it touched.
-    ///
-    /// # Errors
-    /// Store failure while persisting.
-    pub async fn apply_sync_record(
-        &mut self,
-        incoming: BlobHead,
-        record: SyncRecord,
-        yard: &mut Graveyard,
-    ) -> Result<bool> {
-        let key = incoming.key();
-        if self
-            .local_freshness(key, yard)
-            .is_some_and(|held| held >= incoming.updated_at)
-        {
-            return Ok(false);
-        }
-        match record {
-            SyncRecord::Item(mut item) => {
-                yard.revive(Buried::Item, item.id.0);
-                if item.folder != super::ROOT_FOLDER && self.index.folder(item.folder).is_none() {
-                    item.folder = super::ROOT_FOLDER;
-                }
-                upsert(&mut self.index.items, item, |i| i.id);
-                self.persist().await?;
-            }
-            SyncRecord::Folder(folder) => {
-                yard.revive(Buried::Folder, folder.id.0);
-                upsert(&mut self.index.folders, folder, |f| f.id);
-                self.persist().await?;
-            }
-            SyncRecord::Tag(tag) => {
-                yard.revive(Buried::Tag, tag.id.0);
-                upsert(&mut self.index.tags, tag, |t| t.id);
-                self.persist().await?;
-            }
-            SyncRecord::Link(link) => {
-                upsert(&mut self.links.links, link, |l| l.id);
-                self.persist_links().await?;
-            }
-            SyncRecord::Workspace(workspace) => {
-                yard.revive(Buried::Workspace, workspace.id.0);
-                upsert(&mut self.workspaces.workspaces, workspace, |w| w.id);
-                if self.workspaces.active.is_none() {
-                    self.workspaces.active = self.workspaces.workspaces.first().map(|w| w.id);
-                }
-                self.persist_workspaces().await?;
-            }
-            SyncRecord::Snapshot {
-                item,
-                plugin_id,
-                updated_at,
-                bytes,
-            } => {
-                if self.index.item(item).is_none() {
-                    return Ok(false);
-                }
-                bodies::write_plugin_snapshot_at(item, &plugin_id, &bytes, updated_at)?;
-                if plugin_id == notein_notes::KIND_ID {
-                    let body = notein_notes::body_from_snapshot(&bytes);
-                    refs::record_note(item, &body);
-                    if let Some(index) = crate::builtin::notes_index() {
-                        index.update_body(item.0, &body);
-                    }
-                }
-                crate::sync::open_docs::notify_snapshot(item);
-            }
-            SyncRecord::Gone(stone) => {
-                yard.bury(stone.kind, stone.id, stone.at);
-                match stone.kind {
-                    Buried::Item => {
-                        let id = super::ItemId(stone.id);
-                        self.index.items.retain(|i| i.id != id);
-                        bodies::purge(id);
-                        refs::forget(id);
-                        if self.links.retire_item(id, now_millis()) > 0 {
-                            self.persist_links().await?;
-                        }
-                        self.persist().await?;
-                    }
-                    Buried::Folder => {
-                        let id = super::FolderId(stone.id);
-                        self.index.folders.retain(|f| f.id != id);
-                        for item in &mut self.index.items {
-                            if item.folder == id {
-                                item.folder = super::ROOT_FOLDER;
-                            }
-                        }
-                        self.persist().await?;
-                    }
-                    Buried::Tag => {
-                        let id = super::TagId(stone.id);
-                        self.index.tags.retain(|t| t.id != id);
-                        for item in &mut self.index.items {
-                            item.tags.retain(|t| *t != id);
-                        }
-                        self.persist().await?;
-                    }
-                    Buried::Workspace => {
-                        let id = super::WorkspaceId(stone.id);
-                        self.workspaces.workspaces.retain(|w| w.id != id);
-                        if self.workspaces.active == Some(id) {
-                            self.workspaces.active =
-                                self.workspaces.workspaces.first().map(|w| w.id);
-                        }
-                        self.persist_workspaces().await?;
-                    }
-                }
-            }
-        }
-        Ok(true)
-    }
-}
-
-fn upsert<T, K: PartialEq>(list: &mut Vec<T>, record: T, id: impl Fn(&T) -> K) -> bool {
-    let key = id(&record);
-    match list.iter_mut().find(|r| id(r) == key) {
-        Some(slot) => {
-            *slot = record;
-            false
-        }
-        None => {
-            list.push(record);
-            true
         }
     }
 }

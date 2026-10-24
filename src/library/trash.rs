@@ -3,8 +3,8 @@
 //! user picked.
 
 use super::{
-    Folder, FolderId, Item, ItemId, Library, LibraryError, LinkKind, NotFoundKind, ROOT_FOLDER,
-    Result, Trashed, now_millis,
+    Folder, FolderId, Item, ItemId, Library, LibraryData, LibraryError, LinkKind, NotFoundKind,
+    ROOT_FOLDER, Result, Trashed, now_millis,
 };
 
 /// What happens to the notebooks of a document moved to the trash.
@@ -71,14 +71,6 @@ impl Library {
         ])
     }
 
-    /// Notebooks (companion canvases) of `item` that are still live.
-    #[must_use]
-    pub fn live_notebooks_of(&self, item: ItemId) -> Vec<ItemId> {
-        self.companions_of(item)
-            .filter(|id| self.item(*id).is_some_and(|i| i.trashed.is_none()))
-            .collect()
-    }
-
     /// Move `ids` to the trash in one batch. Notebooks follow `fate`.
     ///
     /// # Errors
@@ -112,6 +104,7 @@ impl Library {
         moved.dedup();
         for id in &moved {
             let item = self
+                .data
                 .index
                 .item_mut(*id)
                 .ok_or(LibraryError::NotFound(NotFoundKind::Item(*id)))?;
@@ -122,7 +115,7 @@ impl Library {
             });
             item.updated_at = at;
         }
-        self.index.pins.retain(|p| !moved.contains(p));
+        self.data.index.pins.retain(|p| !moved.contains(p));
         self.persist().await?;
         Ok(TrashReceipt {
             batch,
@@ -138,13 +131,14 @@ impl Library {
     /// persistence errors.
     pub async fn trash_folder(&mut self, id: FolderId) -> Result<TrashReceipt> {
         Self::reject_root(id)?;
-        if self.index.folder(id).is_none() {
+        if self.data.index.folder(id).is_none() {
             return Err(LibraryError::NotFound(NotFoundKind::Folder(id)));
         }
         let batch = Self::new_batch();
         let at = now_millis();
         let subtree = self.collect_subtree(id);
         for folder in self
+            .data
             .index
             .folders
             .iter_mut()
@@ -162,6 +156,7 @@ impl Library {
         let mut items = 0;
         let mut trashed_ids = Vec::new();
         for item in self
+            .data
             .index
             .items
             .iter_mut()
@@ -178,7 +173,7 @@ impl Library {
                 items += 1;
             }
         }
-        self.index.pins.retain(|p| !trashed_ids.contains(p));
+        self.data.index.pins.retain(|p| !trashed_ids.contains(p));
         self.persist().await?;
         Ok(TrashReceipt { batch, items })
     }
@@ -198,6 +193,7 @@ impl Library {
                     .is_some_and(|f| f.trashed.is_none_or(|t| t.batch == batch))
         };
         let folder_targets: Vec<(FolderId, FolderId)> = self
+            .data
             .index
             .folders
             .iter()
@@ -207,7 +203,7 @@ impl Library {
                     .map(|t| (f.id, t.from))
             })
             .map(|(id, from)| {
-                let parent = if live_or_restoring(&self.index, from) {
+                let parent = if live_or_restoring(&self.data.index, from) {
                     from
                 } else {
                     ROOT_FOLDER
@@ -216,13 +212,14 @@ impl Library {
             })
             .collect();
         for (id, parent) in folder_targets {
-            if let Some(folder) = self.index.folder_mut(id) {
+            if let Some(folder) = self.data.index.folder_mut(id) {
                 folder.trashed = None;
                 folder.parent = parent;
                 folder.updated_at = at;
             }
         }
         let item_targets: Vec<(ItemId, FolderId)> = self
+            .data
             .index
             .items
             .iter()
@@ -232,7 +229,7 @@ impl Library {
                     .map(|t| (i.id, t.from))
             })
             .map(|(id, from)| {
-                let folder = if live_or_restoring(&self.index, from) {
+                let folder = if live_or_restoring(&self.data.index, from) {
                     from
                 } else {
                     ROOT_FOLDER
@@ -241,7 +238,7 @@ impl Library {
             })
             .collect();
         for (id, folder) in item_targets {
-            if let Some(item) = self.index.item_mut(id) {
+            if let Some(item) = self.data.index.item_mut(id) {
                 item.trashed = None;
                 item.folder = folder;
                 item.updated_at = at;
@@ -252,71 +249,20 @@ impl Library {
         Ok(restored)
     }
 
-    /// Top-level trash entries, most recently trashed first.
-    #[must_use]
-    pub fn trash_entries(&self) -> Vec<TrashEntry> {
-        let index = &self.index;
-        let parent_in_same_batch = |folder: FolderId, batch: u64| {
-            index
-                .folder(folder)
-                .and_then(|f| f.trashed)
-                .is_some_and(|t| t.batch == batch)
-        };
-        let mut entries: Vec<TrashEntry> = index
-            .folders
-            .iter()
-            .filter_map(|f| f.trashed.map(|t| (f, t)))
-            .filter(|(f, t)| !parent_in_same_batch(f.parent, t.batch))
-            .map(|(f, t)| TrashEntry {
-                trashed: t,
-                record: TrashedRecord::Folder {
-                    folder: f.clone(),
-                    items: index
-                        .items
-                        .iter()
-                        .filter(|i| i.trashed.is_some_and(|it| it.batch == t.batch))
-                        .count(),
-                },
-            })
-            .collect();
-        entries.extend(
-            index
-                .items
-                .iter()
-                .filter_map(|i| i.trashed.map(|t| (i, t)))
-                .filter(|(i, t)| !parent_in_same_batch(i.folder, t.batch))
-                .map(|(i, t)| TrashEntry {
-                    trashed: t,
-                    record: TrashedRecord::Item(i.clone()),
-                }),
-        );
-        entries.sort_by_key(|e| std::cmp::Reverse(e.trashed.at));
-        entries
-    }
-
-    /// Bytes on disk held by trashed items.
-    #[must_use]
-    pub fn trash_size(&self) -> u64 {
-        self.index
-            .items
-            .iter()
-            .filter(|i| i.trashed.is_some())
-            .map(|i| super::bodies::disk_usage(i.id))
-            .sum()
-    }
-
     /// Delete for good everything in `batch`, on every device.
     ///
     /// # Errors
     /// Persistence errors.
     pub async fn purge_batch(&mut self, batch: u64) -> Result<()> {
         let folders: Vec<FolderId> = self
+            .data
             .index
             .folders
             .iter()
             .filter(|f| f.trashed.is_some_and(|t| t.batch == batch))
             .filter(|f| {
                 !self
+                    .data
                     .index
                     .folder(f.parent)
                     .and_then(|p| p.trashed)
@@ -328,6 +274,7 @@ impl Library {
             self.purge_folder(folder).await?;
         }
         let items: Vec<ItemId> = self
+            .data
             .index
             .items
             .iter()
@@ -346,12 +293,14 @@ impl Library {
     /// Persistence errors.
     pub async fn empty_trash(&mut self) -> Result<()> {
         let mut batches: Vec<u64> = self
+            .data
             .index
             .items
             .iter()
             .filter_map(|i| i.trashed.map(|t| t.batch))
             .chain(
-                self.index
+                self.data
+                    .index
                     .folders
                     .iter()
                     .filter_map(|f| f.trashed.map(|t| t.batch)),
@@ -418,5 +367,68 @@ mod tests {
         assert_eq!(days_left(0, 29 * DAY + 1, retention), Some(1));
         assert_eq!(days_left(0, 31 * DAY, retention), Some(0));
         assert_eq!(days_left(0, 31 * DAY, None), None);
+    }
+}
+
+impl LibraryData {
+    /// Notebooks (companion canvases) of `item` that are still live.
+    #[must_use]
+    pub fn live_notebooks_of(&self, item: ItemId) -> Vec<ItemId> {
+        self.companions_of(item)
+            .filter(|id| self.item(*id).is_some_and(|i| i.trashed.is_none()))
+            .collect()
+    }
+
+    /// Top-level trash entries, most recently trashed first.
+    #[must_use]
+    pub fn trash_entries(&self) -> Vec<TrashEntry> {
+        let index = &self.index;
+        let parent_in_same_batch = |folder: FolderId, batch: u64| {
+            index
+                .folder(folder)
+                .and_then(|f| f.trashed)
+                .is_some_and(|t| t.batch == batch)
+        };
+        let mut entries: Vec<TrashEntry> = index
+            .folders
+            .iter()
+            .filter_map(|f| f.trashed.map(|t| (f, t)))
+            .filter(|(f, t)| !parent_in_same_batch(f.parent, t.batch))
+            .map(|(f, t)| TrashEntry {
+                trashed: t,
+                record: TrashedRecord::Folder {
+                    folder: f.clone(),
+                    items: index
+                        .items
+                        .iter()
+                        .filter(|i| i.trashed.is_some_and(|it| it.batch == t.batch))
+                        .count(),
+                },
+            })
+            .collect();
+        entries.extend(
+            index
+                .items
+                .iter()
+                .filter_map(|i| i.trashed.map(|t| (i, t)))
+                .filter(|(i, t)| !parent_in_same_batch(i.folder, t.batch))
+                .map(|(i, t)| TrashEntry {
+                    trashed: t,
+                    record: TrashedRecord::Item(i.clone()),
+                }),
+        );
+        entries.sort_by_key(|e| std::cmp::Reverse(e.trashed.at));
+        entries
+    }
+
+    /// Bytes on disk held by trashed items.
+    #[must_use]
+    pub fn trash_size(&self) -> u64 {
+        self.index
+            .items
+            .iter()
+            .filter(|i| i.trashed.is_some())
+            .map(|i| super::bodies::disk_usage(i.id))
+            .sum()
     }
 }

@@ -23,10 +23,10 @@ pub mod graveyard;
 pub mod index;
 pub mod links;
 pub mod model;
-pub mod refs;
-pub mod sync;
 mod pins;
+pub mod refs;
 pub mod shared;
+pub mod sync;
 mod trash;
 
 use std::sync::Arc;
@@ -67,10 +67,27 @@ use crate::doc::Doc;
 #[derive(Debug)]
 pub struct Library {
     client: DataStoreClient,
+    data: LibraryData,
+}
+
+/// Everything the library holds in memory: the index, the mesas and
+/// the links. Screens read a snapshot of it; [`Library`] derefs to it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LibraryData {
     index: LibraryIndex,
     workspaces: WorkspaceIndex,
     links: LinkIndex,
 }
+
+impl std::ops::Deref for Library {
+    type Target = LibraryData;
+
+    fn deref(&self) -> &LibraryData {
+        &self.data
+    }
+}
+
+impl Library {}
 
 impl Library {
     /// Acquire a data-store instance scoped to
@@ -95,9 +112,11 @@ impl Library {
         let links = index::load_links(&client).await?;
         let mut lib = Self {
             client,
-            index,
-            workspaces,
-            links,
+            data: LibraryData {
+                index,
+                workspaces,
+                links,
+            },
         };
         lib.ensure_default_workspace().await?;
         lib.compact_tombstones().await?;
@@ -108,7 +127,7 @@ impl Library {
     /// still carry the record they cancel.
     async fn compact_tombstones(&mut self) -> Result<()> {
         let now = now_millis();
-        if self.links.compact(now, TOMBSTONE_TTL_MS) > 0 {
+        if self.data.links.compact(now, TOMBSTONE_TTL_MS) > 0 {
             self.persist_links().await?;
         }
         let mut yard = graveyard::Graveyard::load();
@@ -125,9 +144,9 @@ impl Library {
     /// Idempotent — a fresh install mints "Workspace 1" exactly once;
     /// subsequent opens pass through.
     async fn ensure_default_workspace(&mut self) -> Result<()> {
-        if !self.workspaces.workspaces.is_empty() {
-            if self.workspaces.active.is_none() {
-                self.workspaces.active = Some(self.workspaces.workspaces[0].id);
+        if !self.data.workspaces.workspaces.is_empty() {
+            if self.data.workspaces.active.is_none() {
+                self.data.workspaces.active = Some(self.data.workspaces.workspaces[0].id);
                 self.persist_workspaces().await?;
             }
             return Ok(());
@@ -136,90 +155,7 @@ impl Library {
         Ok(())
     }
 
-    /// Borrow the raw index — convenient for UIs that render the full
-    /// tree in a single traversal.
-    #[must_use]
-    pub const fn index(&self) -> &LibraryIndex {
-        &self.index
-    }
-
     // ---------- Reads ---------------------------------------------------
-
-    /// Direct children of `parent`. Order preserved from creation
-    /// order; sort at the UI layer when the user picks a different
-    /// column.
-    #[must_use]
-    pub fn folders_of(&self, parent: FolderId) -> Vec<&Folder> {
-        self.index
-            .folders
-            .iter()
-            .filter(|f| f.parent == parent && f.trashed.is_none())
-            .collect()
-    }
-
-    /// Items whose parent folder is `folder`.
-    #[must_use]
-    pub fn items_of(&self, folder: FolderId) -> Vec<&Item> {
-        self.index
-            .items
-            .iter()
-            .filter(|i| i.folder == folder && i.trashed.is_none())
-            .collect()
-    }
-
-    /// Items carrying `tag` in their tag list.
-    #[must_use]
-    pub fn items_with_tag(&self, tag: TagId) -> Vec<&Item> {
-        self.index
-            .items
-            .iter()
-            .filter(|i| i.tags.contains(&tag) && i.trashed.is_none())
-            .collect()
-    }
-
-    /// Folders carrying `tag` in their tag list.
-    #[must_use]
-    pub fn folders_with_tag(&self, tag: TagId) -> Vec<&Folder> {
-        self.index
-            .folders
-            .iter()
-            .filter(|f| f.tags.contains(&tag) && f.trashed.is_none())
-            .collect()
-    }
-
-    /// Every item outside the trash.
-    pub fn live_items(&self) -> impl Iterator<Item = &Item> {
-        self.index.items.iter().filter(|i| i.trashed.is_none())
-    }
-
-    /// Every folder outside the trash.
-    pub fn live_folders(&self) -> impl Iterator<Item = &Folder> {
-        self.index.folders.iter().filter(|f| f.trashed.is_none())
-    }
-
-    /// Every tag the user has defined.
-    #[must_use]
-    pub fn tags(&self) -> &[Tag] {
-        &self.index.tags
-    }
-
-    /// Look up a folder by id.
-    #[must_use]
-    pub fn folder(&self, id: FolderId) -> Option<&Folder> {
-        self.index.folder(id)
-    }
-
-    /// Look up an item by id.
-    #[must_use]
-    pub fn item(&self, id: ItemId) -> Option<&Item> {
-        self.index.item(id)
-    }
-
-    /// Look up a tag by id.
-    #[must_use]
-    pub fn tag(&self, id: TagId) -> Option<&Tag> {
-        self.index.tag(id)
-    }
 
     // ---------- Folder mutations ---------------------------------------
 
@@ -238,15 +174,15 @@ impl Library {
     ) -> Result<FolderId> {
         self.ensure_folder_target(parent)?;
         for t in &tags {
-            if self.index.tag(*t).is_none() {
+            if self.data.index.tag(*t).is_none() {
                 return Err(LibraryError::NotFound(NotFoundKind::Tag(*t)));
             }
         }
         tags.sort_unstable_by_key(|t| t.0);
         tags.dedup();
         let now = now_millis();
-        let id = self.index.alloc_folder_id();
-        self.index.folders.push(Folder {
+        let id = self.data.index.alloc_folder_id();
+        self.data.index.folders.push(Folder {
             id,
             parent,
             name: name.to_owned(),
@@ -267,6 +203,7 @@ impl Library {
         Self::reject_root(id)?;
         let now = now_millis();
         let folder = self
+            .data
             .index
             .folder_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Folder(id)))?;
@@ -282,11 +219,12 @@ impl Library {
     pub async fn move_folder(&mut self, id: FolderId, new_parent: FolderId) -> Result<()> {
         Self::reject_root(id)?;
         self.ensure_folder_target(new_parent)?;
-        if self.index.folder_has_ancestor(new_parent, id) {
+        if self.data.index.folder_has_ancestor(new_parent, id) {
             return Err(LibraryError::Cycle);
         }
         let now = now_millis();
         let folder = self
+            .data
             .index
             .folder_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Folder(id)))?;
@@ -301,6 +239,7 @@ impl Library {
         Self::reject_root(id)?;
         let now = now_millis();
         let folder = self
+            .data
             .index
             .folder_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Folder(id)))?;
@@ -315,6 +254,7 @@ impl Library {
         Self::reject_root(id)?;
         let now = now_millis();
         let folder = self
+            .data
             .index
             .folder_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Folder(id)))?;
@@ -334,7 +274,7 @@ impl Library {
     pub async fn set_folder_tags(&mut self, id: FolderId, mut tags: Vec<TagId>) -> Result<()> {
         Self::reject_root(id)?;
         for t in &tags {
-            if self.index.tag(*t).is_none() {
+            if self.data.index.tag(*t).is_none() {
                 return Err(LibraryError::NotFound(NotFoundKind::Tag(*t)));
             }
         }
@@ -342,6 +282,7 @@ impl Library {
         tags.dedup();
         let now = now_millis();
         let folder = self
+            .data
             .index
             .folder_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Folder(id)))?;
@@ -357,26 +298,29 @@ impl Library {
     /// [`LibraryError::NotFound`] / [`LibraryError::RootImmutable`].
     pub async fn purge_folder(&mut self, id: FolderId) -> Result<()> {
         Self::reject_root(id)?;
-        if self.index.folder(id).is_none() {
+        if self.data.index.folder(id).is_none() {
             return Err(LibraryError::NotFound(NotFoundKind::Folder(id)));
         }
         let condemned = self.collect_subtree(id);
         let now = now_millis();
         let mut yard = graveyard::Graveyard::load();
         // Wipe items whose folder falls inside the condemned subtree.
-        let mut kept_items = Vec::with_capacity(self.index.items.len());
-        for item in std::mem::take(&mut self.index.items) {
+        let mut kept_items = Vec::with_capacity(self.data.index.items.len());
+        for item in std::mem::take(&mut self.data.index.items) {
             if condemned.contains(&item.folder) {
                 bodies::purge(item.id);
                 refs::forget(item.id);
-                self.links.retire_item(item.id, now);
+                self.data.links.retire_item(item.id, now);
                 yard.bury(graveyard::Buried::Item, item.id.0, now);
             } else {
                 kept_items.push(item);
             }
         }
-        self.index.items = kept_items;
-        self.index.folders.retain(|f| !condemned.contains(&f.id));
+        self.data.index.items = kept_items;
+        self.data
+            .index
+            .folders
+            .retain(|f| !condemned.contains(&f.id));
         for folder in &condemned {
             yard.bury(graveyard::Buried::Folder, folder.0, now);
         }
@@ -407,15 +351,15 @@ impl Library {
     ) -> Result<ItemId> {
         self.ensure_folder_target(folder)?;
         for t in &tags {
-            if self.index.tag(*t).is_none() {
+            if self.data.index.tag(*t).is_none() {
                 return Err(LibraryError::NotFound(NotFoundKind::Tag(*t)));
             }
         }
         tags.sort_unstable_by_key(|t| t.0);
         tags.dedup();
         let now = now_millis();
-        let id = self.index.alloc_item_id();
-        self.index.items.push(Item {
+        let id = self.data.index.alloc_item_id();
+        self.data.index.items.push(Item {
             id,
             folder,
             kind,
@@ -437,6 +381,7 @@ impl Library {
     pub async fn rename_item(&mut self, id: ItemId, name: &str) -> Result<()> {
         let now = now_millis();
         let item = self
+            .data
             .index
             .item_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
@@ -451,6 +396,7 @@ impl Library {
         self.ensure_folder_target(folder)?;
         let now = now_millis();
         let item = self
+            .data
             .index
             .item_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
@@ -464,6 +410,7 @@ impl Library {
     pub async fn set_item_color(&mut self, id: ItemId, color: Option<Rgba>) -> Result<()> {
         let now = now_millis();
         let item = self
+            .data
             .index
             .item_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
@@ -481,7 +428,7 @@ impl Library {
     /// itself is unknown.
     pub async fn set_item_tags(&mut self, id: ItemId, mut tags: Vec<TagId>) -> Result<()> {
         for t in &tags {
-            if self.index.tag(*t).is_none() {
+            if self.data.index.tag(*t).is_none() {
                 return Err(LibraryError::NotFound(NotFoundKind::Tag(*t)));
             }
         }
@@ -489,6 +436,7 @@ impl Library {
         tags.dedup();
         let now = now_millis();
         let item = self
+            .data
             .index
             .item_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
@@ -508,6 +456,7 @@ impl Library {
     ) -> Result<()> {
         let now = now_millis();
         let item = self
+            .data
             .index
             .item_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
@@ -528,6 +477,7 @@ impl Library {
     ) -> Result<()> {
         let now = now_millis();
         let item = self
+            .data
             .index
             .item_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
@@ -541,16 +491,16 @@ impl Library {
     /// # Errors
     /// [`LibraryError::NotFound`].
     pub async fn purge_item(&mut self, id: ItemId) -> Result<()> {
-        let before = self.index.items.len();
-        self.index.items.retain(|i| i.id != id);
-        if self.index.items.len() == before {
+        let before = self.data.index.items.len();
+        self.data.index.items.retain(|i| i.id != id);
+        if self.data.index.items.len() == before {
             return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
         }
         bodies::purge(id);
         refs::forget(id);
         let now = now_millis();
         graveyard::bury(graveyard::Buried::Item, id.0, now);
-        if self.links.retire_item(id, now) > 0 {
+        if self.data.links.retire_item(id, now) > 0 {
             self.persist_links().await?;
         }
         self.persist().await
@@ -563,9 +513,9 @@ impl Library {
     /// # Errors
     /// [`LibraryError::NotFound`].
     pub async fn forget_item(&mut self, id: ItemId) -> Result<()> {
-        let before = self.index.items.len();
-        self.index.items.retain(|i| i.id != id);
-        if self.index.items.len() == before {
+        let before = self.data.index.items.len();
+        self.data.index.items.retain(|i| i.id != id);
+        if self.data.index.items.len() == before {
             return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
         }
         bodies::purge(id);
@@ -578,8 +528,8 @@ impl Library {
     /// # Errors
     /// Runtime / codec / backend failure.
     pub async fn create_tag(&mut self, name: &str, color: Rgba) -> Result<TagId> {
-        let id = self.index.alloc_tag_id();
-        self.index.tags.push(Tag {
+        let id = self.data.index.alloc_tag_id();
+        self.data.index.tags.push(Tag {
             id,
             name: name.to_owned(),
             color,
@@ -593,6 +543,7 @@ impl Library {
     /// [`LibraryError::NotFound`].
     pub async fn rename_tag(&mut self, id: TagId, name: &str) -> Result<()> {
         let tag = self
+            .data
             .index
             .tag_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Tag(id)))?;
@@ -605,6 +556,7 @@ impl Library {
     /// [`LibraryError::NotFound`].
     pub async fn set_tag_color(&mut self, id: TagId, color: Rgba) -> Result<()> {
         let tag = self
+            .data
             .index
             .tag_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Tag(id)))?;
@@ -618,12 +570,12 @@ impl Library {
     /// # Errors
     /// [`LibraryError::NotFound`].
     pub async fn delete_tag(&mut self, id: TagId) -> Result<()> {
-        let before = self.index.tags.len();
-        self.index.tags.retain(|t| t.id != id);
-        if self.index.tags.len() == before {
+        let before = self.data.index.tags.len();
+        self.data.index.tags.retain(|t| t.id != id);
+        if self.data.index.tags.len() == before {
             return Err(LibraryError::NotFound(NotFoundKind::Tag(id)));
         }
-        for item in &mut self.index.items {
+        for item in &mut self.data.index.items {
             item.tags.retain(|t| *t != id);
         }
         graveyard::bury(graveyard::Buried::Tag, id.0, now_millis());
@@ -642,7 +594,7 @@ impl Library {
     // both halves of a load/save cycle without special-casing the read.
     #[allow(clippy::unused_async)]
     pub async fn load_doc(&self, id: ItemId) -> Result<Doc> {
-        if self.index.item(id).is_none() {
+        if self.data.index.item(id).is_none() {
             return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
         }
         bodies::read_doc(id)
@@ -654,7 +606,7 @@ impl Library {
     /// # Errors
     /// [`LibraryError::NotFound`] / body I/O.
     pub async fn save_doc(&mut self, id: ItemId, doc: &Doc) -> Result<()> {
-        if self.index.item(id).is_none() {
+        if self.data.index.item(id).is_none() {
             return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
         }
         bodies::write_doc(id, doc)?;
@@ -674,7 +626,7 @@ impl Library {
         bytes: &[u8],
         captured: refs::Captured,
     ) -> Result<()> {
-        if self.index.item(id).is_none() {
+        if self.data.index.item(id).is_none() {
             return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
         }
         bodies::write_doc_bytes(id, bytes)?;
@@ -684,34 +636,13 @@ impl Library {
 
     async fn touch_item(&mut self, id: ItemId) -> Result<()> {
         let now = now_millis();
-        if let Some(item) = self.index.item_mut(id) {
+        if let Some(item) = self.data.index.item_mut(id) {
             item.updated_at = now;
         }
         self.persist().await
     }
 
     // ---------- Links --------------------------------------------------
-
-    /// Every live link touching `item`, either direction.
-    pub fn links_of(&self, item: ItemId) -> impl Iterator<Item = &Link> {
-        self.links.of(item)
-    }
-
-    /// Items that are notebooks of `item`.
-    pub fn companions_of(&self, item: ItemId) -> impl Iterator<Item = ItemId> + '_ {
-        self.links.companions_of(item)
-    }
-
-    /// Items that `item` is a notebook of.
-    pub fn companion_parents_of(&self, item: ItemId) -> impl Iterator<Item = ItemId> + '_ {
-        self.links.companion_parents_of(item)
-    }
-
-    /// Live link by id.
-    #[must_use]
-    pub fn link(&self, id: LinkId) -> Option<&Link> {
-        self.links.get(id)
-    }
 
     /// Relate `from` and `to`. Returns the existing link id when the
     /// same edge is already live.
@@ -726,11 +657,12 @@ impl Library {
         kind: LinkKind,
     ) -> Result<LinkId> {
         for id in [from, to] {
-            if self.index.item(id).is_none() {
+            if self.data.index.item(id).is_none() {
                 return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
             }
         }
         let id = self
+            .data
             .links
             .insert(from, to, kind, now_millis())
             .ok_or(LibraryError::SelfLink)?;
@@ -743,14 +675,14 @@ impl Library {
     /// # Errors
     /// [`LibraryError::NotFound`] when no live link has that id.
     pub async fn delete_link(&mut self, id: LinkId) -> Result<()> {
-        if !self.links.remove(id, now_millis()) {
+        if !self.data.links.remove(id, now_millis()) {
             return Err(LibraryError::NotFound(NotFoundKind::Link(id)));
         }
         self.persist_links().await
     }
 
     async fn persist_links(&self) -> Result<()> {
-        index::save_links(&self.client, &self.links).await?;
+        index::save_links(&self.client, &self.data.links).await?;
         crate::sync::local_changed();
         shared::notify();
         Ok(())
@@ -764,12 +696,12 @@ impl Library {
     /// [`LibraryError::NotFound`] when the item is unknown, plus body
     /// I/O failures.
     pub async fn attach_pdf(&mut self, id: ItemId, bytes: &[u8]) -> Result<()> {
-        if self.index.item(id).is_none() {
+        if self.data.index.item(id).is_none() {
             return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
         }
         bodies::write_pdf(id, bytes)?;
         let now = now_millis();
-        if let Some(m) = self.index.item_mut(id) {
+        if let Some(m) = self.data.index.item_mut(id) {
             m.updated_at = now;
         }
         self.persist().await
@@ -781,44 +713,13 @@ impl Library {
     /// [`LibraryError::NotFound`] / body I/O.
     #[allow(clippy::unused_async)]
     pub async fn read_pdf(&self, id: ItemId) -> Result<Vec<u8>> {
-        if self.index.item(id).is_none() {
+        if self.data.index.item(id).is_none() {
             return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
         }
         bodies::read_pdf(id)
     }
 
     // ---------- Workspaces ---------------------------------------------
-
-    /// Borrow the raw link index.
-    #[must_use]
-    pub const fn links(&self) -> &LinkIndex {
-        &self.links
-    }
-
-    /// Borrow the raw workspace index.
-    #[must_use]
-    pub const fn workspaces_index(&self) -> &WorkspaceIndex {
-        &self.workspaces
-    }
-
-    /// Every persisted workspace, creation order.
-    #[must_use]
-    pub fn workspaces(&self) -> &[Workspace] {
-        &self.workspaces.workspaces
-    }
-
-    /// Look up a workspace by id.
-    #[must_use]
-    pub fn workspace(&self, id: WorkspaceId) -> Option<&Workspace> {
-        self.workspaces.workspace(id)
-    }
-
-    /// The workspace the user last had focus on, or `None` when the
-    /// index is empty.
-    #[must_use]
-    pub fn active_workspace(&self) -> Option<WorkspaceId> {
-        self.workspaces.active
-    }
 
     /// Create a new empty workspace. Becomes active automatically when
     /// the index previously had no active entry.
@@ -832,12 +733,12 @@ impl Library {
         color: Option<Rgba>,
     ) -> Result<WorkspaceId> {
         let now = now_millis();
-        let id = self.workspaces.alloc_workspace_id();
+        let id = self.data.workspaces.alloc_workspace_id();
         let mut workspace = Workspace::fresh(id, name.trim().to_owned(), color, now);
         workspace.named = !workspace.name.is_empty();
-        self.workspaces.workspaces.push(workspace);
-        if self.workspaces.active.is_none() {
-            self.workspaces.active = Some(id);
+        self.data.workspaces.workspaces.push(workspace);
+        if self.data.workspaces.active.is_none() {
+            self.data.workspaces.active = Some(id);
         }
         self.persist_workspaces().await?;
         Ok(id)
@@ -851,11 +752,12 @@ impl Library {
     pub async fn duplicate_workspace(&mut self, id: WorkspaceId) -> Result<WorkspaceId> {
         let now = now_millis();
         let source = self
+            .data
             .workspaces
             .workspace(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(id)))?;
         let copy = Workspace {
-            id: self.workspaces.alloc_workspace_id(),
+            id: self.data.workspaces.alloc_workspace_id(),
             name: format!("Copia de {}", source.name),
             named: true,
             pinned: false,
@@ -866,7 +768,7 @@ impl Library {
             updated_at: now,
         };
         let new_id = copy.id;
-        self.workspaces.workspaces.push(copy);
+        self.data.workspaces.workspaces.push(copy);
         self.persist_workspaces().await?;
         Ok(new_id)
     }
@@ -876,6 +778,7 @@ impl Library {
     pub async fn rename_workspace(&mut self, id: WorkspaceId, name: &str) -> Result<()> {
         let now = now_millis();
         let w = self
+            .data
             .workspaces
             .workspace_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(id)))?;
@@ -892,39 +795,13 @@ impl Library {
     pub async fn set_workspace_pinned(&mut self, id: WorkspaceId, pinned: bool) -> Result<()> {
         let now = now_millis();
         let w = self
+            .data
             .workspaces
             .workspace_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(id)))?;
         w.pinned = pinned;
         w.updated_at = now;
         self.persist_workspaces().await
-    }
-
-    /// Name a mesa shows: what the user typed, or one derived from the
-    /// documents open in it ("Comentario de Romanos y 2 más").
-    #[must_use]
-    pub fn workspace_title(&self, id: WorkspaceId) -> String {
-        let Some(w) = self.workspaces.workspace(id) else {
-            return String::new();
-        };
-        if w.named {
-            return w.name.clone();
-        }
-        let mut names = w
-            .layout
-            .leaves()
-            .into_iter()
-            .flat_map(|pane| pane.tabs.iter())
-            .filter_map(crate::library::PaneTab::item)
-            .filter_map(|item| self.item(item).map(|i| i.name.clone()));
-        match names.next() {
-            None => "Mesa vacía".to_owned(),
-            Some(first) => match names.count() {
-                0 => first,
-                1 => format!("{first} y 1 más"),
-                more => format!("{first} y {more} más"),
-            },
-        }
     }
 
     /// # Errors
@@ -936,6 +813,7 @@ impl Library {
     ) -> Result<()> {
         let now = now_millis();
         let w = self
+            .data
             .workspaces
             .workspace_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(id)))?;
@@ -958,6 +836,7 @@ impl Library {
     ) -> Result<()> {
         let now = now_millis();
         let w = self
+            .data
             .workspaces
             .workspace_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(id)))?;
@@ -983,6 +862,7 @@ impl Library {
     ) -> Result<PaneId> {
         let now = now_millis();
         let w = self
+            .data
             .workspaces
             .workspace_mut(workspace)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
@@ -1013,6 +893,7 @@ impl Library {
     ) -> Result<()> {
         let now = now_millis();
         let w = self
+            .data
             .workspaces
             .workspace_mut(workspace)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
@@ -1040,6 +921,7 @@ impl Library {
     ) -> Result<()> {
         let now = now_millis();
         let w = self
+            .data
             .workspaces
             .workspace_mut(workspace)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
@@ -1072,6 +954,7 @@ impl Library {
     ) -> Result<PaneId> {
         let now = now_millis();
         let w = self
+            .data
             .workspaces
             .workspace_mut(workspace)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
@@ -1104,6 +987,7 @@ impl Library {
     ) -> Result<()> {
         let now = now_millis();
         let w = self
+            .data
             .workspaces
             .workspace_mut(workspace)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
@@ -1136,6 +1020,7 @@ impl Library {
     ) -> Result<()> {
         let now = now_millis();
         let w = self
+            .data
             .workspaces
             .workspace_mut(workspace)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
@@ -1192,6 +1077,7 @@ impl Library {
     async fn push_tab(&mut self, workspace: WorkspaceId, pane: PaneId, tab: PaneTab) -> Result<()> {
         let now = now_millis();
         let w = self
+            .data
             .workspaces
             .workspace_mut(workspace)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
@@ -1221,6 +1107,7 @@ impl Library {
     ) -> Result<()> {
         let now = now_millis();
         let w = self
+            .data
             .workspaces
             .workspace_mut(workspace)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
@@ -1257,7 +1144,7 @@ impl Library {
     pub async fn close_item_tabs(&mut self, items: &[ItemId]) -> Result<()> {
         let now = now_millis();
         let mut touched = false;
-        for workspace in &mut self.workspaces.workspaces {
+        for workspace in &mut self.data.workspaces.workspaces {
             for pane in workspace.layout.leaves_mut() {
                 let before = pane.tabs.len();
                 pane.tabs.retain(
@@ -1294,6 +1181,7 @@ impl Library {
     ) -> Result<()> {
         let now = now_millis();
         let w = self
+            .data
             .workspaces
             .workspace_mut(workspace)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
@@ -1321,6 +1209,7 @@ impl Library {
     ) -> Result<()> {
         let now = now_millis();
         let w = self
+            .data
             .workspaces
             .workspace_mut(workspace)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(workspace)))?;
@@ -1342,11 +1231,11 @@ impl Library {
     /// [`LibraryError::NotFound`] when `id` is not in the index.
     pub async fn set_active_workspace(&mut self, id: Option<WorkspaceId>) -> Result<()> {
         if let Some(wid) = id
-            && self.workspaces.workspace(wid).is_none()
+            && self.data.workspaces.workspace(wid).is_none()
         {
             return Err(LibraryError::NotFound(NotFoundKind::Workspace(wid)));
         }
-        self.workspaces.active = id;
+        self.data.workspaces.active = id;
         self.persist_workspaces().await
     }
 
@@ -1358,14 +1247,15 @@ impl Library {
     /// [`LibraryError::NotFound`].
     pub async fn delete_workspace(&mut self, id: WorkspaceId) -> Result<()> {
         let pos = self
+            .data
             .workspaces
             .workspaces
             .iter()
             .position(|w| w.id == id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(id)))?;
-        self.workspaces.workspaces.remove(pos);
-        if self.workspaces.active == Some(id) {
-            self.workspaces.active = self.workspaces.workspaces.first().map(|w| w.id);
+        self.data.workspaces.workspaces.remove(pos);
+        if self.data.workspaces.active == Some(id) {
+            self.data.workspaces.active = self.data.workspaces.workspaces.first().map(|w| w.id);
         }
         graveyard::bury(graveyard::Buried::Workspace, id.0, now_millis());
         self.persist_workspaces().await
@@ -1390,13 +1280,13 @@ impl Library {
             .folders
             .iter()
             .map(|f| f.id)
-            .chain(self.index.folders.iter().map(|f| f.id))
+            .chain(self.data.index.folders.iter().map(|f| f.id))
             .chain(std::iter::once(ROOT_FOLDER))
             .collect();
 
         for tag in &bundle.manifest.tags {
-            if self.index.tag(tag.id).is_none() {
-                self.index.tags.push(tag.clone());
+            if self.data.index.tag(tag.id).is_none() {
+                self.data.index.tags.push(tag.clone());
             }
         }
 
@@ -1405,7 +1295,7 @@ impl Library {
             if !known_folders.contains(&f.parent) {
                 f.parent = ROOT_FOLDER;
             }
-            self.index.folders.push(f);
+            self.data.index.folders.push(f);
         }
 
         for item in &bundle.manifest.items {
@@ -1413,21 +1303,27 @@ impl Library {
             if !known_folders.contains(&i.folder) {
                 i.folder = ROOT_FOLDER;
             }
-            self.index.items.push(i);
+            self.data.index.items.push(i);
         }
 
         for ws in &bundle.manifest.workspaces {
-            self.workspaces.workspaces.push(ws.clone());
+            self.data.workspaces.workspaces.push(ws.clone());
         }
 
         for incoming in &bundle.manifest.links {
-            match self.links.links.iter_mut().find(|l| l.id == incoming.id) {
+            match self
+                .data
+                .links
+                .links
+                .iter_mut()
+                .find(|l| l.id == incoming.id)
+            {
                 Some(existing) => {
                     if incoming.updated_at > existing.updated_at {
                         *existing = incoming.clone();
                     }
                 }
-                None => self.links.links.push(incoming.clone()),
+                None => self.data.links.links.push(incoming.clone()),
             }
         }
 
@@ -1450,26 +1346,16 @@ impl Library {
     // ---------- Internal helpers ---------------------------------------
 
     async fn persist(&self) -> Result<()> {
-        index::save(&self.client, &self.index).await?;
+        index::save(&self.client, &self.data.index).await?;
         crate::sync::local_changed();
         shared::notify();
         Ok(())
     }
 
     async fn persist_workspaces(&self) -> Result<()> {
-        index::save_workspaces(&self.client, &self.workspaces).await?;
+        index::save_workspaces(&self.client, &self.data.workspaces).await?;
         crate::sync::local_changed();
         shared::notify();
-        Ok(())
-    }
-
-    fn ensure_folder_target(&self, id: FolderId) -> Result<()> {
-        if id == ROOT_FOLDER {
-            return Ok(());
-        }
-        if self.index.folder(id).is_none() {
-            return Err(LibraryError::NotFound(NotFoundKind::Folder(id)));
-        }
         Ok(())
     }
 
@@ -1480,23 +1366,6 @@ impl Library {
         } else {
             Ok(())
         }
-    }
-
-    /// Every folder id that would be caught in a recursive delete
-    /// starting from `root` (inclusive).
-    fn collect_subtree(&self, root: FolderId) -> Vec<FolderId> {
-        let mut out = vec![root];
-        let mut cursor = 0;
-        while cursor < out.len() {
-            let parent = out[cursor];
-            cursor += 1;
-            for f in &self.index.folders {
-                if f.parent == parent && !out.contains(&f.id) {
-                    out.push(f.id);
-                }
-            }
-        }
-        out
     }
 }
 
@@ -1981,5 +1850,202 @@ mod tests {
         // Out-of-range destination clamps to the last slot.
         assert!(layout.reorder_tab(pane, 0, 99));
         assert_eq!(items(&layout)[2], Some(mk_item(11)));
+    }
+}
+
+impl LibraryData {
+    /// A copy of the in-memory state for a screen to render from.
+    #[must_use]
+    pub fn snapshot(&self) -> LibraryData {
+        self.clone()
+    }
+
+    /// Borrow the raw index — convenient for UIs that render the full
+    /// tree in a single traversal.
+    #[must_use]
+    pub const fn index(&self) -> &LibraryIndex {
+        &self.index
+    }
+
+    /// Direct children of `parent`. Order preserved from creation
+    /// order; sort at the UI layer when the user picks a different
+    /// column.
+    #[must_use]
+    pub fn folders_of(&self, parent: FolderId) -> Vec<&Folder> {
+        self.index
+            .folders
+            .iter()
+            .filter(|f| f.parent == parent && f.trashed.is_none())
+            .collect()
+    }
+
+    /// Items whose parent folder is `folder`.
+    #[must_use]
+    pub fn items_of(&self, folder: FolderId) -> Vec<&Item> {
+        self.index
+            .items
+            .iter()
+            .filter(|i| i.folder == folder && i.trashed.is_none())
+            .collect()
+    }
+
+    /// Items carrying `tag` in their tag list.
+    #[must_use]
+    pub fn items_with_tag(&self, tag: TagId) -> Vec<&Item> {
+        self.index
+            .items
+            .iter()
+            .filter(|i| i.tags.contains(&tag) && i.trashed.is_none())
+            .collect()
+    }
+
+    /// Folders carrying `tag` in their tag list.
+    #[must_use]
+    pub fn folders_with_tag(&self, tag: TagId) -> Vec<&Folder> {
+        self.index
+            .folders
+            .iter()
+            .filter(|f| f.tags.contains(&tag) && f.trashed.is_none())
+            .collect()
+    }
+
+    /// Every item outside the trash.
+    pub fn live_items(&self) -> impl Iterator<Item = &Item> {
+        self.index.items.iter().filter(|i| i.trashed.is_none())
+    }
+
+    /// Every folder outside the trash.
+    pub fn live_folders(&self) -> impl Iterator<Item = &Folder> {
+        self.index.folders.iter().filter(|f| f.trashed.is_none())
+    }
+
+    /// Every tag the user has defined.
+    #[must_use]
+    pub fn tags(&self) -> &[Tag] {
+        &self.index.tags
+    }
+
+    /// Look up a folder by id.
+    #[must_use]
+    pub fn folder(&self, id: FolderId) -> Option<&Folder> {
+        self.index.folder(id)
+    }
+
+    /// Look up an item by id.
+    #[must_use]
+    pub fn item(&self, id: ItemId) -> Option<&Item> {
+        self.index.item(id)
+    }
+
+    /// Look up a tag by id.
+    #[must_use]
+    pub fn tag(&self, id: TagId) -> Option<&Tag> {
+        self.index.tag(id)
+    }
+
+    /// Every live link touching `item`, either direction.
+    pub fn links_of(&self, item: ItemId) -> impl Iterator<Item = &Link> {
+        self.links.of(item)
+    }
+
+    /// Items that are notebooks of `item`.
+    pub fn companions_of(&self, item: ItemId) -> impl Iterator<Item = ItemId> + '_ {
+        self.links.companions_of(item)
+    }
+
+    /// Items that `item` is a notebook of.
+    pub fn companion_parents_of(&self, item: ItemId) -> impl Iterator<Item = ItemId> + '_ {
+        self.links.companion_parents_of(item)
+    }
+
+    /// Live link by id.
+    #[must_use]
+    pub fn link(&self, id: LinkId) -> Option<&Link> {
+        self.links.get(id)
+    }
+
+    /// Borrow the raw link index.
+    #[must_use]
+    pub const fn links(&self) -> &LinkIndex {
+        &self.links
+    }
+
+    /// Borrow the raw workspace index.
+    #[must_use]
+    pub const fn workspaces_index(&self) -> &WorkspaceIndex {
+        &self.workspaces
+    }
+
+    /// Every persisted workspace, creation order.
+    #[must_use]
+    pub fn workspaces(&self) -> &[Workspace] {
+        &self.workspaces.workspaces
+    }
+
+    /// Look up a workspace by id.
+    #[must_use]
+    pub fn workspace(&self, id: WorkspaceId) -> Option<&Workspace> {
+        self.workspaces.workspace(id)
+    }
+
+    /// The workspace the user last had focus on, or `None` when the
+    /// index is empty.
+    #[must_use]
+    pub fn active_workspace(&self) -> Option<WorkspaceId> {
+        self.workspaces.active
+    }
+
+    /// Name a mesa shows: what the user typed, or one derived from the
+    /// documents open in it ("Comentario de Romanos y 2 más").
+    #[must_use]
+    pub fn workspace_title(&self, id: WorkspaceId) -> String {
+        let Some(w) = self.workspaces.workspace(id) else {
+            return String::new();
+        };
+        if w.named {
+            return w.name.clone();
+        }
+        let mut names = w
+            .layout
+            .leaves()
+            .into_iter()
+            .flat_map(|pane| pane.tabs.iter())
+            .filter_map(crate::library::PaneTab::item)
+            .filter_map(|item| self.item(item).map(|i| i.name.clone()));
+        match names.next() {
+            None => "Mesa vacía".to_owned(),
+            Some(first) => match names.count() {
+                0 => first,
+                1 => format!("{first} y 1 más"),
+                more => format!("{first} y {more} más"),
+            },
+        }
+    }
+
+    fn ensure_folder_target(&self, id: FolderId) -> Result<()> {
+        if id == ROOT_FOLDER {
+            return Ok(());
+        }
+        if self.index.folder(id).is_none() {
+            return Err(LibraryError::NotFound(NotFoundKind::Folder(id)));
+        }
+        Ok(())
+    }
+
+    /// Every folder id that would be caught in a recursive delete
+    /// starting from `root` (inclusive).
+    fn collect_subtree(&self, root: FolderId) -> Vec<FolderId> {
+        let mut out = vec![root];
+        let mut cursor = 0;
+        while cursor < out.len() {
+            let parent = out[cursor];
+            cursor += 1;
+            for f in &self.index.folders {
+                if f.parent == parent && !out.contains(&f.id) {
+                    out.push(f.id);
+                }
+            }
+        }
+        out
     }
 }
