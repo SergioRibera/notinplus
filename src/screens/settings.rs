@@ -254,7 +254,10 @@ fn phone_layout(mut open: State<Option<Section>>, list: Rect) -> Element {
 /// Wider screens: the list beside the open section.
 fn wide_layout(section: Section, list: Rect) -> Element {
     let p = palette();
-    let height = (Platform::get().root_size.read().height * 0.82).clamp(420.0, 760.0);
+    let window = Platform::get().root_size.read().height;
+    let height = (window * 0.82).clamp(420.0, 760.0).min(window - 48.0);
+    // The panes sit 1px inside the frame so neither covers its border.
+    let inner = tokens::radius::XL - 1.0;
     rect()
         .width(Size::fill())
         .height(Size::px(height))
@@ -263,10 +266,11 @@ fn wide_layout(section: Section, list: Rect) -> Element {
         .background(p.bg)
         .border(
             Border::new()
-                .fill(p.line)
+                .fill(p.line_strong)
                 .width(1.0)
                 .alignment(BorderAlignment::Inner),
         )
+        .padding(1.0)
         .horizontal()
         .content(Content::Flex)
         .child(
@@ -275,6 +279,7 @@ fn wide_layout(section: Section, list: Rect) -> Element {
                 .height(Size::fill())
                 .padding(16.0)
                 .spacing(12.0)
+                .corner_radius(CornerRadius::new(inner, 0.0, 0.0, inner))
                 .background(p.s1)
                 .child(Text::new("Ajustes").role(TextRole::Heading))
                 .child(list),

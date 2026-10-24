@@ -21,7 +21,13 @@ impl TextSize {
     /// Every size, smallest first.
     pub const ALL: [Self; 4] = [Self::Small, Self::Default, Self::Large, Self::Larger];
 
-    /// Multiplier applied to the platform scale factor.
+    /// Narrowest short side, in points, a larger size may leave the
+    /// window with; past it the text grows no further, so a phone at
+    /// «Más grande» keeps a usable layout.
+    pub const MIN_SHORT_SIDE: f64 = 360.0;
+
+    /// Multiplier applied to the platform scale factor, before
+    /// [`Self::MIN_SHORT_SIDE`] caps it.
     #[must_use]
     pub const fn scale(self) -> f64 {
         match self {
@@ -139,8 +145,17 @@ pub fn use_theme_root(initial: impl FnOnce() -> Appearance) -> ThemeHandle {
         freya_theme.set(freya_theme_for(&palette));
     });
     use_side_effect(move || {
-        let scale = appearance.read().text_size.scale();
-        Platform::get().set_custom_scale_factor(scale);
+        let platform = Platform::get();
+        let wanted = appearance.read().text_size.scale();
+        let size = *platform.root_size.read();
+        // The window's short side as it would be at scale 1.
+        let short = f64::from(size.width.min(size.height)) * *platform.custom_scale_factor.peek();
+        let fits = if short > 0.0 {
+            (short / TextSize::MIN_SHORT_SIDE).max(1.0)
+        } else {
+            wanted
+        };
+        platform.set_custom_scale_factor(wanted.min(fits));
     });
     handle
 }
