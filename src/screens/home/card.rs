@@ -120,6 +120,104 @@ impl Cover {
     }
 }
 
+impl Cover {
+    /// A leather cover with the translation's name.
+    fn bible(&self, base: Rect, p: &Palette) -> Element {
+        let translation = self.data.meta.split(" · ").next().unwrap_or_default().to_uppercase();
+        base.background(Color::from_rgb(59, 47, 30))
+            .padding((18.0, 16.0))
+            .spacing(4.0)
+            .child(
+                label()
+                    .text("Biblia")
+                    .font_size(18.0)
+                    .font_family("Lora")
+                    .color(Color::from_rgb(243, 226, 190)),
+            )
+            .child(
+                label()
+                    .text(translation)
+                    .font_size(10.0)
+                    .font_weight(FontWeight::SEMI_BOLD)
+                    .letter_spacing(1.0)
+                    .color(p.kinds.bible),
+            )
+            .child(
+                rect()
+                    .position(Position::new_absolute().bottom(36.0).left(16.0))
+                    .width(Size::px(self.width - 32.0))
+                    .height(Size::px(2.0))
+                    .background(p.kinds.bible),
+            )
+            .into_element()
+    }
+
+    /// The note's title and the start of its text.
+    fn note(&self, base: Rect, p: &Palette) -> Element {
+        base.background(self.paper(p))
+            .padding((20.0, self.width * 0.12))
+            .spacing(6.0)
+            .child(
+                label()
+                    .text(self.data.name.clone())
+                    .font_size(11.0)
+                    .font_weight(FontWeight::BOLD)
+                    .color(p.paper_ink)
+                    .max_lines(2),
+            )
+            .child(
+                label()
+                    .text(self.data.preview.clone().unwrap_or_default())
+                    .font_size(8.5)
+                    .line_height(1.4)
+                    .color(Color::from_rgb(110, 106, 98))
+                    .max_lines(9)
+                    .text_overflow(TextOverflow::Ellipsis),
+            )
+            .into_element()
+    }
+
+    /// A page with a heading and a highlighted line.
+    fn pdf(&self, base: Rect, p: &Palette) -> Element {
+        let w = self.width;
+        base.background(self.paper(p))
+            .child(Self::lines(w, 8, Color::from_rgb(216, 211, 200), 44.0))
+            .child(
+                rect()
+                    .position(Position::new_absolute().top(22.0).left(w * 0.12))
+                    .width(Size::px(w * 0.76))
+                    .height(Size::px(10.0))
+                    .corner_radius(2.0)
+                    .background(Color::from_rgb(201, 195, 182)),
+            )
+            .child(
+                rect()
+                    .position(Position::new_absolute().top(56.0).left(w * 0.12))
+                    .width(Size::px(w * 0.55))
+                    .height(Size::px(10.0))
+                    .corner_radius(3.0)
+                    .background(p.highlighters[0].with_a(180)),
+            )
+            .into_element()
+    }
+
+    /// The paper pattern with the kind's icon.
+    fn generic(&self, base: Rect, p: &Palette, h: f32) -> Element {
+        base.background(self.paper(p))
+            .maybe_child(self.pattern(h, Color::from_rgb(222, 218, 208)))
+            .child(
+                Icon::new(
+                    crate::plugins::kind_info(&self.data.kind)
+                        .map_or_else(freya::icons::lucide::file, |k| k.icon),
+                )
+                .size(self.width * 0.28)
+                .color(p.paper_ink.with_a(40)),
+            )
+            .center()
+            .into_element()
+    }
+}
+
 impl Component for Cover {
     fn render(&self) -> impl IntoElement {
         let p = palette();
@@ -133,107 +231,14 @@ impl Component for Cover {
         if let Some(bytes) = self.data.thumbnail.clone() {
             return base
                 .background(self.paper(&p))
-                .child(
-                    ImageViewer::new(bytes)
-                        .width(Size::px(w))
-                        .height(Size::px(h)),
-                )
+                .child(ImageViewer::new(bytes).width(Size::px(w)).height(Size::px(h)))
                 .into_element();
         }
-        let ink = Color::from_rgb(201, 195, 182);
         match self.data.kind.as_str() {
-            notein_bible::kind::KIND => base
-                .background(Color::from_rgb(59, 47, 30))
-                .padding((18.0, 16.0))
-                .spacing(4.0)
-                .child(
-                    label()
-                        .text("Biblia")
-                        .font_size(18.0)
-                        .font_family("Lora")
-                        .color(Color::from_rgb(243, 226, 190)),
-                )
-                .child(
-                    label()
-                        .text(
-                            self.data
-                                .meta
-                                .split(" · ")
-                                .next()
-                                .unwrap_or_default()
-                                .to_uppercase(),
-                        )
-                        .font_size(10.0)
-                        .font_weight(FontWeight::SEMI_BOLD)
-                        .letter_spacing(1.0)
-                        .color(p.kinds.bible),
-                )
-                .child(
-                    rect()
-                        .position(Position::new_absolute().bottom(36.0).left(16.0))
-                        .width(Size::px(w - 32.0))
-                        .height(Size::px(2.0))
-                        .background(p.kinds.bible),
-                )
-                .into_element(),
-            notein_notes::kind::KIND => base
-                .background(self.paper(&p))
-                .padding((20.0, w * 0.12))
-                .spacing(6.0)
-                .child(
-                    label()
-                        .text(self.data.name.clone())
-                        .font_size(11.0)
-                        .font_weight(FontWeight::BOLD)
-                        .color(p.paper_ink)
-                        .max_lines(2),
-                )
-                .child(
-                    label()
-                        .text(self.data.preview.clone().unwrap_or_default())
-                        .font_size(8.5)
-                        .line_height(1.4)
-                        .color(Color::from_rgb(110, 106, 98))
-                        .max_lines(9)
-                        .text_overflow(TextOverflow::Ellipsis),
-                )
-                .into_element(),
-            crate::plugins::builtin::pdf::KIND => base
-                .background(self.paper(&p))
-                .child(Self::lines(w, 8, Color::from_rgb(216, 211, 200), 44.0))
-                .child(
-                    rect()
-                        .position(Position::new_absolute().top(22.0).left(w * 0.12))
-                        .width(Size::px(w * 0.76))
-                        .height(Size::px(10.0))
-                        .corner_radius(2.0)
-                        .background(ink),
-                )
-                .child(
-                    rect()
-                        .position(Position::new_absolute().top(56.0).left(w * 0.12))
-                        .width(Size::px(w * 0.55))
-                        .height(Size::px(10.0))
-                        .corner_radius(3.0)
-                        .background(p.highlighters[0].with_a(180)),
-                )
-                .into_element(),
-            _ => {
-                let paper = self.paper(&p);
-                let line = Color::from_rgb(222, 218, 208);
-                base.background(paper)
-                    .maybe_child(self.pattern(h, line))
-                    .child(
-                        Icon::new(
-                            crate::plugins::kind_info(&self.data.kind)
-                                .map_or_else(freya::icons::lucide::file, |k| k.icon),
-                        )
-                        .size(w * 0.28)
-                        .color(p.paper_ink.with_a(40)),
-                    )
-                    .center()
-                    .into_element()
-            }
+            notein_bible::kind::KIND => self.bible(base, &p),
+            notein_notes::kind::KIND => self.note(base, &p),
+            crate::plugins::builtin::pdf::KIND => self.pdf(base, &p),
+            _ => self.generic(base, &p, h),
         }
     }
 }
@@ -279,11 +284,86 @@ pub struct DocCard {
     pub actions: CardActions,
 }
 
-impl Component for DocCard {
-    fn render(&self) -> impl IntoElement {
+/// How many notebooks the document has, over the cover.
+fn notebooks_badge(count: usize) -> Rect {
+    rect()
+        .position(Position::new_absolute().bottom(8.0).right(8.0))
+        .height(Size::px(24.0))
+        .padding((0.0, 7.0))
+        .corner_radius(tokens::radius::FULL)
+        .background(Color::from_argb(220, 30, 30, 34))
+        .horizontal()
+        .cross_align(Alignment::Center)
+        .spacing(4.0)
+        .child(
+            Icon::new(freya::icons::lucide::notebook_pen())
+                .size(12.0)
+                .color(Color::WHITE),
+        )
+        .child(
+            label()
+                .text(count.to_string())
+                .font_size(11.0)
+                .font_weight(FontWeight::BOLD)
+                .color(Color::WHITE),
+        )
+}
+
+/// The check over a card while selecting.
+fn select_mark(selected: bool) -> Rect {
+    let p = palette();
+    rect()
+        .position(Position::new_absolute().top(8.0).left(8.0))
+        .width(Size::px(24.0))
+        .height(Size::px(24.0))
+        .corner_radius(tokens::radius::FULL)
+        .map(selected.then_some(p.accent), Rect::background)
+        .maybe(!selected, |r| {
+            r.border(
+                Border::new()
+                    .fill(Color::WHITE)
+                    .width(2.0)
+                    .alignment(BorderAlignment::Inner),
+            )
+            .background(Color::from_argb(80, 0, 0, 0))
+        })
+        .center()
+        .maybe_child(selected.then(|| {
+            Icon::new(freya::icons::lucide::check())
+                .size(14.0)
+                .color(p.on_accent)
+        }))
+}
+
+/// Name and what it is, under the cover.
+fn caption(data: &DocCardData) -> Rect {
+    let p = palette();
+    rect()
+        .width(Size::fill())
+        .spacing(2.0)
+        .child(
+            label()
+                .text(data.name.clone())
+                .font_size(tokens::text::BODY)
+                .font_weight(FontWeight::SEMI_BOLD)
+                .color(p.t1)
+                .max_lines(2)
+                .text_overflow(TextOverflow::Ellipsis),
+        )
+        .child(
+            label()
+                .text(data.meta.clone())
+                .font_size(tokens::text::LABEL)
+                .color(p.t3)
+                .max_lines(1),
+        )
+}
+
+impl DocCard {
+    /// The cover with its kind, notebooks, pin, sharing and selection
+    /// marks.
+    fn cover(&self, hovering: bool) -> Rect {
         let p = palette();
-        let gesture = use_press_gesture();
-        let mut hovering = use_state(|| false);
         let data = &self.data;
         let info = crate::plugins::kind_info(&data.kind);
         let kind_icon = info
@@ -291,9 +371,7 @@ impl Component for DocCard {
             .map_or_else(freya::icons::lucide::file, |k| k.icon.clone());
         let kind_fill = info.as_ref().map_or(p.t3, |k| kind_color(&p, k.color));
         let selected = self.selecting == Selecting::Selected;
-        let open = self.actions.on_open.clone();
-        let menu = self.actions.on_menu.clone();
-        let cover = rect()
+        rect()
             .width(Size::px(self.width))
             .height(Size::px((self.width * COVER_RATIO).round()))
             .corner_radius(tokens::radius::LG)
@@ -305,7 +383,7 @@ impl Component for DocCard {
                         .alignment(BorderAlignment::Outer),
                 )
             })
-            .maybe(hovering() && !selected, |r| {
+            .maybe(hovering && !selected, |r| {
                 r.shadow(Shadow::new().y(6.0).blur(16.0).color(p.shadow))
             })
             .child(Cover {
@@ -317,29 +395,7 @@ impl Component for DocCard {
                     .position(Position::new_absolute().bottom(8.0).left(8.0))
                     .child(cover_badge(kind_icon, kind_fill)),
             )
-            .maybe_child((data.notebooks > 0).then(|| {
-                rect()
-                    .position(Position::new_absolute().bottom(8.0).right(8.0))
-                    .height(Size::px(24.0))
-                    .padding((0.0, 7.0))
-                    .corner_radius(tokens::radius::FULL)
-                    .background(Color::from_argb(220, 30, 30, 34))
-                    .horizontal()
-                    .cross_align(Alignment::Center)
-                    .spacing(4.0)
-                    .child(
-                        Icon::new(freya::icons::lucide::notebook_pen())
-                            .size(12.0)
-                            .color(Color::WHITE),
-                    )
-                    .child(
-                        label()
-                            .text(data.notebooks.to_string())
-                            .font_size(11.0)
-                            .font_weight(FontWeight::BOLD)
-                            .color(Color::WHITE),
-                    )
-            }))
+            .maybe_child((data.notebooks > 0).then(|| notebooks_badge(data.notebooks)))
             .child(
                 rect()
                     .position(Position::new_absolute().top(8.0).right(8.0))
@@ -354,58 +410,25 @@ impl Component for DocCard {
                             .then(|| cover_badge(freya::icons::lucide::users(), p.highlighters[3])),
                     ),
             )
-            .maybe_child((self.selecting != Selecting::No).then(|| {
-                rect()
-                    .position(Position::new_absolute().top(8.0).left(8.0))
-                    .width(Size::px(24.0))
-                    .height(Size::px(24.0))
-                    .corner_radius(tokens::radius::FULL)
-                    .map(selected.then_some(p.accent), Rect::background)
-                    .maybe(!selected, |r| {
-                        r.border(
-                            Border::new()
-                                .fill(Color::WHITE)
-                                .width(2.0)
-                                .alignment(BorderAlignment::Inner),
-                        )
-                        .background(Color::from_argb(80, 0, 0, 0))
-                    })
-                    .center()
-                    .maybe_child(selected.then(|| {
-                        Icon::new(freya::icons::lucide::check())
-                            .size(14.0)
-                            .color(p.on_accent)
-                    }))
-            }));
+            .maybe_child((self.selecting != Selecting::No).then(|| select_mark(selected)))
+    }
+}
+
+impl Component for DocCard {
+    fn render(&self) -> impl IntoElement {
+        let gesture = use_press_gesture();
+        let mut hovering = use_state(|| false);
+        let open = self.actions.on_open.clone();
+        let menu = self.actions.on_menu.clone();
         let card = rect()
             .width(Size::px(self.width))
             .spacing(8.0)
             .a11y_role(AccessibilityRole::Button)
-            .a11y_alt(data.name.clone())
+            .a11y_alt(self.data.name.clone())
             .on_pointer_enter(move |_| hovering.set(true))
             .on_pointer_leave(move |_| hovering.set(false))
-            .child(cover)
-            .child(
-                rect()
-                    .width(Size::fill())
-                    .spacing(2.0)
-                    .child(
-                        label()
-                            .text(data.name.clone())
-                            .font_size(tokens::text::BODY)
-                            .font_weight(FontWeight::SEMI_BOLD)
-                            .color(p.t1)
-                            .max_lines(2)
-                            .text_overflow(TextOverflow::Ellipsis),
-                    )
-                    .child(
-                        label()
-                            .text(data.meta.clone())
-                            .font_size(tokens::text::LABEL)
-                            .color(p.t3)
-                            .max_lines(1),
-                    ),
-            );
+            .child(self.cover(hovering()))
+            .child(caption(&self.data));
         gesture.apply(card, move || open.call(()), move |at| menu.call(at))
     }
 }
