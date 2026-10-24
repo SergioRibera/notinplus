@@ -7,6 +7,7 @@ use freya::prelude::*;
 
 use super::icon::Icon;
 use super::kind_badge::KindBadge;
+use super::list_row::strut;
 use crate::theme::palette;
 use crate::tokens::{radius, text};
 
@@ -209,16 +210,10 @@ impl Component for ActionRow {
             .a11y_role(AccessibilityRole::MenuItem)
             .a11y_alt(action.label.to_string())
             .width(Size::fill())
-            .min_height(Size::px(if action.subtitle.is_some() {
-                48.0
-            } else {
-                36.0
-            }))
             .padding((4.0, 10.0))
             .corner_radius(radius::SM)
             .map(background, Rect::background)
             .opacity(if enabled { 1.0 } else { 0.4 })
-            .main_align(Alignment::Center)
             .maybe(enabled, |r| {
                 r.on_pointer_enter(move |_| hovering.set(true))
                     .on_pointer_leave(move |_| hovering.set(false))
@@ -229,12 +224,17 @@ impl Component for ActionRow {
 }
 
 impl ActionRow {
-    /// Icon, labels and trailing marks. Its own row: a flex row with a
-    /// minimum height keeps its children at the top.
+    /// Icon, labels and trailing marks.
     fn content(&self) -> Rect {
         let p = palette();
         let action = &self.action;
         let color = if action.danger { p.danger } else { p.t1 };
+        // Row height without its vertical padding.
+        let min_height = if action.subtitle.is_some() {
+            40.0
+        } else {
+            28.0
+        };
         rect()
             .width(Size::fill())
             .horizontal()
@@ -253,21 +253,28 @@ impl ActionRow {
             .child(
                 rect()
                     .width(Size::flex(1.0))
-                    .spacing(1.0)
+                    .horizontal()
+                    .cross_align(Alignment::Center)
+                    .child(strut(min_height))
                     .child(
-                        label()
-                            .text(action.label.clone())
-                            .font_size(text::BODY)
-                            .color(color)
-                            .max_lines(1),
-                    )
-                    .maybe_child(action.subtitle.clone().map(|sub| {
-                        label()
-                            .text(sub)
-                            .font_size(text::LABEL)
-                            .color(p.t3)
-                            .max_lines(1)
-                    })),
+                        rect()
+                            .width(Size::fill())
+                            .spacing(1.0)
+                            .child(
+                                label()
+                                    .text(action.label.clone())
+                                    .font_size(text::BODY)
+                                    .color(color)
+                                    .max_lines(1),
+                            )
+                            .maybe_child(action.subtitle.clone().map(|sub| {
+                                label()
+                                    .text(sub)
+                                    .font_size(text::LABEL)
+                                    .color(p.t3)
+                                    .max_lines(1)
+                            })),
+                    ),
             )
             .maybe_child(
                 action

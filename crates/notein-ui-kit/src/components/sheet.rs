@@ -12,6 +12,7 @@ use super::divider::Divider;
 use super::icon::Icon;
 use super::icon_button::IconButton;
 use super::kind_badge::KindBadge;
+use super::list_row::strut;
 use crate::modal::{Modal, ModalController};
 use crate::theme::palette;
 use crate::tokens::{radius, size, text};
@@ -298,29 +299,27 @@ impl Component for SheetFooter {
         let p = palette();
         rect()
             .width(Size::fill())
-            .min_height(Size::px(40.0))
-            .main_align(Alignment::Center)
+            .horizontal()
+            .cross_align(Alignment::Center)
+            .content(Content::Flex)
+            .spacing(8.0)
+            .maybe_child(self.leading.clone())
             .child(
                 rect()
-                    .width(Size::fill())
+                    .width(Size::flex(1.0))
                     .horizontal()
                     .cross_align(Alignment::Center)
-                    .content(Content::Flex)
-                    .spacing(8.0)
-                    .maybe_child(self.leading.clone())
-                    .child(
-                        rect()
-                            .width(Size::flex(1.0))
-                            .maybe_child(self.hint.clone().map(|hint| {
-                                label()
-                                    .text(hint)
-                                    .font_size(text::LABEL)
-                                    .color(p.t3)
-                                    .max_lines(2)
-                            })),
-                    )
-                    .children(self.actions.clone()),
+                    .child(strut(40.0))
+                    .maybe_child(self.hint.clone().map(|hint| {
+                        label()
+                            .text(hint)
+                            .width(Size::fill())
+                            .font_size(text::LABEL)
+                            .color(p.t3)
+                            .max_lines(2)
+                    })),
             )
+            .children(self.actions.clone())
     }
 }
 

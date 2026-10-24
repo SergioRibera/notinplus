@@ -219,10 +219,10 @@ impl Trailing {
 }
 
 impl ListRow {
-    /// Title and subtitle.
-    fn text(&self, title_color: Color) -> Rect {
-        rect()
-            .width(Size::flex(1.0))
+    /// Title and subtitle, at least `min_height` tall.
+    fn text(&self, title_color: Color, min_height: f32) -> Rect {
+        let column = rect()
+            .width(Size::fill())
             .spacing(2.0)
             .child(
                 label()
@@ -240,8 +240,23 @@ impl ListRow {
                     .color(palette().t3)
                     .max_lines(2)
                     .text_overflow(TextOverflow::Ellipsis)
-            }))
+            }));
+        rect()
+            .width(Size::flex(1.0))
+            .horizontal()
+            .cross_align(Alignment::Center)
+            .child(strut(min_height))
+            .child(column)
     }
+}
+
+/// An invisible column that holds a row open to `height`. Rows use it
+/// instead of `min_height`: a flex row with a minimum height keeps its
+/// children at the top and grows past its content.
+pub(super) fn strut(height: f32) -> Rect {
+    rect()
+        .width(Size::px(0.0))
+        .height(Size::px(height.max(0.0)))
 }
 
 impl Component for ListRow {
@@ -286,7 +301,6 @@ impl Component for ListRow {
             })
             .a11y_alt(self.title.to_string())
             .width(Size::fill())
-            .min_height(Size::px(height))
             .padding((6.0, 12.0, 6.0, 12.0 + self.indent))
             .corner_radius(radius::MD)
             .opacity(if self.enabled { 1.0 } else { 0.45 })
@@ -299,9 +313,6 @@ impl Component for ListRow {
                         .alignment(BorderAlignment::Inner),
                 )
             })
-            // Centred by the wrapper: a flex row with a minimum height
-            // keeps its children at the top.
-            .main_align(Alignment::Center)
             .maybe(clickable, |r| {
                 r.on_pointer_enter(move |_| hovering.set(true))
                     .on_pointer_leave(move |_| hovering.set(false))
@@ -322,7 +333,7 @@ impl Component for ListRow {
                             .clone()
                             .map(|leading| leading.render(self.danger)),
                     )
-                    .child(self.text(title_color))
+                    .child(self.text(title_color, height - 12.0))
                     .maybe_child(self.trailing.clone().map(Trailing::render)),
             )
     }
