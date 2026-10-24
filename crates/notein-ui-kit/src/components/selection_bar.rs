@@ -172,6 +172,25 @@ impl BarItem {
     }
 }
 
+impl SelectionBar {
+    /// The items with every divider that separates nothing left out: at
+    /// either end, or right after another one.
+    fn shown(&self) -> impl Iterator<Item = &BarItem> {
+        let is_divider = |item: &BarItem| matches!(item, BarItem::Divider);
+        let last = self.items.iter().rposition(|i| !is_divider(i));
+        self.items
+            .iter()
+            .enumerate()
+            .filter(move |(at, item)| {
+                !is_divider(item)
+                    || (*at > 0
+                        && last.is_some_and(|last| *at < last)
+                        && !is_divider(&self.items[at - 1]))
+            })
+            .map(|(_, item)| item)
+    }
+}
+
 impl Component for SelectionBar {
     fn render(&self) -> impl IntoElement {
         let p = palette();
@@ -195,10 +214,44 @@ impl Component for SelectionBar {
             .cross_align(Alignment::Center)
             .spacing(2.0)
             .children(
-                self.items
-                    .iter()
+                self.shown()
                     .enumerate()
                     .map(|(index, item)| item.render(index)),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn shown(items: Vec<BarItem>) -> Vec<String> {
+        SelectionBar::new(items)
+            .shown()
+            .map(|item| format!("{item:?}"))
+            .collect()
+    }
+
+    #[test]
+    fn dividers_only_separate_something() {
+        let caption = || BarItem::Caption("Tocá para elegir".into());
+        assert_eq!(
+            shown(vec![caption(), BarItem::Divider]),
+            ["Caption(Tocá para elegir)"]
+        );
+        assert_eq!(
+            shown(vec![
+                BarItem::Divider,
+                caption(),
+                BarItem::Divider,
+                BarItem::Divider,
+                caption(),
+            ]),
+            [
+                "Caption(Tocá para elegir)",
+                "Divider",
+                "Caption(Tocá para elegir)"
+            ],
+        );
     }
 }
