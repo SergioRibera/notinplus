@@ -738,55 +738,91 @@ enum Step {
     Net(NetEvent),
 }
 
-fn run(cmds: &flume::Receiver<Cmd>) {
-    let root = bodies::root_dir();
-    let profile_path = root.join(PROFILE_FILE);
-    let shares_path = root.join(SHARES_FILE);
-    let profile = match DeviceProfile::load_or_create(&profile_path, &default_device_name()) {
-        Ok(profile) => profile,
-        Err(err) => {
-            publish(SyncSnapshot {
-                error: Some(format!("perfil del dispositivo: {err}")),
-                ..SyncSnapshot::default()
-            });
-            return;
-        }
-    };
-    let node = match LanNode::start(LanConfig::new(profile.key().clone(), profile.name())) {
-        Ok(node) => node,
-        Err(err) => {
-            publish(SyncSnapshot {
-                device: Some(profile.id()),
-                name: profile.name().to_owned(),
-                trusted: profile.trusted().to_vec(),
-                error: Some(format!("red: {err}")),
-                ..SyncSnapshot::default()
-            });
-            return;
-        }
-    };
-    let shares = load_shares(&shares_path);
-    let mut service = Service {
-        driver: SyncDriver::new(profile, LibraryReplica::default(), shares),
-        node,
-        profile_path,
-        shares_path,
-        memos: HashMap::new(),
-        last_failure: None,
-        last_join_failure: None,
-        error: None,
-        outdated: HashSet::new(),
-    };
-    service.remember_shares();
-    let relay = service
-        .driver
-        .profile()
-        .relay()
-        .and_then(|text| text.parse::<RelayAddr>().ok());
-    let actions = service.driver.set_relay(relay);
-    service.perform(actions);
-    publish(service.snapshot());
+impl Service {
+    /// Load this device's profile and shares, start the network and
+    /// reach the relay. `None`, with the reason published, when this
+    /// device cannot sync.
+    fn start() -> Option<Self> {
+        let root = bodies::root_dir();
+        let profile_path = root.join(PROFILE_FILE);
+        let shares_path = root.join(SHARES_FILE);
+        let profile = match DeviceProfile::load_or_create(&profile_path, &default_device_name()) {
+            Ok(profile) => profile,
+            Err(err) => {
+                publish(SyncSnapshot {
+                    error: Some(format!("perfil del dispositivo: {err}")),
+                    ..SyncSnapshot::default()
+                });
+                return None;
+            }
+        };
+        let node = match LanNode::start(LanConfig::new(profile.key().clone(), profile.name())) {
+            Ok(node) => node,
+            Err(err) => {
+                publish(SyncSnapshot {
+                    device: Some(profile.id()),
+                    name: profile.name().to_owned(),
+                    trusted: profile.trusted().to_vec(),
+                    error: Some(format!("red: {err}")),
+                    ..SyncSnapshot::default()
+                });
+                return None;
+            }
+        };
+        let shares = load_shares(&shares_path);
+        let mut service = Self {
+            driver: SyncDriver::new(profile, LibraryReplica::default(), shares),
+            node,
+            profile_path,
+            shares_path,
+            memos: HashMap::new(),
+            last_failure: None,
+            last_join_failure: None,
+            error: None,
+            outdated: HashSet::new(),
+        };
+        service.remember_shares();
+        let relay = service
+            .driver
+            .profile()
+            .relay()
+            .and_then(|text| text.parse::<RelayAddr>().ok());
+        let actions = service.driver.set_relay(relay);
+        service.perform(actions);
+        Some(service)
+    }
 
+    /// Something arrived from the network.
+    fn on_net(&mut self, event: NetEvent) {
+        let from = match &event {
+            NetEvent::Message { from, .. } => Some(*from),
+            _ => None,
+        };
+        match self.driver.on_event(event) {
+            Ok(actions) => self.perform(actions),
+            Err(notein_sync::SyncError::Version(version)) => self.report_outdated(from, version),
+            Err(err) => {
+                log::error!("sync: {err}");
+                self.error = Some(err.to_string());
+            }
+        }
+    }
+
+    fn local_changed(&mut self) {
+        if let Err(err) = self.on_cmd(Cmd::LocalChanged) {
+            log::error!("sync: {err}");
+            self.error = Some(err);
+        }
+    }
+}
+
+/// The sync service: commands from the app and network events, with
+/// local changes debounced and a periodic tick.
+fn run(cmds: &flume::Receiver<Cmd>) {
+    let Some(mut service) = Service::start() else {
+        return;
+    };
+    publish(service.snapshot());
     let mut next_tick = Instant::now() + notein_sync::driver::TICK;
     let mut pending_change: Option<Instant> = None;
     loop {
@@ -794,12 +830,11 @@ fn run(cmds: &flume::Receiver<Cmd>) {
         let deadline = pending_change
             .map_or(next_tick, |due| due.min(next_tick))
             .max(now);
-        let wait = deadline.duration_since(now);
         let events = service.node.events().clone();
         let step = flume::Selector::new()
             .recv(cmds, |cmd| cmd.map(Step::Cmd))
             .recv(&events, |event| event.map(Step::Net))
-            .wait_timeout(wait);
+            .wait_timeout(deadline.duration_since(now));
         match step {
             Ok(Ok(Step::Cmd(Cmd::LocalChanged))) => {
                 pending_change.get_or_insert_with(|| Instant::now() + DEBOUNCE);
@@ -810,32 +845,14 @@ fn run(cmds: &flume::Receiver<Cmd>) {
                     service.error = Some(err);
                 }
             }
-            Ok(Ok(Step::Net(event))) => {
-                let from = match &event {
-                    NetEvent::Message { from, .. } => Some(*from),
-                    _ => None,
-                };
-                match service.driver.on_event(event) {
-                    Ok(actions) => service.perform(actions),
-                    Err(notein_sync::SyncError::Version(version)) => {
-                        service.report_outdated(from, version);
-                    }
-                    Err(err) => {
-                        log::error!("sync: {err}");
-                        service.error = Some(err.to_string());
-                    }
-                }
-            }
+            Ok(Ok(Step::Net(event))) => service.on_net(event),
             Ok(Err(_)) => break,
             Err(_) => {}
         }
         let now = Instant::now();
         if pending_change.is_some_and(|due| due <= now) {
             pending_change = None;
-            if let Err(err) = service.on_cmd(Cmd::LocalChanged) {
-                log::error!("sync: {err}");
-                service.error = Some(err);
-            }
+            service.local_changed();
         }
         if next_tick <= now {
             next_tick = now + notein_sync::driver::TICK;

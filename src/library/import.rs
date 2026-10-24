@@ -7,7 +7,7 @@ use super::{
     Folder, FolderId, Item, ItemId, Library, LibraryData, LinkId, ROOT_FOLDER, Result, WorkspaceId,
     bodies, now_millis, refs,
 };
-use crate::bundle::ParsedBundle;
+use crate::bundle::{BundleManifest, ParsedBundle};
 
 /// What to do with a document the library already has.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -145,6 +145,21 @@ impl LibraryData {
     }
 }
 
+/// Where each bundled folder lands in the library.
+struct FolderMap {
+    /// Bundle id → library id (new when the id is already taken).
+    ids: HashMap<FolderId, FolderId>,
+    destination: FolderId,
+}
+
+impl FolderMap {
+    /// The library folder for a bundle `folder`; outside the bundle, the
+    /// destination.
+    fn resolve(&self, folder: FolderId) -> FolderId {
+        self.ids.get(&folder).copied().unwrap_or(self.destination)
+    }
+}
+
 impl Library {
     /// Write `bundle` into the library following `plan`.
     ///
@@ -158,6 +173,91 @@ impl Library {
     ) -> Result<ImportReceipt> {
         let now = now_millis();
         let manifest = &bundle.manifest;
+        let mut receipt = ImportReceipt {
+            destination: plan.destination,
+            ..ImportReceipt::default()
+        };
+        for tag in &manifest.tags {
+            if self.data.index.tag(tag.id).is_none() {
+                self.data.index.tags.push(tag.clone());
+            }
+        }
+        let folders = self.import_folders(manifest, plan.destination, now, &mut receipt);
+        let item_ids = self.import_items(bundle, review, plan, &folders, now, &mut receipt)?;
+        for incoming in &manifest.links {
+            let (Some(from), Some(to)) = (item_ids.get(&incoming.from), item_ids.get(&incoming.to))
+            else {
+                continue;
+            };
+            let mut link = incoming.clone();
+            link.id = LinkId::new_v4();
+            link.from = *from;
+            link.to = *to;
+            link.updated_at = now;
+            self.data.links.links.push(link);
+        }
+        for workspace in &manifest.workspaces {
+            let mut copy = workspace.clone();
+            copy.id = WorkspaceId::new_v4();
+            copy.layout.retarget_items(&item_ids);
+            copy.updated_at = now;
+            receipt.workspaces.push(copy.id);
+            self.data.workspaces.workspaces.push(copy);
+        }
+        self.persist().await?;
+        self.persist_workspaces().await?;
+        self.persist_links().await?;
+        Ok(receipt)
+    }
+
+    /// The bundle's folders, under `destination`; an id already in the
+    /// library gets a new one.
+    fn import_folders(
+        &mut self,
+        manifest: &BundleManifest,
+        destination: FolderId,
+        now: u64,
+        receipt: &mut ImportReceipt,
+    ) -> FolderMap {
+        let ids = manifest
+            .folders
+            .iter()
+            .map(|folder| {
+                let id = if self.data.index.folder(folder.id).is_some() {
+                    FolderId::new_v4()
+                } else {
+                    folder.id
+                };
+                (folder.id, id)
+            })
+            .collect();
+        let map = FolderMap { ids, destination };
+        for folder in &manifest.folders {
+            let id = map.ids.get(&folder.id).copied().unwrap_or(folder.id);
+            self.data.index.folders.push(Folder {
+                id,
+                parent: map.resolve(folder.parent),
+                trashed: None,
+                updated_at: now,
+                ..folder.clone()
+            });
+            receipt.folders.push(id);
+        }
+        map
+    }
+
+    /// The bundle's documents and their bodies, resolving the ones
+    /// already in the library as `plan` says. Returns bundle id →
+    /// library id.
+    fn import_items(
+        &mut self,
+        bundle: &ParsedBundle,
+        review: &Review,
+        plan: &ImportPlan,
+        folders: &FolderMap,
+        now: u64,
+        receipt: &mut ImportReceipt,
+    ) -> Result<HashMap<ItemId, ItemId>> {
         let identical: HashSet<ItemId> = review
             .conflicts
             .iter()
@@ -165,50 +265,8 @@ impl Library {
             .map(|c| c.incoming.id)
             .collect();
         let colliding: HashSet<ItemId> = review.conflicts.iter().map(|c| c.incoming.id).collect();
-        let bundle_folders: HashSet<FolderId> = manifest.folders.iter().map(|f| f.id).collect();
-
-        let mut receipt = ImportReceipt {
-            destination: plan.destination,
-            ..ImportReceipt::default()
-        };
-
-        for tag in &manifest.tags {
-            if self.data.index.tag(tag.id).is_none() {
-                self.data.index.tags.push(tag.clone());
-            }
-        }
-
-        let mut folder_ids: HashMap<FolderId, FolderId> = HashMap::new();
-        for folder in &manifest.folders {
-            let id = if self.data.index.folder(folder.id).is_some() {
-                FolderId::new_v4()
-            } else {
-                folder.id
-            };
-            folder_ids.insert(folder.id, id);
-        }
-        for folder in &manifest.folders {
-            let parent = if bundle_folders.contains(&folder.parent) {
-                folder_ids
-                    .get(&folder.parent)
-                    .copied()
-                    .unwrap_or(plan.destination)
-            } else {
-                plan.destination
-            };
-            let id = folder_ids.get(&folder.id).copied().unwrap_or(folder.id);
-            self.data.index.folders.push(Folder {
-                id,
-                parent,
-                trashed: None,
-                updated_at: now,
-                ..folder.clone()
-            });
-            receipt.folders.push(id);
-        }
-
-        let mut item_ids: HashMap<ItemId, ItemId> = HashMap::new();
-        for item in &manifest.items {
+        let mut item_ids = HashMap::new();
+        for item in &bundle.manifest.items {
             if identical.contains(&item.id) {
                 continue;
             }
@@ -216,14 +274,6 @@ impl Library {
                 plan.resolution(item.id)
             } else {
                 Resolution::KeepBoth
-            };
-            let folder = if bundle_folders.contains(&item.folder) {
-                folder_ids
-                    .get(&item.folder)
-                    .copied()
-                    .unwrap_or(plan.destination)
-            } else {
-                plan.destination
             };
             let id = match resolution {
                 Resolution::Skip => continue,
@@ -238,54 +288,36 @@ impl Library {
             item_ids.insert(item.id, id);
             self.data.index.items.push(Item {
                 id,
-                folder,
+                folder: folders.resolve(item.folder),
                 trashed: None,
                 updated_at: now,
                 ..item.clone()
             });
-            if let Some(bytes) = bundle.docs.get(&item.id) {
-                bodies::write_doc_bytes(id, bytes)?;
-                if let Ok(doc) = bodies::read_doc(id) {
-                    refs::record_doc(id, &doc);
-                }
-            }
-            if let Some(bytes) = bundle.pdfs.get(&item.id) {
-                bodies::write_pdf(id, bytes)?;
-            }
-            if let Some(bytes) = bundle.snapshots.get(&item.id) {
-                bodies::write_plugin_snapshot(id, &item.kind.plugin_id, bytes)?;
-            }
+            write_bodies(bundle, item, id)?;
             receipt.items.push(id);
         }
-
-        for incoming in &manifest.links {
-            let (Some(from), Some(to)) = (item_ids.get(&incoming.from), item_ids.get(&incoming.to))
-            else {
-                continue;
-            };
-            let mut link = incoming.clone();
-            link.id = LinkId::new_v4();
-            link.from = *from;
-            link.to = *to;
-            link.updated_at = now;
-            self.data.links.links.push(link);
-        }
-
-        for workspace in &manifest.workspaces {
-            let mut copy = workspace.clone();
-            copy.id = WorkspaceId::new_v4();
-            copy.layout.retarget_items(&item_ids);
-            copy.updated_at = now;
-            receipt.workspaces.push(copy.id);
-            self.data.workspaces.workspaces.push(copy);
-        }
-
-        self.persist().await?;
-        self.persist_workspaces().await?;
-        self.persist_links().await?;
-        Ok(receipt)
+        Ok(item_ids)
     }
+}
 
+/// The ink, PDF and plugin content of bundled `item`, stored as `id`.
+fn write_bodies(bundle: &ParsedBundle, item: &Item, id: ItemId) -> Result<()> {
+    if let Some(bytes) = bundle.docs.get(&item.id) {
+        bodies::write_doc_bytes(id, bytes)?;
+        if let Ok(doc) = bodies::read_doc(id) {
+            refs::record_doc(id, &doc);
+        }
+    }
+    if let Some(bytes) = bundle.pdfs.get(&item.id) {
+        bodies::write_pdf(id, bytes)?;
+    }
+    if let Some(bytes) = bundle.snapshots.get(&item.id) {
+        bodies::write_plugin_snapshot(id, &item.kind.plugin_id, bytes)?;
+    }
+    Ok(())
+}
+
+impl Library {
     /// Undo an import: everything it wrote leaves for good.
     ///
     /// # Errors

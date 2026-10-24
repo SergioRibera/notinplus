@@ -149,50 +149,54 @@ impl Library {
                 }
                 crate::sync::open_docs::notify_snapshot(item);
             }
-            SyncRecord::Gone(stone) => {
-                yard.bury(stone.kind, stone.id, stone.at);
-                match stone.kind {
-                    Buried::Item => {
-                        let id = super::ItemId(stone.id);
-                        self.data.index.items.retain(|i| i.id != id);
-                        bodies::purge(id);
-                        refs::forget(id);
-                        if self.data.links.retire_item(id, now_millis()) > 0 {
-                            self.persist_links().await?;
-                        }
-                        self.persist().await?;
-                    }
-                    Buried::Folder => {
-                        let id = super::FolderId(stone.id);
-                        self.data.index.folders.retain(|f| f.id != id);
-                        for item in &mut self.data.index.items {
-                            if item.folder == id {
-                                item.folder = super::ROOT_FOLDER;
-                            }
-                        }
-                        self.persist().await?;
-                    }
-                    Buried::Tag => {
-                        let id = super::TagId(stone.id);
-                        self.data.index.tags.retain(|t| t.id != id);
-                        for item in &mut self.data.index.items {
-                            item.tags.retain(|t| *t != id);
-                        }
-                        self.persist().await?;
-                    }
-                    Buried::Workspace => {
-                        let id = super::WorkspaceId(stone.id);
-                        self.data.workspaces.workspaces.retain(|w| w.id != id);
-                        if self.data.workspaces.active == Some(id) {
-                            self.data.workspaces.active =
-                                self.data.workspaces.workspaces.first().map(|w| w.id);
-                        }
-                        self.persist_workspaces().await?;
-                    }
-                }
-            }
+            SyncRecord::Gone(stone) => self.apply_gone(&stone, yard).await?,
         }
         Ok(true)
+    }
+
+    /// Something was deleted on another device: delete it here too.
+    async fn apply_gone(&mut self, stone: &Tombstone, yard: &mut Graveyard) -> Result<()> {
+        yard.bury(stone.kind, stone.id, stone.at);
+        match stone.kind {
+            Buried::Item => {
+                let id = super::ItemId(stone.id);
+                self.data.index.items.retain(|i| i.id != id);
+                bodies::purge(id);
+                refs::forget(id);
+                if self.data.links.retire_item(id, now_millis()) > 0 {
+                    self.persist_links().await?;
+                }
+                self.persist().await?;
+            }
+            Buried::Folder => {
+                let id = super::FolderId(stone.id);
+                self.data.index.folders.retain(|f| f.id != id);
+                for item in &mut self.data.index.items {
+                    if item.folder == id {
+                        item.folder = super::ROOT_FOLDER;
+                    }
+                }
+                self.persist().await?;
+            }
+            Buried::Tag => {
+                let id = super::TagId(stone.id);
+                self.data.index.tags.retain(|t| t.id != id);
+                for item in &mut self.data.index.items {
+                    item.tags.retain(|t| *t != id);
+                }
+                self.persist().await?;
+            }
+            Buried::Workspace => {
+                let id = super::WorkspaceId(stone.id);
+                self.data.workspaces.workspaces.retain(|w| w.id != id);
+                if self.data.workspaces.active == Some(id) {
+                    self.data.workspaces.active =
+                        self.data.workspaces.workspaces.first().map(|w| w.id);
+                }
+                self.persist_workspaces().await?;
+            }
+        }
+        Ok(())
     }
 }
 

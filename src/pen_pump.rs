@@ -380,156 +380,136 @@ impl DtTracker {
     }
 }
 
+/// Pen samples arrive in window coordinates. `Down` hit-tests every
+/// canvas surface and latches the one it lands on; the rest of the
+/// stroke reads that latch, so a stroke crossing a split-pane divider
+/// stays in the pane it started on. `dt` restarts with every stroke.
 fn apply(event: PenEvent, dt: &mut DtTracker) {
-    // Pen samples arrive in window coordinates. `Down` hit-tests the
-    // sample against every registered canvas surface and latches the
-    // owning board for the stroke. Follow-up samples (`Move` / `Up` /
-    // `Cancel`) read that latch rather than re-hit-testing — a stroke
-    // that happens to cross a split-pane divider still belongs to the
-    // pane it started on. `dt` clears on skip so the next real stroke
-    // starts with a fresh baseline.
     match event {
-        PenEvent::Down(sample) => {
-            record_pen_pos(sample.x, sample.y);
-            // Mask gate: a `Down` landing inside any chrome overlay
-            // (palette, zoom HUD, bookmark card, back pill) must not
-            // start a stroke on the canvas underneath. Rects are
-            // published in window coords, same as `sample.x/y`.
-            if crate::ui_mask::contains(sample.x, sample.y) {
-                dt.clear();
-                clear_active_stroke();
-                return;
-            }
-            let Some((board, rect)) = hit_canvas(sample.x, sample.y) else {
-                dt.clear();
-                clear_active_stroke();
-                return;
-            };
-            set_active_stroke(&board, rect);
-            let (lx, ly) = (sample.x - rect.min_x, sample.y - rect.min_y);
-            let d = dt.reset(sample.timestamp_us);
-            let mut point = point_from_sample(&sample, d);
-            point.x = lx;
-            point.y = ly;
-            let mut guard = lock_board(&board);
-            guard.set_pointer(Some((lx, ly)));
-            match guard.input_mode() {
-                // A tap on a bookmark pin opens it; it must not ink a dot.
-                InputMode::Draw
-                    if guard
-                        .bookmark_near_screen(lx, ly, PIN_TAP_RADIUS_PX)
-                        .is_some() => {}
-                InputMode::Draw => guard.begin_screen(point),
-                InputMode::Pan => guard.pan_begin(lx, ly),
-                // Pen is deferred to the sibling overlay; pump is inert.
-                InputMode::Select => {}
-                InputMode::Text => guard.text_press_down(lx, ly),
-                InputMode::Lasso => guard.lasso_down(lx, ly),
-            }
-            drop(guard);
-            mark_pen_seen();
-        }
-        PenEvent::Move(m) => {
-            record_pen_pos(m.sample.x, m.sample.y);
-            let Some((board, rect)) = active_stroke() else {
-                dt.clear();
-                return;
-            };
-            let (lx, ly) = (m.sample.x - rect.min_x, m.sample.y - rect.min_y);
-            let mut guard = lock_board(&board);
-            guard.set_pointer(Some((lx, ly)));
-            match guard.input_mode() {
-                InputMode::Draw => {
-                    let mut points = Vec::with_capacity(m.coalesced.len() + 1);
-                    for c in &m.coalesced {
-                        let d = dt.advance(c.timestamp_us);
-                        let mut p = point_from_sample(c, d);
-                        p.x = c.x - rect.min_x;
-                        p.y = c.y - rect.min_y;
-                        points.push(p);
-                    }
-                    let d = dt.advance(m.sample.timestamp_us);
-                    let mut p = point_from_sample(&m.sample, d);
-                    p.x = lx;
-                    p.y = ly;
-                    points.push(p);
-                    for p in points {
-                        guard.extend_screen(p);
-                    }
-                }
-                InputMode::Pan => {
-                    // Only the final sample's screen position matters —
-                    // intermediate coalesced samples would thrash the
-                    // anchor without changing the net viewport delta.
-                    let _ = dt.advance(m.sample.timestamp_us);
-                    guard.pan_move(lx, ly);
-                }
-                InputMode::Select => {
-                    let _ = dt.advance(m.sample.timestamp_us);
-                }
-                InputMode::Text => {
-                    let _ = dt.advance(m.sample.timestamp_us);
-                    guard.text_press_move(lx, ly);
-                }
-                InputMode::Lasso => {
-                    let _ = dt.advance(m.sample.timestamp_us);
-                    guard.lasso_move(lx, ly);
-                }
-            }
-        }
-        PenEvent::Up(sample) => {
-            record_pen_pos(sample.x, sample.y);
-            let Some((board, rect)) = active_stroke() else {
-                dt.clear();
-                return;
-            };
-            let (lx, ly) = (sample.x - rect.min_x, sample.y - rect.min_y);
-            let d = dt.advance(sample.timestamp_us);
-            {
-                let mut guard = lock_board(&board);
-                guard.set_pointer(Some((lx, ly)));
-                match guard.input_mode() {
-                    InputMode::Draw => {
-                        let mut point = point_from_sample(&sample, d);
-                        point.x = lx;
-                        point.y = ly;
-                        guard.extend_screen(point);
-                        guard.end();
-                    }
-                    InputMode::Pan => {
-                        guard.pan_move(lx, ly);
-                        guard.pan_end();
-                    }
-                    InputMode::Select => {}
-                    InputMode::Text => guard.text_press_up(lx, ly),
-                    InputMode::Lasso => {
-                        guard.lasso_move(lx, ly);
-                        guard.lasso_up();
-                    }
-                }
-            }
-            dt.clear();
-            clear_active_stroke();
-        }
-        PenEvent::Cancel(_) => {
-            clear_pen_pos();
-            if let Some((board, _)) = active_stroke() {
-                let mut guard = lock_board(&board);
-                guard.set_pointer(None);
-                match guard.input_mode() {
-                    InputMode::Draw => guard.cancel(),
-                    InputMode::Pan => guard.pan_end(),
-                    InputMode::Select => {}
-                    InputMode::Text => guard.text_press_cancel(),
-                    InputMode::Lasso => guard.lasso_cancel(),
-                }
-            }
-            dt.clear();
-            clear_active_stroke();
-        }
+        PenEvent::Down(sample) => pen_down(&sample, dt),
+        PenEvent::Move(m) => pen_move(&m, dt),
+        PenEvent::Up(sample) => pen_up(&sample, dt),
+        PenEvent::Cancel(_) => pen_cancel(dt),
         PenEvent::ButtonChanged(_) => {}
         PenEvent::Gesture(_) => shortcut(),
     }
+}
+
+/// `sample` in the surface's coordinates.
+fn local_point(sample: &PenSample, rect: SurfaceRect, dt_us: u16) -> InkPoint {
+    let mut point = point_from_sample(sample, dt_us);
+    point.x = sample.x - rect.min_x;
+    point.y = sample.y - rect.min_y;
+    point
+}
+
+fn pen_down(sample: &PenSample, dt: &mut DtTracker) {
+    record_pen_pos(sample.x, sample.y);
+    // A press on chrome over the canvas (dock, zoom, cards) does not
+    // start a stroke underneath.
+    let target = (!crate::ui_mask::contains(sample.x, sample.y))
+        .then(|| hit_canvas(sample.x, sample.y))
+        .flatten();
+    let Some((board, rect)) = target else {
+        dt.clear();
+        clear_active_stroke();
+        return;
+    };
+    set_active_stroke(&board, rect);
+    let point = local_point(sample, rect, dt.reset(sample.timestamp_us));
+    let (lx, ly) = (point.x, point.y);
+    let mut guard = lock_board(&board);
+    guard.set_pointer(Some((lx, ly)));
+    match guard.input_mode() {
+        // A tap on a bookmark pin opens it; it must not ink a dot.
+        InputMode::Draw if guard.bookmark_near_screen(lx, ly, PIN_TAP_RADIUS_PX).is_some() => {}
+        InputMode::Draw => guard.begin_screen(point),
+        InputMode::Pan => guard.pan_begin(lx, ly),
+        // The selection overlay takes the pen in select mode.
+        InputMode::Select => {}
+        InputMode::Text => guard.text_press_down(lx, ly),
+        InputMode::Lasso => guard.lasso_down(lx, ly),
+    }
+    drop(guard);
+    mark_pen_seen();
+}
+
+fn pen_move(m: &istmo_pen::PenMove, dt: &mut DtTracker) {
+    record_pen_pos(m.sample.x, m.sample.y);
+    let Some((board, rect)) = active_stroke() else {
+        dt.clear();
+        return;
+    };
+    let (lx, ly) = (m.sample.x - rect.min_x, m.sample.y - rect.min_y);
+    let mut guard = lock_board(&board);
+    guard.set_pointer(Some((lx, ly)));
+    if guard.input_mode() == InputMode::Draw {
+        // Every coalesced sample inks; the others only need the last.
+        for c in &m.coalesced {
+            let d = dt.advance(c.timestamp_us);
+            guard.extend_screen(local_point(c, rect, d));
+        }
+        let d = dt.advance(m.sample.timestamp_us);
+        guard.extend_screen(local_point(&m.sample, rect, d));
+        return;
+    }
+    dt.advance(m.sample.timestamp_us);
+    match guard.input_mode() {
+        InputMode::Pan => guard.pan_move(lx, ly),
+        InputMode::Text => guard.text_press_move(lx, ly),
+        InputMode::Lasso => guard.lasso_move(lx, ly),
+        InputMode::Draw | InputMode::Select => {}
+    }
+}
+
+fn pen_up(sample: &PenSample, dt: &mut DtTracker) {
+    record_pen_pos(sample.x, sample.y);
+    let Some((board, rect)) = active_stroke() else {
+        dt.clear();
+        return;
+    };
+    let point = local_point(sample, rect, dt.advance(sample.timestamp_us));
+    let (lx, ly) = (point.x, point.y);
+    {
+        let mut guard = lock_board(&board);
+        guard.set_pointer(Some((lx, ly)));
+        match guard.input_mode() {
+            InputMode::Draw => {
+                guard.extend_screen(point);
+                guard.end();
+            }
+            InputMode::Pan => {
+                guard.pan_move(lx, ly);
+                guard.pan_end();
+            }
+            InputMode::Select => {}
+            InputMode::Text => guard.text_press_up(lx, ly),
+            InputMode::Lasso => {
+                guard.lasso_move(lx, ly);
+                guard.lasso_up();
+            }
+        }
+    }
+    dt.clear();
+    clear_active_stroke();
+}
+
+/// The platform cancelled the contact: drop what was in progress.
+fn pen_cancel(dt: &mut DtTracker) {
+    clear_pen_pos();
+    if let Some((board, _)) = active_stroke() {
+        let mut guard = lock_board(&board);
+        guard.set_pointer(None);
+        match guard.input_mode() {
+            InputMode::Draw => guard.cancel(),
+            InputMode::Pan => guard.pan_end(),
+            InputMode::Select => {}
+            InputMode::Text => guard.text_press_cancel(),
+            InputMode::Lasso => guard.lasso_cancel(),
+        }
+    }
+    dt.clear();
+    clear_active_stroke();
 }
 
 fn lock_board(board: &Arc<Mutex<Board>>) -> std::sync::MutexGuard<'_, Board> {
