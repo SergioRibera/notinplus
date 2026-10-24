@@ -33,7 +33,7 @@ impl LibraryView {
     /// The view installed by [`use_library_root`].
     #[must_use]
     pub fn get() -> Self {
-        consume_context::<Self>()
+        consume_root_context::<Self>()
     }
 
     /// Current state; subscribes the caller.
@@ -62,7 +62,7 @@ pub fn use_library_root() -> LibraryView {
     let state = use_state(|| LibraryState::Loading);
     let view = use_hook(|| {
         let view = LibraryView { state };
-        provide_context(view);
+        provide_context_for_scope_id(view, ScopeId::ROOT);
         view
     });
     use_hook(move || {

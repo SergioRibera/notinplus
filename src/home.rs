@@ -1242,7 +1242,7 @@ pub(crate) async fn export_selection_via_picker(
         }
     };
     let lib = handle.lock().await;
-    if let Err(err) = crate::bundle::write_bundle(writer, &lib, &selection, options) {
+    if let Err(err) = crate::bundle::write_bundle(writer, &lib, &selection, options, "", |_| {}) {
         log::error!("export bundle: {err}");
     } else {
         log::info!("bundle exported to {}", owned.display_name);

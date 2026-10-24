@@ -34,13 +34,15 @@ pub fn canvas(doc: &Doc, paper: [u8; 4]) -> Option<Vec<u8>> {
     let (x0, y0, x1, y1) = bounds?;
     #[allow(clippy::cast_precision_loss)] // small fixed sizes
     let (w, h) = (WIDTH as f32, HEIGHT as f32);
-    let content_w = (x1 - x0).max(1.0);
-    let scale = ((w - MARGIN * 2.0) / content_w).min(2.0).max(0.05);
+    let content = ((x1 - x0).max(1.0), (y1 - y0).max(1.0));
+    let scale = ((w - MARGIN * 2.0) / content.0)
+        .min((h - MARGIN * 2.0) / content.1)
+        .clamp(0.05, 2.0);
     let mut surface = raster_n32_premul((WIDTH, HEIGHT))?;
     let sk = surface.canvas();
     sk.clear(SkColor::from_argb(paper[3], paper[0], paper[1], paper[2]));
     sk.save();
-    sk.translate((MARGIN - x0 * scale, MARGIN - y0 * scale.min(h)));
+    sk.translate((MARGIN - x0 * scale, MARGIN - y0 * scale));
     sk.scale((scale, scale));
     let registry = BrushRegistry::default();
     for layer in doc.layers.iter().filter(|l| l.visible) {
@@ -78,7 +80,7 @@ pub fn pdf(pdf: &freya_pdf::PdfDocument) -> Option<Vec<u8>> {
         None,
     );
     let row = usize::try_from(w).ok()? * 4;
-    let image = SkImage::from_raster_data(&info, SkData::new_copy(&rgba), row)?;
+    let image = freya_engine::prelude::raster_from_data(&info, SkData::new_copy(&rgba), row)?;
     encode(&image)
 }
 

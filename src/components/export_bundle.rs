@@ -147,6 +147,7 @@ impl Component for ExportBundleSheet {
                     options: ExportOptions {
                         include_attachments: *include.read(),
                         include_external_links: *include_external_links.read(),
+                        ..ExportOptions::default()
                     },
                 });
                 ModalController::get().close();

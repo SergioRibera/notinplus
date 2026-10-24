@@ -321,6 +321,7 @@ impl Component for AppShell {
         let area = use_state(Area::default);
         let settings = crate::settings::use_settings_root();
         crate::state::use_library_root();
+        crate::screens::home::use_browse_root();
         crate::plugins::host::use_host_pump();
         use_hook(move || {
             crate::plugins::content::index_library();

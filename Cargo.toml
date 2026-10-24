@@ -64,6 +64,7 @@ notein-bible = { path = "crates/notein-bible", features = ["ui", "importer"] }
 notein-notes = { path = "crates/notein-notes" }
 notein-handwriting = { path = "crates/notein-handwriting" }
 loro = "1.16.2"
+zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 
 [target.'cfg(target_os = "android")'.dependencies]

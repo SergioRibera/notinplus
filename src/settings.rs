@@ -308,13 +308,13 @@ impl SettingsStore {
     /// The store installed by [`use_settings_root`].
     #[must_use]
     pub fn get() -> Self {
-        consume_context::<Self>()
+        consume_root_context::<Self>()
     }
 
     /// The store, when called inside the app.
     #[must_use]
     pub fn try_get() -> Option<Self> {
-        try_consume_context::<Self>()
+        try_consume_root_context::<Self>()
     }
 
     /// Current settings; subscribes the caller.
@@ -340,7 +340,7 @@ pub fn use_settings_root() -> SettingsStore {
     let theme = notein_ui_kit::theme::use_theme_root(move || state.peek().appearance.into());
     use_hook(move || {
         let store = SettingsStore { state, theme };
-        provide_context(store);
+        provide_context_for_scope_id(store, ScopeId::ROOT);
         store
     })
 }

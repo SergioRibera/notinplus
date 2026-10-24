@@ -26,6 +26,7 @@ use bincode::config::{self, Configuration};
 use crate::bookmark::SourceRef;
 use crate::doc::Doc;
 use crate::library::{
+    LibraryData,
     DocKind, Folder, FolderId, Item, ItemId, Library, LibraryError, Link, LinkIndex, LinkKind,
     PaneTab, Tag, TagId, Workspace, WorkspaceId, bodies, refs,
 };
@@ -36,11 +37,12 @@ const CODEC: Configuration = config::standard();
 /// Schema version carried in [`BundleManifest::version`]. Bumped on any
 /// breaking payload change — the reader rejects unknown versions so a
 /// future bundle can't be misinterpreted by an older build.
-pub const BUNDLE_VERSION: u32 = 2;
+pub const BUNDLE_VERSION: u32 = 3;
 
 const MANIFEST_ENTRY: &str = "manifest.bin";
 const DOCS_PREFIX: &str = "docs/";
 const PDFS_PREFIX: &str = "pdfs/";
+const SNAPSHOTS_PREFIX: &str = "snapshots/";
 const DOC_EXT: &str = "bin";
 const PDF_EXT: &str = "pdf";
 const ZSTD_LEVEL: i32 = 3;
@@ -66,6 +68,11 @@ pub struct ExportOptions {
     /// and show up as unavailable on the receiving side. When `false`
     /// only links between bundled items are written.
     pub include_external_links: bool,
+    /// Mesas travel with their documents.
+    pub include_workspaces: bool,
+    /// Bookmarks and highlights stay in the documents. Off strips them
+    /// from the copy (the library keeps them).
+    pub include_marks: bool,
 }
 
 impl Default for ExportOptions {
@@ -73,6 +80,8 @@ impl Default for ExportOptions {
         Self {
             include_attachments: true,
             include_external_links: false,
+            include_workspaces: true,
+            include_marks: true,
         }
     }
 }
@@ -103,6 +112,8 @@ pub struct ExportPreview {
 pub struct BundleManifest {
     pub version: u32,
     pub exported_at_ms: u64,
+    /// Device that made the copy.
+    pub exported_by: String,
     /// Distinct `SourceRef::Plugin::plugin_id` values the bookmarks
     /// inside the bundle reference. Importers cross-check against the
     /// live [`PluginRegistry`] and warn when any entry is unknown.
@@ -123,6 +134,7 @@ impl bincode::Encode for BundleManifest {
     ) -> core::result::Result<(), bincode::error::EncodeError> {
         self.version.encode(encoder)?;
         self.exported_at_ms.encode(encoder)?;
+        self.exported_by.encode(encoder)?;
         self.requires_plugins.encode(encoder)?;
         self.folders.encode(encoder)?;
         self.items.encode(encoder)?;
@@ -140,6 +152,7 @@ impl<Ctx> bincode::Decode<Ctx> for BundleManifest {
         Ok(Self {
             version: bincode::Decode::decode(decoder)?,
             exported_at_ms: bincode::Decode::decode(decoder)?,
+            exported_by: bincode::Decode::decode(decoder)?,
             requires_plugins: bincode::Decode::decode(decoder)?,
             folders: bincode::Decode::decode(decoder)?,
             items: bincode::Decode::decode(decoder)?,
@@ -217,12 +230,18 @@ type Result<T> = core::result::Result<T, BundleError>;
 /// [`BundleError`].
 pub fn write_bundle<W: Write>(
     sink: W,
-    lib: &Library,
+    lib: &LibraryData,
     selection: &ExportSelection,
     options: ExportOptions,
+    exported_by: &str,
+    mut progress: impl FnMut(usize),
 ) -> Result<()> {
     let plan = plan_export(lib, selection, false)?;
-    let manifest = build_manifest(lib, &plan, options.include_external_links)?;
+    let mut manifest = build_manifest(lib, &plan, options.include_external_links)?;
+    manifest.exported_by = exported_by.to_owned();
+    if !options.include_workspaces {
+        manifest.workspaces.clear();
+    }
 
     let encoder = zstd::stream::write::Encoder::new(sink, ZSTD_LEVEL)?.auto_finish();
     let mut tar = tar::Builder::new(encoder);
@@ -232,10 +251,25 @@ pub fn write_bundle<W: Write>(
         bincode::encode_to_vec(&manifest, CODEC).map_err(|e| BundleError::Codec(e.to_string()))?;
     append_file(&mut tar, MANIFEST_ENTRY, &manifest_bytes)?;
 
-    for item in &manifest.items {
+    for (done, item) in manifest.items.iter().enumerate() {
+        progress(done);
         if let Some(doc_bytes) = read_doc_bytes(item.id) {
+            let doc_bytes = if options.include_marks {
+                doc_bytes
+            } else {
+                strip_doc_marks(&doc_bytes)
+            };
             let path = format!("{DOCS_PREFIX}{}.{DOC_EXT}", item.id);
             append_file(&mut tar, &path, &doc_bytes)?;
+        }
+        if let Ok(Some(snapshot)) = bodies::read_plugin_snapshot(item.id, &item.kind.plugin_id) {
+            let snapshot = if options.include_marks {
+                snapshot
+            } else {
+                strip_snapshot_marks(&item.kind.plugin_id, snapshot)
+            };
+            let path = format!("{SNAPSHOTS_PREFIX}{}.{DOC_EXT}", item.id);
+            append_file(&mut tar, &path, &snapshot)?;
         }
         if options.include_attachments && item_carries_pdf(&item.kind) {
             if let Ok(pdf_bytes) = bodies::read_pdf(item.id) {
@@ -256,12 +290,12 @@ pub fn write_bundle<W: Write>(
 /// See [`write_bundle`].
 pub fn write_bundle_to_path(
     dest: &Path,
-    lib: &Library,
+    lib: &LibraryData,
     selection: &ExportSelection,
     options: ExportOptions,
 ) -> Result<()> {
     let file = File::create(dest)?;
-    write_bundle(file, lib, selection, options)
+    write_bundle(file, lib, selection, options, "", |_| {})
 }
 
 /// Decoded bundle payload. Lives entirely in memory — the on-disk
@@ -271,6 +305,8 @@ pub struct ParsedBundle {
     pub manifest: BundleManifest,
     pub docs: HashMap<ItemId, Vec<u8>>,
     pub pdfs: HashMap<ItemId, Vec<u8>>,
+    /// Plugin content of each item (its kind's snapshot).
+    pub snapshots: HashMap<ItemId, Vec<u8>>,
 }
 
 /// Preflight outcome. The caller refuses to merge when `collisions` is
@@ -306,6 +342,7 @@ pub fn parse_bundle<R: Read>(src: R) -> Result<ParsedBundle> {
     let mut manifest: Option<BundleManifest> = None;
     let mut docs: HashMap<ItemId, Vec<u8>> = HashMap::new();
     let mut pdfs: HashMap<ItemId, Vec<u8>> = HashMap::new();
+    let mut snapshots: HashMap<ItemId, Vec<u8>> = HashMap::new();
 
     for entry in archive.entries()? {
         let mut entry = entry?;
@@ -331,6 +368,10 @@ pub fn parse_bundle<R: Read>(src: R) -> Result<ParsedBundle> {
             if let Some(id) = parse_id::<ItemId>(rest, PDF_EXT) {
                 pdfs.insert(id, buf);
             }
+        } else if let Some(rest) = name.strip_prefix(SNAPSHOTS_PREFIX)
+            && let Some(id) = parse_id::<ItemId>(rest, DOC_EXT)
+        {
+            snapshots.insert(id, buf);
         }
     }
 
@@ -339,6 +380,7 @@ pub fn parse_bundle<R: Read>(src: R) -> Result<ParsedBundle> {
         manifest,
         docs,
         pdfs,
+        snapshots,
     })
 }
 
@@ -356,7 +398,7 @@ impl ParsedBundle {
     /// registry. Collisions mean "cancel". Missing plugins mean "warn
     /// but keep going".
     #[must_use]
-    pub fn preflight(&self, lib: &Library, registry: &PluginRegistry) -> Preflight {
+    pub fn preflight(&self, lib: &LibraryData, registry: &PluginRegistry) -> Preflight {
         let mut out = Preflight::default();
         for item in &self.manifest.items {
             if lib.item(item.id).is_some() {
@@ -419,7 +461,7 @@ struct ExportPlan {
 /// [`BundleError::MissingItem`] / [`BundleError::MissingFolder`] /
 /// [`BundleError::MissingWorkspace`] when `selection` names an id the
 /// library does not know.
-pub fn preview_export(lib: &Library, selection: &ExportSelection) -> Result<ExportPreview> {
+pub fn preview_export(lib: &LibraryData, selection: &ExportSelection) -> Result<ExportPreview> {
     let plan = plan_export(lib, selection, true)?;
     let manifest = build_manifest(lib, &plan, false)?;
     let in_bundle: HashSet<ItemId> = plan.item_ids.iter().copied().collect();
@@ -445,7 +487,7 @@ pub fn preview_export(lib: &Library, selection: &ExportSelection) -> Result<Expo
 /// Items one hop away from `in_bundle` through `neighbours`, in
 /// library order, that are not bundled yet.
 fn extra_items(
-    lib: &Library,
+    lib: &LibraryData,
     in_bundle: &HashSet<ItemId>,
     neighbours: impl Fn(ItemId) -> Vec<ItemId>,
 ) -> Vec<Item> {
@@ -470,7 +512,7 @@ fn extra_items(
 /// plan; the writer passes `false` because its selection is already
 /// the user-trimmed final list.
 fn plan_export(
-    lib: &Library,
+    lib: &LibraryData,
     selection: &ExportSelection,
     with_notebooks: bool,
 ) -> Result<ExportPlan> {
@@ -548,7 +590,7 @@ fn expand_notebooks(items: &mut HashSet<ItemId>, links: &LinkIndex) {
 }
 
 fn build_manifest(
-    lib: &Library,
+    lib: &LibraryData,
     plan: &ExportPlan,
     include_external_links: bool,
 ) -> Result<BundleManifest> {
@@ -587,6 +629,7 @@ fn build_manifest(
 
     let mut requires_plugins: HashSet<String> = HashSet::new();
     for item in &items {
+        requires_plugins.insert(item.kind.plugin_id.clone());
         if let Some(doc) = load_doc_opt(item.id) {
             for bm in doc.bookmarks() {
                 for r in &bm.refs {
@@ -618,6 +661,7 @@ fn build_manifest(
     Ok(BundleManifest {
         version: BUNDLE_VERSION,
         exported_at_ms: now_ms(),
+        exported_by: String::new(),
         requires_plugins,
         folders,
         items,
@@ -625,6 +669,42 @@ fn build_manifest(
         workspaces,
         links,
     })
+}
+
+/// Ink document bytes with every bookmark removed.
+fn strip_doc_marks(bytes: &[u8]) -> Vec<u8> {
+    let Ok(mut doc) = crate::doc::Doc::from_snapshot(bytes) else {
+        return bytes.to_vec();
+    };
+    let ids: Vec<_> = doc.bookmarks().iter().map(|b| b.id).collect();
+    for id in ids {
+        doc.emit(crate::doc_op::DocOp::DeleteBookmark { id });
+    }
+    doc.snapshot_bytes().unwrap_or_else(|_| bytes.to_vec())
+}
+
+/// A kind snapshot with its highlights and marks removed.
+fn strip_snapshot_marks(kind: &str, snapshot: Vec<u8>) -> Vec<u8> {
+    use notein_plugin::payload::Payload;
+    match kind {
+        notein_bible::kind::KIND => notein_bible::BibleContent::from_bytes(&snapshot).map_or(snapshot, |mut c| {
+            c.highlights.clear();
+            c.to_bytes()
+        }),
+        crate::plugins::builtin::pdf::KIND => {
+            crate::plugins::builtin::pdf::PdfContent::from_bytes(&snapshot).map_or(snapshot, |mut c| {
+                c.marks.clear();
+                c.to_bytes()
+            })
+        }
+        crate::plugins::builtin::canvas::KIND => {
+            crate::plugins::builtin::canvas::CanvasContent::from_bytes(&snapshot).map_or(snapshot, |mut c| {
+                c.marks.clear();
+                c.to_bytes()
+            })
+        }
+        _ => snapshot,
+    }
 }
 
 fn append_file<W: Write>(tar: &mut tar::Builder<W>, name: &str, bytes: &[u8]) -> Result<()> {
@@ -672,6 +752,7 @@ mod tests {
             manifest: BundleManifest {
                 version: BUNDLE_VERSION,
                 exported_at_ms: 0,
+                exported_by: String::new(),
                 requires_plugins: vec!["io.notein.pdf".into()],
                 folders: Vec::new(),
                 items: vec![Item {
@@ -693,6 +774,7 @@ mod tests {
             },
             docs: HashMap::new(),
             pdfs: HashMap::new(),
+            snapshots: HashMap::new(),
         };
         assert_eq!(bundle.manifest.items[0].id, item);
         assert_eq!(bundle.manifest.requires_plugins.len(), 1);
@@ -711,6 +793,7 @@ mod tests {
         let manifest = BundleManifest {
             version: BUNDLE_VERSION,
             exported_at_ms: 42,
+            exported_by: String::new(),
             requires_plugins: vec!["io.notein.pdf".into(), "org.user.quran".into()],
             folders: Vec::new(),
             items: Vec::new(),
@@ -729,6 +812,7 @@ mod tests {
         let manifest = BundleManifest {
             version: BUNDLE_VERSION,
             exported_at_ms: 7,
+            exported_by: String::new(),
             requires_plugins: vec!["io.notein.pdf".into()],
             folders: Vec::new(),
             items: Vec::new(),
@@ -787,6 +871,7 @@ mod closure_tests {
         let manifest = BundleManifest {
             version: BUNDLE_VERSION,
             exported_at_ms: 1,
+            exported_by: String::new(),
             requires_plugins: Vec::new(),
             folders: Vec::new(),
             items: Vec::new(),

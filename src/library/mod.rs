@@ -23,6 +23,7 @@ pub mod graveyard;
 pub mod index;
 pub mod links;
 pub mod model;
+mod import;
 mod pins;
 pub mod refs;
 pub mod shared;
@@ -49,6 +50,7 @@ pub use self::model::{
 };
 pub use self::refs::{RefEntry, RefOrigin};
 pub use self::shared::{LibHandle, changes, shared, shared_blocking};
+pub use self::import::{Conflict, ImportPlan, ImportReceipt, Resolution, Review};
 pub use self::trash::{
     NotebookFate, TrashEntry, TrashReceipt, TrashedRecord, days_left, retention_millis,
 };
@@ -108,7 +110,12 @@ impl Library {
             bodies::discard_store();
             LibraryIndex::default()
         });
-        let workspaces = index::load_workspaces(&client).await?;
+        let mut workspaces = index::load_workspaces(&client).await?;
+        for workspace in &mut workspaces.workspaces {
+            for pane in workspace.layout.leaves_mut() {
+                pane.tabs.retain(|tab| !matches!(tab.target, TabTarget::Annotation(_)));
+            }
+        }
         let links = index::load_links(&client).await?;
         let mut lib = Self {
             client,
@@ -484,6 +491,33 @@ impl Library {
         item.thumbnail = thumbnail;
         item.updated_at = now;
         self.persist().await
+    }
+
+    /// Copy `id` into the same folder as «Nombre (copia)». Returns the
+    /// new item.
+    ///
+    /// # Errors
+    /// [`LibraryError::NotFound`]; filesystem or persistence errors.
+    pub async fn duplicate_item(&mut self, id: ItemId) -> Result<ItemId> {
+        let source = self
+            .data
+            .index
+            .item(id)
+            .cloned()
+            .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
+        let now = now_millis();
+        let copy = self.data.index.alloc_item_id();
+        bodies::copy_item(id, copy).map_err(LibraryError::from)?;
+        self.data.index.items.push(Item {
+            id: copy,
+            name: format!("{} (copia)", source.name),
+            created_at: now,
+            updated_at: now,
+            trashed: None,
+            ..source
+        });
+        self.persist().await?;
+        Ok(copy)
     }
 
     /// Remove the item and its on-disk bodies.

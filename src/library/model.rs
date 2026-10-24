@@ -711,6 +711,23 @@ impl PaneLayout {
     }
 }
 
+impl PaneLayout {
+    /// Point tabs at new item ids (an imported copy); tabs of items not in
+    /// `ids` close.
+    pub fn retarget_items(&mut self, ids: &std::collections::HashMap<ItemId, ItemId>) {
+        for pane in self.leaves_mut() {
+            pane.tabs.retain_mut(|tab| match tab.target {
+                TabTarget::Item(old) => ids.get(&old).is_some_and(|new| {
+                    tab.target = TabTarget::Item(*new);
+                    true
+                }),
+                TabTarget::Scratch(_) => true,
+                TabTarget::Annotation(_) => false,
+            });
+        }
+    }
+}
+
 impl Default for PaneLayout {
     fn default() -> Self {
         Self::empty()

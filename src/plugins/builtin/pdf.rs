@@ -89,6 +89,12 @@ pub struct PageHits<'a> {
     page: usize,
 }
 
+impl std::fmt::Debug for PageHits<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PageHits").field("needle", &self.needle).finish_non_exhaustive()
+    }
+}
+
 /// Characters of context on each side of a snippet.
 const SNIPPET_CONTEXT: usize = 48;
 

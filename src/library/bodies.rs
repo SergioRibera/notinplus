@@ -280,3 +280,28 @@ fn dir_size(path: &std::path::Path) -> u64 {
         })
         .sum()
 }
+
+/// Copy every on-disk blob of `from` to a fresh item `to`.
+///
+/// # Errors
+/// Filesystem failure.
+pub fn copy_item(from: ItemId, to: ItemId) -> io::Result<()> {
+    fn copy_dir(src: &Path, dst: &Path) -> io::Result<()> {
+        fs::create_dir_all(dst)?;
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            let target = dst.join(entry.file_name());
+            if entry.file_type()?.is_dir() {
+                copy_dir(&entry.path(), &target)?;
+            } else {
+                fs::copy(entry.path(), target)?;
+            }
+        }
+        Ok(())
+    }
+    let src = item_root(from);
+    if !src.exists() {
+        return Ok(());
+    }
+    copy_dir(&src, &item_root(to))
+}
