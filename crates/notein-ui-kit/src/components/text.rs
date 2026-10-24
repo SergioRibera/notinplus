@@ -136,6 +136,10 @@ impl Component for Text {
                 l.max_lines(n).text_overflow(TextOverflow::Ellipsis)
             })
             .map(self.align, Label::text_align)
+            // An alignment only shows across the whole width.
+            .maybe(self.align.is_some() && !self.fill, |l| {
+                l.width(Size::fill())
+            })
             .maybe(self.fill, |l| l.width(Size::flex(1.0)))
     }
 }
