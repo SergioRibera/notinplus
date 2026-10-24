@@ -685,6 +685,7 @@ mod tests {
                     created_at: 0,
                     updated_at: 0,
                     thumbnail: None,
+                    trashed: None,
                 }],
                 tags: Vec::new(),
                 workspaces: Vec::new(),

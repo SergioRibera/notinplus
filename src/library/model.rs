@@ -13,7 +13,7 @@ pub const ROOT_FOLDER: FolderId = FolderId([0u8; 16]);
 
 /// Schema version encoded into the index blob. Bump on any breaking
 /// change to the surrounding types.
-pub const INDEX_VERSION: u32 = 3;
+pub const INDEX_VERSION: u32 = 4;
 
 macro_rules! uuid_newtype {
     ($(#[$meta:meta])* $name:ident) => {
@@ -152,6 +152,20 @@ pub enum BackgroundStyle {
     DotGrid,
 }
 
+/// When and from where something was moved to the trash.
+#[istmo::message]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Trashed {
+    /// Unix millis of the move.
+    pub at: u64,
+    /// Folder it lived in; restoring puts it back there, or at the
+    /// root when that folder is gone.
+    pub from: FolderId,
+    /// Shared by everything trashed by one action (a folder and its
+    /// content, a document and its notebooks) so they restore together.
+    pub batch: u64,
+}
+
 /// User-defined tag. Colour is chosen at creation time and can be
 /// updated independently of the name.
 #[istmo::message]
@@ -175,6 +189,8 @@ pub struct Folder {
     pub tags: Vec<TagId>,
     pub created_at: u64,
     pub updated_at: u64,
+    /// `Some` while the folder sits in the trash.
+    pub trashed: Option<Trashed>,
 }
 
 /// Item metadata. The corresponding doc body lives on disk at
@@ -195,6 +211,8 @@ pub struct Item {
     /// Optional PNG thumbnail bytes. Populated by the UI layer when it
     /// re-renders a preview; the library never generates one itself.
     pub thumbnail: Option<Vec<u8>>,
+    /// `Some` while the item sits in the trash.
+    pub trashed: Option<Trashed>,
 }
 
 /// One open tab inside a pane. Names what it shows via [`TabTarget`];
@@ -701,6 +719,11 @@ impl Default for PaneLayout {
 pub struct Workspace {
     pub id: WorkspaceId,
     pub name: String,
+    /// The user typed `name`. Until then the shell derives it from the
+    /// documents open in the mesa.
+    pub named: bool,
+    /// Shown first in Home.
+    pub pinned: bool,
     pub color: Option<Rgba>,
     pub layout: PaneLayout,
     /// Which leaf has keyboard / input focus. The shell clamps on
@@ -730,6 +753,8 @@ impl Workspace {
         Self {
             id,
             name,
+            named: false,
+            pinned: false,
             color,
             layout: PaneLayout::leaf(root),
             focused_pane: Some(root),
@@ -786,7 +811,7 @@ impl WorkspaceIndex {
 
 /// Schema version for [`WorkspaceIndex`]. Bump on any breaking change
 /// to the surrounding types.
-pub const WORKSPACE_INDEX_VERSION: u32 = 3;
+pub const WORKSPACE_INDEX_VERSION: u32 = 4;
 
 /// The single blob persisted under `library.index.v2` in data-store.
 ///
@@ -801,6 +826,8 @@ pub struct LibraryIndex {
     pub folders: Vec<Folder>,
     pub items: Vec<Item>,
     pub tags: Vec<Tag>,
+    /// Pinned items, in the order Home shows them.
+    pub pins: Vec<ItemId>,
 }
 
 impl Default for LibraryIndex {
@@ -810,6 +837,7 @@ impl Default for LibraryIndex {
             folders: Vec::new(),
             items: Vec::new(),
             tags: Vec::new(),
+            pins: Vec::new(),
         }
     }
 }

@@ -260,3 +260,23 @@ fn write_blob(dest: &Path, bytes: &[u8]) -> Result<()> {
     fs::rename(&tmp, dest)?;
     Ok(())
 }
+
+/// Bytes `id` occupies on disk (body, PDF, plugin snapshots, views).
+#[must_use]
+pub fn disk_usage(id: ItemId) -> u64 {
+    dir_size(&item_root(id))
+}
+
+fn dir_size(path: &std::path::Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return std::fs::metadata(path).map_or(0, |m| m.len());
+    };
+    entries
+        .filter_map(std::result::Result::ok)
+        .map(|entry| match entry.file_type() {
+            Ok(kind) if kind.is_dir() => dir_size(&entry.path()),
+            Ok(_) => entry.metadata().map_or(0, |m| m.len()),
+            Err(_) => 0,
+        })
+        .sum()
+}

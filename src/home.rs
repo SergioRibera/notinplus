@@ -937,7 +937,7 @@ impl Component for FolderCard {
                             let handle = handle.clone();
                             spawn_forever(async move {
                                 let mut lib = handle.lock().await;
-                                if let Err(err) = lib.delete_folder(id).await {
+                                if let Err(err) = lib.trash_folder(id).await {
                                     log::error!("delete_folder: {err}");
                                 }
                                 snap.set(Some(lib.index().clone()));
@@ -1421,12 +1421,12 @@ fn ask_delete_item(
                 let handle = handle.clone();
                 spawn_forever(async move {
                     let mut lib = handle.lock().await;
-                    for extra in also {
-                        if let Err(err) = lib.delete_item(extra).await {
-                            log::error!("delete_item (notebook): {err}");
-                        }
-                    }
-                    if let Err(err) = lib.delete_item(id).await {
+                    let fate = if also.is_empty() {
+                        crate::library::NotebookFate::Keep
+                    } else {
+                        crate::library::NotebookFate::Trash
+                    };
+                    if let Err(err) = lib.trash_items(&[id], fate).await {
                         log::error!("delete_item: {err}");
                     }
                     snap.set(Some(lib.index().clone()));

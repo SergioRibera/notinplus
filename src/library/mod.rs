@@ -25,6 +25,8 @@ pub mod links;
 pub mod model;
 pub mod refs;
 pub mod sync;
+mod pins;
+mod trash;
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -41,10 +43,13 @@ pub use self::links::{Link, LinkIndex, LinkKind};
 pub use self::model::{
     BackgroundStyle, DocKind, Folder, FolderId, INDEX_VERSION, Item, ItemId, LibraryIndex, LinkId,
     Pane, PaneId, PaneLayout, PaneTab, ROOT_FOLDER, Rgba, ScratchId, SplitOrientation, SplitSide,
-    TabTarget, Tag, TagId, ViewSlot, WORKSPACE_INDEX_VERSION, Workspace, WorkspaceId,
+    TabTarget, Tag, TagId, Trashed, ViewSlot, WORKSPACE_INDEX_VERSION, Workspace, WorkspaceId,
     WorkspaceIndex,
 };
 pub use self::refs::{RefEntry, RefOrigin};
+pub use self::trash::{
+    NotebookFate, TrashEntry, TrashReceipt, TrashedRecord, days_left, retention_millis,
+};
 
 use crate::doc::Doc;
 
@@ -125,7 +130,7 @@ impl Library {
             }
             return Ok(());
         }
-        self.create_workspace("Workspace 1", None).await?;
+        self.create_workspace("", None).await?;
         Ok(())
     }
 
@@ -146,7 +151,7 @@ impl Library {
         self.index
             .folders
             .iter()
-            .filter(|f| f.parent == parent)
+            .filter(|f| f.parent == parent && f.trashed.is_none())
             .collect()
     }
 
@@ -156,7 +161,7 @@ impl Library {
         self.index
             .items
             .iter()
-            .filter(|i| i.folder == folder)
+            .filter(|i| i.folder == folder && i.trashed.is_none())
             .collect()
     }
 
@@ -166,7 +171,7 @@ impl Library {
         self.index
             .items
             .iter()
-            .filter(|i| i.tags.contains(&tag))
+            .filter(|i| i.tags.contains(&tag) && i.trashed.is_none())
             .collect()
     }
 
@@ -176,8 +181,18 @@ impl Library {
         self.index
             .folders
             .iter()
-            .filter(|f| f.tags.contains(&tag))
+            .filter(|f| f.tags.contains(&tag) && f.trashed.is_none())
             .collect()
+    }
+
+    /// Every item outside the trash.
+    pub fn live_items(&self) -> impl Iterator<Item = &Item> {
+        self.index.items.iter().filter(|i| i.trashed.is_none())
+    }
+
+    /// Every folder outside the trash.
+    pub fn live_folders(&self) -> impl Iterator<Item = &Folder> {
+        self.index.folders.iter().filter(|f| f.trashed.is_none())
     }
 
     /// Every tag the user has defined.
@@ -238,6 +253,7 @@ impl Library {
             tags,
             created_at: now,
             updated_at: now,
+            trashed: None,
         });
         self.persist().await?;
         Ok(id)
@@ -337,7 +353,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`] / [`LibraryError::RootImmutable`].
-    pub async fn delete_folder(&mut self, id: FolderId) -> Result<()> {
+    pub async fn purge_folder(&mut self, id: FolderId) -> Result<()> {
         Self::reject_root(id)?;
         if self.index.folder(id).is_none() {
             return Err(LibraryError::NotFound(NotFoundKind::Folder(id)));
@@ -408,6 +424,7 @@ impl Library {
             created_at: now,
             updated_at: now,
             thumbnail: None,
+            trashed: None,
         });
         self.persist().await?;
         Ok(id)
@@ -521,7 +538,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`].
-    pub async fn delete_item(&mut self, id: ItemId) -> Result<()> {
+    pub async fn purge_item(&mut self, id: ItemId) -> Result<()> {
         let before = self.index.items.len();
         self.index.items.retain(|i| i.id != id);
         if self.index.items.len() == before {
@@ -813,9 +830,9 @@ impl Library {
     ) -> Result<WorkspaceId> {
         let now = now_millis();
         let id = self.workspaces.alloc_workspace_id();
-        self.workspaces
-            .workspaces
-            .push(Workspace::fresh(id, name.to_owned(), color, now));
+        let mut workspace = Workspace::fresh(id, name.trim().to_owned(), color, now);
+        workspace.named = !workspace.name.is_empty();
+        self.workspaces.workspaces.push(workspace);
         if self.workspaces.active.is_none() {
             self.workspaces.active = Some(id);
         }
@@ -837,6 +854,8 @@ impl Library {
         let copy = Workspace {
             id: self.workspaces.alloc_workspace_id(),
             name: format!("Copia de {}", source.name),
+            named: true,
+            pinned: false,
             color: source.color,
             layout: source.layout.clone(),
             focused_pane: source.focused_pane,
@@ -857,9 +876,52 @@ impl Library {
             .workspaces
             .workspace_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(id)))?;
-        name.clone_into(&mut w.name);
+        name.trim().clone_into(&mut w.name);
+        w.named = !w.name.is_empty();
         w.updated_at = now;
         self.persist_workspaces().await
+    }
+
+    /// Show (or stop showing) a mesa first in Home.
+    ///
+    /// # Errors
+    /// [`LibraryError::NotFound`]; persistence errors.
+    pub async fn set_workspace_pinned(&mut self, id: WorkspaceId, pinned: bool) -> Result<()> {
+        let now = now_millis();
+        let w = self
+            .workspaces
+            .workspace_mut(id)
+            .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(id)))?;
+        w.pinned = pinned;
+        w.updated_at = now;
+        self.persist_workspaces().await
+    }
+
+    /// Name a mesa shows: what the user typed, or one derived from the
+    /// documents open in it ("Comentario de Romanos y 2 más").
+    #[must_use]
+    pub fn workspace_title(&self, id: WorkspaceId) -> String {
+        let Some(w) = self.workspaces.workspace(id) else {
+            return String::new();
+        };
+        if w.named {
+            return w.name.clone();
+        }
+        let mut names = w
+            .layout
+            .leaves()
+            .into_iter()
+            .flat_map(|pane| pane.tabs.iter())
+            .filter_map(crate::library::PaneTab::item)
+            .filter_map(|item| self.item(item).map(|i| i.name.clone()));
+        match names.next() {
+            None => "Mesa vacía".to_owned(),
+            Some(first) => match names.count() {
+                0 => first,
+                1 => format!("{first} y 1 más"),
+                more => format!("{first} y {more} más"),
+            },
+        }
     }
 
     /// # Errors
@@ -1459,6 +1521,7 @@ mod tests {
             tags: Vec::new(),
             created_at: 0,
             updated_at: 0,
+            trashed: None,
         });
         let b = idx.alloc_folder_id();
         idx.folders.push(Folder {
@@ -1470,6 +1533,7 @@ mod tests {
             tags: Vec::new(),
             created_at: 0,
             updated_at: 0,
+            trashed: None,
         });
         assert!(idx.folder_has_ancestor(b, a));
         assert!(idx.folder_has_ancestor(b, ROOT_FOLDER));
@@ -1497,6 +1561,7 @@ mod tests {
             tags: Vec::new(),
             created_at: 1,
             updated_at: 2,
+            trashed: None,
         });
         let item = idx.alloc_item_id();
         idx.items.push(Item {
@@ -1510,6 +1575,7 @@ mod tests {
             created_at: 3,
             updated_at: 4,
             thumbnail: None,
+            trashed: None,
         });
         let bytes = bincode::encode_to_vec(&idx, config::standard()).unwrap();
         let (decoded, _) =
@@ -1569,6 +1635,8 @@ mod tests {
         idx.workspaces.push(Workspace {
             id: a,
             name: "Draft".into(),
+            named: true,
+            pinned: false,
             color: Some([200, 50, 50, 255]),
             layout,
             focused_pane: Some(right),
