@@ -36,7 +36,8 @@ fn qr_svg(text: &str) -> Option<Bytes> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Devices;
 
-/// A row being edited in place: a field and Guardar.
+/// A row being edited in place: a field and Guardar. Leaving the field
+/// saves too, and the row goes back to reading.
 fn edit_row(
     title: &'static str,
     icon: Bytes,
@@ -46,6 +47,11 @@ fn edit_row(
     mut save: impl FnMut(String) + Clone + 'static,
 ) -> ListRow {
     let mut save_typed = save.clone();
+    let mut save_left = save.clone();
+    let field = field
+        .auto_focus(true)
+        .on_submit(move |typed: String| save_typed(typed))
+        .on_blur(move |()| save_left(text.peek().clone()));
     ListRow::new(title).icon(icon).trailing(Trailing::Element(
         rect()
             .horizontal()
@@ -54,7 +60,7 @@ fn edit_row(
             .child(
                 rect()
                     .width(Size::px(width))
-                    .child(field.auto_focus(true).on_submit(move |typed: String| save_typed(typed))),
+                    .child(field),
             )
             .child(
                 Button::new("Guardar")
@@ -70,6 +76,7 @@ fn edit_row(
 fn this_device(snapshot: &SyncSnapshot, mut renaming: State<bool>, name: State<String>) -> ListRow {
     use freya::icons::lucide;
     if renaming() {
+        let before = snapshot.name.clone();
         return edit_row(
             "Este dispositivo",
             lucide::monitor_smartphone(),
@@ -77,8 +84,9 @@ fn this_device(snapshot: &SyncSnapshot, mut renaming: State<bool>, name: State<S
             name,
             200.0,
             move |text: String| {
-                if !text.trim().is_empty() {
-                    crate::sync::set_device_name(text.trim());
+                let text = text.trim();
+                if !text.is_empty() && text != before {
+                    crate::sync::set_device_name(text);
                 }
                 renaming.set(false);
             },
@@ -163,6 +171,7 @@ fn linked_device(
 fn server_row(snapshot: &SyncSnapshot, mut editing: State<bool>, server: State<String>) -> ListRow {
     use freya::icons::lucide;
     if editing() {
+        let before = snapshot.relay.clone();
         return edit_row(
             "Servidor",
             lucide::server(),
@@ -171,7 +180,10 @@ fn server_row(snapshot: &SyncSnapshot, mut editing: State<bool>, server: State<S
             240.0,
             move |text: String| {
                 let text = text.trim().to_owned();
-                crate::sync::set_relay((!text.is_empty()).then_some(text));
+                let relay = (!text.is_empty()).then_some(text);
+                if relay != before {
+                    crate::sync::set_relay(relay);
+                }
                 editing.set(false);
             },
         );
@@ -319,6 +331,16 @@ impl Component for Pairing {
             .width(Size::fill())
             .padding(20.0)
             .spacing(16.0)
+            .background(p.s2)
+            .border(
+                Border::new()
+                    .fill(p.line_strong)
+                    .width(1.0)
+                    .alignment(BorderAlignment::Inner),
+            )
+            .corner_radius(tokens::radius::SHEET)
+            .shadow(Shadow::new().y(16.0).blur(48.0).color(p.shadow))
+            .a11y_role(AccessibilityRole::Dialog)
             .child(
                 rect()
                     .width(Size::fill())

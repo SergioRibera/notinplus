@@ -24,6 +24,7 @@ pub struct TextField {
     a11y_id: Option<AccessibilityId>,
     on_change: Option<EventHandler<String>>,
     on_submit: Option<EventHandler<String>>,
+    on_blur: Option<EventHandler<()>>,
 }
 
 impl std::fmt::Debug for TextField {
@@ -51,6 +52,7 @@ impl TextField {
             a11y_id: None,
             on_change: None,
             on_submit: None,
+            on_blur: None,
         }
     }
 
@@ -131,6 +133,46 @@ impl TextField {
         self.on_submit = Some(handler.into());
         self
     }
+
+    /// Fires when the field loses focus after having it.
+    #[must_use]
+    pub fn on_blur(mut self, handler: impl Into<EventHandler<()>>) -> Self {
+        self.on_blur = Some(handler.into());
+        self
+    }
+}
+
+impl TextField {
+    /// The caller's error, or the length limit once it is passed.
+    fn shown_error(&self) -> Option<Cow<'static, str>> {
+        self.error.clone().or_else(|| {
+            self.max_len
+                .filter(|max| self.value.read().chars().count() > *max)
+                .map(|max| Cow::Owned(format!("Máximo {max} caracteres")))
+        })
+    }
+}
+
+/// Call `gained` when the field takes focus and `lost` when it lets it
+/// go.
+fn use_focus_edges(
+    focus: Memo<Focus>,
+    gained: Option<EventHandler<()>>,
+    lost: Option<EventHandler<()>>,
+) {
+    let mut was_focused = use_state(|| false);
+    use_side_effect(move || {
+        let now = focus.read().is_focused();
+        let before = *was_focused.peek();
+        if now == before {
+            return;
+        }
+        was_focused.set(now);
+        let edge = if now { &gained } else { &lost };
+        if let Some(handler) = edge {
+            handler.call(());
+        }
+    });
 }
 
 impl Component for TextField {
@@ -140,17 +182,8 @@ impl Component for TextField {
         let a11y_id = self.a11y_id.unwrap_or(own_id);
         let focus = use_focus(a11y_id);
         let focused = focus().is_focused();
-        let too_long = self
-            .max_len
-            .is_some_and(|max| self.value.read().chars().count() > max);
-        let error = self.error.clone().or_else(|| {
-            too_long.then(|| {
-                Cow::Owned(format!(
-                    "Máximo {} caracteres",
-                    self.max_len.unwrap_or_default()
-                ))
-            })
-        });
+        use_focus_edges(focus, None, self.on_blur.clone());
+        let error = self.shown_error();
         let border = if error.is_some() {
             Some((p.danger, 2.0))
         } else if focused {
@@ -343,19 +376,7 @@ impl Component for SearchField {
         let a11y_id = self.a11y_id.unwrap_or(own_id);
         let focus = use_focus(a11y_id);
         let focused = focus().is_focused();
-        let mut was_focused = use_state(|| false);
-        let on_focus = self.on_focus.clone();
-        use_side_effect(move || {
-            let now = focus().is_focused();
-            if now && !*was_focused.peek() {
-                if let Some(handler) = &on_focus {
-                    handler.call(());
-                }
-            }
-            if now != *was_focused.peek() {
-                was_focused.set(now);
-            }
-        });
+        use_focus_edges(focus, self.on_focus.clone(), None);
         let has_text = !self.value.read().is_empty();
         let mut value = self.value.clone();
         let clear_change = self.on_change.clone();
