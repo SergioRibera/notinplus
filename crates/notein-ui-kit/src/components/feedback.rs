@@ -71,6 +71,7 @@ impl Component for EmptyState {
             .child(Icon::new(self.icon.clone()).size(28.0).color(p.t3))
             .child(
                 label()
+                    .width(Size::fill())
                     .text(self.title.clone())
                     .font_size(text::BODY_LG)
                     .font_weight(FontWeight::SEMI_BOLD)
@@ -79,6 +80,7 @@ impl Component for EmptyState {
             )
             .maybe_child(self.body.clone().map(|body| {
                 label()
+                    .width(Size::fill())
                     .text(body)
                     .font_size(text::META)
                     .color(p.t2)

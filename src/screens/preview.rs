@@ -305,3 +305,20 @@ fn map() -> Element {
 fn map_renders() {
     render("map-desktop", (1280.0, 800.0), map);
 }
+
+fn library_failed() -> Element {
+    crate::screens::home::Failed {
+        why: "library codec error: UnexpectedVariant".to_owned(),
+    }
+    .into_element()
+}
+
+#[test]
+fn library_failed_desktop() {
+    render("library-failed-desktop", (1440.0, 900.0), library_failed);
+}
+
+#[test]
+fn library_failed_phone() {
+    render("library-failed-phone", (390.0, 844.0), library_failed);
+}

@@ -89,13 +89,7 @@ impl Component for Home {
         let insets = *crate::hooks::use_safe_area_insets().read();
         let body = match view.state() {
             LibraryState::Loading => Loading.into_element(),
-            LibraryState::Failed(why) => EmptyState::new(
-                freya::icons::lucide::triangle_alert(),
-                "No se pudo abrir la biblioteca",
-            )
-            .body(why)
-            .action(Button::new("Reintentar").on_press(|_| crate::library::shared::notify()))
-            .into_element(),
+            LibraryState::Failed(why) => Failed { why }.into_element(),
             LibraryState::Ready(data) => Loaded { data }.into_element(),
         };
         rect()
@@ -103,6 +97,74 @@ impl Component for Home {
             .background(p.bg)
             .padding((insets.top, insets.right, 0.0, insets.left))
             .child(body)
+    }
+}
+
+/// The library could not be read: a plain explanation, a retry, and the
+/// technical cause on the clipboard for a bug report.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Failed {
+    pub(super) why: String,
+}
+
+impl Component for Failed {
+    fn render(&self) -> impl IntoElement {
+        let why = self.why.clone();
+        let actions = rect()
+            .horizontal()
+            .spacing(8.0)
+            .child(
+                Button::new("Copiar detalles")
+                    .ghost()
+                    .icon(freya::icons::lucide::copy())
+                    .on_press(move |_| {
+                        if freya::clipboard::Clipboard::set(why.clone()).is_ok() {
+                            notein_ui_kit::Toasts::get()
+                                .show(notein_ui_kit::Toast::new("Detalles copiados"));
+                        }
+                    }),
+            )
+            .child(
+                Button::new("Reintentar")
+                    .primary()
+                    .icon(freya::icons::lucide::rotate_ccw())
+                    .on_press(|_| crate::library::shared::notify()),
+            );
+        rect()
+            .expanded()
+            .main_align(Alignment::Center)
+            .cross_align(Alignment::Center)
+            .padding(gutter(width_class()))
+            .child(
+                rect()
+                    .width(Size::fill())
+                    .max_width(Size::px(480.0))
+                    .cross_align(Alignment::Center)
+                    .spacing(4.0)
+                    .child(
+                    EmptyState::new(
+                        freya::icons::lucide::triangle_alert(),
+                        "No se pudo abrir la biblioteca",
+                    )
+                    .body(
+                        "Los datos guardados en este dispositivo no se pueden leer. Si los \
+                         copiaste de otra versión de Notein, borrá la carpeta de datos y \
+                         volvé a abrir la app.",
+                    )
+                    .action(actions),
+                    )
+                    .child(
+                        label()
+                            .width(Size::fill())
+                            .text(format!(
+                                "Carpeta de datos: {}",
+                                crate::library::bodies::root_dir().display()
+                            ))
+                            .font_size(tokens::text::META)
+                            .color(palette().t3)
+                            .text_align(TextAlign::Center),
+                    ),
+            )
     }
 }
 
