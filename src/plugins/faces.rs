@@ -35,6 +35,31 @@ const fn item_of<K: notein_plugin::kind::DocumentKind>(ctx: &FaceContext<K>) -> 
     ItemId(ctx.doc.0)
 }
 
+/// Run `on_press` for presses on the header actions of `item` (a
+/// document of `kind`) in the pane `slot`.
+pub(crate) fn use_header_presses(
+    kind: &'static str,
+    item: ItemId,
+    slot: Option<ViewSlot>,
+    mut on_press: impl FnMut(notein_plugin::services::HeaderPress) + 'static,
+) {
+    use_hook(move || {
+        let rx = notein_plugin::services::HostServices::header_presses(
+            &*super::host::shell(),
+            kind,
+        );
+        let doc = doc_id(item);
+        let pane = slot.map(pane_key);
+        spawn(async move {
+            while let Ok(press) = rx.recv_async().await {
+                if press.doc == doc && press.pane == pane {
+                    on_press(press);
+                }
+            }
+        });
+    });
+}
+
 /// Pane body for `item`; a notice when its plugin is missing or off.
 #[must_use]
 pub fn render(item: ItemId, kind: &DocKind, slot: Option<ViewSlot>) -> Element {
@@ -112,9 +137,14 @@ pub struct NoteFace;
 impl Face for NoteFace {
     type Kind = notein_notes::NotesKind;
 
+    fn header_actions(&self) -> Vec<notein_plugin::face::HeaderAction> {
+        crate::notes_face::header_actions()
+    }
+
     fn render(&self, ctx: FaceContext<notein_notes::NotesKind>) -> Element {
         crate::notes_face::NotesFace {
             item: item_of(&ctx),
+            slot: ctx.pane.map(view_slot),
         }
         .into_element()
     }
@@ -127,9 +157,14 @@ pub struct BibleFace;
 impl Face for BibleFace {
     type Kind = notein_bible::BibleKind;
 
+    fn header_actions(&self) -> Vec<notein_plugin::face::HeaderAction> {
+        crate::bible_face::header_actions()
+    }
+
     fn render(&self, ctx: FaceContext<notein_bible::BibleKind>) -> Element {
         crate::bible_face::BibleFace {
             item: item_of(&ctx),
+            slot: ctx.pane.map(view_slot),
         }
         .into_element()
     }

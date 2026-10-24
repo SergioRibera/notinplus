@@ -18,6 +18,8 @@ nursery = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+# Conflicts with rustc's `unreachable_pub`, which this crate keeps on.
+redundant_pub_crate = "allow"
 
 [dependencies]
 zudp = { path = "../../../../GamerOS/zudp", features = ["security", "discovery"] }

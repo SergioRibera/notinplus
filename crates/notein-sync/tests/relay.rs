@@ -142,7 +142,7 @@ impl Device {
             .unwrap_or_default()
     }
 
-    fn mark(&mut self, doc: DocId, author: u64, counter: u64) {
+    fn mark(&self, doc: DocId, author: u64, counter: u64) {
         self.driver
             .with_replica(|r| r.docs.entry(doc).or_default().insert((author, counter)));
     }

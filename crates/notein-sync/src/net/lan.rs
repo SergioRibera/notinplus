@@ -216,13 +216,12 @@ impl Node {
             link.last_seen = Instant::now();
         }
         match frame {
-            Frame::Hello(_) => {}
+            Frame::Hello(_) | Frame::Pong => {}
             Frame::Ping => {
                 if let Some(link) = self.links.get(&device) {
                     Self::send_frame(&link.sender, addr, &Frame::Pong, CONTROL_STREAM).await;
                 }
             }
-            Frame::Pong => {}
             Frame::App(bytes) => self.emit(NetEvent::Message {
                 from: device,
                 bytes,

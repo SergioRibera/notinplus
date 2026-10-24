@@ -174,9 +174,8 @@ impl Share {
 
     fn allows(&self, who: Who, device: DeviceId) -> bool {
         match who {
-            Who::Owner => self.is_owner(device),
+            Who::Owner | Who::Nobody => self.is_owner(device),
             Who::Everyone => self.is_member(device),
-            Who::Nobody => self.is_owner(device),
         }
     }
 
@@ -404,7 +403,7 @@ pub enum ShareMessage {
     /// An exchange message for the share's documents.
     Sync(Vec<u8>),
     /// The owner's current view of the share (policy, members, scope).
-    Meta(Share),
+    Meta(Box<Share>),
     /// The owner closed the share.
     Ended,
     /// A member walked away.

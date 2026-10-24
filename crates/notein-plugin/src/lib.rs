@@ -48,7 +48,7 @@ pub use create::{
 };
 pub use doc::{DocId, DocMeta};
 pub use erased::ErasedKind;
-pub use face::{ContentStore, ErasedFace, Face, FaceContext, FaceRequest, PaneKey};
+pub use face::{ContentStore, ErasedFace, Face, FaceContext, FaceRequest, HeaderAction, PaneKey};
 pub use ids::{ActorId, BookmarkId, DeviceId, OpId, StrokeId, UserId};
 pub use info::PluginInfo;
 pub use kind::{
@@ -59,5 +59,5 @@ pub use loader::{LoaderError, SDK_ABI_VERSION};
 pub use manifest::{ManifestError, ManifestRequirement, PluginManifest};
 pub use payload::{Payload, PayloadError};
 pub use plugin::{Plugin, PluginSettings, Registrar};
-pub use services::{Host, HostServices, HostToast, Jump, Progress, ToastTone};
+pub use services::{HeaderPress, Host, HostServices, HostToast, Jump, Progress, ToastTone};
 pub use text::Folded;

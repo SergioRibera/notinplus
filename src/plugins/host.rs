@@ -11,8 +11,8 @@ use freya::prelude::*;
 use notein_plugin::bookmark::SourceRef;
 use notein_plugin::doc::DocId;
 use notein_plugin::services::{
-    AnnotationDone, AnnotationPreview, AnnotationRequest, Host, HostServices, HostToast, Jump,
-    Placement, Progress, ToastTone as HostTone,
+    AnnotationDone, AnnotationPreview, AnnotationRequest, HeaderPress, Host, HostServices, HostToast,
+    Jump, Placement, Progress, ToastTone as HostTone,
 };
 use notein_ui_kit::{Toast, ToastId, ToastTone, Toasts};
 
@@ -40,6 +40,7 @@ pub struct ShellHost {
     pump: flume::Receiver<HostEvent>,
     pending_jumps: Mutex<HashMap<(String, DocId), Vec<u8>>>,
     jump_listeners: Mutex<Vec<(String, flume::Sender<Jump>)>>,
+    header_listeners: Mutex<Vec<(String, flume::Sender<HeaderPress>)>>,
 }
 
 impl std::fmt::Debug for ShellHost {
@@ -58,6 +59,7 @@ fn shell_host() -> &'static Arc<ShellHost> {
             pump,
             pending_jumps: Mutex::default(),
             jump_listeners: Mutex::default(),
+            header_listeners: Mutex::default(),
         })
     })
 }
@@ -94,6 +96,13 @@ impl ShellHost {
                         })
                         .is_ok()
             });
+    }
+    /// Hand a header press to the open faces of `kind`.
+    pub fn press_header(&self, kind: &str, press: &HeaderPress) {
+        self.header_listeners
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|(k, tx)| k != kind || tx.send(press.clone()).is_ok());
     }
 }
 
@@ -162,6 +171,15 @@ impl HostServices for ShellHost {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(&(kind.to_owned(), doc))
+    }
+
+    fn header_presses(&self, kind: &str) -> flume::Receiver<HeaderPress> {
+        let (tx, rx) = flume::unbounded();
+        self.header_listeners
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((kind.to_owned(), tx));
+        rx
     }
 }
 

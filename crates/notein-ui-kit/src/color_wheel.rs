@@ -7,7 +7,7 @@
 
 use freya::prelude::*;
 
-use crate::FormInput;
+use crate::TextField;
 use crate::theme::palette;
 
 /// Deterministically pick a swatch for `name`. Two callers passing the
@@ -470,10 +470,11 @@ impl Component for ColorWheel {
                 current_color,
             ));
 
-        let hex_field = FormInput::new(hex_input)
-            .width(Size::flex(1.))
-            .flat()
-            .on_change(hex_submit);
+        let hex_field = rect().width(Size::flex(1.)).child(
+            TextField::new(hex_input)
+                .max_len(9)
+                .on_change(hex_submit),
+        );
 
         let inputs_row = rect()
             .horizontal()

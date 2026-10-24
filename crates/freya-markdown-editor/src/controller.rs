@@ -508,7 +508,7 @@ impl EditorController {
             state.selection = None;
             if let Some((Some(index), offset)) = kept {
                 let targets = state.document.targets();
-                if let Some(target) = targets.get(index).or(targets.last()).copied() {
+                if let Some(target) = targets.get(index).or_else(|| targets.last()).copied() {
                     state.request_caret(clamp(&state.document, Selection::caret(target, offset)));
                 }
             }

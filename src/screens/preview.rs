@@ -283,3 +283,22 @@ fn mesa_renders() {
     render("mesa-desktop", (1440.0, 900.0), mesa);
     render("mesa-phone", (390.0, 844.0), mesa);
 }
+
+fn class_mesa() -> Element {
+    let data = crate::state::LibraryView::get().data();
+    let id = data.and_then(|d| {
+        d.workspaces()
+            .iter()
+            .find(|w| w.named)
+            .map(|w| w.id)
+    });
+    match id {
+        Some(id) => crate::screens::mesa::Mesa { id }.into_element(),
+        None => rect().into_element(),
+    }
+}
+
+#[test]
+fn note_mesa_renders() {
+    render("mesa-note-tablet", (1024.0, 768.0), class_mesa);
+}

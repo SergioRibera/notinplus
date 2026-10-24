@@ -5,12 +5,10 @@
 //! kind: its outline is the heading tree of the note and its anchors
 //! point at headings. [`NotesIndex`] keeps every note's title and
 //! headings so references can be offered without opening each note.
-//! [`ui`] holds the page chrome.
 
 pub mod anchor;
 pub mod kind;
 pub mod index;
-pub mod ui;
 
 pub use anchor::NoteAnchor;
 pub use kind::{NoteContent, NotesKind};

@@ -110,10 +110,10 @@ impl<K: DocumentKind> ErasedKind for KindAdapter<K> {
     }
 
     fn chip(&self, doc: DocMeta<'_>, anchor: &[u8]) -> ChipView {
-        match K::Anchor::from_bytes(anchor) {
-            Ok(anchor) => self.0.chip(doc, &anchor),
-            Err(_) => ChipView::broken(doc.name),
-        }
+        K::Anchor::from_bytes(anchor).map_or_else(
+            |_| ChipView::broken(doc.name),
+            |anchor| self.0.chip(doc, &anchor),
+        )
     }
 
     fn selection(&self) -> SelectionSupport {

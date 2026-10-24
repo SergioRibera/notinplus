@@ -5,7 +5,7 @@
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Folded<'a> {
     original: &'a str,
-    folded: String,
+    lower: String,
     /// `origin[i]` = byte offset in `original` of the char that produced
     /// folded byte `i`; one extra entry for the end.
     origin: Vec<usize>,
@@ -14,19 +14,19 @@ pub struct Folded<'a> {
 impl<'a> Folded<'a> {
     #[must_use]
     pub fn new(original: &'a str) -> Self {
-        let mut folded = String::with_capacity(original.len());
+        let mut lower = String::with_capacity(original.len());
         let mut origin = Vec::with_capacity(original.len() + 1);
         for (at, ch) in original.char_indices() {
-            for lower in ch.to_lowercase() {
-                let before = folded.len();
-                folded.push(lower);
-                origin.extend(std::iter::repeat_n(at, folded.len() - before));
+            for ch_lower in ch.to_lowercase() {
+                let before = lower.len();
+                lower.push(ch_lower);
+                origin.extend(std::iter::repeat_n(at, lower.len() - before));
             }
         }
         origin.push(original.len());
         Self {
             original,
-            folded,
+            lower,
             origin,
         }
     }
@@ -38,7 +38,7 @@ impl<'a> Folded<'a> {
         if needle.is_empty() {
             return None;
         }
-        let at = self.folded.find(needle)?;
+        let at = self.lower.find(needle)?;
         let end = at + needle.len();
         Some((self.origin[at], self.origin[end]))
     }

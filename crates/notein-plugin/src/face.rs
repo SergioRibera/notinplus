@@ -4,9 +4,11 @@
 //! [`FaceContext`] with the document id, the host services and a typed
 //! [`ContentStore`] to load and save the document's content.
 
+use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use bytes::Bytes;
 use freya_core::prelude::Element;
 
 use crate::doc::DocId;
@@ -128,9 +130,43 @@ impl<K: DocumentKind> FaceContext<K> {
     }
 }
 
+/// A button a face puts in the header of the pane it is shown in.
+///
+/// Pressing it reaches the face as a
+/// [`HeaderPress`](crate::services::HeaderPress) through
+/// [`HostServices::header_presses`](crate::services::HostServices::header_presses).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeaderAction {
+    /// Stable id the face gets back.
+    pub id: Cow<'static, str>,
+    /// Accessible name and tooltip.
+    pub label: Cow<'static, str>,
+    pub icon: Bytes,
+}
+
+impl HeaderAction {
+    #[must_use]
+    pub fn new(
+        id: impl Into<Cow<'static, str>>,
+        label: impl Into<Cow<'static, str>>,
+        icon: Bytes,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            icon,
+        }
+    }
+}
+
 /// Renders documents of [`Face::Kind`].
 pub trait Face: Send + Sync + 'static {
     type Kind: DocumentKind;
+
+    /// Buttons for the pane header, before the shell's own.
+    fn header_actions(&self) -> Vec<HeaderAction> {
+        Vec::new()
+    }
 
     fn render(&self, ctx: FaceContext<Self::Kind>) -> Element;
 }
@@ -155,6 +191,7 @@ impl std::fmt::Debug for FaceRequest {
 /// Object-safe face, as the shell holds it.
 pub trait ErasedFace: Send + Sync {
     fn kind_id(&self) -> String;
+    fn header_actions(&self) -> Vec<HeaderAction>;
     fn render(&self, request: FaceRequest) -> Element;
 }
 
@@ -166,6 +203,10 @@ pub(crate) struct FaceAdapter<F: Face> {
 impl<F: Face> ErasedFace for FaceAdapter<F> {
     fn kind_id(&self) -> String {
         self.kind.info().id.into_owned()
+    }
+
+    fn header_actions(&self) -> Vec<HeaderAction> {
+        self.face.header_actions()
     }
 
     fn render(&self, request: FaceRequest) -> Element {

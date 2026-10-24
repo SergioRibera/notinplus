@@ -5,11 +5,12 @@ use std::sync::Arc;
 
 use freya::prelude::*;
 use notein_ui_kit::theme::palette;
+use notein_plugin::services::HeaderPress;
 use notein_ui_kit::{Icon, IconButton, Text, TextRole, tokens};
 
 use super::Ops;
 use crate::components::drag_drop::{DragZone, DropZone};
-use crate::library::{LibraryData, Pane, PaneId, PaneTab, TabTarget};
+use crate::library::{ItemId, LibraryData, Pane, PaneId, PaneTab, TabTarget, ViewSlot};
 use crate::references::kind_color;
 
 /// A tab being dragged.
@@ -94,6 +95,46 @@ pub(super) struct PaneHeader {
     pub(super) next: Option<PaneId>,
 }
 
+impl PaneHeader {
+    /// Buttons the face of `item` adds to this header.
+    fn face_actions(&self, item: ItemId) -> Vec<Element> {
+        let Some(kind) = self.data.item(item).map(|i| i.kind.plugin_id.clone()) else {
+            return Vec::new();
+        };
+        let Some(face) = crate::plugins::catalog().face(&kind) else {
+            return Vec::new();
+        };
+        let slot = ViewSlot {
+            workspace: self.ops.mesa,
+            pane: self.pane.id,
+        };
+        face.header_actions()
+            .into_iter()
+            .map(|action| {
+                let kind = kind.clone();
+                let id = action.id.into_owned();
+                IconButton::new(action.icon, action.label)
+                    .size(tokens::size::BUTTON_SM)
+                    .on_press(move |e: Event<PressEventData>| {
+                        let at = anchor(&e);
+                        #[allow(clippy::cast_possible_truncation)] // window coordinates
+                        let at = (at.x as f32, at.y as f32);
+                        crate::plugins::host::shell().press_header(
+                            &kind,
+                            &HeaderPress {
+                                doc: crate::plugins::content::doc_id(item),
+                                pane: Some(crate::plugins::faces::pane_key(slot)),
+                                action: id.clone(),
+                                at,
+                            },
+                        );
+                    })
+                    .into_element()
+            })
+            .collect()
+    }
+}
+
 impl Component for PaneHeader {
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
@@ -103,10 +144,18 @@ impl Component for PaneHeader {
         let single = self.pane.tabs.len() == 1;
         let active = self.pane.active_tab as usize;
 
+        let face_actions = self
+            .pane
+            .tabs
+            .get(active)
+            .and_then(PaneTab::item)
+            .map(|item| self.face_actions(item))
+            .unwrap_or_default();
         let trailing = rect()
             .horizontal()
             .cross_align(Alignment::Center)
             .spacing(2.0)
+            .children(face_actions)
             .maybe_child(self.next.map(|next| {
                 IconButton::new(lucide::columns_2(), "Otro panel")
                     .size(tokens::size::BUTTON_SM)

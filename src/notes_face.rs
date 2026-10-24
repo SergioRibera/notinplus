@@ -18,12 +18,11 @@ use std::time::{Duration, Instant};
 use freya::prelude::*;
 use freya_markdown_editor::document::BlockId;
 use freya_markdown_editor::prelude::*;
-use notein_notes::ui::{self, Action, TopbarActions};
 use notein_notes::{KIND_ID, NoteAnchor};
 
 use crate::doc::Doc;
 use crate::hooks::{provide_safe_area_override, use_safe_area_insets};
-use crate::library::ItemId;
+use crate::library::{ItemId, ViewSlot};
 use crate::sync::live::{LiveEvent, LiveMessage};
 use crate::sync::open_docs;
 
@@ -46,9 +45,20 @@ thread_local! {
     static OPEN_NOTES: RefCell<HashMap<ItemId, EditorController>> = RefCell::new(HashMap::new());
 }
 
+/// The note's buttons in the pane header.
+pub(crate) fn header_actions() -> Vec<notein_plugin::face::HeaderAction> {
+    use freya::icons::lucide;
+    use notein_plugin::face::HeaderAction;
+    vec![
+        HeaderAction::new("reading", "Leer o editar", lucide::book_open()),
+        HeaderAction::new("share", "Enviar o copiar", lucide::share_2()),
+    ]
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct NotesFace {
     pub item: ItemId,
+    pub slot: Option<ViewSlot>,
 }
 
 impl Component for NotesFace {
@@ -104,21 +114,23 @@ impl Component for NotesFace {
             });
         });
 
+        crate::plugins::faces::use_header_presses(KIND_ID, item, self.slot, move |press| {
+            match press.action.as_str() {
+                "reading" if !*locked.peek() => controller.toggle_read_only(),
+                "share" => {
+                    let window = viewport_area.map(|area| *area.0.peek());
+                    crate::notes_share::open_menu(
+                        controller,
+                        title.peek().clone(),
+                        Some(press.at),
+                        window,
+                    );
+                }
+                _ => {}
+            }
+        });
         let locked_now = *locked.read();
         let read_only = controller.active_format().read_only || locked_now;
-        // The mesa header and document panel own going home, the outline,
-        // notebooks and links; the note keeps share and reading mode.
-        let actions = TopbarActions {
-            on_home: None,
-            on_sidebar: None,
-            on_share: Some(Box::new(move |at| {
-                let window = viewport_area.map(|area| *area.0.peek());
-                crate::notes_share::open_menu(controller, title.peek().clone(), at, window);
-            })),
-            on_toggle_mode: (!locked_now).then(|| action(move || controller.toggle_read_only())),
-            on_notebook: None,
-            on_links: None,
-        };
 
         let editor = crate::editor::editor(markdown, controller)
         .reorderable(true)
@@ -132,7 +144,6 @@ impl Component for NotesFace {
             .padding((insets.top, insets.right, insets.bottom, insets.left))
             .background(notein_ui_kit::theme::palette().bg)
             .content(Content::flex())
-            .child(ui::topbar(&title.read(), read_only, actions))
             .maybe_child(locked_now.then(|| banner("Solo lectura: podés mirar, no editar.")))
             .maybe_child(typing_banner(&typing.read()))
             .maybe_child((!read_only).then(|| {
@@ -191,10 +202,6 @@ pub(crate) fn pin_heading(item: ItemId, slug: &str) {
         return;
     }
     crate::plugins::content::reindex(item);
-}
-
-fn action(on_press: impl FnMut() + 'static) -> Action {
-    Box::new(on_press)
 }
 
 /// Load the note's document and publish it as the live copy. A note

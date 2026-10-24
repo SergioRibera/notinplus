@@ -7,7 +7,5 @@
 pub mod bottom_nav;
 pub mod chapter;
 pub mod reader;
-pub mod search_sheet;
-pub mod toolbar;
-pub mod translation_switcher;
+pub mod search;
 pub mod typography;

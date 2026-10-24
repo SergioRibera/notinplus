@@ -255,6 +255,17 @@ pub enum HighlightKind {
     Range(u16, u16),
 }
 
+impl HighlightKind {
+    /// First and last verse.
+    #[must_use]
+    pub const fn span(self) -> (u16, u16) {
+        match self {
+            Self::Verse(v) => (v, v),
+            Self::Range(a, b) => (a, b),
+        }
+    }
+}
+
 /// Full gesture payload.
 ///
 /// `anchor` is the global (window-relative) pointer location where the gesture
@@ -629,7 +640,6 @@ impl Component for VerseParagraph {
         let p = p
             .on_pointer_down({
                 let on_highlight = on_highlight.clone();
-                let mut drag = drag;
                 let mut anchor = anchor;
                 move |e: Event<PointerEventData>| {
                     let g = e.global_location();
@@ -684,7 +694,6 @@ impl Component for VerseParagraph {
                 }
             })
             .on_global_pointer_up({
-                let mut drag = drag;
                 move |_: Event<PointerEventData>| {
                     let (start, end) = drag.finish();
                     EventsCombos::<()>::released();

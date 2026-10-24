@@ -4,30 +4,16 @@ use std::time::Duration;
 use freya::prelude::*;
 use freya_markdown_editor::prelude::*;
 use freya_testing::prelude::*;
-use notein_notes::ui::{self, TopbarActions};
 
 const NOTE: &str = "# Plan de estudio\n\nRepasar **Efesios 6** y anotar ideas.\n\n## Lecturas\n\n- [x] Capítulo 1\n- [ ] Capítulo 2\n\n## Preguntas\n\n> ¿Qué significa *la armadura*?\n";
 
 fn page() -> impl IntoElement {
     let markdown = use_state(|| NOTE.to_owned());
     let controller = use_editor_controller();
-    let action = |(): ()| Box::new(|| {}) as ui::Action;
     rect()
         .expanded()
         .background(notein_ui_kit::theme::palette().bg)
         .content(Content::flex())
-        .child(ui::topbar(
-            "Estudio bíblico",
-            false,
-            TopbarActions {
-                on_home: Some(action(())),
-                on_sidebar: Some(action(())),
-                on_share: Some(Box::new(|_| {})),
-                on_toggle_mode: Some(action(())),
-                on_notebook: Some(action(())),
-                on_links: Some(action(())),
-            },
-        ))
         .child(
             rect()
                 .width(Size::fill())

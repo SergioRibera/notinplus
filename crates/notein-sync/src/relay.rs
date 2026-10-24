@@ -339,53 +339,8 @@ impl Serving {
                 share,
                 members,
                 retain,
-            } => {
-                let accepted = match self.store.boxes.get_mut(&share) {
-                    Some(mailbox) if mailbox.owner != public => false,
-                    Some(mailbox) => {
-                        mailbox.members = members;
-                        mailbox.retain = retain;
-                        true
-                    }
-                    None => {
-                        self.store.boxes.insert(
-                            share,
-                            Mailbox {
-                                owner: public,
-                                members,
-                                retain,
-                                next_seq: 1,
-                                records: Vec::new(),
-                            },
-                        );
-                        true
-                    }
-                };
-                if accepted {
-                    self.store.flush(share);
-                    self.reply(from, &RelayMessage::Registered { share });
-                } else {
-                    self.reply(from, &RelayMessage::Refused { share });
-                }
-            }
-            RelayMessage::Unregister { share } => {
-                if self
-                    .store
-                    .boxes
-                    .get(&share)
-                    .is_some_and(|m| m.owner == public)
-                {
-                    self.store.boxes.remove(&share);
-                    self.store.flush(share);
-                    if let Some(subs) = self.subs.remove(&share) {
-                        for device in subs {
-                            if device != from {
-                                self.reply(device, &RelayMessage::Gone { share });
-                            }
-                        }
-                    }
-                }
-            }
+            } => self.register(from, public, share, members, retain),
+            RelayMessage::Unregister { share } => self.unregister(from, public, share),
             RelayMessage::Subscribe { share, after } => {
                 let Some(mailbox) = self.store.boxes.get(&share) else {
                     self.reply(from, &RelayMessage::Gone { share });
@@ -403,32 +358,7 @@ impl Serving {
                 share,
                 kind,
                 sealed,
-            } => {
-                let Some(mailbox) = self.store.boxes.get_mut(&share) else {
-                    self.reply(from, &RelayMessage::Gone { share });
-                    return;
-                };
-                if !mailbox.allows(public) {
-                    self.reply(from, &RelayMessage::Refused { share });
-                    return;
-                }
-                let record = mailbox.push(from, kind, sealed);
-                self.store.flush(share);
-                let listeners: Vec<DeviceId> = self
-                    .subs
-                    .get(&share)
-                    .map(|s| s.iter().copied().filter(|d| *d != from).collect())
-                    .unwrap_or_default();
-                for device in listeners {
-                    self.reply(
-                        device,
-                        &RelayMessage::Records {
-                            share,
-                            records: vec![record.clone()],
-                        },
-                    );
-                }
-            }
+            } => self.publish(from, public, share, kind, sealed),
             RelayMessage::Forward { to, bytes } => {
                 let target = self
                     .keys
@@ -450,6 +380,98 @@ impl Serving {
             | RelayMessage::Records { .. }
             | RelayMessage::Gone { .. }
             | RelayMessage::Forwarded { .. } => {}
+        }
+    }
+
+    /// Open the mailbox of `share`, or update it when `public` owns it.
+    fn register(
+        &mut self,
+        from: DeviceId,
+        public: [u8; 32],
+        share: ShareId,
+        members: Vec<[u8; 32]>,
+        retain: bool,
+    ) {
+        let accepted = match self.store.boxes.get_mut(&share) {
+            Some(mailbox) if mailbox.owner != public => false,
+            Some(mailbox) => {
+                mailbox.members = members;
+                mailbox.retain = retain;
+                true
+            }
+            None => {
+                self.store.boxes.insert(
+                    share,
+                    Mailbox {
+                        owner: public,
+                        members,
+                        retain,
+                        next_seq: 1,
+                        records: Vec::new(),
+                    },
+                );
+                true
+            }
+        };
+        if accepted {
+            self.store.flush(share);
+            self.reply(from, &RelayMessage::Registered { share });
+        } else {
+            self.reply(from, &RelayMessage::Refused { share });
+        }
+    }
+
+    /// The owner closed `share`: drop its mailbox and tell the others.
+    fn unregister(&mut self, from: DeviceId, public: [u8; 32], share: ShareId) {
+        if !self
+            .store
+            .boxes
+            .get(&share)
+            .is_some_and(|m| m.owner == public)
+        {
+            return;
+        }
+        self.store.boxes.remove(&share);
+        self.store.flush(share);
+        for device in self.subs.remove(&share).into_iter().flatten() {
+            if device != from {
+                self.reply(device, &RelayMessage::Gone { share });
+            }
+        }
+    }
+
+    /// Store a record and hand it to every other subscriber.
+    fn publish(
+        &mut self,
+        from: DeviceId,
+        public: [u8; 32],
+        share: ShareId,
+        kind: RecordKind,
+        sealed: Vec<u8>,
+    ) {
+        let Some(mailbox) = self.store.boxes.get_mut(&share) else {
+            self.reply(from, &RelayMessage::Gone { share });
+            return;
+        };
+        if !mailbox.allows(public) {
+            self.reply(from, &RelayMessage::Refused { share });
+            return;
+        }
+        let record = mailbox.push(from, kind, sealed);
+        self.store.flush(share);
+        let listeners: Vec<DeviceId> = self
+            .subs
+            .get(&share)
+            .map(|s| s.iter().copied().filter(|d| *d != from).collect())
+            .unwrap_or_default();
+        for device in listeners {
+            self.reply(
+                device,
+                &RelayMessage::Records {
+                    share,
+                    records: vec![record.clone()],
+                },
+            );
         }
     }
 }

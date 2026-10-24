@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use crate::bookmark::SourceRef;
 use crate::doc::DocId;
+use crate::face::PaneKey;
 
 /// Shared handle to the shell's services. Cheap to clone.
 pub type Host = Arc<dyn HostServices>;
@@ -133,6 +134,19 @@ pub struct Jump {
     pub anchor: Vec<u8>,
 }
 
+/// A press on one of a face's [`HeaderAction`](crate::face::HeaderAction)s.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HeaderPress {
+    pub doc: DocId,
+    /// The pane whose header was pressed; a document open in two panes
+    /// reacts only in this one.
+    pub pane: Option<PaneKey>,
+    /// [`HeaderAction::id`](crate::face::HeaderAction::id).
+    pub action: String,
+    /// Window point of the press, to hang a popover from.
+    pub at: (f32, f32),
+}
+
 /// Services the shell provides. Implemented by the app; plugins only
 /// call it.
 pub trait HostServices: Send + Sync + std::fmt::Debug {
@@ -170,4 +184,7 @@ pub trait HostServices: Send + Sync + std::fmt::Debug {
 
     /// Take the move queued for `doc` while it was not open.
     fn take_jump(&self, kind: &str, doc: DocId) -> Option<Vec<u8>>;
+
+    /// Presses on the header actions of documents of `kind`.
+    fn header_presses(&self, kind: &str) -> flume::Receiver<HeaderPress>;
 }
