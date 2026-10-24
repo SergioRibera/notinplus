@@ -124,6 +124,8 @@ pub struct ColorWheel {
     swatches: Vec<Color>,
     initial: Color,
     allow_custom: bool,
+    alpha: bool,
+    bare: bool,
     width: f32,
     on_change: Option<Callback<Color, ()>>,
 }
@@ -151,6 +153,8 @@ impl Default for ColorWheel {
             swatches: DEFAULT_SWATCHES.to_vec(),
             initial: DEFAULT_SWATCHES[0],
             allow_custom: true,
+            alpha: true,
+            bare: false,
             width: DEFAULT_WIDTH,
             on_change: None,
         }
@@ -181,6 +185,20 @@ impl ColorWheel {
     #[must_use]
     pub const fn allow_custom(mut self, allow: bool) -> Self {
         self.allow_custom = allow;
+        self
+    }
+
+    /// Show the transparency bar (on by default).
+    #[must_use]
+    pub const fn alpha(mut self, alpha: bool) -> Self {
+        self.alpha = alpha;
+        self
+    }
+
+    /// No panel of its own, for a card that already frames it.
+    #[must_use]
+    pub const fn bare(mut self) -> Self {
+        self.bare = true;
         self
     }
 
@@ -290,7 +308,10 @@ impl Component for ColorWheel {
         let update = {
             let commit = commit.clone();
             move |target: DragTarget, at: CursorPoint| {
-                if let Some(next) = target.apply(*hsva.peek(), tracks.area(target), at) {
+                // Copied out first: a guard alive inside the `if let` would
+                // still borrow `hsva` when `commit` writes it.
+                let cur = *hsva.peek();
+                if let Some(next) = target.apply(cur, tracks.area(target), at) {
                     commit.call(next);
                 }
             }
@@ -314,7 +335,8 @@ impl Component for ColorWheel {
             let commit = commit.clone();
             move |value: String| {
                 if let Some((r, g, b)) = parse_hex_rgb(&value) {
-                    commit.call(with_hsv(*hsva.peek(), Color::from_rgb(r, g, b)));
+                    let next = with_hsv(*hsva.peek(), Color::from_rgb(r, g, b));
+                    commit.call(next);
                 }
             }
         };
@@ -326,17 +348,18 @@ impl Component for ColorWheel {
             commit.call(next);
         });
 
-        let inner_width = 2.0f32.mul_add(-PANEL_PADDING, self.width);
+        let padding = if self.bare { 0.0 } else { PANEL_PADDING };
+        let inner_width = 2.0f32.mul_add(-padding, self.width);
         let mut root = rect()
             .vertical()
             .width(Size::px(self.width))
             .spacing(12.0)
-            .padding(PANEL_PADDING)
-            .background(palette().s3)
-            .corner_radius(12.0)
+            .padding(padding)
+            .maybe(!self.bare, |r| r.background(palette().s3).corner_radius(12.0))
             .color(palette().t1)
             .on_global_pointer_move(move |e: Event<PointerEventData>| {
-                update(*dragging.read(), e.global_location());
+                let target = *dragging.peek();
+                update(target, e.global_location());
             })
             .on_global_pointer_up(move |_: Event<PointerEventData>| {
                 dragging.set_if_modified(DragTarget::None);
@@ -355,13 +378,15 @@ impl Component for ColorWheel {
                     base_hue,
                     press(DragTarget::Hue),
                 ))
-                .child(bar(
-                    tracks.alpha,
-                    alpha_gradient(current.to_rgb_opaque()),
-                    (current.a, inner_width),
-                    current.to_color(),
-                    press(DragTarget::Alpha),
-                ))
+                .maybe_child(self.alpha.then(|| {
+                    bar(
+                        tracks.alpha,
+                        alpha_gradient(current.to_rgb_opaque()),
+                        (current.a, inner_width),
+                        current.to_color(),
+                        press(DragTarget::Alpha),
+                    )
+                }))
                 .child(hex_row(current.to_color(), hex_input, hex_submit));
         }
         root

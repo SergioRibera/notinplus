@@ -104,6 +104,8 @@ pub enum NoticeTone {
     Warning,
     Danger,
     Offline,
+    /// A check passed (a colour that reads well everywhere).
+    Success,
 }
 
 /// Strip under a tab bar or inside a sheet. Never modal.
@@ -147,13 +149,16 @@ impl Component for Notice {
             NoticeTone::Warning => (freya::icons::lucide::triangle_alert(), p.warn),
             NoticeTone::Danger => (freya::icons::lucide::circle_alert(), p.danger),
             NoticeTone::Offline => (freya::icons::lucide::wifi_off(), p.warn),
+            NoticeTone::Success => (freya::icons::lucide::circle_check(), p.ok),
         };
         rect()
             .width(Size::fill())
             .padding((10.0, 12.0))
             .corner_radius(radius::MD)
             .background(match self.tone {
-                NoticeTone::Info => p.s2,
+                // A step below the sheet so it still reads as a strip.
+                NoticeTone::Info => p.s1,
+                NoticeTone::Success => p.ok.with_a(28),
                 NoticeTone::Warning | NoticeTone::Offline => p.warn.with_a(28),
                 NoticeTone::Danger => p.danger.with_a(28),
             })
