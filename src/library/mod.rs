@@ -1888,6 +1888,20 @@ mod tests {
 }
 
 impl LibraryData {
+    /// Data assembled in memory, for screen previews.
+    #[cfg(test)]
+    pub(crate) const fn from_parts(
+        index: LibraryIndex,
+        workspaces: WorkspaceIndex,
+        links: LinkIndex,
+    ) -> Self {
+        Self {
+            index,
+            workspaces,
+            links,
+        }
+    }
+
     /// A copy of the in-memory state for a screen to render from.
     #[must_use]
     pub fn snapshot(&self) -> LibraryData {

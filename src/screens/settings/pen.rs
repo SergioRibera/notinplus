@@ -85,10 +85,12 @@ impl Component for Pen {
             ListRow::new(font.name())
                 .leading(Leading::Element(
                     rect()
-                        .width(Size::px(140.0))
+                        .width(Size::px(190.0))
+                        .overflow(Overflow::Clip)
                         .child(
                             label()
                                 .text("Hola, Romanos 8")
+                                .text_overflow(TextOverflow::Ellipsis)
                                 .font_family(font.name())
                                 .font_size(20.0)
                                 .color(p.t1)

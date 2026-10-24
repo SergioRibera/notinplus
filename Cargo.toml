@@ -86,6 +86,9 @@ winit = { version = "0.30", features = ["android-game-activity"] }
 env_logger = "0.11"
 istmo-window = { path = "../istmo/crates/window" }
 
+[dev-dependencies]
+freya-testing = "=0.5.0-rc.8"
+
 [build-dependencies]
 istmo-build = { path = "../istmo/crates/build" }
 

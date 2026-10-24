@@ -294,6 +294,8 @@ impl Component for DocCard {
         let open = self.actions.on_open.clone();
         let menu = self.actions.on_menu.clone();
         let cover = rect()
+            .width(Size::px(self.width))
+            .height(Size::px((self.width * COVER_RATIO).round()))
             .corner_radius(tokens::radius::LG)
             .maybe(selected, |r| {
                 r.border(

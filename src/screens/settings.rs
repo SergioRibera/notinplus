@@ -260,6 +260,15 @@ impl Component for Settings {
         rect()
             .width(Size::fill())
             .height(Size::px(height))
+            .corner_radius(tokens::radius::XL)
+            .overflow(Overflow::Clip)
+            .background(p.bg)
+            .border(
+                Border::new()
+                    .fill(p.line)
+                    .width(1.0)
+                    .alignment(BorderAlignment::Inner),
+            )
             .horizontal()
             .content(Content::Flex)
             .child(

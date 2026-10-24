@@ -587,6 +587,9 @@ impl Component for PinnedRow {
                 ScrollView::new()
                     .direction(Direction::Horizontal)
                     .width(Size::fill())
+                    .height(Size::px(
+                        (self.card * super::card::COVER_RATIO).round() + 64.0,
+                    ))
                     .show_scrollbar(false)
                     .child(rect().horizontal().spacing(12.0).children(cards)),
             )

@@ -320,7 +320,9 @@ impl Component for ModalPortal {
         let controller = ModalController::get();
         let stack = controller.state.read().stack.clone();
         let top = stack.len().saturating_sub(1);
-        rect().children(stack.into_iter().enumerate().map(|(depth, model)| {
+        rect()
+            .position(Position::new_absolute().top(0.0).left(0.0))
+            .children(stack.into_iter().enumerate().map(|(depth, model)| {
             ModalOverlay {
                 model,
                 area: self.area,

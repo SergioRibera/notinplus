@@ -193,7 +193,7 @@ impl Component for ContinueHero {
             )
             .child(
                 Text::new(format!(
-                    "Abierta {} · {}",
+                    "{} · {}",
                     crate::format::ago(w.updated_at, now),
                     crate::format::count(tab_count(w), "documento", "documentos")
                 ))

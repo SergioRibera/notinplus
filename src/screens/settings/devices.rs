@@ -76,20 +76,24 @@ impl Component for Devices {
                 ))
         } else {
             let current = snapshot.name.clone();
-            ListRow::new(snapshot.name.clone())
-                .subtitle("Este dispositivo · así te ven los demás")
-                .icon(lucide::monitor_smartphone())
-                .trailing(Trailing::Element(
-                    Button::new("Renombrar")
-                        .ghost()
-                        .small()
-                        .on_press(move |_| {
-                            let mut name = name;
-                            name.set(current.clone());
-                            renaming.set(true);
-                        })
-                        .into_element(),
-                ))
+            ListRow::new(if snapshot.name.is_empty() {
+                "Este dispositivo".to_owned()
+            } else {
+                snapshot.name.clone()
+            })
+            .subtitle("Este dispositivo · así te ven los demás")
+            .icon(lucide::monitor_smartphone())
+            .trailing(Trailing::Element(
+                Button::new("Renombrar")
+                    .ghost()
+                    .small()
+                    .on_press(move |_| {
+                        let mut name = name;
+                        name.set(current.clone());
+                        renaming.set(true);
+                    })
+                    .into_element(),
+            ))
         };
 
         let linked = snapshot.trusted.iter().map(|device| {
