@@ -179,25 +179,25 @@ impl Loaded {
     /// The folder's contents as cards or rows, or why there are none.
     fn listing(
         &self,
-        shelf: &Arc<Shelf>,
+        listed: &Arc<Shelf>,
         (folder, filtered): (FolderId, bool),
         columns: Columns,
         selection: State<Selection>,
     ) -> Element {
-        if shelf.is_empty() {
+        if listed.is_empty() {
             return EmptyShelf { folder, filtered }.into_element();
         }
         if SettingsStore::get().read().library.layout == ShelfLayout::List {
             return Rows {
                 data: Arc::clone(&self.data),
-                shelf: Arc::clone(shelf),
+                shelf: Arc::clone(listed),
                 selection,
             }
             .into_element();
         }
         Grid {
             data: Arc::clone(&self.data),
-            shelf: Arc::clone(shelf),
+            shelf: Arc::clone(listed),
             columns,
             selection,
         }

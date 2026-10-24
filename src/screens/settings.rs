@@ -163,84 +163,141 @@ struct Settings {
     start: Option<Section>,
 }
 
-impl Component for Settings {
-    fn render(&self) -> impl IntoElement {
-        use freya::icons::lucide;
-        let p = palette();
-        let start = self.start;
-        let mut open = use_state(move || start);
-        let query = use_state(String::new);
-        let compact = width_class().is_compact();
-        let size = *Platform::get().root_size.read();
-        let insets = *crate::hooks::use_safe_area_insets().read();
-        let text = query.read().clone();
-        let current = *open.read();
+/// The searchable list of sections.
+fn section_list(mut open: State<Option<Section>>, query: State<String>, compact: bool) -> Rect {
+    let text = query.read().clone();
+    let current = *open.read();
+    let nav: Vec<Element> = Section::ALL
+        .into_iter()
+        .filter(|s| s.matches(&text))
+        .map(|section| {
+            let row = ListRow::new(section.label())
+                .icon(section.icon())
+                .dense(!compact)
+                .selected(!compact && current == Some(section))
+                .on_press(move |_| open.set(Some(section)));
+            if compact { row.chevron() } else { row }.into_element()
+        })
+        .collect();
+    let none = nav.is_empty();
+    rect()
+        .width(Size::fill())
+        .spacing(10.0)
+        .child(SearchField::new(query, "Buscar un ajuste").height(38.0))
+        .child(notein_ui_kit::Group::default().children(nav))
+        .maybe_child(none.then(|| {
+            Text::new(format!("Ningún ajuste con «{}»", text.trim())).role(TextRole::Hint)
+        }))
+}
 
-        let nav = Section::ALL
-            .into_iter()
-            .filter(|s| s.matches(&text))
-            .map(|section| {
-                let row = ListRow::new(section.label())
-                    .icon(section.icon())
-                    .dense(!compact)
-                    .selected(!compact && current == Some(section))
-                    .on_press(move |_| open.set(Some(section)));
-                if compact { row.chevron() } else { row }.into_element()
-            })
-            .collect::<Vec<_>>();
-        let nav_empty = nav.is_empty();
-        let list = rect()
+/// Phones: the list, or one section with back; the whole screen.
+fn phone_layout(mut open: State<Option<Section>>, list: Rect) -> Element {
+    use freya::icons::lucide;
+    let size = *Platform::get().root_size.read();
+    let insets = *crate::hooks::use_safe_area_insets().read();
+    let header = |title: &'static str, back: bool| {
+        rect()
             .width(Size::fill())
-            .spacing(10.0)
-            .child(SearchField::new(query, "Buscar un ajuste").height(38.0))
-            .child(notein_ui_kit::Group::default().children(nav))
-            .maybe_child(nav_empty.then(|| {
-                Text::new(format!("Ningún ajuste con «{}»", text.trim())).role(TextRole::Hint)
-            }));
+            .height(Size::px(tokens::size::BAR))
+            .horizontal()
+            .cross_align(Alignment::Center)
+            .content(Content::Flex)
+            .spacing(4.0)
+            .child(if back {
+                IconButton::new(lucide::arrow_left(), "Volver")
+                    .on_press(move |_| open.set(None))
+                    .into_element()
+            } else {
+                IconButton::new(lucide::x(), "Cerrar")
+                    .on_press(|_| ModalController::get().close())
+                    .into_element()
+            })
+            .child(Text::new(title).role(TextRole::Title).fill())
+    };
+    let (head, content) = open.read().map_or_else(
+        || (header("Ajustes", false), list.into_element()),
+        |section| (header(section.label(), true), section.body()),
+    );
+    rect()
+        .position(Position::new_absolute().top(0.0).left(0.0))
+        .width(Size::px(size.width))
+        .height(Size::px(size.height))
+        .background(palette().bg)
+        .padding((
+            insets.top,
+            insets.right + 12.0,
+            insets.bottom,
+            insets.left + 12.0,
+        ))
+        .content(Content::Flex)
+        .on_global_key_down(move |e: Event<KeyboardEventData>| {
+            if e.key == Key::Named(NamedKey::BrowserBack) && open.peek().is_some() {
+                e.stop_propagation();
+                open.set(None);
+            }
+        })
+        .child(head)
+        .child(
+            ScrollView::new()
+                .width(Size::fill())
+                .height(Size::flex(1.0))
+                .child(
+                    rect()
+                        .width(Size::fill())
+                        .padding((8.0, 0.0, 32.0, 0.0))
+                        .child(content),
+                ),
+        )
+        .into_element()
+}
 
-        if compact {
-            let header = |title: &'static str, back: bool| {
-                rect()
-                    .width(Size::fill())
-                    .height(Size::px(tokens::size::BAR))
-                    .horizontal()
-                    .cross_align(Alignment::Center)
-                    .content(Content::Flex)
-                    .spacing(4.0)
-                    .child(if back {
-                        IconButton::new(lucide::arrow_left(), "Volver")
-                            .on_press(move |_| open.set(None))
-                            .into_element()
-                    } else {
-                        IconButton::new(lucide::x(), "Cerrar")
-                            .on_press(|_| ModalController::get().close())
-                            .into_element()
-                    })
-                    .child(Text::new(title).role(TextRole::Title).fill())
-            };
-            let (head, content) = current.map_or_else(
-                || (header("Ajustes", false), list.into_element()),
-                |section| (header(section.label(), true), section.body()),
-            );
-            return rect()
-                .position(Position::new_absolute().top(0.0).left(0.0))
-                .width(Size::px(size.width))
-                .height(Size::px(size.height))
-                .background(p.bg)
-                .padding((
-                    insets.top,
-                    insets.right + 12.0,
-                    insets.bottom,
-                    insets.left + 12.0,
-                ))
+/// Wider screens: the list beside the open section.
+fn wide_layout(section: Section, list: Rect) -> Element {
+    let p = palette();
+    let height = (Platform::get().root_size.read().height * 0.82).clamp(420.0, 760.0);
+    rect()
+        .width(Size::fill())
+        .height(Size::px(height))
+        .corner_radius(tokens::radius::XL)
+        .overflow(Overflow::Clip)
+        .background(p.bg)
+        .border(
+            Border::new()
+                .fill(p.line)
+                .width(1.0)
+                .alignment(BorderAlignment::Inner),
+        )
+        .horizontal()
+        .content(Content::Flex)
+        .child(
+            rect()
+                .width(Size::px(260.0))
+                .height(Size::fill())
+                .padding(16.0)
+                .spacing(12.0)
+                .background(p.s1)
+                .child(Text::new("Ajustes").role(TextRole::Heading))
+                .child(list),
+        )
+        .child(
+            rect()
+                .width(Size::flex(1.0))
+                .height(Size::fill())
                 .content(Content::Flex)
-                .on_global_key_down(move |e: Event<KeyboardEventData>| {
-                    if e.key == Key::Named(NamedKey::BrowserBack) && open.peek().is_some() {
-                        e.stop_propagation();
-                        open.set(None);
-                    }
-                })
-                .child(head)
+                .child(
+                    rect()
+                        .width(Size::fill())
+                        .height(Size::px(tokens::size::BAR))
+                        .padding((0.0, 12.0, 0.0, 24.0))
+                        .horizontal()
+                        .cross_align(Alignment::Center)
+                        .content(Content::Flex)
+                        .child(Text::new(section.label()).role(TextRole::Title).fill())
+                        .child(
+                            IconButton::new(freya::icons::lucide::x(), "Cerrar")
+                                .on_press(|_| ModalController::get().close()),
+                        ),
+                )
                 .child(
                     ScrollView::new()
                         .width(Size::fill())
@@ -248,70 +305,26 @@ impl Component for Settings {
                         .child(
                             rect()
                                 .width(Size::fill())
-                                .padding((8.0, 0.0, 32.0, 0.0))
-                                .child(content),
+                                .padding((4.0, 24.0, 32.0, 24.0))
+                                .child(section.body()),
                         ),
-                )
-                .into_element();
-        }
+                ),
+        )
+        .into_element()
+}
 
-        let section = current.unwrap_or_default();
-        let height = (size.height * 0.82).clamp(420.0, 760.0);
-        rect()
-            .width(Size::fill())
-            .height(Size::px(height))
-            .corner_radius(tokens::radius::XL)
-            .overflow(Overflow::Clip)
-            .background(p.bg)
-            .border(
-                Border::new()
-                    .fill(p.line)
-                    .width(1.0)
-                    .alignment(BorderAlignment::Inner),
-            )
-            .horizontal()
-            .content(Content::Flex)
-            .child(
-                rect()
-                    .width(Size::px(260.0))
-                    .height(Size::fill())
-                    .padding(16.0)
-                    .spacing(12.0)
-                    .background(p.s1)
-                    .child(Text::new("Ajustes").role(TextRole::Heading))
-                    .child(list),
-            )
-            .child(
-                rect()
-                    .width(Size::flex(1.0))
-                    .height(Size::fill())
-                    .content(Content::Flex)
-                    .child(
-                        rect()
-                            .width(Size::fill())
-                            .height(Size::px(tokens::size::BAR))
-                            .padding((0.0, 12.0, 0.0, 24.0))
-                            .horizontal()
-                            .cross_align(Alignment::Center)
-                            .content(Content::Flex)
-                            .child(Text::new(section.label()).role(TextRole::Title).fill())
-                            .child(
-                                IconButton::new(lucide::x(), "Cerrar")
-                                    .on_press(|_| ModalController::get().close()),
-                            ),
-                    )
-                    .child(
-                        ScrollView::new()
-                            .width(Size::fill())
-                            .height(Size::flex(1.0))
-                            .child(
-                                rect()
-                                    .width(Size::fill())
-                                    .padding((4.0, 24.0, 32.0, 24.0))
-                                    .child(section.body()),
-                            ),
-                    ),
-            )
-            .into_element()
+impl Component for Settings {
+    fn render(&self) -> impl IntoElement {
+        let start = self.start;
+        let open = use_state(move || start);
+        let query = use_state(String::new);
+        let compact = width_class().is_compact();
+        let list = section_list(open, query, compact);
+        if compact {
+            phone_layout(open, list)
+        } else {
+            let section = open.read().unwrap_or_default();
+            wide_layout(section, list)
+        }
     }
 }

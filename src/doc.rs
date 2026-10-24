@@ -176,6 +176,12 @@ impl Doc {
     ///
     /// # Errors
     /// Store export failure.
+    /// The snapshot to store, with the references it holds for the index.
+    pub fn saved_state(&self) -> Result<(Vec<u8>, crate::library::refs::Captured), DocError> {
+        self.snapshot_bytes()
+            .map(|bytes| (bytes, crate::library::refs::capture(self)))
+    }
+
     pub fn snapshot_bytes(&self) -> Result<Vec<u8>, DocError> {
         self.store.snapshot()
     }
