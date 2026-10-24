@@ -135,49 +135,30 @@ struct SearchPanel {
 
 impl Component for SearchPanel {
     fn render(&self) -> impl IntoElement {
-        use freya::icons::lucide;
         let p = palette();
         let initial = self.query.clone();
         let query = use_state(move || initial);
-        let mut results = use_state(Results::default);
-        let mut highlighted = use_state(|| 0usize);
-        let mut searching = use_state(|| false);
         let history = use_hook(|| History::load().recent);
         let data = LibraryView::get().data();
+        let (results, mut highlighted, searching) = use_search(query, data.clone());
         let recents = data.as_deref().map(recent_docs).unwrap_or_default();
-
-        use_side_effect({
-            let data = data.clone();
-            move || {
-                let text = query.read().clone();
-                highlighted.set(0);
-                let Some(data) = data.clone() else {
-                    return;
-                };
-                if text.trim().is_empty() {
-                    results.set(Results::default());
-                    return;
-                }
-                searching.set(true);
-                spawn(async move {
-                    async_io::Timer::after(DEBOUNCE).await;
-                    if *query.peek() != text {
-                        return;
-                    }
-                    let found = crate::search::run_async(text.clone(), Arc::clone(&data)).await;
-                    if *query.peek() == text {
-                        results.set(found);
-                        searching.set(false);
-                    }
-                });
-            }
-        });
 
         let text = query.read().clone();
         let current = results.read().clone();
         let list = lines(&current, &history, &recents, &text);
         let count = list.len();
         let selected = (*highlighted.read()).min(count.saturating_sub(1));
+        let mut rows = Rows {
+            selected,
+            query,
+            data: data.as_deref(),
+            next: 0,
+        };
+        let sections = if text.trim().is_empty() {
+            rows.idle_sections(&list, !history.is_empty())
+        } else {
+            rows.result_sections(&list, &current, &text, searching())
+        };
 
         let compact = width_class().is_compact();
         let size = *Platform::get().root_size.read();
@@ -186,15 +167,12 @@ impl Component for SearchPanel {
         } else {
             WIDTH.min(size.width - 32.0)
         };
-        let left = ((size.width - width) / 2.0).max(0.0);
         let top = if compact { 0.0 } else { 72.0 };
         let max_height = if compact {
             size.height
         } else {
             (size.height - top - 48.0).max(240.0)
         };
-
-        let key_list = list.clone();
         let on_key = move |e: Event<KeyboardEventData>| match &e.key {
             Key::Named(NamedKey::ArrowDown) => {
                 e.stop_propagation();
@@ -205,7 +183,7 @@ impl Component for SearchPanel {
                 highlighted.set(selected.saturating_sub(1));
             }
             Key::Named(NamedKey::Enter) => {
-                if let Some(line) = key_list.get(selected) {
+                if let Some(line) = list.get(selected) {
                     e.stop_propagation();
                     line.run(e.modifiers.ctrl() || e.modifiers.meta(), query);
                 }
@@ -213,153 +191,12 @@ impl Component for SearchPanel {
             _ => {}
         };
 
-        let row = |index: usize, line: &Line, data: Option<&LibraryData>| -> Element {
-            let on = index == selected;
-            let action = line.clone();
-            let base = match line {
-                Line::Doc(item) => {
-                    let Some((d, found)) = data.and_then(|d| d.item(*item).map(|f| (d, f))) else {
-                        return rect().into_element();
-                    };
-                    let info = crate::plugins::kind_info(&found.kind.plugin_id);
-                    let place = crate::flows::forms::folder_path(d, found.folder);
-                    ListRow::new(found.name.clone()).subtitle(place).kind(
-                        info.as_ref().map_or_else(lucide::file, |k| k.icon.clone()),
-                        info.map_or(p.t3, |k| kind_color(&p, k.color)),
-                    )
-                }
-                Line::Place(place) => {
-                    ListRow::new(place.title.clone()).subtitle(if place.snippet.is_empty() {
-                        place.doc_name.clone()
-                    } else {
-                        format!("{} · {}", place.doc_name, place.snippet)
-                    })
-                }
-                Line::Recent(text) => ListRow::new(text.clone()).icon(lucide::history()),
-                Line::CreateNote(name) => ListRow::new(format!("Crear nota «{name}»"))
-                    .kind(lucide::notebook_text(), p.kinds.note),
-            };
-            base.dense(true)
-                .selected(on)
-                .on_press(move |_| action.run(false, query))
-                .into_element()
-        };
-
-        let data_ref = data.as_deref();
-        let mut index = 0usize;
-        let mut sections: Vec<Element> = Vec::new();
-        if text.trim().is_empty() {
-            if !history.is_empty() {
-                let rows: Vec<Element> = list
-                    .iter()
-                    .filter(|l| matches!(l, Line::Recent(_)))
-                    .map(|l| {
-                        let r = row(index, l, data_ref);
-                        index += 1;
-                        r
-                    })
-                    .collect();
-                sections.push(
-                    Section::new("Búsquedas recientes")
-                        .child(notein_ui_kit::Group::default().children(rows))
-                        .into_element(),
-                );
-            }
-            let rows: Vec<Element> = list
-                .iter()
-                .filter(|l| matches!(l, Line::Doc(_)))
-                .map(|l| {
-                    let r = row(index, l, data_ref);
-                    index += 1;
-                    r
-                })
-                .collect();
-            if !rows.is_empty() {
-                sections.push(
-                    Section::new("Abiertos hace poco")
-                        .child(notein_ui_kit::Group::default().children(rows))
-                        .into_element(),
-                );
-            }
-        } else {
-            if !current.documents.is_empty() {
-                let rows: Vec<Element> = list
-                    .iter()
-                    .take(current.documents.len())
-                    .map(|l| {
-                        let r = row(index, l, data_ref);
-                        index += 1;
-                        r
-                    })
-                    .collect();
-                sections.push(
-                    Section::new("Documentos")
-                        .child(notein_ui_kit::Group::default().children(rows))
-                        .into_element(),
-                );
-            }
-            for group in &current.groups {
-                let tint = kind_color(&p, group.color);
-                let rows: Vec<Element> = group
-                    .hits
-                    .iter()
-                    .map(|hit| {
-                        let r = row(index, &Line::Place(hit.clone()), data_ref);
-                        index += 1;
-                        r
-                    })
-                    .collect();
-                sections.push(
-                    Section::new(group.label.clone())
-                        .icon(group.icon.clone())
-                        .trailing(
-                            Text::new(group.hits.len().to_string())
-                                .role(TextRole::Meta)
-                                .color(tint),
-                        )
-                        .child(notein_ui_kit::Group::default().children(rows))
-                        .into_element(),
-                );
-            }
-            if current.is_empty() && !searching() {
-                sections.push(
-                    rect()
-                        .width(Size::fill())
-                        .spacing(8.0)
-                        .child(
-                            Text::new(format!("Nada con «{}»", text.trim())).role(TextRole::Strong),
-                        )
-                        .child(row(0, &Line::CreateNote(text.trim().to_owned()), data_ref))
-                        .into_element(),
-                );
-            }
-            for job in &current.indexing {
-                #[allow(clippy::cast_precision_loss)] // page counts
-                let fraction = if job.total == 0 {
-                    0.0
-                } else {
-                    job.done as f32 / job.total as f32
-                };
-                sections.push(
-                    rect()
-                        .width(Size::fill())
-                        .spacing(6.0)
-                        .child(Notice::new(
-                            NoticeTone::Info,
-                            format!(
-                                "Todavía leyendo «{}» ({} de {}). Puede que falten resultados.",
-                                job.name, job.done, job.total
-                            ),
-                        ))
-                        .child(ProgressBar::new(fraction).height(3.0))
-                        .into_element(),
-                );
-            }
-        }
-
-        let field = query;
         rect()
-            .position(Position::new_absolute().top(top).left(left))
+            .position(
+                Position::new_absolute()
+                    .top(top)
+                    .left(((size.width - width) / 2.0).max(0.0)),
+            )
             .width(Size::px(width))
             .max_height(Size::px(max_height))
             .corner_radius(if compact { 0.0 } else { tokens::radius::XL })
@@ -375,43 +212,222 @@ impl Component for SearchPanel {
             .spacing(tokens::space::MD)
             .content(Content::Flex)
             .on_global_key_down(on_key)
-            .child(
-                rect()
-                    .width(Size::fill())
-                    .horizontal()
-                    .cross_align(Alignment::Center)
-                    .content(Content::Flex)
-                    .spacing(8.0)
-                    .child(
-                        rect().width(Size::flex(1.0)).child(
-                            SearchField::new(field, "Buscar documentos, versículos, notas…")
-                                .auto_focus(true)
-                                .height(44.0),
-                        ),
-                    )
-                    .maybe_child(compact.then(|| {
-                        notein_ui_kit::Button::new("Cancelar")
-                            .ghost()
-                            .on_press(|_| ModalController::get().close())
-                    })),
-            )
+            .child(field_row(query, compact))
             .child(
                 ScrollView::new()
                     .width(Size::fill())
                     .height(Size::flex(1.0))
                     .child(rect().width(Size::fill()).spacing(14.0).children(sections)),
             )
-            .maybe_child((!compact).then(|| {
+            .maybe_child((!compact).then(key_hints))
+    }
+}
+
+/// Run the search `DEBOUNCE` after the query stops changing. Returns
+/// the results, the highlighted line and whether a search is running.
+fn use_search(
+    query: State<String>,
+    data: Option<Arc<LibraryData>>,
+) -> (State<Results>, State<usize>, State<bool>) {
+    let mut results = use_state(Results::default);
+    let mut highlighted = use_state(|| 0usize);
+    let mut searching = use_state(|| false);
+    use_side_effect(move || {
+        let text = query.read().clone();
+        highlighted.set(0);
+        let Some(data) = data.clone() else {
+            return;
+        };
+        if text.trim().is_empty() {
+            results.set(Results::default());
+            return;
+        }
+        searching.set(true);
+        spawn(async move {
+            async_io::Timer::after(DEBOUNCE).await;
+            if *query.peek() != text {
+                return;
+            }
+            let found = crate::search::run_async(text.clone(), data).await;
+            if *query.peek() == text {
+                results.set(found);
+                searching.set(false);
+            }
+        });
+    });
+    (results, highlighted, searching)
+}
+
+/// The field, with Cancelar on phones.
+fn field_row(query: State<String>, compact: bool) -> Rect {
+    rect()
+        .width(Size::fill())
+        .horizontal()
+        .cross_align(Alignment::Center)
+        .content(Content::Flex)
+        .spacing(8.0)
+        .child(
+            rect().width(Size::flex(1.0)).child(
+                SearchField::new(query, "Buscar documentos, versículos, notas…")
+                    .auto_focus(true)
+                    .height(44.0),
+            ),
+        )
+        .maybe_child(compact.then(|| {
+            notein_ui_kit::Button::new("Cancelar")
+                .ghost()
+                .on_press(|_| ModalController::get().close())
+        }))
+}
+
+fn key_hints() -> Rect {
+    rect()
+        .horizontal()
+        .cross_align(Alignment::Center)
+        .spacing(6.0)
+        .child(Kbd::new("↑↓"))
+        .child(Text::new("elegir").role(TextRole::Hint))
+        .child(Kbd::new("Enter"))
+        .child(Text::new("abrir").role(TextRole::Hint))
+        .child(Kbd::new("Ctrl Enter"))
+        .child(Text::new("abrir al lado").role(TextRole::Hint))
+}
+
+/// Builds the rows in the order the arrow keys walk them.
+struct Rows<'a> {
+    selected: usize,
+    query: State<String>,
+    data: Option<&'a LibraryData>,
+    /// Index of the next row.
+    next: usize,
+}
+
+impl Rows<'_> {
+    fn row(&mut self, line: &Line) -> Element {
+        use freya::icons::lucide;
+        let p = palette();
+        let on = self.next == self.selected;
+        self.next += 1;
+        let action = line.clone();
+        let query = self.query;
+        let base = match line {
+            Line::Doc(item) => {
+                let Some((d, found)) = self.data.and_then(|d| d.item(*item).map(|f| (d, f))) else {
+                    return rect().into_element();
+                };
+                let info = crate::plugins::kind_info(&found.kind.plugin_id);
+                ListRow::new(found.name.clone())
+                    .subtitle(crate::flows::forms::folder_path(d, found.folder))
+                    .kind(
+                        info.as_ref().map_or_else(lucide::file, |k| k.icon.clone()),
+                        info.map_or(p.t3, |k| kind_color(&p, k.color)),
+                    )
+            }
+            Line::Place(place) => {
+                ListRow::new(place.title.clone()).subtitle(if place.snippet.is_empty() {
+                    place.doc_name.clone()
+                } else {
+                    format!("{} · {}", place.doc_name, place.snippet)
+                })
+            }
+            Line::Recent(text) => ListRow::new(text.clone()).icon(lucide::history()),
+            Line::CreateNote(name) => ListRow::new(format!("Crear nota «{name}»"))
+                .kind(lucide::notebook_text(), p.kinds.note),
+        };
+        base.dense(true)
+            .selected(on)
+            .on_press(move |_| action.run(false, query))
+            .into_element()
+    }
+
+    fn rows<'l>(&mut self, lines: impl Iterator<Item = &'l Line>) -> notein_ui_kit::Group {
+        notein_ui_kit::Group::default().children(lines.map(|l| self.row(l)).collect::<Vec<_>>())
+    }
+
+    /// Recent searches and documents, for the empty field.
+    fn idle_sections(&mut self, list: &[Line], has_history: bool) -> Vec<Element> {
+        let mut sections = Vec::new();
+        if has_history {
+            let rows = self.rows(list.iter().filter(|l| matches!(l, Line::Recent(_))));
+            sections.push(
+                Section::new("Búsquedas recientes")
+                    .child(rows)
+                    .into_element(),
+            );
+        }
+        let docs: Vec<&Line> = list.iter().filter(|l| matches!(l, Line::Doc(_))).collect();
+        if !docs.is_empty() {
+            let rows = self.rows(docs.into_iter());
+            sections.push(
+                Section::new("Abiertos hace poco")
+                    .child(rows)
+                    .into_element(),
+            );
+        }
+        sections
+    }
+
+    /// Documents, then one section per kind of place, then what is
+    /// still being read.
+    fn result_sections(
+        &mut self,
+        list: &[Line],
+        current: &Results,
+        text: &str,
+        searching: bool,
+    ) -> Vec<Element> {
+        let p = palette();
+        let mut sections = Vec::new();
+        if !current.documents.is_empty() {
+            let rows = self.rows(list.iter().take(current.documents.len()));
+            sections.push(Section::new("Documentos").child(rows).into_element());
+        }
+        for group in &current.groups {
+            let hits: Vec<Line> = group.hits.iter().cloned().map(Line::Place).collect();
+            let rows = self.rows(hits.iter());
+            sections.push(
+                Section::new(group.label.clone())
+                    .icon(group.icon.clone())
+                    .trailing(
+                        Text::new(group.hits.len().to_string())
+                            .role(TextRole::Meta)
+                            .color(kind_color(&p, group.color)),
+                    )
+                    .child(rows)
+                    .into_element(),
+            );
+        }
+        if current.is_empty() && !searching {
+            self.next = 0;
+            sections.push(
                 rect()
-                    .horizontal()
-                    .cross_align(Alignment::Center)
-                    .spacing(6.0)
-                    .child(Kbd::new("↑↓"))
-                    .child(Text::new("elegir").role(TextRole::Hint))
-                    .child(Kbd::new("Enter"))
-                    .child(Text::new("abrir").role(TextRole::Hint))
-                    .child(Kbd::new("Ctrl Enter"))
-                    .child(Text::new("abrir al lado").role(TextRole::Hint))
-            }))
+                    .width(Size::fill())
+                    .spacing(8.0)
+                    .child(Text::new(format!("Nada con «{}»", text.trim())).role(TextRole::Strong))
+                    .child(self.row(&Line::CreateNote(text.trim().to_owned())))
+                    .into_element(),
+            );
+        }
+        sections.extend(current.indexing.iter().map(|job| {
+            #[allow(clippy::cast_precision_loss)] // page counts
+            let fraction = if job.total == 0 {
+                0.0
+            } else {
+                job.done as f32 / job.total as f32
+            };
+            rect()
+                .width(Size::fill())
+                .spacing(6.0)
+                .child(Notice::new(
+                    NoticeTone::Info,
+                    format!(
+                        "Todavía leyendo «{}» ({} de {}). Puede que falten resultados.",
+                        job.name, job.done, job.total
+                    ),
+                ))
+                .child(ProgressBar::new(fraction).height(3.0))
+                .into_element()
+        }));
+        sections
     }
 }
