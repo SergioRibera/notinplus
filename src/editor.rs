@@ -6,6 +6,8 @@
 //! through the shell, the theme of the active palette and the user's
 //! markdown-marks setting.
 
+mod labels;
+
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::rc::Rc;
@@ -31,6 +33,7 @@ pub fn theme(p: &Palette) -> EditorTheme {
     };
     theme.body_size = tokens::text::BODY;
     theme.heading_sizes = [22.0, 19.0, 16.5, 15.0, 14.0, 13.5];
+    theme.labels = labels::labels();
     let colors = &mut theme.colors;
     colors.text = p.t1;
     colors.muted = p.t2;

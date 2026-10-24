@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use freya::prelude::Color;
 
 use crate::document::{CalloutKind, HeadingLevel, Rgba};
+use crate::labels::Labels;
 
 /// Palette used to paint the editor.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -117,6 +118,8 @@ pub struct EditorTheme {
     /// with [`Self::zoomed`] so layout and hit testing stay native instead
     /// of going through a render-only scale effect.
     pub zoom: f32,
+    /// Text of the tooltips, menus and captions.
+    pub labels: Labels,
 }
 
 impl Default for EditorTheme {
@@ -153,6 +156,7 @@ impl From<EditorColors> for EditorTheme {
             ],
             font_sizes: vec![10, 12, 14, 15, 16, 18, 20, 24, 30, 36],
             zoom: 1.0,
+            labels: Labels::default(),
         }
     }
 }

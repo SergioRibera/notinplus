@@ -124,17 +124,6 @@ impl CalloutKind {
             Self::Caution => "CAUTION",
         }
     }
-
-    #[must_use]
-    pub const fn title(self) -> &'static str {
-        match self {
-            Self::Note => "Note",
-            Self::Tip => "Tip",
-            Self::Important => "Important",
-            Self::Warning => "Warning",
-            Self::Caution => "Caution",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

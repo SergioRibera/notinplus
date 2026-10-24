@@ -19,7 +19,7 @@ pub use suggest::{
 };
 
 use self::block::{BlockView, TocEntry};
-use self::suggest::SlashMenu;
+use self::suggest::{MenuSource, SlashMenu};
 use crate::controller::{EditorController, EditorState};
 use crate::decorator::{Decorator, Decorators};
 use crate::document::{Abbreviation, BlockKind, Document, Inline};
@@ -251,14 +251,15 @@ impl MarkdownEditor {
     /// are added.
     #[must_use]
     pub fn suggestions(mut self, source: impl SuggestionSource + 'static) -> Self {
-        Rc::make_mut(&mut self.slash.0).push(Rc::new(source));
+        Rc::make_mut(&mut self.slash.0).push(MenuSource::Custom(Rc::new(source)));
         self
     }
 
     /// Enable the `/` menu with the built in [`BlockSuggestions`].
     #[must_use]
-    pub fn slash_menu(self) -> Self {
-        self.suggestions(BlockSuggestions)
+    pub fn slash_menu(mut self) -> Self {
+        Rc::make_mut(&mut self.slash.0).push(MenuSource::Blocks);
+        self
     }
 
     /// Show a drag handle next to every block (edit mode only). Blocks can

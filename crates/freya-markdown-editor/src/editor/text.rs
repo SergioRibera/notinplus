@@ -146,7 +146,7 @@ impl Component for TextBlock {
                 let rows = match &*cache {
                     Some((cached, rows)) if *cached == query => rows.clone(),
                     _ => {
-                        let rows = Rc::new(shared.slash.rows(&query));
+                        let rows = Rc::new(shared.slash.rows(&query, &shared.theme.labels));
                         *cache = Some((query, rows.clone()));
                         rows
                     }

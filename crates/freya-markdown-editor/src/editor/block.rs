@@ -16,6 +16,7 @@ use crate::document::{
     Align, Block, BlockId, BlockKind, CalloutKind, CellPos, ColumnAlign, HeadingLevel, Inline,
     ListKind, Table, TextRole, TextTarget,
 };
+use crate::labels::Label;
 use crate::theme::EditorTheme;
 
 const GUTTER: f32 = 24.0;
@@ -279,7 +280,11 @@ impl BlockView {
                             .color(accent)
                             .font_size(theme.px(13.))
                             .font_weight(FontWeight::BOLD)
-                            .text(title.clone().unwrap_or_else(|| kind.title().to_owned())),
+                            .text(
+                                title
+                                    .clone()
+                                    .unwrap_or_else(|| theme.labels.callout(*kind).to_owned()),
+                            ),
                     )
                     .into_element();
                 Frame {
@@ -316,9 +321,10 @@ impl BlockView {
                 (!language.is_empty()).then(|| language.clone()),
             ),
             BlockKind::Math(tex) => panel(plain(tex, colors.text), Some("TeX".to_owned())),
-            BlockKind::FrontMatter(raw) => {
-                panel(plain(raw, colors.muted), Some("Front matter".to_owned()))
-            }
+            BlockKind::FrontMatter(raw) => panel(
+                plain(raw, colors.muted),
+                Some(theme.labels.get(Label::FrontMatter).to_owned()),
+            ),
             BlockKind::Html(raw) => panel(plain(raw, colors.muted), Some("HTML".to_owned())),
             BlockKind::Footnote {
                 label: name,
@@ -482,7 +488,7 @@ impl BlockView {
                 label()
                     .color(colors.muted)
                     .font_size(theme.px(13.))
-                    .text("Add headings to build the table of contents")
+                    .text(theme.labels.get(Label::EmptyContents))
                     .into_element(),
             ]
         } else {
@@ -590,7 +596,7 @@ impl Component for BlockView {
                     )
                     .child(label().color(colors.text).font_size(12.).max_lines(1).text(
                         if preview.is_empty() {
-                            "Block".to_owned()
+                            theme.labels.get(Label::Block).to_owned()
                         } else {
                             preview
                         },

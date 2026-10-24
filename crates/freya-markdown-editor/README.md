@@ -123,7 +123,8 @@ MarkdownEditor::new(value)
         })
         .keyword("at"),
     )
-    // the built in `BlockSuggestions` (headings, lists, code, tables...)
+    // the built in `BlockSuggestions` (headings, lists, code, tables...),
+    // captioned with the theme labels
     .slash_menu()
 ```
 
@@ -238,6 +239,18 @@ Typing shortcuts: `# `..`###### `, `- `, `* `, `1. `, `[ ] `, `[x] `, `> `,
 passed with `.theme(...)` or provided as context so every editor and
 toolbar below picks it up. `EditorTheme::dark()` and `EditorTheme::light()`
 are included.
+
+The text the editor and toolbar show on their own (tooltips, menus, block
+captions, the `/` menu) comes from `EditorTheme::labels`, English by
+default. Translate it with `Labels::from_fn`, matching on every `Label`
+so a new label fails the build until it is translated:
+
+```rust,ignore
+theme.labels = Labels::from_fn(|label| match label {
+    Label::Undo => "Deshacer (Ctrl+Z)",
+    // ...
+});
+```
 
 ## Limitations
 

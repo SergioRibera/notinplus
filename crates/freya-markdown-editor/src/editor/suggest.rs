@@ -17,6 +17,7 @@ use freya::prelude::*;
 
 use crate::EditorController;
 use crate::document::{BlockKind, BlockType, CalloutKind, HeadingLevel, Inline, Table};
+use crate::labels::{Label, Labels};
 use crate::theme::EditorTheme;
 
 /// What picking a suggestion does. The `/` and the typed query are removed
@@ -123,13 +124,21 @@ pub trait SuggestionSource {
     fn suggestions(&self, query: &str) -> Vec<Suggestion>;
 }
 
-/// Built in block conversions and inserts.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct BlockSuggestions;
+/// Built in block conversions and inserts, captioned with `labels`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BlockSuggestions {
+    labels: Labels,
+}
+
+impl From<Labels> for BlockSuggestions {
+    fn from(labels: Labels) -> Self {
+        Self { labels }
+    }
+}
 
 impl SuggestionSource for BlockSuggestions {
     fn title(&self) -> &'static str {
-        "Blocks"
+        self.labels.get(Label::Blocks)
     }
 
     fn keyword(&self) -> Option<&str> {
@@ -137,7 +146,7 @@ impl SuggestionSource for BlockSuggestions {
     }
 
     fn suggestions(&self, query: &str) -> Vec<Suggestion> {
-        block_entries()
+        self.entries()
             .into_iter()
             .filter(|entry| entry.matches(query))
             .collect()
@@ -201,87 +210,118 @@ impl SuggestionSource for SuggestionGroup {
     }
 }
 
-fn block_entries() -> Vec<Suggestion> {
-    let block = |label: &str, icon: &str, detail: &str, block_type| {
-        Suggestion::new(label, SuggestionAction::SetBlockType(block_type))
-            .icon(icon)
-            .detail(detail)
-    };
-    let insert = |label: &str, icon: &str, detail: &str, kind| {
-        Suggestion::new(label, SuggestionAction::InsertBlock(kind))
-            .icon(icon)
-            .detail(detail)
-    };
-    vec![
-        block("Text", "¶", "Plain paragraph", BlockType::Paragraph),
-        block(
-            "Heading 1",
-            "H1",
-            "Big section heading",
-            BlockType::Heading(HeadingLevel::H1),
-        ),
-        block(
-            "Heading 2",
-            "H2",
-            "Medium section heading",
-            BlockType::Heading(HeadingLevel::H2),
-        ),
-        block(
-            "Heading 3",
-            "H3",
-            "Small section heading",
-            BlockType::Heading(HeadingLevel::H3),
-        ),
-        block("Bulleted list", "•", "Simple list", BlockType::BulletList),
-        block(
-            "Numbered list",
-            "1.",
-            "Ordered list",
-            BlockType::OrderedList,
-        ),
-        block("To-do list", "☐", "Checklist", BlockType::TaskList),
-        block("Quote", "❝", "Quotation", BlockType::Quote),
-        block(
-            "Note",
-            "ℹ",
-            "Callout",
-            BlockType::Callout(CalloutKind::Note),
-        ),
-        block("Tip", "✦", "Callout", BlockType::Callout(CalloutKind::Tip)),
-        block(
-            "Warning",
-            "⚠",
-            "Callout",
-            BlockType::Callout(CalloutKind::Warning),
-        ),
-        block("Code", "</>", "Code block", BlockType::Code),
-        block("Math", "∑", "TeX formula", BlockType::Math),
-        block("Term", "Dt", "Definition list term", BlockType::Term),
-        block(
-            "Definition",
-            "Dd",
-            "Definition list details",
-            BlockType::Definition,
-        ),
-        insert("Divider", "—", "Horizontal rule", BlockKind::Divider),
-        insert(
-            "Table",
-            "▦",
-            "3 x 3 table",
-            BlockKind::Table(Table::new(3, 3)),
-        ),
-        insert(
-            "Table of contents",
-            "≡",
-            "Generated from headings",
-            BlockKind::TableOfContents,
-        ),
-    ]
+impl BlockSuggestions {
+    fn entries(&self) -> Vec<Suggestion> {
+        let text = |label| self.labels.get(label);
+        let block = |label, icon: &str, detail, block_type| {
+            Suggestion::new(text(label), SuggestionAction::SetBlockType(block_type))
+                .icon(icon)
+                .detail(text(detail))
+        };
+        let insert = |label, icon: &str, detail, kind| {
+            Suggestion::new(text(label), SuggestionAction::InsertBlock(kind))
+                .icon(icon)
+                .detail(text(detail))
+        };
+        vec![
+            block(
+                Label::Text,
+                "¶",
+                Label::PlainParagraph,
+                BlockType::Paragraph,
+            ),
+            block(
+                Label::Heading1,
+                "H1",
+                Label::BigHeading,
+                BlockType::Heading(HeadingLevel::H1),
+            ),
+            block(
+                Label::Heading2,
+                "H2",
+                Label::MediumHeading,
+                BlockType::Heading(HeadingLevel::H2),
+            ),
+            block(
+                Label::Heading3,
+                "H3",
+                Label::SmallHeading,
+                BlockType::Heading(HeadingLevel::H3),
+            ),
+            block(
+                Label::BulletedList,
+                "•",
+                Label::SimpleList,
+                BlockType::BulletList,
+            ),
+            block(
+                Label::NumberedList,
+                "1.",
+                Label::OrderedList,
+                BlockType::OrderedList,
+            ),
+            block(Label::TodoList, "☐", Label::Checklist, BlockType::TaskList),
+            block(Label::Quote, "❝", Label::Quotation, BlockType::Quote),
+            block(
+                Label::Note,
+                "ℹ",
+                Label::Callout,
+                BlockType::Callout(CalloutKind::Note),
+            ),
+            block(
+                Label::Tip,
+                "✦",
+                Label::Callout,
+                BlockType::Callout(CalloutKind::Tip),
+            ),
+            block(
+                Label::Warning,
+                "⚠",
+                Label::Callout,
+                BlockType::Callout(CalloutKind::Warning),
+            ),
+            block(Label::Code, "</>", Label::CodeBlock, BlockType::Code),
+            block(Label::Math, "∑", Label::TexFormula, BlockType::Math),
+            block(Label::Term, "Dt", Label::TermDetail, BlockType::Term),
+            block(
+                Label::Definition,
+                "Dd",
+                Label::DefinitionDetail,
+                BlockType::Definition,
+            ),
+            insert(
+                Label::Divider,
+                "—",
+                Label::HorizontalRule,
+                BlockKind::Divider,
+            ),
+            insert(
+                Label::Table,
+                "▦",
+                Label::SmallTable,
+                BlockKind::Table(Table::new(3, 3)),
+            ),
+            insert(
+                Label::TableOfContents,
+                "≡",
+                Label::FromHeadings,
+                BlockKind::TableOfContents,
+            ),
+        ]
+    }
+}
+
+/// A section of the `/` menu.
+#[derive(Clone)]
+pub(crate) enum MenuSource {
+    /// [`BlockSuggestions`] in the editor's labels, known at query time.
+    Blocks,
+    Custom(Rc<dyn SuggestionSource>),
 }
 
 /// Every registered source, compared by identity.
 #[derive(Clone, Default)]
-pub(crate) struct SlashMenu(pub(crate) Rc<Vec<Rc<dyn SuggestionSource>>>);
+pub(crate) struct SlashMenu(pub(crate) Rc<Vec<MenuSource>>);
 
 impl PartialEq for SlashMenu {
     fn eq(&self, other: &Self) -> bool {
@@ -304,17 +344,25 @@ impl SlashMenu {
     }
 
     /// Rows for `query` (the text typed after `/`).
-    pub(crate) fn rows(&self, query: &str) -> Vec<MenuRow> {
+    pub(crate) fn rows(&self, query: &str, labels: &Labels) -> Vec<MenuRow> {
         let query = query.trim_start().to_lowercase();
-        let scoped = self.0.iter().find_map(|source| {
+        let blocks = BlockSuggestions::from(labels.clone());
+        let sources: Vec<&dyn SuggestionSource> = self
+            .0
+            .iter()
+            .map(|source| match source {
+                MenuSource::Blocks => &blocks as &dyn SuggestionSource,
+                MenuSource::Custom(source) => source.as_ref(),
+            })
+            .collect();
+        let scoped = sources.iter().find_map(|source| {
             let keyword = source.keyword()?.to_lowercase();
             let rest = query.strip_prefix(&keyword)?;
             (rest.is_empty() || rest.starts_with(' ')).then(|| (source, rest.trim().to_owned()))
         });
         let sections: Vec<(&str, Vec<Suggestion>)> = match scoped {
             Some((source, rest)) => vec![(source.title(), source.suggestions(&rest))],
-            None => self
-                .0
+            None => sources
                 .iter()
                 .map(|source| (source.title(), source.suggestions(&query)))
                 .collect(),
@@ -415,7 +463,7 @@ impl Component for SuggestionMenu {
                         label()
                             .color(colors.muted)
                             .font_size(13.)
-                            .text("No matches"),
+                            .text(self.theme.labels.get(Label::NoMatches)),
                     ),
                 )
                 .into_element();
@@ -586,26 +634,29 @@ mod tests {
                 .collect()
         })
         .keyword("at");
-        SlashMenu(Rc::new(vec![Rc::new(BlockSuggestions), Rc::new(people)]))
+        SlashMenu(Rc::new(vec![
+            MenuSource::Blocks,
+            MenuSource::Custom(Rc::new(people)),
+        ]))
     }
 
     #[test]
     fn sections_get_headers_when_several_match() {
-        let rows = menu().rows("a");
+        let rows = menu().rows("a", &Labels::default());
         assert!(rows.contains(&MenuRow::Header("People".into())));
         assert!(rows.contains(&MenuRow::Header("Blocks".into())));
     }
 
     #[test]
     fn single_section_has_no_header() {
-        let rows = menu().rows("heading 2");
+        let rows = menu().rows("heading 2", &Labels::default());
         assert_eq!(item_count(&rows), 1);
         assert!(!rows.iter().any(|row| matches!(row, MenuRow::Header(_))));
     }
 
     #[test]
     fn keyword_scopes_to_one_source() {
-        let rows = menu().rows("at al");
+        let rows = menu().rows("at al", &Labels::default());
         assert_eq!(item_count(&rows), 1);
         assert_eq!(item(&rows, 0).map(|item| item.label.as_str()), Some("Alan"));
     }
