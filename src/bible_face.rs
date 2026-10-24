@@ -43,13 +43,13 @@ impl Component for BibleFace {
         // finishing (or a user picking a different installed Bible)
         // forces this scope to re-render — otherwise the empty-state
         // branch would stay even after a background install lands.
-        let _ = *crate::bible_install_modal::install_epoch().read();
+        let _installs = *crate::screens::bible::use_installs().read();
         let inner: Element = match Db::open_default() {
             Err(e) => placeholder(format!("No se pudo abrir la DB: {e}")).into_element(),
             Ok(db) => {
                 let bibles = db.list_bibles().unwrap_or_default();
                 if bibles.is_empty() {
-                    empty_state_with_install().into_element()
+                    crate::screens::bible::FirstUse.into_element()
                 } else {
                     // Delegate to a dedicated component so the viewer's
                     // many hooks are tracked under its own scope. When
@@ -552,7 +552,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                     },
                     move || {
                         picker_open.set(false);
-                        crate::bible_install_modal::open_install_modal();
+                        crate::screens::bible::open_catalog();
                     },
                 )),
         )
@@ -1192,52 +1192,6 @@ fn abbreviate_book(book_id: &str) -> String {
     }
 }
 
-fn empty_state_with_install() -> impl IntoElement {
-    let on_install = move |_: Event<PressEventData>| {
-        crate::bible_install_modal::open_install_modal();
-    };
-    let router = RouterContext::get();
-    let on_home = move || {
-        let _ = router.push(crate::route::Route::Home);
-    };
-    let body = rect()
-        .width(Size::fill())
-        .height(Size::flex(1.0))
-        .center()
-        .padding((32., 32.))
-        .spacing(14.0)
-        .child(
-            label()
-                .font_size(18.0)
-                .color(Color::from_rgb(230, 230, 230))
-                .text("No hay Biblias instaladas"),
-        )
-        .child(
-            label()
-                .font_size(14.0)
-                .color(Color::from_rgb(170, 170, 170))
-                .text("Elegí una traducción del catálogo para empezar a leer."),
-        )
-        .child(
-            rect()
-                .padding((10., 20.))
-                .with_corner_radius(10.0)
-                .background(Color::from_rgb(55, 80, 140))
-                .on_press(on_install)
-                .child(
-                    label()
-                        .font_size(14.0)
-                        .color(Color::from_rgb(240, 240, 240))
-                        .text("Elegir Biblia…"),
-                ),
-        );
-    rect()
-        .width(Size::fill())
-        .height(Size::fill())
-        .content(Content::Flex)
-        .child(toolbar::empty_toolbar(on_home))
-        .child(body)
-}
 
 fn placeholder(message: String) -> impl IntoElement {
     rect()

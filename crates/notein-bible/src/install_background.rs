@@ -190,7 +190,7 @@ pub fn spawn_fetch_headings(
 }
 
 
-fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallProgress) {
+pub(crate) fn run(bible_id: String, db: Db, config: SharedConfig, progress: SharedInstallProgress) {
     log::info!("bible install thread: starting for {bible_id}");
     {
         let mut p = progress.write().unwrap();

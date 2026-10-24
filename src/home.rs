@@ -2054,7 +2054,7 @@ fn flow_open_bible(ctx: FabCtx) {
 /// Bible empty-state, the FAB `+` menu's "install-bible" action and
 /// the translation picker's "Agregar traducción…" row.
 pub fn fab_install_bible() {
-    crate::bible_install_modal::open_install_modal();
+    crate::screens::bible::open_catalog();
 }
 
 fn flow_new_ephemeral(_ctx: FabCtx) {

@@ -1,5 +1,6 @@
 //! Top-level screens.
 
+pub mod bible;
 pub mod collab;
 pub mod home;
 pub mod map;

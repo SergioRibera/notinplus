@@ -516,7 +516,7 @@ fn choose(
                 .ghost()
                 .on_press(|_| {
                     ModalController::get().close();
-                    crate::bible_install_modal::open_install_modal();
+                    crate::screens::bible::open_catalog();
                 }),
         );
     }

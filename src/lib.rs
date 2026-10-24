@@ -17,7 +17,6 @@ pub mod annotation;
 pub mod android_clipboard;
 pub mod app;
 pub mod bible_face;
-pub mod bible_install_modal;
 pub mod bookmark;
 pub mod bookmark_ui;
 pub mod brush;

@@ -42,6 +42,8 @@ pub mod import;
 pub mod kind;
 #[cfg(feature = "importer")]
 pub mod install_background;
+#[cfg(feature = "importer")]
+pub mod installer;
 pub mod plugin_config;
 pub mod reference;
 pub mod resolver;

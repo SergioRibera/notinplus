@@ -40,7 +40,9 @@ impl PartialEq for SelectionMenu {
 
 impl std::fmt::Debug for SelectionMenu {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SelectionMenu").field("at", &self.at).finish_non_exhaustive()
+        f.debug_struct("SelectionMenu")
+            .field("at", &self.at)
+            .finish_non_exhaustive()
     }
 }
 
@@ -84,7 +86,10 @@ impl Component for Bar {
         let inks = inks();
         let on_color = Rc::clone(&menu.on_color);
         let mut items = vec![BarItem::Swatches {
-            colors: inks.iter().map(|c| Color::from_rgb(c[0], c[1], c[2])).collect(),
+            colors: inks
+                .iter()
+                .map(|c| Color::from_rgb(c[0], c[1], c[2]))
+                .collect(),
             active: menu.active,
             on_pick: EventHandler::new(move |i: usize| {
                 ModalController::get().clear_top_on_close();
@@ -94,7 +99,11 @@ impl Component for Bar {
         }];
         items.push(BarItem::Divider);
         let note = Rc::clone(&menu.on_note);
-        items.push(BarItem::action("Nota", lucide::message_square_text(), act(move || note())));
+        items.push(BarItem::action(
+            "Nota",
+            lucide::message_square_text(),
+            act(move || note()),
+        ));
         if let Some((target, label)) = menu.reference.clone() {
             items.push(BarItem::action(
                 "Copiar ref",
@@ -131,7 +140,11 @@ impl Component for Bar {
         let (x, y) = menu.at;
         let top = if y > 90.0 { y - 64.0 } else { y + 28.0 };
         rect()
-            .position(Position::new_absolute().left((x - 220.0).clamp(8.0, (size.width - 460.0).max(8.0))).top(top))
+            .position(
+                Position::new_absolute()
+                    .left((x - 220.0).clamp(8.0, (size.width - 460.0).max(8.0)))
+                    .top(top),
+            )
             .child(bar)
             .into_element()
     }
