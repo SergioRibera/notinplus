@@ -34,7 +34,7 @@ fn missing(text: &str) {
 /// Open `target` with `placement`.
 pub fn open(target: &SourceRef, placement: Placement) {
     match target {
-        SourceRef::External { url } => crate::source_ref_nav::open_external_url(url),
+        SourceRef::External { url } => crate::external::open_url(url),
         SourceRef::Canvas { bookmark } => {
             let Some(doc) = super::builtin::canvas_kind().doc_of_bookmark(bookmark.0) else {
                 missing("Ese marcador ya no existe");

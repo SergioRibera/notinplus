@@ -192,7 +192,7 @@ pub fn open(url: &str) {
         return;
     }
     match SourceRef::from_url(url) {
-        Some(src) => crate::source_ref_nav::navigate(&src),
+        Some(src) => crate::plugins::navigate::open(&src, notein_plugin::services::Placement::Preferred),
         None => log::warn!("deep link ignored: {url}"),
     }
 }

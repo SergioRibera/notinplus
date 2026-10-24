@@ -645,7 +645,7 @@ fn newer_version() {
                 .primary()
                 .on_press(|_| {
                     ModalController::get().close();
-                    crate::source_ref_nav::open_external_url(
+                    crate::external::open_url(
                         "https://github.com/SergioRibera/notinplus/releases",
                     );
                 })

@@ -25,6 +25,12 @@ targets:
         createIntermediateGroups: true
         excludes:
           - "*.fragment"
+      - path: "../../../istmo/plugins/opener/native/ios"
+        name: ISTMO_OPENER
+        type: group
+        createIntermediateGroups: true
+        excludes:
+          - "*.fragment"
       - path: "../../../istmo/plugins/istmo-pen/native/ios"
         name: ISTMO_PEN
         type: group

@@ -53,6 +53,7 @@ pub fn install() -> Result<(), Box<dyn std::error::Error>> {
     runtime.register_host(istmo_barcode_scanner::BarcodeScannerHost::new(
         istmo_barcode_scanner::DesktopBarcodeScanner,
     ));
+    runtime.register_host(istmo_opener::OpenerHost::new(istmo_opener::DesktopOpener));
 
     match istmo_share::DesktopShare::with_global_registry() {
         Ok(share) => runtime.register_host(istmo_share::ShareHost::new(share)),

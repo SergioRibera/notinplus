@@ -39,6 +39,7 @@ istmo-file-picker = { path = "../istmo/plugins/file-picker" }
 istmo-data-store = { path = "../istmo/plugins/data-store" }
 istmo-share = { path = "../istmo/plugins/share" }
 istmo-barcode-scanner = { path = "../istmo/plugins/barcode-scanner" }
+istmo-opener = { path = "../istmo/plugins/opener" }
 freya = { version = "=0.5.0-rc.8", features = ["router", "icons", "icons-lucide"] }
 freya-engine = "=0.5.0-rc.8"
 freya-components = "=0.5.0-rc.8"

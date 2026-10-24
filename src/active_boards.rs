@@ -66,18 +66,6 @@ pub fn get_item(item: ItemId) -> Option<Arc<Mutex<Board>>> {
         .map(|(_, b)| Arc::clone(b))
 }
 
-/// Snapshot of every mounted board — used by cross-canvas navigation
-/// to find the pane that owns a given bookmark id. Clones the Arcs so
-/// the registry lock is dropped before the caller does any Board
-/// work; no deadlock risk.
-#[must_use]
-pub(crate) fn snapshot() -> Vec<(CanvasMount, Arc<Mutex<Board>>)> {
-    lock()
-        .iter()
-        .map(|(k, v)| (*k, Arc::clone(v)))
-        .collect()
-}
-
 /// Every board currently showing `item`, in no particular order. Two
 /// panes of the same document each have one.
 #[must_use]

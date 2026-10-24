@@ -116,7 +116,7 @@ impl HostServices for ShellHost {
     }
 
     fn open_url(&self, url: &str) {
-        crate::source_ref_nav::open_external_url(url);
+        crate::external::open_url(url);
     }
 
     fn load_font(&self, family: &str, data: Vec<u8>) {

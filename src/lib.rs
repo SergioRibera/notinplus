@@ -31,6 +31,7 @@ pub mod doc;
 pub mod doc_op;
 pub mod editor;
 pub mod dynamic_plugins;
+pub mod external;
 pub mod files;
 pub mod flows;
 pub mod format;
@@ -55,7 +56,6 @@ pub mod references;
 pub mod render;
 pub mod route;
 pub mod soft_keyboard;
-pub mod source_ref_nav;
 pub mod screens;
 pub mod search;
 pub mod selection;
@@ -98,10 +98,11 @@ use istmo_data_store::DataStoreClient;
 use istmo_file_picker::FilePickerClient;
 use istmo_pen::PenClient;
 use istmo_barcode_scanner::BarcodeScannerClient;
+use istmo_opener::OpenerClient;
 use istmo_share::ShareClient;
 
 istmo::runtime!(
-    plugins: [PenClient, SafeArea, DeepLinks, FilePickerClient, DataStoreClient, ShareClient, BarcodeScannerClient],
+    plugins: [PenClient, SafeArea, DeepLinks, FilePickerClient, DataStoreClient, ShareClient, BarcodeScannerClient, OpenerClient],
 );
 
 #[cfg(any(

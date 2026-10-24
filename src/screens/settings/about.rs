@@ -72,7 +72,7 @@ impl Component for About {
                                     .small()
                                     .on_press(move |_| {
                                         if desktop {
-                                            crate::source_ref_nav::open_external_url(&format!("file://{folder}"));
+                                            crate::external::open_url(&format!("file://{folder}"));
                                         } else if freya::clipboard::Clipboard::set(folder.clone()).is_ok() {
                                             Toasts::get().show(Toast::new("Ruta copiada"));
                                         }
