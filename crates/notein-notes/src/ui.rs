@@ -2,11 +2,7 @@
 
 use freya::icons::lucide;
 use freya::prelude::*;
-
-pub const BACKGROUND: Color = Color::from_rgb(10, 10, 10);
-pub const TEXT: Color = Color::from_rgb(235, 235, 235);
-pub const MUTED: Color = Color::from_rgb(150, 150, 160);
-pub const CHIP: Color = Color::from_rgb(32, 32, 32);
+use notein_ui_kit::theme::palette;
 
 const ICON_SIZE: f32 = 20.0;
 const BUTTON_SIZE: f32 = 36.0;
@@ -52,7 +48,7 @@ pub fn topbar(title: &str, read_only: bool, actions: TopbarActions) -> impl Into
 
     rect()
         .width(Size::fill())
-        .background(BACKGROUND)
+        .background(palette().bg)
         .padding(16.)
         .horizontal()
         .cross_align(Alignment::Center)
@@ -66,7 +62,7 @@ pub fn topbar(title: &str, read_only: bool, actions: TopbarActions) -> impl Into
                 .margin((0., 8.))
                 .font_size(16.)
                 .font_weight(FontWeight::SEMI_BOLD)
-                .color(TEXT)
+                .color(palette().t1)
                 .max_lines(1)
                 .text_overflow(TextOverflow::Ellipsis)
                 .text(title),
@@ -102,7 +98,7 @@ fn round_button(icon: Bytes, on_press: impl FnMut(Event<PressEventData>) + 'stat
         .on_press(on_press)
         .child(
             SvgViewer::new(icon)
-                .color(TEXT)
+                .color(palette().t1)
                 .width(Size::px(ICON_SIZE))
                 .height(Size::px(ICON_SIZE)),
         )
@@ -124,14 +120,14 @@ fn mode_chip(read_only: bool, mut on_press: Action) -> Element {
         .spacing(6.0)
         .margin((0., 0., 0., 6.))
         .corner_radius(17.0)
-        .background(CHIP)
+        .background(palette().s2)
         .on_press(move |_| on_press())
         .child(
             SvgViewer::new(icon)
-                .color(TEXT)
+                .color(palette().t1)
                 .width(Size::px(14.0))
                 .height(Size::px(14.0)),
         )
-        .child(label().font_size(13.0).color(TEXT).text(text))
+        .child(label().font_size(13.0).color(palette().t1).text(text))
         .into_element()
 }

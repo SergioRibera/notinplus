@@ -270,7 +270,7 @@ pub fn chapter_view(
         styles.insert(
             v,
             VerseStyle {
-                tint: Some(Color::from_rgb(255, 225, 110)),
+                tint: Some(palette().highlighters[0]),
                 has_note: styles.get(&v).map(|s| s.has_note).unwrap_or(false),
             },
         );
@@ -944,7 +944,7 @@ impl Component for FootnoteLetter {
         let target = self.target.clone();
         let on_jump = self.jump.clone();
         let marker_font = self.font_size * 0.55;
-        let blue = Color::from_rgb(80, 150, 230);
+        let blue = palette().accent_text;
         let popup_width = 300.0_f32;
         let popup_margin = 8.0_f32;
 
@@ -1124,7 +1124,7 @@ impl Component for RefHoverButton {
         let popup_max_height = 360.0_f32;
         let popup_width = 320.0_f32;
         let popup_margin = 8.0_f32;
-        let blue = Color::from_rgb(100, 150, 230);
+        let blue = palette().accent_text;
         let refs_for_list = self.refs.clone();
         let jump_for_list = self.jump.clone();
         let font_size = self.font_size;
@@ -1420,19 +1420,19 @@ impl Component for RefListRow {
             .child(
                 label()
                     .font_size(self.font_size * 0.65)
-                    .color(Color::from_rgb(100, 150, 230))
+                    .color(palette().accent_text)
                     .text(self.view.label.clone()),
             )
             .child(
                 rect()
                     .padding((4., 10.))
                     .with_corner_radius(5.0)
-                    .background(Color::from_rgb(55, 80, 140))
+                    .background(palette().accent)
                     .on_press(goto)
                     .child(
                         label()
                             .font_size(self.font_size * 0.58)
-                            .color(Color::from_rgb(240, 240, 240))
+                            .color(palette().on_accent)
                             .text("Ir a"),
                     ),
             );

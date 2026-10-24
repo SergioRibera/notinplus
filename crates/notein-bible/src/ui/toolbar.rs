@@ -174,7 +174,7 @@ fn muted_search_placeholder() -> impl IntoElement {
         .with_corner_radius(17.0)
         .child(
             SvgViewer::new(freya::icons::lucide::search())
-                .color(Color::from_rgb(80, 80, 90))
+                .color(palette().t3)
                 .width(Size::px(ICON_SIZE))
                 .height(Size::px(ICON_SIZE)),
         )
@@ -192,14 +192,14 @@ fn muted_translation_chip() -> impl IntoElement {
         .background(palette().s2)
         .child(
             SvgViewer::new(freya::icons::lucide::globe())
-                .color(Color::from_rgb(80, 80, 90))
+                .color(palette().t3)
                 .width(Size::px(14.0))
                 .height(Size::px(14.0)),
         )
         .child(
             label()
                 .font_size(13.0)
-                .color(Color::from_rgb(80, 80, 90))
+                .color(palette().t3)
                 .text("—"),
         )
 }
@@ -246,7 +246,7 @@ fn nav_icon_button(icon: Bytes, handler: Option<BackHandler>) -> impl IntoElemen
             .with_corner_radius(BUTTON_SIZE / 2.0)
             .child(
                 SvgViewer::new(icon)
-                    .color(Color::from_rgb(80, 80, 90))
+                    .color(palette().t3)
                     .width(Size::px(ICON_SIZE))
                     .height(Size::px(ICON_SIZE)),
             ),

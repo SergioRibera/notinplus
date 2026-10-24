@@ -23,6 +23,7 @@ use notein_bible::ui::reader::{
     CrossRefView, FootnoteView, cross_refs_by_verse, footnotes_by_verse,
 };
 use notein_bible::ui::{bottom_nav, reader, toolbar, translation_switcher};
+use notein_ui_kit::theme::palette;
 
 use std::time::Duration;
 
@@ -63,7 +64,7 @@ impl Component for BibleFace {
         rect()
             .width(Size::fill())
             .height(Size::fill())
-            .background(Color::from_rgb(10, 10, 10))
+            .background(palette().bg)
             .child(inner)
     }
 }
@@ -868,12 +869,12 @@ fn book_grid_page(
                 .height(Size::px(CELL))
                 .center()
                 .with_corner_radius(10.0)
-                .background(Color::from_rgb(32, 32, 32))
+                .background(palette().s2)
                 .on_press(move |_: Event<PressEventData>| on_pick(book_id.clone()))
                 .child(
                     label()
                         .font_size(13.0)
-                        .color(Color::from_rgb(230, 230, 230))
+                        .color(palette().t1)
                         .text(b.abbrev.clone()),
                 ),
         );
@@ -900,14 +901,14 @@ fn chapter_grid_page(
         .on_press(on_back)
         .child(
             SvgViewer::new(arrow_left())
-                .color(Color::from_rgb(230, 230, 230))
+                .color(palette().t1)
                 .width(Size::px(14.))
                 .height(Size::px(14.)),
         )
         .child(
             label()
                 .font_size(14.0)
-                .color(Color::from_rgb(230, 230, 230))
+                .color(palette().t1)
                 .text(book_name.to_string()),
         );
 
@@ -925,12 +926,12 @@ fn chapter_grid_page(
                 .height(Size::px(CELL))
                 .center()
                 .with_corner_radius(8.0)
-                .background(Color::from_rgb(32, 32, 32))
+                .background(palette().s2)
                 .on_press(move |_: Event<PressEventData>| on_pick(c))
                 .child(
                     label()
                         .font_size(13.0)
-                        .color(Color::from_rgb(230, 230, 230))
+                        .color(palette().t1)
                         .text(format!("{c}")),
                 ),
         );
@@ -1019,7 +1020,7 @@ fn chapter_body(
         }
         None => base.center().child(
             label()
-                .color(Color::from_rgb(200, 200, 200))
+                .color(palette().t2)
                 .text("Cargando capítulo…"),
         ),
     }
@@ -1177,7 +1178,7 @@ fn placeholder(message: String) -> impl IntoElement {
         .padding((24., 32.))
         .child(
             label()
-                .color(Color::from_rgb(220, 220, 220))
+                .color(palette().t1)
                 .font_size(16.0)
                 .text(message),
         )

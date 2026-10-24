@@ -23,6 +23,7 @@ missing_panics_doc = "allow"
 notein-sdk = { path = "../notein-sdk" }
 freya-markdown-editor = { path = "../freya-markdown-editor", default-features = false }
 freya = { version = "=0.5.0-rc.8", features = ["icons", "icons-lucide"] }
+notein-ui-kit = { path = "../notein-ui-kit" }
 # Standalone icons crate: `creation_entries` needs SVG bytes.
 freya-icons = { version = "=0.4.0", features = ["lucide"] }
 bincode = { version = "2", features = ["derive", "std"] }

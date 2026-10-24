@@ -130,7 +130,7 @@ impl Component for NotesFace {
         rect()
             .expanded()
             .padding((insets.top, insets.right, insets.bottom, insets.left))
-            .background(ui::BACKGROUND)
+            .background(notein_ui_kit::theme::palette().bg)
             .content(Content::flex())
             .child(ui::topbar(&title.read(), read_only, actions))
             .maybe_child(locked_now.then(|| banner("Solo lectura: podés mirar, no editar.")))
@@ -297,7 +297,7 @@ fn banner(text: impl Into<String>) -> Rect {
     rect()
         .width(Size::fill())
         .padding((2., 20., 6., 20.))
-        .child(label().font_size(12.).color(ui::MUTED).text(text.into()))
+        .child(label().font_size(12.).color(notein_ui_kit::theme::palette().t2).text(text.into()))
 }
 
 /// Keep `locked` in step with the share policy while the face lives.
