@@ -20,17 +20,41 @@ pub enum InstallState {
     Failed(String),
 }
 
+/// How a download ended, for whoever wants to tell the user.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Installed(String),
+    Failed { bible_id: String, reason: String },
+}
+
 #[derive(Debug, Default)]
 struct Queue {
     waiting: VecDeque<String>,
     states: HashMap<String, InstallState>,
     running: bool,
     listeners: Vec<flume::Sender<()>>,
+    outcomes: Vec<flume::Sender<Outcome>>,
 }
 
 impl Queue {
     fn announce(&mut self) {
         self.listeners.retain(|tx| tx.send(()).is_ok());
+    }
+
+    fn finish(&mut self, bible_id: String, outcome: Option<Outcome>) {
+        match &outcome {
+            Some(Outcome::Failed { reason, .. }) => {
+                self.states
+                    .insert(bible_id, InstallState::Failed(reason.clone()));
+            }
+            Some(Outcome::Installed(_)) | None => {
+                self.states.remove(&bible_id);
+            }
+        }
+        if let Some(outcome) = outcome {
+            self.outcomes.retain(|tx| tx.send(outcome.clone()).is_ok());
+        }
+        self.announce();
     }
 
     /// Start the next waiting install; `None` once the queue ran dry.
@@ -94,7 +118,13 @@ impl Installer {
                 .spawn(move || worker.drain());
             if let Err(err) = spawned {
                 log::error!("bible installer: {err}");
-                self.lock().running = false;
+                let mut queue = self.lock();
+                queue.running = false;
+                let stuck: Vec<String> = queue.waiting.drain(..).collect();
+                for bible_id in stuck {
+                    let reason = "No se pudo iniciar la descarga".to_owned();
+                    queue.finish(bible_id.clone(), Some(Outcome::Failed { bible_id, reason }));
+                }
             }
         }
     }
@@ -112,26 +142,17 @@ impl Installer {
                 .read()
                 .unwrap_or_else(PoisonError::into_inner)
                 .clone();
-            let mut queue = self.lock();
-            match finished.stage {
-                InstallStage::Failed => {
-                    queue.states.insert(
-                        next,
-                        InstallState::Failed(
-                            finished
-                                .error
-                                .unwrap_or_else(|| "La descarga falló".to_owned()),
-                        ),
-                    );
-                }
-                InstallStage::Idle
-                | InstallStage::Starting
-                | InstallStage::Downloading
-                | InstallStage::Finished => {
-                    queue.states.remove(&next);
-                }
-            }
-            queue.announce();
+            let outcome = match finished.stage {
+                InstallStage::Failed => Some(Outcome::Failed {
+                    bible_id: next.clone(),
+                    reason: finished
+                        .error
+                        .unwrap_or_else(|| "La descarga falló".to_owned()),
+                }),
+                InstallStage::Finished => Some(Outcome::Installed(next.clone())),
+                InstallStage::Idle | InstallStage::Starting | InstallStage::Downloading => None,
+            };
+            self.lock().finish(next, outcome);
         }
     }
 
@@ -182,6 +203,14 @@ impl Installer {
         self.lock().running
     }
 
+    /// Every download that ends from now on.
+    #[must_use]
+    pub fn outcomes(&self) -> flume::Receiver<Outcome> {
+        let (tx, rx) = flume::unbounded();
+        self.lock().outcomes.push(tx);
+        rx
+    }
+
     /// Fires whenever a state changes.
     #[must_use]
     pub fn changes(&self) -> flume::Receiver<()> {
@@ -199,5 +228,44 @@ impl Installer {
     ) -> Result<crate::import::biblionlabs::CatalogueView, crate::import::biblionlabs::ImportError>
     {
         install_background::load_catalogue(&self.config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finish_reports_outcome_and_settles_state() {
+        let mut queue = Queue::default();
+        let (tx, rx) = flume::unbounded();
+        queue.outcomes.push(tx);
+        queue.states.insert(
+            "rvr".to_owned(),
+            InstallState::Downloading { done: 3, total: 66 },
+        );
+        queue.finish("rvr".to_owned(), Some(Outcome::Installed("rvr".to_owned())));
+        assert_eq!(queue.states.get("rvr"), None);
+        assert_eq!(rx.try_recv(), Ok(Outcome::Installed("rvr".to_owned())));
+
+        let failed = Outcome::Failed {
+            bible_id: "nvi".to_owned(),
+            reason: "sin red".to_owned(),
+        };
+        queue.finish("nvi".to_owned(), Some(failed.clone()));
+        assert_eq!(
+            queue.states.get("nvi"),
+            Some(&InstallState::Failed("sin red".to_owned()))
+        );
+        assert_eq!(rx.try_recv(), Ok(failed));
+    }
+
+    #[test]
+    fn interrupted_install_is_silent() {
+        let mut queue = Queue::default();
+        let (tx, rx) = flume::unbounded();
+        queue.outcomes.push(tx);
+        queue.finish("rvr".to_owned(), None);
+        assert!(rx.try_recv().is_err());
     }
 }

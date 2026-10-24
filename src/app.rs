@@ -271,6 +271,7 @@ impl Component for AppShell {
         use_hook(crate::sync::start);
         use_hook(crate::deep_link::listen);
         use_hook(crate::session_end::listen);
+        use_hook(crate::screens::bible::announce_installs);
         rect()
             .expanded()
             .background(notein_ui_kit::palette().bg)

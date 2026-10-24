@@ -5,11 +5,11 @@ use std::sync::{Arc, OnceLock};
 
 use freya::prelude::*;
 use notein_bible::import::biblionlabs::{BibleEntryView, CatalogueView};
-use notein_bible::installer::{InstallState, Installer};
+use notein_bible::installer::{InstallState, Installer, Outcome};
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
     Button, EmptyState, Group, ListRow, Notice, NoticeTone, ProgressBar, SearchField, Sheet,
-    Skeleton, Tag, Text, TextRole, Trailing, tokens,
+    Skeleton, Tag, Text, TextRole, Toast, ToastTone, Toasts, Trailing, tokens,
 };
 
 /// The installer shared by every Bible surface.
@@ -43,6 +43,43 @@ pub fn use_installs() -> State<u64> {
         });
     });
     tick
+}
+
+/// Toast every download as it ends, with a retry on failures. Runs for the
+/// life of the app.
+pub fn announce_installs() {
+    let Some(installer) = installer() else {
+        return;
+    };
+    let rx = installer.outcomes();
+    spawn(async move {
+        while let Ok(outcome) = rx.recv_async().await {
+            Toasts::get().show(outcome_toast(installer, outcome));
+        }
+    });
+}
+
+fn outcome_toast(installer: &'static Installer, outcome: Outcome) -> Toast {
+    match outcome {
+        Outcome::Installed(bible_id) => {
+            Toast::new(format!("«{}» lista para leer", bible_name(&bible_id)))
+                .tone(ToastTone::Download)
+        }
+        Outcome::Failed { bible_id, reason } => Toast::new(format!(
+            "No se pudo descargar «{}»: {reason}",
+            bible_name(&bible_id)
+        ))
+        .tone(ToastTone::Error)
+        .action("Reintentar", move |()| installer.enqueue(&bible_id)),
+    }
+}
+
+/// Short name of an installed translation, its id otherwise.
+fn bible_name(bible_id: &str) -> String {
+    crate::plugins::builtin::bible_kind()
+        .and_then(|kind| kind.db().list_bibles().ok())
+        .and_then(|bibles| bibles.into_iter().find(|b| b.id == bible_id))
+        .map_or_else(|| bible_id.to_owned(), |b| b.abbrev)
 }
 
 /// The system language as a two-letter code.
