@@ -14,7 +14,7 @@ fn page() -> impl IntoElement {
     let action = |(): ()| Box::new(|| {}) as ui::Action;
     rect()
         .expanded()
-        .background(ui::BACKGROUND)
+        .background(notein_ui_kit::theme::palette().bg)
         .content(Content::flex())
         .child(ui::topbar(
             "Estudio bíblico",
