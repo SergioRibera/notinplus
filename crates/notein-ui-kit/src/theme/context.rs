@@ -130,7 +130,7 @@ pub fn use_theme_root(initial: impl FnOnce() -> Appearance) -> ThemeHandle {
             appearance,
             resolved,
         };
-        provide_context(handle);
+        provide_context_for_scope_id(handle, ScopeId::ROOT);
         handle
     });
     let mut freya_theme = use_init_theme(|| freya_theme_for(&resolved.read().palette));
@@ -148,7 +148,7 @@ pub fn use_theme_root(initial: impl FnOnce() -> Appearance) -> ThemeHandle {
 /// The app-wide handle. `None` outside an app root (tests, previews).
 #[must_use]
 pub fn try_theme() -> Option<ThemeHandle> {
-    try_consume_context::<ThemeHandle>()
+    try_consume_root_context::<ThemeHandle>()
 }
 
 /// Palette of the current theme. Subscribes the calling component, so

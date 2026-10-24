@@ -75,6 +75,7 @@ pub struct Modal {
     dismiss_on_escape: bool,
     backdrop_alpha: u8,
     on_close: Option<NoArgCallback<()>>,
+    opened_at: std::time::Instant,
 }
 
 impl std::fmt::Debug for Modal {
@@ -111,6 +112,7 @@ impl Modal {
             dismiss_on_escape: true,
             backdrop_alpha: 160,
             on_close: None,
+            opened_at: std::time::Instant::now(),
         }
     }
 
@@ -184,6 +186,11 @@ struct ModalState {
     /// Escape / back.
     stack: Vec<Modal>,
 }
+
+/// A backdrop tap this soon after opening belongs to the gesture that
+/// opened the modal (the release of a secondary click), not to the user
+/// dismissing it.
+const DISMISS_GRACE: std::time::Duration = std::time::Duration::from_millis(300);
 
 /// Root-scoped controller shared across the app.
 ///
@@ -391,6 +398,7 @@ impl Component for ModalOverlay {
         let dismiss_on_escape = model.dismiss_on_escape && self.is_top;
         let level = 4 + 2 * u8::try_from(self.depth.min(20)).unwrap_or(20);
         let backdrop_alpha = model.backdrop_alpha;
+        let opened_at = model.opened_at;
         let body_width = model.width;
         let body = model.body;
 
@@ -460,7 +468,13 @@ impl Component for ModalOverlay {
                     .height(Size::px(height))
                     .background(Color::from_argb(backdrop_alpha, 0, 0, 0))
                     .backdrop_blur(blur)
-                    .maybe(dismiss && self.is_top, |r| r.on_press(|_| ModalController::get().close())),
+                    .maybe(dismiss && self.is_top, |r| {
+                        r.on_press(move |_| {
+                            if opened_at.elapsed() >= DISMISS_GRACE {
+                                ModalController::get().close();
+                            }
+                        })
+                    }),
             )
             .child(card_layer)
     }
