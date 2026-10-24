@@ -49,6 +49,8 @@ pub struct ShareView {
     pub invite_link: String,
     /// Whether this device may edit the share's documents.
     pub can_edit: bool,
+    /// Members set to only look.
+    pub viewers: Vec<DeviceId>,
 }
 
 /// What the UI reads.
@@ -102,6 +104,7 @@ enum Cmd {
     End(ShareId),
     Expel(ShareId, DeviceId),
     SetPolicy(ShareId, SharePolicy),
+    SetViewer(ShareId, DeviceId, bool),
     SetRelay(Option<String>),
 }
 
@@ -158,6 +161,23 @@ pub fn changes() -> flume::Receiver<()> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .push(tx);
     rx
+}
+
+/// The sync snapshot as reactive state; re-renders the caller on change.
+pub fn use_sync() -> freya::prelude::State<SyncSnapshot> {
+    use freya::prelude::{WritableUtils, spawn, use_hook, use_state};
+    let state = use_state(snapshot);
+    use_hook(move || {
+        let changes = changes();
+        let mut state = state;
+        spawn(async move {
+            while changes.recv_async().await.is_ok() {
+                while changes.try_recv().is_ok() {}
+                state.set(snapshot());
+            }
+        });
+    });
+    state
 }
 
 fn publish(snapshot: SyncSnapshot) {
@@ -240,10 +260,27 @@ pub enum LinkTarget {
         share: ShareId,
         title: String,
         owner: String,
+        mode: ShareMode,
     },
     Pair {
         name: String,
     },
+}
+
+/// What `text` would do as a link, without acting on it.
+#[must_use]
+pub fn recognize_link(text: &str) -> Option<LinkTarget> {
+    let text = text.trim();
+    if let Some(invite) = Invite::parse_link(text) {
+        Some(LinkTarget::Join {
+            share: invite.share,
+            title: invite.title,
+            owner: invite.owner.name,
+            mode: invite.mode,
+        })
+    } else {
+        PairingOffer::parse_link(text).map(|offer| LinkTarget::Pair { name: offer.name })
+    }
 }
 
 /// Act on a pairing or invitation link; `None` when `text` is neither.
@@ -254,6 +291,7 @@ pub fn open_link(text: &str) -> Option<LinkTarget> {
             share: invite.share,
             title: invite.title.clone(),
             owner: invite.owner.name.clone(),
+            mode: invite.mode,
         };
         join(invite);
         Some(target)
@@ -282,6 +320,11 @@ pub fn expel(id: ShareId, device: DeviceId) {
 
 pub fn set_share_policy(id: ShareId, policy: SharePolicy) {
     command(Cmd::SetPolicy(id, policy));
+}
+
+/// Let `device` only look at share `id` (`true`), or edit again.
+pub fn set_viewer(id: ShareId, device: DeviceId, viewer: bool) {
+    command(Cmd::SetViewer(id, device, viewer));
 }
 
 /// Use a relay (`host:port/<key>`), or none.
@@ -590,6 +633,12 @@ impl Service {
             Cmd::End(id) => self.driver.end_share(id),
             Cmd::Expel(id, device) => self.driver.expel(id, device),
             Cmd::SetPolicy(id, policy) => self.driver.update_share(id, |s| s.policy = policy),
+            Cmd::SetViewer(id, device, viewer) => self.driver.update_share(id, |s| {
+                s.viewers.retain(|d| *d != device);
+                if viewer {
+                    s.viewers.push(device);
+                }
+            }),
             Cmd::SetRelay(relay) => {
                 let parsed = relay.as_deref().map(str::parse::<RelayAddr>);
                 match parsed {
@@ -638,6 +687,7 @@ impl Service {
                     .invite_for(share.id)
                     .map_or_else(|| share.invite().to_link(), |i| i.to_link()),
                 can_edit: share.can_edit(me),
+                viewers: share.viewers.clone(),
             })
             .collect()
     }

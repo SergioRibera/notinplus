@@ -108,6 +108,8 @@ pub struct Share {
     pub mode: ShareMode,
     pub policy: SharePolicy,
     pub members: Vec<Member>,
+    /// Members the owner set to only look, whatever the policy says.
+    pub viewers: Vec<DeviceId>,
     pub key: ShareKey,
     pub created_at: u64,
     pub updated_at: u64,
@@ -147,6 +149,7 @@ impl Share {
             mode,
             policy: SharePolicy::default(),
             members: Vec::new(),
+            viewers: Vec::new(),
             key: ShareKey::generate(),
             created_at: now,
             updated_at: now,
@@ -179,7 +182,7 @@ impl Share {
 
     #[must_use]
     pub fn can_edit(&self, device: DeviceId) -> bool {
-        self.allows(self.policy.edit_content, device)
+        self.allows(self.policy.edit_content, device) && !self.viewers.contains(&device)
     }
 
     #[must_use]
