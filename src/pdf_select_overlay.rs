@@ -27,7 +27,7 @@ const DBL_CLICK_WINDOW: Duration = Duration::from_millis(350);
 /// Selection wash over the text.
 const HIGHLIGHT_RGBA: (u8, u8, u8, u8) = (90, 155, 255, 90);
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PdfSelectOverlay {
     pub item: ItemId,
     /// Board this overlay drives (the pane it is mounted in).
@@ -121,7 +121,7 @@ pub(crate) fn show_bar(item: ItemId, mount: CanvasMount, at: (f32, f32)) {
         .selection_rects(item)
         .first()
         .map_or(WorldPoint::new(0.0, 0.0), |r| {
-            WorldPoint::new((r.min_x + r.max_x) / 2.0, r.min_y)
+            WorldPoint::new(f32::midpoint(r.min_x, r.max_x), r.min_y)
         });
     let anchor = crate::plugins::builtin::pdf::PdfAnchor {
         page: sel.start_page,

@@ -129,7 +129,7 @@ impl Component for Pen {
             };
             row.chevron()
                 .on_press(move |e: Event<PressEventData>| {
-                    pick_shortcut(slot, current.clone(), anchor_of(&e))
+                    pick_shortcut(slot, current.clone(), anchor_of(&e));
                 })
                 .into_element()
         };

@@ -59,7 +59,7 @@ static PEN_SURFACE_POS: Mutex<Option<(f32, f32, Instant)>> = Mutex::new(None);
 const PEN_POS_FRESHNESS: Duration = Duration::from_millis(300);
 
 /// Radius (surface px) around a fresh pen position within which an
-/// incoming touch_down is treated as a pen artifact and dropped.
+/// incoming `touch_down` is treated as a pen artifact and dropped.
 pub const PEN_TOUCH_FILTER_RADIUS: f32 = 48.0;
 
 fn record_pen_pos(x: f32, y: f32) {
@@ -130,7 +130,7 @@ impl SurfaceRect {
 /// Opaque per-surface identifier. Each `drawing_surface` mount
 /// allocates one via [`allocate_canvas_surface_id`] and uses it as the
 /// key for register / unregister calls — multiple surfaces can share
-/// the same `Board` (DocLinked split view) without clobbering each
+/// the same `Board` (`DocLinked` split view) without clobbering each
 /// other's rect on update.
 pub type CanvasSurfaceId = u64;
 
@@ -200,7 +200,7 @@ pub fn unregister_canvas_surface(id: CanvasSurfaceId) {
 }
 
 /// Window-coord hit-test. Walks the registry in reverse (last-mounted
-/// first) so an overlay canvas (future PiP) wins over the base layer.
+/// first) so an overlay canvas (future `PiP`) wins over the base layer.
 fn hit_canvas(x: f32, y: f32) -> Option<(Arc<Mutex<Board>>, SurfaceRect)> {
     let g = CANVAS_SURFACES.lock().ok()?;
     for entry in g.iter().rev() {

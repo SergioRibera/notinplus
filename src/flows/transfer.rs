@@ -614,7 +614,7 @@ pub fn import() {
             Ok(Err(crate::bundle::BundleError::UnknownVersion(v)))
                 if v > crate::bundle::BUNDLE_VERSION =>
             {
-                newer_version()
+                newer_version();
             }
             Ok(Err(err)) => {
                 log::error!("bundle {name}: {err}");
@@ -902,7 +902,7 @@ fn commit(pending: Pending, mut plan: ImportPlan) {
                         crate::format::count(count, "documento", "documentos")
                     ))
                     .action("Ver", move |()| {
-                        crate::screens::home::open_folder(destination)
+                        crate::screens::home::open_folder(destination);
                     }),
                 );
             }

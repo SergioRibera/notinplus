@@ -50,7 +50,7 @@ impl ChipColor {
 }
 
 /// How a chip for a reference looks right now.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChipDisplay {
     pub label: String,
     pub icon: Bytes,
@@ -120,7 +120,7 @@ pub fn display(src: &SourceRef, data: Option<&LibraryData>) -> ChipDisplay {
 }
 
 /// One `/ref` suggestion.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Suggestion {
     pub label: String,
     pub subtitle: String,
@@ -192,7 +192,7 @@ pub fn copy(target: &SourceRef, label: &str) {
         let from = ItemId(*item);
         let target = target.clone();
         toast = toast.action("Pegar en el cuaderno", move |()| {
-            insert_in_notebook(from, target.clone())
+            insert_in_notebook(from, target.clone());
         });
     }
     Toasts::get().show(toast);

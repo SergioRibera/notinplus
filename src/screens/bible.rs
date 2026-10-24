@@ -25,6 +25,7 @@ pub fn installer() -> Option<&'static Installer> {
 }
 
 /// Re-render the caller whenever a download moves.
+#[must_use] 
 pub fn use_installs() -> State<u64> {
     let tick = use_state(|| 0u64);
     use_hook(move || {

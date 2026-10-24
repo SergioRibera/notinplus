@@ -1,4 +1,4 @@
-//! Bible plugin: a SQLite + FTS5 store of installed translations.
+//! Bible plugin: a `SQLite` + FTS5 store of installed translations.
 //!
 //! [`BibleKind`] is the document kind: it reads chapters, resolves
 //! verse anchors and searches the installed text. [`Db`] is the shared

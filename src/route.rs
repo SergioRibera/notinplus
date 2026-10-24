@@ -38,7 +38,7 @@ pub const DEFAULT_PAPER: SkColor = SkColor::from_rgb(250, 250, 248);
 
 /// App router. `Home` is the landing grid; `Space { id }` is the one
 /// editing surface — a mesa holding every open document as a tab.
-#[derive(Routable, Clone, Debug, PartialEq)]
+#[derive(Routable, Clone, Debug, PartialEq, Eq)]
 #[rustfmt::skip]
 pub enum Route {
     #[route("/")]
@@ -50,7 +50,7 @@ pub enum Route {
 }
 
 /// The mesa route: every open document of one workspace as tabs.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Space {
     pub id: WorkspaceId,
 }
@@ -91,8 +91,7 @@ pub(crate) fn init_canvas_mount(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
                     (item.color, item.background)
                 };
                 let surface: SkColor = color
-                    .map(|c| SkColor::from_argb(c[3], c[0], c[1], c[2]))
-                    .unwrap_or(DEFAULT_PAPER);
+                    .map_or(DEFAULT_PAPER, |c| SkColor::from_argb(c[3], c[0], c[1], c[2]));
                 apply_canvas_background(&board, bg, surface);
             });
         }
@@ -182,29 +181,26 @@ fn load_doc_into_board(mount: CanvasMount, board: Arc<Mutex<Board>>) {
                 })
                 .unwrap_or_default();
             guard.set_viewport(next_view);
-            match id {
-                Some(id) => {
-                    let (tx, rx) = flume::unbounded::<()>();
-                    let (view_tx, view_rx) = flume::unbounded::<()>();
-                    guard.set_commit_sink(tx);
-                    guard.set_view_sink(view_tx);
-                    guard.set_live_sink(move |message| crate::sync::live(id, &message));
-                    guard.set_read_only(!crate::sync::can_edit(id));
-                    spawn_autosave_worker(id, Arc::clone(&board), rx);
-                    spawn_policy_worker(id, Arc::downgrade(&board));
-                    spawn_view_worker(
-                        prefs::ViewKey { item: id, slot },
-                        Arc::clone(&board),
-                        view_rx,
-                    );
-                }
-                None => {
-                    // Ephemeral: no sinks installed; previous mount's
-                    // sinks already dropped with its board.
-                    guard.clear_commit_sink();
-                    guard.clear_view_sink();
-                    guard.clear_live_sink();
-                }
+            if let Some(id) = id {
+                let (tx, rx) = flume::unbounded::<()>();
+                let (view_tx, view_rx) = flume::unbounded::<()>();
+                guard.set_commit_sink(tx);
+                guard.set_view_sink(view_tx);
+                guard.set_live_sink(move |message| crate::sync::live(id, &message));
+                guard.set_read_only(!crate::sync::can_edit(id));
+                spawn_autosave_worker(id, Arc::clone(&board), rx);
+                spawn_policy_worker(id, Arc::downgrade(&board));
+                spawn_view_worker(
+                    prefs::ViewKey { item: id, slot },
+                    Arc::clone(&board),
+                    view_rx,
+                );
+            } else {
+                // Ephemeral: no sinks installed; previous mount's
+                // sinks already dropped with its board.
+                guard.clear_commit_sink();
+                guard.clear_view_sink();
+                guard.clear_live_sink();
             }
         }
     });

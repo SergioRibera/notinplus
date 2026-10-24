@@ -802,7 +802,7 @@ impl<R: Replica> SyncDriver<R> {
                 }
             }
             NetEvent::Stopped(_) => {
-                for device in self.connected.keys().copied().collect::<Vec<_>>() {
+                for device in self.connected.keys().copied() {
                     self.engine.forget_peer(device);
                     for link in self.shares.values_mut() {
                         link.engine.forget_peer(device);
@@ -1621,7 +1621,7 @@ impl<R: Replica> SyncDriver<R> {
         bytes: &[u8],
         out: &mut Vec<Action>,
     ) -> Result<(), SyncError<R::Error>> {
-        if !self.relay.as_ref().is_some_and(|r| r.device == from) {
+        if self.relay.as_ref().is_none_or(|r| r.device != from) {
             return Ok(());
         }
         let Some(message) = RelayMessage::from_bytes(bytes) else {

@@ -6,7 +6,7 @@
 //! the plugin struct.
 //!
 //! State is intentionally small: the heavy data (verses, headers) lives
-//! in SQLite, loaded on demand per chapter. We only cache the currently
+//! in `SQLite`, loaded on demand per chapter. We only cache the currently
 //! visible chapter plus a small ring of recent ones so navigation feels
 //! instant without pinning the whole Bible in memory.
 
@@ -36,7 +36,7 @@ pub struct BibleViewerState {
     pub highlights: Vec<BibleBookmark>,
     /// In-memory back stack of visited positions. NOT persisted — users
     /// expect browser-style "back" to clear across sessions. Pushed on
-    /// every explicit navigation (jump_to / switch_bible / cross-ref
+    /// every explicit navigation (`jump_to` / `switch_bible` / cross-ref
     /// click) so the toolbar's back arrow can rewind the trail.
     pub nav_history: Vec<NavEntry>,
     /// Forward stack — populated when the user hits "back"; cleared on
@@ -142,7 +142,7 @@ pub fn rgba_to_u32(rgba: Rgba) -> u32 {
 }
 
 #[must_use]
-pub fn u32_to_rgba(packed: u32) -> Rgba {
+pub const fn u32_to_rgba(packed: u32) -> Rgba {
     [
         ((packed >> 24) & 0xff) as u8,
         ((packed >> 16) & 0xff) as u8,
@@ -392,7 +392,7 @@ impl BibleViewerState {
         });
     }
 
-    pub fn extend_selection(&mut self, verse: u16) {
+    pub const fn extend_selection(&mut self, verse: u16) {
         if let Some(sel) = self.selection.as_mut() {
             if verse >= sel.start_verse {
                 sel.end_verse = verse;
@@ -510,21 +510,21 @@ mod tests {
                 conn.execute(
                     "INSERT INTO books (bible_id, book_id, name, abbrev, order_num, testament)
                      VALUES ('spa_rv1960', ?1, ?2, ?2, ?3, 'OT')",
-                    params![bid, name, order as i64],
+                    params![bid, name, i64::from(order)],
                 )?;
             }
             for chap in 1..=3 {
                 conn.execute(
                     "INSERT INTO verses (bible_id, book_id, chapter, verse, text, paragraph_break)
                      VALUES ('spa_rv1960', 'GEN', ?1, 1, 'gen chap text', 0)",
-                    params![chap as i64],
+                    params![i64::from(chap)],
                 )?;
             }
             for chap in 1..=6 {
                 conn.execute(
                     "INSERT INTO verses (bible_id, book_id, chapter, verse, text, paragraph_break)
                      VALUES ('spa_rv1960', 'EPH', ?1, 1, 'eph chap text', 0)",
-                    params![chap as i64],
+                    params![i64::from(chap)],
                 )?;
             }
             Ok(())

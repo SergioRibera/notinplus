@@ -28,7 +28,7 @@ use crate::settings::{SettingsStore, ShelfLayout};
 use crate::state::{LibraryState, LibraryView};
 
 /// The folder Home is browsing, shared by every surface that opens one.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Browse {
     folder: State<FolderId>,
 }
@@ -59,6 +59,7 @@ impl Browse {
 }
 
 /// Install the browse state at the app root.
+#[must_use] 
 pub fn use_browse_root() -> Browse {
     let folder = use_state(|| ROOT_FOLDER);
     use_hook(|| {
@@ -143,7 +144,7 @@ impl Component for Loaded {
         let pad = gutter(class);
         let insets = *crate::hooks::use_safe_area_insets().read();
         let root_width = Platform::get().root_size.read().width;
-        let content_width = (root_width - insets.left - insets.right - pad * 2.0).max(200.0);
+        let content_width = pad.mul_add(-2.0, root_width - insets.left - insets.right).max(200.0);
         let folder = Browse::get().folder();
         let library = SettingsStore::get().read().library;
         let filter = use_state(Filter::default);

@@ -62,7 +62,7 @@ impl HostToast {
 }
 
 /// State of a long job (download, install, indexing).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Progress {
     /// `total = None` shows an indeterminate bar.
     Running {
@@ -111,7 +111,7 @@ pub struct AnnotationRequest {
 }
 
 /// How the annotation popover closed.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AnnotationOutcome {
     Saved {
         color: Option<[u8; 3]>,

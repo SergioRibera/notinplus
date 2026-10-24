@@ -4,7 +4,7 @@
 //! permissive on whitespace + optional dots after abbreviations
 //! (`"1 Co."` → `"1Co"`), case-insensitive on the book, and tolerates
 //! both `":"` and `"."` between chapter and verse (`"Juan 3.16"` works
-//! too — common in some LatAm typographic traditions).
+//! too — common in some `LatAm` typographic traditions).
 //!
 //! Returns a `ParsedRef` that the resolver can hand off to the DB layer
 //! for anchor materialisation. The parser does not touch the DB; book

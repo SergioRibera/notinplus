@@ -76,7 +76,7 @@ fn link(from: ItemId, to: ItemId, kind: LinkKind) {
         let linked = handle.lock().await.create_link(from, to, kind).await;
         match linked {
             Ok(_) if kind == LinkKind::Companion => {
-                crate::space::open(TabTarget::Item(to), OpenHint::Beside)
+                crate::space::open(TabTarget::Item(to), OpenHint::Beside);
             }
             Ok(_) => {
                 Toasts::get().show(

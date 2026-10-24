@@ -26,7 +26,7 @@ pub struct TrashReceipt {
 }
 
 /// What a trash row holds.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TrashedRecord {
     Item(Item),
     /// A folder and how many items went to the trash with it.
@@ -38,7 +38,7 @@ pub enum TrashedRecord {
 
 /// Something the trash screen lists: only the top of each batch, so a
 /// trashed folder is one row however much it held.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrashEntry {
     pub trashed: Trashed,
     pub record: TrashedRecord,

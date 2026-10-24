@@ -284,6 +284,7 @@ pub fn recognize_link(text: &str) -> Option<LinkTarget> {
 }
 
 /// Act on a pairing or invitation link; `None` when `text` is neither.
+#[must_use] 
 pub fn open_link(text: &str) -> Option<LinkTarget> {
     let text = text.trim();
     if let Some(invite) = Invite::parse_link(text) {

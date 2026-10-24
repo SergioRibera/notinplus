@@ -64,7 +64,7 @@ pub struct NotesKind {
 
 impl NotesKind {
     #[must_use]
-    pub fn new(index: NotesIndex) -> Self {
+    pub const fn new(index: NotesIndex) -> Self {
         Self { index }
     }
 
@@ -98,7 +98,7 @@ impl std::fmt::Debug for NoteHits<'_> {
 }
 
 impl NoteHits<'_> {
-    fn hit(
+    const fn hit(
         doc: [u8; 16],
         anchor: NoteAnchor,
         title: String,

@@ -12,7 +12,7 @@ use crate::references::kind_color;
 pub const COVER_RATIO: f32 = 1.28;
 
 /// What a document card shows.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocCardData {
     pub name: String,
     pub kind: String,
@@ -35,7 +35,7 @@ pub struct Cover {
     pub width: f32,
 }
 
-fn rgba(color: Rgba) -> Color {
+const fn rgba(color: Rgba) -> Color {
     Color::from_argb(color[3], color[0], color[1], color[2])
 }
 
@@ -454,16 +454,16 @@ impl Component for FolderCard {
             })
             .children((0..3).map(|i| {
                 #[allow(clippy::cast_precision_loss)] // 0..3
-                let step = i as f32;
+                let step = f32::from(i);
                 rect()
                     .key(i)
                     .position(
                         Position::new_absolute()
-                            .top(20.0 + step * 10.0)
-                            .left(18.0 + step * 5.0),
+                            .top(step.mul_add(10.0, 20.0))
+                            .left(step.mul_add(5.0, 18.0)),
                     )
-                    .width(Size::px(w - 36.0 - step * 10.0))
-                    .height(Size::px(h - 50.0 - step * 14.0))
+                    .width(Size::px(step.mul_add(-10.0, w - 36.0)))
+                    .height(Size::px(step.mul_add(-14.0, h - 50.0)))
                     .corner_radius(8.0)
                     .background(p.paper.with_a(46 + 46 * i))
                     .into_element()

@@ -167,7 +167,7 @@ impl<A> OutlineNode<A> {
 
 /// A bookmark, highlight or annotation listed in the panel's
 /// Marcadores tab.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Mark<A> {
     pub anchor: A,
     pub title: String,

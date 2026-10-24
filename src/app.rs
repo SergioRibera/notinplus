@@ -78,7 +78,7 @@ impl CanvasMount {
 /// for plain canvas routes) long-press pins land without a plugin
 /// `SourceRef` attribution.
 ///
-/// Clone / PartialEq are structural over the `Arc` pointer — two
+/// Clone / `PartialEq` are structural over the `Arc` pointer — two
 /// contexts compare equal iff they wrap the same closure allocation.
 #[derive(Clone)]
 pub struct AnchorSourceCtx {
@@ -500,7 +500,7 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: ChromeState) -> impl IntoEl
 /// container scope and have inner canvas calls reuse the published
 /// board via `try_consume_context`.
 ///
-/// Must be called inside a component render — spawn + provide_context
+/// Must be called inside a component render — spawn + `provide_context`
 /// resolve against the current scope.
 pub(crate) fn mount_board(mount: CanvasMount, state: ChromeState) -> Arc<Mutex<Board>> {
     let mut active_setter = state.active_board;

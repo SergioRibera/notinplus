@@ -63,14 +63,14 @@ pub fn filter_chips() -> Vec<FilterChip> {
 }
 
 /// A folder on the shelf.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FolderEntry {
     pub id: FolderId,
     pub card: FolderCardData,
 }
 
 /// A document on the shelf.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocEntry {
     pub id: ItemId,
     pub card: DocCardData,

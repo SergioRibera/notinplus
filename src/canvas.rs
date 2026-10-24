@@ -1506,8 +1506,8 @@ impl Board {
             return false;
         }
         let scale = self.viewport.scale;
-        self.viewport.tx = sw * 0.5 - wx * scale;
-        self.viewport.ty = sh * 0.5 - wy * scale;
+        self.viewport.tx = sw.mul_add(0.5, -(wx * scale));
+        self.viewport.ty = sh.mul_add(0.5, -(wy * scale));
         self.clamp_viewport_to_background();
         self.notify();
         self.ping_view();
@@ -2350,7 +2350,7 @@ const PIN_LONG_PRESS: std::time::Duration = std::time::Duration::from_millis(550
 /// user intends a static hold; a strict "any move cancels" rule
 /// would make the pin never land.
 const PIN_LONG_PRESS_SLOP_PX: f32 = 12.0;
-/// Tap radius used to decide whether an initial pointer_down lands
+/// Tap radius used to decide whether an initial `pointer_down` lands
 /// on an existing pin — matches `PIN_RADIUS_PX` plus a small comfort
 /// margin so slightly imprecise taps still select the pin.
 pub(crate) const PIN_TAP_RADIUS_PX: f32 = 20.0;
@@ -2816,7 +2816,7 @@ impl Board {
     }
 
     #[must_use]
-    pub fn is_read_only(&self) -> bool {
+    pub const fn is_read_only(&self) -> bool {
         self.read_only
     }
 
@@ -2976,7 +2976,7 @@ fn device_color(device: notein_sync::DeviceId) -> [u8; 4] {
     let hue = f32::from(device.0[0]) / 255.0 * 6.0;
     let sector = hue.floor();
     let frac = hue - sector;
-    let (v, p, q, t) = (0.92_f32, 0.35_f32, 0.92 - 0.57 * frac, 0.35 + 0.57 * frac);
+    let (v, p, q, t) = (0.92_f32, 0.35_f32, 0.57f32.mul_add(-frac, 0.92), 0.57f32.mul_add(frac, 0.35));
     let (r, g, b) = match sector as u8 {
         0 => (v, t, p),
         1 => (q, v, p),
@@ -3030,7 +3030,7 @@ struct SplitOutcome {
 /// Warm amber reads as "attention mark" on both light and dark
 /// canvases without clashing with the usual stroke palette.
 const PIN_DEFAULT_COLOR: [u8; 4] = [245, 158, 11, 255];
-/// Pin outer radius in surface pixels. Matches the SOURCES_PLAN §7
+/// Pin outer radius in surface pixels. Matches the `SOURCES_PLAN` §7
 /// spec (16 px disc). Independent of zoom so the tap target stays
 /// constant.
 const PIN_RADIUS_PX: f32 = 8.0;

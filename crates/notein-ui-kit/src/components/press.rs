@@ -92,7 +92,7 @@ impl PressGesture {
             }
         })
         .on_secondary_down(move |e: Event<PressEventData>| {
-            if let PressEventData::Mouse(mouse) = &*e.data() {
+            if let PressEventData::Mouse(mouse) = e.data() {
                 on_menu(mouse.global_location);
             }
         })

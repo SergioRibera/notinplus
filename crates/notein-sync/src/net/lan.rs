@@ -236,21 +236,18 @@ impl Node {
             tracing::warn!(target: "notein-sync", peer = %addr, "hello with inconsistent identity");
             return;
         }
-        let (sender, reply) = match self.outbound.remove(&addr) {
-            Some((pinned, sender)) => {
-                if pinned != beacon.public {
-                    tracing::warn!(target: "notein-sync", peer = %addr, "hello key differs from pinned key");
-                    return;
-                }
-                (sender, false)
+        let (sender, reply) = if let Some((pinned, sender)) = self.outbound.remove(&addr) {
+            if pinned != beacon.public {
+                tracing::warn!(target: "notein-sync", peer = %addr, "hello key differs from pinned key");
+                return;
             }
-            None => {
-                if key != Some(beacon.public) {
-                    tracing::warn!(target: "notein-sync", peer = %addr, "hello key differs from channel key");
-                    return;
-                }
-                (self.listen_sender.clone(), true)
+            (sender, false)
+        } else {
+            if key != Some(beacon.public) {
+                tracing::warn!(target: "notein-sync", peer = %addr, "hello key differs from channel key");
+                return;
             }
+            (self.listen_sender.clone(), true)
         };
         if beacon.device == self.beacon.device {
             return;

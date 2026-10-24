@@ -8,7 +8,7 @@ use notein_ui_kit::{Icon, IconButton, Text, TextRole, tokens, use_press_gesture}
 use crate::library::{LibraryData, PaneLayout, SplitOrientation, Workspace, WorkspaceId};
 use crate::references::kind_color;
 
-fn rgba(color: [u8; 4]) -> Color {
+const fn rgba(color: [u8; 4]) -> Color {
     Color::from_argb(color[3], color[0], color[1], color[2])
 }
 

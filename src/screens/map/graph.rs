@@ -145,7 +145,7 @@ fn layout(count: usize, edges: &[Edge]) -> Vec<(f32, f32)> {
     let mut pos: Vec<(f32, f32)> = (0..count)
         .map(|i| {
             let angle = (i as f32) / (count as f32) * std::f32::consts::TAU;
-            (0.5 + 0.4 * angle.cos(), 0.5 + 0.4 * angle.sin())
+            (0.4f32.mul_add(angle.cos(), 0.5), 0.4f32.mul_add(angle.sin(), 0.5))
         })
         .collect();
     let k = (1.0 / count as f32).sqrt();
@@ -179,8 +179,8 @@ fn layout(count: usize, edges: &[Edge]) -> Vec<(f32, f32)> {
         for (p, d) in pos.iter_mut().zip(&disp) {
             let len = d.0.hypot(d.1).max(0.001);
             let step = len.min(temperature);
-            p.0 = (p.0 + d.0 / len * step).clamp(0.0, 1.0);
-            p.1 = (p.1 + d.1 / len * step).clamp(0.0, 1.0);
+            p.0 = (d.0 / len).mul_add(step, p.0).clamp(0.0, 1.0);
+            p.1 = (d.1 / len).mul_add(step, p.1).clamp(0.0, 1.0);
         }
         temperature = (temperature - cooling).max(0.005);
     }

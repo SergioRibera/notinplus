@@ -25,7 +25,7 @@ pub struct DocMatch {
 }
 
 /// A place inside a document.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlaceMatch {
     /// Where it lives: the document name, or the kind's label for
     /// shared content (a Bible translation).
@@ -36,7 +36,7 @@ pub struct PlaceMatch {
 }
 
 /// Hits of one kind.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlaceGroup {
     pub kind: String,
     /// "En la Biblia".

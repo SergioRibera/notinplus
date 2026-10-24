@@ -22,7 +22,7 @@ pub enum Resolution {
 }
 
 /// A bundle document whose id the library already has.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Conflict {
     pub incoming: Item,
     pub existing: Item,
@@ -31,7 +31,7 @@ pub struct Conflict {
 }
 
 /// What the import sheet shows before anything happens.
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Review {
     pub documents: usize,
     pub mesas: usize,
@@ -64,7 +64,7 @@ impl Review {
 }
 
 /// The user's decisions.
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct ImportPlan {
     pub rule: Resolution,
     pub overrides: HashMap<ItemId, Resolution>,

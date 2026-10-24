@@ -69,7 +69,7 @@ pub fn editor(value: impl Into<Writable<String>>, controller: EditorController) 
             .into_element()
         }))
         .on_link(|url| {
-            crate::plugins::navigate::open(&SourceRef::from_link(url), Placement::Preferred)
+            crate::plugins::navigate::open(&SourceRef::from_link(url), Placement::Preferred);
         })
         .on_input_context(crate::soft_keyboard::input_context)
         .suggestions(

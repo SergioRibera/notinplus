@@ -34,13 +34,10 @@ enum DragPhase {
 
 /// Access the global drag state for payloads of type `T`.
 pub fn use_drag<T: 'static>() -> State<Option<T>> {
-    match try_consume_root_context() {
-        Some(s) => s,
-        None => {
-            let state = State::<Option<T>>::create_in_scope(None, ScopeId::ROOT);
-            provide_context_for_scope_id(state, ScopeId::ROOT);
-            state
-        }
+    if let Some(s) = try_consume_root_context() { s } else {
+        let state = State::<Option<T>>::create_in_scope(None, ScopeId::ROOT);
+        provide_context_for_scope_id(state, ScopeId::ROOT);
+        state
     }
 }
 
@@ -86,7 +83,7 @@ impl<T: Clone + PartialEq + 'static> DragZone<T> {
         }
     }
 
-    pub fn show_while_dragging(mut self, show_while_dragging: bool) -> Self {
+    pub const fn show_while_dragging(mut self, show_while_dragging: bool) -> Self {
         self.show_while_dragging = show_while_dragging;
         self
     }
@@ -96,12 +93,12 @@ impl<T: Clone + PartialEq + 'static> DragZone<T> {
         self
     }
 
-    pub fn drag_threshold(mut self, drag_threshold: f64) -> Self {
+    pub const fn drag_threshold(mut self, drag_threshold: f64) -> Self {
         self.drag_threshold = drag_threshold;
         self
     }
 
-    pub fn enabled(mut self, enabled: bool) -> Self {
+    pub const fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
     }
@@ -174,7 +171,7 @@ impl<T: Clone + PartialEq> Component for DragZone<T> {
                 |((position, offset), drag_element)| {
                     let size = *drag_element_size.read();
                     let anchor = size.map_or(offset, |size| {
-                        offset.min(CursorPoint::new(size.width as f64, size.height as f64))
+                        offset.min(CursorPoint::new(f64::from(size.width), f64::from(size.height)))
                     });
                     let (x, y) = (position - anchor).to_f32().to_tuple();
                     rect()
@@ -185,7 +182,7 @@ impl<T: Clone + PartialEq> Component for DragZone<T> {
                         .offset_x(x + 1.)
                         .offset_y(y + 1.)
                         .on_sized(move |e: Event<SizedEventData>| {
-                            drag_element_size.set_if_modified(Some(e.area.size))
+                            drag_element_size.set_if_modified(Some(e.area.size));
                         })
                         .child(drag_element)
                 },
@@ -245,11 +242,13 @@ impl<T: PartialEq + Clone + 'static> DropZone<T> {
         self
     }
 
+    #[must_use] 
     pub fn width(mut self, width: Size) -> Self {
         self.width = width;
         self
     }
 
+    #[must_use] 
     pub fn height(mut self, height: Size) -> Self {
         self.height = height;
         self

@@ -36,7 +36,7 @@ const MARKERS: [[u8; 4]; 5] = [
     [0xB7, 0x9C, 0xF2, 0xFF],
 ];
 
-fn color(rgba: [u8; 4]) -> Color {
+const fn color(rgba: [u8; 4]) -> Color {
     Color::from_argb(rgba[3], rgba[0], rgba[1], rgba[2])
 }
 
@@ -60,7 +60,7 @@ impl Tool {
 
     /// The tool `board` is using.
     #[must_use]
-    pub fn of(board: &Board) -> Self {
+    pub const fn of(board: &Board) -> Self {
         match board.input_mode() {
             InputMode::Lasso => Self::Lasso,
             InputMode::Text => Self::Text,
@@ -155,7 +155,7 @@ fn anchor(e: &Event<PressEventData>) -> Area {
 
 /// Live state the chrome reads, kept in step with the board by its
 /// redraw pump.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct InkState {
     pub tool: State<Tool>,
     pub color: State<[u8; 4]>,
@@ -178,6 +178,7 @@ impl std::fmt::Debug for InkState {
 
 impl InkState {
     /// Allocate the state for one canvas.
+    #[must_use] 
     pub fn use_state() -> Self {
         Self {
             tool: use_state(|| Tool::Pen),
@@ -396,7 +397,7 @@ impl Component for Dock {
                 .a11y_role(AccessibilityRole::Button)
                 .a11y_alt("Color")
                 .on_press(move |e: Event<PressEventData>| {
-                    ColorPopover::open(Arc::clone(&board), anchor(&e))
+                    ColorPopover::open(Arc::clone(&board), anchor(&e));
                 })
                 .child(
                     rect()
@@ -482,7 +483,7 @@ impl Component for Dock {
             items.push(
                 IconButton::new(lucide::layers(), "Capas")
                     .on_press(move |e: Event<PressEventData>| {
-                        Layers::open(Arc::clone(&board), anchor(&e))
+                        Layers::open(Arc::clone(&board), anchor(&e));
                     })
                     .into_element(),
             );
@@ -891,7 +892,7 @@ impl Component for LassoBar {
                 colors: INKS.iter().map(|c| color(*c)).collect(),
                 active: None,
                 on_pick: EventHandler::new(move |i: usize| {
-                    lock(&color_board).selection_recolor(INKS[i])
+                    lock(&color_board).selection_recolor(INKS[i]);
                 }),
             },
             BarItem::action("Duplicar", lucide::copy(), b(Board::selection_duplicate)),
@@ -910,7 +911,7 @@ impl Component for LassoBar {
         rect()
             .position(
                 Position::new_absolute()
-                    .left(((x0 + x1) / 2.0 - 220.0).max(8.0))
+                    .left((f32::midpoint(x0, x1) - 220.0).max(8.0))
                     .top(top),
             )
             .on_sized(move |e: Event<SizedEventData>| mask.publish(e.area))

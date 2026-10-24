@@ -153,7 +153,7 @@ pub struct ImportedFile<'a> {
 }
 
 /// A new document, ready for the shell to store.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Created<C> {
     /// Name for the document; the shell uses it when the user left the
     /// name empty.

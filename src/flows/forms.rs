@@ -82,7 +82,7 @@ pub struct FormSpec {
 }
 
 /// What the form collected.
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct FormValues {
     pub name: String,
     pub paper: BackgroundStyle,
@@ -216,8 +216,8 @@ impl Component for Form {
                         (submit.0)(collected);
                     }),
             )
-            .maybe_child(spec.paper.then(|| PaperPicker { values }))
-            .maybe_child(spec.color.then(|| ColorRow {
+            .maybe_child(spec.paper.then_some(PaperPicker { values }))
+            .maybe_child(spec.color.then_some(ColorRow {
                 values,
                 paper: spec.paper,
             }))
@@ -226,7 +226,7 @@ impl Component for Form {
                 label: spec.choice_label.clone(),
                 choices: spec.choices.clone(),
             }))
-            .maybe_child(spec.tags.then(|| TagsField { values }))
+            .maybe_child(spec.tags.then_some(TagsField { values }))
             .maybe_child(spec.notebook_toggle.then(|| {
                 Group::default().child(
                     ListRow::new("Crear cuaderno al lado")
@@ -265,7 +265,7 @@ impl Component for Form {
                     }),
                 )
             }))
-            .maybe_child(spec.location.then(|| Location { values }))
+            .maybe_child(spec.location.then_some(Location { values }))
     }
 }
 
@@ -390,7 +390,7 @@ impl Component for ColorRow {
                 ColorWheel::new()
                     .initial(current.map_or(p.paper, |c| Color::from_argb(c[3], c[0], c[1], c[2])))
                     .on_change(move |color: Color| {
-                        values.write().color = Some([color.r(), color.g(), color.b(), 255])
+                        values.write().color = Some([color.r(), color.g(), color.b(), 255]);
                     })
             }))
     }

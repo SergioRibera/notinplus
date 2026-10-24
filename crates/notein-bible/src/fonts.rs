@@ -30,7 +30,7 @@ pub const BOLD_ITALIC: &[u8] = include_bytes!("../assets/fonts/Lora-BoldItalic.t
 /// Every bundled face paired with a descriptive name. Hosts that only
 /// want one weight should reach for [`REGULAR`] directly.
 #[must_use]
-pub fn all() -> &'static [(&'static str, &'static [u8])] {
+pub const fn all() -> &'static [(&'static str, &'static [u8])] {
     &[
         ("Lora-Regular", REGULAR),
         ("Lora-Italic", ITALIC),

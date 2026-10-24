@@ -575,9 +575,8 @@ impl Board {
         if sw <= 0.0 || sh <= 0.0 || self.viewport.scale <= 0.0 {
             return false;
         }
-        let wx = (sw * 0.5 - self.viewport.tx) / self.viewport.scale
-            - crate::text_box::TEXT_DEFAULT_WIDTH * 0.5;
-        let wy = (sh * 0.5 - self.viewport.ty) / self.viewport.scale;
+        let wx = crate::text_box::TEXT_DEFAULT_WIDTH.mul_add(-0.5, sw.mul_add(0.5, -self.viewport.tx) / self.viewport.scale);
+        let wy = sh.mul_add(0.5, -self.viewport.ty) / self.viewport.scale;
         self.begin_text_draft(wx, wy);
         if self.text_session.is_none() {
             return false;
@@ -597,7 +596,7 @@ impl crate::doc::Doc {
             layer
                 .texts
                 .iter()
-                .map(|t| t.frame.y + crate::text_box::TEXT_FALLBACK_HEIGHT * 3.0)
+                .map(|t| crate::text_box::TEXT_FALLBACK_HEIGHT.mul_add(3.0, t.frame.y))
                 .fold(0.0_f32, f32::max)
         });
         self.emit(crate::doc_op::DocOp::AddText {

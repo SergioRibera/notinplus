@@ -74,7 +74,7 @@ fn union(a: Option<(f32, f32, f32, f32)>, b: (f32, f32, f32, f32)) -> (f32, f32,
 impl Board {
     /// The current lasso selection, if any.
     #[must_use]
-    pub fn selection(&self) -> Option<&Selection> {
+    pub const fn selection(&self) -> Option<&Selection> {
         self.lasso.selection.as_ref()
     }
 
@@ -187,7 +187,7 @@ impl Board {
             }
             for glyph in &layer.glyphs {
                 if let Some(b) = glyph.bounds()
-                    && inside(polygon, ((b.0 + b.2) / 2.0, (b.1 + b.3) / 2.0))
+                    && inside(polygon, (f32::midpoint(b.0, b.2), f32::midpoint(b.1, b.3)))
                 {
                     selection.glyphs.push(glyph.id);
                     bounds = Some(union(bounds, b));
@@ -480,8 +480,8 @@ mod board_tests {
     fn draw(board: &mut Board, from: (f32, f32), to: (f32, f32)) {
         board.begin_screen(InkPoint::new(from.0, from.1, 128, 0, 0));
         board.extend_screen(InkPoint::new(
-            (from.0 + to.0) / 2.0,
-            (from.1 + to.1) / 2.0,
+            f32::midpoint(from.0, to.0),
+            f32::midpoint(from.1, to.1),
             128,
             0,
             8_000,

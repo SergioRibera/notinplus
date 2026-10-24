@@ -174,7 +174,7 @@ fn shell(body: fn() -> Element, size: (f32, f32)) -> impl Fn() -> Element {
 
 fn render(name: &str, size: (f32, f32), body: fn() -> Element) {
     let app = shell(body, size);
-    let (mut runner, ()) = TestingRunner::new(move || app(), size.into(), |_| (), 1.0);
+    let (mut runner, ()) = TestingRunner::new(app, size.into(), |_| (), 1.0);
     runner.poll_n(Duration::from_millis(40), 12);
     runner.sync_and_update();
     runner.poll_n(Duration::from_millis(40), 4);

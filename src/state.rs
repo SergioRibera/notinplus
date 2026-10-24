@@ -69,6 +69,7 @@ pub(crate) fn use_fixed_library(data: Arc<LibraryData>) -> LibraryView {
 }
 
 /// Open the shared library and keep a snapshot of it for every screen.
+#[must_use] 
 pub fn use_library_root() -> LibraryView {
     let state = use_state(|| LibraryState::Loading);
     let view = use_hook(|| {

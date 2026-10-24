@@ -93,9 +93,9 @@ impl Component for Map {
             .positions
             .iter()
             .map(|&(ux, uy)| {
-                let w = (area.width() - 2.0 * INNER_PAD).max(1.0);
-                let h = (area.height() - 2.0 * INNER_PAD).max(1.0);
-                (INNER_PAD + ux * w, INNER_PAD + uy * h)
+                let w = 2.0f32.mul_add(-INNER_PAD, area.width()).max(1.0);
+                let h = 2.0f32.mul_add(-INNER_PAD, area.height()).max(1.0);
+                (ux.mul_add(w, INNER_PAD), uy.mul_add(h, INNER_PAD))
             })
             .collect();
         let shown_edges: Vec<_> = graph
@@ -144,7 +144,7 @@ impl Component for Map {
                 let tint = info.as_ref().map_or(p.t3, |k| kind_color(&p, k.color));
                 let icon = info.map_or_else(lucide::file, |k| k.icon);
                 #[allow(clippy::cast_precision_loss)] // small degree counts
-                let radius = NODE / 2.0 + graph.degree(i).min(6) as f32 * 1.5;
+                let radius = (graph.degree(i).min(6) as f32).mul_add(1.5, NODE / 2.0);
                 let focused = current == Some(i);
                 let dimmed = current.is_some() && !focused && !neighbours.contains(&i);
                 Some(

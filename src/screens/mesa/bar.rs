@@ -192,7 +192,7 @@ impl Component for MesaBar {
             .spacing(4.0)
             .child(
                 IconButton::new(lucide::arrow_left(), "Volver al inicio").on_press(|_| {
-                    crate::screens::home::open_folder(crate::screens::home::Browse::get().folder())
+                    crate::screens::home::open_folder(crate::screens::home::Browse::get().folder());
                 }),
             )
             .child(
@@ -218,7 +218,7 @@ impl Component for MesaBar {
                             super::Ops { mesa },
                             ui,
                             focus.clone(),
-                        )
+                        );
                     }
                 })
             }))

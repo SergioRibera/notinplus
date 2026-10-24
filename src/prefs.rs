@@ -59,7 +59,7 @@ pub struct Prefs {
 
 impl Prefs {
     #[must_use]
-    pub fn input_mode(&self) -> InputMode {
+    pub const fn input_mode(&self) -> InputMode {
         if self.input_mode_pan {
             InputMode::Pan
         } else {

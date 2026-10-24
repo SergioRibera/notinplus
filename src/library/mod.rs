@@ -1904,7 +1904,7 @@ impl LibraryData {
 
     /// A copy of the in-memory state for a screen to render from.
     #[must_use]
-    pub fn snapshot(&self) -> LibraryData {
+    pub fn snapshot(&self) -> Self {
         self.clone()
     }
 
@@ -2039,7 +2039,7 @@ impl LibraryData {
     /// The workspace the user last had focus on, or `None` when the
     /// index is empty.
     #[must_use]
-    pub fn active_workspace(&self) -> Option<WorkspaceId> {
+    pub const fn active_workspace(&self) -> Option<WorkspaceId> {
         self.workspaces.active
     }
 

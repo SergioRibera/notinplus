@@ -48,7 +48,7 @@ pub fn new_shared() -> SharedConfig {
 }
 
 /// Default platform cache directory, derived from the shared notinplus
-/// data root. Not user-configurable — the UI used to expose a cache_dir
+/// data root. Not user-configurable — the UI used to expose a `cache_dir`
 /// field but all callers now resolve the path directly through this
 /// helper so a single on-disk tree carries everything the plugin touches.
 #[must_use]
@@ -62,6 +62,7 @@ pub fn platform_cache_dir() -> PathBuf {
 /// Build the settings schema. Dynamic — reads installed Bibles from
 /// `db` so `default_bible_id` always shows the real options available
 /// to the user right now.
+#[must_use] 
 pub fn build_schema(db: &Db) -> ConfigSchema {
     let options: Vec<ConfigEnumOption> = db
         .list_bibles()

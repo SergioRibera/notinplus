@@ -60,7 +60,7 @@ impl UndoStack {
     /// Open a transaction. Nested calls increase the depth without
     /// restarting the pending entry so inner groupings fold into the
     /// outer action — a stroke gesture that triggers an auto-layer
-    /// AddLayer stays one undo entry.
+    /// `AddLayer` stays one undo entry.
     pub fn begin(&mut self) {
         if self.depth == 0 {
             self.pending = Some(UndoEntry::default());

@@ -38,7 +38,7 @@
 //! Rendered as `Layer::OverlayLevel(5)` so it sits above every regular
 //! paint sibling without the consumer threading layer hints.
 
-use freya::animation::*;
+use freya::animation::{AnimatedValue, use_animation, OnCreation, AnimNum, Ease, Function, ReadAnimatedValue, OnChange};
 use freya::prelude::*;
 
 /// Backdrop + card shell. `body` is placed inside the card; the sheet
@@ -74,17 +74,20 @@ impl BottomSheet {
         }
     }
 
-    pub fn open(mut self, open: State<bool>) -> Self {
+    #[must_use] 
+    pub const fn open(mut self, open: State<bool>) -> Self {
         self.open = Some(open);
         self
     }
 
-    pub fn height(mut self, height: f32) -> Self {
+    #[must_use] 
+    pub const fn height(mut self, height: f32) -> Self {
         self.height = height;
         self
     }
 
-    pub fn dismiss_on_backdrop(mut self, dismiss: bool) -> Self {
+    #[must_use] 
+    pub const fn dismiss_on_backdrop(mut self, dismiss: bool) -> Self {
         self.dismiss_on_backdrop = dismiss;
         self
     }
@@ -94,7 +97,8 @@ impl BottomSheet {
         self
     }
 
-    pub fn backdrop_alpha(mut self, alpha: u8) -> Self {
+    #[must_use] 
+    pub const fn backdrop_alpha(mut self, alpha: u8) -> Self {
         self.backdrop_alpha = alpha;
         self
     }
@@ -152,7 +156,7 @@ impl Component for BottomSheet {
         });
         let (fade, slide_remaining) = animations.get().value();
 
-        let base_translate_y = -((slide_remaining as f32) * height);
+        let base_translate_y = -(slide_remaining * height);
         let drag_y = (*drag_offset.read()).max(0.0);
         // Negative bottom lifts the card upward from the viewport edge
         // (slide-in). Positive subtracts so a downward drag pushes the
@@ -161,7 +165,7 @@ impl Component for BottomSheet {
         // Fade the backdrop proportionally as the drag approaches the
         // dismiss threshold so the sheet feels anchored to the gesture.
         let drag_fade = 1.0 - (drag_y / (DRAG_DISMISS_PX * 2.0)).min(1.0);
-        let alpha = ((fade as f64) * (drag_fade as f64) * f64::from(backdrop_alpha)) as u8;
+        let alpha = (f64::from(fade) * f64::from(drag_fade) * f64::from(backdrop_alpha)) as u8;
 
         let close = {
             let mut open = open;
@@ -240,7 +244,7 @@ impl Component for BottomSheet {
                     .position(Position::new_global().left(0.).bottom(translate_y))
                     .width(Size::px(w.max(0.0)))
                     .height(Size::px(height))
-                    .background(self.background.clone())
+                    .background(self.background)
                     .corner_radius(CornerRadius::new(16.0, 16.0, 0.0, 0.0))
                     .padding((12., 16.))
                     .spacing(10.0)
@@ -291,7 +295,8 @@ impl std::fmt::Debug for SheetPager {
 }
 
 impl SheetPager {
-    pub fn new(index: State<usize>, pages: Vec<Element>) -> Self {
+    #[must_use] 
+    pub const fn new(index: State<usize>, pages: Vec<Element>) -> Self {
         Self { index, pages }
     }
 }

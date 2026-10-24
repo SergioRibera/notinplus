@@ -309,7 +309,7 @@ impl RelayServer {
     }
 
     #[must_use]
-    pub fn local_addr(&self) -> std::net::SocketAddr {
+    pub const fn local_addr(&self) -> std::net::SocketAddr {
         self.node.local_addr()
     }
 }

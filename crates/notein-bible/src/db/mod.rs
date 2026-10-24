@@ -1,4 +1,4 @@
-//! SQLite + FTS5 storage layer.
+//! `SQLite` + FTS5 storage layer.
 //!
 //! One database file holds every installed translation. Tables are
 //! keyed by `bible_id` so adding a Bible is a bulk-insert, not a new
@@ -6,7 +6,7 @@
 //! `unicode61 remove_diacritics 2` so accent-insensitive queries work
 //! out of the box.
 //!
-//! A single `Arc<Mutex<Connection>>` serialises writes. SQLite does its
+//! A single `Arc<Mutex<Connection>>` serialises writes. `SQLite` does its
 //! own fine-grained locking on reads via WAL mode (enabled at
 //! connection open).
 
@@ -118,7 +118,7 @@ impl Db {
     }
 
     pub(crate) fn with_conn<R>(&self, f: impl FnOnce(&Connection) -> Result<R>) -> Result<R> {
-        let guard = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         f(&guard)
     }
 
@@ -127,7 +127,7 @@ impl Db {
         &self,
         f: impl FnOnce(&mut Connection) -> Result<R>,
     ) -> Result<R> {
-        let mut guard = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         f(&mut guard)
     }
 
@@ -171,7 +171,7 @@ impl Db {
                  ORDER BY src_verse, tgt_book, tgt_chap, tgt_verse",
             )?;
             let rows = stmt
-                .query_map(rusqlite::params![bible_id, book_id, chapter as i64], |r| {
+                .query_map(rusqlite::params![bible_id, book_id, i64::from(chapter)], |r| {
                     Ok(CrossRefRow {
                         src_verse: r.get::<_, i64>(0)? as u16,
                         tgt_book: r.get(1)?,
@@ -202,7 +202,7 @@ impl Db {
             )?;
             let text = stmt
                 .query_row(
-                    rusqlite::params![bible_id, book_id, chapter as i64, verse as i64],
+                    rusqlite::params![bible_id, book_id, i64::from(chapter), i64::from(verse)],
                     |r| r.get::<_, String>(0),
                 )
                 .ok();
@@ -229,7 +229,7 @@ pub struct FootnoteRow {
 
 impl Db {
     /// Publisher-authored footnotes (via helloao.org) for `(book,
-    /// chapter)` under `bible_id`. Ordered by verse then note_id so the
+    /// chapter)` under `bible_id`. Ordered by verse then `note_id` so the
     /// reader can walk them in-line with the paragraph.
     pub fn footnotes_for_chapter(
         &self,
@@ -246,7 +246,7 @@ impl Db {
             )?;
             let rows = stmt
                 .query_map(
-                    rusqlite::params![bible_id, book_id, chapter as i64],
+                    rusqlite::params![bible_id, book_id, i64::from(chapter)],
                     |r| {
                         Ok(FootnoteRow {
                             verse: r.get::<_, i64>(0)? as u16,
@@ -274,7 +274,7 @@ impl Db {
             let count: i64 = conn.query_row(
                 "SELECT COUNT(1) FROM footnotes
                  WHERE bible_id = ?1 AND book_id = ?2 AND chapter = ?3",
-                rusqlite::params![bible_id, book_id, chapter as i64],
+                rusqlite::params![bible_id, book_id, i64::from(chapter)],
                 |r| r.get(0),
             )?;
             Ok(count > 0)
@@ -295,7 +295,7 @@ impl Db {
             let count: i64 = conn.query_row(
                 "SELECT COUNT(1) FROM headers
                  WHERE bible_id = ?1 AND book_id = ?2 AND chapter = ?3",
-                rusqlite::params![bible_id, book_id, chapter as i64],
+                rusqlite::params![bible_id, book_id, i64::from(chapter)],
                 |r| r.get(0),
             )?;
             Ok(count > 0)
@@ -328,7 +328,7 @@ mod tests {
                 conn.execute(
                     "INSERT INTO verses (bible_id, book_id, chapter, verse, text, paragraph_break)
                      VALUES ('spa_rv1960', 'EPH', 6, ?1, ?2, 0)",
-                    params![verse as i64, text],
+                    params![i64::from(verse), text],
                 )?;
             }
             Ok(())

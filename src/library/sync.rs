@@ -61,7 +61,7 @@ const fn buried_of(kind: BlobKind) -> Option<Buried> {
     }
 }
 
-fn head(kind: BlobKind, id: [u8; 16], updated_at: u64) -> BlobHead {
+const fn head(kind: BlobKind, id: [u8; 16], updated_at: u64) -> BlobHead {
     BlobHead {
         kind,
         id,
@@ -70,7 +70,7 @@ fn head(kind: BlobKind, id: [u8; 16], updated_at: u64) -> BlobHead {
     }
 }
 
-fn gone(kind: BlobKind, id: [u8; 16], at: u64) -> BlobHead {
+const fn gone(kind: BlobKind, id: [u8; 16], at: u64) -> BlobHead {
     BlobHead {
         kind,
         id,
@@ -198,15 +198,12 @@ impl Library {
 
 fn upsert<T, K: PartialEq>(list: &mut Vec<T>, record: T, id: impl Fn(&T) -> K) -> bool {
     let key = id(&record);
-    match list.iter_mut().find(|r| id(r) == key) {
-        Some(slot) => {
-            *slot = record;
-            false
-        }
-        None => {
-            list.push(record);
-            true
-        }
+    if let Some(slot) = list.iter_mut().find(|r| id(r) == key) {
+        *slot = record;
+        false
+    } else {
+        list.push(record);
+        true
     }
 }
 
@@ -303,7 +300,7 @@ impl LibraryData {
         };
         match (live, stone) {
             (Some((at, record)), Some(stone)) if at >= stone.at => Some(record),
-            (Some(_), Some(stone)) | (None, Some(stone)) => Some(SyncRecord::Gone(stone)),
+            (Some(_) | None, Some(stone)) => Some(SyncRecord::Gone(stone)),
             (Some((_, record)), None) => Some(record),
             (None, None) => None,
         }

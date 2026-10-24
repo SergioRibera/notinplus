@@ -28,7 +28,7 @@ pub struct SearchHitView {
     /// paints in a brighter colour so the match pops in the list.
     pub snippet_runs: Vec<SnippetRun>,
     /// Flat single-line summary string used as the suggestion label
-    /// in an inline input (toolbar FormInput). Formatted as
+    /// in an inline input (toolbar `FormInput`). Formatted as
     /// `"<reference> — <snippet>"` with the snippet markers stripped
     /// so suggestions render as plain text.
     pub suggestion_label: String,
@@ -201,7 +201,7 @@ mod tests {
             book_id: "EPH".into(),
             chapter: 6,
             verse: 1,
-            snippet: "".into(),
+            snippet: String::new(),
             score: -1.0,
         };
         let v = hit_to_view(hit, None);

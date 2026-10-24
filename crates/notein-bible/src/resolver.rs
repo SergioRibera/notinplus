@@ -11,7 +11,7 @@
 //! 3. Direct OSIS id (`"EPH"`, `"1CO"`) when nothing else hits.
 //!
 //! The returned anchor always clamps `end_verse` ≥ `start_verse`;
-//! chapter-only refs collapse to the whole chapter (start_verse = 1).
+//! chapter-only refs collapse to the whole chapter (`start_verse` = 1).
 
 use crate::anchor::BibleAnchor;
 use crate::db::Db;
@@ -25,6 +25,7 @@ pub fn resolve(db: &Db, bible_id: &str, input: &str) -> Option<BibleAnchor> {
     resolve_parsed(db, bible_id, &parsed)
 }
 
+#[must_use] 
 pub fn resolve_parsed(db: &Db, bible_id: &str, parsed: &ParsedRef) -> Option<BibleAnchor> {
     let book_id = resolve_book_token(db, bible_id, &parsed.book_token)?;
     let start_verse = parsed.start_verse.unwrap_or(1);
@@ -44,6 +45,7 @@ pub fn resolve_parsed(db: &Db, bible_id: &str, parsed: &ParsedRef) -> Option<Bib
 /// Resolve a lowercase book token to an OSIS id. Walks the hardcoded
 /// Spanish alias map first, falls back to the installed catalogue, and
 /// finally accepts the token verbatim if it looks like an OSIS id.
+#[must_use] 
 pub fn resolve_book_token(db: &Db, bible_id: &str, token: &str) -> Option<String> {
     let normalised = normalise(token);
     let books = db.list_books(bible_id).ok()?;
@@ -198,7 +200,7 @@ mod tests {
                 conn.execute(
                     "INSERT INTO books (bible_id, book_id, name, abbrev, order_num, testament)
                      VALUES ('spa_rv1960', ?1, ?2, ?3, ?4, 'NT')",
-                    params![bid, name, abbrev, order as i64],
+                    params![bid, name, abbrev, i64::from(order)],
                 )?;
             }
             Ok(())

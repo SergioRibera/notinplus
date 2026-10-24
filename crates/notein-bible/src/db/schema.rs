@@ -10,7 +10,7 @@
 
 use super::{Db, Result};
 
-const SCHEMA_SQL: &str = r#"
+const SCHEMA_SQL: &str = r"
 BEGIN;
 
 CREATE TABLE IF NOT EXISTS bibles (
@@ -116,7 +116,7 @@ AFTER UPDATE ON verses BEGIN
 END;
 
 COMMIT;
-"#;
+";
 
 pub(crate) fn migrate(db: &Db) -> Result<()> {
     db.with_conn(|conn| {

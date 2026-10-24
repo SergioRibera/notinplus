@@ -20,7 +20,7 @@ const SEGMENTED_OPTIONS: usize = 4;
 /// Time a destructive action waits for its second tap.
 const CONFIRM_WINDOW: Duration = Duration::from_secs(3);
 
-fn rgba(packed: u32) -> Color {
+const fn rgba(packed: u32) -> Color {
     let [r, g, b, a] = packed.to_be_bytes();
     Color::from_argb(a, r, g, b)
 }
@@ -155,7 +155,7 @@ impl Component for Field {
                     .child(TextField::new(text).on_submit(move |typed: String| {
                         match typed.trim().parse::<i64>() {
                             Ok(n) if (min..=max).contains(&n) => {
-                                error.set(set(ConfigValue::Int(n)))
+                                error.set(set(ConfigValue::Int(n)));
                             }
                             _ => error.set(Some(format!("Un número entre {min} y {max}"))),
                         }

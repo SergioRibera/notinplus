@@ -117,7 +117,7 @@ struct BibleDesc {
     chapter_headings: HashMap<String, Vec<String>>,
     #[serde(default)]
     sections: HashMap<String, Vec<SectionEntry>>,
-    /// Optional language id — if absent we fall back to the bible_id prefix.
+    /// Optional language id — if absent we fall back to the `bible_id` prefix.
     #[serde(default)]
     language: Option<String>,
     #[serde(default)]
@@ -185,7 +185,7 @@ enum ContentItem {
 /// / `sections` — the user-facing name, language, and abbreviation
 /// live on the catalogue entry, so the caller resolves them there and
 /// hands them in here. Any field left `None` falls back to a sensible
-/// default (bible_id prefix for language, bible_id itself for name /
+/// default (`bible_id` prefix for language, `bible_id` itself for name /
 /// abbrev).
 #[derive(Debug, Default, Clone)]
 pub struct BibleMeta {
@@ -398,7 +398,7 @@ fn fetch_if_stale(client: &Client, url: &str, dest: &Path, ttl: Duration) -> Res
     if dest.exists() {
         if let Ok(meta) = dest.metadata() {
             if let Ok(modified) = meta.modified() {
-                let fresh = modified.elapsed().map(|e| e <= ttl).unwrap_or(false);
+                let fresh = modified.elapsed().is_ok_and(|e| e <= ttl);
                 if fresh && cache_looks_like_json(dest) {
                     return Ok(());
                 }
@@ -469,14 +469,10 @@ fn upsert_book(
 ) -> rusqlite::Result<()> {
     let name = desc
         .book_names
-        .get(book_id)
-        .map(|n| if n.long.is_empty() { n.normal.clone() } else { n.long.clone() })
-        .unwrap_or_else(|| book_id.to_string());
+        .get(book_id).map_or_else(|| book_id.to_string(), |n| if n.long.is_empty() { n.normal.clone() } else { n.long.clone() });
     let abbrev = desc
         .book_names
-        .get(book_id)
-        .map(|n| n.abbrev.clone())
-        .unwrap_or_else(|| book_id.to_string());
+        .get(book_id).map_or_else(|| book_id.to_string(), |n| n.abbrev.clone());
     let testament = testament_for(book_id);
     conn.execute(
         "INSERT INTO books (bible_id, book_id, name, abbrev, order_num, testament)
@@ -486,7 +482,7 @@ fn upsert_book(
              abbrev = excluded.abbrev,
              order_num = excluded.order_num,
              testament = excluded.testament",
-        params![bible_id, book_id, name, abbrev, order_num as i64, testament],
+        params![bible_id, book_id, name, abbrev, i64::from(order_num), testament],
     )?;
     Ok(())
 }
@@ -561,18 +557,18 @@ fn insert_book_contents(
                 insert_header.execute(params![
                     bible_id,
                     book_id,
-                    chapter_num as i64,
-                    verse_num as i64,
+                    i64::from(chapter_num),
+                    i64::from(verse_num),
                     h
                 ])?;
             }
             insert.execute(params![
                 bible_id,
                 book_id,
-                chapter_num as i64,
-                verse_num as i64,
+                i64::from(chapter_num),
+                i64::from(verse_num),
                 text,
-                paragraph_break as i64,
+                i64::from(paragraph_break),
             ])?;
             count += 1;
         }
@@ -605,7 +601,7 @@ fn insert_headers(
             insert_header.execute(params![
                 bible_id,
                 book_id,
-                chapter_num as i64,
+                i64::from(chapter_num),
                 0i64,
                 heading
             ])?;

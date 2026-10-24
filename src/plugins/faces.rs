@@ -31,7 +31,7 @@ pub fn view_slot(key: PaneKey) -> ViewSlot {
     }
 }
 
-fn item_of<K: notein_plugin::kind::DocumentKind>(ctx: &FaceContext<K>) -> ItemId {
+const fn item_of<K: notein_plugin::kind::DocumentKind>(ctx: &FaceContext<K>) -> ItemId {
     ItemId(ctx.doc.0)
 }
 

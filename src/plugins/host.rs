@@ -168,7 +168,7 @@ impl HostServices for ShellHost {
 /// How long a finished job's toast stays.
 const FINISHED_TOAST: Duration = Duration::from_millis(3_500);
 
-fn tone(tone: HostTone) -> ToastTone {
+const fn tone(tone: HostTone) -> ToastTone {
     match tone {
         HostTone::Info => ToastTone::Info,
         HostTone::Done => ToastTone::Done,
@@ -199,12 +199,9 @@ fn apply(event: HostEvent, jobs: &mut HashMap<(String, String), ToastId>) {
                 let toast = Toast::new(label)
                     .tone(ToastTone::Download)
                     .progress(value, caption);
-                match jobs.get(&key) {
-                    Some(id) => toasts.update(*id, toast),
-                    None => {
-                        let id = toasts.show(toast);
-                        jobs.insert(key, id);
-                    }
+                if let Some(id) = jobs.get(&key) { toasts.update(*id, toast) } else {
+                    let id = toasts.show(toast);
+                    jobs.insert(key, id);
                 }
             }
             Progress::Finished { success, note } => {

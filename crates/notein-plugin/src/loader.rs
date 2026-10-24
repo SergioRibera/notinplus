@@ -213,7 +213,7 @@ pub fn load(manifest_path: &Path) -> Result<Loaded, LoaderError> {
     };
     if export.abi != SDK_ABI_VERSION {
         return Err(LoaderError::AbiMismatch {
-            plugin: manifest.name.clone(),
+            plugin: manifest.name,
             expected: SDK_ABI_VERSION,
             found: export.abi,
         });

@@ -128,7 +128,7 @@ impl Component for PaneHeader {
                         IconButton::new(lucide::ellipsis(), "Más acciones")
                             .size(tokens::size::BUTTON_SM)
                             .on_press(move |e: Event<PressEventData>| {
-                                menu_for(&tab, &data, anchor(&e))
+                                menu_for(&tab, &data, anchor(&e));
                             })
                     }),
             )
@@ -272,7 +272,7 @@ impl Component for TabCell {
             .a11y_alt(self.look_title.clone())
             .on_press(move |_| ops.select_tab(pane, index))
             .on_secondary_down(move |e: Event<PressEventData>| {
-                menu_for(&menu_tab, &data, anchor(&e))
+                menu_for(&menu_tab, &data, anchor(&e));
             })
             .child(Icon::new(look.icon).size(14.0).color(look.tint))
             .child(

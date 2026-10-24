@@ -75,7 +75,7 @@ impl std::fmt::Debug for VerseScrollCtx {
 /// letter (publisher-assigned — "a", "b", "c" or "+" for autogen).
 /// `text` is the footnote body shown in the hover popup. `target`, when
 /// present, lets the click handler navigate to the referenced verse.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FootnoteView {
     pub src_verse: u16,
     pub caller: String,
@@ -95,7 +95,7 @@ pub fn footnotes_by_verse(notes: &[FootnoteView]) -> HashMap<u16, Vec<FootnoteVi
 /// UI-side projection of a cross-reference. The target text is
 /// pre-fetched (`db.verse_text`) so the hover popup renders without
 /// a DB round-trip inside the layout pass.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CrossRefView {
     pub src_verse: u16,
     /// Short label shown as the inline chip (e.g. `"2 Co 4:6"`).
@@ -123,7 +123,7 @@ pub fn cross_refs_by_verse(refs: &[CrossRefView]) -> HashMap<u16, Vec<CrossRefVi
 /// Styling info derived from the active highlights, keyed by verse
 /// number inside a single chapter. Precomputed so the paragraph builder
 /// does one hash lookup per span instead of a linear scan.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct VerseStyle {
     /// Non-default text colour when the verse is highlighted. The
     /// absence of a stored colour on the bookmark falls back to the
@@ -157,7 +157,7 @@ pub fn style_map(highlights: &[&BibleBookmark]) -> HashMap<u16, VerseStyle> {
     out
 }
 
-fn rgba_to_freya(rgba: [u8; 4]) -> Color {
+const fn rgba_to_freya(rgba: [u8; 4]) -> Color {
     Color::from_rgb(rgba[0], rgba[1], rgba[2])
 }
 
@@ -238,13 +238,14 @@ pub type OnHighlight = EventHandler<HighlightTarget>;
 /// shell forwards whatever colour the user is currently hovering /
 /// dragging on the wheel; the reader overrides those verses' tint so
 /// the paragraph updates in real time instead of only on commit.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HighlightPreview {
     pub lo: u16,
     pub hi: u16,
     pub color: Color,
 }
 
+#[must_use] 
 pub fn chapter_view(
     plan: &ChapterPlan,
     highlights: &[&BibleBookmark],
@@ -271,7 +272,7 @@ pub fn chapter_view(
             v,
             VerseStyle {
                 tint: Some(palette().highlighters[0]),
-                has_note: styles.get(&v).map(|s| s.has_note).unwrap_or(false),
+                has_note: styles.get(&v).is_some_and(|s| s.has_note),
             },
         );
     }
@@ -281,7 +282,7 @@ pub fn chapter_view(
                 v,
                 VerseStyle {
                     tint: Some(prev.color),
-                    has_note: styles.get(&v).map(|s| s.has_note).unwrap_or(false),
+                    has_note: styles.get(&v).is_some_and(|s| s.has_note),
                 },
             );
         }
@@ -578,7 +579,7 @@ impl Component for VerseParagraph {
                 highlight_items.push((start, end, c));
             }
 
-            if style.map(|s| s.has_note).unwrap_or(false) {
+            if style.is_some_and(|s| s.has_note) {
                 p = p.child(note_icon(font_size));
                 utf16_offset += 1;
             }
@@ -756,10 +757,10 @@ fn build_bg_rects(
             RectWidthStyle::Tight,
         );
         for tb in boxes {
-            let left = (tb.rect.left as f64 / scale) as f32;
-            let top = (tb.rect.top as f64 / scale) as f32;
-            let width = ((tb.rect.right - tb.rect.left) as f64 / scale) as f32;
-            let height = ((tb.rect.bottom - tb.rect.top) as f64 / scale) as f32;
+            let left = (f64::from(tb.rect.left) / scale) as f32;
+            let top = (f64::from(tb.rect.top) / scale) as f32;
+            let width = (f64::from(tb.rect.right - tb.rect.left) / scale) as f32;
+            let height = (f64::from(tb.rect.bottom - tb.rect.top) / scale) as f32;
             if width <= 0.0 || height <= 0.0 {
                 continue;
             }
@@ -994,7 +995,7 @@ impl Component for FootnoteLetter {
             let icon = *letter_area.read();
             let measured = *popup_area.read();
             let popup_height = measured.height().max(0.0);
-            let viewport_area = viewport.map(|v| v.get()).unwrap_or(icon);
+            let viewport_area = viewport.map_or(icon, notein_ui_kit::ViewportArea::get);
             let has_viewport = viewport_area.width() > 0.0 && viewport_area.height() > 0.0;
             let is_measured = icon.width() > 0.0 && popup_height > 0.0;
 
@@ -1104,7 +1105,7 @@ impl Component for RefHoverButton {
         let open = use_state(|| false);
         let pinned = use_state(|| false);
         let version = use_state(|| 0u64);
-        let expanded = use_state(|| std::collections::HashSet::<usize>::new());
+        let expanded = use_state(std::collections::HashSet::<usize>::new);
         // Icon area in window coords — captured via `on_sized` on the
         // trigger container so the popup can anchor against it with
         // `Position::new_global`.
@@ -1247,7 +1248,7 @@ impl Component for RefHoverButton {
             } else {
                 popup_max_height
             };
-            let viewport_area = viewport.map(|v| v.get()).unwrap_or(icon);
+            let viewport_area = viewport.map_or(icon, notein_ui_kit::ViewportArea::get);
             let has_viewport = viewport_area.width() > 0.0 && viewport_area.height() > 0.0;
             let is_measured = icon.width() > 0.0;
 

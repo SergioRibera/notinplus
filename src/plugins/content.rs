@@ -186,9 +186,7 @@ pub fn index_library() {
             for item in &items {
                 index(item);
             }
-        })
-        .map(drop)
-        .unwrap_or_else(|err| log::error!("index thread: {err}"));
+        }).map_or_else(|err| log::error!("index thread: {err}"), drop);
 }
 
 /// Drop `item` from its kind's index (it left the library).

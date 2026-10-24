@@ -25,7 +25,7 @@ pub struct Contents {
     pub title: String,
     /// Zero-based page.
     pub page: Option<u32>,
-    pub children: Vec<Contents>,
+    pub children: Vec<Self>,
 }
 
 impl From<TocEntry> for Contents {
@@ -39,7 +39,7 @@ impl From<TocEntry> for Contents {
 }
 
 /// A bookmark or highlight on a page.
-#[derive(Clone, Debug, PartialEq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 pub struct PdfMark {
     pub id: [u8; 16],
     pub anchor: PdfAnchor,
@@ -59,7 +59,7 @@ pub struct PdfContent {
 }
 
 /// A place in a PDF: a page, optionally a fragment of its text.
-#[derive(Clone, Debug, PartialEq, Default, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, Encode, Decode)]
 pub struct PdfAnchor {
     /// Zero-based page.
     pub page: u32,

@@ -51,7 +51,7 @@ pub(crate) fn search(
     db.with_conn(|conn| {
         // snippet(table, col_index, open, close, ellipsis, max_tokens)
         // bm25(table) ascends — ORDER BY bm25 ASC puts best matches first.
-        let sql_all = r#"
+        let sql_all = r"
             SELECT bible_id, book_id, chapter, verse,
                    snippet(verses_fts, 0, ?1, ?2, '…', 32) AS snip,
                    bm25(verses_fts) AS score
@@ -59,8 +59,8 @@ pub(crate) fn search(
             WHERE verses_fts MATCH ?3
             ORDER BY score ASC
             LIMIT ?4
-        "#;
-        let sql_scoped = r#"
+        ";
+        let sql_scoped = r"
             SELECT bible_id, book_id, chapter, verse,
                    snippet(verses_fts, 0, ?1, ?2, '…', 32) AS snip,
                    bm25(verses_fts) AS score
@@ -68,7 +68,7 @@ pub(crate) fn search(
             WHERE verses_fts MATCH ?3 AND bible_id = ?5
             ORDER BY score ASC
             LIMIT ?4
-        "#;
+        ";
 
         let limit_i = limit as i64;
         let rows: Vec<SearchHit> = if let Some(bid) = bible_id {

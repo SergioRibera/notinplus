@@ -38,6 +38,7 @@ pub fn provide_safe_area_override(insets: EdgeInsets) {
 /// [`provide_safe_area_override`] the state is seeded with the override
 /// value and the platform subscription is skipped — the override is
 /// authoritative for the whole subtree.
+#[must_use] 
 pub fn use_safe_area_insets() -> State<EdgeInsets> {
     let override_val = use_try_consume::<SafeAreaOverride>().map(|o| o.0);
     let mut insets = use_state(move || override_val.unwrap_or_default());
@@ -76,6 +77,7 @@ pub fn use_safe_area_insets() -> State<EdgeInsets> {
 /// cutout + IME) into a single set of edge padding the app applies.
 /// IME only pushes bottom padding — top/left/right ignore it so
 /// floating overlays don't jump when the keyboard opens.
+#[must_use] 
 pub const fn fold_insets(insets: SafeAreaInsets) -> EdgeInsets {
     let base = insets.system_bars.max(insets.display_cutout);
     EdgeInsets {

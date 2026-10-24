@@ -73,7 +73,7 @@ fn shared_map(path: &Path) -> SharedMap {
     let mut maps = MAPS
         .get_or_init(Mutex::default)
         .lock()
-        .unwrap_or_else(|p| p.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     Arc::clone(
         maps.entry(path.to_path_buf())
             .or_insert_with(|| Arc::new(Mutex::new(load(path).unwrap_or_default()))),
@@ -89,7 +89,7 @@ impl DesktopStore {
     }
 
     fn with_map<R>(&self, f: impl FnOnce(&mut HashMap<String, Value>) -> R) -> R {
-        let mut guard = self.map.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = self.map.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         f(&mut guard)
     }
 

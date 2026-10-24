@@ -81,7 +81,7 @@ struct ChapterPayload {
 
 /// Items inside `chapter.content`. We only care about `heading` + the
 /// `verse` number so we can emit `headers` rows at `before_verse =
-/// next verse number`. Everything else (line_break, hebrew_subtitle,
+/// next verse number`. Everything else (`line_break`, `hebrew_subtitle`,
 /// paragraph markers, …) is ignored.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
@@ -183,7 +183,7 @@ pub fn install_footnotes_for_chapter(
         tx.execute(
             "DELETE FROM footnotes
              WHERE bible_id = ?1 AND book_id = ?2 AND chapter = ?3",
-            params![bible_id, book_id, chapter as i64],
+            params![bible_id, book_id, i64::from(chapter)],
         )
         .map_err(crate::db::DbError::from)?;
         let mut inserted = 0usize;
@@ -199,13 +199,12 @@ pub fn install_footnotes_for_chapter(
                 let verse = note
                     .reference
                     .as_ref()
-                    .map(|r| r.verse)
-                    .unwrap_or(0)
+                    .map_or(0, |r| r.verse)
                     .max(0) as i64;
                 stmt.execute(params![
                     bible_id,
                     book_id,
-                    chapter as i64,
+                    i64::from(chapter),
                     verse,
                     note.note_id,
                     &note.caller,
@@ -299,8 +298,8 @@ pub fn install_all_headings(
                                 stmt.execute(params![
                                     bible_id,
                                     &book_id,
-                                    chapter_num as i64,
-                                    next_verse as i64,
+                                    i64::from(chapter_num),
+                                    i64::from(next_verse),
                                     text,
                                 ])
                                 .map_err(crate::db::DbError::from)?;
@@ -419,7 +418,7 @@ pub fn install_headings_for_chapter(
         tx.execute(
             "DELETE FROM headers
              WHERE bible_id = ?1 AND book_id = ?2 AND chapter = ?3",
-            params![bible_id, book_id, chapter as i64],
+            params![bible_id, book_id, i64::from(chapter)],
         )
         .map_err(crate::db::DbError::from)?;
         let mut inserted = 0usize;
@@ -434,8 +433,8 @@ pub fn install_headings_for_chapter(
                 stmt.execute(params![
                     bible_id,
                     book_id,
-                    chapter as i64,
-                    *before_verse as i64,
+                    i64::from(chapter),
+                    i64::from(*before_verse),
                     text,
                 ])
                 .map_err(crate::db::DbError::from)?;
@@ -579,7 +578,7 @@ fn fetch_if_stale(
     if dest.exists() {
         if let Ok(meta) = dest.metadata() {
             if let Ok(modified) = meta.modified() {
-                let fresh = modified.elapsed().map(|e| e <= ttl).unwrap_or(false);
+                let fresh = modified.elapsed().is_ok_and(|e| e <= ttl);
                 if fresh && cache_looks_like_json(dest) {
                     return Ok(());
                 }

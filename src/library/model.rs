@@ -375,8 +375,8 @@ pub enum PaneLayout {
         /// clamps on load so a corrupted ratio cannot push the handle
         /// off-screen.
         ratio: f32,
-        first: Box<PaneLayout>,
-        second: Box<PaneLayout>,
+        first: Box<Self>,
+        second: Box<Self>,
     },
 }
 
@@ -384,7 +384,7 @@ impl PaneLayout {
     /// Convenience: wrap a leaf with the given id. Used by
     /// [`Workspace::new_leaf`] when minting a fresh layout.
     #[must_use]
-    pub fn leaf(id: PaneId) -> Self {
+    pub const fn leaf(id: PaneId) -> Self {
         Self::Leaf(Pane {
             id,
             tabs: Vec::new(),
@@ -402,6 +402,7 @@ impl PaneLayout {
     /// Walk every leaf, yielding a reference to each pane in a stable
     /// depth-first (first-then-second) order. The shell uses this to
     /// hand ids to the renderer / event router.
+    #[must_use] 
     pub fn leaves(&self) -> Vec<&Pane> {
         let mut out = Vec::new();
         self.collect_leaves(&mut out);

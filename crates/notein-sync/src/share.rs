@@ -214,15 +214,12 @@ impl Share {
         if member.device == self.owner.device {
             return false;
         }
-        match self.members.iter_mut().find(|m| m.device == member.device) {
-            Some(existing) => {
-                *existing = member;
-                false
-            }
-            None => {
-                self.members.push(member);
-                true
-            }
+        if let Some(existing) = self.members.iter_mut().find(|m| m.device == member.device) {
+            *existing = member;
+            false
+        } else {
+            self.members.push(member);
+            true
         }
     }
 

@@ -35,14 +35,14 @@ pub fn canvas(doc: &Doc, paper: [u8; 4]) -> Option<Vec<u8>> {
     #[allow(clippy::cast_precision_loss)] // small fixed sizes
     let (w, h) = (WIDTH as f32, HEIGHT as f32);
     let content = ((x1 - x0).max(1.0), (y1 - y0).max(1.0));
-    let scale = ((w - MARGIN * 2.0) / content.0)
-        .min((h - MARGIN * 2.0) / content.1)
+    let scale = (MARGIN.mul_add(-2.0, w) / content.0)
+        .min(MARGIN.mul_add(-2.0, h) / content.1)
         .clamp(0.05, 2.0);
     let mut surface = raster_n32_premul((WIDTH, HEIGHT))?;
     let sk = surface.canvas();
     sk.clear(SkColor::from_argb(paper[3], paper[0], paper[1], paper[2]));
     sk.save();
-    sk.translate((MARGIN - x0 * scale, MARGIN - y0 * scale));
+    sk.translate((x0.mul_add(-scale, MARGIN), y0.mul_add(-scale, MARGIN)));
     sk.scale((scale, scale));
     let registry = BrushRegistry::default();
     for layer in doc.layers.iter().filter(|l| l.visible) {

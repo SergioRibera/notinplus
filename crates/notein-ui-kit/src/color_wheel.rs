@@ -98,7 +98,7 @@ fn format_alpha_pct(a: f32) -> String {
 }
 
 #[allow(clippy::cast_possible_truncation)]
-fn to_f32(v: f64) -> f32 {
+const fn to_f32(v: f64) -> f32 {
     v as f32
 }
 
@@ -354,7 +354,7 @@ impl Component for ColorWheel {
         };
 
         let swatch_fire = {
-            let commit = commit.clone();
+            let commit = commit;
             Callback::<Color, ()>::new(move |c: Color| {
                 let hsv = c.to_hsv();
                 let cur = *hsva.peek();
@@ -373,7 +373,7 @@ impl Component for ColorWheel {
 
         // -- element tree --
         let picker_width = self.width;
-        let inner_width = picker_width - 2.0 * PANEL_PADDING;
+        let inner_width = 2.0f32.mul_add(-PANEL_PADDING, picker_width);
 
         // Marker positions ride on the *measured* track (from on_sized) so
         // they stay under the cursor even when the parent hands the picker

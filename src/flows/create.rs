@@ -362,7 +362,7 @@ pub fn run(entry: CatalogEntry, context: Context) {
         CreationFlow::Direct | CreationFlow::Custom => create(entry, context, Request::default()),
         CreationFlow::Form => form(entry, context),
         CreationFlow::Choose { title, options } => {
-            choose(entry, context, title.to_string(), options)
+            choose(entry, context, title.to_string(), options);
         }
         CreationFlow::Import {
             title,
@@ -395,7 +395,7 @@ struct Request {
     file: Option<crate::files::Picked>,
 }
 
-fn paper_of(style: BackgroundStyle) -> Paper {
+const fn paper_of(style: BackgroundStyle) -> Paper {
     match style {
         BackgroundStyle::Blank => Paper::Blank,
         BackgroundStyle::Line => Paper::Lines,

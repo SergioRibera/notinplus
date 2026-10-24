@@ -243,22 +243,19 @@ impl DeviceProfile {
             .ok()
             .map(|(file, _): (ProfileFile, usize)| file)
             .filter(|file| file.version == PROFILE_VERSION);
-        let file = match current {
-            Some(file) => file,
-            None => {
-                let (old, _): (ProfileFileV1, usize) = bincode::decode_from_slice(bytes, config)
-                    .map_err(|err| IdentityError::Codec(err.to_string()))?;
-                if old.version != 1 {
-                    return Err(IdentityError::Version(old.version));
-                }
-                ProfileFile {
-                    version: PROFILE_VERSION,
-                    public: old.public,
-                    private: old.private,
-                    name: old.name,
-                    trusted: old.trusted,
-                    relay: None,
-                }
+        let file = if let Some(file) = current { file } else {
+            let (old, _): (ProfileFileV1, usize) = bincode::decode_from_slice(bytes, config)
+                .map_err(|err| IdentityError::Codec(err.to_string()))?;
+            if old.version != 1 {
+                return Err(IdentityError::Version(old.version));
+            }
+            ProfileFile {
+                version: PROFILE_VERSION,
+                public: old.public,
+                private: old.private,
+                name: old.name,
+                trusted: old.trusted,
+                relay: None,
             }
         };
         Ok(Self {

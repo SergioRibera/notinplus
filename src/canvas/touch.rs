@@ -35,7 +35,7 @@ pub(super) struct TouchState {
 impl Board {
     /// Let one finger write (no pen on this device, or the user's
     /// choice).
-    pub fn set_finger_draws(&mut self, draws: bool) {
+    pub const fn set_finger_draws(&mut self, draws: bool) {
         self.touch.finger_draws = draws;
     }
 
@@ -45,7 +45,7 @@ impl Board {
     }
 
     /// Hold "Mover": fingers pan while it is down.
-    pub fn set_pan_hold(&mut self, hold: bool) {
+    pub const fn set_pan_hold(&mut self, hold: bool) {
         self.touch.pan_hold = hold;
     }
 

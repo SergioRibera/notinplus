@@ -406,7 +406,7 @@ impl Component for EdgeBand {
                             p.accent.with_a(36)
                         }),
                     EventHandler::new(move |drag: TabDrag| {
-                        ops.split_with_tab(drag.pane, drag.index, pane, edge)
+                        ops.split_with_tab(drag.pane, drag.index, pane, edge);
                     }),
                 )
                 .on_drag_over(EventHandler::new(move |is_over: bool| over.set(is_over)))

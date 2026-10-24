@@ -6,7 +6,7 @@
 //! in a notein-managed snapshot sidecar
 //! ([`crate::library::bodies::plugin_snapshot_path`]) that the shell
 //! writes via `CanvasKind::serialize_snapshot`. This keeps the Bible
-//! plugin's own SQLite focused on the installed text + search index
+//! plugin's own `SQLite` focused on the installed text + search index
 //! only — user-authored data flows through notein's generic storage
 //! so bundle export + Phase 10 CRDT sync pick it up for free.
 
@@ -31,7 +31,7 @@ use crate::library::ItemId;
 
 const BIBLE_PLUGIN_ID: &str = notein_bible::kind::KIND;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct BibleFace {
     pub item: ItemId,
 }
@@ -98,25 +98,20 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
             .and_then(|bytes| BibleSnapshot::decode(&bytes));
 
     let starting_bible = saved_snapshot
-        .as_ref()
-        .map(|s| s.bible_id.clone())
-        .unwrap_or_else(|| bibles[0].id.clone());
+        .as_ref().map_or_else(|| bibles[0].id.clone(), |s| s.bible_id.clone());
     let books = db.list_books(&starting_bible).unwrap_or_default();
     let starting_book = saved_snapshot
-        .as_ref()
-        .map(|s| s.current_book.clone())
-        .unwrap_or_else(|| {
+        .as_ref().map_or_else(|| {
             books
                 .iter()
                 .find(|b| b.book_id.eq_ignore_ascii_case("gen"))
                 .map(|b| b.book_id.clone())
                 .or_else(|| books.first().map(|b| b.book_id.clone()))
                 .unwrap_or_else(|| "GEN".into())
-        });
+        }, |s| s.current_book.clone());
     let starting_chapter = saved_snapshot
         .as_ref()
-        .map(|s| s.current_chapter)
-        .unwrap_or(1);
+        .map_or(1, |s| s.current_chapter);
 
     // Jump queued on the host (chip tap, panel, search). Pull
     // it once at init so a re-render inside the same mount doesn't
@@ -346,9 +341,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
     };
     let abbrev = bibles
         .iter()
-        .find(|b| b.id == st_snapshot.bible_id)
-        .map(|b| b.name_local.clone())
-        .unwrap_or_else(|| st_snapshot.bible_id.clone());
+        .find(|b| b.id == st_snapshot.bible_id).map_or_else(|| st_snapshot.bible_id.clone(), |b| b.name_local.clone());
 
     let db_prev = db.clone();
     let on_prev = move || {
@@ -462,9 +455,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                 if verse_ok {
                     let book_name = books_for_search
                         .iter()
-                        .find(|b| b.book_id == book_id)
-                        .map(|b| b.name.clone())
-                        .unwrap_or_else(|| book_id.clone());
+                        .find(|b| b.book_id == book_id).map_or_else(|| book_id.clone(), |b| b.name.clone());
                     let label = if parsed.start_verse.is_some() {
                         format!("→ {} {}:{}", book_name, parsed.chapter, verse)
                     } else {
@@ -783,9 +774,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
                 let count = db.chapter_count(&bible_id_sheet, book_id).unwrap_or(1);
                 let name = books
                     .iter()
-                    .find(|b| b.book_id == *book_id)
-                    .map(|b| b.name.clone())
-                    .unwrap_or_else(|| book_id.clone());
+                    .find(|b| b.book_id == *book_id).map_or_else(|| book_id.clone(), |b| b.name.clone());
                 let db_nav = db.clone();
                 let book_for_nav = book_id.clone();
                 chapter_grid_page(
@@ -826,7 +815,7 @@ fn bible_viewer_body(item: ItemId, db: Db, bibles: Vec<BibleRow>) -> Element {
 /// Return the installed `book_id` for `bible_id` that matches
 /// `candidate` case-insensitively, or `candidate` verbatim when no
 /// catalogue entry matches (lets the caller surface a clean
-/// MissingBible error further down instead of silently rewriting).
+/// `MissingBible` error further down instead of silently rewriting).
 ///
 /// Chip anchors persist whatever casing the plugin's resolver chose
 /// at creation time — typically uppercase OSIS from the alias map —
@@ -957,9 +946,7 @@ impl ReaderSnapshot {
     fn from_state(st: &BibleViewerState) -> Self {
         let chapter = st.current_chapter_data().cloned();
         let book_name = chapter
-            .as_ref()
-            .map(|c| c.book_name.clone())
-            .unwrap_or_else(|| st.current_book.clone());
+            .as_ref().map_or_else(|| st.current_book.clone(), |c| c.book_name.clone());
         let highlights = st
             .highlights_on(&st.current_book, st.current_chapter)
             .into_iter()
@@ -991,8 +978,7 @@ fn chapter_body(
             let plan = plan_chapter(data);
             let hl_refs: Vec<&BibleBookmark> = highlights.iter().collect();
             let enabled = crate::plugins::builtin::bible_kind()
-                .map(|c| plugin_config::effective_enable_crossref(c.config()))
-                .unwrap_or(true);
+                .map_or(true, |c| plugin_config::effective_enable_crossref(c.config()));
             let refs = if enabled {
                 build_cross_refs(db, &data.bible_id, &data.book_id, data.chapter)
             } else {
@@ -1186,6 +1172,6 @@ fn placeholder(message: String) -> impl IntoElement {
 
 // Suppress unused Arc import warning when Arc gets dropped by edits.
 #[allow(dead_code)]
-fn _unused() -> Option<Arc<()>> {
+const fn _unused() -> Option<Arc<()>> {
     None
 }

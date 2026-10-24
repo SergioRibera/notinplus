@@ -16,7 +16,7 @@
 
 use std::borrow::Cow;
 
-use freya::{animation::*, prelude::*};
+use freya::{animation::{ReadAnimatedValue, AnimatedValue, use_animation, AnimNum, Function, Ease}, prelude::*};
 
 use crate::theme::palette;
 
@@ -110,7 +110,7 @@ impl FormInput {
     }
 
     #[must_use]
-    pub fn a11y_id(mut self, id: AccessibilityId) -> Self {
+    pub const fn a11y_id(mut self, id: AccessibilityId) -> Self {
         self.node_id = Some(id);
         self
     }
@@ -358,7 +358,7 @@ impl Component for FormInput {
         // arrive on a later render.
         let keystroke_handler = on_change.clone();
         let validator_opt = self.on_validation.clone();
-        let mut validation_error_for_cb = validation_error.clone();
+        let mut validation_error_for_cb = validation_error;
         input = input.on_validate(move |v: InputValidator| {
             let text = v.text().clone();
             current_value.set(text.clone());
@@ -382,7 +382,7 @@ impl Component for FormInput {
 
         let mut paste_value = self.value.clone();
         let paste_validator = self.on_validation.clone();
-        let mut paste_error = validation_error.clone();
+        let mut paste_error = validation_error;
 
         rect()
             .on_global_key_down(move |e: Event<KeyboardEventData>| {
@@ -436,8 +436,8 @@ impl Component for FormInput {
                     .cross_align(Alignment::center())
                     .width(Size::fill())
                     .content(Content::Flex)
-                    .map(self.corner_radius, |r, corner| r.corner_radius(corner))
-                    .maybe(self.corner_radius.is_none(), |r| r.rounded_lg())
+                    .map(self.corner_radius, freya::prelude::StyleExt::corner_radius)
+                    .maybe(self.corner_radius.is_none(), freya::prelude::CornerRadiusExt::rounded_lg)
                     .maybe(collapsible, |r| {
                         r.overflow(Overflow::Clip).height(Size::px(36.))
                     })

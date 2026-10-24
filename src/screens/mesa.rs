@@ -174,7 +174,7 @@ fn save_scratch(doc: crate::doc::Doc, folder: crate::library::FolderId) {
 }
 
 /// UI state of the open mesa, shared by its bar, panes and panel.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct MesaUi {
     pub panel: State<bool>,
     pub panel_tab: State<PanelTab>,
@@ -199,7 +199,7 @@ impl MesaUi {
 }
 
 /// The focused pane and its active tab.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Focus {
     pub pane: PaneId,
     pub index: usize,

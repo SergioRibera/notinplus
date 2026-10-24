@@ -481,10 +481,10 @@ fn materialise(db: &Db, bible_id: &str, parsed: Parsed) -> Result<usize> {
                     params![
                         bible_id,
                         &book.id,
-                        v.chapter as i64,
-                        v.verse as i64,
+                        i64::from(v.chapter),
+                        i64::from(v.verse),
                         &v.text,
-                        v.paragraph_break as i64,
+                        i64::from(v.paragraph_break),
                     ],
                 )
                 .map_err(crate::db::DbError::from)?;
@@ -497,8 +497,8 @@ fn materialise(db: &Db, bible_id: &str, parsed: Parsed) -> Result<usize> {
                     params![
                         bible_id,
                         &book.id,
-                        h.chapter as i64,
-                        h.before_verse as i64,
+                        i64::from(h.chapter),
+                        i64::from(h.before_verse),
                         &h.text,
                     ],
                 )

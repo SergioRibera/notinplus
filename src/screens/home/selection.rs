@@ -70,7 +70,7 @@ impl Selection {
 }
 
 /// The bar shown while selecting.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct SelectionActions {
     pub selection: State<Selection>,
     pub folder: FolderId,

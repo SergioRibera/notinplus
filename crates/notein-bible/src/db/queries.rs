@@ -131,7 +131,7 @@ pub(crate) fn load_chapter(
              ORDER BY verse",
         )?;
         let verses = verses_stmt
-            .query_map(params![bible_id, book_id, chapter as i64], |r| {
+            .query_map(params![bible_id, book_id, i64::from(chapter)], |r| {
                 Ok(VerseRow {
                     verse: r.get::<_, i64>(0)? as u16,
                     text: r.get(1)?,
@@ -147,7 +147,7 @@ pub(crate) fn load_chapter(
              ORDER BY before_verse",
         )?;
         let headers = headers_stmt
-            .query_map(params![bible_id, book_id, chapter as i64], |r| {
+            .query_map(params![bible_id, book_id, i64::from(chapter)], |r| {
                 Ok(HeaderRow {
                     before_verse: r.get::<_, i64>(0)? as u16,
                     text: r.get(1)?,

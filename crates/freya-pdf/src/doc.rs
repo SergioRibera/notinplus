@@ -457,7 +457,7 @@ pub struct TocEntry {
     /// Vertical offset inside the page from its top edge, in points.
     pub y_from_top: Option<f32>,
     /// Nested entries.
-    pub children: Vec<TocEntry>,
+    pub children: Vec<Self>,
 }
 
 impl PdfDocument {
@@ -505,7 +505,7 @@ impl PdfDocument {
 /// Pull a bottom-up y (PDF points) out of a destination view setting
 /// when the variant specifies one. Fit-type destinations pin the whole
 /// page and carry none.
-pub(crate) fn extract_dest_y_bottom(
+pub(crate) const fn extract_dest_y_bottom(
     settings: pdfium_render::prelude::PdfDestinationViewSettings,
 ) -> Option<f32> {
     use pdfium_render::prelude::PdfDestinationViewSettings as V;

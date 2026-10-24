@@ -22,7 +22,7 @@ pub type BackHandler = Box<dyn FnMut() + 'static>;
 
 /// `(home, back, forward, split_h, split_v, close_split, search,
 /// translation)` click handlers. Nav + split buttons are optional —
-/// pass `None` to render them disabled (or absent for close_split).
+/// pass `None` to render them disabled (or absent for `close_split`).
 #[allow(missing_debug_implementations)]
 pub struct ToolbarCallbacks<FT>
 where
@@ -46,7 +46,7 @@ where
     /// to navigate to.
     pub on_search: EventHandler<String>,
     /// Current list of hit labels rendered as suggestions in the
-    /// inline FormInput dropdown. The caller refreshes this each time
+    /// inline `FormInput` dropdown. The caller refreshes this each time
     /// `on_search` runs the FTS query.
     pub search_suggestions: Vec<Cow<'static, str>>,
     pub on_translation: FT,
@@ -85,11 +85,11 @@ where
         .direction(Direction::Horizontal)
         .cross_align(Alignment::Center)
         .spacing(2.0);
-    if let Some(mut cb) = on_home {
-        left = left.child(icon_button(freya::icons::lucide::house(), move || cb()));
+    if let Some(cb) = on_home {
+        left = left.child(icon_button(freya::icons::lucide::house(), cb));
     }
-    if let Some(mut cb) = on_sidebar {
-        left = left.child(icon_button(freya::icons::lucide::panel_left(), move || cb()));
+    if let Some(cb) = on_sidebar {
+        left = left.child(icon_button(freya::icons::lucide::panel_left(), cb));
     }
     // Back / forward buttons always render — when the stack is empty we
     // keep the icon in the grid with a muted tint so the toolbar
@@ -117,14 +117,14 @@ where
                 .suggestions_unfiltered()
                 .on_change(on_search),
         );
-    if let Some(mut cb) = on_notebook {
+    if let Some(cb) = on_notebook {
         right = right.child(icon_button(
             freya::icons::lucide::notebook_text(),
-            move || cb(),
+            cb,
         ));
     }
-    if let Some(mut cb) = on_links {
-        right = right.child(icon_button(freya::icons::lucide::link(), move || cb()));
+    if let Some(cb) = on_links {
+        right = right.child(icon_button(freya::icons::lucide::link(), cb));
     }
     right = right.child(translation_chip(translation_abbrev, on_translation));
 
@@ -137,7 +137,7 @@ where
 /// inert — the search box, translation chip and nav icons all
 /// render as decorations.
 pub fn empty_toolbar(on_home: impl FnMut() + 'static) -> impl IntoElement {
-    let mut on_home = on_home;
+    let on_home = on_home;
     rect()
         .width(Size::fill())
         .height(Size::px(56.0))
@@ -152,7 +152,7 @@ pub fn empty_toolbar(on_home: impl FnMut() + 'static) -> impl IntoElement {
                 .direction(Direction::Horizontal)
                 .cross_align(Alignment::Center)
                 .spacing(2.0)
-                .child(icon_button(freya::icons::lucide::house(), move || on_home()))
+                .child(icon_button(freya::icons::lucide::house(), on_home))
                 .child(nav_icon_button(freya::icons::lucide::arrow_left(), None))
                 .child(nav_icon_button(freya::icons::lucide::arrow_right(), None)),
         )

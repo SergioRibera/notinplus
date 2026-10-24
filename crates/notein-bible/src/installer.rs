@@ -91,18 +91,15 @@ impl Installer {
         loop {
             let next = {
                 let mut queue = self.lock();
-                match queue.waiting.pop_front() {
-                    Some(id) => {
-                        queue
-                            .states
-                            .insert(id.clone(), InstallState::Downloading { done: 0, total: 0 });
-                        queue.announce();
-                        id
-                    }
-                    None => {
-                        queue.running = false;
-                        return;
-                    }
+                if let Some(id) = queue.waiting.pop_front() {
+                    queue
+                        .states
+                        .insert(id.clone(), InstallState::Downloading { done: 0, total: 0 });
+                    queue.announce();
+                    id
+                } else {
+                    queue.running = false;
+                    return;
                 }
             };
             let watcher = self.watch(&next);
