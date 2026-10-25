@@ -254,8 +254,9 @@ fn phone_layout(mut open: State<Option<Section>>, list: Rect) -> Element {
 /// Wider screens: the list beside the open section.
 fn wide_layout(section: Section, list: Rect) -> Element {
     let p = palette();
-    let window = Platform::get().root_size.read().height;
-    let height = (window * 0.82).clamp(420.0, 760.0).min(window - 48.0);
+    // Tall enough to browse, never past the system bars or the keyboard.
+    let window = notein_ui_kit::safe_frame().height();
+    let height = (window * 0.82).clamp(420.0, 760.0).min(window - 32.0);
     // The panes sit 1px inside the frame so neither covers its border.
     let inner = tokens::radius::XL - 1.0;
     rect()

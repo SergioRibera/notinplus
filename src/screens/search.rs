@@ -406,24 +406,35 @@ pub(crate) fn overlay_frame(top: f32) -> Rect {
     let p = palette();
     let compact = width_class().is_compact();
     let size = *Platform::get().root_size.read();
-    let width = if compact {
-        size.width
+    // What the system bars and the keyboard leave of the window.
+    let frame = notein_ui_kit::safe_frame();
+    let pad = tokens::space::MD;
+    let panel = if compact {
+        // The whole screen, its content kept off the bars and the keyboard.
+        rect()
+            .position(Position::new_absolute().top(0.0).left(0.0))
+            .width(Size::px(size.width))
+            .max_height(Size::px(size.height))
+            .padding((
+                frame.min_y() + pad,
+                size.width - frame.max_x() + pad,
+                size.height - frame.max_y() + pad,
+                frame.min_x() + pad,
+            ))
     } else {
-        WIDTH.min(size.width - 32.0)
+        let width = WIDTH.min(frame.width() - 32.0);
+        let top = frame.min_y() + top;
+        rect()
+            .position(
+                Position::new_absolute()
+                    .top(top)
+                    .left(frame.min_x() + ((frame.width() - width) / 2.0).max(0.0)),
+            )
+            .width(Size::px(width))
+            .max_height(Size::px((frame.max_y() - top - 16.0).max(240.0)))
+            .padding(pad)
     };
-    let top = if compact { 0.0 } else { top };
-    rect()
-        .position(
-            Position::new_absolute()
-                .top(top)
-                .left(((size.width - width) / 2.0).max(0.0)),
-        )
-        .width(Size::px(width))
-        .max_height(Size::px(if compact {
-            size.height
-        } else {
-            (size.height - top - 48.0).max(240.0)
-        }))
+    panel
         .corner_radius(if compact { 0.0 } else { tokens::radius::XL })
         .background(p.s1)
         .border(
@@ -433,7 +444,6 @@ pub(crate) fn overlay_frame(top: f32) -> Rect {
                 .alignment(BorderAlignment::Inner),
         )
         .shadow(Shadow::new().y(18.0).blur(48.0).color(p.shadow))
-        .padding(tokens::space::MD)
         .spacing(tokens::space::MD)
         .content(Content::Flex)
 }

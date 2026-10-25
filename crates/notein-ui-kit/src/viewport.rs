@@ -6,7 +6,9 @@
 //! "anchor below" placement (fine for small windows / desktop but
 //! can clip on mobile when the trigger sits near the bottom edge).
 
-use freya::prelude::{Area, State};
+use freya::prelude::{Area, Platform, State, try_consume_context};
+
+use crate::modal::ModalChrome;
 
 /// Shared window-area signal. Store the `State<Area>` of a top-level
 /// rect that `on_sized`-captures the full window.
@@ -141,5 +143,135 @@ pub fn clamp_popup_top_from_point(
         above_top
     } else {
         (viewport_bottom - popup_height - margin).max(viewport_top + margin)
+    }
+}
+
+/// Edges of the window that system bars, display cutouts and the soft
+/// keyboard cover, in layout units.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Gutters {
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+    pub left: f32,
+}
+
+impl Gutters {
+    /// `area` without the covered edges.
+    #[must_use]
+    pub fn inside(self, area: Area) -> Area {
+        Area::new(
+            (area.min_x() + self.left, area.min_y() + self.top).into(),
+            (
+                (area.width() - self.left - self.right).max(0.0),
+                (area.height() - self.top - self.bottom).max(0.0),
+            )
+                .into(),
+        )
+    }
+}
+
+/// The part of the window floating UI may use, in window coordinates:
+/// the window without the edges the host's [`ModalChrome`] reports as
+/// covered. Subscribes the caller to the window size and the gutters.
+#[must_use]
+pub fn safe_frame() -> Area {
+    let window = try_consume_context::<ViewportArea>()
+        .map(ViewportArea::get)
+        .filter(|area| area.width() > 0.0 && area.height() > 0.0)
+        .unwrap_or_else(|| Area::from_size(*Platform::get().root_size.read()));
+    try_consume_context::<ModalChrome>()
+        .unwrap_or_default()
+        .gutters()
+        .inside(window)
+}
+
+/// Where a popup sized `size` goes for a trigger at `anchor`, as its
+/// `(left, top)`.
+///
+/// Under the trigger (over it when `above` is preferred), flipped to the other side when it does not fit, and always inside
+/// `bounds` less `margin`. A popup larger than `bounds` starts at its top.
+#[must_use]
+pub fn place_popup(
+    anchor: Area,
+    size: (f32, f32),
+    above: bool,
+    bounds: Area,
+    margin: f32,
+) -> (f32, f32) {
+    const GAP: f32 = 8.0;
+    let (width, height) = size;
+    let (min_top, max_bottom) = (bounds.min_y() + margin, bounds.max_y() - margin);
+    let below = anchor.max_y() + GAP;
+    let over = anchor.min_y() - GAP - height;
+    let fits_below = below + height <= max_bottom;
+    let fits_over = over >= min_top;
+    let top = match (above, fits_below, fits_over) {
+        (false, true, _) | (true, true, false) => below,
+        (true, _, true) | (false, false, true) => over,
+        (_, false, false) => (max_bottom - height).max(min_top),
+    };
+    let min_left = bounds.min_x() + margin;
+    let max_left = (bounds.max_x() - width - margin).max(min_left);
+    (anchor.min_x().clamp(min_left, max_left), top)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn area(x: f32, y: f32, w: f32, h: f32) -> Area {
+        Area::new((x, y).into(), (w, h).into())
+    }
+
+    #[test]
+    fn a_popup_near_the_bottom_opens_over_its_trigger() {
+        let bounds = area(0.0, 0.0, 800.0, 600.0);
+        let (_, top) = place_popup(
+            area(10.0, 540.0, 40.0, 30.0),
+            (200.0, 160.0),
+            false,
+            bounds,
+            8.0,
+        );
+        assert!((top - (540.0 - 8.0 - 160.0)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_popup_never_crosses_the_right_edge() {
+        let bounds = area(0.0, 0.0, 800.0, 600.0);
+        let (left, _) = place_popup(
+            area(760.0, 40.0, 30.0, 30.0),
+            (200.0, 100.0),
+            false,
+            bounds,
+            8.0,
+        );
+        assert!((left - (800.0 - 8.0 - 200.0)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_popup_taller_than_the_bounds_starts_at_their_top() {
+        let bounds = area(0.0, 24.0, 800.0, 300.0);
+        let (_, top) = place_popup(
+            area(10.0, 100.0, 30.0, 30.0),
+            (200.0, 500.0),
+            false,
+            bounds,
+            8.0,
+        );
+        assert!((top - 32.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn gutters_cut_every_edge() {
+        let inside = Gutters {
+            top: 24.0,
+            right: 0.0,
+            bottom: 300.0,
+            left: 10.0,
+        }
+        .inside(area(0.0, 0.0, 800.0, 1000.0));
+        assert_eq!(inside, area(10.0, 24.0, 790.0, 676.0));
     }
 }

@@ -174,9 +174,18 @@ fn out(name: &str) -> PathBuf {
         .join(format!("{name}.png"))
 }
 
-fn shell(body: fn() -> Element, size: (f32, f32)) -> impl Fn() -> Element {
+fn shell(
+    body: fn() -> Element,
+    size: (f32, f32),
+    gutters: notein_ui_kit::Gutters,
+) -> impl Fn() -> Element {
     move || {
         let area = use_state(move || Area::new((0.0, 0.0).into(), size.into()));
+        let covered = use_memo(move || gutters);
+        use_provide_context(move || notein_ui_kit::ModalChrome {
+            gutters: Some(covered),
+            ..Default::default()
+        });
         let _settings = crate::settings::use_settings_root();
         use_hook(|| {
             if let Some(mut theme) = notein_ui_kit::theme::try_theme() {
@@ -217,8 +226,19 @@ fn sandbox() {
 }
 
 fn render(name: &str, size: (f32, f32), body: fn() -> Element) {
+    render_covered(name, size, notein_ui_kit::Gutters::default(), body);
+}
+
+/// [`render`] with the window edges `gutters` covered, as by the system
+/// bars and the soft keyboard.
+fn render_covered(
+    name: &str,
+    size: (f32, f32),
+    gutters: notein_ui_kit::Gutters,
+    body: fn() -> Element,
+) {
     sandbox();
-    let app = shell(body, size);
+    let app = shell(body, size, gutters);
     let (mut runner, ()) = TestingRunner::new(app, size.into(), |_| (), 1.0);
     runner.poll_n(Duration::from_millis(40), 12);
     runner.sync_and_update();
@@ -373,4 +393,45 @@ fn library_failed_desktop() {
 #[test]
 fn library_failed_phone() {
     render("library-failed-phone", (390.0, 844.0), library_failed);
+}
+
+fn long_sheet() -> Element {
+    use_hook(|| {
+        notein_ui_kit::Sheet::titled("Muchas opciones")
+            .children(
+                (0..30).map(|i| notein_ui_kit::ListRow::new(format!("Opción {i}")).into_element()),
+            )
+            .footer(notein_ui_kit::Button::new("Listo").primary())
+            .open();
+    });
+    rect().into_element()
+}
+
+fn edge_popover() -> Element {
+    use_hook(|| {
+        let entries = (0..8)
+            .map(|i| {
+                notein_ui_kit::ActionEntry::Item(notein_ui_kit::Action::new(
+                    format!("Acción {i}"),
+                    |()| {},
+                ))
+            })
+            .collect();
+        crate::actions::show(entries, CursorPoint::new(790.0, 560.0));
+    });
+    rect().into_element()
+}
+
+const KEYBOARD: notein_ui_kit::Gutters = notein_ui_kit::Gutters {
+    top: 24.0,
+    right: 0.0,
+    bottom: 380.0,
+    left: 0.0,
+};
+
+#[test]
+fn overlays_stay_in_the_visible_window() {
+    render_covered("sheet-keyboard", (820.0, 1000.0), KEYBOARD, long_sheet);
+    render_covered("sheet-keyboard-phone", (390.0, 844.0), KEYBOARD, long_sheet);
+    render("popover-edge", (820.0, 600.0), edge_popover);
 }

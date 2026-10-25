@@ -18,6 +18,7 @@ pub use components::*;
 pub use modal::{Modal, ModalChrome, ModalController, ModalPlacement, ModalPortal};
 pub use theme::{palette, reduce_motion};
 pub use viewport::{
-    PaneArea, ViewportArea, clamp_popup_left, clamp_popup_top, clamp_popup_top_from_point,
+    Gutters, PaneArea, ViewportArea, clamp_popup_left, clamp_popup_top, clamp_popup_top_from_point,
+    place_popup, safe_frame,
 };
 pub use width::{WidthClass, width_class};

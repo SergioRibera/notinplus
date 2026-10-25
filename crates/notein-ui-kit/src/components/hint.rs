@@ -95,18 +95,19 @@ pub struct Hint {
 impl Component for Hint {
     fn render(&self) -> impl IntoElement {
         let p = palette();
-        let window = *Platform::get().root_size.read();
+        let frame = crate::viewport::safe_frame();
         let area = self.area;
-        // Centred under the control, pushed inwards near the window's
-        // sides and above it near the bottom.
-        let (left, align) = if area.center().x + REACH > window.width {
+        // Centred under the control, pushed inwards near the sides of what
+        // the bars and the keyboard leave visible, and above it near the
+        // bottom.
+        let (left, align) = if area.center().x + REACH > frame.max_x() {
             (2.0f32.mul_add(-REACH, area.width()), Alignment::End)
-        } else if area.center().x - REACH < 0.0 {
+        } else if area.center().x - REACH < frame.min_x() {
             (0.0, Alignment::Start)
         } else {
             (area.width() / 2.0 - REACH, Alignment::Center)
         };
-        let below = area.max_y() + GAP + 32.0 < window.height;
+        let below = area.max_y() + GAP + 32.0 < frame.max_y();
         let position = if below {
             Position::new_absolute().top(self.side + GAP).left(left)
         } else {

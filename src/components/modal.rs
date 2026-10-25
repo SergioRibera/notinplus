@@ -7,6 +7,7 @@
 
 use freya::prelude::*;
 
+use notein_ui_kit::Gutters;
 pub use notein_ui_kit::{Modal, ModalChrome, ModalController, ModalPlacement, ModalPortal};
 
 use crate::hooks::use_safe_area_insets;
@@ -17,7 +18,15 @@ use crate::ui_mask::{UiRegion, publish_mask, set as set_mask};
 /// the app root (e.g. inside the modal portal mount).
 pub fn provide_host_modal_chrome() {
     let insets = use_safe_area_insets();
-    let bottom = use_memo(move || insets.read().bottom);
+    let gutters = use_memo(move || {
+        let edges = *insets.read();
+        Gutters {
+            top: edges.top,
+            right: edges.right,
+            bottom: edges.bottom,
+            left: edges.left,
+        }
+    });
     let on_sized = Callback::<Area, ()>::new(|area: Area| {
         publish_mask(UiRegion::Modal, area);
     });
@@ -25,7 +34,7 @@ pub fn provide_host_modal_chrome() {
         set_mask(UiRegion::Modal, None);
     });
     use_provide_context(move || ModalChrome {
-        bottom_inset: Some(bottom),
+        gutters: Some(gutters),
         on_sized: Some(on_sized),
         on_dismiss: Some(on_dismiss),
     });

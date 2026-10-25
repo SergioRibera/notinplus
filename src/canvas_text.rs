@@ -724,11 +724,12 @@ pub fn text_toolbar(
     let mut theme = crate::editor::theme(&notein_ui_kit::palette());
     theme.fonts.insert(0, FONT_FAMILY.into());
     // Menus must stay above the bar: below it there is only the soft
-    // keyboard, which covers the window instead of shrinking it.
+    // keyboard. Around it, what the system bars leave of the window.
     let bar = *area.read();
+    let frame = notein_ui_kit::safe_frame();
     let popup_area = Area::new(
-        (0., 0.).into(),
-        (Platform::get().root_size.read().width, bar.max_y()).into(),
+        frame.origin,
+        (frame.width(), (bar.max_y() - frame.min_y()).max(0.)).into(),
     );
     let delete_board = Arc::clone(board);
     let done_board = Arc::clone(board);

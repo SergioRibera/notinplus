@@ -23,37 +23,39 @@
 use freya::animation::{AnimNum, Ease, Function, OnCreation, ReadAnimatedValue, use_animation};
 use freya::prelude::*;
 
+use crate::viewport::Gutters;
+
 /// Host-provided chrome hooks.
 ///
-/// Insets for the bottom gutter and a mask sink the modal publishes
+/// The covered edges of the window and a mask sink the modal publishes
 /// its area to. Installed via
 /// `use_provide_context(ModalChrome { … })` at app root; absent context
-/// means default (no insets, no mask) which is the common case for
+/// means default (nothing covered, no mask) which is the common case for
 /// plugin-opened modals that do not need to block any underlying
 /// stroke-canvas input.
 #[derive(Clone, Default)]
 pub struct ModalChrome {
-    /// Live bottom gutter (system bars + keyboard) in layout units.
-    pub bottom_inset: Option<Memo<f32>>,
+    /// Live covered edges (system bars, cutouts, keyboard) in layout
+    /// units.
+    pub gutters: Option<Memo<Gutters>>,
     pub on_sized: Option<Callback<Area, ()>>,
     pub on_dismiss: Option<Callback<(), ()>>,
 }
 
 impl ModalChrome {
-    /// The bottom gutter now; subscribes the caller to its changes.
+    /// The covered edges now; subscribes the caller to their changes.
     #[must_use]
-    pub fn bottom_inset(&self) -> f32 {
-        self.bottom_inset.map_or(0.0, |inset| *inset.read())
+    pub fn gutters(&self) -> Gutters {
+        self.gutters
+            .map(|gutters| *gutters.read())
+            .unwrap_or_default()
     }
 }
 
 impl std::fmt::Debug for ModalChrome {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ModalChrome")
-            .field(
-                "bottom_inset",
-                &self.bottom_inset.map(|inset| *inset.peek()),
-            )
+            .field("gutters", &self.gutters.map(|gutters| *gutters.peek()))
             .finish_non_exhaustive()
     }
 }
@@ -427,7 +429,7 @@ impl Component for ModalOverlay {
         // Absent context means a plugin-mounted modal that does not
         // need safe-area padding or pen-input blocking.
         let chrome = use_try_consume::<ModalChrome>().unwrap_or_default();
-        let bottom_inset = chrome.bottom_inset();
+        let gutters = chrome.gutters();
         let dismiss_sink = chrome.on_dismiss.clone();
         use_drop(move || {
             if let Some(cb) = dismiss_sink {
@@ -460,10 +462,10 @@ impl Component for ModalOverlay {
 
         let width = area.width();
         let height = area.height();
-        // Height the card may actually occupy, after reserving the
-        // bottom gutter (system bars + IME). The backdrop still covers
-        // the full window so taps on the gutter dismiss the modal.
-        let safe_height = (height - bottom_inset).max(0.0);
+        // Where the card may sit: the window without its covered edges
+        // (system bars, cutouts, keyboard). The backdrop still covers the
+        // whole window so taps on those edges dismiss the modal.
+        let frame = gutters.inside(area);
         let placement = model.placement;
         let dismiss = model.dismiss_on_backdrop;
         let dismiss_on_escape = model.dismiss_on_escape && self.is_top;
@@ -472,8 +474,8 @@ impl Component for ModalOverlay {
         let (scrim, blur) = self.veil.paint(model.backdrop_alpha, fade);
         let (scale, rise) = placement.entrance(settle);
         let opened_at = model.opened_at;
-        // A pinned width never runs past the window's side gutters.
-        let body_width = model.width.map(|w| w.min((width - 32.0).max(0.0)));
+        // A pinned width never runs past the side gutters.
+        let body_width = model.width.map(|w| w.min((frame.width() - 32.0).max(0.0)));
         let body = model.body;
 
         // Backdrop and card are rendered as **siblings** under the
@@ -504,7 +506,7 @@ impl Component for ModalOverlay {
         let card_layer = match placement {
             ModalPlacement::Manual => body_node.into_element(),
             ModalPlacement::Center | ModalPlacement::BottomSheet => {
-                card_container(placement, width, safe_height, bottom_inset)
+                card_container(placement, frame, gutters)
                     .layer(Layer::OverlayLevel(level + 1))
                     .child(body_node)
                     .into_element()
@@ -556,23 +558,31 @@ impl Component for ModalOverlay {
 
 /// Placement-aware wrapper that positions the card without covering
 /// the full backdrop area — the wrapper hugs the card so empty-space
-/// clicks pass through to the backdrop sibling underneath. `height` is
-/// the IME-aware safe area height; `bottom_offset` pushes bottom-anchored
-/// placements above the keyboard gutter so inputs stay visible while
-/// typing.
-fn card_container(placement: ModalPlacement, width: f32, height: f32, bottom_offset: f32) -> Rect {
+/// clicks pass through to the backdrop sibling underneath. `frame` is
+/// the window without its covered edges (`gutters`): centred cards sit in
+/// its middle and sheets rest on its bottom, above the keyboard, so inputs
+/// stay visible while typing.
+fn card_container(placement: ModalPlacement, frame: Area, gutters: Gutters) -> Rect {
     match placement {
         ModalPlacement::Center => rect()
-            .position(Position::new_absolute().top(0.0).left(0.0))
-            .width(Size::px(width))
-            .height(Size::px(height))
+            .position(
+                Position::new_absolute()
+                    .top(frame.min_y())
+                    .left(frame.min_x()),
+            )
+            .width(Size::px(frame.width()))
+            .height(Size::px(frame.height()))
             .center(),
         // Bottom sheet spans the full width by convention — a click on
         // the sheet area is a click "on the card". Above the sheet is
         // still empty backdrop and dismisses when configured.
         ModalPlacement::BottomSheet => rect()
-            .position(Position::new_absolute().bottom(bottom_offset).left(0.0))
-            .width(Size::px(width))
+            .position(
+                Position::new_absolute()
+                    .bottom(gutters.bottom)
+                    .left(frame.min_x()),
+            )
+            .width(Size::px(frame.width()))
             .cross_align(Alignment::Center),
         // Manual: body owns positioning, wrapper unused (handled by
         // caller emitting `body_node` directly as backdrop sibling).

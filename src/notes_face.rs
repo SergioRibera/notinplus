@@ -139,16 +139,7 @@ impl Component for NotesFace {
             .content(Content::flex())
             .maybe_child(locked_now.then(|| banner("Solo lectura: podés mirar, no editar.")))
             .maybe_child(typing_banner(&typing.read()))
-            .maybe_child((!read_only).then(|| {
-                rect()
-                    .width(Size::fill())
-                    .padding((0., 16., 8., 16.))
-                    .child(
-                        MarkdownToolbar::new(controller)
-                            .theme(crate::editor::theme(&notein_ui_kit::palette()))
-                            .mode_toggle(false),
-                    )
-            }))
+            .maybe_child((!read_only).then(|| toolbar(controller)))
             .child(
                 ScrollView::new_controlled(scroll)
                     .width(Size::fill())
@@ -469,4 +460,18 @@ fn jump(controller: EditorController, mut scroll: ScrollController, anchor: &[u8
         }
         log::info!("notes: heading {slug} not found");
     });
+}
+
+/// The formatting bar over the note, its menus kept inside what the
+/// system bars and the keyboard leave visible.
+fn toolbar(controller: EditorController) -> Rect {
+    rect()
+        .width(Size::fill())
+        .padding((0., 16., 8., 16.))
+        .child(
+            MarkdownToolbar::new(controller)
+                .theme(crate::editor::theme(&notein_ui_kit::palette()))
+                .mode_toggle(false)
+                .popup_area(notein_ui_kit::safe_frame()),
+        )
 }

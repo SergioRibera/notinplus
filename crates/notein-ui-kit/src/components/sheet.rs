@@ -13,10 +13,10 @@ use super::icon::Icon;
 use super::icon_button::IconButton;
 use super::kind_badge::KindBadge;
 use super::list_row::strut;
-use crate::modal::{Modal, ModalChrome, ModalController};
+use crate::modal::{Modal, ModalController};
 use crate::theme::palette;
 use crate::tokens::{radius, size, text};
-use crate::viewport::{ViewportArea, clamp_popup_left};
+use crate::viewport::{place_popup, safe_frame};
 use crate::width::{WidthClass, width_class};
 
 /// A dialog body: header, scrollable content and a footer that stays
@@ -159,16 +159,66 @@ struct SheetCard {
     compact: bool,
 }
 
+impl SheetCard {
+    /// Back, kind, title and close, when the sheet has any of them.
+    fn header(&self, p: &crate::theme::Palette) -> Option<Rect> {
+        let sheet = &self.sheet;
+        let on_back = sheet.on_back.clone();
+        let has_header = sheet.title.is_some() || sheet.closable || on_back.is_some();
+        has_header.then(|| {
+            rect()
+                .width(Size::fill())
+                .height(Size::px(32.0))
+                .horizontal()
+                .cross_align(Alignment::Center)
+                .content(Content::Flex)
+                .spacing(8.0)
+                .maybe_child(on_back.clone().map(|handler| {
+                    IconButton::new(freya::icons::lucide::chevron_left(), "Atrás")
+                        .size(32.0)
+                        .on_press(move |_| handler.call(()))
+                }))
+                .maybe_child(
+                    sheet
+                        .kind
+                        .clone()
+                        .map(|(icon, color)| KindBadge::new(icon, color).size(32.0)),
+                )
+                .child(
+                    label()
+                        .text(sheet.title.clone().unwrap_or_default())
+                        .font_size(text::TITLE)
+                        .font_weight(FontWeight::BOLD)
+                        .color(p.t1)
+                        .width(Size::flex(1.0))
+                        .max_lines(1)
+                        .text_overflow(TextOverflow::Ellipsis),
+                )
+                .maybe_child(sheet.closable.then(|| {
+                    IconButton::new(freya::icons::lucide::x(), "Cerrar")
+                        .size(32.0)
+                        .on_press(|_| ModalController::get().close())
+                }))
+        })
+    }
+}
+
 impl Component for SheetCard {
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let sheet = &self.sheet;
-        let viewport = use_try_consume::<ViewportArea>().map(ViewportArea::get);
-        let max_body = viewport.map_or(560.0, |area| (area.height() - 220.0).max(160.0));
+        let mut card_height = use_state(|| 0.0_f32);
+        let mut body_height = use_state(|| 0.0_f32);
+        // The whole card fits in the visible window: a sheet leaves a strip
+        // of backdrop above it, a dialog a margin all round. Only the body
+        // scrolls, so it gets what the header, subtitle and footer leave.
+        let room = safe_frame().height() - if self.compact { 24.0 } else { 32.0 };
+        let around = match (*card_height.read(), *body_height.read()) {
+            (card, body) if card > 0.0 => card - body,
+            _ => 220.0,
+        };
+        let max_body = (room - around).max(120.0);
         let pad = if self.compact { 20.0 } else { 24.0 };
-        let on_back = sheet.on_back.clone();
-        let has_header = sheet.title.is_some() || sheet.closable || on_back.is_some();
-
         rect()
             .width(Size::fill())
             .background(p.s2)
@@ -187,6 +237,7 @@ impl Component for SheetCard {
             .padding((if self.compact { 8.0 } else { pad }, pad, pad, pad))
             .spacing(16.0)
             .a11y_role(AccessibilityRole::Dialog)
+            .on_sized(move |e: Event<SizedEventData>| card_height.set_if_modified(e.area.height()))
             .maybe_child(self.compact.then(|| {
                 rect()
                     .width(Size::fill())
@@ -200,41 +251,7 @@ impl Component for SheetCard {
                             .background(p.line_strong),
                     )
             }))
-            .maybe_child(has_header.then(|| {
-                rect()
-                    .width(Size::fill())
-                    .height(Size::px(32.0))
-                    .horizontal()
-                    .cross_align(Alignment::Center)
-                    .content(Content::Flex)
-                    .spacing(8.0)
-                    .maybe_child(on_back.clone().map(|handler| {
-                        IconButton::new(freya::icons::lucide::chevron_left(), "Atrás")
-                            .size(32.0)
-                            .on_press(move |_| handler.call(()))
-                    }))
-                    .maybe_child(
-                        sheet
-                            .kind
-                            .clone()
-                            .map(|(icon, color)| KindBadge::new(icon, color).size(32.0)),
-                    )
-                    .child(
-                        label()
-                            .text(sheet.title.clone().unwrap_or_default())
-                            .font_size(text::TITLE)
-                            .font_weight(FontWeight::BOLD)
-                            .color(p.t1)
-                            .width(Size::flex(1.0))
-                            .max_lines(1)
-                            .text_overflow(TextOverflow::Ellipsis),
-                    )
-                    .maybe_child(sheet.closable.then(|| {
-                        IconButton::new(freya::icons::lucide::x(), "Cerrar")
-                            .size(32.0)
-                            .on_press(|_| ModalController::get().close())
-                    }))
-            }))
+            .maybe_child(self.header(&p))
             .maybe_child(sheet.subtitle.clone().map(|sub| {
                 label()
                     .text(sub)
@@ -243,12 +260,19 @@ impl Component for SheetCard {
                     .line_height(text::LINE_BODY)
             }))
             .child(
-                ScrollView::new()
+                rect()
                     .width(Size::fill())
-                    .max_height(Size::px(max_body))
-                    .height(Size::auto())
-                    .spacing(14.0)
-                    .children(sheet.children.clone()),
+                    .on_sized(move |e: Event<SizedEventData>| {
+                        body_height.set_if_modified(e.area.height());
+                    })
+                    .child(
+                        ScrollView::new()
+                            .width(Size::fill())
+                            .max_height(Size::px(max_body))
+                            .height(Size::auto())
+                            .spacing(14.0)
+                            .children(sheet.children.clone()),
+                    ),
             )
             .maybe_child(sheet.footer.clone().map(|footer| {
                 rect()
@@ -436,47 +460,39 @@ struct PopoverCard {
 
 impl Component for PopoverCard {
     fn render(&self) -> impl IntoElement {
+        /// Space kept between the card and the edges it may not cross.
+        const MARGIN: f32 = 12.0;
         let p = palette();
         let pop = &self.popover;
-        let window = use_try_consume::<ViewportArea>()
-            .map(ViewportArea::get)
-            .unwrap_or_default();
-        // The keyboard and the system bars cover the bottom of the window:
-        // a popover only fits where they are not.
-        let bottom_inset = use_try_consume::<ModalChrome>()
-            .unwrap_or_default()
-            .bottom_inset();
-        let viewport = Area::new(
-            window.origin,
-            (window.width(), (window.height() - bottom_inset).max(0.0)).into(),
-        );
+        let mut measured = use_state(|| 0.0_f32);
+        // The card stays where it can be seen: off the system bars and
+        // the keyboard, inside the window.
+        let frame = safe_frame();
+        let width = pop
+            .width
+            .min(2.0f32.mul_add(-MARGIN, frame.width()).max(0.0));
+        let max_height = 2.0f32.mul_add(-MARGIN, frame.height()).max(120.0);
+        let height = match *measured.read() {
+            measured if measured > 0.0 => measured,
+            _ => pop.estimated_height,
+        }
+        .min(max_height);
         let anchor = pop.anchor;
-        let gap = 8.0;
-        let left = match pop.align {
+        let lined_up = match pop.align {
             PopoverAlign::Start => anchor.min_x(),
-            PopoverAlign::Center => anchor.center().x - pop.width / 2.0,
-            PopoverAlign::End => anchor.max_x() - pop.width,
+            PopoverAlign::Center => anchor.center().x - width / 2.0,
+            PopoverAlign::End => anchor.max_x() - width,
         };
-        let left = clamp_popup_left(viewport, left, pop.width, 12.0);
-        let below = anchor.max_y() + gap;
-        let above = anchor.min_y() - gap - pop.estimated_height;
-        let fits_below = below + pop.estimated_height <= viewport.max_y() - 12.0;
-        let fits_above = above >= viewport.min_y() + 12.0;
-        let place_below = match pop.side {
-            PopoverSide::Below => fits_below || !fits_above,
-            PopoverSide::Above => !fits_above && fits_below,
-        };
-        let position = if place_below {
-            Position::new_absolute().top(below).left(left)
-        } else {
-            Position::new_absolute()
-                .bottom((window.max_y() - anchor.min_y() + gap).max(12.0))
-                .left(left)
-        };
+        let (left, top) = place_popup(
+            Area::new((lined_up, anchor.min_y()).into(), anchor.size),
+            (width, height),
+            pop.side == PopoverSide::Above,
+            frame,
+            MARGIN,
+        );
         rect()
-            .position(position)
-            .width(Size::px(pop.width))
-            .max_height(Size::px((viewport.height() - 24.0).max(120.0)))
+            .position(Position::new_absolute().top(top).left(left))
+            .width(Size::px(width))
             .background(p.s2)
             .border(
                 Border::new()
@@ -488,7 +504,14 @@ impl Component for PopoverCard {
             .shadow(Shadow::new().y(8.0).blur(24.0).color(p.shadow))
             .overflow(Overflow::Clip)
             .a11y_role(AccessibilityRole::Dialog)
-            .child(pop.body.clone())
+            .on_sized(move |e: Event<SizedEventData>| measured.set_if_modified(e.area.height()))
+            .child(
+                ScrollView::new()
+                    .width(Size::fill())
+                    .height(Size::auto())
+                    .max_height(Size::px(max_height))
+                    .child(pop.body.clone()),
+            )
     }
 }
 
