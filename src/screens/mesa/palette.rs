@@ -255,6 +255,7 @@ pub(super) fn open(data: Arc<LibraryData>, ops: Ops, ui: MesaUi, focus: Option<&
     ModalController::get().open(
         Modal::new(Palette { data, commands })
             .manual()
+            .instant()
             .dismiss_on_backdrop(true)
             .backdrop_alpha(100),
     );

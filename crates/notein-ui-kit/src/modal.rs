@@ -20,7 +20,10 @@
 //! to `Modal::new(body)`. Higher-level wrappers (Dialog, Sheet, …)
 //! live in sibling modules and delegate here.
 
-use freya::animation::{AnimNum, Ease, Function, OnCreation, ReadAnimatedValue, use_animation};
+use freya::animation::{
+    AnimNum, Ease, Function, OnChange, OnCreation, ReadAnimatedValue, use_animation,
+    use_animation_with_dependencies,
+};
 use freya::prelude::*;
 
 use crate::viewport::Gutters;
@@ -85,8 +88,31 @@ impl ModalPlacement {
         match self {
             Self::Center => (0.04f32.mul_add(-rest, 1.0), 0.0),
             Self::BottomSheet => (1.0, 48.0 * rest),
-            Self::Manual => (0.02f32.mul_add(-rest, 1.0), -6.0 * rest),
+            Self::Manual => (0.05f32.mul_add(-rest, 1.0), 0.0),
         }
+    }
+}
+
+/// How long a closing modal takes to leave.
+const EXIT_MS: u64 = 170;
+
+/// How far the card of the modal around it has come in, 0 to 1 (and back
+/// to 0 while it leaves). Bodies of [`ModalPlacement::Manual`] modals move
+/// themselves with it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct ModalMotion(pub State<f32>);
+
+impl std::fmt::Debug for ModalMotion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("ModalMotion").field(&*self.0.peek()).finish()
+    }
+}
+
+impl ModalMotion {
+    /// The progress now, 1 outside any modal.
+    #[must_use]
+    pub fn settle() -> f32 {
+        try_consume_context::<Self>().map_or(1.0, |motion| *motion.0.read())
     }
 }
 
@@ -95,8 +121,12 @@ impl ModalPlacement {
 /// controller to read/write.
 #[derive(Clone)]
 pub struct Modal {
+    /// Tells this modal's overlay apart from the others while it leaves.
+    id: u64,
     body: Element,
     placement: ModalPlacement,
+    /// Shown and gone at once, with no entrance or exit.
+    instant: bool,
     width: Option<f32>,
     dismiss_on_backdrop: bool,
     dismiss_on_escape: bool,
@@ -131,9 +161,12 @@ impl Modal {
     /// its own layout inside the placement-provided container.
     #[must_use]
     pub fn new(body: impl IntoElement + 'static) -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         Self {
+            id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             body: body.into_element(),
             placement: ModalPlacement::default(),
+            instant: false,
             width: None,
             dismiss_on_backdrop: true,
             dismiss_on_escape: true,
@@ -146,6 +179,14 @@ impl Modal {
     #[must_use]
     pub const fn placement(mut self, placement: ModalPlacement) -> Self {
         self.placement = placement;
+        self
+    }
+
+    /// Appear and go at once. For surfaces opened from the keyboard many
+    /// times a day (search, the command palette), where motion only slows.
+    #[must_use]
+    pub const fn instant(mut self) -> Self {
+        self.instant = true;
         self
     }
 
@@ -212,6 +253,9 @@ struct ModalState {
     /// Open modals, bottom first. The last one is on top and receives
     /// Escape / back.
     stack: Vec<Modal>,
+    /// Closed modals still playing their exit, with the depth they had.
+    /// They take no input.
+    leaving: Vec<(usize, Modal)>,
 }
 
 /// A backdrop tap this soon after opening belongs to the gesture that
@@ -275,7 +319,25 @@ impl ModalController {
             return;
         }
         let closed = self.state.write().stack.pop();
+        if let Some(modal) = &closed
+            && !modal.instant
+            && !crate::theme::reduce_motion()
+        {
+            self.leave(modal.clone());
+        }
         Self::fire_on_close(closed);
+    }
+
+    /// Keep `modal` on screen while its exit plays, then drop it.
+    fn leave(&mut self, modal: Modal) {
+        let id = modal.id;
+        let depth = self.state.peek().stack.len();
+        self.state.write().leaving.push((depth, modal));
+        let mut state = self.state;
+        spawn_in_window(async move {
+            async_io::Timer::after(std::time::Duration::from_millis(EXIT_MS + 30)).await;
+            state.write().leaving.retain(|(_, m)| m.id != id);
+        });
     }
 
     /// Run `f` when the top modal closes for any reason (backdrop,
@@ -345,23 +407,41 @@ impl ModalPortal {
 impl Component for ModalPortal {
     fn render(&self) -> impl IntoElement {
         let controller = ModalController::get();
-        let stack = controller.state.read().stack.clone();
+        let ModalState { stack, leaving } = controller.state.read().clone();
         let top = stack.len().saturating_sub(1);
-        let mut veiled = false;
+        // Whether a modal under `depth` already blurs what is beneath.
+        let veiled_below = |depth: usize| {
+            stack
+                .iter()
+                .take(depth)
+                .any(|m| Veil::for_layer(m.backdrop_alpha, false) == Veil::Blur)
+        };
+        let open = stack
+            .iter()
+            .enumerate()
+            .map(|(depth, model)| (depth, model, false));
+        let closing = leaving.iter().map(|(depth, model)| (*depth, model, true));
+        let overlays: Vec<Element> = open
+            .chain(closing)
+            .map(|(depth, model, leaving)| {
+                // Keyed by modal, so a closing one keeps its overlay and
+                // plays the exit instead of being built again.
+                rect()
+                    .key(model.id)
+                    .child(ModalOverlay {
+                        model: model.clone(),
+                        area: self.area,
+                        depth,
+                        is_top: !leaving && depth == top,
+                        leaving,
+                        veil: Veil::for_layer(model.backdrop_alpha, veiled_below(depth)),
+                    })
+                    .into_element()
+            })
+            .collect();
         rect()
             .position(Position::new_absolute().top(0.0).left(0.0))
-            .children(stack.into_iter().enumerate().map(|(depth, model)| {
-                let veil = Veil::for_layer(model.backdrop_alpha, veiled);
-                veiled |= veil == Veil::Blur;
-                ModalOverlay {
-                    model,
-                    area: self.area,
-                    depth,
-                    is_top: depth == top,
-                    veil,
-                }
-                .into_element()
-            }))
+            .children(overlays)
     }
 }
 
@@ -410,6 +490,8 @@ struct ModalOverlay {
     area: State<Area>,
     depth: usize,
     is_top: bool,
+    /// Closed: playing its exit, taking no input.
+    leaving: bool,
     veil: Veil,
 }
 
@@ -418,6 +500,45 @@ impl std::fmt::Debug for ModalOverlay {
         f.debug_struct("ModalOverlay")
             .field("model", &self.model)
             .finish_non_exhaustive()
+    }
+}
+
+/// How far the veil and the card of a modal have come in, 0 to 1 each.
+///
+/// The card is never faded: freya applies opacity to every node on its
+/// own, so a half-transparent card shows its own panels and the veil
+/// through each other. It grows (centred), rises (sheets) or drops in
+/// (popovers) while the veil fades in behind it, and walks the same path
+/// back, a little faster, when `leaving`. `instant` modals skip both.
+fn use_progress(instant: bool, leaving: bool) -> (f32, f32) {
+    let entrance = use_animation(|conf| {
+        conf.on_creation(OnCreation::Run);
+        (
+            AnimNum::new(0., 1.)
+                .time(180)
+                .ease(Ease::Out)
+                .function(Function::Cubic),
+            AnimNum::new(0., 1.)
+                .time(240)
+                .ease(Ease::Out)
+                .function(Function::Expo),
+        )
+    });
+    let exit = use_animation_with_dependencies(&leaving, |conf, leaving| {
+        conf.on_creation(OnCreation::Finish);
+        conf.on_change(OnChange::Rerun);
+        AnimNum::new(1.0, if *leaving { 0.0 } else { 1.0 })
+            .time(EXIT_MS)
+            .ease(Ease::In)
+            .function(Function::Cubic)
+    });
+    if instant || crate::theme::reduce_motion() {
+        (1.0, 1.0)
+    } else if leaving {
+        let left = exit.get().value();
+        (left, left)
+    } else {
+        entrance.get().value()
     }
 }
 
@@ -437,28 +558,7 @@ impl Component for ModalOverlay {
             }
         });
 
-        // The card is never faded: freya applies opacity to every node on
-        // its own, so a half-transparent card shows its own panels and the
-        // veil through each other. It grows (centred), rises (sheets) or
-        // drops in (popovers) while the veil fades in behind it.
-        let animations = use_animation(|conf| {
-            conf.on_creation(OnCreation::Run);
-            (
-                AnimNum::new(0., 1.)
-                    .time(180)
-                    .ease(Ease::Out)
-                    .function(Function::Cubic),
-                AnimNum::new(0., 1.)
-                    .time(240)
-                    .ease(Ease::Out)
-                    .function(Function::Expo),
-            )
-        });
-        let (fade, settle) = if crate::theme::reduce_motion() {
-            (1.0, 1.0)
-        } else {
-            animations.get().value()
-        };
+        let (fade, settle) = use_progress(model.instant, self.leaving);
 
         let width = area.width();
         let height = area.height();
@@ -475,6 +575,10 @@ impl Component for ModalOverlay {
         .min(crate::tokens::layer::MODAL_MAX - 1);
         let (scrim, blur) = self.veil.paint(model.backdrop_alpha, fade);
         let (scale, rise) = placement.entrance(settle);
+        // A manual body moves itself (a popover knows which side of its
+        // trigger it took); it reads how far the card has settled.
+        let ModalMotion(mut motion) = use_provide_context(|| ModalMotion(State::create(1.0)));
+        motion.set_if_modified(settle);
         let opened_at = model.opened_at;
         // A pinned width never runs past the side gutters.
         let body_width = model.width.map(|w| w.min((frame.width() - 32.0).max(0.0)));
@@ -520,6 +624,7 @@ impl Component for ModalOverlay {
             .position(Position::new_absolute().top(0.0).left(0.0))
             .width(Size::px(width))
             .height(Size::px(height))
+            .interactive(!self.leaving)
             .on_sized({
                 let sink = chrome.on_sized;
                 move |e: Event<SizedEventData>| {

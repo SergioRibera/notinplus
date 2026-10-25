@@ -490,9 +490,14 @@ impl Component for PopoverCard {
             frame,
             MARGIN,
         );
+        // It comes out of its trigger: down when it hangs under it, up when
+        // it sits over it.
+        let toward = if top < anchor.min_y() { 6.0 } else { -6.0 };
+        let rest = 1.0 - crate::modal::ModalMotion::settle();
         rect()
             .position(Position::new_absolute().top(top).left(left))
             .width(Size::px(width))
+            .offset_y(toward * rest)
             .background(p.s2)
             .border(
                 Border::new()

@@ -15,7 +15,7 @@ pub mod width;
 
 pub use color_wheel::{ColorWheel, DEFAULT_SWATCHES, auto_color, color_swatch_strip};
 pub use components::*;
-pub use modal::{Modal, ModalChrome, ModalController, ModalPlacement, ModalPortal};
+pub use modal::{Modal, ModalChrome, ModalController, ModalMotion, ModalPlacement, ModalPortal};
 pub use theme::{palette, reduce_motion};
 pub use viewport::{
     Gutters, PaneArea, ViewportArea, clamp_popup_left, clamp_popup_top, clamp_popup_top_from_point,

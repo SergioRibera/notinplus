@@ -30,6 +30,7 @@ pub fn open(query: String) {
     ModalController::get().open(
         Modal::new(SearchPanel { query })
             .manual()
+            .instant()
             .dismiss_on_backdrop(true)
             .backdrop_alpha(110),
     );
