@@ -1490,30 +1490,43 @@ impl Board {
     /// is known (post first-frame); otherwise the viewport is left
     /// alone and the caller can retry on the next paint.
     pub fn center_on_bookmark(&mut self, id: BookmarkId) -> bool {
-        let Some(bm) = self.doc.bookmark(id).cloned() else {
-            return false;
-        };
-        let world = self.bookmark_world_position(&bm);
-        self.center_on_world(world.x, world.y)
+        self.view_on_bookmark(id).is_some_and(|view| {
+            self.set_viewport(view);
+            true
+        })
+    }
+
+    /// The view [`Self::center_on_bookmark`] moves to, without moving.
+    #[must_use]
+    pub fn view_on_bookmark(&self, id: BookmarkId) -> Option<Viewport> {
+        let bm = self.doc.bookmark(id)?;
+        let world = self.bookmark_world_position(bm);
+        self.view_centered_on(world.x, world.y)
     }
 
     /// Center the viewport on world-space point `(wx, wy)`. Returns
     /// `false` when the surface size is still unknown (pre first-frame).
     pub fn center_on_world(&mut self, wx: f32, wy: f32) -> bool {
-        if !wx.is_finite() || !wy.is_finite() {
-            return false;
-        }
+        self.view_centered_on(wx, wy).is_some_and(|view| {
+            self.set_viewport(view);
+            true
+        })
+    }
+
+    /// The view with world point `(wx, wy)` in the middle at the current
+    /// zoom; `None` while the surface size is unknown.
+    #[must_use]
+    pub fn view_centered_on(&self, wx: f32, wy: f32) -> Option<Viewport> {
         let (sw, sh) = self.last_surface_size;
-        if sw <= 0.0 || sh <= 0.0 {
-            return false;
+        if !wx.is_finite() || !wy.is_finite() || sw <= 0.0 || sh <= 0.0 {
+            return None;
         }
         let scale = self.viewport.scale;
-        self.viewport.tx = sw.mul_add(0.5, -(wx * scale));
-        self.viewport.ty = sh.mul_add(0.5, -(wy * scale));
-        self.clamp_viewport_to_background();
-        self.notify();
-        self.ping_view();
-        true
+        Some(Viewport {
+            tx: sw.mul_add(0.5, -(wx * scale)),
+            ty: sh.mul_add(0.5, -(wy * scale)),
+            scale,
+        })
     }
 
     /// Nearest stroke within `radius` of `world`, expressed as a
@@ -2957,6 +2970,46 @@ pub fn lock(board: &Arc<Mutex<Board>>) -> std::sync::MutexGuard<'_, Board> {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),
     }
+}
+
+/// How long a jump of the view takes.
+const GLIDE: Duration = Duration::from_millis(250);
+/// Steps of a jump, about one per frame.
+const GLIDE_STEPS: u16 = 15;
+
+/// Move `board`'s view to `target` over a quarter second, easing out.
+///
+/// A jump (a page, a bookmark, back to 100 %) keeps the reader oriented. A
+/// jump farther than two screens, or with reduced motion, cuts straight
+/// there; touching the canvas mid-way stops the glide where it is.
+pub fn glide(board: &Arc<Mutex<Board>>, target: Viewport) {
+    let (from, (sw, sh)) = {
+        let guard = lock(board);
+        (guard.viewport(), guard.last_surface_size)
+    };
+    let far = (target.tx - from.tx).hypot(target.ty - from.ty) > 2.0 * sw.max(sh);
+    if far || notein_ui_kit::reduce_motion() {
+        lock(board).set_viewport(target);
+        return;
+    }
+    let board = Arc::clone(board);
+    spawn(async move {
+        let mut last = from;
+        for step in 1..=GLIDE_STEPS {
+            timer(GLIDE / u32::from(GLIDE_STEPS)).await;
+            let mut guard = lock(&board);
+            if guard.viewport() != last {
+                return;
+            }
+            let t = 1.0 - (1.0 - f32::from(step) / f32::from(GLIDE_STEPS)).powi(3);
+            guard.set_viewport(Viewport {
+                tx: (target.tx - from.tx).mul_add(t, from.tx),
+                ty: (target.ty - from.ty).mul_add(t, from.ty),
+                scale: (target.scale - from.scale).mul_add(t, from.scale),
+            });
+            last = guard.viewport();
+        }
+    });
 }
 
 #[derive(Debug)]

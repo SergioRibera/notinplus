@@ -238,8 +238,12 @@ impl Apply for CanvasTarget {
         if let Some(layer) = anchor.layer {
             guard.set_active_layer(layer);
         }
-        if let Some(bookmark) = anchor.bookmark {
-            guard.center_on_bookmark(crate::ids::BookmarkId(bookmark));
+        let view = anchor
+            .bookmark
+            .and_then(|bookmark| guard.view_on_bookmark(crate::ids::BookmarkId(bookmark)));
+        drop(guard);
+        if let Some(view) = view {
+            crate::canvas::glide(&board, view);
         }
         true
     }

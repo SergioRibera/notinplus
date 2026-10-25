@@ -227,7 +227,10 @@ impl crate::plugins::faces::Apply for PageTarget {
             return false;
         };
         if let Some((x, y, w, h)) = rect {
-            lock(&board).center_on_world(x + w / 2.0, y + h / 2.0);
+            let view = lock(&board).view_centered_on(x + w / 2.0, y + h / 2.0);
+            if let Some(view) = view {
+                crate::canvas::glide(&board, view);
+            }
         }
         true
     }

@@ -954,7 +954,7 @@ impl Component for Zoom {
             .a11y_role(AccessibilityRole::Button)
             .a11y_alt("Volver al 100 %")
             .on_sized(move |e: Event<SizedEventData>| mask.publish(e.area))
-            .on_press(move |_| lock(&board).reset_viewport())
+            .on_press(move |_| crate::canvas::glide(&board, crate::canvas::Viewport::default()))
             .child(Text::new(format!("{pct} %")).role(TextRole::Meta))
     }
 }
