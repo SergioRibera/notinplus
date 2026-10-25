@@ -414,6 +414,15 @@ pub struct MesaStrip {
     pub expanded: State<bool>,
 }
 
+impl std::fmt::Debug for MesaStrip {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MesaStrip")
+            .field("width", &self.width)
+            .field("compact", &self.compact)
+            .finish_non_exhaustive()
+    }
+}
+
 impl MesaStrip {
     /// Rows listed while folded.
     const SHOWN: usize = 3;
