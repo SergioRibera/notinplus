@@ -240,6 +240,9 @@ impl Component for Mesa {
         let p = theme();
         let view = LibraryView::get();
         let insets = *crate::hooks::use_safe_area_insets().read();
+        // The mesa pads itself by the insets: the panes, their faces and
+        // the canvas chrome inside must not pad again.
+        crate::hooks::provide_safe_area_override(istmo::plugins::EdgeInsets::default());
         let body = match view.state() {
             LibraryState::Loading => rect().expanded().into_element(),
             LibraryState::Failed(why) => EmptyState::new(
