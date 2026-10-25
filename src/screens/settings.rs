@@ -193,7 +193,7 @@ fn section_list(mut open: State<Option<Section>>, query: State<String>, compact:
 /// Phones: the list, or one section with back; the whole screen.
 fn phone_layout(mut open: State<Option<Section>>, list: Rect) -> Element {
     use freya::icons::lucide;
-    let size = *Platform::get().root_size.read();
+    let size = *Platform::get().current_window().root_size.read();
     let insets = *crate::hooks::use_safe_area_insets().read();
     let header = |title: &'static str, back: bool| {
         rect()

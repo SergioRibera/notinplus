@@ -69,26 +69,30 @@ impl Component for FontSample {
             font,
             color: [r, g, b],
         } = *self;
-        canvas(RenderCallback::new(move |ctx| {
-            // Already clipped to the element and with its origin at 0, 0.
-            let fit = |height| font.sample("Hola Romanos", (0.0, 0.0), height);
-            let Some((mut path, width)) = fit(ctx.size.height) else {
-                return;
-            };
-            if width > ctx.size.width {
-                // Narrow cards: smaller, never cut.
-                if let Some((smaller, _)) = fit(ctx.size.height * ctx.size.width / width) {
-                    path = smaller;
+        rect()
+            .background(RenderCallback::new(move |ctx| {
+                let RenderTarget::Background { canvas, .. } = &ctx.target else {
+                    return;
+                };
+                // Already clipped to the element and with its origin at 0, 0.
+                let fit = |height| font.sample("Hola Romanos", (0.0, 0.0), height);
+                let Some((mut path, width)) = fit(ctx.size.height) else {
+                    return;
+                };
+                if width > ctx.size.width {
+                    // Narrow cards: smaller, never cut.
+                    if let Some((smaller, _)) = fit(ctx.size.height * ctx.size.width / width) {
+                        path = smaller;
+                    }
                 }
-            }
-            let mut paint = Paint::default();
-            paint.set_color(SkColor::from_rgb(r, g, b));
-            paint.set_style(PaintStyle::Fill);
-            paint.set_anti_alias(true);
-            ctx.canvas.draw_path(&path, &paint);
-        }))
-        .width(Size::fill())
-        .height(Size::px(26.0))
+                let mut paint = Paint::default();
+                paint.set_color(SkColor::from_rgb(r, g, b));
+                paint.set_style(PaintStyle::Fill);
+                paint.set_anti_alias(true);
+                canvas.draw_path(&path, &paint);
+            }))
+            .width(Size::fill())
+            .height(Size::px(26.0))
     }
 }
 

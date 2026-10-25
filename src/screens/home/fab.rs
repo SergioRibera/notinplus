@@ -78,7 +78,7 @@ impl Component for Fab {
                     "Crear".to_owned(),
                 )
                 .on_press(move |_| {
-                    let size = *Platform::get().root_size.read();
+                    let size = *Platform::get().current_window().root_size.read();
                     let anchor = Area::new(
                         (size.width - MARGIN - FAB, size.height - bottom - FAB).into(),
                         (FAB, FAB).into(),

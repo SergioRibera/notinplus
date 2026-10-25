@@ -275,8 +275,8 @@ pub fn follow_presence() {
     if !cfg!(any(target_os = "android", target_os = "ios")) {
         return;
     }
-    freya::prelude::spawn_forever(async {
-        let focused = freya::prelude::Platform::get().is_app_focused;
+    freya::prelude::spawn_in_window(async {
+        let focused = freya::prelude::Platform::get().current_window().is_app_focused;
         let mut present = true;
         loop {
             let away = !*focused.peek();

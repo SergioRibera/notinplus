@@ -367,7 +367,7 @@ impl Component for Map {
         let mut selected = use_state(|| None::<usize>);
         let mut stage = use_state(Area::default);
         let segments = use_hook(|| Rc::new(RefCell::new(Vec::<Segment>::new())));
-        let size = *Platform::get().root_size.read();
+        let size = *Platform::get().current_window().root_size.read();
         let insets = *crate::hooks::use_safe_area_insets().read();
 
         let layout = Layout::new(
@@ -382,16 +382,19 @@ impl Component for Map {
         // Paint runs outside the component, where `palette()` is not
         // available.
         let edge_palette = p;
-        let edges_layer = canvas(RenderCallback::new(move |ctx| {
-            let p = edge_palette;
-            for &(a, b, kind) in paint_segments.borrow().iter() {
-                ctx.canvas
-                    .draw_line((a.0, a.1), (b.0, b.1), &stroke(kind, &p));
-            }
-        }))
-        .position(Position::new_absolute().top(0.0).left(0.0))
-        .width(Size::fill())
-        .height(Size::fill());
+        let edges_layer = rect()
+            .background(RenderCallback::new(move |ctx| {
+                let RenderTarget::Background { canvas, .. } = &ctx.target else {
+                    return;
+                };
+                let p = edge_palette;
+                for &(a, b, kind) in paint_segments.borrow().iter() {
+                    canvas.draw_line((a.0, a.1), (b.0, b.1), &stroke(kind, &p));
+                }
+            }))
+            .position(Position::new_absolute().top(0.0).left(0.0))
+            .width(Size::fill())
+            .height(Size::fill());
 
         let body = if layout.graph.nodes.is_empty() {
             EmptyState::new(

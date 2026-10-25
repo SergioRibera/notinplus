@@ -1,7 +1,7 @@
 //! Notebooks: a canvas attached to a document through a
 //! [`LinkKind::Companion`] link, opened beside it.
 
-use freya::prelude::spawn_forever;
+use freya::prelude::spawn_in_window;
 
 use crate::library::{
     BackgroundStyle, DocKind, ItemId, Library, LibraryError, LinkKind, NotFoundKind, Result,
@@ -11,7 +11,7 @@ use crate::space::{self, OpenHint};
 
 /// Create a notebook for `item` and open it beside it.
 pub fn new_notebook(item: ItemId) {
-    spawn_forever(async move {
+    spawn_in_window(async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };

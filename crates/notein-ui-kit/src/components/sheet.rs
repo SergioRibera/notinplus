@@ -43,7 +43,7 @@ impl std::fmt::Debug for Sheet {
 }
 
 impl ChildrenExt for Sheet {
-    fn get_children(&mut self) -> &mut Vec<Element> {
+    fn children_mut(&mut self) -> &mut Vec<Element> {
         &mut self.children
     }
 }
@@ -525,7 +525,7 @@ pub struct Section {
 }
 
 impl ChildrenExt for Section {
-    fn get_children(&mut self) -> &mut Vec<Element> {
+    fn children_mut(&mut self) -> &mut Vec<Element> {
         &mut self.children
     }
 }
@@ -595,7 +595,7 @@ pub struct Group {
 }
 
 impl ChildrenExt for Group {
-    fn get_children(&mut self) -> &mut Vec<Element> {
+    fn children_mut(&mut self) -> &mut Vec<Element> {
         &mut self.children
     }
 }

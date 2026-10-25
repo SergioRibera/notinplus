@@ -51,7 +51,7 @@ pub fn open(target: TabTarget, hint: OpenHint) {
 }
 
 fn open_with(target: TabTarget, hint: OpenHint, dedupe: bool) {
-    freya::prelude::spawn_forever(async move {
+    freya::prelude::spawn_in_window(async move {
         let Ok(handle) = open_library().await else {
             log::warn!("space::open: library unavailable");
             return;
@@ -81,7 +81,7 @@ fn open_with(target: TabTarget, hint: OpenHint, dedupe: bool) {
 
 /// Make `workspace` the active mesa and navigate to it.
 pub fn open_space(workspace: WorkspaceId) {
-    freya::prelude::spawn_forever(async move {
+    freya::prelude::spawn_in_window(async move {
         let Ok(handle) = open_library().await else {
             return;
         };
@@ -230,7 +230,7 @@ pub fn notify_changed() {
 
 /// Close the tab showing `target` on the active mesa, if any.
 pub fn close_tab(target: TabTarget) {
-    freya::prelude::spawn_forever(async move {
+    freya::prelude::spawn_in_window(async move {
         let Ok(handle) = open_library().await else {
             return;
         };

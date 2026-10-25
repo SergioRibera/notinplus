@@ -14,7 +14,7 @@ pub fn open_url(url: &str) {
             return;
         }
     };
-    freya::prelude::spawn_forever(async move {
+    freya::prelude::spawn_in_window(async move {
         match client.open(url.clone()).await.map_err(OpenError::from) {
             Ok(()) => {}
             Err(OpenError::NoHandler) => {

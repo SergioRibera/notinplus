@@ -202,7 +202,7 @@ pub fn copy(target: &SourceRef, label: &str) {
 /// Insert a chip for `target` in `from`'s notebook, creating the
 /// notebook when `from` has none, and show it beside.
 pub fn insert_in_notebook(from: ItemId, target: SourceRef) {
-    spawn_forever(async move {
+    spawn_in_window(async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };

@@ -241,17 +241,21 @@ fn pass_canvas(board: &Arc<Mutex<Board>>, pass: PaintPass, index: usize) -> Elem
         .width(Size::fill())
         .height(Size::fill())
         .child(
-            canvas(RenderCallback::new(move |ctx| {
-                let bounds = SurfaceBounds {
-                    min_x: 0.0,
-                    min_y: 0.0,
-                    max_x: ctx.size.width,
-                    max_y: ctx.size.height,
-                };
-                lock(&board).paint(ctx.canvas, bounds, &pass);
-            }))
-            .width(Size::fill())
-            .height(Size::fill()),
+            rect()
+                .background(RenderCallback::new(move |ctx| {
+                    let RenderTarget::Background { canvas, .. } = &ctx.target else {
+                        return;
+                    };
+                    let bounds = SurfaceBounds {
+                        min_x: 0.0,
+                        min_y: 0.0,
+                        max_x: ctx.size.width,
+                        max_y: ctx.size.height,
+                    };
+                    lock(&board).paint(canvas, bounds, &pass);
+                }))
+                .width(Size::fill())
+                .height(Size::fill()),
         )
         .into_element()
 }
@@ -471,10 +475,10 @@ impl Component for TextBoxEditor {
             .on_sized(move |event: Event<SizedEventData>| mask.publish(event.area))
             .child(
                 crate::editor::editor(value, controller)
-                .theme(self.theme.clone())
-                .font_family(FONT_FAMILY)
-                .placeholder("Escribí… (/ para insertar)")
-                .width(Size::fill()),
+                    .theme(self.theme.clone())
+                    .font_family(FONT_FAMILY)
+                    .placeholder("Escribí… (/ para insertar)")
+                    .width(Size::fill()),
             )
     }
 }

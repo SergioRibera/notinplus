@@ -73,7 +73,7 @@ fn open_plugin_ref(kind_id: String, item: ItemId, anchor: Vec<u8>, hint: OpenHin
         return;
     };
     let singleton = kind.info().singleton;
-    freya::prelude::spawn_forever(async move {
+    freya::prelude::spawn_in_window(async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };

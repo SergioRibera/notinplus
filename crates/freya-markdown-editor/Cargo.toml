@@ -16,10 +16,10 @@ toolbar = []
 emoji = ["comrak/shortcodes"]
 
 [dependencies]
-freya = { version = "=0.5.0-rc.8", features = ["icons", "icons-lucide"] }
-freya-core = "=0.5.0-rc.8"
-freya-edit = "=0.5.0-rc.8"
-freya-engine = "=0.5.0-rc.8"
+freya = { version = "=0.5.0-rc.13", features = ["icons", "icons-lucide"] }
+freya-core = "=0.5.0-rc.13"
+freya-edit = "=0.5.0-rc.13"
+freya-engine = "=0.5.0-rc.13"
 comrak = { version = "0.56", default-features = false, features = ["attributes"] }
 
 [lints.rust]
@@ -37,4 +37,4 @@ missing_panics_doc = "allow"
 redundant_pub_crate = "allow"
 
 [dev-dependencies]
-freya-testing = "=0.5.0-rc.8"
+freya-testing = "=0.5.0-rc.13"

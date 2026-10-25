@@ -51,7 +51,7 @@ impl WidthClass {
 /// window resizes.
 #[must_use]
 pub fn width_class() -> WidthClass {
-    WidthClass::of(Platform::get().root_size.read().width)
+    WidthClass::of(Platform::get().current_window().root_size.read().width)
 }
 
 #[cfg(test)]

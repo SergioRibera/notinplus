@@ -106,7 +106,7 @@ fn tiles() -> (Vec<CatalogEntry>, bool) {
 
 /// Open the create menu from the keyboard (Ctrl+N): near the top centre.
 pub fn open_menu_from_keyboard(context: Context) {
-    let size = *Platform::get().root_size.read();
+    let size = *Platform::get().current_window().root_size.read();
     open_menu(
         Area::new((size.width / 2.0, 80.0).into(), (1.0, 1.0).into()),
         context,
@@ -407,7 +407,7 @@ pub fn run(entry: CatalogEntry, context: Context) {
             extensions,
             mime_types,
         } => {
-            spawn_forever(async move {
+            spawn_in_window(async move {
                 let extensions: Vec<&str> = extensions.iter().map(AsRef::as_ref).collect();
                 let mimes: Vec<&str> = mime_types.iter().map(AsRef::as_ref).collect();
                 match crate::files::pick(&title, &extensions, &mimes).await {
@@ -694,7 +694,7 @@ impl Component for Preparing {
 const LARGE_PDF_PAGES: u32 = 40;
 
 fn create(entry: CatalogEntry, context: Context, request: Request) {
-    spawn_forever(async move {
+    spawn_in_window(async move {
         let Some(kind) = crate::plugins::kind(&entry.kind) else {
             return;
         };
@@ -823,7 +823,7 @@ fn prepare_attachment(item: ItemId, kind: &str, bytes: Vec<u8>) {
         kind.store_text(crate::plugins::content::doc_id(item), pages);
     });
     if let Some(mut done) = progress {
-        spawn_forever(async move {
+        spawn_in_window(async move {
             while let Ok(value) = rx.recv_async().await {
                 done.set(value);
             }
@@ -1067,7 +1067,7 @@ pub fn new_mesa() {
                     let title = name.peek().clone();
                     let how = *start.peek();
                     let chosen = picked.peek().clone();
-                    spawn_forever(async move {
+                    spawn_in_window(async move {
                         let Ok(handle) = crate::library::shared().await else {
                             return;
                         };

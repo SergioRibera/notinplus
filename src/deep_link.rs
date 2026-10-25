@@ -212,7 +212,7 @@ pub fn listen() {
             return;
         }
     };
-    freya::prelude::spawn_forever(async move {
+    freya::prelude::spawn_in_window(async move {
         loop {
             match stream.recv_async().await {
                 Ok(link) => open(&link.uri),

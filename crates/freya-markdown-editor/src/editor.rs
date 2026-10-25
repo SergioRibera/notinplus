@@ -302,13 +302,13 @@ impl MarkdownEditor {
 }
 
 impl KeyExt for MarkdownEditor {
-    fn write_key(&mut self) -> &mut DiffKey {
+    fn key_mut(&mut self) -> &mut DiffKey {
         &mut self.key
     }
 }
 
 impl LayoutExt for MarkdownEditor {
-    fn get_layout(&mut self) -> &mut LayoutData {
+    fn layout_mut(&mut self) -> &mut LayoutData {
         &mut self.layout
     }
 }
@@ -316,7 +316,7 @@ impl LayoutExt for MarkdownEditor {
 impl ContainerExt for MarkdownEditor {}
 
 impl TextStyleExt for MarkdownEditor {
-    fn get_text_style_data(&mut self) -> &mut TextStyleData {
+    fn text_style_data_mut(&mut self) -> &mut TextStyleData {
         &mut self.text_style
     }
 }

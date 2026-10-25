@@ -40,12 +40,12 @@ istmo-data-store = { path = "../istmo/plugins/data-store" }
 istmo-share = { path = "../istmo/plugins/share" }
 istmo-barcode-scanner = { path = "../istmo/plugins/barcode-scanner" }
 istmo-opener = { path = "../istmo/plugins/opener" }
-freya = { version = "=0.5.0-rc.8", features = ["router", "icons", "icons-lucide"] }
-freya-engine = "=0.5.0-rc.8"
-freya-components = "=0.5.0-rc.8"
-freya-edit = "=0.5.0-rc.8"
-freya-core = "=0.5.0-rc.8"
-torin = "=0.5.0-rc.8"
+freya = { version = "=0.5.0-rc.13", features = ["router", "icons", "icons-lucide"] }
+freya-engine = "=0.5.0-rc.13"
+freya-components = "=0.5.0-rc.13"
+freya-edit = "=0.5.0-rc.13"
+freya-core = "=0.5.0-rc.13"
+torin = "=0.5.0-rc.13"
 freya-canvas-bg = { path = "crates/freya-canvas-bg" }
 freya-pdf = { path = "crates/freya-pdf" }
 bincode = { version = "2", features = ["derive", "std"] }
@@ -72,7 +72,7 @@ fs4 = { version = "0.13", default-features = false }
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.14"
-freya-clipboard = "=0.5.0-rc.8"
+freya-clipboard = "=0.5.0-rc.13"
 jni = { version = "0.21", default-features = false }
 # Freya-winit doesn't pin an Android activity backend on winit, so we
 # opt in additively. Cargo feature unification propagates the feature
@@ -89,14 +89,14 @@ env_logger = "0.11"
 istmo-window = { path = "../istmo/crates/window" }
 
 [dev-dependencies]
-freya-testing = "=0.5.0-rc.8"
+freya-testing = "=0.5.0-rc.13"
 
 [build-dependencies]
 istmo-build = { path = "../istmo/crates/build" }
 
 [patch.crates-io]
 winit = { git = "https://github.com/SergioRibera/winit", branch = "notein-native-input" }
-# Touch editing and soft keyboard work, on top of freya 0.5.0-rc.8.
+# Touch editing and soft keyboard work, on top of freya 0.5.0-rc.13 (main).
 freya = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
 freya-android = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
 freya-animation = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }

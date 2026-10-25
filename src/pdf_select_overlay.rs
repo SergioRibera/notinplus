@@ -160,7 +160,7 @@ pub(crate) fn show_bar(item: ItemId, mount: CanvasMount, at: (f32, f32)) {
         on_note: std::rc::Rc::new(move || {
             let (tx, rx) = flume::bounded::<notein_plugin::services::AnnotationOutcome>(1);
             let note_mark = note_mark.clone();
-            spawn_forever(async move {
+            spawn_in_window(async move {
                 match rx.recv_async().await {
                     Ok(notein_plugin::services::AnnotationOutcome::Saved { color, body }) => note_mark(color, body),
                     Ok(_) | Err(_) => clear(item),
@@ -220,33 +220,37 @@ pub(crate) fn select_word_at(item: ItemId, mount: CanvasMount, world: (f32, f32)
 /// The selection wash, mapped through the board's viewport.
 fn selection_paint(item: ItemId, mount: CanvasMount, tick: State<u64>) -> impl IntoElement {
     let _ = *tick.read();
-    canvas(RenderCallback::new(move |ctx| {
-        let rects = PdfText::get().selection_rects(item);
-        if rects.is_empty() {
-            return;
-        }
-        let Some(board) = active_boards::get(mount) else {
-            return;
-        };
-        let screen: Vec<SkRect> = {
-            let guard = lock(&board);
-            rects
-                .iter()
-                .map(|r| {
-                    let (sx0, sy0) = guard.world_to_screen(r.min_x, r.min_y);
-                    let (sx1, sy1) = guard.world_to_screen(r.max_x, r.max_y);
-                    SkRect::new(sx0, sy0, sx1, sy1)
-                })
-                .collect()
-        };
-        let mut paint = Paint::default();
-        paint.set_color(SkColor::from_argb(HIGHLIGHT_RGBA.3, HIGHLIGHT_RGBA.0, HIGHLIGHT_RGBA.1, HIGHLIGHT_RGBA.2));
-        paint.set_style(PaintStyle::Fill);
-        paint.set_anti_alias(true);
-        for r in &screen {
-            ctx.canvas.draw_rect(r, &paint);
-        }
-    }))
-    .width(Size::fill())
-    .height(Size::fill())
+    rect()
+        .background(RenderCallback::new(move |ctx| {
+            let RenderTarget::Background { canvas, .. } = &ctx.target else {
+                return;
+            };
+            let rects = PdfText::get().selection_rects(item);
+            if rects.is_empty() {
+                return;
+            }
+            let Some(board) = active_boards::get(mount) else {
+                return;
+            };
+            let screen: Vec<SkRect> = {
+                let guard = lock(&board);
+                rects
+                    .iter()
+                    .map(|r| {
+                        let (sx0, sy0) = guard.world_to_screen(r.min_x, r.min_y);
+                        let (sx1, sy1) = guard.world_to_screen(r.max_x, r.max_y);
+                        SkRect::new(sx0, sy0, sx1, sy1)
+                    })
+                    .collect()
+            };
+            let mut paint = Paint::default();
+            paint.set_color(SkColor::from_argb(HIGHLIGHT_RGBA.3, HIGHLIGHT_RGBA.0, HIGHLIGHT_RGBA.1, HIGHLIGHT_RGBA.2));
+            paint.set_style(PaintStyle::Fill);
+            paint.set_anti_alias(true);
+            for r in &screen {
+                canvas.draw_rect(r, &paint);
+            }
+        }))
+        .width(Size::fill())
+        .height(Size::fill())
 }

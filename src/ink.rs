@@ -577,7 +577,7 @@ fn more_sheet(board: &Arc<Mutex<Board>>, state: &InkState) {
                     .icon(lucide::layers())
                     .chevron()
                     .on_press(move |_| {
-                        let size = *Platform::get().root_size.read();
+                        let size = *Platform::get().current_window().root_size.read();
                         Layers::open(
                             Arc::clone(&board),
                             Area::new((size.width / 2.0, size.height).into(), (1.0, 1.0).into()),
@@ -1156,7 +1156,7 @@ impl PinNotes {
         let board = Arc::clone(&self.board);
         let mut selected = self.selected;
         let refs = bookmark.refs.clone();
-        spawn_forever(async move {
+        spawn_in_window(async move {
             let outcome = rx.recv_async().await.unwrap_or(AnnotationOutcome::Cancelled);
             {
                 let mut guard = lock(&board);

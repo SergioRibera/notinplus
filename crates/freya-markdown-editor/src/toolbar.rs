@@ -32,7 +32,7 @@ fn popup_bounds() -> Area {
     try_consume_context::<PopupArea>()
         .and_then(|area| area.0)
         .unwrap_or_else(|| {
-            let window = *Platform::get().root_size.read();
+            let window = *Platform::get().current_window().root_size.read();
             Area::new((0., 0.).into(), (window.width, window.height).into())
         })
 }
@@ -117,13 +117,13 @@ impl MarkdownToolbar {
 }
 
 impl KeyExt for MarkdownToolbar {
-    fn write_key(&mut self) -> &mut DiffKey {
+    fn key_mut(&mut self) -> &mut DiffKey {
         &mut self.key
     }
 }
 
 impl LayoutExt for MarkdownToolbar {
-    fn get_layout(&mut self) -> &mut LayoutData {
+    fn layout_mut(&mut self) -> &mut LayoutData {
         &mut self.layout
     }
 }

@@ -113,7 +113,7 @@ pub fn use_library_root() {
         view
     });
     use_hook(move || {
-        spawn_forever(async move {
+        spawn_in_window(async move {
             let handle = view.open().await;
             view.refresh(&handle).await;
             let changes = library::changes();
@@ -131,7 +131,7 @@ pub fn edit<F>(what: &'static str, change: F)
 where
     F: AsyncFnOnce(&mut Library) -> Result<(), LibraryError> + 'static,
 {
-    spawn_forever(async move {
+    spawn_in_window(async move {
         let result = match library::shared().await {
             Ok(handle) => {
                 let mut lib = handle.lock().await;

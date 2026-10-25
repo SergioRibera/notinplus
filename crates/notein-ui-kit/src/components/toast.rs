@@ -182,7 +182,7 @@ impl Toasts {
         }
         if let Some(duration) = duration {
             let mut this = *self;
-            spawn_forever(async move {
+            spawn_in_window(async move {
                 async_io::Timer::after(duration).await;
                 this.expire(id);
             });

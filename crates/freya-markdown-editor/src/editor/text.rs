@@ -890,13 +890,14 @@ impl Component for TextBlock {
         let painter_holder = holder.read().clone();
         let painter_decor = decor;
         let background = has_decor.then(|| {
-            canvas(RenderCallback::new(move |context| {
-                paint_decor(context, &painter_holder, &painter_decor.borrow());
-            }))
-            .key(decor_key)
-            .position(Position::new_absolute().top(0.).left(0.))
-            .width(Size::fill())
-            .height(Size::fill())
+            rect()
+                .background(RenderCallback::new(move |context| {
+                    paint_decor(context, &painter_holder, &painter_decor.borrow());
+                }))
+                .key(decor_key)
+                .position(Position::new_absolute().top(0.).left(0.))
+                .width(Size::fill())
+                .height(Size::fill())
         });
 
         // The popup is a sibling of the editable area, not a child, so
@@ -1317,7 +1318,10 @@ fn caret_rect(holder: &ParagraphHolder, text: &str, cursor: usize) -> Option<(f3
     Some((rect.top / scale, rect.bottom / scale))
 }
 
-fn paint_decor(context: &mut CanvasContext, holder: &ParagraphHolder, decor: &[Decor]) {
+fn paint_decor(context: &mut FillRenderContext, holder: &ParagraphHolder, decor: &[Decor]) {
+    let RenderTarget::Background { canvas, .. } = &context.target else {
+        return;
+    };
     let inner = holder.0.borrow();
     let Some(inner) = inner.as_ref() else {
         return;
@@ -1348,22 +1352,20 @@ fn paint_decor(context: &mut CanvasContext, holder: &ParagraphHolder, decor: &[D
                     paint.set_style(PaintStyle::Fill);
                     paint.set_color(Color::from(color));
                     let area = SkRect::new(left - 1.5, top, right + 1.5, bottom);
-                    context.canvas.draw_round_rect(area, 3.0, 3.0, &paint);
+                    canvas.draw_round_rect(area, 3.0, 3.0, &paint);
                 }
                 DecorKind::Underline(color) => {
                     paint.set_style(PaintStyle::Fill);
                     paint.set_color(Color::from(color));
                     let area = SkRect::new(left, bottom - 1.5, right, bottom - 0.5);
-                    context.canvas.draw_rect(area, &paint);
+                    canvas.draw_rect(area, &paint);
                 }
                 DecorKind::Dotted(color) => {
                     paint.set_style(PaintStyle::Stroke);
                     paint.set_stroke_width(1.0);
                     paint.set_color(Color::from(color));
                     paint.set_path_effect(PathEffect::dash(&[1.5, 2.0], 0.0));
-                    context
-                        .canvas
-                        .draw_line((left, bottom - 0.5), (right, bottom - 0.5), &paint);
+                    canvas.draw_line((left, bottom - 0.5), (right, bottom - 0.5), &paint);
                 }
             }
         }

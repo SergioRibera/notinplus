@@ -154,7 +154,7 @@ impl Reader {
         }
         let mut flash = self.flash;
         flash.set(Some(verse));
-        spawn_forever(async move {
+        spawn_in_window(async move {
             async_io::Timer::after(FLASH).await;
             if *flash.peek() == Some(verse) {
                 flash.set(None);

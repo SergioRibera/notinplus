@@ -98,7 +98,7 @@ pub fn export_folder(folder: FolderId) {
 
 /// Duplicate `item` next to it.
 pub fn duplicate(item: ItemId) {
-    spawn_forever(async move {
+    spawn_in_window(async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };
@@ -138,7 +138,7 @@ pub fn edit_mesa(workspace: WorkspaceId) {
 /// Run one of `item`'s kind actions and carry out its effect.
 pub fn run_kind_action(item: ItemId, action: &str) {
     let action = action.to_owned();
-    spawn_forever(async move {
+    spawn_in_window(async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };
@@ -179,7 +179,7 @@ pub fn run_kind_action(item: ItemId, action: &str) {
 /// Hand a file to the system share sheet.
 pub fn share_file(name: String, mime: String, bytes: Vec<u8>) {
     use istmo_share::{ShareClient, ShareFile, ShareRequest};
-    spawn_forever(async move {
+    spawn_in_window(async move {
         let request =
             ShareRequest::files([ShareFile::bytes(name.clone(), bytes).with_mime_type(mime)])
                 .with_subject(name);
@@ -212,7 +212,7 @@ fn trashed_toast(text: String, batch: u64) {
 
 /// Move items to the trash in one step, with Deshacer.
 pub fn trash_items(items: Vec<ItemId>, fate: NotebookFate) {
-    spawn_forever(async move {
+    spawn_in_window(async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };
@@ -254,7 +254,7 @@ pub fn trash_item(item: ItemId) {
 
 /// Move `items` to the trash. Asks once when any of them has notebooks.
 pub fn trash_documents(items: Vec<ItemId>) {
-    spawn_forever(async move {
+    spawn_in_window(async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };
@@ -345,7 +345,7 @@ impl Component for NotebookFateChoice {
 
 /// Move a folder and everything in it to the trash, with Deshacer.
 pub fn trash_folder(folder: FolderId) {
-    spawn_forever(async move {
+    spawn_in_window(async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };
@@ -391,7 +391,7 @@ pub fn duplicate_mesa(workspace: WorkspaceId) {
 
 /// Delete a mesa after one confirmation; its documents stay.
 pub fn delete_mesa(workspace: WorkspaceId) {
-    spawn_forever(async move {
+    spawn_in_window(async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };

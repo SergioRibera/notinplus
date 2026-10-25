@@ -361,7 +361,7 @@ impl Component for Loaded {
         let class = width_class();
         let pad = gutter(class);
         let insets = *crate::hooks::use_safe_area_insets().read();
-        let root_width = Platform::get().root_size.read().width;
+        let root_width = Platform::get().current_window().root_size.read().width;
         let content_width = pad.mul_add(-2.0, root_width - insets.left - insets.right).max(200.0);
         let folder = Browse::get().folder();
         let sort = SettingsStore::get().read().library.sort;

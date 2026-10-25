@@ -128,7 +128,7 @@ impl ThemeHandle {
 pub fn use_theme_root(initial: impl FnOnce() -> Appearance) -> ThemeHandle {
     let appearance = use_state(initial);
     let resolved = use_memo(move || {
-        let os_dark = *Platform::get().preferred_theme.read() == PreferredTheme::Dark;
+        let os_dark = *Platform::get().current_window().preferred_theme.read() == PreferredTheme::Dark;
         ResolvedTheme::new(*appearance.read(), os_dark)
     });
     let handle = use_hook(|| {
@@ -145,7 +145,7 @@ pub fn use_theme_root(initial: impl FnOnce() -> Appearance) -> ThemeHandle {
         freya_theme.set(freya_theme_for(&palette));
     });
     use_side_effect(move || {
-        let platform = Platform::get();
+        let platform = Platform::get().current_window();
         let wanted = appearance.read().text_size.scale();
         let size = *platform.root_size.read();
         // The window's short side as it would be at scale 1.

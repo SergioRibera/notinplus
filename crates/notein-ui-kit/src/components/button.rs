@@ -105,7 +105,7 @@ impl std::fmt::Debug for Button {
 }
 
 impl KeyExt for Button {
-    fn write_key(&mut self) -> &mut DiffKey {
+    fn key_mut(&mut self) -> &mut DiffKey {
         &mut self.key
     }
 }

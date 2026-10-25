@@ -44,7 +44,7 @@ pub fn listen() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .push(tx);
-    freya::prelude::spawn_forever(async move {
+    freya::prelude::spawn_in_window(async move {
         loop {
             let ends: Vec<SessionEnd> = pending().drain(..).collect();
             for end in ends {
@@ -62,7 +62,7 @@ pub fn listen() {
 
 /// Close the session's tabs, drop its copies and go home.
 pub fn resolve(end: SessionEnd) {
-    freya::prelude::spawn_forever(async move {
+    freya::prelude::spawn_in_window(async move {
         let Ok(handle) = crate::library::shared().await else {
             log::warn!("session end: library unavailable");
             return;

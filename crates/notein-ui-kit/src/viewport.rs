@@ -179,7 +179,7 @@ pub fn safe_frame() -> Area {
     let window = try_consume_context::<ViewportArea>()
         .map(ViewportArea::get)
         .filter(|area| area.width() > 0.0 && area.height() > 0.0)
-        .unwrap_or_else(|| Area::from_size(*Platform::get().root_size.read()));
+        .unwrap_or_else(|| Area::from_size(*Platform::get().current_window().root_size.read()));
     try_consume_context::<ModalChrome>()
         .unwrap_or_default()
         .gutters()

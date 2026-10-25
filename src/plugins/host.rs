@@ -261,7 +261,7 @@ fn apply(event: HostEvent, jobs: &mut HashMap<(String, String), ToastId>) {
 pub fn use_host_pump() {
     use_hook(|| {
         let pump = shell_host().pump.clone();
-        spawn_forever(async move {
+        spawn_in_window(async move {
             let mut jobs = HashMap::new();
             while let Ok(event) = pump.recv_async().await {
                 apply(event, &mut jobs);

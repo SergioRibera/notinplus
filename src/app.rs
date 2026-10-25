@@ -269,7 +269,7 @@ impl Component for AppShell {
         // `RouterContext::get()` / `::try_get()`. The actual Router
         // component is replaced by `Outlet` below — it would create
         // its own scope-local context and leave siblings blind.
-        freya::router::use_share_router(global_router);
+        use_provide_context(global_router);
         // Drain the font-registration buffer that plugins fill via
         // `Host::load_font` during pre-launch `install_host`. This
         // must run inside the freya scheduler context — `use_hook`
@@ -519,7 +519,7 @@ pub(crate) fn mount_board(mount: CanvasMount, state: &ChromeState) -> Arc<Mutex<
     let ink = state.ink;
 
     let board = Arc::new(Mutex::new(Board::default()));
-    let platform = Platform::get();
+    let window = Platform::get().current_window();
     let (notifier, rx) = RedrawNotifier::new();
     let (prefs_tx, prefs_rx) = flume::unbounded::<()>();
     {
@@ -555,7 +555,7 @@ pub(crate) fn mount_board(mount: CanvasMount, state: &ChromeState) -> Arc<Mutex<
     let sync_board = Arc::clone(&board);
     spawn(async move {
         while rx.recv_async().await.is_ok() {
-            platform.send(UserEvent::RequestRedraw);
+            window.request_redraw();
             ink.sync(&lock(&sync_board));
         }
     });

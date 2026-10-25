@@ -100,14 +100,16 @@ impl PressGesture {
 }
 
 /// Where a press happened, in window coordinates: the pointer or the
-/// finger. A key press has no point of its own, so it counts as the middle
-/// of what the system bars and the keyboard leave visible.
+/// finger.
+///
+/// A key or screen reader press has no point of its own, so it counts as
+/// the middle of what the system bars and the keyboard leave visible.
 #[must_use]
 pub fn press_point(data: &PressEventData) -> CursorPoint {
     match data {
         PressEventData::Mouse(mouse) => mouse.global_location,
         PressEventData::Touch(touch) => touch.global_location,
-        PressEventData::Keyboard(_) => {
+        PressEventData::Keyboard(_) | PressEventData::Accessibility(_) => {
             let centre = crate::viewport::safe_frame().center();
             CursorPoint::new(f64::from(centre.x), f64::from(centre.y))
         }

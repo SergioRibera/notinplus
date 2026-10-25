@@ -72,7 +72,7 @@ pub fn provide_safe_area_root() -> Memo<EdgeInsets> {
         });
     });
     let insets = use_memo(move || {
-        let scale = *Platform::get().custom_scale_factor.read();
+        let scale = *Platform::get().current_window().custom_scale_factor.read();
         in_layout_units(*published.read(), scale)
     });
     use_provide_context(move || SafeAreaRoot(insets));

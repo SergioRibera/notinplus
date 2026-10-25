@@ -427,7 +427,7 @@ impl Purpose {
 }
 
 fn run_export(scope: ExportScope, choices: Choices) {
-    spawn_forever(async move {
+    spawn_in_window(async move {
         let Some(data) = LibraryView::get().data() else {
             return;
         };
@@ -493,7 +493,7 @@ fn save_copy(
     scope: ExportScope,
     choices: Choices,
 ) {
-    spawn_forever(async move {
+    spawn_in_window(async move {
         match crate::files::save("Guardar copia", &name, mime, ext, &bytes).await {
             Ok(Some(saved)) => done_sheet(saved, bytes, mime),
             Ok(None) => {}
@@ -598,7 +598,7 @@ pub fn undo_import(receipt: ImportReceipt) {
 
 /// Pick a `.notein` file and review it.
 pub fn import() {
-    spawn_forever(async move {
+    spawn_in_window(async move {
         let picked = match crate::files::pick(
             "Importar una copia de Notein",
             &["notein"],
@@ -885,7 +885,7 @@ impl Component for ImportFooter {
 }
 
 fn commit(pending: Pending, mut plan: ImportPlan) {
-    spawn_forever(async move {
+    spawn_in_window(async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };

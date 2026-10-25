@@ -66,7 +66,7 @@ impl<T: Clone + PartialEq + 'static> std::fmt::Debug for DragZone<T> {
 }
 
 impl<T: Clone + PartialEq + 'static> KeyExt for DragZone<T> {
-    fn write_key(&mut self) -> &mut DiffKey {
+    fn key_mut(&mut self) -> &mut DiffKey {
         &mut self.key
     }
 }
@@ -228,7 +228,7 @@ impl<T: Clone + PartialEq + 'static> std::fmt::Debug for DropZone<T> {
 }
 
 impl<T: Clone + PartialEq + 'static> KeyExt for DropZone<T> {
-    fn write_key(&mut self) -> &mut DiffKey {
+    fn key_mut(&mut self) -> &mut DiffKey {
         &mut self.key
     }
 }

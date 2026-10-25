@@ -47,7 +47,7 @@ ui = [
 ]
 
 [dependencies]
-freya-icons = { version = "=0.5.0-rc.8", features = ["lucide"] }
+freya-icons = { version = "=0.5.0-rc.13", features = ["lucide"] }
 notein-sdk = { path = "../notein-sdk" }
 # `istmo-core` is pulled in strictly for its `path::data_dir()`
 # resolver so the plugin writes its DB + cache alongside every other
@@ -69,13 +69,13 @@ reqwest = { version = "0.12", default-features = false, features = [
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 
-freya = { version = "=0.5.0-rc.8", features = [
+freya = { version = "=0.5.0-rc.13", features = [
     "router",
     "icons",
     "icons-lucide",
 ], optional = true }
-freya-components = { version = "=0.5.0-rc.8", optional = true }
-freya-core = { version = "=0.5.0-rc.8", optional = true }
-freya-engine = { version = "=0.5.0-rc.8", optional = true }
+freya-components = { version = "=0.5.0-rc.13", optional = true }
+freya-core = { version = "=0.5.0-rc.13", optional = true }
+freya-engine = { version = "=0.5.0-rc.13", optional = true }
 async-io = { version = "2", optional = true }
 notein-ui-kit = { path = "../notein-ui-kit", optional = true }

@@ -86,7 +86,7 @@ fn send(request: ShareRequest) {
     // Menu entries close the menu before running, which unmounts the scope
     // `spawn` would tie this task to. Dropping the task drops the call, and
     // istmo cancels a dropped call: Android never got to show the sheet.
-    spawn_forever(async move {
+    spawn_in_window(async move {
         let result = match ShareClient::acquire() {
             Ok(client) => client
                 .share(request)

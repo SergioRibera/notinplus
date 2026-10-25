@@ -130,7 +130,7 @@ impl Component for Bar {
             let run = Rc::clone(run);
             items.push(BarItem::action(*label, icon.clone(), act(move || run())));
         }
-        let size = *Platform::get().root_size.read();
+        let size = *Platform::get().current_window().root_size.read();
         let bar = SelectionBar::new(items);
         if width_class().is_compact() {
             let insets = *crate::hooks::use_safe_area_insets().read();

@@ -405,7 +405,7 @@ impl Rows<'_> {
 pub(crate) fn overlay_frame(top: f32) -> Rect {
     let p = palette();
     let compact = width_class().is_compact();
-    let size = *Platform::get().root_size.read();
+    let size = *Platform::get().current_window().root_size.read();
     // What the system bars and the keyboard leave of the window.
     let frame = notein_ui_kit::safe_frame();
     let pad = tokens::space::MD;

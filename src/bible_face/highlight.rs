@@ -191,7 +191,7 @@ impl Gesture {
         let (done_tx, done_rx) = flume::bounded::<AnnotationOutcome>(1);
         let (preview_tx, preview_rx) = flume::unbounded::<Option<[u8; 3]>>();
         let mut preview = self.preview;
-        spawn_forever(async move {
+        spawn_in_window(async move {
             while let Ok(rgb) = preview_rx.recv_async().await {
                 preview.set(rgb.map(|c| Color::from_rgb(c[0], c[1], c[2])));
             }
@@ -199,7 +199,7 @@ impl Gesture {
         let mut state = reader.state;
         let (book, chapter, lo, hi) = (selection.book.clone(), selection.chapter, selection.lo, selection.hi);
         let existing_id = selection.existing.as_ref().map(|h| h.id);
-        spawn_forever(async move {
+        spawn_in_window(async move {
             match done_rx.recv_async().await {
                 Ok(AnnotationOutcome::Saved { color, body }) => {
                     state

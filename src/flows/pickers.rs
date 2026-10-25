@@ -69,7 +69,7 @@ impl Purpose {
 }
 
 fn link(from: ItemId, to: ItemId, kind: LinkKind) {
-    spawn_forever(async move {
+    spawn_in_window(async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };
@@ -237,7 +237,7 @@ fn create_named(name: &str, purpose: Purpose) -> Element {
 }
 
 pub fn create_quick(entry: notein_plugin::catalog::CatalogEntry, name: String, purpose: Purpose) {
-    spawn_forever(async move {
+    spawn_in_window(async move {
         let Some(kind) = crate::plugins::kind(&entry.kind) else {
             return;
         };

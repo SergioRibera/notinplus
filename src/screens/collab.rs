@@ -942,7 +942,7 @@ pub fn session_ended(end: &SessionEnd) {
 }
 
 fn save_copy(end: SessionEnd) {
-    spawn_forever(async move {
+    spawn_in_window(async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };
