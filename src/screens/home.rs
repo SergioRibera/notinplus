@@ -19,7 +19,7 @@ use notein_ui_kit::{Button, EmptyState, Skeleton, WidthClass, tokens, width_clas
 use self::app_bar::AppBar;
 use self::fab::Fab;
 use self::library::{Columns, EmptyShelf, GridRow, LibraryBar, PinnedRow, ShelfRow};
-use self::mesas::{MESAS_BLOCK, MesaStrip};
+use self::mesas::MesaStrip;
 use self::selection::{Selection, SelectionActions};
 use self::shelf::{Filter, Shelf};
 use crate::library::{FolderId, LibraryData, ROOT_FOLDER};
@@ -220,6 +220,7 @@ struct Body {
     columns: Columns,
     selection: State<Selection>,
     filter: State<Filter>,
+    mesas_open: State<bool>,
     folder: FolderId,
     filtered: bool,
     pad: f32,
@@ -237,7 +238,9 @@ impl Body {
     fn height(&self, block: Block) -> f32 {
         match block {
             Block::Top => 8.0,
-            Block::Mesas => MESAS_BLOCK + Self::GAP,
+            Block::Mesas => {
+                MesaStrip::height(&self.data, self.compact, *self.mesas_open.read()) + Self::GAP
+            }
             Block::Pinned => PinnedRow::height(self.pinned_card) + Self::GAP,
             Block::Bar => LibraryBar::height(self.compact) + 16.0,
             Block::Row(_) => GridRow::height(self.columns),
@@ -255,6 +258,7 @@ impl Body {
                     data: Arc::clone(&self.data),
                     width: self.width,
                     compact: self.compact,
+                    expanded: self.mesas_open,
                 }
                 .into_element(),
             ),
@@ -362,6 +366,7 @@ impl Component for Loaded {
         let folder = Browse::get().folder();
         let sort = SettingsStore::get().read().library.sort;
         let filter = use_state(Filter::default);
+        let mesas_open = use_state(|| false);
         let mut selection = use_state(Selection::default);
         let data = &self.data;
 
@@ -387,6 +392,7 @@ impl Component for Loaded {
             columns,
             selection,
             filter,
+            mesas_open,
             folder,
             filtered: current_filter != Filter::All,
             pad,

@@ -116,6 +116,22 @@ pub(crate) fn demo() -> LibraryData {
     if let PaneLayout::Leaf(pane) = &mut clase.layout {
         pane.tabs = vec![tab(sermon.id), tab(plan.id)];
     }
+    let named = |name: &str, color: [u8; 4], days: u64| {
+        let mut w = Workspace::fresh(
+            WorkspaceId::new_v4(),
+            name.to_owned(),
+            Some(color),
+            now - days * DAY,
+        );
+        w.named = true;
+        w
+    };
+    let more = named("Lectura de Hechos", [0x5F, 0xB3, 0x8A, 0xFF], 2);
+    let extra = [
+        named("Sermón del domingo", [0x7B, 0x8C, 0xFF, 0xFF], 4),
+        named("Griego", [0xD0, 0x6B, 0x6B, 0xFF], 9),
+        named("Investigación", [0xB0, 0x8C, 0xE0, 0xFF], 21),
+    ];
     let link = Link {
         id: LinkId::new_v4(),
         from: romanos.id,
@@ -138,7 +154,7 @@ pub(crate) fn demo() -> LibraryData {
     let workspaces = WorkspaceIndex {
         version: crate::library::WORKSPACE_INDEX_VERSION,
         active: Some(study.id),
-        workspaces: vec![study, clase],
+        workspaces: [study, clase, more].into_iter().chain(extra).collect(),
     };
     let links = LinkIndex {
         version: 1,

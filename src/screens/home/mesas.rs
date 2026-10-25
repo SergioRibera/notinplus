@@ -3,7 +3,7 @@
 
 use freya::prelude::*;
 use notein_ui_kit::theme::{Palette, palette};
-use notein_ui_kit::{Icon, IconButton, Text, TextRole, tokens, use_press_gesture};
+use notein_ui_kit::{Button, Icon, IconButton, Text, TextRole, tokens, use_press_gesture};
 
 use crate::library::{LibraryData, PaneLayout, SplitOrientation, Workspace, WorkspaceId};
 use crate::references::kind_color;
@@ -139,10 +139,8 @@ fn is_blank(w: &Workspace) -> bool {
     !w.named && tab_count(w) == 0
 }
 
-/// Height of a mesa card.
+/// Height of the card of the mesa to continue.
 pub const MESA_CARD: f32 = 104.0;
-/// Height of the mesas block: its header and one row of cards.
-pub const MESAS_BLOCK: f32 = MESA_CARD + 36.0;
 
 /// One mesa: the panes drawn small, its name, what it holds and where
 /// it comes from. The one to continue wears the accent.
@@ -300,65 +298,257 @@ fn new_mesa_card(width: f32) -> Element {
         .into_element()
 }
 
-/// The mesas as one row of equal cards: the one to continue first,
-/// then the rest by pin and date. Three fit across on wide screens, the
-/// rest scroll sideways; phones scroll a narrower card.
+/// The mesas Home lists: the one to continue, then the others that hold
+/// something, pinned first and newest next.
+struct Listed {
+    current: Option<WorkspaceId>,
+    rest: Vec<WorkspaceId>,
+}
+
+impl From<&LibraryData> for Listed {
+    fn from(data: &LibraryData) -> Self {
+        let current = continue_target(data);
+        let rest = others(data, current)
+            .into_iter()
+            .filter(|w| !is_blank(w))
+            .map(|w| w.id)
+            .collect();
+        Self { current, rest }
+    }
+}
+
+/// One mesa as a row of the list beside "Continuar".
 #[derive(Clone, Debug, PartialEq)]
+struct MesaRow {
+    data: std::sync::Arc<LibraryData>,
+    workspace: WorkspaceId,
+    height: f32,
+}
+
+impl Component for MesaRow {
+    fn render(&self) -> impl IntoElement {
+        let p = palette();
+        let gesture = use_press_gesture();
+        let mut hovering = use_state(|| false);
+        let Some(w) = self.data.workspace(self.workspace) else {
+            return rect().into_element();
+        };
+        let id = w.id;
+        let data = std::sync::Arc::clone(&self.data);
+        let title = self.data.workspace_title(id);
+        let row = rect()
+            .width(Size::fill())
+            .height(Size::px(self.height))
+            .padding((0.0, 10.0))
+            .corner_radius(tokens::radius::MD)
+            .background(if hovering() { p.s2 } else { Color::TRANSPARENT })
+            .horizontal()
+            .cross_align(Alignment::Center)
+            .content(Content::Flex)
+            .spacing(10.0)
+            .a11y_role(AccessibilityRole::Button)
+            .a11y_alt(title.clone())
+            .a11y_focusable(true)
+            .on_pointer_enter(move |_| hovering.set(true))
+            .on_pointer_leave(move |_| hovering.set(false))
+            .child(
+                rect()
+                    .width(Size::px(8.0))
+                    .height(Size::px(8.0))
+                    .corner_radius(tokens::radius::FULL)
+                    .background(w.color.map_or(p.t3, rgba)),
+            )
+            .child(Text::new(title).role(TextRole::Strong).lines(1).fill())
+            .maybe_child(w.pinned.then(|| {
+                Icon::new(freya::icons::lucide::pin())
+                    .size(tokens::size::ICON_XS)
+                    .color(p.t3)
+            }))
+            .child(
+                Text::new(mesa_meta(w, crate::format::now()))
+                    .role(TextRole::Meta)
+                    .lines(1),
+            );
+        gesture
+            .apply(
+                row,
+                move || crate::space::open_space(id),
+                move |at| crate::actions::show(crate::actions::for_mesa(&data, id), at),
+            )
+            .into_element()
+    }
+}
+
+/// The row that starts a mesa when there is no other to list.
+fn new_mesa_row(height: f32) -> Element {
+    let p = palette();
+    rect()
+        .width(Size::fill())
+        .height(Size::px(height))
+        .padding((0.0, 10.0))
+        .corner_radius(tokens::radius::MD)
+        .horizontal()
+        .cross_align(Alignment::Center)
+        .spacing(10.0)
+        .a11y_role(AccessibilityRole::Button)
+        .a11y_alt("Nueva mesa")
+        .on_press(|_| crate::flows::create::new_mesa())
+        .child(
+            Icon::new(freya::icons::lucide::plus())
+                .size(tokens::size::ICON_SM)
+                .color(p.t2),
+        )
+        .child(Text::new("Nueva mesa").role(TextRole::Meta))
+        .into_element()
+}
+
+/// The mesas: a card for the one to continue and, beside it (below on
+/// phones), a short list of the rest that "Ver todas" unfolds in place.
+#[derive(Clone, PartialEq)]
 pub struct MesaStrip {
     pub data: std::sync::Arc<LibraryData>,
-    /// Width the row has to fill.
+    /// Width the block has to fill.
     pub width: f32,
     pub compact: bool,
+    /// Whether every mesa is listed, not only the first few.
+    pub expanded: State<bool>,
 }
 
 impl MesaStrip {
-    /// Cards that fit across without scrolling.
-    const ACROSS: usize = 3;
+    /// Rows listed while folded.
+    const SHOWN: usize = 3;
+    /// The section label and the space under it.
+    const HEADER: f32 = 36.0;
+    /// The "Ver todas" button.
+    const MORE: f32 = 32.0;
     const GAP: f32 = 12.0;
+
+    const fn row_height(compact: bool) -> f32 {
+        if compact {
+            tokens::size::HIT
+        } else {
+            tokens::size::HIT_DESKTOP
+        }
+    }
+
+    /// Rows the list shows: the other mesas, or the one that starts a
+    /// mesa when the one to continue is alone.
+    fn rows(listed: &Listed, expanded: bool) -> usize {
+        match (listed.current, listed.rest.len()) {
+            (None, _) => 0,
+            (Some(_), 0) => 1,
+            (Some(_), n) if expanded => n,
+            (Some(_), n) => n.min(Self::SHOWN),
+        }
+    }
+
+    fn list_height(listed: &Listed, compact: bool, expanded: bool) -> f32 {
+        #[allow(clippy::cast_precision_loss)] // a handful of rows
+        let rows = Self::rows(listed, expanded) as f32;
+        let more = if listed.rest.len() > Self::SHOWN {
+            Self::MORE
+        } else {
+            0.0
+        };
+        rows.mul_add(Self::row_height(compact), more)
+    }
+
+    /// Height of the whole block for `data`, as laid out by `render`.
+    #[must_use]
+    pub fn height(data: &LibraryData, compact: bool, expanded: bool) -> f32 {
+        let listed = Listed::from(data);
+        let list = Self::list_height(&listed, compact, expanded);
+        let body = if !compact {
+            MESA_CARD.max(list)
+        } else if list > 0.0 {
+            MESA_CARD + Self::GAP + list
+        } else {
+            MESA_CARD
+        };
+        Self::HEADER + body
+    }
 
     fn card_width(&self) -> f32 {
         if self.compact {
-            (self.width * 0.82).min(300.0)
+            self.width
         } else {
-            #[allow(clippy::cast_precision_loss)] // three cards
-            let across = Self::ACROSS as f32;
-            (Self::GAP.mul_add(-(across - 1.0), self.width) / across).floor()
+            (self.width * 0.42).clamp(260.0, 400.0)
         }
+    }
+
+    fn list(&self, listed: &Listed) -> Element {
+        let mut expanded = self.expanded;
+        let open = expanded();
+        let row = Self::row_height(self.compact);
+        let shown = if open {
+            listed.rest.len()
+        } else {
+            listed.rest.len().min(Self::SHOWN)
+        };
+        let total = listed.rest.len() + usize::from(listed.current.is_some());
+        let rows = listed.rest.iter().take(shown).map(|&workspace| {
+            MesaRow {
+                data: std::sync::Arc::clone(&self.data),
+                workspace,
+                height: row,
+            }
+            .into_element()
+        });
+        rect()
+            .width(if self.compact {
+                Size::fill()
+            } else {
+                Size::flex(1.0)
+            })
+            .max_width(Size::px(640.0))
+            .children(rows)
+            .maybe_child(
+                (listed.current.is_some() && listed.rest.is_empty()).then(|| new_mesa_row(row)),
+            )
+            .maybe_child((listed.rest.len() > Self::SHOWN).then(|| {
+                Button::new(if open {
+                    "Ver menos".to_owned()
+                } else {
+                    format!("Ver todas ({total})")
+                })
+                .ghost()
+                .small()
+                .on_press(move |_| expanded.toggle())
+            }))
+            .into_element()
     }
 }
 
 impl Component for MesaStrip {
     fn render(&self) -> impl IntoElement {
         let p = palette();
-        let current = continue_target(&self.data);
+        let listed = Listed::from(&*self.data);
         let card = self.card_width();
-        let mut mesas: Vec<(WorkspaceId, bool)> =
-            current.map(|id| (id, true)).into_iter().collect();
-        mesas.extend(
-            others(&self.data, current)
-                .into_iter()
-                .filter(|w| !is_blank(w))
-                .map(|w| (w.id, false)),
-        );
-        let shown = mesas.len();
-        let mut cards: Vec<Element> = mesas
-            .into_iter()
-            .map(|(workspace, current)| {
+        let first = listed.current.map_or_else(
+            || new_mesa_card(card),
+            |workspace| {
                 MesaCard {
                     data: std::sync::Arc::clone(&self.data),
                     workspace,
                     width: card,
-                    current,
+                    current: true,
                 }
                 .into_element()
-            })
-            .collect();
-        if shown < Self::ACROSS {
-            cards.push(new_mesa_card(card));
-        }
+            },
+        );
+        let body = rect().width(Size::fill()).spacing(Self::GAP);
+        let body = if self.compact {
+            body
+        } else {
+            body.horizontal().content(Content::Flex)
+        };
         rect()
             .width(Size::fill())
-            .height(Size::px(MESAS_BLOCK))
+            .height(Size::px(Self::height(
+                &self.data,
+                self.compact,
+                *self.expanded.read(),
+            )))
             .spacing(8.0)
             .child(
                 rect()
@@ -374,13 +564,6 @@ impl Component for MesaStrip {
                             .on_press(|_| crate::flows::create::new_mesa()),
                     ),
             )
-            .child(
-                ScrollView::new()
-                    .direction(Direction::Horizontal)
-                    .width(Size::fill())
-                    .height(Size::px(MESA_CARD))
-                    .show_scrollbar(false)
-                    .child(rect().horizontal().spacing(Self::GAP).children(cards)),
-            )
+            .child(body.child(first).child(self.list(&listed)))
     }
 }
