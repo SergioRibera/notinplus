@@ -315,22 +315,56 @@ impl Body {
 }
 
 /// What floats at the bottom: the selection's actions, or the + button.
-fn bottom(selection: State<Selection>, folder: FolderId, inset: f32) -> Element {
-    if !selection.read().active {
-        return Fab {
-            folder,
-            bottom: inset,
+/// Switching between them, the newcomer rises into place: the bar when
+/// selecting starts, the + button when it ends.
+#[derive(Clone, PartialEq)]
+struct BottomActions {
+    selection: State<Selection>,
+    folder: FolderId,
+    inset: f32,
+}
+
+impl Component for BottomActions {
+    fn render(&self) -> impl IntoElement {
+        use freya::animation::{
+            AnimNum, Ease, Function, OnChange, OnCreation, use_animation_with_dependencies,
+        };
+        let (selection, folder, inset) = (self.selection, self.folder, self.inset);
+        let active = selection.read().active;
+        // Finished on creation: Home opening shows the + button at rest.
+        let motion = use_animation_with_dependencies(&active, |conf, _| {
+            conf.on_creation(OnCreation::Finish);
+            conf.on_change(OnChange::Rerun);
+            AnimNum::new(0.0, 1.0)
+                .time(notein_ui_kit::tokens::motion::BASE)
+                .ease(Ease::Out)
+                .function(Function::Cubic)
+        });
+        let rest = if notein_ui_kit::reduce_motion() {
+            0.0
+        } else {
+            1.0 - motion.get().value()
+        };
+        if !active {
+            return Fab {
+                folder,
+                bottom: 24.0f32.mul_add(-rest, inset),
+            }
+            .into_element();
         }
-        .into_element();
+        rect()
+            .position(
+                Position::new_absolute()
+                    .left(0.0)
+                    .bottom(12.0f32.mul_add(-rest, inset + 16.0)),
+            )
+            .width(Size::fill())
+            .layer(Layer::Relative(10))
+            .horizontal()
+            .main_align(Alignment::Center)
+            .child(SelectionActions { selection, folder })
+            .into_element()
     }
-    rect()
-        .position(Position::new_absolute().left(0.0).bottom(inset + 16.0))
-        .width(Size::fill())
-        .layer(Layer::Relative(10))
-        .horizontal()
-        .main_align(Alignment::Center)
-        .child(SelectionActions { selection, folder })
-        .into_element()
 }
 
 impl Loaded {
@@ -428,7 +462,11 @@ impl Component for Loaded {
                     .child(AppBar { trash }),
             )
             .child(scroll)
-            .child(bottom(selection, folder, insets.bottom))
+            .child(BottomActions {
+                selection,
+                folder,
+                inset: insets.bottom,
+            })
     }
 }
 
