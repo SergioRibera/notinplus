@@ -890,17 +890,30 @@ impl Component for LassoBar {
             BarItem::Divider,
             BarItem::action("Borrar", lucide::trash_2(), b(Board::selection_delete)),
         ];
-        let (x0, y0, x1, _) = self.bounds;
+        // The selection is in pane coordinates; the bar floats over it in
+        // the window, kept inside the pane.
+        let (x0, y0, x1, y1) = self.bounds;
         let mask = self.mask;
-        let top = (y0 - 64.0).max(8.0);
-        rect()
-            .position(
-                Position::new_absolute()
-                    .left((f32::midpoint(x0, x1) - 220.0).max(8.0))
-                    .top(top),
-            )
-            .on_sized(move |e: Event<SizedEventData>| mask.publish(e.area))
-            .child(SelectionBar::new(items))
+        let pane = try_consume_context::<notein_ui_kit::PaneArea>()
+            .map(notein_ui_kit::PaneArea::get)
+            .unwrap_or_default();
+        let selection = Area::new(
+            (pane.min_x() + x0, pane.min_y() + y0 - 8.0).into(),
+            (x1 - x0, y1 - y0 + 16.0).into(),
+        );
+        let floating = notein_ui_kit::Floating::new(
+            selection,
+            rect()
+                .on_sized(move |e: Event<SizedEventData>| mask.publish(e.area))
+                .child(SelectionBar::new(items)),
+        )
+        .above()
+        .centered();
+        if pane.width() > 0.0 {
+            floating.bounds(pane)
+        } else {
+            floating
+        }
     }
 }
 

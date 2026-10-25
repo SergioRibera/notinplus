@@ -140,15 +140,13 @@ impl Component for Bar {
                 .child(bar.docked(true))
                 .into_element();
         }
+        // The line the selection ends on, roughly: the bar floats over it,
+        // or under it when the top of the window is too close.
         let (x, y) = menu.at;
-        let top = if y > 90.0 { y - 64.0 } else { y + 28.0 };
-        rect()
-            .position(
-                Position::new_absolute()
-                    .left((x - 220.0).clamp(8.0, (size.width - 460.0).max(8.0)))
-                    .top(top),
-            )
-            .child(bar)
+        let line = Area::new((x, y - 8.0).into(), (1.0, 28.0).into());
+        notein_ui_kit::Floating::new(line, bar)
+            .above()
+            .centered()
             .into_element()
     }
 }
