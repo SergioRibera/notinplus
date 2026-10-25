@@ -59,19 +59,24 @@ impl Component for SearchPane {
             .spacing(12.0)
             .child(SearchField::new(query, "Palabras o una cita (Juan 3:16)").auto_focus(true))
             .maybe_child(several.then(|| {
-                Segmented::new(["Esta traducción", "Todas"], usize::from(*everywhere.read()))
-                    .full_width()
-                    .height(32.0)
-                    .on_select(move |i: usize| everywhere.set(i == 1))
+                Segmented::new(
+                    ["Esta traducción", "Todas"],
+                    usize::from(*everywhere.read()),
+                )
+                .full_width()
+                .height(32.0)
+                .on_select(move |i: usize| everywhere.set(i == 1))
             }))
-            .child(Text::new(if typed.is_empty() {
-                HELP.to_owned()
-            } else if found >= LIMIT {
-                format!("Los {LIMIT} más cercanos")
-            } else {
-                crate::format::count(found, "resultado", "resultados")
-            })
-            .role(TextRole::Hint))
+            .child(
+                Text::new(if typed.is_empty() {
+                    HELP.to_owned()
+                } else if found >= LIMIT {
+                    format!("Los {LIMIT} más cercanos")
+                } else {
+                    crate::format::count(found, "resultado", "resultados")
+                })
+                .role(TextRole::Hint),
+            )
             .child(results)
     }
 }
