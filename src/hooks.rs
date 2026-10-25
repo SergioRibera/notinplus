@@ -2,4 +2,6 @@
 
 pub mod safe_area;
 
-pub use safe_area::{SafeAreaOverride, provide_safe_area_override, use_safe_area_insets};
+pub use safe_area::{
+    SafeAreaOverride, provide_safe_area_override, provide_safe_area_root, use_safe_area_insets,
+};

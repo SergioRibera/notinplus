@@ -254,7 +254,7 @@ impl Component for AppShell {
                 lib.purge_expired(retention).await.map(drop)
             });
         });
-        let insets = *crate::hooks::use_safe_area_insets().read();
+        let insets = *crate::hooks::provide_safe_area_root().read();
         // Share the measured window area with any descendant that
         // wants to clamp its own popup/overlay inside the viewport —
         // see `notein_ui_kit::ViewportArea` + `clamp_popup_top`.
