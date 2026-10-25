@@ -781,6 +781,114 @@ struct ToolButtonColors {
     hover: Color,
     active: Color,
     accent: Color,
+    tip: Color,
+    tip_text: Color,
+    tip_border: Color,
+}
+
+/// Tooltips paint on the top overlay level: above every menu, popup and
+/// dialog, since they never take input.
+const TOOLTIP_LAYER: Layer = Layer::OverlayLevel(16);
+/// How long the mouse rests on a button before its tooltip shows.
+const TOOLTIP_DELAY: Duration = Duration::from_millis(450);
+/// Gap between a button and its tooltip.
+const TOOLTIP_GAP: f32 = 6.;
+
+/// The tooltip of one [`ToolButton`]: shown after the mouse rests on it,
+/// under it or over it near the bottom of the popup bounds, and slid
+/// sideways to stay inside them.
+#[derive(Clone, Copy, PartialEq)]
+struct Tip {
+    shown: State<bool>,
+    task: State<Option<TaskHandle>>,
+    anchor: State<Area>,
+    size: State<Area>,
+}
+
+impl Tip {
+    fn use_tip() -> Self {
+        Self {
+            shown: use_state(|| false),
+            task: use_state(|| None),
+            anchor: use_state(Area::default),
+            size: use_state(Area::default),
+        }
+    }
+
+    /// Touch never shows a tooltip: a finger does not rest, and the press
+    /// already does what the button says.
+    fn enter(mut self, event: &Event<PointerEventData>) {
+        if !matches!(event.data(), PointerEventData::Mouse(_)) {
+            return;
+        }
+        self.cancel();
+        let mut shown = self.shown;
+        self.task.set(Some(spawn(async move {
+            timer(TOOLTIP_DELAY).await;
+            shown.set_if_modified(true);
+        })));
+    }
+
+    fn leave(mut self) {
+        self.cancel();
+        self.shown.set_if_modified(false);
+    }
+
+    fn cancel(&mut self) {
+        if let Some(task) = self.task.write().take() {
+            task.cancel();
+        }
+    }
+
+    fn track(mut self, event: &Event<SizedEventData>) {
+        self.anchor.set_if_modified(event.area);
+    }
+
+    fn render(self, text: &'static str, colors: &ToolButtonColors) -> Option<Element> {
+        if !*self.shown.read() {
+            return None;
+        }
+        let mut size = self.size;
+        let anchor = *self.anchor.peek();
+        let measured = *size.read();
+        let bounds = popup_bounds();
+        let over = anchor.max_y() + TOOLTIP_ROOM > bounds.max_y();
+        let centred = anchor.center().x - measured.width() / 2.;
+        let (min_left, max_left) = (
+            bounds.min_x() + POPUP_MARGIN,
+            (bounds.max_x() - measured.width() - POPUP_MARGIN).max(bounds.min_x() + POPUP_MARGIN),
+        );
+        let left = centred.clamp(min_left, max_left) - anchor.min_x();
+        let position = if over {
+            Position::new_absolute().bottom(anchor.height() + TOOLTIP_GAP)
+        } else {
+            Position::new_absolute().top(anchor.height() + TOOLTIP_GAP)
+        };
+        Some(
+            rect()
+                .position(position.left(left))
+                .layer(TOOLTIP_LAYER)
+                .interactive(Interactive::No)
+                .on_sized(move |event: Event<SizedEventData>| size.set_if_modified(event.area))
+                .padding((5., 9.))
+                .corner_radius(6.)
+                .background(colors.tip)
+                .border(
+                    Border::new()
+                        .width(1.)
+                        .alignment(BorderAlignment::Inner)
+                        .fill(colors.tip_border),
+                )
+                .child(
+                    label()
+                        .text(text)
+                        .font_size(12.)
+                        .color(colors.tip_text)
+                        .max_lines(1),
+                )
+                .into_element(),
+        )
+    }
 }
 
 /// Square icon button with hover, active and disabled states.
@@ -837,6 +945,9 @@ impl ToolButton {
             hover: colors.popup_selected,
             active: colors.accent.with_a(46),
             accent: colors.accent,
+            tip: colors.popup_background,
+            tip_text: colors.text,
+            tip_border: colors.border,
         });
         self
     }
@@ -845,12 +956,16 @@ impl ToolButton {
 impl Component for ToolButton {
     fn render(&self) -> impl IntoElement {
         let mut hovered = use_state(|| false);
+        let tip = Tip::use_tip();
         let colors = self.colors.clone().unwrap_or(ToolButtonColors {
             text: Color::WHITE,
             muted: Color::GRAY,
             hover: Color::from_argb(40, 255, 255, 255),
             active: Color::from_argb(60, 110, 168, 254),
             accent: Color::from_rgb(110, 168, 254),
+            tip: Color::from_rgb(32, 32, 36),
+            tip_text: Color::WHITE,
+            tip_border: Color::from_argb(40, 255, 255, 255),
         });
         let enabled = self.enabled;
         let background = if self.active {
@@ -879,10 +994,17 @@ impl Component for ToolButton {
             } else {
                 CursorIcon::NotAllowed
             })
-            .on_pointer_enter(move |_| hovered.set(true))
-            .on_pointer_leave(move |_| hovered.set_if_modified(false))
+            .on_pointer_enter(move |event: Event<PointerEventData>| {
+                hovered.set(true);
+                tip.enter(&event);
+            })
+            .on_pointer_leave(move |_| {
+                hovered.set_if_modified(false);
+                tip.leave();
+            })
             .on_press(move |event: Event<PressEventData>| {
                 event.stop_propagation();
+                tip.leave();
                 if enabled && let Some(handler) = &on_press {
                     handler.call(());
                 }
@@ -901,20 +1023,10 @@ impl Component for ToolButton {
                     .corner_radius(2.)
                     .background(swatch)
             }));
-        let mut area = use_state(Area::default);
-        let position = if area.read().max_y() + TOOLTIP_ROOM > popup_bounds().max_y() {
-            AttachedPosition::Top
-        } else {
-            AttachedPosition::Bottom
-        };
-        TooltipContainer::new(Tooltip::new_text(self.tip))
-            .delay(Duration::from_millis(450))
-            .position(position)
-            .child(
-                rect()
-                    .on_sized(move |event: Event<SizedEventData>| area.set_if_modified(event.area))
-                    .child(button),
-            )
+        rect()
+            .on_sized(move |event: Event<SizedEventData>| tip.track(&event))
+            .child(button)
+            .maybe_child(tip.render(self.tip, &colors))
     }
 }
 

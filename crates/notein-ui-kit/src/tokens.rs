@@ -76,6 +76,23 @@ pub mod motion {
     pub const SLOW: u64 = 250;
 }
 
+/// Overlay levels (freya's `Layer::OverlayLevel`, 1 to 16).
+///
+/// They keep floating UI in one order: page, then modals and popovers,
+/// then toasts and hints on top. Floating UI that belongs to the page (selection bars,
+/// toolbar menus) uses `Layer::Overlay`, one level above its parent.
+pub mod layer {
+    /// The lowest modal; each one stacked above takes two more levels, up
+    /// to [`MODAL_MAX`].
+    pub const MODAL: u8 = 4;
+    /// The highest level a modal card reaches.
+    pub const MODAL_MAX: u8 = 15;
+    /// Toasts, over any modal.
+    pub const TOAST: u8 = 16;
+    /// Hover hints, over everything: they never take input.
+    pub const HINT: u8 = 16;
+}
+
 /// Toast durations (milliseconds).
 pub mod toast {
     /// Default toast with an undo action.

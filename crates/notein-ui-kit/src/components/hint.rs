@@ -115,7 +115,7 @@ impl Component for Hint {
         };
         rect()
             .position(position)
-            .layer(Layer::Overlay)
+            .layer(Layer::OverlayLevel(crate::tokens::layer::HINT))
             .interactive(Interactive::No)
             .width(Size::px(2.0 * REACH))
             .horizontal()

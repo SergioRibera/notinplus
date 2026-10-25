@@ -251,7 +251,7 @@ impl Component for ToastHost {
         let toasts = Toasts::get();
         let items = toasts.stack.read().items.clone();
         rect()
-            .layer(Layer::OverlayLevel(60))
+            .layer(Layer::OverlayLevel(crate::tokens::layer::TOAST))
             .position(
                 Position::new_absolute()
                     .bottom(self.bottom_inset + 24.0)

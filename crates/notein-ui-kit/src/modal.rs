@@ -469,8 +469,10 @@ impl Component for ModalOverlay {
         let placement = model.placement;
         let dismiss = model.dismiss_on_backdrop;
         let dismiss_on_escape = model.dismiss_on_escape && self.is_top;
-        // Two overlay levels per modal, capped below freya's 16.
-        let level = 4 + 2 * u8::try_from(self.depth.min(5)).unwrap_or(5);
+        // Two overlay levels per modal (veil and card), under toasts and hints.
+        let level = (crate::tokens::layer::MODAL
+            + 2 * u8::try_from(self.depth.min(5)).unwrap_or(5))
+        .min(crate::tokens::layer::MODAL_MAX - 1);
         let (scrim, blur) = self.veil.paint(model.backdrop_alpha, fade);
         let (scale, rise) = placement.entrance(settle);
         let opened_at = model.opened_at;
