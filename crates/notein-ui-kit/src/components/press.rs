@@ -124,3 +124,11 @@ pub fn press_anchor(data: &PressEventData) -> Area {
     )]
     Area::new((at.x as f32, at.y as f32).into(), (1.0, 1.0).into())
 }
+
+/// Whether a pointer event comes from a mouse. Hover follows only the
+/// mouse: a finger fires enter when it lands but no leave when it lifts,
+/// so a hover set by touch would stay on.
+#[must_use]
+pub fn is_mouse(e: &Event<PointerEventData>) -> bool {
+    matches!(e.data(), PointerEventData::Mouse(_))
+}

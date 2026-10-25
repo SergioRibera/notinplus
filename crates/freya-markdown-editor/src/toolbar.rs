@@ -995,7 +995,7 @@ impl Component for ToolButton {
                 CursorIcon::NotAllowed
             })
             .on_pointer_enter(move |event: Event<PointerEventData>| {
-                hovered.set(true);
+                hovered.set(matches!(event.data(), PointerEventData::Mouse(_)));
                 tip.enter(&event);
             })
             .on_pointer_leave(move |_| {
@@ -1101,7 +1101,9 @@ impl Component for Dropdown {
             } else {
                 CursorIcon::NotAllowed
             })
-            .on_pointer_enter(move |_| hovered.set(true))
+            .on_pointer_enter(move |event: Event<PointerEventData>| {
+                hovered.set(matches!(event.data(), PointerEventData::Mouse(_)));
+            })
             .on_pointer_leave(move |_| hovered.set_if_modified(false))
             .on_press(move |event: Event<PressEventData>| {
                 event.stop_propagation();

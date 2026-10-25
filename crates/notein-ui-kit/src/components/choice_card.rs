@@ -91,7 +91,9 @@ impl Component for ChoiceCard {
                     .width(if chosen { 2.0 } else { 1.0 })
                     .alignment(BorderAlignment::Inner),
             )
-            .on_pointer_enter(move |_| hovering.set(true))
+            .on_pointer_enter(move |e: Event<PointerEventData>| {
+                hovering.set(super::press::is_mouse(&e));
+            })
             .on_pointer_leave(move |_| hovering.set(false))
             .map(on_pick, |r, handler| r.on_press(move |_| handler.call(())))
             .child(self.preview.clone())

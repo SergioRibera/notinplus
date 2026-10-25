@@ -246,14 +246,16 @@ impl Component for Button {
                 )
             })
             .maybe(interactive, |r| {
-                r.on_pointer_enter(move |_| hovering.set(true))
-                    .on_pointer_leave(move |_| {
-                        hovering.set(false);
-                        pressed.set(false);
-                    })
-                    .on_pointer_down(move |_| pressed.set(true))
-                    .on_pointer_press(move |_| pressed.set(false))
-                    .map(on_press, |r, handler| r.on_press(move |e| handler.call(e)))
+                r.on_pointer_enter(move |e: Event<PointerEventData>| {
+                    hovering.set(super::press::is_mouse(&e));
+                })
+                .on_pointer_leave(move |_| {
+                    hovering.set(false);
+                    pressed.set(false);
+                })
+                .on_pointer_down(move |_| pressed.set(true))
+                .on_pointer_press(move |_| pressed.set(false))
+                .map(on_press, |r, handler| r.on_press(move |e| handler.call(e)))
             })
             .maybe_child(leading)
             .child(

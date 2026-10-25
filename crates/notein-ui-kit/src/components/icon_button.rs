@@ -155,7 +155,7 @@ impl Component for IconButton {
             })
             .on_sized(move |e: Event<SizedEventData>| hint.track(&e))
             .on_pointer_enter(move |e: Event<PointerEventData>| {
-                hovering.set(true);
+                hovering.set(super::press::is_mouse(&e));
                 hint.enter(&e);
             })
             .on_pointer_leave(move |_| {

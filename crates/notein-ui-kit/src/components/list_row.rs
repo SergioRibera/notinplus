@@ -314,9 +314,11 @@ impl Component for ListRow {
                 )
             })
             .maybe(clickable, |r| {
-                r.on_pointer_enter(move |_| hovering.set(true))
-                    .on_pointer_leave(move |_| hovering.set(false))
-                    .map(on_press, |r, handler| r.on_press(move |e| handler.call(e)))
+                r.on_pointer_enter(move |e: Event<PointerEventData>| {
+                    hovering.set(super::press::is_mouse(&e));
+                })
+                .on_pointer_leave(move |_| hovering.set(false))
+                .map(on_press, |r, handler| r.on_press(move |e| handler.call(e)))
             })
             .map(on_secondary, |r, handler| {
                 r.on_secondary_down(move |e| handler.call(e))

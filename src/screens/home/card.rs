@@ -446,7 +446,9 @@ impl Component for DocCard {
             .spacing(CAPTION_GAP)
             .a11y_role(AccessibilityRole::Button)
             .a11y_alt(self.data.name.clone())
-            .on_pointer_enter(move |_| hovering.set(true))
+            .on_pointer_enter(move |e: Event<PointerEventData>| {
+                hovering.set(notein_ui_kit::is_mouse(&e));
+            })
             .on_pointer_leave(move |_| hovering.set(false))
             .child(self.cover(hovering()))
             .child(caption(&self.data));

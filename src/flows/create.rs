@@ -340,7 +340,9 @@ impl Component for Tile {
             .background(color.with_a(if hover() { 60 } else { 41 }))
             .a11y_role(AccessibilityRole::Button)
             .a11y_alt(info.label.to_string())
-            .on_pointer_enter(move |_| hover.set(true))
+            .on_pointer_enter(move |e: Event<PointerEventData>| {
+                hover.set(notein_ui_kit::is_mouse(&e));
+            })
             .on_pointer_leave(move |_| hover.set(false))
             .on_press(move |_| {
                 ModalController::get().close();

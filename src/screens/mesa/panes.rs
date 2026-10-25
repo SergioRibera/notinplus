@@ -193,7 +193,9 @@ impl Component for Split {
                 divider
                     .center()
                     .a11y_role(AccessibilityRole::Splitter)
-                    .on_pointer_enter(move |_| hovered.set(true))
+                    .on_pointer_enter(move |e: Event<PointerEventData>| {
+                        hovered.set(notein_ui_kit::is_mouse(&e));
+                    })
                     .on_pointer_leave(move |_| hovered.set(false))
                     .on_pointer_down(move |e: Event<PointerEventData>| {
                         if e.data().is_primary() {

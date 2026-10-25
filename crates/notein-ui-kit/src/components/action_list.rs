@@ -215,9 +215,11 @@ impl Component for ActionRow {
             .map(background, Rect::background)
             .opacity(if enabled { 1.0 } else { 0.4 })
             .maybe(enabled, |r| {
-                r.on_pointer_enter(move |_| hovering.set(true))
-                    .on_pointer_leave(move |_| hovering.set(false))
-                    .on_press(move |_| on_run.call(()))
+                r.on_pointer_enter(move |e: Event<PointerEventData>| {
+                    hovering.set(super::press::is_mouse(&e));
+                })
+                .on_pointer_leave(move |_| hovering.set(false))
+                .on_press(move |_| on_run.call(()))
             })
             .child(self.content())
     }

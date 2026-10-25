@@ -249,7 +249,9 @@ impl Component for MesaCard {
             .a11y_role(AccessibilityRole::Button)
             .a11y_alt(self.data.workspace_title(id))
             .a11y_focusable(true)
-            .on_pointer_enter(move |_| hovering.set(true))
+            .on_pointer_enter(move |e: Event<PointerEventData>| {
+                hovering.set(notein_ui_kit::is_mouse(&e));
+            })
             .on_pointer_leave(move |_| hovering.set(false))
             .child(
                 rect()
@@ -349,7 +351,9 @@ impl Component for MesaRow {
             .a11y_role(AccessibilityRole::Button)
             .a11y_alt(title.clone())
             .a11y_focusable(true)
-            .on_pointer_enter(move |_| hovering.set(true))
+            .on_pointer_enter(move |e: Event<PointerEventData>| {
+                hovering.set(notein_ui_kit::is_mouse(&e));
+            })
             .on_pointer_leave(move |_| hovering.set(false))
             .child(
                 rect()
