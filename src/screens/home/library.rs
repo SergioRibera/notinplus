@@ -587,13 +587,7 @@ impl Component for EmptyShelf {
                     .primary()
                     .icon(lucide::plus())
                     .on_press(move |e: Event<PressEventData>| {
-                        let at = match e.data() {
-                            PressEventData::Mouse(m) => m.global_location,
-                            _ => CursorPoint::new(0.0, 0.0),
-                        };
-                        #[allow(clippy::cast_possible_truncation)] // window coordinates
-                        let anchor =
-                            Area::new((at.x as f32, at.y as f32).into(), (1.0, 1.0).into());
+                        let anchor = notein_ui_kit::press_anchor(e.data());
                         crate::flows::create::open_menu(
                             anchor,
                             crate::flows::create::Context {

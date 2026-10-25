@@ -77,10 +77,7 @@ fn menu_for(tab: &PaneTab, data: &Arc<LibraryData>, at: CursorPoint) {
 }
 
 fn anchor(e: &Event<PressEventData>) -> CursorPoint {
-    match e.data() {
-        PressEventData::Mouse(m) => m.global_location,
-        _ => CursorPoint::new(0.0, 0.0),
-    }
+    notein_ui_kit::press_point(e.data())
 }
 
 /// The header of pane `pane`.

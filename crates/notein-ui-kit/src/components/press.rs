@@ -98,3 +98,29 @@ impl PressGesture {
         })
     }
 }
+
+/// Where a press happened, in window coordinates: the pointer or the
+/// finger. A key press has no point of its own, so it counts as the middle
+/// of what the system bars and the keyboard leave visible.
+#[must_use]
+pub fn press_point(data: &PressEventData) -> CursorPoint {
+    match data {
+        PressEventData::Mouse(mouse) => mouse.global_location,
+        PressEventData::Touch(touch) => touch.global_location,
+        PressEventData::Keyboard(_) => {
+            let centre = crate::viewport::safe_frame().center();
+            CursorPoint::new(f64::from(centre.x), f64::from(centre.y))
+        }
+    }
+}
+
+/// [`press_point`] as the one pixel area a popover hangs from.
+#[must_use]
+pub fn press_anchor(data: &PressEventData) -> Area {
+    let at = press_point(data);
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "window coordinates fit an f32"
+    )]
+    Area::new((at.x as f32, at.y as f32).into(), (1.0, 1.0).into())
+}

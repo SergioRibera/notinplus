@@ -145,12 +145,7 @@ impl Tool {
 }
 
 fn anchor(e: &Event<PressEventData>) -> Area {
-    let at = match e.data() {
-        PressEventData::Mouse(m) => m.global_location,
-        _ => CursorPoint::new(0.0, 0.0),
-    };
-    #[allow(clippy::cast_possible_truncation)] // window coordinates
-    Area::new((at.x as f32, at.y as f32).into(), (1.0, 1.0).into())
+    notein_ui_kit::press_anchor(e.data())
 }
 
 /// Live state the chrome reads, kept in step with the board by its

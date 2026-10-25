@@ -14,10 +14,7 @@ use crate::library::{ItemId, LibraryData, PaneTab, WorkspaceId};
 const AVATARS: usize = 3;
 
 fn anchor(e: &Event<PressEventData>) -> CursorPoint {
-    match e.data() {
-        PressEventData::Mouse(m) => m.global_location,
-        _ => CursorPoint::new(0.0, 0.0),
-    }
+    notein_ui_kit::press_point(e.data())
 }
 
 /// People sharing any document of the mesa, online first.

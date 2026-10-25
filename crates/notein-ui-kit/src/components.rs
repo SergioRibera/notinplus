@@ -39,7 +39,7 @@ pub use icon::Icon;
 pub use icon_button::IconButton;
 pub use kind_badge::KindBadge;
 pub use list_row::{Leading, ListRow, Trailing};
-pub use press::{LONG_PRESS, PressGesture, use_press_gesture};
+pub use press::{LONG_PRESS, PressGesture, press_anchor, press_point, use_press_gesture};
 pub use ref_chip::RefChip;
 pub use segmented::{Segment, Segmented};
 pub use spinner::Spinner;
