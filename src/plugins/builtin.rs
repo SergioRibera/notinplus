@@ -36,6 +36,9 @@ pub fn notes_kind() -> Arc<notein_notes::NotesKind> {
 /// The Bible kind, when its database could be opened.
 #[must_use]
 pub fn bible_kind() -> Option<Arc<notein_bible::BibleKind>> {
+    // The kind is made while the catalog is built, which may not have
+    // happened yet when a screen first asks.
+    super::catalog::ensure();
     BIBLE.get().cloned()
 }
 

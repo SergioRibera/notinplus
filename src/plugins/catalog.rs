@@ -41,6 +41,11 @@ fn init() -> RwLock<PluginCatalog> {
     RwLock::new(catalog)
 }
 
+/// Build the catalog if nothing has asked for it yet, without locking it.
+pub(super) fn ensure() {
+    CATALOG.get_or_init(init);
+}
+
 /// Read access to the catalog.
 pub fn catalog() -> RwLockReadGuard<'static, PluginCatalog> {
     CATALOG
