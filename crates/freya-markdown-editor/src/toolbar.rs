@@ -158,7 +158,7 @@ impl Component for MarkdownToolbar {
             menu.set(next);
         };
 
-        let history = group([
+        let history = [
             ToolButton::new(lucide::undo_2(), text.get(Label::Undo))
                 .enabled(editing && format.can_undo)
                 .on_press(move || controller.undo())
@@ -169,7 +169,7 @@ impl Component for MarkdownToolbar {
                 .on_press(move || controller.redo())
                 .colors(&theme)
                 .into_element(),
-        ]);
+        ];
 
         let block_picker = Dropdown {
             text: text.block(format.block_type).to_owned(),
@@ -239,7 +239,7 @@ impl Component for MarkdownToolbar {
             .collect(),
         };
 
-        let marks = group([
+        let marks = [
             toggle(
                 MarkFamily::Strong,
                 MarkKind::Strong,
@@ -296,7 +296,7 @@ impl Component for MarkdownToolbar {
                 text.get(Label::Subscript),
             )
             .into_element(),
-        ]);
+        ];
 
         let color_menu = (*menu.read() == Some(Menu::Color)).then(|| {
             palette_popup(&theme, format.color(), move |color| {
@@ -312,7 +312,7 @@ impl Component for MarkdownToolbar {
                 menu.set(None);
             })
         });
-        let paint = group([
+        let paint = [
             anchored(
                 ToolButton::new(lucide::baseline(), text.get(Label::TextColor))
                     .enabled(rich)
@@ -339,14 +339,14 @@ impl Component for MarkdownToolbar {
             .on_press(move || controller.clear_formatting())
             .colors(&theme)
             .into_element(),
-        ]);
+        ];
 
         let current_link = format.link().map(|link| link.url.clone());
         let link_menu = (*menu.read() == Some(Menu::Link))
             .then(|| link_popup(&theme, controller, menu, link_draft, current_link.clone()));
         let mut draft_seed = link_draft;
         let seed = current_link.clone().unwrap_or_default();
-        let link = group([anchored(
+        let link = [anchored(
             ToolButton::new(lucide::link(), text.get(Label::Link))
                 .active(current_link.is_some())
                 .enabled(rich && (format.has_selection || current_link.is_some()))
@@ -357,7 +357,7 @@ impl Component for MarkdownToolbar {
                 .colors(&theme)
                 .into_element(),
             link_menu,
-        )]);
+        )];
 
         let align = |value: Align, icon: Bytes, tip: &'static str| {
             ToolButton::new(icon, tip)
@@ -367,7 +367,7 @@ impl Component for MarkdownToolbar {
                 .colors(&theme)
                 .into_element()
         };
-        let alignment = group([
+        let alignment = [
             align(
                 Align::Left,
                 lucide::text_align_start(),
@@ -388,7 +388,7 @@ impl Component for MarkdownToolbar {
                 lucide::text_align_justify(),
                 text.get(Label::Justify),
             ),
-        ]);
+        ];
 
         let list = |block_type: BlockType, icon: Bytes, tip: &'static str| {
             let active = format.block_type == Some(block_type);
@@ -409,7 +409,7 @@ impl Component for MarkdownToolbar {
             format.block_type,
             Some(BlockType::BulletList | BlockType::OrderedList | BlockType::TaskList)
         );
-        let lists = group([
+        let lists = [
             list(
                 BlockType::BulletList,
                 lucide::list(),
@@ -435,7 +435,7 @@ impl Component for MarkdownToolbar {
                 .on_press(move || controller.indent())
                 .colors(&theme)
                 .into_element(),
-        ]);
+        ];
 
         let insert_picker = Dropdown {
             text: text.get(Label::Insert).to_owned(),
@@ -471,21 +471,21 @@ impl Component for MarkdownToolbar {
             .horizontal()
             .maybe(self.wrap, |bar| bar.content(Content::wrap_spacing(4.)))
             .cross_align(Alignment::center())
-            .spacing(4.)
-            .child(history)
+            .spacing(2.)
+            .children(history)
             .child(separator(&colors))
             .child(block_picker)
             .child(font_picker)
             .child(size_picker)
             .child(separator(&colors))
-            .child(marks)
+            .children(marks)
             .child(separator(&colors))
-            .child(paint)
-            .child(link)
+            .children(paint)
+            .children(link)
             .child(separator(&colors))
-            .child(alignment)
+            .children(alignment)
             .child(separator(&colors))
-            .child(lists)
+            .children(lists)
             .child(separator(&colors))
             .child(insert_picker)
             .maybe_child(mode.map(|mode| rect().margin((0., 0., 0., 6.)).child(mode)))
@@ -567,15 +567,6 @@ fn insert_items(
             close();
         }),
     ]
-}
-
-fn group<const N: usize>(children: [Element; N]) -> Element {
-    rect()
-        .horizontal()
-        .cross_align(Alignment::center())
-        .spacing(2.)
-        .children(children)
-        .into_element()
 }
 
 fn separator(colors: &crate::EditorColors) -> Element {

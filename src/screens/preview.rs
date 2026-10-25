@@ -345,6 +345,7 @@ fn class_mesa() -> Element {
 #[test]
 fn note_mesa_renders() {
     render("mesa-note-tablet", (1024.0, 768.0), class_mesa);
+    render("mesa-note-portrait", (820.0, 1180.0), class_mesa);
 }
 
 fn map() -> Element {
