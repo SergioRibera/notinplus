@@ -214,7 +214,7 @@ impl Component for Catalog {
             .filter(|l| {
                 view.bibles
                     .iter()
-                    .any(|b| b.language.as_deref() == Some(l.id.as_str()))
+                    .any(|b| b.language_code == l.id)
             })
             .map(|l| (l.id.clone(), l.local.clone()))
             .collect();
@@ -235,7 +235,7 @@ impl Component for Catalog {
         let rows: Vec<Element> = view
             .bibles
             .iter()
-            .filter(|b| chosen.is_none() || b.language == chosen)
+            .filter(|b| chosen.as_deref().is_none_or(|code| b.language_code == code))
             .filter(|b| {
                 needle.is_empty()
                     || label(b).to_lowercase().contains(&needle)
@@ -358,7 +358,7 @@ impl Component for FirstUse {
             .and_then(|view| {
                 view.bibles
                     .iter()
-                    .filter(|b| b.language.as_deref() == Some(language))
+                    .filter(|b| b.language_code == language)
                     .min_by_key(|b| !label(b).to_lowercase().contains("reina"))
                     .or_else(|| view.bibles.first())
                     .cloned()

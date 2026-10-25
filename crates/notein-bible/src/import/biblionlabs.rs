@@ -750,6 +750,10 @@ pub struct CatalogueView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BibleEntryView {
     pub id: String,
+    /// ISO 639-3 code of the language, the prefix of the id (`spa_rvr` is
+    /// `spa`). What filters and defaults compare.
+    pub language_code: String,
+    /// Name of the language to show, in itself when known.
     pub language: Option<String>,
     pub name_local: Option<String>,
     pub name_english: Option<String>,
@@ -761,6 +765,11 @@ pub struct LanguageEntryView {
     pub local: String,
     pub english: String,
     pub direction: String,
+}
+
+/// The ISO 639-3 prefix of a catalogue id.
+fn language_code(id: &str) -> String {
+    id.split('_').next().unwrap_or_default().to_owned()
 }
 
 impl CatalogueView {
@@ -807,6 +816,7 @@ impl CatalogueView {
                     });
                 BibleEntryView {
                     id: id.clone(),
+                    language_code: language_code(id),
                     language,
                     name_local,
                     name_english,
@@ -823,6 +833,7 @@ impl CatalogueView {
             }
             bibles.push(BibleEntryView {
                 id: extra.id.to_string(),
+                language_code: language_code(extra.id),
                 language: Some(extra.language.to_string()),
                 name_local: Some(extra.name_local.to_string()),
                 name_english: Some(extra.name_english.to_string()),
