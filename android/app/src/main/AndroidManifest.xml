@@ -23,6 +23,7 @@
             android:name="rs.sergioribera.notinplus.NotinplusActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|keyboardHidden|screenSize">
             <meta-data
                 android:name="android.app.lib_name"
