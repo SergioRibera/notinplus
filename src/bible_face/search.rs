@@ -2,15 +2,19 @@
 //! reference ("Juan 3:16") that goes straight there.
 
 use freya::prelude::*;
-use notein_bible::db::{BookRow, SearchHit};
+use notein_bible::db::{BibleRow, BookRow, SearchHit};
 use notein_bible::ui::search::{SearchHitView, hit_to_view};
 use notein_ui_kit::theme::palette;
-use notein_ui_kit::{EmptyState, ModalController, SearchField, Sheet, Text, TextRole, tokens};
+use notein_ui_kit::{
+    EmptyState, ModalController, SearchField, Segmented, Sheet, Text, TextRole, tokens,
+};
 
 use super::Reader;
 
 /// Most verse matches listed.
 const LIMIT: usize = 50;
+/// How to search, shown until something is typed.
+const HELP: &str = "Todas las palabras deben aparecer, también como comienzo de otra (amor encuentra amoroso). \"frase exacta\" · fe OR esperanza · -palabra para excluir.";
 
 pub(super) fn open(reader: &Reader) {
     Sheet::titled("Buscar en la Biblia")
@@ -28,12 +32,17 @@ struct SearchPane {
 impl Component for SearchPane {
     fn render(&self) -> impl IntoElement {
         let query = use_state(String::new);
+        let mut everywhere = use_state(|| false);
+        let bibles = self.reader.db.list_bibles().unwrap_or_default();
+        let several = bibles.len() > 1;
+        let scope = (several && *everywhere.read()).then_some(bibles.as_slice());
         let typed = query.read().trim().to_owned();
         let hits = if typed.is_empty() {
             Vec::new()
         } else {
-            find(&self.reader, &typed)
+            find(&self.reader, &typed, scope)
         };
+        let found = hits.len();
         let results: Element = if !typed.is_empty() && hits.is_empty() {
             EmptyState::new(freya::icons::lucide::search_x(), "Sin resultados")
                 .body("Probá con otras palabras o con una cita como Juan 3:16.")
@@ -49,6 +58,20 @@ impl Component for SearchPane {
             .width(Size::fill())
             .spacing(12.0)
             .child(SearchField::new(query, "Palabras o una cita (Juan 3:16)").auto_focus(true))
+            .maybe_child(several.then(|| {
+                Segmented::new(["Esta traducción", "Todas"], usize::from(*everywhere.read()))
+                    .full_width()
+                    .height(32.0)
+                    .on_select(move |i: usize| everywhere.set(i == 1))
+            }))
+            .child(Text::new(if typed.is_empty() {
+                HELP.to_owned()
+            } else if found >= LIMIT {
+                format!("Los {LIMIT} más cercanos")
+            } else {
+                crate::format::count(found, "resultado", "resultados")
+            })
+            .role(TextRole::Hint))
             .child(results)
     }
 }
@@ -76,6 +99,9 @@ fn hit_row(reader: &Reader, hit: SearchHitView) -> Element {
         .spacing(4.0)
         .corner_radius(tokens::radius::MD)
         .on_press(move |_: Event<PressEventData>| {
+            if !source.bible_id.is_empty() && source.bible_id != reader.bible_id() {
+                reader.switch_bible(&source.bible_id);
+            }
             reader.go(&source.book_id, source.chapter, source.verse);
             ModalController::get().close();
         })
@@ -85,8 +111,9 @@ fn hit_row(reader: &Reader, hit: SearchHitView) -> Element {
 }
 
 /// Matches for `query`: a reference it names first, then verses with
-/// its words.
-fn find(reader: &Reader, query: &str) -> Vec<SearchHitView> {
+/// its words, in the open translation or in every one of `everywhere`
+/// (each hit then says which).
+fn find(reader: &Reader, query: &str, everywhere: Option<&[BibleRow]>) -> Vec<SearchHitView> {
     let db = &reader.db;
     let bible_id = reader.bible_id();
     let books = db.list_books(&bible_id).unwrap_or_default();
@@ -96,13 +123,21 @@ fn find(reader: &Reader, query: &str) -> Vec<SearchHitView> {
             .find(|b| b.book_id == book_id)
             .map(|b| b.name.clone())
     };
+    let scope = everywhere.is_none().then_some(bible_id.as_str());
     let mut views: Vec<SearchHitView> = db
-        .search(Some(&bible_id), query, LIMIT)
+        .search(scope, query, LIMIT)
         .unwrap_or_default()
         .into_iter()
         .map(|hit| {
             let name = name_of(&hit.book_id);
-            hit_to_view(hit, name.as_deref())
+            let abbrev = everywhere
+                .and_then(|bibles| bibles.iter().find(|b| b.id == hit.bible_id))
+                .map(|b| b.abbrev.clone());
+            let mut view = hit_to_view(hit, name.as_deref());
+            if let Some(abbrev) = abbrev {
+                view.reference = format!("{} · {abbrev}", view.reference);
+            }
+            view
         })
         .collect();
     if let Some(place) = reference(reader, &books, query) {
