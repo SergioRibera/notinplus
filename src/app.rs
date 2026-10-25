@@ -87,6 +87,11 @@ pub struct AnchorSourceCtx {
     pub text_press: Option<crate::canvas::TextPressRef>,
 }
 
+/// Provided by a face that paints its own pages under the ink (the PDF),
+/// so the canvas it mounts does not lay the item's paper over them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FacePaintsBackground;
+
 impl PartialEq for AnchorSourceCtx {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.source, &other.source)

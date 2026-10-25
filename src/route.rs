@@ -71,8 +71,10 @@ pub(crate) fn init_canvas_mount(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
     // path (e.g. re-opening the split in a DocLinked bundle). Pull the
     // item's persisted color + pattern from the library so the canvas
     // paints with the user's chosen backdrop instead of flashing the
-    // default off-white paper.
-    if !had_pending {
+    // default off-white paper. A face that paints its own pages keeps
+    // them: the paper would land on top once the library answered.
+    let face_paints = try_consume_context::<crate::app::FacePaintsBackground>().is_some();
+    if !had_pending && !face_paints {
         if let Some(id) = mount.item() {
             let board = Arc::clone(board);
             spawn(async move {

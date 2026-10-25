@@ -46,6 +46,7 @@ impl Component for PdfFace {
             slot: self.slot,
         };
 
+        use_provide_context(|| crate::app::FacePaintsBackground);
         // Publish the long-press anchor-ref for this item. Any
         // descendant `canvas_body` picks it up via `try_consume_context`
         // and threads it through `drawing_surface`.
