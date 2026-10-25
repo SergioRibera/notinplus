@@ -8,6 +8,9 @@
 use std::borrow::Cow;
 use std::time::Duration;
 
+use freya::animation::{
+    AnimNum, Ease, Function, OnChange, OnCreation, use_animation_with_dependencies,
+};
 use freya::prelude::*;
 
 use super::feedback::ProgressBar;
@@ -127,7 +130,23 @@ impl Toast {
 struct ToastStack {
     next: u64,
     items: Vec<(ToastId, Toast)>,
+    /// Toasts that are gone but still playing their exit.
+    leaving: Vec<ToastId>,
 }
+
+impl ToastStack {
+    /// The toasts still showing, oldest first.
+    fn showing(&self) -> impl Iterator<Item = ToastId> + '_ {
+        self.items
+            .iter()
+            .map(|(id, _)| *id)
+            .filter(|id| !self.leaving.contains(id))
+    }
+}
+
+/// How long a toast takes to come in and to leave.
+const ENTER_MS: u64 = 220;
+const EXIT_MS: u64 = 150;
 
 /// Root-scoped toast queue.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -168,15 +187,9 @@ impl Toasts {
             stack.items.push((id, toast));
             id
         };
-        let overflow = self.stack.peek().items.len().saturating_sub(MAX_VISIBLE);
-        let expired: Vec<ToastId> = self
-            .stack
-            .peek()
-            .items
-            .iter()
-            .take(overflow)
-            .map(|(id, _)| *id)
-            .collect();
+        let showing: Vec<ToastId> = self.stack.peek().showing().collect();
+        let overflow = showing.len().saturating_sub(MAX_VISIBLE);
+        let expired: Vec<ToastId> = showing.into_iter().take(overflow).collect();
         for old in expired {
             self.expire(old);
         }
@@ -193,43 +206,60 @@ impl Toasts {
     /// Replace the content of a visible toast (progress updates). No-op
     /// when it is gone.
     pub fn update(&mut self, id: ToastId, toast: Toast) {
-        if let Some(slot) = self
-            .stack
-            .write()
-            .items
-            .iter_mut()
-            .find(|(tid, _)| *tid == id)
-        {
+        let mut stack = self.stack.write();
+        if stack.leaving.contains(&id) {
+            return;
+        }
+        if let Some(slot) = stack.items.iter_mut().find(|(tid, _)| *tid == id) {
             slot.1 = toast;
         }
     }
 
     /// Remove a toast without running `on_expire`.
     pub fn dismiss(&mut self, id: ToastId) {
-        self.stack.write().items.retain(|(tid, _)| *tid != id);
+        self.leave(id);
     }
 
     /// Remove a toast and run its `on_expire`.
     pub fn expire(&mut self, id: ToastId) {
-        let removed = {
-            let mut stack = self.stack.write();
-            let index = stack.items.iter().position(|(tid, _)| *tid == id);
-            index.map(|i| stack.items.remove(i).1)
-        };
-        if let Some(handler) = removed.and_then(|t| t.on_expire) {
+        if let Some(handler) = self.leave(id).and_then(|t| t.on_expire) {
             handler.call(());
         }
     }
 
     fn press_action(&mut self, id: ToastId) {
-        let action = {
-            let mut stack = self.stack.write();
-            let index = stack.items.iter().position(|(tid, _)| *tid == id);
-            index.and_then(|i| stack.items.remove(i).1.action)
-        };
-        if let Some((_, handler)) = action {
+        if let Some((_, handler)) = self.leave(id).and_then(|t| t.action) {
             handler.call(());
         }
+    }
+
+    /// Take `id` off the queue: it plays its exit, then goes. Returns what
+    /// it was, unless it had already left.
+    fn leave(&mut self, id: ToastId) -> Option<Toast> {
+        let toast = {
+            let stack = self.stack.peek();
+            if stack.leaving.contains(&id) {
+                return None;
+            }
+            stack
+                .items
+                .iter()
+                .find(|(tid, _)| *tid == id)
+                .map(|(_, t)| t.clone())
+        }?;
+        if crate::theme::reduce_motion() {
+            self.stack.write().items.retain(|(tid, _)| *tid != id);
+            return Some(toast);
+        }
+        self.stack.write().leaving.push(id);
+        let mut stack = self.stack;
+        spawn_in_window(async move {
+            async_io::Timer::after(Duration::from_millis(EXIT_MS + 30)).await;
+            let mut stack = stack.write();
+            stack.items.retain(|(tid, _)| *tid != id);
+            stack.leaving.retain(|tid| *tid != id);
+        });
+        Some(toast)
     }
 }
 
@@ -249,7 +279,10 @@ impl ToastHost {
 impl Component for ToastHost {
     fn render(&self) -> impl IntoElement {
         let toasts = Toasts::get();
-        let items = toasts.stack.read().items.clone();
+        let (items, leaving) = {
+            let stack = toasts.stack.read();
+            (stack.items.clone(), stack.leaving.clone())
+        };
         rect()
             .layer(Layer::OverlayLevel(crate::tokens::layer::TOAST))
             .position(
@@ -260,17 +293,48 @@ impl Component for ToastHost {
             .width(Size::fill())
             .cross_align(Alignment::Center)
             .spacing(8.0)
-            .children(
-                items
-                    .into_iter()
-                    .map(|(id, toast)| ToastCard { id, toast }.into_element()),
-            )
+            .children(items.into_iter().map(|(id, toast)| {
+                ToastCard {
+                    id,
+                    leaving: leaving.contains(&id),
+                    toast,
+                }
+                .into_element()
+            }))
+    }
+}
+
+/// How far a toast is in, 0 to 1: it rises a little into place and sinks
+/// back out the same way when `leaving`. Not faded: the card has panels of
+/// its own (the progress bar).
+fn use_shown(leaving: bool) -> f32 {
+    let motion = use_animation_with_dependencies(&leaving, |conf, leaving| {
+        conf.on_creation(OnCreation::Run);
+        conf.on_change(OnChange::Rerun);
+        if *leaving {
+            AnimNum::new(1.0, 0.0)
+                .time(EXIT_MS)
+                .ease(Ease::In)
+                .function(Function::Cubic)
+        } else {
+            AnimNum::new(0.0, 1.0)
+                .time(ENTER_MS)
+                .ease(Ease::Out)
+                .function(Function::Expo)
+        }
+    });
+    if crate::theme::reduce_motion() {
+        1.0
+    } else {
+        motion.get().value()
     }
 }
 
 #[derive(Clone, PartialEq)]
 struct ToastCard {
     id: ToastId,
+    /// Gone from the queue, playing its exit.
+    leaving: bool,
     toast: Toast,
 }
 
@@ -295,8 +359,12 @@ impl Component for ToastCard {
         } else {
             Color::lerp(p.accent, Color::WHITE, 0.45)
         };
+        let shown = use_shown(self.leaving);
         let card = rect()
             .key(id.0)
+            .offset_y(16.0 * (1.0 - shown))
+            .scale((0.04f32.mul_add(shown, 0.96), 0.04f32.mul_add(shown, 0.96)))
+            .interactive(!self.leaving)
             .a11y_role(AccessibilityRole::Status)
             .max_width(Size::px(560.0))
             .corner_radius(radius::LG)
