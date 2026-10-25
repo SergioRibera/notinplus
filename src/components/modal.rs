@@ -16,7 +16,8 @@ use crate::ui_mask::{UiRegion, publish_mask, set as set_mask};
 /// up the safe-area insets + the shell's pen-mask sink. Call once near
 /// the app root (e.g. inside the modal portal mount).
 pub fn provide_host_modal_chrome() {
-    let insets = *use_safe_area_insets().read();
+    let insets = use_safe_area_insets();
+    let bottom = use_memo(move || insets.read().bottom);
     let on_sized = Callback::<Area, ()>::new(|area: Area| {
         publish_mask(UiRegion::Modal, area);
     });
@@ -24,7 +25,7 @@ pub fn provide_host_modal_chrome() {
         set_mask(UiRegion::Modal, None);
     });
     use_provide_context(move || ModalChrome {
-        bottom_inset: insets.bottom,
+        bottom_inset: Some(bottom),
         on_sized: Some(on_sized),
         on_dismiss: Some(on_dismiss),
     });

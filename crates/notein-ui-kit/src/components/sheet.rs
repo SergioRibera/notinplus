@@ -13,7 +13,7 @@ use super::icon::Icon;
 use super::icon_button::IconButton;
 use super::kind_badge::KindBadge;
 use super::list_row::strut;
-use crate::modal::{Modal, ModalController};
+use crate::modal::{Modal, ModalChrome, ModalController};
 use crate::theme::palette;
 use crate::tokens::{radius, size, text};
 use crate::viewport::{ViewportArea, clamp_popup_left};
@@ -438,9 +438,18 @@ impl Component for PopoverCard {
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let pop = &self.popover;
-        let viewport = use_try_consume::<ViewportArea>()
+        let window = use_try_consume::<ViewportArea>()
             .map(ViewportArea::get)
             .unwrap_or_default();
+        // The keyboard and the system bars cover the bottom of the window:
+        // a popover only fits where they are not.
+        let bottom_inset = use_try_consume::<ModalChrome>()
+            .unwrap_or_default()
+            .bottom_inset();
+        let viewport = Area::new(
+            window.origin,
+            (window.width(), (window.height() - bottom_inset).max(0.0)).into(),
+        );
         let anchor = pop.anchor;
         let gap = 8.0;
         let left = match pop.align {
@@ -461,7 +470,7 @@ impl Component for PopoverCard {
             Position::new_absolute().top(below).left(left)
         } else {
             Position::new_absolute()
-                .bottom((viewport.max_y() - anchor.min_y() + gap).max(12.0))
+                .bottom((window.max_y() - anchor.min_y() + gap).max(12.0))
                 .left(left)
         };
         rect()

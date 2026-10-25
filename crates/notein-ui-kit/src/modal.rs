@@ -33,15 +33,27 @@ use freya::prelude::*;
 /// stroke-canvas input.
 #[derive(Clone, Default)]
 pub struct ModalChrome {
-    pub bottom_inset: f32,
+    /// Live bottom gutter (system bars + keyboard) in layout units.
+    pub bottom_inset: Option<Memo<f32>>,
     pub on_sized: Option<Callback<Area, ()>>,
     pub on_dismiss: Option<Callback<(), ()>>,
+}
+
+impl ModalChrome {
+    /// The bottom gutter now; subscribes the caller to its changes.
+    #[must_use]
+    pub fn bottom_inset(&self) -> f32 {
+        self.bottom_inset.map_or(0.0, |inset| *inset.read())
+    }
 }
 
 impl std::fmt::Debug for ModalChrome {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ModalChrome")
-            .field("bottom_inset", &self.bottom_inset)
+            .field(
+                "bottom_inset",
+                &self.bottom_inset.map(|inset| *inset.peek()),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -415,7 +427,7 @@ impl Component for ModalOverlay {
         // Absent context means a plugin-mounted modal that does not
         // need safe-area padding or pen-input blocking.
         let chrome = use_try_consume::<ModalChrome>().unwrap_or_default();
-        let bottom_inset = chrome.bottom_inset;
+        let bottom_inset = chrome.bottom_inset();
         let dismiss_sink = chrome.on_dismiss.clone();
         use_drop(move || {
             if let Some(cb) = dismiss_sink {
