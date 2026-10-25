@@ -66,9 +66,11 @@ impl Component for BibleFace {
             )
             .body("No se pudo abrir la base de datos de traducciones.")
             .into_element(),
-            Some(db) if db.list_bibles().unwrap_or_default().is_empty() => {
-                crate::screens::bible::FirstUse.into_element()
+            Some(db) if db.list_bibles().unwrap_or_default().is_empty() => FirstUseFace {
+                item: self.item,
+                slot: self.slot,
             }
+            .into_element(),
             Some(db) => BibleViewer {
                 item: self.item,
                 slot: self.slot,
@@ -81,6 +83,23 @@ impl Component for BibleFace {
             .height(Size::fill())
             .background(palette().bg)
             .child(inner)
+    }
+}
+
+/// The first-use card in a pane: with nothing installed yet, both header
+/// buttons lead to the translations to download.
+#[derive(Debug, PartialEq, Eq)]
+struct FirstUseFace {
+    item: ItemId,
+    slot: Option<ViewSlot>,
+}
+
+impl Component for FirstUseFace {
+    fn render(&self) -> impl IntoElement {
+        crate::plugins::faces::use_header_presses(KIND, self.item, self.slot, |_| {
+            crate::screens::bible::open_catalog();
+        });
+        crate::screens::bible::FirstUse
     }
 }
 
