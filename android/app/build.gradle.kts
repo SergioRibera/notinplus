@@ -11,6 +11,18 @@ plugins {
     id("io.github.sergioribera.istmo")
 }
 
+val abisProperty = (findProperty("notinplus.abis") as String?)
+    ?.split(',')
+    ?.map { it.trim() }
+    ?.filter { it.isNotEmpty() }
+val splitAbis = abisProperty != null
+val appAbis = abisProperty ?: listOf("arm64-v8a")
+val releaseKeystore: String? = System.getenv("ANDROID_KEYSTORE_FILE")
+
+// With splits on, ndk.abiFilters stays empty and the istmo plugin
+// falls back to `defaultAbis` for the cargo builds.
+istmo { defaultAbis.set(appAbis) }
+
 android {
     namespace  = "rs.sergioribera.notinplus"
     compileSdk = 34
@@ -21,7 +33,20 @@ android {
         // gradle plugin injects them and warns on manual overrides.
         //
         targetSdk = 36
-        ndk { abiFilters += setOf("arm64-v8a") }
+        // Release CI builds every ABI through `splits` instead (AGP
+        // rejects ndk.abiFilters and splits.abi together).
+        if (!splitAbis) ndk { abiFilters += appAbis }
+    }
+
+    // `-Pnotinplus.abis=arm64-v8a,x86_64` → one APK per ABI plus a
+    // universal one. Without the property the single-ABI local flow stays.
+    splits {
+        abi {
+            isEnable = splitAbis
+            reset()
+            include(*appAbis.toTypedArray())
+            isUniversalApk = true
+        }
     }
 
     signingConfigs {
@@ -32,11 +57,24 @@ android {
             keyAlias      = "androiddebugkey"
             keyPassword   = "android"
         }
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile     = file(releaseKeystore)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias      = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword   = System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         getByName("debug")   { signingConfig = signingConfigs.getByName("debug") }
-        getByName("release") { isMinifyEnabled = false }
+        getByName("release") {
+            isMinifyEnabled = false
+            // Falls back to the debug key so CI artifacts stay installable
+            // before a release keystore is configured.
+            signingConfig = signingConfigs.getByName(if (releaseKeystore != null) "release" else "debug")
+        }
     }
 
     compileOptions {
@@ -76,7 +114,7 @@ val pdfiumCacheDir       = layout.buildDirectory.dir("pdfium-cache")
 val pdfiumJniLibsDir     = layout.buildDirectory.dir("pdfium-jniLibs")
 val pdfiumStageTaskNames = mutableListOf<String>()
 
-for (abi in android.defaultConfig.ndk.abiFilters) {
+for (abi in appAbis) {
     val suffix   = pdfiumAbiSuffix[abi] ?: continue
     val tgzName  = "pdfium-android-$suffix.tgz"
     val tgzUrl   = "$pdfiumBaseUrl/$tgzName"
