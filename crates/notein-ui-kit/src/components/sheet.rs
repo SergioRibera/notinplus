@@ -14,6 +14,7 @@ use super::icon_button::IconButton;
 use super::kind_badge::KindBadge;
 use super::list_row::strut;
 use super::scroll_content::ScrollContent;
+use super::sheet_drag::{SheetContent, SheetDrag};
 use crate::modal::{Modal, ModalController};
 use crate::theme::palette;
 use crate::tokens::{radius, size, text};
@@ -211,6 +212,10 @@ impl Component for SheetCard {
         let mut card_height = use_state(|| 0.0_f32);
         let mut body_height = use_state(|| 0.0_f32);
         let mut content_height = use_state(|| 0.0_f32);
+        let scroll = use_scroll_controller(ScrollConfig::default);
+        // A sheet on a phone drags down to close, unless it must end with
+        // a button.
+        let drag = SheetDrag::use_new(self.compact && sheet.dismissable, card_height, scroll);
         // The whole card fits in the visible window: a sheet leaves a strip
         // of backdrop above it, a dialog a margin all round. Only the body
         // scrolls, so it gets what the header, subtitle and footer leave.
@@ -221,7 +226,8 @@ impl Component for SheetCard {
         };
         let max_body = (room - around).max(120.0);
         let pad = if self.compact { 20.0 } else { 24.0 };
-        rect()
+        let card = drag
+            .sheet(rect())
             .width(Size::fill())
             .background(p.s2)
             .border(
@@ -268,19 +274,21 @@ impl Component for SheetCard {
                         body_height.set_if_modified(e.area.height());
                     })
                     .child(
-                        ScrollView::new()
+                        ScrollView::new_controlled(scroll)
                             .width(Size::fill())
                             .height(scroll_height(*content_height.read(), max_body))
                             .max_height(Size::px(max_body))
-                            .child(ScrollContent::new(
-                                rect()
+                            .child(ScrollContent::new(SheetContent {
+                                drag: drag.clone(),
+                                body: rect()
                                     .width(Size::fill())
                                     .spacing(14.0)
                                     .on_sized(move |e: Event<SizedEventData>| {
                                         content_height.set_if_modified(e.area.height());
                                     })
-                                    .children(sheet.children.clone()),
-                            )),
+                                    .children(sheet.children.clone())
+                                    .into_element(),
+                            })),
                     ),
             )
             .maybe_child(sheet.footer.clone().map(|footer| {
@@ -289,7 +297,13 @@ impl Component for SheetCard {
                     .spacing(16.0)
                     .child(Divider::horizontal())
                     .child(footer)
-            }))
+            }));
+        // An offset moves what is inside a rect, not the rect: the card
+        // moves inside one that stays.
+        rect()
+            .width(Size::fill())
+            .offset_y(drag.offset())
+            .child(card)
     }
 }
 

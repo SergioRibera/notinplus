@@ -116,6 +116,17 @@ impl ModalMotion {
     }
 }
 
+/// How far the card of the modal around it was dragged away, 0 to 1. The
+/// veil clears as much, so the window shows through as a sheet goes down.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct ModalDrag(pub State<f32>);
+
+impl std::fmt::Debug for ModalDrag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("ModalDrag").field(&*self.0.peek()).finish()
+    }
+}
+
 /// Modal descriptor. Cheap to clone (only holds an `Element` and a
 /// handful of `Copy` fields), safe to stash inside a `State` for the
 /// controller to read/write.
@@ -573,7 +584,9 @@ impl Component for ModalOverlay {
         let level = (crate::tokens::layer::MODAL
             + 2 * u8::try_from(self.depth.min(5)).unwrap_or(5))
         .min(crate::tokens::layer::MODAL_MAX - 1);
-        let (scrim, blur) = self.veil.paint(model.backdrop_alpha, fade);
+        let ModalDrag(dragged) = use_provide_context(|| ModalDrag(State::create(0.0)));
+        let cleared = 1.0 - dragged.read().clamp(0.0, 1.0);
+        let (scrim, blur) = self.veil.paint(model.backdrop_alpha, fade * cleared);
         let (scale, rise) = placement.entrance(settle);
         // A manual body moves itself (a popover knows which side of its
         // trigger it took); it reads how far the card has settled.

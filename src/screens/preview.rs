@@ -680,3 +680,81 @@ fn sheet_scrolls_by_touch_without_pressing() {
     runner.sync_and_update();
     assert_eq!(SHEET_PRESSES.get(), 1, "a tap did not press its cell");
 }
+
+/// The book grid sheet on a phone, settled.
+fn phone_sheet() -> TestingRunner {
+    sandbox();
+    let size = (390.0, 844.0);
+    let app = shell(book_grid_sheet, size, notein_ui_kit::Gutters::default());
+    let (mut runner, ()) = TestingRunner::new(app, size.into(), |_| (), 1.0);
+    runner.poll_n(Duration::from_millis(40), 12);
+    runner.sync_and_update();
+    runner
+}
+
+/// Drag a finger from `from` straight down by `by`, in `steps` moves a
+/// frame apart, and lift it after `hold`.
+fn finger_drag(runner: &mut TestingRunner, from: (f64, f64), by: f64, steps: u32, hold: Duration) {
+    runner.press_touch(from);
+    runner.sync_and_update();
+    let mut y = from.1;
+    for step in 1..=steps {
+        y = (by / f64::from(steps)).mul_add(f64::from(step), from.1);
+        runner.move_touch((from.0, y));
+        runner.poll_n(Duration::from_millis(16), 1);
+    }
+    std::thread::sleep(hold);
+    runner.release_touch((from.0, y));
+    runner.poll_n(Duration::from_millis(30), 20);
+    runner.sync_and_update();
+}
+
+fn open_modals(runner: &TestingRunner) -> usize {
+    runner.run_in(|| notein_ui_kit::ModalController::get().depth())
+}
+
+#[test]
+fn sheet_closes_when_dragged_down_by_its_handle() {
+    let mut runner = phone_sheet();
+    finger_drag(&mut runner, (195.0, 40.0), 520.0, 10, Duration::ZERO);
+    assert_eq!(open_modals(&runner), 0);
+}
+
+#[test]
+fn sheet_glides_back_after_a_short_slow_drag() {
+    let mut runner = phone_sheet();
+    runner.press_touch((195.0, 40.0));
+    runner.sync_and_update();
+    runner.move_touch((195.0, 120.0));
+    runner.poll_n(Duration::from_millis(16), 2);
+    runner.render_to_file(out("sheet-drag-held"));
+    std::thread::sleep(Duration::from_millis(150));
+    runner.release_touch((195.0, 120.0));
+    runner.poll_n(Duration::from_millis(30), 20);
+    runner.sync_and_update();
+    runner.render_to_file(out("sheet-drag-back"));
+    assert_eq!(open_modals(&runner), 1);
+}
+
+#[test]
+fn sheet_follows_a_finger_on_its_content_only_from_the_top() {
+    // Scrolled down, a finger going down scrolls the content back.
+    let mut runner = phone_sheet();
+    finger_drag(&mut runner, (150.0, 700.0), -300.0, 10, Duration::ZERO);
+    finger_drag(
+        &mut runner,
+        (150.0, 300.0),
+        120.0,
+        6,
+        Duration::from_millis(150),
+    );
+    assert_eq!(
+        open_modals(&runner),
+        1,
+        "scrolling back up closed the sheet"
+    );
+    // At the top, the same finger takes the sheet down.
+    let mut runner = phone_sheet();
+    finger_drag(&mut runner, (150.0, 300.0), 480.0, 10, Duration::ZERO);
+    assert_eq!(open_modals(&runner), 0);
+}

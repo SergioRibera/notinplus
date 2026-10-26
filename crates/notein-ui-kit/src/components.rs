@@ -22,6 +22,7 @@ mod segmented;
 mod spinner;
 mod selection_bar;
 mod sheet;
+mod sheet_drag;
 mod side_panel;
 mod stepper;
 mod switch;
