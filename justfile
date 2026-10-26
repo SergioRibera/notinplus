@@ -69,7 +69,7 @@ build-ios:
 
 # Desktop distribution bundles via nix-bundle-app.
 bundle-desktop:
-    nix build .#bundle
+    nix build .#bundles
 
 # Run the desktop shell (uses the mock runtime + emulator thread).
 android: (clean) (build-android) (install-android)
