@@ -1,12 +1,12 @@
 //! The annotation popover shared by verses, PDF fragments and canvas
-//! pins, and its expanded form as a tab with the full editor.
+//! pins, and the sidebar it expands into beside the mesa's panes.
 //!
 //! One open annotation is a [`Session`]: the request a plugin sent, the
 //! draft being edited and the callbacks to report back. The popover and
-//! the expanded tab edit the same draft, so what is written in one shows
-//! in the other.
+//! the sidebar edit the same draft, so what is written in one shows in
+//! the other, and every colour change previews on the document at once.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -16,15 +16,18 @@ use notein_plugin::services::{
 };
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
-    Button, ButtonVariant, ColorWheel, IconButton, ModalController, Popover, PopoverAlign,
-    PopoverSide, Sheet, SheetFooter, Spacer, tokens, width_class,
+    Button, ButtonVariant, ColorWheel, Icon, IconButton, ModalController, Popover, PopoverAlign,
+    PopoverSide, Sheet, SheetFooter, SidePanel, Spacer, tokens, width_class,
 };
 
 use crate::editor::{CloseOnNavigate, EditorField};
-use crate::library::{ItemId, TabTarget};
-use crate::space::OpenHint;
 
 pub use crate::library::AnnotationId;
+
+/// Width of the sidebar an annotation expands into.
+const SIDEBAR_WIDTH: f32 = 380.0;
+/// Width of the colour picker hanging from the swatches.
+const PICKER_WIDTH: f32 = 276.0;
 
 /// What the user is editing.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,19 +44,41 @@ struct Session {
     done: AnnotationDone,
 }
 
+impl Session {
+    /// Change the draft's colour and show it on the document right away.
+    fn recolor(&self, color: Option<[u8; 3]>) {
+        let mut draft = self.draft;
+        draft.write().color = color;
+        if let Some(preview) = &self.preview {
+            preview(color);
+        }
+    }
+}
+
 thread_local! {
     static SESSIONS: RefCell<HashMap<AnnotationId, Rc<Session>>> = RefCell::new(HashMap::new());
-    static NEXT: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
+    static NEXT: Cell<u64> = const { Cell::new(1) };
+    static ASIDE: Cell<Option<State<Option<AnnotationId>>>> = const { Cell::new(None) };
 }
 
 fn session(id: AnnotationId) -> Option<Rc<Session>> {
     SESSIONS.with(|s| s.borrow().get(&id).cloned())
 }
 
+/// Which annotation the sidebar shows; `None` while no mesa shows one.
+fn aside() -> Option<State<Option<AnnotationId>>> {
+    ASIDE.get()
+}
+
 /// End `id`, reporting `outcome` once.
 fn finish(id: AnnotationId, outcome: AnnotationOutcome) {
     if let Some(session) = SESSIONS.with(|s| s.borrow_mut().remove(&id)) {
         (session.done)(outcome);
+    }
+    if let Some(mut aside) = aside()
+        && *aside.peek() == Some(id)
+    {
+        aside.set(None);
     }
 }
 
@@ -74,18 +99,26 @@ fn settle(id: AnnotationId) {
     finish(id, outcome);
 }
 
-/// Title of the expanded tab.
-#[must_use]
-pub fn tab_title(id: AnnotationId) -> String {
-    session(id).map_or_else(
-        || "Anotación".to_owned(),
-        |s| {
-            format!(
-                "Anotación · {}",
-                s.request.title.trim_start_matches("Resaltar ")
-            )
+/// Save the draft as it is.
+fn settle_saving(id: AnnotationId) {
+    let Some(session) = session(id) else {
+        return;
+    };
+    let draft = session.draft.peek().clone();
+    finish(
+        id,
+        AnnotationOutcome::Saved {
+            color: draft.color,
+            body: draft.body,
         },
-    )
+    );
+}
+
+/// Recolour the draft of `id`.
+fn recolor(id: AnnotationId, color: Option<[u8; 3]>) {
+    if let Some(session) = session(id) {
+        session.recolor(color);
+    }
 }
 
 /// Entry points.
@@ -93,7 +126,8 @@ pub fn tab_title(id: AnnotationId) -> String {
 pub struct AnnotationPopover;
 
 impl AnnotationPopover {
-    /// Show the annotation popover for `request`.
+    /// Show the annotation popover for `request`; in the sidebar instead
+    /// while another annotation is expanded there.
     pub fn open(
         request: AnnotationRequest,
         preview: Option<AnnotationPreview>,
@@ -121,7 +155,10 @@ impl AnnotationPopover {
                 }),
             );
         });
-        Self::show(id);
+        let docked = aside().is_some_and(|aside| aside.peek().is_some());
+        if !(docked && Self::dock(id)) {
+            Self::show(id);
+        }
     }
 
     fn show(id: AnnotationId) {
@@ -152,46 +189,91 @@ impl AnnotationPopover {
         modals.set_top_on_close(move || settle(id));
     }
 
-    /// Move the annotation from the popover to a tab beside the text.
+    /// Put `id` in the sidebar, settling the one there before; `false`
+    /// when there is no sidebar to put it in.
+    fn dock(id: AnnotationId) -> bool {
+        let Some(mut aside) = aside().filter(|_| !width_class().is_compact()) else {
+            return false;
+        };
+        let previous = *aside.peek();
+        if let Some(previous) = previous.filter(|p| *p != id) {
+            settle(previous);
+        }
+        aside.set(Some(id));
+        true
+    }
+
+    /// Move the annotation from the popover to the sidebar.
     fn expand(id: AnnotationId) {
+        if aside().is_none() {
+            return;
+        }
         let mut modals = ModalController::get();
         modals.clear_top_on_close();
         modals.close();
-        crate::space::open(TabTarget::Annotation(id), OpenHint::Beside);
+        Self::dock(id);
     }
 
-    /// Back from the tab to the popover.
-    fn collapse(id: AnnotationId, item: ItemId) {
-        crate::space::close_tab(TabTarget::Annotation(id));
-        crate::space::open(TabTarget::Item(item), OpenHint::Focused);
+    /// Back from the sidebar to the popover.
+    fn collapse(id: AnnotationId) {
+        if let Some(mut aside) = aside() {
+            aside.set(None);
+        }
         Self::show(id);
     }
 }
 
-/// The expanded annotation, as a tab body.
+/// The expanded annotation beside the panes of a mesa. A narrow window
+/// has no room for it, and the annotation goes back to its sheet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ExpandedAnnotation {
-    pub id: AnnotationId,
-}
+pub struct AnnotationSidebar;
 
-impl Component for ExpandedAnnotation {
+impl Component for AnnotationSidebar {
     fn render(&self) -> impl IntoElement {
-        let id = self.id;
-        use_drop(move || settle(id));
-        if session(id).is_none() {
-            return notein_ui_kit::EmptyState::new(
-                freya::icons::lucide::sticky_note(),
-                "Esta anotación ya se cerró",
-            )
-            .body("Lo escrito quedó guardado en su marcador. Cerrá esta pestaña.")
-            .into_element();
+        let mut aside = use_state(|| None);
+        use_hook(|| ASIDE.set(Some(aside)));
+        use_drop(move || {
+            // Unregistered first: settling must not write to the state
+            // that is going away.
+            ASIDE.set(None);
+            if let Some(id) = *aside.peek() {
+                settle(id);
+            }
+        });
+        let current = *aside.read();
+        let compact = width_class().is_compact();
+        if compact && let Some(id) = current {
+            aside.set(None);
+            AnnotationPopover::show(id);
         }
-        rect()
-            .expanded()
-            .background(palette().s1)
-            .padding((24.0, 32.0))
-            .child(AnnotationCard { id, expanded: true })
-            .into_element()
+        // The last annotation stays on screen while the sidebar slides out.
+        let mut shown = use_state(|| current);
+        if current.is_some() && *shown.peek() != current {
+            shown.set(current);
+        }
+        let p = palette();
+        let body = shown.read().map_or_else(
+            || rect().into_element(),
+            |id| {
+                rect()
+                    .expanded()
+                    .background(p.s1)
+                    .border(Border::new().fill(p.line).width(BorderWidth {
+                        left: 1.0,
+                        ..BorderWidth::default()
+                    }))
+                    .child(
+                        ScrollView::new().expanded().child(
+                            rect()
+                                .width(Size::fill())
+                                .padding((12.0, 12.0, 16.0, 16.0))
+                                .child(AnnotationCard { id, expanded: true }),
+                        ),
+                    )
+                    .into_element()
+            },
+        );
+        SidePanel::new(current.is_some() && !compact, SIDEBAR_WIDTH, body)
     }
 }
 
@@ -202,18 +284,41 @@ struct AnnotationCard {
 }
 
 impl AnnotationCard {
-    /// Close the popover, or the tab when expanded.
-    fn dismiss(self) {
+    /// Close the popover, or the sidebar when expanded, keeping what was
+    /// written.
+    fn close(self) {
         if self.expanded {
-            crate::space::close_tab(TabTarget::Annotation(self.id));
+            settle(self.id);
         } else {
             ModalController::get().close();
         }
     }
 
-    /// Colour, title, expand / collapse and close.
-    fn header(self, title: String, dot: Color, item: ItemId) -> Rect {
+    /// Close after a footer button already reported how it ended.
+    fn dismiss(self) {
+        if !self.expanded {
+            ModalController::get().close();
+        }
+    }
+
+    /// Colour, title, sidebar toggle and close.
+    fn header(self, title: String, dot: Color) -> Rect {
         let id = self.id;
+        let toggle = if width_class().is_compact() || aside().is_none() {
+            None
+        } else if self.expanded {
+            Some(
+                IconButton::new(freya::icons::lucide::panel_right_close(), "Volver al popup")
+                    .size(32.0)
+                    .on_press(move |_| AnnotationPopover::collapse(id)),
+            )
+        } else {
+            Some(
+                IconButton::new(freya::icons::lucide::panel_right_open(), "Abrir al costado")
+                    .size(32.0)
+                    .on_press(move |_| AnnotationPopover::expand(id)),
+            )
+        };
         rect()
             .width(Size::fill())
             .height(Size::px(32.0))
@@ -230,27 +335,20 @@ impl AnnotationCard {
             )
             .child(
                 label()
+                    .width(Size::flex(1.0))
                     .text(title)
                     .font_size(tokens::text::BODY_LG)
                     .font_weight(FontWeight::BOLD)
                     .color(palette().t1)
-                    .max_lines(1),
+                    .max_lines(1)
+                    .text_overflow(TextOverflow::Ellipsis),
             )
-            .child(Spacer)
-            .child(if self.expanded {
-                IconButton::new(freya::icons::lucide::minimize_2(), "Volver al popup")
-                    .size(32.0)
-                    .on_press(move |_| AnnotationPopover::collapse(id, item))
-            } else {
-                IconButton::new(freya::icons::lucide::maximize_2(), "Expandir")
-                    .size(32.0)
-                    .on_press(move |_| AnnotationPopover::expand(id))
-            })
-            .maybe_child((!self.expanded).then(|| {
+            .maybe_child(toggle)
+            .child(
                 IconButton::new(freya::icons::lucide::x(), "Cerrar")
                     .size(32.0)
-                    .on_press(|_| ModalController::get().close())
-            }))
+                    .on_press(move |_| self.close()),
+            )
     }
 
     /// The quoted text, with a bar in the highlight colour.
@@ -260,7 +358,9 @@ impl AnnotationCard {
             .width(Size::fill())
             .padding((10.0, 12.0))
             .corner_radius(tokens::radius::MD)
-            .background(p.s1)
+            // Inset from what is around it: the popover card, or the
+            // sidebar a step darker.
+            .background(if self.expanded { p.s2 } else { p.s1 })
             // The bar is a border: a filled child would stretch to the
             // height of the whole popover.
             .child(
@@ -285,13 +385,9 @@ impl AnnotationCard {
     }
 
     /// The five inks, another colour and no colour.
-    fn swatches(
-        current: Option<[u8; 3]>,
-        pick: impl FnMut(Option<[u8; 3]>) + Clone + 'static,
-        mut picking: State<bool>,
-    ) -> Rect {
+    fn swatches(self, current: Option<[u8; 3]>, custom: State<Area>) -> Rect {
         let p = palette();
-        let mut clear = pick.clone();
+        let id = self.id;
         rect()
             .width(Size::fill())
             .horizontal()
@@ -300,34 +396,46 @@ impl AnnotationCard {
             .spacing(10.0)
             .children(p.highlighters.iter().map(|color| {
                 let rgb = [color.r(), color.g(), color.b()];
-                let mut pick = pick.clone();
-                rect()
+                swatch(*color, current == Some(rgb))
                     .key(color.to_hex_string())
-                    .a11y_role(AccessibilityRole::Button)
                     .a11y_alt("Color de resaltado")
-                    .width(Size::px(28.0))
-                    .height(Size::px(28.0))
-                    .corner_radius(tokens::radius::FULL)
-                    .background(*color)
-                    .maybe(current == Some(rgb), |r| {
-                        r.border(
-                            Border::new()
-                                .fill(p.t1)
-                                .width(2.0)
-                                .alignment(BorderAlignment::Outer),
-                        )
-                    })
-                    .on_press(move |_| pick(Some(rgb)))
+                    .on_press(move |_| recolor(id, Some(rgb)))
                     .into_element()
             }))
-            .child(
-                IconButton::new(freya::icons::lucide::palette(), "Otro color")
-                    .size(32.0)
-                    .active(picking())
-                    .on_press(move |_| picking.toggle()),
-            )
+            .child(Self::custom_swatch(id, current, custom))
             .child(Spacer)
-            .child(Button::new("Sin color").ghost().small().on_press(move |_| clear(None)))
+            .child(
+                Button::new("Sin color")
+                    .ghost()
+                    .small()
+                    .on_press(move |_| recolor(id, None)),
+            )
+    }
+
+    /// Opens the colour picker; filled with the colour when it is none of
+    /// the inks.
+    fn custom_swatch(id: AnnotationId, current: Option<[u8; 3]>, mut area: State<Area>) -> Rect {
+        let p = palette();
+        let custom = current
+            .map(|[r, g, b]| Color::from_rgb(r, g, b))
+            .filter(|c| !p.highlighters.contains(c));
+        swatch(custom.unwrap_or(p.s3), custom.is_some())
+            .a11y_alt("Otro color")
+            .center()
+            .on_sized(move |e: Event<SizedEventData>| area.set_if_modified(e.area))
+            .on_press(move |_| {
+                Popover::new(*area.peek(), ColorPicker { id })
+                    .width(PICKER_WIDTH + 24.0)
+                    .align(PopoverAlign::Center)
+                    .estimated_height(340.0)
+                    .sheet_title("Otro color")
+                    .open();
+            })
+            .maybe_child(custom.is_none().then(|| {
+                Icon::new(freya::icons::lucide::pipette())
+                    .size(14.0)
+                    .color(p.t1)
+            }))
     }
 
     /// Cancelar and Guardar, with Borrar for an existing annotation.
@@ -374,7 +482,7 @@ impl Component for AnnotationCard {
         provide_context(CloseOnNavigate(Rc::new(move || settle(id))));
         let mut draft = session.draft;
         let current = draft.read().clone();
-        let picking = use_state(|| false);
+        let custom = use_state(Area::default);
         let body = use_state(move || current.body);
         use_side_effect(move || {
             let text = body.read().clone();
@@ -382,13 +490,6 @@ impl Component for AnnotationCard {
                 draft.write().body = text;
             }
         });
-        let preview = session.preview.clone();
-        let pick = move |color: Option<[u8; 3]>| {
-            draft.write().color = color;
-            if let Some(preview) = &preview {
-                preview(color);
-            }
-        };
         let request = &session.request;
         let dot = current
             .color
@@ -397,15 +498,9 @@ impl Component for AnnotationCard {
             .width(Size::fill())
             .padding(if expanded { 0.0 } else { 16.0 })
             .spacing(14.0)
-            .child(self.header(request.title.clone(), dot, ItemId(request.doc.0)))
+            .child(self.header(request.title.clone(), dot))
             .maybe_child(request.quote.clone().map(|quote| self.quote(quote, dot)))
-            .child(Self::swatches(current.color, pick.clone(), picking))
-            .maybe_child(picking().then(|| {
-                let mut pick = pick.clone();
-                ColorWheel::new()
-                    .initial(dot)
-                    .on_change(move |color: Color| pick(Some([color.r(), color.g(), color.b()])))
-            }))
+            .child(self.swatches(current.color, custom))
             .child(
                 EditorField::new(body)
                     .placeholder("Escribí una nota… «/ref» para citar")
@@ -417,16 +512,56 @@ impl Component for AnnotationCard {
     }
 }
 
-fn settle_saving(id: AnnotationId) {
-    let Some(session) = session(id) else {
-        return;
-    };
-    let draft = session.draft.peek().clone();
-    finish(
-        id,
-        AnnotationOutcome::Saved {
-            color: draft.color,
-            body: draft.body,
-        },
-    );
+/// A round colour to pick, ringed when chosen.
+fn swatch(color: Color, chosen: bool) -> Rect {
+    let p = palette();
+    rect()
+        .a11y_role(AccessibilityRole::Button)
+        .width(Size::px(28.0))
+        .height(Size::px(28.0))
+        .corner_radius(tokens::radius::FULL)
+        .background(color)
+        .maybe(chosen, |r| {
+            r.border(
+                Border::new()
+                    .fill(p.t1)
+                    .width(2.0)
+                    .alignment(BorderAlignment::Outer),
+            )
+        })
+}
+
+/// The free colour picker. Every change shows on the document as it
+/// happens, as the ink pickers do; the draft keeps the last one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ColorPicker {
+    id: AnnotationId,
+}
+
+impl Component for ColorPicker {
+    fn render(&self) -> impl IntoElement {
+        let id = self.id;
+        let Some(session) = session(id) else {
+            return rect().into_element();
+        };
+        let p = palette();
+        let initial = session
+            .draft
+            .peek()
+            .color
+            .map_or(p.highlighters[0], |[r, g, b]| Color::from_rgb(r, g, b));
+        rect()
+            .padding(12.0)
+            .child(
+                ColorWheel::new()
+                    .swatches(Vec::new())
+                    .allow_custom(true)
+                    .alpha(false)
+                    .bare()
+                    .initial(initial)
+                    .width(PICKER_WIDTH)
+                    .on_change(move |c: Color| recolor(id, Some([c.r(), c.g(), c.b()]))),
+            )
+            .into_element()
+    }
 }

@@ -269,8 +269,9 @@ pub enum TabTarget {
     /// tab discards it; a persisted workspace keeps the tab but the
     /// canvas starts blank on the next mount.
     Scratch(ScratchId),
-    /// An annotation opened from its popover with the full editor. Lives
-    /// only while the app runs; reopening a mesa drops these tabs.
+    /// An annotation that older builds expanded into a tab. Annotations
+    /// expand into a sidebar now; the variant stays so mesas saved with
+    /// one still load, and loading drops these tabs.
     Annotation(AnnotationId),
 }
 

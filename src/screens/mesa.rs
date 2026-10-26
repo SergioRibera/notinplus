@@ -12,7 +12,9 @@ use std::sync::Arc;
 
 use freya::prelude::*;
 use notein_ui_kit::theme::palette as theme;
-use notein_ui_kit::{Button, EmptyState, ModalController, Toast, Toasts, tokens, width_class};
+use notein_ui_kit::{
+    Button, EmptyState, ModalController, PanelEdge, SidePanel, Toast, Toasts, tokens, width_class,
+};
 
 use panes::SplitEdge;
 use crate::library::{
@@ -278,51 +280,6 @@ struct Open {
     id: WorkspaceId,
 }
 
-/// How the document panel comes and goes beside the panes.
-struct PanelSlide;
-
-impl PanelSlide {
-    /// How far the panel is open, 0 to 1: it slides in and pushes the
-    /// panes aside, and back out, instead of appearing.
-    fn use_opened(shown: bool) -> f32 {
-        use freya::animation::{
-            AnimNum, Ease, Function, OnChange, OnCreation, use_animation_with_dependencies,
-        };
-        let motion = use_animation_with_dependencies(&shown, |conf, shown| {
-            conf.on_creation(OnCreation::Finish);
-            conf.on_change(OnChange::Rerun);
-            let (from, to) = if *shown { (0.0, 1.0) } else { (1.0, 0.0) };
-            AnimNum::new(from, to)
-                .time(tokens::motion::SLOW)
-                .ease(Ease::Out)
-                .function(Function::Cubic)
-        });
-        if notein_ui_kit::reduce_motion() {
-            if shown { 1.0 } else { 0.0 }
-        } else {
-            motion.get().value()
-        }
-    }
-
-    /// The room `panel` takes when `opened` that far: it grows from zero
-    /// while the panel slides in from the left edge.
-    fn slide(opened: f32, panel: panel::Panel) -> Element {
-        let width = tokens::size::PANEL_WIDTH;
-        rect()
-            .width(Size::px(width * opened))
-            .height(Size::fill())
-            .overflow(Overflow::Clip)
-            .child(
-                rect()
-                    .width(Size::px(width))
-                    .height(Size::fill())
-                    .offset_x(width * (opened - 1.0))
-                    .child(panel),
-            )
-            .into_element()
-    }
-}
-
 impl Component for Open {
     fn render(&self) -> impl IntoElement {
         let compact = width_class().is_compact();
@@ -341,7 +298,6 @@ impl Component for Open {
             data: Arc::clone(&self.data),
         };
         let show_panel = *panel.read() && !compact;
-        let opened = PanelSlide::use_opened(show_panel);
         if *panel.read() && compact {
             let mut panel = panel;
             panel.set(false);
@@ -363,16 +319,18 @@ impl Component for Open {
                     .height(Size::flex(1.0))
                     .horizontal()
                     .content(Content::Flex)
-                    .maybe_child((opened > 0.0).then(|| {
-                        PanelSlide::slide(
-                            opened,
+                    .child(
+                        SidePanel::new(
+                            show_panel,
+                            tokens::size::PANEL_WIDTH,
                             panel::Panel {
                                 data: Arc::clone(&self.data),
-                                focus: focus.clone(),
+                                focus,
                                 tab: panel_tab,
                             },
                         )
-                    }))
+                        .edge(PanelEdge::Left),
+                    )
                     .child(
                         rect()
                             .width(Size::flex(1.0))
@@ -383,7 +341,8 @@ impl Component for Open {
                                 mesa,
                                 ops,
                             }),
-                    ),
+                    )
+                    .child(crate::annotation::AnnotationSidebar),
             )
             .into_element()
     }

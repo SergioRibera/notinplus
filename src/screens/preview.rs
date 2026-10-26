@@ -501,6 +501,34 @@ fn annotation_popover_keeps_its_width() {
     render("annotation-tablet", (1024.0, 768.0), annotation_popover);
 }
 
+/// The annotation popover over a mesa-like row with room for the sidebar.
+fn annotation_beside() -> Element {
+    annotation_popover();
+    rect()
+        .expanded()
+        .horizontal()
+        .content(Content::Flex)
+        .child(rect().width(Size::flex(1.0)).height(Size::fill()))
+        .child(crate::annotation::AnnotationSidebar)
+        .into_element()
+}
+
+#[test]
+fn annotation_expands_and_picks_colors() {
+    render_after_press(
+        "annotation-sidebar",
+        (1440.0, 900.0),
+        (559.0, 53.0),
+        annotation_beside,
+    );
+    render_after_press(
+        "annotation-picker",
+        (1440.0, 900.0),
+        (430.0, 190.0),
+        annotation_beside,
+    );
+}
+
 const JOHN_3: &str = r#"<osis><osisText>
 <div type="book" osisID="John"><chapter osisID="John.3">
 <title type="section">Jesús y Nicodemo</title>

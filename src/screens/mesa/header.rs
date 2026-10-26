@@ -57,8 +57,8 @@ impl TabLook {
                 tint: p.kinds.scratch,
                 scratch: true,
             },
-            TabTarget::Annotation(id) => Self {
-                title: crate::annotation::tab_title(id),
+            TabTarget::Annotation(_) => Self {
+                title: "Anotación".to_owned(),
                 icon: lucide::message_square_text(),
                 tint: p.accent,
                 scratch: false,

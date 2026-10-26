@@ -233,7 +233,7 @@ fn body(tab: &PaneTab, data: &LibraryData, slot: ViewSlot) -> Element {
             mount: CanvasMount::Ephemeral(id),
         }
         .into_element(),
-        TabTarget::Annotation(id) => crate::annotation::ExpandedAnnotation { id }.into_element(),
+        TabTarget::Annotation(_) => rect().expanded().into_element(),
     };
     rect()
         .key(tab.target)

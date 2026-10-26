@@ -3,7 +3,9 @@
 
 use freya::prelude::*;
 use notein_ui_kit::theme::palette;
-use notein_ui_kit::{IconButton, ModalController, Sheet, Text, TextRole, is_mouse, tokens};
+use notein_ui_kit::{
+    IconButton, ModalController, Sheet, SidePanel, Text, TextRole, is_mouse, tokens,
+};
 
 use super::Reader;
 
@@ -141,88 +143,64 @@ impl Component for Panel {
         if current.is_some() && *shown.peek() != current {
             shown.set(current.clone());
         }
-        let opened = use_opened(current.is_some());
-        let Some(refs) = shown.read().clone() else {
-            return rect().into_element();
-        };
-        if opened <= 0.0 {
-            return rect().into_element();
-        }
-        let p = palette();
-        rect()
-            .width(Size::px(PANEL_WIDTH * opened))
-            .height(Size::fill())
-            .overflow(Overflow::Clip)
-            .child(
-                rect()
-                    .width(Size::px(PANEL_WIDTH))
-                    .height(Size::fill())
-                    .offset_x(PANEL_WIDTH * (1.0 - opened))
-                    .background(p.s1)
-                    .border(Border::new().fill(p.line).width(BorderWidth {
-                        left: 1.0,
-                        ..BorderWidth::default()
-                    }))
-                    .content(Content::Flex)
-                    .child(
-                        rect()
-                            .width(Size::fill())
-                            .padding((12.0, 8.0, 8.0, 16.0))
-                            .horizontal()
-                            .content(Content::Flex)
-                            .cross_align(Alignment::Center)
-                            .child(
-                                rect()
-                                    .width(Size::flex(1.0))
-                                    .spacing(2.0)
-                                    .child(
-                                        Text::new(format!("Referencias de {}", refs.place))
-                                            .role(TextRole::Strong),
-                                    )
-                                    .child(Text::new(refs.count()).role(TextRole::Meta)),
-                            )
-                            .child(
-                                IconButton::new(freya::icons::lucide::x(), "Cerrar")
-                                    .size(32.0)
-                                    .on_press(move |_| {
-                                        let mut open = open;
-                                        open.set(None);
-                                    }),
-                            ),
-                    )
-                    .child(
-                        ScrollView::new()
-                            .width(Size::fill())
-                            .height(Size::flex(1.0))
-                            .child(rect().padding((0.0, 8.0, 16.0, 8.0)).child(List {
-                                reader: self.reader.clone(),
-                                refs,
-                                in_sheet: false,
-                            })),
-                    ),
-            )
-            .into_element()
+        let body = shown
+            .read()
+            .clone()
+            .map_or_else(|| rect().into_element(), |refs| self.body(refs));
+        SidePanel::new(current.is_some(), PANEL_WIDTH, body).into_element()
     }
 }
 
-/// How far the panel is open, 0 to 1.
-fn use_opened(shown: bool) -> f32 {
-    use freya::animation::{
-        AnimNum, Ease, Function, OnChange, OnCreation, use_animation_with_dependencies,
-    };
-    let motion = use_animation_with_dependencies(&shown, |conf, shown| {
-        conf.on_creation(OnCreation::Finish);
-        conf.on_change(OnChange::Rerun);
-        let (from, to) = if *shown { (0.0, 1.0) } else { (1.0, 0.0) };
-        AnimNum::new(from, to)
-            .time(tokens::motion::SLOW)
-            .ease(Ease::Out)
-            .function(Function::Cubic)
-    });
-    if notein_ui_kit::reduce_motion() {
-        if shown { 1.0 } else { 0.0 }
-    } else {
-        motion.get().value()
+impl Panel {
+    /// The verse and the count over the list.
+    fn body(&self, refs: VerseRefs) -> Element {
+        let open = self.reader.refs;
+        let p = palette();
+        rect()
+            .expanded()
+            .background(p.s1)
+            .border(Border::new().fill(p.line).width(BorderWidth {
+                left: 1.0,
+                ..BorderWidth::default()
+            }))
+            .content(Content::Flex)
+            .child(
+                rect()
+                    .width(Size::fill())
+                    .padding((12.0, 8.0, 8.0, 16.0))
+                    .horizontal()
+                    .content(Content::Flex)
+                    .cross_align(Alignment::Center)
+                    .child(
+                        rect()
+                            .width(Size::flex(1.0))
+                            .spacing(2.0)
+                            .child(
+                                Text::new(format!("Referencias de {}", refs.place))
+                                    .role(TextRole::Strong),
+                            )
+                            .child(Text::new(refs.count()).role(TextRole::Meta)),
+                    )
+                    .child(
+                        IconButton::new(freya::icons::lucide::x(), "Cerrar")
+                            .size(32.0)
+                            .on_press(move |_| {
+                                let mut open = open;
+                                open.set(None);
+                            }),
+                    ),
+            )
+            .child(
+                ScrollView::new()
+                    .width(Size::fill())
+                    .height(Size::flex(1.0))
+                    .child(rect().padding((0.0, 8.0, 16.0, 8.0)).child(List {
+                        reader: self.reader.clone(),
+                        refs,
+                        in_sheet: false,
+                    })),
+            )
+            .into_element()
     }
 }
 
