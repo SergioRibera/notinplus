@@ -5,13 +5,14 @@ use std::sync::Arc;
 
 use freya::prelude::*;
 use notein_plugin::bookmark::SourceRef;
-use notein_plugin::kind::{OutlineIcon, OutlineNode};
 use notein_plugin::services::Placement;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
     Button, EmptyState, Group, ListRow, SearchField, Section, Segmented, Sheet, Tag, Text,
     TextRole, tokens,
 };
+
+mod outline;
 
 use super::Focus;
 use crate::library::{ItemId, LibraryData, LinkKind, refs};
@@ -50,62 +51,6 @@ fn jump(kind: &str, item: ItemId, anchor: Vec<u8>) {
     );
 }
 
-fn outline_icon(icon: OutlineIcon) -> Bytes {
-    use freya::icons::lucide;
-    match icon {
-        OutlineIcon::Section => lucide::list(),
-        OutlineIcon::Page => lucide::file(),
-        OutlineIcon::Heading => lucide::heading(),
-        OutlineIcon::Layer => lucide::layers(),
-        OutlineIcon::Book => lucide::book_open(),
-    }
-}
-
-fn matches(node: &OutlineNode<Vec<u8>>, query: &str) -> bool {
-    query.is_empty()
-        || node.label.to_lowercase().contains(query)
-        || node.children.iter().any(|c| matches(c, query))
-}
-
-fn outline_rows(
-    nodes: &[OutlineNode<Vec<u8>>],
-    depth: u8,
-    query: &str,
-    kind: &str,
-    item: ItemId,
-    out: &mut Vec<Element>,
-) {
-    for node in nodes.iter().filter(|n| matches(n, query)) {
-        let anchor = node.anchor.clone();
-        let kind_id = kind.to_owned();
-        let row = ListRow::new(node.label.clone())
-            .icon(outline_icon(node.icon))
-            .dense(true)
-            .indent(f32::from(depth) * 14.0);
-        let row = match &node.meta {
-            Some(meta) => row.meta(meta.clone()),
-            None => row,
-        };
-        out.push(
-            row.enabled(anchor.is_some())
-                .on_press(move |_| {
-                    if let Some(anchor) = anchor.clone() {
-                        jump(&kind_id, item, anchor);
-                    }
-                })
-                .into_element(),
-        );
-        outline_rows(
-            &node.children,
-            depth.saturating_add(1),
-            query,
-            kind,
-            item,
-            out,
-        );
-    }
-}
-
 /// The docked panel.
 #[derive(Clone, PartialEq)]
 pub(super) struct Panel {
@@ -126,6 +71,7 @@ impl Component for Panel {
                 data: Arc::clone(&self.data),
                 item: self.focus.as_ref().and_then(Focus::item),
                 tab: self.tab,
+                in_sheet: false,
             })
     }
 }
@@ -138,6 +84,7 @@ pub(super) fn open_sheet(data: Arc<LibraryData>, focus: Option<&Focus>, start: P
             data,
             item: focus.and_then(Focus::item),
             tab,
+            in_sheet: true,
         })
         .open();
 }
@@ -147,6 +94,8 @@ struct PanelBody {
     data: Arc<LibraryData>,
     item: Option<ItemId>,
     tab: State<PanelTab>,
+    /// In the phone sheet, which scrolls on its own.
+    in_sheet: bool,
 }
 
 /// The tabs and, except on Vínculos, a search field.
@@ -176,22 +125,6 @@ fn panel_head(mut tab: State<PanelTab>, query: State<String>) -> Rect {
             )
             .height(34.0)
         }))
-}
-
-/// The document's own outline, filtered by `text`.
-fn contents(outline: &[OutlineNode<Vec<u8>>], text: &str, kind_id: &str, id: ItemId) -> Element {
-    let mut rows = Vec::new();
-    outline_rows(outline, 0, text, kind_id, id, &mut rows);
-    if rows.is_empty() {
-        return Text::new(if text.is_empty() {
-            "Este documento no tiene índice."
-        } else {
-            "Nada con ese nombre."
-        })
-        .role(TextRole::Hint)
-        .into_element();
-    }
-    Group::default().children(rows).into_element()
 }
 
 /// The document's marks, newest first, filtered by colour and `text`.
@@ -277,6 +210,8 @@ impl Component for PanelBody {
         let current = *self.tab.read();
         let query = use_state(String::new);
         let color = use_state(|| None::<[u8; 3]>);
+        let folds = use_state(outline::Folds::default);
+        let cache = use_hook(outline::OutlineCache::default);
         let text = query.read().trim().to_lowercase();
         let head = panel_head(self.tab, query);
         let Some(item) = self.item.and_then(|id| self.data.item(id)) else {
@@ -295,10 +230,36 @@ impl Component for PanelBody {
         let kind = crate::plugins::kind(&kind_id);
         let content = crate::plugins::content::read(id, &kind_id)
             .unwrap_or_else(|| kind.as_ref().map(|k| k.empty_content()).unwrap_or_default());
+        let page = rect()
+            .width(Size::fill())
+            .height(Size::fill())
+            .spacing(12.0)
+            .content(Content::Flex)
+            .child(head);
         let body = match current {
+            // The outline scrolls on its own and builds only its visible rows.
             PanelTab::Contents => {
-                let outline = kind.as_ref().map(|k| k.outline(&content)).unwrap_or_default();
-                contents(&outline, &text, &kind_id, id)
+                let outline = cache.get(id, &content, || {
+                    kind.as_ref()
+                        .map(|k| k.outline(&content))
+                        .unwrap_or_default()
+                });
+                return page
+                    .child(
+                        rect().width(Size::fill()).height(Size::flex(1.0)).child(
+                            outline::OutlineList {
+                                outline,
+                                query: text,
+                                kind: kind_id,
+                                item: id,
+                                folds,
+                                max_height: self
+                                    .in_sheet
+                                    .then(|| notein_ui_kit::safe_frame().height() * 0.6),
+                            },
+                        ),
+                    )
+                    .into_element();
             }
             PanelTab::Bookmarks => {
                 let marks = kind.as_ref().map(|k| k.marks(&content)).unwrap_or_default();
@@ -310,24 +271,18 @@ impl Component for PanelBody {
             }
             .into_element(),
         };
-        rect()
-            .width(Size::fill())
-            .height(Size::fill())
-            .spacing(12.0)
-            .content(Content::Flex)
-            .child(head)
-            .child(
-                ScrollView::new()
-                    .width(Size::fill())
-                    .height(Size::flex(1.0))
-                    .child(notein_ui_kit::ScrollContent::new(
-                        rect()
-                            .width(Size::fill())
-                            .padding((0.0, 0.0, 24.0, 0.0))
-                            .child(body),
-                    )),
-            )
-            .into_element()
+        page.child(
+            ScrollView::new()
+                .width(Size::fill())
+                .height(Size::flex(1.0))
+                .child(notein_ui_kit::ScrollContent::new(
+                    rect()
+                        .width(Size::fill())
+                        .padding((0.0, 0.0, 24.0, 0.0))
+                        .child(body),
+                )),
+        )
+        .into_element()
     }
 }
 
