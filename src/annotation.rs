@@ -479,7 +479,14 @@ impl Component for AnnotationCard {
         let Some(session) = session(id) else {
             return rect().into_element();
         };
-        provide_context(CloseOnNavigate(Rc::new(move || settle(id))));
+        // A reference in the body takes the reader there. The popover would
+        // cover the destination and closes, keeping what was written; the
+        // sidebar sits beside it and stays open.
+        provide_context(CloseOnNavigate(Rc::new(move || {
+            if !expanded {
+                ModalController::get().close();
+            }
+        })));
         let mut draft = session.draft;
         let current = draft.read().clone();
         let custom = use_state(Area::default);
