@@ -37,6 +37,9 @@ ios/**/Generated/
 ios/.istmo/
 ios/NotinplusApp/Plugins/IstmoPluginRegistry.swift
 ios/NotinplusApp/Plugins/IstmoMain.swift
+# Plugin source groups with absolute cargo-registry paths, rewritten by
+# `istmo_build::emit()` on every build — machine-specific.
+ios/NotinplusApp/istmo-plugins.yml
 
 # JetBrains / VS Code
 .idea/
