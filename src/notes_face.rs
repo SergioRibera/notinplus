@@ -147,7 +147,7 @@ impl Component for NotesFace {
                     .on_sized(move |event: Event<SizedEventData>| {
                         viewport.set_if_modified(Some(event.area));
                     })
-                    .child(
+                    .child(notein_ui_kit::ScrollContent::new(
                         rect()
                             .width(Size::fill())
                             .cross_align(Alignment::Center)
@@ -155,7 +155,7 @@ impl Component for NotesFace {
                                 content_top.set(event.area.min_y());
                             })
                             .child(editor),
-                    ),
+                    )),
             )
     }
 }

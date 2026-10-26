@@ -338,7 +338,9 @@ impl Component for Palette {
                 ScrollView::new()
                     .width(Size::fill())
                     .height(Size::flex(1.0))
-                    .child(rect().width(Size::fill()).spacing(12.0).children(sections)),
+                    .child(notein_ui_kit::ScrollContent::new(
+                        rect().width(Size::fill()).spacing(12.0).children(sections),
+                    )),
             )
     }
 }

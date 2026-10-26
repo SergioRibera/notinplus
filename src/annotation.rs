@@ -263,12 +263,14 @@ impl Component for AnnotationSidebar {
                         ..BorderWidth::default()
                     }))
                     .child(
-                        ScrollView::new().expanded().child(
-                            rect()
-                                .width(Size::fill())
-                                .padding((12.0, 12.0, 16.0, 16.0))
-                                .child(AnnotationCard { id, expanded: true }),
-                        ),
+                        ScrollView::new()
+                            .expanded()
+                            .child(notein_ui_kit::ScrollContent::new(
+                                rect()
+                                    .width(Size::fill())
+                                    .padding((12.0, 12.0, 16.0, 16.0))
+                                    .child(AnnotationCard { id, expanded: true }),
+                            )),
                     )
                     .into_element()
             },

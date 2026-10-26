@@ -314,18 +314,21 @@ fn filters(
         .height(Size::px(34.0))
         .show_scrollbar(false)
         .child(
-            rect()
-                .horizontal()
-                .cross_align(Alignment::Center)
-                .spacing(6.0)
-                .children(kind_chips)
-                .child(
-                    rect()
-                        .width(Size::px(1.0))
-                        .height(Size::px(20.0))
-                        .background(p.line),
-                )
-                .children(edge_chips),
+            notein_ui_kit::ScrollContent::new(
+                rect()
+                    .horizontal()
+                    .cross_align(Alignment::Center)
+                    .spacing(6.0)
+                    .children(kind_chips)
+                    .child(
+                        rect()
+                            .width(Size::px(1.0))
+                            .height(Size::px(20.0))
+                            .background(p.line),
+                    )
+                    .children(edge_chips),
+            )
+            .width(Size::auto()),
         )
         .into_element()
 }

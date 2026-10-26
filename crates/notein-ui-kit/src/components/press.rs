@@ -9,7 +9,7 @@ use freya::prelude::*;
 /// Hold time before a press becomes a menu request.
 pub const LONG_PRESS: Duration = Duration::from_millis(450);
 /// Travel that turns a hold into a scroll or drag.
-const SLOP_PX: f64 = 8.0;
+pub(super) const SLOP_PX: f64 = 8.0;
 
 /// Gesture state of one element. Create with [`use_press_gesture`] in
 /// the component that owns the element.
@@ -84,10 +84,16 @@ impl PressGesture {
             token.set(0);
             start.set(None);
         })
-        .on_press(move |_| {
+        .on_press(move |e: Event<PressEventData>| {
             token.set(0);
+            // A pointer that travelled scrolled or dragged; it does not tap.
+            let pointer = matches!(
+                e.data(),
+                PressEventData::Mouse(_) | PressEventData::Touch(_)
+            );
+            let still = !pointer || start.peek().is_some();
             start.set(None);
-            if !*held.peek() {
+            if still && !*held.peek() {
                 on_tap();
             }
         })

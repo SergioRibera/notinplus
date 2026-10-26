@@ -272,13 +272,16 @@ impl PaneHeader {
             .height(Size::px(tokens::size::TAB_BAR))
             .show_scrollbar(false)
             .child(
-                rect()
-                    .height(Size::fill())
-                    .horizontal()
-                    .cross_align(Alignment::Center)
-                    .spacing(2.0)
-                    .padding((0.0, 4.0))
-                    .children(cells),
+                notein_ui_kit::ScrollContent::new(
+                    rect()
+                        .height(Size::fill())
+                        .horizontal()
+                        .cross_align(Alignment::Center)
+                        .spacing(2.0)
+                        .padding((0.0, 4.0))
+                        .children(cells),
+                )
+                .width(Size::auto()),
             )
             .into_element()
     }

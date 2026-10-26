@@ -194,11 +194,13 @@ impl Panel {
                 ScrollView::new()
                     .width(Size::fill())
                     .height(Size::flex(1.0))
-                    .child(rect().padding((0.0, 8.0, 16.0, 8.0)).child(List {
-                        reader: self.reader.clone(),
-                        refs,
-                        in_sheet: false,
-                    })),
+                    .child(notein_ui_kit::ScrollContent::new(
+                        rect().padding((0.0, 8.0, 16.0, 8.0)).child(List {
+                            reader: self.reader.clone(),
+                            refs,
+                            in_sheet: false,
+                        }),
+                    )),
             )
             .into_element()
     }

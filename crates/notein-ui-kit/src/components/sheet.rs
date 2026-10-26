@@ -13,6 +13,7 @@ use super::icon::Icon;
 use super::icon_button::IconButton;
 use super::kind_badge::KindBadge;
 use super::list_row::strut;
+use super::scroll_content::ScrollContent;
 use crate::modal::{Modal, ModalController};
 use crate::theme::palette;
 use crate::tokens::{radius, size, text};
@@ -209,6 +210,7 @@ impl Component for SheetCard {
         let sheet = &self.sheet;
         let mut card_height = use_state(|| 0.0_f32);
         let mut body_height = use_state(|| 0.0_f32);
+        let mut content_height = use_state(|| 0.0_f32);
         // The whole card fits in the visible window: a sheet leaves a strip
         // of backdrop above it, a dialog a margin all round. Only the body
         // scrolls, so it gets what the header, subtitle and footer leave.
@@ -268,10 +270,17 @@ impl Component for SheetCard {
                     .child(
                         ScrollView::new()
                             .width(Size::fill())
+                            .height(scroll_height(*content_height.read(), max_body))
                             .max_height(Size::px(max_body))
-                            .height(Size::auto())
-                            .spacing(14.0)
-                            .children(sheet.children.clone()),
+                            .child(ScrollContent::new(
+                                rect()
+                                    .width(Size::fill())
+                                    .spacing(14.0)
+                                    .on_sized(move |e: Event<SizedEventData>| {
+                                        content_height.set_if_modified(e.area.height());
+                                    })
+                                    .children(sheet.children.clone()),
+                            )),
                     ),
             )
             .maybe_child(sheet.footer.clone().map(|footer| {
@@ -465,6 +474,7 @@ impl Component for PopoverCard {
         let p = palette();
         let pop = &self.popover;
         let mut measured = use_state(|| 0.0_f32);
+        let mut content_height = use_state(|| 0.0_f32);
         // The card stays where it can be seen: off the system bars and
         // the keyboard, inside the window.
         let frame = safe_frame();
@@ -513,9 +523,16 @@ impl Component for PopoverCard {
             .child(
                 ScrollView::new()
                     .width(Size::fill())
-                    .height(Size::auto())
+                    .height(scroll_height(*content_height.read(), max_height))
                     .max_height(Size::px(max_height))
-                    .child(pop.body.clone()),
+                    .child(ScrollContent::new(
+                        rect()
+                            .width(Size::fill())
+                            .on_sized(move |e: Event<SizedEventData>| {
+                                content_height.set_if_modified(e.area.height());
+                            })
+                            .child(pop.body.clone()),
+                    )),
             )
     }
 }
@@ -614,5 +631,17 @@ impl Component for Group {
             .background(p.s1)
             .padding(4.0)
             .children(self.children.clone())
+    }
+}
+
+/// Height of a scroll view that hugs `content` up to `max`. An auto height
+/// lays the content out against a size it is still working out, and
+/// while a finger scrolls the rows jump; a fixed one does not. Auto only
+/// until the content is measured.
+fn scroll_height(content: f32, max: f32) -> Size {
+    if content > 0.0 {
+        Size::px(content.min(max))
+    } else {
+        Size::auto()
     }
 }

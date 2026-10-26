@@ -618,3 +618,63 @@ fn bible_cross_references() {
         bible_john_3,
     );
 }
+
+thread_local! {
+    static SHEET_PRESSES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// A sheet with a long grid, like the Bible's book picker.
+fn book_grid_sheet() -> Element {
+    use_hook(|| {
+        let grid = rect()
+            .width(Size::fill())
+            .horizontal()
+            .spacing(8.0)
+            .content(Content::wrap_spacing(8.0))
+            .children((1..=66).map(|i| {
+                rect()
+                    .width(Size::px(72.0))
+                    .height(Size::px(72.0))
+                    .center()
+                    .background(notein_ui_kit::palette().s3)
+                    .on_press(|_| SHEET_PRESSES.set(SHEET_PRESSES.get() + 1))
+                    .child(label().text(i.to_string()))
+                    .into_element()
+            }));
+        notein_ui_kit::Sheet::titled("Libros").child(grid).open();
+    });
+    rect().into_element()
+}
+
+#[test]
+fn sheet_scrolls_by_touch_without_pressing() {
+    sandbox();
+    let size = (390.0, 844.0);
+    let app = shell(book_grid_sheet, size, notein_ui_kit::Gutters::default());
+    let (mut runner, ()) = TestingRunner::new(app, size.into(), |_| (), 1.0);
+    runner.poll_n(Duration::from_millis(40), 12);
+    runner.sync_and_update();
+    runner.render_to_file(out("sheet-touch-before"));
+    runner.press_touch((150.0, 600.0));
+    runner.sync_and_update();
+    for step in 1..=10 {
+        runner.move_touch((150.0, f64::from(step).mul_add(-30.0, 600.0)));
+        runner.poll_n(Duration::from_millis(16), 1);
+        runner.sync_and_update();
+    }
+    runner.render_to_file(out("sheet-touch-during"));
+    runner.release_touch((150.0, 300.0));
+    runner.poll_n(Duration::from_millis(40), 20);
+    runner.sync_and_update();
+    runner.render_to_file(out("sheet-touch-after"));
+    assert_eq!(
+        SHEET_PRESSES.get(),
+        0,
+        "lifting after a scroll pressed a cell"
+    );
+    runner.press_touch((60.0, 400.0));
+    runner.sync_and_update();
+    runner.release_touch((62.0, 401.0));
+    runner.sync_and_update();
+    assert_eq!(SHEET_PRESSES.get(), 1, "a tap did not press its cell");
+}

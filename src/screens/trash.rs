@@ -181,7 +181,7 @@ impl Component for TrashList {
                 ScrollView::new()
                     .width(Size::fill())
                     .height(Size::fill())
-                    .child(
+                    .child(notein_ui_kit::ScrollContent::new(
                         rect()
                             .width(Size::fill())
                             .padding((0.0, self.pad, 120.0, self.pad))
@@ -189,7 +189,7 @@ impl Component for TrashList {
                             .child(header)
                             .child(notein_ui_kit::Group::default().children(rows))
                             .child(ui.empty_all(all_batches, total)),
-                    ),
+                    )),
             )
             .maybe_child(ui.selection_bar())
             .into_element()

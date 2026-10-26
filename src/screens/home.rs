@@ -449,7 +449,7 @@ impl Component for Loaded {
         .length(length)
         .item_size(move |index: usize| heights.get(index).copied().unwrap_or_default())
         .width(Size::fill())
-        .height(Size::flex(1.0));
+        .height(Size::fill());
         rect()
             .expanded()
             .content(Content::Flex)
@@ -461,7 +461,7 @@ impl Component for Loaded {
                     .padding((8.0, pad, 0.0, pad))
                     .child(AppBar { trash }),
             )
-            .child(scroll)
+            .child(notein_ui_kit::ScrollContent::new(scroll).height(Size::flex(1.0)))
             .child(BottomActions {
                 selection,
                 folder,

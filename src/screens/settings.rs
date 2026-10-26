@@ -241,12 +241,12 @@ fn phone_layout(mut open: State<Option<Section>>, list: Rect) -> Element {
             ScrollView::new()
                 .width(Size::fill())
                 .height(Size::flex(1.0))
-                .child(
+                .child(notein_ui_kit::ScrollContent::new(
                     rect()
                         .width(Size::fill())
                         .padding((8.0, 0.0, 32.0, 0.0))
                         .child(content),
-                ),
+                )),
         )
         .into_element()
 }
@@ -308,12 +308,12 @@ fn wide_layout(section: Section, list: Rect) -> Element {
                     ScrollView::new()
                         .width(Size::fill())
                         .height(Size::flex(1.0))
-                        .child(
+                        .child(notein_ui_kit::ScrollContent::new(
                             rect()
                                 .width(Size::fill())
                                 .padding((4.0, 24.0, 32.0, 24.0))
                                 .child(section.body()),
-                        ),
+                        )),
                 ),
         )
         .into_element()

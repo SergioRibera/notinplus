@@ -186,7 +186,9 @@ impl Component for SearchPanel {
                 ScrollView::new()
                     .width(Size::fill())
                     .height(Size::flex(1.0))
-                    .child(rect().width(Size::fill()).spacing(14.0).children(sections)),
+                    .child(notein_ui_kit::ScrollContent::new(
+                        rect().width(Size::fill()).spacing(14.0).children(sections),
+                    )),
             )
             .maybe_child((!compact).then(key_hints))
     }

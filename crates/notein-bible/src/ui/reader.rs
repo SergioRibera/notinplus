@@ -386,7 +386,7 @@ pub fn chapter_view(
         })
         .font_family(typography::FAMILY)
         .child(
-            scroll.child(
+            scroll.child(notein_ui_kit::ScrollContent::new(
                 rect()
                     .width(Size::fill())
                     .cross_align(Alignment::Center)
@@ -399,7 +399,7 @@ pub fn chapter_view(
                             .child(book_title_header(plan))
                             .child(all_blocks(plan, &styles, reading)),
                     ),
-            ),
+            )),
         )
 }
 

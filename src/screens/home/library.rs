@@ -259,12 +259,15 @@ impl Component for LibraryBar {
                     .height(Size::px(CHIPS))
                     .show_scrollbar(false)
                     .child(
-                        rect()
-                            .horizontal()
-                            .height(Size::px(CHIPS))
-                            .cross_align(Alignment::Center)
-                            .spacing(6.0)
-                            .children(chips(self.filter)),
+                        notein_ui_kit::ScrollContent::new(
+                            rect()
+                                .horizontal()
+                                .height(Size::px(CHIPS))
+                                .cross_align(Alignment::Center)
+                                .spacing(6.0)
+                                .children(chips(self.filter)),
+                        )
+                        .width(Size::auto()),
                     ),
             )
     }
@@ -708,7 +711,12 @@ impl Component for PinnedRow {
                     .width(Size::fill())
                     .height(Size::px(super::card::card_height(self.card)))
                     .show_scrollbar(false)
-                    .child(rect().horizontal().spacing(12.0).children(cards)),
+                    .child(
+                        notein_ui_kit::ScrollContent::new(
+                            rect().horizontal().spacing(12.0).children(cards),
+                        )
+                        .width(Size::auto()),
+                    ),
             )
     }
 }

@@ -320,12 +320,12 @@ impl Component for PanelBody {
                 ScrollView::new()
                     .width(Size::fill())
                     .height(Size::flex(1.0))
-                    .child(
+                    .child(notein_ui_kit::ScrollContent::new(
                         rect()
                             .width(Size::fill())
                             .padding((0.0, 0.0, 24.0, 0.0))
                             .child(body),
-                    ),
+                    )),
             )
             .into_element()
     }
