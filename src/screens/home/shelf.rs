@@ -129,6 +129,7 @@ impl Shelf {
                         name: f.name.clone(),
                         color: f.color,
                         count: data.items_of(f.id).len() + data.folders_of(f.id).len(),
+                        previews: latest(data, f.id, now),
                     },
                 })
                 .collect(),
@@ -146,6 +147,17 @@ impl Shelf {
     pub fn is_empty(&self) -> bool {
         self.folders.is_empty() && self.docs.is_empty()
     }
+}
+
+/// Covers of the three documents last changed in `folder`, newest first.
+fn latest(data: &LibraryData, folder: FolderId, now: u64) -> Vec<DocCardData> {
+    let mut items = data.items_of(folder);
+    items.sort_by_key(|i| std::cmp::Reverse(i.updated_at));
+    items
+        .into_iter()
+        .take(3)
+        .map(|item| card(data, item, false, now))
+        .collect()
 }
 
 /// Card content of `item`.

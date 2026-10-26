@@ -462,6 +462,8 @@ pub struct FolderCardData {
     pub name: String,
     pub color: Option<Rgba>,
     pub count: usize,
+    /// Covers of its latest documents, newest first; three at most.
+    pub previews: Vec<DocCardData>,
 }
 
 /// A folder card.
@@ -472,6 +474,69 @@ pub struct FolderCard {
     pub selecting: Selecting,
     pub drop_target: bool,
     pub actions: CardActions,
+}
+
+impl FolderCard {
+    /// Where each preview sits, newest first: in front in the middle,
+    /// then tilted behind it to the left and to the right. Offsets are
+    /// shares of the card width; tops and tilts are fixed.
+    const FAN: [(f32, f32, f32); 3] = [(0.0, 30.0, 0.0), (-0.19, 18.0, -9.0), (0.19, 18.0, 9.0)];
+
+    /// The covers of its latest documents, fanned out.
+    fn fan(&self, w: f32, p: &Palette) -> Vec<Element> {
+        let mini = (w * 0.56).round();
+        let middle = (w - mini) / 2.0;
+        self.data
+            .previews
+            .iter()
+            .zip(Self::FAN)
+            .enumerate()
+            .map(|(i, (data, (shift, top, tilt)))| {
+                rect()
+                    .key(i)
+                    .position(
+                        Position::new_absolute()
+                            .top(top)
+                            .left(w.mul_add(shift, middle)),
+                    )
+                    .rotate(tilt)
+                    // Siblings on one layer paint in no set order, and each level
+                    // of a cover adds one: the steps clear a whole cover, and
+                    // stay under the marks.
+                    .layer(Layer::Relative(
+                        i16::try_from((2 - i) * 5).unwrap_or_default(),
+                    ))
+                    .corner_radius(tokens::radius::MD)
+                    .shadow(Shadow::new().y(4.0).blur(10.0).color(p.shadow))
+                    .child(Cover {
+                        data: data.clone(),
+                        width: mini,
+                    })
+                    .into_element()
+            })
+            .collect()
+    }
+
+    /// Empty sheets of paper, for a folder with no documents.
+    fn sheets(w: f32, h: f32, p: &Palette) -> Vec<Element> {
+        (0..3)
+            .map(|i| {
+                let step = f32::from(i);
+                rect()
+                    .key(i)
+                    .position(
+                        Position::new_absolute()
+                            .top(step.mul_add(10.0, 20.0))
+                            .left(step.mul_add(5.0, 18.0)),
+                    )
+                    .width(Size::px(step.mul_add(-10.0, w - 36.0)))
+                    .height(Size::px(step.mul_add(-14.0, h - 50.0)))
+                    .corner_radius(8.0)
+                    .background(p.paper.with_a(46 + 46 * i))
+                    .into_element()
+            })
+            .collect()
+    }
 }
 
 impl Component for FolderCard {
@@ -498,22 +563,11 @@ impl Component for FolderCard {
                         .alignment(BorderAlignment::Outer),
                 )
             })
-            .children((0..3).map(|i| {
-                #[allow(clippy::cast_precision_loss)] // 0..3
-                let step = f32::from(i);
-                rect()
-                    .key(i)
-                    .position(
-                        Position::new_absolute()
-                            .top(step.mul_add(10.0, 20.0))
-                            .left(step.mul_add(5.0, 18.0)),
-                    )
-                    .width(Size::px(step.mul_add(-10.0, w - 36.0)))
-                    .height(Size::px(step.mul_add(-14.0, h - 50.0)))
-                    .corner_radius(8.0)
-                    .background(p.paper.with_a(46 + 46 * i))
-                    .into_element()
-            }))
+            .children(if self.data.previews.is_empty() {
+                Self::sheets(w, h, &p)
+            } else {
+                self.fan(w, &p)
+            })
             .child(
                 rect()
                     .position(Position::new_absolute().bottom(8.0).left(8.0))

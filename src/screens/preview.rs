@@ -101,6 +101,8 @@ pub(crate) fn demo() -> LibraryData {
         30,
     );
     let inside = item("Efesios 6", canvas::KIND, estudio.id, 3);
+    let efesios = item("Notas de Efesios", notein_notes::kind::KIND, estudio.id, 5);
+    let griego = item("Léxico de Efesios", pdf::KIND, estudio.id, 6);
     let mut layout = PaneLayout::Split {
         orientation: SplitOrientation::Horizontal,
         ratio: 0.55,
@@ -151,7 +153,7 @@ pub(crate) fn demo() -> LibraryData {
         version: crate::library::INDEX_VERSION,
         folders: vec![estudio, clases],
         items: vec![
-            romanos, cuaderno, biblia, plan, sermon, mapa, manual, inside,
+            romanos, cuaderno, biblia, plan, sermon, mapa, manual, inside, efesios, griego,
         ],
         tags: Vec::new(),
         pins,
