@@ -50,7 +50,28 @@ fn load_pdfium() -> Result<Pdfium, String> {
             }
         }
     }
-    // 2. Default: let dlopen search the process' loader path. Works
+    // 2. Next to the executable — where release bundles ship it:
+    //    `bin/` (Windows), `../lib` (Linux packages, Nix) and
+    //    `../Frameworks` (macOS `.app`). macOS `dlopen` ignores
+    //    `LC_RPATH` for bare names, so the system search alone misses it.
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf));
+    if let Some(exe_dir) = exe_dir {
+        let bound = [
+            exe_dir.clone(),
+            exe_dir.join("../lib"),
+            exe_dir.join("../Frameworks"),
+        ]
+        .iter()
+        .map(Pdfium::pdfium_platform_library_name_at_path)
+        .filter(|path| path.is_file())
+        .find_map(|path| Pdfium::bind_to_library(&path).ok());
+        if let Some(b) = bound {
+            return Ok(Pdfium::new(b));
+        }
+    }
+    // 3. Default: let dlopen search the process' loader path. Works
     //    on Android (nativeLibraryDir), Linux with pdfium on
     //    LD_LIBRARY_PATH (see the nix devshell), macOS with
     //    DYLD_FALLBACK_LIBRARY_PATH, Windows with pdfium.dll on PATH.
