@@ -1,6 +1,9 @@
 // Desktop entry point. Mobile targets get a stub `main` so the same
 // `Cargo.toml` produces `cdylib` + `staticlib` + a `bin` without extra cfgs.
 
+// Release builds on Windows must not open a console window next to the app.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 #[cfg(not(any(
     target_os = "android",
     target_os = "ios",
