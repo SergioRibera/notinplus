@@ -261,24 +261,26 @@ impl AnnotationCard {
             .padding((10.0, 12.0))
             .corner_radius(tokens::radius::MD)
             .background(p.s1)
-            .horizontal()
-            .spacing(10.0)
+            // The bar is a border: a filled child would stretch to the
+            // height of the whole popover.
             .child(
                 rect()
-                    .width(Size::px(3.0))
-                    .height(Size::fill())
-                    .min_height(Size::px(28.0))
-                    .corner_radius(2.0)
-                    .background(dot),
-            )
-            .child(
-                label()
-                    .text(quote)
-                    .font_size(tokens::text::BODY)
-                    .font_slant(FontSlant::Italic)
-                    .color(p.t2)
-                    .max_lines(if self.expanded { 6 } else { 3 })
-                    .text_overflow(TextOverflow::Ellipsis),
+                    .width(Size::fill())
+                    .padding((0.0, 0.0, 0.0, 10.0))
+                    .border(Border::new().fill(dot).width(BorderWidth {
+                        left: 3.0,
+                        ..BorderWidth::default()
+                    }))
+                    .child(
+                        label()
+                            .width(Size::fill())
+                            .text(quote)
+                            .font_size(tokens::text::BODY)
+                            .font_slant(FontSlant::Italic)
+                            .color(p.t2)
+                            .max_lines(if self.expanded { 6 } else { 3 })
+                            .text_overflow(TextOverflow::Ellipsis),
+                    ),
             )
     }
 

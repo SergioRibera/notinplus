@@ -435,3 +435,64 @@ fn overlays_stay_in_the_visible_window() {
     render_covered("sheet-keyboard-phone", (390.0, 844.0), KEYBOARD, long_sheet);
     render("popover-edge", (820.0, 600.0), edge_popover);
 }
+
+fn selection_menu() -> Element {
+    use_hook(|| {
+        crate::selection::SelectionMenu {
+            at: (420.0, 320.0),
+            active: Some(1),
+            on_color: std::rc::Rc::new(|_| {}),
+            on_note: std::rc::Rc::new(|| {}),
+            reference: Some((
+                notein_plugin::bookmark::SourceRef::Plugin {
+                    plugin_id: "bible".to_owned(),
+                    item: [1; 16],
+                    anchor: Vec::new(),
+                    selection: None,
+                },
+                "Juan 3:16".to_owned(),
+            )),
+            document: Some(crate::library::ItemId([1; 16])),
+            extra: Vec::new(),
+            on_dismiss: std::rc::Rc::new(|| {}),
+        }
+        .show();
+    });
+    rect().into_element()
+}
+
+#[test]
+fn selection_menu_hugs_its_actions() {
+    render("selection-desktop", (1440.0, 900.0), selection_menu);
+    render("selection-tablet", (1024.0, 768.0), selection_menu);
+}
+
+fn annotation_popover() -> Element {
+    use_hook(|| {
+        crate::annotation::AnnotationPopover::open(
+            notein_plugin::services::AnnotationRequest {
+                doc: notein_plugin::DocId::default(),
+                kind: "bible".to_owned(),
+                title: "Verso 16".to_owned(),
+                quote: Some(
+                    "Porque de tal manera amó Dios al mundo, que ha dado a su Hijo unigénito, \
+                     para que todo aquel que en él cree, no se pierda, mas tenga vida eterna."
+                        .to_owned(),
+                ),
+                color: Some([255, 214, 102]),
+                body: String::new(),
+                target: Some((420.0, 420.0, 1.0, 1.0)),
+                existing: false,
+            },
+            None,
+            std::sync::Arc::new(|_| {}),
+        );
+    });
+    rect().into_element()
+}
+
+#[test]
+fn annotation_popover_keeps_its_width() {
+    render("annotation-desktop", (1440.0, 900.0), annotation_popover);
+    render("annotation-tablet", (1024.0, 768.0), annotation_popover);
+}
