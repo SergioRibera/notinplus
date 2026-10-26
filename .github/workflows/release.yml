@@ -1,24 +1,462 @@
-name: release
+name: Release
 
 on:
   push:
-    tags: ['v*']
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release (v0.1.0). Empty → build every artifact from the selected ref without publishing."
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
 
-jobs:
+concurrency:
+  group: release-${{ github.ref }}-${{ inputs.tag }}
+  cancel-in-progress: false
 
-  github-release:
-    name: publish GitHub release
+env:
+  ABIS: arm64-v8a,x86_64
+
+jobs:
+  # Resolves what is being built and fans the desktop matrix out of
+  # nix/targets.nix (`nix run .#matrix`), so the workflow never lists
+  # platforms itself.
+  plan:
+    name: Plan
     runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.r.outputs.ref }}
+      tag: ${{ steps.r.outputs.tag }}
+      version: ${{ steps.r.outputs.version }}
+      publish: ${{ steps.r.outputs.publish }}
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: r
+        name: Resolve ref
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          raw="${INPUT_TAG:-}"
+          if [ -z "$raw" ] && [ "$GITHUB_REF_TYPE" = tag ]; then raw="$GITHUB_REF_NAME"; fi
+          if [ -n "$raw" ]; then
+            tag="v${raw#v}"
+            {
+              echo "ref=refs/tags/$tag"
+              echo "tag=$tag"
+              echo "version=${tag#v}"
+              echo "publish=true"
+            } >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "ref=$GITHUB_SHA"
+              echo "publish=false"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.r.outputs.ref }}
+
+      - name: Verify Cargo.toml version matches tag
+        if: steps.r.outputs.publish == 'true'
+        run: |
+          crate=$(awk -F\" '/^version = /{print $2; exit}' Cargo.toml)
+          if [ "$crate" != "${{ steps.r.outputs.version }}" ]; then
+            echo "::error::Cargo.toml version ($crate) does not match tag (${{ steps.r.outputs.version }})"
+            exit 1
+          fi
+
+      - uses: ./.github/actions/setup-nix
+
+      - id: m
+        name: Generate matrix
+        run: |
+          matrix=$(nix run .#matrix --quiet)
+          echo "$matrix" | jq .
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  desktop:
+    name: Desktop (${{ matrix.system }})
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.plan.outputs.matrix).nix }}
     steps:
       - uses: actions/checkout@v4
-      
-      - uses: cachix/install-nix-action@v27
-      - run: nix build .#bundle
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+
+      - id: nix
+        uses: ./.github/actions/setup-nix
+        with:
+          attic-token: ${{ secrets.ATTIC_TOKEN }}
+
+      # Pushed on its own first: a failure further down still leaves the
+      # dependency build in attic, so the retry starts from the app crate.
+      - name: Build dependencies
+        run: nix build -L .#cargoArtifacts -o result-deps
+
+      - name: Push dependencies to attic
+        if: always()
+        uses: ./.github/actions/attic-push
+        with:
+          push-enabled: ${{ steps.nix.outputs.push-enabled }}
+          paths: result-deps
+
+      # The wrapped package doubles as the "Nix" release format: once in
+      # attic, `nix run github:SergioRibera/notinplus/<tag>` is a download.
+      - name: Build Nix package
+        run: nix build -L .#notinplus -o result-app
+
+      - name: Build bundles
+        run: nix build -L .#bundles -o result-bundles
+
+      - id: flatpak
+        name: Build flatpak kit
+        run: |
+          if [ "$(nix eval --json '.#packages.${{ matrix.system }}' --apply 'p: p ? flatpak-kit')" = true ]; then
+            nix build -L .#flatpak-kit -o result-flatpak-kit
+            mkdir -p flatpak-kit && cp -rL result-flatpak-kit/. flatpak-kit/
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stage artifacts
+        run: bash .github/scripts/stage-bundles.sh result-bundles dist ${{ matrix.system }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.system }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+      - if: steps.flatpak.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-kit-${{ matrix.system }}
+          path: flatpak-kit/
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Push closures to attic
+        if: always()
+        uses: ./.github/actions/attic-push
+        with:
+          push-enabled: ${{ steps.nix.outputs.push-enabled }}
+          paths: result-deps result-app result-bundles result-flatpak-kit
+
+  # rust-skia ships no windows-gnu binaries, so the exe is built with MSVC
+  # here and only packaged by Nix (windows-bundle).
+  windows-build:
+    name: Windows build (${{ matrix.system }})
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.plan.outputs.matrix).prebuilt }}
+    env:
+      # rust-toolchain.toml lists the mobile targets; skip installing them here.
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - run: git config --global core.longpaths true
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo build
+        run: cargo build --release --locked --bin notinplus
+
+      - name: Stage exe + pdfium
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p win-dist pdfium
+          cp target/release/notinplus.exe win-dist/
+          curl -fsSL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7881/pdfium-win-x64.tgz" \
+            | tar -xz -C pdfium
+          cp pdfium/bin/pdfium.dll win-dist/
+          ls -la win-dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prebuilt-${{ matrix.system }}
+          path: win-dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  windows-bundle:
+    name: Windows bundles (${{ matrix.system }})
+    needs: [plan, windows-build]
+    runs-on: ${{ matrix.bundleRunner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.plan.outputs.matrix).prebuilt }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+
+      - id: nix
+        uses: ./.github/actions/setup-nix
+        with:
+          attic-token: ${{ secrets.ATTIC_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: prebuilt-${{ matrix.system }}
+          path: win-dist
+
+      - name: Bundle NSIS / MSI / zip
+        run: NOTINPLUS_WINDOWS_DIST="$PWD/win-dist" nix build -L --impure .#windows-bundles -o result-bundles
+
+      - name: Stage artifacts
+        run: bash .github/scripts/stage-bundles.sh result-bundles dist ${{ matrix.system }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.system }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  # nix-bundle-app emits a flatpak source kit; finishing it needs
+  # flatpak-builder with network access to the Flathub runtime.
+  flatpak:
+    name: Flatpak
+    needs: [plan, desktop]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: flatpak-kit-x86_64-linux
+          path: flatpak-kit
+
+      - name: Install flatpak-builder + runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+
+      - name: Build .flatpak
+        working-directory: flatpak-kit
+        run: |
+          chmod +x build.sh
+          ./build.sh
+          mkdir -p ../dist
+          for f in *.flatpak; do mv "$f" "../dist/${f%.flatpak}-x86_64.flatpak"; done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-flatpak
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  android:
+    name: Android (per-ABI + universal APKs)
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+
+      - uses: ./.github/actions/android-build
+        with:
+          task: ":app:assembleRelease"
+          abis: ${{ env.ABIS }}
+          keystore-base64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          keystore-password: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          key-alias: ${{ secrets.ANDROID_KEY_ALIAS }}
+          key-password: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+      - name: Stage APKs
+        env:
+          VERSION: ${{ needs.plan.outputs.version || github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for apk in android/app/build/outputs/apk/release/app-*-release.apk; do
+            variant=$(basename "$apk" -release.apk)
+            cp "$apk" "dist/notinplus-${VERSION}-android-${variant#app-}.apk"
+          done
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  # notein-relay: deb/rpm/tar.gz (systemd unit included) go into the
+  # release; the per-arch OCI images are pushed as `<version>-<arch>` and
+  # joined into one multi-arch tag by server-image.
+  server:
+    name: Server (${{ matrix.system }})
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.plan.outputs.matrix).server }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+
+      - id: nix
+        uses: ./.github/actions/setup-nix
+        with:
+          attic-token: ${{ secrets.ATTIC_TOKEN }}
+
+      - name: Build dependencies
+        run: nix build -L .#relay-cargoArtifacts -o result-deps
+
+      - name: Push dependencies to attic
+        if: always()
+        uses: ./.github/actions/attic-push
+        with:
+          push-enabled: ${{ steps.nix.outputs.push-enabled }}
+          paths: result-deps
+
+      - name: Build packages
+        run: nix build -L .#relay-bundles -o result-bundles
+
+      - name: Build OCI image
+        run: nix build -L .#relay-image -o result-image
+
+      - name: Stage artifacts
+        run: bash .github/scripts/stage-bundles.sh result-bundles dist ${{ matrix.system }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-${{ matrix.system }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+      # crane talks the registry protocol directly — no docker daemon. The
+      # dockerTools tarball is gzipped and crane wants plain tar.
+      - name: Push image
+        if: needs.plan.outputs.publish == 'true'
+        env:
+          TAG: ${{ needs.plan.outputs.version }}-${{ matrix.dockerArch }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/notein-relay"
+          gunzip -c "$(readlink -f result-image)" > "$RUNNER_TEMP/image.tar"
+          nix run nixpkgs#crane -- auth login ghcr.io -u "$GITHUB_ACTOR" -p "$TOKEN"
+          nix run nixpkgs#crane -- push "$RUNNER_TEMP/image.tar" "$image:$TAG"
+
+      - name: Push closures to attic
+        if: always()
+        uses: ./.github/actions/attic-push
+        with:
+          push-enabled: ${{ steps.nix.outputs.push-enabled }}
+          paths: result-deps result-bundles result-image
+
+  server-image:
+    name: Server image manifest
+    needs: [plan, server]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+
+      - uses: ./.github/actions/setup-nix
+
+      - name: Join per-arch images
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          MATRIX: ${{ needs.plan.outputs.matrix }}
+          PRERELEASE: ${{ contains(needs.plan.outputs.tag, '-') }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/notein-relay"
+          nix run nixpkgs#crane -- auth login ghcr.io -u "$GITHUB_ACTOR" -p "$TOKEN"
+          manifests=()
+          for arch in $(jq -r '.server[].dockerArch' <<<"$MATRIX"); do
+            manifests+=(-m "$image:$VERSION-$arch")
+          done
+          nix run nixpkgs#crane -- index append "${manifests[@]}" -t "$image:$VERSION"
+          if [ "$PRERELEASE" != true ]; then
+            nix run nixpkgs#crane -- tag "$image:$VERSION" latest
+          fi
+
+  publish:
+    name: Publish GitHub Release
+    needs: [plan, desktop, windows-bundle, flatpak, android, server, server-image]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "{desktop-*,server-*,android}"
+          path: dist
+          merge-multiple: true
+
+      - name: SHA256SUMS
+        working-directory: dist
+        run: |
+          find . -type f ! -name SHA256SUMS -printf '%P\n' | LC_ALL=C sort | xargs sha256sum -- > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Release notes header
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          cat > NOTES.md <<EOF
+          ## Install
+
+          - **Android**: \`notinplus-*-android-universal.apk\` works everywhere; the \`arm64-v8a\` / \`x86_64\` APKs are smaller.
+          - **Linux**: AppImage, \`.deb\`, \`.rpm\`, \`.flatpak\` or \`.tar.gz\`.
+          - **Nix**: \`nix run github:SergioRibera/notinplus/$TAG\` (binary cache: \`cache.sergioribera.rs/main\`).
+          - **macOS**: \`.dmg\`, \`.pkg\` or the zipped \`.app\` (unsigned: right-click → Open the first time).
+          - **Windows**: \`-setup.exe\` (NSIS) or \`.msi\`.
+
+          ### Relay server (\`notein-relay\`, Linux)
+
+          - \`notein-relay_*.deb\` / \`notein-relay-*.rpm\`: installs and starts the \`notein-relay\` systemd service (UDP 7720, data in \`/var/lib/notein-relay\`).
+          - \`notein-relay-*-linux.tar.gz\`: standalone binary.
+          - Docker: \`docker run -p 7720:7720/udp -v relay:/data ghcr.io/sergioribera/notein-relay:${TAG#v} --port 7720 --data /data --advertise <public-host>\`
+          EOF
+
       - uses: softprops/action-gh-release@v2
         with:
-          files: result/*
-      
-
+          tag_name: ${{ needs.plan.outputs.tag }}
+          name: notinplus ${{ needs.plan.outputs.tag }}
+          prerelease: ${{ contains(needs.plan.outputs.tag, '-') }}
+          body_path: NOTES.md
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: dist/*

@@ -1,0 +1,50 @@
+name: Push paths to attic
+description: >-
+  Resolves the listed store paths (or symlinks like ./result*) and pushes
+  them to main:main on cache.sergioribera.rs. No-op when the token is
+  missing so PRs from forks don't fail here.
+
+inputs:
+  push-enabled:
+    description: Pass `steps.<id>.outputs.push-enabled` from setup-nix here. Empty/false → skip.
+    required: false
+    default: ""
+  paths:
+    description: >-
+      Space-separated list of store paths or symlinks to push. Symlinks
+      get dereferenced; non-existent entries are silently skipped so
+      callers can pass `result result-deps result-bundle-*` without
+      juggling conditionals per workflow.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Push
+      if: ${{ inputs.push-enabled == 'true' }}
+      shell: bash
+      env:
+        PUSH_PATHS: ${{ inputs.paths }}
+      # Never fail the calling job: a cache miss on Attic (network blip,
+      # auth expiry, server 5xx) must not red-X a release that otherwise
+      # produced valid artifacts. We log loudly and exit 0.
+      run: |
+        set -uo pipefail
+        resolved=()
+        for p in $PUSH_PATHS; do
+          for match in $p; do
+            if [ -e "$match" ]; then
+              resolved+=("$(readlink -f "$match")")
+            fi
+          done
+        done
+        if [ "${#resolved[@]}" -eq 0 ]; then
+          echo "attic-push: no paths matched, nothing to upload"
+          exit 0
+        fi
+        printf 'attic-push: uploading %d path(s):\n' "${#resolved[@]}"
+        printf '  - %s\n' "${resolved[@]}"
+        if ! attic push main:main "${resolved[@]}"; then
+          echo "::warning::attic push failed; continuing without warming cache"
+        fi
+        exit 0
