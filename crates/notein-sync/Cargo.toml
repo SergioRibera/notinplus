@@ -22,7 +22,7 @@ missing_panics_doc = "allow"
 redundant_pub_crate = "allow"
 
 [dependencies]
-zudp = { path = "../../../../GamerOS/zudp", features = ["security", "discovery"] }
+zudp = { version = "0.3.8", features = ["security", "discovery"] }
 bincode = { version = "2", features = ["derive", "std"] }
 blake2 = "0.10"
 chacha20poly1305 = "0.10"

@@ -31,15 +31,15 @@ path = "src/main.rs"
 # The istmo facade's default feature enables `native-activity`; the pen
 # plugin needs Kotlin-side `MotionEvent` interception, which only fires
 # under `GameActivity`. Switch the activity flavor at the facade level.
-istmo = { path = "../istmo", default-features = false, features = [
+istmo = { version = "0.1.1-alpha.4", default-features = false, features = [
     "game-activity",
 ] }
-istmo-pen = { path = "../istmo/plugins/istmo-pen" }
-istmo-file-picker = { path = "../istmo/plugins/file-picker" }
-istmo-data-store = { path = "../istmo/plugins/data-store" }
-istmo-share = { path = "../istmo/plugins/share" }
-istmo-barcode-scanner = { path = "../istmo/plugins/barcode-scanner" }
-istmo-opener = { path = "../istmo/plugins/opener" }
+istmo-pen = "0.1.1-alpha.4"
+istmo-file-picker = "0.1.1-alpha.4"
+istmo-data-store = "0.1.1-alpha.4"
+istmo-share = "0.1.1-alpha.4"
+istmo-barcode-scanner = "0.1.1-alpha.4"
+istmo-opener = "0.1.1-alpha.4"
 freya = { version = "=0.5.0-rc.13", features = ["router", "icons", "icons-lucide"] }
 freya-engine = "=0.5.0-rc.13"
 freya-components = "=0.5.0-rc.13"
@@ -86,14 +86,14 @@ winit = { version = "0.30", features = ["android-game-activity"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos")))'.dependencies]
 env_logger = "0.11"
-istmo-window = { path = "../istmo/crates/window" }
+istmo-window = "0.1.1-alpha.4"
 
 [dev-dependencies]
 freya-testing = "=0.5.0-rc.13"
 rusqlite = { version = "0.37", features = ["bundled"] }
 
 [build-dependencies]
-istmo-build = { path = "../istmo/crates/build" }
+istmo-build = "0.1.1-alpha.4"
 
 [patch.crates-io]
 winit = { git = "https://github.com/SergioRibera/winit", branch = "notein-native-input" }
