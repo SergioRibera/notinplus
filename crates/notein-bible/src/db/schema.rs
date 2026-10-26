@@ -20,6 +20,12 @@ CREATE TABLE IF NOT EXISTS bibles (
     language    TEXT NOT NULL
 );
 
+-- A translation still downloading, or cut short; hidden until done.
+CREATE TABLE IF NOT EXISTS installs_pending (
+    bible_id    TEXT PRIMARY KEY,
+    FOREIGN KEY (bible_id) REFERENCES bibles(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS books (
     bible_id    TEXT NOT NULL,
     book_id     TEXT NOT NULL,
@@ -118,9 +124,25 @@ END;
 COMMIT;
 ";
 
+/// Bumped by each one-off data fix below.
+const VERSION: i64 = 1;
+
 pub(crate) fn migrate(db: &Db) -> Result<()> {
     db.with_conn(|conn| {
         conn.execute_batch(SCHEMA_SQL)?;
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if version < 1 {
+            // Installs from before `installs_pending` could stop after the
+            // verses; one without cross-references or headings never
+            // finished.
+            conn.execute_batch(
+                "INSERT OR IGNORE INTO installs_pending (bible_id)
+                 SELECT id FROM bibles
+                 WHERE id NOT IN (SELECT DISTINCT bible_id FROM cross_refs)
+                    OR id NOT IN (SELECT DISTINCT bible_id FROM headers);",
+            )?;
+        }
+        conn.pragma_update(None, "user_version", VERSION)?;
         Ok(())
     })
 }

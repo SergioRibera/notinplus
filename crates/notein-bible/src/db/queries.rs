@@ -55,7 +55,9 @@ pub struct ChapterRow {
 pub(crate) fn list_bibles(db: &Db) -> Result<Vec<BibleRow>> {
     db.with_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, abbrev, name_local, language FROM bibles ORDER BY name_local",
+            "SELECT id, abbrev, name_local, language FROM bibles
+             WHERE id NOT IN (SELECT bible_id FROM installs_pending)
+             ORDER BY name_local",
         )?;
         let rows = stmt
             .query_map([], |r| {
@@ -68,6 +70,26 @@ pub(crate) fn list_bibles(db: &Db) -> Result<Vec<BibleRow>> {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
+    })
+}
+
+pub(crate) fn pending_installs(db: &Db) -> Result<Vec<String>> {
+    db.with_conn(|conn| {
+        let mut stmt = conn.prepare("SELECT bible_id FROM installs_pending ORDER BY bible_id")?;
+        let rows = stmt
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<Vec<String>>>()?;
+        Ok(rows)
+    })
+}
+
+pub(crate) fn finish_install(db: &Db, bible_id: &str) -> Result<()> {
+    db.with_conn(|conn| {
+        conn.execute(
+            "DELETE FROM installs_pending WHERE bible_id = ?1",
+            [bible_id],
+        )?;
+        Ok(())
     })
 }
 

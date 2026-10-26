@@ -6,17 +6,14 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::db::Db;
 use crate::install_background::{self, InstallStage, SharedInstallProgress};
+pub use crate::install_background::{Phase, Step};
 use crate::plugin_config::SharedConfig;
 
 /// Where one translation is in the queue.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InstallState {
     Queued,
-    /// Books done of total (total is 0 until the manifest is read).
-    Downloading {
-        done: usize,
-        total: usize,
-    },
+    Downloading(Step),
     Failed(String),
 }
 
@@ -64,7 +61,7 @@ impl Queue {
             return None;
         };
         self.states
-            .insert(id.clone(), InstallState::Downloading { done: 0, total: 0 });
+            .insert(id.clone(), InstallState::Downloading(Step::default()));
         self.announce();
         Some(id)
     }
@@ -100,7 +97,7 @@ impl Installer {
             let mut queue = self.lock();
             if matches!(
                 queue.states.get(bible_id),
-                Some(InstallState::Queued | InstallState::Downloading { .. })
+                Some(InstallState::Queued | InstallState::Downloading(_))
             ) {
                 return;
             }
@@ -175,10 +172,7 @@ impl Installer {
                         continue;
                     }
                     let mut queue = this.lock();
-                    let next = InstallState::Downloading {
-                        done: p.done_books,
-                        total: p.total_books,
-                    };
+                    let next = InstallState::Downloading(p.step);
                     if queue.states.get(&id) != Some(&next) {
                         queue.states.insert(id.clone(), next);
                         queue.announce();
@@ -201,6 +195,26 @@ impl Installer {
     #[must_use]
     pub fn busy(&self) -> bool {
         self.lock().running
+    }
+
+    /// The translation downloading now, with how far it is.
+    #[must_use]
+    pub fn active(&self) -> Option<(String, Step)> {
+        self.lock()
+            .states
+            .iter()
+            .find_map(|(id, state)| match state {
+                InstallState::Downloading(step) => Some((id.clone(), *step)),
+                InstallState::Queued | InstallState::Failed(_) => None,
+            })
+    }
+
+    /// Queue again every download a closed app cut short.
+    pub fn resume(&self) {
+        match self.db.pending_installs() {
+            Ok(pending) => pending.iter().for_each(|id| self.enqueue(id)),
+            Err(e) => log::warn!("bible installer: pending downloads: {e}"),
+        }
     }
 
     /// Every download that ends from now on.
@@ -242,7 +256,7 @@ mod tests {
         queue.outcomes.push(tx);
         queue.states.insert(
             "rvr".to_owned(),
-            InstallState::Downloading { done: 3, total: 66 },
+            InstallState::Downloading(Step::new(Phase::Books, 3, 66)),
         );
         queue.finish("rvr".to_owned(), Some(Outcome::Installed("rvr".to_owned())));
         assert_eq!(queue.states.get("rvr"), None);
@@ -258,6 +272,21 @@ mod tests {
             Some(&InstallState::Failed("sin red".to_owned()))
         );
         assert_eq!(rx.try_recv(), Ok(failed));
+    }
+
+    #[test]
+    fn step_fraction_moves_forward_through_the_phases() {
+        let steps = [
+            Step::new(Phase::Books, 0, 0),
+            Step::new(Phase::Books, 33, 66),
+            Step::new(Phase::Books, 66, 66),
+            Step::new(Phase::CrossRefs, 10, 66),
+            Step::new(Phase::Headings, 0, 0),
+            Step::new(Phase::Headings, 66, 66),
+        ];
+        let fractions = steps.map(Step::fraction);
+        assert!(fractions.windows(2).all(|w| w[0] <= w[1]), "{fractions:?}");
+        assert!((fractions[5] - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]

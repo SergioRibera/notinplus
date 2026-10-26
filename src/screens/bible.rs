@@ -5,7 +5,7 @@ use std::sync::{Arc, OnceLock};
 
 use freya::prelude::*;
 use notein_bible::import::biblionlabs::{BibleEntryView, CatalogueView};
-use notein_bible::installer::{InstallState, Installer, Outcome};
+use notein_bible::installer::{InstallState, Installer, Outcome, Phase, Step};
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
     Button, EmptyState, Group, ListRow, Notice, NoticeTone, ProgressBar, SearchField, Sheet,
@@ -45,8 +45,8 @@ pub fn use_installs() -> State<u64> {
     tick
 }
 
-/// Toast every download as it ends, with a retry on failures. Runs for the
-/// life of the app.
+/// Toast every download as it ends, with a retry on failures, and pick up
+/// the ones a closed app cut short. Runs for the life of the app.
 pub fn announce_installs() {
     let Some(installer) = installer() else {
         return;
@@ -57,6 +57,7 @@ pub fn announce_installs() {
             Toasts::get().show(outcome_toast(installer, outcome));
         }
     });
+    installer.resume();
 }
 
 fn outcome_toast(installer: &'static Installer, outcome: Outcome) -> Toast {
@@ -71,6 +72,18 @@ fn outcome_toast(installer: &'static Installer, outcome: Outcome) -> Toast {
         ))
         .tone(ToastTone::Error)
         .action("Reintentar", move |()| installer.enqueue(&bible_id)),
+    }
+}
+
+/// What a download is doing, for the line under its bar.
+fn step_text(step: Step) -> String {
+    let Step { phase, done, total } = step;
+    match phase {
+        Phase::Books if total == 0 => "Preparando la descarga…".to_owned(),
+        Phase::Books => format!("Libros: {done} de {total}"),
+        Phase::CrossRefs => format!("Referencias cruzadas: {done} de {total} libros"),
+        Phase::Headings if total == 0 => "Subtítulos de sección…".to_owned(),
+        Phase::Headings => format!("Subtítulos: {done} de {total} libros"),
     }
 }
 
@@ -284,20 +297,15 @@ impl Component for Row {
         let id = self.entry.id.clone();
         let state = installer().and_then(|i| i.state(&id));
         let trailing: Element = match (&state, self.installed) {
-            (Some(InstallState::Downloading { done, total }), _) => {
-                #[allow(clippy::cast_precision_loss)] // book counts
-                let fraction = if *total == 0 {
-                    0.02
-                } else {
-                    *done as f32 / *total as f32
-                };
+            (Some(InstallState::Downloading(step)), _) => {
+                let fraction = step.fraction();
                 rect()
                     .width(Size::px(120.0))
                     .spacing(4.0)
                     .child(
                         Text::new(format!("{} %", (fraction * 100.0).round())).role(TextRole::Meta),
                     )
-                    .child(ProgressBar::new(fraction))
+                    .child(ProgressBar::new(fraction.max(0.02)))
                     .into_element()
             }
             (Some(InstallState::Queued), _) => {
@@ -328,11 +336,14 @@ impl Component for Row {
         };
         let subtitle = match &state {
             Some(InstallState::Failed(why)) => why.clone(),
-            _ => [self.entry.name_english.clone(), self.entry.language.clone()]
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>()
-                .join(" · "),
+            Some(InstallState::Downloading(step)) => step_text(*step),
+            Some(InstallState::Queued) | None => {
+                [self.entry.name_english.clone(), self.entry.language.clone()]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            }
         };
         ListRow::new(label(&self.entry))
             .subtitle(subtitle)
@@ -363,31 +374,25 @@ impl Component for FirstUse {
                     .or_else(|| view.bibles.first())
                     .cloned()
             });
-        let state = recommended
-            .as_ref()
-            .and_then(|r| installer().and_then(|i| i.state(&r.id)));
+        // Whatever downloads now, also one picked from the catalog.
+        let state = installer()
+            .and_then(Installer::active)
+            .map(|(_, step)| InstallState::Downloading(step))
+            .or_else(|| {
+                recommended
+                    .as_ref()
+                    .and_then(|r| installer().and_then(|i| i.state(&r.id)))
+            });
         let action: Element = match (&recommended, &state) {
-            (_, Some(InstallState::Downloading { done, total })) => {
-                #[allow(clippy::cast_precision_loss)] // book counts
-                let fraction = if *total == 0 {
-                    0.02
-                } else {
-                    *done as f32 / *total as f32
-                };
-                rect()
-                    .width(Size::px(320.0))
-                    .spacing(6.0)
-                    .child(ProgressBar::new(fraction))
-                    .child(
-                        Text::new(if *total == 0 {
-                            "Preparando la descarga…".to_owned()
-                        } else {
-                            format!("Descargando {done} de {total} libros. Podés empezar a leer cuando aparezca el primero.")
-                        })
+            (_, Some(InstallState::Downloading(step))) => rect()
+                .width(Size::px(320.0))
+                .spacing(6.0)
+                .child(ProgressBar::new(step.fraction().max(0.02)))
+                .child(
+                    Text::new(format!("{} · Se abre al terminar", step_text(*step)))
                         .role(TextRole::Meta),
-                    )
-                    .into_element()
-            }
+                )
+                .into_element(),
             (_, Some(InstallState::Queued)) => {
                 Text::new("En cola…").role(TextRole::Meta).into_element()
             }

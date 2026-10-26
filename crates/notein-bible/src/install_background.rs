@@ -26,9 +26,51 @@ const CACHE_TTL: Duration = Duration::from_secs(60 * 60 * 24 * 7);
 pub struct InstallProgress {
     pub bible_id: String,
     pub stage: InstallStage,
-    pub done_books: usize,
-    pub total_books: usize,
+    pub step: Step,
     pub error: Option<String>,
+}
+
+/// The parts of a download, in order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Phase {
+    #[default]
+    Books,
+    CrossRefs,
+    Headings,
+}
+
+/// How far a download is: `done` of `total` units of `phase` (`total` is 0
+/// until the phase knows its size).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Step {
+    pub phase: Phase,
+    pub done: usize,
+    pub total: usize,
+}
+
+impl Step {
+    #[must_use]
+    pub const fn new(phase: Phase, done: usize, total: usize) -> Self {
+        Self { phase, done, total }
+    }
+
+    /// The whole download, 0 to 1. The books take most of it; the
+    /// cross-references and the section headings follow.
+    #[must_use]
+    pub fn fraction(self) -> f32 {
+        let (start, share): (f32, f32) = match self.phase {
+            Phase::Books => (0.0, 0.7),
+            Phase::CrossRefs => (0.7, 0.2),
+            Phase::Headings => (0.9, 0.1),
+        };
+        #[allow(clippy::cast_precision_loss)] // book counts
+        let part = if self.total == 0 {
+            0.0
+        } else {
+            self.done.min(self.total) as f32 / self.total as f32
+        };
+        share.mul_add(part, start)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -217,19 +259,24 @@ pub(crate) fn run(
         edit(progress, |p| match event {
             biblionlabs::Progress::ManifestFetched { total_books } => {
                 p.stage = InstallStage::Downloading;
-                p.total_books = total_books;
+                p.step = Step::new(Phase::Books, 0, total_books);
             }
-            biblionlabs::Progress::BookDone { .. } => p.done_books += 1,
+            biblionlabs::Progress::BookDone { .. } => p.step.done += 1,
+            biblionlabs::Progress::CrossRefs { done, total } => {
+                p.step = Step::new(Phase::CrossRefs, done, total);
+            }
             biblionlabs::Progress::Started { .. } | biblionlabs::Progress::Finished { .. } => {}
         });
     };
 
     match install.run(on_progress) {
         Ok(verses) => {
-            // Headings come right after the verses so the first passage
-            // opened already shows them; the per-chapter fetch is only a
-            // fallback.
+            // The translation shows only after its headings, so the first
+            // passage opened already has them.
             prefetch_all_headings(db, &client, &cache_dir, bible_id, progress);
+            if let Err(e) = db.finish_install(bible_id) {
+                return fail(progress, &e.to_string());
+            }
             edit(progress, |p| {
                 p.stage = InstallStage::Finished;
                 p.error = None;
@@ -284,11 +331,9 @@ fn prefetch_all_headings(
         log::debug!("headings prefetch: no sibling id for {bible_id}; skipping");
         return;
     };
-    // Restart the counters so the progress moves through this pass too.
     edit(progress, |p| {
         p.stage = InstallStage::Downloading;
-        p.done_books = 0;
-        p.total_books = 66;
+        p.step = Step::new(Phase::Headings, 0, 0);
     });
     let helloao = helloao::Helloao {
         db,
@@ -297,12 +342,10 @@ fn prefetch_all_headings(
         cache_ttl: CACHE_TTL,
     };
     let result = helloao.all_headings(bible_id, source, |done, total, _book_name| {
-            edit(progress, |p| {
-                p.done_books = done;
-                p.total_books = total;
-            });
-        },
-    );
+        edit(progress, |p| {
+            p.step = Step::new(Phase::Headings, done, total);
+        });
+    });
     match result {
         Ok(n) => log::info!("headings prefetch: {bible_id} inserted {n} rows via {source}"),
         Err(e) => log::warn!("headings prefetch: {bible_id} failed: {e}"),

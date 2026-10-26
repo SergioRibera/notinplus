@@ -137,6 +137,23 @@ impl Db {
         queries::list_bibles(self)
     }
 
+    /// Translations whose download started but has not finished; they
+    /// stay out of [`Self::list_bibles`] and the search.
+    ///
+    /// # Errors
+    /// The database could not be read.
+    pub fn pending_installs(&self) -> Result<Vec<String>> {
+        queries::pending_installs(self)
+    }
+
+    /// Show `bible_id` once its download is complete.
+    ///
+    /// # Errors
+    /// The database could not be written.
+    pub fn finish_install(&self, bible_id: &str) -> Result<()> {
+        queries::finish_install(self, bible_id)
+    }
+
     pub fn list_books(&self, bible_id: &str) -> Result<Vec<BookRow>> {
         queries::list_books(self, bible_id)
     }
@@ -364,5 +381,43 @@ mod tests {
         assert_eq!(all.len(), scoped.len());
         let miss = db.search(Some("eng_kjv"), "padre", 10).unwrap();
         assert!(miss.is_empty());
+    }
+
+    #[test]
+    fn pending_install_stays_hidden_until_finished() {
+        let db = Db::in_memory().unwrap();
+        seed_eph6(&db);
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO installs_pending (bible_id) VALUES ('spa_rv1960')",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        assert!(db.list_bibles().unwrap().is_empty());
+        assert!(db.search(None, "padre", 10).unwrap().is_empty());
+        assert_eq!(db.pending_installs().unwrap(), ["spa_rv1960"]);
+
+        db.finish_install("spa_rv1960").unwrap();
+        assert_eq!(db.list_bibles().unwrap().len(), 1);
+        assert!(!db.search(None, "padre", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn migration_resumes_installs_cut_before_cross_refs() {
+        let db = Db::in_memory().unwrap();
+        seed_eph6(&db);
+        db.with_conn(|conn| {
+            conn.pragma_update(None, "user_version", 0)?;
+            Ok(())
+        })
+        .unwrap();
+        schema::migrate(&db).unwrap();
+        assert_eq!(db.pending_installs().unwrap(), ["spa_rv1960"]);
+
+        db.finish_install("spa_rv1960").unwrap();
+        schema::migrate(&db).unwrap();
+        assert!(db.pending_installs().unwrap().is_empty());
     }
 }

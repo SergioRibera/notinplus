@@ -82,6 +82,8 @@ pub enum Progress {
     Started { bible_id: String },
     ManifestFetched { total_books: usize },
     BookDone { book_id: String, verses: usize },
+    /// Cross-references of `done` books of `total` are in.
+    CrossRefs { done: usize, total: usize },
     Finished { bible_id: String, inserted_verses: usize },
 }
 
@@ -247,7 +249,7 @@ impl Install<'_> {
                 verses,
             });
         }
-        self.install_cross_refs(&book_ids)?;
+        self.install_cross_refs(&book_ids, &mut on_progress)?;
 
         on_progress(Progress::Finished {
             bible_id: bible_id.into(),
@@ -287,10 +289,16 @@ impl Install<'_> {
         Ok(desc)
     }
 
-    /// The Bible row and one row per book, in `book_ids` order.
+    /// The Bible row and one row per book, in `book_ids` order. The Bible
+    /// stays pending, out of the lists, until the caller finishes it.
     fn register_books(&self, desc: &BibleDesc, book_ids: &[&String]) -> Result<()> {
         self.db.with_conn_mut(|conn| {
             upsert_bible(conn, self.bible_id, desc).map_err(crate::db::DbError::from)?;
+            conn.execute(
+                "INSERT OR IGNORE INTO installs_pending (bible_id) VALUES (?1)",
+                [self.bible_id],
+            )
+            .map_err(crate::db::DbError::from)?;
             let tx = conn.transaction().map_err(crate::db::DbError::from)?;
             for (order_num, book_id) in book_ids.iter().enumerate() {
                 let order_num = u16::try_from(order_num).unwrap_or(u16::MAX);
@@ -342,10 +350,16 @@ impl Install<'_> {
 
     /// Cross-references for every book. They are optional: a book
     /// without them is logged and skipped.
-    fn install_cross_refs(&self, book_ids: &[&String]) -> Result<()> {
+    fn install_cross_refs(
+        &self,
+        book_ids: &[&String],
+        on_progress: &mut impl FnMut(Progress),
+    ) -> Result<()> {
         let xref_cache = self.cache_dir.join("crossrefs");
         std::fs::create_dir_all(&xref_cache)?;
-        for book_id in book_ids {
+        let total = book_ids.len();
+        for (done, book_id) in book_ids.iter().enumerate() {
+            on_progress(Progress::CrossRefs { done, total });
             let xref_path = xref_cache.join(format!("{book_id}.json"));
             let xref_url = CROSSREF_URL_TEMPLATE.replace("{book}", book_id);
             if let Err(e) = fetch_if_stale(self.client, &xref_url, &xref_path, self.cache_ttl) {

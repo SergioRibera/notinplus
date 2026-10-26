@@ -57,6 +57,7 @@ pub(crate) fn search(
                    bm25(verses_fts) AS score
             FROM verses_fts
             WHERE verses_fts MATCH ?3
+              AND bible_id NOT IN (SELECT bible_id FROM installs_pending)
             ORDER BY score ASC
             LIMIT ?4
         ";
