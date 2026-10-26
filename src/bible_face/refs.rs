@@ -289,6 +289,7 @@ impl Component for Row {
                 label()
                     .width(Size::fill())
                     .text(self.target.text.clone())
+                    .font_family(notein_bible::fonts::FAMILY)
                     .font_size(tokens::text::BODY)
                     .color(p.t2)
                     .max_lines(3)

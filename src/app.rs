@@ -156,11 +156,7 @@ pub fn run() {
         };
         install_global_router();
         launch(
-            LaunchConfig::new()
-                .with_font(
-                    crate::canvas_text::FONT_FAMILY,
-                    crate::canvas_text::FONT_BYTES,
-                )
+            launch_config()
                 .with_event_loop(event_loop)
                 .with_window(WindowConfig::new(router_root).with_title("notinplus")),
         );
@@ -169,38 +165,43 @@ pub fn run() {
     #[cfg(not(target_os = "android"))]
     {
         install_global_router();
-        let cfg = LaunchConfig::new()
-            .with_font(
-                crate::canvas_text::FONT_FAMILY,
-                crate::canvas_text::FONT_BYTES,
-            )
-            .with_window(
-                WindowConfig::new(router_root)
-                    .with_title("notinplus")
-                    .with_window_handle(|window| {
-                        // Freya hands us the live winit `Window` exactly once at
-                        // creation. Upgrade the symbolic pen registration to a
-                        // real handle attach so the Linux Wayland / XInput2
-                        // backends can bind to the compositor; macOS / Windows
-                        // find their native view through the same call.
-                        if let Some(publisher) = crate::desktop::PEN_PUBLISHER.get() {
-                            if let Err(err) = publisher.register_window(crate::WINDOW_ID, &*window)
-                            {
-                                log::warn!("pen register_window failed: {err}");
-                            }
+        let cfg = launch_config().with_window(
+            WindowConfig::new(router_root)
+                .with_title("notinplus")
+                .with_window_handle(|window| {
+                    // Freya hands us the live winit `Window` exactly once at
+                    // creation. Upgrade the symbolic pen registration to a
+                    // real handle attach so the Linux Wayland / XInput2
+                    // backends can bind to the compositor; macOS / Windows
+                    // find their native view through the same call.
+                    if let Some(publisher) = crate::desktop::PEN_PUBLISHER.get() {
+                        if let Err(err) = publisher.register_window(crate::WINDOW_ID, &*window) {
+                            log::warn!("pen register_window failed: {err}");
                         }
-                        // The share sheet anchors on the window on macOS / Windows.
-                        if let Err(err) = istmo_window::WindowRegistry::global()
-                            .register(istmo_window::WindowId(crate::WINDOW_ID), &*window)
-                        {
-                            log::warn!("share window registration failed: {err}");
-                        }
-                    }),
-            );
+                    }
+                    // The share sheet anchors on the window on macOS / Windows.
+                    if let Err(err) = istmo_window::WindowRegistry::global()
+                        .register(istmo_window::WindowId(crate::WINDOW_ID), &*window)
+                    {
+                        log::warn!("share window registration failed: {err}");
+                    }
+                }),
+        );
         launch(cfg);
         // The window is closed: let the other devices know right away.
         crate::sync::stop();
     }
+}
+
+/// The bundled fonts: the canvas hand and the Bible's Lora.
+fn launch_config() -> LaunchConfig {
+    notein_bible::fonts::FACES.into_iter().fold(
+        LaunchConfig::new().with_font(
+            crate::canvas_text::FONT_FAMILY,
+            crate::canvas_text::FONT_BYTES,
+        ),
+        |config, face| config.with_font(notein_bible::fonts::FAMILY, face),
+    )
 }
 
 fn router_root() -> impl IntoElement {

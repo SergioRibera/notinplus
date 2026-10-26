@@ -4,17 +4,14 @@
 //! with Freya's font collection at startup so the reader's
 //! `font_family: "Lora"` references resolve correctly.
 //!
-//! Typical host wiring:
+//! Every face registers under [`FAMILY`], so one family name reaches
+//! the italic and bold faces too:
 //!
 //! ```ignore
-//! for (name, bytes) in notein_bible::fonts::all() {
-//!     app.register_font(name, bytes);
+//! for face in notein_bible::fonts::FACES {
+//!     config = config.with_font(notein_bible::fonts::FAMILY, face);
 //! }
 //! ```
-//!
-//! The exact registration call depends on the host's font API — the
-//! bytes themselves are opaque TrueType and work with any skia-backed
-//! loader.
 
 pub const FAMILY: &str = "Lora";
 
@@ -27,18 +24,14 @@ pub const SEMI_BOLD_ITALIC: &[u8] = include_bytes!("../assets/fonts/Lora-SemiBol
 pub const BOLD: &[u8] = include_bytes!("../assets/fonts/Lora-Bold.ttf");
 pub const BOLD_ITALIC: &[u8] = include_bytes!("../assets/fonts/Lora-BoldItalic.ttf");
 
-/// Every bundled face paired with a descriptive name. Hosts that only
-/// want one weight should reach for [`REGULAR`] directly.
-#[must_use]
-pub const fn all() -> &'static [(&'static str, &'static [u8])] {
-    &[
-        ("Lora-Regular", REGULAR),
-        ("Lora-Italic", ITALIC),
-        ("Lora-Medium", MEDIUM),
-        ("Lora-MediumItalic", MEDIUM_ITALIC),
-        ("Lora-SemiBold", SEMI_BOLD),
-        ("Lora-SemiBoldItalic", SEMI_BOLD_ITALIC),
-        ("Lora-Bold", BOLD),
-        ("Lora-BoldItalic", BOLD_ITALIC),
-    ]
-}
+/// Every bundled face, from regular to bold italic.
+pub const FACES: [&[u8]; 8] = [
+    REGULAR,
+    ITALIC,
+    MEDIUM,
+    MEDIUM_ITALIC,
+    SEMI_BOLD,
+    SEMI_BOLD_ITALIC,
+    BOLD,
+    BOLD_ITALIC,
+];

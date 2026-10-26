@@ -384,14 +384,21 @@ pub fn chapter_view(
                 setter.set(e.area.min_y());
             }
         })
+        .font_family(typography::FAMILY)
         .child(
             scroll.child(
                 rect()
                     .width(Size::fill())
-                    .padding(16.)
-                    .spacing(14.)
-                    .child(book_title_header(plan))
-                    .child(all_blocks(plan, &styles, reading)),
+                    .cross_align(Alignment::Center)
+                    .child(
+                        rect()
+                            .width(Size::fill())
+                            .max_width(Size::px(typography::MEASURE_PX))
+                            .padding(16.)
+                            .spacing(14.)
+                            .child(book_title_header(plan))
+                            .child(all_blocks(plan, &styles, reading)),
+                    ),
             ),
         )
 }

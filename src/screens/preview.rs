@@ -191,6 +191,10 @@ fn shell(
             if let Some(mut theme) = notein_ui_kit::theme::try_theme() {
                 theme.update(|a| a.reduce_motion = true);
             }
+            // The fonts the app bundles at launch.
+            for face in notein_bible::fonts::FACES {
+                Platform::get().load_font(notein_bible::fonts::FAMILY, Bytes::from_static(face));
+            }
         });
         crate::state::use_fixed_library(Arc::new(demo()));
         crate::screens::home::use_browse_root();
@@ -575,7 +579,7 @@ fn bible_cross_references() {
     render_after_press(
         "bible-refs-panel",
         (1440.0, 900.0),
-        (808.0, 205.0),
+        (466.0, 312.0),
         bible_john_3,
     );
     render("bible-refs-phone-closed", (390.0, 844.0), bible_john_3);
