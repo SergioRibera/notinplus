@@ -496,3 +496,93 @@ fn annotation_popover_keeps_its_width() {
     render("annotation-desktop", (1440.0, 900.0), annotation_popover);
     render("annotation-tablet", (1024.0, 768.0), annotation_popover);
 }
+
+const JOHN_3: &str = r#"<osis><osisText>
+<div type="book" osisID="John"><chapter osisID="John.3">
+<title type="section">Jesús y Nicodemo</title>
+<verse osisID="John.3.14">Y como Moisés levantó la serpiente en el desierto, así es necesario que el Hijo del Hombre sea levantado,</verse>
+<verse osisID="John.3.15">para que todo aquel que en él cree, no se pierda, mas tenga vida eterna.</verse>
+<verse osisID="John.3.16">Porque de tal manera amó Dios al mundo, que ha dado a su Hijo unigénito, para que todo aquel que en él cree, no se pierda, mas tenga vida eterna.</verse>
+<verse osisID="John.3.17">Porque no envió Dios a su Hijo al mundo para condenar al mundo, sino para que el mundo sea salvo por él.</verse>
+</chapter></div>
+<div type="book" osisID="Rom"><chapter osisID="Rom.5">
+<verse osisID="Rom.5.8">Mas Dios muestra su amor para con nosotros, en que siendo aún pecadores, Cristo murió por nosotros.</verse>
+</chapter></div>
+<div type="book" osisID="1John"><chapter osisID="1John.4">
+<verse osisID="1John.4.9">En esto se mostró el amor de Dios para con nosotros, en que Dios envió a su Hijo unigénito al mundo, para que vivamos por él.</verse>
+</chapter></div>
+</osisText></osis>"#;
+
+/// A Bible item open at John 3, with cross-references on verse 16.
+fn bible_john_3() -> Element {
+    use_hook(|| {
+        let Some(kind) = crate::plugins::builtin::bible_kind() else {
+            return;
+        };
+        let db = kind.db();
+        if db.list_bibles().unwrap_or_default().is_empty() {
+            notein_bible::import::osis::import_osis_xml(db, "spa_rv1960", JOHN_3.as_bytes())
+                .expect("seed John 3");
+            let books = db.list_books("spa_rv1960").expect("books");
+            let id = |osis: &str| {
+                books
+                    .iter()
+                    .find(|b| b.book_id.eq_ignore_ascii_case(osis) || b.name == osis)
+                    .map_or_else(|| osis.to_owned(), |b| b.book_id.clone())
+            };
+            let conn = rusqlite::Connection::open(notein_bible::db::Db::default_path())
+                .expect("open bible db");
+            for (book, chapter, verse) in [("Rom", 5, 8), ("1John", 4, 9), ("John", 3, 14)] {
+                conn.execute(
+                    "INSERT INTO cross_refs
+                     (bible_id, src_book, src_chap, src_verse, tgt_book, tgt_chap, tgt_verse)
+                     VALUES ('spa_rv1960', ?1, 3, 16, ?2, ?3, ?4)",
+                    rusqlite::params![id("John"), id(book), chapter, verse],
+                )
+                .expect("seed cross-reference");
+            }
+        }
+        let state = notein_bible::state::BibleViewerState::new("spa_rv1960", "John", 3);
+        let bytes = notein_bible::state::BibleSnapshot::from_state(&state).encode();
+        crate::library::bodies::write_plugin_snapshot(BIBLE_ITEM, crate::bible_face::KIND, &bytes)
+            .expect("snapshot");
+    });
+    crate::bible_face::BibleFace {
+        item: BIBLE_ITEM,
+        slot: None,
+    }
+    .into_element()
+}
+
+const BIBLE_ITEM: crate::library::ItemId = crate::library::ItemId([7; 16]);
+
+/// [`render`] after pressing `at`, once the screen settled.
+fn render_after_press(name: &str, size: (f32, f32), at: (f64, f64), body: fn() -> Element) {
+    sandbox();
+    let app = shell(body, size, notein_ui_kit::Gutters::default());
+    let (mut runner, ()) = TestingRunner::new(app, size.into(), |_| (), 1.0);
+    runner.poll_n(Duration::from_millis(40), 12);
+    runner.sync_and_update();
+    runner.click_cursor(at);
+    runner.poll_n(Duration::from_millis(40), 12);
+    runner.sync_and_update();
+    runner.render_to_file(out(name));
+}
+
+#[test]
+fn bible_cross_references() {
+    render("bible-refs-closed", (1440.0, 900.0), bible_john_3);
+    render_after_press(
+        "bible-refs-panel",
+        (1440.0, 900.0),
+        (808.0, 205.0),
+        bible_john_3,
+    );
+    render("bible-refs-phone-closed", (390.0, 844.0), bible_john_3);
+    render_after_press(
+        "bible-refs-sheet",
+        (390.0, 844.0),
+        (136.0, 565.0),
+        bible_john_3,
+    );
+}

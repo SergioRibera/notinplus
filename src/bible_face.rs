@@ -6,6 +6,7 @@
 
 mod highlight;
 mod nav;
+mod refs;
 mod search;
 mod translation;
 
@@ -112,6 +113,8 @@ pub(super) struct Reader {
     flash: State<Option<u16>>,
     scroll_to: State<Option<ScrollTarget>>,
     scroll: ScrollController,
+    /// The cross-references showing in the panel beside the text.
+    refs: State<Option<refs::VerseRefs>>,
 }
 
 impl PartialEq for Reader {
@@ -272,6 +275,7 @@ fn use_reader(item: ItemId, db: &Db) -> Reader {
     let flash = use_state(|| None);
     let scroll_to = use_state(|| None);
     let scroll = use_scroll_controller(ScrollConfig::default);
+    let refs = use_state(|| None);
     let reader = Reader {
         item,
         db: db.clone(),
@@ -279,6 +283,7 @@ fn use_reader(item: ItemId, db: &Db) -> Reader {
         flash,
         scroll_to,
         scroll,
+        refs,
     };
     use_hook({
         let reader = reader.clone();
@@ -344,6 +349,8 @@ impl Component for BibleViewer {
         let reader = use_reader(self.item, &self.db);
         let gesture = highlight::Gesture::use_gesture();
         let viewport_top = use_state(|| 0.0_f32);
+        let mut width = use_state(|| 0.0_f32);
+        let wide = *width.read() >= refs::ROOM_FOR_PANEL;
         crate::plugins::faces::use_header_presses(KIND, self.item, self.slot, {
             let reader = reader.clone();
             move |press| match press.action.as_str() {
@@ -381,7 +388,7 @@ impl Component for BibleViewer {
                     .child(label().color(palette().t2).text("Cargando capítulo…"))
                     .into_element()
             },
-            |data| chapter_body(&reader, data, &highlights, gesture, scroll_ctx),
+            |data| chapter_body(&reader, data, &highlights, gesture, scroll_ctx, wide),
         );
         let on_back = has_back.then(|| {
             let reader = reader.clone();
@@ -391,11 +398,16 @@ impl Component for BibleViewer {
             let reader = reader.clone();
             Box::new(move || reader.history(false)) as bottom_nav::NavHandler
         });
-        rect()
-            .width(Size::fill())
+        let column = rect()
+            .width(Size::flex(1.))
             .height(Size::fill())
             .content(Content::Flex)
-            .child(rect().width(Size::fill()).height(Size::flex(1.)).child(body))
+            .child(
+                rect()
+                    .width(Size::fill())
+                    .height(Size::flex(1.))
+                    .child(body),
+            )
             .child(bottom_nav::bottom_nav(
                 &book_name,
                 current_chapter,
@@ -415,7 +427,15 @@ impl Component for BibleViewer {
                     on_back,
                     on_forward,
                 },
-            ))
+            ));
+        rect()
+            .width(Size::fill())
+            .height(Size::fill())
+            .horizontal()
+            .content(Content::Flex)
+            .on_sized(move |e: Event<SizedEventData>| width.set_if_modified(e.area.width()))
+            .child(column)
+            .child(refs::Panel { reader })
     }
 }
 
@@ -426,6 +446,7 @@ fn chapter_body(
     highlights: &[BibleBookmark],
     gesture: highlight::Gesture,
     scroll_ctx: VerseScrollCtx,
+    wide: bool,
 ) -> Element {
     let db = &reader.db;
     let show_cross_refs = crate::plugins::builtin::bible_kind()
@@ -442,6 +463,16 @@ fn chapter_body(
             let reader = reader.clone();
             move |(book, chapter, verse): (String, u16, u16)| reader.go(&book, chapter, verse)
         }),
+        on_refs: EventHandler::new({
+            let reader = reader.clone();
+            move |verse: u16| refs::open(&reader, verse, wide)
+        }),
+        refs_open: reader
+            .refs
+            .read()
+            .as_ref()
+            .filter(|refs| refs.here(reader))
+            .map(|refs| refs.verse),
         on_highlight: gesture.handler(reader),
         preview: gesture.preview(),
         font_size: 22.0,
@@ -485,30 +516,22 @@ fn footnotes(db: &Db, data: &ChapterRow) -> Vec<FootnoteView> {
         .collect()
 }
 
-/// Cross-references of the chapter, each with its target verse's text.
+/// Cross-references of the chapter; the panel reads their text.
 fn cross_refs(db: &Db, data: &ChapterRow) -> Vec<CrossRefView> {
     db.cross_refs_for_chapter(&data.bible_id, &data.book_id, data.chapter)
         .unwrap_or_default()
         .into_iter()
-        .map(|row| {
-            let tooltip = db
-                .verse_text(&data.bible_id, &row.tgt_book, row.tgt_chap, row.tgt_verse)
-                .ok()
-                .flatten()
-                .unwrap_or_default();
-            CrossRefView {
-                src_verse: row.src_verse,
-                label: format!(
-                    "{} {}:{}",
-                    notein_bible::canon::short_name(&row.tgt_book),
-                    row.tgt_chap,
-                    row.tgt_verse
-                ),
-                tooltip,
-                tgt_book: row.tgt_book,
-                tgt_chap: row.tgt_chap,
-                tgt_verse: row.tgt_verse,
-            }
+        .map(|row| CrossRefView {
+            src_verse: row.src_verse,
+            label: format!(
+                "{} {}:{}",
+                notein_bible::canon::short_name(&row.tgt_book),
+                row.tgt_chap,
+                row.tgt_verse
+            ),
+            tgt_book: row.tgt_book,
+            tgt_chap: row.tgt_chap,
+            tgt_verse: row.tgt_verse,
         })
         .collect()
 }

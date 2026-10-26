@@ -90,6 +90,7 @@ istmo-window = { path = "../istmo/crates/window" }
 
 [dev-dependencies]
 freya-testing = "=0.5.0-rc.13"
+rusqlite = { version = "0.37", features = ["bundled"] }
 
 [build-dependencies]
 istmo-build = { path = "../istmo/crates/build" }

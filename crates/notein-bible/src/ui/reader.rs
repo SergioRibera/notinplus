@@ -5,7 +5,7 @@
 //! own state; chapter navigation and selection live on
 //! [`crate::state::BibleViewerState`].
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use freya::components::ScrollController;
 use freya::elements::paragraph::ParagraphCursorExt;
@@ -95,18 +95,13 @@ pub fn footnotes_by_verse(notes: &[FootnoteView]) -> HashMap<u16, Vec<FootnoteVi
     out
 }
 
-/// UI-side projection of a cross-reference. The target text is
-/// pre-fetched (`db.verse_text`) so the hover popup renders without
-/// a DB round-trip inside the layout pass.
+/// UI-side projection of a cross-reference.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CrossRefView {
     pub src_verse: u16,
-    /// Short label shown as the inline chip (e.g. `"2 Co 4:6"`).
+    /// Short label of the target (e.g. `"2 Co 4:6"`).
     pub label: String,
-    /// Target verse text — shown inside the hover popup.
-    pub tooltip: String,
-    /// Target coordinates — the chip's `on_press` hands these back so
-    /// the viewer navigates to the referenced verse.
+    /// Target coordinates, where pressing the reference goes.
     pub tgt_book: String,
     pub tgt_chap: u16,
     pub tgt_verse: u16,
@@ -174,6 +169,9 @@ const fn rgba_to_freya(rgba: [u8; 4]) -> Color {
 /// chip. Carries `(book, chapter, verse)` so the viewer can
 /// `jump_to` the referenced verse without re-decoding anchor bytes.
 pub type OnJump = EventHandler<(String, u16, u16)>;
+
+/// Callback fired by a verse's cross-reference icon, with the verse.
+pub type OnRefs = EventHandler<u16>;
 
 /// Chapter-scoped drag-selection cursor. Provided via `use_provide_context`
 /// at the `chapter_view` root so every `VerseMarker` can co-operate on
@@ -300,6 +298,10 @@ pub struct Reading {
     pub cross_refs: HashMap<u16, Vec<CrossRefView>>,
     pub footnotes: HashMap<u16, Vec<FootnoteView>>,
     pub on_jump: OnJump,
+    /// Show the cross-references of a verse.
+    pub on_refs: OnRefs,
+    /// The verse whose cross-references are showing.
+    pub refs_open: Option<u16>,
     pub on_highlight: OnHighlight,
     /// Colour being tried on a range while the picker is open.
     pub preview: Option<HighlightPreview>,
@@ -581,10 +583,11 @@ impl VerseParagraph {
                     utf16_offset += 1;
                 }
             }
-            if let Some(refs) = self.reading.cross_refs.get(&span.verse) {
-                p = p.child(RefHoverButton {
-                    refs: refs.clone(),
-                    jump: on_jump.clone(),
+            if self.reading.cross_refs.contains_key(&span.verse) {
+                p = p.child(RefButton {
+                    verse: span.verse,
+                    open: self.reading.refs_open == Some(span.verse),
+                    on_press: self.reading.on_refs.clone(),
                     font_size,
                 });
                 utf16_offset += 1;
@@ -1079,267 +1082,38 @@ impl Component for FootnoteLetter {
     }
 }
 
-/// Inline bookmark icon rendered when a verse has at least one
-/// cross-ref.
-///
-/// Hovering or tapping opens a floating list of collapsible refs; each
-/// row carries an "Ir a" button that drives `on_jump`. A single icon
-/// keeps the paragraph flow intact.
-#[derive(Clone, PartialEq)]
-struct RefHoverButton {
-    refs: Vec<CrossRefView>,
-    jump: OnJump,
+/// The icon closing a verse that has cross-references; pressing it
+/// opens them in the host's panel. Accented while that panel shows this
+/// verse.
+#[derive(Clone, Debug, PartialEq)]
+struct RefButton {
+    verse: u16,
+    open: bool,
+    on_press: OnRefs,
     font_size: f32,
 }
 
-impl std::fmt::Debug for RefHoverButton {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RefHoverButton")
-            .field("ref_count", &self.refs.len())
-            .finish_non_exhaustive()
-    }
-}
-
-impl RefHoverButton {
-    const POPUP_MAX_HEIGHT: f32 = 360.0;
-    const POPUP_WIDTH: f32 = 320.0;
-
-    /// The list of references, scrolled past [`Self::POPUP_MAX_HEIGHT`].
-    fn list(&self, hover: Hover, pinned: State<bool>, expanded: State<HashSet<usize>>) -> Rect {
-        let mut col = rect().width(Size::fill()).spacing(4.0);
-        for (idx, xref) in self.refs.iter().enumerate() {
-            col = col.child(RefListRow {
-                idx,
-                view: xref.clone(),
-                jump: self.jump.clone(),
-                expanded,
-                parent: hover,
-                font_size: self.font_size,
-            });
-        }
-        rect()
-            .layer(Layer::Overlay)
-            .width(Size::px(Self::POPUP_WIDTH))
-            .padding((6., 8.))
-            .with_corner_radius(10.0)
-            .background(palette().s2)
-            .spacing(4.0)
-            // Rows must not seed the paragraph's drag gesture, nor bubble
-            // a press up to the trigger, which would close the popup.
-            .on_pointer_down(|e: Event<PointerEventData>| {
-                e.stop_propagation();
-            })
-            .on_press(|e: Event<PressEventData>| {
-                e.stop_propagation();
-            })
-            .on_pointer_enter(move |_| hover.enter())
-            .on_pointer_leave(move |_| {
-                if !*pinned.peek() {
-                    hover.leave();
-                }
-            })
-            .child(
-                ScrollView::new()
-                    .height(Size::auto())
-                    .max_height(Size::px(Self::POPUP_MAX_HEIGHT))
-                    .child(col),
-            )
-    }
-}
-
-impl Component for RefHoverButton {
+impl Component for RefButton {
     fn render(&self) -> impl IntoElement {
-        let hover = Hover::use_hover();
-        // Tap-opened: hover-leave does not close it, since touch devices
-        // fire `pointer_leave` right after lifting the finger.
-        let pinned = use_state(|| false);
-        let expanded = use_state(HashSet::<usize>::new);
-        let icon_area: State<Area> = use_state(Area::default);
-        let popup_area: State<Area> = use_state(Area::default);
-        let viewport = try_consume_context::<notein_ui_kit::ViewportArea>();
-        let icon_size = self.font_size * 0.55;
-
-        let on_toggle = {
-            let mut pinned = pinned;
-            move |_: Event<PressEventData>| {
-                let next = !*pinned.peek();
-                pinned.set(next);
-                if next {
-                    hover.enter();
-                } else {
-                    hover.close();
-                }
-            }
-        };
-        // A pinned popup closes on a release outside both the icon and
-        // the popup. Focus-based dismissal would close it whenever a row
-        // inside expands.
-        let on_outside_up = {
-            let mut pinned = pinned;
-            move |e: Event<PointerEventData>| {
-                if !*pinned.peek() {
-                    return;
-                }
-                let g = e.global_location();
-                #[allow(clippy::cast_possible_truncation)] // window coordinates
-                let at = (g.x as f32, g.y as f32);
-                let inside = |area: Area| {
-                    area.width() > 0.0
-                        && (area.min_x()..=area.max_x()).contains(&at.0)
-                        && (area.min_y()..=area.max_y()).contains(&at.1)
-                };
-                if !inside(*icon_area.peek()) && !inside(*popup_area.peek()) {
-                    pinned.set(false);
-                    hover.close();
-                }
-            }
-        };
-
-        let container = rect()
-            .padding((0., 2.))
+        let p = palette();
+        let icon_size = self.font_size * 0.6;
+        let (verse, on_press) = (self.verse, self.on_press.clone());
+        rect()
+            .padding((2., 4.))
             .margin((0., 2.))
-            .cross_align(Alignment::Start)
-            .main_align(Alignment::Start)
-            .on_sized(track_area(icon_area))
-            .on_pointer_enter(move |_| hover.enter())
-            .on_pointer_leave(move |_| {
-                if !*pinned.peek() {
-                    hover.leave();
-                }
-            })
+            .corner_radius(4.0)
+            .maybe(self.open, |r| r.background(p.accent_soft))
+            .a11y_role(AccessibilityRole::Button)
             // A tap on the icon must not reach the paragraph, where a
             // second tap would open the highlight picker.
-            .on_pointer_down(|e: Event<PointerEventData>| {
-                e.stop_propagation();
-            })
-            .on_global_pointer_up(on_outside_up)
-            .on_press(on_toggle)
+            .on_pointer_down(|e: Event<PointerEventData>| e.stop_propagation())
+            .on_press(move |_| on_press.call(verse))
             .child(
                 SvgViewer::new(freya::icons::lucide::trending_up_down())
-                    .color(palette().accent_text)
+                    .color(p.accent_text)
                     .width(Size::px(icon_size))
                     .height(Size::px(icon_size)),
-            );
-        if !*hover.open.read() {
-            return container;
-        }
-
-        let anchor = *icon_area.read();
-        let measured = popup_area.read().height();
-        let height = if measured > 0.0 {
-            measured.min(Self::POPUP_MAX_HEIGHT)
-        } else {
-            Self::POPUP_MAX_HEIGHT
-        };
-        // Hidden until the icon is measured, so it never flashes at an
-        // unclamped position.
-        let popup = self
-            .list(hover, pinned, expanded)
-            .on_sized(track_area(popup_area))
-            .opacity(if anchor.width() > 0.0 { 1.0 } else { 0.0 });
-        container.child(place_popup(
-            popup,
-            anchor,
-            viewport,
-            (Self::POPUP_WIDTH, height),
-            icon_size * 1.4,
-        ))
-    }
-}
-
-/// One collapsible row inside the hover popup. Clicking anywhere on
-/// the header expands / collapses; the "Ir a" button navigates
-/// unconditionally.
-#[derive(Clone, PartialEq)]
-struct RefListRow {
-    idx: usize,
-    view: CrossRefView,
-    jump: OnJump,
-    expanded: State<HashSet<usize>>,
-    /// The popup the row sits in; jumping closes it.
-    parent: Hover,
-    font_size: f32,
-}
-
-impl std::fmt::Debug for RefListRow {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RefListRow")
-            .field("ref", &self.view.label)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Component for RefListRow {
-    fn render(&self) -> impl IntoElement {
-        let is_open = self.expanded.read().contains(&self.idx);
-        let idx = self.idx;
-        let mut expanded = self.expanded;
-        let on_header = move |_: Event<PressEventData>| {
-            let mut set = expanded.write();
-            if !set.remove(&idx) {
-                set.insert(idx);
-            }
-        };
-        let target = (
-            self.view.tgt_book.clone(),
-            self.view.tgt_chap,
-            self.view.tgt_verse,
-        );
-        let on_jump = self.jump.clone();
-        let parent = self.parent;
-        let goto = move |e: Event<PressEventData>| {
-            // "Ir a" sits inside the collapsible header; let its press
-            // navigate but do not let the event bubble into the header
-            // and toggle the expand state too.
-            e.stop_propagation();
-            parent.close();
-            on_jump.call(target.clone());
-        };
-
-        let header = rect()
-            .width(Size::fill())
-            .padding((6., 10.))
-            .direction(Direction::Horizontal)
-            .cross_align(Alignment::Center)
-            .main_align(Alignment::SpaceBetween)
-            .with_corner_radius(6.0)
-            .background(palette().bg)
-            .on_press(on_header)
-            .child(
-                label()
-                    .font_size(self.font_size * 0.65)
-                    .color(palette().accent_text)
-                    .text(self.view.label.clone()),
             )
-            .child(
-                rect()
-                    .padding((4., 10.))
-                    .with_corner_radius(5.0)
-                    .background(palette().accent)
-                    .on_press(goto)
-                    .child(
-                        label()
-                            .font_size(self.font_size * 0.58)
-                            .color(palette().on_accent)
-                            .text("Ir a"),
-                    ),
-            );
-
-        let mut body = rect().width(Size::fill()).spacing(2.0).child(header);
-        if is_open && !self.view.tooltip.is_empty() {
-            body = body.child(
-                rect()
-                    .width(Size::fill())
-                    .padding((8., 10., 8., 16.))
-                    .child(
-                        label()
-                            .font_size(self.font_size * 0.65)
-                            .color(palette().t2)
-                            .text(self.view.tooltip.clone()),
-                    ),
-            );
-        }
-        body
     }
 }
 
