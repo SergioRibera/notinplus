@@ -45,6 +45,12 @@ const PREFETCH_BUFFER: usize = 3;
 /// Cache capacity. Bumped from M4 to accommodate multi-tile pages —
 /// a tiled page at bucket 3 can easily contribute a dozen entries.
 const CACHE_CAPACITY: usize = 256;
+/// Bytes of page bitmaps a document keeps; a phone has less to spare.
+const CACHE_BUDGET: usize = if cfg!(any(target_os = "android", target_os = "ios")) {
+    64 << 20
+} else {
+    192 << 20
+};
 /// Sampling for the `draw_image_rect` calls that blit cached tiles.
 /// The default `SamplingOptions` is `Nearest` filter with no mipmap —
 /// visibly pixelated whenever the viewport zoom lands between the
@@ -108,7 +114,7 @@ impl PdfBackground {
     #[must_use]
     pub fn with_settings(doc: PdfDocument, gap: f32, backdrop: Color) -> Self {
         let (pages, bounds) = compute_layout(&doc, gap);
-        let cache = Arc::new(Cache::new(CACHE_CAPACITY));
+        let cache = Arc::new(Cache::new(CACHE_CAPACITY, CACHE_BUDGET));
         let pool = RenderPool::new(&doc, &cache, DEFAULT_WORKERS);
         Self {
             doc,
