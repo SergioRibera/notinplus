@@ -88,6 +88,41 @@ impl SelectionBar {
 }
 
 impl BarItem {
+    /// A labelled action as an icon over its label, for docked bars.
+    fn tile(&self, index: usize) -> Element {
+        let Self::Action {
+            label: text_value,
+            icon,
+            on_press,
+        } = self
+        else {
+            return self.render(index);
+        };
+        let p = palette();
+        let handler = on_press.clone();
+        rect()
+            .key(index)
+            .min_width(Size::px(56.0))
+            .padding((6.0, 6.0))
+            .corner_radius(radius::SM)
+            .cross_align(Alignment::Center)
+            .spacing(4.0)
+            .a11y_role(AccessibilityRole::Button)
+            .on_tap(move |_| handler.call(()))
+            .maybe_child(
+                icon.clone()
+                    .map(|i| Icon::new(i).size(18.0).color(p.inv_text)),
+            )
+            .maybe_child(text_value.clone().map(|t| {
+                label()
+                    .text(t)
+                    .font_size(text::META)
+                    .color(p.inv_text)
+                    .max_lines(1)
+            }))
+            .into_element()
+    }
+
     fn render(&self, index: usize) -> Element {
         let p = palette();
         match self {
@@ -192,9 +227,77 @@ impl SelectionBar {
     }
 }
 
+impl SelectionBar {
+    /// Docked, the bar takes two rows so a phone fits it: the caption, the
+    /// inks and icon buttons first, then every labelled action as an icon
+    /// over its label.
+    fn docked_rows(&self) -> Rect {
+        let p = palette();
+        let labelled = |item: &&BarItem| matches!(item, BarItem::Action { label: Some(_), .. });
+        let head = self
+            .items
+            .iter()
+            .filter(|item| !labelled(item) && !matches!(item, BarItem::Divider));
+        let (lead, trail): (Vec<_>, Vec<_>) =
+            head.partition(|item| !matches!(item, BarItem::Action { .. }));
+        let actions: Vec<Element> = self
+            .items
+            .iter()
+            .filter(labelled)
+            .enumerate()
+            .map(|(index, item)| item.tile(index))
+            .collect();
+        rect()
+            .a11y_role(AccessibilityRole::Toolbar)
+            .width(Size::fill())
+            .padding((4.0, 8.0, 6.0, 8.0))
+            .background(p.inv)
+            .border(
+                Border::new()
+                    .fill(p.inv_line)
+                    .width(1.0)
+                    .alignment(BorderAlignment::Inner),
+            )
+            .shadow(Shadow::new().y(8.0).blur(24.0).color(p.shadow))
+            .spacing(2.0)
+            .child(
+                rect()
+                    .width(Size::fill())
+                    .min_height(Size::px(44.0))
+                    .horizontal()
+                    .content(Content::Flex)
+                    .cross_align(Alignment::Center)
+                    .children(
+                        lead.iter()
+                            .enumerate()
+                            .map(|(index, item)| item.render(index)),
+                    )
+                    .child(rect().width(Size::flex(1.0)))
+                    .children(
+                        trail
+                            .iter()
+                            .enumerate()
+                            .map(|(index, item)| item.render(lead.len() + index)),
+                    ),
+            )
+            .maybe(!actions.is_empty(), |r| {
+                r.child(
+                    rect()
+                        .width(Size::fill())
+                        .horizontal()
+                        .main_align(Alignment::SpaceAround)
+                        .children(actions),
+                )
+            })
+    }
+}
+
 impl Component for SelectionBar {
     fn render(&self) -> impl IntoElement {
         let p = palette();
+        if self.docked {
+            return self.docked_rows().into_element();
+        }
         rect()
             .a11y_role(AccessibilityRole::Toolbar)
             .maybe(self.docked, |r| {
@@ -219,6 +322,7 @@ impl Component for SelectionBar {
                     .enumerate()
                     .map(|(index, item)| item.render(index)),
             )
+            .into_element()
     }
 }
 
