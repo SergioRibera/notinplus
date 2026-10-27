@@ -565,8 +565,12 @@ impl Service {
     fn perform(&mut self, actions: Vec<Action>) {
         for action in actions {
             match action {
-                Action::Send { device, bytes } => {
-                    if let Err(err) = self.node.send(device, bytes) {
+                Action::Send {
+                    device,
+                    lane,
+                    bytes,
+                } => {
+                    if let Err(err) = self.node.send(device, lane, bytes) {
                         log::warn!("sync send: {err}");
                     }
                 }

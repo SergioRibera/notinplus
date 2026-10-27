@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use crate::engine::{Message, SyncEngine};
 use crate::error::SyncError;
 use crate::identity::{DeviceId, DeviceProfile, PairingCode, TrustedDevice};
-use crate::net::{NetEvent, PeerInfo};
+use crate::net::{Lane, NetEvent, PeerInfo};
 use crate::relay::{RecordKind, RelayAddr, RelayMessage};
 use crate::replica::{BlobKey, BlobKind, DocId, Replica, Scope, Version};
 use crate::share::{Invite, Member, Share, ShareId, ShareMessage, ShareMode, proof_is_valid};
@@ -219,6 +219,7 @@ pub enum DriverEvent {
 pub enum Action {
     Send {
         device: DeviceId,
+        lane: Lane,
         bytes: Vec<u8>,
     },
     Connect {
@@ -1419,7 +1420,7 @@ impl<R: Replica> SyncDriver<R> {
         let mut out: Vec<Action> = self
             .online()
             .map(|p| {
-                send(
+                send_live(
                     p.device,
                     &Payload::Live {
                         doc,
@@ -1442,7 +1443,7 @@ impl<R: Replica> SyncDriver<R> {
                 if member.device == me || !self.connected.contains_key(&member.device) {
                     continue;
                 }
-                out.push(send(
+                out.push(send_live(
                     member.device,
                     &Payload::Share {
                         share: link.share.id,
@@ -1592,6 +1593,7 @@ impl<R: Replica> SyncDriver<R> {
         let relay = self.relay.as_ref()?;
         relay.connected.then(|| Action::Send {
             device: relay.device,
+            lane: Lane::Data,
             bytes: relay_payload(message),
         })
     }
@@ -1664,6 +1666,7 @@ impl<R: Replica> SyncDriver<R> {
                 let sealed = ShareMessage::Sync(message.to_bytes()?).seal(&share.key);
                 out.push(Action::Send {
                     device: relay.device,
+                    lane: Lane::Data,
                     bytes: relay_payload(&RelayMessage::Publish {
                         share: id,
                         kind,
@@ -1675,6 +1678,7 @@ impl<R: Replica> SyncDriver<R> {
                 published.meta_at = share.updated_at;
                 out.push(Action::Send {
                     device: relay.device,
+                    lane: Lane::Data,
                     bytes: relay_payload(&RelayMessage::Publish {
                         share: id,
                         kind: RecordKind::Meta,
@@ -1881,6 +1885,16 @@ fn seal_answer(share: &Share, answer: &JoinAnswer) -> Vec<u8> {
 fn send(device: DeviceId, payload: &Payload) -> Action {
     Action::Send {
         device,
+        lane: Lane::Data,
+        bytes: payload.to_bytes(),
+    }
+}
+
+/// [`send`] on the live lane: small, urgent, soon stale.
+fn send_live(device: DeviceId, payload: &Payload) -> Action {
+    Action::Send {
+        device,
+        lane: Lane::Live,
         bytes: payload.to_bytes(),
     }
 }

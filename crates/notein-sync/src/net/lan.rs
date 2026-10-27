@@ -14,18 +14,47 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc as tmpsc;
 use zudp::{Discovery, DiscoveryConfig, ZudpSender, ZudpSocket};
 
-use super::{APP_ID, Beacon, Frame, LanConfig, NetError, NetEvent, PeerInfo};
+use super::{APP_ID, Beacon, Frame, LanConfig, Lane, NetError, NetEvent, PeerInfo};
 use crate::identity::DeviceId;
 
 /// Stream carrying hellos, pings and byes.
 const CONTROL_STREAM: u16 = 0;
-/// Stream carrying application payloads.
+/// Stream carrying application payloads that must arrive.
 const APP_STREAM: u16 = 1;
+/// Stream carrying small urgent payloads (cursors, ink in progress).
+const LIVE_STREAM: u16 = 2;
+/// Stream carrying the parts of big payloads (files, whole documents).
+const BULK_STREAM: u16 = 3;
+/// Largest payload sent in one frame. zudp drops messages of more than
+/// 1024 fragments (about 1.4 MB), so bigger ones travel in parts.
+const PART_SIZE: usize = 256 * 1024;
+/// Most parts one payload may have (256 MB).
+const MAX_PARTS: u32 = 1024;
+/// Pause between parts: zudp sends without flow control, so bulk
+/// transfers are paced here (about 12 MB/s).
+const PART_PAUSE: Duration = Duration::from_millis(20);
+/// A payload whose parts stop coming is dropped after this.
+const ASSEMBLY_TIMEOUT: Duration = Duration::from_secs(60);
+/// Packets per second a peer may send before zudp drops them; parts
+/// burst well above zudp's default of 1000.
+const MAX_PPS: f64 = 50_000.0;
+/// Frames kept per stream for retransmission, enough for a few parts.
+const SENT_BUFFER: usize = 4096;
 
 enum Cmd {
-    Connect { addr: SocketAddr, public: [u8; 32] },
-    ConnectHost { host: String, public: [u8; 32] },
-    Send { device: DeviceId, bytes: Vec<u8> },
+    Connect {
+        addr: SocketAddr,
+        public: [u8; 32],
+    },
+    ConnectHost {
+        host: String,
+        public: [u8; 32],
+    },
+    Send {
+        device: DeviceId,
+        lane: Lane,
+        bytes: Vec<u8>,
+    },
     SetName(String),
     Disconnect(DeviceId),
     Pause,
@@ -111,8 +140,12 @@ impl LanNode {
     }
 
     /// Deliver an application payload to a connected device.
-    pub fn send(&self, device: DeviceId, bytes: Vec<u8>) -> Result<(), NetError> {
-        self.command(Cmd::Send { device, bytes })
+    pub fn send(&self, device: DeviceId, lane: Lane, bytes: Vec<u8>) -> Result<(), NetError> {
+        self.command(Cmd::Send {
+            device,
+            lane,
+            bytes,
+        })
     }
 
     /// Change the name carried by beacons and hellos from now on.
@@ -157,9 +190,13 @@ pub struct LanSender {
 }
 
 impl LanSender {
-    pub fn send(&self, device: DeviceId, bytes: Vec<u8>) -> Result<(), NetError> {
+    pub fn send(&self, device: DeviceId, lane: Lane, bytes: Vec<u8>) -> Result<(), NetError> {
         self.cmds
-            .send(Cmd::Send { device, bytes })
+            .send(Cmd::Send {
+                device,
+                lane,
+                bytes,
+            })
             .map_err(|_| NetError::Stopped)
     }
 }
@@ -188,7 +225,54 @@ enum Internal {
 struct Link {
     addr: SocketAddr,
     sender: ZudpSender,
+    lanes: Lanes,
     last_seen: Instant,
+}
+
+/// One writer task per stream of a link, so the node never waits on a
+/// send and a slow stream never holds back another.
+struct Lanes {
+    data: flume::Sender<Vec<u8>>,
+    live: flume::Sender<Vec<u8>>,
+    bulk: flume::Sender<Vec<u8>>,
+}
+
+impl Lanes {
+    fn spawn(sender: &ZudpSender, addr: SocketAddr) -> Self {
+        Self {
+            data: writer(sender.clone(), addr, APP_STREAM, None),
+            live: writer(sender.clone(), addr, LIVE_STREAM, None),
+            bulk: writer(sender.clone(), addr, BULK_STREAM, Some(PART_PAUSE)),
+        }
+    }
+}
+
+/// Task sending encoded frames on `stream` in order, `pause` apart.
+fn writer(
+    sender: ZudpSender,
+    addr: SocketAddr,
+    stream: u16,
+    pause: Option<Duration>,
+) -> flume::Sender<Vec<u8>> {
+    let (queue, frames) = flume::unbounded::<Vec<u8>>();
+    tokio::spawn(async move {
+        while let Ok(frame) = frames.recv_async().await {
+            if let Err(err) = sender.send_stream(frame, addr, stream).await {
+                tracing::warn!(target: "notein-sync", peer = %addr, stream, "send failed: {err}");
+            }
+            if let Some(pause) = pause {
+                tokio::time::sleep(pause).await;
+            }
+        }
+    });
+    queue
+}
+
+/// Parts of one payload received so far.
+struct Assembly {
+    parts: Vec<Option<Vec<u8>>>,
+    missing: usize,
+    started: Instant,
 }
 
 struct Node {
@@ -203,6 +287,9 @@ struct Node {
     events: flume::Sender<NetEvent>,
     /// Away: no channels, no hellos answered, nothing discovered.
     paused: bool,
+    /// Id of the next payload sent in parts.
+    next_part: u32,
+    assemblies: HashMap<(DeviceId, u32), Assembly>,
 }
 
 impl Node {
@@ -242,6 +329,12 @@ impl Node {
                 from: device,
                 bytes,
             }),
+            Frame::Part {
+                id,
+                index,
+                total,
+                bytes,
+            } => self.on_part(device, id, index, total, bytes),
             Frame::Bye => self.drop_link(device),
         }
     }
@@ -280,6 +373,7 @@ impl Node {
             beacon.device,
             Link {
                 addr,
+                lanes: Lanes::spawn(&sender, addr),
                 sender: sender.clone(),
                 last_seen: Instant::now(),
             },
@@ -297,9 +391,76 @@ impl Node {
         self.emit(NetEvent::Connected(info));
     }
 
+    /// Queue an app payload on its lane, in parts on the bulk stream when
+    /// it is too big for one frame.
+    fn send_app(&mut self, device: DeviceId, lane: Lane, bytes: Vec<u8>) {
+        let Some(link) = self.links.get(&device) else {
+            return;
+        };
+        if bytes.len() <= PART_SIZE {
+            let queue = match lane {
+                Lane::Data => &link.lanes.data,
+                Lane::Live => &link.lanes.live,
+            };
+            let _ = queue.send(Frame::App(bytes).to_bytes());
+            return;
+        }
+        let Ok(total) = u32::try_from(bytes.len().div_ceil(PART_SIZE)) else {
+            return;
+        };
+        if total > MAX_PARTS {
+            tracing::warn!(target: "notein-sync", bytes = bytes.len(), "payload too big to send");
+            return;
+        }
+        let id = self.next_part;
+        self.next_part = self.next_part.wrapping_add(1);
+        for (index, chunk) in (0..total).zip(bytes.chunks(PART_SIZE)) {
+            let part = Frame::Part {
+                id,
+                index,
+                total,
+                bytes: chunk.to_vec(),
+            };
+            let _ = link.lanes.bulk.send(part.to_bytes());
+        }
+    }
+
+    /// Keep a part; once a payload has them all, it is a message.
+    fn on_part(&mut self, device: DeviceId, id: u32, index: u32, total: u32, bytes: Vec<u8>) {
+        if total == 0 || total > MAX_PARTS || index >= total {
+            return;
+        }
+        let assembly = self
+            .assemblies
+            .entry((device, id))
+            .or_insert_with(|| Assembly {
+                parts: vec![None; total as usize],
+                missing: total as usize,
+                started: Instant::now(),
+            });
+        let Some(slot) = assembly.parts.get_mut(index as usize) else {
+            return;
+        };
+        if slot.is_none() {
+            *slot = Some(bytes);
+            assembly.missing -= 1;
+        }
+        if assembly.missing > 0 {
+            return;
+        }
+        if let Some(assembly) = self.assemblies.remove(&(device, id)) {
+            let bytes = assembly.parts.into_iter().flatten().flatten().collect();
+            self.emit(NetEvent::Message {
+                from: device,
+                bytes,
+            });
+        }
+    }
+
     fn drop_link(&mut self, device: DeviceId) {
         if let Some(link) = self.links.remove(&device) {
             self.by_addr.remove(&link.addr);
+            self.assemblies.retain(|(from, _), _| *from != device);
             self.emit(NetEvent::Disconnected(device));
         }
     }
@@ -345,11 +506,11 @@ impl Node {
                     internal.clone(),
                 );
             }
-            Cmd::Send { device, bytes } => {
-                if let Some(link) = self.links.get(&device) {
-                    Self::send_frame(&link.sender, link.addr, &Frame::App(bytes), APP_STREAM).await;
-                }
-            }
+            Cmd::Send {
+                device,
+                lane,
+                bytes,
+            } => self.send_app(device, lane, bytes),
             Cmd::SetName(name) => {
                 self.beacon.name = name;
                 let hello = Frame::Hello(self.beacon.clone());
@@ -408,6 +569,8 @@ impl Node {
 
     async fn on_tick(&mut self) {
         let now = Instant::now();
+        self.assemblies
+            .retain(|_, assembly| now.duration_since(assembly.started) < ASSEMBLY_TIMEOUT);
         let silent: Vec<DeviceId> = self
             .links
             .iter()
@@ -449,6 +612,8 @@ async fn run_outbound(
     {
         let conn = zudp::Zudp::default()
             .port(0)
+            .rate_limit(MAX_PPS)
+            .sent_buffer(SENT_BUFFER)
             .security(keypair)
             .pin_remote_key(public)
             .connect::<Vec<u8>>(addr);
@@ -539,6 +704,8 @@ async fn run(
 ) {
     let socket = zudp::Zudp::default()
         .port(config.port)
+        .rate_limit(MAX_PPS)
+        .sent_buffer(SENT_BUFFER)
         .security(config.key.keypair().clone())
         .listen::<Vec<u8>>()
         .await;
@@ -569,6 +736,8 @@ async fn run(
         events,
         config,
         paused: false,
+        next_part: 0,
+        assemblies: HashMap::new(),
     };
     spawn_listener(socket, internal_tx.clone());
 
@@ -730,7 +899,7 @@ mod tests {
         assert_eq!(seen_by_b.device, key_a.id());
         assert_eq!(seen_by_b.name, "A");
 
-        a.send(key_b.id(), b"hola".to_vec()).unwrap();
+        a.send(key_b.id(), Lane::Data, b"hola".to_vec()).unwrap();
         let (from, bytes) = wait_for(&b, |e| match e {
             NetEvent::Message { from, bytes } => Some((from, bytes)),
             _ => None,
@@ -738,7 +907,7 @@ mod tests {
         assert_eq!(from, key_a.id());
         assert_eq!(bytes, b"hola");
 
-        b.send(key_a.id(), b"chau".to_vec()).unwrap();
+        b.send(key_a.id(), Lane::Live, b"chau".to_vec()).unwrap();
         let bytes = wait_for(&a, |e| match e {
             NetEvent::Message { bytes, .. } => Some(bytes),
             _ => None,
@@ -751,6 +920,33 @@ mod tests {
             _ => None,
         });
         assert_eq!(gone, key_a.id());
+    }
+
+    #[test]
+    fn big_payloads_arrive_whole_in_parts() {
+        let key_a = DeviceKey::generate();
+        let key_b = DeviceKey::generate();
+        let a = LanNode::start(quiet(key_a, "A")).unwrap();
+        let b = LanNode::start(quiet(key_b.clone(), "B")).unwrap();
+        a.connect(loopback(&b), *key_b.public()).unwrap();
+        wait_for(&b, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
+        wait_for(&a, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
+
+        // Over zudp's 1.4 MB message limit, and not a multiple of a part.
+        let big: Vec<u8> = (0..3_000_123u32).map(|i| (i % 251) as u8).collect();
+        a.send(key_b.id(), Lane::Data, big.clone()).unwrap();
+        a.send(key_b.id(), Lane::Live, b"cursor".to_vec()).unwrap();
+        let mut got = Vec::new();
+        while got.len() < 2 {
+            got.push(wait_for(&b, |e| match e {
+                NetEvent::Message { bytes, .. } => Some(bytes),
+                _ => None,
+            }));
+        }
+        // The cursor never waits behind the transfer.
+        assert_eq!(got[0], b"cursor");
+        assert_eq!(got[1].len(), big.len());
+        assert!(got[1] == big);
     }
 
     #[test]
@@ -801,7 +997,7 @@ mod tests {
         assert_eq!(renamed.device, key_a.id());
         assert_eq!(renamed.name, "A nuevo");
         // The channel is still the same one: messages keep flowing.
-        a.send(key_b.id(), b"sigo".to_vec()).unwrap();
+        a.send(key_b.id(), Lane::Data, b"sigo".to_vec()).unwrap();
         let bytes = wait_for(&b, |e| match e {
             NetEvent::Message { bytes, .. } => Some(bytes),
             _ => None,

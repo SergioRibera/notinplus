@@ -210,6 +210,17 @@ impl std::error::Error for NetError {
     }
 }
 
+/// Which channel a message rides. Each has its own ordered stream, so a
+/// big transfer never holds back a cursor.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Lane {
+    /// Documents, records and everything that must arrive.
+    #[default]
+    Data,
+    /// Small, urgent and soon stale: cursors, ink in progress.
+    Live,
+}
+
 /// One unit on a channel.
 #[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
 enum Frame {
@@ -217,6 +228,13 @@ enum Frame {
     Ping,
     Pong,
     App(Vec<u8>),
+    /// Piece `index` of `total` of an app payload too big for one frame.
+    Part {
+        id: u32,
+        index: u32,
+        total: u32,
+        bytes: Vec<u8>,
+    },
     Bye,
 }
 

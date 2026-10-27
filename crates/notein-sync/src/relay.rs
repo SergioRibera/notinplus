@@ -16,7 +16,7 @@ use std::str::FromStr;
 
 use crate::identity::{DeviceId, DeviceKey};
 use crate::net::lan::LanNode;
-use crate::net::{LanConfig, NetError, NetEvent};
+use crate::net::{LanConfig, Lane, NetError, NetEvent};
 use crate::replica::{BlobKey, DocId};
 use crate::share::ShareId;
 
@@ -325,7 +325,7 @@ struct Serving {
 impl Serving {
     fn reply(&self, to: DeviceId, message: &RelayMessage) {
         let bytes = crate::driver::relay_payload(message);
-        if let Err(err) = self.sender.send(to, bytes) {
+        if let Err(err) = self.sender.send(to, Lane::Data, bytes) {
             tracing::warn!(target: "notein-relay", "reply: {err}");
         }
     }

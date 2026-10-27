@@ -118,7 +118,11 @@ impl Device {
     fn perform(&mut self, actions: Vec<Action>) {
         for action in actions {
             match action {
-                Action::Send { device, bytes } => self.node.send(device, bytes).unwrap(),
+                Action::Send {
+                    device,
+                    lane,
+                    bytes,
+                } => self.node.send(device, lane, bytes).unwrap(),
                 Action::Connect { addr, public } => self.node.connect(addr, public).unwrap(),
                 Action::ConnectHost { host, public } => {
                     self.node.connect_host(host, public).unwrap();
