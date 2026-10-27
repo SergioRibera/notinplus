@@ -114,7 +114,7 @@ impl Library {
             bodies::discard_store();
             LibraryIndex::default()
         });
-        let inline = hydrate_covers(&mut index);
+        read_covers(&mut index);
         let mut workspaces = index::load_workspaces(&client).await?;
         for workspace in &mut workspaces.workspaces {
             for pane in workspace.layout.leaves_mut() {
@@ -131,10 +131,6 @@ impl Library {
                 links,
             },
         };
-        if inline {
-            // An index written before covers had files of their own.
-            lib.persist()?;
-        }
         lib.ensure_default_workspace().await?;
         lib.compact_tombstones().await?;
         Ok(lib)
@@ -1437,21 +1433,11 @@ impl Library {
     }
 }
 
-/// Read every cover from its file. A cover still carried inline (an
-/// index stored before covers had files) moves to its file instead.
-/// Returns whether any did.
-fn hydrate_covers(index: &mut LibraryIndex) -> bool {
-    let mut inline = false;
+/// Read every cover from its file.
+fn read_covers(index: &mut LibraryIndex) {
     for item in &mut index.items {
-        match &item.thumbnail {
-            Some(cover) => {
-                inline = true;
-                keep_cover(item.id, Some(cover));
-            }
-            None => item.thumbnail = bodies::read_cover(item.id).map(Arc::from),
-        }
+        item.thumbnail = bodies::read_cover(item.id).map(Arc::from);
     }
-    inline
 }
 
 /// Store the cover a record arrived with; failures are logged.
