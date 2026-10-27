@@ -10,7 +10,7 @@ use notein_sdk::create::{
 use notein_sdk::doc::DocMeta;
 use notein_sdk::kind::{
     ActionEffect, ChipView, DocumentKind, Hit, KindAction, KindChoice, KindColor, KindInfo, Mark,
-    OutlineIcon, OutlineNode, SearchQuery, SelectionSupport,
+    OutlineIcon, OutlineNode, Quote, SearchQuery, SelectionSupport,
 };
 
 use crate::anchor::BibleAnchor;
@@ -121,6 +121,60 @@ impl BibleKind {
         }
     }
 
+    /// Text of every verse `anchor` covers, `(verse, text)` in order.
+    fn verses(&self, anchor: &BibleAnchor) -> Vec<(u16, String)> {
+        (anchor.start_chapter..=anchor.end_chapter)
+            .filter_map(|chapter| {
+                let row = self
+                    .db
+                    .load_chapter(&anchor.bible_id, &anchor.book_id, chapter)
+                    .ok()?;
+                Some((chapter, row.verses))
+            })
+            .flat_map(|(chapter, verses)| {
+                verses.into_iter().filter(move |v| {
+                    (chapter > anchor.start_chapter || v.verse >= anchor.start_verse)
+                        && (chapter < anchor.end_chapter || v.verse <= anchor.end_verse)
+                })
+            })
+            .map(|v| (v.verse, v.text))
+            .collect()
+    }
+
+    /// Short name of translation `bible`, as a citation ends with it.
+    fn translation(&self, bible: &str) -> String {
+        self.db
+            .list_bibles()
+            .unwrap_or_default()
+            .into_iter()
+            .find(|b| b.id == bible)
+            .map_or_else(
+                || bible.to_owned(),
+                |b| {
+                    if b.abbrev.is_empty() {
+                        b.name_local
+                    } else {
+                        b.abbrev
+                    }
+                },
+            )
+    }
+
+    /// The passage `text` names, when it reads as a reference that
+    /// exists in translation `bible`.
+    fn passage(&self, bible: &str, text: &str) -> Option<Hit<BibleAnchor>> {
+        let anchor = crate::resolver::resolve(&self.db, bible, text)?;
+        let verses = self.verses(&anchor);
+        let (_, first) = verses.first()?;
+        Some(Hit {
+            doc: None,
+            title: self.label(&anchor),
+            snippet: first.clone(),
+            anchor,
+            score: f32::MAX,
+        })
+    }
+
     /// Translation the user reads by default.
     #[must_use]
     pub fn default_bible(&self) -> Option<String> {
@@ -158,7 +212,11 @@ impl DocumentKind for BibleKind {
     fn search<'a>(&'a self, query: &'a SearchQuery) -> Self::Hits<'a> {
         let (open, close) = crate::db::snippet_markers();
         let bible = self.default_bible();
-        self.db
+        let passage = bible
+            .as_deref()
+            .and_then(|bible| self.passage(bible, &query.text));
+        let found = self
+            .db
             .search(bible.as_deref(), &query.text, query.limit)
             .unwrap_or_default()
             .into_iter()
@@ -173,7 +231,11 @@ impl DocumentKind for BibleKind {
                     #[allow(clippy::cast_possible_truncation)] // bm25 scores are small
                     score: -(hit.score as f32),
                 }
-            })
+            });
+        passage
+            .into_iter()
+            .chain(found)
+            .take(query.limit)
             .collect::<Vec<_>>()
             .into_iter()
     }
@@ -246,6 +308,34 @@ impl DocumentKind for BibleKind {
 
     fn chip(&self, _doc: DocMeta<'_>, anchor: &BibleAnchor) -> ChipView {
         ChipView::new(self.label(anchor))
+    }
+
+    fn quotes(&self) -> bool {
+        true
+    }
+
+    fn quote(&self, _doc: DocMeta<'_>, anchor: &BibleAnchor) -> Option<Quote> {
+        let verses = self.verses(anchor);
+        let numbered = verses.len() > 1;
+        let body = verses
+            .iter()
+            .map(|(verse, text)| {
+                if numbered {
+                    format!("{} {}", superscript(*verse), text.trim())
+                } else {
+                    text.trim().to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        (!body.is_empty()).then(|| Quote {
+            body,
+            source: format!(
+                "{} ({})",
+                self.label(anchor),
+                self.translation(&anchor.bible_id)
+            ),
+        })
     }
 
     fn selection(&self) -> SelectionSupport {
@@ -361,5 +451,100 @@ impl DocumentKind for BibleKind {
 
     fn without_marks(&self, content: &mut BibleContent) {
         content.highlights.clear();
+    }
+}
+
+/// `n` written in superscript digits, as verse numbers are printed.
+fn superscript(n: u16) -> String {
+    const DIGITS: [char; 10] = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+    n.to_string()
+        .bytes()
+        .map(|digit| DIGITS[usize::from(digit - b'0')])
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::params;
+
+    use super::*;
+
+    fn genesis() -> BibleKind {
+        let db = Db::in_memory().unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO bibles (id, abbrev, name_local, language)
+                 VALUES ('spa_rv1960', 'RVR1960', 'Reina Valera 1960', 'spa')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO books (bible_id, book_id, name, abbrev, order_num, testament)
+                 VALUES ('spa_rv1960', 'GEN', 'Génesis', 'Gn', 1, 'AT')",
+                [],
+            )?;
+            for (verse, text) in [
+                (1, "En el principio creó Dios los cielos y la tierra."),
+                (2, "Y la tierra estaba desordenada y vacía."),
+                (3, "Y dijo Dios: Sea la luz; y fue la luz."),
+            ] {
+                conn.execute(
+                    "INSERT INTO verses (bible_id, book_id, chapter, verse, text)
+                     VALUES ('spa_rv1960', 'GEN', 1, ?1, ?2)",
+                    params![verse, text],
+                )?;
+            }
+            Ok(())
+        })
+        .unwrap();
+        BibleKind::new(db, SharedConfig::default())
+    }
+
+    fn meta() -> DocMeta<'static> {
+        DocMeta {
+            id: notein_sdk::DocId([0; 16]),
+            name: "Biblia",
+            updated_at: 0,
+            tint: None,
+        }
+    }
+
+    #[test]
+    fn a_typed_reference_comes_first_however_it_is_spelled() {
+        let kind = genesis();
+        for typed in ["genesis 1:3", "Génesis 1:3", "gn 1:3", "GEN 1.3"] {
+            let hits: Vec<_> = kind.search(&SearchQuery::new(typed, 6)).collect();
+            assert_eq!(hits[0].title, "Génesis 1:3", "{typed}");
+        }
+    }
+
+    #[test]
+    fn a_range_quotes_every_verse_with_its_number() {
+        let kind = genesis();
+        let hits: Vec<_> = kind.search(&SearchQuery::new("gen 1:2-3", 6)).collect();
+        let quote = kind.quote(meta(), &hits[0].anchor).unwrap();
+        assert_eq!(
+            quote.body,
+            "² Y la tierra estaba desordenada y vacía. ³ Y dijo Dios: Sea la luz; y fue la luz."
+        );
+        assert_eq!(quote.source, "Génesis 1:2–3 (RVR1960)");
+    }
+
+    #[test]
+    fn one_verse_is_quoted_without_a_number() {
+        let kind = genesis();
+        let anchor = BibleAnchor::single_verse("spa_rv1960", "GEN", 1, 1);
+        let quote = kind.quote(meta(), &anchor).unwrap();
+        assert_eq!(
+            quote.body,
+            "En el principio creó Dios los cielos y la tierra."
+        );
+        assert_eq!(quote.source, "Génesis 1:1 (RVR1960)");
+    }
+
+    #[test]
+    fn a_missing_passage_quotes_nothing() {
+        let kind = genesis();
+        let anchor = BibleAnchor::single_verse("spa_rv1960", "GEN", 9, 9);
+        assert!(kind.quote(meta(), &anchor).is_none());
     }
 }
