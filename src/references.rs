@@ -131,11 +131,11 @@ pub struct Suggestion {
 /// from every kind's search.
 #[must_use]
 pub fn suggestions(query: &str, data: Option<&LibraryData>) -> Vec<Suggestion> {
-    let needle = query.trim().to_lowercase();
+    let needle = notein_plugin::fold(query.trim());
     let mut out: Vec<Suggestion> = data
         .map(|data| {
             data.live_items()
-                .filter(|i| needle.is_empty() || i.name.to_lowercase().contains(&needle))
+                .filter(|i| needle.is_empty() || notein_plugin::fold(&i.name).contains(&needle))
                 .take(SUGGESTED_DOCS)
                 .map(|item| Suggestion {
                     label: item.name.clone(),

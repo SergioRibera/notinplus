@@ -110,10 +110,10 @@ impl SearchQuery {
         }
     }
 
-    /// Lower-cased text for simple containment matching.
+    /// Text without case or accents, for [`crate::Folded`] matching.
     #[must_use]
     pub fn folded(&self) -> String {
-        self.text.to_lowercase()
+        crate::text::fold(&self.text)
     }
 }
 
@@ -219,6 +219,15 @@ impl ChipView {
             broken: true,
         }
     }
+}
+
+/// Content a place inside a document offers to be quoted elsewhere.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Quote {
+    /// Markdown of what the place holds.
+    pub body: String,
+    /// Where it comes from, as a reader would cite it.
+    pub source: String,
 }
 
 /// What the selection bar offers inside this kind's documents.
@@ -528,6 +537,19 @@ pub trait DocumentKind: Send + Sync + 'static {
         attachment: Option<&[u8]>,
     ) -> Option<ExportFile> {
         let _ = (doc, content, attachment);
+        None
+    }
+
+    /// Whether [`Self::quote`] can return content. Kinds that cannot never
+    /// get asked, and nobody is offered to quote them.
+    fn quotes(&self) -> bool {
+        false
+    }
+
+    /// What `anchor` inside `doc` holds, to be quoted. `None` when the
+    /// place is gone.
+    fn quote(&self, doc: DocMeta<'_>, anchor: &Self::Anchor) -> Option<Quote> {
+        let _ = (doc, anchor);
         None
     }
 

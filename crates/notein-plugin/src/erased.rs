@@ -13,7 +13,7 @@ use crate::create::{
 use crate::doc::{DocId, DocMeta};
 use crate::kind::{
     ActionEffect, ChipView, DocumentKind, ExportFile, Hit, IndexReport, KindAction, KindChoice,
-    KindInfo, Mark, OutlineNode, SearchQuery, SelectionSupport,
+    KindInfo, Mark, OutlineNode, Quote, SearchQuery, SelectionSupport,
 };
 use crate::payload::Payload;
 
@@ -70,6 +70,8 @@ pub trait ErasedKind: Send + Sync {
         attachment: Option<&[u8]>,
     ) -> Option<ExportFile>;
     fn cited(&self, doc: DocId, anchor: &[u8]);
+    fn quotes(&self) -> bool;
+    fn quote(&self, doc: DocMeta<'_>, anchor: &[u8]) -> Option<Quote>;
 }
 
 pub(crate) struct KindAdapter<K: DocumentKind>(pub(crate) Arc<K>);
@@ -248,5 +250,14 @@ impl<K: DocumentKind> ErasedKind for KindAdapter<K> {
         if let Ok(anchor) = K::Anchor::from_bytes(anchor) {
             self.0.cited(doc, &anchor);
         }
+    }
+
+    fn quotes(&self) -> bool {
+        self.0.quotes()
+    }
+
+    fn quote(&self, doc: DocMeta<'_>, anchor: &[u8]) -> Option<Quote> {
+        let anchor = K::Anchor::from_bytes(anchor).ok()?;
+        self.0.quote(doc, &anchor)
     }
 }

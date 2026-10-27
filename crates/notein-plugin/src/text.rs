@@ -1,6 +1,7 @@
-//! Case-insensitive matching with excerpts, for plugin search.
+//! Matching that ignores case and accents, with excerpts, for plugin
+//! search.
 
-/// Text folded to lower case, remembering where each folded byte came
+/// Text folded to lower case without accents, remembering where each folded byte came
 /// from so matches map back to the original.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Folded<'a> {
@@ -19,7 +20,7 @@ impl<'a> Folded<'a> {
         for (at, ch) in original.char_indices() {
             for ch_lower in ch.to_lowercase() {
                 let before = lower.len();
-                lower.push(ch_lower);
+                lower.push(plain(ch_lower));
                 origin.extend(std::iter::repeat_n(at, lower.len() - before));
             }
         }
@@ -32,7 +33,7 @@ impl<'a> Folded<'a> {
     }
 
     /// Byte range in the original text of the first match of an
-    /// already lower-cased `needle`.
+    /// already [`fold`]ed `needle`.
     #[must_use]
     pub fn find(&self, needle: &str) -> Option<(usize, usize)> {
         if needle.is_empty() {
@@ -72,16 +73,48 @@ impl<'a> Folded<'a> {
     }
 }
 
+/// `text` in lower case without accents, the form [`Folded::find`] expects.
+#[must_use]
+pub fn fold(text: &str) -> String {
+    text.chars()
+        .flat_map(char::to_lowercase)
+        .map(plain)
+        .collect()
+}
+
+/// A lower-case letter without its accent.
+const fn plain(ch: char) -> char {
+    match ch {
+        'á' | 'à' | 'ä' | 'â' | 'ã' | 'å' => 'a',
+        'é' | 'è' | 'ë' | 'ê' => 'e',
+        'í' | 'ì' | 'ï' | 'î' => 'i',
+        'ó' | 'ò' | 'ö' | 'ô' | 'õ' => 'o',
+        'ú' | 'ù' | 'ü' | 'û' => 'u',
+        'ñ' => 'n',
+        'ç' => 'c',
+        other => other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Folded;
+    use super::{Folded, fold};
 
     #[test]
     fn matches_map_back_to_the_original() {
         let text = "Ninguna CONDENACIÓN hay";
         let folded = Folded::new(text);
-        let (start, end) = folded.find("condenación").expect("match");
+        let (start, end) = folded.find(&fold("condenación")).expect("match");
         assert_eq!(&text[start..end], "CONDENACIÓN");
+    }
+
+    #[test]
+    fn accents_do_not_matter_either_way() {
+        let text = "Génesis y éxodo";
+        let folded = Folded::new(text);
+        let (start, end) = folded.find(&fold("GENESIS")).expect("match");
+        assert_eq!(&text[start..end], "Génesis");
+        assert!(folded.find(&fold("exodo")).is_some());
     }
 
     #[test]

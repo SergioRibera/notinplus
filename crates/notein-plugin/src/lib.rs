@@ -58,7 +58,8 @@ pub use ids::{ActorId, BookmarkId, DeviceId, OpId, StrokeId, UserId};
 pub use info::PluginInfo;
 pub use kind::{
     ActionEffect, Attachment, ChipView, DocumentKind, ExportFile, Hit, IndexReport, KindAction,
-    KindChoice, KindColor, KindInfo, Mark, OutlineIcon, OutlineNode, SearchQuery, SelectionSupport,
+    KindChoice, KindColor, KindInfo, Mark, OutlineIcon, OutlineNode, Quote, SearchQuery,
+    SelectionSupport,
 };
 pub use loader::{LoaderError, SDK_ABI_VERSION};
 pub use manifest::{ManifestError, ManifestLibrary, ManifestRequirement, PluginManifest};
@@ -68,5 +69,5 @@ pub use services::{
     HeaderPress, Host, HostServices, HostToast, Jump, Progress, Share, TextBody, ToastTone, Typing,
 };
 pub use target::Target;
-pub use text::Folded;
+pub use text::{Folded, fold};
 pub use ui::{HostUi, SelectionMenu, Ui};

@@ -100,7 +100,7 @@ impl Iterator for MarkHits<'_> {
         while let Some((doc, name, marks)) = self.index.docs.get(self.doc) {
             while let Some(mark) = marks.get(self.mark) {
                 self.mark += 1;
-                if mark.body.to_lowercase().contains(&self.needle) {
+                if notein_plugin::fold(&mark.body).contains(&self.needle) {
                     return Some(Hit {
                         doc: Some(*doc),
                         anchor: CanvasAnchor {
