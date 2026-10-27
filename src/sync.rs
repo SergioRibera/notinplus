@@ -294,6 +294,7 @@ pub fn use_presence() {
     freya::prelude::use_side_effect(move || {
         let focused = *focused.read();
         if !focused {
+            crate::route::save_open_documents();
             std::thread::spawn(crate::deferred::flush);
         }
         let _ = changes.send(focused);

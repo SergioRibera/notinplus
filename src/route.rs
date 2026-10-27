@@ -17,6 +17,7 @@
 //! queued (fresh start / cold URL entry).
 
 use std::sync::{Arc, Mutex, Weak};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use freya::prelude::*;
@@ -231,8 +232,10 @@ fn spawn_autosave_worker(id: ItemId, board: &Arc<Mutex<Board>>, rx: flume::Recei
                 let Some(board) = watched.upgrade() else {
                     return;
                 };
+                SAVING.fetch_add(1, Ordering::AcqRel);
                 settle(&rx);
                 save(id, &board);
+                SAVING.fetch_sub(1, Ordering::AcqRel);
             }
         });
     if let Err(err) = spawned {
@@ -240,15 +243,41 @@ fn spawn_autosave_worker(id: ItemId, board: &Arc<Mutex<Board>>, rx: flume::Recei
     }
 }
 
-/// Wait until commits stop for [`SAVE_AFTER`], or [`SAVE_AT_MOST`] went
-/// by since the first one.
+/// Wait until commits stop for [`SAVE_AFTER`], [`SAVE_AT_MOST`] went by
+/// since the first one, or [`save_open_documents`] asked.
 fn settle(rx: &flume::Receiver<()>) {
+    /// How often a waiting save looks whether it was asked to hurry.
+    const GLANCE: Duration = Duration::from_millis(100);
+    let asked = SAVE_NOW.load(Ordering::Acquire);
     let first = Instant::now();
-    loop {
-        let left = SAVE_AT_MOST.saturating_sub(first.elapsed());
-        if left.is_zero() || rx.recv_timeout(SAVE_AFTER.min(left)).is_err() {
-            return;
+    let mut last = first;
+    while SAVE_NOW.load(Ordering::Acquire) == asked && first.elapsed() < SAVE_AT_MOST {
+        match rx.recv_timeout(GLANCE) {
+            Ok(()) => last = Instant::now(),
+            Err(flume::RecvTimeoutError::Timeout) if last.elapsed() < SAVE_AFTER => {}
+            Err(_) => return,
         }
+    }
+}
+
+/// Bumped to make every waiting canvas save run at once.
+static SAVE_NOW: AtomicU64 = AtomicU64::new(0);
+
+/// Canvas saves waiting or running.
+static SAVING: AtomicUsize = AtomicUsize::new(0);
+
+/// Save every open canvas with unsaved strokes now, for when the app
+/// may go away.
+pub fn save_open_documents() {
+    SAVE_NOW.fetch_add(1, Ordering::AcqRel);
+}
+
+/// [`save_open_documents`], then wait a moment for the saves to land.
+pub fn save_open_documents_and_wait() {
+    save_open_documents();
+    let asked = Instant::now();
+    while SAVING.load(Ordering::Acquire) > 0 && asked.elapsed() < Duration::from_secs(3) {
+        std::thread::sleep(Duration::from_millis(10));
     }
 }
 

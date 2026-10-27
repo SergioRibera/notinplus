@@ -187,6 +187,7 @@ pub fn run() {
                 }),
         );
         launch(cfg);
+        crate::route::save_open_documents_and_wait();
         crate::deferred::flush();
         crate::library::index::flush();
         // The window is closed: let the other devices know right away.
