@@ -131,7 +131,7 @@ struct LanguageEntry {
 #[derive(Debug, Default, Deserialize, Serialize)]
 struct BibleDesc {
     #[serde(default)]
-    book_names: HashMap<String, BookName>,
+    book_names: BookNames,
     #[serde(default)]
     chapter_headings: HashMap<String, Vec<String>>,
     #[serde(default)]
@@ -145,6 +145,72 @@ struct BibleDesc {
     name_english: Option<String>,
     #[serde(default)]
     abbrev: Option<String>,
+}
+
+/// Book names keyed by book id, in the order the manifest lists them:
+/// reading order, deuterocanonical books where each tradition puts them.
+#[derive(Debug, Default)]
+struct BookNames(Vec<(String, BookName)>);
+
+impl BookNames {
+    fn get(&self, book_id: &str) -> Option<&BookName> {
+        self.0
+            .iter()
+            .find(|(id, _)| id == book_id)
+            .map(|(_, name)| name)
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Book ids in reading order.
+    fn ids(&self) -> Vec<&String> {
+        self.0.iter().map(|(id, _)| id).collect()
+    }
+}
+
+impl<'de> Deserialize<'de> for BookNames {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        struct Ordered;
+
+        impl<'de> serde::de::Visitor<'de> for Ordered {
+            type Value = BookNames;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a map of book ids to names")
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> std::result::Result<BookNames, A::Error> {
+                let mut books = Vec::with_capacity(map.size_hint().unwrap_or(0));
+                while let Some(entry) = map.next_entry::<String, BookName>()? {
+                    books.push(entry);
+                }
+                Ok(BookNames(books))
+            }
+        }
+
+        deserializer.deserialize_map(Ordered)
+    }
+}
+
+impl Serialize for BookNames {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        for (id, name) in &self.0 {
+            map.serialize_entry(id, name)?;
+        }
+        map.end()
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -249,10 +315,7 @@ impl Install<'_> {
             total_books: desc.book_names.len(),
         });
 
-        // The manifest keeps books in a map; sorting keeps the install
-        // deterministic.
-        let mut book_ids: Vec<&String> = desc.book_names.keys().collect();
-        book_ids.sort();
+        let book_ids = desc.book_names.ids();
         self.register_books(&desc, &book_ids)?;
 
         let mut inserted = 0usize;
@@ -955,8 +1018,7 @@ pub(crate) fn populate_from_fixtures(
             source: e,
         })?;
 
-    let mut book_ids: Vec<&String> = desc_parsed.book_names.keys().collect();
-    book_ids.sort();
+    let book_ids = desc_parsed.book_names.ids();
 
     db.with_conn_mut(|conn| {
         upsert_bible(conn, bible_id, &desc_parsed).map_err(crate::db::DbError::from)?;
@@ -1000,6 +1062,26 @@ pub(crate) fn populate_from_fixtures(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn books_keep_the_order_the_manifest_lists_them_in() {
+        let desc: BibleDesc = serde_json::from_str(
+            r#"{"book_names": {
+                "gen": {"normal": "Génesis"},
+                "exo": {"normal": "Éxodo"},
+                "tob": {"normal": "Tobías"},
+                "1ch": {"normal": "1 Crónicas"}
+            }}"#,
+        )
+        .unwrap();
+        assert_eq!(desc.book_names.ids(), ["gen", "exo", "tob", "1ch"]);
+        assert_eq!(
+            desc.book_names.get("tob").map(|b| b.normal.as_str()),
+            Some("Tobías")
+        );
+        let written = serde_json::to_string(&desc.book_names).unwrap();
+        assert!(written.find("gen") < written.find("1ch"), "{written}");
+    }
 
     fn eph_fixture() -> (serde_json::Value, serde_json::Value) {
         let desc = json!({
