@@ -33,6 +33,7 @@ pub mod manifest;
 pub mod payload;
 pub mod plugin;
 pub mod services;
+pub mod target;
 pub mod text;
 pub mod ui;
 
@@ -60,11 +61,12 @@ pub use kind::{
     KindChoice, KindColor, KindInfo, Mark, OutlineIcon, OutlineNode, SearchQuery, SelectionSupport,
 };
 pub use loader::{LoaderError, SDK_ABI_VERSION};
-pub use manifest::{ManifestError, ManifestRequirement, PluginManifest};
+pub use manifest::{ManifestError, ManifestLibrary, ManifestRequirement, PluginManifest};
 pub use payload::{Payload, PayloadError};
 pub use plugin::{Font, Plugin, PluginSettings, Registrar};
 pub use services::{
     HeaderPress, Host, HostServices, HostToast, Jump, Progress, Share, TextBody, ToastTone, Typing,
 };
+pub use target::Target;
 pub use text::Folded;
 pub use ui::{HostUi, SelectionMenu, Ui};

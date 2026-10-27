@@ -18,6 +18,7 @@ use crate::info::PluginInfo;
 use crate::kind::KindInfo;
 use crate::manifest::{ManifestError, PluginManifest};
 use crate::plugin::{Plugin, Registrar};
+use crate::target::Target;
 
 /// Version of the plugin contract. A plugin built against another one
 /// is refused before any of its code runs past the entry function.
@@ -64,6 +65,13 @@ pub enum LoaderError {
     MissingLibrary {
         manifest: PathBuf,
     },
+    /// The manifest lists libraries, none for this device.
+    NoLibraryForDevice {
+        plugin: String,
+        device: String,
+        /// The platforms it does ship for.
+        targets: Vec<String>,
+    },
     Open {
         library: PathBuf,
         error: libloading::Error,
@@ -88,6 +96,14 @@ impl LoaderError {
             Self::MissingLibrary { .. } | Self::Open { .. } | Self::MissingEntry { .. } => {
                 "No es un plugin de Notein para este dispositivo.".to_owned()
             }
+            Self::NoLibraryForDevice {
+                plugin,
+                device,
+                targets,
+            } => format!(
+                "«{plugin}» no trae una versión para este dispositivo ({device}). Trae para: {}.",
+                targets.join(", ")
+            ),
             Self::AbiMismatch {
                 plugin,
                 expected,
@@ -111,6 +127,15 @@ impl std::fmt::Display for LoaderError {
             Self::MissingLibrary { manifest } => {
                 write!(f, "no library next to {}", manifest.display())
             }
+            Self::NoLibraryForDevice {
+                plugin,
+                device,
+                targets,
+            } => write!(
+                f,
+                "{plugin}: no library for {device} (ships {})",
+                targets.join(", ")
+            ),
             Self::Open { library, error } => write!(f, "open {}: {error}", library.display()),
             Self::MissingEntry { library, error } => {
                 write!(f, "entry in {}: {error}", library.display())
@@ -187,11 +212,21 @@ impl Loaded {
 /// missing or the plugin targets another SDK version.
 pub fn load(manifest_path: &Path) -> Result<Loaded, LoaderError> {
     let manifest = PluginManifest::from_path(manifest_path)?;
+    let device = Target::current();
     let library_path = manifest
-        .library_path(manifest_path)
-        .or_else(|| default_library_path(manifest_path, &manifest.id))
-        .ok_or_else(|| LoaderError::MissingLibrary {
-            manifest: manifest_path.to_path_buf(),
+        .library_for(manifest_path, &device)
+        .ok_or_else(|| {
+            if manifest.libraries.is_empty() {
+                LoaderError::MissingLibrary {
+                    manifest: manifest_path.to_path_buf(),
+                }
+            } else {
+                LoaderError::NoLibraryForDevice {
+                    plugin: manifest.name.clone(),
+                    device: device.to_string(),
+                    targets: manifest.targets(),
+                }
+            }
         })?;
     // SAFETY: loading a library runs its initialisers with the app's
     // privileges. The user chose to install this plugin; the manifest
@@ -226,35 +261,9 @@ pub fn load(manifest_path: &Path) -> Result<Loaded, LoaderError> {
     })
 }
 
-fn default_library_path(manifest_path: &Path, id: &str) -> Option<PathBuf> {
-    let base: String = id
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect();
-    let file = if cfg!(target_os = "windows") {
-        format!("{base}.dll")
-    } else if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
-        format!("lib{base}.dylib")
-    } else {
-        format!("lib{base}.so")
-    };
-    Some(manifest_path.parent()?.join(file))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn default_library_name_is_sanitised() {
-        let path =
-            default_library_path(Path::new("/p/plugin.ntp.kdl"), "org.user.quran").expect("parent");
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default();
-        assert!(name.contains("org_user_quran"), "{name}");
-    }
 
     #[test]
     fn newer_abi_asks_to_update_the_app() {
@@ -264,5 +273,17 @@ mod tests {
             found: SDK_ABI_VERSION + 1,
         };
         assert!(err.user_message().contains("más nueva"));
+    }
+
+    #[test]
+    fn a_plugin_for_other_devices_says_which() {
+        let err = LoaderError::NoLibraryForDevice {
+            plugin: "Corán".to_owned(),
+            device: "android-aarch64".to_owned(),
+            targets: vec!["linux-x86_64".to_owned(), "macos".to_owned()],
+        };
+        let message = err.user_message();
+        assert!(message.contains("android-aarch64"), "{message}");
+        assert!(message.contains("linux-x86_64, macos"), "{message}");
     }
 }
