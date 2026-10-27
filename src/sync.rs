@@ -662,7 +662,9 @@ impl Service {
                     LiveMessage::Presence { state } => {
                         presence::seen(item, from, &name, Some(state.clone()));
                     }
-                    _ => presence::seen(item, from, &name, None),
+                    _ => {
+                        presence::seen(item, from, &name, None);
+                    }
                 }
                 for (_, board) in crate::active_boards::for_item(item) {
                     crate::canvas::lock(&board).apply_live(from, &name, message.clone());

@@ -136,8 +136,9 @@ pub fn color(device: DeviceId) -> [u8; 3] {
 }
 
 /// `from` sent something about `item`: it is there. `state` replaces
-/// what it last published, when given.
-pub(super) fn seen(item: ItemId, from: DeviceId, name: &str, state: Option<Vec<u8>>) {
+/// what it last published, when given. Returns whether that changed
+/// anything.
+pub(super) fn seen(item: ItemId, from: DeviceId, name: &str, state: Option<Vec<u8>>) -> bool {
     let mut guard = peers();
     let here = guard
         .get_or_insert_with(HashMap::new)
@@ -164,6 +165,7 @@ pub(super) fn seen(item: ItemId, from: DeviceId, name: &str, state: Option<Vec<u
     if arrived || moved {
         notify(item);
     }
+    arrived || moved
 }
 
 /// `from` closed `item`.
@@ -362,8 +364,7 @@ mod tests {
         assert!(changes.try_recv().is_ok());
         assert_eq!(here(item)[0].state, vec![4]);
         // Saying the same again changes nothing.
-        seen(item, ana, "Ana", Some(vec![4]));
-        assert!(changes.try_recv().is_err());
+        assert!(!seen(item, ana, "Ana", Some(vec![4])));
         left(item, ana);
         assert!(here(item).is_empty());
     }
