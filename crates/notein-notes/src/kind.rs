@@ -56,7 +56,9 @@ impl NoteContent {
     #[must_use]
     pub fn markdown_of(bytes: &[u8]) -> String {
         use notein_sdk::payload::Payload;
-        Self::from_bytes(bytes).map(|c| c.markdown).unwrap_or_default()
+        Self::from_bytes(bytes)
+            .map(|c| c.markdown)
+            .unwrap_or_default()
     }
 }
 

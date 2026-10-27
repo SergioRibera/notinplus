@@ -885,7 +885,6 @@ impl Board {
         self.gesture_active
     }
 
-
     fn compute_gesture_baseline(&self) -> Option<GestureBaseline> {
         if self.finger_positions.len() < 2 {
             return None;
@@ -2632,8 +2631,8 @@ impl Surface {
         if crate::pen_pump::is_pen_near(x + ox, y + oy, crate::pen_pump::PEN_TOUCH_FILTER_RADIUS) {
             return;
         }
-        let palm = crate::settings::SettingsStore::try_get()
-            .is_some_and(|s| s.peek().pen.palm_rejection);
+        let palm =
+            crate::settings::SettingsStore::try_get().is_some_and(|s| s.peek().pen.palm_rejection);
         if palm && crate::pen_pump::pen_in_use() {
             return;
         }
@@ -3136,7 +3135,10 @@ fn pointer_dash_path(cx: f32, cy: f32, radius: f32) -> freya_engine::prelude::Pa
         let start = step * f32::from(segment);
         for sub in 0..=SUBSTEPS {
             let angle = (f32::from(sub) / f32::from(SUBSTEPS)).mul_add(step, start);
-            let point = (radius.mul_add(angle.cos(), cx), radius.mul_add(angle.sin(), cy));
+            let point = (
+                radius.mul_add(angle.cos(), cx),
+                radius.mul_add(angle.sin(), cy),
+            );
             if sub == 0 {
                 path.move_to(point);
             } else {

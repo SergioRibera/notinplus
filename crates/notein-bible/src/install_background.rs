@@ -166,12 +166,7 @@ pub fn spawn_fetch_footnotes(
 /// the standard "Pablo es enviado a Roma" style apparatus) and inserts into the
 /// `headers` table so the reader renders them inline between paragraphs.
 /// Skipped when the chapter already has rows OR when no sibling id is mapped.
-pub fn spawn_fetch_headings(
-    db: Db,
-    bible_id: String,
-    book_id: String,
-    chapter: u16,
-) {
+pub fn spawn_fetch_headings(db: Db, bible_id: String, book_id: String, chapter: u16) {
     std::thread::Builder::new()
         .name(format!("bible-headings-{book_id}-{chapter}"))
         .spawn(move || {
@@ -209,7 +204,6 @@ pub fn spawn_fetch_headings(
         })
         .map_or_else(|e| log::warn!("headings thread: {e}"), drop);
 }
-
 
 /// Raw biblionlabs layout: `bibles/<id>/manifest.json` holds the book
 /// names and sections, `bibles/<id>/books/<book>.json` one book each.
@@ -318,7 +312,9 @@ fn catalogue_meta(
             })
             .unwrap_or_default(),
         Err(e) => {
-            log::warn!("bible install: catalogue lookup failed, the name falls back to the id: {e}");
+            log::warn!(
+                "bible install: catalogue lookup failed, the name falls back to the id: {e}"
+            );
             biblionlabs::BibleMeta::default()
         }
     }

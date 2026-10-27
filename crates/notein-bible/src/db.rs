@@ -135,7 +135,9 @@ impl Db {
     /// Run a read on the read-only connection.
     pub(crate) fn with_conn<R>(&self, f: impl FnOnce(&Connection) -> Result<R>) -> Result<R> {
         let conn = self.read.as_ref().unwrap_or(&self.conn);
-        let guard = conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let guard = conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         f(&guard)
     }
 
@@ -144,7 +146,10 @@ impl Db {
         &self,
         f: impl FnOnce(&mut Connection) -> Result<R>,
     ) -> Result<R> {
-        let mut guard = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = self
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         f(&mut guard)
     }
 
@@ -183,7 +188,12 @@ impl Db {
         queries::load_chapter(self, bible_id, book_id, chapter)
     }
 
-    pub fn search(&self, bible_id: Option<&str>, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
+    pub fn search(
+        &self,
+        bible_id: Option<&str>,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchHit>> {
         search::search(self, bible_id, query, limit)
     }
 
@@ -205,14 +215,17 @@ impl Db {
                  ORDER BY src_verse, tgt_book, tgt_chap, tgt_verse",
             )?;
             let rows = stmt
-                .query_map(rusqlite::params![bible_id, book_id, i64::from(chapter)], |r| {
-                    Ok(CrossRefRow {
-                        src_verse: r.get::<_, u16>(0)?,
-                        tgt_book: r.get(1)?,
-                        tgt_chap: r.get::<_, u16>(2)?,
-                        tgt_verse: r.get::<_, u16>(3)?,
-                    })
-                })?
+                .query_map(
+                    rusqlite::params![bible_id, book_id, i64::from(chapter)],
+                    |r| {
+                        Ok(CrossRefRow {
+                            src_verse: r.get::<_, u16>(0)?,
+                            tgt_book: r.get(1)?,
+                            tgt_chap: r.get::<_, u16>(2)?,
+                            tgt_verse: r.get::<_, u16>(3)?,
+                        })
+                    },
+                )?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
         })
@@ -355,9 +368,18 @@ mod tests {
                 [],
             )?;
             for (verse, text) in [
-                (1u16, "Hijos, obedeced en el Señor a vuestros padres, porque esto es justo."),
-                (2, "Honra a tu padre y a tu madre, que es el primer mandamiento con promesa;"),
-                (3, "para que te vaya bien, y seas de larga vida sobre la tierra."),
+                (
+                    1u16,
+                    "Hijos, obedeced en el Señor a vuestros padres, porque esto es justo.",
+                ),
+                (
+                    2,
+                    "Honra a tu padre y a tu madre, que es el primer mandamiento con promesa;",
+                ),
+                (
+                    3,
+                    "para que te vaya bien, y seas de larga vida sobre la tierra.",
+                ),
             ] {
                 conn.execute(
                     "INSERT INTO verses (bible_id, book_id, chapter, verse, text, paragraph_break)
@@ -385,7 +407,10 @@ mod tests {
         let db = Db::in_memory().unwrap();
         seed_eph6(&db);
         let hits = db.search(Some("spa_rv1960"), "senor", 10).unwrap();
-        assert!(!hits.is_empty(), "expected hit for 'senor' matching 'Señor'");
+        assert!(
+            !hits.is_empty(),
+            "expected hit for 'senor' matching 'Señor'"
+        );
         assert!(hits[0].snippet.contains(search::SNIPPET_OPEN));
     }
 

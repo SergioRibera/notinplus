@@ -164,7 +164,11 @@ impl Component for Cover {
         if let Some(thumb) = self.data.thumbnail.clone() {
             return base
                 .background(self.paper(&p))
-                .child(ImageViewer::new((thumb.key, thumb.bytes)).width(Size::px(w)).height(Size::px(h)))
+                .child(
+                    ImageViewer::new((thumb.key, thumb.bytes))
+                        .width(Size::px(w))
+                        .height(Size::px(h)),
+                )
                 .into_element();
         }
         let request = CoverRequest {

@@ -142,7 +142,11 @@ fn tiles_heading(cold: bool) -> Rect {
         .content(Content::Flex)
         .spacing(6.0)
         .padding((0.0, 4.0))
-        .child(Icon::new(freya::icons::lucide::sparkles()).size(14.0).color(p.t3))
+        .child(
+            Icon::new(freya::icons::lucide::sparkles())
+                .size(14.0)
+                .color(p.t3),
+        )
         .child(
             Text::new(if cold {
                 "Para empezar"
@@ -260,7 +264,11 @@ impl Component for Menu {
             .partition(|e| matches!(e.entry.flow, CreationFlow::Import { .. }));
         rect()
             .width(Size::fill())
-            .padding(if width_class().is_compact() { 0.0 } else { 12.0 })
+            .padding(if width_class().is_compact() {
+                0.0
+            } else {
+                12.0
+            })
             .spacing(10.0)
             .child(tiles_heading(cold))
             .children(self.tile_rows(&tiles))

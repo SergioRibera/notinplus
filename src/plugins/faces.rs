@@ -35,7 +35,6 @@ const fn item_of<K: notein_plugin::kind::DocumentKind>(ctx: &FaceContext<K>) -> 
     ItemId(ctx.doc.0)
 }
 
-
 /// Pane body for `item`; a notice when its plugin is missing or off.
 #[must_use]
 pub fn render(item: ItemId, kind: &DocKind, slot: Option<ViewSlot>) -> Element {
@@ -248,7 +247,11 @@ struct CanvasWithJumps {
 
 impl Component for CanvasWithJumps {
     fn render(&self) -> impl IntoElement {
-        use_jumps(super::builtin::canvas::KIND, self.item, CanvasTarget { mount: self.mount });
+        use_jumps(
+            super::builtin::canvas::KIND,
+            self.item,
+            CanvasTarget { mount: self.mount },
+        );
         CanvasPane { mount: self.mount }
     }
 }

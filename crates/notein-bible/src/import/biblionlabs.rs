@@ -29,16 +29,20 @@ pub const DEFAULT_MANIFEST_URL: &str = "https://v1.fetch.bible/manifest.json";
 
 /// fetch.bible cross-reference bundle, per lowercase book id.
 /// Shape: `{ chapter_str: { verse_str: [[tgt_book, chap, verse, …], …] } }`.
-pub const CROSSREF_URL_TEMPLATE: &str =
-    "https://v1.fetch.bible/crossref/large/{book}.json";
+pub const CROSSREF_URL_TEMPLATE: &str = "https://v1.fetch.bible/crossref/large/{book}.json";
 
 #[derive(Debug)]
 pub enum ImportError {
     Http(reqwest::Error),
-    Json { context: String, source: serde_json::Error },
+    Json {
+        context: String,
+        source: serde_json::Error,
+    },
     Io(std::io::Error),
     Db(crate::db::DbError),
-    Format { reason: String },
+    Format {
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for ImportError {
@@ -79,12 +83,25 @@ pub type Result<T> = std::result::Result<T, ImportError>;
 /// translation-picker UI to drive its progress bar.
 #[derive(Clone, Debug)]
 pub enum Progress {
-    Started { bible_id: String },
-    ManifestFetched { total_books: usize },
-    BookDone { book_id: String, verses: usize },
+    Started {
+        bible_id: String,
+    },
+    ManifestFetched {
+        total_books: usize,
+    },
+    BookDone {
+        book_id: String,
+        verses: usize,
+    },
     /// Cross-references of `done` books of `total` are in.
-    CrossRefs { done: usize, total: usize },
-    Finished { bible_id: String, inserted_verses: usize },
+    CrossRefs {
+        done: usize,
+        total: usize,
+    },
+    Finished {
+        bible_id: String,
+        inserted_verses: usize,
+    },
 }
 
 /// Catalogue manifest entry — the top-level `manifest.json` is roughly
@@ -406,20 +423,32 @@ fn insert_crossrefs_for_book(
     src_book: &str,
     value: &serde_json::Value,
 ) -> rusqlite::Result<()> {
-    let Some(chapters) = value.as_object() else { return Ok(()) };
+    let Some(chapters) = value.as_object() else {
+        return Ok(());
+    };
     let mut stmt = conn.prepare_cached(
         "INSERT INTO cross_refs
          (bible_id, src_book, src_chap, src_verse, tgt_book, tgt_chap, tgt_verse)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )?;
     for (chap_key, verses) in chapters {
-        let Ok(src_chap) = chap_key.parse::<i64>() else { continue };
-        let Some(verses) = verses.as_object() else { continue };
+        let Ok(src_chap) = chap_key.parse::<i64>() else {
+            continue;
+        };
+        let Some(verses) = verses.as_object() else {
+            continue;
+        };
         for (verse_key, targets) in verses {
-            let Ok(src_verse) = verse_key.parse::<i64>() else { continue };
-            let Some(targets) = targets.as_array() else { continue };
+            let Ok(src_verse) = verse_key.parse::<i64>() else {
+                continue;
+            };
+            let Some(targets) = targets.as_array() else {
+                continue;
+            };
             for target in targets {
-                let Some(items) = target.as_array() else { continue };
+                let Some(items) = target.as_array() else {
+                    continue;
+                };
                 let Some(tgt_book) = items.first().and_then(serde_json::Value::as_str) else {
                     continue;
                 };
@@ -468,7 +497,9 @@ fn fetch_if_stale(client: &Client, url: &str, dest: &Path, ttl: Duration) -> Res
 
 fn cache_looks_like_json(path: &Path) -> bool {
     use std::io::Read;
-    let Ok(mut f) = std::fs::File::open(path) else { return false };
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
     let mut buf = [0u8; 16];
     let n = f.read(&mut buf).unwrap_or(0);
     bytes_look_like_json(&buf[..n])
@@ -478,7 +509,12 @@ fn bytes_look_like_json(bytes: &[u8]) -> bool {
     bytes
         .iter()
         .position(|b| !b.is_ascii_whitespace())
-        .is_some_and(|i| matches!(bytes[i], b'{' | b'[' | b'"' | b't' | b'f' | b'n' | b'-' | b'0'..=b'9'))
+        .is_some_and(|i| {
+            matches!(
+                bytes[i],
+                b'{' | b'[' | b'"' | b't' | b'f' | b'n' | b'-' | b'0'..=b'9'
+            )
+        })
 }
 
 fn upsert_bible(
@@ -514,12 +550,20 @@ fn upsert_book(
     desc: &BibleDesc,
     order_num: u16,
 ) -> rusqlite::Result<()> {
-    let name = desc
-        .book_names
-        .get(book_id).map_or_else(|| book_id.to_string(), |n| if n.long.is_empty() { n.normal.clone() } else { n.long.clone() });
+    let name = desc.book_names.get(book_id).map_or_else(
+        || book_id.to_string(),
+        |n| {
+            if n.long.is_empty() {
+                n.normal.clone()
+            } else {
+                n.long.clone()
+            }
+        },
+    );
     let abbrev = desc
         .book_names
-        .get(book_id).map_or_else(|| book_id.to_string(), |n| n.abbrev.clone());
+        .get(book_id)
+        .map_or_else(|| book_id.to_string(), |n| n.abbrev.clone());
     let testament = testament_for(book_id);
     conn.execute(
         "INSERT INTO books (bible_id, book_id, name, abbrev, order_num, testament)
@@ -529,7 +573,14 @@ fn upsert_book(
              abbrev = excluded.abbrev,
              order_num = excluded.order_num,
              testament = excluded.testament",
-        params![bible_id, book_id, name, abbrev, i64::from(order_num), testament],
+        params![
+            bible_id,
+            book_id,
+            name,
+            abbrev,
+            i64::from(order_num),
+            testament
+        ],
     )?;
     Ok(())
 }
@@ -657,7 +708,13 @@ fn insert_headers(
 
     if let Some(sections) = desc.sections.get(book_id) {
         for section in sections {
-            if let SectionEntry::Range { start_chapter, start_verse, heading, .. } = section {
+            if let SectionEntry::Range {
+                start_chapter,
+                start_verse,
+                heading,
+                ..
+            } = section
+            {
                 let Some(text) = heading else { continue };
                 if text.is_empty() {
                     continue;
@@ -680,15 +737,11 @@ fn insert_headers(
 /// `"OT"`; the deuterocanon is grouped with the OT per convention.
 fn testament_for(book_id: &str) -> &'static str {
     const NT: &[&str] = &[
-        "MAT", "MRK", "LUK", "JHN", "ACT", "ROM", "1CO", "2CO", "GAL", "EPH", "PHP", "COL",
-        "1TH", "2TH", "1TI", "2TI", "TIT", "PHM", "HEB", "JAS", "1PE", "2PE", "1JN", "2JN",
-        "3JN", "JUD", "REV",
+        "MAT", "MRK", "LUK", "JHN", "ACT", "ROM", "1CO", "2CO", "GAL", "EPH", "PHP", "COL", "1TH",
+        "2TH", "1TI", "2TI", "TIT", "PHM", "HEB", "JAS", "1PE", "2PE", "1JN", "2JN", "3JN", "JUD",
+        "REV",
     ];
-    if NT.contains(&book_id) {
-        "NT"
-    } else {
-        "OT"
-    }
+    if NT.contains(&book_id) { "NT" } else { "OT" }
 }
 
 // ─── Catalogue extras ────────────────────────────────────────────
@@ -748,8 +801,10 @@ pub fn load_catalogue(
     std::fs::create_dir_all(cache_dir)?;
     fetch_if_stale(client, manifest_url, &path, cache_ttl)?;
     let bytes = std::fs::read(&path)?;
-    let cat: Catalogue = serde_json::from_slice(&bytes)
-        .map_err(|e| ImportError::Json { context: "catalogue".into(), source: e })?;
+    let cat: Catalogue = serde_json::from_slice(&bytes).map_err(|e| ImportError::Json {
+        context: "catalogue".into(),
+        source: e,
+    })?;
     Ok(CatalogueView::from_raw(cat))
 }
 
@@ -800,7 +855,10 @@ impl CatalogueView {
             .map(|(id, v)| {
                 let name = v.get("name");
                 let non_empty = |s: &serde_json::Value| {
-                    s.as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
+                    s.as_str()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
                 };
                 let name_local = name
                     .and_then(|n| n.get("local"))
@@ -809,7 +867,10 @@ impl CatalogueView {
                 let name_english = name
                     .and_then(|n| n.get("english"))
                     .and_then(non_empty)
-                    .or_else(|| name.and_then(|n| n.get("english_abbrev")).and_then(non_empty));
+                    .or_else(|| {
+                        name.and_then(|n| n.get("english_abbrev"))
+                            .and_then(non_empty)
+                    });
                 let language = id
                     .split('_')
                     .next()
@@ -888,8 +949,11 @@ pub(crate) fn populate_from_fixtures(
     desc: &serde_json::Value,
     books: &[(String, serde_json::Value)],
 ) -> Result<usize> {
-    let desc_parsed: BibleDesc = serde_json::from_value(desc.clone())
-        .map_err(|e| ImportError::Json { context: "desc fixture".into(), source: e })?;
+    let desc_parsed: BibleDesc =
+        serde_json::from_value(desc.clone()).map_err(|e| ImportError::Json {
+            context: "desc fixture".into(),
+            source: e,
+        })?;
 
     let mut book_ids: Vec<&String> = desc_parsed.book_names.keys().collect();
     book_ids.sort();
@@ -898,8 +962,14 @@ pub(crate) fn populate_from_fixtures(
         upsert_bible(conn, bible_id, &desc_parsed).map_err(crate::db::DbError::from)?;
         let tx = conn.transaction().map_err(crate::db::DbError::from)?;
         for (order_num, book_id) in book_ids.iter().enumerate() {
-            upsert_book(&tx, bible_id, book_id, &desc_parsed, u16::try_from(order_num).unwrap_or(u16::MAX))
-                .map_err(crate::db::DbError::from)?;
+            upsert_book(
+                &tx,
+                bible_id,
+                book_id,
+                &desc_parsed,
+                u16::try_from(order_num).unwrap_or(u16::MAX),
+            )
+            .map_err(crate::db::DbError::from)?;
         }
         tx.commit().map_err(crate::db::DbError::from)?;
         Ok(())
@@ -907,8 +977,11 @@ pub(crate) fn populate_from_fixtures(
 
     let mut inserted = 0usize;
     for (book_id, raw) in books {
-        let book_doc: BookDoc = serde_json::from_value(raw.clone())
-            .map_err(|e| ImportError::Json { context: format!("{book_id} fixture"), source: e })?;
+        let book_doc: BookDoc =
+            serde_json::from_value(raw.clone()).map_err(|e| ImportError::Json {
+                context: format!("{book_id} fixture"),
+                source: e,
+            })?;
         let n = db.with_conn_mut(|conn| {
             let tx = conn.transaction().map_err(crate::db::DbError::from)?;
             let n = insert_book_contents(&tx, bible_id, book_id, &book_doc)
@@ -984,13 +1057,8 @@ mod tests {
     fn populate_fixture_round_trips_verses_and_headers() {
         let db = Db::in_memory().unwrap();
         let (desc, book) = eph_fixture();
-        let n = populate_from_fixtures(
-            &db,
-            "spa_rv1960",
-            &desc,
-            &[("EPH".into(), book)],
-        )
-        .expect("populate");
+        let n = populate_from_fixtures(&db, "spa_rv1960", &desc, &[("EPH".into(), book)])
+            .expect("populate");
         assert_eq!(n, 9, "expected 9 verses inserted across chapters 1..6");
 
         let chap = db.load_chapter("spa_rv1960", "EPH", 6).unwrap();
@@ -1001,12 +1069,21 @@ mod tests {
 
         // Two source-section headings + one chapter-level heading.
         assert_eq!(chap.headers.len(), 3);
-        assert!(chap.headers.iter().any(|h| h.before_verse == 0
-            && h.text == "La armadura de Dios"));
-        assert!(chap.headers.iter().any(|h| h.before_verse == 1
-            && h.text == "Instrucciones a hijos y padres"));
-        assert!(chap.headers.iter().any(|h| h.before_verse == 5
-            && h.text == "Siervos y amos"));
+        assert!(
+            chap.headers
+                .iter()
+                .any(|h| h.before_verse == 0 && h.text == "La armadura de Dios")
+        );
+        assert!(
+            chap.headers
+                .iter()
+                .any(|h| h.before_verse == 1 && h.text == "Instrucciones a hijos y padres")
+        );
+        assert!(
+            chap.headers
+                .iter()
+                .any(|h| h.before_verse == 5 && h.text == "Siervos y amos")
+        );
     }
 
     #[test]

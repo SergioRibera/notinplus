@@ -39,7 +39,12 @@ pub struct BibleAnchor {
 
 impl BibleAnchor {
     #[must_use]
-    pub fn single_verse(bible_id: impl Into<String>, book_id: impl Into<String>, chapter: u16, verse: u16) -> Self {
+    pub fn single_verse(
+        bible_id: impl Into<String>,
+        book_id: impl Into<String>,
+        chapter: u16,
+        verse: u16,
+    ) -> Self {
         Self {
             bible_id: bible_id.into(),
             book_id: book_id.into(),

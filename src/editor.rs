@@ -248,4 +248,3 @@ impl Component for EditorField {
             .child(field)
     }
 }
-

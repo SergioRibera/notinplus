@@ -56,9 +56,7 @@ pub fn resolve_book_token(db: &Db, bible_id: &str, token: &str) -> Option<String
     // catalogue case-insensitively and return the stored id so
     // downstream `load_chapter` queries hit the right row.
     if let Some(osis) = book_id_for_alias(&normalised)
-        && let Some(book) = books
-            .iter()
-            .find(|b| b.book_id.eq_ignore_ascii_case(osis))
+        && let Some(book) = books.iter().find(|b| b.book_id.eq_ignore_ascii_case(osis))
     {
         return Some(book.book_id.clone());
     }
@@ -71,10 +69,7 @@ pub fn resolve_book_token(db: &Db, bible_id: &str, token: &str) -> Option<String
 
     // Last-resort: user may have typed an OSIS id directly. Match the
     // catalogue case-insensitively and return the stored id.
-    if let Some(book) = books
-        .iter()
-        .find(|b| b.book_id.eq_ignore_ascii_case(token))
-    {
+    if let Some(book) = books.iter().find(|b| b.book_id.eq_ignore_ascii_case(token)) {
         return Some(book.book_id.clone());
     }
 

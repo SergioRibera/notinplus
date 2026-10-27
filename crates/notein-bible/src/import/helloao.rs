@@ -29,10 +29,15 @@ const HELLOAO_BASE: &str = "https://bible.helloao.org/api";
 #[derive(Debug)]
 pub enum HelloaoError {
     Http(reqwest::Error),
-    Json { context: String, source: serde_json::Error },
+    Json {
+        context: String,
+        source: serde_json::Error,
+    },
     Io(std::io::Error),
     Db(crate::db::DbError),
-    Unmapped { bible_id: String },
+    Unmapped {
+        bible_id: String,
+    },
 }
 
 impl std::fmt::Display for HelloaoError {
@@ -203,20 +208,22 @@ impl Helloao<'_> {
         };
         let helloao_book = helloao_book_for_osis(book_id).unwrap_or_else(|| book_id.to_uppercase());
 
-        let chapter_dir = self.cache_dir
+        let chapter_dir = self
+            .cache_dir
             .join("helloao")
             .join(helloao_translation)
             .join(&helloao_book);
         std::fs::create_dir_all(&chapter_dir)?;
         let dest = chapter_dir.join(format!("{chapter}.json"));
-        let url = format!(
-            "{HELLOAO_BASE}/{helloao_translation}/{helloao_book}/{chapter}.json"
-        );
+        let url = format!("{HELLOAO_BASE}/{helloao_translation}/{helloao_book}/{chapter}.json");
         fetch_if_stale(self.client, &url, &dest, self.cache_ttl)?;
 
         let bytes = std::fs::read(&dest)?;
-        let env: ChapterEnvelope = serde_json::from_slice(&bytes)
-            .map_err(|e| HelloaoError::Json { context: url.clone(), source: e })?;
+        let env: ChapterEnvelope =
+            serde_json::from_slice(&bytes).map_err(|e| HelloaoError::Json {
+                context: url.clone(),
+                source: e,
+            })?;
 
         let inserted = self.db.with_conn_mut(|conn| {
             let tx = conn.transaction().map_err(crate::db::DbError::from)?;
@@ -236,11 +243,7 @@ impl Helloao<'_> {
                     )
                     .map_err(crate::db::DbError::from)?;
                 for note in &env.chapter.footnotes {
-                    let verse = note
-                        .reference
-                        .as_ref()
-                        .map_or(0, |r| r.verse)
-                        .max(0);
+                    let verse = note.reference.as_ref().map_or(0, |r| r.verse).max(0);
                     stmt.execute(params![
                         bible_id,
                         book_id,
@@ -286,8 +289,11 @@ impl Helloao<'_> {
         fetch_if_stale(self.client, &url, &dest, self.cache_ttl)?;
 
         let bytes = std::fs::read(&dest)?;
-        let bundle: CompleteTranslation = serde_json::from_slice(&bytes)
-            .map_err(|e| HelloaoError::Json { context: url.clone(), source: e })?;
+        let bundle: CompleteTranslation =
+            serde_json::from_slice(&bytes).map_err(|e| HelloaoError::Json {
+                context: url.clone(),
+                source: e,
+            })?;
 
         // The DB stores book ids lowercase (`gen`, `1co`, …) but helloao
         // emits uppercase OSIS (`GEN`, `1CO`). Normalise once here so the
@@ -374,20 +380,22 @@ impl Helloao<'_> {
         chapter: u16,
     ) -> Result<usize, HelloaoError> {
         let helloao_book = helloao_book_for_osis(book_id).unwrap_or_else(|| book_id.to_uppercase());
-        let chapter_dir = self.cache_dir
+        let chapter_dir = self
+            .cache_dir
             .join("helloao")
             .join(source_translation)
             .join(&helloao_book);
         std::fs::create_dir_all(&chapter_dir)?;
         let dest = chapter_dir.join(format!("{chapter}.json"));
-        let url = format!(
-            "{HELLOAO_BASE}/{source_translation}/{helloao_book}/{chapter}.json"
-        );
+        let url = format!("{HELLOAO_BASE}/{source_translation}/{helloao_book}/{chapter}.json");
         fetch_if_stale(self.client, &url, &dest, self.cache_ttl)?;
 
         let bytes = std::fs::read(&dest)?;
-        let env: ChapterEnvelope = serde_json::from_slice(&bytes)
-            .map_err(|e| HelloaoError::Json { context: url.clone(), source: e })?;
+        let env: ChapterEnvelope =
+            serde_json::from_slice(&bytes).map_err(|e| HelloaoError::Json {
+                context: url.clone(),
+                source: e,
+            })?;
 
         // Walk the content array tracking the *next* verse number so
         // `heading` entries emit a `headers` row anchored to the verse
@@ -612,7 +620,9 @@ fn fetch_if_stale(
 
 fn cache_looks_like_json(path: &Path) -> bool {
     use std::io::Read;
-    let Ok(mut f) = std::fs::File::open(path) else { return false };
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
     let mut buf = [0u8; 16];
     let n = f.read(&mut buf).unwrap_or(0);
     bytes_look_like_json(&buf[..n])
@@ -622,5 +632,10 @@ fn bytes_look_like_json(bytes: &[u8]) -> bool {
     bytes
         .iter()
         .position(|b| !b.is_ascii_whitespace())
-        .is_some_and(|i| matches!(bytes[i], b'{' | b'[' | b'"' | b't' | b'f' | b'n' | b'-' | b'0'..=b'9'))
+        .is_some_and(|i| {
+            matches!(
+                bytes[i],
+                b'{' | b'[' | b'"' | b't' | b'f' | b'n' | b'-' | b'0'..=b'9'
+            )
+        })
 }

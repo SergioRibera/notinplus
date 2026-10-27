@@ -422,7 +422,10 @@ fn pen_down(sample: &PenSample, dt: &mut DtTracker) {
     guard.set_pointer(Some((lx, ly)));
     match guard.input_mode() {
         // A tap on a bookmark pin opens it; it must not ink a dot.
-        InputMode::Draw if guard.bookmark_near_screen(lx, ly, PIN_TAP_RADIUS_PX).is_some() => {}
+        InputMode::Draw
+            if guard
+                .bookmark_near_screen(lx, ly, PIN_TAP_RADIUS_PX)
+                .is_some() => {}
         InputMode::Draw => guard.begin_screen(point),
         InputMode::Pan => guard.pan_begin(lx, ly),
         // The selection overlay takes the pen in select mode.
@@ -564,7 +567,10 @@ static PEN_SEEN_LOADED: std::sync::Once = std::sync::Once::new();
 pub fn pen_seen() -> bool {
     use crate::persist::Persisted;
     PEN_SEEN_LOADED.call_once(|| {
-        PEN_SEEN.store(PenPresence::load().seen, std::sync::atomic::Ordering::Relaxed);
+        PEN_SEEN.store(
+            PenPresence::load().seen,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     });
     PEN_SEEN.load(std::sync::atomic::Ordering::Relaxed)
 }

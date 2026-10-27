@@ -16,8 +16,8 @@
 //! background. Falls back to a blank off-white surface when nothing is
 //! queued (fresh start / cold URL entry).
 
-use std::sync::{Arc, Mutex, Weak};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use freya::prelude::*;
@@ -30,10 +30,10 @@ use freya_engine::prelude::Color as SkColor;
 use crate::app::CanvasMount;
 use crate::canvas::{Board, Viewport, lock};
 use crate::doc::Doc;
-use crate::screens::home::Home;
-use crate::screens::trash::Trash;
 use crate::library::{BackgroundStyle, ItemId, LibraryError, TabTarget, WorkspaceId};
 use crate::prefs;
+use crate::screens::home::Home;
+use crate::screens::trash::Trash;
 
 /// Off-white paper used when the caller does not override the surface.
 pub const DEFAULT_PAPER: SkColor = SkColor::from_rgb(250, 250, 248);
@@ -96,8 +96,9 @@ pub(crate) fn init_canvas_mount(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
                 let Some((color, bg)) = found else {
                     return;
                 };
-                let surface: SkColor = color
-                    .map_or(DEFAULT_PAPER, |c| SkColor::from_argb(c[3], c[0], c[1], c[2]));
+                let surface: SkColor = color.map_or(DEFAULT_PAPER, |c| {
+                    SkColor::from_argb(c[3], c[0], c[1], c[2])
+                });
                 apply_canvas_background(&board, bg, surface);
             });
         }

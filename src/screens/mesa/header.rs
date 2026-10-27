@@ -4,9 +4,9 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
+use notein_plugin::services::HeaderPress;
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
-use notein_plugin::services::HeaderPress;
 use notein_ui_kit::{Icon, IconButton, Text, TextRole, tokens};
 
 use super::Ops;

@@ -144,7 +144,12 @@ pub(super) struct Appearance;
 
 /// An accent swatch; `None` is the theme's own accent, which also
 /// stands for a pick of the very same colour.
-fn accent_swatch(color: Option<Color>, label: &'static str, accent: Option<Color>, theme_accent: Color) -> Element {
+fn accent_swatch(
+    color: Option<Color>,
+    label: &'static str,
+    accent: Option<Color>,
+    theme_accent: Color,
+) -> Element {
     let p = palette();
     let chosen = color.map_or_else(
         || accent.is_none_or(|a| a == theme_accent),
@@ -205,7 +210,11 @@ fn custom_swatch(accent: Option<Color>, theme_accent: Color, mut area: State<Are
                 .sheet_title("Otro color")
                 .open();
         })
-        .child(Icon::new(freya::icons::lucide::pipette()).size(16.0).color(p.t1))
+        .child(
+            Icon::new(freya::icons::lucide::pipette())
+                .size(16.0)
+                .color(p.t1),
+        )
 }
 
 const PICKER_WIDTH: f32 = 268.0;
@@ -236,11 +245,17 @@ impl Component for AccentPicker {
         let readable = Self::readable_in(color);
         let all = ThemeKind::ALL.len();
         let (tone, note) = if readable == all {
-            (NoticeTone::Success, format!("Se lee bien en los {all} temas"))
+            (
+                NoticeTone::Success,
+                format!("Se lee bien en los {all} temas"),
+            )
         } else {
             (
                 NoticeTone::Info,
-                format!("Se ajusta en {} de los {all} temas para que se lea", all - readable),
+                format!(
+                    "Se ajusta en {} de los {all} temas para que se lea",
+                    all - readable
+                ),
             )
         };
         rect()

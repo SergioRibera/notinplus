@@ -649,10 +649,7 @@ impl Component for ModalOverlay {
             })
             .maybe(dismiss_on_escape, |r| {
                 r.on_global_key_down(|e: Event<KeyboardEventData>| {
-                    if matches!(
-                        e.key,
-                        Key::Named(NamedKey::Escape | NamedKey::BrowserBack)
-                    ) {
+                    if matches!(e.key, Key::Named(NamedKey::Escape | NamedKey::BrowserBack)) {
                         e.stop_propagation();
                         ModalController::get().close();
                     }

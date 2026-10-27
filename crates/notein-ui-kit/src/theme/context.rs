@@ -128,7 +128,8 @@ impl ThemeHandle {
 pub fn use_theme_root(initial: impl FnOnce() -> Appearance) -> ThemeHandle {
     let appearance = use_state(initial);
     let resolved = use_memo(move || {
-        let os_dark = *Platform::get().current_window().preferred_theme.read() == PreferredTheme::Dark;
+        let os_dark =
+            *Platform::get().current_window().preferred_theme.read() == PreferredTheme::Dark;
         ResolvedTheme::new(*appearance.read(), os_dark)
     });
     let handle = use_hook(|| {

@@ -8,15 +8,15 @@
 
 pub mod anchor;
 mod face;
-pub mod kind;
 pub mod index;
+pub mod kind;
 pub mod plugin;
 mod share;
 
 pub use anchor::NoteAnchor;
+pub use index::NotesIndex;
 pub use kind::{NoteContent, NotesKind};
 pub use plugin::{NoteFace, NotesPlugin};
-pub use index::NotesIndex;
 
 /// Kind id of the note page (`PluginCanvas` items and their snapshots).
 pub const KIND_ID: &str = kind::KIND;

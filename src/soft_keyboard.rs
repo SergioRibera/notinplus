@@ -10,7 +10,11 @@ use freya_markdown_editor::prelude::InputContext;
 
 /// Input context handler for note editors.
 pub fn input_context(context: &InputContext) {
-    Platform::get().current_window().set_ime_surrounding_text(context.text.clone(), context.cursor, context.anchor);
+    Platform::get().current_window().set_ime_surrounding_text(
+        context.text.clone(),
+        context.cursor,
+        context.anchor,
+    );
 }
 
 /// Ask for the soft keyboard when a text field holds the focus but the keyboard is hidden, e.g.

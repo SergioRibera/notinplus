@@ -65,10 +65,13 @@ pub fn parse(input: &str) -> Option<ParsedRef> {
     let start_verse = caps
         .name("verse_start")
         .and_then(|m| m.as_str().parse().ok());
-    let end_verse = caps
-        .name("verse_end")
-        .and_then(|m| m.as_str().parse().ok());
-    Some(ParsedRef { book_token, chapter, start_verse, end_verse })
+    let end_verse = caps.name("verse_end").and_then(|m| m.as_str().parse().ok());
+    Some(ParsedRef {
+        book_token,
+        chapter,
+        start_verse,
+        end_verse,
+    })
 }
 
 #[cfg(test)]

@@ -205,7 +205,8 @@ impl BibleViewerState {
         self.nav_future.clear();
         // Cap depth so unbounded navigation doesn't balloon memory.
         if self.nav_history.len() > MAX_HISTORY {
-            self.nav_history.drain(..self.nav_history.len() - MAX_HISTORY);
+            self.nav_history
+                .drain(..self.nav_history.len() - MAX_HISTORY);
         }
     }
 
@@ -246,9 +247,11 @@ impl BibleViewerState {
     /// for the same (book, chapter) already exists it is replaced in
     /// place rather than duplicated.
     pub fn push_chapter(&mut self, chapter: ChapterRow) {
-        if let Some(pos) = self.chapter_cache.iter().position(|c| {
-            c.book_id == chapter.book_id && c.chapter == chapter.chapter
-        }) {
+        if let Some(pos) = self
+            .chapter_cache
+            .iter()
+            .position(|c| c.book_id == chapter.book_id && c.chapter == chapter.chapter)
+        {
             self.chapter_cache[pos] = chapter;
             return;
         }
@@ -260,9 +263,9 @@ impl BibleViewerState {
 
     #[must_use]
     pub fn current_chapter_data(&self) -> Option<&ChapterRow> {
-        self.chapter_cache.iter().find(|c| {
-            c.book_id == self.current_book && c.chapter == self.current_chapter
-        })
+        self.chapter_cache
+            .iter()
+            .find(|c| c.book_id == self.current_book && c.chapter == self.current_chapter)
     }
 
     /// Ensure the current chapter is loaded in the cache. No-op when
@@ -376,12 +379,7 @@ impl BibleViewerState {
         self.ensure_current_loaded(db)
     }
 
-    pub fn begin_selection(
-        &mut self,
-        book: impl Into<String>,
-        chapter: u16,
-        verse: u16,
-    ) {
+    pub fn begin_selection(&mut self, book: impl Into<String>, chapter: u16, verse: u16) {
         self.selection = Some(VerseSelection {
             book_id: book.into(),
             chapter,
@@ -450,13 +448,14 @@ impl BibleViewerState {
         color: Option<u32>,
         note: impl Into<String>,
     ) -> BookmarkId {
-        let (lo, hi) = if start <= end { (start, end) } else { (end, start) };
+        let (lo, hi) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
         let note = note.into();
         if let Some(existing) = self.highlights.iter_mut().find(|h| {
-            h.book_id == book_id
-                && h.chapter == chapter
-                && h.start_verse <= hi
-                && h.end_verse >= lo
+            h.book_id == book_id && h.chapter == chapter && h.start_verse <= hi && h.end_verse >= lo
         }) {
             existing.start_verse = existing.start_verse.min(lo);
             existing.end_verse = existing.end_verse.max(hi);
@@ -487,7 +486,6 @@ impl BibleViewerState {
             .filter(|h| h.book_id == book_id && h.chapter == chapter)
             .collect()
     }
-
 }
 
 #[cfg(test)]
@@ -503,10 +501,7 @@ mod tests {
                  VALUES ('spa_rv1960', 'RVR1960', 'Reina Valera 1960', 'spa')",
                 [],
             )?;
-            for (bid, name, order) in [
-                ("GEN", "Génesis", 1),
-                ("EPH", "Efesios", 49),
-            ] {
+            for (bid, name, order) in [("GEN", "Génesis", 1), ("EPH", "Efesios", 49)] {
                 conn.execute(
                     "INSERT INTO books (bible_id, book_id, name, abbrev, order_num, testament)
                      VALUES ('spa_rv1960', ?1, ?2, ?2, ?3, 'OT')",

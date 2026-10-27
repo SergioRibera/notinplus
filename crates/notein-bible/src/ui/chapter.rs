@@ -52,7 +52,10 @@ pub fn plan_chapter(data: &ChapterRow) -> ChapterPlan {
         if v.paragraph_break && !current.is_empty() {
             blocks.push(Block::Paragraph(std::mem::take(&mut current)));
         }
-        current.push(ParagraphSpan { verse: v.verse, text: v.text.clone() });
+        current.push(ParagraphSpan {
+            verse: v.verse,
+            text: v.text.clone(),
+        });
     }
 
     if !current.is_empty() {

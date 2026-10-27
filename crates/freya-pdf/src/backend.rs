@@ -499,7 +499,6 @@ fn compute_layout(doc: &PdfDocument, gap: f32) -> (Vec<PageLayout>, Rect) {
     (pages, bounds)
 }
 
-
 /// Sub-rect of the placeholder bitmap covering `dst_world`'s slice of
 /// `page_rect`. Returns `None` when `dst_world` matches `page_rect` —
 /// the caller should paint the whole placeholder in that case, which

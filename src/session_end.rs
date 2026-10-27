@@ -50,7 +50,9 @@ pub fn listen() {
             for end in ends {
                 match end.reason {
                     Removal::Left => resolve(end),
-                    Removal::Ended | Removal::Expelled => crate::screens::collab::session_ended(&end),
+                    Removal::Ended | Removal::Expelled => {
+                        crate::screens::collab::session_ended(&end)
+                    }
                 }
             }
             if rx.recv_async().await.is_err() {

@@ -1,11 +1,11 @@
 //! Ajustes › Lápiz y escritura.
 
 use freya::prelude::*;
-use notein_ui_kit::theme::palette;
 use freya_engine::prelude::{Color as SkColor, Paint, PaintStyle};
+use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
-    Action, ActionEntry, ActionList, Button, ChoiceCard, Group, Icon, KindBadge, ListRow, ModalController,
-    Section, Segmented, Sheet, Text, TextRole, Trailing, tokens,
+    Action, ActionEntry, ActionList, Button, ChoiceCard, Group, Icon, KindBadge, ListRow,
+    ModalController, Section, Segmented, Sheet, Text, TextRole, Trailing, tokens,
 };
 
 use crate::ink_glyph::GlyphFont;
@@ -27,17 +27,22 @@ fn pick_shortcut(slot: usize, current: Option<&EntryKey>) {
             .icon(freya::icons::lucide::circle_off())
             .checked(current.is_none()),
     )];
-    entries.extend(crate::plugins::catalog().entries().into_iter().map(|entry| {
-        let key = EntryKey::new(entry.plugin.clone(), entry.entry.id.to_string());
-        let chosen = current == Some(&key);
-        ActionEntry::Item(
-            Action::new(entry.entry.label.clone(), choose(Some(key)))
-                .subtitle(entry.entry.subtitle.clone())
-                .icon(entry.entry.icon.clone())
-                .kind_color(kind_color(&p, entry.entry.color))
-                .checked(chosen),
-        )
-    }));
+    entries.extend(
+        crate::plugins::catalog()
+            .entries()
+            .into_iter()
+            .map(|entry| {
+                let key = EntryKey::new(entry.plugin.clone(), entry.entry.id.to_string());
+                let chosen = current == Some(&key);
+                ActionEntry::Item(
+                    Action::new(entry.entry.label.clone(), choose(Some(key)))
+                        .subtitle(entry.entry.subtitle.clone())
+                        .icon(entry.entry.icon.clone())
+                        .kind_color(kind_color(&p, entry.entry.color))
+                        .checked(chosen),
+                )
+            }),
+    );
     Sheet::titled(slot_title(slot))
         .subtitle("Lo que crea la burbuja con un toque.")
         .on_back(|()| ModalController::get().close())
@@ -156,7 +161,11 @@ fn choice_section<const N: usize>(
     on_select: impl FnMut(usize) + 'static,
 ) -> Section {
     Section::new(title)
-        .child(Segmented::new(labels, selected).full_width().on_select(on_select))
+        .child(
+            Segmented::new(labels, selected)
+                .full_width()
+                .on_select(on_select),
+        )
         .child(Text::new(hint).role(TextRole::Hint))
 }
 

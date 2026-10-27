@@ -315,7 +315,12 @@ impl Published {
                 BlobKind::Link => share.can_link(me),
                 BlobKind::Folder | BlobKind::Tag | BlobKind::Workspace => false,
             };
-            if !allowed || self.blobs.get(&key).is_some_and(|&at| at >= head.updated_at) {
+            if !allowed
+                || self
+                    .blobs
+                    .get(&key)
+                    .is_some_and(|&at| at >= head.updated_at)
+            {
                 continue;
             }
             let blobs = replica.blobs(&[key]);

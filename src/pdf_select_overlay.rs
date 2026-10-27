@@ -142,9 +142,16 @@ pub(crate) fn show_bar(item: ItemId, mount: CanvasMount, at: (f32, f32)) {
             };
             let now = now_ms();
             let mut guard = lock(&board);
-            let id = guard.add_bookmark_full(world, 0.0, now, body.clone(), vec![reference.clone()]);
+            let id =
+                guard.add_bookmark_full(world, 0.0, now, body.clone(), vec![reference.clone()]);
             if color.is_some() {
-                guard.update_bookmark(id, body, vec![reference.clone()], color.map(|c| [c[0], c[1], c[2], 0xFF]), now);
+                guard.update_bookmark(
+                    id,
+                    body,
+                    vec![reference.clone()],
+                    color.map(|c| [c[0], c[1], c[2], 0xFF]),
+                    now,
+                );
             }
             drop(guard);
             clear(item);
@@ -161,7 +168,9 @@ pub(crate) fn show_bar(item: ItemId, mount: CanvasMount, at: (f32, f32)) {
             let note_mark = note_mark.clone();
             spawn_in_window(async move {
                 match rx.recv_async().await {
-                    Ok(notein_plugin::services::AnnotationOutcome::Saved { color, body }) => note_mark(color, body),
+                    Ok(notein_plugin::services::AnnotationOutcome::Saved { color, body }) => {
+                        note_mark(color, body)
+                    }
                     Ok(_) | Err(_) => clear(item),
                 }
             });
@@ -202,7 +211,12 @@ fn clear(item: ItemId) {
 
 /// Long-press on a page: select the word under the finger and offer
 /// the selection bar. `false` when the press was not on text.
-pub(crate) fn select_word_at(item: ItemId, mount: CanvasMount, world: (f32, f32), window: (f32, f32)) -> bool {
+pub(crate) fn select_word_at(
+    item: ItemId,
+    mount: CanvasMount,
+    world: (f32, f32),
+    window: (f32, f32),
+) -> bool {
     let engine = PdfText::get();
     if !engine.begin(item, world.0, world.1, SelectMode::Word) {
         return false;
@@ -242,7 +256,12 @@ fn selection_paint(item: ItemId, mount: CanvasMount, tick: State<u64>) -> impl I
                     .collect()
             };
             let mut paint = Paint::default();
-            paint.set_color(SkColor::from_argb(HIGHLIGHT_RGBA.3, HIGHLIGHT_RGBA.0, HIGHLIGHT_RGBA.1, HIGHLIGHT_RGBA.2));
+            paint.set_color(SkColor::from_argb(
+                HIGHLIGHT_RGBA.3,
+                HIGHLIGHT_RGBA.0,
+                HIGHLIGHT_RGBA.1,
+                HIGHLIGHT_RGBA.2,
+            ));
             paint.set_style(PaintStyle::Fill);
             paint.set_anti_alias(true);
             for r in &screen {

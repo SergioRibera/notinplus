@@ -186,9 +186,11 @@ fn usage_view(u: Usage) -> Element {
                 .child(legend(p.accent, named("Documentos", u.documents)))
                 .child(legend(p.kinds.pdf, named("PDF originales", u.pdfs)))
                 .child(legend(p.warn, named("Papelera", u.trash)))
-                .maybe_child(u.disk.is_some().then(|| {
-                    legend(others, named("Otras apps y archivos", u.others()))
-                }))
+                .maybe_child(
+                    u.disk
+                        .is_some()
+                        .then(|| legend(others, named("Otras apps y archivos", u.others()))),
+                )
                 .maybe_child(u.disk.map(|d| legend(p.s3, named("Libre", d.available)))),
         )
         .into_element()
@@ -209,7 +211,8 @@ fn trash_section(retention: TrashRetention, trash_count: usize) -> Section {
             Segmented::new(TrashRetention::ALL.map(TrashRetention::label), index)
                 .full_width()
                 .on_select(move |i: usize| {
-                    SettingsStore::get().update(|s| s.library.trash_retention = TrashRetention::ALL[i]);
+                    SettingsStore::get()
+                        .update(|s| s.library.trash_retention = TrashRetention::ALL[i]);
                 }),
         )
         .child(
@@ -248,7 +251,9 @@ impl Component for Library {
                     Group::default()
                         .child(
                             ListRow::new("Exportar…")
-                                .subtitle("Una copia de seguridad o archivos para leer en otras apps.")
+                                .subtitle(
+                                    "Una copia de seguridad o archivos para leer en otras apps.",
+                                )
                                 .icon(lucide::download())
                                 .chevron()
                                 .on_press(|_| transfer::export(ExportScope::Library)),

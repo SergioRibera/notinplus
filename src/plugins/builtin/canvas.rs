@@ -87,7 +87,9 @@ pub struct MarkHits<'a> {
 
 impl std::fmt::Debug for MarkHits<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MarkHits").field("needle", &self.needle).finish_non_exhaustive()
+        f.debug_struct("MarkHits")
+            .field("needle", &self.needle)
+            .finish_non_exhaustive()
     }
 }
 

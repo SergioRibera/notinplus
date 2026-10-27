@@ -108,7 +108,10 @@ enum Cmd {
     BeginPairing,
     CancelPairing,
     PairWith(PairingOffer),
-    PairDiscovered { device: DeviceId, code: PairingCode },
+    PairDiscovered {
+        device: DeviceId,
+        code: PairingCode,
+    },
     SetName(String),
     Revoke(DeviceId),
     CreateShare(ShareRequest),
@@ -147,7 +150,12 @@ pub fn snapshot() -> SyncSnapshot {
 pub fn shared_docs() -> std::collections::HashSet<ItemId> {
     snapshot_slot()
         .as_ref()
-        .map(|s| s.shares.iter().flat_map(|v| v.docs.iter().copied()).collect())
+        .map(|s| {
+            s.shares
+                .iter()
+                .flat_map(|v| v.docs.iter().copied())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -283,7 +291,9 @@ const AWAY_AFTER: std::time::Duration = std::time::Duration::from_secs(10);
 /// focus. Desktop windows lose focus all the time without the app
 /// going anywhere, so only mobile targets leave the network.
 pub fn use_presence() {
-    let focused = freya::prelude::Platform::get().current_window().is_app_focused;
+    let focused = freya::prelude::Platform::get()
+        .current_window()
+        .is_app_focused;
     let changes = freya::prelude::use_hook(|| {
         let (tx, rx) = flume::unbounded::<bool>();
         if cfg!(any(target_os = "android", target_os = "ios")) {

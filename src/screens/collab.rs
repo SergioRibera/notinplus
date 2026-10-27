@@ -176,7 +176,9 @@ impl ShareForm {
         let scope = self.scope;
         let current = *scope.read();
         let notebooks = target.item.map_or(0, |i| data.live_notebooks_of(i).len());
-        let mesa_docs = target.mesa.map_or(0, |_| target.docs(Scope::Mesa, data).len());
+        let mesa_docs = target
+            .mesa
+            .map_or(0, |_| target.docs(Scope::Mesa, data).len());
         let doc_name = target
             .item
             .and_then(|i| data.item(i))
@@ -810,7 +812,13 @@ fn join_failed(failure: notein_sync::JoinFailure) -> Element {
 /// The share being joined: its title, and how many documents arrived.
 fn join_progress(snapshot: &SyncSnapshot, joined: Option<&ShareView>) -> (String, usize, usize) {
     joined.map_or_else(
-        || (snapshot.pending_joins.first().cloned().unwrap_or_default(), 0, 0),
+        || {
+            (
+                snapshot.pending_joins.first().cloned().unwrap_or_default(),
+                0,
+                0,
+            )
+        },
         |view| {
             let done = view
                 .docs

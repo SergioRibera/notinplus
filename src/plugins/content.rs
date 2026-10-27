@@ -138,8 +138,7 @@ type Unsaved = HashMap<(ItemId, String), Vec<u8>>;
 
 /// Snapshots saved by a face and not on disk yet.
 fn unsaved() -> std::sync::MutexGuard<'static, Unsaved> {
-    static UNSAVED: std::sync::LazyLock<Mutex<Unsaved>> =
-        std::sync::LazyLock::new(Mutex::default);
+    static UNSAVED: std::sync::LazyLock<Mutex<Unsaved>> = std::sync::LazyLock::new(Mutex::default);
     UNSAVED.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
@@ -245,7 +244,8 @@ pub fn index_library() {
             for item in &items {
                 index(item);
             }
-        }).map_or_else(|err| log::error!("index thread: {err}"), drop);
+        })
+        .map_or_else(|err| log::error!("index thread: {err}"), drop);
 }
 
 /// Drop `item` from its kind's index (it left the library).

@@ -148,11 +148,11 @@ fn purpose_card(
                 .horizontal()
                 .cross_align(Alignment::Center)
                 .spacing(8.0)
-                .child(
-                    notein_ui_kit::Icon::new(icon)
-                        .size(16.0)
-                        .color(if on { p.accent_text } else { p.t1 }),
-                )
+                .child(notein_ui_kit::Icon::new(icon).size(16.0).color(if on {
+                    p.accent_text
+                } else {
+                    p.t1
+                }))
                 .child(
                     label()
                         .text(title)
@@ -179,7 +179,9 @@ impl ExportForm {
             ExportScope::Items(items) if items.len() == 1 => data
                 .item(items[0])
                 .map_or_else(|| "1 documento".to_owned(), |i| i.name.clone()),
-            ExportScope::Items(items) => crate::format::count(items.len(), "documento", "documentos"),
+            ExportScope::Items(items) => {
+                crate::format::count(items.len(), "documento", "documentos")
+            }
             ExportScope::Folder(folder) => data
                 .folder(*folder)
                 .map_or_else(|| "Carpeta".to_owned(), |f| f.name.clone()),
@@ -218,7 +220,9 @@ impl ExportForm {
                     ))
                     .trailing(Trailing::Switch {
                         on: current.mesas_and_marks,
-                        on_toggle: EventHandler::new(move |on| choices.write().mesas_and_marks = on),
+                        on_toggle: EventHandler::new(move |on| {
+                            choices.write().mesas_and_marks = on
+                        }),
                     })
             }))
     }
@@ -666,9 +670,7 @@ fn newer_version() {
                 .primary()
                 .on_press(|_| {
                     ModalController::get().close();
-                    crate::external::open_url(
-                        "https://github.com/SergioRibera/notinplus/releases",
-                    );
+                    crate::external::open_url("https://github.com/SergioRibera/notinplus/releases");
                 })
                 .into_element(),
         ]))

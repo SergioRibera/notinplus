@@ -10,13 +10,13 @@ pub mod canon;
 pub mod db;
 pub mod fonts;
 pub mod import;
-pub mod kind;
-#[cfg(feature = "ui")]
-pub mod plugin;
 #[cfg(feature = "importer")]
 pub mod install_background;
 #[cfg(feature = "importer")]
 pub mod installer;
+pub mod kind;
+#[cfg(feature = "ui")]
+pub mod plugin;
 pub mod plugin_config;
 pub mod reference;
 pub mod resolver;

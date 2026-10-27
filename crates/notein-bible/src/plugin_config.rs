@@ -8,9 +8,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, PoisonError, RwLock};
 
-use notein_sdk::{
-    ConfigEnumOption, ConfigError, ConfigField, ConfigSchema, ConfigValue,
-};
+use notein_sdk::{ConfigEnumOption, ConfigError, ConfigField, ConfigSchema, ConfigValue};
 
 use crate::db::Db;
 
@@ -87,22 +85,44 @@ pub fn build_schema(db: &Db) -> ConfigSchema {
         // Nothing installed yet: a text row, the catalog is the next step.
         ConfigField::string(KEY_DEFAULT_BIBLE, "Biblia por defecto", 64, "")
     } else {
-        ConfigField::choice(KEY_DEFAULT_BIBLE, "Biblia por defecto", options, &default_bible)
+        ConfigField::choice(
+            KEY_DEFAULT_BIBLE,
+            "Biblia por defecto",
+            options,
+            &default_bible,
+        )
     };
 
     ConfigSchema::new(1)
         .field(bible.help("Traducción abierta al crear una pestaña nueva."))
         .field(
-            ConfigField::string(KEY_MANIFEST_URL, "URL del catálogo", 256, DEFAULT_MANIFEST_URL)
-                .help("Endpoint del manifest biblionlabs / fetch.bible."),
+            ConfigField::string(
+                KEY_MANIFEST_URL,
+                "URL del catálogo",
+                256,
+                DEFAULT_MANIFEST_URL,
+            )
+            .help("Endpoint del manifest biblionlabs / fetch.bible."),
         )
         .field(
-            ConfigField::float(KEY_FONT_SIZE, "Tamaño del texto", 14.0..=32.0, 1.0, DEFAULT_FONT_SIZE)
-                .help("Tamaño en píxeles del cuerpo del versículo."),
+            ConfigField::float(
+                KEY_FONT_SIZE,
+                "Tamaño del texto",
+                14.0..=32.0,
+                1.0,
+                DEFAULT_FONT_SIZE,
+            )
+            .help("Tamaño en píxeles del cuerpo del versículo."),
         )
         .field(
-            ConfigField::float(KEY_LINE_HEIGHT, "Interlineado", 1.2..=2.2, 0.05, DEFAULT_LINE_HEIGHT)
-                .help("Multiplicador de altura de línea del párrafo."),
+            ConfigField::float(
+                KEY_LINE_HEIGHT,
+                "Interlineado",
+                1.2..=2.2,
+                0.05,
+                DEFAULT_LINE_HEIGHT,
+            )
+            .help("Multiplicador de altura de línea del párrafo."),
         )
         .field(
             ConfigField::boolean(KEY_ENABLE_CROSSREF, "Referencias cruzadas avanzadas", true).help(
@@ -112,11 +132,7 @@ pub fn build_schema(db: &Db) -> ConfigSchema {
         )
 }
 
-pub fn apply_set(
-    config: &SharedConfig,
-    key: &str,
-    value: ConfigValue,
-) -> Result<(), ConfigError> {
+pub fn apply_set(config: &SharedConfig, key: &str, value: ConfigValue) -> Result<(), ConfigError> {
     match (key, &value) {
         (KEY_FONT_SIZE, ConfigValue::Float(v)) if !(14.0..=32.0).contains(v) => {
             return Err(ConfigError::OutOfRange);
@@ -134,12 +150,21 @@ pub fn apply_set(
         ) => return Err(ConfigError::TypeMismatch),
         _ => return Err(ConfigError::UnknownKey(key.into())),
     }
-    config.write().unwrap_or_else(PoisonError::into_inner).values.insert(key.into(), value);
+    config
+        .write()
+        .unwrap_or_else(PoisonError::into_inner)
+        .values
+        .insert(key.into(), value);
     Ok(())
 }
 
 pub fn get_value(config: &SharedConfig, key: &str) -> Option<ConfigValue> {
-    config.read().unwrap_or_else(PoisonError::into_inner).values.get(key).cloned()
+    config
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .values
+        .get(key)
+        .cloned()
 }
 
 pub fn string(config: &SharedConfig, key: &str) -> Option<String> {
@@ -183,7 +208,6 @@ pub fn effective_default_bible(config: &SharedConfig, db: &Db) -> String {
         .map(|b| b.id)
         .unwrap_or_default()
 }
-
 
 /// Resolve the effective manifest URL, falling back to the default
 /// fetch.bible endpoint.

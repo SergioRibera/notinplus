@@ -206,7 +206,12 @@ impl Gesture {
             }
         });
         let mut state = reader.state;
-        let (book, chapter, lo, hi) = (selection.book.clone(), selection.chapter, selection.lo, selection.hi);
+        let (book, chapter, lo, hi) = (
+            selection.book.clone(),
+            selection.chapter,
+            selection.lo,
+            selection.hi,
+        );
         let existing_id = selection.existing.as_ref().map(|h| h.id);
         spawn_in_window(async move {
             match done_rx.recv_async().await {

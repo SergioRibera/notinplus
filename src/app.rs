@@ -19,9 +19,7 @@ use istmo::plugins::EdgeInsets;
 
 use crate::route::Route;
 
-use crate::canvas::{
-    AnchorSourceRef, Board, InputMode, RedrawNotifier, drawing_surface, lock,
-};
+use crate::canvas::{AnchorSourceRef, Board, InputMode, RedrawNotifier, drawing_surface, lock};
 use crate::hooks::use_safe_area_insets;
 use crate::library::{ItemId, ScratchId, TabTarget, ViewSlot};
 use crate::prefs;
@@ -669,4 +667,3 @@ pub(crate) fn canvas_chrome(
             pad,
         ))
 }
-

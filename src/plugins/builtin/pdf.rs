@@ -93,7 +93,9 @@ pub struct PageHits<'a> {
 
 impl std::fmt::Debug for PageHits<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PageHits").field("needle", &self.needle).finish_non_exhaustive()
+        f.debug_struct("PageHits")
+            .field("needle", &self.needle)
+            .finish_non_exhaustive()
     }
 }
 

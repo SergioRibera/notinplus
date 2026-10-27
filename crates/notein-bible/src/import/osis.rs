@@ -25,9 +25,9 @@
 
 use std::io::BufRead;
 
+use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::QName;
-use quick_xml::Reader;
 use rusqlite::params;
 
 use crate::db::Db;
@@ -295,7 +295,9 @@ impl Walker {
     fn text(&mut self, text: &str) {
         if self.in_name {
             if let Some(book) = self.book.as_mut() {
-                book.name.get_or_insert_with(String::new).push_str(text.trim());
+                book.name
+                    .get_or_insert_with(String::new)
+                    .push_str(text.trim());
             }
         } else if let Some(title) = self.title.as_mut() {
             title.push_str(text);
@@ -410,11 +412,7 @@ fn parse_verse_num(osis_id: &str) -> Option<(u16, u16)> {
     let chap = parts.next()?.parse().ok()?;
     let verse_token = parts.next()?;
     // Handle verse ranges like `Gen.1.1-Gen.1.3` → use the first number.
-    let verse = verse_token
-        .split('-')
-        .next()?
-        .parse()
-        .ok()?;
+    let verse = verse_token.split('-').next()?.parse().ok()?;
     Some((chap, verse))
 }
 
@@ -503,15 +501,11 @@ fn materialise(db: &Db, bible_id: &str, parsed: &Parsed) -> Result<usize> {
 /// always-on path.
 fn testament_for(book_id: &str) -> &'static str {
     const NT: &[&str] = &[
-        "Matt", "Mark", "Luke", "John", "Acts", "Rom", "1Cor", "2Cor", "Gal", "Eph", "Phil",
-        "Col", "1Thess", "2Thess", "1Tim", "2Tim", "Titus", "Phlm", "Heb", "Jas", "1Pet",
-        "2Pet", "1John", "2John", "3John", "Jude", "Rev",
+        "Matt", "Mark", "Luke", "John", "Acts", "Rom", "1Cor", "2Cor", "Gal", "Eph", "Phil", "Col",
+        "1Thess", "2Thess", "1Tim", "2Tim", "Titus", "Phlm", "Heb", "Jas", "1Pet", "2Pet", "1John",
+        "2John", "3John", "Jude", "Rev",
     ];
-    if NT.contains(&book_id) {
-        "NT"
-    } else {
-        "OT"
-    }
+    if NT.contains(&book_id) { "NT" } else { "OT" }
 }
 
 #[cfg(test)]
@@ -562,7 +556,11 @@ mod tests {
         );
         assert!(chap.verses[3].paragraph_break);
         assert!(chap.headers.iter().any(|h| h.text == "La armadura de Dios"));
-        assert!(chap.headers.iter().any(|h| h.text == "Instrucciones a hijos y padres"));
+        assert!(
+            chap.headers
+                .iter()
+                .any(|h| h.text == "Instrucciones a hijos y padres")
+        );
     }
 
     #[test]

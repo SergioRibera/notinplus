@@ -88,7 +88,11 @@ impl Component for ChoiceCard {
             .background(if chosen { p.accent_soft } else { p.s2 })
             .border(
                 Border::new()
-                    .fill(if focus() == Focus::Keyboard { p.focus } else { border })
+                    .fill(if focus() == Focus::Keyboard {
+                        p.focus
+                    } else {
+                        border
+                    })
                     .width(if chosen { 2.0 } else { 1.0 })
                     .alignment(BorderAlignment::Inner),
             )

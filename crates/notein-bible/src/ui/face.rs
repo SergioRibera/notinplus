@@ -286,7 +286,8 @@ fn initial_state(ctx: &FaceContext<BibleKind>, db: &Db) -> (BibleViewerState, Op
         state.current_chapter = jump.start_chapter;
     }
     settle_place(db, &mut state, &first_bible);
-    if let Ok(chapter) = db.load_chapter(&state.bible_id, &state.current_book, state.current_chapter)
+    if let Ok(chapter) =
+        db.load_chapter(&state.bible_id, &state.current_book, state.current_chapter)
     {
         state.push_chapter(chapter);
     }

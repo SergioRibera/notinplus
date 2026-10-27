@@ -22,9 +22,8 @@ use bincode::config::{self, Configuration};
 use crate::bookmark::SourceRef;
 use crate::doc::Doc;
 use crate::library::{
-    LibraryData,
-    DocKind, Folder, FolderId, Item, ItemId, Library, LibraryError, Link, LinkIndex, LinkKind,
-    PaneTab, Tag, TagId, Workspace, WorkspaceId, bodies, refs,
+    DocKind, Folder, FolderId, Item, ItemId, Library, LibraryData, LibraryError, Link, LinkIndex,
+    LinkKind, PaneTab, Tag, TagId, Workspace, WorkspaceId, bodies, refs,
 };
 
 const CODEC: Configuration = config::standard();

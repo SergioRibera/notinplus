@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, PoisonError, RwLock};
 
-use freya_markdown_editor::document::Document;
 use crate::anchor::NoteAnchor;
+use freya_markdown_editor::document::Document;
 
 /// What the index knows about one note.
 #[derive(Clone, Debug, PartialEq, Eq)]

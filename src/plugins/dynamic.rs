@@ -174,9 +174,11 @@ impl Staged {
             plugin: root.clone(),
             root,
         };
-        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        let mut archive =
+            zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(InstallError::Package)?;
+        archive
+            .extract(&staged.root)
             .map_err(InstallError::Package)?;
-        archive.extract(&staged.root).map_err(InstallError::Package)?;
         if staged.root.join(MANIFEST).exists() {
             return Ok(staged);
         }

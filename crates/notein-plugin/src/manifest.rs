@@ -74,16 +74,30 @@ pub struct ManifestRequirement {
 
 #[derive(Debug)]
 pub enum ManifestError {
-    Io { path: PathBuf, error: std::io::Error },
-    Parse { path: PathBuf, line: usize, message: String },
-    MissingField { path: PathBuf, field: &'static str },
+    Io {
+        path: PathBuf,
+        error: std::io::Error,
+    },
+    Parse {
+        path: PathBuf,
+        line: usize,
+        message: String,
+    },
+    MissingField {
+        path: PathBuf,
+        field: &'static str,
+    },
 }
 
 impl std::fmt::Display for ManifestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Io { path, error } => write!(f, "read {}: {}", path.display(), error),
-            Self::Parse { path, line, message } => {
+            Self::Parse {
+                path,
+                line,
+                message,
+            } => {
                 write!(f, "{}:{}: {}", path.display(), line, message)
             }
             Self::MissingField { path, field } => {
@@ -325,7 +339,8 @@ mod tests {
 id      "org.user.quran"
 name    "Quran Source"
 version "1.0.0"
-"#).unwrap();
+"#)
+        .unwrap();
         assert_eq!(m.id, "org.user.quran");
         assert_eq!(m.name, "Quran Source");
         assert_eq!(m.version, "1.0.0");
@@ -348,7 +363,8 @@ library  "libquran.so"
 provides "io.notein.source"
 requires "io.notein.sdk" min-version="1.0"
 requires "io.notein.pdf"
-"#).unwrap();
+"#)
+        .unwrap();
         assert_eq!(m.author.as_deref(), Some("Alice"));
         assert_eq!(
             m.libraries,
@@ -367,7 +383,10 @@ requires "io.notein.pdf"
     #[test]
     fn rejects_missing_id() {
         let err = mk(r#"name "x"\nversion "1""#).unwrap_err();
-        assert!(matches!(err, ManifestError::MissingField { field: "id", .. }));
+        assert!(matches!(
+            err,
+            ManifestError::MissingField { field: "id", .. }
+        ));
     }
 
     #[test]

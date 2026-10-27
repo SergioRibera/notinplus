@@ -75,7 +75,8 @@ pub(crate) fn list_bibles(db: &Db) -> Result<Vec<BibleRow>> {
 
 pub(crate) fn pending_installs(db: &Db) -> Result<Vec<String>> {
     db.with_conn(|conn| {
-        let mut stmt = conn.prepare_cached("SELECT bible_id FROM installs_pending ORDER BY bible_id")?;
+        let mut stmt =
+            conn.prepare_cached("SELECT bible_id FROM installs_pending ORDER BY bible_id")?;
         let rows = stmt
             .query_map([], |r| r.get(0))?
             .collect::<rusqlite::Result<Vec<String>>>()?;
@@ -144,7 +145,9 @@ pub(crate) fn load_chapter(
                 |r| r.get(0),
             )
             .optional()?
-            .ok_or_else(|| DbError::MissingBible { id: bible_id.to_string() })?;
+            .ok_or_else(|| DbError::MissingBible {
+                id: bible_id.to_string(),
+            })?;
 
         let mut verses_stmt = conn.prepare_cached(
             "SELECT verse, text, paragraph_break

@@ -43,7 +43,9 @@ impl Component for Spinner {
         let turn = use_animation(|conf| {
             conf.on_creation(OnCreation::Run);
             conf.on_finish(OnFinish::restart());
-            AnimNum::new(0.0, 360.0).time(900).function(Function::Linear)
+            AnimNum::new(0.0, 360.0)
+                .time(900)
+                .function(Function::Linear)
         });
         let angle = if crate::theme::reduce_motion() {
             0.0

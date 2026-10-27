@@ -7,8 +7,8 @@
 
 use freya::prelude::*;
 
-use crate::components::TapExt;
 use crate::TextField;
+use crate::components::TapExt;
 use crate::theme::palette;
 
 /// Deterministically pick a swatch for `name`. Two callers passing the
@@ -242,7 +242,10 @@ impl DragTarget {
                     ..cur
                 }
             }
-            Self::Hue => Hsva { h: x * 360.0, ..cur },
+            Self::Hue => Hsva {
+                h: x * 360.0,
+                ..cur
+            },
             Self::Alpha => Hsva { a: x, ..cur },
             Self::None => return None,
         })
@@ -356,7 +359,9 @@ impl Component for ColorWheel {
             .width(Size::px(self.width))
             .spacing(12.0)
             .padding(padding)
-            .maybe(!self.bare, |r| r.background(palette().s3).corner_radius(12.0))
+            .maybe(!self.bare, |r| {
+                r.background(palette().s3).corner_radius(12.0)
+            })
             .color(palette().t1)
             .on_global_pointer_move(move |e: Event<PointerEventData>| {
                 let target = *dragging.peek();
@@ -366,12 +371,21 @@ impl Component for ColorWheel {
                 dragging.set_if_modified(DragTarget::None);
             });
         if !self.swatches.is_empty() {
-            root = root.child(swatch_strip(&self.swatches, current.to_color(), &swatch_fire));
+            root = root.child(swatch_strip(
+                &self.swatches,
+                current.to_color(),
+                &swatch_fire,
+            ));
         }
         if self.allow_custom {
             let base_hue = Color::from_hsv(current.h, 1.0, 1.0);
             root = root
-                .child(sv_pane(tracks.sv, current, inner_width, press(DragTarget::Sv)))
+                .child(sv_pane(
+                    tracks.sv,
+                    current,
+                    inner_width,
+                    press(DragTarget::Sv),
+                ))
                 .child(bar(
                     tracks.hue,
                     hue_gradient(),

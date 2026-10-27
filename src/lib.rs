@@ -11,9 +11,9 @@
 
 pub mod actions;
 pub mod active_boards;
-pub mod annotation;
 #[cfg(target_os = "android")]
 pub mod android_clipboard;
+pub mod annotation;
 pub mod app;
 pub mod bookmark;
 pub mod brush;
@@ -21,8 +21,8 @@ pub mod builtin;
 pub mod bundle;
 pub mod canvas;
 pub mod canvas_text;
-pub mod creation;
 pub mod components;
+pub mod creation;
 pub mod deep_link;
 pub mod deferred;
 pub mod doc;
@@ -33,8 +33,8 @@ pub mod files;
 pub mod flows;
 pub mod format;
 pub mod hooks;
-pub mod ink;
 pub mod ids;
+pub mod ink;
 pub mod ink_glyph;
 pub mod library;
 pub mod notebooks;
@@ -48,16 +48,16 @@ pub mod readable;
 pub mod references;
 pub mod render;
 pub mod route;
-pub mod soft_keyboard;
+pub mod scan;
 pub mod screens;
 pub mod search;
 pub mod selection;
 pub mod session_end;
 pub mod settings;
+pub mod soft_keyboard;
 pub mod space;
 pub mod spatial;
 pub mod state;
-pub mod scan;
 pub mod sync;
 pub mod text_box;
 pub mod thumbnail;
@@ -87,11 +87,11 @@ pub mod desktop_data_store;
 pub const WINDOW_ID: u64 = 1;
 
 use istmo::plugins::{DeepLinks, SafeArea};
+use istmo_barcode_scanner::BarcodeScannerClient;
 use istmo_data_store::DataStoreClient;
 use istmo_file_picker::FilePickerClient;
-use istmo_pen::PenClient;
-use istmo_barcode_scanner::BarcodeScannerClient;
 use istmo_opener::OpenerClient;
+use istmo_pen::PenClient;
 use istmo_share::ShareClient;
 
 istmo::runtime!(

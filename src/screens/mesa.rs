@@ -16,12 +16,12 @@ use notein_ui_kit::{
     Button, EmptyState, ModalController, PanelEdge, SidePanel, Toast, Toasts, tokens, width_class,
 };
 
-use panes::SplitEdge;
 use crate::library::{
     ItemId, LibraryData, PaneId, PaneTab, SplitOrientation, SplitSide, TabTarget, Workspace,
     WorkspaceId,
 };
 use crate::state::{self, LibraryState, LibraryView};
+use panes::SplitEdge;
 
 pub use panel::PanelTab;
 

@@ -82,15 +82,16 @@ impl OpenPdf {
     fn open(item: ItemId) -> Option<Self> {
         let bytes = bodies::read_pdf(item).ok()?;
         let doc = PdfDocument::open_bytes(bytes).ok()?;
-        let pages = freya_pdf::write::page_world_rects(doc.page_sizes(), freya_pdf::write::PAGE_GAP)
-            .into_iter()
-            .map(|(x, y, w, h)| Page {
-                min_x: x,
-                min_y: y,
-                max_x: x + w,
-                max_y: y + h,
-            })
-            .collect();
+        let pages =
+            freya_pdf::write::page_world_rects(doc.page_sizes(), freya_pdf::write::PAGE_GAP)
+                .into_iter()
+                .map(|(x, y, w, h)| Page {
+                    min_x: x,
+                    min_y: y,
+                    max_x: x + w,
+                    max_y: y + h,
+                })
+                .collect();
         Some(Self {
             doc,
             pages,
@@ -104,7 +105,11 @@ impl OpenPdf {
         self.pages.iter().enumerate().find_map(|(index, page)| {
             (y >= page.min_y && y < page.max_y).then(|| {
                 let local_x = x.clamp(page.min_x, page.max_x - 1.0) - page.min_x;
-                (u32::try_from(index).unwrap_or(u32::MAX), local_x, y - page.min_y)
+                (
+                    u32::try_from(index).unwrap_or(u32::MAX),
+                    local_x,
+                    y - page.min_y,
+                )
             })
         })
     }
@@ -118,7 +123,9 @@ impl OpenPdf {
     fn word_around(&self, page: u32, index: usize) -> (usize, usize) {
         self.doc
             .extract_page_text_indexed(page as usize)
-            .map_or((index, index + 1), |(text, starts)| word_bounds(&text, &starts, index))
+            .map_or((index, index + 1), |(text, starts)| {
+                word_bounds(&text, &starts, index)
+            })
     }
 
     fn page_chars(&self, page: u32) -> usize {
@@ -132,8 +139,16 @@ impl OpenPdf {
         if page < sel.start_page || page > sel.end_page {
             return None;
         }
-        let start = if page == sel.start_page { sel.start_char as usize } else { 0 };
-        let end = if page == sel.end_page { sel.end_char as usize } else { self.page_chars(page) };
+        let start = if page == sel.start_page {
+            sel.start_char as usize
+        } else {
+            0
+        };
+        let end = if page == sel.end_page {
+            sel.end_char as usize
+        } else {
+            self.page_chars(page)
+        };
         Some((start, end))
     }
 }
@@ -150,7 +165,11 @@ fn word_bounds(text: &str, starts: &[usize], anchor: usize) -> (usize, usize) {
     if !is_word(anchor) {
         return (anchor, anchor + 1);
     }
-    let start = (0..anchor).rev().take_while(|i| is_word(*i)).last().unwrap_or(anchor);
+    let start = (0..anchor)
+        .rev()
+        .take_while(|i| is_word(*i))
+        .last()
+        .unwrap_or(anchor);
     let end = (anchor + 1..last).find(|i| !is_word(*i)).unwrap_or(last);
     (start, end)
 }
@@ -202,8 +221,15 @@ impl PdfText {
                 SelectMode::Point => (index, index),
                 SelectMode::Word => pdf.word_around(page, index),
             };
-            let (start, end) = (u32::try_from(start).unwrap_or(u32::MAX), u32::try_from(end).unwrap_or(u32::MAX));
-            pdf.drag = Some(Drag { page, char_idx: start, mode });
+            let (start, end) = (
+                u32::try_from(start).unwrap_or(u32::MAX),
+                u32::try_from(end).unwrap_or(u32::MAX),
+            );
+            pdf.drag = Some(Drag {
+                page,
+                char_idx: start,
+                mode,
+            });
             pdf.selection = Some(PdfSelection {
                 start_page: page,
                 start_char: start,
@@ -233,7 +259,8 @@ impl PdfText {
                     end_char: to_u32(index),
                 },
                 SelectMode::Word => {
-                    let (anchor_start, anchor_end) = pdf.word_around(drag.page, drag.char_idx as usize);
+                    let (anchor_start, anchor_end) =
+                        pdf.word_around(drag.page, drag.char_idx as usize);
                     let (live_start, live_end) = pdf.word_around(page, index);
                     if (page, to_u32(index)) >= (drag.page, drag.char_idx) {
                         PdfSelection {
@@ -289,7 +316,11 @@ impl PdfText {
         let Some(pdf) = open.get(&item) else {
             return Vec::new();
         };
-        let Some(sel) = pdf.selection.map(PdfSelection::normalized).filter(|s| !s.is_empty()) else {
+        let Some(sel) = pdf
+            .selection
+            .map(PdfSelection::normalized)
+            .filter(|s| !s.is_empty())
+        else {
             return Vec::new();
         };
         let rects = (sel.start_page..=sel.end_page)
@@ -315,7 +346,10 @@ impl PdfText {
     pub fn selected_text(&self, item: ItemId) -> Option<String> {
         let open = self.lock();
         let pdf = open.get(&item)?;
-        let sel = pdf.selection.map(PdfSelection::normalized).filter(|s| !s.is_empty())?;
+        let sel = pdf
+            .selection
+            .map(PdfSelection::normalized)
+            .filter(|s| !s.is_empty())?;
         let parts: Vec<String> = (sel.start_page..=sel.end_page)
             .filter_map(|page| {
                 let (start, end) = pdf.range_on(page, sel)?;
@@ -340,13 +374,20 @@ mod tests {
             end_char: 9,
         }
         .normalized();
-        assert_eq!((sel.start_page, sel.start_char, sel.end_page, sel.end_char), (1, 9, 2, 5));
+        assert_eq!(
+            (sel.start_page, sel.start_char, sel.end_page, sel.end_char),
+            (1, 9, 2, 5)
+        );
     }
 
     #[test]
     fn word_bounds_expand_to_spaces() {
         let text = "hola mundo bello";
-        let starts: Vec<usize> = text.char_indices().map(|(i, _)| i).chain(std::iter::once(text.len())).collect();
+        let starts: Vec<usize> = text
+            .char_indices()
+            .map(|(i, _)| i)
+            .chain(std::iter::once(text.len()))
+            .collect();
         assert_eq!(word_bounds(text, &starts, 7), (5, 10));
         assert_eq!(word_bounds(text, &starts, 4), (4, 5));
     }

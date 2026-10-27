@@ -57,11 +57,7 @@ fn edit_row(
             .horizontal()
             .cross_align(Alignment::Center)
             .spacing(6.0)
-            .child(
-                rect()
-                    .width(Size::px(width))
-                    .child(field),
-            )
+            .child(rect().width(Size::px(width)).child(field))
             .child(
                 Button::new("Guardar")
                     .primary()
@@ -726,8 +722,11 @@ impl Component for LinkSheet {
             )
             .maybe_child(card)
             .maybe_child(typed_unknown.then(|| {
-                Notice::new(NoticeTone::Danger, "Ese enlace no es de Notein o ya venció.")
-                    .detail("Pedí uno nuevo: las invitaciones y los códigos duran unos minutos.")
+                Notice::new(
+                    NoticeTone::Danger,
+                    "Ese enlace no es de Notein o ya venció.",
+                )
+                .detail("Pedí uno nuevo: las invitaciones y los códigos duran unos minutos.")
             }))
             .child(SheetFooter::new([Button::new("Cerrar")
                 .ghost()

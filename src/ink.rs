@@ -216,7 +216,8 @@ impl InkState {
         if *self.handwriting.peek() != board.handwriting_enabled() {
             self.handwriting.set(board.handwriting_enabled());
         }
-        let pdf = board.background().attribution_mode() == freya_canvas_bg::AttributionMode::PerPage;
+        let pdf =
+            board.background().attribution_mode() == freya_canvas_bg::AttributionMode::PerPage;
         if *self.pdf.peek() != pdf {
             self.pdf.set(pdf);
         }
@@ -374,10 +375,15 @@ impl Dock {
     /// Hold to pan with the pen, for touchscreens without fingers.
     fn mover(&self) -> Element {
         let (down, up) = (Arc::clone(&self.board), Arc::clone(&self.board));
-        dock_button(freya::icons::lucide::hand(), "Mover (mantené apretado)", false, None)
-            .on_pointer_down(move |_| lock(&down).set_pan_hold(true))
-            .on_global_pointer_up(move |_| lock(&up).set_pan_hold(false))
-            .into_element()
+        dock_button(
+            freya::icons::lucide::hand(),
+            "Mover (mantené apretado)",
+            false,
+            None,
+        )
+        .on_pointer_down(move |_| lock(&down).set_pan_hold(true))
+        .on_global_pointer_up(move |_| lock(&up).set_pan_hold(false))
+        .into_element()
     }
 
     /// The current ink; pressing opens the colours.
@@ -449,7 +455,10 @@ impl Dock {
     /// Wider screens: every tool, grouped.
     fn wide_items(&self) -> Vec<Element> {
         use freya::icons::lucide;
-        let mut items: Vec<Element> = Tool::BRUSHES.into_iter().map(|t| self.tool_button(t)).collect();
+        let mut items: Vec<Element> = Tool::BRUSHES
+            .into_iter()
+            .map(|t| self.tool_button(t))
+            .collect();
         items.push(self.tool_button(Tool::Eraser));
         items.push(self.tool_button(Tool::Shape));
         items.push(divider().into_element());
@@ -629,7 +638,11 @@ fn choice(
         .width(Size::fill())
         .spacing(6.0)
         .child(Text::new(title).role(TextRole::Label))
-        .child(Segmented::new(labels, selected).full_width().on_select(on_select))
+        .child(
+            Segmented::new(labels, selected)
+                .full_width()
+                .on_select(on_select),
+        )
         .into_element()
 }
 
@@ -649,59 +662,85 @@ impl BrushPopover {
         } else {
             &INKS
         };
-        rect().horizontal().spacing(8.0).children(colors.iter().map(|&c| {
-            let board = Arc::clone(&self.board);
-            rect()
-                .width(Size::px(28.0))
-                .height(Size::px(28.0))
-                .corner_radius(tokens::radius::FULL)
-                .background(color(c))
-                .border(
-                    Border::new()
-                        .fill(if c == ink { palette().t1 } else { Color::TRANSPARENT })
-                        .width(2.0)
-                        .alignment(BorderAlignment::Outer),
-                )
-                .a11y_role(AccessibilityRole::RadioButton)
-                .on_tap(move |_| {
-                    lock(&board).set_current_color(c);
-                    bump();
-                })
-                .into_element()
-        }))
+        rect()
+            .horizontal()
+            .spacing(8.0)
+            .children(colors.iter().map(|&c| {
+                let board = Arc::clone(&self.board);
+                rect()
+                    .width(Size::px(28.0))
+                    .height(Size::px(28.0))
+                    .corner_radius(tokens::radius::FULL)
+                    .background(color(c))
+                    .border(
+                        Border::new()
+                            .fill(if c == ink {
+                                palette().t1
+                            } else {
+                                Color::TRANSPARENT
+                            })
+                            .width(2.0)
+                            .alignment(BorderAlignment::Outer),
+                    )
+                    .a11y_role(AccessibilityRole::RadioButton)
+                    .on_tap(move |_| {
+                        lock(&board).set_current_color(c);
+                        bump();
+                    })
+                    .into_element()
+            }))
     }
 
     /// What only this tool has: pressure, tip, what the eraser takes,
     /// or the shape.
-    fn specific(&self, kind: BrushKind, config: BrushConfig, bump: impl Fn() + Copy + 'static) -> Option<Element> {
+    fn specific(
+        &self,
+        kind: BrushKind,
+        config: BrushConfig,
+        bump: impl Fn() + Copy + 'static,
+    ) -> Option<Element> {
         let board = Arc::clone(&self.board);
         match (self.tool, config) {
             (Tool::Pen | Tool::Pencil | Tool::Marker, BrushConfig::Pen { curve, .. }) => {
-                let curves = [PressureCurve::Linear, PressureCurve::Soft, PressureCurve::Hard];
+                let curves = [
+                    PressureCurve::Linear,
+                    PressureCurve::Soft,
+                    PressureCurve::Hard,
+                ];
                 let selected = curves.iter().position(|c| *c == curve).unwrap_or(0);
-                Some(choice("Presión", ["Lineal", "Suave", "Dura"], selected, move |i| {
-                    edit_config(&board, kind, |config| {
-                        if let BrushConfig::Pen { curve, .. } = config {
-                            *curve = curves[i];
-                        }
-                    });
-                    bump();
-                }))
+                Some(choice(
+                    "Presión",
+                    ["Lineal", "Suave", "Dura"],
+                    selected,
+                    move |i| {
+                        edit_config(&board, kind, |config| {
+                            if let BrushConfig::Pen { curve, .. } = config {
+                                *curve = curves[i];
+                            }
+                        });
+                        bump();
+                    },
+                ))
             }
             (Tool::Highlighter, BrushConfig::Highlighter { tip, .. }) => {
                 let bevel = matches!(tip, HighlighterTip::Bevel { .. });
-                Some(choice("Punta", ["Redonda", "Bisel"], usize::from(bevel), move |i| {
-                    edit_config(&board, kind, |config| {
-                        if let BrushConfig::Highlighter { tip, .. } = config {
-                            *tip = if i == 1 {
-                                HighlighterTip::Bevel { angle_deg: 30.0 }
-                            } else {
-                                HighlighterTip::Round
-                            };
-                        }
-                    });
-                    bump();
-                }))
+                Some(choice(
+                    "Punta",
+                    ["Redonda", "Bisel"],
+                    usize::from(bevel),
+                    move |i| {
+                        edit_config(&board, kind, |config| {
+                            if let BrushConfig::Highlighter { tip, .. } = config {
+                                *tip = if i == 1 {
+                                    HighlighterTip::Bevel { angle_deg: 30.0 }
+                                } else {
+                                    HighlighterTip::Round
+                                };
+                            }
+                        });
+                        bump();
+                    },
+                ))
             }
             (Tool::Eraser, BrushConfig::Eraser { mode, .. }) => {
                 let stroke = usize::from(mode == EraserMode::Stroke);
@@ -1014,7 +1053,11 @@ impl Layers {
                     .spacing(2.0)
                     .child(
                         IconButton::new(
-                            if visible { lucide::eye() } else { lucide::eye_off() },
+                            if visible {
+                                lucide::eye()
+                            } else {
+                                lucide::eye_off()
+                            },
                             "Mostrar u ocultar",
                         )
                         .size(tokens::size::BUTTON_SM)
@@ -1025,7 +1068,11 @@ impl Layers {
                     )
                     .child(
                         IconButton::new(
-                            if locked { lucide::lock() } else { lucide::lock_open() },
+                            if locked {
+                                lucide::lock()
+                            } else {
+                                lucide::lock_open()
+                            },
                             "Bloquear",
                         )
                         .size(tokens::size::BUTTON_SM)
@@ -1115,7 +1162,9 @@ pub struct PinNotes {
 
 impl PartialEq for PinNotes {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.board, &other.board) && self.selected == other.selected && self.origin == other.origin
+        Arc::ptr_eq(&self.board, &other.board)
+            && self.selected == other.selected
+            && self.origin == other.origin
     }
 }
 
@@ -1158,12 +1207,21 @@ impl PinNotes {
         let mut selected = self.selected;
         let refs = bookmark.refs.clone();
         spawn_in_window(async move {
-            let outcome = rx.recv_async().await.unwrap_or(AnnotationOutcome::Cancelled);
+            let outcome = rx
+                .recv_async()
+                .await
+                .unwrap_or(AnnotationOutcome::Cancelled);
             {
                 let mut guard = lock(&board);
                 match outcome {
                     AnnotationOutcome::Saved { color, body } => {
-                        guard.update_bookmark(id, body, refs, color.map(|c| [c[0], c[1], c[2], 0xFF]), crate::format::now());
+                        guard.update_bookmark(
+                            id,
+                            body,
+                            refs,
+                            color.map(|c| [c[0], c[1], c[2], 0xFF]),
+                            crate::format::now(),
+                        );
                     }
                     AnnotationOutcome::Deleted => {
                         guard.delete_bookmark(id);
@@ -1175,13 +1233,21 @@ impl PinNotes {
         });
         crate::annotation::AnnotationPopover::open(
             AnnotationRequest {
-                doc: self.item.map_or(notein_plugin::doc::DocId([0; 16]), crate::plugins::content::doc_id),
+                doc: self.item.map_or(
+                    notein_plugin::doc::DocId([0; 16]),
+                    crate::plugins::content::doc_id,
+                ),
                 kind: crate::plugins::builtin::canvas::KIND.to_owned(),
                 title: "Marcador".to_owned(),
                 quote,
                 color: bookmark.color.map(|c| [c[0], c[1], c[2]]),
                 body: bookmark.body,
-                target: Some((self.origin.0 + sx - 6.0, self.origin.1 + sy - 6.0, 12.0, 12.0)),
+                target: Some((
+                    self.origin.0 + sx - 6.0,
+                    self.origin.1 + sy - 6.0,
+                    12.0,
+                    12.0,
+                )),
                 existing: true,
             },
             None,

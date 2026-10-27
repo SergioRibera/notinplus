@@ -99,7 +99,11 @@ where
                 .horizontal()
                 .child(pill),
         )
-        .child(history_button(lucide::redo_2(), "Pasaje siguiente", on_forward))
+        .child(history_button(
+            lucide::redo_2(),
+            "Pasaje siguiente",
+            on_forward,
+        ))
 }
 
 /// A history button, or an empty slot of its size so the pill stays

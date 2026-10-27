@@ -92,9 +92,7 @@ impl Component for PdfFace {
             .width(Size::fill())
             .height(Size::fill())
             .content(Content::Flex)
-            .child(
-                CanvasPane { mount }.into_element(),
-            )
+            .child(CanvasPane { mount }.into_element())
             .child(PdfSelectOverlay { item, mount }.into_element())
     }
 }
@@ -144,10 +142,11 @@ fn load_pdf_background(
 ) -> Result<Arc<dyn freya_canvas_bg::CanvasBackground>, LoadError> {
     let bytes = bodies::read_pdf(id).map_err(LoadError::Read)?;
     let doc = PdfDocument::open_bytes(bytes).map_err(LoadError::Open)?;
-    *pages.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(freya_pdf::write::page_world_rects(
-        doc.page_sizes(),
-        freya_pdf::write::PAGE_GAP,
-    ));
+    *pages
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(
+        freya_pdf::write::page_world_rects(doc.page_sizes(), freya_pdf::write::PAGE_GAP),
+    );
     Ok(Arc::new(PdfBackground::new(doc)))
 }
 

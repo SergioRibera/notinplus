@@ -489,9 +489,9 @@ impl ShelfRow {
             });
         match checked {
             Selecting::No => row.chevron(),
-            Selecting::Selected | Selecting::Unselected => {
-                row.leading(notein_ui_kit::Leading::Check(checked == Selecting::Selected))
-            }
+            Selecting::Selected | Selecting::Unselected => row.leading(
+                notein_ui_kit::Leading::Check(checked == Selecting::Selected),
+            ),
         }
     }
 
@@ -515,9 +515,9 @@ impl ShelfRow {
             });
         match checked {
             Selecting::No => row.kind(icon, tint),
-            Selecting::Selected | Selecting::Unselected => {
-                row.leading(notein_ui_kit::Leading::Check(checked == Selecting::Selected))
-            }
+            Selecting::Selected | Selecting::Unselected => row.leading(
+                notein_ui_kit::Leading::Check(checked == Selecting::Selected),
+            ),
         }
     }
 }
@@ -538,8 +538,16 @@ impl Component for ShelfRow {
         };
         // The rows of one shelf read as a single rounded group.
         let (top, bottom) = (
-            if self.index == 0 { tokens::radius::XL } else { 0.0 },
-            if self.index == last { tokens::radius::XL } else { 0.0 },
+            if self.index == 0 {
+                tokens::radius::XL
+            } else {
+                0.0
+            },
+            if self.index == last {
+                tokens::radius::XL
+            } else {
+                0.0
+            },
         );
         rect()
             .width(Size::fill())

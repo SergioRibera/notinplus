@@ -94,7 +94,9 @@ fn hit_row(reader: &Reader, hit: SearchHitView) -> Element {
         .max_lines(3);
     for run in hit.snippet_runs {
         snippet = snippet.span(if run.bold {
-            Span::new(run.text).color(p.t1).font_weight(FontWeight::BOLD)
+            Span::new(run.text)
+                .color(p.t1)
+                .font_weight(FontWeight::BOLD)
         } else {
             Span::new(run.text)
         });
@@ -183,7 +185,11 @@ fn reference(reader: &Reader, books: &[BookRow], query: &str) -> Option<SearchHi
             bible_id,
             book_id,
             chapter: parsed.chapter,
-            verse: if parsed.start_verse.is_some() { verse } else { 0 },
+            verse: if parsed.start_verse.is_some() {
+                verse
+            } else {
+                0
+            },
             snippet: String::new(),
             score: 0.0,
         },

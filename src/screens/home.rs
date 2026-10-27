@@ -142,16 +142,16 @@ impl Component for Failed {
                     .cross_align(Alignment::Center)
                     .spacing(4.0)
                     .child(
-                    EmptyState::new(
-                        freya::icons::lucide::triangle_alert(),
-                        "No se pudo abrir la biblioteca",
-                    )
-                    .body(
-                        "Los datos guardados en este dispositivo no se pueden leer. Si los \
+                        EmptyState::new(
+                            freya::icons::lucide::triangle_alert(),
+                            "No se pudo abrir la biblioteca",
+                        )
+                        .body(
+                            "Los datos guardados en este dispositivo no se pueden leer. Si los \
                          copiaste de otra versión de Notein, borrá la carpeta de datos y \
                          volvé a abrir la app.",
-                    )
-                    .action(actions),
+                        )
+                        .action(actions),
                     )
                     .child(
                         label()
@@ -396,7 +396,9 @@ impl Component for Loaded {
         let pad = gutter(class);
         let insets = *crate::hooks::use_safe_area_insets().read();
         let root_width = Platform::get().current_window().root_size.read().width;
-        let content_width = pad.mul_add(-2.0, root_width - insets.left - insets.right).max(200.0);
+        let content_width = pad
+            .mul_add(-2.0, root_width - insets.left - insets.right)
+            .max(200.0);
         let folder = Browse::get().folder();
         let sort = SettingsStore::get().read().library.sort;
         let filter = use_state(Filter::default);
@@ -421,7 +423,11 @@ impl Component for Loaded {
         let at_root = folder == ROOT_FOLDER;
         let columns = Columns::fit(content_width);
         let body = Body {
-            blocks: Self::blocks(&listed, columns, (at_root, at_root && !data.pinned().is_empty())),
+            blocks: Self::blocks(
+                &listed,
+                columns,
+                (at_root, at_root && !data.pinned().is_empty()),
+            ),
             data: Arc::clone(data),
             shelf: listed,
             columns,

@@ -354,8 +354,9 @@ impl FieldRow {
                                 Ok(()) => error.set(set(ConfigValue::FilePath(
                                     path.to_string_lossy().into_owned(),
                                 ))),
-                                Err(err) => error
-                                    .set(Some(format!("No se pudo guardar el archivo: {err}"))),
+                                Err(err) => {
+                                    error.set(Some(format!("No se pudo guardar el archivo: {err}")))
+                                }
                             }
                         }
                         Ok(None) => {}

@@ -34,8 +34,8 @@ use bincode::config::{self, Configuration};
 
 use crate::brush::{BrushKind, BrushPreset};
 use crate::canvas::{InputMode, Viewport};
-use crate::library::{ItemId, ViewSlot};
 use crate::library::bodies;
+use crate::library::{ItemId, ViewSlot};
 
 const CODEC: Configuration = config::standard();
 const PREFS_FILE: &str = "prefs.bin";
