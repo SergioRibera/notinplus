@@ -141,7 +141,8 @@ impl BibleKind {
             .collect()
     }
 
-    /// Short name of translation `bible`, as a citation ends with it.
+    /// Short name of translation `bible`, as a citation ends with it: its
+    /// abbreviation, or its name when the abbreviation is only the id.
     fn translation(&self, bible: &str) -> String {
         self.db
             .list_bibles()
@@ -151,13 +152,38 @@ impl BibleKind {
             .map_or_else(
                 || bible.to_owned(),
                 |b| {
-                    if b.abbrev.is_empty() {
+                    if b.abbrev.is_empty() || b.abbrev.eq_ignore_ascii_case(&b.id) {
                         b.name_local
                     } else {
                         b.abbrev
                     }
                 },
             )
+    }
+
+    /// The verses `anchor` covers and where they come from.
+    fn passage_quote(&self, anchor: &BibleAnchor) -> Option<Quote> {
+        let verses = self.verses(anchor);
+        let numbered = verses.len() > 1;
+        let body = verses
+            .iter()
+            .map(|(verse, text)| {
+                if numbered {
+                    format!("{} {}", superscript(*verse), text.trim())
+                } else {
+                    text.trim().to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        (!body.is_empty()).then(|| Quote {
+            body,
+            source: format!(
+                "{} ({})",
+                self.label(anchor),
+                self.translation(&anchor.bible_id)
+            ),
+        })
     }
 
     /// The passage `text` names, when it reads as a reference that
@@ -292,17 +318,21 @@ impl DocumentKind for BibleKind {
     }
 
     fn summary(&self, content: &BibleContent) -> Option<String> {
-        let abbrev = self
+        let bible = self
             .db
             .list_bibles()
             .ok()?
             .into_iter()
-            .find(|b| b.id == content.bible_id)
-            .map(|b| b.abbrev)?;
+            .find(|b| b.id == content.bible_id)?;
+        let name = if bible.name_local.trim().is_empty() {
+            self.translation(&bible.id)
+        } else {
+            bible.name_local
+        };
         Some(match content.highlights.len() {
-            0 => abbrev,
-            1 => format!("{abbrev} · 1 resaltado"),
-            n => format!("{abbrev} · {n} resaltados"),
+            0 => name,
+            1 => format!("{name} · 1 resaltado"),
+            n => format!("{name} · {n} resaltados"),
         })
     }
 
@@ -315,27 +345,7 @@ impl DocumentKind for BibleKind {
     }
 
     fn quote(&self, _doc: DocMeta<'_>, anchor: &BibleAnchor) -> Option<Quote> {
-        let verses = self.verses(anchor);
-        let numbered = verses.len() > 1;
-        let body = verses
-            .iter()
-            .map(|(verse, text)| {
-                if numbered {
-                    format!("{} {}", superscript(*verse), text.trim())
-                } else {
-                    text.trim().to_owned()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        (!body.is_empty()).then(|| Quote {
-            body,
-            source: format!(
-                "{} ({})",
-                self.label(anchor),
-                self.translation(&anchor.bible_id)
-            ),
-        })
+        self.passage_quote(anchor)
     }
 
     fn selection(&self) -> SelectionSupport {
@@ -539,6 +549,27 @@ mod tests {
             "En el principio creó Dios los cielos y la tierra."
         );
         assert_eq!(quote.source, "Génesis 1:1 (RVR1960)");
+    }
+
+    #[test]
+    fn a_translation_without_its_own_abbreviation_goes_by_its_name() {
+        let kind = genesis();
+        kind.db
+            .with_conn(|conn| {
+                conn.execute("UPDATE bibles SET abbrev = id WHERE id = 'spa_rv1960'", [])?;
+                Ok(())
+            })
+            .unwrap();
+        let anchor = BibleAnchor::single_verse("spa_rv1960", "GEN", 1, 1);
+        assert_eq!(
+            kind.quote(meta(), &anchor).unwrap().source,
+            "Génesis 1:1 (Reina Valera 1960)"
+        );
+        let content = BibleContent {
+            bible_id: "spa_rv1960".to_owned(),
+            ..BibleContent::default()
+        };
+        assert_eq!(kind.summary(&content).as_deref(), Some("Reina Valera 1960"));
     }
 
     #[test]
