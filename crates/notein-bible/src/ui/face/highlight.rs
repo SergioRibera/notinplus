@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use freya::prelude::*;
 use notein_sdk::bookmark::SourceRef;
-use notein_sdk::services::{AnnotationOutcome, AnnotationRequest};
-use notein_sdk::ui::SelectionMenu;
+use notein_sdk::services::{AnnotationOutcome, AnnotationRequest, Share};
+use notein_sdk::ui::{SelectionExtra, SelectionMenu};
 use notein_ui_kit::theme::palette;
 
 use super::Reader;
@@ -40,6 +40,7 @@ struct Selection {
     chapter: u16,
     quote: String,
     existing: Option<BibleBookmark>,
+    anchor: BibleAnchor,
     reference: SourceRef,
 }
 
@@ -86,6 +87,7 @@ impl Selection {
             chapter: st.current_chapter,
             quote,
             existing,
+            anchor,
             reference,
         }
     }
@@ -186,12 +188,32 @@ impl Gesture {
             on_note,
             reference: Some(selection.reference.clone()),
             document: Some(reader.doc),
-            extra: Vec::new(),
+            extra: self.share(reader, &selection).into_iter().collect(),
             on_dismiss: Rc::new(move || {
                 let mut pending = self.pending;
                 pending.set(None);
             }),
         });
+    }
+
+    /// The bar button that sends the selected verses, with their reference,
+    /// to another app; `None` where the system cannot share.
+    fn share(self, reader: &Reader, selection: &Selection) -> Option<SelectionExtra> {
+        if !reader.host.can_share() {
+            return None;
+        }
+        let (host, kind) = (reader.host.clone(), Arc::clone(&reader.kind));
+        let anchor = selection.anchor.clone();
+        let share: Rc<dyn Fn()> = Rc::new(move || {
+            if let Some(text) = kind.shared_text(&anchor) {
+                host.share(Share::Text {
+                    text,
+                    subject: kind.label(&anchor),
+                });
+            }
+            self.end();
+        });
+        Some(("Compartir", freya::icons::lucide::share_2(), share))
     }
 
     /// The note popover for `selection`; its colour previews live on the

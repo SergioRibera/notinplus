@@ -186,6 +186,14 @@ impl BibleKind {
         })
     }
 
+    /// The verses `anchor` covers as plain text for other apps, closed by
+    /// their reference.
+    #[must_use]
+    pub fn shared_text(&self, anchor: &BibleAnchor) -> Option<String> {
+        self.passage_quote(anchor)
+            .map(|quote| format!("{}\n\n— {}", quote.body, quote.source))
+    }
+
     /// The passage `text` names, when it reads as a reference that
     /// exists in translation `bible`.
     fn passage(&self, bible: &str, text: &str) -> Option<Hit<BibleAnchor>> {
@@ -549,6 +557,19 @@ mod tests {
             "En el principio creó Dios los cielos y la tierra."
         );
         assert_eq!(quote.source, "Génesis 1:1 (RVR1960)");
+    }
+
+    #[test]
+    fn shared_verses_close_with_their_reference() {
+        let kind = genesis();
+        let mut anchor = BibleAnchor::single_verse("spa_rv1960", "GEN", 1, 1);
+        anchor.end_verse = 2;
+        assert_eq!(
+            kind.shared_text(&anchor).as_deref(),
+            Some(
+                "¹ En el principio creó Dios los cielos y la tierra. ² Y la tierra estaba desordenada y vacía.\n\n— Génesis 1:1–2 (RVR1960)"
+            )
+        );
     }
 
     #[test]
