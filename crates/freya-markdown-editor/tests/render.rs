@@ -448,3 +448,33 @@ fn renders_remote_carets() {
     runner.sync_and_update();
     runner.render_to_file(snapshot_path("remote_carets"));
 }
+
+fn table_caret_app() -> impl IntoElement {
+    let value = use_state(|| "Intro\n\n| Nombre | Estado |\n|---|---|\n| Ana | lista |\n".to_owned());
+    rect()
+        .expanded()
+        .background(EditorTheme::dark().colors.surface)
+        .padding(20.)
+        .child(
+            MarkdownEditor::new(value)
+                .remote_carets(vec![RemoteCaret {
+                    position: TextPosition {
+                        target: 4,
+                        anchor: 0,
+                        head: 3,
+                    },
+                    name: "Beto".to_owned(),
+                    color: Color::from_rgb(244, 114, 182),
+                }])
+                .width(Size::fill()),
+        )
+}
+
+#[test]
+fn renders_remote_caret_in_a_table_cell() {
+    let (mut runner, ()) = TestingRunner::new(table_caret_app, (520., 220.).into(), |_| {}, 1.0);
+    runner.sync_and_update();
+    runner.poll_n(std::time::Duration::from_millis(16), 4);
+    runner.sync_and_update();
+    runner.render_to_file(snapshot_path("remote_caret_table"));
+}
