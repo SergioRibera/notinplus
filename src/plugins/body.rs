@@ -50,7 +50,7 @@ impl SharedBody {
         })
     }
 
-    /// Save the body once typing pauses, then push it to other devices.
+    /// Save the body once typing pauses, and push what is left.
     fn write_later(&self) {
         let (item, doc) = (self.item, Arc::clone(&self.doc));
         crate::deferred::schedule(write_key(item), move || {
@@ -96,6 +96,8 @@ impl TextBody for SharedBody {
             return false;
         }
         drop(doc);
+        // Others see each change as it is typed; only the disk waits.
+        crate::sync::doc_changed(self.item);
         self.write_later();
         crate::sync::live(
             self.item,

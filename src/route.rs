@@ -233,8 +233,10 @@ fn spawn_autosave_worker(id: ItemId, board: &Arc<Mutex<Board>>, rx: flume::Recei
                 let Some(board) = watched.upgrade() else {
                     return;
                 };
+                // Others see each stroke as it lands; only the disk waits.
+                crate::sync::doc_changed(id);
                 SAVING.fetch_add(1, Ordering::AcqRel);
-                settle(&rx);
+                settle(&rx, || crate::sync::doc_changed(id));
                 save(id, &board);
                 SAVING.fetch_sub(1, Ordering::AcqRel);
             }
@@ -244,9 +246,10 @@ fn spawn_autosave_worker(id: ItemId, board: &Arc<Mutex<Board>>, rx: flume::Recei
     }
 }
 
-/// Wait until commits stop for [`SAVE_AFTER`], [`SAVE_AT_MOST`] went by
+/// Wait, calling `on_commit` for every commit meanwhile, until commits
+/// stop for [`SAVE_AFTER`], [`SAVE_AT_MOST`] went by
 /// since the first one, or [`save_open_documents`] asked.
-fn settle(rx: &flume::Receiver<()>) {
+fn settle(rx: &flume::Receiver<()>, on_commit: impl Fn()) {
     /// How often a waiting save looks whether it was asked to hurry.
     const GLANCE: Duration = Duration::from_millis(100);
     let asked = SAVE_NOW.load(Ordering::Acquire);
@@ -254,7 +257,10 @@ fn settle(rx: &flume::Receiver<()>) {
     let mut last = first;
     while SAVE_NOW.load(Ordering::Acquire) == asked && first.elapsed() < SAVE_AT_MOST {
         match rx.recv_timeout(GLANCE) {
-            Ok(()) => last = Instant::now(),
+            Ok(()) => {
+                last = Instant::now();
+                on_commit();
+            }
             Err(flume::RecvTimeoutError::Timeout) if last.elapsed() < SAVE_AFTER => {}
             Err(_) => return,
         }
