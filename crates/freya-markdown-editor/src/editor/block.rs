@@ -148,8 +148,11 @@ impl Frame {
                             ),
                     )
                     .child(
+                        // In the right padding and over the text, which
+                        // would otherwise take the presses meant for it.
                         rect()
-                            .position(Position::new_absolute().top(0.).right(0.))
+                            .position(Position::new_absolute().top(0.).right(-self.padding.1))
+                            .layer(Layer::Relative(1))
                             .maybe_child(self.corner),
                     ),
             )
@@ -306,7 +309,7 @@ impl BlockView {
 
     /// Chip of a formula block, with templates for people who do not know
     /// TeX.
-    fn math_header(&self) -> Option<Element> {
+    fn math_header(&self, folded: bool) -> Option<Element> {
         if !self.editable() {
             return None;
         }
@@ -327,15 +330,20 @@ impl BlockView {
         ]
         .into_iter()
         .map(|(name, tex)| {
-            MenuItem::new(format!("{}   {tex}", theme.labels.get(name)), move || {
+            MenuItem::new(theme.labels.get(name), move || {
                 controller.insert_text_in(block, tex);
             })
+            .detail(tex)
         })
         .collect();
         Some(
             rect()
                 .margin((theme.px(-4.), 0., theme.px(4.), theme.px(-6.)))
-                .child(HeaderChip {
+                .width(Size::fill())
+                .horizontal()
+                .content(Content::flex())
+                .cross_align(Alignment::center())
+                .child(rect().width(Size::flex(1.)).child(HeaderChip {
                     icon: lucide::sigma(),
                     text: theme.labels.get(Label::Formula).to_owned(),
                     color: theme.colors.muted,
@@ -343,9 +351,43 @@ impl BlockView {
                     editable: true,
                     auto_open: false,
                     menu: ChipMenu::Items(vec![templates]),
-                })
+                }))
+                .maybe_child(folded.then(|| self.edit_button()))
                 .into_element(),
         )
+    }
+
+    /// Opens the source of a block that only shows its drawing.
+    fn edit_button(&self) -> Element {
+        let theme = &self.shared.theme;
+        let color = theme.colors.muted;
+        let controller = self.shared.controller;
+        let block = self.block.id;
+        rect()
+            .height(Size::px(theme.px(28.)))
+            .padding((0., theme.px(8.)))
+            .corner_radius(theme.px(6.))
+            .horizontal()
+            .spacing(theme.px(6.))
+            .cross_align(Alignment::center())
+            .cursor(CursorIcon::Pointer)
+            .on_press(move |event: Event<PressEventData>| {
+                event.stop_propagation();
+                controller.focus(block, usize::MAX);
+            })
+            .child(
+                SvgViewer::new(lucide::pencil())
+                    .color(color)
+                    .width(Size::px(theme.px(14.)))
+                    .height(Size::px(theme.px(14.))),
+            )
+            .child(
+                label()
+                    .color(color)
+                    .font_size(theme.px(12.))
+                    .text(theme.labels.get(Label::EditSource)),
+            )
+            .into_element()
     }
 
     /// Folding header of raw HTML.
@@ -427,6 +469,7 @@ impl BlockView {
         let colors = &theme.colors;
         let controller = self.shared.controller;
         let block = self.block.id;
+        let focused = self.focused.is_some();
         let mut unfolded = unfolded;
         let shown = if summary.is_empty() {
             theme.labels.get(Label::Collapsible).to_owned()
@@ -450,7 +493,15 @@ impl BlockView {
                     .cursor(CursorIcon::Pointer)
                     .on_press(move |event: Event<PressEventData>| {
                         event.stop_propagation();
-                        unfolded.toggle();
+                        if !open {
+                            unfolded.set(true);
+                            return;
+                        }
+                        unfolded.set(false);
+                        // The caret would stay in hidden text: it moves next to it.
+                        if focused {
+                            controller.focus_beside(block);
+                        }
                     })
                     .child(
                         SvgViewer::new(if open {
@@ -490,8 +541,9 @@ impl BlockView {
             .into_element()
     }
 
-    /// Language chip and copy button of a code block.
-    fn code_header(&self, language: &str, code: &Inline) -> Option<Element> {
+    /// Language chip and copy button of a code block, and a way into its
+    /// source while only its drawing shows (`folded`).
+    fn code_header(&self, language: &str, code: &Inline, folded: bool) -> Option<Element> {
         let theme = &self.shared.theme;
         let colors = &theme.colors;
         let editable = self.editable();
@@ -530,6 +582,7 @@ impl BlockView {
                 .cross_align(Alignment::center())
                 .margin((theme.px(-4.), theme.px(-6.), theme.px(4.), theme.px(-6.)))
                 .child(rect().width(Size::flex(1.)).child(chip))
+                .maybe_child((folded && editable).then(|| self.edit_button()))
                 .child(CopyButton {
                     text: code.plain_text(),
                     theme: theme.clone(),
@@ -715,7 +768,7 @@ impl BlockView {
                 });
                 let (collapsed, footer) = self.drawing(drawn, code.is_empty());
                 Frame {
-                    header: self.code_header(language, code),
+                    header: self.code_header(language, code, collapsed),
                     collapsed,
                     footer,
                     ..panel(plain(code, colors.text), None)
@@ -731,7 +784,7 @@ impl BlockView {
                 });
                 let (collapsed, footer) = self.drawing(drawn, tex.is_empty());
                 Frame {
-                    header: self.math_header(),
+                    header: self.math_header(collapsed),
                     collapsed,
                     footer,
                     ..panel(plain(tex, colors.text), None)

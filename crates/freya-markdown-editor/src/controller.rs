@@ -1430,6 +1430,24 @@ impl EditorController {
         }
     }
 
+    /// Move the caret out of block `id`: to the end of the text before it,
+    /// else to the start of the one after it.
+    pub(crate) fn focus_beside(&self, id: BlockId) {
+        let beside = self.peek(|state| {
+            let document = &state.document;
+            let targets = document.targets();
+            let first = targets.iter().position(|target| target.block == id)?;
+            let last = targets.iter().rposition(|target| target.block == id)?;
+            match first.checked_sub(1).and_then(|before| targets.get(before)) {
+                Some(&before) => Some((before, document.inline(before).map_or(0, Inline::len))),
+                None => targets.get(last + 1).map(|&after| (after, 0)),
+            }
+        });
+        if let Some((target, offset)) = beside {
+            self.focus(target, offset);
+        }
+    }
+
     /// Distance in logical pixels from the top of the editor to block
     /// `id`, as last laid out. Add it to wherever the editor sits inside
     /// your `ScrollView` to scroll a heading into view. `None` until the

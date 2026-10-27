@@ -591,3 +591,48 @@ fn pasted_markdown_splits_around_the_caret() {
     );
     assert_eq!(harness.value(), "before \n\n## Mid\n\ntext\n\nafter\n");
 }
+
+fn tap(harness: &mut Harness, at: (f64, f64)) {
+    for (name, phase) in [
+        (TouchEventName::TouchStart, TouchPhase::Started),
+        (TouchEventName::TouchEnd, TouchPhase::Ended),
+    ] {
+        harness.runner.send_event(PlatformEvent::Touch {
+            name,
+            location: at.into(),
+            finger_id: 0,
+            phase,
+            force: None,
+        });
+        harness.runner.sync_and_update();
+    }
+    harness.settle();
+}
+
+#[test]
+fn a_tap_on_the_quote_converter_reaches_it() {
+    let mut harness = Harness::new("> quoted\n\nafter\n");
+    let quote = harness.block(0);
+    harness.focus(quote, 2);
+    tap(&mut harness, (565., 30.));
+    tap(&mut harness, (410., 73.));
+    assert!(matches!(
+        harness.document().blocks()[0].kind,
+        BlockKind::Callout { .. }
+    ));
+}
+
+#[test]
+fn folding_details_with_the_caret_inside_moves_it_out() {
+    let mut harness =
+        Harness::new("before\n\n<details>\n<summary>Hola</summary>\n\nhidden\n\n</details>\n");
+    let details = harness.block(1);
+    harness.focus(details, 2);
+    tap(&mut harness, (40., 63.));
+    let controller = harness.controller;
+    let selection = harness.runner.run_in(|| controller.selection());
+    assert_eq!(
+        selection.map(|selection| selection.target),
+        Some(harness.block(0))
+    );
+}

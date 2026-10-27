@@ -121,6 +121,7 @@ labels! {
     PlainQuote = "Plain quote",
     CopyCode = "Copy",
     Copied = "Copied",
+    EditSource = "Edit",
     Rename = "Rename",
     RenameHint = "Leave empty for the default name",
     Comment = "Comment",

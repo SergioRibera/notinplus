@@ -91,6 +91,7 @@ const fn spanish(label: Label) -> &'static str {
         Label::PlainQuote => "Cita simple",
         Label::CopyCode => "Copiar",
         Label::Copied => "Copiado",
+        Label::EditSource => "Editar",
         Label::Rename => "Renombrar",
         Label::RenameHint => "Dejalo vacío para usar el nombre por defecto",
         Label::Comment => "Comentario",
