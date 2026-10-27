@@ -158,6 +158,7 @@ impl Component for Bar {
         if width_class().is_compact() {
             return rect()
                 .position(Position::new_absolute().left(0.0).bottom(insets.bottom))
+                .layer(Layer::Overlay)
                 .width(Size::px(size.width))
                 .child(bar.docked(true))
                 .into_element();
@@ -169,6 +170,7 @@ impl Component for Bar {
                         .left(0.0)
                         .bottom(insets.bottom + 24.0),
                 )
+                .layer(Layer::Overlay)
                 .width(Size::px(size.width))
                 .main_align(Alignment::Center)
                 .horizontal()
