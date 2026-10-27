@@ -79,6 +79,7 @@ pub fn configure(editor: MarkdownEditor) -> MarkdownEditor {
         .decorator(SchemeEmbed::new(deep_link::SCHEME, |embed| {
             Chip {
                 target: SourceRef::from_link(embed.url),
+                written: embed.label.to_owned(),
                 zoom: embed.theme.zoom,
             }
             .into_element()
@@ -191,6 +192,8 @@ impl std::fmt::Debug for CloseOnNavigate {
 #[derive(Clone, Debug, PartialEq)]
 struct Chip {
     target: SourceRef,
+    /// Label the link was written with.
+    written: String,
     zoom: f32,
 }
 
@@ -198,7 +201,16 @@ impl Component for Chip {
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let data = LibraryView::get().data();
-        let shown = references::display(&self.target, data.as_deref());
+        let mut shown = references::display(&self.target, data.as_deref());
+        // A label written with more than the current one (a citation that
+        // names its translation) keeps the extra; a renamed target does not
+        // match and shows its new name.
+        if !shown.broken
+            && self.written.len() > shown.label.len()
+            && self.written.starts_with(&shown.label)
+        {
+            shown.label.clone_from(&self.written);
+        }
         let target = self.target.clone();
         rect()
             .scale((self.zoom, self.zoom))
