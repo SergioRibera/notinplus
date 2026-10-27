@@ -118,6 +118,18 @@ torin = { git = "https://github.com/SergioRibera/freya", branch = "native-input-
 ragnarok = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
 pathgraph = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
 
+# The debug APK is built with the dev profile: optimise dependencies
+# fully and the app lightly so it stays usable on a phone.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
 [lints.rust]
 missing_debug_implementations = "warn"
 unreachable_pub = "warn"
