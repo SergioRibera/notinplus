@@ -5,6 +5,7 @@
 //! from a native backend, need to know which parts of the window a popup
 //! covers so a tap on it does not reach what lies below.
 
+use std::cell::Cell;
 use std::fmt;
 use std::rc::Rc;
 
@@ -19,6 +20,26 @@ pub(crate) const POPUP_MARGIN: f32 = 8.0;
 /// Height of a menu row: a comfortable touch target that still reads as a
 /// list with a mouse.
 pub(crate) const MENU_ROW: f32 = 40.0;
+/// Travel that turns a touch in a popup into a scroll.
+const SLOP: f64 = 8.0;
+
+thread_local! {
+    /// Where the last finger that scrolled a popup lifted, so the row under
+    /// it ignores that lift. The rows are built by whoever owns the popup,
+    /// outside its scope, hence no context.
+    static LIFTED_AFTER_SCROLL: Cell<Option<CursorPoint>> = const { Cell::new(None) };
+}
+
+/// Whether `press` is the lift of a finger that scrolled a popup.
+fn ends_a_scroll(press: &PressEventData) -> bool {
+    let PressEventData::Touch(touch) = press else {
+        return false;
+    };
+    let at = touch.global_location;
+    LIFTED_AFTER_SCROLL
+        .get()
+        .is_some_and(|lift| (at.x - lift.x).abs() < 1.0 && (at.y - lift.y).abs() < 1.0)
+}
 
 /// Called with the window area of a popup the editor or its toolbar
 /// opens, and with `None` once it closes. Provide it as context above the
@@ -122,6 +143,8 @@ impl Component for Anchored {
     fn render(&self) -> impl IntoElement {
         let mut anchor = use_state(Area::default);
         let mut measured = use_state(Area::default);
+        // Where a finger went down in the popup and whether it travelled.
+        let touch = use_hook(|| Rc::new(Cell::new(None::<(CursorPoint, bool)>)));
         let bounds = popup_bounds();
         let dismiss = self.on_dismiss.clone().filter(|_| self.popup.is_some());
         let popup = self.popup.clone().map(|popup| {
@@ -154,6 +177,38 @@ impl Component for Anchored {
                         dismiss.call(());
                     }
                 })
+                // The popup sits inside what it is anchored to: a touch or a
+                // scroll in it must not also edit or scroll the note below.
+                .on_pointer_down({
+                    let touch = Rc::clone(&touch);
+                    move |event: Event<PointerEventData>| {
+                        event.stop_propagation();
+                        if matches!(event.data(), PointerEventData::Touch(_)) {
+                            touch.set(Some((event.global_location(), false)));
+                        }
+                    }
+                })
+                .on_capture_global_pointer_move({
+                    let touch = Rc::clone(&touch);
+                    move |event: Event<PointerEventData>| {
+                        if let Some((origin, travelled)) = touch.get() {
+                            let at = event.global_location();
+                            let far = (at.x - origin.x).hypot(at.y - origin.y) >= SLOP;
+                            touch.set(Some((origin, travelled || far)));
+                        }
+                    }
+                })
+                .on_capture_global_pointer_up({
+                    let touch = Rc::clone(&touch);
+                    move |event: Event<PointerEventData>| {
+                        if let Some((_, true)) = touch.take() {
+                            LIFTED_AFTER_SCROLL.set(Some(event.global_location()));
+                        }
+                    }
+                })
+                .on_pointer_press(|event: Event<PointerEventData>| event.stop_propagation())
+                .on_touch_start(|event: Event<TouchEventData>| event.stop_propagation())
+                .on_wheel(|event: Event<WheelEventData>| event.stop_propagation())
                 .child(ReportedPopup { child: popup })
         });
         rect()
@@ -212,6 +267,8 @@ pub(crate) fn popup_frame(colors: &EditorColors) -> Rect {
 #[derive(Clone, PartialEq)]
 pub(crate) struct MenuItem {
     pub(crate) text: String,
+    /// Quieter text after the entry, cut short when it does not fit.
+    pub(crate) detail: Option<String>,
     pub(crate) icon: Option<(Bytes, Color)>,
     pub(crate) selected: bool,
     pub(crate) on_press: EventHandler<()>,
@@ -222,6 +279,7 @@ impl MenuItem {
         let mut on_press = on_press;
         Self {
             text: text.into(),
+            detail: None,
             icon: None,
             selected: false,
             on_press: EventHandler::new(move |()| on_press()),
@@ -230,6 +288,11 @@ impl MenuItem {
 
     pub(crate) fn icon(mut self, icon: Bytes, color: Color) -> Self {
         self.icon = Some((icon, color));
+        self
+    }
+
+    pub(crate) fn detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
         self
     }
 
@@ -254,6 +317,7 @@ impl MenuItem {
             .padding((0., 10.))
             .corner_radius(6.)
             .horizontal()
+            .content(Content::flex())
             .spacing(10.)
             .cross_align(Alignment::center())
             .background(if self.selected {
@@ -264,6 +328,9 @@ impl MenuItem {
             .cursor(CursorIcon::Pointer)
             .on_press(move |event: Event<PressEventData>| {
                 event.stop_propagation();
+                if ends_a_scroll(event.data()) {
+                    return;
+                }
                 on_press.call(());
                 if let Some(after) = &after {
                     after.call(());
@@ -280,8 +347,25 @@ impl MenuItem {
                     .font_size(13.5)
                     .color(colors.text)
                     .max_lines(1)
+                    .text_overflow(TextOverflow::Ellipsis)
+                    .width(if self.detail.is_some() {
+                        Size::auto()
+                    } else {
+                        Size::flex(1.)
+                    })
                     .text(self.text.clone()),
             )
+            .maybe_child(self.detail.clone().map(|detail| {
+                label()
+                    .width(Size::flex(1.))
+                    .font_size(12.)
+                    .font_family("monospace")
+                    .color(colors.muted)
+                    .max_lines(1)
+                    .text_overflow(TextOverflow::Ellipsis)
+                    .text_align(TextAlign::End)
+                    .text(detail)
+            }))
             .into_element()
     }
 }

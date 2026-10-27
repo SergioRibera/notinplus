@@ -666,6 +666,11 @@ impl Component for TextBlock {
                 return;
             }
             let location = event.element_location;
+            // An image or a formula opens its menu instead, see `on_focus_press`:
+            // the finger lifting there must not raise the keyboard.
+            if atom_at(&holder.read(), location, &content_for_touch).is_some() {
+                return;
+            }
             editable.process_touch(TouchEditEvent::Down { location });
             let scroll_views = scroll_views.clone();
             let reveal = reveal_for_touch.clone();

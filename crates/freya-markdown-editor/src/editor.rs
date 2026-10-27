@@ -28,6 +28,7 @@ use crate::controller::{EditorController, EditorState, ImagePicker};
 use crate::decorator::{Decorator, Decorators};
 use crate::document::{Abbreviation, BlockKind, Document, Inline};
 use crate::markdown::{Dialect, Extensions, ParseOptions};
+use crate::popup::PopupArea;
 use crate::theme::EditorTheme;
 
 /// Text of the focused text field and its selection, as the platform input
@@ -147,6 +148,7 @@ pub struct MarkdownEditor {
     on_link: LinkHandler,
     on_input_context: InputContextHandler,
     image_picker: Option<ImagePicker>,
+    popup_area: Option<Area>,
     layout: LayoutData,
     text_style: TextStyleData,
     key: DiffKey,
@@ -180,6 +182,7 @@ impl Default for MarkdownEditor {
             on_link: LinkHandler::default(),
             on_input_context: InputContextHandler::default(),
             image_picker: None,
+            popup_area: None,
             layout: LayoutData::default(),
             text_style: TextStyleData::default(),
             key: DiffKey::None,
@@ -287,8 +290,6 @@ impl MarkdownEditor {
         self
     }
 
-    /// Called when a link is pressed: always in read only mode, with Ctrl
-    /// (or Cmd) held while editing.
     /// How people choose image files, see [`ImagePicker`]. It also turns on
     /// the image entries of the toolbar and the `/` menu.
     #[must_use]
@@ -297,6 +298,17 @@ impl MarkdownEditor {
         self
     }
 
+    /// Region (window coordinates) the menus of blocks and images must stay
+    /// inside. Defaults to the window; pass the part left visible when
+    /// something covers it, like a soft keyboard drawn over the window.
+    #[must_use]
+    pub const fn popup_area(mut self, area: Area) -> Self {
+        self.popup_area = Some(area);
+        self
+    }
+
+    /// Called when a link is pressed: always in read only mode, with Ctrl
+    /// (or Cmd) held while editing.
     #[must_use]
     pub fn on_link(mut self, on_link: impl Fn(&str) + 'static) -> Self {
         self.on_link = LinkHandler(Some(Rc::new(on_link)));
@@ -345,6 +357,7 @@ impl Component for MarkdownEditor {
     fn render(&self) -> impl IntoElement {
         let context_theme = use_try_consume::<EditorTheme>();
         let theme = Rc::new(self.theme.clone().or(context_theme).unwrap_or_default());
+        provide_context(PopupArea(self.popup_area));
         let parse = ParseOptions {
             extensions: self.extensions,
             embed: self.decorators.embed_filter(),

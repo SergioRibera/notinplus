@@ -89,6 +89,8 @@ pub fn configure_for(
 pub fn configure(editor: MarkdownEditor) -> MarkdownEditor {
     let editor = editor
         .theme(theme(&palette()))
+        // Menus stay in what the system bars and the keyboard leave visible.
+        .popup_area(notein_ui_kit::safe_frame())
         .syntax_reveal(show_marks())
         .decorator(SchemeEmbed::new(deep_link::SCHEME, |embed| {
             Chip {

@@ -61,6 +61,9 @@ pub(crate) struct HeaderChip {
 impl Component for HeaderChip {
     fn render(&self) -> impl IntoElement {
         let mut open = use_state(|| self.auto_open && self.editable);
+        // A finger opening the picker means looking through the list: its
+        // search field waits for a tap instead of raising the keyboard.
+        let mut by_touch = use_state(|| false);
         let mut hovered = use_state(|| false);
         let theme = &self.theme;
         let colors = &theme.colors;
@@ -85,6 +88,7 @@ impl Component for HeaderChip {
                     .on_pointer_leave(move |_| hovered.set_if_modified(false))
                     .on_press(move |event: Event<PressEventData>| {
                         event.stop_propagation();
+                        by_touch.set(matches!(event.data(), PressEventData::Touch(_)));
                         open.toggle();
                     })
             })
@@ -138,6 +142,7 @@ impl Component for HeaderChip {
                 block: *block,
                 current: current.clone(),
                 theme: self.theme.clone(),
+                focus_search: !by_touch(),
                 on_done: close.clone(),
             }
             .into_element(),
@@ -242,6 +247,7 @@ struct LanguagePicker {
     block: BlockId,
     current: String,
     theme: Rc<EditorTheme>,
+    focus_search: bool,
     on_done: EventHandler<()>,
 }
 
@@ -316,7 +322,7 @@ impl Component for LanguagePicker {
                 Input::new(draft)
                     .placeholder(labels.get(Label::SearchLanguage))
                     .theme_colors(input_colors(colors))
-                    .auto_focus(true)
+                    .auto_focus(self.focus_search)
                     .width(Size::fill())
                     .on_submit(submit),
             )
