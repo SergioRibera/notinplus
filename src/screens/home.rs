@@ -416,7 +416,8 @@ impl Component for Loaded {
         });
 
         let current_filter = filter.read().clone();
-        let listed = Arc::new(Shelf::build(data, folder, &current_filter, sort));
+        let shelves = use_hook(ShelfMemo::default);
+        let (listed, trash) = shelves.get(data, folder, &current_filter, sort);
         let at_root = folder == ROOT_FOLDER;
         let columns = Columns::fit(content_width);
         let body = Body {
@@ -437,7 +438,6 @@ impl Component for Loaded {
         };
         let heights: Vec<f32> = body.blocks.iter().map(|b| body.height(*b)).collect();
         let length = heights.len();
-        let trash = crate::screens::trash::groups(data).len();
         // Only the body scrolls: the bar with search, sync state and the
         // trash stays in reach.
         let scroll = VirtualScrollView::new_with_data(body, |item, body: &Body| {
@@ -528,4 +528,64 @@ fn up_one(folder: FolderId) {
         .and_then(|d| d.folder(folder).map(|f| f.parent))
         .unwrap_or(ROOT_FOLDER);
     Browse::get().enter(parent);
+}
+
+/// What the shelf was built from.
+#[derive(Clone)]
+struct ShelfKey {
+    data: Arc<LibraryData>,
+    folder: FolderId,
+    filter: Filter,
+    sort: crate::settings::SortOrder,
+    shared: std::collections::HashSet<crate::library::ItemId>,
+    /// Cards say how long ago a document changed.
+    minute: u64,
+}
+
+impl PartialEq for ShelfKey {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.data, &other.data)
+            && self.folder == other.folder
+            && self.filter == other.filter
+            && self.sort == other.sort
+            && self.shared == other.shared
+            && self.minute == other.minute
+    }
+}
+
+/// The last shelf Home built and the trash count beside it, kept until
+/// the library, the folder, the filter or the order change: Home renders
+/// again on every resize and selection.
+/// A built shelf, what it was built from and the trash count.
+type Built = (ShelfKey, Arc<Shelf>, usize);
+
+#[derive(Clone, Default)]
+struct ShelfMemo(std::rc::Rc<std::cell::RefCell<Option<Built>>>);
+
+impl ShelfMemo {
+    fn get(
+        &self,
+        data: &Arc<LibraryData>,
+        folder: FolderId,
+        filter: &Filter,
+        sort: crate::settings::SortOrder,
+    ) -> (Arc<Shelf>, usize) {
+        let key = ShelfKey {
+            data: Arc::clone(data),
+            folder,
+            filter: filter.clone(),
+            sort,
+            shared: crate::sync::shared_docs(),
+            minute: crate::format::now() / 60_000,
+        };
+        if let Some((held, built, count)) = self.0.borrow().as_ref()
+            && *held == key
+        {
+            return (Arc::clone(built), *count);
+        }
+        let shelf = Arc::new(Shelf::build(data, folder, filter, sort, &key.shared));
+        let trash = crate::screens::trash::groups(data).len();
+        *self.0.borrow_mut() = Some((key, Arc::clone(&shelf), trash));
+        (shelf, trash)
+    }
 }

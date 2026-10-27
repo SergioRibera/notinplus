@@ -142,6 +142,15 @@ pub fn snapshot() -> SyncSnapshot {
     snapshot_slot().clone().unwrap_or_default()
 }
 
+/// Every document some share carries.
+#[must_use]
+pub fn shared_docs() -> std::collections::HashSet<ItemId> {
+    snapshot_slot()
+        .as_ref()
+        .map(|s| s.shares.iter().flat_map(|v| v.docs.iter().copied()).collect())
+        .unwrap_or_default()
+}
+
 /// Where `item` stands against the other devices.
 #[must_use]
 pub fn doc_status(item: ItemId) -> DocStatus {

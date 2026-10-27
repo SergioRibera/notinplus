@@ -32,13 +32,30 @@ pub struct DocCardData {
     /// Card tint (paper colour for canvases).
     pub color: Option<Rgba>,
     pub background: BackgroundStyle,
-    pub thumbnail: Option<Bytes>,
+    pub thumbnail: Option<Thumb>,
     pub notebooks: usize,
     pub pinned: bool,
     pub shared: bool,
     /// The first words of the document, for its drawn cover.
     pub preview: Option<String>,
 }
+
+/// An encoded cover and the key it is decoded once under. Two thumbs
+/// are equal when their keys are, so a card compares without reading
+/// the image.
+#[derive(Clone, Debug)]
+pub struct Thumb {
+    pub key: u64,
+    pub bytes: Bytes,
+}
+
+impl PartialEq for Thumb {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+    }
+}
+
+impl Eq for Thumb {}
 
 /// Cover of one document.
 #[derive(Clone, Debug, PartialEq)]
@@ -144,10 +161,10 @@ impl Component for Cover {
             .height(Size::px(h))
             .corner_radius(tokens::radius::LG)
             .overflow(Overflow::Clip);
-        if let Some(bytes) = self.data.thumbnail.clone() {
+        if let Some(thumb) = self.data.thumbnail.clone() {
             return base
                 .background(self.paper(&p))
-                .child(ImageViewer::new(bytes).width(Size::px(w)).height(Size::px(h)))
+                .child(ImageViewer::new((thumb.key, thumb.bytes)).width(Size::px(w)).height(Size::px(h)))
                 .into_element();
         }
         let request = CoverRequest {

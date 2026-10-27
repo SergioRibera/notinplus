@@ -637,11 +637,7 @@ impl Component for PinnedRow {
         let selection = self.selection;
         let pinned = self.data.pinned();
         let last = pinned.len().saturating_sub(1);
-        let shared: Vec<ItemId> = crate::sync::snapshot()
-            .shares
-            .into_iter()
-            .flat_map(|s| s.docs)
-            .collect();
+        let shared = crate::sync::shared_docs();
         let cards: Vec<Element> = pinned
             .iter()
             .enumerate()

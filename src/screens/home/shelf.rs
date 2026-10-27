@@ -1,9 +1,14 @@
 //! What the library area of Home lists: the folders and documents of
 //! one folder, filtered by kind and sorted, ready for cards.
 
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+
 use freya::prelude::Bytes;
 
-use super::card::{DocCardData, FolderCardData};
+use super::card::{DocCardData, FolderCardData, Thumb};
 use crate::library::{FolderId, Item, ItemId, LibraryData};
 use crate::plugins::content::Glance;
 use crate::settings::SortOrder;
@@ -86,13 +91,14 @@ pub struct Shelf {
 impl Shelf {
     /// Contents of `folder` under `filter`, in `sort` order.
     #[must_use]
-    pub fn build(data: &LibraryData, folder: FolderId, filter: &Filter, sort: SortOrder) -> Self {
+    pub fn build(
+        data: &LibraryData,
+        folder: FolderId,
+        filter: &Filter,
+        sort: SortOrder,
+        shared: &HashSet<ItemId>,
+    ) -> Self {
         let now = crate::format::now();
-        let shared: Vec<ItemId> = crate::sync::snapshot()
-            .shares
-            .into_iter()
-            .flat_map(|s| s.docs)
-            .collect();
         let mut items: Vec<&Item> = data
             .items_of(folder)
             .into_iter()
@@ -120,17 +126,24 @@ impl Shelf {
                 }
             }
         }
+        let mut inside = Inside::of(data, folders.iter().map(|f| f.id));
         Self {
             folders: folders
                 .into_iter()
-                .map(|f| FolderEntry {
-                    id: f.id,
-                    card: FolderCardData {
-                        name: f.name.clone(),
-                        color: f.color,
-                        count: data.items_of(f.id).len() + data.folders_of(f.id).len(),
-                        previews: latest(data, f.id, now),
-                    },
+                .map(|f| {
+                    let (count, latest) = inside.take(f.id);
+                    FolderEntry {
+                        id: f.id,
+                        card: FolderCardData {
+                            name: f.name.clone(),
+                            color: f.color,
+                            count,
+                            previews: latest
+                                .into_iter()
+                                .map(|item| card(data, item, false, now))
+                                .collect(),
+                        },
+                    }
                 })
                 .collect(),
             docs: items
@@ -149,15 +162,40 @@ impl Shelf {
     }
 }
 
-/// Covers of the three documents last changed in `folder`, newest first.
-fn latest(data: &LibraryData, folder: FolderId, now: u64) -> Vec<DocCardData> {
-    let mut items = data.items_of(folder);
-    items.sort_by_key(|i| std::cmp::Reverse(i.updated_at));
-    items
-        .into_iter()
-        .take(3)
-        .map(|item| card(data, item, false, now))
-        .collect()
+/// How many entries each listed folder holds and its three documents
+/// changed last, newest first, gathered in one pass over the library.
+struct Inside<'a> {
+    folders: HashMap<FolderId, (usize, Vec<&'a Item>)>,
+}
+
+impl<'a> Inside<'a> {
+    fn of(data: &'a LibraryData, listed: impl Iterator<Item = FolderId>) -> Self {
+        let mut folders: HashMap<FolderId, (usize, Vec<&'a Item>)> =
+            listed.map(|id| (id, (0, Vec::new()))).collect();
+        if folders.is_empty() {
+            return Self { folders };
+        }
+        for sub in data.live_folders() {
+            if let Some((count, _)) = folders.get_mut(&sub.parent) {
+                *count += 1;
+            }
+        }
+        for item in data.live_items() {
+            if let Some((count, latest)) = folders.get_mut(&item.folder) {
+                *count += 1;
+                let at = latest.partition_point(|held| held.updated_at >= item.updated_at);
+                if at < 3 {
+                    latest.insert(at, item);
+                    latest.truncate(3);
+                }
+            }
+        }
+        Self { folders }
+    }
+
+    fn take(&mut self, folder: FolderId) -> (usize, Vec<&'a Item>) {
+        self.folders.remove(&folder).unwrap_or_default()
+    }
 }
 
 /// Card content of `item`.
@@ -177,10 +215,21 @@ pub fn card(data: &LibraryData, item: &Item, shared: bool, now: u64) -> DocCardD
         meta,
         color: item.color,
         background: item.background,
-        thumbnail: item.thumbnail.clone().map(Bytes::from_owner),
+        thumbnail: item.thumbnail.as_ref().map(|cover| thumb(item.id, cover)),
         notebooks: data.live_notebooks_of(item.id).len(),
         pinned: data.is_pinned(item.id),
         shared,
         preview: glance.preview,
+    }
+}
+
+/// `cover` shared with the card, keyed by the item and the very bytes
+/// it holds: a new cover is a new allocation.
+fn thumb(id: ItemId, cover: &Arc<[u8]>) -> Thumb {
+    let mut hasher = DefaultHasher::new();
+    (id, cover.as_ptr() as usize, cover.len()).hash(&mut hasher);
+    Thumb {
+        key: hasher.finish(),
+        bytes: Bytes::from_owner(Arc::clone(cover)),
     }
 }
