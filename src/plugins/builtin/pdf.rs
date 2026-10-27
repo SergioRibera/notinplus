@@ -475,7 +475,7 @@ mod tests {
     #[test]
     fn snippets_keep_context_around_the_match() {
         let text = "La adopción no es una metáfora legal fría sino un acto de amor.";
-        let s = snippet(text, "metáfora").expect("found");
+        let s = snippet(text, &notein_plugin::fold("metáfora")).expect("found");
         assert!(s.contains("metáfora"));
         assert!(snippet(text, "tribunal").is_none());
     }
