@@ -14,8 +14,12 @@
 //! * [`bodies`] — on-disk `.notinplus` + PDF blob helpers.
 //!
 //! The top-level [`Library`] type wires the three together, keeps the
-//! decoded index in memory, and reflects every mutation back to disk
-//! before returning.
+//! decoded index in memory, and hands every mutation to the store before
+//! returning.
+
+// The facade stays async: callers are written against a store that may
+// have to wait, even where a write returns before it reaches the disk.
+#![allow(clippy::unused_async)]
 
 pub mod bodies;
 pub mod error;
