@@ -206,6 +206,8 @@ pub fn build(
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
+    // Files linked from several items of a folder are written once.
+    let mut written = std::collections::HashSet::new();
     for (done, id) in items.iter().enumerate() {
         progress(done);
         let Some(item) = data.item(*id) else {
@@ -233,8 +235,20 @@ pub fn build(
             .and_then(|_| bodies::read_pdf(item.id).ok());
         let meta = crate::plugins::content::meta(item);
         let mut files = Vec::new();
+        let mut linked = Vec::new();
         if let Some(file) = kind.export(meta, &content, attachment.as_deref()) {
             files.push((format!("{base}.{}", file.extension), file.bytes));
+            // Beside the file, so its relative links (`assets/x.png`) keep working.
+            let assets = if folder.is_empty() {
+                bodies::ASSETS_SUBDIR.to_owned()
+            } else {
+                format!("{folder}/{}", bodies::ASSETS_SUBDIR)
+            };
+            linked.extend(
+                bodies::read_assets(item.id)
+                    .into_iter()
+                    .map(|(name, bytes)| (format!("{assets}/{name}"), bytes)),
+            );
         }
         let marks = kind.marks(&content);
         if !marks.is_empty() {
@@ -246,6 +260,12 @@ pub fn build(
         for (path, bytes) in files {
             zip.start_file(path, options)?;
             zip.write_all(&bytes)?;
+        }
+        for (path, bytes) in linked {
+            if written.insert(path.clone()) {
+                zip.start_file(path, options)?;
+                zip.write_all(&bytes)?;
+            }
         }
     }
     Ok(zip.finish()?.into_inner())
