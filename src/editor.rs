@@ -7,6 +7,9 @@
 //! markdown-marks setting.
 
 mod labels;
+mod live;
+
+pub use live::LIVE_QUOTE;
 
 use std::borrow::Cow;
 use std::rc::Rc;
@@ -74,6 +77,7 @@ pub fn configure(editor: MarkdownEditor) -> MarkdownEditor {
             }
             .into_element()
         }))
+        .decorator(live::LiveQuotes)
         .on_link(|url| {
             crate::plugins::navigate::open(&SourceRef::from_link(url), Placement::Preferred);
         })

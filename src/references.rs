@@ -239,6 +239,48 @@ pub fn quote_markdown(quote: &Quote, target: &SourceRef) -> String {
         .join("\n>\n")
 }
 
+/// Markdown of `quote` as a quote that keeps showing what `target` holds
+/// now; the lines written are what it held when inserted.
+#[must_use]
+pub fn live_quote_markdown(quote: &Quote, target: &SourceRef) -> String {
+    format!(
+        "> [!{}]\n>\n{}",
+        crate::editor::LIVE_QUOTE,
+        quote_markdown(quote, target)
+    )
+}
+
+/// A line of quoted content as it reads, without markdown.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QuoteLine {
+    pub text: String,
+    pub heading: bool,
+    /// List nesting; `None` outside a list.
+    pub bullet: Option<u8>,
+}
+
+/// The blocks of `markdown` as plain lines.
+#[must_use]
+pub fn quote_text(markdown: &str) -> Vec<QuoteLine> {
+    Document::parse(markdown)
+        .blocks()
+        .iter()
+        .filter_map(|block| {
+            let line = |content: &Inline, heading, bullet| QuoteLine {
+                text: content.plain_text().trim().to_owned(),
+                heading,
+                bullet,
+            };
+            let line = match &block.kind {
+                BlockKind::Heading { content, .. } => line(content, true, None),
+                BlockKind::ListItem { depth, content, .. } => line(content, false, Some(*depth)),
+                kind => line(kind.content()?, false, None),
+            };
+            (!line.text.is_empty()).then_some(line)
+        })
+        .collect()
+}
+
 /// One line per block of `markdown`, in the shape a quote keeps.
 fn quote_lines(markdown: &str) -> Vec<String> {
     let document = Document::parse(markdown);
@@ -345,6 +387,43 @@ pub fn insert_in_notebook(from: ItemId, target: SourceRef) {
 #[cfg(test)]
 mod quote_tests {
     use super::*;
+
+    #[test]
+    fn a_live_quote_reads_back_as_one_transclusion_of_its_source() {
+        let quote = Quote {
+            body: "Sea la luz.".to_owned(),
+            source: "Génesis 1:3 (RVR1960)".to_owned(),
+        };
+        let target = SourceRef::External {
+            url: "https://example.com".to_owned(),
+        };
+        let document = Document::parse(&live_quote_markdown(&quote, &target));
+        let BlockKind::Transclusion(live) = &document.blocks()[0].kind else {
+            panic!("{:?}", document.blocks());
+        };
+        assert_eq!(live.kind, crate::editor::LIVE_QUOTE);
+        assert_eq!(live.url, "https://example.com");
+        assert_eq!(live.label, "Génesis 1:3 (RVR1960)");
+        assert_eq!(live.fallback, "Sea la luz.");
+    }
+
+    #[test]
+    fn quoted_text_drops_markdown_but_keeps_the_shape() {
+        let lines = quote_text("## Tema\n\nUna *idea*.\n\n- uno\n  - dos");
+        let shape: Vec<_> = lines
+            .iter()
+            .map(|l| (l.text.as_str(), l.heading, l.bullet))
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                ("Tema", true, None),
+                ("Una idea.", false, None),
+                ("uno", false, Some(0)),
+                ("dos", false, Some(1)),
+            ]
+        );
+    }
 
     #[test]
     fn a_quote_becomes_plain_quoted_lines_closed_by_its_source() {
