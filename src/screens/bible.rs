@@ -196,12 +196,76 @@ pub fn open_catalog() {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Catalog;
 
+/// Most chips the language filter shows; the rest are a search away.
+const LANGUAGE_CHIPS: usize = 12;
+/// Most rows the list builds at once.
+const MAX_ROWS: usize = 120;
+
+/// Whether `entry` matches the lower-cased `needle` by name, id or
+/// language.
+fn matches(entry: &BibleEntryView, needle: &str) -> bool {
+    needle.is_empty()
+        || label(entry).to_lowercase().contains(needle)
+        || entry
+            .name_english
+            .as_deref()
+            .is_some_and(|n| n.to_lowercase().contains(needle))
+        || entry.id.to_lowercase().contains(needle)
+        || entry
+            .language
+            .as_deref()
+            .is_some_and(|l| l.to_lowercase().contains(needle))
+}
+
+/// The languages to offer as chips: the system one first, then the ones
+/// with the most translations, and `chosen` even when it is neither.
+fn language_chips(
+    view: &CatalogueView,
+    system: &str,
+    chosen: Option<&str>,
+) -> Vec<(String, String)> {
+    let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for bible in &view.bibles {
+        *counts.entry(bible.language_code.as_str()).or_default() += 1;
+    }
+    let mut languages: Vec<(&str, &str, usize)> = view
+        .languages
+        .iter()
+        .filter_map(|l| {
+            counts
+                .get(l.id.as_str())
+                .map(|n| (l.id.as_str(), l.local.as_str(), *n))
+        })
+        .collect();
+    languages.sort_by(|a, b| {
+        (b.0 == system)
+            .cmp(&(a.0 == system))
+            .then(b.2.cmp(&a.2))
+            .then(a.1.cmp(b.1))
+    });
+    let mut chips: Vec<(String, String)> = languages
+        .iter()
+        .take(LANGUAGE_CHIPS)
+        .map(|(id, name, _)| ((*id).to_owned(), (*name).to_owned()))
+        .collect();
+    if let Some(code) = chosen
+        && !chips.iter().any(|(id, _)| id == code)
+        && let Some((id, name, _)) = languages.iter().find(|(id, _, _)| *id == code)
+    {
+        chips.push(((*id).to_owned(), (*name).to_owned()));
+    }
+    chips
+}
+
 impl Component for Catalog {
     fn render(&self) -> impl IntoElement {
         let _installs = *use_installs().read();
         let catalogue = use_catalogue();
         let query = use_state(String::new);
-        let mut language = use_state(|| Some(catalogue_language(&system_language()).to_owned()));
+        let system = catalogue_language(&system_language());
+        // `None` until the reader picks a chip: then the system language
+        // when the catalogue has it, every language otherwise.
+        let mut language = use_state(|| None::<Option<String>>);
         let current = catalogue.read().clone();
         let Some(result) = current else {
             return rect()
@@ -220,54 +284,57 @@ impl Component for Catalog {
         };
         let installed = installed_ids();
         let needle = query.read().trim().to_lowercase();
-        let chosen = language.read().clone();
-        let mut languages: Vec<(String, String)> = view
-            .languages
-            .iter()
-            .filter(|l| {
-                view.bibles
-                    .iter()
-                    .any(|b| b.language_code == l.id)
-            })
-            .map(|l| (l.id.clone(), l.local.clone()))
-            .collect();
-        languages.sort_by(|a, b| a.1.cmp(&b.1));
+        let chosen = language.read().clone().unwrap_or_else(|| {
+            view.bibles
+                .iter()
+                .any(|b| b.language_code == system)
+                .then(|| system.to_owned())
+        });
         let chips = std::iter::once(
             Tag::new("Todos")
                 .active(chosen.is_none())
-                .on_press(move |_| language.set(None))
+                .on_press(move |_| language.set(Some(None)))
                 .into_element(),
         )
-        .chain(languages.into_iter().take(14).map(|(id, name)| {
-            let on = chosen.as_deref() == Some(id.as_str());
-            Tag::new(name)
-                .active(on)
-                .on_press(move |_| language.set(Some(id.clone())))
-                .into_element()
-        }));
-        let rows: Vec<Element> = view
+        .chain(
+            language_chips(&view, system, chosen.as_deref())
+                .into_iter()
+                .map(|(id, name)| {
+                    let on = chosen.as_deref() == Some(id.as_str());
+                    Tag::new(name)
+                        .key(id.clone())
+                        .active(on)
+                        .on_press(move |_| language.set(Some(Some(id.clone()))))
+                        .into_element()
+                }),
+        );
+        // A search looks through every language: the chip only narrows
+        // the list while browsing.
+        let shown: Vec<&BibleEntryView> = view
             .bibles
             .iter()
-            .filter(|b| chosen.as_deref().is_none_or(|code| b.language_code == code))
             .filter(|b| {
-                needle.is_empty()
-                    || label(b).to_lowercase().contains(&needle)
-                    || b.id.to_lowercase().contains(&needle)
+                !needle.is_empty() || chosen.as_deref().is_none_or(|code| b.language_code == code)
             })
-            .take(120)
+            .filter(|b| matches(b, &needle))
+            .collect();
+        let total = shown.len();
+        let rows: Vec<Element> = shown
+            .into_iter()
+            .take(MAX_ROWS)
             .map(|b| {
                 Row {
                     entry: b.clone(),
                     installed: installed.contains(&b.id),
+                    state: installer().and_then(|i| i.state(&b.id)),
                 }
                 .into_element()
             })
             .collect();
-        let empty = rows.is_empty();
         rect()
             .width(Size::fill())
             .spacing(12.0)
-            .child(SearchField::new(query, "Buscar una traducción").height(38.0))
+            .child(SearchField::new(query, "Buscar por nombre o idioma").height(38.0))
             .child(
                 rect()
                     .width(Size::fill())
@@ -277,25 +344,34 @@ impl Component for Catalog {
                     .children(chips),
             )
             .child(Group::default().children(rows))
-            .maybe_child(
-                empty
-                    .then(|| Text::new("No hay traducciones con ese nombre.").role(TextRole::Hint)),
-            )
+            .maybe_child((total == 0).then(|| {
+                Text::new("No hay traducciones con ese nombre.").role(TextRole::Hint)
+            }))
+            .maybe_child((total > MAX_ROWS).then(|| {
+                Text::new(format!(
+                    "Se muestran {MAX_ROWS} de {total}. Buscá por nombre o idioma para encontrar el resto."
+                ))
+                .role(TextRole::Hint)
+            }))
             .into_element()
     }
 }
 
+/// One translation of the catalog. `state` travels as a prop: read inside
+/// `render`, a download moving would not render the row again, since its
+/// other props stay equal.
 #[derive(Clone, Debug, PartialEq)]
 struct Row {
     entry: BibleEntryView,
     installed: bool,
+    state: Option<InstallState>,
 }
 
 impl Component for Row {
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let id = self.entry.id.clone();
-        let state = installer().and_then(|i| i.state(&id));
+        let state = self.state.clone();
         let trailing: Element = match (&state, self.installed) {
             (Some(InstallState::Downloading(step)), _) => {
                 let fraction = step.fraction();
