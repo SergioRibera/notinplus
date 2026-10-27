@@ -51,8 +51,8 @@ pub(super) fn use_others(reader: &Reader, gesture: Gesture) -> Rc<Vec<Other>> {
         move || presence.peers()
     });
     use_hook({
-        let presence = Arc::clone(&presence);
-        move || follow(presence, peers)
+        let (presence, reader) = (Arc::clone(&presence), reader.clone());
+        move || follow(presence, peers, reader)
     });
     use_side_effect({
         let (presence, reader) = (Arc::clone(&presence), reader.clone());
@@ -82,11 +82,26 @@ pub(super) fn use_others(reader: &Reader, gesture: Gesture) -> Rc<Vec<Other>> {
     Rc::new(others)
 }
 
-fn follow(presence: Arc<dyn Presence>, mut peers: State<Vec<Peer>>) {
+/// Keep `peers` current and, while following one of them, read where
+/// they read.
+fn follow(presence: Arc<dyn Presence>, mut peers: State<Vec<Peer>>, reader: Reader) {
     let changes = presence.changes();
     spawn(async move {
+        // Their place last taken, so only their moves move this reader.
+        let mut taken: Option<(String, u16, Option<u16>)> = None;
         while changes.recv_async().await.is_ok() {
             peers.set(presence.peers());
+            let Some((book, chapter, verses)) =
+                presence.followed().and_then(|peer| decode(&peer.state))
+            else {
+                taken = None;
+                continue;
+            };
+            let place = (book, chapter, verses.first().copied());
+            if taken.as_ref() != Some(&place) {
+                reader.go(&place.0, place.1, place.2.unwrap_or(1));
+                taken = Some(place);
+            }
         }
     });
 }

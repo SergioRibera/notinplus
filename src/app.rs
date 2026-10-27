@@ -308,6 +308,7 @@ impl Component for AppShell {
                 crate::components::ModalPortal::new(area)
             })
             .child(notein_ui_kit::ToastHost::new(insets.bottom))
+            .child(crate::follow::FollowFrame { top: insets.top })
     }
 }
 

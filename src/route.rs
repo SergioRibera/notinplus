@@ -203,6 +203,7 @@ fn load_doc_into_board(mount: CanvasMount, board: Arc<Mutex<Board>>) {
                     Arc::clone(&board),
                     view_rx,
                 );
+                spawn_follow_worker(id, Arc::downgrade(&board));
             } else {
                 // Ephemeral: no sinks installed; previous mount's
                 // sinks already dropped with its board.
@@ -339,11 +340,31 @@ fn spawn_policy_worker(id: ItemId, board: Weak<Mutex<Board>>) {
 }
 
 fn spawn_view_worker(key: prefs::ViewKey, board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
+    use notein_plugin::Presence as _;
     spawn(async move {
+        let presence = crate::sync::presence::open(key.item);
+        // Say where this board looks right away, not only once it moves,
+        // so whoever follows lands on it.
+        for _ in 0..10 {
+            async_io::Timer::after(Duration::from_millis(100)).await;
+            let place = {
+                let guard = lock(&board);
+                guard
+                    .world_center()
+                    .map(|(wx, wy)| (wx, wy, guard.viewport().scale))
+            };
+            if let Some((wx, wy, scale)) = place {
+                presence.publish(encode_view(wx, wy, scale));
+                break;
+            }
+        }
         while rx.recv_async().await.is_ok() {
             while rx.try_recv().is_ok() {}
             let view = {
                 let guard = lock(&board);
+                if let Some((wx, wy)) = guard.world_center() {
+                    presence.publish(encode_view(wx, wy, guard.viewport().scale));
+                }
                 prefs::DocView::from_viewport(guard.viewport())
             };
             if let Err(err) = prefs::save_view(key, view) {
@@ -410,4 +431,49 @@ fn sync_siblings(item: ItemId, board: &Arc<Mutex<Board>>) {
             log::error!("sibling sync import id={item:?}: {err}");
         }
     }
+}
+
+/// Where a board looks, as the others receive it: the world point in the
+/// middle and the zoom, little endian `f32`s.
+fn encode_view(wx: f32, wy: f32, scale: f32) -> Vec<u8> {
+    [wx, wy, scale]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect()
+}
+
+fn decode_view(bytes: &[u8]) -> Option<(f32, f32, f32)> {
+    let mut values = bytes
+        .chunks_exact(4)
+        .map(|chunk| chunk.try_into().map(f32::from_le_bytes));
+    Some((
+        values.next()?.ok()?,
+        values.next()?.ok()?,
+        values.next()?.ok()?,
+    ))
+}
+
+/// While this device follows someone looking at `item`, show what they
+/// see. Ends with the board.
+fn spawn_follow_worker(item: ItemId, board: std::sync::Weak<Mutex<Board>>) {
+    use notein_plugin::Presence as _;
+    spawn(async move {
+        let presence = crate::sync::presence::open(item);
+        let changes = presence.changes();
+        while changes.recv_async().await.is_ok() {
+            let Some(board) = board.upgrade() else {
+                return;
+            };
+            let Some((wx, wy, scale)) = presence
+                .followed()
+                .and_then(|peer| decode_view(&peer.state))
+            else {
+                continue;
+            };
+            let target = lock(&board).view_at(wx, wy, scale);
+            if let Some(target) = target {
+                crate::canvas::glide(&board, target);
+            }
+        }
+    });
 }

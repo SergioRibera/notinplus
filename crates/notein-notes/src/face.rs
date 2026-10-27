@@ -109,7 +109,7 @@ impl Component for NotePage {
         });
         use_hook({
             let presence = Arc::clone(&presence);
-            move || follow_peers(presence, peers)
+            move || follow_peers(presence, peers, controller, scroll)
         });
         use_side_effect({
             let presence = Arc::clone(&presence);
@@ -222,15 +222,37 @@ fn follow_remote(body: Arc<dyn TextBody>, mut markdown: State<String>) {
     });
 }
 
-/// Keep `peers` up to date with whoever else has the note open.
-fn follow_peers(presence: Arc<dyn Presence>, mut peers: State<Vec<Peer>>) {
+/// Keep `peers` up to date with whoever else has the note open, and
+/// while following one of them keep their caret in view.
+fn follow_peers(
+    presence: Arc<dyn Presence>,
+    mut peers: State<Vec<Peer>>,
+    controller: EditorController,
+    mut scroll: ScrollController,
+) {
     let changes = presence.changes();
     spawn(async move {
         while changes.recv_async().await.is_ok() {
             peers.set(presence.peers());
+            let Some(caret) = presence.followed().as_ref().and_then(remote_caret) else {
+                continue;
+            };
+            let offset = controller
+                .document()
+                .targets()
+                .get(caret.position.target)
+                .and_then(|target| controller.block_offset(target.block));
+            if let Some(offset) = offset {
+                // A little room above, so the line is not at the very edge.
+                #[allow(clippy::cast_possible_truncation, reason = "pixel offsets")]
+                scroll.scroll_to_y(-((offset - FOLLOW_MARGIN).max(0.0) as i32));
+            }
         }
     });
 }
+
+/// Space kept above a followed caret.
+const FOLLOW_MARGIN: f32 = 120.0;
 
 /// This person's caret as the others receive it: field, anchor and head
 /// as little endian `u32`s; empty without a caret.

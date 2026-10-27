@@ -24,6 +24,9 @@ struct Here {
     name: String,
     state: Vec<u8>,
     seen: Instant,
+    /// When they last published a place here: the document they are
+    /// working in is the one they moved in last.
+    moved: Instant,
 }
 
 type Peers = HashMap<ItemId, HashMap<DeviceId, Here>>;
@@ -32,6 +35,10 @@ static PEERS: Mutex<Option<Peers>> = Mutex::new(None);
 static WATCHERS: Mutex<Vec<(ItemId, flume::Sender<()>)>> = Mutex::new(Vec::new());
 /// This device's presence per open document.
 static MINE: Mutex<Vec<(ItemId, Weak<DocPresence>)>> = Mutex::new(Vec::new());
+/// Whom this device follows: its view goes wherever theirs does.
+static FOLLOWING: Mutex<Option<DeviceId>> = Mutex::new(None);
+/// Woken on any arrival, move, departure or follow change, anywhere.
+static ALL_WATCHERS: Mutex<Vec<flume::Sender<()>>> = Mutex::new(Vec::new());
 
 fn peers() -> MutexGuard<'static, Option<Peers>> {
     PEERS.lock().unwrap_or_else(PoisonError::into_inner)
@@ -42,6 +49,82 @@ fn notify(item: ItemId) {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .retain(|(id, tx)| !tx.is_disconnected() && (*id != item || tx.send(()).is_ok()));
+    notify_all();
+}
+
+fn notify_all() {
+    ALL_WATCHERS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .retain(|tx| tx.send(()).is_ok());
+}
+
+/// Wake on any change to anyone's presence, or to whom this device
+/// follows.
+#[must_use]
+pub fn watch_all() -> flume::Receiver<()> {
+    let (tx, rx) = flume::unbounded();
+    ALL_WATCHERS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push(tx);
+    ensure_ticker();
+    rx
+}
+
+/// Follow `device`, or stop with `None`.
+pub fn follow(device: Option<DeviceId>) {
+    let mut following = FOLLOWING.lock().unwrap_or_else(PoisonError::into_inner);
+    if *following == device {
+        return;
+    }
+    *following = device;
+    drop(following);
+    // Every open document may have to move.
+    let items: Vec<ItemId> = peers()
+        .as_ref()
+        .map(|all| all.keys().copied().collect())
+        .unwrap_or_default();
+    for item in items {
+        WATCHERS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|(id, tx)| !tx.is_disconnected() && (*id != item || tx.send(()).is_ok()));
+    }
+    notify_all();
+}
+
+/// Whom this device follows.
+#[must_use]
+pub fn following() -> Option<DeviceId> {
+    *FOLLOWING.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The document `device` was most recently in, with its name and color.
+#[must_use]
+pub fn whereabouts(device: DeviceId) -> Option<(ItemId, Peer)> {
+    let guard = peers();
+    guard
+        .as_ref()?
+        .iter()
+        .filter_map(|(item, here)| {
+            let seen = here
+                .get(&device)
+                .filter(|here| here.seen.elapsed() < GONE_AFTER)?;
+            Some((*item, seen))
+        })
+        .max_by_key(|(_, here)| here.moved)
+        .map(|(item, here)| {
+            (
+                item,
+                Peer {
+                    id: device.0,
+                    name: here.name.clone(),
+                    color: color(device),
+                    state: here.state.clone(),
+                },
+            )
+        })
 }
 
 /// The color everything of `device` is drawn in.
@@ -65,11 +148,15 @@ pub(super) fn seen(item: ItemId, from: DeviceId, name: &str, state: Option<Vec<u
         name: name.to_owned(),
         state: Vec::new(),
         seen: Instant::now(),
+        moved: Instant::now(),
     });
     entry.seen = Instant::now();
     name.clone_into(&mut entry.name);
     let moved = state.is_some_and(|state| {
         let changed = entry.state != state;
+        if changed {
+            entry.moved = Instant::now();
+        }
         entry.state = state;
         changed
     });
@@ -191,6 +278,15 @@ impl Presence for DocPresence {
     fn changes(&self) -> flume::Receiver<()> {
         watch(self.item)
     }
+
+    fn followed(&self) -> Option<Peer> {
+        let device = following()?;
+        here(self.item).into_iter().find(|peer| peer.id == device.0)
+    }
+
+    fn stop_following(&self) {
+        follow(None);
+    }
 }
 
 impl Drop for DocPresence {
@@ -242,6 +338,12 @@ fn sweep() {
     for item in gone {
         notify(item);
     }
+    // Following someone who left everywhere ends.
+    if let Some(device) = following()
+        && whereabouts(device).is_none()
+    {
+        follow(None);
+    }
 }
 
 #[cfg(test)]
@@ -264,5 +366,24 @@ mod tests {
         assert!(changes.try_recv().is_err());
         left(item, ana);
         assert!(here(item).is_empty());
+    }
+
+    #[test]
+    fn following_goes_where_they_last_moved() {
+        let (notes, bible) = (ItemId([5; 16]), ItemId([6; 16]));
+        let beto = DeviceId([2; 32]);
+        seen(notes, beto, "Beto", Some(vec![1]));
+        std::thread::sleep(Duration::from_millis(5));
+        seen(bible, beto, "Beto", Some(vec![2]));
+        follow(Some(beto));
+        assert_eq!(following(), Some(beto));
+        assert_eq!(whereabouts(beto).map(|(item, _)| item), Some(bible));
+        let mine = open(bible);
+        assert_eq!(mine.followed().map(|peer| peer.state), Some(vec![2]));
+        assert!(open(notes).followed().is_some());
+        left(notes, beto);
+        left(bible, beto);
+        sweep();
+        assert_eq!(following(), None);
     }
 }

@@ -450,7 +450,8 @@ fn renders_remote_carets() {
 }
 
 fn table_caret_app() -> impl IntoElement {
-    let value = use_state(|| "Intro\n\n| Nombre | Estado |\n|---|---|\n| Ana | lista |\n".to_owned());
+    let value =
+        use_state(|| "Intro\n\n| Nombre | Estado |\n|---|---|\n| Ana | lista |\n".to_owned());
     rect()
         .expanded()
         .background(EditorTheme::dark().colors.surface)

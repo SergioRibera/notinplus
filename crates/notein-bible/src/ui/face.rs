@@ -146,7 +146,7 @@ impl Reader {
     }
 
     /// Go to `book` `chapter`, bring `verse` into view and wash it.
-    fn go(&self, book: &str, chapter: u16, verse: u16) {
+    pub(super) fn go(&self, book: &str, chapter: u16, verse: u16) {
         let mut state = self.state;
         if let Err(e) = state.write().jump_to(&self.db, book, chapter) {
             log::warn!("bible: go to {book} {chapter}: {e}");

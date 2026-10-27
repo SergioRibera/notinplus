@@ -31,6 +31,7 @@ pub mod editor;
 pub mod external;
 pub mod files;
 pub mod flows;
+pub mod follow;
 pub mod format;
 pub mod hooks;
 pub mod ids;

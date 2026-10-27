@@ -264,6 +264,12 @@ pub trait Presence: Send + Sync {
     fn peers(&self) -> Vec<Peer>;
     /// Fires when someone arrives, moves or leaves.
     fn changes(&self) -> flume::Receiver<()>;
+    /// The person this device follows, when they are in this document: the
+    /// face shows what they see (their page, their caret). Changes fire
+    /// [`Self::changes`].
+    fn followed(&self) -> Option<Peer>;
+    /// This person moved on their own: stop following.
+    fn stop_following(&self);
 }
 
 /// Something to send through the system share sheet.

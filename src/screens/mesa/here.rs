@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use freya::prelude::*;
 use notein_plugin::{Peer, Presence};
+use notein_sync::DeviceId;
 use notein_ui_kit::Avatar;
 use notein_ui_kit::theme::palette;
 
@@ -36,6 +37,15 @@ impl Component for HereNow {
                 }
             });
         });
+        let mut followed = use_state(presence::following);
+        use_hook(move || {
+            let changes = presence::watch_all();
+            spawn(async move {
+                while changes.recv_async().await.is_ok() {
+                    followed.set_if_modified(presence::following());
+                }
+            });
+        });
         let people = people.read();
         if people.is_empty() {
             return rect().into_element();
@@ -48,15 +58,23 @@ impl Component for HereNow {
             .margin((0.0, 6.0))
             .spacing(-6.0)
             .children(people.iter().take(SHOWN).map(|peer| {
+                let device = DeviceId(peer.id);
+                let is_followed = *followed.read() == Some(device);
                 rect()
                     .key(peer.id)
                     .corner_radius(SIZE)
                     .border(
                         Border::new()
-                            .fill(p.bg)
+                            .fill(if is_followed { color(peer) } else { p.bg })
                             .width(2.0)
                             .alignment(BorderAlignment::Outer),
                     )
+                    .cursor(CursorIcon::Pointer)
+                    // Following someone shows what they see; again, it stops.
+                    .on_press(move |event: Event<PressEventData>| {
+                        event.stop_propagation();
+                        presence::follow((!is_followed).then_some(device));
+                    })
                     .child(Avatar::new(initials(peer), color(peer)).size(SIZE))
                     .into_element()
             }))

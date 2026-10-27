@@ -836,6 +836,7 @@ impl Board {
         if !dx.is_finite() || !dy.is_finite() {
             return;
         }
+        stop_following();
         self.viewport.tx += dx;
         self.viewport.ty += dy;
         self.clamp_viewport_to_background();
@@ -851,6 +852,7 @@ impl Board {
         if !factor.is_finite() || factor <= 0.0 {
             return;
         }
+        stop_following();
         let old_scale = self.viewport.scale;
         let raw_new = (old_scale * factor).clamp(VIEWPORT_SCALE_MIN, VIEWPORT_SCALE_MAX);
         // Snap to exactly 1.0 whenever the target lands within a 2%
@@ -1530,6 +1532,30 @@ impl Board {
         self.view_centered_on(wx, wy).is_some_and(|view| {
             self.set_viewport(view);
             true
+        })
+    }
+
+    /// The world point in the middle of the surface; `None` while its
+    /// size is unknown.
+    #[must_use]
+    pub fn world_center(&self) -> Option<(f32, f32)> {
+        let (sw, sh) = self.last_surface_size;
+        (sw > 0.0 && sh > 0.0).then(|| self.viewport.screen_to_world(sw * 0.5, sh * 0.5))
+    }
+
+    /// The view with world point `(wx, wy)` in the middle at `scale`;
+    /// `None` while the surface size is unknown.
+    #[must_use]
+    pub fn view_at(&self, wx: f32, wy: f32, scale: f32) -> Option<Viewport> {
+        let (sw, sh) = self.last_surface_size;
+        if !wx.is_finite() || !wy.is_finite() || !scale.is_finite() || sw <= 0.0 || sh <= 0.0 {
+            return None;
+        }
+        let scale = scale.clamp(VIEWPORT_SCALE_MIN, VIEWPORT_SCALE_MAX);
+        Some(Viewport {
+            tx: sw.mul_add(0.5, -(wx * scale)),
+            ty: sh.mul_add(0.5, -(wy * scale)),
+            scale,
         })
     }
 
@@ -3626,6 +3652,14 @@ fn lerp_u8(from: u8, to: u8, t: f32) -> u8 {
     let av = f32::from(from);
     let bv = f32::from(to);
     (bv - av).mul_add(t, av).round().clamp(0.0, 255.0) as u8
+}
+
+/// The person moved the view themselves: whoever they followed, they
+/// stop.
+fn stop_following() {
+    if crate::sync::presence::following().is_some() {
+        crate::sync::presence::follow(None);
+    }
 }
 
 #[cfg(test)]
