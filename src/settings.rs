@@ -218,6 +218,9 @@ pub struct NotesSettings {
     pub show_markdown_marks: bool,
     /// Tapping a reference chip opens the target in the other pane.
     pub open_refs_beside: bool,
+    /// Quoted content keeps showing what its source holds now, instead
+    /// of being copied as text of the note.
+    pub live_quotes: bool,
 }
 
 impl Default for NotesSettings {
@@ -225,6 +228,7 @@ impl Default for NotesSettings {
         Self {
             show_markdown_marks: false,
             open_refs_beside: true,
+            live_quotes: true,
         }
     }
 }

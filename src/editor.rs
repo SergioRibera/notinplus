@@ -60,6 +60,12 @@ pub fn show_marks() -> bool {
     crate::settings::SettingsStore::try_get().is_some_and(|s| s.read().notes.show_markdown_marks)
 }
 
+/// Whether quoted content is inserted as a live quote.
+#[must_use]
+pub fn live_quotes() -> bool {
+    crate::settings::SettingsStore::try_get().is_none_or(|s| s.read().notes.live_quotes)
+}
+
 /// A configured [`MarkdownEditor`] over `value`.
 pub fn editor(value: impl Into<Writable<String>>, controller: EditorController) -> MarkdownEditor {
     configure(MarkdownEditor::new(value).controller(controller))
@@ -135,6 +141,7 @@ fn suggestion(found: references::Suggestion) -> Suggestion {
 /// Entry that inserts what `found` points at as a block quote.
 fn quote_suggestion(found: references::Suggestion) -> Suggestion {
     let target = found.target;
+    let live = live_quotes();
     let run = SuggestionRun::new(move |controller| {
         let data = LibraryView::get().data();
         let Some(quote) = references::quote(&target, data.as_deref()) else {
@@ -150,10 +157,16 @@ fn quote_suggestion(found: references::Suggestion) -> Suggestion {
         {
             kind.cited(notein_plugin::DocId(*item), anchor);
         }
-        controller.insert_markdown(&references::quote_markdown(&quote, &target));
+        let markdown = if live {
+            references::live_quote_markdown(&quote, &target)
+        } else {
+            references::quote_markdown(&quote, &target)
+        };
+        controller.insert_markdown(&markdown);
     });
+    let mode = if live { "bloque vivo" } else { "copia fija" };
     Suggestion::new(found.label, SuggestionAction::Run(run))
-        .detail(found.subtitle)
+        .detail(format!("{} · {mode}", found.subtitle))
         .icon("❝")
 }
 

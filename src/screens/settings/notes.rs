@@ -52,10 +52,91 @@ fn typing_preview(marks: bool) -> Rect {
         )
 }
 
+/// A quoted verse as it sits in a note: the text, its source, then either
+/// the mark of a quote that follows its source or a caret inside the text.
+fn quote_preview(live: bool) -> Rect {
+    let p = palette();
+    let text = rect()
+        .horizontal()
+        .cross_align(Alignment::Center)
+        .spacing(2.0)
+        .child(
+            label()
+                .text("Sea la luz.")
+                .font_size(tokens::text::BODY)
+                .color(p.t1)
+                .max_lines(1),
+        )
+        .maybe(!live, |r| {
+            r.child(
+                rect()
+                    .width(Size::px(2.0))
+                    .height(Size::px(18.0))
+                    .corner_radius(1.0)
+                    .background(p.accent),
+            )
+        });
+    let source = rect()
+        .width(Size::fill())
+        .horizontal()
+        .content(Content::Flex)
+        .cross_align(Alignment::Center)
+        .spacing(6.0)
+        .child(
+            label()
+                .width(Size::flex(1.0))
+                .text("— Génesis 1:3")
+                .font_size(tokens::text::CAPTION)
+                .color(p.t2)
+                .max_lines(1),
+        )
+        .maybe(live, |r| {
+            r.child(
+                SvgViewer::new(freya::icons::lucide::refresh_cw())
+                    .color(p.accent)
+                    .width(Size::px(12.0))
+                    .height(Size::px(12.0)),
+            )
+        });
+    rect()
+        .width(Size::fill())
+        .padding(8.0)
+        .corner_radius(tokens::radius::MD)
+        .background(p.bg)
+        .child(
+            rect()
+                .width(Size::fill())
+                .padding((2.0, 10.0))
+                .spacing(4.0)
+                .border(
+                    Border::new()
+                        .width(BorderWidth {
+                            top: 0.0,
+                            right: 0.0,
+                            bottom: 0.0,
+                            left: 3.0,
+                        })
+                        .alignment(BorderAlignment::Inner)
+                        .fill(if live { p.kinds.bible } else { p.line_strong }),
+                )
+                .child(text)
+                .child(source),
+        )
+}
+
 impl Component for Notes {
     fn render(&self) -> impl IntoElement {
         let store = SettingsStore::get();
         let notes = store.read().notes;
+        let quoting = |live: bool, title: &'static str, detail: &'static str| {
+            ChoiceCard::new(quote_preview(live), title)
+                .detail(detail)
+                .chosen(notes.live_quotes == live)
+                .on_pick(move |()| {
+                    let mut store = store;
+                    store.update(|s| s.notes.live_quotes = live);
+                })
+        };
         let format = |marks: bool, title: &'static str, detail: &'static str| {
             ChoiceCard::new(typing_preview(marks), title)
                 .detail(detail)
@@ -84,6 +165,25 @@ impl Component for Notes {
                             true,
                             "Mostrar marcas de markdown",
                             "Cerca del cursor aparece **negrita**.",
+                        )),
+                ),
+            )
+            .child(
+                Section::new("Al citar contenido").child(
+                    rect()
+                        .width(Size::fill())
+                        .horizontal()
+                        .content(Content::Flex)
+                        .spacing(10.0)
+                        .child(quoting(
+                            true,
+                            "Bloque vivo",
+                            "Se actualiza si cambia el original.",
+                        ))
+                        .child(quoting(
+                            false,
+                            "Copia fija",
+                            "Queda como texto tuyo y puedes editarla.",
                         )),
                 ),
             )
