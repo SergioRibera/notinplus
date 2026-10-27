@@ -184,6 +184,11 @@ impl PaneHeader {
             .horizontal()
             .cross_align(Alignment::Center)
             .spacing(2.0)
+            .maybe_child(
+                active
+                    .and_then(PaneTab::item)
+                    .map(|item| rect().key(item).child(super::here::HereNow { item })),
+            )
             .children(face_actions)
             .maybe_child(self.next.map(|next| {
                 IconButton::new(lucide::columns_2(), "Otro panel")

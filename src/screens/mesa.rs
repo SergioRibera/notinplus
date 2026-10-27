@@ -3,6 +3,7 @@
 
 mod bar;
 mod header;
+mod here;
 mod notices;
 mod palette;
 mod panel;

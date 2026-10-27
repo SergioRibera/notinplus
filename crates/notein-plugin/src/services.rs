@@ -208,6 +208,37 @@ pub trait HostServices: Send + Sync + std::fmt::Debug {
 
     /// The name of `doc` in the library. Call it from the UI thread.
     fn doc_name(&self, doc: DocId) -> Option<String>;
+
+    /// Who else has `doc` open, and where they are in it. Keep it while
+    /// the document is on screen: holding it is what tells the others
+    /// this person is here.
+    fn presence(&self, doc: DocId) -> Arc<dyn Presence>;
+}
+
+/// Someone else with the same document open.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Peer {
+    /// Stable per device, to tell people apart.
+    pub id: [u8; 32],
+    pub name: String,
+    /// The color everything of theirs is drawn in.
+    pub color: [u8; 3],
+    /// What their face last published, in its own format; empty until it
+    /// does.
+    pub state: Vec<u8>,
+}
+
+/// This person's place in a document and everyone else's, sent as it
+/// changes and never stored.
+pub trait Presence: Send + Sync {
+    /// Tell the others where this person is: a caret, a selection, a
+    /// page. The face picks the format; keep it small (it is sent on
+    /// every change) and send it again whenever it changes.
+    fn publish(&self, state: Vec<u8>);
+    /// Everyone else here now.
+    fn peers(&self) -> Vec<Peer>;
+    /// Fires when someone arrives, moves or leaves.
+    fn changes(&self) -> flume::Receiver<()>;
 }
 
 /// Something to send through the system share sheet.

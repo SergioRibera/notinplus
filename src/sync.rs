@@ -23,6 +23,7 @@ use crate::session_end::SessionEnd;
 
 pub mod live;
 pub mod open_docs;
+pub mod presence;
 pub mod replica;
 
 use live::{LiveEvent, LiveMessage};
@@ -656,6 +657,13 @@ impl Service {
                     return;
                 };
                 let item = ItemId(doc.0);
+                match &message {
+                    LiveMessage::Left => presence::left(item, from),
+                    LiveMessage::Presence { state } => {
+                        presence::seen(item, from, &name, Some(state.clone()));
+                    }
+                    _ => presence::seen(item, from, &name, None),
+                }
                 for (_, board) in crate::active_boards::for_item(item) {
                     crate::canvas::lock(&board).apply_live(from, &name, message.clone());
                 }

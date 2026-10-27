@@ -30,6 +30,11 @@ pub enum LiveMessage {
     /// Where the caret sits in a text body, as a character offset, and
     /// whether the author is typing right now.
     Caret { offset: u64, typing: bool },
+    /// Where this person is in the document, in the format of its face.
+    /// Repeated now and then, so silence means they left.
+    Presence { state: Vec<u8> },
+    /// They closed the document.
+    Left,
 }
 
 impl LiveMessage {

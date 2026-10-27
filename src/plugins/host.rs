@@ -206,6 +206,10 @@ impl HostServices for ShellHost {
         data.item(crate::library::ItemId(doc.0))
             .map(|item| item.name.clone())
     }
+
+    fn presence(&self, doc: DocId) -> Arc<dyn notein_plugin::Presence> {
+        crate::sync::presence::open(crate::library::ItemId(doc.0))
+    }
 }
 
 /// How long a finished job's toast stays.

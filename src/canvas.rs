@@ -2369,7 +2369,7 @@ impl Board {
         for (device, hand) in &self.remote {
             if let Some((wx, wy)) = hand.pointer {
                 let (sx, sy) = self.viewport.world_to_screen(wx, wy);
-                draw_remote_pointer(canvas, sx, sy, device_color(*device));
+                draw_remote_pointer(canvas, sx, sy, device_color(*device), &hand.name);
             }
         }
 
@@ -2968,7 +2968,10 @@ impl Board {
             LiveMessage::Pointer { x, y, shown } => {
                 hand.pointer = shown.then_some((x, y));
             }
-            LiveMessage::Caret { .. } => {}
+            LiveMessage::Left => {
+                self.remote.remove(&from);
+            }
+            LiveMessage::Caret { .. } | LiveMessage::Presence { .. } => {}
         }
         self.settle_remote();
         self.notify();
@@ -3061,14 +3064,19 @@ impl Board {
 
 /// A stable, readable colour for a device, from its id.
 fn device_color(device: notein_sync::DeviceId) -> [u8; 4] {
-    let hue = f32::from(device.0[0]) / 255.0 * 360.0;
-    let color = freya::prelude::Color::from_hsv(hue, 0.62, 0.92);
-    [color.r(), color.g(), color.b(), 255]
+    let [r, g, b] = crate::sync::presence::color(device);
+    [r, g, b, 255]
 }
 
 /// Another person's pointer: a small disc in their colour with a
-/// white halo so it reads on any paper.
-fn draw_remote_pointer(canvas: &freya_engine::prelude::Canvas, cx: f32, cy: f32, color: [u8; 4]) {
+/// white halo so it reads on any paper, and their name beside it.
+fn draw_remote_pointer(
+    canvas: &freya_engine::prelude::Canvas,
+    cx: f32,
+    cy: f32,
+    color: [u8; 4],
+    name: &str,
+) {
     const RADIUS: f32 = 5.0;
     let mut halo = Paint::default();
     halo.set_color(SkColor::from_argb(200, 255, 255, 255));
@@ -3080,6 +3088,47 @@ fn draw_remote_pointer(canvas: &freya_engine::prelude::Canvas, cx: f32, cy: f32,
     dot.set_style(PaintStyle::Fill);
     dot.set_anti_alias(true);
     canvas.draw_circle((cx, cy), RADIUS, &dot);
+    draw_name_tag(canvas, cx + RADIUS + 4.0, cy + RADIUS + 2.0, color, name);
+}
+
+/// `name` on a pill of `color`, its top left corner at `(x, y)`.
+fn draw_name_tag(
+    canvas: &freya_engine::prelude::Canvas,
+    x: f32,
+    y: f32,
+    color: [u8; 4],
+    name: &str,
+) {
+    use freya_engine::prelude::{Font, FontMgr, FontStyle, Rect, Typeface};
+    const SIZE: f32 = 11.5;
+    const PAD_X: f32 = 6.0;
+    const PAD_Y: f32 = 3.0;
+    thread_local! {
+        static FACE: Option<Typeface> = FontMgr::new().legacy_make_typeface(None, FontStyle::bold());
+    }
+    if name.is_empty() {
+        return;
+    }
+    let Some(face) = FACE.with(Clone::clone) else {
+        return;
+    };
+    let font = Font::from_typeface(face, SIZE);
+    let (width, _) = font.measure_str(name, None);
+    let (_, metrics) = font.metrics();
+    let height = PAD_Y.mul_add(2.0, SIZE);
+    let mut pill = Paint::default();
+    pill.set_color(SkColor::from_argb(235, color[0], color[1], color[2]));
+    pill.set_anti_alias(true);
+    canvas.draw_round_rect(
+        Rect::from_xywh(x, y, PAD_X.mul_add(2.0, width), height),
+        height / 2.0,
+        height / 2.0,
+        &pill,
+    );
+    let mut ink = Paint::default();
+    ink.set_color(SkColor::from_argb(255, 21, 21, 26));
+    ink.set_anti_alias(true);
+    canvas.draw_str(name, (x + PAD_X, y + PAD_Y - metrics.ascent), &font, &ink);
 }
 
 pub fn lock(board: &Arc<Mutex<Board>>) -> std::sync::MutexGuard<'_, Board> {
