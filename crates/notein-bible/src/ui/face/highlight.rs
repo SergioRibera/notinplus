@@ -198,6 +198,27 @@ impl Gesture {
         }
     }
 
+    /// Let go of the selection, bar and underline, once the reader moves
+    /// to another chapter.
+    pub(super) fn use_end_with_chapter(self, reader: &Reader) {
+        let reader = reader.clone();
+        use_side_effect(move || {
+            let here = {
+                let st = reader.state.read();
+                (st.current_book.clone(), st.current_chapter)
+            };
+            let left = self
+                .place
+                .peek()
+                .as_ref()
+                .is_some_and(|place| *place != here);
+            if left {
+                self.end();
+                reader.ui.close_selection();
+            }
+        });
+    }
+
     /// Long presses, double taps and drags: open the selection or add to it.
     pub(super) fn handler(self, reader: &Reader) -> EventHandler<HighlightTarget> {
         let reader = reader.clone();
