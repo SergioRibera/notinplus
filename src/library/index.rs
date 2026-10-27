@@ -176,4 +176,5 @@ pub fn flush() {
             .wait(queue)
             .unwrap_or_else(PoisonError::into_inner);
     }
+    drop(queue);
 }

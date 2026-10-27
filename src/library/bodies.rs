@@ -233,13 +233,13 @@ pub fn cover_path(id: ItemId) -> PathBuf {
 /// # Errors
 /// Filesystem failure.
 pub fn write_cover(id: ItemId, bytes: Option<&[u8]>) -> Result<()> {
-    match bytes {
-        Some(bytes) => write_blob(&cover_path(id), bytes),
-        None => match fs::remove_file(cover_path(id)) {
+    bytes.map_or_else(
+        || match fs::remove_file(cover_path(id)) {
             Err(err) if err.kind() != io::ErrorKind::NotFound => Err(err.into()),
             _ => Ok(()),
         },
-    }
+        |bytes| write_blob(&cover_path(id), bytes),
+    )
 }
 
 /// The encoded cover of `id`, when one was stored.

@@ -169,7 +169,7 @@ pub(crate) fn show_bar(item: ItemId, mount: CanvasMount, at: (f32, f32)) {
             spawn_in_window(async move {
                 match rx.recv_async().await {
                     Ok(notein_plugin::services::AnnotationOutcome::Saved { color, body }) => {
-                        note_mark(color, body)
+                        note_mark(color, body);
                     }
                     Ok(_) | Err(_) => clear(item),
                 }

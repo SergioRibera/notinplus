@@ -589,9 +589,9 @@ impl ShelfMemo {
         {
             return (Arc::clone(built), *count);
         }
-        let shelf = Arc::new(Shelf::build(data, folder, filter, sort, &key.shared));
+        let listed = Arc::new(Shelf::build(data, folder, filter, sort, &key.shared));
         let trash = crate::screens::trash::groups(data).len();
-        *self.0.borrow_mut() = Some((key, Arc::clone(&shelf), trash));
-        (shelf, trash)
+        *self.0.borrow_mut() = Some((key, Arc::clone(&listed), trash));
+        (listed, trash)
     }
 }

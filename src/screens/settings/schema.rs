@@ -355,7 +355,8 @@ impl FieldRow {
                                     path.to_string_lossy().into_owned(),
                                 ))),
                                 Err(err) => {
-                                    error.set(Some(format!("No se pudo guardar el archivo: {err}")))
+                                    error
+                                        .set(Some(format!("No se pudo guardar el archivo: {err}")));
                                 }
                             }
                         }

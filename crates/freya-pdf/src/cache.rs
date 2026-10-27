@@ -94,6 +94,7 @@ impl Cache {
             };
             tiles.bytes -= gone.size();
         }
+        drop(tiles);
     }
 
     /// Bytes of pixels held.
@@ -132,7 +133,7 @@ impl Cache {
         let mut best: Option<(i32, Arc<CachedTile>)> = None;
         {
             let guard = self.lock();
-            for (k, v) in guard.lru.iter() {
+            for (k, v) in &guard.lru {
                 if k.page != page || k.bucket > max_bucket || !pred(k) {
                     continue;
                 }

@@ -116,6 +116,7 @@ impl Deferred {
         let mut queue = self.queue();
         let job = queue.waiting.remove(key)?.job;
         queue.running += 1;
+        drop(queue);
         Some(job)
     }
 
@@ -175,6 +176,7 @@ pub fn flush() {
             .wait(queue)
             .unwrap_or_else(PoisonError::into_inner);
     }
+    drop(queue);
 }
 
 #[cfg(test)]

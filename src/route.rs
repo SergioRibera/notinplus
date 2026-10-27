@@ -286,10 +286,12 @@ fn save(id: ItemId, board: &Arc<Mutex<Board>>) {
     let (snapshot, content) = {
         let guard = lock(board);
         let doc = guard.doc();
-        (
+        let taken = (
             doc.saved_state(),
             crate::plugins::builtin::canvas::CanvasContent::of(doc),
-        )
+        );
+        drop(guard);
+        taken
     };
     let (bytes, captured) = match snapshot {
         Ok(snapshot) => snapshot,

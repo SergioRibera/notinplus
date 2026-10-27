@@ -288,6 +288,10 @@ fn with_hsv(cur: Hsva, color: Color) -> Hsva {
 }
 
 impl Component for ColorWheel {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one tree for the wheel, its slider and swatches"
+    )]
     fn render(&self) -> impl IntoElement {
         let initial = self.initial;
         let mut hsva = use_state(move || Hsva::from_color(initial));

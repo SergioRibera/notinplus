@@ -221,7 +221,7 @@ impl ExportForm {
                     .trailing(Trailing::Switch {
                         on: current.mesas_and_marks,
                         on_toggle: EventHandler::new(move |on| {
-                            choices.write().mesas_and_marks = on
+                            choices.write().mesas_and_marks = on;
                         }),
                     })
             }))

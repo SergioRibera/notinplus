@@ -51,7 +51,7 @@ pub fn listen() {
                 match end.reason {
                     Removal::Left => resolve(end),
                     Removal::Ended | Removal::Expelled => {
-                        crate::screens::collab::session_ended(&end)
+                        crate::screens::collab::session_ended(&end);
                     }
                 }
             }
