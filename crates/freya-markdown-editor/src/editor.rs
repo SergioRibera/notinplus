@@ -24,9 +24,9 @@ pub use suggest::{
 
 use self::block::{BlockView, TocEntry};
 use self::suggest::{MenuSource, SlashMenu};
-use crate::controller::{EditorController, EditorState, ImagePicker};
+use crate::controller::{EditorController, EditorState, ImagePicker, RemoteCaret};
 use crate::decorator::{Decorator, Decorators};
-use crate::document::{Abbreviation, BlockKind, Document, Inline};
+use crate::document::{Abbreviation, BlockKind, Document, Inline, TextTarget};
 use crate::markdown::{Dialect, Extensions, ParseOptions};
 use crate::popup::PopupArea;
 use crate::theme::EditorTheme;
@@ -106,6 +106,8 @@ pub(crate) struct Shared {
     pub(crate) reorderable: bool,
     pub(crate) syntax_reveal: bool,
     pub(crate) abbreviations: Rc<Vec<Abbreviation>>,
+    /// Other people's carets, with the text field each is in.
+    pub(crate) remote_carets: Rc<Vec<(TextTarget, RemoteCaret)>>,
 }
 
 /// Block based Markdown editor and viewer.
@@ -149,6 +151,7 @@ pub struct MarkdownEditor {
     on_input_context: InputContextHandler,
     image_picker: Option<ImagePicker>,
     popup_area: Option<Area>,
+    remote_carets: Vec<RemoteCaret>,
     layout: LayoutData,
     text_style: TextStyleData,
     key: DiffKey,
@@ -183,6 +186,7 @@ impl Default for MarkdownEditor {
             on_input_context: InputContextHandler::default(),
             image_picker: None,
             popup_area: None,
+            remote_carets: Vec::new(),
             layout: LayoutData::default(),
             text_style: TextStyleData::default(),
             key: DiffKey::None,
@@ -287,6 +291,14 @@ impl MarkdownEditor {
     #[must_use]
     pub const fn syntax_reveal(mut self, syntax_reveal: bool) -> Self {
         self.syntax_reveal = syntax_reveal;
+        self
+    }
+
+    /// Other people's carets and selections, drawn in their colors with
+    /// their names.
+    #[must_use]
+    pub fn remote_carets(mut self, carets: Vec<RemoteCaret>) -> Self {
+        self.remote_carets = carets;
         self
     }
 
@@ -395,6 +407,7 @@ impl Component for MarkdownEditor {
             reorderable: self.reorderable,
             syntax_reveal: self.syntax_reveal,
             abbreviations: Rc::new(document.abbreviations.clone()),
+            remote_carets: Rc::new(remote_targets(document, &self.remote_carets)),
         };
 
         let empty = matches!(
@@ -549,4 +562,19 @@ fn use_value_sync(value: Option<Writable<String>>, controller: EditorController,
             *value.write() = markdown;
         }
     });
+}
+
+/// `carets` with the text field of `document` each points at.
+fn remote_targets(document: &Document, carets: &[RemoteCaret]) -> Vec<(TextTarget, RemoteCaret)> {
+    if carets.is_empty() {
+        return Vec::new();
+    }
+    let targets = document.targets();
+    carets
+        .iter()
+        .filter_map(|caret| {
+            let target = *targets.get(caret.position.target)?;
+            Some((target, caret.clone()))
+        })
+        .collect()
 }

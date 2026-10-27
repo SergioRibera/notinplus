@@ -891,13 +891,33 @@ impl Component for TextBlock {
         }
         drop(editor);
 
+        let carets: Vec<RemotePaint> = shared
+            .remote_carets
+            .iter()
+            .filter(|(at, _)| *at == target)
+            .map(|(_, caret)| {
+                let (anchor, head) = (caret.position.anchor, caret.position.head);
+                if anchor != head {
+                    decor_list.push(Decor {
+                        range: anchor.min(head)..anchor.max(head),
+                        kind: DecorKind::Fill(caret.color.with_a(70).into()),
+                    });
+                }
+                RemotePaint {
+                    head,
+                    color: caret.color.into(),
+                    name: caret.name.clone(),
+                }
+            })
+            .collect();
         let decor_key = {
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             decor_list.hash(&mut hasher);
+            carets.hash(&mut hasher);
             hasher.finish()
         };
-        let has_decor = !decor_list.is_empty();
+        let has_decor = !decor_list.is_empty() || !carets.is_empty();
         *decor.borrow_mut() = decor_list;
 
         let popup = entries.map(|(open, rows)| {
@@ -928,12 +948,20 @@ impl Component for TextBlock {
                 })
         });
 
+        // Tags are placed from the last layout; reading the width renders
+        // again once there is one.
+        let tags = if carets.is_empty() || width() <= 0. {
+            Vec::new()
+        } else {
+            caret_tags(&holder.read(), &carets, shared.theme.px(10.5))
+        };
         let painter_holder = holder.read().clone();
         let painter_decor = decor;
         let background = has_decor.then(|| {
             rect()
                 .background(RenderCallback::new(move |context| {
                     paint_decor(context, &painter_holder, &painter_decor.borrow());
+                    paint_carets(context, &painter_holder, &carets);
                 }))
                 .key(decor_key)
                 .position(Position::new_absolute().top(0.).left(0.))
@@ -971,7 +999,8 @@ impl Component for TextBlock {
                     .on_global_pointer_move(on_global_pointer_move)
                     .on_global_pointer_up(on_global_pointer_up)
                     .maybe_child(background)
-                    .child(paragraph.layer(Layer::Relative(1))),
+                    .child(paragraph.layer(Layer::Relative(1)))
+                    .children(tags),
             )
             .maybe_child(
                 abbreviation
@@ -1600,4 +1629,101 @@ fn atom_at(holder: &ParagraphHolder, location: CursorPoint, content: &Inline) ->
                 Some(Atom::Image { .. } | Atom::Math { .. })
             )
         })
+}
+
+/// Someone else's caret in this text field.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct RemotePaint {
+    head: usize,
+    color: u32,
+    name: String,
+}
+
+/// Other people's carets: a bar in their color. Their names are
+/// [`caret_tags`].
+fn paint_carets(context: &mut FillRenderContext, holder: &ParagraphHolder, carets: &[RemotePaint]) {
+    let RenderTarget::Background { canvas, .. } = &context.target else {
+        return;
+    };
+    let inner = holder.0.borrow();
+    let Some(inner) = inner.as_ref() else {
+        return;
+    };
+    for caret in carets {
+        let Some((x, top, bottom)) = caret_place(inner, caret.head) else {
+            continue;
+        };
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_style(PaintStyle::Fill);
+        paint.set_color(Color::from(caret.color));
+        canvas.draw_rect(SkRect::new(x - 1.0, top, x + 1.0, bottom), &paint);
+    }
+}
+
+/// `(x, top, bottom)` in logical pixels of a caret at `head`, from the
+/// paragraph's last layout.
+fn caret_place(inner: &ParagraphHolderInner, head: usize) -> Option<(f32, f32, f32)> {
+    #[allow(clippy::cast_possible_truncation, reason = "scale factors are small")]
+    let scale = inner.scale_factor as f32;
+    if scale <= 0.0 {
+        return None;
+    }
+    let at = |range: std::ops::Range<usize>| {
+        inner
+            .paragraph
+            .get_rects_for_range(range, RectHeightStyle::Max, RectWidthStyle::Tight)
+            .first()
+            .map(|text_box| text_box.rect)
+    };
+    // Before the character at `head`, else after the one before it (the
+    // end of the text), else an empty field.
+    let (x, top, bottom) = at(head..head + 1).map_or_else(
+        || {
+            head.checked_sub(1)
+                .and_then(|before| at(before..head))
+                .map_or_else(
+                    || (0.0, 0.0, inner.paragraph.height()),
+                    |rect| (rect.right, rect.top, rect.bottom),
+                )
+        },
+        |rect| (rect.left, rect.top, rect.bottom),
+    );
+    Some((x / scale, top / scale, bottom / scale))
+}
+
+/// Name tags of other people's carets, above each caret. Elements rather
+/// than paint, so they can rise above the text field.
+fn caret_tags(holder: &ParagraphHolder, carets: &[RemotePaint], size: f32) -> Vec<Element> {
+    let inner = holder.0.borrow();
+    let Some(inner) = inner.as_ref() else {
+        return Vec::new();
+    };
+    carets
+        .iter()
+        .filter(|caret| !caret.name.is_empty())
+        .filter_map(|caret| {
+            let (x, top, _) = caret_place(inner, caret.head)?;
+            let height = size + 4.0;
+            Some(
+                rect()
+                    .layer(Layer::Relative(2))
+                    .position(Position::new_absolute().top(top - height).left(x - 1.0))
+                    .height(Size::px(height))
+                    .padding((0., 4.))
+                    .corner_radius(3.)
+                    .background(Color::from(caret.color))
+                    .center()
+                    .child(
+                        label()
+                            .font_size(size)
+                            .font_weight(FontWeight::BOLD)
+                            .color(Color::from_rgb(21, 21, 26))
+                            .max_lines(1)
+                            .text(caret.name.clone()),
+                    )
+                    .into_element(),
+            )
+        })
+        .collect()
 }

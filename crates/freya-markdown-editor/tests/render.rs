@@ -405,3 +405,46 @@ fn header_menus_fit_a_phone() {
     runner.sync_and_update();
     runner.render_to_file(snapshot_path("phone_editor"));
 }
+
+fn remote_app() -> impl IntoElement {
+    let value = use_state(|| {
+        "# Plan\n\nPrimera línea del plan.\n\nSegunda idea con más texto.\n".to_owned()
+    });
+    rect()
+        .expanded()
+        .background(EditorTheme::dark().colors.surface)
+        .padding(20.)
+        .child(
+            MarkdownEditor::new(value)
+                .remote_carets(vec![
+                    RemoteCaret {
+                        position: TextPosition {
+                            target: 1,
+                            anchor: 0,
+                            head: 7,
+                        },
+                        name: "Ana".to_owned(),
+                        color: Color::from_rgb(96, 165, 250),
+                    },
+                    RemoteCaret {
+                        position: TextPosition {
+                            target: 2,
+                            anchor: 14,
+                            head: 14,
+                        },
+                        name: "Beto".to_owned(),
+                        color: Color::from_rgb(244, 114, 182),
+                    },
+                ])
+                .width(Size::fill()),
+        )
+}
+
+#[test]
+fn renders_remote_carets() {
+    let (mut runner, ()) = TestingRunner::new(remote_app, (520., 260.).into(), |_| {}, 1.0);
+    runner.sync_and_update();
+    runner.poll_n(std::time::Duration::from_millis(16), 4);
+    runner.sync_and_update();
+    runner.render_to_file(snapshot_path("remote_carets"));
+}

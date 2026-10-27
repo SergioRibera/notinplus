@@ -19,7 +19,7 @@ use freya_markdown_editor::document::BlockId;
 use freya_markdown_editor::prelude::*;
 use notein_sdk::doc::DocId;
 use notein_sdk::face::{ContentStore, FaceContext, HeaderAction};
-use notein_sdk::services::{TextBody, Typing};
+use notein_sdk::services::{Peer, Presence, TextBody, Typing};
 
 use crate::anchor::NoteAnchor;
 use crate::kind::{NoteContent, NotesKind};
@@ -107,6 +107,22 @@ impl Component for NotePage {
             let body = Arc::clone(&body);
             move || follow_typing(&*body, typing)
         });
+        let presence = use_hook({
+            let host = Arc::clone(&ctx.host);
+            move || host.presence(doc)
+        });
+        let peers = use_state({
+            let presence = Arc::clone(&presence);
+            move || presence.peers()
+        });
+        use_hook({
+            let presence = Arc::clone(&presence);
+            move || follow_peers(presence, peers)
+        });
+        use_side_effect({
+            let presence = Arc::clone(&presence);
+            move || presence.publish(encode_caret(controller.text_position()))
+        });
         ctx.use_jumps(move |anchor: NoteAnchor| jump(controller, scroll, anchor));
         use_hook({
             let store = ctx.store.clone();
@@ -144,6 +160,7 @@ impl Component for NotePage {
                 MarkdownEditor::new(markdown).controller(controller),
                 ctx.doc,
             )
+            .remote_carets(peers.read().iter().filter_map(remote_caret).collect())
             .reorderable(true)
             .placeholder("Escribí tu nota… (/ para insertar)")
             .width(Size::fill())
@@ -212,6 +229,48 @@ fn follow_remote(body: Arc<dyn TextBody>, mut markdown: State<String>) {
             }
         }
     });
+}
+
+/// Keep `peers` up to date with whoever else has the note open.
+fn follow_peers(presence: Arc<dyn Presence>, mut peers: State<Vec<Peer>>) {
+    let changes = presence.changes();
+    spawn(async move {
+        while changes.recv_async().await.is_ok() {
+            peers.set(presence.peers());
+        }
+    });
+}
+
+/// This person's caret as the others receive it: field, anchor and head
+/// as little endian `u32`s; empty without a caret.
+fn encode_caret(position: Option<TextPosition>) -> Vec<u8> {
+    let Some(position) = position else {
+        return Vec::new();
+    };
+    [position.target, position.anchor, position.head]
+        .into_iter()
+        .flat_map(|value| u32::try_from(value).unwrap_or(u32::MAX).to_le_bytes())
+        .collect()
+}
+
+/// Someone else's caret, from what [`encode_caret`] made of it.
+fn remote_caret(peer: &Peer) -> Option<RemoteCaret> {
+    let mut values = peer
+        .state
+        .chunks_exact(4)
+        .map(|bytes| bytes.try_into().map(u32::from_le_bytes));
+    let mut next = || -> Option<usize> { usize::try_from(values.next()?.ok()?).ok() };
+    let position = TextPosition {
+        target: next()?,
+        anchor: next()?,
+        head: next()?,
+    };
+    let [r, g, b] = peer.color;
+    Some(RemoteCaret {
+        position,
+        name: peer.name.clone(),
+        color: Color::from_rgb(r, g, b),
+    })
 }
 
 /// Keep the list of people typing in this note right now.

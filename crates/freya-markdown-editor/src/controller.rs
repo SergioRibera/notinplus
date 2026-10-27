@@ -383,6 +383,23 @@ impl EditorState {
     }
 }
 
+/// A caret or selection in a document, by where its text field falls in
+/// reading order (see [`Document::targets`]) and UTF-16 offsets in it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct TextPosition {
+    pub target: usize,
+    pub anchor: usize,
+    pub head: usize,
+}
+
+/// Someone else's caret, drawn in their color with their name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteCaret {
+    pub position: TextPosition,
+    pub name: String,
+    pub color: Color,
+}
+
 /// Where an atom (an image, an inline formula) sits: the text field holding
 /// it and which of its atoms it is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -506,6 +523,25 @@ impl EditorController {
     #[must_use]
     pub fn selection(&self) -> Option<Selection> {
         self.read(|state| state.selection)
+    }
+
+    /// Where the caret is in a form another device can find in the same
+    /// document, unlike block ids, which are this process's own.
+    #[must_use]
+    pub fn text_position(&self) -> Option<TextPosition> {
+        self.read(|state| {
+            let selection = state.selection?;
+            let target = state
+                .document
+                .targets()
+                .iter()
+                .position(|target| *target == selection.target)?;
+            Some(TextPosition {
+                target,
+                anchor: selection.anchor,
+                head: selection.head,
+            })
+        })
     }
 
     #[must_use]
