@@ -32,7 +32,7 @@ pub struct SelectionMenu {
     pub on_color: Rc<dyn Fn(Option<[u8; 3]>)>,
     /// Open the annotation for the selection; `None` hides Nota.
     pub on_note: Option<Rc<dyn Fn()>>,
-    /// The place as a reference, for Copiar ref.
+    /// The place as a reference, for Al cuaderno.
     pub reference: Option<SourceRef>,
     /// The document the selection is in, for Al cuaderno.
     pub document: Option<DocId>,

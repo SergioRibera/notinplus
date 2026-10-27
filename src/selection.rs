@@ -1,6 +1,5 @@
 //! The bar over a text selection, the same in the Bible and PDFs: five
-//! highlighters one tap away, a note, copy as reference and send to the
-//! notebook. Notes get the editor's formatting bar instead.
+//! highlighters one tap away, a note and send to the notebook. Notes get the editor's formatting bar instead.
 //!
 //! A sticky bar (a selection that grows tap by tap) docks at the bottom
 //! without a backdrop, so taps keep reaching the text under it.
@@ -8,7 +7,6 @@
 use std::rc::Rc;
 
 use freya::prelude::*;
-use notein_plugin::bookmark::SourceRef;
 use notein_plugin::ui::SelectionMenu;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{BarItem, Modal, ModalController, SelectionBar, width_class};
@@ -115,25 +113,15 @@ impl Bar {
                 },
             ));
         }
-        if let Some(target) = menu.reference.clone() {
-            let label = label_of(&target);
+        if let (Some(target), Some(document)) = (menu.reference.clone(), menu.document) {
+            let document = ItemId(document.0);
             items.push(BarItem::action(
-                "Copiar ref",
-                lucide::copy(),
-                self.finish(move || crate::references::copy(&target, &label)),
+                "Al cuaderno",
+                lucide::notebook_pen(),
+                self.finish(move || {
+                    crate::references::insert_in_notebook(document, target.clone());
+                }),
             ));
-            if let Some(document) = menu.document {
-                let (document, target) = (ItemId(document.0), menu.reference.clone());
-                items.push(BarItem::action(
-                    "Al cuaderno",
-                    lucide::notebook_pen(),
-                    self.finish(move || {
-                        if let Some(target) = target.clone() {
-                            crate::references::insert_in_notebook(document, target);
-                        }
-                    }),
-                ));
-            }
         }
         for (label, icon, run) in &menu.extra {
             let run = Rc::clone(run);
@@ -207,11 +195,4 @@ impl Component for StickySelection {
         let menu = sticky().read().clone();
         menu.map_or_else(|| rect().into_element(), |menu| Bar { menu }.into_element())
     }
-}
-
-/// The reference chip label of `target`.
-#[must_use]
-pub fn label_of(target: &SourceRef) -> String {
-    let data = crate::state::LibraryView::try_get().and_then(|view| view.data());
-    crate::references::display(target, data.as_deref()).label
 }
