@@ -177,7 +177,7 @@ pub fn card(data: &LibraryData, item: &Item, shared: bool, now: u64) -> DocCardD
         meta,
         color: item.color,
         background: item.background,
-        thumbnail: item.thumbnail.clone().map(Bytes::from),
+        thumbnail: item.thumbnail.clone().map(Bytes::from_owner),
         notebooks: data.live_notebooks_of(item.id).len(),
         pinned: data.is_pinned(item.id),
         shared,

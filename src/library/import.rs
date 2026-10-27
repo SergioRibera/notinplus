@@ -204,9 +204,9 @@ impl Library {
             receipt.workspaces.push(copy.id);
             self.data.workspaces.workspaces.push(copy);
         }
-        self.persist().await?;
-        self.persist_workspaces().await?;
-        self.persist_links().await?;
+        self.persist()?;
+        self.persist_workspaces()?;
+        self.persist_links()?;
         Ok(receipt)
     }
 

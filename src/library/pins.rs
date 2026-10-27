@@ -18,14 +18,14 @@ impl Library {
                 self.data.index.pins.push(*id);
             }
         }
-        self.persist().await
+        self.persist()
     }
 
     /// # Errors
     /// Persistence errors.
     pub async fn unpin_items(&mut self, ids: &[ItemId]) -> Result<()> {
         self.data.index.pins.retain(|p| !ids.contains(p));
-        self.persist().await
+        self.persist()
     }
 
     /// Move the pin at `from` to position `to` (drag to reorder).
@@ -39,7 +39,7 @@ impl Library {
         let id = self.data.index.pins.remove(from);
         let to = to.min(self.data.index.pins.len());
         self.data.index.pins.insert(to, id);
-        self.persist().await
+        self.persist()
     }
 }
 

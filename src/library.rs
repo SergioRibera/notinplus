@@ -20,10 +20,10 @@
 pub mod bodies;
 pub mod error;
 pub mod graveyard;
+mod import;
 pub mod index;
 pub mod links;
 pub mod model;
-mod import;
 mod pins;
 pub mod refs;
 pub mod shared;
@@ -41,16 +41,16 @@ use istmo_data_store::{DataStoreClient, DataStoreConfig};
 const TOMBSTONE_TTL_MS: u64 = 90 * 24 * 60 * 60 * 1000;
 
 pub use self::error::{LibraryError, NotFoundKind, Result};
+pub use self::import::{Conflict, ImportPlan, ImportReceipt, Resolution, Review};
 pub use self::links::{Link, LinkIndex, LinkKind};
 pub use self::model::{
-    AnnotationId,     BackgroundStyle, DocKind, Folder, FolderId, INDEX_VERSION, Item, ItemId, LibraryIndex, LinkId,
-    Pane, PaneId, PaneLayout, PaneTab, ROOT_FOLDER, Rgba, ScratchId, SplitOrientation, SplitSide,
-    TabTarget, Tag, TagId, Trashed, ViewSlot, WORKSPACE_INDEX_VERSION, Workspace, WorkspaceId,
-    WorkspaceIndex,
+    AnnotationId, BackgroundStyle, DocKind, Folder, FolderId, INDEX_VERSION, Item, ItemId,
+    LibraryIndex, LinkId, Pane, PaneId, PaneLayout, PaneTab, ROOT_FOLDER, Rgba, ScratchId,
+    SplitOrientation, SplitSide, TabTarget, Tag, TagId, Trashed, ViewSlot, WORKSPACE_INDEX_VERSION,
+    Workspace, WorkspaceId, WorkspaceIndex,
 };
 pub use self::refs::{RefEntry, RefOrigin};
 pub use self::shared::{LibHandle, changes, shared, shared_blocking};
-pub use self::import::{Conflict, ImportPlan, ImportReceipt, Resolution, Review};
 pub use self::trash::{
     NotebookFate, TrashEntry, TrashReceipt, TrashedRecord, days_left, retention_millis,
 };
@@ -68,7 +68,7 @@ use crate::doc::Doc;
 /// the call site.
 #[derive(Debug)]
 pub struct Library {
-    client: DataStoreClient,
+    client: Arc<DataStoreClient>,
     data: LibraryData,
 }
 
@@ -104,27 +104,33 @@ impl Library {
             DataStoreConfig::new(index::NAMESPACE.to_owned()),
         )
         .await?;
-        let index = index::load(&client).await?.unwrap_or_else(|| {
+        let mut index = index::load(&client).await?.unwrap_or_else(|| {
             // Nothing readable under the current key: whatever the
             // item store holds belongs to an older schema.
             bodies::discard_store();
             LibraryIndex::default()
         });
+        let inline = hydrate_covers(&mut index);
         let mut workspaces = index::load_workspaces(&client).await?;
         for workspace in &mut workspaces.workspaces {
             for pane in workspace.layout.leaves_mut() {
-                pane.tabs.retain(|tab| !matches!(tab.target, TabTarget::Annotation(_)));
+                pane.tabs
+                    .retain(|tab| !matches!(tab.target, TabTarget::Annotation(_)));
             }
         }
         let links = index::load_links(&client).await?;
         let mut lib = Self {
-            client,
+            client: Arc::new(client),
             data: LibraryData {
                 index,
                 workspaces,
                 links,
             },
         };
+        if inline {
+            // An index written before covers had files of their own.
+            lib.persist()?;
+        }
         lib.ensure_default_workspace().await?;
         lib.compact_tombstones().await?;
         Ok(lib)
@@ -135,7 +141,7 @@ impl Library {
     async fn compact_tombstones(&mut self) -> Result<()> {
         let now = now_millis();
         if self.data.links.compact(now, TOMBSTONE_TTL_MS) > 0 {
-            self.persist_links().await?;
+            self.persist_links()?;
         }
         let mut yard = graveyard::Graveyard::load();
         if yard.compact(now, TOMBSTONE_TTL_MS) > 0
@@ -154,7 +160,7 @@ impl Library {
         if !self.data.workspaces.workspaces.is_empty() {
             if self.data.workspaces.active.is_none() {
                 self.data.workspaces.active = Some(self.data.workspaces.workspaces[0].id);
-                self.persist_workspaces().await?;
+                self.persist_workspaces()?;
             }
             return Ok(());
         }
@@ -200,7 +206,7 @@ impl Library {
             updated_at: now,
             trashed: None,
         });
-        self.persist().await?;
+        self.persist()?;
         Ok(id)
     }
 
@@ -216,7 +222,7 @@ impl Library {
             .ok_or(LibraryError::NotFound(NotFoundKind::Folder(id)))?;
         name.clone_into(&mut folder.name);
         folder.updated_at = now;
-        self.persist().await
+        self.persist()
     }
 
     /// # Errors
@@ -237,7 +243,7 @@ impl Library {
             .ok_or(LibraryError::NotFound(NotFoundKind::Folder(id)))?;
         folder.parent = new_parent;
         folder.updated_at = now;
-        self.persist().await
+        self.persist()
     }
 
     /// # Errors
@@ -252,7 +258,7 @@ impl Library {
             .ok_or(LibraryError::NotFound(NotFoundKind::Folder(id)))?;
         folder.color = color;
         folder.updated_at = now;
-        self.persist().await
+        self.persist()
     }
 
     /// # Errors
@@ -267,7 +273,7 @@ impl Library {
             .ok_or(LibraryError::NotFound(NotFoundKind::Folder(id)))?;
         folder.icon = icon;
         folder.updated_at = now;
-        self.persist().await
+        self.persist()
     }
 
     /// Replace the folder's tag list. Same semantics as
@@ -295,7 +301,7 @@ impl Library {
             .ok_or(LibraryError::NotFound(NotFoundKind::Folder(id)))?;
         folder.tags = tags;
         folder.updated_at = now;
-        self.persist().await
+        self.persist()
     }
 
     /// Delete `id` **and every folder / item descending from it**.
@@ -334,8 +340,8 @@ impl Library {
         if let Err(err) = yard.save() {
             log::error!("graveyard save: {err}");
         }
-        self.persist_links().await?;
-        self.persist().await
+        self.persist_links()?;
+        self.persist()
     }
 
     // ---------- Item mutations -----------------------------------------
@@ -379,7 +385,7 @@ impl Library {
             thumbnail: None,
             trashed: None,
         });
-        self.persist().await?;
+        self.persist()?;
         Ok(id)
     }
 
@@ -394,7 +400,7 @@ impl Library {
             .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
         name.clone_into(&mut item.name);
         item.updated_at = now;
-        self.persist().await
+        self.persist()
     }
 
     /// # Errors
@@ -409,7 +415,7 @@ impl Library {
             .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
         item.folder = folder;
         item.updated_at = now;
-        self.persist().await
+        self.persist()
     }
 
     /// # Errors
@@ -423,7 +429,7 @@ impl Library {
             .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
         item.color = color;
         item.updated_at = now;
-        self.persist().await
+        self.persist()
     }
 
     /// Replace the item's tag list. Callers pass a set-like `Vec`;
@@ -449,7 +455,7 @@ impl Library {
             .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
         item.tags = tags;
         item.updated_at = now;
-        self.persist().await
+        self.persist()
     }
 
     /// Swap the item's paper pattern.
@@ -469,7 +475,7 @@ impl Library {
             .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
         item.background = background;
         item.updated_at = now;
-        self.persist().await
+        self.persist()
     }
 
     /// Stash a fresh thumbnail (or clear it with `None`). The library
@@ -488,9 +494,10 @@ impl Library {
             .index
             .item_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
-        item.thumbnail = thumbnail;
+        bodies::write_cover(id, thumbnail.as_deref())?;
+        item.thumbnail = thumbnail.map(Arc::from);
         item.updated_at = now;
-        self.persist().await
+        self.persist()
     }
 
     /// Copy `id` into the same folder as «Nombre (copia)». Returns the
@@ -516,7 +523,7 @@ impl Library {
             trashed: None,
             ..source
         });
-        self.persist().await?;
+        self.persist()?;
         Ok(copy)
     }
 
@@ -535,9 +542,9 @@ impl Library {
         let now = now_millis();
         graveyard::bury(graveyard::Buried::Item, id.0, now);
         if self.data.links.retire_item(id, now) > 0 {
-            self.persist_links().await?;
+            self.persist_links()?;
         }
-        self.persist().await
+        self.persist()
     }
 
     /// Drop this library's copy of `id` without recording a deletion:
@@ -554,7 +561,7 @@ impl Library {
         }
         bodies::purge(id);
         refs::forget(id);
-        self.persist().await
+        self.persist()
     }
 
     // ---------- Tag mutations ------------------------------------------
@@ -569,7 +576,7 @@ impl Library {
             color,
             updated_at: now_millis(),
         });
-        self.persist().await?;
+        self.persist()?;
         Ok(id)
     }
 
@@ -583,7 +590,7 @@ impl Library {
             .ok_or(LibraryError::NotFound(NotFoundKind::Tag(id)))?;
         name.clone_into(&mut tag.name);
         tag.updated_at = now_millis();
-        self.persist().await
+        self.persist()
     }
 
     /// # Errors
@@ -596,7 +603,7 @@ impl Library {
             .ok_or(LibraryError::NotFound(NotFoundKind::Tag(id)))?;
         tag.color = color;
         tag.updated_at = now_millis();
-        self.persist().await
+        self.persist()
     }
 
     /// Remove `id` and sweep it out of every item's tag list.
@@ -613,7 +620,7 @@ impl Library {
             item.tags.retain(|t| *t != id);
         }
         graveyard::bury(graveyard::Buried::Tag, id.0, now_millis());
-        self.persist().await
+        self.persist()
     }
 
     // ---------- Doc / PDF body I/O -------------------------------------
@@ -673,7 +680,7 @@ impl Library {
         if let Some(item) = self.data.index.item_mut(id) {
             item.updated_at = now;
         }
-        self.persist().await
+        self.persist()
     }
 
     // ---------- Links --------------------------------------------------
@@ -700,7 +707,7 @@ impl Library {
             .links
             .insert(from, to, kind, now_millis())
             .ok_or(LibraryError::SelfLink)?;
-        self.persist_links().await?;
+        self.persist_links()?;
         Ok(id)
     }
 
@@ -712,11 +719,15 @@ impl Library {
         if !self.data.links.remove(id, now_millis()) {
             return Err(LibraryError::NotFound(NotFoundKind::Link(id)));
         }
-        self.persist_links().await
+        self.persist_links()
     }
 
-    async fn persist_links(&self) -> Result<()> {
-        index::save_links(&self.client, &self.data.links).await?;
+    fn persist_links(&self) -> Result<()> {
+        index::store(
+            &self.client,
+            index::LINKS_KEY,
+            index::encode(&self.data.links)?,
+        );
         crate::sync::local_changed();
         shared::notify();
         Ok(())
@@ -738,7 +749,7 @@ impl Library {
         if let Some(m) = self.data.index.item_mut(id) {
             m.updated_at = now;
         }
-        self.persist().await
+        self.persist()
     }
 
     /// Read the PDF attachment as raw bytes.
@@ -775,7 +786,7 @@ impl Library {
         if self.data.workspaces.active.is_none() {
             self.data.workspaces.active = Some(id);
         }
-        self.persist_workspaces().await?;
+        self.persist_workspaces()?;
         Ok(id)
     }
 
@@ -805,7 +816,7 @@ impl Library {
         };
         let new_id = copy.id;
         self.data.workspaces.workspaces.push(copy);
-        self.persist_workspaces().await?;
+        self.persist_workspaces()?;
         Ok(new_id)
     }
 
@@ -821,7 +832,7 @@ impl Library {
         name.trim().clone_into(&mut w.name);
         w.named = !w.name.is_empty();
         w.updated_at = now;
-        self.persist_workspaces().await
+        self.persist_workspaces()
     }
 
     /// Show (or stop showing) a mesa first in Home.
@@ -837,7 +848,7 @@ impl Library {
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(id)))?;
         w.pinned = pinned;
         w.updated_at = now;
-        self.persist_workspaces().await
+        self.persist_workspaces()
     }
 
     /// # Errors
@@ -855,7 +866,7 @@ impl Library {
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(id)))?;
         w.color = color;
         w.updated_at = now;
-        self.persist_workspaces().await
+        self.persist_workspaces()
     }
 
     /// Replace the workspace's pane layout wholesale. The shell calls
@@ -878,7 +889,7 @@ impl Library {
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(id)))?;
         w.layout = layout;
         w.updated_at = now;
-        self.persist_workspaces().await
+        self.persist_workspaces()
     }
 
     /// Split the pane with id `target` inside workspace `workspace`.
@@ -911,7 +922,7 @@ impl Library {
         }
         w.focused_pane = Some(new_id);
         w.updated_at = now;
-        self.persist_workspaces().await?;
+        self.persist_workspaces()?;
         Ok(new_id)
     }
 
@@ -937,7 +948,7 @@ impl Library {
             return Err(LibraryError::NotFound(NotFoundKind::Workspace(workspace)));
         }
         w.updated_at = now;
-        self.persist_workspaces().await
+        self.persist_workspaces()
     }
 
     /// Move the tab at `src_index` in pane `src` to the end of pane
@@ -967,7 +978,7 @@ impl Library {
         w.layout.prune_empty_leaf(src);
         w.focused_pane = Some(dst);
         w.updated_at = now;
-        self.persist_workspaces().await
+        self.persist_workspaces()
     }
 
     /// Split pane `target` along `orientation` and move the tab at
@@ -1004,7 +1015,7 @@ impl Library {
         w.layout.prune_empty_leaf(src);
         w.focused_pane = Some(new_id);
         w.updated_at = now;
-        self.persist_workspaces().await?;
+        self.persist_workspaces()?;
         Ok(new_id)
     }
 
@@ -1039,7 +1050,7 @@ impl Library {
         }
         w.focused_pane = Some(pane);
         w.updated_at = now;
-        self.persist_workspaces().await
+        self.persist_workspaces()
     }
 
     /// Close the pane with id `target`. The sibling collapses up to
@@ -1069,7 +1080,7 @@ impl Library {
             w.focused_pane = w.layout.leaves().first().map(|p| p.id);
         }
         w.updated_at = now;
-        self.persist_workspaces().await
+        self.persist_workspaces()
     }
 
     /// Append a tab to the given pane and mark it active.
@@ -1124,7 +1135,7 @@ impl Library {
         leaf.tabs.push(tab);
         leaf.active_tab = u32::try_from(leaf.tabs.len().saturating_sub(1)).unwrap_or(u32::MAX);
         w.updated_at = now;
-        self.persist_workspaces().await
+        self.persist_workspaces()
     }
 
     /// Close the tab at `index` within the given pane. The next tab
@@ -1168,7 +1179,7 @@ impl Library {
             w.focused_pane = w.layout.leaves().first().map(|p| p.id);
         }
         w.updated_at = now;
-        self.persist_workspaces().await
+        self.persist_workspaces()
     }
 
     /// Close every tab showing one of `items`, in every workspace. A
@@ -1198,7 +1209,7 @@ impl Library {
             }
         }
         if touched {
-            self.persist_workspaces().await?;
+            self.persist_workspaces()?;
         }
         Ok(())
     }
@@ -1229,7 +1240,7 @@ impl Library {
         leaf.active_tab = u32::try_from(index.min(max)).unwrap_or(u32::MAX);
         w.focused_pane = Some(pane);
         w.updated_at = now;
-        self.persist_workspaces().await
+        self.persist_workspaces()
     }
 
     /// Focus the given pane. `None` clears focus (the shell routes
@@ -1256,7 +1267,7 @@ impl Library {
         }
         w.focused_pane = pane;
         w.updated_at = now;
-        self.persist_workspaces().await
+        self.persist_workspaces()
     }
 
     /// Flip the active workspace. `None` clears the selection — the
@@ -1272,7 +1283,7 @@ impl Library {
             return Err(LibraryError::NotFound(NotFoundKind::Workspace(wid)));
         }
         self.data.workspaces.active = id;
-        self.persist_workspaces().await
+        self.persist_workspaces()
     }
 
     /// Remove a workspace. If it was the active one, the active
@@ -1294,7 +1305,7 @@ impl Library {
             self.data.workspaces.active = self.data.workspaces.workspaces.first().map(|w| w.id);
         }
         graveyard::bury(graveyard::Buried::Workspace, id.0, now_millis());
-        self.persist_workspaces().await
+        self.persist_workspaces()
     }
 
     // ---------- Bundle import ------------------------------------------
@@ -1339,6 +1350,7 @@ impl Library {
             if !known_folders.contains(&i.folder) {
                 i.folder = ROOT_FOLDER;
             }
+            keep_cover(i.id, i.thumbnail.as_deref());
             self.data.index.items.push(i);
         }
 
@@ -1373,23 +1385,39 @@ impl Library {
             bodies::write_pdf(*id, bytes)?;
         }
 
-        self.persist().await?;
-        self.persist_workspaces().await?;
-        self.persist_links().await?;
+        self.persist()?;
+        self.persist_workspaces()?;
+        self.persist_links()?;
         Ok(())
     }
 
     // ---------- Internal helpers ---------------------------------------
 
-    async fn persist(&self) -> Result<()> {
-        index::save(&self.client, &self.data.index).await?;
+    /// Store the index. Covers stay out of it: each lives in its own file.
+    fn persist(&mut self) -> Result<()> {
+        let covers: Vec<_> = self
+            .data
+            .index
+            .items
+            .iter_mut()
+            .map(|item| item.thumbnail.take())
+            .collect();
+        let bytes = index::encode(&self.data.index);
+        for (item, cover) in self.data.index.items.iter_mut().zip(covers) {
+            item.thumbnail = cover;
+        }
+        index::store(&self.client, index::INDEX_KEY, bytes?);
         crate::sync::local_changed();
         shared::notify();
         Ok(())
     }
 
-    async fn persist_workspaces(&self) -> Result<()> {
-        index::save_workspaces(&self.client, &self.data.workspaces).await?;
+    fn persist_workspaces(&self) -> Result<()> {
+        index::store(
+            &self.client,
+            index::WORKSPACES_KEY,
+            index::encode(&self.data.workspaces)?,
+        );
         crate::sync::local_changed();
         shared::notify();
         Ok(())
@@ -1402,6 +1430,30 @@ impl Library {
         } else {
             Ok(())
         }
+    }
+}
+
+/// Read every cover from its file. A cover still carried inline (an
+/// index stored before covers had files) moves to its file instead.
+/// Returns whether any did.
+fn hydrate_covers(index: &mut LibraryIndex) -> bool {
+    let mut inline = false;
+    for item in &mut index.items {
+        match &item.thumbnail {
+            Some(cover) => {
+                inline = true;
+                keep_cover(item.id, Some(cover));
+            }
+            None => item.thumbnail = bodies::read_cover(item.id).map(Arc::from),
+        }
+    }
+    inline
+}
+
+/// Store the cover a record arrived with; failures are logged.
+fn keep_cover(id: ItemId, cover: Option<&[u8]>) {
+    if let Err(err) = bodies::write_cover(id, cover) {
+        log::error!("cover {id}: {err}");
     }
 }
 

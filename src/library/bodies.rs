@@ -11,6 +11,7 @@
 //! └── items/<item_id>/
 //!     ├── doc.loro                      // Doc snapshot + history
 //!     ├── attachment.pdf                // raw PDF blob
+//!     ├── cover.png                     // cover thumbnail
 //!     └── plugin_snapshots/<plugin>.bincode
 //! ```
 //!
@@ -35,6 +36,7 @@ const ROOT_SUBDIR: &str = "notinplus";
 const ITEMS_SUBDIR: &str = "items";
 const DOC_FILE: &str = "doc.loro";
 const PDF_FILE: &str = "attachment.pdf";
+const COVER_FILE: &str = "cover.png";
 /// Subdir holding per-plugin snapshot blobs under each item root.
 /// Keyed by plugin id (sanitised to a filesystem-safe form) so a
 /// single item can carry snapshots from several plugins without any
@@ -214,6 +216,36 @@ pub fn write_doc_bytes(id: ItemId, bytes: &[u8]) -> Result<()> {
 #[must_use]
 pub fn read_doc_bytes(id: ItemId) -> Option<Vec<u8>> {
     fs::read(doc_path(id)).ok()
+}
+
+// ---------------------------------------------------------------------------
+// Cover
+// ---------------------------------------------------------------------------
+
+/// Absolute path of the item's cover thumbnail.
+#[must_use]
+pub fn cover_path(id: ItemId) -> PathBuf {
+    item_root(id).join(COVER_FILE)
+}
+
+/// Store the encoded cover of `id`, or remove it with `None`.
+///
+/// # Errors
+/// Filesystem failure.
+pub fn write_cover(id: ItemId, bytes: Option<&[u8]>) -> Result<()> {
+    match bytes {
+        Some(bytes) => write_blob(&cover_path(id), bytes),
+        None => match fs::remove_file(cover_path(id)) {
+            Err(err) if err.kind() != io::ErrorKind::NotFound => Err(err.into()),
+            _ => Ok(()),
+        },
+    }
+}
+
+/// The encoded cover of `id`, when one was stored.
+#[must_use]
+pub fn read_cover(id: ItemId) -> Option<Vec<u8>> {
+    fs::read(cover_path(id)).ok()
 }
 
 // ---------------------------------------------------------------------------

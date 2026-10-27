@@ -116,7 +116,7 @@ impl Library {
             item.updated_at = at;
         }
         self.data.index.pins.retain(|p| !moved.contains(p));
-        self.persist().await?;
+        self.persist()?;
         Ok(TrashReceipt {
             batch,
             items: moved.len(),
@@ -174,7 +174,7 @@ impl Library {
             }
         }
         self.data.index.pins.retain(|p| !trashed_ids.contains(p));
-        self.persist().await?;
+        self.persist()?;
         Ok(TrashReceipt { batch, items })
     }
 
@@ -245,7 +245,7 @@ impl Library {
                 restored += 1;
             }
         }
-        self.persist().await?;
+        self.persist()?;
         Ok(restored)
     }
 

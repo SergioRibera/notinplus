@@ -213,7 +213,10 @@ pub struct Item {
     pub updated_at: u64,
     /// Optional PNG thumbnail bytes. Populated by the UI layer when it
     /// re-renders a preview; the library never generates one itself.
-    pub thumbnail: Option<Vec<u8>>,
+    /// Shared, so a screen holds it without copying. On this device it
+    /// lives in its own file next to the body; the stored index
+    /// carries none, only the copy that travels to other devices does.
+    pub thumbnail: Option<std::sync::Arc<[u8]>>,
     /// `Some` while the item sits in the trash.
     pub trashed: Option<Trashed>,
 }

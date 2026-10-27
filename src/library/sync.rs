@@ -106,22 +106,23 @@ impl Library {
                 {
                     item.folder = super::ROOT_FOLDER;
                 }
+                super::keep_cover(item.id, item.thumbnail.as_deref());
                 upsert(&mut self.data.index.items, item, |i| i.id);
-                self.persist().await?;
+                self.persist()?;
             }
             SyncRecord::Folder(folder) => {
                 yard.revive(Buried::Folder, folder.id.0);
                 upsert(&mut self.data.index.folders, folder, |f| f.id);
-                self.persist().await?;
+                self.persist()?;
             }
             SyncRecord::Tag(tag) => {
                 yard.revive(Buried::Tag, tag.id.0);
                 upsert(&mut self.data.index.tags, tag, |t| t.id);
-                self.persist().await?;
+                self.persist()?;
             }
             SyncRecord::Link(link) => {
                 upsert(&mut self.data.links.links, link, |l| l.id);
-                self.persist_links().await?;
+                self.persist_links()?;
             }
             SyncRecord::Workspace(workspace) => {
                 yard.revive(Buried::Workspace, workspace.id.0);
@@ -130,7 +131,7 @@ impl Library {
                     self.data.workspaces.active =
                         self.data.workspaces.workspaces.first().map(|w| w.id);
                 }
-                self.persist_workspaces().await?;
+                self.persist_workspaces()?;
             }
             SyncRecord::Snapshot {
                 item,
@@ -161,9 +162,9 @@ impl Library {
                 bodies::purge(id);
                 refs::forget(id);
                 if self.data.links.retire_item(id, now_millis()) > 0 {
-                    self.persist_links().await?;
+                    self.persist_links()?;
                 }
-                self.persist().await?;
+                self.persist()?;
             }
             Buried::Folder => {
                 let id = super::FolderId(stone.id);
@@ -173,7 +174,7 @@ impl Library {
                         item.folder = super::ROOT_FOLDER;
                     }
                 }
-                self.persist().await?;
+                self.persist()?;
             }
             Buried::Tag => {
                 let id = super::TagId(stone.id);
@@ -181,7 +182,7 @@ impl Library {
                 for item in &mut self.data.index.items {
                     item.tags.retain(|t| *t != id);
                 }
-                self.persist().await?;
+                self.persist()?;
             }
             Buried::Workspace => {
                 let id = super::WorkspaceId(stone.id);
@@ -190,7 +191,7 @@ impl Library {
                     self.data.workspaces.active =
                         self.data.workspaces.workspaces.first().map(|w| w.id);
                 }
-                self.persist_workspaces().await?;
+                self.persist_workspaces()?;
             }
         }
         Ok(())
