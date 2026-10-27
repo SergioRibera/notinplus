@@ -27,6 +27,14 @@ pub fn show() {
     android::show();
 }
 
+/// [`show`] once the caret a button just placed has landed in its field.
+pub fn show_soon() {
+    spawn(async {
+        async_io::Timer::after(std::time::Duration::from_millis(60)).await;
+        show();
+    });
+}
+
 #[cfg(target_os = "android")]
 mod android {
     pub(super) fn show() {

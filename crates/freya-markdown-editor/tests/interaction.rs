@@ -636,3 +636,64 @@ fn folding_details_with_the_caret_inside_moves_it_out() {
         Some(harness.block(0))
     );
 }
+
+/// Draws every formula as a plain box.
+struct DrawnMath;
+
+impl Decorator for DrawnMath {
+    fn render_math(&self, _math: &MathContext<'_>) -> Option<Element> {
+        Some(
+            rect()
+                .width(Size::px(120.))
+                .height(Size::px(40.))
+                .background((200, 80, 80))
+                .into_element(),
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
+struct KeyboardAsks(State<u32>);
+
+fn drawn_math_app() -> impl IntoElement {
+    let value = use_consume::<State<String>>();
+    let controller = use_consume::<EditorController>();
+    let asks = use_consume::<KeyboardAsks>().0;
+    rect().expanded().padding(12.).child(
+        MarkdownEditor::new(value)
+            .controller(controller)
+            .decorator(DrawnMath)
+            .on_request_keyboard(move || {
+                let mut asks = asks;
+                *asks.write() += 1;
+            })
+            .width(Size::fill()),
+    )
+}
+
+#[test]
+fn the_edit_button_of_a_drawing_opens_its_source_and_asks_for_the_keyboard() {
+    let (runner, (value, controller, asks)) = TestingRunner::new(
+        drawn_math_app,
+        (600., 400.).into(),
+        move |runner| {
+            let value = runner.provide_root_context(|| State::create("$$\nx^2\n$$\n".to_owned()));
+            let controller =
+                runner.provide_root_context(|| EditorController::create(Document::default()));
+            let asks = runner.provide_root_context(|| KeyboardAsks(State::create(0)));
+            (value, controller, asks)
+        },
+        1.0,
+    );
+    let mut harness = Harness {
+        runner,
+        value,
+        controller,
+    };
+    harness.settle();
+    tap(&mut harness, (560., 30.));
+    let formula = harness.block(0);
+    let selection = harness.runner.run_in(|| controller.selection());
+    assert_eq!(selection.map(|selection| selection.target), Some(formula));
+    assert_eq!(*asks.0.peek(), 1);
+}

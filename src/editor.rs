@@ -105,6 +105,7 @@ pub fn configure(editor: MarkdownEditor) -> MarkdownEditor {
             crate::plugins::navigate::open(&SourceRef::from_link(url), Placement::Preferred);
         })
         .on_input_context(crate::soft_keyboard::input_context)
+        .on_request_keyboard(crate::soft_keyboard::show_soon)
         .suggestions(
             SuggestionGroup::new("Referencias", move |query| {
                 let data = LibraryView::get().data();

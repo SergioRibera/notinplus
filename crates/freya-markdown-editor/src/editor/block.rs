@@ -273,6 +273,7 @@ impl BlockView {
         let theme = &self.shared.theme;
         let editing = self.editable() && (self.focused.is_some() || empty);
         let controller = self.shared.controller;
+        let keyboard = self.shared.request_keyboard.clone();
         let block = self.block.id;
         let footer = rect()
             .width(Size::fill())
@@ -300,6 +301,7 @@ impl BlockView {
                     .on_press(move |event: Event<PressEventData>| {
                         event.stop_propagation();
                         controller.focus(block, usize::MAX);
+                        keyboard.call();
                     })
             })
             .child(drawn)
@@ -362,6 +364,7 @@ impl BlockView {
         let theme = &self.shared.theme;
         let color = theme.colors.muted;
         let controller = self.shared.controller;
+        let keyboard = self.shared.request_keyboard.clone();
         let block = self.block.id;
         rect()
             .height(Size::px(theme.px(28.)))
@@ -374,6 +377,7 @@ impl BlockView {
             .on_press(move |event: Event<PressEventData>| {
                 event.stop_propagation();
                 controller.focus(block, usize::MAX);
+                keyboard.call();
             })
             .child(
                 SvgViewer::new(lucide::pencil())

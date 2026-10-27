@@ -93,6 +93,30 @@ impl LinkHandler {
     }
 }
 
+/// Called when a button of the editor put the caret in a text field, so a
+/// soft keyboard that only opens for taps on the field itself can be asked
+/// for.
+#[derive(Clone, Default)]
+pub(crate) struct KeyboardRequest(Option<Rc<dyn Fn()>>);
+
+impl PartialEq for KeyboardRequest {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+}
+
+impl KeyboardRequest {
+    pub(crate) fn call(&self) {
+        if let Some(handler) = &self.0 {
+            handler();
+        }
+    }
+}
+
 /// Values every block needs, compared cheaply between renders.
 #[derive(Clone, PartialEq)]
 pub(crate) struct Shared {
@@ -101,6 +125,7 @@ pub(crate) struct Shared {
     pub(crate) decorators: Decorators,
     pub(crate) slash: SlashMenu,
     pub(crate) on_link: LinkHandler,
+    pub(crate) request_keyboard: KeyboardRequest,
     pub(crate) on_input_context: InputContextHandler,
     pub(crate) read_only: bool,
     pub(crate) reorderable: bool,
@@ -148,6 +173,7 @@ pub struct MarkdownEditor {
     reorderable: bool,
     syntax_reveal: bool,
     on_link: LinkHandler,
+    request_keyboard: KeyboardRequest,
     on_input_context: InputContextHandler,
     image_picker: Option<ImagePicker>,
     popup_area: Option<Area>,
@@ -183,6 +209,7 @@ impl Default for MarkdownEditor {
             reorderable: false,
             syntax_reveal: false,
             on_link: LinkHandler::default(),
+            request_keyboard: KeyboardRequest::default(),
             on_input_context: InputContextHandler::default(),
             image_picker: None,
             popup_area: None,
@@ -319,6 +346,16 @@ impl MarkdownEditor {
         self
     }
 
+    /// Called when one of the editor's own buttons (like the one that opens
+    /// the source of a formula) puts the caret in a text field. Platforms
+    /// whose soft keyboard only opens when the field itself is tapped show it
+    /// from here.
+    #[must_use]
+    pub fn on_request_keyboard(mut self, request: impl Fn() + 'static) -> Self {
+        self.request_keyboard = KeyboardRequest(Some(Rc::new(request)));
+        self
+    }
+
     /// Called when a link is pressed: always in read only mode, with Ctrl
     /// (or Cmd) held while editing.
     #[must_use]
@@ -402,6 +439,7 @@ impl Component for MarkdownEditor {
             decorators: self.decorators.clone(),
             slash: self.slash.clone(),
             on_link: self.on_link.clone(),
+            request_keyboard: self.request_keyboard.clone(),
             on_input_context: self.on_input_context.clone(),
             read_only,
             reorderable: self.reorderable,
