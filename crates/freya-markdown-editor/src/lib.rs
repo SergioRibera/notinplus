@@ -26,7 +26,7 @@ pub use controller::{
 };
 pub use decorator::{
     CodeContext, Decorator, Decorators, EmbedContext, ImageContext, PrefixTokens, SchemeEmbed,
-    SpanStyle, TextMatch,
+    SpanStyle, TextMatch, TransclusionContext,
 };
 pub use editor::{
     BlockSuggestions, InputContext, MarkdownEditor, Suggestion, SuggestionAction, SuggestionGroup,
@@ -42,7 +42,7 @@ pub use toolbar::MarkdownToolbar;
 pub mod prelude {
     pub use crate::document::{
         Align, Atom, BlockKind, BlockType, CalloutKind, Document, HeadingLevel, Inline, Link,
-        ListKind, MarkFamily, MarkKind, Rgba,
+        ListKind, MarkFamily, MarkKind, Rgba, Transclusion,
     };
     pub use crate::markdown::{Dialect, Extensions, ParseOptions};
     #[cfg(feature = "toolbar")]
@@ -52,6 +52,6 @@ pub mod prelude {
         EditorController, EditorTheme, EmbedContext, ImageContext, InputContext, Label, Labels,
         MarkdownEditor, PopupReporter, PrefixTokens, SchemeEmbed, Selection, SpanStyle, Suggestion,
         SuggestionAction, SuggestionGroup, SuggestionRun, SuggestionSource, TextMatch,
-        use_editor_controller, use_editor_controller_with,
+        TransclusionContext, use_editor_controller, use_editor_controller_with,
     };
 }

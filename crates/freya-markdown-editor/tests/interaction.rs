@@ -192,6 +192,21 @@ fn slash_menu_turns_block_into_quote() {
 }
 
 #[test]
+fn backspace_after_a_transclusion_removes_it_whole() {
+    let mut harness =
+        Harness::new("antes\n\n> [!app:live]\n>\n> texto\n>\n> — [Fuente](app://x)\n\ndespués");
+    assert!(matches!(
+        harness.document().blocks()[1].kind,
+        BlockKind::Transclusion(_)
+    ));
+    harness.snapshot("transclusion");
+    let after = harness.block(2);
+    harness.focus(after, 0);
+    harness.named(NamedKey::Backspace);
+    assert_eq!(harness.value(), "antes\n\ndespués\n");
+}
+
+#[test]
 fn backspace_at_start_merges_with_previous_block() {
     let mut harness = Harness::new("ab\n\ncd");
     let second = harness.block(1);

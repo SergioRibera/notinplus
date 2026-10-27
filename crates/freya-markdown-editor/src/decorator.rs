@@ -115,6 +115,20 @@ pub struct CodeContext<'a> {
     pub theme: &'a EditorTheme,
 }
 
+/// Data available when rendering a [`Transclusion`] block.
+///
+/// [`Transclusion`]: crate::document::Transclusion
+#[derive(Clone, Copy, Debug)]
+pub struct TransclusionContext<'a> {
+    pub kind: &'a str,
+    pub url: &'a str,
+    pub label: &'a str,
+    /// Markdown of the content as last seen.
+    pub fallback: &'a str,
+    pub read_only: bool,
+    pub theme: &'a EditorTheme,
+}
+
 /// Data available when rendering an image.
 #[derive(Clone, Copy, Debug)]
 pub struct ImageContext<'a> {
@@ -155,6 +169,12 @@ pub trait Decorator {
 
     /// Replace the default image placeholder.
     fn render_image(&self, _image: &ImageContext<'_>) -> Option<Element> {
+        None
+    }
+
+    /// Show a transcluded quote as its source holds it now. `None` keeps
+    /// the default: the content as last seen.
+    fn render_transclusion(&self, _transclusion: &TransclusionContext<'_>) -> Option<Element> {
         None
     }
 }
@@ -246,6 +266,13 @@ impl Decorators {
         self.0
             .iter()
             .find_map(|decorator| decorator.render_image(image))
+    }
+
+    #[must_use]
+    pub fn render_transclusion(&self, transclusion: &TransclusionContext<'_>) -> Option<Element> {
+        self.0
+            .iter()
+            .find_map(|decorator| decorator.render_transclusion(transclusion))
     }
 }
 

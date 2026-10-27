@@ -11,10 +11,10 @@ use freya::prelude::*;
 use super::Shared;
 use super::text::{TextBlock, TextLook, TextPlace};
 use crate::controller::CaretRequest;
-use crate::decorator::CodeContext;
+use crate::decorator::{CodeContext, TransclusionContext};
 use crate::document::{
     Align, Block, BlockId, BlockKind, CalloutKind, CellPos, ColumnAlign, HeadingLevel, Inline,
-    ListKind, Table, TextRole, TextTarget,
+    ListKind, Table, TextRole, TextTarget, Transclusion,
 };
 use crate::labels::Label;
 use crate::theme::EditorTheme;
@@ -357,7 +357,10 @@ impl BlockView {
                 indent: theme.px(GUTTER),
                 ..Frame::new(rich(content, self.look()))
             },
-            BlockKind::Divider | BlockKind::Table(_) | BlockKind::TableOfContents => return None,
+            BlockKind::Divider
+            | BlockKind::Table(_)
+            | BlockKind::TableOfContents
+            | BlockKind::Transclusion(_) => return None,
         })
     }
 
@@ -473,6 +476,67 @@ impl BlockView {
             .into_element()
     }
 
+    /// A transcluded quote, as a decorator shows it or as last seen.
+    /// Pressing it follows its source.
+    fn transclusion(&self, transclusion: &Transclusion) -> Element {
+        let theme = &self.shared.theme;
+        let shown = self
+            .shared
+            .decorators
+            .render_transclusion(&TransclusionContext {
+                kind: &transclusion.kind,
+                url: &transclusion.url,
+                label: &transclusion.label,
+                fallback: &transclusion.fallback,
+                read_only: self.shared.read_only,
+                theme,
+            });
+        if let Some(shown) = shown {
+            return shown;
+        }
+        let colors = &theme.colors;
+        let on_link = self.shared.on_link.clone();
+        let url = transclusion.url.clone();
+        let lines = transclusion
+            .fallback
+            .split("\n\n")
+            .filter(|paragraph| !paragraph.trim().is_empty())
+            .map(|paragraph| {
+                label()
+                    .width(Size::fill())
+                    .color(colors.muted)
+                    .font_size(theme.body_size)
+                    .font_slant(FontSlant::Italic)
+                    .text(paragraph.to_owned())
+                    .into_element()
+            });
+        rect()
+            .width(Size::fill())
+            .padding((theme.px(2.), theme.px(12.)))
+            .spacing(theme.px(6.))
+            .cursor(CursorIcon::Pointer)
+            .border(
+                Border::new()
+                    .width(BorderWidth {
+                        top: 0.,
+                        right: 0.,
+                        bottom: 0.,
+                        left: theme.px(3.),
+                    })
+                    .alignment(BorderAlignment::Inner)
+                    .fill(colors.quote_bar),
+            )
+            .on_press(move |_| on_link.call(&url))
+            .children(lines)
+            .child(
+                label()
+                    .color(colors.accent)
+                    .font_size(theme.px(13.))
+                    .text(format!("— {}", transclusion.label)),
+            )
+            .into_element()
+    }
+
     fn table_of_contents(&self) -> Element {
         let theme = &self.shared.theme;
         let colors = &theme.colors;
@@ -545,6 +609,7 @@ impl Component for BlockView {
         let fallback = || match &self.block.kind {
             BlockKind::Table(table) => self.table(table),
             BlockKind::TableOfContents => self.table_of_contents(),
+            BlockKind::Transclusion(transclusion) => self.transclusion(transclusion),
             _ => rect()
                 .width(Size::fill())
                 .padding((theme.px(10.), 0.))

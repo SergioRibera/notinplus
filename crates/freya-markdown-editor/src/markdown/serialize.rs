@@ -4,7 +4,7 @@ use super::Dialect;
 use super::html::span_open;
 use crate::document::{
     Align, Atom, Block, BlockKind, ColumnAlign, Document, Inline, ListKind, Mark, MarkFamily,
-    MarkKind, OBJECT_REPLACEMENT, Table, byte_index,
+    MarkKind, OBJECT_REPLACEMENT, Table, Transclusion, byte_index,
 };
 
 pub(super) fn serialize(document: &Document, dialect: Dialect) -> String {
@@ -153,6 +153,7 @@ impl Writer<'_> {
                 }
             }
             BlockKind::Html(raw) => raw.text().to_owned(),
+            BlockKind::Transclusion(transclusion) => transclusion_source(transclusion, rich),
         };
         let wrap = rich
             && block.align != Align::Left
@@ -305,6 +306,29 @@ fn fenced(language: &str, code: &str) -> String {
         .unwrap_or(0);
     let fence = "`".repeat(longest_run.max(2) + 1);
     format!("{fence}{language}\n{code}\n{fence}")
+}
+
+/// A transcluded quote: the opening marker (rich markdown only), the
+/// content as last seen and the line naming its source.
+fn transclusion_source(transclusion: &Transclusion, rich: bool) -> String {
+    let mut parts = Vec::new();
+    if rich {
+        parts.push(format!("> [!{}]", transclusion.kind));
+    }
+    parts.extend(
+        transclusion
+            .fallback
+            .split("\n\n")
+            .map(str::trim)
+            .filter(|paragraph| !paragraph.is_empty())
+            .map(|paragraph| prefix_lines(paragraph, "> ", "> ")),
+    );
+    parts.push(format!(
+        "> — [{}]({})",
+        transclusion.label.replace(['[', ']'], ""),
+        transclusion.url
+    ));
+    parts.join("\n>\n")
 }
 
 fn prefix_lines(body: &str, first: &str, rest: &str) -> String {

@@ -5,7 +5,7 @@ use super::html::Tag;
 use super::{Extensions, ParseOptions};
 use crate::document::{
     Abbreviation, Align, Atom, Block, BlockKind, CalloutKind, ColumnAlign, Document, HeadingLevel,
-    Inline, Link, ListKind, MarkKind, Table,
+    Inline, Link, ListKind, MarkKind, Table, Transclusion,
 };
 
 pub(super) fn parse(markdown: &str, options: &ParseOptions) -> Document {
@@ -102,6 +102,41 @@ impl Lowering<'_> {
         self.blocks.push(Block::from(kind).with_align(align));
     }
 
+    /// The quote `node` as a [`Transclusion`]: its first paragraph opens
+    /// with `[!kind]` (a kind with a colon) and its last names the source
+    /// with `— [label](url)`.
+    fn transclusion<'a>(&self, node: &'a AstNode<'a>) -> Option<Transclusion> {
+        let paragraphs = node
+            .children()
+            .map(|child| {
+                matches!(child.data().value, NodeValue::Paragraph).then(|| self.inline(child))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let [first, middle @ .., last] = paragraphs.as_slice() else {
+            return None;
+        };
+        let open = first.text().strip_prefix("[!")?;
+        let kind = &open[..open.find(']')?];
+        if !kind.contains(':') || kind.contains(char::is_whitespace) {
+            return None;
+        }
+        let (url, label) = source_link(last)?;
+        let marker = "[!]".encode_utf16().count() + kind.encode_utf16().count();
+        let lead = first.slice(marker..first.len());
+        let fallback = std::iter::once(&lead)
+            .chain(middle)
+            .map(|paragraph| super::inline_source(paragraph).trim().to_owned())
+            .filter(|paragraph| !paragraph.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        Some(Transclusion {
+            kind: kind.to_owned(),
+            url,
+            label,
+            fallback,
+        })
+    }
+
     fn inline<'a>(&self, node: &'a AstNode<'a>) -> Inline {
         let mut builder = InlineBuilder::new(self.options);
         for child in node.children() {
@@ -146,6 +181,10 @@ impl Lowering<'_> {
                 });
             }
             NodeValue::BlockQuote | NodeValue::MultilineBlockQuote(_) => {
+                if let Some(transclusion) = self.transclusion(node) {
+                    self.push(BlockKind::Transclusion(transclusion));
+                    return;
+                }
                 for child in node.children() {
                     if matches!(child.data().value, NodeValue::Paragraph) {
                         let content = self.inline(child);
@@ -327,6 +366,29 @@ impl Lowering<'_> {
         }
         self.push(BlockKind::Html(Inline::from(trimmed)));
     }
+}
+
+/// URL and label of the link on a `— [label](url)` line, whether the link
+/// stayed a link or was claimed as an embed.
+fn source_link(line: &Inline) -> Option<(String, String)> {
+    if !line.text().trim_start().starts_with('—') {
+        return None;
+    }
+    line.marks()
+        .iter()
+        .find_map(|mark| match &mark.kind {
+            MarkKind::Link(target) => Some((
+                target.url.clone(),
+                line.slice(mark.range.clone()).plain_text(),
+            )),
+            _ => None,
+        })
+        .or_else(|| {
+            line.atoms().iter().find_map(|atom| match atom {
+                Atom::Embed { url, label, .. } => Some((url.clone(), label.clone())),
+                _ => None,
+            })
+        })
 }
 
 const fn callout_kind(alert: comrak::nodes::AlertType) -> CalloutKind {

@@ -175,6 +175,24 @@ pub enum BlockKind {
     FrontMatter(Inline),
     TableOfContents,
     Html(Inline),
+    Transclusion(Transclusion),
+}
+
+/// A quote whose content lives elsewhere and is shown as it is now.
+///
+/// In markdown it is a block quote opened by `[!<kind>]` (a kind with a
+/// colon, so it never reads as an alert), followed by the content as it
+/// was last seen and closed by a `— [label](url)` line naming the source.
+/// Portable markdown keeps the plain quote and drops the opening line.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Transclusion {
+    /// What the opening marker names, such as `app:live`.
+    pub kind: String,
+    pub url: String,
+    pub label: String,
+    /// Markdown of the content as last seen, paragraphs split by a blank
+    /// line.
+    pub fallback: String,
 }
 
 /// How the text of a block may be edited.
@@ -218,7 +236,7 @@ impl BlockKind {
             | Self::ListItem { content, .. }
             | Self::Footnote { content, .. }
             | Self::Code { code: content, .. } => Some(content),
-            Self::Divider | Self::Table(_) | Self::TableOfContents => None,
+            Self::Divider | Self::Table(_) | Self::TableOfContents | Self::Transclusion(_) => None,
         }
     }
 
@@ -236,7 +254,7 @@ impl BlockKind {
             | Self::ListItem { content, .. }
             | Self::Footnote { content, .. }
             | Self::Code { code: content, .. } => Some(content),
-            Self::Divider | Self::Table(_) | Self::TableOfContents => None,
+            Self::Divider | Self::Table(_) | Self::TableOfContents | Self::Transclusion(_) => None,
         }
     }
 
@@ -246,7 +264,7 @@ impl BlockKind {
             Self::Code { .. } | Self::Math(_) | Self::FrontMatter(_) | Self::Html(_) => {
                 Some(TextRole::Plain)
             }
-            Self::Divider | Self::TableOfContents => None,
+            Self::Divider | Self::TableOfContents | Self::Transclusion(_) => None,
             _ => Some(TextRole::Rich),
         }
     }
@@ -713,7 +731,7 @@ impl Document {
         let previous_index = index.checked_sub(1)?;
         let previous_id = self.blocks[previous_index].id;
         match &self.blocks[previous_index].kind {
-            BlockKind::Divider | BlockKind::TableOfContents => {
+            BlockKind::Divider | BlockKind::TableOfContents | BlockKind::Transclusion(_) => {
                 self.blocks.remove(previous_index);
                 Some(Caret::new(target.block, 0))
             }
@@ -765,7 +783,7 @@ impl Document {
         let next = self.blocks.get(next_index)?;
         let offset = self.blocks[index].kind.content()?.len();
         match &next.kind {
-            BlockKind::Divider | BlockKind::TableOfContents => {
+            BlockKind::Divider | BlockKind::TableOfContents | BlockKind::Transclusion(_) => {
                 self.blocks.remove(next_index);
             }
             BlockKind::Table(_) => return None,
