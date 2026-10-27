@@ -20,6 +20,7 @@
 //! boundary. See [`Board::erase_at`].
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -48,6 +49,7 @@ use crate::text_box::TextBoxId;
 use crate::undo::UndoStack;
 
 mod handwriting;
+mod ink_cache;
 mod lasso;
 mod tools;
 mod touch;
@@ -56,6 +58,7 @@ pub use lasso::Selection;
 mod text;
 
 pub use handwriting::LETTER_IDLE;
+pub use ink_cache::InkCache;
 
 pub use text::{SceneText, TextLayerView, TextScene};
 
@@ -303,6 +306,10 @@ pub struct Board {
     pointer_last: Option<Instant>,
     /// What other people are doing on this document right now.
     remote: HashMap<notein_sync::DeviceId, RemoteHand>,
+    /// Bumped whenever the committed ink may paint differently.
+    ink_rev: u64,
+    /// Bumped whenever the background asks for a repaint.
+    paper_rev: Arc<AtomicU64>,
     /// Edits are refused: the document is shared with us to look at.
     read_only: bool,
 }
@@ -420,6 +427,8 @@ impl Default for Board {
             BrushKind::Highlighter,
             Arc::new(HighlighterBrush::new(Arc::clone(&highlighter_state))),
         );
+        let paper_rev = Arc::new(AtomicU64::new(0));
+        let paper = Arc::clone(&paper_rev);
         Self {
             doc: Doc::default(),
             active: None,
@@ -455,7 +464,9 @@ impl Default for Board {
             highlighter_state,
             two_point_active: false,
             background: Arc::new(SolidColorBackground::new(SkColor::from_rgb(250, 250, 248))),
-            redraw_handle: RedrawHandle::noop(),
+            redraw_handle: RedrawHandle::new(move || {
+                paper.fetch_add(1, Ordering::Relaxed);
+            }),
             last_surface_size: (0.0, 0.0),
             text_session: None,
             text_heights: HashMap::new(),
@@ -469,6 +480,8 @@ impl Default for Board {
             pointer_last: None,
             remote: HashMap::new(),
             read_only: false,
+            ink_rev: 0,
+            paper_rev,
         }
     }
 }
@@ -481,7 +494,11 @@ impl Board {
     /// their wakeups through the same channel.
     pub fn set_notifier(&mut self, notifier: RedrawNotifier) {
         let mirror = notifier.clone();
-        self.redraw_handle = RedrawHandle::new(move || mirror.ping());
+        let paper = Arc::clone(&self.paper_rev);
+        self.redraw_handle = RedrawHandle::new(move || {
+            paper.fetch_add(1, Ordering::Relaxed);
+            mirror.ping();
+        });
         self.notifier = Some(notifier);
     }
 
@@ -490,6 +507,7 @@ impl Board {
     /// next frame.
     pub fn set_background(&mut self, background: Arc<dyn CanvasBackground>) {
         self.background = background;
+        self.ink_rev += 1;
         self.notify();
     }
 
@@ -693,6 +711,7 @@ impl Board {
             // subsequently committed highlighter.
             self.highlighter_state.set(tip);
         }
+        self.ink_rev += 1;
         self.notify();
     }
 
@@ -748,6 +767,7 @@ impl Board {
     /// again or the doc is reloaded. Register renderers before
     /// painting starts to keep the cache consistent.
     pub fn brush_registry_mut(&mut self) -> &mut BrushRegistry {
+        self.ink_rev += 1;
         Arc::make_mut(&mut self.brush_registry)
     }
 
@@ -947,6 +967,7 @@ impl Board {
     /// Rebuild the spatial index, cached paths, glyph paths and stroke
     /// positions from the current doc, then ask for a repaint.
     fn rebuild_derived(&mut self) {
+        self.ink_rev += 1;
         self.spatial.clear();
         self.glyph_paths.clear();
         let glyphs: Vec<crate::ink_glyph::InkGlyph> = self
@@ -1606,6 +1627,7 @@ impl Board {
     /// recording — used by both the forward path (indirectly via
     /// [`Self::apply_op`]) and the undo / redo replays.
     fn apply_op_untracked(&mut self, op: DocOp) {
+        self.ink_rev += 1;
         self.touch_text_scene();
         match op {
             DocOp::RemoveStroke { id } => {
@@ -1999,39 +2021,127 @@ impl Board {
         self.undo.commit();
     }
 
-    /// Paint every committed stroke plus the active one onto `canvas`.
+    /// Paint the slice of the document `pass` names onto `canvas`.
     ///
-    /// Committed strokes: cached Skia path per stroke, one `draw_path`
-    /// each. Active stroke: rebuilt from scratch every frame via
-    /// [`build_stroke_path`] — the unified-polygon ribbon renderer
-    /// cannot be composed incrementally without reintroducing seams,
-    /// and the per-frame cost is negligible for realistic sample
-    /// counts.
+    /// The committed ink (and the paper under it, for the bottom pass)
+    /// comes from `cache` whenever it can; see [`InkCache`]. The active
+    /// stroke and the overlays are drawn fresh every frame on top.
     pub fn paint(
         &mut self,
         canvas: &freya_engine::prelude::Canvas,
         surface: SurfaceBounds,
         pass: &PaintPass,
+        cache: &mut InkCache,
     ) {
         if pass.base {
-            self.paint_base(canvas, surface);
+            self.settle_surface(surface);
         }
-        canvas.save();
-        canvas.translate((self.viewport.tx, self.viewport.ty));
-        canvas.scale((self.viewport.scale, self.viewport.scale));
-        self.paint_layers(canvas, surface, pass.layers.clone());
+        if !self.paint_cached(canvas, surface, pass, cache) {
+            if pass.base {
+                self.paint_base(canvas, surface);
+            }
+            canvas.save();
+            canvas.translate((self.viewport.tx, self.viewport.ty));
+            canvas.scale((self.viewport.scale, self.viewport.scale));
+            self.paint_layers(canvas, surface, pass.layers.clone());
+            canvas.restore();
+        }
+        if pass.base {
+            self.tick_background(surface);
+        }
         if pass.overlays {
+            canvas.save();
+            canvas.translate((self.viewport.tx, self.viewport.ty));
+            canvas.scale((self.viewport.scale, self.viewport.scale));
             self.paint_world_overlays(canvas);
-        }
-        canvas.restore();
-        if pass.overlays {
+            canvas.restore();
             self.paint_screen_overlays(canvas);
         }
     }
 
-    /// Backdrop and background (PDF pages, paper, …): everything below the
-    /// first layer.
-    fn paint_base(&mut self, canvas: &freya_engine::prelude::Canvas, surface: SurfaceBounds) {
+    /// Paint the base and committed ink of `pass` from `cache`, drawing
+    /// the cache again when it no longer fits. `false` when the pass has
+    /// to be painted directly: the ink is moving under an eraser or a
+    /// lasso, it blends with what lies under the pass, or the canvas
+    /// cannot hold an image.
+    fn paint_cached(
+        &self,
+        canvas: &freya_engine::prelude::Canvas,
+        surface: SurfaceBounds,
+        pass: &PaintPass,
+        cache: &mut InkCache,
+    ) -> bool {
+        let erasing = self
+            .erase_session
+            .as_ref()
+            .is_some_and(|s| !s.circles.is_empty());
+        if erasing || self.lasso_dragging() {
+            return false;
+        }
+        if !pass.base && !self.has_ink(pass.layers.clone()) {
+            return false;
+        }
+        if !pass.base && cache.blends(self.ink_rev, || self.ink_blends(pass.layers.clone())) {
+            return false;
+        }
+        let size = (surface.max_x - surface.min_x, surface.max_y - surface.min_y);
+        let Some(frame) = ink_cache::Frame::of(canvas, size, self.viewport) else {
+            return false;
+        };
+        let content = (self.ink_rev, self.paper_rev.load(Ordering::Relaxed));
+        if !cache.fits(&frame, content, self.gesture_active) {
+            let drawn = cache.redraw(canvas, &frame, content, |target, bounds| {
+                if pass.base {
+                    self.paint_base(target, bounds);
+                }
+                target.save();
+                target.translate((self.viewport.tx, self.viewport.ty));
+                target.scale((self.viewport.scale, self.viewport.scale));
+                self.paint_layers(target, bounds, pass.layers.clone());
+                target.restore();
+            });
+            if !drawn {
+                return false;
+            }
+        }
+        cache.draw(canvas, &frame);
+        true
+    }
+
+    /// Whether the layers at `range` hold anything to paint.
+    fn has_ink(&self, range: std::ops::Range<usize>) -> bool {
+        self.doc.layers.get(range).is_some_and(|layers| {
+            layers
+                .iter()
+                .any(|l| l.visible && !(l.strokes.is_empty() && l.glyphs.is_empty()))
+        })
+    }
+
+    /// Whether any visible ink of the layers at `range` blends with what
+    /// lies under it instead of covering it (a highlighter multiplies).
+    fn ink_blends(&self, range: std::ops::Range<usize>) -> bool {
+        let Some(layers) = self.doc.layers.get(range) else {
+            return false;
+        };
+        let mut seen = HashSet::new();
+        layers
+            .iter()
+            .filter(|layer| layer.visible)
+            .flat_map(|layer| &layer.strokes)
+            .filter(|stroke| seen.insert(stroke.brush))
+            .filter_map(|stroke| self.doc.preset(stroke.brush))
+            .any(|preset| {
+                let paint = self
+                    .brush_registry
+                    .brush(preset.kind)
+                    .paint(preset, [0, 0, 0, 255]);
+                paint.as_blend_mode() != Some(BlendMode::SrcOver)
+            })
+    }
+
+    /// Note the surface size and pull the viewport back inside the
+    /// background before anything is painted.
+    fn settle_surface(&mut self, surface: SurfaceBounds) {
         // Cache surface size so off-paint mutators (`pan_move`,
         // `viewport_zoom_at`, `viewport_zoom_by`) can consult it when
         // clamping against the current background's content bounds.
@@ -2041,7 +2151,28 @@ impl Board {
         // an off-path mutator may have pushed the viewport past bounds
         // before the surface size was known.
         self.clamp_viewport_to_background();
+    }
 
+    /// Let the background fetch what the view now shows.
+    fn tick_background(&self, surface: SurfaceBounds) {
+        self.background
+            .tick(self.visible_world(surface), self.viewport.scale);
+    }
+
+    fn visible_world(&self, surface: SurfaceBounds) -> BgRect {
+        let (min_x, min_y) = self.viewport.screen_to_world(surface.min_x, surface.min_y);
+        let (max_x, max_y) = self.viewport.screen_to_world(surface.max_x, surface.max_y);
+        BgRect {
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+        }
+    }
+
+    /// Backdrop and background (PDF pages, paper, …): everything below the
+    /// first layer.
+    fn paint_base(&self, canvas: &freya_engine::prelude::Canvas, surface: SurfaceBounds) {
         // Backdrop fill lives inside the paint callback so a runtime
         // `set_background` swap (edit sheet re-tint) actually repaints
         // the surface — the enclosing freya rect's `.background(...)`
@@ -2063,33 +2194,20 @@ impl Board {
             );
         }
 
-        // Everything below draws in world coordinates. Wrapping in a
-        // save/restore lets viewport pan+zoom compose freely with any
-        // future overlay pass that wants to draw in screen space.
-        canvas.save();
-        canvas.translate((self.viewport.tx, self.viewport.ty));
-        canvas.scale((self.viewport.scale, self.viewport.scale));
-
         // Background layer (PDF pages, blank paper, image, solid
         // color, etc.) paints first — under the strokes but inside the
         // world transform so page rectangles live in the same
         // coordinate space as the ink.
-        let (v_min_x, v_min_y) = self.viewport.screen_to_world(surface.min_x, surface.min_y);
-        let (v_max_x, v_max_y) = self.viewport.screen_to_world(surface.max_x, surface.max_y);
-        let bg_visible = BgRect {
-            min_x: v_min_x,
-            min_y: v_min_y,
-            max_x: v_max_x,
-            max_y: v_max_y,
-        };
+        canvas.save();
+        canvas.translate((self.viewport.tx, self.viewport.ty));
+        canvas.scale((self.viewport.scale, self.viewport.scale));
         let mut bg_ctx = BgPaintCtx {
             canvas,
-            visible: bg_visible,
+            visible: self.visible_world(surface),
             scale: self.viewport.scale,
             redraw: self.redraw_handle.clone(),
         };
         self.background.paint(&mut bg_ctx);
-        self.background.tick(bg_visible, self.viewport.scale);
         canvas.restore();
     }
 

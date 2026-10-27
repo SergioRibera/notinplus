@@ -20,7 +20,9 @@ use freya_markdown_editor::prelude::*;
 use istmo::plugins::EdgeInsets;
 use notein_ui_kit::TapExt;
 
-use crate::canvas::{Board, PaintPass, SceneText, SurfaceBounds, TextLayerView, TextScene, lock};
+use crate::canvas::{
+    Board, InkCache, PaintPass, SceneText, SurfaceBounds, TextLayerView, TextScene, lock,
+};
 use crate::text_box::{TEXT_BASE_SIZE, TEXT_MIN_WIDTH, TextBoxId, TextFrame};
 use crate::ui_mask::{MaskSlot, use_mask_slot};
 
@@ -236,6 +238,7 @@ fn pass_canvas(board: &Arc<Mutex<Board>>, pass: PaintPass, index: usize) -> Elem
         pass.layers.start, pass.layers.end, pass.base, pass.overlays
     );
     let board = Arc::clone(board);
+    let mut cache = InkCache::default();
     rect()
         .key(key)
         .position(Position::new_absolute().top(0.).left(0.))
@@ -253,7 +256,7 @@ fn pass_canvas(board: &Arc<Mutex<Board>>, pass: PaintPass, index: usize) -> Elem
                         max_x: ctx.size.width,
                         max_y: ctx.size.height,
                     };
-                    lock(&board).paint(canvas, bounds, &pass);
+                    lock(&board).paint(canvas, bounds, &pass, &mut cache);
                 }))
                 .width(Size::fill())
                 .height(Size::fill()),

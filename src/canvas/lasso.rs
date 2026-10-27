@@ -407,6 +407,14 @@ impl Board {
         Some(text)
     }
 
+    /// Whether a selection is being dragged.
+    pub(super) fn lasso_dragging(&self) -> bool {
+        self.lasso
+            .selection
+            .as_ref()
+            .is_some_and(|s| s.grab.is_some())
+    }
+
     /// Whether stroke `id` is being dragged, and by how much.
     pub(super) fn drag_offset_of_stroke(&self, id: StrokeId) -> Option<(f32, f32)> {
         self.lasso

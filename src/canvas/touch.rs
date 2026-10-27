@@ -183,6 +183,10 @@ impl Board {
             self.two_finger_tap_ended();
         }
         if self.finger_positions.len() < 2 {
+            if self.gesture_active {
+                // A zoom just ended: repaint so the ink is drawn sharp again.
+                self.notify();
+            }
             self.gesture_active = false;
             self.gesture_baseline = None;
             if self.touch_pan_finger.is_none()
