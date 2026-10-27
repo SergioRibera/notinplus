@@ -120,7 +120,9 @@ const fn spanish(label: Label) -> &'static str {
         Label::Matrix => "Matriz",
         Label::Diagram => "Diagrama",
         Label::DiagramDetail => "Diagrama de flujo que se edita como texto",
-        Label::DiagramTemplate => "flowchart TD\n    inicio[Inicio] --> pregunta{¿Decisión?}\n    pregunta -->|Sí| hacer[Hacerlo]\n    pregunta -->|No| fin[Terminar]",
+        Label::DiagramTemplate => {
+            "flowchart TD\n    inicio[Inicio] --> pregunta{¿Decisión?}\n    pregunta -->|Sí| hacer[Hacerlo]\n    pregunta -->|No| fin[Terminar]"
+        }
     }
 }
 

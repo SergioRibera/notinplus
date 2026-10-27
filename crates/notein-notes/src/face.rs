@@ -68,6 +68,7 @@ impl PartialEq for NotePage {
 }
 
 impl Component for NotePage {
+    #[allow(clippy::too_many_lines, reason = "declarative layout of the page")]
     fn render(&self) -> impl IntoElement {
         let ctx = &self.ctx;
         let doc = ctx.doc;
@@ -139,7 +140,10 @@ impl Component for NotePage {
 
         let editor = ctx
             .ui
-            .editor_for(MarkdownEditor::new(markdown).controller(controller), ctx.doc)
+            .editor_for(
+                MarkdownEditor::new(markdown).controller(controller),
+                ctx.doc,
+            )
             .reorderable(true)
             .placeholder("Escribí tu nota… (/ para insertar)")
             .width(Size::fill())

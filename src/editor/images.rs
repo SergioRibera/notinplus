@@ -469,7 +469,11 @@ mod tests {
         for byte in data {
             crc ^= u32::from(*byte);
             for _ in 0..8 {
-                crc = if crc & 1 == 1 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
+                crc = if crc & 1 == 1 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
             }
         }
         !crc
@@ -483,7 +487,10 @@ mod tests {
             .expect("encode");
         // A text chunk before the end of the file.
         let body = b"tEXtnote\0hello";
-        let mut chunk = u32::try_from(body.len() - 4).expect("len").to_be_bytes().to_vec();
+        let mut chunk = u32::try_from(body.len() - 4)
+            .expect("len")
+            .to_be_bytes()
+            .to_vec();
         chunk.extend_from_slice(body);
         chunk.extend_from_slice(&crc32(body).to_be_bytes());
         let end = raw.len() - 12;

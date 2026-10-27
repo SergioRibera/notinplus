@@ -209,7 +209,10 @@ fn inline_symbols(svg: &str) -> String {
                     attribute(element, name).map(|value| format!(" {name}=\"{value}\""))
                 })
                 .collect::<String>();
-            let _ = write!(out, "<g transform=\"translate({x} {y})\"{paint}>{inner}</g>");
+            let _ = write!(
+                out,
+                "<g transform=\"translate({x} {y})\"{paint}>{inner}</g>"
+            );
         } else {
             out.push_str(&tail[..end + 2]);
         }

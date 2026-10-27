@@ -6,8 +6,8 @@
 //! through the shell, the theme of the active palette and the user's
 //! markdown-marks setting.
 
-mod labels;
 pub(crate) mod images;
+mod labels;
 mod live;
 
 pub use live::LIVE_QUOTE;
