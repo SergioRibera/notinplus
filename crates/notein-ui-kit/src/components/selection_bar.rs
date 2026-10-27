@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use freya::prelude::*;
 
 use super::icon::Icon;
+use crate::components::TapExt;
 use crate::theme::palette;
 use crate::tokens::{radius, text};
 
@@ -105,7 +106,7 @@ impl BarItem {
                     .center()
                     .spacing(6.0)
                     .a11y_role(AccessibilityRole::Button)
-                    .on_press(move |_| handler.call(()))
+                    .on_tap(move |_| handler.call(()))
                     .maybe_child(
                         icon.clone()
                             .map(|i| Icon::new(i).size(16.0).color(p.inv_text)),
@@ -147,7 +148,7 @@ impl BarItem {
                                     .alignment(BorderAlignment::Outer),
                             )
                         })
-                        .on_press(move |_| handler.call(ci))
+                        .on_tap(move |_| handler.call(ci))
                         .into_element()
                 }))
                 .into_element(),

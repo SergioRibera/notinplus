@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use freya::prelude::*;
 
 use super::icon::Icon;
+use crate::components::TapExt;
 use crate::theme::palette;
 use crate::tokens::{radius, text};
 
@@ -96,7 +97,7 @@ impl Component for RefChip {
             .spacing(6.0)
             .a11y_role(AccessibilityRole::Link)
             .a11y_alt(self.label.to_string())
-            .map(on_press, |r, handler| r.on_press(move |e| handler.call(e)))
+            .map(on_press, |r, handler| r.on_tap(move |e| handler.call(e)))
             .child(Icon::new(icon).size(14.0).color(icon_color))
             .child(
                 label()

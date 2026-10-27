@@ -4,6 +4,7 @@
 use freya::prelude::*;
 use notein_bible::db::{BibleRow, BookRow, SearchHit};
 use notein_bible::ui::search::{SearchHitView, hit_to_view};
+use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
     EmptyState, ModalController, SearchField, Segmented, Sheet, Text, TextRole, tokens,
@@ -103,7 +104,7 @@ fn hit_row(reader: &Reader, hit: SearchHitView) -> Element {
         .padding((10.0, 12.0))
         .spacing(4.0)
         .corner_radius(tokens::radius::MD)
-        .on_press(move |_: Event<PressEventData>| {
+        .on_tap(move |_: Event<PressEventData>| {
             if !source.bible_id.is_empty() && source.bible_id != reader.bible_id() {
                 reader.switch_bible(&source.bible_id);
             }

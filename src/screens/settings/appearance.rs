@@ -1,6 +1,7 @@
 //! Ajustes › Apariencia: theme, accent, text size and motion.
 
 use freya::prelude::*;
+use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::{ACCENT_SWATCHES, Palette, ThemeKind, palette, try_theme};
 use notein_ui_kit::{
     Button, ColorWheel, Group, Icon, ListRow, ModalController, Notice, NoticeTone, Popover,
@@ -99,7 +100,7 @@ fn theme_card(
         .a11y_role(AccessibilityRole::RadioButton)
         .a11y_alt(pref.label())
         .a11y_focusable(true)
-        .on_press(move |_| on_pick())
+        .on_tap(move |_| on_pick())
         .child(
             rect()
                 .width(Size::px(THUMB_W))
@@ -164,7 +165,7 @@ fn accent_swatch(color: Option<Color>, label: &'static str, accent: Option<Color
                 .width(2.0)
                 .alignment(BorderAlignment::Outer),
         )
-        .on_press(move |_| {
+        .on_tap(move |_| {
             SettingsStore::get().update(|s| s.appearance.accent = color.map(rgb));
         })
         .maybe_child(chosen.then(|| {
@@ -195,7 +196,7 @@ fn custom_swatch(accent: Option<Color>, theme_accent: Color, mut area: State<Are
         .a11y_role(AccessibilityRole::Button)
         .a11y_alt("Otro color")
         .on_sized(move |e: Event<SizedEventData>| area.set_if_modified(e.area))
-        .on_press(move |_| {
+        .on_tap(move |_| {
             let initial = accent.unwrap_or(theme_accent);
             Popover::new(*area.peek(), AccentPicker { initial })
                 .width(PICKER_WIDTH + 32.0)

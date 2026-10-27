@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
+use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
     ActionEntry, Button, EmptyState, IconButton, ListRow, Popover, PopoverAlign, PopoverSide, Tag,
@@ -67,7 +68,7 @@ fn breadcrumb(data: &LibraryData, browse: Browse) -> Rect {
                 .padding((4.0, 6.0))
                 .corner_radius(tokens::radius::XS)
                 .a11y_role(AccessibilityRole::Link)
-                .maybe(!here, |r| r.on_press(move |_| browse.enter(id)))
+                .maybe(!here, |r| r.on_tap(move |_| browse.enter(id)))
                 .child(
                     Text::new(name)
                         .role(if here {

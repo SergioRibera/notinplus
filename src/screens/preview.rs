@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use freya::prelude::*;
 use freya_testing::prelude::*;
+use notein_ui_kit::TapExt;
 
 use crate::library::{
     DocKind, Folder, FolderId, Item, ItemId, LibraryData, LibraryIndex, Link, LinkId, LinkIndex,
@@ -639,7 +640,7 @@ fn book_grid_sheet() -> Element {
                     .height(Size::px(72.0))
                     .center()
                     .background(notein_ui_kit::palette().s3)
-                    .on_press(|_| SHEET_PRESSES.set(SHEET_PRESSES.get() + 1))
+                    .on_tap(|_| SHEET_PRESSES.set(SHEET_PRESSES.get() + 1))
                     .child(label().text(i.to_string()))
                     .into_element()
             }));

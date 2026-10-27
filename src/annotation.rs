@@ -14,6 +14,7 @@ use freya::prelude::*;
 use notein_plugin::services::{
     AnnotationDone, AnnotationOutcome, AnnotationPreview, AnnotationRequest,
 };
+use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
     Button, ButtonVariant, ColorWheel, Icon, IconButton, ModalController, Popover, PopoverAlign,
@@ -401,7 +402,7 @@ impl AnnotationCard {
                 swatch(*color, current == Some(rgb))
                     .key(color.to_hex_string())
                     .a11y_alt("Color de resaltado")
-                    .on_press(move |_| recolor(id, Some(rgb)))
+                    .on_tap(move |_| recolor(id, Some(rgb)))
                     .into_element()
             }))
             .child(Self::custom_swatch(id, current, custom))
@@ -425,7 +426,7 @@ impl AnnotationCard {
             .a11y_alt("Otro color")
             .center()
             .on_sized(move |e: Event<SizedEventData>| area.set_if_modified(e.area))
-            .on_press(move |_| {
+            .on_tap(move |_| {
                 Popover::new(*area.peek(), ColorPicker { id })
                     .width(PICKER_WIDTH + 24.0)
                     .align(PopoverAlign::Center)

@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
+use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_plugin::services::HeaderPress;
 use notein_ui_kit::{Icon, IconButton, Text, TextRole, tokens};
@@ -326,7 +327,7 @@ impl Component for TabCell {
             .spacing(6.0)
             .a11y_role(AccessibilityRole::Tab)
             .a11y_alt(self.look_title.clone())
-            .on_press(move |_| ops.select_tab(pane, index))
+            .on_tap(move |_| ops.select_tab(pane, index))
             .on_secondary_down(move |e: Event<PressEventData>| {
                 menu_for(&menu_tab, &data, anchor(&e));
             })
@@ -349,7 +350,7 @@ impl Component for TabCell {
                     .center()
                     .a11y_role(AccessibilityRole::Button)
                     .a11y_alt("Cerrar pestaña")
-                    .on_press(move |e: Event<PressEventData>| {
+                    .on_tap(move |e: Event<PressEventData>| {
                         e.stop_propagation();
                         ops.close_tab(pane, index, &close);
                     })

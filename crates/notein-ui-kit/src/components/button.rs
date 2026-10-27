@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use freya::prelude::*;
 
 use super::icon::Icon;
+use super::scroll_content::TapExt;
 use super::spinner::Spinner;
 use crate::theme::{Palette, palette};
 use crate::tokens::{radius, size, text};
@@ -80,7 +81,7 @@ impl ButtonVariant {
 /// A labelled button.
 ///
 /// ```rust,ignore
-/// Button::new("Crear y abrir").primary().on_press(|_| create())
+/// Button::new("Crear y abrir").primary().on_tap(|_| create())
 /// ```
 #[derive(Clone, PartialEq)]
 pub struct Button {
@@ -255,7 +256,7 @@ impl Component for Button {
                 })
                 .on_pointer_down(move |_| pressed.set(true))
                 .on_pointer_press(move |_| pressed.set(false))
-                .map(on_press, |r, handler| r.on_press(move |e| handler.call(e)))
+                .map(on_press, |r, handler| r.on_tap(move |e| handler.call(e)))
             })
             .maybe_child(leading)
             .child(

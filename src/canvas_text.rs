@@ -18,6 +18,7 @@ use freya::icons::lucide::{check, grip, rotate_cw, trash_2};
 use freya::prelude::*;
 use freya_markdown_editor::prelude::*;
 use istmo::plugins::EdgeInsets;
+use notein_ui_kit::TapExt;
 
 use crate::canvas::{Board, PaintPass, SceneText, SurfaceBounds, TextLayerView, TextScene, lock};
 use crate::text_box::{TEXT_BASE_SIZE, TEXT_MIN_WIDTH, TextBoxId, TextFrame};
@@ -885,7 +886,7 @@ fn toolbar_action(icon: Bytes, on_press: impl Fn() + 'static) -> Element {
         .center()
         .corner_radius(8.)
         .cursor(CursorIcon::Pointer)
-        .on_press(move |_| on_press())
+        .on_tap(move |_| on_press())
         .child(
             SvgViewer::new(icon)
                 .color(notein_ui_kit::palette().t1)

@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
+use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{Avatar, Button, IconButton, Kbd, Text, TextRole, tokens, width_class};
 
@@ -73,7 +74,7 @@ impl MesaBar {
             .corner_radius(tokens::radius::MD)
             .a11y_role(AccessibilityRole::Button)
             .a11y_alt("Opciones de la mesa")
-            .on_press(move |e: Event<PressEventData>| {
+            .on_tap(move |e: Event<PressEventData>| {
                 crate::actions::show(crate::actions::for_mesa(&data, mesa), anchor(&e));
             })
             .child(
@@ -114,7 +115,7 @@ impl MesaBar {
             .spacing(8.0)
             .a11y_role(AccessibilityRole::SearchInput)
             .a11y_focusable(true)
-            .on_press(self.open_palette())
+            .on_tap(self.open_palette())
             .child(
                 notein_ui_kit::Icon::new(freya::icons::lucide::search())
                     .size(14.0)
@@ -153,7 +154,7 @@ impl MesaBar {
                 .cross_align(Alignment::Center)
                 .spacing(-6.0)
                 .a11y_alt(format!("{} en la mesa", present.len()))
-                .on_press(move |_| crate::flows::share_mesa(mesa))
+                .on_tap(move |_| crate::flows::share_mesa(mesa))
                 .children(
                     present
                         .iter()

@@ -3,7 +3,7 @@
 
 use freya::prelude::*;
 use notein_ui_kit::theme::{Palette, palette};
-use notein_ui_kit::{Button, Icon, IconButton, Text, TextRole, tokens, use_press_gesture};
+use notein_ui_kit::{Button, Icon, IconButton, TapExt, Text, TextRole, tokens, use_press_gesture};
 
 use crate::library::{LibraryData, PaneLayout, SplitOrientation, Workspace, WorkspaceId};
 use crate::references::kind_color;
@@ -290,7 +290,7 @@ fn new_mesa_card(width: f32) -> Element {
         .spacing(6.0)
         .a11y_role(AccessibilityRole::Button)
         .a11y_alt("Nueva mesa")
-        .on_press(|_| crate::flows::create::new_mesa())
+        .on_tap(|_| crate::flows::create::new_mesa())
         .child(
             Icon::new(freya::icons::lucide::plus())
                 .size(20.0)
@@ -396,7 +396,7 @@ fn new_mesa_row(height: f32) -> Element {
         .spacing(10.0)
         .a11y_role(AccessibilityRole::Button)
         .a11y_alt("Nueva mesa")
-        .on_press(|_| crate::flows::create::new_mesa())
+        .on_tap(|_| crate::flows::create::new_mesa())
         .child(
             Icon::new(freya::icons::lucide::plus())
                 .size(tokens::size::ICON_SM)

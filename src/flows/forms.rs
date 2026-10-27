@@ -4,6 +4,7 @@
 use std::rc::Rc;
 
 use freya::prelude::*;
+use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
     Button, ButtonVariant, ColorWheel, Group, IconButton, ListRow, ModalController, Section, Sheet,
@@ -329,7 +330,7 @@ impl Component for PaperPicker {
                         .cross_align(Alignment::Center)
                         .a11y_role(AccessibilityRole::RadioButton)
                         .a11y_alt(label_text)
-                        .on_press(move |_| values.write().paper = style)
+                        .on_tap(move |_| values.write().paper = style)
                         .child(
                             rect()
                                 .width(Size::fill())
@@ -401,7 +402,7 @@ impl Component for ColorRow {
                                     .width(if selected { 2.5 } else { 1.0 })
                                     .alignment(BorderAlignment::Outer),
                             )
-                            .on_press(move |_| values.write().color = Some(c))
+                            .on_tap(move |_| values.write().color = Some(c))
                             .into_element()
                     }))
                     .child(

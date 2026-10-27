@@ -6,6 +6,7 @@ use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use freya::prelude::*;
+use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
     Button, Group, ListRow, ModalController, Notice, NoticeTone, ProgressBar, Section, Segmented,
@@ -141,7 +142,7 @@ fn purpose_card(
         )
         .spacing(4.0)
         .a11y_role(AccessibilityRole::RadioButton)
-        .on_press(move |_| choices.write().purpose = purpose)
+        .on_tap(move |_| choices.write().purpose = purpose)
         .child(
             rect()
                 .horizontal()

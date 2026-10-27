@@ -4,6 +4,7 @@ use std::borrow::Cow;
 
 use freya::prelude::*;
 
+use crate::components::TapExt;
 use crate::theme::palette;
 use crate::tokens::{radius, text};
 
@@ -135,7 +136,7 @@ impl Component for PresenceChip {
             .spacing(8.0)
             .a11y_role(AccessibilityRole::Button)
             .a11y_alt(format!("{} · {}", person.name, person.status))
-            .map(on_press, |r, handler| r.on_press(move |e| handler.call(e)))
+            .map(on_press, |r, handler| r.on_tap(move |e| handler.call(e)))
             .child(Avatar::new(person.initials.clone(), person.color).presence(person.live))
             .child(
                 label()
@@ -238,7 +239,7 @@ impl Component for PresenceList {
                     .center()
                     .a11y_role(AccessibilityRole::Button)
                     .a11y_alt(format!("Ver {hidden} personas más"))
-                    .map(on_more, |r, handler| r.on_press(move |_| handler.call(())))
+                    .map(on_more, |r, handler| r.on_tap(move |_| handler.call(())))
                     .child(
                         label()
                             .text(format!("+{hidden}"))

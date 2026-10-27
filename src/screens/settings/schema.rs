@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use freya::prelude::*;
 use notein_plugin::config::{ConfigEnumOption, ConfigField, ConfigFieldKind, ConfigValue};
 use notein_plugin::plugin::PluginSettings;
+use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
     Action, ActionEntry, ActionList, Button, ButtonVariant, ColorWheel, Group, ListRow, Popover,
@@ -293,7 +294,7 @@ impl FieldRow {
                     )
                     .a11y_role(AccessibilityRole::Button)
                     .a11y_alt("Cambiar color")
-                    .on_press(move |_| {
+                    .on_tap(move |_| {
                         let next = !wheel_open();
                         wheel_open.set(next);
                     }),

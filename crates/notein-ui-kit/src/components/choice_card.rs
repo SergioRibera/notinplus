@@ -5,6 +5,7 @@ use std::borrow::Cow;
 
 use freya::prelude::*;
 
+use super::scroll_content::TapExt;
 use crate::theme::palette;
 use crate::tokens::{radius, text};
 
@@ -95,7 +96,7 @@ impl Component for ChoiceCard {
                 hovering.set(super::press::is_mouse(&e));
             })
             .on_pointer_leave(move |_| hovering.set(false))
-            .map(on_pick, |r, handler| r.on_press(move |_| handler.call(())))
+            .map(on_pick, |r, handler| r.on_tap(move |_| handler.call(())))
             .child(self.preview.clone())
             .child(
                 rect()

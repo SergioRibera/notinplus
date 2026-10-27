@@ -6,6 +6,7 @@ use freya::prelude::*;
 
 use super::hint::use_hint;
 use super::icon::Icon;
+use super::scroll_content::TapExt;
 use crate::theme::palette;
 use crate::tokens::{radius, size};
 
@@ -164,7 +165,7 @@ impl Component for IconButton {
             })
             .on_pointer_down(move |_| hint.leave())
             .maybe(self.enabled, |r| {
-                r.map(on_press, |r, handler| r.on_press(move |e| handler.call(e)))
+                r.map(on_press, |r, handler| r.on_tap(move |e| handler.call(e)))
             })
             .child(Icon::new(self.icon.clone()).size(icon_size).color(color))
             .maybe_child(hint.render(self.label.clone(), side))

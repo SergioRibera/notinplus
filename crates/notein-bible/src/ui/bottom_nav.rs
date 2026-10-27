@@ -4,6 +4,7 @@
 
 use freya::icons::lucide;
 use freya::prelude::*;
+use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{IconButton, tokens};
 
@@ -66,7 +67,7 @@ where
             rect()
                 .width(Size::flex(1.))
                 .padding((4., 6.))
-                .on_press(move |_: Event<PressEventData>| on_open_picker())
+                .on_tap(move |_: Event<PressEventData>| on_open_picker())
                 .child(
                     label()
                         .width(Size::fill())

@@ -5,6 +5,7 @@
 use std::sync::{Arc, Mutex};
 
 use freya::prelude::*;
+use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
     BarItem, Icon, IconButton, Popover, PopoverAlign, PopoverSide, Segmented, SelectionBar, Text,
@@ -360,7 +361,7 @@ impl Dock {
         let on = t == *self.state.tool.read();
         let tint = (t == Tool::Highlighter && on).then(|| color(*self.state.color.read()));
         dock_button(t.icon(), t.label(), on, tint)
-            .on_press(move |e: Event<PressEventData>| {
+            .on_tap(move |e: Event<PressEventData>| {
                 if on && t.tunable() {
                     BrushPopover::open(Arc::clone(&board), t, anchor(&e));
                 } else {
@@ -389,7 +390,7 @@ impl Dock {
             .center()
             .a11y_role(AccessibilityRole::Button)
             .a11y_alt("Color")
-            .on_press(move |e: Event<PressEventData>| {
+            .on_tap(move |e: Event<PressEventData>| {
                 ColorPopover::open(Arc::clone(&board), anchor(&e));
             })
             .child(
@@ -465,7 +466,7 @@ impl Dock {
                 *self.state.handwriting.read(),
                 None,
             )
-            .on_press(move |_| {
+            .on_tap(move |_| {
                 let mut guard = lock(&board);
                 let next = !guard.handwriting_enabled();
                 guard.set_handwriting(next);
@@ -662,7 +663,7 @@ impl BrushPopover {
                         .alignment(BorderAlignment::Outer),
                 )
                 .a11y_role(AccessibilityRole::RadioButton)
-                .on_press(move |_| {
+                .on_tap(move |_| {
                     lock(&board).set_current_color(c);
                     bump();
                 })
@@ -954,7 +955,7 @@ impl Component for Zoom {
             .a11y_role(AccessibilityRole::Button)
             .a11y_alt("Volver al 100 %")
             .on_sized(move |e: Event<SizedEventData>| mask.publish(e.area))
-            .on_press(move |_| crate::canvas::glide(&board, crate::canvas::Viewport::default()))
+            .on_tap(move |_| crate::canvas::glide(&board, crate::canvas::Viewport::default()))
             .child(Text::new(format!("{pct} %")).role(TextRole::Meta))
     }
 }

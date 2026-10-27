@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 use freya::prelude::*;
 use notein_plugin::kind::{OutlineIcon, OutlineNode};
+use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{Icon, Leading, ListRow, ScrollContent, Text, TextRole, tokens};
 
@@ -180,7 +181,7 @@ impl Rows {
                 rect()
                     .a11y_role(AccessibilityRole::Button)
                     .a11y_alt(if line.open { "Contraer" } else { "Expandir" })
-                    .on_press(move |e: Event<PressEventData>| {
+                    .on_tap(move |e: Event<PressEventData>| {
                         e.stop_propagation();
                         toggle();
                     })

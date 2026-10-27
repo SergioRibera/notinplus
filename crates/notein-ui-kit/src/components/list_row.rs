@@ -7,6 +7,7 @@ use freya::prelude::*;
 use super::checkbox::Checkbox;
 use super::icon::Icon;
 use super::kind_badge::KindBadge;
+use super::scroll_content::TapExt;
 use super::switch::Switch;
 use crate::theme::palette;
 use crate::tokens::{radius, size, text};
@@ -318,7 +319,7 @@ impl Component for ListRow {
                     hovering.set(super::press::is_mouse(&e));
                 })
                 .on_pointer_leave(move |_| hovering.set(false))
-                .map(on_press, |r, handler| r.on_press(move |e| handler.call(e)))
+                .map(on_press, |r, handler| r.on_tap(move |e| handler.call(e)))
             })
             .map(on_secondary, |r, handler| {
                 r.on_secondary_down(move |e| handler.call(e))

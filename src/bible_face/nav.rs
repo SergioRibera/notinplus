@@ -1,6 +1,7 @@
 //! The book and chapter picker opened from the bottom bar.
 
 use freya::prelude::*;
+use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{ModalController, Sheet, tokens};
 
@@ -58,6 +59,6 @@ fn cell(size: f32, text: String, mut on_press: impl FnMut() + 'static) -> Rect {
         .center()
         .corner_radius(tokens::radius::MD)
         .background(palette().s2)
-        .on_press(move |_: Event<PressEventData>| on_press())
+        .on_tap(move |_: Event<PressEventData>| on_press())
         .child(label().font_size(13.0).color(palette().t1).text(text))
 }

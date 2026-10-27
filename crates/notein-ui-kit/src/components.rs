@@ -46,7 +46,7 @@ pub use kind_badge::KindBadge;
 pub use list_row::{Leading, ListRow, Trailing};
 pub use press::{LONG_PRESS, PressGesture, is_mouse, press_anchor, press_point, use_press_gesture};
 pub use ref_chip::RefChip;
-pub use scroll_content::ScrollContent;
+pub use scroll_content::{ScrollContent, TapExt};
 pub use segmented::{Segment, Segmented};
 pub use spinner::Spinner;
 pub use selection_bar::{BarItem, SelectionBar};

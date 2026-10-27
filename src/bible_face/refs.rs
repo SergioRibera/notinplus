@@ -2,6 +2,7 @@
 //! has room for it, a sheet from the bottom when it does not.
 
 use freya::prelude::*;
+use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
     IconButton, ModalController, Sheet, SidePanel, Text, TextRole, is_mouse, tokens,
@@ -254,7 +255,7 @@ impl Component for Row {
             .a11y_role(AccessibilityRole::Button)
             .on_pointer_enter(move |e: Event<PointerEventData>| hovered.set(is_mouse(&e)))
             .on_pointer_leave(move |_| hovered.set(false))
-            .on_press(move |_| {
+            .on_tap(move |_| {
                 if in_sheet {
                     ModalController::get().close();
                 }

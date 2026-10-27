@@ -26,6 +26,7 @@ use freya::animation::{
 };
 use freya::prelude::*;
 
+use crate::components::TapExt;
 use crate::viewport::Gutters;
 
 /// Host-provided chrome hooks.
@@ -665,7 +666,7 @@ impl Component for ModalOverlay {
                     .background(scrim)
                     .maybe(blur > 0.0, |r| r.backdrop_blur(blur))
                     .maybe(dismiss && self.is_top, |r| {
-                        r.on_press(move |_| {
+                        r.on_tap(move |_| {
                             if opened_at.elapsed() >= DISMISS_GRACE {
                                 ModalController::get().close();
                             }

@@ -6,6 +6,7 @@ use freya::animation::{
 };
 use freya::prelude::*;
 
+use crate::components::TapExt;
 use crate::theme::palette;
 use crate::tokens::radius;
 
@@ -122,7 +123,7 @@ impl Component for Switch {
                 r.on_pointer_down(move |_| pressed.set(true))
                     .on_pointer_leave(move |_| pressed.set_if_modified(false))
                     .map(handler, |r, handler| {
-                        r.on_press(move |e: Event<PressEventData>| {
+                        r.on_tap(move |e: Event<PressEventData>| {
                             // The row around it toggles too; one toggle is enough.
                             e.stop_propagation();
                             pressed.set(false);

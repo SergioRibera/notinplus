@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use freya::prelude::*;
 
 use super::icon::Icon;
+use crate::components::TapExt;
 use crate::theme::palette;
 use crate::tokens::{radius, text};
 
@@ -432,7 +433,7 @@ impl Component for SearchField {
                     .a11y_role(AccessibilityRole::Button)
                     .a11y_alt("Borrar búsqueda")
                     .padding(4.0)
-                    .on_press(move |_| {
+                    .on_tap(move |_| {
                         value.set(String::new());
                         if let Some(handler) = &clear_change {
                             handler.call(String::new());

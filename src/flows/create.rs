@@ -8,6 +8,7 @@ use notein_plugin::catalog::CatalogEntry;
 use notein_plugin::create::{CreationFlow, CreationRequest, ImportedFile, Paper};
 use notein_plugin::doc::DocMeta;
 use notein_plugin::payload::Payload;
+use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
     Action, ActionEntry, ActionList, Button, Group, Icon, ListRow, ModalController, Popover,
@@ -344,7 +345,7 @@ impl Component for Tile {
                 hover.set(notein_ui_kit::is_mouse(&e));
             })
             .on_pointer_leave(move |_| hover.set(false))
-            .on_press(move |_| {
+            .on_tap(move |_| {
                 ModalController::get().close();
                 run(entry.clone(), context.clone());
             })

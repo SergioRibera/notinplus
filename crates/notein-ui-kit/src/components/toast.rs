@@ -15,6 +15,7 @@ use freya::prelude::*;
 
 use super::feedback::ProgressBar;
 use super::icon::Icon;
+use crate::components::TapExt;
 use crate::theme::palette;
 use crate::tokens::{radius, text, toast};
 
@@ -427,7 +428,7 @@ impl Component for ToastCard {
                         .corner_radius(radius::SM)
                         .center()
                         .a11y_role(AccessibilityRole::Button)
-                        .on_press(move |_| Toasts::get().press_action(id))
+                        .on_tap(move |_| Toasts::get().press_action(id))
                         .child(
                             label()
                                 .text(action_label)

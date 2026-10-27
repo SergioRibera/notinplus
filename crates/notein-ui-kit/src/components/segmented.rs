@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use freya::prelude::*;
 
 use super::icon::Icon;
+use crate::components::TapExt;
 use crate::theme::palette;
 use crate::tokens::{radius, text};
 
@@ -131,9 +132,7 @@ impl Component for Segmented {
                     .center()
                     .spacing(6.0)
                     .a11y_role(AccessibilityRole::RadioButton)
-                    .map(handler, |r, handler| {
-                        r.on_press(move |_| handler.call(index))
-                    })
+                    .map(handler, |r, handler| r.on_tap(move |_| handler.call(index)))
                     .maybe_child(
                         segment
                             .icon

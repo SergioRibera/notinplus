@@ -7,6 +7,7 @@
 
 use freya::prelude::*;
 
+use crate::components::TapExt;
 use crate::TextField;
 use crate::theme::palette;
 
@@ -573,7 +574,7 @@ where
                 .width(if selected { 2.0 } else { 1.0 })
                 .fill(ring),
         )
-        .on_press(move |_| handler(()))
+        .on_tap(move |_| handler(()))
 }
 
 /// Canonical palette strip reused across folder creation and the brush
@@ -640,7 +641,7 @@ where
                 .width(if selected { 2.0 } else { 1.0 })
                 .fill(ring),
         )
-        .on_press(on_press)
+        .on_tap(on_press)
 }
 
 fn special_swatch<F>(
@@ -666,7 +667,7 @@ where
                 .width(if selected || picker_open { 2.0 } else { 1.0 })
                 .fill(ring),
         )
-        .on_press(on_press);
+        .on_tap(on_press);
 
     match special {
         Some(c) => base.background(c),

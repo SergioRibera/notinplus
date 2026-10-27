@@ -1,6 +1,7 @@
 //! The + button and the two shortcuts the user pinned above it.
 
 use freya::prelude::*;
+use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{Icon, tokens};
 
@@ -59,7 +60,7 @@ impl Component for Fab {
                 let label = entry.entry.label.to_string();
                 let icon = entry.entry.icon.clone();
                 bubble(BUBBLE, p.s3, icon, fill, label)
-                    .on_press(move |_| create::run(entry.clone(), context()))
+                    .on_tap(move |_| create::run(entry.clone(), context()))
                     .into_element()
             })
             .collect::<Vec<_>>();
@@ -77,7 +78,7 @@ impl Component for Fab {
                     p.on_accent,
                     "Crear".to_owned(),
                 )
-                .on_press(move |_| {
+                .on_tap(move |_| {
                     let size = *Platform::get().current_window().root_size.read();
                     let anchor = Area::new(
                         (size.width - MARGIN - FAB, size.height - bottom - FAB).into(),

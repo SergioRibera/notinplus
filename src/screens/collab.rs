@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use freya::prelude::*;
 use notein_sync::{DeviceId, Removal, ShareId, ShareMode, SharePolicy};
+use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
     Button, ButtonVariant, Group, Icon, ListRow, ModalController, Notice, NoticeTone, Person,
@@ -156,7 +157,7 @@ fn card(
         .opacity(if enabled { 1.0 } else { 0.45 })
         .a11y_role(AccessibilityRole::RadioButton)
         .a11y_alt(title)
-        .maybe(enabled, |r| r.on_press(move |_| on_pick()))
+        .maybe(enabled, |r| r.on_tap(move |_| on_pick()))
         .child(
             Icon::new(icon)
                 .size(18.0)

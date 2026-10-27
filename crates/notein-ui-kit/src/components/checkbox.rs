@@ -3,6 +3,7 @@
 use freya::prelude::*;
 
 use super::icon::Icon;
+use crate::components::TapExt;
 use crate::theme::palette;
 use crate::tokens::radius;
 
@@ -57,7 +58,7 @@ impl Component for Checkbox {
                 )
             })
             .center()
-            .map(handler, |r, handler| r.on_press(move |_| handler.call(!on)))
+            .map(handler, |r, handler| r.on_tap(move |_| handler.call(!on)))
             .maybe_child(on.then(|| {
                 Icon::new(freya::icons::lucide::check())
                     .size(14.0)

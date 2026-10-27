@@ -2,6 +2,7 @@
 //! and settings.
 
 use freya::prelude::*;
+use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{IconButton, Tag, Text, TextRole, tokens, width_class};
 
@@ -99,7 +100,7 @@ fn search_field(compact: bool) -> Rect {
         .spacing(8.0)
         .a11y_role(AccessibilityRole::SearchInput)
         .a11y_focusable(true)
-        .on_press(|_| crate::screens::search::open(String::new()))
+        .on_tap(|_| crate::screens::search::open(String::new()))
         .child(
             notein_ui_kit::Icon::new(freya::icons::lucide::search())
                 .size(tokens::size::ICON_SM)

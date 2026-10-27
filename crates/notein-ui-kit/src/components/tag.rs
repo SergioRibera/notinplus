@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use freya::prelude::*;
 
 use super::icon::Icon;
+use super::scroll_content::TapExt;
 use crate::theme::palette;
 use crate::tokens::{radius, text};
 
@@ -113,7 +114,7 @@ impl Component for Tag {
             .spacing(5.0)
             .a11y_role(AccessibilityRole::Button)
             .a11y_alt(self.label.to_string())
-            .map(on_press, |r, handler| r.on_press(move |e| handler.call(e)))
+            .map(on_press, |r, handler| r.on_tap(move |e| handler.call(e)))
             .maybe_child(
                 self.icon
                     .clone()
@@ -144,7 +145,7 @@ impl Component for Tag {
                 rect()
                     .a11y_role(AccessibilityRole::Button)
                     .a11y_alt("Quitar")
-                    .map(on_close, |r, handler| r.on_press(move |_| handler.call(())))
+                    .map(on_close, |r, handler| r.on_tap(move |_| handler.call(())))
                     .child(Icon::new(freya::icons::lucide::x()).size(12.0).color(p.t3))
             }))
     }

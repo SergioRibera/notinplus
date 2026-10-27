@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 use freya::prelude::*;
 use freya_engine::prelude::{Color as SkColor, Paint, PaintStyle, PathEffect};
+use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::{Palette, palette};
 use notein_ui_kit::{
     Button, EmptyState, Icon, IconButton, Modal, ModalController, Tag, Text, TextRole, tokens,
@@ -152,7 +153,7 @@ impl Layout {
                 .opacity(if dimmed { 0.35 } else { 1.0 })
                 .a11y_role(AccessibilityRole::Button)
                 .a11y_alt(node.name.clone())
-                .on_press(move |_| selected.set(if focused { None } else { Some(i) }))
+                .on_tap(move |_| selected.set(if focused { None } else { Some(i) }))
                 .child(
                     rect()
                         .width(Size::px(radius * 2.0))
@@ -415,7 +416,7 @@ impl Component for Map {
                 .width(Size::fill())
                 .height(Size::flex(1.0))
                 .on_sized(move |e: Event<SizedEventData>| stage.set(e.area))
-                .on_press(move |_| selected.set(None))
+                .on_tap(move |_| selected.set(None))
                 .child(edges_layer)
                 .children(nodes)
                 .maybe_child(layout.card(width_class().is_compact(), size, insets.bottom))

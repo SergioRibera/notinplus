@@ -8,6 +8,7 @@ use freya::prelude::*;
 use super::icon::Icon;
 use super::kind_badge::KindBadge;
 use super::list_row::strut;
+use super::scroll_content::TapExt;
 use crate::theme::palette;
 use crate::tokens::{radius, text};
 
@@ -219,7 +220,7 @@ impl Component for ActionRow {
                     hovering.set(super::press::is_mouse(&e));
                 })
                 .on_pointer_leave(move |_| hovering.set(false))
-                .on_press(move |_| on_run.call(()))
+                .on_tap(move |_| on_run.call(()))
             })
             .child(self.content())
     }
