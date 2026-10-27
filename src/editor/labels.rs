@@ -11,6 +11,7 @@ pub(super) fn labels() -> Labels {
     SPANISH.with(Clone::clone)
 }
 
+#[allow(clippy::too_many_lines, reason = "one arm per label")]
 const fn spanish(label: Label) -> &'static str {
     match label {
         Label::Undo => "Deshacer (Ctrl+Z)",
@@ -31,7 +32,7 @@ const fn spanish(label: Label) -> &'static str {
         Label::ClearFormatting => "Quitar formato (Ctrl+\\)",
         Label::Link => "Enlace (Ctrl+K)",
         Label::ApplyLink => "Aplicar",
-        Label::RemoveLink => "Quitar",
+        Label::RemoveLink | Label::RemoveProperty => "Quitar",
         Label::AlignLeft => "Alinear a la izquierda",
         Label::AlignCenter => "Centrar",
         Label::AlignRight => "Alinear a la derecha",
@@ -52,7 +53,7 @@ const fn spanish(label: Label) -> &'static str {
         Label::NumberedList => "Lista numerada",
         Label::TodoList => "Lista de tareas",
         Label::Code => "Código",
-        Label::Math => "Fórmula",
+        Label::Math | Label::Formula => "Fórmula",
         Label::Term => "Término",
         Label::Definition => "Definición",
         Label::Table => "Tabla",
@@ -84,6 +85,42 @@ const fn spanish(label: Label) -> &'static str {
         Label::FrontMatter => "Metadatos",
         Label::EmptyContents => "Agregá títulos para armar el índice",
         Label::Block => "Bloque",
+        Label::PlainText => "Texto plano",
+        Label::SearchLanguage => "Buscá o escribí un lenguaje",
+        Label::UseLanguage => "Usar",
+        Label::PlainQuote => "Cita simple",
+        Label::CopyCode => "Copiar",
+        Label::Copied => "Copiado",
+        Label::Rename => "Renombrar",
+        Label::RenameHint => "Dejalo vacío para usar el nombre por defecto",
+        Label::Comment => "Comentario",
+        Label::CommentHint => "No se ve al leer",
+        Label::Collapsible => "Sección plegable",
+        Label::DetailsSummary => "Resumen",
+        Label::Image => "Imagen",
+        Label::ReplaceImage => "Reemplazar imagen",
+        Label::AltText => "Descripción",
+        Label::AltTextHint => "Describe la imagen para quien no puede verla",
+        Label::RemoveImage => "Quitar imagen",
+        Label::AddImage => "Agregá una imagen desde tus archivos",
+        Label::Properties => "Propiedades",
+        Label::AddProperty => "Agregar propiedad",
+        Label::EditAsText => "Editar como texto",
+        Label::ShowAsList => "Ver como lista",
+        Label::PropertyName => "Nombre",
+        Label::PropertyValue => "Valor",
+        Label::Add => "Agregar",
+        Label::Save => "Guardar",
+        Label::Fraction => "Fracción",
+        Label::SquareRoot => "Raíz cuadrada",
+        Label::Power => "Potencia",
+        Label::MathIndex => "Subíndice",
+        Label::Sum => "Sumatoria",
+        Label::Integral => "Integral definida",
+        Label::Matrix => "Matriz",
+        Label::Diagram => "Diagrama",
+        Label::DiagramDetail => "Diagrama de flujo que se edita como texto",
+        Label::DiagramTemplate => "flowchart TD\n    inicio[Inicio] --> pregunta{¿Decisión?}\n    pregunta -->|Sí| hacer[Hacerlo]\n    pregunta -->|No| fin[Terminar]",
     }
 }
 

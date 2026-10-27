@@ -22,11 +22,12 @@ mod theme;
 mod toolbar;
 
 pub use controller::{
-    ActiveFormat, EditorController, Selection, use_editor_controller, use_editor_controller_with,
+    ActiveFormat, AtomSlot, EditorController, ImagePicker, ImageRequest, Selection,
+    use_editor_controller, use_editor_controller_with,
 };
 pub use decorator::{
-    CodeContext, Decorator, Decorators, EmbedContext, ImageContext, PrefixTokens, SchemeEmbed,
-    SpanStyle, TextMatch, TransclusionContext,
+    CodeContext, Decorator, Decorators, EmbedContext, ImageContext, MathContext, PrefixTokens,
+    SchemeEmbed, SpanStyle, TextMatch, TransclusionContext,
 };
 pub use editor::{
     BlockSuggestions, InputContext, MarkdownEditor, Suggestion, SuggestionAction, SuggestionGroup,
@@ -48,10 +49,11 @@ pub mod prelude {
     #[cfg(feature = "toolbar")]
     pub use crate::toolbar::MarkdownToolbar;
     pub use crate::{
-        ActiveFormat, BlockSuggestions, CodeContext, Decorator, Decorators, EditorColors,
-        EditorController, EditorTheme, EmbedContext, ImageContext, InputContext, Label, Labels,
-        MarkdownEditor, PopupReporter, PrefixTokens, SchemeEmbed, Selection, SpanStyle, Suggestion,
-        SuggestionAction, SuggestionGroup, SuggestionRun, SuggestionSource, TextMatch,
-        TransclusionContext, use_editor_controller, use_editor_controller_with,
+        ActiveFormat, AtomSlot, BlockSuggestions, CodeContext, Decorator, Decorators, EditorColors,
+        EditorController, EditorTheme, EmbedContext, ImageContext, ImagePicker, ImageRequest,
+        InputContext, Label, Labels, MarkdownEditor, MathContext, PopupReporter, PrefixTokens,
+        SchemeEmbed, Selection, SpanStyle, Suggestion, SuggestionAction, SuggestionGroup,
+        SuggestionRun, SuggestionSource, TextMatch, TransclusionContext, use_editor_controller,
+        use_editor_controller_with,
     };
 }

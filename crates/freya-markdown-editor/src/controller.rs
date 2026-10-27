@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use freya::prelude::*;
 
 use crate::document::{
-    Align, Atom, Block, BlockId, BlockKind, BlockType, Caret, CellPos, Document, Inline, Link,
-    MarkFamily, MarkKind, Rgba, Table, TextRole, TextTarget, utf16_len,
+    Align, Atom, Block, BlockId, BlockKind, BlockType, CalloutKind, Caret, CellPos, Document,
+    Inline, Link, MarkFamily, MarkKind, Rgba, Table, TextRole, TextTarget, utf16_len,
 };
 use crate::editor::SuggestionAction;
 use crate::markdown::{Dialect, ParseOptions};
@@ -184,6 +184,11 @@ pub(crate) struct EditorState {
     layout: Rc<RefCell<BlockLayout>>,
     /// Text field holding the keyboard focus.
     focused: Option<TextTarget>,
+    /// How the host lets people choose an image, if it does. Hosts may
+    /// hand a fresh one every render, so swapping it never notifies.
+    image_picker: Rc<RefCell<Option<ImagePicker>>>,
+    /// Atom whose menu is open.
+    atom_menu: Option<AtomSlot>,
 }
 
 /// Where the editor, its blocks and its caret are, in window coordinates.
@@ -214,6 +219,8 @@ impl EditorState {
             clipboard: None,
             layout: Rc::default(),
             focused: None,
+            image_picker: Rc::default(),
+            atom_menu: None,
         }
     }
 
@@ -373,6 +380,52 @@ impl EditorState {
             }
         }
         format
+    }
+}
+
+/// Where an atom (an image, an inline formula) sits: the text field holding
+/// it and which of its atoms it is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AtomSlot {
+    pub target: TextTarget,
+    /// Index into [`Inline::atoms`].
+    pub atom: usize,
+}
+
+/// What an [`ImagePicker`] is asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageRequest {
+    /// A new image at the caret: finish with
+    /// [`EditorController::insert_image`].
+    Insert,
+    /// Another file for an image already there: finish with
+    /// [`EditorController::set_image_url`].
+    Replace(AtomSlot),
+}
+
+/// Lets people choose an image file.
+///
+/// The host opens its picker, stores the file wherever images live for the
+/// document and answers through the controller it is handed. Without one, the editor offers no way to add
+/// or replace images besides typing markdown.
+#[derive(Clone)]
+pub struct ImagePicker(Rc<dyn Fn(EditorController, ImageRequest)>);
+
+impl ImagePicker {
+    pub fn new(pick: impl Fn(EditorController, ImageRequest) + 'static) -> Self {
+        Self(Rc::new(pick))
+    }
+}
+
+impl PartialEq for ImagePicker {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl std::fmt::Debug for ImagePicker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImagePicker").finish_non_exhaustive()
     }
 }
 
@@ -659,6 +712,28 @@ impl EditorController {
     // Insertion.
 
     /// Insert plain text at the caret, replacing the selection.
+    /// Insert `text` into `block`: at its caret when it has one, else at
+    /// its end, leaving the caret after it.
+    pub fn insert_text_in(&self, block: BlockId, text: &str) {
+        self.update(|state| {
+            let target = TextTarget::from(block);
+            let Some(len) = state.document.inline(target).map(Inline::len) else {
+                return;
+            };
+            let range = state
+                .selection
+                .filter(|selection| selection.target == target)
+                .map_or(len..len, |selection| selection.range());
+            state.record(None);
+            let Some(inline) = state.document.inline_mut(target) else {
+                return;
+            };
+            let inserted = inline.replace(range, text);
+            state.changed();
+            state.request_caret(Selection::caret(target, inserted.end));
+        });
+    }
+
     pub fn insert_text(&self, text: &str) {
         self.insert_inline(Inline::from(text));
     }
@@ -676,6 +751,141 @@ impl EditorController {
             url: url.to_owned(),
             label: label.to_owned(),
             title: None,
+        });
+    }
+
+    // Images.
+
+    /// Use `picker` to choose images; `None` hides the image actions.
+    pub fn set_image_picker(&self, picker: Option<ImagePicker>) {
+        let slot = self.peek(|state| state.image_picker.clone());
+        let toggled = slot.borrow().is_some() != picker.is_some();
+        *slot.borrow_mut() = picker;
+        if toggled {
+            // Only whether there is one shows in the interface.
+            self.update(|_| ());
+        }
+    }
+
+    /// Whether the host can choose image files.
+    #[must_use]
+    pub fn can_pick_image(&self) -> bool {
+        self.read(|state| state.image_picker.borrow().is_some())
+    }
+
+    /// Open the menu of the atom at `slot`, or close it with `None`.
+    pub(crate) fn open_atom_menu(&self, slot: Option<AtomSlot>) {
+        if self.peek(|state| state.atom_menu != slot) {
+            self.update(|state| state.atom_menu = slot);
+        }
+    }
+
+    /// Atom whose menu is open.
+    pub(crate) fn atom_menu(&self) -> Option<AtomSlot> {
+        self.read(|state| state.atom_menu)
+    }
+
+    /// Ask the host for an image, see [`ImagePicker`].
+    pub fn request_image(&self, request: ImageRequest) {
+        let picker = self.peek(|state| state.image_picker.borrow().clone());
+        if let Some(picker) = picker {
+            (picker.0)(*self, request);
+        }
+    }
+
+    /// Add an image after the caret's block, or in place of an empty one.
+    pub fn insert_image(&self, url: &str, alt: &str) {
+        let mut content = Inline::default();
+        content.insert_atom(
+            0,
+            Atom::Image {
+                url: url.to_owned(),
+                alt: alt.to_owned(),
+                title: None,
+            },
+        );
+        self.insert_block(BlockKind::Paragraph(content));
+    }
+
+    /// Point the image at `slot` to another file.
+    pub fn set_image_url(&self, slot: AtomSlot, url: &str) {
+        self.edit_image(slot, |current, _| url.clone_into(current));
+    }
+
+    /// Describe the image at `slot` for people who cannot see it.
+    pub fn set_image_alt(&self, slot: AtomSlot, alt: &str) {
+        let alt = alt.trim();
+        self.edit_image(slot, |_, current| alt.clone_into(current));
+    }
+
+    fn edit_image(&self, slot: AtomSlot, edit: impl FnOnce(&mut String, &mut String)) {
+        self.update(|state| {
+            let Some(Atom::Image { url, alt, .. }) = state
+                .document
+                .inline(slot.target)
+                .and_then(|inline| inline.atoms().get(slot.atom))
+            else {
+                return;
+            };
+            let (mut new_url, mut new_alt) = (url.clone(), alt.clone());
+            edit(&mut new_url, &mut new_alt);
+            if (&new_url, &new_alt) == (url, alt) {
+                return;
+            }
+            state.record(None);
+            if let Some(Atom::Image { url, alt, .. }) = state
+                .document
+                .inline_mut(slot.target)
+                .and_then(|inline| inline.atom_mut(slot.atom))
+            {
+                *url = new_url;
+                *alt = new_alt;
+            }
+            state.changed();
+        });
+    }
+
+    /// Change the TeX of the inline formula at `slot`.
+    pub fn set_math(&self, slot: AtomSlot, tex: &str) {
+        self.update(|state| {
+            let Some(Atom::Math { tex: current }) = state
+                .document
+                .inline(slot.target)
+                .and_then(|inline| inline.atoms().get(slot.atom))
+            else {
+                return;
+            };
+            if current == tex {
+                return;
+            }
+            state.record(None);
+            if let Some(Atom::Math { tex: current }) = state
+                .document
+                .inline_mut(slot.target)
+                .and_then(|inline| inline.atom_mut(slot.atom))
+            {
+                tex.clone_into(current);
+            }
+            state.changed();
+        });
+    }
+
+    /// Take the image at `slot` out of the document.
+    pub fn remove_image(&self, slot: AtomSlot) {
+        self.update(|state| {
+            let Some(at) = state
+                .document
+                .inline(slot.target)
+                .and_then(|inline| inline.atom_position(slot.atom))
+            else {
+                return;
+            };
+            state.record(None);
+            if let Some(inline) = state.document.inline_mut(slot.target) {
+                inline.replace(at..at + 1, "");
+            }
+            state.changed();
+            state.request_caret(Selection::caret(slot.target, at));
         });
     }
 
@@ -821,17 +1031,106 @@ impl EditorController {
 
     // Blocks.
 
+    /// Convert the block holding the caret.
     pub fn set_block_type(&self, block_type: BlockType) {
+        let block = self.peek(|state| {
+            state
+                .selection
+                .filter(|s| s.target.cell.is_none())
+                .map(|s| s.target.block)
+        });
+        if let Some(block) = block {
+            self.set_type_of(block, block_type);
+        }
+    }
+
+    /// Convert `block`, wherever the caret is.
+    pub fn set_type_of(&self, block: BlockId, block_type: BlockType) {
         self.update(|state| {
-            let Some(selection) = state.selection.filter(|s| s.target.cell.is_none()) else {
-                return;
-            };
             let mut document = state.document.clone();
-            if document.set_type(selection.target.block, block_type) {
+            if document.set_type(block, block_type) {
                 state.record(None);
                 state.document = document;
                 state.changed();
                 state.refresh_caret();
+            }
+        });
+    }
+
+    /// Replace the YAML of a front matter block.
+    pub fn set_front_matter(&self, block: BlockId, yaml: &str) {
+        self.update(|state| {
+            if let Some(BlockKind::FrontMatter(current)) =
+                state.document.block(block).map(|block| &block.kind)
+                && current.text() != yaml
+            {
+                state.record(None);
+                if let Some(BlockKind::FrontMatter(current)) =
+                    state.document.block_mut(block).map(|block| &mut block.kind)
+                {
+                    *current = Inline::from(yaml);
+                }
+                state.changed();
+            }
+        });
+    }
+
+    /// Rename a callout; an empty title falls back to the kind's name.
+    pub fn set_callout_title(&self, block: BlockId, title: &str) {
+        let title = title.trim();
+        let wanted = (!title.is_empty()).then(|| title.to_owned());
+        self.update(|state| {
+            if let Some(BlockKind::Callout { title: current, .. }) =
+                state.document.block(block).map(|block| &block.kind)
+                && *current != wanted
+            {
+                state.record(None);
+                if let Some(BlockKind::Callout { title, .. }) =
+                    state.document.block_mut(block).map(|block| &mut block.kind)
+                {
+                    *title = wanted;
+                }
+                state.changed();
+            }
+        });
+    }
+
+    /// Rename the summary of a `<details>` block.
+    pub fn set_details_summary(&self, block: BlockId, summary: &str) {
+        let wanted = summary.trim().to_owned();
+        self.update(|state| {
+            if let Some(BlockKind::Details {
+                summary: current, ..
+            }) = state.document.block(block).map(|block| &block.kind)
+                && *current != wanted
+            {
+                state.record(None);
+                if let Some(BlockKind::Details { summary, .. }) =
+                    state.document.block_mut(block).map(|block| &mut block.kind)
+                {
+                    *summary = wanted;
+                }
+                state.changed();
+            }
+        });
+    }
+
+    /// Change the kind of a callout, keeping its title and content.
+    pub fn set_callout_kind(&self, block: BlockId, kind: CalloutKind) {
+        self.update(|state| {
+            if let Some(Block {
+                kind: BlockKind::Callout { kind: current, .. },
+                ..
+            }) = state.document.block(block)
+                && *current != kind
+            {
+                state.record(None);
+                if let Some(BlockKind::Callout { kind: current, .. }) =
+                    state.document.block_mut(block).map(|block| &mut block.kind)
+                {
+                    *current = kind;
+                }
+                state.changed();
             }
         });
     }

@@ -5,38 +5,21 @@ use std::time::Duration;
 use freya::icons::lucide;
 use freya::prelude::*;
 
-use crate::controller::EditorController;
+use crate::controller::{EditorController, ImageRequest};
 use crate::document::{
     Align, BlockKind, BlockType, CalloutKind, HeadingLevel, Inline, MarkFamily, MarkKind, Rgba,
 };
-use crate::labels::{Label, Labels};
-use crate::popup::ReportedPopup;
+use crate::editor::header::callout_icon;
+use crate::labels::Label;
+use crate::popup::{
+    Anchored, MenuItem, POPUP_MARGIN, PopupArea, input_colors, popup_bounds, popup_frame,
+};
 use crate::theme::EditorTheme;
 
 const BUTTON: f32 = 30.0;
 const ICON: f32 = 16.0;
-/// Space between a button and its popup.
-const POPUP_GAP: f32 = 4.0;
-/// Space kept between a popup and the window edges.
-const POPUP_MARGIN: f32 = 8.0;
 /// Room a tooltip needs under its button before it flips above.
 const TOOLTIP_ROOM: f32 = 44.0;
-
-/// Region menus, pickers and tooltips must stay inside, provided by
-/// [`MarkdownToolbar`] to its buttons. `None` means the whole window.
-#[derive(Clone, Copy, PartialEq)]
-struct PopupArea(Option<Area>);
-
-/// Area popups may use: the toolbar's [`PopupArea`], else the window.
-fn popup_bounds() -> Area {
-    try_consume_context::<PopupArea>()
-        .and_then(|area| area.0)
-        .unwrap_or_else(|| {
-            let window = *Platform::get().current_window().root_size.read();
-            Area::new((0., 0.).into(), (window.width, window.height).into())
-        })
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Menu {
     Block,
@@ -157,6 +140,11 @@ impl Component for MarkdownToolbar {
             let next = (*menu.peek() != Some(which)).then_some(which);
             menu.set(next);
         };
+        let mut close_menu = move |which: Menu| {
+            if *menu.peek() == Some(which) {
+                menu.set(None);
+            }
+        };
 
         let history = [
             ToolButton::new(lucide::undo_2(), text.get(Label::Undo))
@@ -177,8 +165,9 @@ impl Component for MarkdownToolbar {
             enabled: editing && format.target.is_some_and(|t| t.cell.is_none()),
             open: *menu.read() == Some(Menu::Block),
             on_toggle: EventHandler::new(move |()| toggle_menu(Menu::Block)),
+            on_close: EventHandler::new(move |()| close_menu(Menu::Block)),
             colors: colors.clone(),
-            items: block_items(controller, menu, format.block_type, &text),
+            items: block_items(controller, menu, format.block_type, &theme),
         };
 
         let font_label = format.font_family().map_or_else(
@@ -191,6 +180,7 @@ impl Component for MarkdownToolbar {
             enabled: rich,
             open: *menu.read() == Some(Menu::Font),
             on_toggle: EventHandler::new(move |()| toggle_menu(Menu::Font)),
+            on_close: EventHandler::new(move |()| close_menu(Menu::Font)),
             colors: colors.clone(),
             items: std::iter::once(MenuItem::new(text.get(Label::DefaultFont), move || {
                 controller.set_font_family(None);
@@ -221,6 +211,7 @@ impl Component for MarkdownToolbar {
             enabled: rich,
             open: *menu.read() == Some(Menu::Size),
             on_toggle: EventHandler::new(move |()| toggle_menu(Menu::Size)),
+            on_close: EventHandler::new(move |()| close_menu(Menu::Size)),
             colors: colors.clone(),
             items: std::iter::once(MenuItem::new(text.get(Label::DefaultSize), move || {
                 controller.set_font_size(None);
@@ -443,8 +434,9 @@ impl Component for MarkdownToolbar {
             enabled: editing,
             open: *menu.read() == Some(Menu::Insert),
             on_toggle: EventHandler::new(move |()| toggle_menu(Menu::Insert)),
+            on_close: EventHandler::new(move |()| close_menu(Menu::Insert)),
             colors: colors.clone(),
-            items: insert_items(controller, menu, &text),
+            items: insert_items(controller, menu, &theme),
         };
 
         let mode = self.show_mode_toggle.then(|| {
@@ -500,8 +492,9 @@ fn block_items(
     controller: EditorController,
     menu: State<Option<Menu>>,
     current: Option<BlockType>,
-    text: &Labels,
+    theme: &EditorTheme,
 ) -> Vec<MenuItem> {
+    let text = &theme.labels;
     let entries = [
         BlockType::Paragraph,
         BlockType::Heading(HeadingLevel::H1),
@@ -510,7 +503,9 @@ fn block_items(
         BlockType::Quote,
         BlockType::Callout(CalloutKind::Note),
         BlockType::Callout(CalloutKind::Tip),
+        BlockType::Callout(CalloutKind::Important),
         BlockType::Callout(CalloutKind::Warning),
+        BlockType::Callout(CalloutKind::Caution),
         BlockType::Code,
         BlockType::Math,
     ];
@@ -528,6 +523,13 @@ fn block_items(
                 let mut menu = menu;
                 menu.set(None);
             })
+            .icon(
+                block_icon(block_type),
+                match block_type {
+                    BlockType::Callout(kind) => theme.colors.callout(kind),
+                    _ => theme.colors.muted,
+                },
+            )
             .selected(current == Some(block_type))
         })
         .collect()
@@ -536,37 +538,63 @@ fn block_items(
 fn insert_items(
     controller: EditorController,
     menu: State<Option<Menu>>,
-    text: &Labels,
+    theme: &EditorTheme,
 ) -> Vec<MenuItem> {
+    let text = &theme.labels;
+    let icon = theme.colors.muted;
+    let text_diagram = text.get(Label::DiagramTemplate);
     let close = move || {
         let mut menu = menu;
         menu.set(None);
     };
-    vec![
-        MenuItem::new(text.get(Label::Table), move || {
-            controller.insert_table(3, 3);
+    let image = controller.can_pick_image().then(|| {
+        MenuItem::new(text.get(Label::Image), move || {
             close();
-        }),
-        MenuItem::new(text.get(Label::Divider), move || {
-            controller.insert_divider();
-            close();
-        }),
-        MenuItem::new(text.get(Label::CodeBlock), move || {
-            controller.insert_block(BlockKind::Code {
-                language: String::new(),
-                code: Inline::default(),
-            });
-            close();
-        }),
-        MenuItem::new(text.get(Label::MathBlock), move || {
-            controller.insert_block(BlockKind::Math(Inline::default()));
-            close();
-        }),
-        MenuItem::new(text.get(Label::TableOfContents), move || {
-            controller.insert_block(BlockKind::TableOfContents);
-            close();
-        }),
-    ]
+            controller.request_image(ImageRequest::Insert);
+        })
+        .icon(lucide::image_plus(), icon)
+    });
+    image
+        .into_iter()
+        .chain([
+            MenuItem::new(text.get(Label::Table), move || {
+                controller.insert_table(3, 3);
+                close();
+            })
+            .icon(lucide::table(), icon),
+            MenuItem::new(text.get(Label::Divider), move || {
+                controller.insert_divider();
+                close();
+            })
+            .icon(lucide::minus(), icon),
+            MenuItem::new(text.get(Label::CodeBlock), move || {
+                controller.insert_block(BlockKind::Code {
+                    language: String::new(),
+                    code: Inline::default(),
+                });
+                close();
+            })
+            .icon(lucide::code_xml(), icon),
+            MenuItem::new(text.get(Label::Diagram), move || {
+                controller.insert_block(BlockKind::Code {
+                    language: "mermaid".to_owned(),
+                    code: Inline::from(text_diagram),
+                });
+                close();
+            })
+            .icon(lucide::workflow(), icon),
+            MenuItem::new(text.get(Label::MathBlock), move || {
+                controller.insert_block(BlockKind::Math(Inline::default()));
+                close();
+            })
+            .icon(lucide::sigma(), icon),
+            MenuItem::new(text.get(Label::TableOfContents), move || {
+                controller.insert_block(BlockKind::TableOfContents);
+                close();
+            })
+            .icon(lucide::list_tree(), icon),
+        ])
+        .collect()
 }
 
 fn separator(colors: &crate::EditorColors) -> Element {
@@ -576,91 +604,6 @@ fn separator(colors: &crate::EditorColors) -> Element {
         .margin((0., 4.))
         .background(colors.border)
         .into_element()
-}
-
-/// Child with an optional popup. See [`Anchored`].
-fn anchored(child: Element, popup: Option<Element>) -> Element {
-    Anchored { child, popup }.into_element()
-}
-
-/// Child with an optional popup that opens right under it, or right above
-/// it when there is no room below, and never leaves the window: the bar can
-/// sit anywhere (top of a page, docked above a soft keyboard, scrolled
-/// sideways).
-#[derive(Clone, PartialEq)]
-struct Anchored {
-    child: Element,
-    popup: Option<Element>,
-}
-
-impl Component for Anchored {
-    fn render(&self) -> impl IntoElement {
-        let mut anchor = use_state(Area::default);
-        let mut measured = use_state(Area::default);
-        let bounds = popup_bounds();
-        let popup = self.popup.clone().map(|popup| {
-            let size = *measured.read();
-            let (top, left) = popup_origin(*anchor.read(), (size.width(), size.height()), bounds);
-            rect()
-                .layer(Layer::Overlay)
-                .position(Position::new_global().top(top).left(left))
-                // Hidden until measured, so it never flashes off screen.
-                .opacity(if size.height() > 0. { 1. } else { 0. })
-                .on_sized(move |event: Event<SizedEventData>| {
-                    measured.set_if_modified(event.area);
-                })
-                .child(ReportedPopup { child: popup })
-        });
-        rect()
-            .on_sized(move |event: Event<SizedEventData>| anchor.set_if_modified(event.area))
-            .child(self.child.clone())
-            .maybe_child(popup)
-    }
-}
-
-/// Window position `(top, left)` of a `popup` sized `(width, height)` for a
-/// button at `anchor`, kept inside `bounds`.
-fn popup_origin(anchor: Area, popup: (f32, f32), bounds: Area) -> (f32, f32) {
-    let (width, height) = popup;
-    let below = anchor.max_y() + POPUP_GAP;
-    let above = anchor.min_y() - POPUP_GAP - height;
-    let (min_top, max_bottom) = (bounds.min_y() + POPUP_MARGIN, bounds.max_y() - POPUP_MARGIN);
-    let top = if bounds.height() <= 0. || below + height <= max_bottom {
-        below
-    } else if above >= min_top {
-        above
-    } else {
-        (max_bottom - height).max(min_top)
-    };
-    let (min_left, max_left) = (
-        bounds.min_x() + POPUP_MARGIN,
-        (bounds.max_x() - width - POPUP_MARGIN).max(bounds.min_x() + POPUP_MARGIN),
-    );
-    let left = if bounds.width() <= 0. {
-        anchor.min_x()
-    } else {
-        anchor.min_x().clamp(min_left, max_left)
-    };
-    (top, left)
-}
-
-fn popup_frame(colors: &crate::EditorColors) -> Rect {
-    rect()
-        .padding(8.)
-        .background(colors.popup_background)
-        .corner_radius(10.)
-        .border(
-            Border::new()
-                .width(1.)
-                .alignment(BorderAlignment::Inner)
-                .fill(colors.border),
-        )
-        .shadow(
-            Shadow::new()
-                .y(6.)
-                .blur(18.)
-                .color(Color::from_argb(70, 0, 0, 0)),
-        )
 }
 
 fn palette_popup(
@@ -747,6 +690,7 @@ fn link_popup(
         .child(
             Input::new(draft)
                 .placeholder("https://")
+                .theme_colors(input_colors(colors))
                 .auto_focus(true)
                 .width(Size::fill())
                 .on_submit(move |_| apply()),
@@ -1030,29 +974,6 @@ impl Component for ToolButton {
     }
 }
 
-#[derive(Clone, PartialEq)]
-struct MenuItem {
-    text: String,
-    selected: bool,
-    on_press: EventHandler<()>,
-}
-
-impl MenuItem {
-    fn new(text: impl Into<String>, on_press: impl FnMut() + 'static) -> Self {
-        let mut on_press = on_press;
-        Self {
-            text: text.into(),
-            selected: false,
-            on_press: EventHandler::new(move |()| on_press()),
-        }
-    }
-
-    const fn selected(mut self, selected: bool) -> Self {
-        self.selected = selected;
-        self
-    }
-}
-
 /// Text button that opens a list of [`MenuItem`]s.
 #[derive(Clone, PartialEq)]
 struct Dropdown {
@@ -1061,6 +982,7 @@ struct Dropdown {
     enabled: bool,
     open: bool,
     on_toggle: EventHandler<()>,
+    on_close: EventHandler<()>,
     colors: crate::EditorColors,
     items: Vec<MenuItem>,
 }
@@ -1134,75 +1056,39 @@ impl Component for Dropdown {
             popup_frame(colors)
                 .padding(4.)
                 .width(Size::px(self.width.max(150.)))
-                .children(self.items.iter().enumerate().map(|(index, item)| {
-                    let on_press = item.on_press.clone();
-                    rect()
-                        .key(index)
-                        .width(Size::fill())
-                        .padding((6., 10.))
-                        .corner_radius(6.)
-                        .background(if item.selected {
-                            colors.popup_selected
-                        } else {
-                            Color::TRANSPARENT
-                        })
-                        .cursor(CursorIcon::Pointer)
-                        .on_press(move |event: Event<PressEventData>| {
-                            event.stop_propagation();
-                            on_press.call(());
-                        })
-                        .child(
-                            label()
-                                .font_size(13.)
-                                .color(colors.text)
-                                .text(item.text.clone()),
-                        )
-                        .into_element()
-                }))
+                .children(
+                    self.items
+                        .iter()
+                        .enumerate()
+                        .map(|(index, item)| item.row(index, colors, None)),
+                )
                 .into_element()
         });
-        anchored(button, popup)
+        let on_close = self.on_close.clone();
+        Anchored::new(button, popup)
+            .on_dismiss(move || on_close.call(()))
+            .into_element()
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use freya::prelude::Area;
+/// Child with an optional popup. See [`Anchored`].
+fn anchored(child: Element, popup: Option<Element>) -> Element {
+    Anchored::new(child, popup).into_element()
+}
 
-    use super::popup_origin;
-
-    fn button(top: f32) -> Area {
-        Area::new((100., top).into(), (30., 30.).into())
-    }
-
-    fn window(width: f32, height: f32) -> Area {
-        Area::new((0., 0.).into(), (width, height).into())
-    }
-
-    #[test]
-    fn opens_below_when_it_fits() {
-        let (top, left) = popup_origin(button(10.), (150., 200.), window(800., 600.));
-        assert!((top - 44.).abs() < f32::EPSILON);
-        assert!((left - 100.).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn flips_above_near_the_bottom() {
-        let (top, _) = popup_origin(button(550.), (150., 200.), window(800., 600.));
-        assert!((top - 346.).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn flips_above_a_covered_bottom() {
-        // Window 600 tall, but only the top 400 visible above a keyboard.
-        let (top, _) = popup_origin(button(330.), (150., 200.), window(800., 400.));
-        assert!((top - 126.).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn stays_inside_the_window() {
-        let (top, left) = popup_origin(button(100.), (300., 580.), window(320., 600.));
-        assert!((top - 12.).abs() < f32::EPSILON);
-        assert!((left - 12.).abs() < f32::EPSILON);
+fn block_icon(block_type: BlockType) -> Bytes {
+    match block_type {
+        BlockType::Paragraph => lucide::pilcrow(),
+        BlockType::Heading(HeadingLevel::H1) => lucide::heading_1(),
+        BlockType::Heading(HeadingLevel::H2) => lucide::heading_2(),
+        BlockType::Heading(_) => lucide::heading_3(),
+        BlockType::Quote => lucide::quote(),
+        BlockType::Callout(kind) => callout_icon(kind),
+        BlockType::BulletList => lucide::list(),
+        BlockType::OrderedList => lucide::list_ordered(),
+        BlockType::TaskList => lucide::list_checks(),
+        BlockType::Code => lucide::code_xml(),
+        BlockType::Math => lucide::sigma(),
+        BlockType::Term | BlockType::Definition => lucide::text_quote(),
     }
 }

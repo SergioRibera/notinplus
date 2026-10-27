@@ -16,6 +16,7 @@ use std::rc::Rc;
 use freya::prelude::*;
 
 use crate::EditorController;
+use crate::controller::ImageRequest;
 use crate::document::{BlockKind, BlockType, CalloutKind, HeadingLevel, Inline, Table};
 use crate::labels::{Label, Labels};
 use crate::theme::EditorTheme;
@@ -128,11 +129,25 @@ pub trait SuggestionSource {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BlockSuggestions {
     labels: Labels,
+    images: bool,
 }
 
 impl From<Labels> for BlockSuggestions {
     fn from(labels: Labels) -> Self {
-        Self { labels }
+        Self {
+            labels,
+            images: false,
+        }
+    }
+}
+
+impl BlockSuggestions {
+    /// Offer adding an image, for editors with an
+    /// [`ImagePicker`](crate::ImagePicker).
+    #[must_use]
+    pub const fn with_images(mut self, images: bool) -> Self {
+        self.images = images;
+        self
     }
 }
 
@@ -211,6 +226,7 @@ impl SuggestionSource for SuggestionGroup {
 }
 
 impl BlockSuggestions {
+    #[allow(clippy::too_many_lines, reason = "one entry per block kind")]
     fn entries(&self) -> Vec<Suggestion> {
         let text = |label| self.labels.get(label);
         let block = |label, icon: &str, detail, block_type| {
@@ -218,12 +234,22 @@ impl BlockSuggestions {
                 .icon(icon)
                 .detail(text(detail))
         };
+        let image = self.images.then(|| {
+            Suggestion::new(
+                text(Label::Image),
+                SuggestionAction::Run(SuggestionRun::new(|controller| {
+                    controller.request_image(ImageRequest::Insert);
+                })),
+            )
+            .icon("▣")
+            .detail(text(Label::AddImage))
+        });
         let insert = |label, icon: &str, detail, kind| {
             Suggestion::new(text(label), SuggestionAction::InsertBlock(kind))
                 .icon(icon)
                 .detail(text(detail))
         };
-        vec![
+        let mut entries = vec![
             block(
                 Label::Text,
                 "¶",
@@ -302,12 +328,23 @@ impl BlockSuggestions {
                 BlockKind::Table(Table::new(3, 3)),
             ),
             insert(
+                Label::Diagram,
+                "◇",
+                Label::DiagramDetail,
+                BlockKind::Code {
+                    language: "mermaid".to_owned(),
+                    code: Inline::from(text(Label::DiagramTemplate)),
+                },
+            ),
+            insert(
                 Label::TableOfContents,
                 "≡",
                 Label::FromHeadings,
                 BlockKind::TableOfContents,
             ),
-        ]
+        ];
+        entries.extend(image);
+        entries
     }
 }
 
@@ -344,9 +381,9 @@ impl SlashMenu {
     }
 
     /// Rows for `query` (the text typed after `/`).
-    pub(crate) fn rows(&self, query: &str, labels: &Labels) -> Vec<MenuRow> {
+    pub(crate) fn rows(&self, query: &str, labels: &Labels, images: bool) -> Vec<MenuRow> {
         let query = query.trim_start().to_lowercase();
-        let blocks = BlockSuggestions::from(labels.clone());
+        let blocks = BlockSuggestions::from(labels.clone()).with_images(images);
         let sources: Vec<&dyn SuggestionSource> = self
             .0
             .iter()
@@ -642,21 +679,21 @@ mod tests {
 
     #[test]
     fn sections_get_headers_when_several_match() {
-        let rows = menu().rows("a", &Labels::default());
+        let rows = menu().rows("a", &Labels::default(), false);
         assert!(rows.contains(&MenuRow::Header("People".into())));
         assert!(rows.contains(&MenuRow::Header("Blocks".into())));
     }
 
     #[test]
     fn single_section_has_no_header() {
-        let rows = menu().rows("heading 2", &Labels::default());
+        let rows = menu().rows("heading 2", &Labels::default(), false);
         assert_eq!(item_count(&rows), 1);
         assert!(!rows.iter().any(|row| matches!(row, MenuRow::Header(_))));
     }
 
     #[test]
     fn keyword_scopes_to_one_source() {
-        let rows = menu().rows("at al", &Labels::default());
+        let rows = menu().rows("at al", &Labels::default(), false);
         assert_eq!(item_count(&rows), 1);
         assert_eq!(item(&rows, 0).map(|item| item.label.as_str()), Some("Alan"));
     }

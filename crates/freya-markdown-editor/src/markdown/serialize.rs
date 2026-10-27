@@ -153,6 +153,21 @@ impl Writer<'_> {
                 }
             }
             BlockKind::Html(raw) => raw.text().to_owned(),
+            BlockKind::Comment(note) => comment(note.text()),
+            BlockKind::Details {
+                summary,
+                open,
+                content,
+            } => {
+                let open = if *open { " open" } else { "" };
+                let head = format!("<details{open}>\n<summary>{}</summary>", html_text(summary));
+                if content.is_empty() {
+                    format!("{head}\n</details>")
+                } else {
+                    let body = self.inline(content, InlineContext::Block);
+                    format!("{head}\n\n{body}\n\n</details>")
+                }
+            }
             BlockKind::Transclusion(transclusion) => transclusion_source(transclusion, rich),
         };
         let wrap = rich
@@ -542,6 +557,10 @@ impl<'i> InlineWriter<'i> {
             },
             MarkKind::Superscript => pair("<sup>", "</sup>"),
             MarkKind::Subscript => pair("<sub>", "</sub>"),
+            MarkKind::Abbreviation(title) => (
+                format!("<abbr title=\"{}\">", html_attribute(title)),
+                "</abbr>".to_owned(),
+            ),
             MarkKind::Link(link) => {
                 let destination = link_destination(&link.url);
                 let title = link
@@ -657,6 +676,7 @@ const fn priority(kind: &MarkKind) -> u8 {
         MarkKind::Superscript => 8,
         MarkKind::Subscript => 9,
         MarkKind::Code => 10,
+        MarkKind::Abbreviation(_) => 11,
     }
 }
 
@@ -770,6 +790,29 @@ fn link_destination(url: &str) -> String {
     } else {
         url.to_owned()
     }
+}
+
+/// An HTML comment holding `note`, which can never close it early.
+fn comment(note: &str) -> String {
+    let note = note.replace("-->", "-- >");
+    if note.contains('\n') {
+        format!("<!--\n{note}\n-->")
+    } else {
+        format!("<!-- {note} -->")
+    }
+}
+
+/// `text` escaped to sit between HTML tags.
+fn html_text(text: &str) -> String {
+    text.replace('&', "&amp;").replace('<', "&lt;")
+}
+
+/// `value` escaped for a double quoted HTML attribute.
+fn html_attribute(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
 }
 
 fn escape_text(text: &str, mut line_start: bool, context: InlineContext) -> String {

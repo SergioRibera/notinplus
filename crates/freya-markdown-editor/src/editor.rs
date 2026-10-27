@@ -1,7 +1,11 @@
 //! The [`MarkdownEditor`] component.
 
 mod block;
+pub(crate) mod header;
+mod image;
+mod math;
 mod paint;
+mod properties;
 mod reveal;
 mod suggest;
 mod text;
@@ -20,7 +24,7 @@ pub use suggest::{
 
 use self::block::{BlockView, TocEntry};
 use self::suggest::{MenuSource, SlashMenu};
-use crate::controller::{EditorController, EditorState};
+use crate::controller::{EditorController, EditorState, ImagePicker};
 use crate::decorator::{Decorator, Decorators};
 use crate::document::{Abbreviation, BlockKind, Document, Inline};
 use crate::markdown::{Dialect, Extensions, ParseOptions};
@@ -142,6 +146,7 @@ pub struct MarkdownEditor {
     syntax_reveal: bool,
     on_link: LinkHandler,
     on_input_context: InputContextHandler,
+    image_picker: Option<ImagePicker>,
     layout: LayoutData,
     text_style: TextStyleData,
     key: DiffKey,
@@ -174,6 +179,7 @@ impl Default for MarkdownEditor {
             syntax_reveal: false,
             on_link: LinkHandler::default(),
             on_input_context: InputContextHandler::default(),
+            image_picker: None,
             layout: LayoutData::default(),
             text_style: TextStyleData::default(),
             key: DiffKey::None,
@@ -283,6 +289,14 @@ impl MarkdownEditor {
 
     /// Called when a link is pressed: always in read only mode, with Ctrl
     /// (or Cmd) held while editing.
+    /// How people choose image files, see [`ImagePicker`]. It also turns on
+    /// the image entries of the toolbar and the `/` menu.
+    #[must_use]
+    pub fn image_picker(mut self, picker: ImagePicker) -> Self {
+        self.image_picker = Some(picker);
+        self
+    }
+
     #[must_use]
     pub fn on_link(mut self, on_link: impl Fn(&str) + 'static) -> Self {
         self.on_link = LinkHandler(Some(Rc::new(on_link)));
@@ -350,6 +364,7 @@ impl Component for MarkdownEditor {
         if let Some(read_only) = self.read_only {
             controller.set_read_only(read_only);
         }
+        controller.set_image_picker(self.image_picker.clone());
 
         use_value_sync(self.value.clone(), controller, self.dialect);
 

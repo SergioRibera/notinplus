@@ -178,7 +178,11 @@ fn sample_lowers_to_expected_blocks() {
             .any(|kind| matches!(kind, BlockKind::Definition(_)))
     );
     assert!(kinds.iter().any(|kind| matches!(kind, BlockKind::Divider)));
-    assert!(kinds.iter().any(|kind| matches!(kind, BlockKind::Html(_))));
+    assert!(
+        kinds
+            .iter()
+            .any(|kind| matches!(kind, BlockKind::Details { .. }))
+    );
     assert!(
         kinds
             .iter()
@@ -251,4 +255,41 @@ fn plain_text_strips_markup() {
     let document =
         Document::parse("# Hi\n\nsome **bold** [link](x)\n\n| a | b |\n|---|---|\n| 1 | 2 |");
     assert_eq!(document.plain_text(), "Hi\nsome bold link\na | b\n1 | 2");
+}
+
+#[test]
+fn loose_html_becomes_comment_details_and_abbr() {
+    let source = "<details>\n<summary>Detalles plegables</summary>\n\nContenido dentro.\n\n</details>\n\nUn <abbr title=\"ejemplo &quot;x&quot;\">abbr</abbr>.\n\n<!-- Un comentario -->\n";
+    let document = Document::parse(source);
+    let kinds: Vec<&BlockKind> = document.blocks().iter().map(|block| &block.kind).collect();
+    assert!(matches!(
+        kinds[0],
+        BlockKind::Details { summary, open: false, content }
+            if summary == "Detalles plegables" && content.text() == "Contenido dentro."
+    ));
+    assert!(matches!(kinds[2], BlockKind::Comment(note) if note.text() == "Un comentario"));
+    assert!(kinds[1].content().is_some_and(|content| {
+        content
+            .marks()
+            .iter()
+            .any(|mark| mark.kind == MarkKind::Abbreviation("ejemplo \"x\"".to_owned()))
+    }));
+    let written = document.to_markdown(Dialect::Rich);
+    assert_eq!(
+        written,
+        "<details>\n<summary>Detalles plegables</summary>\n\nContenido dentro.\n\n</details>\n\nUn <abbr title=\"ejemplo &quot;x&quot;\">abbr</abbr>.\n\n<!-- Un comentario -->\n"
+    );
+    assert_eq!(
+        Document::parse(&written).to_markdown(Dialect::Rich),
+        written
+    );
+}
+
+#[test]
+fn details_in_one_html_block_keep_their_body() {
+    let document = Document::parse("<details open><summary>S</summary>body</details>\n");
+    assert!(matches!(
+        &document.blocks()[0].kind,
+        BlockKind::Details { summary, open: true, content } if summary == "S" && content.text() == "body"
+    ));
 }

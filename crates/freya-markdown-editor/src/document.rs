@@ -6,6 +6,7 @@
 
 mod color;
 mod inline;
+mod properties;
 mod table;
 
 use std::collections::HashSet;
@@ -16,6 +17,7 @@ pub use inline::{
     Atom, Inline, Link, Mark, MarkFamily, MarkKind, OBJECT_REPLACEMENT, TextChange, byte_index,
     diff, utf16_len,
 };
+pub use properties::Properties;
 pub use table::{ColumnAlign, Table};
 
 /// Stable identity of a block for the lifetime of the process.
@@ -175,6 +177,16 @@ pub enum BlockKind {
     FrontMatter(Inline),
     TableOfContents,
     Html(Inline),
+    /// `<!-- ... -->`: a note for whoever edits the file, never shown when
+    /// reading.
+    Comment(Inline),
+    /// `<details>`: content hidden behind a summary until opened.
+    Details {
+        summary: String,
+        /// Whether it starts open (`<details open>`).
+        open: bool,
+        content: Inline,
+    },
     Transclusion(Transclusion),
 }
 
@@ -231,6 +243,8 @@ impl BlockKind {
             | Self::Definition(content)
             | Self::FrontMatter(content)
             | Self::Html(content)
+            | Self::Comment(content)
+            | Self::Details { content, .. }
             | Self::Heading { content, .. }
             | Self::Callout { content, .. }
             | Self::ListItem { content, .. }
@@ -249,6 +263,8 @@ impl BlockKind {
             | Self::Definition(content)
             | Self::FrontMatter(content)
             | Self::Html(content)
+            | Self::Comment(content)
+            | Self::Details { content, .. }
             | Self::Heading { content, .. }
             | Self::Callout { content, .. }
             | Self::ListItem { content, .. }
@@ -261,9 +277,11 @@ impl BlockKind {
     #[must_use]
     pub const fn role(&self) -> Option<TextRole> {
         match self {
-            Self::Code { .. } | Self::Math(_) | Self::FrontMatter(_) | Self::Html(_) => {
-                Some(TextRole::Plain)
-            }
+            Self::Code { .. }
+            | Self::Math(_)
+            | Self::FrontMatter(_)
+            | Self::Html(_)
+            | Self::Comment(_) => Some(TextRole::Plain),
             Self::Divider | Self::TableOfContents | Self::Transclusion(_) => None,
             _ => Some(TextRole::Rich),
         }
@@ -846,6 +864,20 @@ impl Document {
         let index = self.index_of(id)?;
         let block = &mut self.blocks[index];
         let BlockKind::Paragraph(content) = &block.kind else {
+            if let BlockKind::Quote(content) = &block.kind {
+                let (marker_len, kind) = callout_marker(content.text())?;
+                if marker_len != cursor {
+                    return None;
+                }
+                let mut content = content.clone();
+                content.replace(0..marker_len, "");
+                block.kind = BlockKind::Callout {
+                    kind,
+                    title: None,
+                    content,
+                };
+                return Some(Caret::new(id, 0));
+            }
             if let BlockKind::ListItem {
                 kind: kind @ ListKind::Bullet,
                 content,
@@ -1067,6 +1099,16 @@ enum Shortcut {
     Quote,
 }
 
+/// `[!WARNING] ` typed at the start of a quote, in any case.
+fn callout_marker(text: &str) -> Option<(usize, CalloutKind)> {
+    let rest = text.strip_prefix("[!")?;
+    let (name, after) = rest.split_once("] ")?;
+    let kind = CalloutKind::ALL
+        .into_iter()
+        .find(|kind| kind.marker().eq_ignore_ascii_case(name))?;
+    Some((text.len() - after.len(), kind))
+}
+
 fn shortcut_marker(text: &str) -> Option<(usize, Shortcut)> {
     let hashes = text.chars().take_while(|ch| *ch == '#').count();
     if (1..=6).contains(&hashes) && text[hashes..].starts_with(' ') {
@@ -1182,6 +1224,22 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn alert_marker_turns_a_quote_into_a_callout() {
+        let mut document = doc(vec![BlockKind::Quote("[!warning] mind".into())]);
+        let id = document.blocks()[0].id;
+        assert!(document.apply_block_shortcut(id, 4).is_none());
+        document.apply_block_shortcut(id, 11).expect("callout");
+        assert_eq!(
+            document.blocks()[0].kind,
+            BlockKind::Callout {
+                kind: CalloutKind::Warning,
+                title: None,
+                content: "mind".into(),
+            }
+        );
     }
 
     #[test]

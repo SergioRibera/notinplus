@@ -58,6 +58,9 @@ fn marks_for(name: &str, attributes: &[(String, String)]) -> Option<Vec<MarkKind
         "sup" => vec![MarkKind::Superscript],
         "sub" => vec![MarkKind::Subscript],
         "code" | "kbd" => vec![MarkKind::Code],
+        "abbr" => vec![MarkKind::Abbreviation(unescape(
+            attribute("title").unwrap_or_default(),
+        ))],
         "span" => Vec::new(),
         "font" => {
             let mut marks = Vec::new();
@@ -103,6 +106,16 @@ pub(super) fn style_marks(style: &str) -> Vec<MarkKind> {
             }
         })
         .collect()
+}
+
+/// Text of an HTML attribute value with the common entities decoded.
+pub(super) fn unescape(value: &str) -> String {
+    value
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
 }
 
 fn clean_family(value: &str) -> String {

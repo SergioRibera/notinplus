@@ -107,11 +107,13 @@ pub struct EmbedContext<'a> {
     pub theme: &'a EditorTheme,
 }
 
-/// Data available when rendering a fenced code block in read only mode.
+/// Data available when rendering a fenced code block.
 #[derive(Clone, Copy, Debug)]
 pub struct CodeContext<'a> {
     pub language: &'a str,
     pub code: &'a str,
+    /// Widest a drawing of it may be, in logical pixels.
+    pub max_width: f32,
     pub theme: &'a EditorTheme,
 }
 
@@ -129,12 +131,29 @@ pub struct TransclusionContext<'a> {
     pub theme: &'a EditorTheme,
 }
 
+/// Data available when drawing a formula.
+#[derive(Clone, Copy, Debug)]
+pub struct MathContext<'a> {
+    pub tex: &'a str,
+    /// A block of its own (`$$`) rather than inside a line (`$`).
+    pub display: bool,
+    /// Size of the text around it, in logical pixels.
+    pub font_size: f32,
+    /// Widest it may be drawn, in logical pixels.
+    pub max_width: f32,
+    pub theme: &'a EditorTheme,
+}
+
 /// Data available when rendering an image.
 #[derive(Clone, Copy, Debug)]
 pub struct ImageContext<'a> {
     pub url: &'a str,
     pub alt: &'a str,
     pub title: Option<&'a str>,
+    /// Widest the image may be drawn, in logical pixels: the width of the
+    /// text it sits in.
+    pub max_width: f32,
+    pub read_only: bool,
     pub theme: &'a EditorTheme,
 }
 
@@ -169,6 +188,18 @@ pub trait Decorator {
 
     /// Replace the default image placeholder.
     fn render_image(&self, _image: &ImageContext<'_>) -> Option<Element> {
+        None
+    }
+
+    /// Draw a formula. Without one, formulas show their TeX source.
+    fn render_math(&self, _math: &MathContext<'_>) -> Option<Element> {
+        None
+    }
+
+    /// Draw what a code block describes, like a diagram, under its source
+    /// while editing and instead of it while reading. `None` for languages
+    /// the decorator does not draw.
+    fn render_preview(&self, _code: &CodeContext<'_>) -> Option<Element> {
         None
     }
 
@@ -266,6 +297,20 @@ impl Decorators {
         self.0
             .iter()
             .find_map(|decorator| decorator.render_image(image))
+    }
+
+    #[must_use]
+    pub fn render_math(&self, math: &MathContext<'_>) -> Option<Element> {
+        self.0
+            .iter()
+            .find_map(|decorator| decorator.render_math(math))
+    }
+
+    #[must_use]
+    pub fn render_preview(&self, code: &CodeContext<'_>) -> Option<Element> {
+        self.0
+            .iter()
+            .find_map(|decorator| decorator.render_preview(code))
     }
 
     #[must_use]

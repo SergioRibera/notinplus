@@ -42,6 +42,8 @@ pub enum MarkKind {
     FontFamily(String),
     /// Font size in logical pixels.
     FontSize(u16),
+    /// `<abbr title="...">`: the text abbreviates the title.
+    Abbreviation(String),
 }
 
 /// Value-less identity of a [`MarkKind`]. Two marks of the same family never
@@ -62,6 +64,7 @@ pub enum MarkFamily {
     Background,
     FontFamily,
     FontSize,
+    Abbreviation,
 }
 
 impl MarkKind {
@@ -82,12 +85,13 @@ impl MarkKind {
             Self::Background(_) => MarkFamily::Background,
             Self::FontFamily(_) => MarkFamily::FontFamily,
             Self::FontSize(_) => MarkFamily::FontSize,
+            Self::Abbreviation(_) => MarkFamily::Abbreviation,
         }
     }
 
     /// Whether text typed right after the end of the mark joins it.
     pub(crate) const fn is_inclusive(&self) -> bool {
-        !matches!(self, Self::Code | Self::Link(_))
+        !matches!(self, Self::Code | Self::Link(_) | Self::Abbreviation(_))
     }
 }
 
@@ -411,6 +415,28 @@ impl Inline {
         let change = diff(&self.text, new_text, edit_start_hint)?;
         self.replace(change.range.clone(), &change.inserted);
         Some(change)
+    }
+
+    /// The `index`th atom, to change it in place.
+    pub fn atom_mut(&mut self, index: usize) -> Option<&mut Atom> {
+        self.atoms.get_mut(index)
+    }
+
+    /// UTF-16 position of the placeholder of the `index`th atom.
+    #[must_use]
+    pub fn atom_position(&self, index: usize) -> Option<usize> {
+        let mut units = 0;
+        let mut seen = 0;
+        for ch in self.text.chars() {
+            if ch == OBJECT_REPLACEMENT {
+                if seen == index {
+                    return Some(units);
+                }
+                seen += 1;
+            }
+            units += ch.len_utf16();
+        }
+        None
     }
 
     pub fn insert_atom(&mut self, at: usize, atom: Atom) {

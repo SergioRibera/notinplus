@@ -8,15 +8,20 @@
 
 use freya::prelude::*;
 
+use freya::icons::lucide;
+
 use super::Shared;
+use super::header::{ChipMenu, CopyButton, HeaderChip, RenameButton, callout_icon, language_name};
+use super::properties::PropertiesPanel;
 use super::text::{TextBlock, TextLook, TextPlace};
 use crate::controller::CaretRequest;
-use crate::decorator::{CodeContext, TransclusionContext};
+use crate::decorator::{CodeContext, MathContext, TransclusionContext};
 use crate::document::{
-    Align, Block, BlockId, BlockKind, CalloutKind, CellPos, ColumnAlign, HeadingLevel, Inline,
-    ListKind, Table, TextRole, TextTarget, Transclusion,
+    Align, Block, BlockId, BlockKind, BlockType, CalloutKind, CellPos, ColumnAlign, HeadingLevel,
+    Inline, ListKind, Properties, Table, TextRole, TextTarget, Transclusion,
 };
 use crate::labels::Label;
+use crate::popup::MenuItem;
 use crate::theme::EditorTheme;
 
 const GUTTER: f32 = 24.0;
@@ -40,6 +45,17 @@ pub(crate) struct BlockView {
     pub(crate) shared: Shared,
 }
 
+/// What a block remembers between renders.
+#[derive(Clone, Copy)]
+struct View {
+    /// Opens `<details>` and property lists.
+    unfolded: State<bool>,
+    /// Shows front matter as YAML.
+    as_text: State<bool>,
+    /// Width of the block, for drawings that must fit in it.
+    width: f32,
+}
+
 /// Chrome around a text run.
 struct Frame {
     indent: f32,
@@ -49,6 +65,13 @@ struct Frame {
     radius: f32,
     gutter: Option<Element>,
     header: Option<Element>,
+    /// Floats over the top right corner without taking room, so it can
+    /// come and go without moving the text.
+    corner: Option<Element>,
+    /// Keeps the text mounted (and its caret) but takes no room.
+    collapsed: bool,
+    /// Under the text, like the drawing of a formula.
+    footer: Option<Element>,
     text: TextBlock,
 }
 
@@ -62,6 +85,9 @@ impl Frame {
             radius: 0.,
             gutter: None,
             header: None,
+            corner: None,
+            collapsed: false,
+            footer: None,
             text,
         }
     }
@@ -110,8 +136,21 @@ impl Frame {
                                 rect()
                                     .width(Size::flex(1.))
                                     .child(rect().width(Size::fill()).maybe_child(self.header))
-                                    .child(self.text),
+                                    .child(
+                                        rect()
+                                            .width(Size::fill())
+                                            .maybe(self.collapsed, |text| {
+                                                text.height(Size::px(0.)).overflow(Overflow::Clip)
+                                            })
+                                            .child(self.text),
+                                    )
+                                    .child(rect().width(Size::fill()).maybe_child(self.footer)),
                             ),
+                    )
+                    .child(
+                        rect()
+                            .position(Position::new_absolute().top(0.).right(0.))
+                            .maybe_child(self.corner),
                     ),
             )
             .into_element()
@@ -156,6 +195,347 @@ impl BlockView {
             align: text_align(self.block.align),
             ..TextLook::default()
         }
+    }
+
+    const fn editable(&self) -> bool {
+        !self.shared.read_only
+    }
+
+    /// Callout kinds a block can turn into, as menu entries.
+    fn callout_items(&self, current: Option<CalloutKind>) -> Vec<MenuItem> {
+        let controller = self.shared.controller;
+        let block = self.block.id;
+        let theme = &self.shared.theme;
+        CalloutKind::ALL
+            .into_iter()
+            .map(|kind| {
+                MenuItem::new(theme.labels.callout(kind), move || {
+                    if current.is_some() {
+                        controller.set_callout_kind(block, kind);
+                    } else {
+                        controller.set_type_of(block, BlockType::Callout(kind));
+                    }
+                })
+                .icon(callout_icon(kind), theme.colors.callout(kind))
+                .selected(current == Some(kind))
+            })
+            .collect()
+    }
+
+    /// Kind and title of a callout; pressing it changes the kind or turns
+    /// the callout back into a plain quote.
+    fn callout_chip(&self, kind: CalloutKind, title: Option<&str>) -> Element {
+        let theme = &self.shared.theme;
+        let controller = self.shared.controller;
+        let block = self.block.id;
+        let plain = MenuItem::new(theme.labels.get(Label::PlainQuote), move || {
+            controller.set_type_of(block, BlockType::Quote);
+        })
+        .icon(lucide::quote(), theme.colors.muted);
+        HeaderChip {
+            icon: callout_icon(kind),
+            text: title.map_or_else(|| theme.labels.callout(kind).to_owned(), str::to_owned),
+            color: theme.colors.callout(kind),
+            theme: theme.clone(),
+            editable: self.editable(),
+            auto_open: false,
+            menu: ChipMenu::Items(vec![self.callout_items(Some(kind)), vec![plain]]),
+        }
+        .into_element()
+    }
+
+    /// Converter shown on a focused plain quote.
+    fn quote_chip(&self) -> Element {
+        let theme = &self.shared.theme;
+        HeaderChip {
+            icon: lucide::quote(),
+            text: String::new(),
+            color: theme.colors.muted,
+            theme: theme.clone(),
+            editable: true,
+            auto_open: false,
+            menu: ChipMenu::Items(vec![self.callout_items(None)]),
+        }
+        .into_element()
+    }
+
+    /// How a block with a drawing (a formula, a diagram) shows: the drawing
+    /// alone until someone edits it, then its source with the drawing kept
+    /// up to date under it. Returns whether the source is folded away and
+    /// the footer holding the drawing.
+    fn drawing(&self, drawn: Option<Element>, empty: bool) -> (bool, Option<Element>) {
+        let Some(drawn) = drawn else {
+            return (false, None);
+        };
+        let theme = &self.shared.theme;
+        let editing = self.editable() && (self.focused.is_some() || empty);
+        let controller = self.shared.controller;
+        let block = self.block.id;
+        let footer = rect()
+            .width(Size::fill())
+            .cross_align(Alignment::center())
+            .maybe(editing, |footer| {
+                footer
+                    .margin((theme.px(8.), 0., 0., 0.))
+                    .padding((theme.px(10.), 0., theme.px(2.), 0.))
+                    .border(
+                        Border::new()
+                            .width(BorderWidth {
+                                top: 1.,
+                                right: 0.,
+                                bottom: 0.,
+                                left: 0.,
+                            })
+                            .alignment(BorderAlignment::Inner)
+                            .fill(theme.colors.border),
+                    )
+            })
+            .maybe(!editing && self.editable(), |footer| {
+                footer
+                    .padding((theme.px(4.), 0.))
+                    .cursor(CursorIcon::Pointer)
+                    .on_press(move |event: Event<PressEventData>| {
+                        event.stop_propagation();
+                        controller.focus(block, usize::MAX);
+                    })
+            })
+            .child(drawn)
+            .into_element();
+        (!editing, Some(footer))
+    }
+
+    /// Chip of a formula block, with templates for people who do not know
+    /// TeX.
+    fn math_header(&self) -> Option<Element> {
+        if !self.editable() {
+            return None;
+        }
+        let theme = &self.shared.theme;
+        let controller = self.shared.controller;
+        let block = self.block.id;
+        let templates = [
+            (Label::Fraction, r"\frac{a}{b}"),
+            (Label::SquareRoot, r"\sqrt{x}"),
+            (Label::Power, "x^{2}"),
+            (Label::MathIndex, "x_{i}"),
+            (Label::Sum, r"\sum_{i=1}^{n} "),
+            (Label::Integral, r"\int_{a}^{b} f(x)\,dx"),
+            (
+                Label::Matrix,
+                r"\begin{pmatrix} a & b \\ c & d \end{pmatrix}",
+            ),
+        ]
+        .into_iter()
+        .map(|(name, tex)| {
+            MenuItem::new(format!("{}   {tex}", theme.labels.get(name)), move || {
+                controller.insert_text_in(block, tex);
+            })
+        })
+        .collect();
+        Some(
+            rect()
+                .margin((theme.px(-4.), 0., theme.px(4.), theme.px(-6.)))
+                .child(HeaderChip {
+                    icon: lucide::sigma(),
+                    text: theme.labels.get(Label::Formula).to_owned(),
+                    color: theme.colors.muted,
+                    theme: theme.clone(),
+                    editable: true,
+                    auto_open: false,
+                    menu: ChipMenu::Items(vec![templates]),
+                })
+                .into_element(),
+        )
+    }
+
+    /// Folding header of raw HTML.
+    fn html_header(&self, open: bool, unfolded: State<bool>) -> Element {
+        let theme = &self.shared.theme;
+        let color = theme.colors.muted;
+        let mut unfolded = unfolded;
+        rect()
+            .height(Size::px(theme.px(28.)))
+            .horizontal()
+            .spacing(theme.px(6.))
+            .cross_align(Alignment::center())
+            .cursor(CursorIcon::Pointer)
+            .on_press(move |event: Event<PressEventData>| {
+                event.stop_propagation();
+                unfolded.toggle();
+            })
+            .child(
+                SvgViewer::new(lucide::file_code())
+                    .color(color)
+                    .width(Size::px(theme.px(13.)))
+                    .height(Size::px(theme.px(13.))),
+            )
+            .child(
+                label()
+                    .color(color)
+                    .font_size(theme.px(11.5))
+                    .font_weight(FontWeight::BOLD)
+                    .text("HTML"),
+            )
+            .child(
+                SvgViewer::new(if open {
+                    lucide::chevron_down()
+                } else {
+                    lucide::chevron_right()
+                })
+                .color(color)
+                .width(Size::px(theme.px(12.)))
+                .height(Size::px(theme.px(12.))),
+            )
+            .into_element()
+    }
+
+    /// Caption telling a comment apart from the text around it.
+    fn comment_header(&self) -> Element {
+        let theme = &self.shared.theme;
+        let color = theme.colors.muted;
+        rect()
+            .horizontal()
+            .spacing(theme.px(6.))
+            .margin((0., 0., theme.px(4.), 0.))
+            .cross_align(Alignment::center())
+            .child(
+                SvgViewer::new(lucide::message_square_dashed())
+                    .color(color)
+                    .width(Size::px(theme.px(13.)))
+                    .height(Size::px(theme.px(13.))),
+            )
+            .child(
+                label()
+                    .color(color)
+                    .font_size(theme.px(11.5))
+                    .font_weight(FontWeight::BOLD)
+                    .text(theme.labels.get(Label::Comment)),
+            )
+            .child(
+                label()
+                    .color(color.with_a(170))
+                    .font_size(theme.px(11.5))
+                    .text(format!("· {}", theme.labels.get(Label::CommentHint))),
+            )
+            .into_element()
+    }
+
+    /// Chevron and summary of a `<details>` block. Pressing either folds
+    /// it; folding is a view state, the file keeps how it starts.
+    fn details_header(&self, summary: &str, open: bool, unfolded: State<bool>) -> Element {
+        let theme = &self.shared.theme;
+        let colors = &theme.colors;
+        let controller = self.shared.controller;
+        let block = self.block.id;
+        let mut unfolded = unfolded;
+        let shown = if summary.is_empty() {
+            theme.labels.get(Label::Collapsible).to_owned()
+        } else {
+            summary.to_owned()
+        };
+        rect()
+            .width(Size::fill())
+            .horizontal()
+            .content(Content::flex())
+            .cross_align(Alignment::center())
+            .margin((0., theme.px(-6.), theme.px(2.), theme.px(-4.)))
+            .child(
+                rect()
+                    .width(Size::flex(1.))
+                    .height(Size::px(theme.px(32.)))
+                    .horizontal()
+                    .content(Content::flex())
+                    .spacing(theme.px(6.))
+                    .cross_align(Alignment::center())
+                    .cursor(CursorIcon::Pointer)
+                    .on_press(move |event: Event<PressEventData>| {
+                        event.stop_propagation();
+                        unfolded.toggle();
+                    })
+                    .child(
+                        SvgViewer::new(if open {
+                            lucide::chevron_down()
+                        } else {
+                            lucide::chevron_right()
+                        })
+                        .color(colors.muted)
+                        .width(Size::px(theme.px(16.)))
+                        .height(Size::px(theme.px(16.))),
+                    )
+                    .child(
+                        label()
+                            .width(Size::flex(1.))
+                            .max_lines(1)
+                            .text_overflow(TextOverflow::Ellipsis)
+                            .color(if summary.is_empty() {
+                                colors.muted
+                            } else {
+                                colors.text
+                            })
+                            .font_size(theme.body_size)
+                            .font_weight(FontWeight::BOLD)
+                            .text(shown),
+                    ),
+            )
+            .maybe_child(self.editable().then(|| RenameButton {
+                current: summary.to_owned(),
+                placeholder: theme.labels.get(Label::DetailsSummary),
+                hint: None,
+                color: colors.muted,
+                theme: theme.clone(),
+                on_rename: EventHandler::new(move |summary: String| {
+                    controller.set_details_summary(block, &summary);
+                }),
+            }))
+            .into_element()
+    }
+
+    /// Language chip and copy button of a code block.
+    fn code_header(&self, language: &str, code: &Inline) -> Option<Element> {
+        let theme = &self.shared.theme;
+        let colors = &theme.colors;
+        let editable = self.editable();
+        let name = language_name(language);
+        if !editable && name.is_none() {
+            return None;
+        }
+        let diagram = matches!(
+            language.trim().to_ascii_lowercase().as_str(),
+            "mermaid" | "dot" | "graphviz"
+        );
+        let chip = HeaderChip {
+            icon: if diagram {
+                lucide::workflow()
+            } else {
+                lucide::code_xml()
+            },
+            text: name
+                .unwrap_or_else(|| theme.labels.get(Label::PlainText))
+                .to_owned(),
+            color: colors.muted,
+            theme: theme.clone(),
+            editable,
+            auto_open: language.is_empty() && code.is_empty() && self.focused.is_some(),
+            menu: ChipMenu::Language {
+                controller: self.shared.controller,
+                block: self.block.id,
+                current: language.to_owned(),
+            },
+        };
+        Some(
+            rect()
+                .width(Size::fill())
+                .horizontal()
+                .content(Content::flex())
+                .cross_align(Alignment::center())
+                .margin((theme.px(-4.), theme.px(-6.), theme.px(4.), theme.px(-6.)))
+                .child(rect().width(Size::flex(1.)).child(chip))
+                .child(CopyButton {
+                    text: code.plain_text(),
+                    theme: theme.clone(),
+                })
+                .into_element(),
+        )
     }
 
     fn marker(&self, kind: ListKind, depth: u8) -> Element {
@@ -207,7 +587,12 @@ impl BlockView {
     }
 
     #[allow(clippy::too_many_lines, reason = "one arm per text block kind")]
-    fn framed(&self) -> Option<Frame> {
+    fn framed(&self, view: View) -> Option<Frame> {
+        let View {
+            unfolded,
+            as_text,
+            width,
+        } = view;
         let theme = &self.shared.theme;
         let colors = &theme.colors;
         let rich = |content: &Inline, look: TextLook| {
@@ -247,8 +632,15 @@ impl BlockView {
                 ))
             },
             BlockKind::Quote(content) => Frame {
-                padding: (theme.px(2.), theme.px(12.), theme.px(2.), theme.px(12.)),
+                padding: (
+                    theme.px(2.),
+                    // Room for the converter, so it never covers text.
+                    theme.px(if self.editable() { 52. } else { 12. }),
+                    theme.px(2.),
+                    theme.px(12.),
+                ),
                 bar: Some(colors.quote_bar),
+                corner: (self.editable() && self.focused.is_some()).then(|| self.quote_chip()),
                 ..Frame::new(rich(
                     content,
                     TextLook {
@@ -265,27 +657,25 @@ impl BlockView {
             } => {
                 let accent = colors.callout(*kind);
                 let header = rect()
+                    // The chip's own padding lines its icon up with the text.
+                    .margin((theme.px(-2.), 0., theme.px(2.), theme.px(-6.)))
                     .horizontal()
-                    .spacing(theme.px(6.))
-                    .margin((0., 0., theme.px(4.), 0.))
                     .cross_align(Alignment::center())
-                    .child(
-                        label()
-                            .color(accent)
-                            .font_size(theme.px(13.))
-                            .text(callout_icon(*kind)),
-                    )
-                    .child(
-                        label()
-                            .color(accent)
-                            .font_size(theme.px(13.))
-                            .font_weight(FontWeight::BOLD)
-                            .text(
-                                title
-                                    .clone()
-                                    .unwrap_or_else(|| theme.labels.callout(*kind).to_owned()),
-                            ),
-                    )
+                    .child(self.callout_chip(*kind, title.as_deref()))
+                    .maybe_child((self.editable() && self.focused.is_some()).then(|| {
+                        let controller = self.shared.controller;
+                        let block = self.block.id;
+                        RenameButton {
+                            current: title.clone().unwrap_or_default(),
+                            placeholder: theme.labels.callout(*kind),
+                            hint: Some(theme.labels.get(Label::RenameHint)),
+                            color: accent,
+                            theme: theme.clone(),
+                            on_rename: EventHandler::new(move |title: String| {
+                                controller.set_callout_title(block, &title);
+                            }),
+                        }
+                    }))
                     .into_element();
                 Frame {
                     padding: (theme.px(8.), theme.px(12.), theme.px(8.), theme.px(12.)),
@@ -316,16 +706,98 @@ impl BlockView {
                     ))
                 }
             }
-            BlockKind::Code { language, code } => panel(
-                plain(code, colors.text),
-                (!language.is_empty()).then(|| language.clone()),
-            ),
-            BlockKind::Math(tex) => panel(plain(tex, colors.text), Some("TeX".to_owned())),
-            BlockKind::FrontMatter(raw) => panel(
-                plain(raw, colors.muted),
-                Some(theme.labels.get(Label::FrontMatter).to_owned()),
-            ),
-            BlockKind::Html(raw) => panel(plain(raw, colors.muted), Some("HTML".to_owned())),
+            BlockKind::Code { language, code } => {
+                let drawn = self.shared.decorators.render_preview(&CodeContext {
+                    language,
+                    code: code.text(),
+                    max_width: width - theme.px(24.),
+                    theme,
+                });
+                let (collapsed, footer) = self.drawing(drawn, code.is_empty());
+                Frame {
+                    header: self.code_header(language, code),
+                    collapsed,
+                    footer,
+                    ..panel(plain(code, colors.text), None)
+                }
+            }
+            BlockKind::Math(tex) => {
+                let drawn = self.shared.decorators.render_math(&MathContext {
+                    tex: tex.text(),
+                    display: true,
+                    font_size: theme.body_size,
+                    max_width: width - theme.px(24.),
+                    theme,
+                });
+                let (collapsed, footer) = self.drawing(drawn, tex.is_empty());
+                Frame {
+                    header: self.math_header(),
+                    collapsed,
+                    footer,
+                    ..panel(plain(tex, colors.text), None)
+                }
+            }
+            BlockKind::FrontMatter(raw) => {
+                let properties = Properties::parse(raw.text());
+                // Rich YAML only reads as text.
+                let listed = properties.is_some() && !as_text();
+                Frame {
+                    header: Some(
+                        PropertiesPanel {
+                            block: self.block.id,
+                            properties,
+                            controller: self.shared.controller,
+                            theme: theme.clone(),
+                            editable: self.editable(),
+                            unfolded,
+                            as_text,
+                        }
+                        .into_element(),
+                    ),
+                    collapsed: listed,
+                    ..panel(plain(raw, colors.muted), None)
+                }
+            }
+            BlockKind::Html(raw) => {
+                // Markup the editor cannot show stays out of the way until asked for.
+                let open = unfolded() || self.focused.is_some();
+                Frame {
+                    padding: (theme.px(2.), theme.px(10.), theme.px(4.), theme.px(10.)),
+                    header: Some(self.html_header(open, unfolded)),
+                    collapsed: !open,
+                    ..panel(plain(raw, colors.muted), None)
+                }
+            }
+            BlockKind::Comment(note) => Frame {
+                padding: (theme.px(6.), theme.px(10.), theme.px(6.), theme.px(10.)),
+                background: colors.muted.with_a(18),
+                radius: theme.px(6.),
+                header: Some(self.comment_header()),
+                ..Frame::new(self.block_text(
+                    note,
+                    TextRole::Plain,
+                    TextPlace::Block,
+                    TextLook {
+                        font_size: Some(theme.body_size * 0.92),
+                        color: Some(colors.muted),
+                        ..TextLook::default()
+                    },
+                ))
+            },
+            BlockKind::Details {
+                summary, content, ..
+            } => {
+                // Focus opens it, so the caret is never inside hidden text.
+                let open = unfolded() || self.focused.is_some();
+                Frame {
+                    padding: (theme.px(4.), theme.px(10.), theme.px(6.), theme.px(10.)),
+                    background: colors.code_background.with_a(120),
+                    radius: theme.px(8.),
+                    header: Some(self.details_header(summary, open, unfolded)),
+                    collapsed: !open,
+                    ..Frame::new(rich(content, self.look()))
+                }
+            }
             BlockKind::Footnote {
                 label: name,
                 content,
@@ -365,7 +837,7 @@ impl BlockView {
     }
 
     /// Read only replacement for code and math blocks from decorators.
-    fn decorated(&self) -> Option<Element> {
+    fn decorated(&self, width: f32) -> Option<Element> {
         if !self.shared.read_only {
             return None;
         }
@@ -377,6 +849,7 @@ impl BlockView {
         self.shared.decorators.render_code_block(&CodeContext {
             language,
             code,
+            max_width: width,
             theme: &self.shared.theme,
         })
     }
@@ -623,12 +1096,28 @@ impl Component for BlockView {
         };
         let mut hovered = use_state(|| false);
         let mut drop_target = use_state(|| false);
+        let unfolded =
+            use_state(|| matches!(self.block.kind, BlockKind::Details { open: true, .. }));
+        let as_text = use_state(|| false);
+        // Only the width, so scrolling (which moves the area) re-renders nothing.
+        let mut width = use_state(|| 0f32);
+        if self.shared.read_only && matches!(self.block.kind, BlockKind::Comment(_)) {
+            return rect().into_element();
+        }
+        let view = View {
+            unfolded,
+            as_text,
+            width: width(),
+        };
         let body = self
-            .decorated()
-            .or_else(|| self.framed().map(|frame| frame.render(&theme)))
+            .decorated(view.width)
+            .or_else(|| self.framed(view).map(|frame| frame.render(&theme)))
             .unwrap_or_else(fallback);
         let block = rect()
             .width(Size::fill())
+            .on_sized(move |event: Event<SizedEventData>| {
+                width.set_if_modified(event.area.width());
+            })
             .padding((theme.block_spacing / 2., 0.))
             .child(body);
         if !self.shared.reorderable || self.shared.read_only {
@@ -719,16 +1208,6 @@ impl Component for BlockView {
 
 /// Width of the drag handle column shown when blocks can be reordered.
 const HANDLE: f32 = 20.0;
-
-const fn callout_icon(kind: CalloutKind) -> &'static str {
-    match kind {
-        CalloutKind::Note => "ℹ",
-        CalloutKind::Tip => "✦",
-        CalloutKind::Important => "❗",
-        CalloutKind::Warning => "⚠",
-        CalloutKind::Caution => "⛔",
-    }
-}
 
 const fn text_align(align: Align) -> TextAlign {
     match align {

@@ -14,12 +14,15 @@ use freya_engine::prelude::{
     Paint, PaintStyle, PathEffect, RectHeightStyle, RectWidthStyle, SkRect,
 };
 
+use super::image::ImageAtom;
+use super::math::MathAtom;
 use super::paint::{Decor, DecorKind, PaintContext, Piece};
 use super::reveal::{Reveal, RevealEdit};
 use super::suggest::{MENU_WIDTH, MenuRow, OpenMenu, SuggestionMenu, item, item_count};
 use super::{InputContext, Shared};
+use crate::controller::AtomSlot;
 use crate::controller::{CaretRequest, Selection};
-use crate::decorator::{EmbedContext, ImageContext};
+use crate::decorator::EmbedContext;
 use crate::document::{
     Atom, BlockType, HeadingLevel, Inline, MarkFamily, MarkKind, OBJECT_REPLACEMENT, TextRole,
     TextTarget, byte_index, utf16_len,
@@ -67,10 +70,15 @@ impl Component for TextBlock {
         let focus = use_focus(a11y_id);
         let holder = use_state(ParagraphHolder::default);
         let mut area = use_state(Area::default);
+        // Apart from `area` so scrolling, which moves the area, re-renders
+        // nothing; images size themselves to it.
+        let mut width = use_state(|| 0f32);
         let mut dragging = use_state(|| false);
         let mut long_press = use_state(|| None::<TaskHandle>);
         let scroll_views = use_hook(EnclosingScrollViews::get);
         let mut menu = use_state(|| None::<OpenMenu>);
+        // Title of the `<abbr>` last pressed and where, in element coordinates.
+        let mut abbreviation = use_state(|| None::<(String, f32, f32)>);
         let menu_cache = use_hook(|| Rc::new(RefCell::new(None::<(String, Rc<Vec<MenuRow>>)>)));
         let applied_caret = use_hook(|| Rc::new(Cell::new(0u64)));
         let command_held = use_hook(|| Rc::new(Cell::new(false)));
@@ -149,7 +157,11 @@ impl Component for TextBlock {
                 let rows = match &*cache {
                     Some((cached, rows)) if *cached == query => rows.clone(),
                     _ => {
-                        let rows = Rc::new(shared.slash.rows(&query, &shared.theme.labels));
+                        let rows = Rc::new(shared.slash.rows(
+                            &query,
+                            &shared.theme.labels,
+                            controller.can_pick_image(),
+                        ));
                         *cache = Some((query, rows.clone()));
                         rows
                     }
@@ -586,8 +598,22 @@ impl Component for TextBlock {
         let on_focus_press = move |event: Event<FocusPressEventData>| {
             let location = event.element_location();
             let link = link_at(&holder.read(), location, &content_for_press);
+            #[allow(clippy::cast_possible_truncation, reason = "element coordinates")]
+            abbreviation.set_if_modified(
+                abbreviation_at(&holder.read(), location, &content_for_press)
+                    .map(|title| (title, location.x as f32, location.y as f32)),
+            );
             // Read only text is not a field: no focus, caret or selection,
             // and presses outside links reach whatever lies below.
+            if !read_only && let Some(atom) = atom_at(&holder.read(), location, &content_for_press)
+            {
+                event.stop_propagation();
+                event.prevent_default();
+                shared_for_press
+                    .controller
+                    .open_atom_menu(Some(AtomSlot { target, atom }));
+                return;
+            }
             if read_only {
                 if let Some(url) = link {
                     event.stop_propagation();
@@ -741,7 +767,10 @@ impl Component for TextBlock {
             }
         };
 
-        let on_sized = move |event: Event<SizedEventData>| area.set_if_modified(event.area);
+        let on_sized = move |event: Event<SizedEventData>| {
+            width.set_if_modified(event.area.width());
+            area.set_if_modified(event.area);
+        };
 
         let shared_for_toolbar = shared.clone();
         let reveal_for_toolbar = reveal.clone();
@@ -842,9 +871,16 @@ impl Component for TextBlock {
             for piece in painted.pieces {
                 paragraph = match piece {
                     Piece::Text(span) => paragraph.span(span),
-                    Piece::Atom(index) => {
-                        paragraph.child(atom_element(shown.atoms().get(index), &shared, base_size))
-                    }
+                    Piece::Atom(index) => paragraph.child(atom_element(
+                        shown.atoms().get(index),
+                        AtomSlot {
+                            target,
+                            atom: index,
+                        },
+                        width(),
+                        &shared,
+                        base_size,
+                    )),
                 };
             }
         }
@@ -931,6 +967,13 @@ impl Component for TextBlock {
                     .on_global_pointer_up(on_global_pointer_up)
                     .maybe_child(background)
                     .child(paragraph.layer(Layer::Relative(1))),
+            )
+            .maybe_child(
+                abbreviation
+                    .read()
+                    .clone()
+                    .filter(|_| read_only || is_focused)
+                    .map(|(title, x, y)| abbreviation_bubble(&shared.theme, title, x, y)),
             )
             .maybe_child(popup)
             .maybe_child((is_focused && !read_only).then(|| {
@@ -1252,6 +1295,31 @@ fn is_committed_paste(text: &str) -> bool {
 }
 
 fn link_at(holder: &ParagraphHolder, location: CursorPoint, content: &Inline) -> Option<String> {
+    match mark_at_point(holder, location, content, MarkFamily::Link)? {
+        MarkKind::Link(link) => Some(link.url),
+        _ => None,
+    }
+}
+
+/// Title of the `<abbr>` under `location`.
+fn abbreviation_at(
+    holder: &ParagraphHolder,
+    location: CursorPoint,
+    content: &Inline,
+) -> Option<String> {
+    match mark_at_point(holder, location, content, MarkFamily::Abbreviation)? {
+        MarkKind::Abbreviation(title) => Some(title).filter(|title| !title.is_empty()),
+        _ => None,
+    }
+}
+
+/// Mark of `family` covering the character under `location`.
+fn mark_at_point(
+    holder: &ParagraphHolder,
+    location: CursorPoint,
+    content: &Inline,
+    family: MarkFamily,
+) -> Option<MarkKind> {
     let location = holder.visible_location(location);
     let inner = holder.0.borrow();
     let ParagraphHolderInner {
@@ -1263,15 +1331,7 @@ fn link_at(holder: &ParagraphHolder, location: CursorPoint, content: &Inline) ->
         paragraph.cursor_index_at_point((location.x * scale_factor, location.y * scale_factor));
     [index, index.saturating_sub(1)]
         .into_iter()
-        .find_map(|pos| {
-            match content
-                .mark_at(pos, MarkFamily::Link)
-                .map(|mark| &mark.kind)
-            {
-                Some(MarkKind::Link(link)) => Some(link.url.clone()),
-                _ => None,
-            }
-        })
+        .find_map(|pos| content.mark_at(pos, family).map(|mark| mark.kind.clone()))
 }
 
 /// `(top, left)` in paragraph coordinates right under the caret at
@@ -1372,7 +1432,13 @@ fn paint_decor(context: &mut FillRenderContext, holder: &ParagraphHolder, decor:
     }
 }
 
-fn atom_element(atom: Option<&Atom>, shared: &Shared, base_size: f32) -> Element {
+fn atom_element(
+    atom: Option<&Atom>,
+    slot: AtomSlot,
+    max_width: f32,
+    shared: &Shared,
+    base_size: f32,
+) -> Element {
     let theme = &shared.theme;
     let colors = &theme.colors;
     let pill = |text: String, background: Color, color: Color| {
@@ -1409,22 +1475,15 @@ fn atom_element(atom: Option<&Atom>, shared: &Shared, base_size: f32) -> Element
                 .render_embed(&context)
                 .unwrap_or_else(|| pill(text.clone(), colors.popup_selected, colors.accent))
         }
-        Some(Atom::Image { url, alt, title }) => {
-            let context = ImageContext {
-                url,
-                alt,
-                title: title.as_deref(),
-                theme,
-            };
-            shared.decorators.render_image(&context).unwrap_or_else(|| {
-                let text = if alt.is_empty() {
-                    url.clone()
-                } else {
-                    alt.clone()
-                };
-                pill(format!("🖼 {text}"), colors.code_background, colors.muted)
-            })
+        Some(Atom::Image { url, alt, title }) => ImageAtom {
+            url: url.clone(),
+            alt: alt.clone(),
+            title: title.clone(),
+            slot,
+            max_width,
+            shared: shared.clone(),
         }
+        .into_element(),
         Some(Atom::FootnoteRef { label: name }) => rect()
             .height(Size::px(base_size))
             .child(
@@ -1434,12 +1493,106 @@ fn atom_element(atom: Option<&Atom>, shared: &Shared, base_size: f32) -> Element
                     .text(format!("[{name}]")),
             )
             .into_element(),
-        Some(Atom::Math { tex }) => pill(tex.clone(), colors.code_background, colors.code_text),
-        Some(Atom::Html { raw }) => pill(raw.clone(), Color::TRANSPARENT, colors.muted),
+        Some(Atom::Math { tex }) => MathAtom {
+            tex: tex.clone(),
+            slot,
+            font_size: base_size,
+            max_width,
+            shared: shared.clone(),
+        }
+        .into_element(),
+        Some(Atom::Html { raw }) => match html_comment(raw) {
+            Some(_) if shared.read_only => rect().into_element(),
+            Some(note) => pill(
+                format!("\u{1f4ac} {note}"),
+                colors.muted.with_a(22),
+                colors.muted,
+            ),
+            None => pill(raw.clone(), Color::TRANSPARENT, colors.muted),
+        },
         None => pill(
             OBJECT_REPLACEMENT.to_string(),
             Color::TRANSPARENT,
             colors.muted,
         ),
     }
+}
+
+/// Text of an inline `<!-- ... -->` comment.
+fn html_comment(raw: &str) -> Option<&str> {
+    raw.trim()
+        .strip_prefix("<!--")
+        .and_then(|rest| rest.strip_suffix("-->"))
+        .map(str::trim)
+}
+
+/// What an `<abbr>` stands for, shown under where it was pressed.
+fn abbreviation_bubble(
+    theme: &crate::theme::EditorTheme,
+    title: String,
+    x: f32,
+    y: f32,
+) -> Element {
+    let colors = &theme.colors;
+    rect()
+        .layer(Layer::Overlay)
+        .position(
+            Position::new_absolute()
+                .top(y + theme.px(14.))
+                .left((x - theme.px(12.)).max(0.)),
+        )
+        .max_width(Size::px(theme.px(280.)))
+        .padding((theme.px(6.), theme.px(10.)))
+        .corner_radius(theme.px(8.))
+        .background(colors.popup_background)
+        .border(
+            Border::new()
+                .width(1.)
+                .alignment(BorderAlignment::Inner)
+                .fill(colors.border),
+        )
+        .shadow(
+            Shadow::new()
+                .y(4.)
+                .blur(12.)
+                .color(Color::from_argb(60, 0, 0, 0)),
+        )
+        .child(
+            label()
+                .font_size(theme.px(13.))
+                .color(colors.text)
+                .text(title),
+        )
+        .into_element()
+}
+
+/// Index into [`Inline::atoms`] of the image or formula drawn under
+/// `location`.
+fn atom_at(holder: &ParagraphHolder, location: CursorPoint, content: &Inline) -> Option<usize> {
+    let location = holder.visible_location(location);
+    let inner = holder.0.borrow();
+    let ParagraphHolderInner {
+        paragraph,
+        scale_factor,
+        ..
+    } = inner.as_ref()?;
+    #[allow(clippy::cast_possible_truncation, reason = "pixel coordinates")]
+    let (x, y) = (
+        (location.x * scale_factor) as f32,
+        (location.y * scale_factor) as f32,
+    );
+    // Every atom is a placeholder, in order.
+    paragraph
+        .get_rects_for_placeholders()
+        .iter()
+        .position(|placeholder| {
+            let rect = placeholder.rect;
+            (rect.left..=rect.right).contains(&x) && (rect.top..=rect.bottom).contains(&y)
+        })
+        .filter(|index| {
+            matches!(
+                content.atoms().get(*index),
+                Some(Atom::Image { .. } | Atom::Math { .. })
+            )
+        })
 }

@@ -22,6 +22,7 @@ pub(super) fn parse(markdown: &str, options: &ParseOptions) -> Document {
         options,
         blocks: Vec::new(),
         align: Vec::new(),
+        details: None,
     };
     for child in root.children() {
         lowering.block(child, 0);
@@ -94,10 +95,22 @@ struct Lowering<'o> {
     options: &'o ParseOptions,
     blocks: Vec<Block>,
     align: Vec<Align>,
+    /// Index of the `<details>` block still waiting for its `</details>`;
+    /// the paragraphs met meanwhile become its content.
+    details: Option<usize>,
 }
 
 impl Lowering<'_> {
     fn push(&mut self, kind: BlockKind) {
+        if let (Some(index), BlockKind::Paragraph(paragraph)) = (self.details, &kind)
+            && let Some(content) = self.blocks[index].kind.content_mut()
+        {
+            if !content.is_empty() {
+                content.push_str("\n", &[]);
+            }
+            content.append(paragraph.clone());
+            return;
+        }
         let align = self.align.last().copied().unwrap_or_default();
         self.blocks.push(Block::from(kind).with_align(align));
     }
@@ -352,6 +365,30 @@ impl Lowering<'_> {
     fn html_block(&mut self, literal: &str) {
         let trimmed = literal.trim();
         let lower = trimmed.to_ascii_lowercase();
+        if let Some(note) = trimmed
+            .strip_prefix("<!--")
+            .and_then(|rest| rest.strip_suffix("-->"))
+            .filter(|note| !note.contains("-->"))
+        {
+            self.push(BlockKind::Comment(Inline::from(note.trim())));
+            return;
+        }
+        if lower == "</details>" && self.details.is_some() {
+            self.details = None;
+            return;
+        }
+        if let Some(details) = Details::parse(trimmed) {
+            let closed = details.closed;
+            self.push(BlockKind::Details {
+                summary: details.summary,
+                open: details.open,
+                content: Inline::from(details.body.as_str()),
+            });
+            if !closed {
+                self.details = Some(self.blocks.len() - 1);
+            }
+            return;
+        }
         if lower == "</div>" && !self.align.is_empty() {
             self.align.pop();
             return;
@@ -365,6 +402,52 @@ impl Lowering<'_> {
             return;
         }
         self.push(BlockKind::Html(Inline::from(trimmed)));
+    }
+}
+
+/// A `<details>` element opened by one HTML block. Blank lines split the
+/// element into several blocks, so its body and closing tag may come later.
+struct Details {
+    summary: String,
+    open: bool,
+    /// Text after the summary within this same block.
+    body: String,
+    /// Whether `</details>` was in this same block.
+    closed: bool,
+}
+
+impl Details {
+    fn parse(html: &str) -> Option<Self> {
+        // ASCII lowercasing keeps byte offsets, so `lower` indexes `html`.
+        let lower = html.to_ascii_lowercase();
+        let tag_end = lower.find('>')?;
+        let attributes = lower.get(..tag_end)?.strip_prefix("<details")?;
+        if !(attributes.is_empty() || attributes.starts_with(char::is_whitespace)) {
+            return None;
+        }
+        let open = attributes
+            .split_whitespace()
+            .any(|attribute| attribute == "open" || attribute.starts_with("open="));
+        let mut rest = tag_end + 1;
+        let mut summary = String::new();
+        if let Some(start) = lower[rest..].find("<summary") {
+            let start = rest + start;
+            let inner = start + lower[start..].find('>')? + 1;
+            let end = inner + lower[inner..].find("</summary>")?;
+            summary = super::html::unescape(html[inner..end].trim());
+            rest = end + "</summary>".len();
+        }
+        let (body, closed) = lower[rest..]
+            .find("</details>")
+            .map_or((&html[rest..], false), |end| {
+                (&html[rest..rest + end], true)
+            });
+        Some(Self {
+            summary,
+            open,
+            body: body.trim().to_owned(),
+            closed,
+        })
     }
 }
 

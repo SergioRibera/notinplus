@@ -50,6 +50,7 @@ pub(crate) struct PaintContext<'a> {
 struct Look {
     style: SpanStyle,
     strike: bool,
+    dotted: bool,
 }
 
 impl PaintContext<'_> {
@@ -107,6 +108,12 @@ impl PaintContext<'_> {
                 decor.push(Decor {
                     range: range.clone(),
                     kind: DecorKind::Underline(color.into()),
+                });
+            }
+            if look.dotted {
+                decor.push(Decor {
+                    range: range.clone(),
+                    kind: DecorKind::Dotted(self.theme.colors.muted.into()),
                 });
             }
             pieces.push(Piece::Text(span(segment, &look, underline)));
@@ -214,6 +221,7 @@ impl PaintContext<'_> {
                 MarkKind::FontSize(size) => {
                     style.font_size = Some(self.theme.px(f32::from(*size)));
                 }
+                MarkKind::Abbreviation(_) => look.dotted = true,
             }
         }
         for (_, style) in matches
