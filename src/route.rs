@@ -17,6 +17,7 @@
 //! queued (fresh start / cold URL entry).
 
 use std::sync::{Arc, Mutex, Weak};
+use std::time::{Duration, Instant};
 
 use freya::prelude::*;
 use freya::router::Routable;
@@ -193,7 +194,7 @@ fn load_doc_into_board(mount: CanvasMount, board: Arc<Mutex<Board>>) {
                 guard.set_view_sink(view_tx);
                 guard.set_live_sink(move |message| crate::sync::live(id, &message));
                 guard.set_read_only(!crate::sync::can_edit(id));
-                spawn_autosave_worker(id, Arc::clone(&board), rx);
+                spawn_autosave_worker(id, &board, rx);
                 spawn_policy_worker(id, Arc::downgrade(&board));
                 spawn_view_worker(
                     prefs::ViewKey { item: id, slot },
@@ -211,39 +212,74 @@ fn load_doc_into_board(mount: CanvasMount, board: Arc<Mutex<Board>>) {
     });
 }
 
-/// Drive one autosave iteration per ping. `recv_async` blocks until a
-/// commit fires, then `try_recv` drains any additional pings that landed
-/// while this worker was awaiting the library mutex — a tight pen-up /
-/// pen-down burst collapses into one write instead of several. The
-/// worker owns its item id + a strong ref to this mount's board; when
-/// the mount unmounts and the matching sender is dropped, the receiver
-/// sees `Disconnected` on the next recv and the worker exits.
-fn spawn_autosave_worker(id: ItemId, board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
-    spawn(async move {
-        while rx.recv_async().await.is_ok() {
-            while rx.try_recv().is_ok() {}
-            let snapshot = lock(&board).doc().saved_state();
-            let (bytes, captured) = match snapshot {
-                Ok(snapshot) => snapshot,
-                Err(err) => {
-                    log::error!("autosave snapshot id={id:?}: {err}");
-                    continue;
-                }
-            };
-            match crate::library::shared().await {
-                Ok(handle) => {
-                    let mut lib = handle.lock().await;
-                    if let Err(err) = lib.save_doc_snapshot(id, &bytes, captured).await {
-                        log::error!("autosave save_doc id={id:?}: {err}");
-                    }
-                }
-                Err(err) => log::error!("autosave open library: {err}"),
+/// Quiet time after the last stroke before the document is saved.
+const SAVE_AFTER: Duration = Duration::from_millis(700);
+/// Longest a document goes unsaved while strokes keep coming.
+const SAVE_AT_MOST: Duration = Duration::from_secs(3);
+
+/// Save the document a while after each burst of commits, on a thread
+/// of its own so neither the pen nor the UI waits on the export or the
+/// disk. While a save is due the worker holds the board, so closing it
+/// right after a stroke still saves that stroke; otherwise it only
+/// watches, and exits once the board and its commit sink are gone.
+fn spawn_autosave_worker(id: ItemId, board: &Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
+    let watched = Arc::downgrade(board);
+    let spawned = std::thread::Builder::new()
+        .name("notein-autosave".to_owned())
+        .spawn(move || {
+            while rx.recv().is_ok() {
+                let Some(board) = watched.upgrade() else {
+                    return;
+                };
+                settle(&rx);
+                save(id, &board);
             }
-            crate::plugins::builtin::canvas::after_save(id, bytes);
-            sync_siblings(id, &board);
-            crate::sync::doc_changed(id);
+        });
+    if let Err(err) = spawned {
+        log::error!("autosave thread id={id:?}: {err}");
+    }
+}
+
+/// Wait until commits stop for [`SAVE_AFTER`], or [`SAVE_AT_MOST`] went
+/// by since the first one.
+fn settle(rx: &flume::Receiver<()>) {
+    let first = Instant::now();
+    loop {
+        let left = SAVE_AT_MOST.saturating_sub(first.elapsed());
+        if left.is_zero() || rx.recv_timeout(SAVE_AFTER.min(left)).is_err() {
+            return;
         }
-    });
+    }
+}
+
+fn save(id: ItemId, board: &Arc<Mutex<Board>>) {
+    let (snapshot, content) = {
+        let guard = lock(board);
+        let doc = guard.doc();
+        (
+            doc.saved_state(),
+            crate::plugins::builtin::canvas::CanvasContent::of(doc),
+        )
+    };
+    let (bytes, captured) = match snapshot {
+        Ok(snapshot) => snapshot,
+        Err(err) => {
+            log::error!("autosave snapshot id={id:?}: {err}");
+            return;
+        }
+    };
+    match crate::library::shared_blocking() {
+        Ok(handle) => {
+            let mut lib = pollster::block_on(handle.lock());
+            if let Err(err) = pollster::block_on(lib.save_doc_snapshot(id, &bytes, captured)) {
+                log::error!("autosave save_doc id={id:?}: {err}");
+            }
+        }
+        Err(err) => log::error!("autosave open library: {err}"),
+    }
+    crate::plugins::builtin::canvas::after_save(id, &content, &bytes);
+    sync_siblings(id, board);
+    crate::sync::doc_changed(id);
 }
 
 /// Drive one view-sidecar write per ping. Same drain pattern as the doc

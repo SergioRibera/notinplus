@@ -374,8 +374,9 @@ static LAST_COVER: std::sync::LazyLock<
 > = std::sync::LazyLock::new(Default::default);
 
 /// After a canvas was saved: refresh its summary (layers, bookmarks),
-/// search index and, at most every few seconds, its cover.
-pub fn after_save(item: crate::library::ItemId, snapshot: Vec<u8>) {
+/// search index and, at most every few seconds, its cover. Runs on the
+/// thread that saved it.
+pub fn after_save(item: crate::library::ItemId, content: &CanvasContent, snapshot: &[u8]) {
     let due = {
         let mut last = LAST_COVER.lock().unwrap_or_else(PoisonError::into_inner);
         let now = std::time::Instant::now();
@@ -387,37 +388,29 @@ pub fn after_save(item: crate::library::ItemId, snapshot: Vec<u8>) {
         }
         due
     };
-    let spawned = std::thread::Builder::new()
-        .name("notein-cover".to_owned())
-        .spawn(move || {
-            let Ok(doc) = crate::doc::Doc::from_snapshot(&snapshot) else {
-                return;
-            };
-            let content = CanvasContent::of(&doc);
-            crate::plugins::content::write(
-                item,
-                KIND,
-                &notein_plugin::payload::Payload::to_bytes(&content),
-            );
-            crate::plugins::content::reindex(item);
-            if !due {
-                return;
-            }
-            let Ok(handle) = crate::library::shared_blocking() else {
-                return;
-            };
-            let paper = pollster::block_on(handle.lock())
-                .item(item)
-                .and_then(|i| i.color)
-                .unwrap_or(UNTINTED_PAPER);
-            let cover = crate::thumbnail::canvas(&doc, paper);
-            let mut lib = pollster::block_on(handle.lock());
-            if let Err(err) = pollster::block_on(lib.set_item_thumbnail(item, cover)) {
-                log::error!("cover {item}: {err}");
-            }
-        });
-    if let Err(err) = spawned {
-        log::error!("cover thread: {err}");
+    crate::plugins::content::write(
+        item,
+        KIND,
+        &notein_plugin::payload::Payload::to_bytes(content),
+    );
+    crate::plugins::content::index_blocking(item);
+    if !due {
+        return;
+    }
+    let Ok(doc) = crate::doc::Doc::from_snapshot(snapshot) else {
+        return;
+    };
+    let Ok(handle) = crate::library::shared_blocking() else {
+        return;
+    };
+    let paper = pollster::block_on(handle.lock())
+        .item(item)
+        .and_then(|i| i.color)
+        .unwrap_or(UNTINTED_PAPER);
+    let cover = crate::thumbnail::canvas(&doc, paper);
+    let mut lib = pollster::block_on(handle.lock());
+    if let Err(err) = pollster::block_on(lib.set_item_thumbnail(item, cover)) {
+        log::error!("cover {item}: {err}");
     }
 }
 
