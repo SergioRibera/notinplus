@@ -3,11 +3,10 @@
 
 use std::sync::{Arc, Mutex};
 
-use notein_plugin::services::{TextBody, Typing};
+use notein_plugin::services::TextBody;
 
 use crate::doc::Doc;
 use crate::library::{ItemId, bodies};
-use crate::sync::live::LiveMessage;
 use crate::sync::open_docs;
 
 /// The body of one document, published as its live copy while held.
@@ -104,22 +103,11 @@ impl TextBody for SharedBody {
         }
         drop(doc);
         self.changed_here();
-        crate::sync::live(
-            self.item,
-            &LiveMessage::Caret {
-                offset: 0,
-                typing: true,
-            },
-        );
         true
     }
 
     fn changes(&self) -> flume::Receiver<()> {
         open_docs::watch(self.item)
-    }
-
-    fn typing(&self) -> flume::Receiver<Typing> {
-        crate::sync::live::watch_typing(self.item)
     }
 }
 

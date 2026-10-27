@@ -12,20 +12,17 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use freya::prelude::*;
 use freya_markdown_editor::document::BlockId;
 use freya_markdown_editor::prelude::*;
 use notein_sdk::doc::DocId;
 use notein_sdk::face::{ContentStore, FaceContext, HeaderAction};
-use notein_sdk::services::{Peer, Presence, TextBody, Typing};
+use notein_sdk::services::{Peer, Presence, TextBody};
 
 use crate::anchor::NoteAnchor;
 use crate::kind::{NoteContent, NotesKind};
-
-/// A remote author is shown as typing this long after their last key.
-const TYPING_TTL: Duration = Duration::from_millis(2500);
 
 /// Width of the reading column.
 const COLUMN_WIDTH: f32 = 760.0;
@@ -80,7 +77,6 @@ impl Component for NotePage {
             let body = Arc::clone(&body);
             move || body.text()
         });
-        let typing = use_state(Vec::<(String, Instant)>::new);
         let locked = use_state({
             let store = ctx.store.clone();
             move || store.read_only()
@@ -102,10 +98,6 @@ impl Component for NotePage {
         use_hook({
             let body = Arc::clone(&body);
             move || follow_remote(body, markdown)
-        });
-        use_hook({
-            let body = Arc::clone(&body);
-            move || follow_typing(&*body, typing)
         });
         let presence = use_hook({
             let host = Arc::clone(&ctx.host);
@@ -172,7 +164,6 @@ impl Component for NotePage {
             .background(notein_ui_kit::theme::palette().bg)
             .content(Content::flex())
             .maybe_child(locked_now.then(|| banner("Solo lectura: podés mirar, no editar.")))
-            .maybe_child(typing_banner(&typing.read()))
             .maybe_child((!read_only).then(|| toolbar(ctx.ui.editor_theme(), controller)))
             .child(
                 ScrollView::new_controlled(scroll)
@@ -271,56 +262,6 @@ fn remote_caret(peer: &Peer) -> Option<RemoteCaret> {
         name: peer.name.clone(),
         color: Color::from_rgb(r, g, b),
     })
-}
-
-/// Keep the list of people typing in this note right now.
-fn follow_typing(body: &dyn TextBody, mut typing: State<Vec<(String, Instant)>>) {
-    let events = body.typing();
-    spawn(async move {
-        while let Ok(Typing { name, active }) = events.recv_async().await {
-            let now = Instant::now();
-            let mut list = typing.peek().clone();
-            list.retain(|(who, at)| *who != name && now.duration_since(*at) < TYPING_TTL);
-            if active {
-                list.push((name, now));
-            }
-            typing.set(list);
-            // Clear the banner once the author pauses.
-            let mut typing = typing;
-            spawn(async move {
-                async_io::Timer::after(TYPING_TTL).await;
-                let now = Instant::now();
-                let list: Vec<(String, Instant)> = typing
-                    .peek()
-                    .iter()
-                    .filter(|(_, at)| now.duration_since(*at) < TYPING_TTL)
-                    .cloned()
-                    .collect();
-                if list.len() != typing.peek().len() {
-                    typing.set(list);
-                }
-            });
-        }
-    });
-}
-
-/// "Ana está escribiendo…" under the top bar while someone else types.
-fn typing_banner(typing: &[(String, Instant)]) -> Option<Rect> {
-    let now = Instant::now();
-    let names: Vec<&str> = typing
-        .iter()
-        .filter(|(_, at)| now.duration_since(*at) < TYPING_TTL)
-        .map(|(name, _)| name.as_str())
-        .collect();
-    if names.is_empty() {
-        return None;
-    }
-    let text = if names.len() == 1 {
-        format!("{} está escribiendo…", names[0])
-    } else {
-        format!("{} están escribiendo…", names.join(", "))
-    };
-    Some(banner(text))
 }
 
 /// One muted line under the top bar.

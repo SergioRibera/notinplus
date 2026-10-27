@@ -27,9 +27,6 @@ pub enum LiveMessage {
     },
     /// Where the pen hovers, in world units. `shown: false` hides it.
     Pointer { x: f32, y: f32, shown: bool },
-    /// Where the caret sits in a text body, as a character offset, and
-    /// whether the author is typing right now.
-    Caret { offset: u64, typing: bool },
     /// Where this person is in the document, in the format of its face.
     /// Repeated now and then, so silence means they left.
     Presence { state: Vec<u8> },
@@ -70,35 +67,9 @@ pub fn watch(item: ItemId) -> flume::Receiver<LiveEvent> {
     rx
 }
 
-type TypingListeners = Vec<(ItemId, flume::Sender<notein_plugin::Typing>)>;
-
-static TYPING: Mutex<TypingListeners> = Mutex::new(Vec::new());
-
-/// Who starts and stops typing in `item`, for as long as the receiver
-/// lives.
-#[must_use]
-pub fn watch_typing(item: ItemId) -> flume::Receiver<notein_plugin::Typing> {
-    let (tx, rx) = flume::unbounded();
-    TYPING
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .push((item, tx));
-    rx
-}
-
 /// Hand `event` to every face watching `item`.
 pub(super) fn dispatch(item: ItemId, event: &LiveEvent) {
     listeners().retain(|(watched, tx)| *watched != item || tx.send(event.clone()).is_ok());
-    if let LiveMessage::Caret { typing, .. } = event.message {
-        let typing = notein_plugin::Typing {
-            name: event.name.clone(),
-            active: typing,
-        };
-        TYPING
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .retain(|(watched, tx)| *watched != item || tx.send(typing.clone()).is_ok());
-    }
 }
 
 fn listeners() -> std::sync::MutexGuard<'static, Vec<(ItemId, flume::Sender<LiveEvent>)>> {

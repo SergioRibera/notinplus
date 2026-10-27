@@ -281,14 +281,6 @@ pub enum Share {
     },
 }
 
-/// Someone else typing in a body.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Typing {
-    pub name: String,
-    /// `false` once they stop.
-    pub active: bool,
-}
-
 /// A text body the shell keeps merged with every device and person the
 /// document is shared with.
 pub trait TextBody: Send + Sync {
@@ -298,6 +290,4 @@ pub trait TextBody: Send + Sync {
     fn set(&self, text: &str) -> bool;
     /// Fires when text arrives from elsewhere.
     fn changes(&self) -> flume::Receiver<()>;
-    /// Who else is typing.
-    fn typing(&self) -> flume::Receiver<Typing>;
 }

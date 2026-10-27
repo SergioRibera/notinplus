@@ -2971,7 +2971,7 @@ impl Board {
             LiveMessage::Left => {
                 self.remote.remove(&from);
             }
-            LiveMessage::Caret { .. } | LiveMessage::Presence { .. } => {}
+            LiveMessage::Presence { .. } => {}
         }
         self.settle_remote();
         self.notify();

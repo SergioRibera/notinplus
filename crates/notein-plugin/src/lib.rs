@@ -67,7 +67,7 @@ pub use payload::{Payload, PayloadError};
 pub use plugin::{Font, Plugin, PluginSettings, Registrar};
 pub use services::{
     HeaderPress, Host, HostServices, HostToast, Jump, Peer, Presence, Progress, Records, Share,
-    TextBody, ToastTone, Typing,
+    TextBody, ToastTone,
 };
 pub use target::Target;
 pub use text::{Folded, fold};
