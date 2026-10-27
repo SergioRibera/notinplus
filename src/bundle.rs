@@ -623,26 +623,9 @@ fn strip_doc_marks(bytes: &[u8]) -> Vec<u8> {
 
 /// A kind snapshot with its highlights and marks removed.
 fn strip_snapshot_marks(kind: &str, snapshot: Vec<u8>) -> Vec<u8> {
-    use notein_plugin::payload::Payload;
-    match kind {
-        notein_bible::kind::KIND => notein_bible::BibleContent::from_bytes(&snapshot).map_or(snapshot, |mut c| {
-            c.highlights.clear();
-            c.to_bytes()
-        }),
-        crate::plugins::builtin::pdf::KIND => {
-            crate::plugins::builtin::pdf::PdfContent::from_bytes(&snapshot).map_or(snapshot, |mut c| {
-                c.marks.clear();
-                c.to_bytes()
-            })
-        }
-        crate::plugins::builtin::canvas::KIND => {
-            crate::plugins::builtin::canvas::CanvasContent::from_bytes(&snapshot).map_or(snapshot, |mut c| {
-                c.marks.clear();
-                c.to_bytes()
-            })
-        }
-        _ => snapshot,
-    }
+    crate::plugins::kind(kind)
+        .and_then(|kind| kind.without_marks(&snapshot))
+        .unwrap_or(snapshot)
 }
 
 fn append_file<W: Write>(tar: &mut tar::Builder<W>, name: &str, bytes: &[u8]) -> Result<()> {
@@ -663,8 +646,9 @@ fn load_doc_opt(id: ItemId) -> Option<Doc> {
     bodies::read_doc(id).ok()
 }
 
+/// Whether items of `kind` keep a file next to their content.
 fn item_carries_pdf(kind: &DocKind) -> bool {
-    kind.is(crate::plugins::builtin::pdf::KIND)
+    crate::plugins::kind_info(&kind.plugin_id).is_some_and(|k| k.attachment.is_some())
 }
 
 fn now_ms() -> u64 {

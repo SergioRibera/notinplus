@@ -38,6 +38,7 @@ importer = ["dep:reqwest", "dep:serde", "dep:serde_json"]
 # Freya rsx components. Off by default so library + import tests do not
 # drag the GPU stack. The host enables this to render the Bible viewer.
 ui = [
+    "importer",
     "dep:freya",
     "dep:freya-components",
     "dep:freya-core",

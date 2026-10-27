@@ -37,10 +37,14 @@ pub async fn create_notebook(lib: &mut Library, item: ItemId) -> Result<ItemId> 
         .cloned()
         .ok_or(LibraryError::NotFound(NotFoundKind::Item(item)))?;
     let name = format!("Cuaderno de {}", parent.name);
+    let kind = crate::plugins::catalog().notebook_kind().map_or_else(
+        || crate::plugins::builtin::canvas::KIND.to_owned(),
+        |k| k.info().id.into_owned(),
+    );
     let id = lib
         .create_item(
             parent.folder,
-            DocKind::plugin(crate::plugins::builtin::canvas::KIND),
+            DocKind::plugin(&kind),
             &name,
             parent.color,
             Vec::new(),

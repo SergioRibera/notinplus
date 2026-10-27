@@ -28,9 +28,15 @@ pub enum CreationFlow {
     Choose {
         title: Cow<'static, str>,
         options: Vec<CreationChoice>,
+        /// A last row that runs [`crate::DocumentKind::launch`] with its
+        /// id instead of creating (Agregar traducción).
+        more: Option<CreationChoice>,
     },
     /// The plugin shows its own UI from its face (Biblia first use).
     Custom,
+    /// No document is made here: the shell hands the entry to
+    /// [`crate::DocumentKind::launch`] (a scratch canvas, a picker).
+    Launch,
 }
 
 /// One option of a [`CreationFlow::Choose`].
@@ -59,6 +65,15 @@ pub struct CreationEntry {
     /// Position among the starting tiles of a new install; lower comes
     /// first, `None` never starts as a tile.
     pub starter_rank: Option<u8>,
+    /// Offered where a name is all there is (Crear con este nombre, a
+    /// search with no results): the entry needs nothing else.
+    pub named: bool,
+    /// Title of the create sheet; `None` reads "Nuevo <label>".
+    pub sheet_title: Option<Cow<'static, str>>,
+    /// Hint under the name field; `None` keeps the keyboard hint.
+    pub name_hint: Option<Cow<'static, str>>,
+    /// The create sheet asks for the folder.
+    pub location: bool,
 }
 
 impl CreationEntry {
@@ -78,6 +93,10 @@ impl CreationEntry {
             flow: CreationFlow::Form,
             ranked: true,
             starter_rank: None,
+            named: false,
+            sheet_title: None,
+            name_hint: None,
+            location: true,
         }
     }
 
@@ -119,6 +138,39 @@ impl CreationEntry {
         self.starter_rank = Some(rank);
         self
     }
+
+    /// See [`CreationEntry::named`].
+    #[must_use]
+    pub const fn named(mut self) -> Self {
+        self.named = true;
+        self
+    }
+
+    /// Title and name hint of the create sheet, and whether it asks for
+    /// the folder.
+    #[must_use]
+    pub fn sheet(
+        mut self,
+        title: impl Into<Cow<'static, str>>,
+        name_hint: Option<&'static str>,
+        location: bool,
+    ) -> Self {
+        self.sheet_title = Some(title.into());
+        self.name_hint = name_hint.map(Cow::Borrowed);
+        self.location = location;
+        self
+    }
+}
+
+/// What the import sheet shows for a picked file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImportPreview {
+    /// Name the document gets unless the user types another.
+    pub name: String,
+    /// One line about the file ("Libro.pdf · 248 páginas · 3 MB").
+    pub details: Option<String>,
+    /// The first lines of its text.
+    pub preview: Option<String>,
 }
 
 /// The paper pattern picked in the create sheet.

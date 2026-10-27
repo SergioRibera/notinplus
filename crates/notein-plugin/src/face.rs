@@ -6,15 +6,17 @@
 
 use std::borrow::Cow;
 use std::marker::PhantomData;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use freya_core::prelude::Element;
+use freya_core::prelude::{Element, spawn, use_hook};
 
 use crate::doc::DocId;
 use crate::kind::DocumentKind;
 use crate::payload::Payload;
-use crate::services::Host;
+use crate::services::{HeaderPress, Host};
+use crate::ui::Ui;
 
 /// Identifies the pane a document is shown in, so a face keeps state
 /// (scroll, zoom) per pane. Opaque to plugins.
@@ -31,6 +33,8 @@ pub trait RawStore: Send + Sync {
     fn changes(&self) -> flume::Receiver<()>;
     /// The document is shared read-only with this person.
     fn read_only(&self) -> bool;
+    /// Fires when what this person may do with the document changes.
+    fn access_changes(&self) -> flume::Receiver<()>;
 }
 
 /// Typed access to one document's content.
@@ -85,6 +89,11 @@ impl<C: Payload + Default> ContentStore<C> {
     pub fn read_only(&self) -> bool {
         self.raw.read_only()
     }
+
+    #[must_use]
+    pub fn access_changes(&self) -> flume::Receiver<()> {
+        self.raw.access_changes()
+    }
 }
 
 /// Everything a face gets to draw one document.
@@ -92,6 +101,8 @@ pub struct FaceContext<K: DocumentKind> {
     pub doc: DocId,
     pub pane: Option<PaneKey>,
     pub host: Host,
+    /// The shell's own pieces of UI (the editor, the selection bar).
+    pub ui: Ui,
     pub store: ContentStore<K::Content>,
     kind: Arc<K>,
 }
@@ -102,6 +113,7 @@ impl<K: DocumentKind> Clone for FaceContext<K> {
             doc: self.doc,
             pane: self.pane,
             host: Arc::clone(&self.host),
+            ui: Rc::clone(&self.ui),
             store: self.store.clone(),
             kind: Arc::clone(&self.kind),
         }
@@ -123,10 +135,58 @@ impl<K: DocumentKind> FaceContext<K> {
         &self.kind
     }
 
+    /// A handle on the kind to keep in the face's state.
+    #[must_use]
+    pub fn kind_handle(&self) -> Arc<K> {
+        Arc::clone(&self.kind)
+    }
+
     /// Decode a queued jump into this kind's anchor.
     #[must_use]
     pub fn anchor(bytes: &[u8]) -> Option<K::Anchor> {
         K::Anchor::from_bytes(bytes).ok()
+    }
+
+    /// Run `on_press` for presses on this face's header actions, in this
+    /// pane only. A hook: call it from the face's render.
+    pub fn use_header_presses(&self, mut on_press: impl FnMut(HeaderPress) + 'static) {
+        let (host, doc, pane) = (Arc::clone(&self.host), self.doc, self.pane);
+        let kind = self.kind.info().id;
+        use_hook(move || {
+            let rx = host.header_presses(&kind);
+            spawn(async move {
+                while let Ok(press) = rx.recv_async().await {
+                    if press.doc == doc && press.pane == pane {
+                        on_press(press);
+                    }
+                }
+            });
+        });
+    }
+
+    /// Run `on_jump` with the anchor this document was opened at, then
+    /// with every move queued for it while it is on screen (an outline
+    /// row, a chip). A hook: call it from the face's render.
+    pub fn use_jumps(&self, mut on_jump: impl FnMut(K::Anchor) + 'static) {
+        let (host, doc) = (Arc::clone(&self.host), self.doc);
+        let kind = self.kind.info().id;
+        use_hook(move || {
+            let first = host.take_jump(&kind, doc);
+            let rx = host.jumps(&kind);
+            if let Some(anchor) = first.as_deref().and_then(Self::anchor) {
+                on_jump(anchor);
+            }
+            spawn(async move {
+                while let Ok(jump) = rx.recv_async().await {
+                    if jump.doc == doc {
+                        host.take_jump(&kind, doc);
+                        if let Some(anchor) = Self::anchor(&jump.anchor) {
+                            on_jump(anchor);
+                        }
+                    }
+                }
+            });
+        });
     }
 }
 
@@ -159,6 +219,20 @@ impl HeaderAction {
     }
 }
 
+/// What a drawn cover knows about its document.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CoverRequest {
+    pub name: String,
+    /// The card's meta line ("RVR1960 · 14 resaltados").
+    pub meta: String,
+    /// [`DocumentKind::excerpt`](crate::kind::DocumentKind::excerpt).
+    pub excerpt: Option<String>,
+    /// The document's tint (sRGBA), if the user picked one.
+    pub tint: Option<[u8; 4]>,
+    pub width: f32,
+    pub height: f32,
+}
+
 /// Renders documents of [`Face::Kind`].
 pub trait Face: Send + Sync + 'static {
     type Kind: DocumentKind;
@@ -169,6 +243,13 @@ pub trait Face: Send + Sync + 'static {
     }
 
     fn render(&self, ctx: FaceContext<Self::Kind>) -> Element;
+
+    /// The cover drawn on the document's card when it has no picture;
+    /// `None` draws the shell's paper with the kind's icon.
+    fn cover(&self, cover: &CoverRequest) -> Option<Element> {
+        let _ = cover;
+        None
+    }
 }
 
 /// What the shell passes to an erased face.
@@ -177,6 +258,7 @@ pub struct FaceRequest {
     pub doc: DocId,
     pub pane: Option<PaneKey>,
     pub host: Host,
+    pub ui: Ui,
     pub store: Arc<dyn RawStore>,
 }
 
@@ -193,6 +275,7 @@ pub trait ErasedFace: Send + Sync {
     fn kind_id(&self) -> String;
     fn header_actions(&self) -> Vec<HeaderAction>;
     fn render(&self, request: FaceRequest) -> Element;
+    fn cover(&self, cover: &CoverRequest) -> Option<Element>;
 }
 
 pub(crate) struct FaceAdapter<F: Face> {
@@ -214,8 +297,13 @@ impl<F: Face> ErasedFace for FaceAdapter<F> {
             doc: request.doc,
             pane: request.pane,
             host: request.host,
+            ui: request.ui,
             store: ContentStore::new(request.store),
             kind: Arc::clone(&self.kind),
         })
+    }
+
+    fn cover(&self, cover: &CoverRequest) -> Option<Element> {
+        self.face.cover(cover)
     }
 }

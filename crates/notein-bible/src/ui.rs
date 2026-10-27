@@ -5,7 +5,9 @@
 //! headless; interactive Freya builders live in `reader.rs`.
 
 pub mod bottom_nav;
+pub(crate) mod catalog;
 pub mod chapter;
+pub(crate) mod face;
 pub mod reader;
 pub mod search;
 pub mod typography;

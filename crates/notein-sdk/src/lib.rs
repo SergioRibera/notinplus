@@ -31,9 +31,10 @@ pub use notein_plugin::*;
 /// The traits and types a plugin implementing a kind uses.
 pub mod prelude {
     pub use notein_plugin::{
-        ChipView, ConfigSchema, ConfigValue, Created, CreationEntry, CreationError, CreationRequest,
-        DocId, DocMeta, DocumentKind, Face, FaceContext, Folded, Hit, HostServices, IndexReport,
-        KindColor, KindInfo, Mark, OutlineIcon, OutlineNode, Payload, PayloadError, Plugin,
-        PluginInfo, Registrar, SearchQuery,
+        ChipView, ConfigSchema, ConfigValue, CoverRequest, Created, CreationEntry, CreationError,
+        CreationRequest, DocId, DocMeta, DocumentKind, ExportFile, Face, FaceContext, Folded, Font,
+        Hit, HostServices, HostUi, ImportPreview, ImportedFile, IndexReport, KindChoice, KindColor,
+        KindInfo, Mark, OutlineIcon, OutlineNode, Payload, PayloadError, Plugin, PluginInfo,
+        Registrar, SearchQuery, SelectionMenu, Share, SourceRef, TextBody, Ui,
     };
 }

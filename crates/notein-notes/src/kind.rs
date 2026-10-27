@@ -1,17 +1,21 @@
 //! The Nota kind.
 
 use std::collections::HashMap;
-use std::sync::RwLockReadGuard;
+use std::sync::{Arc, OnceLock, RwLockReadGuard};
 
 use bincode::{Decode, Encode};
 use freya::icons::lucide;
 use freya_markdown_editor::document::{Document, HeadingRef};
-use notein_sdk::create::{Created, CreationEntry, CreationError, CreationRequest};
+use notein_sdk::bookmark::SourceRef;
+use notein_sdk::create::{
+    Created, CreationEntry, CreationError, CreationRequest, ImportPreview, ImportedFile,
+};
 use notein_sdk::doc::{DocId, DocMeta};
 use notein_sdk::kind::{
-    ActionEffect, ChipView, DocumentKind, Hit, IndexReport, KindAction, KindColor, KindInfo,
-    OutlineIcon, OutlineNode, SearchQuery, SelectionSupport,
+    ActionEffect, ChipView, DocumentKind, ExportFile, Hit, IndexReport, KindAction, KindColor,
+    KindInfo, OutlineIcon, OutlineNode, SearchQuery, SelectionSupport,
 };
+use notein_sdk::services::Host;
 use notein_sdk::text::Folded;
 
 use crate::anchor::NoteAnchor;
@@ -60,12 +64,23 @@ impl NoteContent {
 #[derive(Debug, Default)]
 pub struct NotesKind {
     index: NotesIndex,
+    /// The shell, once the plugin is installed: fixing a cited heading
+    /// in a note that is not on screen writes its body.
+    host: OnceLock<Host>,
 }
 
 impl NotesKind {
     #[must_use]
-    pub const fn new(index: NotesIndex) -> Self {
-        Self { index }
+    pub fn new(index: NotesIndex) -> Self {
+        Self {
+            index,
+            host: OnceLock::new(),
+        }
+    }
+
+    /// Hand the kind the shell; the first one stays.
+    pub fn attach(&self, host: &Host) {
+        let _ = self.host.set(Arc::clone(host));
     }
 
     #[must_use]
@@ -238,6 +253,9 @@ impl DocumentKind for NotesKind {
             has_paper: false,
             attachment: None,
             singleton: false,
+            tint: true,
+            notebook: false,
+            body: true,
         }
     }
 
@@ -328,7 +346,13 @@ impl DocumentKind for NotesKind {
         vec![
             CreationEntry::new(ENTRY_NOTE, "Nota", lucide::sticky_note(), KindColor::Note)
                 .subtitle("Texto y referencias")
-                .starter(1),
+                .starter(1)
+                .named()
+                .sheet(
+                    "Nueva nota",
+                    Some("Vacío = toma el nombre de la primera línea"),
+                    false,
+                ),
             CreationEntry::new(
                 ENTRY_IMPORT_MARKDOWN,
                 "Markdown",
@@ -373,6 +397,74 @@ impl DocumentKind for NotesKind {
             other => Err(CreationError::UnknownEntry(other.to_owned())),
         }
     }
+
+    fn inspect(
+        &self,
+        _entry: &str,
+        file: ImportedFile<'_>,
+    ) -> Result<ImportPreview, CreationError> {
+        let text = String::from_utf8_lossy(file.bytes).into_owned();
+        let headings = Document::parse(&text).outline().len();
+        let words = text.split_whitespace().count();
+        Ok(ImportPreview {
+            name: import_name(Some(file.name), &text),
+            details: Some(format!(
+                "{} · {} · {}",
+                file.name,
+                notein_ui_kit::count(headings, "título", "títulos"),
+                notein_ui_kit::count(words, "palabra", "palabras")
+            )),
+            preview: Some(text.lines().take(8).collect::<Vec<_>>().join("\n")),
+        })
+    }
+
+    fn excerpt(&self, content: &NoteContent) -> Option<String> {
+        Some(content.markdown.clone())
+    }
+
+    fn references(&self, content: &NoteContent) -> Option<Vec<SourceRef>> {
+        Some(notein_sdk::link::scan_links(&content.markdown).collect())
+    }
+
+    fn export(
+        &self,
+        _doc: DocMeta<'_>,
+        content: &NoteContent,
+        _attachment: Option<&[u8]>,
+    ) -> Option<ExportFile> {
+        Some(ExportFile {
+            extension: "md".into(),
+            bytes: content.markdown.clone().into_bytes(),
+        })
+    }
+
+    /// Fix the anchor of the cited heading, so the link survives the
+    /// heading being renamed: in the open editor when the note is on
+    /// screen, in its body otherwise.
+    fn cited(&self, doc: DocId, anchor: &NoteAnchor) {
+        let Some(slug) = anchor.heading.as_deref() else {
+            return;
+        };
+        if let Some(controller) = crate::face::open_editor(doc) {
+            let heading = controller
+                .document()
+                .outline()
+                .into_iter()
+                .find(|heading| heading.slug == slug && !heading.pinned);
+            if let Some(heading) = heading {
+                controller.set_heading_anchor(heading.block, Some(heading.slug));
+            }
+            return;
+        }
+        let Some(host) = self.host.get() else {
+            return;
+        };
+        let body = host.body(doc);
+        if let Some(pinned) = crate::pin_heading(&body.text(), slug) {
+            body.set(&pinned);
+            host.store(doc, KIND).save(NoteContent::encode(&pinned));
+        }
+    }
 }
 
 /// Name a note takes from its first non-empty line when the user left
@@ -396,6 +488,7 @@ mod tests {
             id: DocId([7; 16]),
             name: "Apuntes del sábado",
             updated_at: 0,
+            tint: None,
         };
         let content = NoteContent {
             markdown: "# Idea central\n\nLa adopción no es sólo legal.\n\n## Preguntas\n"

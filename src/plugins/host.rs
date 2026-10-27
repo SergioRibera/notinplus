@@ -4,15 +4,17 @@
 //! the UI is queued and applied on the UI thread by [`use_host_pump`].
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use freya::prelude::*;
 use notein_plugin::bookmark::SourceRef;
 use notein_plugin::doc::DocId;
+use notein_plugin::face::RawStore;
 use notein_plugin::services::{
-    AnnotationDone, AnnotationPreview, AnnotationRequest, HeaderPress, Host, HostServices, HostToast,
-    Jump, Placement, Progress, ToastTone as HostTone,
+    AnnotationDone, AnnotationPreview, AnnotationRequest, HeaderPress, Host, HostServices,
+    HostToast, Jump, Placement, Progress, Share, TextBody, ToastTone as HostTone,
 };
 use notein_ui_kit::{Toast, ToastId, ToastTone, Toasts};
 
@@ -32,6 +34,7 @@ enum HostEvent {
     },
     CopyReference(SourceRef, String),
     InsertInNotebook(DocId, SourceRef),
+    Share(Share),
 }
 
 /// The shell's [`HostServices`].
@@ -181,6 +184,28 @@ impl HostServices for ShellHost {
             .push((kind.to_owned(), tx));
         rx
     }
+
+    fn can_share(&self) -> bool {
+        CAN_SHARE.load(Ordering::Relaxed)
+    }
+
+    fn share(&self, what: Share) {
+        self.send(HostEvent::Share(what));
+    }
+
+    fn store(&self, doc: DocId, kind: &str) -> Arc<dyn RawStore> {
+        super::content::SnapshotStore::new(crate::library::ItemId(doc.0), kind)
+    }
+
+    fn body(&self, doc: DocId) -> Arc<dyn TextBody> {
+        super::body::SharedBody::open(crate::library::ItemId(doc.0))
+    }
+
+    fn doc_name(&self, doc: DocId) -> Option<String> {
+        let data = crate::state::LibraryView::try_get()?.peek_data()?;
+        data.item(crate::library::ItemId(doc.0))
+            .map(|item| item.name.clone())
+    }
 }
 
 /// How long a finished job's toast stays.
@@ -191,6 +216,7 @@ const fn tone(tone: HostTone) -> ToastTone {
         HostTone::Info => ToastTone::Info,
         HostTone::Done => ToastTone::Done,
         HostTone::Error => ToastTone::Error,
+        HostTone::Download => ToastTone::Download,
     }
 }
 
@@ -254,12 +280,22 @@ fn apply(event: HostEvent, jobs: &mut HashMap<(String, String), ToastId>) {
         HostEvent::InsertInNotebook(from, reference) => {
             crate::references::insert_in_notebook(crate::library::ItemId(from.0), reference);
         }
+        HostEvent::Share(what) => crate::flows::share(what),
     }
 }
+
+/// Whether the system share sheet can send things, learnt once at start.
+static CAN_SHARE: AtomicBool = AtomicBool::new(false);
 
 /// Apply queued host events on the UI thread. Call once at the root.
 pub fn use_host_pump() {
     use_hook(|| {
+        spawn_in_window(async {
+            if let Ok(client) = istmo_share::ShareClient::acquire() {
+                let send = client.capabilities().await.is_ok_and(|c| c.send);
+                CAN_SHARE.store(send, Ordering::Relaxed);
+            }
+        });
         let pump = shell_host().pump.clone();
         spawn_in_window(async move {
             let mut jobs = HashMap::new();

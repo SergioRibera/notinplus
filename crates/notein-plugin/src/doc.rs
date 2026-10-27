@@ -26,4 +26,6 @@ pub struct DocMeta<'a> {
     pub name: &'a str,
     /// Unix millis of the last change.
     pub updated_at: u64,
+    /// The colour the user tinted it with (sRGBA).
+    pub tint: Option<[u8; 4]>,
 }

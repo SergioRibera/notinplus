@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::bookmark::SourceRef;
 use crate::doc::DocId;
-use crate::face::PaneKey;
+use crate::face::{PaneKey, RawStore};
 
 /// Shared handle to the shell's services. Cheap to clone.
 pub type Host = Arc<dyn HostServices>;
@@ -21,6 +21,8 @@ pub enum ToastTone {
     Info,
     Done,
     Error,
+    /// Something arrived over the network (a download finished).
+    Download,
 }
 
 /// A toast a plugin asks the shell to show.
@@ -187,4 +189,59 @@ pub trait HostServices: Send + Sync + std::fmt::Debug {
 
     /// Presses on the header actions of documents of `kind`.
     fn header_presses(&self, kind: &str) -> flume::Receiver<HeaderPress>;
+
+    /// The system share sheet is there to send things to.
+    fn can_share(&self) -> bool;
+
+    /// Send `what` through the system share sheet; the shell says so
+    /// when it fails.
+    fn share(&self, what: Share);
+
+    /// The stored content of `doc`, a document of `kind`, outside its
+    /// face.
+    fn store(&self, doc: DocId, kind: &str) -> Arc<dyn RawStore>;
+
+    /// The body of `doc` the shell merges with other devices and people;
+    /// for kinds whose [`KindInfo::body`](crate::kind::KindInfo::body)
+    /// is set. Keep it while the document is on screen.
+    fn body(&self, doc: DocId) -> Arc<dyn TextBody>;
+
+    /// The name of `doc` in the library. Call it from the UI thread.
+    fn doc_name(&self, doc: DocId) -> Option<String>;
+}
+
+/// Something to send through the system share sheet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Share {
+    Text {
+        text: String,
+        subject: String,
+    },
+    File {
+        name: String,
+        mime: String,
+        bytes: Vec<u8>,
+        subject: String,
+    },
+}
+
+/// Someone else typing in a body.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Typing {
+    pub name: String,
+    /// `false` once they stop.
+    pub active: bool,
+}
+
+/// A text body the shell keeps merged with every device and person the
+/// document is shared with.
+pub trait TextBody: Send + Sync {
+    fn text(&self) -> String;
+    /// Replace the text, telling the others this person types; `false`
+    /// when nothing changed.
+    fn set(&self, text: &str) -> bool;
+    /// Fires when text arrives from elsewhere.
+    fn changes(&self) -> flume::Receiver<()>;
+    /// Who else is typing.
+    fn typing(&self) -> flume::Receiver<Typing>;
 }

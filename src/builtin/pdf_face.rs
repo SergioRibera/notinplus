@@ -16,7 +16,7 @@
 //! `doc_path(id)` through the standard autosave worker. Everything
 //! else is this plugin's business.
 
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
 use freya::prelude::*;
 use freya_pdf::{PdfBackground, PdfDocument};
@@ -74,7 +74,7 @@ impl Component for PdfFace {
         );
         let loaded_pages = Arc::clone(&pages);
         use_hook(move || {
-            let replaced = Reloads::subscribe(item);
+            let replaced = crate::plugins::content::watch_attachment(item);
             spawn(async move {
                 loop {
                     install_background(item, mount, &loaded_pages);
@@ -113,33 +113,6 @@ fn install_background(item: ItemId, mount: CanvasMount, pages: &PageRects) {
         return;
     };
     lock(&board).set_background(bg);
-}
-
-/// Open faces per PDF, told to load the file again when it is replaced.
-struct Reloads;
-
-impl Reloads {
-    fn registry() -> &'static Mutex<Vec<(ItemId, flume::Sender<()>)>> {
-        static FACES: Mutex<Vec<(ItemId, flume::Sender<()>)>> = Mutex::new(Vec::new());
-        &FACES
-    }
-
-    fn subscribe(item: ItemId) -> flume::Receiver<()> {
-        let (tx, rx) = flume::unbounded();
-        Self::registry()
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push((item, tx));
-        rx
-    }
-}
-
-/// Reload every open view of `item`, after its file changed.
-pub fn reload(item: ItemId) {
-    Reloads::registry()
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .retain(|(id, tx)| !tx.is_disconnected() && (*id != item || tx.send(()).is_ok()));
 }
 
 /// World rectangles `(x, y, w, h)` of the pages, once the PDF is open.

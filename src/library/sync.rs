@@ -142,12 +142,9 @@ impl Library {
                     return Ok(false);
                 }
                 bodies::write_plugin_snapshot_at(item, &plugin_id, &bytes, updated_at)?;
-                if plugin_id == notein_notes::KIND_ID {
-                    let body = notein_notes::kind::NoteContent::markdown_of(&bytes);
-                    refs::record_note(item, &body);
-                    crate::plugins::content::reindex(item);
-                }
-                crate::sync::open_docs::notify_snapshot(item);
+                crate::plugins::content::record_references(item, &plugin_id, &bytes);
+                crate::plugins::content::reindex(item);
+                crate::plugins::content::notify_remote(item);
             }
             SyncRecord::Gone(stone) => self.apply_gone(&stone, yard).await?,
         }

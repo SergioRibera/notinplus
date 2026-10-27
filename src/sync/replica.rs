@@ -84,7 +84,7 @@ fn stamp(item: ItemId) -> Option<Stamp> {
 /// Whether items of `kind` carry a document body of their own, as
 /// opposed to a plugin snapshot only.
 fn owns_doc(kind: &DocKind) -> bool {
-    kind.is(crate::plugins::builtin::canvas::KIND) || kind.is(notein_notes::kind::KIND)
+    crate::plugins::kind_info(&kind.plugin_id).is_some_and(|info| info.body)
 }
 
 /// Library-backed [`Replica`].

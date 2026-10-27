@@ -4,29 +4,38 @@
 use std::sync::{Arc, OnceLock};
 
 use freya::prelude::*;
-use notein_bible::import::biblionlabs::{BibleEntryView, CatalogueView};
-use notein_bible::installer::{InstallState, Installer, Outcome, Phase, Step};
+use notein_sdk::services::{Host, HostToast, ToastTone as HostTone};
+
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
     Button, EmptyState, Group, ListRow, Notice, NoticeTone, ProgressBar, SearchField, Sheet,
-    Skeleton, Tag, Text, TextRole, Toast, ToastTone, Toasts, Trailing, tokens,
+    Skeleton, Tag, Text, TextRole, Trailing, tokens,
 };
 
+use crate::import::biblionlabs::{BibleEntryView, CatalogueView};
+use crate::installer::{InstallState, Installer, Outcome, Phase, Step};
+use crate::kind::BibleKind;
+
+/// The Bible the catalog installs into.
+static KIND: OnceLock<Arc<BibleKind>> = OnceLock::new();
+
+/// Make `kind` the Bible the catalog installs into; the first one stays.
+pub(crate) fn register(kind: &Arc<BibleKind>) {
+    let _ = KIND.set(Arc::clone(kind));
+}
+
+fn kind() -> Option<&'static Arc<BibleKind>> {
+    KIND.get()
+}
+
 /// The installer shared by every Bible surface.
-#[must_use]
-pub fn installer() -> Option<&'static Installer> {
-    static INSTALLER: OnceLock<Option<Installer>> = OnceLock::new();
-    INSTALLER
-        .get_or_init(|| {
-            crate::plugins::builtin::bible_kind()
-                .map(|kind| Installer::new(kind.db().clone(), kind.config().clone()))
-        })
-        .as_ref()
+fn installer() -> Option<&'static Installer> {
+    kind().map(|kind| kind.installer())
 }
 
 /// Re-render the caller whenever a download moves.
 #[must_use]
-pub fn use_installs() -> State<u64> {
+pub(crate) fn use_installs() -> State<u64> {
     let tick = use_state(|| 0u64);
     use_hook(move || {
         let Some(installer) = installer() else {
@@ -47,31 +56,35 @@ pub fn use_installs() -> State<u64> {
 
 /// Toast every download as it ends, with a retry on failures, and pick up
 /// the ones a closed app cut short. Runs for the life of the app.
-pub fn announce_installs() {
+pub(crate) fn announce(host: Host) {
     let Some(installer) = installer() else {
         return;
     };
     let rx = installer.outcomes();
-    spawn(async move {
-        while let Ok(outcome) = rx.recv_async().await {
-            Toasts::get().show(outcome_toast(installer, outcome));
-        }
-    });
+    let spawned = std::thread::Builder::new()
+        .name("bible-installs".to_owned())
+        .spawn(move || {
+            while let Ok(outcome) = rx.recv() {
+                host.toast(outcome_toast(installer, outcome));
+            }
+        });
+    if let Err(err) = spawned {
+        log::error!("bible: install announcer: {err}");
+    }
     installer.resume();
 }
 
-fn outcome_toast(installer: &'static Installer, outcome: Outcome) -> Toast {
+fn outcome_toast(installer: &'static Installer, outcome: Outcome) -> HostToast {
     match outcome {
-        Outcome::Installed(bible_id) => {
-            Toast::new(format!("«{}» lista para leer", bible_name(&bible_id)))
-                .tone(ToastTone::Download)
-        }
-        Outcome::Failed { bible_id, reason } => Toast::new(format!(
-            "No se pudo descargar «{}»: {reason}",
-            bible_name(&bible_id)
-        ))
-        .tone(ToastTone::Error)
-        .action("Reintentar", move |()| installer.enqueue(&bible_id)),
+        Outcome::Installed(bible_id) => HostToast::new(
+            format!("«{}» lista para leer", bible_name(&bible_id)),
+            HostTone::Download,
+        ),
+        Outcome::Failed { bible_id, reason } => HostToast::new(
+            format!("No se pudo descargar «{}»: {reason}", bible_name(&bible_id)),
+            HostTone::Error,
+        )
+        .action("Reintentar", move || installer.enqueue(&bible_id)),
     }
 }
 
@@ -89,7 +102,7 @@ fn step_text(step: Step) -> String {
 
 /// Short name of an installed translation, its id otherwise.
 fn bible_name(bible_id: &str) -> String {
-    crate::plugins::builtin::bible_kind()
+    kind()
         .and_then(|kind| kind.db().list_bibles().ok())
         .and_then(|bibles| bibles.into_iter().find(|b| b.id == bible_id))
         .map_or_else(|| bible_id.to_owned(), |b| b.abbrev)
@@ -132,7 +145,7 @@ fn label(entry: &BibleEntryView) -> String {
 }
 
 fn installed_ids() -> Vec<String> {
-    crate::plugins::builtin::bible_kind()
+    kind()
         .and_then(|k| k.db().list_bibles().ok())
         .unwrap_or_default()
         .into_iter()
@@ -186,7 +199,7 @@ fn use_catalogue() -> State<Option<Result<Arc<CatalogueView>, String>>> {
 }
 
 /// Open the catalog of translations.
-pub fn open_catalog() {
+pub(crate) fn open() {
     Sheet::titled("Traducciones de la Biblia")
         .subtitle("Se descargan una por vez; podés cerrar y siguen.")
         .child(Catalog)
@@ -430,7 +443,7 @@ impl Component for Row {
 
 /// What the Bible shows before any translation is installed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FirstUse;
+pub(crate) struct FirstUse;
 
 impl Component for FirstUse {
     fn render(&self) -> impl IntoElement {
@@ -516,7 +529,7 @@ impl Component for FirstUse {
                             .spacing(12.0)
                             .cross_align(Alignment::Center)
                             .child(action)
-                            .child(Button::new("Ver todas las traducciones").ghost().on_press(|_| open_catalog())),
+                            .child(Button::new("Ver todas las traducciones").ghost().on_press(|_| open())),
                     ),
             )
     }

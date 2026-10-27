@@ -15,7 +15,6 @@ pub mod annotation;
 #[cfg(target_os = "android")]
 pub mod android_clipboard;
 pub mod app;
-pub mod bible_face;
 pub mod bookmark;
 pub mod brush;
 pub mod builtin;
@@ -38,8 +37,6 @@ pub mod ids;
 pub mod ink_glyph;
 pub mod library;
 pub mod notebooks;
-pub mod notes_face;
-pub mod notes_share;
 pub mod pdf_select_overlay;
 pub mod pdf_text;
 pub mod pen_pump;

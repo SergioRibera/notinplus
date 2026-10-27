@@ -240,11 +240,11 @@ pub fn record_captured(item: ItemId, captured: Captured) {
     drop(guard);
 }
 
-/// Re-index the references a markdown note makes. Call after every
-/// body write.
-pub fn record_note(item: ItemId, markdown: &str) {
+/// Re-index the references the content of a plugin document makes (a
+/// note's links). Call after every content write.
+pub fn record_content(item: ItemId, refs: Vec<SourceRef>) {
     let found: Vec<(RefOrigin, SourceRef)> =
-        scan_links(markdown).map(|r| (RefOrigin::Note, r)).collect();
+        refs.into_iter().map(|r| (RefOrigin::Note, r)).collect();
     let mut guard = index();
     guard.replace(item, found);
     persist(&guard);
@@ -287,11 +287,11 @@ pub fn bookmark_owner(bookmark: [u8; 16]) -> Option<ItemId> {
     index().pins.get(&bookmark).copied()
 }
 
-/// Rebuild the whole cache from `docs` (canvas bodies) and `notes`
-/// (markdown bodies). Everything not mentioned is dropped.
+/// Rebuild the whole cache from `docs` (canvas bodies) and `contents`
+/// (what plugin documents link to). Everything not mentioned is dropped.
 pub fn rebuild<'a>(
     docs: impl IntoIterator<Item = (ItemId, &'a Doc)>,
-    notes: impl IntoIterator<Item = (ItemId, &'a str)>,
+    contents: impl IntoIterator<Item = (ItemId, Vec<SourceRef>)>,
 ) {
     let mut guard = index();
     *guard = RefsIndex::default();
@@ -302,9 +302,11 @@ pub fn rebuild<'a>(
     for (item, doc) in &docs {
         guard.replace(*item, doc_refs(doc));
     }
-    for (item, markdown) in notes {
-        let found = scan_links(markdown).map(|r| (RefOrigin::Note, r)).collect();
-        guard.replace(item, found);
+    for (item, refs) in contents {
+        guard.replace(
+            item,
+            refs.into_iter().map(|r| (RefOrigin::Note, r)).collect(),
+        );
     }
     persist(&guard);
     drop(guard);

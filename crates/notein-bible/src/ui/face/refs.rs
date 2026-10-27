@@ -69,7 +69,7 @@ impl VerseRefs {
             .map(|row| {
                 let found = book_of(&row.tgt_book);
                 let name = found.map_or_else(
-                    || notein_bible::canon::short_name(&row.tgt_book).to_owned(),
+                    || crate::canon::short_name(&row.tgt_book).to_owned(),
                     |b| b.name.clone(),
                 );
                 Target {
@@ -101,7 +101,7 @@ impl VerseRefs {
     }
 
     fn count(&self) -> String {
-        crate::format::count(self.targets.len(), "referencia", "referencias")
+        notein_ui_kit::count(self.targets.len(), "referencia", "referencias")
     }
 }
 
@@ -270,7 +270,7 @@ impl Component for Row {
                 label()
                     .width(Size::fill())
                     .text(self.target.text.clone())
-                    .font_family(notein_bible::fonts::FAMILY)
+                    .font_family(crate::fonts::FAMILY)
                     .font_size(tokens::text::BODY)
                     .color(p.t2)
                     .max_lines(3)

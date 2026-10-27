@@ -45,6 +45,21 @@ pub trait Plugin: Send + Sync + 'static {
     fn install(&self, host: &Host) {
         let _ = host;
     }
+
+    /// Typefaces the plugin draws text with, registered before the first
+    /// window opens.
+    fn fonts(&self) -> Vec<Font> {
+        Vec::new()
+    }
+}
+
+/// One face of a typeface a plugin ships.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Font {
+    /// The family name text asks for ("Lora").
+    pub family: &'static str,
+    /// The font file (TTF or OTF).
+    pub bytes: &'static [u8],
 }
 
 /// Collects what a plugin contributes.

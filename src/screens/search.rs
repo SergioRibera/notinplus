@@ -42,7 +42,8 @@ enum Line {
     Doc(ItemId),
     Place(PlaceMatch),
     Recent(String),
-    CreateNote(String),
+    /// Make a document of this entry, named after what was typed.
+    Create(Box<notein_plugin::catalog::CatalogEntry>, String),
 }
 
 impl Line {
@@ -78,22 +79,25 @@ impl Line {
                 );
             }
             Self::Recent(text) => query.set(text.clone()),
-            Self::CreateNote(name) => {
+            Self::Create(entry, name) => {
                 ModalController::get().close();
-                let entry = crate::plugins::catalog().entries().into_iter().find(|e| {
-                    e.kind == notein_notes::kind::KIND
-                        && e.entry.id == notein_notes::kind::ENTRY_NOTE
-                });
-                if let Some(entry) = entry {
-                    crate::flows::pickers::create_quick(
-                        entry,
-                        name.clone(),
-                        crate::flows::pickers::Purpose::NewTab { pane: None },
-                    );
-                }
+                crate::flows::pickers::create_quick(
+                    (**entry).clone(),
+                    name.clone(),
+                    crate::flows::pickers::Purpose::NewTab { pane: None },
+                );
             }
         }
     }
+}
+
+/// One "Crear … «query»" line per entry a name is enough for.
+fn create_lines(query: &str) -> Vec<Line> {
+    let name = query.trim().to_owned();
+    crate::flows::pickers::named_entries()
+        .into_iter()
+        .map(|entry| Line::Create(Box::new(entry), name.clone()))
+        .collect()
 }
 
 /// Recently changed documents, for the empty field.
@@ -124,7 +128,7 @@ fn lines(results: &Results, history: &[String], recents: &[ItemId], query: &str)
             .flat_map(|g| g.hits.iter().cloned().map(Line::Place)),
     );
     if out.is_empty() {
-        out.push(Line::CreateNote(query.trim().to_owned()));
+        out.extend(create_lines(query));
     }
     out
 }
@@ -302,8 +306,14 @@ impl Rows<'_> {
                 })
             }
             Line::Recent(text) => ListRow::new(text.clone()).icon(lucide::history()),
-            Line::CreateNote(name) => ListRow::new(format!("Crear nota «{name}»"))
-                .kind(lucide::notebook_text(), p.kinds.note),
+            Line::Create(entry, name) => ListRow::new(format!(
+                "Crear {} «{name}»",
+                entry.entry.label.to_lowercase()
+            ))
+            .kind(
+                entry.entry.icon.clone(),
+                crate::references::kind_color(&p, entry.entry.color),
+            ),
         };
         base.dense(true)
             .selected(on)
@@ -375,7 +385,7 @@ impl Rows<'_> {
                     .width(Size::fill())
                     .spacing(8.0)
                     .child(Text::new(format!("Nada con «{}»", text.trim())).role(TextRole::Strong))
-                    .child(self.row(&Line::CreateNote(text.trim().to_owned())))
+                    .children(create_lines(text).iter().map(|line| self.row(line)))
                     .into_element(),
             );
         }

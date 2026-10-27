@@ -616,22 +616,25 @@ pub fn edit_item(item: ItemId) {
     let Some(found) = data.item(item).cloned() else {
         return;
     };
-    let info = crate::plugins::kind_info(&found.kind.plugin_id);
+    let kind = crate::plugins::kind(&found.kind.plugin_id);
+    let info = kind.as_ref().map(|k| k.info());
     let p = palette();
     let label = info
         .as_ref()
         .map_or_else(|| "documento".to_owned(), |k| k.label.to_lowercase());
-    let is_canvas = found.kind.is(crate::plugins::builtin::canvas::KIND);
-    let is_pdf = found.kind.is(crate::plugins::builtin::pdf::KIND);
-    let is_bible = found.kind.is(notein_bible::kind::KIND);
+    let has_paper = info.as_ref().is_some_and(|k| k.has_paper);
+    let content = kind.as_ref().map(|k| {
+        crate::plugins::content::read(item, &found.kind.plugin_id)
+            .unwrap_or_else(|| k.empty_content())
+    });
     let mut spec = FormSpec {
         title: format!("Editar {label}"),
         kind_icon: info.as_ref().map(|k| k.icon.clone()),
         kind_color: info
             .as_ref()
             .map(|k| crate::references::kind_color(&p, k.color)),
-        paper: is_canvas,
-        color: !is_bible,
+        paper: has_paper,
+        color: info.as_ref().is_none_or(|k| k.tint),
         tags: true,
         location: false,
         placeholder: "Sin título".to_owned(),
@@ -639,48 +642,53 @@ pub fn edit_item(item: ItemId) {
         trash: Some(FormAction(Rc::new(move || super::trash_item(item)))),
         ..FormSpec::default()
     };
-    if is_pdf {
+    if info.as_ref().is_some_and(|k| k.attachment.is_some()) {
+        let kind_id = found.kind.plugin_id.clone();
         spec.file_action = Some((
             "Reemplazar",
-            FormAction(Rc::new(move || super::create::replace_pdf(item))),
+            FormAction(Rc::new(move || {
+                super::create::replace_attachment(item, kind_id.clone());
+            })),
         ));
-        spec.file_line = crate::plugins::content::read(item, crate::plugins::builtin::pdf::KIND)
-            .and_then(|b| <crate::plugins::builtin::pdf::PdfContent as notein_plugin::payload::Payload>::from_bytes(&b).ok())
-            .map(|c| format!("{} · {} · {}", c.file_name, crate::format::count(c.page_count as usize, "página", "páginas"), crate::format::size(c.size_bytes)));
     }
-    let initial_choice = if is_bible && let Some(bible) = crate::plugins::builtin::bible_kind() {
-        "Traducción".clone_into(&mut spec.choice_label);
-        spec.choices = bible
-            .db()
-            .list_bibles()
-            .unwrap_or_default()
+    let choice = kind
+        .as_ref()
+        .zip(content.as_deref())
+        .and_then(|(kind, content)| {
+            spec.file_line = kind.details(content);
+            kind.choice(content)
+        });
+    let initial_choice = choice.and_then(|choice| {
+        spec.choice_label = choice.label.into_owned();
+        spec.choices = choice
+            .options
             .into_iter()
-            .map(|b| (b.id.clone(), format!("{} · {}", b.abbrev, b.name_local)))
+            .map(|option| (option.id.into_owned(), option.label.into_owned()))
             .collect();
-        crate::plugins::content::read(item, notein_bible::kind::KIND)
-            .and_then(|b| {
-                <notein_bible::BibleContent as notein_plugin::payload::Payload>::from_bytes(&b).ok()
-            })
-            .map(|c| c.bible_id)
-    } else {
-        None
-    };
+        choice.current
+    });
     let initial = FormValues {
         name: found.name.clone(),
         paper: found.background,
         color: found.color,
         tags: tag_names(&data, &found.tags),
         folder: found.folder,
-        choice: initial_choice,
+        choice: initial_choice.clone(),
         ..FormValues::default()
     };
+    let kind_id = found.kind.plugin_id.clone();
     open(spec, initial, move |values| {
+        let kind_id = kind_id.clone();
+        let picked = values
+            .choice
+            .clone()
+            .filter(|choice| Some(choice) != initial_choice.as_ref());
         state::edit("guardar los cambios", async move |lib| {
             let tags = resolve_tags(lib, &values.tags).await;
             lib.rename_item(item, values.name.trim()).await?;
             lib.set_item_color(item, values.color).await?;
             lib.set_item_tags(item, tags).await?;
-            if is_canvas {
+            if has_paper {
                 lib.set_item_background(item, values.paper).await?;
                 if let Some(board) = crate::active_boards::get_item(item) {
                     let surface = values.color.map_or(crate::route::DEFAULT_PAPER, |c| {
@@ -689,8 +697,8 @@ pub fn edit_item(item: ItemId) {
                     crate::route::apply_canvas_background(&board, values.paper, surface);
                 }
             }
-            if is_bible && let Some(choice) = values.choice.clone() {
-                super::create::set_bible_translation(item, &choice);
+            if let Some(choice) = picked {
+                super::create::apply_choice(item, &kind_id, &choice);
             }
             Ok(())
         });

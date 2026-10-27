@@ -6,7 +6,7 @@ use notein_plugin::catalog::{Failed, Origin, PluginCatalog};
 use notein_plugin::erased::ErasedKind;
 use notein_plugin::kind::KindInfo;
 
-use super::builtin::{BiblePlugin, CanvasPlugin, NotesPlugin, PdfPlugin};
+use super::builtin::{CanvasPlugin, PdfPlugin};
 
 static CATALOG: OnceLock<RwLock<PluginCatalog>> = OnceLock::new();
 
@@ -15,14 +15,14 @@ fn init() -> RwLock<PluginCatalog> {
     let builtins: [Arc<dyn notein_plugin::plugin::Plugin>; 3] = [
         Arc::new(CanvasPlugin),
         Arc::new(PdfPlugin),
-        Arc::new(NotesPlugin),
+        Arc::new(notein_notes::NotesPlugin::default()),
     ];
     for plugin in builtins {
         if let Err(err) = catalog.add(plugin, Origin::Builtin) {
             log::error!("builtin plugin: {err}");
         }
     }
-    match BiblePlugin::open() {
+    match notein_bible::BiblePlugin::open() {
         Ok(bible) => {
             if let Err(err) = catalog.add(Arc::new(bible), Origin::Builtin) {
                 log::error!("builtin plugin: {err}");
@@ -39,11 +39,6 @@ fn init() -> RwLock<PluginCatalog> {
     }
     catalog.install_host(&super::host::handle());
     RwLock::new(catalog)
-}
-
-/// Build the catalog if nothing has asked for it yet, without locking it.
-pub(super) fn ensure() {
-    CATALOG.get_or_init(init);
 }
 
 /// Read access to the catalog.

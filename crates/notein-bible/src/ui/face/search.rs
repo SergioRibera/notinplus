@@ -1,9 +1,9 @@
 //! Search in the open translation: words in the verses, or a
 //! reference ("Juan 3:16") that goes straight there.
 
+use crate::db::{BibleRow, BookRow, SearchHit};
+use crate::ui::search::{SearchHitView, hit_to_view};
 use freya::prelude::*;
-use notein_bible::db::{BibleRow, BookRow, SearchHit};
-use notein_bible::ui::search::{SearchHitView, hit_to_view};
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
@@ -74,7 +74,7 @@ impl Component for SearchPane {
                 } else if found >= LIMIT {
                     format!("Los {LIMIT} más cercanos")
                 } else {
-                    crate::format::count(found, "resultado", "resultados")
+                    notein_ui_kit::count(found, "resultado", "resultados")
                 })
                 .role(TextRole::Hint),
             )
@@ -157,9 +157,8 @@ fn find(reader: &Reader, query: &str, everywhere: Option<&[BibleRow]>) -> Vec<Se
 fn reference(reader: &Reader, books: &[BookRow], query: &str) -> Option<SearchHitView> {
     let db = &reader.db;
     let bible_id = reader.bible_id();
-    let parsed = notein_bible::reference::parse(query)?;
-    let book_id =
-        notein_bible::resolver::resolve_book_token(db, &bible_id, &parsed.book_token)?;
+    let parsed = crate::reference::parse(query)?;
+    let book_id = crate::resolver::resolve_book_token(db, &bible_id, &parsed.book_token)?;
     let chapters = db.chapter_count(&bible_id, &book_id).unwrap_or(0);
     if !(1..=chapters).contains(&parsed.chapter) {
         return None;

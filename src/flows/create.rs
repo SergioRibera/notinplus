@@ -6,8 +6,6 @@ use std::sync::{Mutex, OnceLock, PoisonError};
 use freya::prelude::*;
 use notein_plugin::catalog::CatalogEntry;
 use notein_plugin::create::{CreationFlow, CreationRequest, ImportedFile, Paper};
-use notein_plugin::doc::DocMeta;
-use notein_plugin::payload::Payload;
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
@@ -18,7 +16,7 @@ use notein_ui_kit::{
 
 use super::forms::{self, FormSpec, FormValues};
 use crate::creation::{TILES, UsageLog};
-use crate::library::{BackgroundStyle, DocKind, FolderId, ItemId, ScratchId, TabTarget};
+use crate::library::{BackgroundStyle, DocKind, FolderId, ItemId, TabTarget};
 use crate::persist::Persisted;
 use crate::plugins::content;
 use crate::references::kind_color;
@@ -372,21 +370,6 @@ impl Component for Tile {
 /// Run `entry`: show what its flow needs, then create and open.
 pub fn run(entry: CatalogEntry, context: Context) {
     let kind_id = entry.kind.clone();
-    if kind_id == crate::plugins::builtin::canvas::KIND {
-        match entry.entry.id.as_ref() {
-            crate::plugins::builtin::canvas::ENTRY_SCRATCH => {
-                record_use(&entry);
-                crate::space::open(TabTarget::Scratch(ScratchId::fresh()), OpenHint::Focused);
-                return;
-            }
-            crate::plugins::builtin::canvas::ENTRY_NOTEBOOK => {
-                super::pickers::document_picker(super::pickers::Purpose::NotebookFor);
-                record_use(&entry);
-                return;
-            }
-            _ => {}
-        }
-    }
     if crate::plugins::kind_info(&kind_id).is_some_and(|k| k.singleton) {
         let existing = crate::state::LibraryView::get()
             .data()
@@ -398,10 +381,20 @@ pub fn run(entry: CatalogEntry, context: Context) {
         }
     }
     match entry.entry.flow.clone() {
+        CreationFlow::Launch => {
+            record_use(&entry);
+            if let Some(kind) = crate::plugins::kind(&kind_id) {
+                kind.launch(&entry.entry.id);
+            }
+        }
         CreationFlow::Direct | CreationFlow::Custom => create(entry, context, Request::default()),
         CreationFlow::Form => form(entry, context),
-        CreationFlow::Choose { title, options } => {
-            choose(&entry, &context, title.to_string(), options);
+        CreationFlow::Choose {
+            title,
+            options,
+            more,
+        } => {
+            choose(&entry, &context, title.to_string(), options, more);
         }
         CreationFlow::Import {
             title,
@@ -459,26 +452,23 @@ fn form(entry: CatalogEntry, context: Context) {
     let p = palette();
     let info = crate::plugins::kind_info(&entry.kind);
     let has_paper = info.as_ref().is_some_and(|k| k.has_paper);
-    let is_note = entry.kind == notein_notes::kind::KIND;
     let last = LastPaper::load();
     let spec = FormSpec {
-        title: if is_note {
-            "Nueva nota".to_owned()
-        } else {
-            format!("Nuevo {}", entry.entry.label.to_lowercase())
-        },
+        title: entry.entry.sheet_title.as_ref().map_or_else(
+            || format!("Nuevo {}", entry.entry.label.to_lowercase()),
+            ToString::to_string,
+        ),
         kind_icon: Some(entry.entry.icon.clone()),
         kind_color: Some(kind_color(&p, entry.entry.color)),
         paper: has_paper,
         color: true,
         tags: true,
-        location: !is_note,
+        location: entry.entry.location,
         placeholder: "Sin título".to_owned(),
-        hint: if is_note {
-            "Vacío = toma el nombre de la primera línea".to_owned()
-        } else {
-            "Enter crea · Esc cancela".to_owned()
-        },
+        hint: entry.entry.name_hint.as_ref().map_or_else(
+            || "Enter crea · Esc cancela".to_owned(),
+            ToString::to_string,
+        ),
         submit: "Crear y abrir".to_owned(),
         ..FormSpec::default()
     };
@@ -515,6 +505,7 @@ fn choose(
     context: &Context,
     title: String,
     options: Vec<notein_plugin::create::CreationChoice>,
+    more: Option<notein_plugin::create::CreationChoice>,
 ) {
     let mut sheet = Sheet::titled(title).kind(
         entry.entry.icon.clone(),
@@ -548,14 +539,17 @@ fn choose(
         })
         .collect();
     sheet = sheet.child(Group::default().children(rows));
-    if entry.kind == notein_bible::kind::KIND {
+    if let Some(more) = more {
+        let kind = entry.kind.clone();
         sheet = sheet.child(
-            Button::new("Agregar traducción")
+            Button::new(more.label.clone())
                 .icon(freya::icons::lucide::plus())
                 .ghost()
-                .on_press(|_| {
+                .on_press(move |_| {
                     ModalController::get().close();
-                    crate::screens::bible::open_catalog();
+                    if let Some(kind) = crate::plugins::kind(&kind) {
+                        kind.launch(&more.id);
+                    }
                 }),
         );
     }
@@ -569,60 +563,39 @@ fn choose(
 
 fn import_sheet(entry: CatalogEntry, context: Context, picked: crate::files::Picked) {
     let p = palette();
-    let is_pdf = entry.kind == crate::plugins::builtin::pdf::KIND;
-    let is_markdown = entry.kind == notein_notes::kind::KIND;
-    let (name, file_line, preview) = if is_pdf {
-        match crate::plugins::builtin::pdf::PdfKind::read_file(&picked.name, &picked.bytes) {
-            Ok((_, pdf)) => (
-                crate::plugins::builtin::pdf::name_from_file(&picked.name),
-                Some(format!(
-                    "{} · {} · {}",
-                    crate::format::count(pdf.page_count as usize, "página", "páginas"),
-                    crate::format::size(pdf.size_bytes),
-                    picked.name
-                )),
-                None,
-            ),
-            Err(err) => {
-                import_error(&entry, context, &picked.name, &err.to_string());
-                return;
-            }
-        }
-    } else if is_markdown {
-        let text = String::from_utf8_lossy(&picked.bytes).into_owned();
-        let headings = freya_markdown_editor::document::Document::parse(&text)
-            .outline()
-            .len();
-        let words = text.split_whitespace().count();
-        (
-            notein_notes::import_name(Some(&picked.name), &text),
-            Some(format!(
-                "{} · {} · {}",
-                picked.name,
-                crate::format::count(headings, "título", "títulos"),
-                crate::format::count(words, "palabra", "palabras")
-            )),
-            Some(text.lines().take(8).collect::<Vec<_>>().join("\n")),
-        )
-    } else {
-        (picked.name.clone(), Some(picked.name.clone()), None)
+    let Some(kind) = crate::plugins::kind(&entry.kind) else {
+        return;
     };
+    let file = notein_plugin::create::ImportedFile {
+        name: &picked.name,
+        bytes: &picked.bytes,
+    };
+    let found = match kind.inspect(&entry.entry.id, file) {
+        Ok(found) => found,
+        Err(err) => {
+            import_error(&entry, context, &picked.name, &err.to_string());
+            return;
+        }
+    };
+    // A kept file (the PDF itself) brings its own look and often wants
+    // a notebook to write beside it.
+    let keeps_file = kind.info().attachment.is_some();
     let spec = FormSpec {
         title: format!("Importar {}", entry.entry.label),
         kind_icon: Some(entry.entry.icon.clone()),
         kind_color: Some(kind_color(&p, entry.entry.color)),
-        color: !is_pdf,
+        color: !keeps_file,
         tags: true,
         location: true,
-        notebook_toggle: is_pdf,
-        file_line,
-        preview,
+        notebook_toggle: keeps_file,
+        file_line: found.details,
+        preview: found.preview,
         placeholder: "Sin título".to_owned(),
         submit: "Importar y abrir".to_owned(),
         ..FormSpec::default()
     };
     let initial = FormValues {
-        name,
+        name: found.name,
         folder: context.folder,
         ..FormValues::default()
     };
@@ -669,6 +642,8 @@ fn import_error(entry: &CatalogEntry, context: Context, file: &str, why: &str) {
 struct Preparing {
     done: State<u32>,
     total: u32,
+    /// The colour of the kind being imported.
+    color: Color,
 }
 
 impl Component for Preparing {
@@ -687,12 +662,14 @@ impl Component for Preparing {
                 Text::new(format!("Preparando páginas · {done} de {}", self.total))
                     .role(TextRole::Meta),
             )
-            .child(ProgressBar::new(fraction).color(palette().kinds.pdf))
+            .child(ProgressBar::new(fraction).color(self.color))
     }
 }
 
-/// Pages above which the import shows its progress sheet.
-const LARGE_PDF_PAGES: u32 = 40;
+/// Units (pages) above which an import shows its progress sheet.
+const LARGE_IMPORT: u32 = 40;
+/// How often the progress sheet asks how far indexing got.
+const PROGRESS_POLL: std::time::Duration = std::time::Duration::from_millis(120);
 
 fn create(entry: CatalogEntry, context: Context, request: Request) {
     spawn_in_window(async move {
@@ -784,98 +761,124 @@ fn create(entry: CatalogEntry, context: Context, request: Request) {
     });
 }
 
-/// Index an attachment's text and render its cover in the background,
-/// showing progress for large files.
-fn prepare_attachment(item: ItemId, kind: &str, bytes: Vec<u8>) {
-    if kind != crate::plugins::builtin::pdf::KIND {
-        crate::plugins::content::reindex(item);
+/// Draw the cover of an attachment and index it in the background,
+/// showing progress while the kind reports a large job.
+fn prepare_attachment(item: ItemId, kind_id: &str, bytes: Vec<u8>) {
+    let Some(kind) = crate::plugins::kind(kind_id) else {
         return;
+    };
+    let content = content::read(item, kind_id).unwrap_or_else(|| kind.empty_content());
+    let doc = content::doc_id(item);
+    let color = crate::references::kind_color(&palette(), kind.info().color);
+    let (finished, done_rx) = flume::bounded::<()>(1);
+    {
+        let kind = std::sync::Arc::clone(&kind);
+        std::thread::spawn(move || {
+            if let Some(cover) = kind.thumbnail(&content, &bytes)
+                && let Ok(handle) = crate::library::shared_blocking()
+            {
+                let mut lib = pollster::block_on(handle.lock());
+                if let Err(err) = pollster::block_on(lib.set_item_thumbnail(item, Some(cover))) {
+                    log::error!("cover of {item}: {err}");
+                }
+            }
+            content::index_blocking(item);
+            let _ = finished.send(());
+        });
     }
-    let Ok(pdf) = freya_pdf::PdfDocument::open_bytes(bytes) else {
-        return;
-    };
-    let total = u32::try_from(pdf.page_count()).unwrap_or(u32::MAX);
-    let progress = if total >= LARGE_PDF_PAGES {
-        let done = State::create_in_scope(0u32, ScopeId::ROOT);
-        Sheet::titled("Importando…")
-            .child(Preparing { done, total })
-            .footer(SheetFooter::new([Button::new("Seguir en segundo plano")
-                .on_press(|_| ModalController::get().close())
-                .into_element()]))
-            .open();
-        Some(done)
-    } else {
-        None
-    };
-    let (tx, rx) = flume::unbounded::<u32>();
-    std::thread::spawn(move || {
-        if let Some(cover) = crate::thumbnail::pdf(&pdf)
-            && let Ok(handle) = crate::library::shared_blocking()
-        {
-            let mut lib = pollster::block_on(handle.lock());
-            if let Err(err) = pollster::block_on(lib.set_item_thumbnail(item, Some(cover))) {
-                log::error!("pdf cover: {err}");
+    spawn_in_window(async move {
+        let mut shown: Option<State<u32>> = None;
+        while done_rx.try_recv().is_err() && !done_rx.is_disconnected() {
+            async_io::Timer::after(PROGRESS_POLL).await;
+            let report = kind
+                .index_status()
+                .into_iter()
+                .find_map(|(id, report)| (id == doc).then_some(report));
+            let Some(report) = report.filter(|r| !r.is_complete()) else {
+                continue;
+            };
+            match &mut shown {
+                Some(done) => done.set(report.done),
+                None if report.total >= LARGE_IMPORT => {
+                    let done = State::create_in_scope(report.done, ScopeId::ROOT);
+                    Sheet::titled("Importando…")
+                        .child(Preparing {
+                            done,
+                            total: report.total,
+                            color,
+                        })
+                        .footer(SheetFooter::new([Button::new("Seguir en segundo plano")
+                            .on_press(|_| ModalController::get().close())
+                            .into_element()]))
+                        .open();
+                    shown = Some(done);
+                }
+                None => {}
             }
         }
-        let kind = crate::plugins::builtin::pdf_kind();
-        let pages = kind.extract_text(crate::plugins::content::doc_id(item), &pdf, |done, _| {
-            let _ = tx.send(done);
-        });
-        kind.store_text(crate::plugins::content::doc_id(item), pages);
+        if shown.is_some() && ModalController::get().is_open() {
+            ModalController::get().close();
+        }
     });
-    if let Some(mut done) = progress {
-        spawn_in_window(async move {
-            while let Ok(value) = rx.recv_async().await {
-                done.set(value);
-            }
-            if ModalController::get().is_open() {
-                ModalController::get().close();
-            }
-        });
-    }
 }
 
-/// Swap the file under PDF `item` for another one. Ink, bookmarks and
+/// Swap the file `item` keeps for another one. Ink, bookmarks and
 /// notebooks stay: they belong to the document, not to the file.
-pub fn replace_pdf(item: ItemId) {
-    use crate::plugins::builtin::pdf::{KIND, PdfContent, PdfKind};
+pub fn replace_attachment(item: ItemId, kind_id: String) {
     spawn(async move {
-        let picked = match crate::files::pick("Reemplazar PDF", &["pdf"], &["application/pdf"]).await
-        {
+        let Some(kind) = crate::plugins::kind(&kind_id) else {
+            return;
+        };
+        let info = kind.info();
+        let Some(attachment) = info.attachment else {
+            return;
+        };
+        let extensions: Vec<&str> = attachment.extensions.iter().map(AsRef::as_ref).collect();
+        let title = format!("Reemplazar {}", info.label);
+        let picked = match crate::files::pick(&title, &extensions, &[]).await {
             Ok(Some(picked)) => picked,
             Ok(None) => return,
             Err(err) => {
-                log::warn!("pick pdf: {err}");
+                log::warn!("pick {kind_id}: {err}");
                 return;
             }
         };
-        let mut fresh = match PdfKind::read_file(&picked.name, &picked.bytes) {
-            Ok((_, fresh)) => fresh,
+        let old = content::read(item, &kind_id).unwrap_or_else(|| kind.empty_content());
+        let file = notein_plugin::create::ImportedFile {
+            name: &picked.name,
+            bytes: &picked.bytes,
+        };
+        let fresh = match kind.replace_attachment(file, &old) {
+            Ok(fresh) => fresh,
             Err(err) => {
-                replace_failed(item, &picked.name, &err.to_string());
+                replace_failed(item, kind_id, &picked.name, &err.to_string());
                 return;
             }
         };
-        if let Some(old) = content::read(item, KIND).and_then(|b| PdfContent::from_bytes(&b).ok()) {
-            fresh.marks = old.marks;
-        }
         let Ok(handle) = crate::library::shared().await else {
             return;
         };
         if let Err(err) = handle.lock().await.attach_pdf(item, &picked.bytes).await {
-            log::error!("replace pdf: {err}");
-            Toasts::get().show(Toast::new("No se pudo reemplazar el archivo").tone(ToastTone::Error));
+            log::error!("replace attachment: {err}");
+            Toasts::get()
+                .show(Toast::new("No se pudo reemplazar el archivo").tone(ToastTone::Error));
             return;
         }
-        content::write(item, KIND, &fresh.to_bytes());
-        crate::builtin::pdf_face::reload(item);
-        prepare_attachment(item, KIND, picked.bytes);
+        content::write(item, &kind_id, &fresh);
+        kind.forget(content::doc_id(item));
+        content::attachment_replaced(item);
+        content::notify_remote(item);
+        prepare_attachment(item, &kind_id, picked.bytes);
         Toasts::get().show(Toast::new(format!("Ahora muestra «{}»", picked.name)));
     });
 }
 
-fn replace_failed(item: ItemId, file: &str, why: &str) {
-    Sheet::titled("Reemplazar PDF")
+fn replace_failed(item: ItemId, kind_id: String, file: &str, why: &str) {
+    let title = crate::plugins::kind_info(&kind_id).map_or_else(
+        || "Reemplazar archivo".to_owned(),
+        |k| format!("Reemplazar {}", k.label),
+    );
+    Sheet::titled(title)
         .child(
             notein_ui_kit::Notice::new(
                 notein_ui_kit::NoticeTone::Danger,
@@ -892,7 +895,7 @@ fn replace_failed(item: ItemId, file: &str, why: &str) {
                 .primary()
                 .on_press(move |_| {
                     ModalController::get().close();
-                    replace_pdf(item);
+                    replace_attachment(item, kind_id.clone());
                 })
                 .into_element(),
         ]))
@@ -1115,18 +1118,17 @@ pub fn new_mesa() {
         .open();
 }
 
-/// Change the translation the Bible document reads.
-pub fn set_bible_translation(item: ItemId, bible_id: &str) {
-    let kind = notein_bible::kind::KIND;
-    let mut content = content::read(item, kind)
-        .and_then(|b| notein_bible::BibleContent::from_bytes(&b).ok())
-        .unwrap_or_default();
-    if content.bible_id == bible_id {
+/// Apply option `id` of the edit sheet's list to `item`, a document of
+/// `kind_id`.
+pub fn apply_choice(item: ItemId, kind_id: &str, id: &str) {
+    let Some(kind) = crate::plugins::kind(kind_id) else {
         return;
+    };
+    let old = content::read(item, kind_id).unwrap_or_else(|| kind.empty_content());
+    if let Some(fresh) = kind.choose(&old, id) {
+        content::write(item, kind_id, &fresh);
+        content::notify_remote(item);
     }
-    bible_id.clone_into(&mut content.bible_id);
-    content::write(item, kind, &content.to_bytes());
-    content::notify_remote(item);
 }
 
 /// Miniature of a paper pattern for the paper picker.
@@ -1197,14 +1199,4 @@ pub fn entry_for(shortcut: &EntryKey) -> Option<CatalogEntry> {
         .entries()
         .into_iter()
         .find(|e| e.plugin == shortcut.plugin && e.entry.id == shortcut.entry)
-}
-
-/// The doc meta of an item for kind calls.
-#[must_use]
-pub fn meta(item: &crate::library::Item) -> DocMeta<'_> {
-    DocMeta {
-        id: content::doc_id(item.id),
-        name: &item.name,
-        updated_at: item.updated_at,
-    }
 }

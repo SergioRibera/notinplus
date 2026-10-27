@@ -7,11 +7,15 @@
 //! headings so references can be offered without opening each note.
 
 pub mod anchor;
+mod face;
 pub mod kind;
 pub mod index;
+pub mod plugin;
+mod share;
 
 pub use anchor::NoteAnchor;
 pub use kind::{NoteContent, NotesKind};
+pub use plugin::{NoteFace, NotesPlugin};
 pub use index::NotesIndex;
 
 /// Kind id of the note page (`PluginCanvas` items and their snapshots).

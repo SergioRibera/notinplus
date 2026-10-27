@@ -1,7 +1,7 @@
-//! Bible reader bound to a library item.
+//! The reader of a Bible document.
 //!
-//! Highlights and the last place read live in the item's snapshot, so
-//! export and sync carry them; the plugin database only holds the
+//! Highlights and the last place read live in the document's content,
+//! so export and sync carry them; the plugin database only holds the
 //! installed text and its search index.
 
 mod highlight;
@@ -12,27 +12,28 @@ mod translation;
 
 use std::cell::Cell;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use freya::components::{ScrollConfig, ScrollController, use_scroll_controller};
 use freya::prelude::*;
-use notein_bible::db::{ChapterRow, Db};
-use notein_bible::plugin_config;
-use notein_bible::state::{BibleBookmark, BibleSnapshot, BibleViewerState};
-use notein_bible::ui::chapter::plan_chapter;
-use notein_bible::ui::reader::{
+use notein_sdk::doc::DocId;
+use notein_sdk::face::{ContentStore, FaceContext, HeaderAction};
+use notein_sdk::services::Host;
+use notein_sdk::ui::Ui;
+use notein_ui_kit::theme::palette;
+
+use super::bottom_nav;
+use super::chapter::plan_chapter;
+use super::reader::{
     self, CrossRefView, FootnoteView, ScrollTarget, VerseScrollCtx, cross_refs_by_verse,
     footnotes_by_verse,
 };
-use notein_bible::ui::bottom_nav;
-use notein_bible::BibleAnchor;
-use notein_plugin::face::HeaderAction;
-use notein_plugin::services::HostServices;
-use notein_ui_kit::theme::palette;
-
-use crate::library::{ItemId, ViewSlot};
-
-pub(crate) const KIND: &str = notein_bible::kind::KIND;
+use crate::BibleAnchor;
+use crate::db::{ChapterRow, Db};
+use crate::kind::{BibleContent, BibleKind, KIND};
+use crate::plugin_config;
+use crate::state::{BibleBookmark, BibleSnapshot, BibleViewerState};
 
 /// How long a jump target stays washed.
 const FLASH: Duration = Duration::from_secs(3);
@@ -46,38 +47,35 @@ pub(crate) fn header_actions() -> Vec<HeaderAction> {
     ]
 }
 
-/// The reader of `item`; the first-use card until a translation is
-/// installed.
-#[derive(Debug, PartialEq, Eq)]
-pub struct BibleFace {
-    pub item: ItemId,
-    pub slot: Option<ViewSlot>,
+/// The reader of one document; the first-use card until a translation
+/// is installed.
+pub(crate) struct BiblePage {
+    pub(crate) ctx: FaceContext<BibleKind>,
 }
 
-impl Component for BibleFace {
+impl PartialEq for BiblePage {
+    fn eq(&self, other: &Self) -> bool {
+        self.ctx.doc == other.ctx.doc && self.ctx.pane == other.ctx.pane
+    }
+}
+
+impl Component for BiblePage {
     fn render(&self) -> impl IntoElement {
         // Re-render when an install finishes, so the first-use card
         // gives way to the reader.
-        let _installs = *crate::screens::bible::use_installs().read();
-        let db = crate::plugins::builtin::bible_kind().map(|kind| kind.db().clone());
-        let inner = match db {
-            None => notein_ui_kit::EmptyState::new(
-                freya::icons::lucide::book_x(),
-                "La Biblia no está disponible",
-            )
-            .body("No se pudo abrir la base de datos de traducciones.")
-            .into_element(),
-            Some(db) if db.list_bibles().unwrap_or_default().is_empty() => FirstUseFace {
-                item: self.item,
-                slot: self.slot,
+        let _installs = *super::catalog::use_installs().read();
+        let db = self.ctx.kind().db().clone();
+        let inner = if db.list_bibles().unwrap_or_default().is_empty() {
+            FirstUseFace {
+                ctx: self.ctx.clone(),
             }
-            .into_element(),
-            Some(db) => BibleViewer {
-                item: self.item,
-                slot: self.slot,
+            .into_element()
+        } else {
+            BibleViewer {
+                ctx: self.ctx.clone(),
                 db,
             }
-            .into_element(),
+            .into_element()
         };
         rect()
             .width(Size::fill())
@@ -89,25 +87,30 @@ impl Component for BibleFace {
 
 /// The first-use card in a pane: with nothing installed yet, both header
 /// buttons lead to the translations to download.
-#[derive(Debug, PartialEq, Eq)]
 struct FirstUseFace {
-    item: ItemId,
-    slot: Option<ViewSlot>,
+    ctx: FaceContext<BibleKind>,
+}
+
+impl PartialEq for FirstUseFace {
+    fn eq(&self, other: &Self) -> bool {
+        self.ctx.doc == other.ctx.doc && self.ctx.pane == other.ctx.pane
+    }
 }
 
 impl Component for FirstUseFace {
     fn render(&self) -> impl IntoElement {
-        crate::plugins::faces::use_header_presses(KIND, self.item, self.slot, |_| {
-            crate::screens::bible::open_catalog();
-        });
-        crate::screens::bible::FirstUse
+        self.ctx.use_header_presses(|_| super::catalog::open());
+        super::catalog::FirstUse
     }
 }
 
 /// Handles the parts of the reader share.
 #[derive(Clone)]
 pub(super) struct Reader {
-    item: ItemId,
+    doc: DocId,
+    host: Host,
+    ui: Ui,
+    kind: Arc<BibleKind>,
     db: Db,
     state: State<BibleViewerState>,
     flash: State<Option<u16>>,
@@ -119,14 +122,14 @@ pub(super) struct Reader {
 
 impl PartialEq for Reader {
     fn eq(&self, other: &Self) -> bool {
-        self.item == other.item
+        self.doc == other.doc
     }
 }
 
 impl std::fmt::Debug for Reader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Reader")
-            .field("item", &self.item)
+            .field("doc", &self.doc)
             .finish_non_exhaustive()
     }
 }
@@ -258,14 +261,12 @@ fn settle_place(db: &Db, state: &mut BibleViewerState, fallback_bible: &str) {
 }
 
 /// The reader state at mount: the saved place, overridden by a jump
-/// queued while the item was closed. Returns the verse to wash.
-fn initial_state(item: ItemId, db: &Db) -> (BibleViewerState, Option<u16>) {
-    let saved = crate::library::bodies::read_plugin_snapshot(item, KIND)
-        .ok()
-        .flatten()
-        .and_then(|bytes| BibleSnapshot::decode(&bytes));
-    let jump = crate::plugins::host::shell()
-        .take_jump(KIND, crate::plugins::content::doc_id(item))
+/// queued while the document was closed. Returns the verse to wash.
+fn initial_state(ctx: &FaceContext<BibleKind>, db: &Db) -> (BibleViewerState, Option<u16>) {
+    let saved: BibleContent = ctx.store.load();
+    let jump = ctx
+        .host
+        .take_jump(KIND, ctx.doc)
         .and_then(|bytes| BibleAnchor::decode(&bytes));
     let first_bible = db
         .list_bibles()
@@ -274,9 +275,7 @@ fn initial_state(item: ItemId, db: &Db) -> (BibleViewerState, Option<u16>) {
         .map(|b| b.id)
         .unwrap_or_default();
     let mut state = BibleViewerState::new(first_bible.as_str(), "GEN", 1);
-    if let Some(snapshot) = &saved {
-        snapshot.clone().apply_to(&mut state);
-    }
+    saved.apply_to(&mut state);
     if let Some(jump) = &jump {
         state.bible_id.clone_from(&jump.bible_id);
         state.current_book = canonical_book_id(db, &jump.bible_id, &jump.book_id);
@@ -292,29 +291,28 @@ fn initial_state(item: ItemId, db: &Db) -> (BibleViewerState, Option<u16>) {
 
 /// The reader's state and the hooks that keep it: jumps sent while it is
 /// open, saving, and the lazy footnote fetch.
-fn use_reader(item: ItemId, db: &Db) -> Reader {
+fn use_reader(ctx: &FaceContext<BibleKind>, db: &Db) -> Reader {
     // The verse a queued jump asked for, read once the state exists.
     let start = use_hook(|| Rc::new(Cell::new(None::<u16>)));
     let state = use_state({
-        let (db, start) = (db.clone(), Rc::clone(&start));
+        let (ctx, db, start) = (ctx.clone(), db.clone(), Rc::clone(&start));
         move || {
-            let (state, verse) = initial_state(item, &db);
+            let (state, verse) = initial_state(&ctx, &db);
             start.set(verse);
             state
         }
     });
-    let flash = use_state(|| None);
-    let scroll_to = use_state(|| None);
-    let scroll = use_scroll_controller(ScrollConfig::default);
-    let refs = use_state(|| None);
     let reader = Reader {
-        item,
+        doc: ctx.doc,
+        host: Arc::clone(&ctx.host),
+        ui: Rc::clone(&ctx.ui),
+        kind: ctx.kind_handle(),
         db: db.clone(),
         state,
-        flash,
-        scroll_to,
-        scroll,
-        refs,
+        flash: use_state(|| None),
+        scroll_to: use_state(|| None),
+        scroll: use_scroll_controller(ScrollConfig::default),
+        refs: use_state(|| None),
     };
     use_hook({
         let reader = reader.clone();
@@ -322,28 +320,39 @@ fn use_reader(item: ItemId, db: &Db) -> Reader {
             if let Some(verse) = start.get() {
                 reader.show(verse);
             }
-            let jumps = crate::plugins::host::shell().jumps(KIND);
-            let doc = crate::plugins::content::doc_id(item);
+        }
+    });
+    ctx.use_jumps({
+        let reader = reader.clone();
+        move |anchor: BibleAnchor| reader.follow(&anchor)
+    });
+    use_side_effect({
+        let store: ContentStore<BibleContent> = ctx.store.clone();
+        move || store.save(&BibleSnapshot::from_state(&state.read()))
+    });
+    // Content written elsewhere: another device, or the translation
+    // picked in the edit sheet.
+    use_hook({
+        let (store, db) = (ctx.store.clone(), db.clone());
+        move || {
+            let changes = store.changes();
+            let mut state = state;
             spawn(async move {
-                while let Ok(jump) = jumps.recv_async().await {
-                    if jump.doc != doc {
+                while changes.recv_async().await.is_ok() {
+                    let saved = store.load();
+                    if saved == BibleSnapshot::from_state(&state.peek()) {
                         continue;
                     }
-                    crate::plugins::host::shell().take_jump(KIND, doc);
-                    match BibleAnchor::decode(&jump.anchor) {
-                        Some(anchor) => reader.follow(&anchor),
-                        None => log::warn!("bible: undecodable jump"),
+                    let mut st = state.write();
+                    saved.apply_to(&mut st);
+                    let fallback = st.bible_id.clone();
+                    settle_place(&db, &mut st, &fallback);
+                    if let Err(e) = st.ensure_current_loaded(&db) {
+                        log::warn!("bible: reload after a change: {e}");
                     }
                 }
             });
         }
-    });
-    use_side_effect(move || {
-        let bytes = BibleSnapshot::from_state(&state.read()).encode();
-        if let Err(e) = crate::library::bodies::write_plugin_snapshot(item, KIND, &bytes) {
-            log::warn!("bible: snapshot write failed: {e}");
-        }
-        crate::sync::snapshot_changed(item);
     });
     // Footnotes arrive lazily per chapter; headings came with the
     // install. The fetch returns at once when the rows exist.
@@ -351,7 +360,7 @@ fn use_reader(item: ItemId, db: &Db) -> Reader {
         let db = db.clone();
         move || {
             let st = state.read();
-            notein_bible::install_background::spawn_fetch_footnotes(
+            crate::install_background::spawn_fetch_footnotes(
                 db.clone(),
                 st.bible_id.clone(),
                 st.current_book.clone(),
@@ -362,27 +371,25 @@ fn use_reader(item: ItemId, db: &Db) -> Reader {
     reader
 }
 
-#[derive(Debug)]
 struct BibleViewer {
-    item: ItemId,
-    slot: Option<ViewSlot>,
+    ctx: FaceContext<BibleKind>,
     db: Db,
 }
 
 impl PartialEq for BibleViewer {
     fn eq(&self, other: &Self) -> bool {
-        self.item == other.item && self.slot == other.slot
+        self.ctx.doc == other.ctx.doc && self.ctx.pane == other.ctx.pane
     }
 }
 
 impl Component for BibleViewer {
     fn render(&self) -> impl IntoElement {
-        let reader = use_reader(self.item, &self.db);
+        let reader = use_reader(&self.ctx, &self.db);
         let gesture = highlight::Gesture::use_gesture();
         let viewport_top = use_state(|| 0.0_f32);
         let mut width = use_state(|| 0.0_f32);
         let wide = *width.read() >= refs::ROOM_FOR_PANEL;
-        crate::plugins::faces::use_header_presses(KIND, self.item, self.slot, {
+        self.ctx.use_header_presses({
             let reader = reader.clone();
             move |press| match press.action.as_str() {
                 "translation" => translation::open(&reader, press.at),
@@ -480,8 +487,7 @@ fn chapter_body(
     wide: bool,
 ) -> Element {
     let db = &reader.db;
-    let show_cross_refs = crate::plugins::builtin::bible_kind()
-        .is_none_or(|kind| plugin_config::effective_enable_crossref(kind.config()));
+    let show_cross_refs = plugin_config::effective_enable_crossref(reader.kind.config());
     let cross_refs = if show_cross_refs {
         cross_refs(db, data)
     } else {
@@ -533,9 +539,8 @@ fn footnotes(db: &Db, data: &ChapterRow) -> Vec<FootnoteView> {
         .unwrap_or_default()
         .into_iter()
         .map(|row| {
-            let target = notein_bible::reference::parse(&row.text).and_then(|parsed| {
-                let anchor =
-                    notein_bible::resolver::resolve_parsed(db, first_bible.as_deref()?, &parsed)?;
+            let target = crate::reference::parse(&row.text).and_then(|parsed| {
+                let anchor = crate::resolver::resolve_parsed(db, first_bible.as_deref()?, &parsed)?;
                 Some((anchor.book_id, anchor.start_chapter, anchor.start_verse))
             });
             FootnoteView {
@@ -557,7 +562,7 @@ fn cross_refs(db: &Db, data: &ChapterRow) -> Vec<CrossRefView> {
             src_verse: row.src_verse,
             label: format!(
                 "{} {}:{}",
-                notein_bible::canon::short_name(&row.tgt_book),
+                crate::canon::short_name(&row.tgt_book),
                 row.tgt_chap,
                 row.tgt_verse
             ),

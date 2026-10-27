@@ -2,7 +2,7 @@
 //! any document through the catalog.
 
 use freya::prelude::*;
-use notein_plugin::face::{Face, FaceContext, FaceRequest, PaneKey};
+use notein_plugin::face::{CoverRequest, Face, FaceContext, FaceRequest, PaneKey};
 
 use super::builtin::{canvas::CanvasKind, pdf::PdfKind};
 use super::content::{SnapshotStore, doc_id};
@@ -35,30 +35,6 @@ const fn item_of<K: notein_plugin::kind::DocumentKind>(ctx: &FaceContext<K>) -> 
     ItemId(ctx.doc.0)
 }
 
-/// Run `on_press` for presses on the header actions of `item` (a
-/// document of `kind`) in the pane `slot`.
-pub(crate) fn use_header_presses(
-    kind: &'static str,
-    item: ItemId,
-    slot: Option<ViewSlot>,
-    mut on_press: impl FnMut(notein_plugin::services::HeaderPress) + 'static,
-) {
-    use_hook(move || {
-        let rx = notein_plugin::services::HostServices::header_presses(
-            &*super::host::shell(),
-            kind,
-        );
-        let doc = doc_id(item);
-        let pane = slot.map(pane_key);
-        spawn(async move {
-            while let Ok(press) = rx.recv_async().await {
-                if press.doc == doc && press.pane == pane {
-                    on_press(press);
-                }
-            }
-        });
-    });
-}
 
 /// Pane body for `item`; a notice when its plugin is missing or off.
 #[must_use]
@@ -76,6 +52,7 @@ pub fn render(item: ItemId, kind: &DocKind, slot: Option<ViewSlot>) -> Element {
                 doc: doc_id(item),
                 pane: slot.map(pane_key),
                 host: super::host::handle(),
+                ui: super::ui::handle(),
                 store: SnapshotStore::new(item, kind.plugin_id.clone()),
             })
         },
@@ -132,46 +109,59 @@ impl Face for PdfFace {
         }
         .into_element()
     }
-}
 
-/// Nota.
-#[derive(Debug, Default)]
-pub struct NoteFace;
-
-impl Face for NoteFace {
-    type Kind = notein_notes::NotesKind;
-
-    fn header_actions(&self) -> Vec<notein_plugin::face::HeaderAction> {
-        crate::notes_face::header_actions()
-    }
-
-    fn render(&self, ctx: FaceContext<notein_notes::NotesKind>) -> Element {
-        crate::notes_face::NotesFace {
-            item: item_of(&ctx),
-            slot: ctx.pane.map(view_slot),
-        }
-        .into_element()
+    fn cover(&self, cover: &CoverRequest) -> Option<Element> {
+        Some(pdf_cover(cover))
     }
 }
 
-/// Biblia.
-#[derive(Debug, Default)]
-pub struct BibleFace;
+/// The paper of a drawn cover: the document's tint, else the theme's.
+fn cover_paper(cover: &CoverRequest) -> Color {
+    cover.tint.map_or_else(
+        || notein_ui_kit::palette().paper,
+        |c| Color::from_argb(c[3], c[0], c[1], c[2]),
+    )
+}
 
-impl Face for BibleFace {
-    type Kind = notein_bible::BibleKind;
-
-    fn header_actions(&self) -> Vec<notein_plugin::face::HeaderAction> {
-        crate::bible_face::header_actions()
-    }
-
-    fn render(&self, ctx: FaceContext<notein_bible::BibleKind>) -> Element {
-        crate::bible_face::BibleFace {
-            item: item_of(&ctx),
-            slot: ctx.pane.map(view_slot),
-        }
+/// A page with a heading and a highlighted line.
+fn pdf_cover(cover: &CoverRequest) -> Element {
+    let p = notein_ui_kit::palette();
+    let w = cover.width;
+    let lines = rect()
+        .position(Position::new_absolute().top(44.0).left(w * 0.12))
+        .width(Size::px(w * 0.76))
+        .spacing(w * 0.06)
+        .children((0..8).map(|row| {
+            rect()
+                .key(row)
+                .width(Size::percent(if row % 3 == 2 { 60.0 } else { 100.0 }))
+                .height(Size::px(4.0))
+                .corner_radius(2.0)
+                .background(Color::from_rgb(216, 211, 200))
+                .into_element()
+        }));
+    rect()
+        .width(Size::px(w))
+        .height(Size::px(cover.height))
+        .background(cover_paper(cover))
+        .child(lines)
+        .child(
+            rect()
+                .position(Position::new_absolute().top(22.0).left(w * 0.12))
+                .width(Size::px(w * 0.76))
+                .height(Size::px(10.0))
+                .corner_radius(2.0)
+                .background(Color::from_rgb(201, 195, 182)),
+        )
+        .child(
+            rect()
+                .position(Position::new_absolute().top(56.0).left(w * 0.12))
+                .width(Size::px(w * 0.55))
+                .height(Size::px(10.0))
+                .corner_radius(3.0)
+                .background(p.highlighters[0].with_a(180)),
+        )
         .into_element()
-    }
 }
 
 /// How often, and how many times, a jump waits for the board of a

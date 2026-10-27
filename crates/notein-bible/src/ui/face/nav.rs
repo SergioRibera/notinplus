@@ -11,7 +11,7 @@ use super::Reader;
 /// importer stores them alphabetically.
 pub(super) fn open_books(reader: &Reader) {
     let mut books = reader.db.list_books(&reader.bible_id()).unwrap_or_default();
-    books.sort_by_key(|b| notein_bible::canon::canonical_order(&b.book_id));
+    books.sort_by_key(|b| crate::canon::canonical_order(&b.book_id));
     let mut grid = grid();
     for book in books {
         let reader = reader.clone();

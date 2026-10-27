@@ -8,14 +8,13 @@ pub mod pickers;
 pub mod transfer;
 
 use freya::prelude::*;
-use notein_plugin::doc::DocMeta;
 use notein_plugin::kind::ActionEffect;
 use notein_ui_kit::{
     Button, ButtonVariant, ListRow, ModalController, Sheet, SheetFooter, Toast, ToastTone, Toasts,
 };
 
 use crate::library::{FolderId, ItemId, NotebookFate, TabTarget, WorkspaceId};
-use crate::plugins::content::{self, doc_id};
+use crate::plugins::content;
 use crate::space::OpenHint;
 use crate::state;
 
@@ -149,11 +148,7 @@ pub fn run_kind_action(item: ItemId, action: &str) {
             return;
         };
         let bytes = content::read(item, &found.kind.plugin_id).unwrap_or_default();
-        let meta = DocMeta {
-            id: doc_id(item),
-            name: &found.name,
-            updated_at: found.updated_at,
-        };
+        let meta = content::meta(&found);
         match kind.run_action(&action, meta, &bytes) {
             ActionEffect::Done => {}
             ActionEffect::Copy {
@@ -178,11 +173,32 @@ pub fn run_kind_action(item: ItemId, action: &str) {
 
 /// Hand a file to the system share sheet.
 pub fn share_file(name: String, mime: String, bytes: Vec<u8>) {
+    share(notein_plugin::Share::File {
+        subject: name.clone(),
+        name,
+        mime,
+        bytes,
+    });
+}
+
+/// Hand `what` to the system share sheet.
+pub fn share(what: notein_plugin::Share) {
     use istmo_share::{ShareClient, ShareFile, ShareRequest};
+    // A menu that runs this closes first, unmounting the scope `spawn`
+    // would tie the task to; dropping the task cancels the call.
     spawn_in_window(async move {
-        let request =
-            ShareRequest::files([ShareFile::bytes(name.clone(), bytes).with_mime_type(mime)])
-                .with_subject(name);
+        let request = match what {
+            notein_plugin::Share::Text { text, subject } => {
+                ShareRequest::text(text).with_subject(subject)
+            }
+            notein_plugin::Share::File {
+                name,
+                mime,
+                bytes,
+                subject,
+            } => ShareRequest::files([ShareFile::bytes(name, bytes).with_mime_type(mime)])
+                .with_subject(subject),
+        };
         let result = match ShareClient::acquire() {
             Ok(client) => client
                 .share(request)

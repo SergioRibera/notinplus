@@ -53,7 +53,8 @@ pub fn for_item(data: &LibraryData, item: ItemId, origin: Origin) -> Vec<ActionE
         ));
     }
     let notebooks = data.live_notebooks_of(item);
-    if !found.kind.is(crate::plugins::builtin::canvas::KIND) {
+    let is_notebook = crate::plugins::kind_info(&found.kind.plugin_id).is_some_and(|k| k.notebook);
+    if !is_notebook {
         entries.push(ActionEntry::Item(
             Action::new(
                 if notebooks.is_empty() {

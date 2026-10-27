@@ -2,7 +2,7 @@
 //! catalog to add more.
 
 use freya::prelude::*;
-use notein_ui_kit::{Action, ActionEntry};
+use notein_ui_kit::{Action, ActionEntry, ActionList};
 
 use super::Reader;
 
@@ -24,7 +24,7 @@ pub(super) fn open(reader: &Reader, at: (f32, f32)) {
                 bible.name_local.clone()
             };
             ActionEntry::Item(
-                Action::new(name, crate::actions::run(move || reader.switch_bible(&id)))
+                Action::closing(name, move || reader.switch_bible(&id))
                     .subtitle(bible.abbrev.clone())
                     .checked(bible.id == current),
             )
@@ -32,11 +32,7 @@ pub(super) fn open(reader: &Reader, at: (f32, f32)) {
         .collect();
     entries.push(ActionEntry::Divider);
     entries.push(ActionEntry::Item(
-        Action::new(
-            "Agregar traducción",
-            crate::actions::run(crate::screens::bible::open_catalog),
-        )
-        .icon(lucide::plus()),
+        Action::closing("Agregar traducción", crate::ui::catalog::open).icon(lucide::plus()),
     ));
-    notein_ui_kit::ActionList::new(entries).show_at(Area::new(at.into(), (1.0, 1.0).into()));
+    ActionList::new(entries).show_at(Area::new(at.into(), (1.0, 1.0).into()));
 }

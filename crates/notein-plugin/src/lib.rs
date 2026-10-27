@@ -27,12 +27,14 @@ pub mod face;
 pub mod ids;
 pub mod info;
 pub mod kind;
+pub mod link;
 pub mod loader;
 pub mod manifest;
 pub mod payload;
 pub mod plugin;
 pub mod services;
 pub mod text;
+pub mod ui;
 
 pub use bytes;
 pub use rkyv;
@@ -44,20 +46,25 @@ pub use config::{
 };
 pub use create::{
     Created, CreationChoice, CreationEntry, CreationError, CreationFlow, CreationRequest,
-    ImportedFile, Paper,
+    ImportPreview, ImportedFile, Paper,
 };
 pub use doc::{DocId, DocMeta};
 pub use erased::ErasedKind;
-pub use face::{ContentStore, ErasedFace, Face, FaceContext, FaceRequest, HeaderAction, PaneKey};
+pub use face::{
+    ContentStore, CoverRequest, ErasedFace, Face, FaceContext, FaceRequest, HeaderAction, PaneKey,
+};
 pub use ids::{ActorId, BookmarkId, DeviceId, OpId, StrokeId, UserId};
 pub use info::PluginInfo;
 pub use kind::{
-    ActionEffect, Attachment, ChipView, DocumentKind, Hit, IndexReport, KindAction, KindColor,
-    KindInfo, Mark, OutlineIcon, OutlineNode, SearchQuery, SelectionSupport,
+    ActionEffect, Attachment, ChipView, DocumentKind, ExportFile, Hit, IndexReport, KindAction,
+    KindChoice, KindColor, KindInfo, Mark, OutlineIcon, OutlineNode, SearchQuery, SelectionSupport,
 };
 pub use loader::{LoaderError, SDK_ABI_VERSION};
 pub use manifest::{ManifestError, ManifestRequirement, PluginManifest};
 pub use payload::{Payload, PayloadError};
-pub use plugin::{Plugin, PluginSettings, Registrar};
-pub use services::{HeaderPress, Host, HostServices, HostToast, Jump, Progress, ToastTone};
+pub use plugin::{Font, Plugin, PluginSettings, Registrar};
+pub use services::{
+    HeaderPress, Host, HostServices, HostToast, Jump, Progress, Share, TextBody, ToastTone, Typing,
+};
 pub use text::Folded;
+pub use ui::{HostUi, SelectionMenu, Ui};

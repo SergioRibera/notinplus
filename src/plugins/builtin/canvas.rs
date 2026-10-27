@@ -8,8 +8,8 @@ use freya::icons::lucide;
 use notein_plugin::create::{Created, CreationEntry, CreationError, CreationFlow, CreationRequest};
 use notein_plugin::doc::{DocId, DocMeta};
 use notein_plugin::kind::{
-    ChipView, DocumentKind, Hit, IndexReport, KindColor, KindInfo, Mark, OutlineIcon, OutlineNode,
-    SearchQuery, SelectionSupport,
+    ChipView, DocumentKind, ExportFile, Hit, IndexReport, KindColor, KindInfo, Mark, OutlineIcon,
+    OutlineNode, SearchQuery, SelectionSupport,
 };
 
 /// Kind id stored with every canvas.
@@ -20,6 +20,8 @@ pub const ENTRY_CANVAS: &str = "canvas";
 pub const ENTRY_SCRATCH: &str = "scratch";
 /// Create entry of a notebook beside another document.
 pub const ENTRY_NOTEBOOK: &str = "notebook";
+/// Paper of covers and exports of a canvas the user did not tint.
+const UNTINTED_PAPER: [u8; 4] = [247, 245, 240, 255];
 
 /// One layer, as the panel lists it.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
@@ -147,6 +149,9 @@ impl DocumentKind for CanvasKind {
             has_paper: true,
             attachment: None,
             singleton: false,
+            tint: true,
+            notebook: true,
+            body: true,
         }
     }
 
@@ -252,7 +257,8 @@ impl DocumentKind for CanvasKind {
                 KindColor::Canvas,
             )
             .subtitle("Escribir a mano")
-            .starter(0),
+            .starter(0)
+            .named(),
             CreationEntry::new(
                 ENTRY_SCRATCH,
                 "Borrador",
@@ -260,7 +266,7 @@ impl DocumentKind for CanvasKind {
                 KindColor::Scratch,
             )
             .subtitle("Se descarta al cerrar si no lo guardás")
-            .flow(CreationFlow::Direct),
+            .flow(CreationFlow::Launch),
             CreationEntry::new(
                 ENTRY_NOTEBOOK,
                 "Cuaderno",
@@ -268,7 +274,7 @@ impl DocumentKind for CanvasKind {
                 KindColor::Canvas,
             )
             .subtitle("Al lado de un documento")
-            .flow(CreationFlow::Custom),
+            .flow(CreationFlow::Launch),
         ]
     }
 
@@ -277,14 +283,11 @@ impl DocumentKind for CanvasKind {
         entry: &str,
         request: CreationRequest<'_>,
     ) -> Result<Created<CanvasContent>, CreationError> {
-        let fallback = match entry {
-            ENTRY_CANVAS => "Lienzo",
-            ENTRY_SCRATCH => "Borrador",
-            ENTRY_NOTEBOOK => "Cuaderno",
-            other => return Err(CreationError::UnknownEntry(other.to_owned())),
-        };
+        if entry != ENTRY_CANVAS {
+            return Err(CreationError::UnknownEntry(entry.to_owned()));
+        }
         let name = if request.name.trim().is_empty() {
-            fallback.to_owned()
+            "Lienzo".to_owned()
         } else {
             request.name.trim().to_owned()
         };
@@ -298,6 +301,38 @@ impl DocumentKind for CanvasKind {
                 marks: Vec::new(),
             },
             attachment: None,
+        })
+    }
+
+    fn launch(&self, entry: &str) {
+        match entry {
+            ENTRY_SCRATCH => crate::space::open(
+                crate::library::TabTarget::Scratch(crate::library::ScratchId::fresh()),
+                crate::space::OpenHint::Focused,
+            ),
+            ENTRY_NOTEBOOK => {
+                crate::flows::pickers::document_picker(crate::flows::pickers::Purpose::NotebookFor)
+            }
+            _ => {}
+        }
+    }
+
+    fn without_marks(&self, content: &mut CanvasContent) {
+        content.marks.clear();
+    }
+
+    fn export(
+        &self,
+        doc: DocMeta<'_>,
+        _content: &CanvasContent,
+        _attachment: Option<&[u8]>,
+    ) -> Option<ExportFile> {
+        let paper = doc.tint.unwrap_or(UNTINTED_PAPER);
+        crate::readable::canvas_pdf(crate::library::ItemId(doc.id.0), paper).map(|bytes| {
+            ExportFile {
+                extension: "pdf".into(),
+                bytes,
+            }
         })
     }
 }
@@ -372,7 +407,7 @@ pub fn after_save(item: crate::library::ItemId, snapshot: Vec<u8>) {
             let paper = pollster::block_on(handle.lock())
                 .item(item)
                 .and_then(|i| i.color)
-                .unwrap_or([247, 245, 240, 255]);
+                .unwrap_or(UNTINTED_PAPER);
             let cover = crate::thumbnail::canvas(&doc, paper);
             let mut lib = pollster::block_on(handle.lock());
             if let Err(err) = pollster::block_on(lib.set_item_thumbnail(item, cover)) {
@@ -408,6 +443,7 @@ mod tests {
             id: DocId([2; 16]),
             name: "Mapa",
             updated_at: 0,
+            tint: None,
         };
         kind.index(meta, &content, None);
         let query = SearchQuery::new("ADOP", 10);

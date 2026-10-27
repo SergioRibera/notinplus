@@ -48,9 +48,12 @@ impl Purpose {
         }
     }
 
-    const fn only_kind(self) -> Option<&'static str> {
+    /// The kind every pick must be: notebooks are made of one.
+    fn only_kind(self) -> Option<String> {
         match self {
-            Self::UseAsNotebook { .. } => Some(crate::plugins::builtin::canvas::KIND),
+            Self::UseAsNotebook { .. } => crate::plugins::catalog()
+                .notebook_kind()
+                .map(|kind| kind.info().id.into_owned()),
             Self::Link { .. } | Self::NotebookFor | Self::NewTab { .. } => None,
         }
     }
@@ -115,10 +118,7 @@ impl Component for DocumentPicker {
             return rect().into_element();
         };
         let needle = query.read().trim().to_lowercase();
-        let only = purpose
-            .only_kind()
-            .map(str::to_owned)
-            .or_else(|| filter.read().clone());
+        let only = purpose.only_kind().or_else(|| filter.read().clone());
         let mut items: Vec<_> = data
             .live_items()
             .filter(|i| Some(i.id) != purpose.excluded())
@@ -208,19 +208,10 @@ impl Component for DocumentPicker {
     }
 }
 
-/// "Crear con este nombre": a canvas or a note named `name`.
+/// "Crear con este nombre": every entry a name is enough for.
 fn create_named(name: &str, purpose: Purpose) -> Element {
     let p = palette();
-    let entries: Vec<_> = crate::plugins::catalog()
-        .entries()
-        .into_iter()
-        .filter(|e| {
-            (e.kind == crate::plugins::builtin::canvas::KIND
-                && e.entry.id == crate::plugins::builtin::canvas::ENTRY_CANVAS)
-                || (e.kind == notein_notes::kind::KIND
-                    && e.entry.id == notein_notes::kind::ENTRY_NOTE)
-        })
-        .collect();
+    let entries = named_entries();
     Section::new("Crear con este nombre")
         .child(Group::default().children(entries.into_iter().map(|entry| {
             let name = name.to_owned();
@@ -460,4 +451,14 @@ pub fn folder_picker(items: Vec<ItemId>, folders: Vec<FolderId>) {
         .on_press(|_| ModalController::get().close())
         .into_element()]))
     .open();
+}
+
+/// The create entries a name is enough for, in the catalog's order.
+#[must_use]
+pub fn named_entries() -> Vec<notein_plugin::catalog::CatalogEntry> {
+    crate::plugins::catalog()
+        .entries()
+        .into_iter()
+        .filter(|e| e.entry.named)
+        .collect()
 }

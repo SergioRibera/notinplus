@@ -10,7 +10,11 @@ use std::borrow::Cow;
 
 use bytes::Bytes;
 
-use crate::create::{Created, CreationEntry, CreationError, CreationRequest};
+use crate::bookmark::SourceRef;
+use crate::create::{
+    Created, CreationChoice, CreationEntry, CreationError, CreationRequest, ImportPreview,
+    ImportedFile,
+};
 use crate::doc::{DocId, DocMeta};
 use crate::payload::Payload;
 
@@ -37,6 +41,10 @@ pub struct Attachment {
 
 /// How a kind presents itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent capabilities of a kind"
+)]
 pub struct KindInfo {
     /// Stable id stored with every document of this kind.
     pub id: Cow<'static, str>,
@@ -57,6 +65,15 @@ pub struct KindInfo {
     /// One document of this kind is enough (the Bible): the create menu
     /// opens the existing one instead of making another.
     pub singleton: bool,
+    /// The user can tint documents of this kind (the card and the
+    /// paper colour).
+    pub tint: bool,
+    /// Documents of this kind serve as the notebook written beside
+    /// another document.
+    pub notebook: bool,
+    /// Documents of this kind keep a body the shell syncs and merges
+    /// itself (strokes, collaborative text) next to their content.
+    pub body: bool,
 }
 
 /// One full-text match.
@@ -287,6 +304,26 @@ pub enum ActionEffect {
     Edit,
 }
 
+/// A document as a file people can open without Notein, for the
+/// readable export.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExportFile {
+    /// Extension without the dot ("pdf", "md").
+    pub extension: Cow<'static, str>,
+    pub bytes: Vec<u8>,
+}
+
+/// A setting of one document the edit sheet offers as a list (the
+/// translation a Bible reads).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KindChoice {
+    /// Field label ("Traducción").
+    pub label: Cow<'static, str>,
+    pub options: Vec<CreationChoice>,
+    /// Id of the option the document has now.
+    pub current: Option<String>,
+}
+
 /// A kind of document.
 ///
 /// Implement this on a plugin type and register it through
@@ -387,5 +424,109 @@ pub trait DocumentKind: Send + Sync + 'static {
     ) -> Result<Created<Self::Content>, CreationError> {
         let _ = request;
         Err(CreationError::UnknownEntry(entry.to_owned()))
+    }
+
+    /// Run an entry whose flow is [`CreationFlow::Launch`], or the
+    /// `more` option of a [`CreationFlow::Choose`]: the plugin shows
+    /// what it needs itself.
+    ///
+    /// [`CreationFlow::Launch`]: crate::create::CreationFlow::Launch
+    /// [`CreationFlow::Choose`]: crate::create::CreationFlow::Choose
+    fn launch(&self, entry: &str) {
+        let _ = entry;
+    }
+
+    /// What the import sheet shows for a picked file: the name it
+    /// suggests, a line about the file and a preview of its text.
+    ///
+    /// # Errors
+    /// [`CreationError::Unreadable`] when the file is not one this kind
+    /// opens; the sheet says why.
+    fn inspect(&self, entry: &str, file: ImportedFile<'_>) -> Result<ImportPreview, CreationError> {
+        let _ = entry;
+        Ok(ImportPreview {
+            name: file.name.to_owned(),
+            details: Some(file.name.to_owned()),
+            preview: None,
+        })
+    }
+
+    /// The content after the user replaced the kept file with `file`,
+    /// keeping what `old` says about the document (highlights, marks).
+    ///
+    /// # Errors
+    /// [`CreationError`] when the kind keeps no file or `file` cannot be
+    /// read.
+    fn replace_attachment(
+        &self,
+        file: ImportedFile<'_>,
+        old: &Self::Content,
+    ) -> Result<Self::Content, CreationError> {
+        let _ = (file, old);
+        Err(CreationError::MissingFile)
+    }
+
+    /// A cover picture (PNG) drawn from the kept file, for the card.
+    fn thumbnail(&self, content: &Self::Content, attachment: &[u8]) -> Option<Vec<u8>> {
+        let _ = (content, attachment);
+        None
+    }
+
+    /// The line about the kept file in the edit sheet ("Libro.pdf · 248
+    /// páginas · 3 MB").
+    fn details(&self, content: &Self::Content) -> Option<String> {
+        let _ = content;
+        None
+    }
+
+    /// The setting the edit sheet offers as a list, if the kind has one.
+    fn choice(&self, content: &Self::Content) -> Option<KindChoice> {
+        let _ = content;
+        None
+    }
+
+    /// Apply option `id` of [`DocumentKind::choice`]; `false` when
+    /// nothing changed.
+    fn choose(&self, content: &mut Self::Content, id: &str) -> bool {
+        let _ = (content, id);
+        false
+    }
+
+    /// The first words of the document, for its drawn cover.
+    fn excerpt(&self, content: &Self::Content) -> Option<String> {
+        let _ = content;
+        None
+    }
+
+    /// Everything the document links to, so the shell can show what
+    /// points where. `None` for kinds whose links are not in this
+    /// content (a canvas keeps them in its strokes).
+    fn references(&self, content: &Self::Content) -> Option<Vec<SourceRef>> {
+        let _ = content;
+        None
+    }
+
+    /// Remove highlights, annotations and bookmarks, for a copy shared
+    /// without them.
+    fn without_marks(&self, content: &mut Self::Content) {
+        let _ = content;
+    }
+
+    /// The document as a file for people without Notein. The shell
+    /// writes the marks next to it on its own.
+    fn export(
+        &self,
+        doc: DocMeta<'_>,
+        content: &Self::Content,
+        attachment: Option<&[u8]>,
+    ) -> Option<ExportFile> {
+        let _ = (doc, content, attachment);
+        None
+    }
+
+    /// Something is about to link to `anchor` inside `doc`: keep that
+    /// place findable when the document changes (a heading renamed).
+    fn cited(&self, doc: DocId, anchor: &Self::Anchor) {
+        let _ = (doc, anchor);
     }
 }

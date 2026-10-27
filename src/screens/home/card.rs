@@ -2,6 +2,7 @@
 //! one and a drawn cover of the kind otherwise.
 
 use freya::prelude::*;
+use notein_plugin::face::CoverRequest;
 use notein_ui_kit::theme::{Palette, palette};
 use notein_ui_kit::{Icon, tokens, use_press_gesture};
 
@@ -35,7 +36,7 @@ pub struct DocCardData {
     pub notebooks: usize,
     pub pinned: bool,
     pub shared: bool,
-    /// Text for a note's drawn cover (first lines of the body).
+    /// The first words of the document, for its drawn cover.
     pub preview: Option<String>,
 }
 
@@ -53,22 +54,6 @@ const fn rgba(color: Rgba) -> Color {
 impl Cover {
     fn paper(&self, p: &Palette) -> Color {
         self.data.color.map_or(p.paper, rgba)
-    }
-
-    fn lines(width: f32, rows: usize, color: Color, top: f32) -> Rect {
-        rect()
-            .position(Position::new_absolute().top(top).left(width * 0.12))
-            .width(Size::px(width * 0.76))
-            .spacing(width * 0.06)
-            .children((0..rows).map(|row| {
-                rect()
-                    .key(row)
-                    .width(Size::percent(if row % 3 == 2 { 60.0 } else { 100.0 }))
-                    .height(Size::px(4.0))
-                    .corner_radius(2.0)
-                    .background(color)
-                    .into_element()
-            }))
     }
 
     fn pattern(&self, height: f32, line: Color) -> Option<Rect> {
@@ -132,86 +117,6 @@ impl Cover {
 }
 
 impl Cover {
-    /// A leather cover with the translation's name.
-    fn bible(&self, base: Rect, p: &Palette) -> Element {
-        let translation = self.data.meta.split(" · ").next().unwrap_or_default().to_uppercase();
-        base.background(Color::from_rgb(59, 47, 30))
-            .padding((18.0, 16.0))
-            .spacing(4.0)
-            .child(
-                label()
-                    .text("Biblia")
-                    .font_size(18.0)
-                    .font_family("Lora")
-                    .color(Color::from_rgb(243, 226, 190)),
-            )
-            .child(
-                label()
-                    .text(translation)
-                    .font_size(10.0)
-                    .font_weight(FontWeight::SEMI_BOLD)
-                    .letter_spacing(1.0)
-                    .color(p.kinds.bible),
-            )
-            .child(
-                rect()
-                    .position(Position::new_absolute().bottom(36.0).left(16.0))
-                    .width(Size::px(self.width - 32.0))
-                    .height(Size::px(2.0))
-                    .background(p.kinds.bible),
-            )
-            .into_element()
-    }
-
-    /// The note's title and the start of its text.
-    fn note(&self, base: Rect, p: &Palette) -> Element {
-        base.background(self.paper(p))
-            .padding((20.0, self.width * 0.12))
-            .spacing(6.0)
-            .child(
-                label()
-                    .text(self.data.name.clone())
-                    .font_size(11.0)
-                    .font_weight(FontWeight::BOLD)
-                    .color(p.paper_ink)
-                    .max_lines(2),
-            )
-            .child(
-                label()
-                    .text(self.data.preview.clone().unwrap_or_default())
-                    .font_size(8.5)
-                    .line_height(1.4)
-                    .color(Color::from_rgb(110, 106, 98))
-                    .max_lines(9)
-                    .text_overflow(TextOverflow::Ellipsis),
-            )
-            .into_element()
-    }
-
-    /// A page with a heading and a highlighted line.
-    fn pdf(&self, base: Rect, p: &Palette) -> Element {
-        let w = self.width;
-        base.background(self.paper(p))
-            .child(Self::lines(w, 8, Color::from_rgb(216, 211, 200), 44.0))
-            .child(
-                rect()
-                    .position(Position::new_absolute().top(22.0).left(w * 0.12))
-                    .width(Size::px(w * 0.76))
-                    .height(Size::px(10.0))
-                    .corner_radius(2.0)
-                    .background(Color::from_rgb(201, 195, 182)),
-            )
-            .child(
-                rect()
-                    .position(Position::new_absolute().top(56.0).left(w * 0.12))
-                    .width(Size::px(w * 0.55))
-                    .height(Size::px(10.0))
-                    .corner_radius(3.0)
-                    .background(p.highlighters[0].with_a(180)),
-            )
-            .into_element()
-    }
-
     /// The paper pattern with the kind's icon.
     fn generic(&self, base: Rect, p: &Palette, h: f32) -> Element {
         base.background(self.paper(p))
@@ -245,11 +150,20 @@ impl Component for Cover {
                 .child(ImageViewer::new(bytes).width(Size::px(w)).height(Size::px(h)))
                 .into_element();
         }
-        match self.data.kind.as_str() {
-            notein_bible::kind::KIND => self.bible(base, &p),
-            notein_notes::kind::KIND => self.note(base, &p),
-            crate::plugins::builtin::pdf::KIND => self.pdf(base, &p),
-            _ => self.generic(base, &p, h),
+        let request = CoverRequest {
+            name: self.data.name.clone(),
+            meta: self.data.meta.clone(),
+            excerpt: self.data.preview.clone(),
+            tint: self.data.color,
+            width: w,
+            height: h,
+        };
+        let drawn = crate::plugins::catalog()
+            .face(&self.data.kind)
+            .and_then(|face| face.cover(&request));
+        match drawn {
+            Some(cover) => base.child(cover).into_element(),
+            None => self.generic(base, &p, h),
         }
     }
 }

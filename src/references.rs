@@ -8,7 +8,6 @@ use notein_plugin::kind::{KindColor, SearchQuery};
 use notein_ui_kit::theme::Palette;
 use notein_ui_kit::{Toast, ToastTone, Toasts};
 
-use crate::deep_link::DeepLink;
 use crate::library::{ItemId, LibraryData, TabTarget};
 use crate::plugins::content::doc_id;
 use crate::space::OpenHint;
@@ -106,6 +105,7 @@ pub fn display(src: &SourceRef, data: Option<&LibraryData>) -> ChipDisplay {
                 id: doc_id(id),
                 name: &name,
                 updated_at: doc.map_or(0, |d| d.updated_at),
+                tint: doc.and_then(|d| d.color),
             };
             let chip = kind.chip(meta, anchor);
             let broken = chip.broken || (doc.is_none() && !info.singleton);

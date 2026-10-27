@@ -445,25 +445,21 @@ fn overlays_stay_in_the_visible_window() {
 
 fn selection_menu() -> Element {
     use_hook(|| {
-        crate::selection::SelectionMenu {
+        crate::selection::show(notein_plugin::ui::SelectionMenu {
             at: (420.0, 320.0),
             active: Some(1),
             on_color: std::rc::Rc::new(|_| {}),
             on_note: std::rc::Rc::new(|| {}),
-            reference: Some((
-                notein_plugin::bookmark::SourceRef::Plugin {
-                    plugin_id: "bible".to_owned(),
-                    item: [1; 16],
-                    anchor: Vec::new(),
-                    selection: None,
-                },
-                "Juan 3:16".to_owned(),
-            )),
-            document: Some(crate::library::ItemId([1; 16])),
+            reference: Some(notein_plugin::bookmark::SourceRef::Plugin {
+                plugin_id: "bible".to_owned(),
+                item: [1; 16],
+                anchor: Vec::new(),
+                selection: None,
+            }),
+            document: Some(notein_plugin::DocId([1; 16])),
             extra: Vec::new(),
             on_dismiss: std::rc::Rc::new(|| {}),
-        }
-        .show();
+        });
     });
     rect().into_element()
 }
@@ -551,10 +547,7 @@ const JOHN_3: &str = r#"<osis><osisText>
 /// A Bible item open at John 3, with cross-references on verse 16.
 fn bible_john_3() -> Element {
     use_hook(|| {
-        let Some(kind) = crate::plugins::builtin::bible_kind() else {
-            return;
-        };
-        let db = kind.db();
+        let db = &notein_bible::Db::open_default().expect("open bible db");
         if db.list_bibles().unwrap_or_default().is_empty() {
             notein_bible::import::osis::import_osis_xml(db, "spa_rv1960", JOHN_3.as_bytes())
                 .expect("seed John 3");
@@ -579,14 +572,14 @@ fn bible_john_3() -> Element {
         }
         let state = notein_bible::state::BibleViewerState::new("spa_rv1960", "John", 3);
         let bytes = notein_bible::state::BibleSnapshot::from_state(&state).encode();
-        crate::library::bodies::write_plugin_snapshot(BIBLE_ITEM, crate::bible_face::KIND, &bytes)
+        crate::library::bodies::write_plugin_snapshot(BIBLE_ITEM, notein_bible::kind::KIND, &bytes)
             .expect("snapshot");
     });
-    crate::bible_face::BibleFace {
-        item: BIBLE_ITEM,
-        slot: None,
-    }
-    .into_element()
+    crate::plugins::faces::render(
+        BIBLE_ITEM,
+        &crate::library::DocKind::plugin(notein_bible::kind::KIND),
+        None,
+    )
 }
 
 const BIBLE_ITEM: crate::library::ItemId = crate::library::ItemId([7; 16]);

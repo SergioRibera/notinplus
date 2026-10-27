@@ -31,9 +31,8 @@ use crate::ui_mask::{MaskSlot, use_mask_slot};
 /// Drives per-mount side effects (doc load, viewport sidecar routing)
 /// without forcing every caller to re-implement the hook plumbing.
 ///
-/// Plugin-specific concerns (PDF background install, Bible viewer,
-/// …) live with each face — [`crate::faces`]. The shell only knows
-/// about generic doc flavours.
+/// Plugin-specific concerns (the PDF background, a reader) live with
+/// each kind's face. The shell only knows about generic doc flavours.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum CanvasMount {
     /// Persisted canvas item — doc + viewport sidecar load from
@@ -193,14 +192,15 @@ pub fn run() {
     }
 }
 
-/// The bundled fonts: the canvas hand and the Bible's Lora.
+/// The bundled fonts: the canvas hand, and those of every plugin.
 fn launch_config() -> LaunchConfig {
-    notein_bible::fonts::FACES.into_iter().fold(
+    let fonts = crate::plugins::catalog().fonts();
+    fonts.into_iter().fold(
         LaunchConfig::new().with_font(
             crate::canvas_text::FONT_FAMILY,
             crate::canvas_text::FONT_BYTES,
         ),
-        |config, face| config.with_font(notein_bible::fonts::FAMILY, face),
+        |config, font| config.with_font(font.family, font.bytes),
     )
 }
 
@@ -280,7 +280,6 @@ impl Component for AppShell {
         use_hook(crate::sync::follow_presence);
         use_hook(crate::deep_link::listen);
         use_hook(crate::session_end::listen);
-        use_hook(crate::screens::bible::announce_installs);
         rect()
             .expanded()
             .background(notein_ui_kit::palette().bg)

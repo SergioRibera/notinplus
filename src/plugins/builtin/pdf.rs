@@ -6,11 +6,13 @@ use std::sync::{PoisonError, RwLock, RwLockReadGuard};
 use bincode::{Decode, Encode};
 use freya::icons::lucide;
 use freya_pdf::{PdfDocument, TocEntry};
-use notein_plugin::create::{Created, CreationEntry, CreationError, CreationRequest};
+use notein_plugin::create::{
+    Created, CreationEntry, CreationError, CreationRequest, ImportPreview, ImportedFile,
+};
 use notein_plugin::doc::{DocId, DocMeta};
 use notein_plugin::kind::{
-    Attachment, ChipView, DocumentKind, Hit, IndexReport, KindColor, KindInfo, Mark, OutlineIcon,
-    OutlineNode, SearchQuery, SelectionSupport,
+    Attachment, ChipView, DocumentKind, ExportFile, Hit, IndexReport, KindColor, KindInfo, Mark,
+    OutlineIcon, OutlineNode, SearchQuery, SelectionSupport,
 };
 use notein_plugin::text::Folded;
 
@@ -265,6 +267,9 @@ impl DocumentKind for PdfKind {
                 extensions: vec!["pdf".into()],
             }),
             singleton: false,
+            tint: true,
+            notebook: false,
+            body: false,
         }
     }
 
@@ -383,6 +388,65 @@ impl DocumentKind for PdfKind {
             name,
             content,
             attachment: Some(file.bytes.to_vec()),
+        })
+    }
+
+    fn inspect(
+        &self,
+        _entry: &str,
+        file: ImportedFile<'_>,
+    ) -> Result<ImportPreview, CreationError> {
+        let (_, pdf) = Self::read_file(file.name, file.bytes)?;
+        Ok(ImportPreview {
+            name: name_from_file(file.name),
+            details: Some(format!(
+                "{} · {} · {}",
+                crate::format::count(pdf.page_count as usize, "página", "páginas"),
+                crate::format::size(pdf.size_bytes),
+                file.name
+            )),
+            preview: None,
+        })
+    }
+
+    fn replace_attachment(
+        &self,
+        file: ImportedFile<'_>,
+        old: &PdfContent,
+    ) -> Result<PdfContent, CreationError> {
+        let (_, mut fresh) = Self::read_file(file.name, file.bytes)?;
+        fresh.marks.clone_from(&old.marks);
+        Ok(fresh)
+    }
+
+    fn thumbnail(&self, _content: &PdfContent, attachment: &[u8]) -> Option<Vec<u8>> {
+        let pdf = PdfDocument::open_bytes(attachment.to_vec()).ok()?;
+        crate::thumbnail::pdf(&pdf)
+    }
+
+    fn details(&self, content: &PdfContent) -> Option<String> {
+        Some(format!(
+            "{} · {} · {}",
+            content.file_name,
+            crate::format::count(content.page_count as usize, "página", "páginas"),
+            crate::format::size(content.size_bytes)
+        ))
+    }
+
+    fn without_marks(&self, content: &mut PdfContent) {
+        content.marks.clear();
+    }
+
+    fn export(
+        &self,
+        doc: DocMeta<'_>,
+        _content: &PdfContent,
+        attachment: Option<&[u8]>,
+    ) -> Option<ExportFile> {
+        let item = crate::library::ItemId(doc.id.0);
+        crate::readable::flattened_pdf(item, attachment?).map(|bytes| ExportFile {
+            extension: "pdf".into(),
+            bytes,
         })
     }
 }

@@ -9,10 +9,6 @@ use notein_plugin::face::RawStore;
 
 use crate::library::{Item, ItemId, bodies};
 
-type Listeners = Mutex<HashMap<ItemId, Vec<flume::Sender<()>>>>;
-
-static LISTENERS: std::sync::LazyLock<Listeners> = std::sync::LazyLock::new(Listeners::default);
-
 /// What a card shows about a document's content.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Glance {
@@ -31,14 +27,17 @@ static GLANCES: std::sync::LazyLock<Mutex<HashMap<ItemId, (u64, Glance)>>> =
 impl Glance {
     fn compute(item: &Item) -> Self {
         let kind = &item.kind.plugin_id;
-        let summary = read(item.id, kind)
-            .and_then(|bytes| crate::plugins::kind(kind).and_then(|k| k.summary(&bytes)));
-        let preview = (kind == notein_notes::kind::KIND)
-            .then(|| read(item.id, kind))
-            .flatten()
-            .map(|bytes| notein_notes::kind::NoteContent::markdown_of(&bytes).chars().take(PREVIEW_CHARS).collect::<String>())
+        let (Some(bytes), Some(kind)) = (read(item.id, kind), crate::plugins::kind(kind)) else {
+            return Self::default();
+        };
+        let preview = kind
+            .excerpt(&bytes)
+            .map(|text| text.chars().take(PREVIEW_CHARS).collect::<String>())
             .filter(|text| !text.trim().is_empty());
-        Self { summary, preview }
+        Self {
+            summary: kind.summary(&bytes),
+            preview,
+        }
     }
 
     fn forget(item: ItemId) {
@@ -66,13 +65,7 @@ impl Glance {
 /// Tell open faces of `item` that its content changed elsewhere.
 pub fn notify_remote(item: ItemId) {
     Glance::forget(item);
-    if let Some(list) = LISTENERS
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get_mut(&item)
-    {
-        list.retain(|tx| tx.send(()).is_ok());
-    }
+    crate::sync::open_docs::notify_snapshot(item);
 }
 
 /// Content bytes of `item` for kind `kind`; `None` when never saved.
@@ -89,6 +82,13 @@ pub fn write(item: ItemId, kind: &str, bytes: &[u8]) {
     }
     Glance::forget(item);
     crate::sync::local_changed();
+}
+
+/// Keep what the content of `item` links to, when its kind says.
+pub fn record_references(item: ItemId, kind: &str, bytes: &[u8]) {
+    if let Some(refs) = super::kind(kind).and_then(|k| k.references(bytes)) {
+        crate::library::refs::record_content(item, refs);
+    }
 }
 
 /// [`RawStore`] over one document's snapshot.
@@ -114,23 +114,26 @@ impl RawStore for SnapshotStore {
     }
 
     fn save(&self, bytes: Vec<u8>) {
-        write(self.item, &self.kind, &bytes);
+        if let Err(err) = bodies::write_plugin_snapshot(self.item, &self.kind, &bytes) {
+            log::error!("content save {}: {err}", self.item);
+            return;
+        }
+        Glance::forget(self.item);
+        crate::sync::snapshot_changed(self.item);
+        record_references(self.item, &self.kind, &bytes);
         reindex(self.item);
     }
 
     fn changes(&self) -> flume::Receiver<()> {
-        let (tx, rx) = flume::unbounded();
-        LISTENERS
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .entry(self.item)
-            .or_default()
-            .push(tx);
-        rx
+        crate::sync::open_docs::watch_snapshot(self.item)
     }
 
     fn read_only(&self) -> bool {
         !crate::sync::can_edit(self.item)
+    }
+
+    fn access_changes(&self) -> flume::Receiver<()> {
+        crate::sync::changes()
     }
 }
 
@@ -150,25 +153,23 @@ pub fn index(item: &Item) {
         .info()
         .attachment
         .and_then(|_| bodies::read_pdf(item.id).ok());
-    let meta = DocMeta {
-        id: doc_id(item.id),
-        name: &item.name,
-        updated_at: item.updated_at,
-    };
-    kind.index(meta, &content, attachment.as_deref());
+    kind.index(meta(item), &content, attachment.as_deref());
 }
 
 /// Re-index `item` in the background after its content changed.
 pub fn reindex(item: ItemId) {
-    std::thread::spawn(move || {
-        let Ok(handle) = crate::library::shared_blocking() else {
-            return;
-        };
-        let found = pollster::block_on(handle.lock()).item(item).cloned();
-        if let Some(found) = found.filter(|i| i.trashed.is_none()) {
-            index(&found);
-        }
-    });
+    std::thread::spawn(move || index_blocking(item));
+}
+
+/// Index `item` on this thread, if it is still in the library.
+pub fn index_blocking(item: ItemId) {
+    let Ok(handle) = crate::library::shared_blocking() else {
+        return;
+    };
+    let found = pollster::block_on(handle.lock()).item(item).cloned();
+    if let Some(found) = found.filter(|i| i.trashed.is_none()) {
+        index(&found);
+    }
 }
 
 /// Index every live document, on a background thread, once at start.
@@ -193,5 +194,39 @@ pub fn index_library() {
 pub fn forget(item: &Item) {
     if let Some(kind) = super::kind(&item.kind.plugin_id) {
         kind.forget(doc_id(item.id));
+    }
+}
+
+type AttachmentWatchers = Mutex<Vec<(ItemId, flume::Sender<()>)>>;
+
+static ATTACHMENT_WATCHERS: AttachmentWatchers = Mutex::new(Vec::new());
+
+/// Wake whenever the file `item` keeps is replaced.
+#[must_use]
+pub fn watch_attachment(item: ItemId) -> flume::Receiver<()> {
+    let (tx, rx) = flume::unbounded();
+    ATTACHMENT_WATCHERS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push((item, tx));
+    rx
+}
+
+/// Tell the open faces of `item` that its kept file changed.
+pub fn attachment_replaced(item: ItemId) {
+    ATTACHMENT_WATCHERS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .retain(|(id, tx)| !tx.is_disconnected() && (*id != item || tx.send(()).is_ok()));
+}
+
+/// What kinds are told about `item`.
+#[must_use]
+pub fn meta(item: &Item) -> DocMeta<'_> {
+    DocMeta {
+        id: doc_id(item.id),
+        name: &item.name,
+        updated_at: item.updated_at,
+        tint: item.color,
     }
 }

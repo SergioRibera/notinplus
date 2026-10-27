@@ -5,13 +5,16 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use freya::prelude::*;
-use notein_bible::BibleAnchor;
-use notein_bible::state::{BibleBookmark, rgba_to_u32, u32_to_rgba};
-use notein_bible::ui::reader::{HighlightPreview, HighlightTarget};
-use notein_plugin::bookmark::SourceRef;
-use notein_plugin::services::{AnnotationOutcome, AnnotationRequest};
+use notein_sdk::bookmark::SourceRef;
+use notein_sdk::services::{AnnotationOutcome, AnnotationRequest};
+use notein_sdk::ui::SelectionMenu;
+use notein_ui_kit::theme::palette;
 
-use super::{KIND, Reader};
+use super::Reader;
+use crate::BibleAnchor;
+use crate::kind::KIND;
+use crate::state::{BibleBookmark, rgba_to_u32, u32_to_rgba};
+use crate::ui::reader::{HighlightPreview, HighlightTarget};
 
 /// The verses a gesture targets while its menu is open, and the colour
 /// being tried on them.
@@ -72,7 +75,7 @@ impl Selection {
         };
         let reference = SourceRef::Plugin {
             plugin_id: KIND.to_owned(),
-            item: reader.item.0,
+            item: reader.doc.0,
             anchor: anchor.encode(),
             selection: (!quote.is_empty()).then(|| quote.clone()),
         };
@@ -146,10 +149,12 @@ impl Gesture {
         let mut pending = self.pending;
         pending.set(Some(target));
         let selection = Rc::new(Selection::of(reader, target));
-        let active = selection
-            .rgb()
-            .and_then(|c| crate::selection::inks().iter().position(|ink| *ink == c));
-        let label = crate::selection::label_of(&selection.reference);
+        let active = selection.rgb().and_then(|c| {
+            palette()
+                .highlighters
+                .iter()
+                .position(|ink| [ink.r(), ink.g(), ink.b()] == c)
+        });
         let on_color = {
             let (state, selection) = (reader.state, Rc::clone(&selection));
             Rc::new(move |rgb: Option<[u8; 3]>| {
@@ -174,20 +179,19 @@ impl Gesture {
             let (reader, selection) = (reader.clone(), Rc::clone(&selection));
             Rc::new(move || self.annotate(&reader, &selection, target.anchor_x, target.anchor_y))
         };
-        crate::selection::SelectionMenu {
+        reader.ui.selection(SelectionMenu {
             at: (target.anchor_x, target.anchor_y),
             active,
             on_color,
             on_note,
-            reference: Some((selection.reference.clone(), label)),
-            document: Some(reader.item),
+            reference: Some(selection.reference.clone()),
+            document: Some(reader.doc),
             extra: Vec::new(),
             on_dismiss: Rc::new(move || {
                 let mut pending = self.pending;
                 pending.set(None);
             }),
-        }
-        .show();
+        });
     }
 
     /// The note popover for `selection`; its colour previews live on the
@@ -220,9 +224,9 @@ impl Gesture {
             }
             self.end();
         });
-        crate::annotation::AnnotationPopover::open(
+        reader.host.annotate(
             AnnotationRequest {
-                doc: crate::plugins::content::doc_id(reader.item),
+                doc: reader.doc,
                 kind: KIND.to_owned(),
                 title: selection.title(),
                 quote: (!selection.quote.is_empty()).then(|| selection.quote.clone()),

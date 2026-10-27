@@ -134,7 +134,6 @@ pub(crate) fn show_bar(item: ItemId, mount: CanvasMount, at: (f32, f32)) {
         anchor: anchor.to_bytes(),
         selection: (!snippet.is_empty()).then(|| snippet.clone()),
     };
-    let label = crate::selection::label_of(&reference);
     let mark = {
         let reference = reference.clone();
         std::rc::Rc::new(move |color: Option<[u8; 3]>, body: String| {
@@ -153,7 +152,7 @@ pub(crate) fn show_bar(item: ItemId, mount: CanvasMount, at: (f32, f32)) {
     };
     let (color_mark, note_mark, plain_mark) = (mark.clone(), mark.clone(), mark);
     let quote = snippet;
-    crate::selection::SelectionMenu {
+    crate::selection::show(notein_plugin::ui::SelectionMenu {
         at,
         active: None,
         on_color: std::rc::Rc::new(move |rgb| color_mark(rgb, String::new())),
@@ -183,16 +182,15 @@ pub(crate) fn show_bar(item: ItemId, mount: CanvasMount, at: (f32, f32)) {
                 }),
             );
         }),
-        reference: Some((reference, label)),
-        document: Some(item),
+        reference: Some(reference),
+        document: Some(crate::plugins::content::doc_id(item)),
         extra: vec![(
             "Marcador",
             freya::icons::lucide::bookmark(),
             std::rc::Rc::new(move || plain_mark(None, String::new())),
         )],
         on_dismiss: std::rc::Rc::new(move || clear(item)),
-    }
-    .show();
+    });
 }
 
 fn clear(item: ItemId) {

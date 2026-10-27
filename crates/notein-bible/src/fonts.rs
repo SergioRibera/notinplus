@@ -1,17 +1,11 @@
 //! Bundled Lora font family (SIL OFL).
 //!
-//! The TTF bytes are compiled into the crate. The host registers them
-//! with Freya's font collection at startup so the reader's
-//! `font_family: "Lora"` references resolve correctly.
+//! The TTF bytes are compiled into the crate. The plugin hands them to
+//! the shell through `Plugin::fonts`, which registers them before the
+//! first window opens, so the reader's `font_family: "Lora"` resolves.
 //!
 //! Every face registers under [`FAMILY`], so one family name reaches
-//! the italic and bold faces too:
-//!
-//! ```ignore
-//! for face in notein_bible::fonts::FACES {
-//!     config = config.with_font(notein_bible::fonts::FAMILY, face);
-//! }
-//! ```
+//! the italic and bold faces too.
 
 pub const FAMILY: &str = "Lora";
 

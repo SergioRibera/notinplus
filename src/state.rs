@@ -36,6 +36,21 @@ impl LibraryView {
         consume_root_context::<Self>()
     }
 
+    /// The view, when a library root is mounted (not in bare previews).
+    #[must_use]
+    pub fn try_get() -> Option<Self> {
+        try_consume_root_context::<Self>()
+    }
+
+    /// The loaded data, if ready, without subscribing the caller.
+    #[must_use]
+    pub fn peek_data(&self) -> Option<Arc<LibraryData>> {
+        match &*self.state.peek() {
+            LibraryState::Ready(data) => Some(Arc::clone(data)),
+            LibraryState::Loading | LibraryState::Failed(_) => None,
+        }
+    }
+
     /// Current state; subscribes the caller.
     #[must_use]
     pub fn state(&self) -> LibraryState {

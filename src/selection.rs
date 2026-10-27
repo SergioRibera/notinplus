@@ -6,48 +6,11 @@ use std::rc::Rc;
 
 use freya::prelude::*;
 use notein_plugin::bookmark::SourceRef;
+use notein_plugin::ui::SelectionMenu;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{BarItem, Modal, ModalController, SelectionBar, width_class};
 
 use crate::library::ItemId;
-
-/// A kind specific button of the menu: label, icon and what it does.
-pub type ExtraAction = (&'static str, Bytes, Rc<dyn Fn()>);
-
-/// What the bar offers for one selection.
-#[derive(Clone)]
-pub struct SelectionMenu {
-    /// Window point the selection ends at; the bar floats above it.
-    pub at: (f32, f32),
-    /// Index of the highlighter already on the selection.
-    pub active: Option<usize>,
-    /// Highlight with one of the five inks (`None` removes it).
-    pub on_color: Rc<dyn Fn(Option<[u8; 3]>)>,
-    /// Open the annotation for the selection.
-    pub on_note: Rc<dyn Fn()>,
-    /// The place as a reference, with its label, for Copiar ref.
-    pub reference: Option<(SourceRef, String)>,
-    /// The document the selection is in, for Al cuaderno.
-    pub document: Option<ItemId>,
-    /// Kind specific extras ("Marcador" in PDFs).
-    pub extra: Vec<ExtraAction>,
-    /// The bar went away without an action.
-    pub on_dismiss: Rc<dyn Fn()>,
-}
-
-impl PartialEq for SelectionMenu {
-    fn eq(&self, other: &Self) -> bool {
-        self.at == other.at && self.active == other.active
-    }
-}
-
-impl std::fmt::Debug for SelectionMenu {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SelectionMenu")
-            .field("at", &self.at)
-            .finish_non_exhaustive()
-    }
-}
 
 /// The five highlighter inks of the theme, as sRGB.
 #[must_use]
@@ -55,18 +18,16 @@ pub fn inks() -> [[u8; 3]; 5] {
     palette().highlighters.map(|c| [c.r(), c.g(), c.b()])
 }
 
-impl SelectionMenu {
-    /// Show the bar.
-    pub fn show(self) {
-        let dismiss = Rc::clone(&self.on_dismiss);
-        ModalController::get().open(
-            Modal::new(Bar { menu: self })
-                .manual()
-                .dismiss_on_backdrop(true)
-                .backdrop_alpha(0)
-                .on_close(move || dismiss()),
-        );
-    }
+/// Show the bar for `menu`.
+pub fn show(menu: SelectionMenu) {
+    let dismiss = Rc::clone(&menu.on_dismiss);
+    ModalController::get().open(
+        Modal::new(Bar { menu })
+            .manual()
+            .dismiss_on_backdrop(true)
+            .backdrop_alpha(0)
+            .on_close(move || dismiss()),
+    );
 }
 
 /// An action that hands the selection over to what it opens next (the
@@ -118,14 +79,15 @@ impl Component for Bar {
             lucide::message_square_text(),
             act(move || note()),
         ));
-        if let Some((target, label)) = menu.reference.clone() {
+        if let Some(target) = menu.reference.clone() {
+            let label = label_of(&target);
             items.push(BarItem::action(
                 "Copiar ref",
                 lucide::copy(),
                 finish(move || crate::references::copy(&target, &label)),
             ));
             if let Some(document) = menu.document {
-                let target = menu.reference.as_ref().map(|(t, _)| t.clone());
+                let (document, target) = (ItemId(document.0), menu.reference.clone());
                 items.push(BarItem::action(
                     "Al cuaderno",
                     lucide::notebook_pen(),
@@ -165,6 +127,6 @@ impl Component for Bar {
 /// The reference chip label of `target`.
 #[must_use]
 pub fn label_of(target: &SourceRef) -> String {
-    let data = crate::state::LibraryView::get().data();
+    let data = crate::state::LibraryView::try_get().and_then(|view| view.data());
     crate::references::display(target, data.as_deref()).label
 }

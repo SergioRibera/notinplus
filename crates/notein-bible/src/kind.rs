@@ -9,8 +9,8 @@ use notein_sdk::create::{
 };
 use notein_sdk::doc::DocMeta;
 use notein_sdk::kind::{
-    ActionEffect, ChipView, DocumentKind, Hit, KindAction, KindColor, KindInfo, Mark, OutlineIcon,
-    OutlineNode, SearchQuery, SelectionSupport,
+    ActionEffect, ChipView, DocumentKind, Hit, KindAction, KindChoice, KindColor, KindInfo, Mark,
+    OutlineIcon, OutlineNode, SearchQuery, SelectionSupport,
 };
 
 use crate::anchor::BibleAnchor;
@@ -22,6 +22,9 @@ use crate::state::{BibleSnapshot, u32_to_rgba};
 pub const KIND: &str = "io.notein.bible";
 /// Create entry that opens (or creates) the Bible.
 pub const ENTRY_BIBLE: &str = "bible";
+/// What the create sheet's last row launches: the catalog of
+/// translations.
+pub const ENTRY_CATALOG: &str = "catalog";
 
 /// What the shell stores for the Bible document: reading position and
 /// highlights. Highlights are per verse, so they survive a change of
@@ -34,6 +37,8 @@ pub struct BibleKind {
     db: Db,
     config: SharedConfig,
     books: RwLock<HashMap<String, Vec<BookRow>>>,
+    #[cfg(feature = "importer")]
+    installer: std::sync::OnceLock<crate::installer::Installer>,
 }
 
 impl BibleKind {
@@ -43,7 +48,16 @@ impl BibleKind {
             db,
             config,
             books: RwLock::new(HashMap::new()),
+            #[cfg(feature = "importer")]
+            installer: std::sync::OnceLock::new(),
         }
+    }
+
+    /// The downloads of translations into this kind's database.
+    #[cfg(feature = "importer")]
+    pub fn installer(&self) -> &crate::installer::Installer {
+        self.installer
+            .get_or_init(|| crate::installer::Installer::new(self.db.clone(), self.config.clone()))
     }
 
     #[must_use]
@@ -135,6 +149,9 @@ impl DocumentKind for BibleKind {
             has_paper: false,
             attachment: None,
             singleton: true,
+            tint: false,
+            notebook: false,
+            body: false,
         }
     }
 
@@ -264,6 +281,11 @@ impl DocumentKind for BibleKind {
                         id: b.id.into(),
                     })
                     .collect(),
+                more: Some(CreationChoice {
+                    id: ENTRY_CATALOG.into(),
+                    label: "Agregar traducción".into(),
+                    subtitle: "".into(),
+                }),
             })
         } else {
             entry.flow(CreationFlow::Direct)
@@ -300,5 +322,44 @@ impl DocumentKind for BibleKind {
             },
             attachment: None,
         })
+    }
+
+    fn launch(&self, entry: &str) {
+        #[cfg(feature = "ui")]
+        if entry == ENTRY_CATALOG {
+            crate::ui::catalog::open();
+        }
+        #[cfg(not(feature = "ui"))]
+        let _ = entry;
+    }
+
+    fn choice(&self, content: &BibleContent) -> Option<KindChoice> {
+        Some(KindChoice {
+            label: "Traducción".into(),
+            options: self
+                .db
+                .list_bibles()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|b| CreationChoice {
+                    label: format!("{} · {}", b.abbrev, b.name_local).into(),
+                    subtitle: b.language.into(),
+                    id: b.id.into(),
+                })
+                .collect(),
+            current: Some(content.bible_id.clone()),
+        })
+    }
+
+    fn choose(&self, content: &mut BibleContent, id: &str) -> bool {
+        if content.bible_id == id {
+            return false;
+        }
+        id.clone_into(&mut content.bible_id);
+        true
+    }
+
+    fn without_marks(&self, content: &mut BibleContent) {
+        content.highlights.clear();
     }
 }

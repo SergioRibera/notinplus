@@ -1,6 +1,9 @@
-//! "Leer en otras apps": a zip other programs open. PDFs carry the
-//! ink drawn on them, canvases become one-page PDFs, notes stay
-//! markdown and the Bible's highlights become a markdown list.
+//! "Leer en otras apps": a zip other programs open.
+//!
+//! Each kind exports its documents as a common file (PDFs with the ink
+//! drawn on them, canvases as one-page PDFs, notes as markdown), and the
+//! highlights, annotations and bookmarks of any document become a
+//! markdown list beside it.
 
 use std::io::{Cursor, Write};
 
@@ -104,8 +107,9 @@ fn composite(doc: &Doc, area: (f32, f32, f32, f32), rgba: &mut [u8], w: u32, h: 
     let _ = surface.read_pixels(&info, rgba, usize::try_from(w).unwrap_or(0) * 4, (0, 0));
 }
 
-fn flattened_pdf(item: ItemId) -> Option<Vec<u8>> {
-    let bytes = bodies::read_pdf(item).ok()?;
+/// The PDF `bytes` kept by `item` with the ink drawn on its pages.
+pub(crate) fn flattened_pdf(item: ItemId, bytes: &[u8]) -> Option<Vec<u8>> {
+    let bytes = bytes.to_vec();
     let pdf = freya_pdf::PdfDocument::open_bytes(bytes.clone()).ok()?;
     let doc = bodies::read_doc(item).ok();
     let rects = page_world_rects(pdf.page_sizes(), PAGE_GAP);
@@ -132,7 +136,8 @@ fn flattened_pdf(item: ItemId) -> Option<Vec<u8>> {
     image_pdf(&pages).ok().or(Some(bytes))
 }
 
-fn canvas_pdf(item: ItemId, paper: [u8; 4]) -> Option<Vec<u8>> {
+/// Canvas `item` as one page of `paper`, cropped to its ink.
+pub(crate) fn canvas_pdf(item: ItemId, paper: [u8; 4]) -> Option<Vec<u8>> {
     let doc = bodies::read_doc(item).ok()?;
     let mut bounds: Option<(f32, f32, f32, f32)> = None;
     for p in doc
@@ -173,14 +178,10 @@ fn canvas_pdf(item: ItemId, paper: [u8; 4]) -> Option<Vec<u8>> {
     .ok()
 }
 
-fn bible_markdown(item: ItemId) -> Option<String> {
-    use notein_plugin::kind::DocumentKind;
-    use notein_plugin::payload::Payload;
-    let bytes = bodies::read_plugin_snapshot(item, notein_bible::kind::KIND).ok()??;
-    let content = notein_bible::BibleContent::from_bytes(&bytes).ok()?;
-    let kind = crate::plugins::builtin::bible_kind()?;
-    let mut out = String::from("# Resaltados\n\n");
-    for mark in kind.marks(&content) {
+/// The marks of a document as a markdown list.
+fn marks_markdown(marks: &[notein_plugin::kind::Mark<Vec<u8>>]) -> String {
+    let mut out = String::from("# Marcadores\n\n");
+    for mark in marks {
         out.push_str("- **");
         out.push_str(&mark.title);
         out.push_str("**");
@@ -190,7 +191,7 @@ fn bible_markdown(item: ItemId) -> Option<String> {
         }
         out.push('\n');
     }
-    Some(out)
+    out
 }
 
 /// Build the zip for `items` (paths follow the library's folders).
@@ -221,27 +222,28 @@ pub fn build(
         } else {
             format!("{folder}/{}", file_name(&item.name))
         };
-        let entry: Option<(String, Vec<u8>)> = match item.kind.plugin_id.as_str() {
-            crate::plugins::builtin::pdf::KIND => {
-                flattened_pdf(item.id).map(|b| (format!("{base}.pdf"), b))
-            }
-            crate::plugins::builtin::canvas::KIND => {
-                canvas_pdf(item.id, item.color.unwrap_or([247, 245, 240, 255]))
-                    .map(|b| (format!("{base}.pdf"), b))
-            }
-            notein_notes::kind::KIND => bodies::read_plugin_snapshot(item.id, notein_notes::kind::KIND)
-                .ok()
-                .flatten()
-                .map(|bytes| {
-                    let markdown = notein_notes::kind::NoteContent::markdown_of(&bytes);
-                    (format!("{base}.md"), markdown.into_bytes())
-                }),
-            notein_bible::kind::KIND => {
-                bible_markdown(item.id).map(|m| (format!("{base} — resaltados.md"), m.into_bytes()))
-            }
-            _ => None,
+        let Some(kind) = crate::plugins::kind(&item.kind.plugin_id) else {
+            continue;
         };
-        if let Some((path, bytes)) = entry {
+        let content = crate::plugins::content::read(item.id, &item.kind.plugin_id)
+            .unwrap_or_else(|| kind.empty_content());
+        let attachment = kind
+            .info()
+            .attachment
+            .and_then(|_| bodies::read_pdf(item.id).ok());
+        let meta = crate::plugins::content::meta(item);
+        let mut files = Vec::new();
+        if let Some(file) = kind.export(meta, &content, attachment.as_deref()) {
+            files.push((format!("{base}.{}", file.extension), file.bytes));
+        }
+        let marks = kind.marks(&content);
+        if !marks.is_empty() {
+            files.push((
+                format!("{base} — marcadores.md"),
+                marks_markdown(&marks).into_bytes(),
+            ));
+        }
+        for (path, bytes) in files {
             zip.start_file(path, options)?;
             zip.write_all(&bytes)?;
         }

@@ -9,7 +9,7 @@ use crate::face::ErasedFace;
 use crate::info::PluginInfo;
 use crate::kind::{Hit, SearchQuery};
 use crate::manifest::PluginManifest;
-use crate::plugin::{Plugin, PluginSettings, Registrar};
+use crate::plugin::{Font, Plugin, PluginSettings, Registrar};
 use crate::services::Host;
 
 /// Where a plugin came from.
@@ -230,6 +230,24 @@ impl PluginCatalog {
             .flat_map(|p| p.faces.iter())
             .find(|f| f.kind_id() == id)
             .cloned()
+    }
+
+    /// The kind notebooks are made of ([`KindInfo::notebook`]).
+    ///
+    /// [`KindInfo::notebook`]: crate::kind::KindInfo::notebook
+    #[must_use]
+    pub fn notebook_kind(&self) -> Option<Arc<dyn ErasedKind>> {
+        self.active()
+            .flat_map(|p| p.kinds.iter())
+            .find(|k| k.info().notebook)
+            .cloned()
+    }
+
+    /// The typefaces of every plugin, on or off: text already laid out
+    /// with them keeps its face.
+    #[must_use]
+    pub fn fonts(&self) -> Vec<Font> {
+        self.plugins.iter().flat_map(|p| p.plugin.fonts()).collect()
     }
 
     /// Plugin that owns kind `id`.

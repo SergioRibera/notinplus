@@ -1,9 +1,8 @@
 //! Font family + size constants.
 //!
 //! Lora (SIL OFL) is bundled under `assets/fonts/`. Freya resolves
-//! family names against the font cache seeded by the host; the host
-//! must load the bundled face at startup for `font_family: FAMILY` to
-//! resolve. If the face is unavailable the system serif is used, which
+//! family names against the font cache seeded by the host, which
+//! registers the plugin's fonts at startup. If the face is unavailable the system serif is used, which
 //! is close enough for a visual fallback.
 
 pub const FAMILY: &str = "Lora";

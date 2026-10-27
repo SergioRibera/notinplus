@@ -18,7 +18,7 @@ use notein_plugin::services::Placement;
 use notein_ui_kit::theme::{Palette, palette};
 use notein_ui_kit::{RefChip, tokens};
 
-use crate::deep_link::{self, DeepLink};
+use crate::deep_link;
 use crate::references;
 use crate::state::LibraryView;
 
@@ -59,8 +59,12 @@ pub fn show_marks() -> bool {
 
 /// A configured [`MarkdownEditor`] over `value`.
 pub fn editor(value: impl Into<Writable<String>>, controller: EditorController) -> MarkdownEditor {
-    MarkdownEditor::new(value)
-        .controller(controller)
+    configure(MarkdownEditor::new(value).controller(controller))
+}
+
+/// Set `editor` up the way every editor in Notein is.
+pub fn configure(editor: MarkdownEditor) -> MarkdownEditor {
+    editor
         .theme(theme(&palette()))
         .syntax_reveal(show_marks())
         .decorator(SchemeEmbed::new(deep_link::SCHEME, |embed| {
@@ -96,12 +100,15 @@ fn suggestion(found: references::Suggestion) -> Suggestion {
             item,
             anchor,
             ..
-        } if plugin_id == notein_notes::kind::KIND => {
-            let heading = notein_notes::NoteAnchor::decode(anchor).and_then(|a| a.heading);
-            let item = crate::library::ItemId(*item);
+        } => {
+            let (kind, doc, anchor) = (
+                plugin_id.clone(),
+                notein_plugin::DocId(*item),
+                anchor.clone(),
+            );
             SuggestionAction::Run(SuggestionRun::new(move |controller| {
-                if let Some(slug) = &heading {
-                    crate::notes_face::pin_heading(item, slug);
+                if let Some(kind) = crate::plugins::kind(&kind) {
+                    kind.cited(doc, &anchor);
                 }
                 controller.insert_embed(&label, &url);
             }))
@@ -110,7 +117,7 @@ fn suggestion(found: references::Suggestion) -> Suggestion {
             label: found.label.clone(),
             url: url.clone(),
         },
-        SourceRef::Plugin { .. } | SourceRef::Canvas { .. } => SuggestionAction::InsertEmbed {
+        SourceRef::Canvas { .. } => SuggestionAction::InsertEmbed {
             label: found.label.clone(),
             url,
         },

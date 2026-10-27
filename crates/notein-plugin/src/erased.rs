@@ -6,11 +6,14 @@
 
 use std::sync::Arc;
 
-use crate::create::{Created, CreationEntry, CreationError, CreationRequest};
+use crate::bookmark::SourceRef;
+use crate::create::{
+    Created, CreationEntry, CreationError, CreationRequest, ImportPreview, ImportedFile,
+};
 use crate::doc::{DocId, DocMeta};
 use crate::kind::{
-    ActionEffect, ChipView, DocumentKind, Hit, IndexReport, KindAction, KindInfo, Mark,
-    OutlineNode, SearchQuery, SelectionSupport,
+    ActionEffect, ChipView, DocumentKind, ExportFile, Hit, IndexReport, KindAction, KindChoice,
+    KindInfo, Mark, OutlineNode, SearchQuery, SelectionSupport,
 };
 use crate::payload::Payload;
 
@@ -36,6 +39,36 @@ pub trait ErasedKind: Send + Sync {
     ) -> Result<Created<Vec<u8>>, CreationError>;
     /// Bytes of an empty document.
     fn empty_content(&self) -> Vec<u8>;
+    fn launch(&self, entry: &str);
+    /// # Errors
+    /// The file is not one this kind opens.
+    fn inspect(&self, entry: &str, file: ImportedFile<'_>) -> Result<ImportPreview, CreationError>;
+    /// New content bytes after the kept file was replaced.
+    ///
+    /// # Errors
+    /// The kind keeps no file or this one cannot be read.
+    fn replace_attachment(
+        &self,
+        file: ImportedFile<'_>,
+        old: &[u8],
+    ) -> Result<Vec<u8>, CreationError>;
+    fn thumbnail(&self, content: &[u8], attachment: &[u8]) -> Option<Vec<u8>>;
+    fn details(&self, content: &[u8]) -> Option<String>;
+    fn choice(&self, content: &[u8]) -> Option<KindChoice>;
+    /// New content bytes when option `id` changed something.
+    fn choose(&self, content: &[u8], id: &str) -> Option<Vec<u8>>;
+    fn excerpt(&self, content: &[u8]) -> Option<String>;
+    fn references(&self, content: &[u8]) -> Option<Vec<SourceRef>>;
+    /// Content bytes without highlights, annotations and bookmarks;
+    /// `None` when `content` does not decode.
+    fn without_marks(&self, content: &[u8]) -> Option<Vec<u8>>;
+    fn export(
+        &self,
+        doc: DocMeta<'_>,
+        content: &[u8],
+        attachment: Option<&[u8]>,
+    ) -> Option<ExportFile>;
+    fn cited(&self, doc: DocId, anchor: &[u8]);
 }
 
 pub(crate) struct KindAdapter<K: DocumentKind>(pub(crate) Arc<K>);
@@ -146,5 +179,69 @@ impl<K: DocumentKind> ErasedKind for KindAdapter<K> {
 
     fn empty_content(&self) -> Vec<u8> {
         K::Content::default().to_bytes()
+    }
+
+    fn launch(&self, entry: &str) {
+        self.0.launch(entry);
+    }
+
+    fn inspect(&self, entry: &str, file: ImportedFile<'_>) -> Result<ImportPreview, CreationError> {
+        self.0.inspect(entry, file)
+    }
+
+    fn replace_attachment(
+        &self,
+        file: ImportedFile<'_>,
+        old: &[u8],
+    ) -> Result<Vec<u8>, CreationError> {
+        self.0
+            .replace_attachment(file, &Self::content(old))
+            .map(|content| content.to_bytes())
+    }
+
+    fn thumbnail(&self, content: &[u8], attachment: &[u8]) -> Option<Vec<u8>> {
+        self.0.thumbnail(&Self::content(content), attachment)
+    }
+
+    fn details(&self, content: &[u8]) -> Option<String> {
+        self.0.details(&Self::content(content))
+    }
+
+    fn choice(&self, content: &[u8]) -> Option<KindChoice> {
+        self.0.choice(&Self::content(content))
+    }
+
+    fn choose(&self, content: &[u8], id: &str) -> Option<Vec<u8>> {
+        let mut content = Self::content(content);
+        self.0.choose(&mut content, id).then(|| content.to_bytes())
+    }
+
+    fn excerpt(&self, content: &[u8]) -> Option<String> {
+        self.0.excerpt(&Self::content(content))
+    }
+
+    fn references(&self, content: &[u8]) -> Option<Vec<SourceRef>> {
+        self.0.references(&Self::content(content))
+    }
+
+    fn without_marks(&self, content: &[u8]) -> Option<Vec<u8>> {
+        let mut content = K::Content::from_bytes(content).ok()?;
+        self.0.without_marks(&mut content);
+        Some(content.to_bytes())
+    }
+
+    fn export(
+        &self,
+        doc: DocMeta<'_>,
+        content: &[u8],
+        attachment: Option<&[u8]>,
+    ) -> Option<ExportFile> {
+        self.0.export(doc, &Self::content(content), attachment)
+    }
+
+    fn cited(&self, doc: DocId, anchor: &[u8]) {
+        if let Ok(anchor) = K::Anchor::from_bytes(anchor) {
+            self.0.cited(doc, &anchor);
+        }
     }
 }

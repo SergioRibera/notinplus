@@ -11,6 +11,8 @@ pub mod db;
 pub mod fonts;
 pub mod import;
 pub mod kind;
+#[cfg(feature = "ui")]
+pub mod plugin;
 #[cfg(feature = "importer")]
 pub mod install_background;
 #[cfg(feature = "importer")]
@@ -32,4 +34,6 @@ pub mod ui {
 pub use anchor::BibleAnchor;
 pub use db::Db;
 pub use kind::{BibleContent, BibleKind};
+#[cfg(feature = "ui")]
+pub use plugin::{BibleFace, BiblePlugin};
 pub use plugin_config::{SharedConfig, new_shared};
