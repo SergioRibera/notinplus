@@ -547,6 +547,9 @@ const JOHN_3: &str = r#"<osis><osisText>
 /// A Bible item open at John 3, with cross-references on verse 16.
 fn bible_john_3() -> Element {
     use_hook(|| {
+        // The catalog opens the database first; a second connection made
+        // while it still creates the tables finds it locked.
+        drop(crate::plugins::catalog());
         let db = &notein_bible::Db::open_default().expect("open bible db");
         if db.list_bibles().unwrap_or_default().is_empty() {
             notein_bible::import::osis::import_osis_xml(db, "spa_rv1960", JOHN_3.as_bytes())
