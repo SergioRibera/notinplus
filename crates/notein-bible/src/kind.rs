@@ -280,6 +280,7 @@ impl DocumentKind for BibleKind {
             tint: false,
             notebook: false,
             body: false,
+            records: true,
         }
     }
 

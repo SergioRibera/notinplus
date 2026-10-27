@@ -50,6 +50,13 @@ impl SharedBody {
         })
     }
 
+    /// Something changed on this device: the others see it now, the disk
+    /// a moment later.
+    fn changed_here(&self) {
+        crate::sync::doc_changed(self.item);
+        self.write_later();
+    }
+
     /// Save the body once typing pauses, and push what is left.
     fn write_later(&self) {
         let (item, doc) = (self.item, Arc::clone(&self.doc));
@@ -96,9 +103,7 @@ impl TextBody for SharedBody {
             return false;
         }
         drop(doc);
-        // Others see each change as it is typed; only the disk waits.
-        crate::sync::doc_changed(self.item);
-        self.write_later();
+        self.changed_here();
         crate::sync::live(
             self.item,
             &LiveMessage::Caret {
@@ -115,5 +120,27 @@ impl TextBody for SharedBody {
 
     fn typing(&self) -> flume::Receiver<Typing> {
         crate::sync::live::watch_typing(self.item)
+    }
+}
+
+impl notein_plugin::services::Records for SharedBody {
+    fn entries(&self) -> Vec<(String, Vec<u8>)> {
+        open_docs::lock(&self.doc).records()
+    }
+
+    fn set(&self, key: &str, value: &[u8]) {
+        if open_docs::lock(&self.doc).set_record(key, value) {
+            self.changed_here();
+        }
+    }
+
+    fn remove(&self, key: &str) {
+        if open_docs::lock(&self.doc).remove_record(key) {
+            self.changed_here();
+        }
+    }
+
+    fn changes(&self) -> flume::Receiver<()> {
+        open_docs::watch(self.item)
     }
 }

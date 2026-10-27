@@ -74,6 +74,10 @@ pub struct KindInfo {
     /// Documents of this kind keep a body the shell syncs and merges
     /// itself (strokes, collaborative text) next to their content.
     pub body: bool,
+    /// Documents of this kind keep [`Records`](crate::services::Records):
+    /// keyed values the shell merges per key with other devices and
+    /// people, live.
+    pub records: bool,
 }
 
 /// One full-text match.

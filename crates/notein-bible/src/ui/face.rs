@@ -6,8 +6,10 @@
 
 mod highlight;
 mod nav;
+mod presence;
 mod refs;
 mod search;
+mod shared;
 mod translation;
 
 use std::cell::Cell;
@@ -307,6 +309,11 @@ fn use_reader(ctx: &FaceContext<BibleKind>, db: &Db) -> Reader {
             state
         }
     });
+    let records = use_hook({
+        let (host, doc) = (Arc::clone(&ctx.host), ctx.doc);
+        move || host.records(doc)
+    });
+    shared::use_shared_highlights(&records, state);
     let reader = Reader {
         doc: ctx.doc,
         host: Arc::clone(&ctx.host),
@@ -347,11 +354,16 @@ fn use_reader(ctx: &FaceContext<BibleKind>, db: &Db) -> Reader {
             spawn(async move {
                 while changes.recv_async().await.is_ok() {
                     let saved = store.load();
-                    if saved == BibleSnapshot::from_state(&state.peek()) {
+                    // Highlights merge as records; where someone else reads is
+                    // theirs. Only another translation (the edit sheet) moves
+                    // this reader.
+                    if saved.bible_id == state.peek().bible_id {
                         continue;
                     }
                     let mut st = state.write();
+                    let highlights = std::mem::take(&mut st.highlights);
                     saved.apply_to(&mut st);
+                    st.highlights = highlights;
                     let fallback = st.bible_id.clone();
                     settle_place(&db, &mut st, &fallback);
                     if let Err(e) = st.ensure_current_loaded(&db) {
@@ -408,6 +420,7 @@ impl Component for BibleViewer {
         let reader = use_reader(&self.ctx, &self.db);
         let gesture = highlight::Gesture::use_gesture();
         gesture.use_end_with_chapter(&reader);
+        let others = presence::use_others(&reader, gesture);
         let viewport_top = use_state(|| 0.0_f32);
         let mut width = use_state(|| 0.0_f32);
         let wide = *width.read() >= refs::ROOM_FOR_PANEL;
@@ -448,7 +461,17 @@ impl Component for BibleViewer {
                     .child(label().color(palette().t2).text("Cargando capítulo…"))
                     .into_element()
             },
-            |data| chapter_body(&reader, data, &highlights, gesture, scroll_ctx, wide),
+            |data| {
+                chapter_body(
+                    &reader,
+                    data,
+                    &highlights,
+                    gesture,
+                    others,
+                    scroll_ctx,
+                    wide,
+                )
+            },
         );
         let on_back = has_back.then(|| {
             let reader = reader.clone();
@@ -505,6 +528,7 @@ fn chapter_body(
     data: &ChapterRow,
     highlights: &[BibleBookmark],
     gesture: highlight::Gesture,
+    others: Rc<Vec<reader::Other>>,
     scroll_ctx: VerseScrollCtx,
     wide: bool,
 ) -> Element {
@@ -530,6 +554,7 @@ fn chapter_body(
         on_tap: gesture.tap_handler(reader),
         preview: gesture.preview(),
         selected: gesture.selected(reader),
+        others,
         font_size: 22.0,
         line_height: 1.65,
     };

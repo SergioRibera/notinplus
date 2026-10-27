@@ -154,6 +154,7 @@ impl DocumentKind for CanvasKind {
             tint: true,
             notebook: true,
             body: true,
+            records: false,
         }
     }
 

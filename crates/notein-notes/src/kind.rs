@@ -258,6 +258,7 @@ impl DocumentKind for NotesKind {
             tint: true,
             notebook: false,
             body: true,
+            records: false,
         }
     }
 

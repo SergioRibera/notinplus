@@ -66,8 +66,8 @@ pub use manifest::{ManifestError, ManifestLibrary, ManifestRequirement, PluginMa
 pub use payload::{Payload, PayloadError};
 pub use plugin::{Font, Plugin, PluginSettings, Registrar};
 pub use services::{
-    HeaderPress, Host, HostServices, HostToast, Jump, Peer, Presence, Progress, Share, TextBody,
-    ToastTone, Typing,
+    HeaderPress, Host, HostServices, HostToast, Jump, Peer, Presence, Progress, Records, Share,
+    TextBody, ToastTone, Typing,
 };
 pub use target::Target;
 pub use text::{Folded, fold};

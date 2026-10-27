@@ -399,6 +399,14 @@ pub struct HighlightPreview {
 /// Verses of the chapter a selection holds, in order.
 pub type Verses = Rc<BTreeSet<u16>>;
 
+/// Someone else reading this chapter, on the verses they selected.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Other {
+    pub verses: Verses,
+    pub color: Color,
+    pub name: String,
+}
+
 /// What every paragraph of a chapter shares: references, footnotes, the
 /// gesture callbacks and the type settings.
 #[derive(Clone, PartialEq)]
@@ -417,6 +425,8 @@ pub struct Reading {
     pub preview: Option<HighlightPreview>,
     /// The verses the selection holds, underlined; empty without one.
     pub selected: Verses,
+    /// Other people's selections in this chapter.
+    pub others: Rc<Vec<Other>>,
     pub font_size: f32,
     pub line_height: f32,
 }
@@ -743,6 +753,23 @@ impl VerseParagraph {
         (p, verse_ranges, highlight_items)
     }
 
+    /// Text ranges of other people's selections, with their color; the
+    /// first range of each also carries their name.
+    fn others(&self, ranges: &[VerseRange]) -> Vec<(usize, usize, Color, Option<String>)> {
+        let mut out = Vec::new();
+        for other in self.reading.others.iter() {
+            let mut named = false;
+            for (start, end, verse) in ranges {
+                if other.verses.contains(verse) {
+                    let name = (!named).then(|| other.name.clone());
+                    named = true;
+                    out.push((*start, *end, other.color, name));
+                }
+            }
+        }
+        out
+    }
+
     /// Text ranges of the verses the selection works on: the one a long
     /// press holds and the ones the selection holds.
     fn underlined(&self, ranges: &[VerseRange], held: Option<u16>) -> Vec<(usize, usize)> {
@@ -801,7 +828,8 @@ impl Component for VerseParagraph {
 
         let _ = *laid_out.read();
         let underlined = self.underlined(&verse_ranges, *drag.held.read());
-        let bg_rects = build_bg_rects(&holder, &highlight_items, &underlined);
+        let others = self.others(&verse_ranges);
+        let bg_rects = build_bg_rects(&holder, &highlight_items, &underlined, &others);
 
         // Gesture wiring: paragraph-level so a tap anywhere in verse
         // text — not just the tiny superscript marker — fires.
@@ -907,6 +935,7 @@ fn build_bg_rects(
     holder: &ParagraphHolder,
     items: &[(usize, usize, Color)],
     underlined: &[(usize, usize)],
+    others: &[(usize, usize, Color, Option<String>)],
 ) -> impl IntoElement + use<> {
     // `Layer::Relative(-1)` pushes every bg rect one step behind the
     // paragraph sibling in the paint order. Hit-testing then prefers
@@ -918,7 +947,7 @@ fn build_bg_rects(
         .width(Size::fill())
         .height(Size::fill());
     // Skip empty items so unhighlighted paragraphs do not allocate.
-    if items.is_empty() && underlined.is_empty() {
+    if items.is_empty() && underlined.is_empty() && others.is_empty() {
         return container;
     }
     let inner = holder.0.borrow();
@@ -962,6 +991,26 @@ fn build_bg_rects(
                     .height(Size::px(b.height()))
                     .background(*color),
             );
+        }
+    }
+    for (start, end, color, name) in others.iter().filter(|(s, e, _, _)| s != e) {
+        for (index, b) in boxes(*start, *end).into_iter().enumerate() {
+            container = container.child(
+                rect()
+                    .layer(Layer::Relative(-1))
+                    .position(
+                        Position::new_absolute()
+                            .top(b.max_y() - 1.0)
+                            .left(b.min_x()),
+                    )
+                    .width(Size::px(b.width()))
+                    .height(Size::px(2.5))
+                    .corner_radius(1.25)
+                    .background(*color),
+            );
+            if let Some(name) = name.as_ref().filter(|_| index == 0) {
+                container = container.child(name_tag(name, *color, b.min_x(), b.min_y()));
+            }
         }
     }
     let ink = palette().accent;
@@ -1348,4 +1397,25 @@ fn section_header(text: &str) -> impl IntoElement {
 
 fn spacer(height: f32) -> impl IntoElement {
     rect().width(Size::fill()).height(Size::px(height))
+}
+
+/// Whose selection starts here, on a tag above the line.
+fn name_tag(name: &str, color: Color, left: f32, top: f32) -> Rect {
+    const SIZE: f32 = 11.0;
+    let height = SIZE + 5.0;
+    rect()
+        .position(Position::new_absolute().top(top - height).left(left))
+        .height(Size::px(height))
+        .padding((0., 5.))
+        .corner_radius(4.)
+        .background(color)
+        .center()
+        .child(
+            label()
+                .font_size(SIZE)
+                .font_weight(FontWeight::BOLD)
+                .color(Color::from_rgb(21, 21, 26))
+                .max_lines(1)
+                .text(name.to_owned()),
+        )
 }

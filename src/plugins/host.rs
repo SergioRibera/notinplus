@@ -201,6 +201,10 @@ impl HostServices for ShellHost {
         super::body::SharedBody::open(crate::library::ItemId(doc.0))
     }
 
+    fn records(&self, doc: DocId) -> Arc<dyn notein_plugin::Records> {
+        super::body::SharedBody::open(crate::library::ItemId(doc.0))
+    }
+
     fn doc_name(&self, doc: DocId) -> Option<String> {
         let data = crate::state::LibraryView::try_get()?.peek_data()?;
         data.item(crate::library::ItemId(doc.0))

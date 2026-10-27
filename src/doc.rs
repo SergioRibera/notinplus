@@ -242,6 +242,28 @@ impl Doc {
         }
     }
 
+    /// Records a plugin keeps here, merged per key with other devices.
+    #[must_use]
+    pub fn records(&self) -> Vec<(String, Vec<u8>)> {
+        self.store.records()
+    }
+
+    /// Set the record `key`; returns whether it changed.
+    pub fn set_record(&mut self, key: &str, bytes: &[u8]) -> bool {
+        self.store.set_record(key, bytes).unwrap_or_else(|err| {
+            log::error!("doc record update: {err}");
+            false
+        })
+    }
+
+    /// Remove the record `key`; returns whether it was there.
+    pub fn remove_record(&mut self, key: &str) -> bool {
+        self.store.remove_record(key).unwrap_or_else(|err| {
+            log::error!("doc record removal: {err}");
+            false
+        })
+    }
+
     /// Record `op` in the store and mirror it into the materialised
     /// state. A store failure is logged and the materialised state
     /// still moves, so the user never loses the edit on screen.

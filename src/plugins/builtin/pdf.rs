@@ -272,6 +272,7 @@ impl DocumentKind for PdfKind {
             tint: true,
             notebook: false,
             body: false,
+            records: false,
         }
     }
 

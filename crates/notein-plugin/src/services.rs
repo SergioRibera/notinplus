@@ -209,10 +209,35 @@ pub trait HostServices: Send + Sync + std::fmt::Debug {
     /// The name of `doc` in the library. Call it from the UI thread.
     fn doc_name(&self, doc: DocId) -> Option<String>;
 
+    /// The records of `doc`, for kinds whose
+    /// [`KindInfo::records`](crate::kind::KindInfo::records) is set. Keep
+    /// it while the document is on screen.
+    fn records(&self, doc: DocId) -> Arc<dyn Records>;
+
     /// Who else has `doc` open, and where they are in it. Keep it while
     /// the document is on screen: holding it is what tells the others
     /// this person is here.
     fn presence(&self, doc: DocId) -> Arc<dyn Presence>;
+}
+
+/// Values a document keeps by key, merged with every device and person.
+///
+/// Two people changing different keys both keep their change; the same
+/// key keeps one. Use it for anything several people
+/// add to at once (highlights, comments, list entries) instead of one
+/// content blob, where the last writer wins.
+pub trait Records: Send + Sync {
+    /// Every record, sorted by key.
+    fn entries(&self) -> Vec<(String, Vec<u8>)>;
+    fn get(&self, key: &str) -> Option<Vec<u8>> {
+        self.entries()
+            .into_iter()
+            .find_map(|(held, value)| (held == key).then_some(value))
+    }
+    fn set(&self, key: &str, value: &[u8]);
+    fn remove(&self, key: &str);
+    /// Fires when records arrive from elsewhere.
+    fn changes(&self) -> flume::Receiver<()>;
 }
 
 /// Someone else with the same document open.

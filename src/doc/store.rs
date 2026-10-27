@@ -48,6 +48,8 @@ const BRUSHES: &str = "brushes";
 const LAYERS: &str = "layers";
 const BOOKMARKS: &str = "bookmarks";
 const BODY: &str = "body";
+/// Records a plugin keeps in the document, merged per key.
+const RECORDS: &str = "records";
 
 const ACTIVE_LAYER: &str = "active_layer";
 const NEXT_LAYER_ID: &str = "next_layer_id";
@@ -167,6 +169,47 @@ impl DocStore {
         }
         body.update(text, UpdateOptions::default())
             .map_err(|err| DocError::Store(err.to_string()))?;
+        self.doc.commit();
+        Ok(true)
+    }
+
+    /// Every record, by key.
+    pub(super) fn records(&self) -> Vec<(String, Vec<u8>)> {
+        let mut out = Vec::new();
+        self.doc.get_map(RECORDS).for_each(|key, value| {
+            if let ValueOrContainer::Value(value) = value
+                && let Some(bytes) = value.as_binary()
+            {
+                out.push((key.to_owned(), bytes.to_vec()));
+            }
+        });
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
+    /// Set the record `key`; two devices setting different keys both
+    /// keep theirs, the same key keeps one. Returns whether it changed.
+    pub(super) fn set_record(&self, key: &str, bytes: &[u8]) -> Result<bool, DocError> {
+        let map = self.doc.get_map(RECORDS);
+        if let Some(ValueOrContainer::Value(value)) = map.get(key)
+            && value
+                .as_binary()
+                .is_some_and(|held| held.as_slice() == bytes)
+        {
+            return Ok(false);
+        }
+        map.insert(key, bytes.to_vec())?;
+        self.doc.commit();
+        Ok(true)
+    }
+
+    /// Remove the record `key`. Returns whether it was there.
+    pub(super) fn remove_record(&self, key: &str) -> Result<bool, DocError> {
+        let map = self.doc.get_map(RECORDS);
+        if map.get(key).is_none() {
+            return Ok(false);
+        }
+        map.delete(key)?;
         self.doc.commit();
         Ok(true)
     }
