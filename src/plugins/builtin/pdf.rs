@@ -303,6 +303,10 @@ impl DocumentKind for PdfKind {
         IndexReport::complete(total)
     }
 
+    fn index_size(&self, content: &PdfContent) -> u32 {
+        content.page_count
+    }
+
     fn index_status(&self) -> Vec<(DocId, IndexReport)> {
         self.index
             .read()

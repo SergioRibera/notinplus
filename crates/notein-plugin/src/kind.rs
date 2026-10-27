@@ -361,6 +361,13 @@ pub trait DocumentKind: Send + Sync + 'static {
         Vec::new()
     }
 
+    /// How many units indexing `content` goes through (a PDF's pages);
+    /// 0 when it is quick. The shell shows the progress of large ones.
+    fn index_size(&self, content: &Self::Content) -> u32 {
+        let _ = content;
+        0
+    }
+
     /// Forget a document that left the library.
     fn forget(&self, doc: DocId) {
         let _ = doc;

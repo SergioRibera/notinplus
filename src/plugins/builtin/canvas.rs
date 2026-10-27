@@ -306,12 +306,14 @@ impl DocumentKind for CanvasKind {
 
     fn launch(&self, entry: &str) {
         match entry {
-            ENTRY_SCRATCH => crate::space::open(
-                crate::library::TabTarget::Scratch(crate::library::ScratchId::fresh()),
-                crate::space::OpenHint::Focused,
-            ),
+            ENTRY_SCRATCH => {
+                crate::space::open(
+                    crate::library::TabTarget::Scratch(crate::library::ScratchId::fresh()),
+                    crate::space::OpenHint::Focused,
+                );
+            }
             ENTRY_NOTEBOOK => {
-                crate::flows::pickers::document_picker(crate::flows::pickers::Purpose::NotebookFor)
+                crate::flows::pickers::document_picker(crate::flows::pickers::Purpose::NotebookFor);
             }
             _ => {}
         }

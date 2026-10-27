@@ -762,61 +762,67 @@ fn create(entry: CatalogEntry, context: Context, request: Request) {
 }
 
 /// Draw the cover of an attachment and index it in the background,
-/// showing progress while the kind reports a large job.
+/// showing progress while a large one prepares.
 fn prepare_attachment(item: ItemId, kind_id: &str, bytes: Vec<u8>) {
     let Some(kind) = crate::plugins::kind(kind_id) else {
         return;
     };
     let content = content::read(item, kind_id).unwrap_or_else(|| kind.empty_content());
     let doc = content::doc_id(item);
-    let color = crate::references::kind_color(&palette(), kind.info().color);
+    let total = kind.index_size(&content);
+    // Opened before the job starts: a fast machine may finish it before
+    // the first look at its progress.
+    let done = (total >= LARGE_IMPORT).then(|| {
+        let done = State::create_in_scope(0u32, ScopeId::ROOT);
+        Sheet::titled("Importando…")
+            .child(Preparing {
+                done,
+                total,
+                color: crate::references::kind_color(&palette(), kind.info().color),
+            })
+            .footer(SheetFooter::new([Button::new("Seguir en segundo plano")
+                .on_press(|_| ModalController::get().close())
+                .into_element()]))
+            .open();
+        done
+    });
     let (finished, done_rx) = flume::bounded::<()>(1);
     {
         let kind = std::sync::Arc::clone(&kind);
         std::thread::spawn(move || {
-            if let Some(cover) = kind.thumbnail(&content, &bytes)
-                && let Ok(handle) = crate::library::shared_blocking()
-            {
-                let mut lib = pollster::block_on(handle.lock());
-                if let Err(err) = pollster::block_on(lib.set_item_thumbnail(item, Some(cover))) {
-                    log::error!("cover of {item}: {err}");
-                }
+            match kind.thumbnail(&content, &bytes) {
+                Some(cover) => match crate::library::shared_blocking() {
+                    Ok(handle) => {
+                        let mut lib = pollster::block_on(handle.lock());
+                        if let Err(err) =
+                            pollster::block_on(lib.set_item_thumbnail(item, Some(cover)))
+                        {
+                            log::error!("cover of {item}: {err}");
+                        }
+                    }
+                    Err(err) => log::error!("cover of {item}: {err}"),
+                },
+                None => log::warn!("cover of {item}: the kind drew none"),
             }
             content::index_blocking(item);
             let _ = finished.send(());
         });
     }
+    let Some(mut done) = done else {
+        return;
+    };
     spawn_in_window(async move {
-        let mut shown: Option<State<u32>> = None;
         while done_rx.try_recv().is_err() && !done_rx.is_disconnected() {
             async_io::Timer::after(PROGRESS_POLL).await;
             let report = kind
                 .index_status()
                 .into_iter()
                 .find_map(|(id, report)| (id == doc).then_some(report));
-            let Some(report) = report.filter(|r| !r.is_complete()) else {
-                continue;
-            };
-            match &mut shown {
-                Some(done) => done.set(report.done),
-                None if report.total >= LARGE_IMPORT => {
-                    let done = State::create_in_scope(report.done, ScopeId::ROOT);
-                    Sheet::titled("Importando…")
-                        .child(Preparing {
-                            done,
-                            total: report.total,
-                            color,
-                        })
-                        .footer(SheetFooter::new([Button::new("Seguir en segundo plano")
-                            .on_press(|_| ModalController::get().close())
-                            .into_element()]))
-                        .open();
-                    shown = Some(done);
-                }
-                None => {}
+            if let Some(report) = report {
+                done.set(report.done);
             }
         }
-        if shown.is_some() && ModalController::get().is_open() {
+        if ModalController::get().is_open() {
             ModalController::get().close();
         }
     });
