@@ -192,6 +192,39 @@ fn slash_menu_turns_block_into_quote() {
 }
 
 #[test]
+fn a_transclusion_pasted_mid_paragraph_splits_it_and_keeps_typing_after() {
+    let mut harness = Harness::new("antesdespués");
+    let first = harness.block(0);
+    harness.focus(first, 5);
+    let controller = harness.controller;
+    harness.runner.run_in(|| {
+        controller.insert_markdown("> [!app:live]\n>\n> texto\n>\n> — [Fuente](app://x)");
+    });
+    harness.settle();
+    harness.type_text("!");
+    assert_eq!(
+        harness.value(),
+        "antes\n\n> [!app:live]\n>\n> texto\n>\n> — [Fuente](app://x)\n\n!después\n"
+    );
+}
+
+#[test]
+fn a_transclusion_pasted_at_a_line_start_goes_before_it() {
+    let mut harness = Harness::new("arriba\n\nabajo");
+    let empty = harness.block(1);
+    harness.focus(empty, 0);
+    let controller = harness.controller;
+    harness.runner.run_in(|| {
+        controller.insert_markdown("> [!app:live]\n>\n> texto\n>\n> — [Fuente](app://x)");
+    });
+    harness.settle();
+    assert_eq!(
+        harness.value(),
+        "arriba\n\n> [!app:live]\n>\n> texto\n>\n> — [Fuente](app://x)\n\nabajo\n"
+    );
+}
+
+#[test]
 fn backspace_after_a_transclusion_removes_it_whole() {
     let mut harness =
         Harness::new("antes\n\n> [!app:live]\n>\n> texto\n>\n> — [Fuente](app://x)\n\ndespués");
