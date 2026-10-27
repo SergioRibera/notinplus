@@ -226,6 +226,37 @@ fn canonical_book_id(db: &Db, bible_id: &str, candidate: &str) -> String {
         .unwrap_or_else(|| candidate.to_owned())
 }
 
+/// Point `state` at a place that exists. A Bible opened before any
+/// translation was installed saved an empty translation and book; one
+/// whose translation was removed names one that is gone. Either way the
+/// reader starts at the first chapter of `fallback_bible`.
+fn settle_place(db: &Db, state: &mut BibleViewerState, fallback_bible: &str) {
+    let installed = db.list_bibles().unwrap_or_default();
+    if !installed.iter().any(|b| b.id == state.bible_id) {
+        fallback_bible.clone_into(&mut state.bible_id);
+        state.current_book.clear();
+        state.current_chapter = 1;
+    }
+    let books = db.list_books(&state.bible_id).unwrap_or_default();
+    if let Some(book) = books
+        .iter()
+        .find(|b| b.book_id.eq_ignore_ascii_case(&state.current_book))
+    {
+        book.book_id.clone_into(&mut state.current_book);
+    } else {
+        if let Some(first) = books.first() {
+            first.book_id.clone_into(&mut state.current_book);
+        }
+        state.current_chapter = 1;
+    }
+    let chapters = db
+        .chapter_count(&state.bible_id, &state.current_book)
+        .unwrap_or(1);
+    if state.current_chapter == 0 || state.current_chapter > chapters {
+        state.current_chapter = 1;
+    }
+}
+
 /// The reader state at mount: the saved place, overridden by a jump
 /// queued while the item was closed. Returns the verse to wash.
 fn initial_state(item: ItemId, db: &Db) -> (BibleViewerState, Option<u16>) {
@@ -243,15 +274,15 @@ fn initial_state(item: ItemId, db: &Db) -> (BibleViewerState, Option<u16>) {
         .map(|b| b.id)
         .unwrap_or_default();
     let mut state = BibleViewerState::new(first_bible.as_str(), "GEN", 1);
-    match &saved {
-        Some(snapshot) => snapshot.clone().apply_to(&mut state),
-        None => state.current_book = canonical_book_id(db, &first_bible, "GEN"),
+    if let Some(snapshot) = &saved {
+        snapshot.clone().apply_to(&mut state);
     }
     if let Some(jump) = &jump {
         state.bible_id.clone_from(&jump.bible_id);
         state.current_book = canonical_book_id(db, &jump.bible_id, &jump.book_id);
         state.current_chapter = jump.start_chapter;
     }
+    settle_place(db, &mut state, &first_bible);
     if let Ok(chapter) = db.load_chapter(&state.bible_id, &state.current_book, state.current_chapter)
     {
         state.push_chapter(chapter);
@@ -475,6 +506,7 @@ fn chapter_body(
             .map(|refs| refs.verse),
         on_highlight: gesture.handler(reader),
         preview: gesture.preview(),
+        selected: gesture.selected(),
         font_size: 22.0,
         line_height: 1.65,
     };

@@ -125,6 +125,11 @@ impl Gesture {
         Some(HighlightPreview { lo, hi, color })
     }
 
+    /// First and last verse the open menu works on.
+    pub(super) fn selected(self) -> Option<(u16, u16)> {
+        (*self.pending.read()).map(|target| target.kind.span())
+    }
+
     pub(super) fn handler(self, reader: &Reader) -> EventHandler<HighlightTarget> {
         let reader = reader.clone();
         EventHandler::new(move |target| self.open(&reader, target))

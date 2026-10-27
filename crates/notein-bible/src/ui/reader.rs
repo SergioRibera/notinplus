@@ -5,13 +5,17 @@
 //! own state; chapter navigation and selection live on
 //! [`crate::state::BibleViewerState`].
 
+use std::cell::Cell;
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use freya::components::ScrollController;
 use freya::elements::paragraph::ParagraphCursorExt;
 use freya::prelude::*;
-use freya_engine::prelude::{RectHeightStyle, RectWidthStyle};
+use freya_engine::prelude::{Paragraph as SkParagraph, RectHeightStyle, RectWidthStyle};
 
+use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 
 use crate::state::{BibleBookmark, u32_to_rgba};
@@ -173,21 +177,38 @@ pub type OnJump = EventHandler<(String, u16, u16)>;
 /// Callback fired by a verse's cross-reference icon, with the verse.
 pub type OnRefs = EventHandler<u16>;
 
-/// Chapter-scoped drag-selection cursor. Provided via `use_provide_context`
-/// at the `chapter_view` root so every `VerseMarker` can co-operate on
-/// a single multi-marker drag without the parent threading state as a
-/// prop. `start` sticks on pointer-down over a marker; `end` tracks the
-/// last marker the pointer entered while held. Global pointer-up reads
-/// both and emits a `HighlightTarget::Range` when they differ.
+/// Hold time before a still press on a verse selects it.
+const LONG_PRESS: Duration = Duration::from_millis(450);
+/// Most time between the two taps of a double tap.
+const DOUBLE_TAP: Duration = Duration::from_millis(350);
+/// Travel, in logical pixels, past which a hold is a scroll instead.
+const SLOP_PX: f32 = 8.0;
+
+/// Chapter-scoped gesture state, shared by every paragraph of the
+/// chapter through context.
+///
+/// - A mouse drag across verses: `start` sticks on pointer-down, `end`
+///   follows the verse under the pointer, and the lift opens the menu
+///   for the range. A finger drag scrolls instead, so it never grows
+///   the range.
+/// - A double tap on a verse opens the menu for it.
+/// - A long press selects the verse at once (it shows underlined) and
+///   opens the menu on the lift, so the lifting finger cannot land on
+///   the menu that just appeared under it.
 #[derive(Clone, Copy)]
 struct DragSelect {
     start: State<Option<u16>>,
     end: State<Option<u16>>,
-    /// Set true on the first marker's `pointer_down` and cleared on
-    /// global `pointer_up`. Markers mid-paragraph only extend `end`
-    /// while this is true so a stray `pointer_enter` (hover without
-    /// press) never grows the selection.
+    /// Set on a paragraph's pointer-down and cleared on the global
+    /// pointer-up. Paragraphs only extend `end` while it is set, so
+    /// hovering without a press never grows the range.
     pressing: State<bool>,
+    /// The previous tap, to tell a double tap.
+    last_tap: State<Option<(Instant, u16)>>,
+    /// Bumped by every press; a long press only fires while it holds.
+    hold: State<u64>,
+    /// The verse a long press selected, until the finger lifts.
+    held: State<Option<u16>>,
 }
 
 impl DragSelect {
@@ -206,23 +227,89 @@ impl DragSelect {
             start: State::create_in_scope(None, ScopeId::ROOT),
             end: State::create_in_scope(None, ScopeId::ROOT),
             pressing: State::create_in_scope(false, ScopeId::ROOT),
+            last_tap: State::create_in_scope(None, ScopeId::ROOT),
+            hold: State::create_in_scope(0, ScopeId::ROOT),
+            held: State::create_in_scope(None, ScopeId::ROOT),
         };
         provide_context(fresh);
         fresh
     }
 
-    fn begin(mut self, verse: u16) {
+    /// A press on `verse`; returns whether it completes a double tap.
+    fn begin(mut self, verse: u16) -> bool {
         self.start.set(Some(verse));
         self.end.set(Some(verse));
         self.pressing.set(true);
+        let now = Instant::now();
+        let double = self
+            .last_tap
+            .peek()
+            .is_some_and(|(at, v)| v == verse && now.duration_since(at) <= DOUBLE_TAP);
+        self.last_tap.set((!double).then_some((now, verse)));
+        double
     }
 
-    /// End the drag; returns the verses it spanned.
-    fn finish(mut self) -> (Option<u16>, Option<u16>) {
-        let ends = (*self.start.peek(), *self.end.peek());
+    /// Start the long-press timer of the press just begun on the
+    /// paragraph `placed` tracks.
+    fn arm_hold(mut self, placed: Rc<Cell<Area>>) {
+        let token = self.hold.peek().wrapping_add(1);
+        self.hold.set(token);
+        let origin = placed.get().origin;
+        spawn(async move {
+            async_io::Timer::after(LONG_PRESS).await;
+            // A finger that scrolled moved the paragraph, even when the
+            // scroll view swallowed its moves.
+            let now = placed.get().origin;
+            if (now.x - origin.x).hypot(now.y - origin.y) >= SLOP_PX {
+                self.cancel_hold();
+            } else {
+                self.hold_due(token);
+            }
+        });
+    }
+
+    /// The long press armed with `token` came due: select its verse when
+    /// the press is still the same, still and on one verse.
+    fn hold_due(mut self, token: u64) {
+        let still_pressing = *self.pressing.peek() && *self.hold.peek() == token;
+        let start = *self.start.peek();
+        if let Some(verse) = start.filter(|_| still_pressing && *self.end.peek() == start) {
+            self.held.set(Some(verse));
+            self.last_tap.set(None);
+        }
+    }
+
+    /// Forget the press: a scroll or a drag took it over.
+    fn cancel_hold(mut self) {
+        let token = self.hold.peek().wrapping_add(1);
+        self.hold.set(token);
+    }
+
+    /// The finger or button lifted: what the menu opens on, if the press
+    /// was a long press or a drag across verses. Every paragraph hears
+    /// the lift; the first one ends the press for all.
+    fn lift(self) -> Option<HighlightKind> {
+        if !*self.pressing.peek() {
+            return None;
+        }
+        match self.finish() {
+            (_, _, Some(verse)) => Some(HighlightKind::Verse(verse)),
+            (Some(a), Some(b), None) if a != b => Some(HighlightKind::Range(a.min(b), a.max(b))),
+            _ => None,
+        }
+    }
+
+    /// End the press; returns the verses it spanned and the verse a long
+    /// press selected.
+    fn finish(mut self) -> (Option<u16>, Option<u16>, Option<u16>) {
+        let ends = (*self.start.peek(), *self.end.peek(), *self.held.peek());
         self.start.set(None);
         self.end.set(None);
         self.pressing.set(false);
+        self.cancel_hold();
+        if self.held.peek().is_some() {
+            self.held.set(None);
+        }
         ends
     }
 }
@@ -305,6 +392,8 @@ pub struct Reading {
     pub on_highlight: OnHighlight,
     /// Colour being tried on a range while the picker is open.
     pub preview: Option<HighlightPreview>,
+    /// First and last verse the selection menu works on, underlined.
+    pub selected: Option<(u16, u16)>,
     pub font_size: f32,
     pub line_height: f32,
 }
@@ -315,6 +404,7 @@ impl std::fmt::Debug for Reading {
             .field("cross_refs", &self.cross_refs.len())
             .field("footnotes", &self.footnotes.len())
             .field("preview", &self.preview)
+            .field("selected", &self.selected)
             .field("font_size", &self.font_size)
             .field("line_height", &self.line_height)
             .finish_non_exhaustive()
@@ -503,18 +593,45 @@ fn offset_to_verse(ranges: &[VerseRange], offset: usize) -> Option<u16> {
 /// returns a stale offset and the handler fires for the wrong verse.
 /// Rebasing from `global_location` against the paragraph's own area
 /// closes the hole.
+///
+/// The laid-out paragraph measures in physical pixels, the pointer in
+/// logical ones: the point is scaled before the hit test, or on a dense
+/// screen it lands up and to the left, on an earlier verse.
 fn hit_offset(holder: &ParagraphHolder, global: CursorPoint, area: Area) -> Option<usize> {
     if area.width() <= 0.0 || area.height() <= 0.0 {
         return None;
     }
-    let inner = holder.0.borrow();
-    let data = inner.as_ref()?;
     let elem = CursorPoint::new(
         global.x - f64::from(area.min_x()),
         global.y - f64::from(area.min_y()),
     );
     let vis = holder.visible_location(elem);
-    Some(data.paragraph.cursor_index_at_point((vis.x, vis.y)))
+    let inner = holder.0.borrow();
+    let data = inner.as_ref()?;
+    let point = (vis.x * data.scale_factor, vis.y * data.scale_factor);
+    let caret = data.paragraph.cursor_index_at_point(point);
+    Some(character_at(&data.paragraph, caret, point))
+}
+
+/// The character under `point`, given the caret `cursor_index_at_point`
+/// found there. Past the middle of a character the caret sits after it,
+/// which at a verse's last character is already the next verse.
+fn character_at(paragraph: &SkParagraph, caret: usize, (x, y): (f64, f64)) -> usize {
+    let Some(before) = caret.checked_sub(1) else {
+        return caret;
+    };
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "pixel coordinates fit an f32"
+    )]
+    let (x, y) = (x as f32, y as f32);
+    let under = paragraph
+        .get_rects_for_range(before..caret, RectHeightStyle::Max, RectWidthStyle::Tight)
+        .iter()
+        .any(|b| {
+            (b.rect.left..=b.rect.right).contains(&x) && (b.rect.top..=b.rect.bottom).contains(&y)
+        });
+    if under { before } else { caret }
 }
 
 impl VerseParagraph {
@@ -602,6 +719,19 @@ impl VerseParagraph {
         }
         (p, verse_ranges, highlight_items)
     }
+
+    /// Text ranges of the verses the selection works on: the one a long
+    /// press holds, else the ones the host's menu is open on.
+    fn underlined(&self, ranges: &[VerseRange], held: Option<u16>) -> Vec<(usize, usize)> {
+        let Some((lo, hi)) = held.map(|v| (v, v)).or(self.reading.selected) else {
+            return Vec::new();
+        };
+        ranges
+            .iter()
+            .filter(|(_, _, v)| (lo..=hi).contains(v))
+            .map(|(start, end, _)| (*start, *end))
+            .collect()
+    }
 }
 
 impl Component for VerseParagraph {
@@ -612,11 +742,14 @@ impl Component for VerseParagraph {
         // host anchors its colour picker here so the popup opens next
         // to the finger / cursor instead of pinned to a fixed corner.
         let anchor: State<(f32, f32)> = use_state(|| (0.0, 0.0));
-        // Paragraph area captured via `on_sized`. Flips 0 → real_size
-        // after first layout; subscribing to it forces a re-render once
-        // the holder has been populated, so the second-pass bg-rect
-        // compute reads a laid-out paragraph.
-        let mut area: State<Area> = use_state(Area::default);
+        // Where the paragraph sits on screen, for hit testing. A plain
+        // cell: it moves every scrolled frame, which must not render
+        // the paragraph again.
+        let placed = use_hook(|| Rc::new(Cell::new(Area::default())));
+        // Its size only flips 0 → real size after the first layout;
+        // reading it renders once more, so the second pass computes the
+        // bg rects from a laid-out paragraph.
+        let mut laid_out: State<(f32, f32)> = use_state(|| (0.0, 0.0));
         use_settle_ticks();
 
         let on_highlight = self.reading.on_highlight.clone();
@@ -627,37 +760,41 @@ impl Component for VerseParagraph {
             .font_family(typography::FAMILY)
             .font_size(self.reading.font_size)
             .holder(holder.clone())
-            .on_sized(move |e: Event<SizedEventData>| {
-                let new_area = e.data().area;
-                if *area.peek() != new_area {
-                    area.set(new_area);
+            .on_sized({
+                let placed = Rc::clone(&placed);
+                move |e: Event<SizedEventData>| {
+                    let area = e.data().area;
+                    placed.set(area);
+                    laid_out.set_if_modified((area.width(), area.height()));
                 }
             });
         let (p, verse_ranges, highlight_items) = self.compose(p);
 
-        // Subscribe to the area signal so the second pass runs after
-        // the paragraph publishes its laid-out form into the holder.
-        let paragraph_area = *area.read();
-        let bg_rects = build_bg_rects(&holder, &highlight_items, paragraph_area);
+        let _ = *laid_out.read();
+        let underlined = self.underlined(&verse_ranges, *drag.held.read());
+        let bg_rects = build_bg_rects(&holder, &highlight_items, &underlined);
 
         // Gesture wiring: paragraph-level so a tap anywhere in verse
         // text — not just the tiny superscript marker — fires.
-        let holder_for_down = holder.clone();
-        let ranges_for_down = verse_ranges.clone();
-        let holder_for_move = holder;
-        let ranges_for_move = verse_ranges;
+        let verse_at = {
+            let (holder, placed) = (holder, Rc::clone(&placed));
+            Rc::new(move |at: CursorPoint| {
+                hit_offset(&holder, at, placed.get())
+                    .and_then(|offset| offset_to_verse(&verse_ranges, offset))
+            })
+        };
+        let verse_at_move = Rc::clone(&verse_at);
 
         let p = p
             .on_pointer_down({
                 let on_highlight = on_highlight.clone();
                 let mut anchor = anchor;
                 move |e: Event<PointerEventData>| {
-                    let g = e.global_location();
-                    let paragraph_area = *area.peek();
-                    let Some(offset) = hit_offset(&holder_for_down, g, paragraph_area) else {
+                    if !e.data().is_primary() {
                         return;
-                    };
-                    let Some(verse) = offset_to_verse(&ranges_for_down, offset) else {
+                    }
+                    let g = e.global_location();
+                    let Some(verse) = verse_at(g) else {
                         return;
                     };
 
@@ -665,21 +802,17 @@ impl Component for VerseParagraph {
                     let anchor_pt = (g.x as f32, g.y as f32);
                     anchor.set(anchor_pt);
 
-                    drag.begin(verse);
-
-                    // Double-tap on a verse is the only way to open the
-                    // highlight picker now — the long-press path was
-                    // dropped because sustained touch is uncomfortable
-                    // on mobile. Drag between verses still produces a
-                    // `Range` highlight on pointer-up.
-                    if EventsCombos::<()>::pressed(g).is_double() {
+                    if drag.begin(verse) {
                         on_highlight.call(HighlightTarget {
                             kind: HighlightKind::Verse(verse),
                             anchor_x: anchor_pt.0,
                             anchor_y: anchor_pt.1,
                         });
                         drag.finish();
+                        return;
                     }
+
+                    drag.arm_hold(Rc::clone(&placed));
                 }
             })
             .on_pointer_move({
@@ -688,37 +821,31 @@ impl Component for VerseParagraph {
                     if !*drag.pressing.peek() {
                         return;
                     }
-                    let paragraph_area = *area.peek();
-                    let Some(offset) =
-                        hit_offset(&holder_for_move, e.global_location(), paragraph_area)
-                    else {
+                    // A finger dragging over the text scrolls it.
+                    if !matches!(e.data(), PointerEventData::Mouse(_)) {
+                        drag.cancel_hold();
+                        return;
+                    }
+                    let Some(verse) = verse_at_move(e.global_location()) else {
                         return;
                     };
-                    let Some(verse) = offset_to_verse(&ranges_for_move, offset) else {
-                        return;
-                    };
-                    let current = *drag.end.peek();
-                    if current != Some(verse) {
+                    if *drag.end.peek() != Some(verse) {
                         drag.end.set(Some(verse));
+                        drag.cancel_hold();
                     }
                 }
             })
             .on_global_pointer_up({
                 move |_: Event<PointerEventData>| {
-                    let (start, end) = drag.finish();
-                    EventsCombos::<()>::released();
-
-                    if let (Some(a), Some(b)) = (start, end)
-                        && a != b
-                    {
-                        let (lo, hi) = if a < b { (a, b) } else { (b, a) };
-                        let (ax, ay) = *anchor.peek();
-                        on_highlight.call(HighlightTarget {
-                            kind: HighlightKind::Range(lo, hi),
-                            anchor_x: ax,
-                            anchor_y: ay,
-                        });
-                    }
+                    let Some(kind) = drag.lift() else {
+                        return;
+                    };
+                    let (ax, ay) = *anchor.peek();
+                    on_highlight.call(HighlightTarget {
+                        kind,
+                        anchor_x: ax,
+                        anchor_y: ay,
+                    });
                 }
             });
 
@@ -730,20 +857,22 @@ impl Component for VerseParagraph {
     }
 }
 
-/// Build the per-verse background-rect overlay. Reads the laid-out
-/// paragraph from `holder` and emits one absolute-positioned coloured
-/// rect per text box the paragraph returned for each highlight range.
-/// Multi-line verses produce one box per visual line, so the paint
-/// hugs the line heights naturally.
+/// Dot of the selection underline and the gap after it, in logical px.
+const UNDERLINE_DOT: f32 = 2.5;
+const UNDERLINE_GAP: f32 = 2.5;
+
+/// Build the per-verse overlay behind the text: one coloured rect per
+/// text box of each highlight range, and a dotted underline under each
+/// text box of the `underlined` ranges, the verses the selection menu
+/// works on. Multi-line verses produce one box per visual line, so the
+/// paint hugs the lines naturally.
 ///
-/// Before the first layout publishes into the holder (`area` still at
-/// its default), returns an empty rect. The `on_sized` callback on the
-/// paragraph flips `area` after layout, which re-runs render and gives
-/// this function a populated holder on the second pass.
+/// Before the first layout publishes into the holder it returns an
+/// empty rect; the paragraph's `on_sized` renders again once laid out.
 fn build_bg_rects(
     holder: &ParagraphHolder,
     items: &[(usize, usize, Color)],
-    paragraph_area: Area,
+    underlined: &[(usize, usize)],
 ) -> impl IntoElement + use<> {
     // `Layer::Relative(-1)` pushes every bg rect one step behind the
     // paragraph sibling in the paint order. Hit-testing then prefers
@@ -755,10 +884,7 @@ fn build_bg_rects(
         .width(Size::fill())
         .height(Size::fill());
     // Skip empty items so unhighlighted paragraphs do not allocate.
-    // Keep the area read for its subscription side-effect so a layout
-    // change schedules a re-render even when the holder data hasn't.
-    let _ = paragraph_area;
-    if items.is_empty() {
+    if items.is_empty() && underlined.is_empty() {
         return container;
     }
     let inner = holder.0.borrow();
@@ -767,23 +893,26 @@ fn build_bg_rects(
     };
     #[allow(clippy::cast_possible_truncation)] // a display scale factor
     let scale = data.scale_factor.max(1e-3) as f32;
-    for (start, end, color) in items {
-        if start == end {
-            continue;
-        }
-        let boxes = data.paragraph.get_rects_for_range(
-            *start..*end,
-            RectHeightStyle::Tight,
-            RectWidthStyle::Tight,
-        );
-        for tb in boxes {
-            let left = tb.rect.left / scale;
-            let top = tb.rect.top / scale;
-            let width = (tb.rect.right - tb.rect.left) / scale;
-            let height = (tb.rect.bottom - tb.rect.top) / scale;
-            if width <= 0.0 || height <= 0.0 {
-                continue;
-            }
+    // Text boxes of `start..end`, in logical px.
+    let boxes = |start: usize, end: usize| {
+        data.paragraph
+            .get_rects_for_range(start..end, RectHeightStyle::Tight, RectWidthStyle::Tight)
+            .into_iter()
+            .map(|tb| {
+                Area::new(
+                    (tb.rect.left / scale, tb.rect.top / scale).into(),
+                    (
+                        (tb.rect.right - tb.rect.left) / scale,
+                        (tb.rect.bottom - tb.rect.top) / scale,
+                    )
+                        .into(),
+                )
+            })
+            .filter(|b| b.width() > 0.0 && b.height() > 0.0)
+            .collect::<Vec<_>>()
+    };
+    for (start, end, color) in items.iter().filter(|(s, e, _)| s != e) {
+        for b in boxes(*start, *end) {
             container = container.child(
                 rect()
                     // Mirror the parent's negative relative so each
@@ -794,10 +923,41 @@ fn build_bg_rects(
                     // ends up on top of the text + swallowing pointer
                     // events.
                     .layer(Layer::Relative(-1))
-                    .position(Position::new_absolute().top(top).left(left))
-                    .width(Size::px(width))
-                    .height(Size::px(height))
+                    .position(Position::new_absolute().top(b.min_y()).left(b.min_x()))
+                    .width(Size::px(b.width()))
+                    .height(Size::px(b.height()))
                     .background(*color),
+            );
+        }
+    }
+    let ink = palette().accent;
+    for (start, end) in underlined.iter().filter(|(s, e)| s != e) {
+        for b in boxes(*start, *end) {
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a line holds a few hundred dots at most"
+            )]
+            let dots = ((b.width() + UNDERLINE_GAP) / (UNDERLINE_DOT + UNDERLINE_GAP)) as usize;
+            container = container.child(
+                rect()
+                    .layer(Layer::Relative(-1))
+                    .position(
+                        Position::new_absolute()
+                            .top(b.max_y() - UNDERLINE_DOT / 2.0)
+                            .left(b.min_x()),
+                    )
+                    .horizontal()
+                    .spacing(UNDERLINE_GAP)
+                    .children((0..dots).map(|i| {
+                        rect()
+                            .key(i)
+                            .width(Size::px(UNDERLINE_DOT))
+                            .height(Size::px(UNDERLINE_DOT))
+                            .corner_radius(UNDERLINE_DOT / 2.0)
+                            .background(ink)
+                            .into_element()
+                    })),
             );
         }
     }
@@ -1041,7 +1201,7 @@ impl Component for FootnoteLetter {
             .on_pointer_down(|e: Event<PointerEventData>| {
                 e.stop_propagation();
             })
-            .on_press(move |_: Event<PressEventData>| {
+            .on_tap(move |_: Event<PressEventData>| {
                 hover.close();
                 if let Some(t) = target.clone() {
                     on_jump.call(t);
@@ -1114,7 +1274,7 @@ impl Component for RefButton {
             // A tap on the icon must not reach the paragraph, where a
             // second tap would open the highlight picker.
             .on_pointer_down(|e: Event<PointerEventData>| e.stop_propagation())
-            .on_press(move |_| on_press.call(verse))
+            .on_tap(move |_| on_press.call(verse))
             .child(
                 SvgViewer::new(freya::icons::lucide::trending_up_down())
                     .color(p.accent_text)

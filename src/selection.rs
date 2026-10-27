@@ -69,11 +69,22 @@ impl SelectionMenu {
     }
 }
 
+/// An action that hands the selection over to what it opens next (the
+/// note popover): the menu closes without dismissing the selection.
 fn act(f: impl Fn() + 'static) -> impl Fn(()) + 'static {
     move |()| {
         ModalController::get().clear_top_on_close();
         ModalController::get().close();
         f();
+    }
+}
+
+/// An action that is done with the selection: it runs on the selection, then
+/// the menu closes as a dismissal, so the caller lets go of it.
+fn finish(f: impl Fn() + 'static) -> impl Fn(()) + 'static {
+    move |()| {
+        f();
+        ModalController::get().close();
     }
 }
 
@@ -111,14 +122,14 @@ impl Component for Bar {
             items.push(BarItem::action(
                 "Copiar ref",
                 lucide::copy(),
-                act(move || crate::references::copy(&target, &label)),
+                finish(move || crate::references::copy(&target, &label)),
             ));
             if let Some(document) = menu.document {
                 let target = menu.reference.as_ref().map(|(t, _)| t.clone());
                 items.push(BarItem::action(
                     "Al cuaderno",
                     lucide::notebook_pen(),
-                    act(move || {
+                    finish(move || {
                         if let Some(target) = target.clone() {
                             crate::references::insert_in_notebook(document, target);
                         }
@@ -128,7 +139,7 @@ impl Component for Bar {
         }
         for (label, icon, run) in &menu.extra {
             let run = Rc::clone(run);
-            items.push(BarItem::action(*label, icon.clone(), act(move || run())));
+            items.push(BarItem::action(*label, icon.clone(), finish(move || run())));
         }
         let size = *Platform::get().current_window().root_size.read();
         let bar = SelectionBar::new(items);
