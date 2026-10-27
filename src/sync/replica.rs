@@ -90,14 +90,15 @@ fn owns_doc(kind: &DocKind) -> bool {
 /// Library-backed [`Replica`].
 #[derive(Default)]
 pub struct LibraryReplica {
-    versions: HashMap<ItemId, (Stamp, Version)>,
+    /// Versions of stored documents, valid while their file is unchanged.
+    versions: std::sync::Mutex<HashMap<ItemId, (Stamp, Version)>>,
     known: Vec<DocId>,
 }
 
 impl fmt::Debug for LibraryReplica {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("LibraryReplica")
-            .field("cached", &self.versions.len())
+            .field("cached", &self.versions().len())
             .finish_non_exhaustive()
     }
 }
@@ -109,67 +110,59 @@ impl LibraryReplica {
         &self.known
     }
 
+    fn versions(&self) -> std::sync::MutexGuard<'_, HashMap<ItemId, (Stamp, Version)>> {
+        self.versions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     fn open() -> Result<async_lock::MutexGuardArc<Library>, ReplicaError> {
         let handle = crate::library::shared_blocking()?;
         Ok(pollster::block_on(handle.lock_arc()))
     }
 
-    fn version_of(&mut self, item: ItemId, lib: &Library) -> Option<Version> {
+    fn version_of(&self, item: ItemId, lib: &Library) -> Option<Version> {
+        if let Some(version) = with_live(item, Doc::version) {
+            return Some(Version(version));
+        }
         let Some(current) = stamp(item) else {
             // Created but never saved: the document exists and is empty.
             // Announcing it at the version every empty document shares
             // lets a peer hold it before the first stroke lands.
             let kind = &lib.index().item(item)?.kind;
-            return owns_doc(kind).then(|| Version(live_doc(item).unwrap_or_default().version()));
+            return owns_doc(kind).then(|| Version(Doc::default().version()));
         };
-        if let Some((cached, version)) = self.versions.get(&item)
+        if let Some((cached, version)) = self.versions().get(&item)
             && *cached == current
         {
             return Some(version.clone());
         }
         let bytes = bodies::read_doc_bytes(item)?;
-        let version = match live_doc(item) {
-            Some(doc) => Version(doc.version()),
-            None => Version(Doc::from_snapshot(&bytes).ok()?.version()),
-        };
-        self.versions.insert(item, (current, version.clone()));
+        let version = Version(Doc::from_snapshot(&bytes).ok()?.version());
+        self.versions().insert(item, (current, version.clone()));
         Some(version)
     }
 }
 
-/// The document as an open board or face holds it, when the item is
-/// on screen.
-fn live_doc(item: ItemId) -> Option<Doc> {
-    active_boards::get_item(item)
-        .map(|board| lock(&board).doc().clone())
-        .or_else(|| open_docs::get(item).map(|doc| open_docs::lock(&doc).clone()))
-}
-
-fn load_doc(item: ItemId) -> Result<Option<Doc>, ReplicaError> {
-    if let Some(doc) = live_doc(item) {
-        return Ok(Some(doc));
+/// Run `f` on the document as an open board or face holds it, when
+/// the item is on screen, without copying it.
+fn with_live<T>(item: ItemId, f: impl FnOnce(&Doc) -> T) -> Option<T> {
+    if let Some(board) = active_boards::get_item(item) {
+        return Some(f(lock(&board).doc()));
     }
-    bodies::read_doc_bytes(item)
-        .map(|bytes| Doc::from_snapshot(&bytes).map_err(ReplicaError::Doc))
-        .transpose()
+    open_docs::get(item).map(|doc| f(&open_docs::lock(&doc)))
 }
 
 impl Replica for LibraryReplica {
     type Error = ReplicaError;
 
     fn docs(&self) -> Vec<(DocId, Version)> {
-        // `docs` takes `&self`; the cache refresh happens through
-        // interior calls on a scratch copy so the trait stays simple.
         let Ok(lib) = Self::open() else {
             return Vec::new();
         };
-        let mut scratch = Self {
-            versions: self.versions.clone(),
-            known: Vec::new(),
-        };
         let mut out = Vec::new();
         for item in &lib.index().items {
-            if let Some(version) = scratch.version_of(item.id, &lib) {
+            if let Some(version) = self.version_of(item.id, &lib) {
                 out.push((DocId(item.id.0), version));
             }
         }
@@ -177,29 +170,33 @@ impl Replica for LibraryReplica {
     }
 
     fn doc_version(&self, doc: DocId) -> Option<Version> {
-        let mut scratch = Self {
-            versions: self.versions.clone(),
-            known: Vec::new(),
-        };
         let Ok(lib) = Self::open() else {
             return None;
         };
-        scratch.version_of(ItemId(doc.0), &lib)
+        self.version_of(ItemId(doc.0), &lib)
     }
 
     fn doc_updates_since(&self, doc: DocId, since: &Version) -> Result<Vec<u8>, ReplicaError> {
-        let Some(doc) = load_doc(ItemId(doc.0))? else {
-            return Ok(Vec::new());
+        let item = ItemId(doc.0);
+        let updates = |doc: &Doc| {
+            if doc.version() == since.0 {
+                Ok(Vec::new())
+            } else {
+                doc.updates_since(&since.0)
+            }
         };
-        if doc.version() == since.0 {
-            return Ok(Vec::new());
+        if let Some(updates) = with_live(item, updates) {
+            return Ok(updates?);
         }
-        Ok(doc.updates_since(&since.0)?)
+        match bodies::read_doc_bytes(item) {
+            Some(bytes) => Ok(updates(&Doc::from_snapshot(&bytes)?)?),
+            None => Ok(Vec::new()),
+        }
     }
 
     fn doc_snapshot(&self, doc: DocId) -> Result<Vec<u8>, ReplicaError> {
-        match live_doc(ItemId(doc.0)) {
-            Some(doc) => Ok(doc.snapshot_bytes()?),
+        match with_live(ItemId(doc.0), Doc::snapshot_bytes) {
+            Some(bytes) => Ok(bytes?),
             None => match bodies::read_doc_bytes(ItemId(doc.0)) {
                 Some(bytes) => Ok(bytes),
                 None => Ok(Doc::default().snapshot_bytes()?),
@@ -234,7 +231,7 @@ impl Replica for LibraryReplica {
         let snapshot = merged.snapshot_bytes()?;
         bodies::write_doc_bytes(item, &snapshot)?;
         refs::record_doc(item, &merged);
-        self.versions.remove(&item);
+        self.versions().remove(&item);
         Ok(())
     }
 
@@ -291,7 +288,7 @@ impl LibraryReplica {
         for (doc, version) in docs {
             let item = ItemId(doc.0);
             if let Some(current) = stamp(item) {
-                self.versions.insert(item, (current, version.clone()));
+                self.versions().insert(item, (current, version.clone()));
             }
         }
     }

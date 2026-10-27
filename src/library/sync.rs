@@ -249,15 +249,20 @@ impl LibraryData {
             let at = bodies::plugin_snapshot_stamp(i.id, &i.kind.plugin_id)?;
             Some(head(BlobKind::Snapshot, i.id.0, at))
         }));
+        let mut at: std::collections::HashMap<(BlobKind, [u8; 16]), usize> = heads
+            .iter()
+            .enumerate()
+            .map(|(i, h)| ((h.kind, h.id), i))
+            .collect();
         for stone in &yard.stones {
             let kind = kind_of(stone.kind);
-            match heads
-                .iter_mut()
-                .find(|h| h.kind == kind && h.id == stone.id)
-            {
-                Some(live) if live.updated_at >= stone.at => {}
-                Some(live) => *live = gone(kind, stone.id, stone.at),
-                None => heads.push(gone(kind, stone.id, stone.at)),
+            match at.get(&(kind, stone.id)) {
+                Some(&i) if heads[i].updated_at >= stone.at => {}
+                Some(&i) => heads[i] = gone(kind, stone.id, stone.at),
+                None => {
+                    at.insert((kind, stone.id), heads.len());
+                    heads.push(gone(kind, stone.id, stone.at));
+                }
             }
         }
         heads

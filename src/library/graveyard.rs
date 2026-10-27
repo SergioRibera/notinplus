@@ -39,16 +39,28 @@ impl Graveyard {
     }
 
     /// Read from disk; a missing or unreadable file is an empty yard.
+    /// The last yard read or saved is kept and reused while the file
+    /// is unchanged.
     #[must_use]
     pub fn load() -> Self {
-        std::fs::read(Self::path())
+        let path = Self::path();
+        let stamp = file_stamp(&path);
+        let mut cache = cache();
+        if let Some((held, yard)) = cache.as_ref()
+            && *held == stamp
+        {
+            return yard.clone();
+        }
+        let yard: Self = std::fs::read(&path)
             .ok()
             .and_then(|bytes| {
                 bincode::decode_from_slice(&bytes, config::standard())
                     .ok()
                     .map(|(yard, _): (Self, usize)| yard)
             })
-            .unwrap_or_default()
+            .unwrap_or_default();
+        *cache = Some((stamp, yard.clone()));
+        yard
     }
 
     pub fn save(&self) -> std::io::Result<()> {
@@ -60,7 +72,9 @@ impl Graveyard {
         }
         let tmp = path.with_extension("bin.tmp");
         std::fs::write(&tmp, bytes)?;
-        std::fs::rename(tmp, path)
+        std::fs::rename(tmp, &path)?;
+        *cache() = Some((file_stamp(&path), self.clone()));
+        Ok(())
     }
 
     /// Record a deletion. A later deletion of the same record keeps
@@ -93,6 +107,21 @@ impl Graveyard {
         self.stones.retain(|s| now.saturating_sub(s.at) <= max_age);
         before - self.stones.len()
     }
+}
+
+/// When and how big the file was, to tell a changed one.
+type Stamp = Option<(std::time::SystemTime, u64)>;
+
+fn file_stamp(path: &std::path::Path) -> Stamp {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
+
+fn cache() -> std::sync::MutexGuard<'static, Option<(Stamp, Graveyard)>> {
+    static CACHE: std::sync::Mutex<Option<(Stamp, Graveyard)>> = std::sync::Mutex::new(None);
+    CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Load, bury and save in one go; failures are logged, never fatal.
