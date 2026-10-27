@@ -382,8 +382,8 @@ pub struct HighlightPreview {
 /// gesture callbacks and the type settings.
 #[derive(Clone, PartialEq)]
 pub struct Reading {
-    pub cross_refs: HashMap<u16, Vec<CrossRefView>>,
-    pub footnotes: HashMap<u16, Vec<FootnoteView>>,
+    pub cross_refs: Rc<HashMap<u16, Vec<CrossRefView>>>,
+    pub footnotes: Rc<HashMap<u16, Vec<FootnoteView>>>,
     pub on_jump: OnJump,
     /// Show the cross-references of a verse.
     pub on_refs: OnRefs,

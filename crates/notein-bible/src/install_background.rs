@@ -111,8 +111,14 @@ pub fn load_catalogue(
 /// Idempotent — the reader fires one per chapter open, the on-disk cache +
 /// the `footnotes` row count both short-circuit duplicate work. Silent on
 /// failure (we log at debug) so a 404 or empty response does not surface a
-/// user-visible error.
-pub fn spawn_fetch_footnotes(db: Db, bible_id: String, book_id: String, chapter: u16) {
+/// user-visible error. `landed` runs when new rows were stored.
+pub fn spawn_fetch_footnotes(
+    db: Db,
+    bible_id: String,
+    book_id: String,
+    chapter: u16,
+    landed: impl FnOnce() + Send + 'static,
+) {
     std::thread::Builder::new()
         .name(format!("bible-footnotes-{book_id}-{chapter}"))
         .spawn(move || {
@@ -143,6 +149,9 @@ pub fn spawn_fetch_footnotes(db: Db, bible_id: String, book_id: String, chapter:
             match helloao.footnotes_for_chapter(&bible_id, &book_id, chapter) {
                 Ok(n) => {
                     log::debug!("footnotes: {book_id} {chapter} → {n} rows");
+                    if n > 0 {
+                        landed();
+                    }
                 }
                 Err(e) => log::debug!("footnotes: fetch failed for {book_id} {chapter}: {e}"),
             }

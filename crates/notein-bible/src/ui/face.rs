@@ -118,6 +118,10 @@ pub(super) struct Reader {
     scroll: ScrollController,
     /// The cross-references showing in the panel beside the text.
     refs: State<Option<refs::VerseRefs>>,
+    /// What the current chapter shows besides its text, read once.
+    annotations: Rc<std::cell::RefCell<Option<(AnnotationKey, Annotations)>>>,
+    /// Bumped when footnotes of a chapter arrive.
+    footnotes_landed: State<u32>,
 }
 
 impl PartialEq for Reader {
@@ -313,6 +317,8 @@ fn use_reader(ctx: &FaceContext<BibleKind>, db: &Db) -> Reader {
         scroll_to: use_state(|| None),
         scroll: use_scroll_controller(ScrollConfig::default),
         refs: use_state(|| None),
+        annotations: use_hook(Rc::default),
+        footnotes_landed: use_state(|| 0),
     };
     use_hook({
         let reader = reader.clone();
@@ -358,13 +364,27 @@ fn use_reader(ctx: &FaceContext<BibleKind>, db: &Db) -> Reader {
     // install. The fetch returns at once when the rows exist.
     use_side_effect({
         let db = db.clone();
+        let landed = use_hook(|| {
+            let (tx, rx) = flume::unbounded::<()>();
+            let mut count = reader.footnotes_landed;
+            spawn(async move {
+                while rx.recv_async().await.is_ok() {
+                    *count.write() += 1;
+                }
+            });
+            tx
+        });
         move || {
             let st = state.read();
+            let landed = landed.clone();
             crate::install_background::spawn_fetch_footnotes(
                 db.clone(),
                 st.bible_id.clone(),
                 st.current_book.clone(),
                 st.current_chapter,
+                move || {
+                    let _ = landed.send(());
+                },
             );
         }
     });
@@ -486,16 +506,10 @@ fn chapter_body(
     scroll_ctx: VerseScrollCtx,
     wide: bool,
 ) -> Element {
-    let db = &reader.db;
-    let show_cross_refs = plugin_config::effective_enable_crossref(reader.kind.config());
-    let cross_refs = if show_cross_refs {
-        cross_refs(db, data)
-    } else {
-        Vec::new()
-    };
+    let annotations = reader.annotations(data);
     let reading = reader::Reading {
-        cross_refs: cross_refs_by_verse(&cross_refs),
-        footnotes: footnotes_by_verse(&footnotes(db, data)),
+        cross_refs: annotations.cross_refs,
+        footnotes: annotations.footnotes,
         on_jump: EventHandler::new({
             let reader = reader.clone();
             move |(book, chapter, verse): (String, u16, u16)| reader.go(&book, chapter, verse)
@@ -571,4 +585,53 @@ fn cross_refs(db: &Db, data: &ChapterRow) -> Vec<CrossRefView> {
             tgt_verse: row.tgt_verse,
         })
         .collect()
+}
+
+/// Which chapter, as shown, a set of [`Annotations`] belongs to.
+#[derive(Clone, PartialEq, Eq)]
+struct AnnotationKey {
+    bible: String,
+    book: String,
+    chapter: u16,
+    cross_refs: bool,
+    footnotes_landed: u32,
+}
+
+/// What a chapter shows besides its text, by verse.
+#[derive(Clone)]
+struct Annotations {
+    cross_refs: Rc<std::collections::HashMap<u16, Vec<CrossRefView>>>,
+    footnotes: Rc<std::collections::HashMap<u16, Vec<FootnoteView>>>,
+}
+
+impl Reader {
+    /// The annotations of `data`, read from the database only when the
+    /// chapter, the settings or its footnotes changed: the reader renders
+    /// again on every flash, colour tried and panel toggle.
+    fn annotations(&self, data: &ChapterRow) -> Annotations {
+        let show_cross_refs = plugin_config::effective_enable_crossref(self.kind.config());
+        let key = AnnotationKey {
+            bible: data.bible_id.clone(),
+            book: data.book_id.clone(),
+            chapter: data.chapter,
+            cross_refs: show_cross_refs,
+            footnotes_landed: *self.footnotes_landed.read(),
+        };
+        if let Some((held, annotations)) = self.annotations.borrow().as_ref()
+            && *held == key
+        {
+            return annotations.clone();
+        }
+        let cross_refs = if show_cross_refs {
+            cross_refs(&self.db, data)
+        } else {
+            Vec::new()
+        };
+        let annotations = Annotations {
+            cross_refs: Rc::new(cross_refs_by_verse(&cross_refs)),
+            footnotes: Rc::new(footnotes_by_verse(&footnotes(&self.db, data))),
+        };
+        *self.annotations.borrow_mut() = Some((key, annotations.clone()));
+        annotations
+    }
 }
