@@ -73,6 +73,12 @@ impl NotesIndex {
             .clear();
     }
 
+    /// Markdown body of note `item`, as last indexed.
+    #[must_use]
+    pub fn body(&self, item: [u8; 16]) -> Option<String> {
+        self.read().get(&item).map(|note| note.body.clone())
+    }
+
     /// Current label of a reference to `item`: the note title, plus the
     /// heading text when the anchor names one. `None` when the note is
     /// gone; a heading that no longer exists falls back to the title.

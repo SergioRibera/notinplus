@@ -13,7 +13,7 @@ use notein_sdk::create::{
 use notein_sdk::doc::{DocId, DocMeta};
 use notein_sdk::kind::{
     ActionEffect, ChipView, DocumentKind, ExportFile, Hit, IndexReport, KindAction, KindColor,
-    KindInfo, OutlineIcon, OutlineNode, SearchQuery, SelectionSupport,
+    KindInfo, OutlineIcon, OutlineNode, Quote, SearchQuery, SelectionSupport,
 };
 use notein_sdk::services::Host;
 use notein_sdk::text::Folded;
@@ -305,6 +305,22 @@ impl DocumentKind for NotesKind {
             .map_or_else(|| ChipView::broken(doc.name), ChipView::new)
     }
 
+    fn quotes(&self) -> bool {
+        true
+    }
+
+    fn quote(&self, doc: DocMeta<'_>, anchor: &NoteAnchor) -> Option<Quote> {
+        let source = self.index.label(doc.id.0, anchor)?;
+        let live = self
+            .host
+            .get()
+            .map(|host| host.body(doc.id).text())
+            .filter(|text| !text.is_empty());
+        let markdown = live.or_else(|| self.index.body(doc.id.0))?;
+        let body = crate::section(&markdown, anchor.heading.as_deref())?;
+        Some(Quote { body, source })
+    }
+
     fn selection(&self) -> SelectionSupport {
         SelectionSupport {
             highlight: false,
@@ -483,6 +499,23 @@ pub fn name_from_body(markdown: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_heading_quotes_its_section_from_the_index() {
+        let kind = indexed();
+        let meta = DocMeta {
+            id: DocId([7; 16]),
+            name: "Apuntes del sábado",
+            updated_at: 0,
+            tint: None,
+        };
+        let quote = kind
+            .quote(meta, &NoteAnchor::heading("idea-central"))
+            .expect("quote");
+        assert!(quote.body.starts_with("La adopción"), "{}", quote.body);
+        assert_eq!(quote.source, "Apuntes del sábado › Idea central");
+        assert!(kind.quote(meta, &NoteAnchor::heading("nada")).is_none());
+    }
 
     fn indexed() -> NotesKind {
         let kind = NotesKind::default();

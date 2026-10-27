@@ -74,9 +74,61 @@ pub fn pin_heading(markdown: &str, slug: &str) -> Option<String> {
     Some(document.to_markdown(Dialect::Rich))
 }
 
+/// What `markdown` holds under the heading `slug` names, up to the next
+/// heading of the same or a higher level; the whole note without a slug.
+/// `None` when the heading is missing or nothing sits under it.
+#[must_use]
+pub fn section(markdown: &str, slug: Option<&str>) -> Option<String> {
+    use freya_markdown_editor::document::{BlockKind, Document};
+    use freya_markdown_editor::markdown::Dialect;
+
+    let document = Document::parse(markdown);
+    let part = match slug {
+        None => document,
+        Some(slug) => {
+            let at = document.index_of(document.heading_by_slug(slug)?)?;
+            let blocks = document.blocks();
+            let BlockKind::Heading { level, .. } = blocks[at].kind else {
+                return None;
+            };
+            Document::from(
+                blocks[at + 1..]
+                    .iter()
+                    .take_while(|block| {
+                        !matches!(block.kind, BlockKind::Heading { level: next, .. } if next <= level)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            )
+        }
+    };
+    let text = part.to_markdown(Dialect::Rich).trim().to_owned();
+    (!text.is_empty()).then_some(text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_section_runs_to_the_next_heading_of_its_level() {
+        let note =
+            "# Diario\n\nintro\n\n## Ideas\n\nuna\n\n### Detalle\n\n- dos\n\n## Otra\n\nfuera\n";
+        let ideas = section(note, Some("ideas")).expect("section");
+        assert!(ideas.starts_with("una"), "{ideas}");
+        assert!(ideas.contains("### Detalle"), "{ideas}");
+        assert!(ideas.contains("- dos"), "{ideas}");
+        assert!(!ideas.contains("fuera"), "{ideas}");
+        assert!(!ideas.contains("## Ideas"), "{ideas}");
+    }
+
+    #[test]
+    fn an_empty_or_missing_section_quotes_nothing() {
+        let note = "# Diario\n\n## Vacia\n\n## Llena\n\ntexto\n";
+        assert_eq!(section(note, Some("vacia")), None);
+        assert_eq!(section(note, Some("nada")), None);
+        assert!(section(note, None).is_some_and(|all| all.contains("texto")));
+    }
 
     #[test]
     fn pinned_heading_keeps_its_anchor_after_a_rename() {
