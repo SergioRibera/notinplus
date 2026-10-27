@@ -12,6 +12,7 @@
 //!     ├── doc.loro                      // Doc snapshot + history
 //!     ├── attachment.pdf                // raw PDF blob
 //!     ├── cover.png                     // cover thumbnail
+//!     ├── assets/<name>                 // images linked from the body
 //!     └── plugin_snapshots/<plugin>.bincode
 //! ```
 //!
@@ -42,6 +43,9 @@ const COVER_FILE: &str = "cover.png";
 /// single item can carry snapshots from several plugins without any
 /// name collision at the shell level.
 const PLUGIN_SNAPSHOTS_SUBDIR: &str = "plugin_snapshots";
+/// Subdir holding the images (and any other file) the item's body links
+/// to by relative path.
+pub const ASSETS_SUBDIR: &str = "assets";
 
 /// Subdirectories under [`root_dir`] that hold per-item state and are
 /// wiped when the library starts over.
@@ -336,4 +340,42 @@ pub fn copy_item(from: ItemId, to: ItemId) -> io::Result<()> {
         return Ok(());
     }
     copy_dir(&src, &item_root(to))
+}
+
+/// Name and bytes of every file in `id`'s assets folder. Unreadable
+/// entries and half written `.tmp` files are skipped.
+#[must_use]
+pub fn read_assets(id: ItemId) -> Vec<(String, Vec<u8>)> {
+    let Ok(entries) = fs::read_dir(item_root(id).join(ASSETS_SUBDIR)) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(std::result::Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            if Path::new(&name).extension().is_some_and(|ext| ext == "tmp") {
+                return None;
+            }
+            let bytes = fs::read(entry.path()).ok()?;
+            Some((name, bytes))
+        })
+        .collect()
+}
+
+/// Store `bytes` as `name` in `id`'s assets folder. Names with any path
+/// separator are refused, so a bundle cannot write outside the folder.
+///
+/// # Errors
+/// I/O failures, or [`LibraryError::Codec`] for a name that is not a
+/// plain file name.
+pub fn write_asset(id: ItemId, name: &str, bytes: &[u8]) -> Result<()> {
+    let mut parts = Path::new(name).components();
+    if !matches!(
+        (parts.next(), parts.next()),
+        (Some(std::path::Component::Normal(_)), None)
+    ) {
+        return Err(LibraryError::Codec(format!("asset name {name:?}")));
+    }
+    write_blob(&item_root(id).join(ASSETS_SUBDIR).join(name), bytes)
 }

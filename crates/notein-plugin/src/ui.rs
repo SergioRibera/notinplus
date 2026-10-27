@@ -68,6 +68,12 @@ pub trait HostUi {
     /// open through the shell and the user's markdown-marks setting.
     fn editor(&self, editor: MarkdownEditor) -> MarkdownEditor;
 
+    /// [`Self::editor`] for the body of `doc`: images it links live with
+    /// the document, and people can add or replace them.
+    fn editor_for(&self, editor: MarkdownEditor, _doc: DocId) -> MarkdownEditor {
+        self.editor(editor)
+    }
+
     /// The editor theme of the active palette, for toolbars.
     fn editor_theme(&self) -> EditorTheme;
 

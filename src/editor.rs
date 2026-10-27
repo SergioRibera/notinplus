@@ -7,6 +7,7 @@
 //! markdown-marks setting.
 
 mod labels;
+pub(crate) mod images;
 mod live;
 
 pub use live::LIVE_QUOTE;
@@ -69,6 +70,16 @@ pub fn live_quotes() -> bool {
 /// A configured [`MarkdownEditor`] over `value`.
 pub fn editor(value: impl Into<Writable<String>>, controller: EditorController) -> MarkdownEditor {
     configure(MarkdownEditor::new(value).controller(controller))
+}
+
+/// [`configure`] for a document whose files live in `root`: its images
+/// load from there and new ones are stored there.
+#[must_use]
+pub fn configure_for(editor: MarkdownEditor, root: &std::path::Path) -> MarkdownEditor {
+    let images = images::ItemImages::new(root.to_owned());
+    configure(editor)
+        .image_picker(images.picker())
+        .decorator(images)
 }
 
 /// Set `editor` up the way every editor in Notein is.

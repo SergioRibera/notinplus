@@ -37,6 +37,8 @@ const MANIFEST_ENTRY: &str = "manifest.bin";
 const DOCS_PREFIX: &str = "docs/";
 const PDFS_PREFIX: &str = "pdfs/";
 const SNAPSHOTS_PREFIX: &str = "snapshots/";
+/// `assets/<item id>/<file name>`: images and other files a body links to.
+const ASSETS_PREFIX: &str = "assets/";
 const DOC_EXT: &str = "bin";
 const PDF_EXT: &str = "pdf";
 const ZSTD_LEVEL: i32 = 3;
@@ -265,6 +267,10 @@ pub fn write_bundle<W: Write>(
             let path = format!("{SNAPSHOTS_PREFIX}{}.{DOC_EXT}", item.id);
             append_file(&mut tar, &path, &snapshot)?;
         }
+        for (name, bytes) in bodies::read_assets(item.id) {
+            let path = format!("{ASSETS_PREFIX}{}/{name}", item.id);
+            append_file(&mut tar, &path, &bytes)?;
+        }
         if options.include_attachments && item_carries_pdf(&item.kind) {
             if let Ok(pdf_bytes) = bodies::read_pdf(item.id) {
                 let path = format!("{PDFS_PREFIX}{}.{PDF_EXT}", item.id);
@@ -301,6 +307,8 @@ pub struct ParsedBundle {
     pub pdfs: HashMap<ItemId, Vec<u8>>,
     /// Plugin content of each item (its kind's snapshot).
     pub snapshots: HashMap<ItemId, Vec<u8>>,
+    /// Files each body links to, by name.
+    pub assets: HashMap<ItemId, Vec<(String, Vec<u8>)>>,
 }
 
 /// Decode a bundle from any [`Read`] source into memory. Callers with
@@ -316,6 +324,7 @@ pub fn parse_bundle<R: Read>(src: R) -> Result<ParsedBundle> {
     let mut docs: HashMap<ItemId, Vec<u8>> = HashMap::new();
     let mut pdfs: HashMap<ItemId, Vec<u8>> = HashMap::new();
     let mut snapshots: HashMap<ItemId, Vec<u8>> = HashMap::new();
+    let mut assets: HashMap<ItemId, Vec<(String, Vec<u8>)>> = HashMap::new();
 
     for entry in archive.entries()? {
         let mut entry = entry?;
@@ -345,6 +354,11 @@ pub fn parse_bundle<R: Read>(src: R) -> Result<ParsedBundle> {
             && let Some(id) = parse_id::<ItemId>(rest, DOC_EXT)
         {
             snapshots.insert(id, buf);
+        } else if let Some(rest) = name.strip_prefix(ASSETS_PREFIX)
+            && let Some((id, file)) = rest.split_once('/')
+            && let Ok(id) = id.parse::<ItemId>()
+        {
+            assets.entry(id).or_default().push((file.to_owned(), buf));
         }
     }
 
@@ -354,6 +368,7 @@ pub fn parse_bundle<R: Read>(src: R) -> Result<ParsedBundle> {
         docs,
         pdfs,
         snapshots,
+        assets,
     })
 }
 

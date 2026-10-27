@@ -69,6 +69,9 @@ loro = "1.16.2"
 zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 fs4 = { version = "0.13", default-features = false }
+# Note images: decoded and written back without their metadata.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.14"

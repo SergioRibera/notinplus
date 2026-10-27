@@ -125,6 +125,7 @@ impl LibraryData {
             .values()
             .chain(bundle.pdfs.values())
             .chain(bundle.snapshots.values())
+            .chain(bundle.assets.values().flatten().map(|(_, bytes)| bytes))
             .map(|b| u64::try_from(b.len()).unwrap_or(0))
             .sum();
         let marks = bundle
@@ -313,6 +314,9 @@ fn write_bodies(bundle: &ParsedBundle, item: &Item, id: ItemId) -> Result<()> {
     }
     if let Some(bytes) = bundle.snapshots.get(&item.id) {
         bodies::write_plugin_snapshot(id, &item.kind.plugin_id, bytes)?;
+    }
+    for (name, bytes) in bundle.assets.get(&item.id).into_iter().flatten() {
+        bodies::write_asset(id, name, bytes)?;
     }
     Ok(())
 }

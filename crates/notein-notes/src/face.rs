@@ -139,7 +139,7 @@ impl Component for NotePage {
 
         let editor = ctx
             .ui
-            .editor(MarkdownEditor::new(markdown).controller(controller))
+            .editor_for(MarkdownEditor::new(markdown).controller(controller), ctx.doc)
             .reorderable(true)
             .placeholder("Escribí tu nota… (/ para insertar)")
             .width(Size::fill())
