@@ -242,6 +242,22 @@ pub fn snapshot_changed(item: ItemId) {
     }));
 }
 
+/// The attachment of `item` changed; push it.
+pub fn attachment_changed(item: ItemId) {
+    command(Cmd::BlobChanged(BlobKey {
+        kind: BlobKind::Attachment,
+        id: item.0,
+    }));
+}
+
+/// `item` got the file `name`; push it.
+pub fn asset_added(item: ItemId, name: &str) {
+    command(Cmd::BlobChanged(BlobKey {
+        kind: BlobKind::Asset,
+        id: crate::library::bodies::asset_key(item, name),
+    }));
+}
+
 /// A document body changed; push it to everyone right away.
 pub fn doc_changed(item: ItemId) {
     command(Cmd::DocChanged(DocId(item.0)));

@@ -72,11 +72,14 @@ pub fn editor(value: impl Into<Writable<String>>, controller: EditorController) 
     configure(MarkdownEditor::new(value).controller(controller))
 }
 
-/// [`configure`] for a document whose files live in `root`: its images
-/// load from there and new ones are stored there.
+/// [`configure`] for the body of `item`: its images load from the item's
+/// folder and new ones are stored there.
 #[must_use]
-pub fn configure_for(editor: MarkdownEditor, root: &std::path::Path) -> MarkdownEditor {
-    let images = images::ItemImages::new(root.to_owned());
+pub fn configure_for(
+    editor: MarkdownEditor,
+    item: crate::library::model::ItemId,
+) -> MarkdownEditor {
+    let images = images::ItemImages::new(item);
     configure(editor)
         .image_picker(images.picker())
         .decorator(images)

@@ -312,7 +312,9 @@ impl Published {
                 continue;
             }
             let allowed = match key.kind {
-                BlobKind::Item | BlobKind::Snapshot | BlobKind::Asset => share.can_edit(me),
+                BlobKind::Item | BlobKind::Snapshot | BlobKind::Asset | BlobKind::Attachment => {
+                    share.can_edit(me)
+                }
                 BlobKind::Link => share.can_link(me),
                 BlobKind::Folder | BlobKind::Tag | BlobKind::Workspace => false,
             };
@@ -1867,7 +1869,10 @@ fn permitted(share: &Share, from: DeviceId, message: Message) -> Option<Message>
                 .into_iter()
                 .filter(|blob| match blob.head.kind {
                     BlobKind::Item if blob.head.gone => share.can_delete(from),
-                    BlobKind::Item | BlobKind::Snapshot | BlobKind::Asset => share.can_edit(from),
+                    BlobKind::Item
+                    | BlobKind::Snapshot
+                    | BlobKind::Asset
+                    | BlobKind::Attachment => share.can_edit(from),
                     BlobKind::Link => share.can_link(from),
                     BlobKind::Folder | BlobKind::Tag | BlobKind::Workspace => false,
                 })

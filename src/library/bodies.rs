@@ -263,6 +263,26 @@ pub fn write_pdf(id: ItemId, bytes: &[u8]) -> Result<()> {
     write_blob(&pdf_path(id), bytes)
 }
 
+/// When the attachment of `id` was last written, in Unix milliseconds.
+#[must_use]
+pub fn pdf_stamp(id: ItemId) -> Option<u64> {
+    let modified = fs::metadata(pdf_path(id)).ok()?.modified().ok()?;
+    let since = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+    u64::try_from(since.as_millis()).ok()
+}
+
+/// Store an attachment that came from another device, stamped with the
+/// time it was written there.
+///
+/// # Errors
+/// Filesystem failure.
+pub fn write_pdf_at(id: ItemId, bytes: &[u8], written_at_ms: u64) -> Result<()> {
+    write_pdf(id, bytes)?;
+    let file = fs::File::options().write(true).open(pdf_path(id))?;
+    file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_millis(written_at_ms))?;
+    Ok(())
+}
+
 /// # Errors
 /// Filesystem failure, `NotFound` when the item has no attachment.
 pub fn read_pdf(id: ItemId) -> Result<Vec<u8>> {

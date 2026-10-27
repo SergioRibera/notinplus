@@ -43,6 +43,8 @@ pub enum BlobKind {
     /// bytes of the document id and 8 bytes naming the file; files are
     /// named after their content, so they never change.
     Asset,
+    /// The file a document shows (a PDF), keyed by the document id.
+    Attachment,
 }
 
 /// Identity plus freshness of a blob; enough to decide who is newer.
@@ -116,7 +118,8 @@ impl Scope {
             Self::All => true,
             Self::Subset { docs, blobs } => {
                 blobs.contains(&key)
-                    || (key.kind == BlobKind::Snapshot && docs.contains(&DocId(key.id)))
+                    || (matches!(key.kind, BlobKind::Snapshot | BlobKind::Attachment)
+                        && docs.contains(&DocId(key.id)))
                     || (key.kind == BlobKind::Asset
                         && docs.iter().any(|doc| doc.0[..8] == key.id[..8]))
             }

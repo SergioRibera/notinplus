@@ -746,6 +746,7 @@ impl Library {
         }
         bodies::write_pdf(id, bytes)?;
         let now = now_millis();
+        crate::sync::attachment_changed(id);
         if let Some(m) = self.data.index.item_mut(id) {
             m.updated_at = now;
         }

@@ -33,6 +33,12 @@ pub enum SyncRecord {
         name: String,
         bytes: Vec<u8>,
     },
+    /// The file an item shows (a PDF): last writer wins.
+    Attachment {
+        item: super::ItemId,
+        updated_at: u64,
+        bytes: Vec<u8>,
+    },
 }
 
 /// Freshness of every asset: they never change, so having one is enough.
@@ -67,7 +73,7 @@ const fn buried_of(kind: BlobKind) -> Option<Buried> {
         BlobKind::Folder => Some(Buried::Folder),
         BlobKind::Tag => Some(Buried::Tag),
         BlobKind::Workspace => Some(Buried::Workspace),
-        BlobKind::Link | BlobKind::Snapshot | BlobKind::Asset => None,
+        BlobKind::Link | BlobKind::Snapshot | BlobKind::Asset | BlobKind::Attachment => None,
     }
 }
 
@@ -162,6 +168,23 @@ impl Library {
                     return Ok(false);
                 }
                 bodies::write_asset(item, &name, &bytes)?;
+                crate::plugins::content::assets_arrived(item);
+            }
+            SyncRecord::Attachment {
+                item,
+                updated_at,
+                bytes,
+            } => {
+                let Some(entry) = self.data.index.item(item) else {
+                    return Ok(false);
+                };
+                let kind_id = entry.kind.plugin_id.clone();
+                bodies::write_pdf_at(item, &bytes, updated_at)?;
+                if let Some(kind) = crate::plugins::kind(&kind_id) {
+                    kind.forget(crate::plugins::content::doc_id(item));
+                }
+                crate::plugins::content::attachment_replaced(item);
+                crate::plugins::content::notify_remote(item);
             }
             SyncRecord::Gone(stone) => self.apply_gone(&stone, yard).await?,
         }
@@ -265,6 +288,12 @@ impl LibraryData {
             let at = bodies::plugin_snapshot_stamp(i.id, &i.kind.plugin_id)?;
             Some(head(BlobKind::Snapshot, i.id.0, at))
         }));
+        heads.extend(
+            self.index
+                .items
+                .iter()
+                .filter_map(|i| Some(head(BlobKind::Attachment, i.id.0, bodies::pdf_stamp(i.id)?))),
+        );
         heads.extend(self.index.items.iter().flat_map(|i| {
             bodies::asset_names(i.id)
                 .into_iter()
@@ -326,6 +355,7 @@ impl LibraryData {
                 .map(|w| (w.updated_at, SyncRecord::Workspace(w.clone()))),
             BlobKind::Snapshot => self.snapshot_record(super::ItemId(key.id)),
             BlobKind::Asset => self.asset_record(key.id),
+            BlobKind::Attachment => self.attachment_record(super::ItemId(key.id)),
         };
         match (live, stone) {
             (Some((at, record)), Some(stone)) if at >= stone.at => Some(record),
@@ -363,6 +393,20 @@ impl LibraryData {
                     .find(|name| bodies::asset_key(i.id, name) == key)
                     .map(|name| (i.id, name))
             })
+    }
+
+    fn attachment_record(&self, item: super::ItemId) -> Option<(u64, SyncRecord)> {
+        self.index.item(item)?;
+        let updated_at = bodies::pdf_stamp(item)?;
+        let bytes = bodies::read_pdf(item).ok()?;
+        Some((
+            updated_at,
+            SyncRecord::Attachment {
+                item,
+                updated_at,
+                bytes,
+            },
+        ))
     }
 
     fn asset_record(&self, key: [u8; 16]) -> Option<(u64, SyncRecord)> {
@@ -410,6 +454,10 @@ impl LibraryData {
                 .item(super::ItemId(key.id))
                 .and_then(|i| bodies::plugin_snapshot_stamp(i.id, &i.kind.plugin_id)),
             BlobKind::Asset => self.asset_of(key.id).map(|_| ASSET_STAMP),
+            BlobKind::Attachment => self
+                .index
+                .item(super::ItemId(key.id))
+                .and_then(|i| bodies::pdf_stamp(i.id)),
         };
         match (live, stone) {
             (Some(a), Some(b)) => Some(a.max(b)),

@@ -270,6 +270,27 @@ pub fn watch_attachment(item: ItemId) -> flume::Receiver<()> {
     rx
 }
 
+static ASSET_WATCHERS: Mutex<Vec<(ItemId, flume::Sender<()>)>> = Mutex::new(Vec::new());
+
+/// Fires when files `item` links to (images) arrive from another device.
+#[must_use]
+pub fn watch_assets(item: ItemId) -> flume::Receiver<()> {
+    let (tx, rx) = flume::unbounded();
+    ASSET_WATCHERS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push((item, tx));
+    rx
+}
+
+/// Tell whoever shows `item` that more of its files are here.
+pub fn assets_arrived(item: ItemId) {
+    ASSET_WATCHERS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .retain(|(id, tx)| !tx.is_disconnected() && (*id != item || tx.send(()).is_ok()));
+}
+
 /// Tell the open faces of `item` that its kept file changed.
 pub fn attachment_replaced(item: ItemId) {
     ATTACHMENT_WATCHERS

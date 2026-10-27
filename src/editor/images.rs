@@ -19,6 +19,8 @@ use freya_markdown_editor::prelude::{
 };
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader};
 
+use crate::library::model::ItemId;
+
 use crate::library::bodies::ASSETS_SUBDIR as ASSETS_DIR;
 /// Longest side an image is stored at; bigger ones are scaled down.
 const MAX_SIDE: u32 = 4096;
@@ -130,13 +132,17 @@ enum Source {
 /// Images of one library item: drawn from its folder and added to it.
 #[derive(Clone, Debug)]
 pub(crate) struct ItemImages {
+    item: ItemId,
     root: PathBuf,
 }
 
 impl ItemImages {
     #[must_use]
-    pub(crate) const fn new(root: PathBuf) -> Self {
-        Self { root }
+    pub(crate) fn new(item: ItemId) -> Self {
+        Self {
+            item,
+            root: crate::library::bodies::item_root(item),
+        }
     }
 
     /// Only links inside the item are read from disk: a note someone
@@ -154,11 +160,11 @@ impl ItemImages {
     /// Picker that stores chosen images in this item.
     #[must_use]
     pub(crate) fn picker(&self) -> ImagePicker {
-        let root = self.root.clone();
+        let (item, root) = (self.item, self.root.clone());
         ImagePicker::new(move |controller, request| {
             let root = root.clone();
             spawn_in_window(async move {
-                if let Err(err) = add_picked(&root, controller, request).await {
+                if let Err(err) = add_picked(item, &root, controller, request).await {
                     log::warn!("adding an image: {err}");
                 }
             });
@@ -169,6 +175,7 @@ impl ItemImages {
 /// Ask for a file, clean it off the UI thread, store it and link it.
 #[allow(clippy::future_not_send, reason = "runs on the UI executor")]
 async fn add_picked(
+    item: ItemId,
     root: &Path,
     controller: EditorController,
     request: ImageRequest,
@@ -188,7 +195,7 @@ async fn add_picked(
         }
     };
     let root = root.to_owned();
-    let url = off_thread(move || {
+    let (url, name) = off_thread(move || {
         let clean = CleanImage::from_raw(&picked.bytes)?;
         let name = clean.file_name();
         let dir = root.join(ASSETS_DIR);
@@ -199,9 +206,10 @@ async fn add_picked(
             std::fs::write(&partial, &clean.bytes)?;
             std::fs::rename(&partial, &path)?;
         }
-        Ok(format!("{ASSETS_DIR}/{name}"))
+        Ok((format!("{ASSETS_DIR}/{name}"), name))
     })
     .await?;
+    crate::sync::asset_added(item, &name);
     match request {
         ImageRequest::Insert => controller.insert_image(&url, ""),
         ImageRequest::Replace(slot) => controller.set_image_url(slot, &url),
@@ -230,6 +238,7 @@ impl Decorator for ItemImages {
     fn render_image(&self, image: &ImageContext<'_>) -> Option<Element> {
         Some(
             NoteImage {
+                item: self.item,
                 source: self.resolve(image.url),
                 name: if image.alt.is_empty() {
                     image.url.rsplit('/').next().unwrap_or(image.url).to_owned()
@@ -319,6 +328,8 @@ fn load(source: &Source) -> Result<Loaded, ImageError> {
 /// An image of a note, loading in the background.
 #[derive(Clone, PartialEq)]
 struct NoteImage {
+    /// Whose files to wait for when the image is not here yet.
+    item: ItemId,
     source: Option<Source>,
     name: String,
     max_width: f32,
@@ -383,27 +394,40 @@ impl Component for NoteImage {
             (Some(_), None) => Load::Loading,
             (None, None) => Load::Failed,
         });
+        let item = self.item;
         use_hook(move || {
-            let Some(source) = source.filter(|_| *state.peek() == Load::Loading) else {
+            let Some(source) = source else {
                 return;
             };
             spawn(async move {
-                let wanted = source.clone();
-                match off_thread(move || load(&wanted)).await {
-                    Ok(loaded) => {
-                        let loaded = Rc::new(loaded);
-                        LOADED.with(|cache| {
-                            let mut cache = cache.borrow_mut();
-                            if cache.len() >= CACHE_LIMIT {
-                                cache.clear();
-                            }
-                            cache.insert(source, loaded.clone());
-                        });
-                        state.set(Load::Ready(loaded));
+                // An image someone just added may still be on its way: try
+                // again whenever more of the item's files arrive.
+                let arrivals = crate::plugins::content::watch_assets(item);
+                loop {
+                    if matches!(*state.peek(), Load::Ready(_)) {
+                        return;
                     }
-                    Err(err) => {
-                        log::warn!("{err}");
-                        state.set(Load::Failed);
+                    let wanted = source.clone();
+                    match off_thread(move || load(&wanted)).await {
+                        Ok(loaded) => {
+                            let loaded = Rc::new(loaded);
+                            LOADED.with(|cache| {
+                                let mut cache = cache.borrow_mut();
+                                if cache.len() >= CACHE_LIMIT {
+                                    cache.clear();
+                                }
+                                cache.insert(source, loaded.clone());
+                            });
+                            state.set(Load::Ready(loaded));
+                            return;
+                        }
+                        Err(err) => {
+                            log::warn!("{err}");
+                            state.set(Load::Failed);
+                        }
+                    }
+                    if arrivals.recv_async().await.is_err() {
+                        return;
                     }
                 }
             });
@@ -451,7 +475,10 @@ mod tests {
 
     #[test]
     fn only_links_inside_the_item_are_read() {
-        let images = ItemImages::new(PathBuf::from("/items/a"));
+        let images = ItemImages {
+            item: ItemId([1; 16]),
+            root: PathBuf::from("/items/a"),
+        };
         assert_eq!(
             images.resolve("assets/x.png"),
             Some(Source::File(PathBuf::from("/items/a/assets/x.png")))

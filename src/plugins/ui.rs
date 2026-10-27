@@ -18,7 +18,7 @@ impl HostUi for ShellUi {
     }
 
     fn editor_for(&self, editor: MarkdownEditor, doc: DocId) -> MarkdownEditor {
-        crate::editor::configure_for(editor, &crate::library::bodies::item_root(ItemId(doc.0)))
+        crate::editor::configure_for(editor, ItemId(doc.0))
     }
 
     fn editor_theme(&self) -> EditorTheme {
