@@ -13,7 +13,11 @@ repository = "https://github.com/SergioRibera/notinplus"
 publish = false
 
 [features]
-default = []
+default = ["math", "diagrams"]
+# Mermaid diagrams drawn in pure Rust.
+diagrams = ["dep:freya-markdown-diagrams"]
+# LaTeX formulas drawn with Typst (adds ~30 MB to a release build).
+math = ["dep:freya-markdown-math"]
 # Hot reload is driven by `dx serve --hot-patch --features hotreload`.
 # Freya gates its subsecond wrap-sites + patch handler on this flag, so
 # the feature name must match what the dioxus-cli invocation passes or
@@ -62,6 +66,8 @@ notein-ui-kit = { path = "crates/notein-ui-kit" }
 notein-sync = { path = "crates/notein-sync" }
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 freya-markdown-editor = { path = "crates/freya-markdown-editor" }
+freya-markdown-math = { path = "crates/freya-markdown-math", optional = true }
+freya-markdown-diagrams = { path = "crates/freya-markdown-diagrams", optional = true }
 notein-bible = { path = "crates/notein-bible", features = ["ui", "importer"] }
 notein-notes = { path = "crates/notein-notes" }
 notein-handwriting = { path = "crates/notein-handwriting" }

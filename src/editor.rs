@@ -84,7 +84,7 @@ pub fn configure_for(editor: MarkdownEditor, root: &std::path::Path) -> Markdown
 
 /// Set `editor` up the way every editor in Notein is.
 pub fn configure(editor: MarkdownEditor) -> MarkdownEditor {
-    editor
+    let editor = editor
         .theme(theme(&palette()))
         .syntax_reveal(show_marks())
         .decorator(SchemeEmbed::new(deep_link::SCHEME, |embed| {
@@ -110,7 +110,12 @@ pub fn configure(editor: MarkdownEditor) -> MarkdownEditor {
             })
             .keyword("ref"),
         )
-        .slash_menu()
+        .slash_menu();
+    #[cfg(feature = "math")]
+    let editor = editor.decorator(freya_markdown_math::TypstMath);
+    #[cfg(feature = "diagrams")]
+    let editor = editor.decorator(freya_markdown_diagrams::MermaidDiagrams);
+    editor
 }
 
 fn suggestion(found: references::Suggestion) -> Suggestion {
