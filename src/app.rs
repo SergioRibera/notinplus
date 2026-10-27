@@ -296,6 +296,7 @@ impl Component for AppShell {
             // its own context and siblings outside its subtree would
             // again lose access.
             .child(Outlet::<Route>::new())
+            .child(crate::selection::StickySelection)
             .child({
                 // Install the host-side ModalChrome context before the
                 // portal materialises its children, so every modal

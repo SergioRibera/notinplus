@@ -526,8 +526,9 @@ fn chapter_body(
             .filter(|refs| refs.here(reader))
             .map(|refs| refs.verse),
         on_highlight: gesture.handler(reader),
+        on_tap: gesture.tap_handler(reader),
         preview: gesture.preview(),
-        selected: gesture.selected(),
+        selected: gesture.selected(reader),
         font_size: 22.0,
         line_height: 1.65,
     };

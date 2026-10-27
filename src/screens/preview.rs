@@ -205,6 +205,7 @@ fn shell(
             .expanded()
             .background(notein_ui_kit::palette().bg)
             .child(body())
+            .child(crate::selection::StickySelection)
             .child(crate::components::ModalPortal::new(area))
             .into_element()
     }
@@ -449,7 +450,7 @@ fn selection_menu() -> Element {
             at: (420.0, 320.0),
             active: Some(1),
             on_color: std::rc::Rc::new(|_| {}),
-            on_note: std::rc::Rc::new(|| {}),
+            on_note: Some(std::rc::Rc::new(|| {})),
             reference: Some(notein_plugin::bookmark::SourceRef::Plugin {
                 plugin_id: "bible".to_owned(),
                 item: [1; 16],
@@ -458,6 +459,35 @@ fn selection_menu() -> Element {
             }),
             document: Some(notein_plugin::DocId([1; 16])),
             extra: Vec::new(),
+            caption: None,
+            sticky: false,
+            on_dismiss: std::rc::Rc::new(|| {}),
+        });
+    });
+    rect().into_element()
+}
+
+fn sticky_selection_menu() -> Element {
+    use_hook(|| {
+        crate::selection::show(notein_plugin::ui::SelectionMenu {
+            at: (420.0, 320.0),
+            active: None,
+            on_color: std::rc::Rc::new(|_| {}),
+            on_note: Some(std::rc::Rc::new(|| {})),
+            reference: Some(notein_plugin::bookmark::SourceRef::Plugin {
+                plugin_id: "bible".to_owned(),
+                item: [1; 16],
+                anchor: Vec::new(),
+                selection: None,
+            }),
+            document: Some(notein_plugin::DocId([1; 16])),
+            extra: vec![(
+                "Compartir",
+                freya::icons::lucide::share_2(),
+                std::rc::Rc::new(|| {}),
+            )],
+            caption: Some("3 versículos".to_owned()),
+            sticky: true,
             on_dismiss: std::rc::Rc::new(|| {}),
         });
     });
@@ -468,6 +498,16 @@ fn selection_menu() -> Element {
 fn selection_menu_hugs_its_actions() {
     render("selection-desktop", (1440.0, 900.0), selection_menu);
     render("selection-tablet", (1024.0, 768.0), selection_menu);
+    render(
+        "selection-sticky-tablet",
+        (1024.0, 768.0),
+        sticky_selection_menu,
+    );
+    render(
+        "selection-sticky-phone",
+        (390.0, 844.0),
+        sticky_selection_menu,
+    );
 }
 
 fn annotation_popover() -> Element {

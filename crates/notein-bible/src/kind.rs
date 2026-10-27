@@ -161,9 +161,10 @@ impl BibleKind {
             )
     }
 
-    /// The verses `anchor` covers and where they come from.
-    fn passage_quote(&self, anchor: &BibleAnchor) -> Option<Quote> {
-        let verses = self.verses(anchor);
+    /// The verses `anchors` cover and where they come from.
+    fn passage_quote(&self, anchors: &[BibleAnchor]) -> Option<Quote> {
+        let first = anchors.first()?;
+        let verses: Vec<(u16, String)> = anchors.iter().flat_map(|a| self.verses(a)).collect();
         let numbered = verses.len() > 1;
         let body = verses
             .iter()
@@ -180,17 +181,56 @@ impl BibleKind {
             body,
             source: format!(
                 "{} ({})",
-                self.label(anchor),
-                self.translation(&anchor.bible_id)
+                self.label_of_passages(anchors),
+                self.translation(&first.bible_id)
             ),
         })
     }
 
-    /// The verses `anchor` covers as plain text for other apps, closed by
+    /// "Génesis 1:1, 3–4" for passages of one chapter, each label joined
+    /// by "; " otherwise.
+    #[must_use]
+    pub fn label_of_passages(&self, anchors: &[BibleAnchor]) -> String {
+        let one_chapter = anchors.first().filter(|first| {
+            anchors.iter().all(|a| {
+                a.book_id == first.book_id
+                    && a.start_chapter == first.start_chapter
+                    && a.start_chapter == a.end_chapter
+            })
+        });
+        match (anchors, one_chapter) {
+            ([only], _) => self.label(only),
+            (_, Some(first)) => {
+                let verses = anchors
+                    .iter()
+                    .map(|a| {
+                        if a.start_verse == a.end_verse {
+                            a.start_verse.to_string()
+                        } else {
+                            format!("{}–{}", a.start_verse, a.end_verse)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "{} {}:{verses}",
+                    self.book_name(&first.bible_id, &first.book_id),
+                    first.start_chapter
+                )
+            }
+            _ => anchors
+                .iter()
+                .map(|a| self.label(a))
+                .collect::<Vec<_>>()
+                .join("; "),
+        }
+    }
+
+    /// The verses `anchors` cover as plain text for other apps, closed by
     /// their reference.
     #[must_use]
-    pub fn shared_text(&self, anchor: &BibleAnchor) -> Option<String> {
-        self.passage_quote(anchor)
+    pub fn shared_text(&self, anchors: &[BibleAnchor]) -> Option<String> {
+        self.passage_quote(anchors)
             .map(|quote| format!("{}\n\n— {}", quote.body, quote.source))
     }
 
@@ -353,7 +393,7 @@ impl DocumentKind for BibleKind {
     }
 
     fn quote(&self, _doc: DocMeta<'_>, anchor: &BibleAnchor) -> Option<Quote> {
-        self.passage_quote(anchor)
+        self.passage_quote(std::slice::from_ref(anchor))
     }
 
     fn selection(&self) -> SelectionSupport {
@@ -565,7 +605,7 @@ mod tests {
         let mut anchor = BibleAnchor::single_verse("spa_rv1960", "GEN", 1, 1);
         anchor.end_verse = 2;
         assert_eq!(
-            kind.shared_text(&anchor).as_deref(),
+            kind.shared_text(std::slice::from_ref(&anchor)).as_deref(),
             Some(
                 "¹ En el principio creó Dios los cielos y la tierra. ² Y la tierra estaba desordenada y vacía.\n\n— Génesis 1:1–2 (RVR1960)"
             )

@@ -30,20 +30,26 @@ pub struct SelectionMenu {
     pub active: Option<usize>,
     /// Highlight with one of the inks (`None` removes it).
     pub on_color: Rc<dyn Fn(Option<[u8; 3]>)>,
-    /// Open the annotation for the selection.
-    pub on_note: Rc<dyn Fn()>,
+    /// Open the annotation for the selection; `None` hides Nota.
+    pub on_note: Option<Rc<dyn Fn()>>,
     /// The place as a reference, for Copiar ref.
     pub reference: Option<SourceRef>,
     /// The document the selection is in, for Al cuaderno.
     pub document: Option<DocId>,
     pub extra: Vec<SelectionExtra>,
+    /// What the bar says it works on ("3 versículos").
+    pub caption: Option<String>,
+    /// The selection grows and shrinks while the bar shows: the bar docks
+    /// at the bottom, taps outside it reach the document, and only its
+    /// close button dismisses it. Showing the bar again replaces it.
+    pub sticky: bool,
     /// The bar went away without an action.
     pub on_dismiss: Rc<dyn Fn()>,
 }
 
 impl PartialEq for SelectionMenu {
     fn eq(&self, other: &Self) -> bool {
-        self.at == other.at && self.active == other.active
+        self.at == other.at && self.active == other.active && self.caption == other.caption
     }
 }
 
@@ -67,4 +73,7 @@ pub trait HostUi {
 
     /// Show the selection bar.
     fn selection(&self, menu: SelectionMenu);
+
+    /// Take a sticky selection bar away, as when its selection emptied.
+    fn close_selection(&self) {}
 }

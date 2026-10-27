@@ -21,6 +21,10 @@ impl HostUi for ShellUi {
     fn selection(&self, menu: SelectionMenu) {
         crate::selection::show(menu);
     }
+
+    fn close_selection(&self) {
+        crate::selection::close_sticky();
+    }
 }
 
 /// The handle faces receive.

@@ -163,7 +163,7 @@ pub(crate) fn show_bar(item: ItemId, mount: CanvasMount, at: (f32, f32)) {
         at,
         active: None,
         on_color: std::rc::Rc::new(move |rgb| color_mark(rgb, String::new())),
-        on_note: std::rc::Rc::new(move || {
+        on_note: Some(std::rc::Rc::new(move || {
             let (tx, rx) = flume::bounded::<notein_plugin::services::AnnotationOutcome>(1);
             let note_mark = note_mark.clone();
             spawn_in_window(async move {
@@ -190,7 +190,7 @@ pub(crate) fn show_bar(item: ItemId, mount: CanvasMount, at: (f32, f32)) {
                     let _ = tx.send(outcome);
                 }),
             );
-        }),
+        })),
         reference: Some(reference),
         document: Some(crate::plugins::content::doc_id(item)),
         extra: vec![(
@@ -198,6 +198,8 @@ pub(crate) fn show_bar(item: ItemId, mount: CanvasMount, at: (f32, f32)) {
             freya::icons::lucide::bookmark(),
             std::rc::Rc::new(move || plain_mark(None, String::new())),
         )],
+        caption: None,
+        sticky: false,
         on_dismiss: std::rc::Rc::new(move || clear(item)),
     });
 }

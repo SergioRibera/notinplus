@@ -6,7 +6,7 @@
 //! [`crate::state::BibleViewerState`].
 
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -209,6 +209,16 @@ struct DragSelect {
     hold: State<u64>,
     /// The verse a long press selected, until the finger lifts.
     held: State<Option<u16>>,
+    /// Window point the press started at, to tell a tap from a scroll.
+    pressed_at: State<(f32, f32)>,
+}
+
+/// What a lifted press was.
+enum Lifted {
+    /// A long press or a drag across verses: the menu opens on them.
+    Menu(HighlightKind),
+    /// A short press that stayed on one verse.
+    Tap(u16),
 }
 
 impl DragSelect {
@@ -230,13 +240,16 @@ impl DragSelect {
             last_tap: State::create_in_scope(None, ScopeId::ROOT),
             hold: State::create_in_scope(0, ScopeId::ROOT),
             held: State::create_in_scope(None, ScopeId::ROOT),
+            pressed_at: State::create_in_scope((0.0, 0.0), ScopeId::ROOT),
         };
         provide_context(fresh);
         fresh
     }
 
-    /// A press on `verse`; returns whether it completes a double tap.
-    fn begin(mut self, verse: u16) -> bool {
+    /// A press on `verse` at window point `at`; returns whether it
+    /// completes a double tap.
+    fn begin(mut self, verse: u16, at: (f32, f32)) -> bool {
+        self.pressed_at.set(at);
         self.start.set(Some(verse));
         self.end.set(Some(verse));
         self.pressing.set(true);
@@ -285,16 +298,22 @@ impl DragSelect {
         self.hold.set(token);
     }
 
-    /// The finger or button lifted: what the menu opens on, if the press
-    /// was a long press or a drag across verses. Every paragraph hears
-    /// the lift; the first one ends the press for all.
-    fn lift(self) -> Option<HighlightKind> {
+    /// The finger or button lifted at window point `at`: what the press
+    /// was. A press that travelled past the slop scrolled and is nothing.
+    /// Every paragraph hears the lift; the first one ends the press for
+    /// all.
+    fn lift(self, at: (f32, f32)) -> Option<Lifted> {
         if !*self.pressing.peek() {
             return None;
         }
+        let (x, y) = *self.pressed_at.peek();
+        let still = (at.0 - x).hypot(at.1 - y) < SLOP_PX;
         match self.finish() {
-            (_, _, Some(verse)) => Some(HighlightKind::Verse(verse)),
-            (Some(a), Some(b), None) if a != b => Some(HighlightKind::Range(a.min(b), a.max(b))),
+            (_, _, Some(verse)) => Some(Lifted::Menu(HighlightKind::Verse(verse))),
+            (Some(a), Some(b), None) if a != b => {
+                Some(Lifted::Menu(HighlightKind::Range(a.min(b), a.max(b))))
+            }
+            (Some(a), _, None) if still => Some(Lifted::Tap(a)),
             _ => None,
         }
     }
@@ -371,12 +390,14 @@ pub type OnHighlight = EventHandler<HighlightTarget>;
 /// The shell forwards whatever colour the user is currently hovering / dragging
 /// on the wheel; the reader overrides those verses' tint so the paragraph
 /// updates in real time instead of only on commit.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HighlightPreview {
-    pub lo: u16,
-    pub hi: u16,
+    pub verses: Verses,
     pub color: Color,
 }
+
+/// Verses of the chapter a selection holds, in order.
+pub type Verses = Rc<BTreeSet<u16>>;
 
 /// What every paragraph of a chapter shares: references, footnotes, the
 /// gesture callbacks and the type settings.
@@ -390,10 +411,12 @@ pub struct Reading {
     /// The verse whose cross-references are showing.
     pub refs_open: Option<u16>,
     pub on_highlight: OnHighlight,
-    /// Colour being tried on a range while the picker is open.
+    /// A tap on a verse while a selection is open: it joins or leaves it.
+    pub on_tap: EventHandler<u16>,
+    /// Colour being tried on the selection while the note is open.
     pub preview: Option<HighlightPreview>,
-    /// First and last verse the selection menu works on, underlined.
-    pub selected: Option<(u16, u16)>,
+    /// The verses the selection holds, underlined; empty without one.
+    pub selected: Verses,
     pub font_size: f32,
     pub line_height: f32,
 }
@@ -438,8 +461,8 @@ pub fn chapter_view(
             },
         );
     }
-    if let Some(prev) = reading.preview {
-        for v in prev.lo..=prev.hi {
+    if let Some(prev) = &reading.preview {
+        for &v in prev.verses.iter() {
             styles.insert(
                 v,
                 VerseStyle {
@@ -662,7 +685,7 @@ impl VerseParagraph {
                 .reading
                 .preview
                 .as_ref()
-                .filter(|p| span.verse >= p.lo && span.verse <= p.hi)
+                .filter(|p| p.verses.contains(&span.verse))
                 .map(|p| p.color);
 
             p = p.child(VerseMarker {
@@ -721,20 +744,22 @@ impl VerseParagraph {
     }
 
     /// Text ranges of the verses the selection works on: the one a long
-    /// press holds, else the ones the host's menu is open on.
+    /// press holds and the ones the selection holds.
     fn underlined(&self, ranges: &[VerseRange], held: Option<u16>) -> Vec<(usize, usize)> {
-        let Some((lo, hi)) = held.map(|v| (v, v)).or(self.reading.selected) else {
-            return Vec::new();
-        };
+        let selected = &self.reading.selected;
         ranges
             .iter()
-            .filter(|(_, _, v)| (lo..=hi).contains(v))
+            .filter(|(_, _, v)| held == Some(*v) || selected.contains(v))
             .map(|(start, end, _)| (*start, *end))
             .collect()
     }
 }
 
 impl Component for VerseParagraph {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one handler per pointer event of the gestures"
+    )]
     fn render(&self) -> impl IntoElement {
         let holder = use_hook(ParagraphHolder::default);
         let drag = use_consume::<DragSelect>();
@@ -753,6 +778,10 @@ impl Component for VerseParagraph {
         use_settle_ticks();
 
         let on_highlight = self.reading.on_highlight.clone();
+        let on_tap = self.reading.on_tap.clone();
+        // While a selection is open a tap joins or leaves it, so a quick
+        // second tap is not a double tap.
+        let selecting = !self.reading.selected.is_empty();
         let p = paragraph()
             .width(Size::fill())
             .line_height(self.reading.line_height)
@@ -802,7 +831,7 @@ impl Component for VerseParagraph {
                     let anchor_pt = (g.x as f32, g.y as f32);
                     anchor.set(anchor_pt);
 
-                    if drag.begin(verse) {
+                    if drag.begin(verse, anchor_pt) && !selecting {
                         on_highlight.call(HighlightTarget {
                             kind: HighlightKind::Verse(verse),
                             anchor_x: anchor_pt.0,
@@ -836,16 +865,21 @@ impl Component for VerseParagraph {
                 }
             })
             .on_global_pointer_up({
-                move |_: Event<PointerEventData>| {
-                    let Some(kind) = drag.lift() else {
-                        return;
-                    };
-                    let (ax, ay) = *anchor.peek();
-                    on_highlight.call(HighlightTarget {
-                        kind,
-                        anchor_x: ax,
-                        anchor_y: ay,
-                    });
+                move |e: Event<PointerEventData>| {
+                    let g = e.global_location();
+                    #[allow(clippy::cast_possible_truncation)] // window coordinates
+                    match drag.lift((g.x as f32, g.y as f32)) {
+                        Some(Lifted::Menu(kind)) => {
+                            let (ax, ay) = *anchor.peek();
+                            on_highlight.call(HighlightTarget {
+                                kind,
+                                anchor_x: ax,
+                                anchor_y: ay,
+                            });
+                        }
+                        Some(Lifted::Tap(verse)) if selecting => on_tap.call(verse),
+                        _ => {}
+                    }
                 }
             });
 
