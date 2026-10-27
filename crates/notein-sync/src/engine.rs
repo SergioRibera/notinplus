@@ -12,7 +12,7 @@ use crate::identity::DeviceId;
 use crate::replica::{Blob, BlobHead, BlobKey, DocId, Replica, Scope, Version};
 
 /// Bumped whenever [`Message`] changes shape.
-pub const PROTOCOL_VERSION: u16 = 4;
+pub const PROTOCOL_VERSION: u16 = 5;
 
 /// One unit of the exchange.
 #[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]

@@ -346,18 +346,10 @@ pub fn copy_item(from: ItemId, to: ItemId) -> io::Result<()> {
 /// entries and half written `.tmp` files are skipped.
 #[must_use]
 pub fn read_assets(id: ItemId) -> Vec<(String, Vec<u8>)> {
-    let Ok(entries) = fs::read_dir(item_root(id).join(ASSETS_SUBDIR)) else {
-        return Vec::new();
-    };
-    entries
-        .filter_map(std::result::Result::ok)
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-        .filter_map(|entry| {
-            let name = entry.file_name().into_string().ok()?;
-            if Path::new(&name).extension().is_some_and(|ext| ext == "tmp") {
-                return None;
-            }
-            let bytes = fs::read(entry.path()).ok()?;
+    asset_names(id)
+        .into_iter()
+        .filter_map(|name| {
+            let bytes = read_asset(id, &name).ok()?;
             Some((name, bytes))
         })
         .collect()
@@ -378,4 +370,55 @@ pub fn write_asset(id: ItemId, name: &str, bytes: &[u8]) -> Result<()> {
         return Err(LibraryError::Codec(format!("asset name {name:?}")));
     }
     write_blob(&item_root(id).join(ASSETS_SUBDIR).join(name), bytes)
+}
+
+/// Names of the files in `id`'s assets folder, without half written ones.
+#[must_use]
+pub fn asset_names(id: ItemId) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(item_root(id).join(ASSETS_SUBDIR)) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(std::result::Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| Path::new(name).extension().is_none_or(|ext| ext != "tmp"))
+        .collect()
+}
+
+/// Bytes of the asset `name` of `id`.
+///
+/// # Errors
+/// I/O failures, including a missing file.
+pub fn read_asset(id: ItemId, name: &str) -> Result<Vec<u8>> {
+    Ok(fs::read(item_root(id).join(ASSETS_SUBDIR).join(name))?)
+}
+
+/// Sync identity of the asset `name` of `id`: the first half of the item
+/// id, then a hash of the name that is the same on every device.
+#[must_use]
+pub fn asset_key(id: ItemId, name: &str) -> [u8; 16] {
+    // FNV-1a: stable across builds and platforms, unlike `DefaultHasher`.
+    let hash = name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    });
+    let mut key = [0; 16];
+    key[..8].copy_from_slice(&id.0[..8]);
+    key[8..].copy_from_slice(&hash.to_le_bytes());
+    key
+}
+
+#[cfg(test)]
+mod asset_tests {
+    use super::{ItemId, asset_key};
+
+    #[test]
+    fn asset_keys_are_the_same_everywhere() {
+        let item = ItemId([3; 16]);
+        let key = asset_key(item, "a.png");
+        assert_eq!(&key[..8], &[3; 8]);
+        // FNV-1a 64 of "a.png", fixed so every build agrees.
+        assert_eq!(key[8..], 0xa292_05b5_6ba8_5779_u64.to_le_bytes());
+        assert_ne!(key, asset_key(item, "b.png"));
+    }
 }

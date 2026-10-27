@@ -26,7 +26,17 @@ pub enum SyncRecord {
         updated_at: u64,
         bytes: Vec<u8>,
     },
+    /// A file an item links to. Named after its content, so it is only
+    /// ever added.
+    Asset {
+        item: super::ItemId,
+        name: String,
+        bytes: Vec<u8>,
+    },
 }
+
+/// Freshness of every asset: they never change, so having one is enough.
+const ASSET_STAMP: u64 = 1;
 
 impl SyncRecord {
     #[must_use]
@@ -57,7 +67,7 @@ const fn buried_of(kind: BlobKind) -> Option<Buried> {
         BlobKind::Folder => Some(Buried::Folder),
         BlobKind::Tag => Some(Buried::Tag),
         BlobKind::Workspace => Some(Buried::Workspace),
-        BlobKind::Link | BlobKind::Snapshot => None,
+        BlobKind::Link | BlobKind::Snapshot | BlobKind::Asset => None,
     }
 }
 
@@ -146,6 +156,12 @@ impl Library {
                 crate::plugins::content::record_references(item, &plugin_id, &bytes);
                 crate::plugins::content::reindex(item);
                 crate::plugins::content::notify_remote(item);
+            }
+            SyncRecord::Asset { item, name, bytes } => {
+                if self.data.index.item(item).is_none() {
+                    return Ok(false);
+                }
+                bodies::write_asset(item, &name, &bytes)?;
             }
             SyncRecord::Gone(stone) => self.apply_gone(&stone, yard).await?,
         }
@@ -249,6 +265,11 @@ impl LibraryData {
             let at = bodies::plugin_snapshot_stamp(i.id, &i.kind.plugin_id)?;
             Some(head(BlobKind::Snapshot, i.id.0, at))
         }));
+        heads.extend(self.index.items.iter().flat_map(|i| {
+            bodies::asset_names(i.id)
+                .into_iter()
+                .map(|name| head(BlobKind::Asset, bodies::asset_key(i.id, &name), ASSET_STAMP))
+        }));
         let mut at: std::collections::HashMap<(BlobKind, [u8; 16]), usize> = heads
             .iter()
             .enumerate()
@@ -304,6 +325,7 @@ impl LibraryData {
                 .find(|w| w.id.0 == key.id)
                 .map(|w| (w.updated_at, SyncRecord::Workspace(w.clone()))),
             BlobKind::Snapshot => self.snapshot_record(super::ItemId(key.id)),
+            BlobKind::Asset => self.asset_record(key.id),
         };
         match (live, stone) {
             (Some((at, record)), Some(stone)) if at >= stone.at => Some(record),
@@ -327,6 +349,26 @@ impl LibraryData {
                 bytes,
             },
         ))
+    }
+
+    /// Item and file name of the asset whose sync key is `key`.
+    fn asset_of(&self, key: [u8; 16]) -> Option<(super::ItemId, String)> {
+        self.index
+            .items
+            .iter()
+            .filter(|i| i.id.0[..8] == key[..8])
+            .find_map(|i| {
+                bodies::asset_names(i.id)
+                    .into_iter()
+                    .find(|name| bodies::asset_key(i.id, name) == key)
+                    .map(|name| (i.id, name))
+            })
+    }
+
+    fn asset_record(&self, key: [u8; 16]) -> Option<(u64, SyncRecord)> {
+        let (item, name) = self.asset_of(key)?;
+        let bytes = bodies::read_asset(item, &name).ok()?;
+        Some((ASSET_STAMP, SyncRecord::Asset { item, name, bytes }))
     }
 
     /// Freshness of what is held locally under `key`, if anything.
@@ -367,6 +409,7 @@ impl LibraryData {
                 .index
                 .item(super::ItemId(key.id))
                 .and_then(|i| bodies::plugin_snapshot_stamp(i.id, &i.kind.plugin_id)),
+            BlobKind::Asset => self.asset_of(key.id).map(|_| ASSET_STAMP),
         };
         match (live, stone) {
             (Some(a), Some(b)) => Some(a.max(b)),
