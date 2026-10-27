@@ -38,5 +38,5 @@ pub(super) fn open(reader: &Reader, at: (f32, f32)) {
         )
         .icon(lucide::plus()),
     ));
-    crate::actions::show_at(entries, Area::new(at.into(), (1.0, 1.0).into()));
+    notein_ui_kit::ActionList::new(entries).show_at(Area::new(at.into(), (1.0, 1.0).into()));
 }

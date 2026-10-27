@@ -143,3 +143,13 @@ impl Component for Text {
             .maybe(self.fill, |l| l.width(Size::flex(1.0)))
     }
 }
+
+/// "1 elemento" / "12 elementos".
+#[must_use]
+pub fn count(n: usize, singular: &str, plural: &str) -> String {
+    if n == 1 {
+        format!("1 {singular}")
+    } else {
+        format!("{n} {plural}")
+    }
+}

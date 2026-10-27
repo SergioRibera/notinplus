@@ -4,7 +4,7 @@
 
 use freya::prelude::*;
 use notein_ui_kit::theme::palette;
-use notein_ui_kit::{Action, ActionEntry, ActionList, ModalController, Popover};
+use notein_ui_kit::{Action, ActionEntry, ActionList, ModalController};
 
 use crate::flows;
 use crate::library::{FolderId, ItemId, LibraryData, WorkspaceId};
@@ -216,24 +216,5 @@ pub fn for_mesa(data: &LibraryData, workspace: WorkspaceId) -> Vec<ActionEntry> 
 
 /// Show `entries` hanging from the pointer at `at`.
 pub fn show(entries: Vec<ActionEntry>, at: CursorPoint) {
-    #[allow(clippy::cast_possible_truncation)] // window coordinates
-    let anchor = Area::new((at.x as f32, at.y as f32).into(), (1.0, 1.0).into());
-    show_at(entries, anchor);
-}
-
-/// Show `entries` hanging from `anchor`, in window coordinates.
-pub fn show_at(entries: Vec<ActionEntry>, anchor: Area) {
-    let height = entries
-        .iter()
-        .map(|e| match e {
-            ActionEntry::Item(_) => 36.0,
-            ActionEntry::Divider => 9.0,
-            ActionEntry::Header(_) => 28.0,
-        })
-        .sum::<f32>()
-        + 12.0;
-    Popover::new(anchor, ActionList::new(entries))
-        .width(280.0)
-        .estimated_height(height)
-        .open();
+    ActionList::new(entries).show(at);
 }

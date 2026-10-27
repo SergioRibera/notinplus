@@ -5,9 +5,9 @@ use freya::icons::lucide;
 use freya::prelude::*;
 use freya_markdown_editor::prelude::*;
 use istmo_share::{ShareClient, ShareFile, ShareRequest};
-use notein_ui_kit::{Action, ActionEntry};
+use notein_ui_kit::{Action, ActionEntry, ActionList};
 
-use crate::actions::{run, show_at};
+use crate::actions::run;
 
 /// Open the share menu for the note in `controller`, below the press at
 /// `at` in `window` coordinates, or under the top-right corner without one.
@@ -64,7 +64,7 @@ pub(crate) fn open_menu(
             )
             .icon(lucide::clipboard_copy()),
         ));
-        show_at(entries, anchor);
+        ActionList::new(entries).show_at(anchor);
     });
 }
 

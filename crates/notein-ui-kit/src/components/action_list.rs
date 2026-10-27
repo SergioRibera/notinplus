@@ -9,6 +9,8 @@ use super::icon::Icon;
 use super::kind_badge::KindBadge;
 use super::list_row::strut;
 use super::scroll_content::TapExt;
+use super::sheet::Popover;
+use crate::modal::ModalController;
 use crate::theme::palette;
 use crate::tokens::{radius, text};
 
@@ -73,6 +75,18 @@ impl Action {
             highlighted: false,
             on_run: on_run.into(),
         }
+    }
+
+    /// An action that closes the menu it is in, then runs `run`.
+    #[must_use]
+    pub fn closing(label: impl Into<Cow<'static, str>>, run: impl Fn() + 'static) -> Self {
+        Self::new(
+            label,
+            EventHandler::new(move |()| {
+                ModalController::get().close();
+                run();
+            }),
+        )
     }
 
     #[must_use]
@@ -151,6 +165,32 @@ impl ActionList {
     pub const fn width(mut self, width: f32) -> Self {
         self.width = Some(width);
         self
+    }
+
+    /// Show the list in a popover hanging from `anchor`, in window
+    /// coordinates.
+    pub fn show_at(self, anchor: Area) {
+        let height = self
+            .entries
+            .iter()
+            .map(|e| match e {
+                ActionEntry::Item(_) => 36.0,
+                ActionEntry::Divider => 9.0,
+                ActionEntry::Header(_) => 28.0,
+            })
+            .sum::<f32>()
+            + 12.0;
+        Popover::new(anchor, self)
+            .width(280.0)
+            .estimated_height(height)
+            .open();
+    }
+
+    /// Show the list hanging from the pointer at `at`.
+    pub fn show(self, at: CursorPoint) {
+        #[allow(clippy::cast_possible_truncation, reason = "window coordinates")]
+        let anchor = Area::new((at.x as f32, at.y as f32).into(), (1.0, 1.0).into());
+        self.show_at(anchor);
     }
 }
 

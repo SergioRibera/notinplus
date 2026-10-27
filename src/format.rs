@@ -74,15 +74,7 @@ pub fn size(bytes: u64) -> String {
     }
 }
 
-/// "1 elemento" / "12 elementos".
-#[must_use]
-pub fn count(n: usize, singular: &str, plural: &str) -> String {
-    if n == 1 {
-        format!("1 {singular}")
-    } else {
-        format!("{n} {plural}")
-    }
-}
+pub use notein_ui_kit::count;
 
 /// Unix millis now.
 #[must_use]
