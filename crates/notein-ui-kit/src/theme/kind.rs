@@ -87,11 +87,11 @@ impl ThemeChoice {
 }
 
 const HIGHLIGHTERS: [Color; 5] = [
-    hex(0xF2_D5_6B),
-    hex(0x9B_D6_7C),
-    hex(0xF2_9B_B0),
-    hex(0x7F_C4_F0),
-    hex(0xB7_9C_F2),
+    hex(0x8B_7B_40),
+    hex(0x53_7A_3F),
+    hex(0xA5_61_71),
+    hex(0x46_6D_86),
+    hex(0x77_62_A5),
 ];
 
 const NOCHE: Palette = Palette {
