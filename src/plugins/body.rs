@@ -50,20 +50,35 @@ impl SharedBody {
         })
     }
 
-    fn write(&self, doc: &Doc) {
-        match doc.snapshot_bytes() {
-            Ok(bytes) => {
-                if let Err(err) = bodies::write_doc_bytes(self.item, &bytes) {
-                    log::warn!("body {}: write failed: {err}", self.item);
-                }
+    /// Save the body once typing pauses, then push it to other devices.
+    fn write_later(&self) {
+        let (item, doc) = (self.item, Arc::clone(&self.doc));
+        crate::deferred::schedule(write_key(item), move || {
+            let bytes = open_docs::lock(&doc).snapshot_bytes();
+            write(item, bytes);
+            crate::sync::doc_changed(item);
+        });
+    }
+}
+
+fn write_key(item: ItemId) -> String {
+    format!("body:{item}")
+}
+
+fn write(item: ItemId, bytes: Result<Vec<u8>, crate::doc::DocError>) {
+    match bytes {
+        Ok(bytes) => {
+            if let Err(err) = bodies::write_doc_bytes(item, &bytes) {
+                log::warn!("body {item}: write failed: {err}");
             }
-            Err(err) => log::warn!("body {}: snapshot failed: {err}", self.item),
         }
+        Err(err) => log::warn!("body {item}: snapshot failed: {err}"),
     }
 }
 
 impl Drop for SharedBody {
     fn drop(&mut self) {
+        crate::deferred::run_now(&write_key(self.item));
         if self.published {
             open_docs::unregister(self.item, &self.doc);
         }
@@ -80,9 +95,8 @@ impl TextBody for SharedBody {
         if !doc.set_body(text) {
             return false;
         }
-        self.write(&doc);
         drop(doc);
-        crate::sync::doc_changed(self.item);
+        self.write_later();
         crate::sync::live(
             self.item,
             &LiveMessage::Caret {

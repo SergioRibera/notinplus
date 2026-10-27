@@ -110,18 +110,15 @@ impl SnapshotStore {
 
 impl RawStore for SnapshotStore {
     fn load(&self) -> Option<Vec<u8>> {
-        read(self.item, &self.kind)
+        let unsaved = unsaved().get(&(self.item, self.kind.clone())).cloned();
+        unsaved.or_else(|| read(self.item, &self.kind))
     }
 
+    /// Kept in memory at once and written once changes pause.
     fn save(&self, bytes: Vec<u8>) {
-        if let Err(err) = bodies::write_plugin_snapshot(self.item, &self.kind, &bytes) {
-            log::error!("content save {}: {err}", self.item);
-            return;
-        }
-        Glance::forget(self.item);
-        crate::sync::snapshot_changed(self.item);
-        record_references(self.item, &self.kind, &bytes);
-        reindex(self.item);
+        let (item, kind) = (self.item, self.kind.clone());
+        unsaved().insert((item, kind.clone()), bytes);
+        crate::deferred::schedule(store_key(item, &kind), move || store_unsaved(item, &kind));
     }
 
     fn changes(&self) -> flume::Receiver<()> {
@@ -135,6 +132,41 @@ impl RawStore for SnapshotStore {
     fn access_changes(&self) -> flume::Receiver<()> {
         crate::sync::changes()
     }
+}
+
+type Unsaved = HashMap<(ItemId, String), Vec<u8>>;
+
+/// Snapshots saved by a face and not on disk yet.
+fn unsaved() -> std::sync::MutexGuard<'static, Unsaved> {
+    static UNSAVED: std::sync::LazyLock<Mutex<Unsaved>> =
+        std::sync::LazyLock::new(Mutex::default);
+    UNSAVED.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn store_key(item: ItemId, kind: &str) -> String {
+    format!("snapshot:{item}:{kind}")
+}
+
+fn store_unsaved(item: ItemId, kind: &str) {
+    let key = (item, kind.to_owned());
+    let Some(bytes) = unsaved().get(&key).cloned() else {
+        return;
+    };
+    let written = bodies::write_plugin_snapshot(item, kind, &bytes);
+    // Saved again meanwhile: those bytes stay for the next write.
+    let mut waiting = unsaved();
+    if waiting.get(&key) == Some(&bytes) {
+        waiting.remove(&key);
+    }
+    drop(waiting);
+    if let Err(err) = written {
+        log::error!("content save {item}: {err}");
+        return;
+    }
+    Glance::forget(item);
+    crate::sync::snapshot_changed(item);
+    record_references(item, kind, &bytes);
+    reindex(item);
 }
 
 /// Library id → plugin doc id.
@@ -156,9 +188,35 @@ pub fn index(item: &Item) {
     kind.index(meta(item), &content, attachment.as_deref());
 }
 
-/// Re-index `item` in the background after its content changed.
+/// Re-index `item` in the background after its content changed. One
+/// thread works through the requests; a burst for the same document
+/// indexes it once.
 pub fn reindex(item: ItemId) {
-    std::thread::spawn(move || index_blocking(item));
+    static QUEUE: std::sync::OnceLock<Option<flume::Sender<ItemId>>> = std::sync::OnceLock::new();
+    let queue = QUEUE.get_or_init(|| {
+        let (tx, rx) = flume::unbounded::<ItemId>();
+        std::thread::Builder::new()
+            .name("notein-reindex".to_owned())
+            .spawn(move || {
+                while let Ok(first) = rx.recv() {
+                    let mut batch = vec![first];
+                    for item in rx.try_iter() {
+                        if !batch.contains(&item) {
+                            batch.push(item);
+                        }
+                    }
+                    for item in batch {
+                        index_blocking(item);
+                    }
+                }
+            })
+            .map_err(|err| log::error!("reindex thread: {err}"))
+            .ok()
+            .map(|_| tx)
+    });
+    if let Some(tx) = queue {
+        let _ = tx.send(item);
+    }
 }
 
 /// Index `item` on this thread, if it is still in the library.

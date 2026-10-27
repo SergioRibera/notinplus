@@ -24,6 +24,7 @@ pub mod canvas_text;
 pub mod creation;
 pub mod components;
 pub mod deep_link;
+pub mod deferred;
 pub mod doc;
 pub mod doc_op;
 pub mod editor;

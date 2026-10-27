@@ -269,29 +269,41 @@ pub fn set_present(present: bool) {
 const AWAY_AFTER: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Follow the window to the background and back, from the app root.
-/// Desktop windows lose focus all the time without the app going
-/// anywhere, so only mobile targets leave.
-pub fn follow_presence() {
-    if !cfg!(any(target_os = "android", target_os = "ios")) {
-        return;
-    }
-    freya::prelude::spawn_in_window(async {
-        let focused = freya::prelude::Platform::get().current_window().is_app_focused;
+///
+/// Writes waiting for a pause go to disk as soon as the app loses
+/// focus. Desktop windows lose focus all the time without the app
+/// going anywhere, so only mobile targets leave the network.
+pub fn use_presence() {
+    let focused = freya::prelude::Platform::get().current_window().is_app_focused;
+    let changes = freya::prelude::use_hook(|| {
+        let (tx, rx) = flume::unbounded::<bool>();
+        if cfg!(any(target_os = "android", target_os = "ios")) {
+            follow_presence(rx);
+        }
+        tx
+    });
+    freya::prelude::use_side_effect(move || {
+        let focused = *focused.read();
+        if !focused {
+            std::thread::spawn(crate::deferred::flush);
+        }
+        let _ = changes.send(focused);
+    });
+}
+
+fn follow_presence(changes: flume::Receiver<bool>) {
+    freya::prelude::spawn_in_window(async move {
         let mut present = true;
-        loop {
-            let away = !*focused.peek();
-            if away == present {
-                if away {
-                    // Coming back within the grace keeps the channels.
-                    async_io::Timer::after(AWAY_AFTER).await;
-                    if *focused.peek() {
-                        continue;
-                    }
-                }
-                present = !away;
+        while let Ok(mut focused) = changes.recv_async().await {
+            if !focused && present {
+                // Coming back within the grace keeps the channels.
+                async_io::Timer::after(AWAY_AFTER).await;
+                focused = changes.try_iter().last().unwrap_or(focused);
+            }
+            if focused != present {
+                present = focused;
                 set_present(present);
             }
-            async_io::Timer::after(std::time::Duration::from_millis(500)).await;
         }
     });
 }

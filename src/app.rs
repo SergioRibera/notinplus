@@ -187,6 +187,8 @@ pub fn run() {
                 }),
         );
         launch(cfg);
+        crate::deferred::flush();
+        crate::library::index::flush();
         // The window is closed: let the other devices know right away.
         crate::sync::stop();
     }
@@ -277,7 +279,7 @@ impl Component for AppShell {
         // runs once per `AppShell` mount, exactly when `Platform::get`
         // becomes safe to call.
         use_hook(crate::sync::start);
-        use_hook(crate::sync::follow_presence);
+        crate::sync::use_presence();
         use_hook(crate::deep_link::listen);
         use_hook(crate::session_end::listen);
         rect()
