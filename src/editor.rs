@@ -92,6 +92,9 @@ pub fn configure(editor: MarkdownEditor) -> MarkdownEditor {
 }
 
 fn suggestion(found: references::Suggestion) -> Suggestion {
+    if found.quote {
+        return quote_suggestion(found);
+    }
     let label = found.label.clone();
     let url = found.target.to_url();
     let action = match &found.target {
@@ -123,6 +126,31 @@ fn suggestion(found: references::Suggestion) -> Suggestion {
         },
     };
     Suggestion::new(found.label, action).detail(found.subtitle)
+}
+
+/// Entry that inserts what `found` points at as a block quote.
+fn quote_suggestion(found: references::Suggestion) -> Suggestion {
+    let target = found.target;
+    let run = SuggestionRun::new(move |controller| {
+        let data = LibraryView::get().data();
+        let Some(quote) = references::quote(&target, data.as_deref()) else {
+            return;
+        };
+        if let SourceRef::Plugin {
+            plugin_id,
+            item,
+            anchor,
+            ..
+        } = &target
+            && let Some(kind) = crate::plugins::kind(plugin_id)
+        {
+            kind.cited(notein_plugin::DocId(*item), anchor);
+        }
+        controller.insert_markdown(&references::quote_markdown(&quote, &target));
+    });
+    Suggestion::new(found.label, SuggestionAction::Run(run))
+        .detail(found.subtitle)
+        .icon("❝")
 }
 
 /// Close the surface the editor sits in before a chip navigates away

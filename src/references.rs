@@ -2,9 +2,11 @@
 //! copying a reference and putting one in a notebook.
 
 use freya::prelude::*;
+use freya_markdown_editor::document::{Block, BlockKind, Document, Inline};
+use freya_markdown_editor::markdown::Dialect;
 use notein_plugin::bookmark::SourceRef;
 use notein_plugin::doc::DocMeta;
-use notein_plugin::kind::{KindColor, SearchQuery};
+use notein_plugin::kind::{KindColor, Quote, SearchQuery};
 use notein_ui_kit::theme::Palette;
 use notein_ui_kit::{Toast, ToastTone, Toasts};
 
@@ -16,6 +18,8 @@ use crate::space::OpenHint;
 const SUGGESTIONS_PER_KIND: usize = 6;
 /// Most documents `/ref` offers by name.
 const SUGGESTED_DOCS: usize = 8;
+/// Places per kind offered with their content too.
+const QUOTED_PER_KIND: usize = 3;
 
 /// Resolve a kind colour family against the palette.
 #[must_use]
@@ -125,10 +129,13 @@ pub struct Suggestion {
     pub label: String,
     pub subtitle: String,
     pub target: SourceRef,
+    /// Picking it inserts what the target holds instead of a chip.
+    pub quote: bool,
 }
 
 /// What `/ref query` offers: documents by name, then places inside them
-/// from every kind's search.
+/// from every kind's search. The first places of a kind that can quote
+/// them come with a second entry that inserts their content.
 #[must_use]
 pub fn suggestions(query: &str, data: Option<&LibraryData>) -> Vec<Suggestion> {
     let needle = notein_plugin::fold(query.trim());
@@ -147,6 +154,7 @@ pub fn suggestions(query: &str, data: Option<&LibraryData>) -> Vec<Suggestion> {
                         anchor: Vec::new(),
                         selection: None,
                     },
+                    quote: false,
                 })
                 .collect()
         })
@@ -154,23 +162,110 @@ pub fn suggestions(query: &str, data: Option<&LibraryData>) -> Vec<Suggestion> {
     if needle.is_empty() {
         return out;
     }
-    let catalog = crate::plugins::catalog();
-    for found in catalog.search(&SearchQuery::new(query, SUGGESTIONS_PER_KIND)) {
+    let results = crate::plugins::catalog().search(&SearchQuery::new(query, SUGGESTIONS_PER_KIND));
+    for found in results {
         let label = crate::plugins::kind_info(&found.kind)
             .map_or_else(String::new, |k| k.label.into_owned());
-        out.extend(found.hits.into_iter().map(|hit| Suggestion {
-            label: hit.title,
-            subtitle: format!("{label} · {}", hit.snippet),
-            target: SourceRef::Plugin {
+        let quotes = crate::plugins::kind(&found.kind).is_some_and(|kind| kind.quotes());
+        for (rank, hit) in found.hits.into_iter().enumerate() {
+            let target = SourceRef::Plugin {
                 plugin_id: found.kind.clone(),
                 item: hit.doc.map_or([0; 16], |d| d.0),
                 anchor: hit.anchor,
                 selection: None,
-            },
-        }));
+            };
+            if quotes && rank < QUOTED_PER_KIND {
+                out.push(Suggestion {
+                    label: hit.title.clone(),
+                    subtitle: format!("{label} · Referencia"),
+                    target: target.clone(),
+                    quote: false,
+                });
+                out.push(Suggestion {
+                    label: hit.title,
+                    subtitle: format!("{label} · Insertar el texto"),
+                    target,
+                    quote: true,
+                });
+            } else {
+                out.push(Suggestion {
+                    label: hit.title,
+                    subtitle: format!("{label} · {}", hit.snippet),
+                    target,
+                    quote: false,
+                });
+            }
+        }
     }
-    drop(catalog);
     out
+}
+
+/// What `target` holds, quoted by its kind. `None` when the kind cannot
+/// quote or the place is gone.
+#[must_use]
+pub fn quote(target: &SourceRef, data: Option<&LibraryData>) -> Option<Quote> {
+    let SourceRef::Plugin {
+        plugin_id,
+        item,
+        anchor,
+        ..
+    } = target
+    else {
+        return None;
+    };
+    let kind = crate::plugins::kind(plugin_id).filter(|kind| kind.quotes())?;
+    let id = ItemId(*item);
+    let doc = data.and_then(|d| d.item(id));
+    let name = doc.map_or_else(String::new, |d| d.name.clone());
+    let meta = DocMeta {
+        id: doc_id(id),
+        name: &name,
+        updated_at: doc.map_or(0, |d| d.updated_at),
+        tint: doc.and_then(|d| d.color),
+    };
+    kind.quote(meta, anchor)
+}
+
+/// Markdown of `quote` as a block quote of plain lines (lists become
+/// bullets, headings bold) closed by a chip to `target`.
+#[must_use]
+pub fn quote_markdown(quote: &Quote, target: &SourceRef) -> String {
+    let mut lines = quote_lines(&quote.body);
+    lines.push(format!("— {}", chip_markdown(&quote.source, target)));
+    lines
+        .iter()
+        .map(|line| format!("> {line}"))
+        .collect::<Vec<_>>()
+        .join("\n>\n")
+}
+
+/// One line per block of `markdown`, in the shape a quote keeps.
+fn quote_lines(markdown: &str) -> Vec<String> {
+    let document = Document::parse(markdown);
+    document
+        .blocks()
+        .iter()
+        .filter_map(|block| {
+            let source = |content: &Inline| {
+                Document::from(vec![Block::paragraph(content.clone())])
+                    .to_markdown(Dialect::Rich)
+                    .trim()
+                    .to_owned()
+            };
+            let line = match &block.kind {
+                BlockKind::Heading { content, .. } => format!("**{}**", source(content)),
+                BlockKind::ListItem { depth, content, .. } => {
+                    format!(
+                        "{}• {}",
+                        "\u{a0}\u{a0}".repeat(usize::from(*depth)),
+                        source(content)
+                    )
+                }
+                kind => source(kind.content()?),
+            };
+            (!line.trim().is_empty()).then_some(line)
+        })
+        .collect()
 }
 
 /// Markdown that renders as a chip for `target`.
@@ -245,4 +340,37 @@ pub fn insert_in_notebook(from: ItemId, target: SourceRef) {
         crate::space::open(TabTarget::Item(notebook), OpenHint::Beside);
         Toasts::get().show(Toast::new("Agregado al cuaderno").tone(ToastTone::Done));
     });
+}
+
+#[cfg(test)]
+mod quote_tests {
+    use super::*;
+
+    #[test]
+    fn a_quote_becomes_plain_quoted_lines_closed_by_its_source() {
+        let quote = Quote {
+            body: "Una *idea*.\n\n### Detalle\n\n- uno\n  - dos".to_owned(),
+            source: "Nota › Ideas".to_owned(),
+        };
+        let target = SourceRef::External {
+            url: "https://example.com".to_owned(),
+        };
+        let markdown = quote_markdown(&quote, &target);
+        assert_eq!(
+            markdown,
+            "> Una *idea*.\n>\n> **Detalle**\n>\n> • uno\n>\n> \u{a0}\u{a0}• dos\n>\n> — [Nota › Ideas](https://example.com)"
+        );
+        let document = Document::parse(&markdown);
+        let quoted = document.blocks().iter().filter(
+            |block| !matches!(&block.kind, BlockKind::Paragraph(content) if content.is_empty()),
+        );
+        assert!(
+            quoted
+                .clone()
+                .all(|block| matches!(block.kind, BlockKind::Quote(_)))
+                && quoted.count() == 5,
+            "{:?}",
+            document.blocks()
+        );
+    }
 }
