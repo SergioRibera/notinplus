@@ -759,3 +759,45 @@ fn sheet_follows_a_finger_on_its_content_only_from_the_top() {
     finger_drag(&mut runner, (150.0, 300.0), 480.0, 10, Duration::ZERO);
     assert_eq!(open_modals(&runner), 0);
 }
+
+/// Home on a phone tall enough to show the shelf grid, settled. The
+/// first grid card, the "Estudio" folder, sits at [`GRID_FOLDER`].
+fn tall_home() -> TestingRunner {
+    sandbox();
+    let size = (390.0, 1700.0);
+    let app = shell(home, size, notein_ui_kit::Gutters::default());
+    let (mut runner, ()) = TestingRunner::new(app, size.into(), |_| (), 1.0);
+    runner.poll_n(Duration::from_millis(40), 12);
+    runner.sync_and_update();
+    runner
+}
+
+const GRID_FOLDER: (f64, f64) = (90.0, 950.0);
+
+fn browsing_root(runner: &TestingRunner) -> bool {
+    runner.run_in(|| crate::screens::home::Browse::get().folder() == crate::library::ROOT_FOLDER)
+}
+
+#[test]
+fn grid_card_opens_on_click() {
+    let mut runner = tall_home();
+    assert!(browsing_root(&runner));
+    runner.click_cursor(GRID_FOLDER);
+    runner.poll_n(Duration::from_millis(40), 4);
+    runner.sync_and_update();
+    assert!(
+        !browsing_root(&runner),
+        "a click on a grid card did nothing"
+    );
+}
+
+#[test]
+fn grid_card_opens_on_tap() {
+    let mut runner = tall_home();
+    runner.press_touch(GRID_FOLDER);
+    runner.sync_and_update();
+    runner.release_touch(GRID_FOLDER);
+    runner.poll_n(Duration::from_millis(40), 4);
+    runner.sync_and_update();
+    assert!(!browsing_root(&runner), "a tap on a grid card did nothing");
+}

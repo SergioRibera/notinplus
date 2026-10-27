@@ -84,13 +84,21 @@ impl PressGesture {
             Rc::clone(&placement),
             placement,
         );
-        let menu_on_hold = on_menu.clone();
         rect.on_sized(move |e: Event<SizedEventData>| {
             let mut now = sized.get();
             now.now = e.area;
             sized.set(now);
         })
+        // One pointer-down handler for both buttons: an element keeps one
+        // handler per event, and `on_secondary_down` is a pointer-down
+        // handler too, so wiring both drops the first.
         .on_pointer_down(move |e: Event<PointerEventData>| {
+            if let PointerEventData::Mouse(mouse) = e.data()
+                && mouse.button == Some(MouseButton::Right)
+            {
+                on_menu(mouse.global_location);
+                return;
+            }
             if !e.data().is_primary() {
                 return;
             }
@@ -102,7 +110,7 @@ impl PressGesture {
             down.set(now);
             let current = token.peek().wrapping_add(1);
             token.set(current);
-            let menu = menu_on_hold.clone();
+            let menu = on_menu.clone();
             let timer = Rc::clone(&timer);
             spawn(async move {
                 async_io::Timer::after(LONG_PRESS).await;
@@ -122,10 +130,6 @@ impl PressGesture {
                 start.set(None);
             }
         })
-        .on_pointer_leave(move |_| {
-            token.set(0);
-            start.set(None);
-        })
         .on_tap(move |e: Event<PressEventData>| {
             token.set(0);
             // A pointer that travelled scrolled or dragged; it does not tap.
@@ -137,11 +141,6 @@ impl PressGesture {
             start.set(None);
             if still && !*held.peek() {
                 on_tap();
-            }
-        })
-        .on_secondary_down(move |e: Event<PressEventData>| {
-            if let PressEventData::Mouse(mouse) = e.data() {
-                on_menu(mouse.global_location);
             }
         })
     }
