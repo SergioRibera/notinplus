@@ -73,14 +73,14 @@ pub(crate) fn search(
 
         let limit_i = i64::try_from(limit).unwrap_or(i64::MAX);
         let rows: Vec<SearchHit> = if let Some(bid) = bible_id {
-            let mut stmt = conn.prepare(sql_scoped)?;
+            let mut stmt = conn.prepare_cached(sql_scoped)?;
             stmt.query_map(
                 params![SNIPPET_OPEN, SNIPPET_CLOSE, &query, limit_i, bid],
                 map_hit,
             )?
             .collect::<rusqlite::Result<_>>()?
         } else {
-            let mut stmt = conn.prepare(sql_all)?;
+            let mut stmt = conn.prepare_cached(sql_all)?;
             stmt.query_map(
                 params![SNIPPET_OPEN, SNIPPET_CLOSE, &query, limit_i],
                 map_hit,

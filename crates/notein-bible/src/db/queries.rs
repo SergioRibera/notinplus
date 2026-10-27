@@ -54,7 +54,7 @@ pub struct ChapterRow {
 
 pub(crate) fn list_bibles(db: &Db) -> Result<Vec<BibleRow>> {
     db.with_conn(|conn| {
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare_cached(
             "SELECT id, abbrev, name_local, language FROM bibles
              WHERE id NOT IN (SELECT bible_id FROM installs_pending)
              ORDER BY name_local",
@@ -75,7 +75,7 @@ pub(crate) fn list_bibles(db: &Db) -> Result<Vec<BibleRow>> {
 
 pub(crate) fn pending_installs(db: &Db) -> Result<Vec<String>> {
     db.with_conn(|conn| {
-        let mut stmt = conn.prepare("SELECT bible_id FROM installs_pending ORDER BY bible_id")?;
+        let mut stmt = conn.prepare_cached("SELECT bible_id FROM installs_pending ORDER BY bible_id")?;
         let rows = stmt
             .query_map([], |r| r.get(0))?
             .collect::<rusqlite::Result<Vec<String>>>()?;
@@ -84,7 +84,7 @@ pub(crate) fn pending_installs(db: &Db) -> Result<Vec<String>> {
 }
 
 pub(crate) fn finish_install(db: &Db, bible_id: &str) -> Result<()> {
-    db.with_conn(|conn| {
+    db.with_conn_mut(|conn| {
         conn.execute(
             "DELETE FROM installs_pending WHERE bible_id = ?1",
             [bible_id],
@@ -95,7 +95,7 @@ pub(crate) fn finish_install(db: &Db, bible_id: &str) -> Result<()> {
 
 pub(crate) fn list_books(db: &Db, bible_id: &str) -> Result<Vec<BookRow>> {
     db.with_conn(|conn| {
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare_cached(
             "SELECT book_id, name, abbrev, order_num, testament
              FROM books
              WHERE bible_id = ?1
@@ -146,7 +146,7 @@ pub(crate) fn load_chapter(
             .optional()?
             .ok_or_else(|| DbError::MissingBible { id: bible_id.to_string() })?;
 
-        let mut verses_stmt = conn.prepare(
+        let mut verses_stmt = conn.prepare_cached(
             "SELECT verse, text, paragraph_break
              FROM verses
              WHERE bible_id = ?1 AND book_id = ?2 AND chapter = ?3
@@ -162,7 +162,7 @@ pub(crate) fn load_chapter(
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        let mut headers_stmt = conn.prepare(
+        let mut headers_stmt = conn.prepare_cached(
             "SELECT before_verse, text
              FROM headers
              WHERE bible_id = ?1 AND book_id = ?2 AND chapter = ?3

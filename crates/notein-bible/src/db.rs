@@ -6,14 +6,15 @@
 //! `unicode61 remove_diacritics 2` so accent-insensitive queries work
 //! out of the box.
 //!
-//! A single `Arc<Mutex<Connection>>` serialises writes. `SQLite` does its
-//! own fine-grained locking on reads via WAL mode (enabled at
-//! connection open).
+//! One connection writes (installs, fixes) and a second, read-only one
+//! serves the reader and the search, so an install running in the
+//! background never makes a page wait: in WAL mode a reader sees the
+//! last commit while the writer works on the next.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 
 mod queries;
 mod schema;
@@ -66,6 +67,9 @@ pub type Result<T> = std::result::Result<T, DbError>;
 #[derive(Clone, Debug)]
 pub struct Db {
     conn: Arc<Mutex<Connection>>,
+    /// Read-only connection to the same file; `None` in memory, where
+    /// a second connection would see another database.
+    read: Option<Arc<Mutex<Connection>>>,
 }
 
 impl Db {
@@ -83,8 +87,16 @@ impl Db {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
-        let db = Self { conn: Arc::new(Mutex::new(conn)) };
+        let mut db = Self {
+            conn: Arc::new(Mutex::new(conn)),
+            read: None,
+        };
         schema::migrate(&db)?;
+        let read = Connection::open_with_flags(
+            path.as_ref(),
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        db.read = Some(Arc::new(Mutex::new(read)));
         Ok(db)
     }
 
@@ -112,13 +124,18 @@ impl Db {
     pub fn in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
-        let db = Self { conn: Arc::new(Mutex::new(conn)) };
+        let db = Self {
+            conn: Arc::new(Mutex::new(conn)),
+            read: None,
+        };
         schema::migrate(&db)?;
         Ok(db)
     }
 
+    /// Run a read on the read-only connection.
     pub(crate) fn with_conn<R>(&self, f: impl FnOnce(&Connection) -> Result<R>) -> Result<R> {
-        let guard = self.conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let conn = self.read.as_ref().unwrap_or(&self.conn);
+        let guard = conn.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         f(&guard)
     }
 
@@ -181,7 +198,7 @@ impl Db {
         chapter: u16,
     ) -> Result<Vec<CrossRefRow>> {
         self.with_conn(|conn| {
-            let mut stmt = conn.prepare(
+            let mut stmt = conn.prepare_cached(
                 "SELECT src_verse, tgt_book, tgt_chap, tgt_verse
                  FROM cross_refs
                  WHERE bible_id = ?1 AND src_book = ?2 AND src_chap = ?3
@@ -212,7 +229,7 @@ impl Db {
         verse: u16,
     ) -> Result<Option<String>> {
         self.with_conn(|conn| {
-            let mut stmt = conn.prepare(
+            let mut stmt = conn.prepare_cached(
                 "SELECT text FROM verses
                  WHERE bible_id = ?1 AND book_id = ?2 AND chapter = ?3 AND verse = ?4
                  LIMIT 1",
@@ -255,7 +272,7 @@ impl Db {
         chapter: u16,
     ) -> Result<Vec<FootnoteRow>> {
         self.with_conn(|conn| {
-            let mut stmt = conn.prepare(
+            let mut stmt = conn.prepare_cached(
                 "SELECT verse, note_id, caller, text
                  FROM footnotes
                  WHERE bible_id = ?1 AND book_id = ?2 AND chapter = ?3
@@ -326,7 +343,7 @@ mod tests {
     use rusqlite::params;
 
     fn seed_eph6(db: &Db) {
-        db.with_conn(|conn| {
+        db.with_conn_mut(|conn| {
             conn.execute(
                 "INSERT INTO bibles (id, abbrev, name_local, language)
                  VALUES ('spa_rv1960', 'RVR1960', 'Reina Valera 1960', 'spa')",
@@ -387,7 +404,7 @@ mod tests {
     fn pending_install_stays_hidden_until_finished() {
         let db = Db::in_memory().unwrap();
         seed_eph6(&db);
-        db.with_conn(|conn| {
+        db.with_conn_mut(|conn| {
             conn.execute(
                 "INSERT INTO installs_pending (bible_id) VALUES ('spa_rv1960')",
                 [],
@@ -402,6 +419,20 @@ mod tests {
         db.finish_install("spa_rv1960").unwrap();
         assert_eq!(db.list_bibles().unwrap().len(), 1);
         assert!(!db.search(None, "padre", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_file_database_reads_what_its_writer_committed() {
+        let dir = std::env::temp_dir().join(format!("notein-bible-{}", std::process::id()));
+        let path = dir.join("bible.db");
+        let _ = std::fs::remove_dir_all(&dir);
+        let db = Db::open(&path).unwrap();
+        assert!(db.list_bibles().unwrap().is_empty());
+        seed_eph6(&db);
+        assert_eq!(db.list_bibles().unwrap().len(), 1);
+        assert!(!db.search(None, "padre", 10).unwrap().is_empty());
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

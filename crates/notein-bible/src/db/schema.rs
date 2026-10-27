@@ -128,7 +128,7 @@ COMMIT;
 const VERSION: i64 = 1;
 
 pub(crate) fn migrate(db: &Db) -> Result<()> {
-    db.with_conn(|conn| {
+    db.with_conn_mut(|conn| {
         conn.execute_batch(SCHEMA_SQL)?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version < 1 {
