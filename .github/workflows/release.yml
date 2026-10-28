@@ -419,11 +419,40 @@ jobs:
     if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:
+      # Full history + tags: git-cliff needs the previous tag to cut the range.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           pattern: "{desktop-*,server-*,android}"
           path: dist
           merge-multiple: true
+
+      # This release's section only (feat / fix / perf since the previous
+      # tag): release body, and the notes the app shows in its update notice.
+      - name: Changelog for this release
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --current --strip header
+        env:
+          OUTPUT: CHANGES.md
+
+      - name: Full changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --strip header
+        env:
+          OUTPUT: dist/CHANGELOG.md
+
+      - name: Update manifest
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: bash .github/scripts/latest-manifest.sh dist "$TAG" CHANGES.md > dist/latest.json && jq '.assets |= length' dist/latest.json
 
       - name: SHA256SUMS
         working-directory: dist
@@ -431,11 +460,14 @@ jobs:
           find . -type f ! -name SHA256SUMS -printf '%P\n' | LC_ALL=C sort | xargs sha256sum -- > SHA256SUMS
           cat SHA256SUMS
 
-      - name: Release notes header
+      - name: Release notes
         env:
           TAG: ${{ needs.plan.outputs.tag }}
         run: |
-          cat > NOTES.md <<EOF
+          {
+            cat CHANGES.md
+            cat <<EOF
+
           ## Install
 
           - **Android**: \`notinplus-*-android-universal.apk\` works everywhere; the \`arm64-v8a\` / \`x86_64\` APKs are smaller.
@@ -450,13 +482,17 @@ jobs:
           - \`notein-relay-*-linux.tar.gz\`: standalone binary.
           - Docker: \`docker run -p 7720:7720/udp -v relay:/data ghcr.io/sergioribera/notein-relay:${TAG#v} --port 7720 --data /data --advertise <public-host>\`
           EOF
+          } > NOTES.md
+          head -60 NOTES.md
 
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.plan.outputs.tag }}
           name: notinplus ${{ needs.plan.outputs.tag }}
           prerelease: ${{ contains(needs.plan.outputs.tag, '-') }}
+          # Stable releases become `releases/latest`, which is where the app
+          # looks for latest.json.
+          make_latest: ${{ !contains(needs.plan.outputs.tag, '-') }}
           body_path: NOTES.md
-          generate_release_notes: true
           fail_on_unmatched_files: true
           files: dist/*
