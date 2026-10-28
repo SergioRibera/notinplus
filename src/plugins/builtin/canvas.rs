@@ -400,16 +400,18 @@ pub fn after_save(item: crate::library::ItemId, content: &CanvasContent, snapsho
     if !due {
         return;
     }
-    let Ok(doc) = crate::doc::Doc::from_snapshot(snapshot) else {
-        return;
-    };
     let Ok(handle) = crate::library::shared_blocking() else {
         return;
     };
-    let paper = pollster::block_on(handle.lock())
-        .item(item)
-        .and_then(|i| i.color)
-        .unwrap_or(UNTINTED_PAPER);
+    // Ink over another kind (PDF pages) saves through here too, but the
+    // cover belongs to that kind: only a canvas is drawn from its strokes.
+    let paper = match pollster::block_on(handle.lock()).item(item) {
+        Some(found) if found.kind.is(KIND) => found.color.unwrap_or(UNTINTED_PAPER),
+        _ => return,
+    };
+    let Ok(doc) = crate::doc::Doc::from_snapshot(snapshot) else {
+        return;
+    };
     let cover = crate::thumbnail::canvas(&doc, paper);
     let mut lib = pollster::block_on(handle.lock());
     if let Err(err) = pollster::block_on(lib.set_item_thumbnail(item, cover)) {
