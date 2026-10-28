@@ -199,9 +199,19 @@ impl Gesture {
     }
 
     /// Let go of the selection, bar and underline, once the reader moves
-    /// to another chapter.
-    pub(super) fn use_end_with_chapter(self, reader: &Reader) {
+    /// to another chapter, and take the bar away with the reader: it lives
+    /// over the whole app and would outlast what it acts on.
+    pub(super) fn use_end_with_reader(self, reader: &Reader) {
         let reader = reader.clone();
+        use_drop({
+            let (reader, place) = (reader.clone(), self.place);
+            move || {
+                // Unknown once the state went first: close it to be safe.
+                if !place.try_peek().is_some_and(|place| place.is_none()) {
+                    reader.ui.close_selection();
+                }
+            }
+        });
         use_side_effect(move || {
             let here = {
                 let st = reader.state.read();

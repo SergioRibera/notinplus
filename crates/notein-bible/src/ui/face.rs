@@ -419,7 +419,7 @@ impl Component for BibleViewer {
     fn render(&self) -> impl IntoElement {
         let reader = use_reader(&self.ctx, &self.db);
         let gesture = highlight::Gesture::use_gesture();
-        gesture.use_end_with_chapter(&reader);
+        gesture.use_end_with_reader(&reader);
         let others = presence::use_others(&reader, gesture);
         let viewport_top = use_state(|| 0.0_f32);
         let mut width = use_state(|| 0.0_f32);
