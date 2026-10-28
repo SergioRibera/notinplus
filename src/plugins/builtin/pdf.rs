@@ -268,7 +268,7 @@ impl DocumentKind for PdfKind {
             attachment: Some(Attachment {
                 extensions: vec!["pdf".into()],
             }),
-            singleton: false,
+            shared_refs: false,
             tint: true,
             notebook: false,
             body: false,

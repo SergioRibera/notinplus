@@ -254,7 +254,7 @@ impl DocumentKind for NotesKind {
             supports_ink: false,
             has_paper: false,
             attachment: None,
-            singleton: false,
+            shared_refs: false,
             tint: true,
             notebook: false,
             body: true,

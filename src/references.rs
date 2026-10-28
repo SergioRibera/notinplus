@@ -112,7 +112,7 @@ pub fn display(src: &SourceRef, data: Option<&LibraryData>) -> ChipDisplay {
                 tint: doc.and_then(|d| d.color),
             };
             let chip = kind.chip(meta, anchor);
-            let broken = chip.broken || (doc.is_none() && !info.singleton);
+            let broken = chip.broken || (doc.is_none() && !info.shared_refs);
             ChipDisplay {
                 label: chip.label,
                 icon: info.icon,

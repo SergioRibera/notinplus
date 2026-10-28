@@ -62,9 +62,10 @@ pub struct KindInfo {
     /// Has a paper background the user picks (create / edit sheets).
     pub has_paper: bool,
     pub attachment: Option<Attachment>,
-    /// One document of this kind is enough (the Bible): the create menu
-    /// opens the existing one instead of making another.
-    pub singleton: bool,
+    /// Any document of this kind answers a reference: one whose document
+    /// is gone opens the most recently used one instead of reading as
+    /// broken (a verse reads the same in every Bible).
+    pub shared_refs: bool,
     /// The user can tint documents of this kind (the card and the
     /// paper colour).
     pub tint: bool,

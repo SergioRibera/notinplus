@@ -72,7 +72,7 @@ fn open_plugin_ref(kind_id: String, item: ItemId, anchor: Vec<u8>, hint: OpenHin
         missing("Esa referencia necesita un plugin que no está instalado");
         return;
     };
-    let singleton = kind.info().singleton;
+    let shared = kind.info().shared_refs;
     freya::prelude::spawn_in_window(async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
@@ -82,8 +82,11 @@ fn open_plugin_ref(kind_id: String, item: ItemId, anchor: Vec<u8>, hint: OpenHin
             let live = |id: ItemId| lib.item(id).is_some_and(|i| i.trashed.is_none());
             if live(item) {
                 Some(item)
-            } else if singleton {
-                lib.live_items().find(|i| i.kind.is(&kind_id)).map(|i| i.id)
+            } else if shared {
+                lib.live_items()
+                    .filter(|i| i.kind.is(&kind_id))
+                    .max_by_key(|i| i.updated_at)
+                    .map(|i| i.id)
             } else {
                 None
             }

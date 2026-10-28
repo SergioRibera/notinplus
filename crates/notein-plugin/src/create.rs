@@ -31,6 +31,9 @@ pub enum CreationFlow {
         /// A last row that runs [`crate::DocumentKind::launch`] with its
         /// id instead of creating (Agregar traducción).
         more: Option<CreationChoice>,
+        /// After the choice, the create sheet asks for the name, folder
+        /// and tags; otherwise the document is made at once.
+        named: bool,
     },
     /// The plugin shows its own UI from its face (Biblia first use).
     Custom,

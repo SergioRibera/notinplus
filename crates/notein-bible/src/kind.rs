@@ -258,6 +258,16 @@ impl BibleKind {
         ))
         .filter(|id| !id.is_empty())
     }
+
+    /// Name of a new Bible left unnamed: "Biblia RVR1909".
+    fn default_name(&self, bible_id: &str) -> String {
+        self.db
+            .list_bibles()
+            .unwrap_or_default()
+            .into_iter()
+            .find(|b| b.id == bible_id)
+            .map_or_else(|| "Biblia".to_owned(), |b| format!("Biblia {}", b.abbrev))
+    }
 }
 
 impl DocumentKind for BibleKind {
@@ -276,7 +286,7 @@ impl DocumentKind for BibleKind {
             supports_ink: false,
             has_paper: false,
             attachment: None,
-            singleton: true,
+            shared_refs: true,
             tint: false,
             notebook: false,
             body: false,
@@ -418,7 +428,8 @@ impl DocumentKind for BibleKind {
         let entry =
             CreationEntry::new(ENTRY_BIBLE, "Biblia", lucide::book_open(), KindColor::Bible)
                 .subtitle("Leer y resaltar")
-                .starter(3);
+                .starter(3)
+                .sheet("Nueva Biblia", Some("Ej.: Biblia de estudio"), true);
         let entry = if installed.len() > 1 {
             entry.flow(CreationFlow::Choose {
                 title: "Abrir Biblia".into(),
@@ -435,9 +446,14 @@ impl DocumentKind for BibleKind {
                     label: "Agregar traducción".into(),
                     subtitle: "".into(),
                 }),
+                named: true,
             })
-        } else {
+        } else if installed.is_empty() {
+            // The face installs the first translation; there is nothing to
+            // name yet.
             entry.flow(CreationFlow::Direct)
+        } else {
+            entry.flow(CreationFlow::Form)
         };
         vec![entry]
     }
@@ -460,8 +476,13 @@ impl DocumentKind for BibleKind {
             .into_iter()
             .next()
             .map(|b| b.book_id);
+        let name = if request.name.trim().is_empty() {
+            self.default_name(&bible_id)
+        } else {
+            request.name.trim().to_owned()
+        };
         Ok(Created {
-            name: "Biblia".to_owned(),
+            name,
             content: BibleSnapshot {
                 version: BibleSnapshot::VERSION,
                 current_book: first_book.unwrap_or_default(),

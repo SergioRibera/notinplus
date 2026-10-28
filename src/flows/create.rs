@@ -378,16 +378,6 @@ impl Component for Tile {
 /// Run `entry`: show what its flow needs, then create and open.
 pub fn run(entry: CatalogEntry, context: Context) {
     let kind_id = entry.kind.clone();
-    if crate::plugins::kind_info(&kind_id).is_some_and(|k| k.singleton) {
-        let existing = crate::state::LibraryView::get()
-            .data()
-            .and_then(|d| d.live_items().find(|i| i.kind.is(&kind_id)).map(|i| i.id));
-        if let Some(existing) = existing {
-            record_use(&entry);
-            super::open(existing);
-            return;
-        }
-    }
     match entry.entry.flow.clone() {
         CreationFlow::Launch => {
             record_use(&entry);
@@ -396,13 +386,14 @@ pub fn run(entry: CatalogEntry, context: Context) {
             }
         }
         CreationFlow::Direct | CreationFlow::Custom => create(entry, context, Request::default()),
-        CreationFlow::Form => form(entry, context),
+        CreationFlow::Form => form(entry, context, None),
         CreationFlow::Choose {
             title,
             options,
             more,
+            named,
         } => {
-            choose(&entry, &context, title.to_string(), options, more);
+            choose(&entry, &context, title.to_string(), options, more, named);
         }
         CreationFlow::Import {
             title,
@@ -456,7 +447,9 @@ impl Persisted for LastPaper {
     const FILE: &'static str = "last-paper.v2.bin";
 }
 
-fn form(entry: CatalogEntry, context: Context) {
+/// The create sheet: name, folder, tags and, for a kind with paper, its
+/// paper. `choice` is what a [`CreationFlow::Choose`] already picked.
+fn form(entry: CatalogEntry, context: Context, choice: Option<String>) {
     let p = palette();
     let info = crate::plugins::kind_info(&entry.kind);
     let has_paper = info.as_ref().is_some_and(|k| k.has_paper);
@@ -488,6 +481,7 @@ fn form(entry: CatalogEntry, context: Context) {
         },
         color: if has_paper { last.color } else { None },
         folder: context.folder,
+        choice,
         ..FormValues::default()
     };
     forms::open(spec, initial, move |values| {
@@ -514,6 +508,7 @@ fn choose(
     title: String,
     options: Vec<notein_plugin::create::CreationChoice>,
     more: Option<notein_plugin::create::CreationChoice>,
+    named: bool,
 ) {
     let mut sheet = Sheet::titled(title).kind(
         entry.entry.icon.clone(),
@@ -530,6 +525,10 @@ fn choose(
                 .chevron()
                 .on_press(move |_| {
                     ModalController::get().close();
+                    if named {
+                        form(entry.clone(), context.clone(), Some(id.clone()));
+                        return;
+                    }
                     create(
                         entry.clone(),
                         context.clone(),

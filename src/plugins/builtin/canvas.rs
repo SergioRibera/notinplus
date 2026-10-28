@@ -150,7 +150,7 @@ impl DocumentKind for CanvasKind {
             supports_ink: true,
             has_paper: true,
             attachment: None,
-            singleton: false,
+            shared_refs: false,
             tint: true,
             notebook: true,
             body: true,
