@@ -672,12 +672,13 @@ fn drawn_math_app() -> impl IntoElement {
 }
 
 #[test]
-fn the_edit_button_of_a_drawing_opens_its_source_and_asks_for_the_keyboard() {
+fn edit_opens_the_source_of_a_drawing_and_done_folds_it_again() {
     let (runner, (value, controller, asks)) = TestingRunner::new(
         drawn_math_app,
         (600., 400.).into(),
         move |runner| {
-            let value = runner.provide_root_context(|| State::create("$$\nx^2\n$$\n".to_owned()));
+            let value =
+                runner.provide_root_context(|| State::create("$$\nx^2\n$$\n\nafter\n".to_owned()));
             let controller =
                 runner.provide_root_context(|| EditorController::create(Document::default()));
             let asks = runner.provide_root_context(|| KeyboardAsks(State::create(0)));
@@ -696,4 +697,10 @@ fn the_edit_button_of_a_drawing_opens_its_source_and_asks_for_the_keyboard() {
     let selection = harness.runner.run_in(|| controller.selection());
     assert_eq!(selection.map(|selection| selection.target), Some(formula));
     assert_eq!(*asks.0.peek(), 1);
+    tap(&mut harness, (560., 30.));
+    let selection = harness.runner.run_in(|| controller.selection());
+    assert_eq!(
+        selection.map(|selection| selection.target),
+        Some(harness.block(1))
+    );
 }

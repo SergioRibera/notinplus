@@ -135,7 +135,14 @@ impl Frame {
                             .child(
                                 rect()
                                     .width(Size::flex(1.))
-                                    .child(rect().width(Size::fill()).maybe_child(self.header))
+                                    // Over the text, which keeps its paragraph laid out
+                                    // even while folded away and could take their presses.
+                                    .child(
+                                        rect()
+                                            .width(Size::fill())
+                                            .layer(Layer::Relative(1))
+                                            .maybe_child(self.header),
+                                    )
                                     .child(
                                         rect()
                                             .width(Size::fill())
@@ -144,7 +151,12 @@ impl Frame {
                                             })
                                             .child(self.text),
                                     )
-                                    .child(rect().width(Size::fill()).maybe_child(self.footer)),
+                                    .child(
+                                        rect()
+                                            .width(Size::fill())
+                                            .layer(Layer::Relative(1))
+                                            .maybe_child(self.footer),
+                                    ),
                             ),
                     )
                     .child(
@@ -266,12 +278,17 @@ impl BlockView {
     /// alone until someone edits it, then its source with the drawing kept
     /// up to date under it. Returns whether the source is folded away and
     /// the footer holding the drawing.
-    fn drawing(&self, drawn: Option<Element>, empty: bool) -> (bool, Option<Element>) {
+    fn drawing(
+        &self,
+        drawn: Option<Element>,
+        empty: bool,
+        unfolded: State<bool>,
+    ) -> (bool, Option<Element>) {
         let Some(drawn) = drawn else {
             return (false, None);
         };
         let theme = &self.shared.theme;
-        let editing = self.editable() && (self.focused.is_some() || empty);
+        let editing = self.editable() && (self.focused.is_some() || empty || unfolded());
         let controller = self.shared.controller;
         let keyboard = self.shared.request_keyboard.clone();
         let block = self.block.id;
@@ -311,7 +328,7 @@ impl BlockView {
 
     /// Chip of a formula block, with templates for people who do not know
     /// TeX.
-    fn math_header(&self, folded: bool) -> Option<Element> {
+    fn math_header(&self, toggle: Option<Element>) -> Option<Element> {
         if !self.editable() {
             return None;
         }
@@ -354,18 +371,40 @@ impl BlockView {
                     auto_open: false,
                     menu: ChipMenu::Items(vec![templates]),
                 }))
-                .maybe_child(folded.then(|| self.edit_button()))
+                .maybe_child(toggle)
                 .into_element(),
         )
     }
 
-    /// Opens the source of a block that only shows its drawing.
-    fn edit_button(&self) -> Element {
-        let theme = &self.shared.theme;
-        let color = theme.colors.muted;
+    /// Shows the source of a block that only shows its drawing, with the
+    /// caret at its end. The source stays open even if the focus does not
+    /// arrive, so it can always be tapped into.
+    fn source_opener(&self, unfolded: State<bool>) -> impl Fn() + 'static {
         let controller = self.shared.controller;
         let keyboard = self.shared.request_keyboard.clone();
         let block = self.block.id;
+        move || {
+            let mut unfolded = unfolded;
+            unfolded.set(true);
+            controller.focus(block, usize::MAX);
+            keyboard.call();
+        }
+    }
+
+    /// Edit while only the drawing of a block shows (`folded`), Done while
+    /// its source does.
+    fn source_toggle(&self, folded: bool, unfolded: State<bool>) -> Element {
+        let theme = &self.shared.theme;
+        let color = theme.colors.muted;
+        let controller = self.shared.controller;
+        let block = self.block.id;
+        let focused = self.focused.is_some();
+        let open = self.source_opener(unfolded);
+        let (icon, caption) = if folded {
+            (lucide::pencil(), Label::EditSource)
+        } else {
+            (lucide::check(), Label::DoneEditing)
+        };
         rect()
             .height(Size::px(theme.px(28.)))
             .padding((0., theme.px(8.)))
@@ -376,11 +415,18 @@ impl BlockView {
             .cursor(CursorIcon::Pointer)
             .on_press(move |event: Event<PressEventData>| {
                 event.stop_propagation();
-                controller.focus(block, usize::MAX);
-                keyboard.call();
+                if folded {
+                    open();
+                    return;
+                }
+                let mut unfolded = unfolded;
+                unfolded.set(false);
+                if focused {
+                    controller.focus_beside(block);
+                }
             })
             .child(
-                SvgViewer::new(lucide::pencil())
+                SvgViewer::new(icon)
                     .color(color)
                     .width(Size::px(theme.px(14.)))
                     .height(Size::px(theme.px(14.))),
@@ -389,7 +435,7 @@ impl BlockView {
                 label()
                     .color(color)
                     .font_size(theme.px(12.))
-                    .text(theme.labels.get(Label::EditSource)),
+                    .text(theme.labels.get(caption)),
             )
             .into_element()
     }
@@ -545,9 +591,14 @@ impl BlockView {
             .into_element()
     }
 
-    /// Language chip and copy button of a code block, and a way into its
-    /// source while only its drawing shows (`folded`).
-    fn code_header(&self, language: &str, code: &Inline, folded: bool) -> Option<Element> {
+    /// Language chip and copy button of a code block, after `toggle` when it
+    /// draws something, see [`Self::source_toggle`].
+    fn code_header(
+        &self,
+        language: &str,
+        code: &Inline,
+        toggle: Option<Element>,
+    ) -> Option<Element> {
         let theme = &self.shared.theme;
         let colors = &theme.colors;
         let editable = self.editable();
@@ -586,7 +637,7 @@ impl BlockView {
                 .cross_align(Alignment::center())
                 .margin((theme.px(-4.), theme.px(-6.), theme.px(4.), theme.px(-6.)))
                 .child(rect().width(Size::flex(1.)).child(chip))
-                .maybe_child((folded && editable).then(|| self.edit_button()))
+                .maybe_child(toggle.filter(|_| editable))
                 .child(CopyButton {
                     text: code.plain_text(),
                     theme: theme.clone(),
@@ -770,9 +821,11 @@ impl BlockView {
                     max_width: width - theme.px(24.),
                     theme,
                 });
-                let (collapsed, footer) = self.drawing(drawn, code.is_empty());
+                let (collapsed, footer) = self.drawing(drawn, code.is_empty(), unfolded);
+                let toggle = (footer.is_some() && !code.is_empty())
+                    .then(|| self.source_toggle(collapsed, unfolded));
                 Frame {
-                    header: self.code_header(language, code, collapsed),
+                    header: self.code_header(language, code, toggle),
                     collapsed,
                     footer,
                     ..panel(plain(code, colors.text), None)
@@ -786,9 +839,11 @@ impl BlockView {
                     max_width: width - theme.px(24.),
                     theme,
                 });
-                let (collapsed, footer) = self.drawing(drawn, tex.is_empty());
+                let (collapsed, footer) = self.drawing(drawn, tex.is_empty(), unfolded);
+                let toggle = (footer.is_some() && !tex.is_empty())
+                    .then(|| self.source_toggle(collapsed, unfolded));
                 Frame {
-                    header: self.math_header(collapsed),
+                    header: self.math_header(toggle),
                     collapsed,
                     footer,
                     ..panel(plain(tex, colors.text), None)

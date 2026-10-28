@@ -122,6 +122,7 @@ labels! {
     CopyCode = "Copy",
     Copied = "Copied",
     EditSource = "Edit",
+    DoneEditing = "Done",
     Rename = "Rename",
     RenameHint = "Leave empty for the default name",
     Comment = "Comment",
