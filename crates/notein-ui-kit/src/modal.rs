@@ -21,7 +21,7 @@
 //! live in sibling modules and delegate here.
 
 use freya::animation::{
-    AnimNum, Ease, Function, OnChange, OnCreation, ReadAnimatedValue, use_animation,
+    AnimNum, Ease, Function, OnChange, OnCreation, ReadAnimatedValue,
     use_animation_with_dependencies,
 };
 use freya::prelude::*;
@@ -314,7 +314,7 @@ impl ModalController {
     /// open). Fires the replaced modal's `on_close`.
     pub fn open(&mut self, modal: Modal) {
         let replaced = self.state.write().stack.pop();
-        Self::fire_on_close(replaced);
+        self.retire(replaced);
         self.state.write().stack.push(modal);
     }
 
@@ -331,13 +331,19 @@ impl ModalController {
             return;
         }
         let closed = self.state.write().stack.pop();
-        if let Some(modal) = &closed
+        self.retire(closed);
+    }
+
+    /// Play the exit of a modal just taken off the stack and fire its
+    /// `on_close`.
+    fn retire(&mut self, modal: Option<Modal>) {
+        if let Some(modal) = &modal
             && !modal.instant
             && !crate::theme::reduce_motion()
         {
             self.leave(modal.clone());
         }
-        Self::fire_on_close(closed);
+        Self::fire_on_close(modal);
     }
 
     /// Keep `modal` on screen while its exit plays, then drop it.
@@ -428,14 +434,26 @@ impl Component for ModalPortal {
                 .take(depth)
                 .any(|m| Veil::for_layer(m.backdrop_alpha, false) == Veil::Blur)
         };
-        let open = stack
-            .iter()
-            .enumerate()
-            .map(|(depth, model)| (depth, model, false));
-        let closing = leaving.iter().map(|(depth, model)| (*depth, model, true));
+        // A modal opened where another is still leaving (one sheet
+        // swapped for the next) takes over that one's veil and keeps its
+        // card back until the exit is over, so the two cards never cross.
+        let leaving_at = |depth: usize| leaving.iter().any(|(d, _)| *d == depth);
+        let open = stack.iter().enumerate().map(|(depth, model)| {
+            let waiting = !model.instant && leaving_at(depth);
+            (depth, model, false, waiting)
+        });
+        let closing = leaving.iter().map(|(depth, model)| {
+            let handed_over = stack.len() > *depth;
+            (*depth, model, true, handed_over)
+        });
         let overlays: Vec<Element> = open
             .chain(closing)
-            .map(|(depth, model, leaving)| {
+            .map(|(depth, model, leaving, swapped)| {
+                let veil = if leaving && swapped {
+                    Veil::Clear
+                } else {
+                    Veil::for_layer(model.backdrop_alpha, veiled_below(depth))
+                };
                 // Keyed by modal, so a closing one keeps its overlay and
                 // plays the exit instead of being built again.
                 rect()
@@ -446,7 +464,8 @@ impl Component for ModalPortal {
                         depth,
                         is_top: !leaving && depth == top,
                         leaving,
-                        veil: Veil::for_layer(model.backdrop_alpha, veiled_below(depth)),
+                        waiting: !leaving && swapped,
+                        veil,
                     })
                     .into_element()
             })
@@ -504,6 +523,9 @@ struct ModalOverlay {
     is_top: bool,
     /// Closed: playing its exit, taking no input.
     leaving: bool,
+    /// Opened over one still leaving at the same depth: the veil is
+    /// already up, the card waits for the exit to end.
+    waiting: bool,
     veil: Veil,
 }
 
@@ -522,9 +544,17 @@ impl std::fmt::Debug for ModalOverlay {
 /// through each other. It grows (centred), rises (sheets) or drops in
 /// (popovers) while the veil fades in behind it, and walks the same path
 /// back, a little faster, when `leaving`. `instant` modals skip both.
-fn use_progress(instant: bool, leaving: bool) -> (f32, f32) {
-    let entrance = use_animation(|conf| {
-        conf.on_creation(OnCreation::Run);
+/// While `waiting` the entrance holds still and starts once it clears; a
+/// modal that waited found the veil already up and never fades it in.
+fn use_progress(instant: bool, leaving: bool, waiting: bool) -> (f32, f32) {
+    let took_over = use_hook(|| waiting);
+    let entrance = use_animation_with_dependencies(&waiting, |conf, waiting| {
+        conf.on_creation(if *waiting {
+            OnCreation::Nothing
+        } else {
+            OnCreation::Run
+        });
+        conf.on_change(OnChange::Rerun);
         (
             AnimNum::new(0., 1.)
                 .time(180)
@@ -550,7 +580,8 @@ fn use_progress(instant: bool, leaving: bool) -> (f32, f32) {
         let left = exit.get().value();
         (left, left)
     } else {
-        entrance.get().value()
+        let (fade, settle) = entrance.get().value();
+        (if took_over { 1.0 } else { fade }, settle)
     }
 }
 
@@ -570,7 +601,7 @@ impl Component for ModalOverlay {
             }
         });
 
-        let (fade, settle) = use_progress(model.instant, self.leaving);
+        let (fade, settle) = use_progress(model.instant, self.leaving, self.waiting);
 
         let width = area.width();
         let height = area.height();
@@ -670,7 +701,7 @@ impl Component for ModalOverlay {
                         })
                     }),
             )
-            .child(card_layer)
+            .maybe_child((!self.waiting).then_some(card_layer))
     }
 }
 
