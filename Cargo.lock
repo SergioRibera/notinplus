@@ -3947,6 +3947,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "istmo-installer"
+version = "0.1.0"
+dependencies = [
+ "bincode 2.0.1",
+ "istmo-build",
+ "istmo-core",
+ "istmo-macros",
+]
+
+[[package]]
 name = "istmo-ios"
 version = "0.1.1-alpha.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5130,6 +5140,7 @@ dependencies = [
  "istmo-build",
  "istmo-data-store",
  "istmo-file-picker",
+ "istmo-installer",
  "istmo-opener",
  "istmo-pen",
  "istmo-share",
@@ -5147,6 +5158,10 @@ dependencies = [
  "qrcode",
  "reqwest",
  "rusqlite",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
  "tar",
  "torin",
  "uuid",

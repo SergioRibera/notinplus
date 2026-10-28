@@ -168,6 +168,7 @@ impl Component for AppBar {
                     .content(Content::Flex)
                     .child(search_field(compact)),
             )
+            .maybe_child(crate::update::ui::chip(compact))
             .maybe_child(state.map(|s| s.indicator(compact)))
             .child(
                 IconButton::new(lucide::trash_2(), "Papelera")

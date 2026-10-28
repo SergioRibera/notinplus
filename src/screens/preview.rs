@@ -199,6 +199,7 @@ fn shell(
                 Platform::get().load_font(notein_bible::fonts::FAMILY, Bytes::from_static(face));
             }
         });
+        crate::update::use_preview_updates(PREVIEW_RELEASE.with(|r| r.borrow().clone()));
         crate::state::use_fixed_library(Arc::new(demo()));
         crate::screens::home::use_browse_root();
         rect()
@@ -836,4 +837,60 @@ fn grid_card_opens_on_tap() {
     runner.poll_n(Duration::from_millis(40), 4);
     runner.sync_and_update();
     assert!(!browsing_root(&runner), "a tap on a grid card did nothing");
+}
+
+thread_local! {
+    /// The release the headless renders of this thread announce.
+    static PREVIEW_RELEASE: std::cell::RefCell<Option<crate::update::Release>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn preview_release() -> crate::update::Release {
+    let asset =
+        |platform: &str, arch: &str, kind: &str, name: &str, size: u64| crate::update::Asset {
+            platform: platform.into(),
+            arch: arch.into(),
+            kind: kind.into(),
+            name: name.into(),
+            url: format!("https://example.invalid/{name}"),
+            size,
+            sha256: String::new(),
+        };
+    crate::update::Release {
+        version: "0.2.0".into(),
+        url: "https://github.com/SergioRibera/notinplus/releases/tag/v0.2.0".into(),
+        published_at: "2026-10-26T12:00:00Z".into(),
+        notes: "## 0.2.0 — 2026-10-26\n### New\n- **sync:** highlights reach your other devices at once\n- **bible:** live quotes inside notes\n### Fixes\n- **import:** large PDFs show their progress again\n".into(),
+        assets: vec![
+            asset("linux", "x86_64", "appimage", "notinplus-0.2.0-x86_64.AppImage", 96_468_992),
+            asset("linux", "x86_64", "deb", "notinplus_0.2.0_amd64.deb", 63_963_136),
+            asset("linux", "x86_64", "rpm", "notinplus-0.2.0.x86_64.rpm", 65_011_712),
+            asset("android", "aarch64", "apk", "notinplus-0.2.0-android-arm64-v8a.apk", 39_845_888),
+        ],
+    }
+}
+
+fn release_card() -> Element {
+    use_hook(|| {
+        spawn(async {
+            let release = std::sync::Arc::new(preview_release());
+            let anchor = Area::new((1180.0, 14.0).into(), (150.0, 32.0).into());
+            crate::update::ui::open_release(Some(anchor), &release);
+        });
+    });
+    home()
+}
+
+fn settings_about() -> Element {
+    settings_at(crate::screens::settings::Section::About)
+}
+
+#[test]
+fn update_renders() {
+    PREVIEW_RELEASE.with(|r| *r.borrow_mut() = Some(preview_release()));
+    render("update-chip-desktop", (1440.0, 900.0), home);
+    render("update-chip-phone", (390.0, 844.0), home);
+    render("update-card-desktop", (1440.0, 900.0), release_card);
+    render("update-card-phone", (390.0, 844.0), release_card);
+    render("update-settings", (1280.0, 860.0), settings_about);
 }

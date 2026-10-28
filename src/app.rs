@@ -251,6 +251,7 @@ impl Component for AppShell {
         use_hook(crate::android_clipboard::install);
         let area = use_state(Area::default);
         let settings = crate::settings::use_settings_root();
+        crate::update::use_updates_root();
         crate::state::use_library_root();
         crate::screens::home::use_browse_root();
         crate::plugins::host::use_host_pump();

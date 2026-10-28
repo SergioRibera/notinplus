@@ -81,6 +81,7 @@ impl Component for About {
                             )),
                     ),
             )
+            .child(crate::update::ui::UpdatesSection)
             .child(Section::new("Tus datos").child(
                 Text::new("Todo queda en este dispositivo y en los que vincules. Notein no manda tus documentos a ningún servidor que no elijas.")
                     .role(TextRole::Hint),

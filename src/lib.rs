@@ -64,6 +64,7 @@ pub mod text_box;
 pub mod thumbnail;
 pub mod ui_mask;
 pub mod undo;
+pub mod update;
 
 #[cfg(not(any(
     target_os = "android",
@@ -91,12 +92,13 @@ use istmo::plugins::{DeepLinks, SafeArea};
 use istmo_barcode_scanner::BarcodeScannerClient;
 use istmo_data_store::DataStoreClient;
 use istmo_file_picker::FilePickerClient;
+use istmo_installer::InstallerClient;
 use istmo_opener::OpenerClient;
 use istmo_pen::PenClient;
 use istmo_share::ShareClient;
 
 istmo::runtime!(
-    plugins: [PenClient, SafeArea, DeepLinks, FilePickerClient, DataStoreClient, ShareClient, BarcodeScannerClient, OpenerClient],
+    plugins: [PenClient, SafeArea, DeepLinks, FilePickerClient, DataStoreClient, ShareClient, BarcodeScannerClient, OpenerClient, InstallerClient],
 );
 
 #[cfg(any(
