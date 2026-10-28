@@ -359,8 +359,9 @@ impl Component for EdgeDrops {
         rect()
             .position(Position::new_absolute().top(0.0).left(0.0))
             .layer(Layer::Overlay)
-            .width(Size::fill())
-            .height(Size::fill())
+            // `fill` would size it to what the content left over, not the pane.
+            .width(Size::percent(100.0))
+            .height(Size::percent(100.0))
             .content(Content::Flex)
             .child(band(SplitEdge::Top, Size::fill(), Size::px(EDGE_DROP)))
             .child(
