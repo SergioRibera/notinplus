@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Roots IstmoInstallerFileProvider may expose: only the downloads
+     kept in the cache's updates/ folder. -->
+<paths>
+    <cache-path name="istmo_installer_updates" path="updates/" />
+</paths>
