@@ -937,6 +937,15 @@ impl Component for TextBlock {
             rect()
                 .layer(Layer::Overlay)
                 .position(Position::new_absolute().top(open.top).left(open.left))
+                // The menu hangs outside the editor's bounds, so whatever
+                // holds the editor (a canvas box) would take a touch on it
+                // for a tap elsewhere.
+                .on_pointer_down(|event: Event<PointerEventData>| event.stop_propagation())
+                .on_mouse_down(|event: Event<MouseEventData>| event.stop_propagation())
+                .on_touch_start(|event: Event<TouchEventData>| event.stop_propagation())
+                .on_touch_move(|event: Event<TouchEventData>| event.stop_propagation())
+                .on_touch_end(|event: Event<TouchEventData>| event.stop_propagation())
+                .on_wheel(|event: Event<WheelEventData>| event.stop_propagation())
                 .child(ReportedPopup {
                     child: SuggestionMenu {
                         rows,

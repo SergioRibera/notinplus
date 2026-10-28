@@ -15,12 +15,18 @@ struct Harness {
 #[derive(Clone, Copy)]
 struct RevealSyntax(bool);
 
+/// Touches that reached the page holding the editor, like a canvas does.
+#[derive(Clone, Copy)]
+struct TouchesBelow(State<u32>);
+
 fn app() -> impl IntoElement {
     let value = use_consume::<State<String>>();
     let controller = use_consume::<EditorController>();
     let reveal = use_consume::<RevealSyntax>().0;
+    let mut below = use_consume::<TouchesBelow>().0;
     rect()
         .expanded()
+        .on_touch_start(move |_| *below.write() += 1)
         .background((30, 32, 38))
         .padding(12.)
         .child(
@@ -78,6 +84,7 @@ impl Harness {
             (600., 400.).into(),
             move |runner| {
                 runner.provide_root_context(|| RevealSyntax(reveal));
+                runner.provide_root_context(|| TouchesBelow(State::create(0)));
                 let value = runner.provide_root_context(|| State::create(markdown.to_owned()));
                 let controller =
                     runner.provide_root_context(|| EditorController::create(Document::default()));
@@ -703,4 +710,19 @@ fn edit_opens_the_source_of_a_drawing_and_done_folds_it_again() {
         selection.map(|selection| selection.target),
         Some(harness.block(1))
     );
+}
+
+#[test]
+fn a_tap_on_a_suggestion_picks_it_and_stays_in_the_menu() {
+    let mut harness = Harness::new("see");
+    let first = harness.block(0);
+    harness.focus(first, 3);
+    harness.type_text(" /doc");
+    let below = harness
+        .runner
+        .run_in(try_consume_root_context::<TouchesBelow>)
+        .map(|touches| touches.0);
+    tap(&mut harness, (100., 65.));
+    assert_eq!(harness.value(), "see [Doc](app://doc)\n");
+    assert_eq!(below.map(|touches| *touches.peek()), Some(0));
 }
