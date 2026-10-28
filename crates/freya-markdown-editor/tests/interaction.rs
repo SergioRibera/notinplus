@@ -614,8 +614,8 @@ fn a_tap_on_the_quote_converter_reaches_it() {
     let mut harness = Harness::new("> quoted\n\nafter\n");
     let quote = harness.block(0);
     harness.focus(quote, 2);
-    tap(&mut harness, (565., 30.));
-    tap(&mut harness, (410., 73.));
+    tap(&mut harness, (60., 31.));
+    tap(&mut harness, (80., 73.));
     assert!(matches!(
         harness.document().blocks()[0].kind,
         BlockKind::Callout { .. }

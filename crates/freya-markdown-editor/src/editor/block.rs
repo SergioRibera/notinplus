@@ -65,9 +65,6 @@ struct Frame {
     radius: f32,
     gutter: Option<Element>,
     header: Option<Element>,
-    /// Floats over the top right corner without taking room, so it can
-    /// come and go without moving the text.
-    corner: Option<Element>,
     /// Keeps the text mounted (and its caret) but takes no room.
     collapsed: bool,
     /// Under the text, like the drawing of a formula.
@@ -85,7 +82,6 @@ impl Frame {
             radius: 0.,
             gutter: None,
             header: None,
-            corner: None,
             collapsed: false,
             footer: None,
             text,
@@ -158,14 +154,6 @@ impl Frame {
                                             .maybe_child(self.footer),
                                     ),
                             ),
-                    )
-                    .child(
-                        // In the right padding and over the text, which
-                        // would otherwise take the presses meant for it.
-                        rect()
-                            .position(Position::new_absolute().top(0.).right(-self.padding.1))
-                            .layer(Layer::Relative(1))
-                            .maybe_child(self.corner),
                     ),
             )
             .into_element()
@@ -259,12 +247,14 @@ impl BlockView {
         .into_element()
     }
 
-    /// Converter shown on a focused plain quote.
+    /// Header of a plain quote while editing, turning it into a callout. In
+    /// the flow like a callout's, since the text would take the presses of
+    /// anything floating over its line on touch screens.
     fn quote_chip(&self) -> Element {
         let theme = &self.shared.theme;
         HeaderChip {
             icon: lucide::quote(),
-            text: String::new(),
+            text: theme.labels.get(Label::Quote).to_owned(),
             color: theme.colors.muted,
             theme: theme.clone(),
             editable: true,
@@ -740,15 +730,14 @@ impl BlockView {
                 ))
             },
             BlockKind::Quote(content) => Frame {
-                padding: (
-                    theme.px(2.),
-                    // Room for the converter, so it never covers text.
-                    theme.px(if self.editable() { 52. } else { 12. }),
-                    theme.px(2.),
-                    theme.px(12.),
-                ),
+                padding: (theme.px(2.), theme.px(12.), theme.px(2.), theme.px(12.)),
                 bar: Some(colors.quote_bar),
-                corner: (self.editable() && self.focused.is_some()).then(|| self.quote_chip()),
+                header: self.editable().then(|| {
+                    rect()
+                        .margin((0., 0., theme.px(2.), theme.px(-6.)))
+                        .child(self.quote_chip())
+                        .into_element()
+                }),
                 ..Frame::new(rich(
                     content,
                     TextLook {
