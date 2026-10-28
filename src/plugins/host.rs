@@ -13,8 +13,8 @@ use notein_plugin::bookmark::SourceRef;
 use notein_plugin::doc::DocId;
 use notein_plugin::face::RawStore;
 use notein_plugin::services::{
-    AnnotationDone, AnnotationPreview, AnnotationRequest, HeaderPress, Host, HostServices,
-    HostToast, Jump, Placement, Progress, Share, TextBody, ToastTone as HostTone,
+    AnnotationDone, AnnotationPreview, AnnotationRequest, HeaderPress, HistoryRequest, Host,
+    HostServices, HostToast, Jump, Placement, Progress, Share, TextBody, ToastTone as HostTone,
 };
 use notein_ui_kit::{Toast, ToastId, ToastTone, Toasts};
 
@@ -32,7 +32,6 @@ enum HostEvent {
         preview: Option<AnnotationPreview>,
         done: AnnotationDone,
     },
-    CopyReference(SourceRef, String),
     InsertInNotebook(DocId, SourceRef),
     Share(Share),
 }
@@ -44,6 +43,7 @@ pub struct ShellHost {
     pending_jumps: Mutex<HashMap<(String, DocId), Vec<u8>>>,
     jump_listeners: Mutex<Vec<(String, flume::Sender<Jump>)>>,
     header_listeners: Mutex<Vec<(String, flume::Sender<HeaderPress>)>>,
+    history_listeners: Mutex<Vec<(String, flume::Sender<HistoryRequest>)>>,
 }
 
 impl std::fmt::Debug for ShellHost {
@@ -63,6 +63,7 @@ fn shell_host() -> &'static Arc<ShellHost> {
             pending_jumps: Mutex::default(),
             jump_listeners: Mutex::default(),
             header_listeners: Mutex::default(),
+            history_listeners: Mutex::default(),
         })
     })
 }
@@ -106,6 +107,24 @@ impl ShellHost {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .retain(|(k, tx)| k != kind || tx.send(press.clone()).is_ok());
+    }
+
+    /// Ask the open faces of `kind` to undo or redo. `false` when no face
+    /// of that kind listens (the keystroke stays unhandled).
+    pub fn step_history(&self, kind: &str, request: HistoryRequest) -> bool {
+        let mut sent = false;
+        self.history_listeners
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|(k, tx)| {
+                if k != kind {
+                    return true;
+                }
+                let alive = tx.send(request).is_ok();
+                sent |= alive;
+                alive
+            });
+        sent
     }
 }
 
@@ -152,10 +171,6 @@ impl HostServices for ShellHost {
         });
     }
 
-    fn copy_reference(&self, reference: SourceRef, label: String) {
-        self.send(HostEvent::CopyReference(reference, label));
-    }
-
     fn insert_in_notebook(&self, from: DocId, reference: SourceRef) {
         self.send(HostEvent::InsertInNotebook(from, reference));
     }
@@ -179,6 +194,15 @@ impl HostServices for ShellHost {
     fn header_presses(&self, kind: &str) -> flume::Receiver<HeaderPress> {
         let (tx, rx) = flume::unbounded();
         self.header_listeners
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((kind.to_owned(), tx));
+        rx
+    }
+
+    fn history_steps(&self, kind: &str) -> flume::Receiver<HistoryRequest> {
+        let (tx, rx) = flume::unbounded();
+        self.history_listeners
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push((kind.to_owned(), tx));
@@ -284,7 +308,6 @@ fn apply(event: HostEvent, jobs: &mut HashMap<(String, String), ToastId>) {
         } => {
             crate::annotation::AnnotationPopover::open(request, preview, done);
         }
-        HostEvent::CopyReference(reference, label) => crate::references::copy(&reference, &label),
         HostEvent::InsertInNotebook(from, reference) => {
             crate::references::insert_in_notebook(crate::library::ItemId(from.0), reference);
         }

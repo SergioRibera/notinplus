@@ -316,26 +316,6 @@ pub fn chip_markdown(label: &str, target: &SourceRef) -> String {
     format!("[{}]({})", label.replace(['[', ']'], ""), target.to_url())
 }
 
-/// Copy a reference: the clipboard gets a chip, and a toast offers to
-/// paste it in the notebook beside its document.
-pub fn copy(target: &SourceRef, label: &str) {
-    let markdown = chip_markdown(label, target);
-    if let Err(err) = freya::clipboard::Clipboard::set(markdown) {
-        log::warn!("clipboard: {err:?}");
-    }
-    let mut toast = Toast::new(format!("Referencia «{label}» copiada")).tone(ToastTone::Done);
-    if let SourceRef::Plugin { item, .. } = target
-        && *item != [0; 16]
-    {
-        let from = ItemId(*item);
-        let target = target.clone();
-        toast = toast.action("Pegar en el cuaderno", move |()| {
-            insert_in_notebook(from, target.clone());
-        });
-    }
-    Toasts::get().show(toast);
-}
-
 /// Insert a chip for `target` in `from`'s notebook, creating the
 /// notebook when `from` has none, and show it beside.
 pub fn insert_in_notebook(from: ItemId, target: SourceRef) {

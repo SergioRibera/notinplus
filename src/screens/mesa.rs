@@ -12,14 +12,15 @@ pub(crate) mod panes;
 use std::sync::Arc;
 
 use freya::prelude::*;
+use notein_plugin::services::{HistoryRequest, HistoryStep};
 use notein_ui_kit::theme::palette as theme;
 use notein_ui_kit::{
     Button, EmptyState, ModalController, PanelEdge, SidePanel, Toast, Toasts, tokens, width_class,
 };
 
 use crate::library::{
-    ItemId, LibraryData, PaneId, PaneTab, SplitOrientation, SplitSide, TabTarget, Workspace,
-    WorkspaceId,
+    ItemId, LibraryData, PaneId, PaneTab, SplitOrientation, SplitSide, TabTarget, ViewSlot,
+    Workspace, WorkspaceId,
 };
 use crate::state::{self, LibraryState, LibraryView};
 use panes::SplitEdge;
@@ -359,6 +360,39 @@ struct Shortcuts {
 }
 
 impl Shortcuts {
+    /// Hand undo or redo to the document focused in the mesa; its face
+    /// decides what that means (and ignores it when its own text field
+    /// already took the keystroke).
+    fn step_history(&self, step: HistoryStep) -> bool {
+        let Some(Focus {
+            pane,
+            tab:
+                Some(PaneTab {
+                    target: TabTarget::Item(item),
+                    ..
+                }),
+            ..
+        }) = &self.focus
+        else {
+            return false;
+        };
+        let Some(found) = self.data.item(*item) else {
+            return false;
+        };
+        let slot = ViewSlot {
+            workspace: self.ops.mesa,
+            pane: *pane,
+        };
+        crate::plugins::host::shell().step_history(
+            &found.kind.plugin_id,
+            HistoryRequest {
+                doc: crate::plugins::content::doc_id(*item),
+                pane: Some(crate::plugins::faces::pane_key(slot)),
+                step,
+            },
+        )
+    }
+
     fn handle(&self, e: &Event<KeyboardEventData>) {
         let command = e.modifiers.ctrl() || e.modifiers.meta();
         if !command || ModalController::get().is_open() {
@@ -421,6 +455,8 @@ impl Shortcuts {
                     crate::screens::settings::open();
                     true
                 }
+                ("z", false) => self.step_history(HistoryStep::Undo),
+                ("z", true) | ("y", false) => self.step_history(HistoryStep::Redo),
                 _ => false,
             },
             Key::Named(NamedKey::Tab) => self.next_tab(shift),

@@ -243,8 +243,6 @@ pub struct SelectionSupport {
     pub highlight: bool,
     /// "Nota": opens the annotation popover.
     pub annotate: bool,
-    /// "Copiar ref" / "Copiar como ref".
-    pub copy_reference: bool,
     /// "Al cuaderno": insert a reference in the notebook beside.
     pub to_notebook: bool,
 }
@@ -254,7 +252,6 @@ impl SelectionSupport {
     pub const NONE: Self = Self {
         highlight: false,
         annotate: false,
-        copy_reference: false,
         to_notebook: false,
     };
 
@@ -262,7 +259,6 @@ impl SelectionSupport {
     pub const TEXT: Self = Self {
         highlight: true,
         annotate: true,
-        copy_reference: true,
         to_notebook: true,
     };
 }

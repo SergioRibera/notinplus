@@ -209,6 +209,39 @@ pub(crate) fn use_jumps(kind: &'static str, item: ItemId, target: impl Apply) {
     });
 }
 
+/// Undo and redo asked of `item` in the pane of `mount`, applied to its
+/// board. Skipped while a text box on it is edited: its editor took the
+/// keystroke.
+pub(crate) fn use_board_history(kind: &'static str, item: ItemId, mount: CanvasMount) {
+    use notein_plugin::services::{HistoryStep, HostServices};
+    let pane = match mount {
+        CanvasMount::Item { slot, .. } => slot.map(pane_key),
+        CanvasMount::Ephemeral(_) => None,
+    };
+    use_hook(move || {
+        let doc = doc_id(item);
+        let rx = super::host::shell().history_steps(kind);
+        spawn(async move {
+            while let Ok(request) = rx.recv_async().await {
+                if request.doc != doc || request.pane != pane {
+                    continue;
+                }
+                let Some(board) = crate::active_boards::get(mount) else {
+                    continue;
+                };
+                let mut board = crate::canvas::lock(&board);
+                if board.text_session().is_some() {
+                    continue;
+                }
+                match request.step {
+                    HistoryStep::Undo => board.undo(),
+                    HistoryStep::Redo => board.redo(),
+                };
+            }
+        });
+    });
+}
+
 #[derive(Clone, Copy)]
 struct CanvasTarget {
     mount: CanvasMount,
@@ -252,6 +285,7 @@ impl Component for CanvasWithJumps {
             self.item,
             CanvasTarget { mount: self.mount },
         );
+        use_board_history(super::builtin::canvas::KIND, self.item, self.mount);
         CanvasPane { mount: self.mount }
     }
 }

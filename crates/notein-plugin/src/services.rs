@@ -149,6 +149,24 @@ pub struct HeaderPress {
     pub at: (f32, f32),
 }
 
+/// A step back or forward through a document's own history.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoryStep {
+    Undo,
+    Redo,
+}
+
+/// Undo or redo the shell asks of one open document: the keyboard
+/// shortcut, wherever the focus is inside its pane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HistoryRequest {
+    pub doc: DocId,
+    /// The pane it is asked in; a document open in two panes steps only
+    /// in this one.
+    pub pane: Option<PaneKey>,
+    pub step: HistoryStep,
+}
+
 /// Services the shell provides. Implemented by the app; plugins only
 /// call it.
 pub trait HostServices: Send + Sync + std::fmt::Debug {
@@ -173,10 +191,6 @@ pub trait HostServices: Send + Sync + std::fmt::Debug {
         done: AnnotationDone,
     );
 
-    /// Put a reference on the clipboard and offer to paste it in the
-    /// notebook beside.
-    fn copy_reference(&self, reference: SourceRef, label: String);
-
     /// Insert a reference at the end of `from`'s notebook (creating one
     /// when it has none).
     fn insert_in_notebook(&self, from: DocId, reference: SourceRef);
@@ -189,6 +203,9 @@ pub trait HostServices: Send + Sync + std::fmt::Debug {
 
     /// Presses on the header actions of documents of `kind`.
     fn header_presses(&self, kind: &str) -> flume::Receiver<HeaderPress>;
+
+    /// Undo and redo asked of documents of `kind` (Ctrl+Z, Ctrl+Shift+Z).
+    fn history_steps(&self, kind: &str) -> flume::Receiver<HistoryRequest>;
 
     /// The system share sheet is there to send things to.
     fn can_share(&self) -> bool;

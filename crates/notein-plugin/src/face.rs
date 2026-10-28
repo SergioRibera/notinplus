@@ -15,7 +15,7 @@ use freya_core::prelude::{Element, spawn, use_hook};
 use crate::doc::DocId;
 use crate::kind::DocumentKind;
 use crate::payload::Payload;
-use crate::services::{HeaderPress, Host};
+use crate::services::{HeaderPress, HistoryStep, Host};
 use crate::ui::Ui;
 
 /// Identifies the pane a document is shown in, so a face keeps state
@@ -145,6 +145,25 @@ impl<K: DocumentKind> FaceContext<K> {
     #[must_use]
     pub fn anchor(bytes: &[u8]) -> Option<K::Anchor> {
         K::Anchor::from_bytes(bytes).ok()
+    }
+
+    /// Run `on_step` when the shell asks this document to undo or redo
+    /// (Ctrl+Z, Ctrl+Shift+Z), in this pane only. A hook: call it from
+    /// the face's render. A face whose own text field already took the
+    /// keystroke ignores the step.
+    pub fn use_history(&self, mut on_step: impl FnMut(HistoryStep) + 'static) {
+        let (host, doc, pane) = (Arc::clone(&self.host), self.doc, self.pane);
+        let kind = self.kind.info().id;
+        use_hook(move || {
+            let rx = host.history_steps(&kind);
+            spawn(async move {
+                while let Ok(request) = rx.recv_async().await {
+                    if request.doc == doc && request.pane == pane {
+                        on_step(request.step);
+                    }
+                }
+            });
+        });
     }
 
     /// Run `on_press` for presses on this face's header actions, in this

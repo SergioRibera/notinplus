@@ -13,7 +13,7 @@ use notein_sdk::create::{
 use notein_sdk::doc::{DocId, DocMeta};
 use notein_sdk::kind::{
     ActionEffect, ChipView, DocumentKind, ExportFile, Hit, IndexReport, KindAction, KindColor,
-    KindInfo, OutlineIcon, OutlineNode, Quote, SearchQuery, SelectionSupport,
+    KindInfo, OutlineIcon, OutlineNode, Quote, SearchQuery,
 };
 use notein_sdk::services::Host;
 use notein_sdk::text::Folded;
@@ -320,15 +320,6 @@ impl DocumentKind for NotesKind {
         let markdown = live.or_else(|| self.index.body(doc.id.0))?;
         let body = crate::section(&markdown, anchor.heading.as_deref())?;
         Some(Quote { body, source })
-    }
-
-    fn selection(&self) -> SelectionSupport {
-        SelectionSupport {
-            highlight: false,
-            annotate: false,
-            copy_reference: true,
-            to_notebook: false,
-        }
     }
 
     fn actions(&self) -> Vec<KindAction> {

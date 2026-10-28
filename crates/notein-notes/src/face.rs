@@ -19,7 +19,7 @@ use freya_markdown_editor::document::BlockId;
 use freya_markdown_editor::prelude::*;
 use notein_sdk::doc::DocId;
 use notein_sdk::face::{ContentStore, FaceContext, HeaderAction};
-use notein_sdk::services::{Peer, Presence, TextBody};
+use notein_sdk::services::{HistoryStep, Peer, Presence, TextBody};
 
 use crate::anchor::NoteAnchor;
 use crate::kind::{NoteContent, NotesKind};
@@ -133,6 +133,16 @@ impl Component for NotePage {
             });
         });
 
+        // A focused editor already undid it from its own key handler.
+        ctx.use_history(move |step| {
+            if controller.has_focus() {
+                return;
+            }
+            match step {
+                HistoryStep::Undo => controller.undo(),
+                HistoryStep::Redo => controller.redo(),
+            }
+        });
         let host = Arc::clone(&ctx.host);
         ctx.use_header_presses(move |press| match press.action.as_str() {
             "reading" if !*locked.peek() => controller.toggle_read_only(),
