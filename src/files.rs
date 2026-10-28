@@ -86,8 +86,18 @@ pub async fn pick(
     Ok(Some(Picked { name, bytes }))
 }
 
-/// Ask where to save and write `bytes` there. Returns the chosen file
-/// name; `Ok(None)` when the user cancels.
+/// A file [`save`] wrote.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Saved {
+    /// Name the system shows for it.
+    pub name: String,
+    /// Where it lives, when the system lets the app know (Linux): what
+    /// "Mostrar en la carpeta" opens.
+    pub path: Option<std::path::PathBuf>,
+}
+
+/// Ask where to save and write `bytes` there. `Ok(None)` when the user
+/// cancels.
 ///
 /// # Errors
 /// [`FileError`] when the picker or the write fails (no space).
@@ -97,7 +107,7 @@ pub async fn save(
     mime: &str,
     extension: &str,
     bytes: &[u8],
-) -> Result<Option<String>, FileError> {
+) -> Result<Option<Saved>, FileError> {
     let picker = client()?;
     let config = SaveConfig {
         dialog_title: Some(title.to_owned()),
@@ -119,5 +129,35 @@ pub async fn save(
     let mut writer = file.open_writer(&picker).await?;
     writer.write_all(bytes)?;
     writer.flush()?;
-    Ok(Some(name))
+    Ok(Some(Saved {
+        name,
+        path: written_path(&writer),
+    }))
+}
+
+/// The path behind the descriptor the picker handed out. Only Linux
+/// names it (`/proc/self/fd`); elsewhere the descriptor may point into
+/// a document provider with no folder to show.
+#[cfg(target_os = "linux")]
+fn written_path(file: &impl std::os::fd::AsRawFd) -> Option<std::path::PathBuf> {
+    std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))
+        .ok()
+        .filter(|path| path.is_absolute() && path.exists())
+}
+
+#[cfg(not(target_os = "linux"))]
+const fn written_path<F>(_file: &F) -> Option<std::path::PathBuf> {
+    None
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    #[test]
+    fn an_open_file_names_its_path() {
+        let path = std::env::temp_dir().join(format!("notein-saved-{}.notein", std::process::id()));
+        let file = std::fs::File::create(&path).expect("create");
+        let named = super::written_path(&file);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(named, Some(path));
+    }
 }

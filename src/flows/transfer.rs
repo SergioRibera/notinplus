@@ -516,29 +516,46 @@ fn save_copy(
     });
 }
 
-fn done_sheet(name: String, bytes: Vec<u8>, mime: &'static str) {
+fn done_sheet(saved: crate::files::Saved, bytes: Vec<u8>, mime: &'static str) {
     let size = crate::format::size(u64::try_from(bytes.len()).unwrap_or(0));
+    let crate::files::Saved { name, path } = saved;
+    let subtitle = format!("{name} · {size}");
+    let mut buttons = vec![
+        Button::new("Listo")
+            .ghost()
+            .on_press(|_| ModalController::get().close())
+            .into_element(),
+    ];
+    if let Some(folder) = path.as_deref().and_then(std::path::Path::parent) {
+        let folder = folder.to_path_buf();
+        buttons.push(
+            Button::new("Mostrar en la carpeta")
+                .icon(freya::icons::lucide::folder_open())
+                .on_press(move |_| {
+                    ModalController::get().close();
+                    crate::external::open_url(&format!("file://{}", folder.display()));
+                })
+                .into_element(),
+        );
+    }
+    buttons.push(
+        Button::new("Compartir")
+            .primary()
+            .icon(freya::icons::lucide::share_2())
+            .on_press(move |_| {
+                ModalController::get().close();
+                super::share_file(name.clone(), mime.to_owned(), bytes.clone());
+            })
+            .into_element(),
+    );
     Sheet::default()
         .without_close()
         .child(
             ListRow::new("Copia guardada")
-                .subtitle(format!("{name} · {size}"))
+                .subtitle(subtitle)
                 .icon(freya::icons::lucide::circle_check()),
         )
-        .footer(SheetFooter::new([
-            Button::new("Listo")
-                .ghost()
-                .on_press(|_| ModalController::get().close())
-                .into_element(),
-            Button::new("Compartir")
-                .primary()
-                .icon(freya::icons::lucide::share_2())
-                .on_press(move |_| {
-                    ModalController::get().close();
-                    super::share_file(name.clone(), mime.to_owned(), bytes.clone());
-                })
-                .into_element(),
-        ]))
+        .footer(SheetFooter::new(buttons))
         .open();
 }
 
