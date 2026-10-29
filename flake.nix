@@ -241,6 +241,8 @@
             # can link the plugin without hunting for system libs.
             libinput
             udev
+            # The camera plugin binds V4L2 headers with bindgen.
+            llvmPackages.libclang.lib
             # freya-skia links against system freetype/fontconfig.
             freetype
             fontconfig
@@ -270,6 +272,7 @@
               pdfium
             ]
           );
+          LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
         };
 
         formatter = pkgs.nixfmt-rfc-style;

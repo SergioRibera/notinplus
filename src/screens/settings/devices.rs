@@ -658,8 +658,9 @@ fn scan_button(mut error: State<Option<&'static str>>, mut pasted: State<String>
         .full_width()
         .icon(freya::icons::lucide::scan_qr_code())
         .on_press(move |_| {
+            let scan = crate::scan::scan_qr("Apuntá al código del otro dispositivo");
             spawn(async move {
-                match crate::scan::scan_qr("Apuntá al código del otro dispositivo").await {
+                match scan.await {
                     Ok(Some(text)) => {
                         error.set(None);
                         pasted.set(text);

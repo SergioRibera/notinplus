@@ -48,7 +48,11 @@ let
     cargoExtraArgs = "--locked --bin ${pname}";
     doCheck = false;
 
-    nativeBuildInputs = [ pkgs.pkg-config ];
+    nativeBuildInputs = [
+      pkgs.pkg-config
+    ]
+    # The camera plugin binds V4L2 headers with bindgen.
+    ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.rustPlatform.bindgenHook ];
     buildInputs =
       lib.optionals pkgs.stdenv.hostPlatform.isLinux (
         with pkgs;

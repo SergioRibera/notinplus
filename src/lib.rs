@@ -89,7 +89,7 @@ pub mod desktop_data_store;
 pub const WINDOW_ID: u64 = 1;
 
 use istmo::plugins::{DeepLinks, SafeArea};
-use istmo_barcode_scanner::BarcodeScannerClient;
+use istmo_camera::CameraClient;
 use istmo_data_store::DataStoreClient;
 use istmo_file_picker::FilePickerClient;
 use istmo_installer::InstallerClient;
@@ -98,7 +98,7 @@ use istmo_pen::PenClient;
 use istmo_share::ShareClient;
 
 istmo::runtime!(
-    plugins: [PenClient, SafeArea, DeepLinks, FilePickerClient, DataStoreClient, ShareClient, BarcodeScannerClient, OpenerClient, InstallerClient],
+    plugins: [PenClient, SafeArea, DeepLinks, FilePickerClient, DataStoreClient, ShareClient, CameraClient, OpenerClient, InstallerClient],
 );
 
 #[cfg(any(

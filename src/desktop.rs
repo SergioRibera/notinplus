@@ -50,8 +50,8 @@ pub fn install() -> Result<(), Box<dyn std::error::Error>> {
     picker.install_release_hook(&runtime);
     runtime.register_host(FilePickerHost::new(picker));
 
-    runtime.register_host(istmo_barcode_scanner::BarcodeScannerHost::new(
-        istmo_barcode_scanner::DesktopBarcodeScanner,
+    runtime.register_host(istmo_camera::CameraHost::new(
+        istmo_camera::DesktopCameraFactory,
     ));
     runtime.register_host(istmo_opener::OpenerHost::new(istmo_opener::DesktopOpener));
     runtime.register_host(istmo_installer::InstallerHost::new(
