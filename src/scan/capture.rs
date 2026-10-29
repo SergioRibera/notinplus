@@ -56,12 +56,21 @@ impl Capture {
         let spawned = std::thread::Builder::new()
             .name("qr-scan".into())
             .spawn(move || {
-                let outcome = pollster::block_on(open()).and_then(|session| {
-                    read(&session, &thread_stop, &tx).map(|found| (session, found))
+                let outcome = pollster::block_on(async {
+                    let session = open().await?;
+                    let found = read(&session, &thread_stop, &tx);
+                    // Dropping the handle does not free a Rust-hosted
+                    // camera: the desktop host only lets go on `close`,
+                    // and until then the next scan finds it busy.
+                    match session.close().await {
+                        Ok(()) => log::info!("scan: camera released"),
+                        Err(err) => log::warn!("scan: releasing the camera: {err}"),
+                    }
+                    found
                 });
                 let event = match outcome {
-                    Ok((_session, Some(text))) => Event::Found(text),
-                    Ok((_session, None)) => return,
+                    Ok(Some(text)) => Event::Found(text),
+                    Ok(None) => return,
                     Err(err) => Event::Failed(err),
                 };
                 let _ = tx.send(event);
