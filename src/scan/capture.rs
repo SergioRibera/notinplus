@@ -59,9 +59,9 @@ impl Capture {
                 let outcome = pollster::block_on(async {
                     let session = open().await?;
                     let found = read(&session, &thread_stop, &tx);
-                    // Dropping the handle does not free a Rust-hosted
-                    // camera: the desktop host only lets go on `close`,
-                    // and until then the next scan finds it busy.
+                    // Close rather than drop: the release a drop sends is
+                    // fire and forget, and a camera still held makes the
+                    // next scan find it busy.
                     match session.close().await {
                         Ok(()) => log::info!("scan: camera released"),
                         Err(err) => log::warn!("scan: releasing the camera: {err}"),
