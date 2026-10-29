@@ -120,29 +120,6 @@ fn search_field(compact: bool) -> Rect {
         .maybe_child((!compact).then(|| notein_ui_kit::Kbd::new("Ctrl K")))
 }
 
-/// The app mark, with the name on wider screens.
-fn brand(compact: bool) -> Rect {
-    let p = palette();
-    rect()
-        .horizontal()
-        .cross_align(Alignment::Center)
-        .spacing(8.0)
-        .child(
-            rect()
-                .width(Size::px(28.0))
-                .height(Size::px(28.0))
-                .corner_radius(tokens::radius::SM)
-                .background(p.accent)
-                .center()
-                .child(
-                    notein_ui_kit::Icon::new(freya::icons::lucide::pen_line())
-                        .size(16.0)
-                        .color(p.on_accent),
-                ),
-        )
-        .maybe_child((!compact).then(|| Text::new("Notein").role(TextRole::Title)))
-}
-
 impl Component for AppBar {
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
@@ -155,7 +132,7 @@ impl Component for AppBar {
             .cross_align(Alignment::Center)
             .content(Content::Flex)
             .spacing(tokens::space::MD)
-            .child(brand(compact))
+            .child(rect())
             .child(
                 rect()
                     .width(Size::flex(1.0))
