@@ -359,6 +359,13 @@ impl Board {
             .copied()
             .unwrap_or(1.0)
             .max(1.0);
+        log::info!(
+            target: super::handwriting::LOG,
+            "lasso to text: {} strokes in {} letters, median width {median:.1}, word gap > {:.1}",
+            strokes.len(),
+            letters.len(),
+            median * WORD_GAP
+        );
         let mut text = String::new();
         let mut last_end: Option<f32> = None;
         for (group, range) in &letters {
@@ -371,12 +378,26 @@ impl Board {
                 .iter()
                 .map(|s| s.points.iter().map(|p| Point::new(p.x, p.y)).collect())
                 .collect();
-            if let Some(best) = recognizer.recognize(&ink, None, 1).into_iter().next() {
+            let candidates = recognizer.recognize(&ink, None, 3);
+            log::info!(
+                target: super::handwriting::LOG,
+                "lasso letter {:.1}..{:.1} ({} strokes): {}",
+                range.0,
+                range.1,
+                group.len(),
+                candidates
+                    .iter()
+                    .map(|c| format!("{:?} {:.2}/{:.2}", c.glyph, c.distance, c.score))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            if let Some(best) = candidates.into_iter().next() {
                 text.push(best.glyph);
             }
             last_end = Some(range.1);
         }
         let text = text.trim().to_owned();
+        log::info!(target: super::handwriting::LOG, "lasso to text read {text:?}");
         if text.is_empty() {
             return None;
         }

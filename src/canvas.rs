@@ -948,7 +948,7 @@ impl Board {
         self.text_heights.clear();
         self.touch_text_scene();
         self.undo.clear();
-        self.forget_handwriting();
+        self.forget_handwriting("document replaced");
         self.rebuild_derived();
     }
 
@@ -1193,7 +1193,7 @@ impl Board {
             return false;
         }
         self.end_text_session();
-        self.forget_handwriting();
+        self.forget_handwriting("undo");
         let Some(entry) = self.undo.pop_undo() else {
             return false;
         };
@@ -1227,7 +1227,7 @@ impl Board {
             return false;
         }
         self.end_text_session();
-        self.forget_handwriting();
+        self.forget_handwriting("redo");
         let Some(entry) = self.undo.pop_redo() else {
             return false;
         };

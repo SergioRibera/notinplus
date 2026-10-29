@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use freya_engine::prelude::{Canvas, Paint, PaintStyle};
-use notein_handwriting::{Point, Recognizer};
+use notein_handwriting::{Candidate, Point, Recognizer};
 
 use super::Board;
 use crate::brush::BrushKind;
@@ -35,6 +35,10 @@ const JOIN_SLACK_Y: f32 = 0.7;
 
 /// Candidates scanned for one that passes [`fits_ink_size`].
 const CANDIDATES: usize = 8;
+
+/// Log target of every handwriting decision, so `RUST_LOG=handwriting=info`
+/// (or `logcat | grep handwriting`) follows a letter from pen to glyph.
+pub(crate) const LOG: &str = "handwriting";
 
 /// Largest ink, in pen widths, that can be `glyph`. The recognizer
 /// normalizes size away, so a stem drawn bottom-up reads as `.`; only
@@ -82,6 +86,19 @@ struct Bounds {
 }
 
 impl Bounds {
+    /// `x0..x1 × y0..y1` with one decimal, for the log.
+    fn describe(self) -> String {
+        format!(
+            "{:.1}..{:.1} × {:.1}..{:.1} ({:.1}×{:.1})",
+            self.min_x,
+            self.max_x,
+            self.min_y,
+            self.max_y,
+            self.width(),
+            self.height()
+        )
+    }
+
     fn of(points: impl IntoIterator<Item = (f32, f32)>) -> Option<Self> {
         points.into_iter().fold(None, |bounds, (x, y)| {
             Some(bounds.map_or(
@@ -124,6 +141,14 @@ impl Board {
     /// Turn smoothing on or off. Turning it off closes the pending
     /// letter right away.
     pub fn set_handwriting(&mut self, enabled: bool) {
+        if enabled != self.handwriting.enabled {
+            log::info!(
+                target: LOG,
+                "smoothing {} (pending {} strokes)",
+                if enabled { "on" } else { "off" },
+                self.handwriting.pending.len()
+            );
+        }
         if !enabled {
             self.close_letter();
         }
@@ -140,7 +165,20 @@ impl Board {
     /// Close the pending letter if it is still the one armed as
     /// `generation` and the pen is up.
     pub fn flush_handwriting(&mut self, generation: u64) {
-        if generation == self.handwriting.generation && self.active.is_none() {
+        if generation != self.handwriting.generation {
+            log::info!(
+                target: LOG,
+                "idle timer for generation {generation} is stale (now {}), letter stays open",
+                self.handwriting.generation
+            );
+        } else if self.active.is_some() {
+            log::info!(target: LOG, "idle timer fired with the pen down, letter stays open");
+        } else {
+            log::info!(
+                target: LOG,
+                "pen rested {} ms, closing the letter",
+                LETTER_IDLE.as_millis()
+            );
             self.close_letter();
         }
     }
@@ -150,26 +188,61 @@ impl Board {
     /// (decided on the whole stroke, so a `t` bar starting left of its stem
     /// still joins).
     pub(super) fn handwriting_after_stroke(&mut self, id: StrokeId, kind: BrushKind) {
-        if !self.handwriting.enabled || !writes(kind) {
+        if !self.handwriting.enabled {
             return;
         }
+        if !writes(kind) {
+            log::info!(target: LOG, "stroke {id} with {kind:?} is not writing, ignored");
+            return;
+        }
+        if let Some(stroke) = self.doc.find_stroke(id) {
+            log::info!(
+                target: LOG,
+                "stroke {id}: {} points over {}",
+                stroke.points.len(),
+                Bounds::of(stroke.points.iter().map(|p| (p.x, p.y)))
+                    .map_or_else(|| "nothing".to_owned(), Bounds::describe)
+            );
+        }
         if !self.handwriting.pending.is_empty() && !self.joins_pending(id) {
+            log::info!(
+                target: LOG,
+                "stroke {id} lands outside the pending letter, closing it first"
+            );
             self.close_letter();
         }
         let handwriting = &mut self.handwriting;
         handwriting.pending.push(id);
         if handwriting.pending.len() > MAX_STROKES {
             // Too many strokes for a letter: this is a drawing.
+            log::info!(
+                target: LOG,
+                "{} strokes is more than a letter takes ({MAX_STROKES}), treating it as a drawing",
+                handwriting.pending.len()
+            );
             handwriting.pending.clear();
         }
         handwriting.generation += 1;
+        log::info!(
+            target: LOG,
+            "pending letter: {} strokes, generation {}",
+            handwriting.pending.len(),
+            handwriting.generation
+        );
         if let Some(waker) = &handwriting.waker {
             let _ = waker.send(handwriting.generation);
         }
     }
 
     /// Drop the pending letter without recognizing it (undo, reload).
-    pub(super) fn forget_handwriting(&mut self) {
+    pub(super) fn forget_handwriting(&mut self, why: &str) {
+        if !self.handwriting.pending.is_empty() {
+            log::info!(
+                target: LOG,
+                "{why}: dropping the pending letter of {} strokes unread",
+                self.handwriting.pending.len()
+            );
+        }
         self.handwriting.pending.clear();
         self.handwriting.generation += 1;
     }
@@ -194,10 +267,18 @@ impl Board {
         let size = pending.width().max(pending.height());
         let slack_x = (JOIN_SLACK_X * size).max(2.0 * pen_width);
         let slack_y = JOIN_SLACK_Y * size;
-        new.min_x <= pending.max_x + slack_x
+        let joins = new.min_x <= pending.max_x + slack_x
             && new.max_x >= pending.min_x - slack_x
             && new.min_y <= pending.max_y + slack_y
-            && new.max_y >= pending.min_y - slack_y
+            && new.max_y >= pending.min_y - slack_y;
+        log::info!(
+            target: LOG,
+            "join test: pending {} vs new {}, slack {slack_x:.1} × {slack_y:.1} (pen {pen_width:.1}) → {}",
+            pending.describe(),
+            new.describe(),
+            if joins { "same letter" } else { "new letter" }
+        );
+        joins
     }
 
     fn pending_bounds(&self) -> Option<Bounds> {
@@ -214,7 +295,11 @@ impl Board {
     fn close_letter(&mut self) {
         let ids = std::mem::take(&mut self.handwriting.pending);
         self.handwriting.generation += 1;
+        if ids.is_empty() {
+            return;
+        }
         let Some(recognizer) = recognizer() else {
+            log::warn!(target: LOG, "no recognizer, {} strokes stay ink", ids.len());
             return;
         };
         let strokes: Vec<(u32, crate::brush::Stroke)> = ids
@@ -222,9 +307,19 @@ impl Board {
             .filter_map(|id| self.doc.locate_stroke(*id))
             .collect();
         let Some(&(layer_id, ref first)) = strokes.first() else {
+            log::info!(target: LOG, "the {} pending strokes are gone (erased?)", ids.len());
             return;
         };
+        if strokes.len() < ids.len() {
+            log::info!(
+                target: LOG,
+                "{} of {} pending strokes are gone, reading the rest",
+                ids.len() - strokes.len(),
+                ids.len()
+            );
+        }
         if strokes.iter().any(|(layer, _)| *layer != layer_id) {
+            log::info!(target: LOG, "letter spans several layers, stays ink");
             return;
         }
         let ink: Vec<Vec<Point>> = strokes
@@ -232,6 +327,7 @@ impl Board {
             .map(|(_, stroke)| stroke.points.iter().map(|p| Point::new(p.x, p.y)).collect())
             .collect();
         let Some(centerline) = Bounds::of(ink.iter().flatten().map(|p| (p.x, p.y))) else {
+            log::info!(target: LOG, "letter has no points, stays ink");
             return;
         };
         let pen_width = self
@@ -239,12 +335,15 @@ impl Board {
             .preset(first.brush)
             .map_or(0.0, |preset| preset.max_width * preset.size_scale);
         let pen_widths = centerline.width().max(centerline.height()) / pen_width.max(f32::EPSILON);
-        let Some(best) = recognizer
-            .recognize(&ink, None, CANDIDATES)
-            .into_iter()
-            .find(|candidate| fits_ink_size(candidate.glyph, pen_widths))
-            .filter(|candidate| candidate.distance <= REJECT_DISTANCE)
-        else {
+        log::info!(
+            target: LOG,
+            "reading letter: {} strokes ({} points: {:?}), centerline {}, pen {pen_width:.1} → {pen_widths:.1} pen widths",
+            ink.len(),
+            ink.iter().map(Vec::len).sum::<usize>(),
+            ink.iter().map(Vec::len).collect::<Vec<_>>(),
+            centerline.describe()
+        );
+        let Some(best) = pick(recognizer, &ink, pen_widths) else {
             return;
         };
         // The outline includes the font's stroke weight, so fit it over the
@@ -256,9 +355,26 @@ impl Board {
             max_x: centerline.max_x + pad,
             max_y: centerline.max_y + pad,
         };
-        let Some(glyph) = place(best.glyph, GlyphFont::selected(), bounds, first.color) else {
+        let font = GlyphFont::selected();
+        let Some(glyph) = place(best.glyph, font, bounds, first.color) else {
+            log::warn!(
+                target: LOG,
+                "font {font:?} has no outline for {:?}, stays ink",
+                best.glyph
+            );
             return;
         };
+        log::info!(
+            target: LOG,
+            "→ {:?} (distance {:.2}, score {:.2}) in {font:?} at ({:.1}, {:.1}) scale {:.3} over {}",
+            best.glyph,
+            best.distance,
+            best.score,
+            glyph.x,
+            glyph.y,
+            glyph.scale,
+            bounds.describe()
+        );
         let mut ops: Vec<DocOp> = strokes
             .iter()
             .map(|(_, stroke)| DocOp::RemoveStroke { id: stroke.id })
@@ -342,6 +458,59 @@ impl Board {
             canvas.draw_path(path, &paint);
         }
     }
+}
+
+/// The candidate `ink` reads as, or `None` (logged why) when it reads as
+/// no character of its size.
+fn pick(recognizer: &Recognizer, ink: &[Vec<Point>], pen_widths: f32) -> Option<Candidate> {
+    let started = std::time::Instant::now();
+    let candidates = recognizer.recognize(ink, None, CANDIDATES);
+    log::info!(
+        target: LOG,
+        "recognizer took {:.1} ms, candidates (≤ {REJECT_DISTANCE} passes): {}",
+        started.elapsed().as_secs_f64() * 1000.0,
+        describe(&candidates, pen_widths)
+    );
+    let Some(best) = candidates
+        .into_iter()
+        .find(|candidate| fits_ink_size(candidate.glyph, pen_widths))
+    else {
+        log::info!(target: LOG, "no candidate fits the ink size, stays ink");
+        return None;
+    };
+    if best.distance > REJECT_DISTANCE {
+        log::info!(
+            target: LOG,
+            "best {:?} is too far ({:.2} > {REJECT_DISTANCE}), stays ink",
+            best.glyph,
+            best.distance
+        );
+        return None;
+    }
+    Some(best)
+}
+
+/// `'a' 1.23/1.40, 'o' 2.10/2.10 (too big)…` for the log: glyph,
+/// distance/score, and whether the ink size rules it out.
+fn describe(candidates: &[Candidate], pen_widths: f32) -> String {
+    if candidates.is_empty() {
+        return "none".to_owned();
+    }
+    candidates
+        .iter()
+        .map(|candidate| {
+            let size = if fits_ink_size(candidate.glyph, pen_widths) {
+                ""
+            } else {
+                " (wrong size)"
+            };
+            format!(
+                "{:?} {:.2}/{:.2}{size}",
+                candidate.glyph, candidate.distance, candidate.score
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Font glyph for `glyph` fitted over the ink `bounds`: scaled to the
