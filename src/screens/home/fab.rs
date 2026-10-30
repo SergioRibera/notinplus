@@ -1,6 +1,7 @@
 //! The + button and the two shortcuts the user pinned above it.
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{Icon, tokens};
@@ -76,7 +77,7 @@ impl Component for Fab {
                     p.accent,
                     lucide::plus(),
                     p.on_accent,
-                    "Crear".to_owned(),
+                    tr!("home-create"),
                 )
                 .on_tap(move |_| {
                     let size = *Platform::get().current_window().root_size.read();

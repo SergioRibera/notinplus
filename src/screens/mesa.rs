@@ -23,6 +23,7 @@ use crate::library::{
     Workspace, WorkspaceId,
 };
 use crate::state::{self, LibraryState, LibraryView};
+use notein_i18n::tr;
 use panes::SplitEdge;
 
 pub use panel::PanelTab;
@@ -149,14 +150,19 @@ fn scratch_closed(scratch: crate::library::ScratchId) {
     }
     let folder = crate::screens::home::Browse::get().folder();
     Toasts::get().show(
-        Toast::new("Borrador descartado")
+        Toast::new(tr!("mesa-draft-discarded"))
             .duration(SCRATCH_GRACE)
-            .action("Guardar", move |()| save_scratch(doc.clone(), folder)),
+            .action(tr!("common-save"), move |()| {
+                save_scratch(doc.clone(), folder);
+            }),
     );
 }
 
 fn save_scratch(doc: crate::doc::Doc, folder: crate::library::FolderId) {
-    let name = format!("Borrador del {}", chrono::Local::now().format("%d/%m"));
+    let name = tr!(
+        "mesa-draft-name",
+        "date" => chrono::Local::now().format("%d/%m").to_string(),
+    );
     state::edit(crate::state::LibraryEdit::SaveDraft, async move |lib| {
         let item = lib
             .create_item(
@@ -170,8 +176,8 @@ fn save_scratch(doc: crate::doc::Doc, folder: crate::library::FolderId) {
             .await?;
         lib.save_doc(item, &doc).await?;
         Toasts::get().show(
-            Toast::new(format!("«{name}» guardado"))
-                .action("Abrir", move |()| crate::flows::open(item)),
+            Toast::new(tr!("mesa-draft-saved", "name" => name.clone()))
+                .action(tr!("common-open"), move |()| crate::flows::open(item)),
         );
         Ok(())
     });
@@ -251,21 +257,20 @@ impl Component for Mesa {
             LibraryState::Loading => rect().expanded().into_element(),
             LibraryState::Failed(why) => EmptyState::new(
                 freya::icons::lucide::triangle_alert(),
-                "No se pudo abrir la mesa",
+                tr!("mesa-failed-title"),
             )
             .body(why)
             .into_element(),
             LibraryState::Ready(data) => match data.workspace(self.id) {
                 Some(_) => Open { data, id: self.id }.into_element(),
-                None => EmptyState::new(
-                    freya::icons::lucide::layout_grid(),
-                    "Esta mesa ya no existe",
-                )
-                .body("Se borró en este u otro dispositivo.")
-                .action(Button::new("Ir al inicio").primary().on_press(|_| {
-                    crate::screens::home::open_folder(crate::library::ROOT_FOLDER);
-                }))
-                .into_element(),
+                None => {
+                    EmptyState::new(freya::icons::lucide::layout_grid(), tr!("mesa-gone-title"))
+                        .body(tr!("mesa-gone-body"))
+                        .action(Button::new(tr!("mesa-go-home")).primary().on_press(|_| {
+                            crate::screens::home::open_folder(crate::library::ROOT_FOLDER);
+                        }))
+                        .into_element()
+                }
             },
         };
         rect()

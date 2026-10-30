@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use freya::prelude::*;
 use freya::router::RouterContext;
+use notein_i18n::tr;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
     BarItem, Button, EmptyState, IconButton, Leading, ListRow, SelectionBar, Text, TextRole, Toast,
@@ -32,7 +33,7 @@ impl TrashGroup {
         let first = self.entries.first().map_or("", TrashEntry::name);
         match self.entries.len() {
             0 | 1 => first.to_owned(),
-            n => format!("{first} y {} más", n - 1),
+            n => tr!("trash-group-title", "first" => first, "more" => n - 1),
         }
     }
 
@@ -89,10 +90,7 @@ fn restore(batches: Vec<u64>) {
         for batch in batches {
             restored += lib.restore_batch(batch).await?;
         }
-        Toasts::get().show(Toast::new(format!(
-            "{} de vuelta en la biblioteca",
-            crate::format::count(restored, "documento", "documentos")
-        )));
+        Toasts::get().show(Toast::new(tr!("trash-restored", "count" => restored)));
         Ok(())
     });
 }
@@ -102,7 +100,7 @@ fn purge(batches: Vec<u64>) {
         for batch in &batches {
             lib.purge_batch(*batch).await?;
         }
-        Toasts::get().show(Toast::new("Borrado para siempre"));
+        Toasts::get().show(Toast::new(tr!("trash-purged")));
         Ok(())
     });
 }
@@ -164,8 +162,8 @@ impl Component for TrashList {
                 .padding((0.0, self.pad))
                 .child(header)
                 .child(
-                    EmptyState::new(freya::icons::lucide::trash_2(), "La papelera está vacía")
-                        .body("Lo que borres queda acá un tiempo, por si cambiás de idea."),
+                    EmptyState::new(freya::icons::lucide::trash_2(), tr!("trash-empty-title"))
+                        .body(tr!("trash-empty-body")),
                 )
                 .into_element();
         }
@@ -208,10 +206,9 @@ impl TrashUi {
     /// Back, the title, how much there is and how long it stays.
     fn header(self, retention: TrashRetention, total: usize, size: &str, any: bool) -> Rect {
         let (mut selecting, mut picked) = (self.selecting, self.picked);
-        let documents = crate::format::count(total, "documento", "documentos");
         let summary = retention.days().map_or_else(
-            || format!("{documents} · {size} · se guardan hasta que los borres"),
-            |days| format!("{documents} · {size} · se borran solos a los {days} días"),
+            || tr!("trash-summary-kept", "count" => total, "size" => size),
+            |days| tr!("trash-summary-days", "count" => total, "size" => size, "days" => days),
         );
         rect()
             .width(Size::fill())
@@ -221,24 +218,28 @@ impl TrashUi {
             .content(Content::Flex)
             .spacing(8.0)
             .child(
-                IconButton::new(freya::icons::lucide::arrow_left(), "Volver")
+                IconButton::new(freya::icons::lucide::arrow_left(), tr!("trash-back"))
                     .on_press(|_| RouterContext::get().go_back()),
             )
             .child(
                 rect()
                     .width(Size::flex(1.0))
-                    .child(Text::new("Papelera").role(TextRole::Heading))
+                    .child(Text::new(tr!("common-trash")).role(TextRole::Heading))
                     .child(Text::new(summary).role(TextRole::Meta)),
             )
             .maybe_child(any.then(|| {
-                Button::new(if selecting() { "Listo" } else { "Seleccionar" })
-                    .ghost()
-                    .small()
-                    .on_press(move |_| {
-                        let next = !selecting();
-                        selecting.set(next);
-                        picked.write().clear();
-                    })
+                Button::new(if selecting() {
+                    tr!("common-done")
+                } else {
+                    tr!("trash-select")
+                })
+                .ghost()
+                .small()
+                .on_press(move |_| {
+                    let next = !selecting();
+                    selecting.set(next);
+                    picked.write().clear();
+                })
             }))
     }
 
@@ -260,16 +261,12 @@ impl TrashUi {
             .first()
             .map(|e| crate::flows::forms::folder_path(data, e.trashed.from))
             .unwrap_or_default();
-        let left = days_left(group.at(), now, retention.millis()).map_or_else(String::new, |d| {
-            format!(
-                " · {}",
-                crate::format::count(usize::try_from(d).unwrap_or(0), "día más", "días más")
-            )
-        });
-        let row = ListRow::new(group.title()).subtitle(format!(
-            "Borrado {} · de {from}{left}",
-            crate::format::ago(group.at(), now)
-        ));
+        let ago = crate::format::ago(group.at(), now);
+        let meta = days_left(group.at(), now, retention.millis()).map_or_else(
+            || tr!("trash-row-meta", "ago" => ago.clone(), "from" => from.clone()),
+            |days| tr!("trash-row-meta-left", "ago" => ago.clone(), "from" => from.clone(), "days" => days),
+        );
+        let row = ListRow::new(group.title()).subtitle(meta);
         let row = if *self.selecting.read() {
             let on = picked.read().contains(&batch);
             row.leading(Leading::Check(on))
@@ -293,7 +290,7 @@ impl TrashUi {
                 )
             };
             row.trailing(Trailing::Element(
-                Button::new("Restaurar")
+                Button::new(tr!("trash-restore"))
                     .tonal()
                     .small()
                     .on_press(move |_| restore(vec![batch]))
@@ -307,7 +304,7 @@ impl TrashUi {
     fn empty_all(self, batches: Vec<u64>, total: usize) -> Element {
         let mut confirming = self.confirming;
         if !confirming() {
-            return Button::new("Vaciar papelera")
+            return Button::new(tr!("trash-empty-all"))
                 .danger()
                 .icon(freya::icons::lucide::trash_2())
                 .on_press(move |_| confirming.set(true))
@@ -319,29 +316,23 @@ impl TrashUi {
             .corner_radius(tokens::radius::LG)
             .background(palette().s1)
             .spacing(10.0)
-            .child(
-                Text::new("No se puede deshacer. También se borran en tus otros dispositivos.")
-                    .role(TextRole::Hint),
-            )
+            .child(Text::new(tr!("trash-empty-all-warning")).role(TextRole::Hint))
             .child(
                 rect()
                     .horizontal()
                     .spacing(8.0)
                     .child(
-                        Button::new("Cancelar")
+                        Button::new(tr!("common-cancel"))
                             .ghost()
                             .on_press(move |_| confirming.set(false)),
                     )
                     .child(
-                        Button::new(format!(
-                            "Borrar {} para siempre",
-                            crate::format::count(total, "documento", "documentos")
-                        ))
-                        .variant(notein_ui_kit::ButtonVariant::DangerFill)
-                        .on_press(move |_| {
-                            confirming.set(false);
-                            purge(batches.clone());
-                        }),
+                        Button::new(tr!("trash-purge-count", "count" => total))
+                            .variant(notein_ui_kit::ButtonVariant::DangerFill)
+                            .on_press(move |_| {
+                                confirming.set(false);
+                                purge(batches.clone());
+                            }),
                     ),
             )
             .into_element()
@@ -360,15 +351,13 @@ impl TrashUi {
                 .horizontal()
                 .main_align(Alignment::Center)
                 .child(SelectionBar::new([
-                    BarItem::Caption(
-                        crate::format::count(chosen.len(), "elegido", "elegidos").into(),
-                    ),
+                    BarItem::Caption(tr!("trash-chosen-count", "count" => chosen.len()).into()),
                     BarItem::Divider,
-                    BarItem::action("Restaurar", lucide::undo_2(), move |()| {
+                    BarItem::action(tr!("trash-restore"), lucide::undo_2(), move |()| {
                         restore(to_restore.clone());
                         selecting.set(false);
                     }),
-                    BarItem::action("Borrar para siempre", lucide::trash_2(), move |()| {
+                    BarItem::action(tr!("trash-purge"), lucide::trash_2(), move |()| {
                         purge(to_purge.clone());
                         selecting.set(false);
                     }),

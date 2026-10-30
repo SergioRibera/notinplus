@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_plugin::bookmark::SourceRef;
 use notein_plugin::services::Placement;
 use notein_ui_kit::theme::palette;
@@ -30,11 +31,11 @@ pub enum PanelTab {
 impl PanelTab {
     const ALL: [Self; 3] = [Self::Contents, Self::Bookmarks, Self::Links];
 
-    const fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Self::Contents => "Contenido",
-            Self::Bookmarks => "Marcadores",
-            Self::Links => "Vínculos",
+            Self::Contents => tr!("mesa-panel-contents"),
+            Self::Bookmarks => tr!("mesa-panel-bookmarks"),
+            Self::Links => tr!("mesa-panel-links"),
         }
     }
 }
@@ -79,7 +80,7 @@ impl Component for Panel {
 /// The panel as a sheet, on phones.
 pub(super) fn open_sheet(data: Arc<LibraryData>, focus: Option<&Focus>, start: PanelTab) {
     let tab = State::create_in_scope(start, ScopeId::ROOT);
-    Sheet::titled("Documento")
+    Sheet::titled(tr!("mesa-panel-sheet-title"))
         .child(PanelBody {
             data,
             item: focus.and_then(Focus::item),
@@ -118,9 +119,9 @@ fn panel_head(mut tab: State<PanelTab>, query: State<String>) -> Rect {
             SearchField::new(
                 query,
                 if current == PanelTab::Contents {
-                    "Buscar en el contenido"
+                    tr!("mesa-panel-search-contents")
                 } else {
-                    "Buscar marcadores"
+                    tr!("mesa-panel-search-bookmarks")
                 },
             )
             .height(34.0)
@@ -183,7 +184,7 @@ fn bookmarks(
                 .content(Content::wrap_spacing(6.0))
                 .spacing(6.0)
                 .child(
-                    Tag::new("Todos")
+                    Tag::new(tr!("mesa-panel-bookmarks-all"))
                         .active(chosen.is_none())
                         .on_press(move |_| color.set(None)),
                 )
@@ -196,7 +197,7 @@ fn bookmarks(
                 }))
         }))
         .child(if rows.is_empty() {
-            Text::new("Sin marcadores. Mantené apretado sobre el texto o la hoja para marcar.")
+            Text::new(tr!("mesa-panel-bookmarks-empty"))
                 .role(TextRole::Hint)
                 .into_element()
         } else {
@@ -220,8 +221,11 @@ impl Component for PanelBody {
                 .spacing(12.0)
                 .child(head)
                 .child(
-                    EmptyState::new(freya::icons::lucide::panel_left(), "Elegí un documento")
-                        .body("El panel muestra el documento del panel enfocado."),
+                    EmptyState::new(
+                        freya::icons::lucide::panel_left(),
+                        tr!("mesa-panel-none-title"),
+                    )
+                    .body(tr!("mesa-panel-none-body")),
                 )
                 .into_element();
         };
@@ -334,11 +338,11 @@ impl Component for Links {
             .into_iter()
             .filter(|r| self.data.item(r.to).is_none_or(|i| i.trashed.is_some()))
             .map(|r| {
-                ListRow::new("Referencia a un documento que ya no está")
+                ListRow::new(tr!("mesa-links-broken-row"))
                     .subtitle(match r.origin {
-                        refs::RefOrigin::Bookmark(_) => "Desde un marcador",
-                        refs::RefOrigin::TextBox => "Desde un cuadro de texto",
-                        refs::RefOrigin::Note => "Desde el texto de la nota",
+                        refs::RefOrigin::Bookmark(_) => tr!("mesa-links-from-bookmark"),
+                        refs::RefOrigin::TextBox => tr!("mesa-links-from-text-box"),
+                        refs::RefOrigin::Note => tr!("mesa-links-from-note"),
                     })
                     .icon(lucide::unlink())
                     .danger(true)
@@ -346,26 +350,24 @@ impl Component for Links {
                     .into_element()
             })
             .collect();
-        let section = |title: &'static str,
-                       rows: Vec<Element>,
-                       empty: &'static str,
-                       action: Option<Element>| {
-            let none = rows.is_empty();
-            Section::new(title)
-                .maybe_child(none.then(|| Text::new(empty).role(TextRole::Hint)))
-                .maybe_child((!none).then(|| Group::default().children(rows)))
-                .maybe_child(action)
-                .into_element()
-        };
+        let section =
+            |title: String, rows: Vec<Element>, empty: String, action: Option<Element>| {
+                let none = rows.is_empty();
+                Section::new(title)
+                    .maybe_child(none.then(|| Text::new(empty).role(TextRole::Hint)))
+                    .maybe_child((!none).then(|| Group::default().children(rows)))
+                    .maybe_child(action)
+                    .into_element()
+            };
         rect()
             .width(Size::fill())
             .spacing(18.0)
             .child(section(
-                "Cuadernos",
+                tr!("mesa-links-notebooks"),
                 notebooks,
-                "Sin cuadernos todavía.",
+                tr!("mesa-links-notebooks-empty"),
                 Some(
-                    Button::new("Nuevo cuaderno")
+                    Button::new(tr!("mesa-links-new-notebook"))
                         .ghost()
                         .small()
                         .icon(lucide::plus())
@@ -374,11 +376,11 @@ impl Component for Links {
                 ),
             ))
             .child(section(
-                "Vinculados",
+                tr!("mesa-links-linked"),
                 linked,
-                "No está vinculado con nada.",
+                tr!("mesa-links-linked-empty"),
                 Some(
-                    Button::new("Vincular con…")
+                    Button::new(tr!("mesa-cmd-link-with"))
                         .ghost()
                         .small()
                         .icon(lucide::link())
@@ -387,13 +389,14 @@ impl Component for Links {
                 ),
             ))
             .child(section(
-                "Lo mencionan",
+                tr!("mesa-links-mentions"),
                 mentions,
-                "Ningún documento lo cita todavía.",
+                tr!("mesa-links-mentions-empty"),
                 None,
             ))
             .maybe_child(
-                (!broken.is_empty()).then(|| section("Referencias rotas", broken, "", None)),
+                (!broken.is_empty())
+                    .then(|| section(tr!("mesa-links-broken"), broken, String::new(), None)),
             )
     }
 }

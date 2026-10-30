@@ -3,6 +3,8 @@
 
 use std::collections::HashMap;
 
+use notein_i18n::tr;
+
 use crate::library::{ItemId, LibraryData, LinkKind, refs};
 
 /// Rounds of the layout pass.
@@ -23,11 +25,11 @@ impl EdgeKind {
     pub(super) const ALL: [Self; 3] = [Self::Notebook, Self::Link, Self::Reference];
 
     #[must_use]
-    pub(super) const fn label(self) -> &'static str {
+    pub(super) fn label(self) -> String {
         match self {
-            Self::Notebook => "Cuaderno",
-            Self::Link => "Vínculo",
-            Self::Reference => "Referencia",
+            Self::Notebook => tr!("map-edge-notebook"),
+            Self::Link => tr!("map-edge-link"),
+            Self::Reference => tr!("map-edge-reference"),
         }
     }
 }

@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_plugin::services::HeaderPress;
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
@@ -37,7 +38,7 @@ impl TabLook {
         match tab.target {
             TabTarget::Item(id) => data.item(id).map_or_else(
                 || Self {
-                    title: "Ya no está".to_owned(),
+                    title: tr!("mesa-tab-gone"),
                     icon: lucide::file_x(),
                     tint: p.t3,
                     scratch: false,
@@ -53,13 +54,13 @@ impl TabLook {
                 },
             ),
             TabTarget::Scratch(_) => Self {
-                title: "Borrador".to_owned(),
+                title: tr!("mesa-tab-draft"),
                 icon: lucide::pen_line(),
                 tint: p.kinds.scratch,
                 scratch: true,
             },
             TabTarget::Annotation(_) => Self {
-                title: "Anotación".to_owned(),
+                title: tr!("mesa-tab-annotation"),
                 icon: lucide::message_square_text(),
                 tint: p.accent,
                 scratch: false,
@@ -191,24 +192,24 @@ impl PaneHeader {
             )
             .children(face_actions)
             .maybe_child(self.next.map(|next| {
-                IconButton::new(lucide::columns_2(), "Otro panel")
+                IconButton::new(lucide::columns_2(), tr!("mesa-pane-other"))
                     .size(tokens::size::BUTTON_SM)
                     .on_press(move |_| ops.focus(next))
             }))
             .child(
-                IconButton::new(lucide::plus(), "Nueva pestaña")
+                IconButton::new(lucide::plus(), tr!("mesa-tab-new"))
                     .size(tokens::size::BUTTON_SM)
                     .on_press(move |_| ops.new_tab(pane)),
             )
             .maybe_child(active.filter(|t| t.item().is_some()).map(|tab| {
                 let tab = tab.clone();
                 let data = Arc::clone(&self.data);
-                IconButton::new(lucide::ellipsis(), "Más acciones")
+                IconButton::new(lucide::ellipsis(), tr!("mesa-more-actions"))
                     .size(tokens::size::BUTTON_SM)
                     .on_press(move |e: Event<PressEventData>| menu_for(&tab, &data, anchor(&e)))
             }))
             .maybe_child(self.can_close.then(|| {
-                IconButton::new(lucide::panel_right_close(), "Cerrar el panel")
+                IconButton::new(lucide::panel_right_close(), tr!("mesa-pane-close"))
                     .size(tokens::size::BUTTON_SM)
                     .on_press(move |_| ops.close_pane(pane))
             }))
@@ -240,7 +241,7 @@ impl PaneHeader {
                     .child(Text::new(look.title).role(TextRole::Strong).lines(1)),
             )
             .child(
-                IconButton::new(freya::icons::lucide::x(), "Cerrar")
+                IconButton::new(freya::icons::lucide::x(), tr!("common-close"))
                     .size(tokens::size::BUTTON_SM)
                     .on_press(move |_| ops.close_tab(pane, 0, &close_tab)),
             )
@@ -354,7 +355,7 @@ impl Component for TabCell {
                     .corner_radius(tokens::radius::XS)
                     .center()
                     .a11y_role(AccessibilityRole::Button)
-                    .a11y_alt("Cerrar pestaña")
+                    .a11y_alt(tr!("mesa-tab-close"))
                     .on_tap(move |e: Event<PressEventData>| {
                         e.stop_propagation();
                         ops.close_tab(pane, index, &close);

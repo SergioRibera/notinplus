@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_plugin::kind::{OutlineIcon, OutlineNode};
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
@@ -180,7 +181,11 @@ impl Rows {
             Leading::Element(
                 rect()
                     .a11y_role(AccessibilityRole::Button)
-                    .a11y_alt(if line.open { "Contraer" } else { "Expandir" })
+                    .a11y_alt(if line.open {
+                        tr!("mesa-outline-collapse")
+                    } else {
+                        tr!("mesa-outline-expand")
+                    })
                     .on_tap(move |e: Event<PressEventData>| {
                         e.stop_propagation();
                         toggle();
@@ -237,9 +242,9 @@ impl Component for OutlineList {
         drop(folds);
         if lines.is_empty() {
             return Text::new(if self.query.is_empty() {
-                "Este documento no tiene índice."
+                tr!("mesa-outline-empty")
             } else {
-                "Nada con ese nombre."
+                tr!("mesa-outline-no-match")
             })
             .role(TextRole::Hint)
             .into_element();

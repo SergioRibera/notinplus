@@ -2,6 +2,7 @@
 //! on them in place of the + button.
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_ui_kit::{BarItem, SelectionBar};
 
 use super::card::Selecting;
@@ -96,9 +97,9 @@ impl Component for SelectionActions {
         let folders = current.folders.clone();
         let has_docs = !items.is_empty();
         let caption = if current.count() == 0 {
-            "Tocá para elegir".to_owned()
+            tr!("home-selection-hint")
         } else {
-            crate::format::count(current.count(), "seleccionado", "seleccionados")
+            tr!("home-selection-count", "count" => current.count())
         };
         let mut bar = vec![
             BarItem::icon(lucide::x(), move |()| done()),
@@ -108,7 +109,7 @@ impl Component for SelectionActions {
         if current.count() > 0 {
             let (move_items, move_folders) = (items.clone(), folders.clone());
             bar.push(BarItem::action(
-                "Mover",
+                tr!("common-move"),
                 lucide::folder_input(),
                 move |()| {
                     flows::move_items(move_items.clone(), move_folders.clone());
@@ -118,27 +119,39 @@ impl Component for SelectionActions {
         }
         if has_docs {
             let pin = items.clone();
-            bar.push(BarItem::action("Fijar", lucide::pin(), move |()| {
-                flows::pin_items(pin.clone());
-                done();
-            }));
+            bar.push(BarItem::action(
+                tr!("home-selection-pin"),
+                lucide::pin(),
+                move |()| {
+                    flows::pin_items(pin.clone());
+                    done();
+                },
+            ));
             if let [one] = items.as_slice() {
                 let one = *one;
-                bar.push(BarItem::action("Compartir", lucide::share_2(), move |()| {
-                    flows::share_item(one);
-                    done();
-                }));
+                bar.push(BarItem::action(
+                    tr!("common-share"),
+                    lucide::share_2(),
+                    move |()| {
+                        flows::share_item(one);
+                        done();
+                    },
+                ));
             }
             let export = items.clone();
-            bar.push(BarItem::action("Exportar", lucide::download(), move |()| {
-                flows::export_items(export.clone());
-                done();
-            }));
+            bar.push(BarItem::action(
+                tr!("home-selection-export"),
+                lucide::download(),
+                move |()| {
+                    flows::export_items(export.clone());
+                    done();
+                },
+            ));
         }
         if current.count() > 0 {
             let (group, group_folders) = (items.clone(), folders.clone());
             bar.push(BarItem::action(
-                format!("Nueva carpeta con {}", current.count()),
+                tr!("home-selection-new-folder", "count" => current.count()),
                 lucide::folder_plus(),
                 move |()| {
                     flows::create::new_folder(flows::create::Context {
@@ -152,15 +165,19 @@ impl Component for SelectionActions {
         }
         if current.count() > 0 {
             bar.push(BarItem::Divider);
-            bar.push(BarItem::action("Papelera", lucide::trash_2(), move |()| {
-                if !items.is_empty() {
-                    flows::trash_documents(items.clone());
-                }
-                for f in &folders {
-                    flows::trash_folder(*f);
-                }
-                done();
-            }));
+            bar.push(BarItem::action(
+                tr!("common-trash"),
+                lucide::trash_2(),
+                move |()| {
+                    if !items.is_empty() {
+                        flows::trash_documents(items.clone());
+                    }
+                    for f in &folders {
+                        flows::trash_folder(*f);
+                    }
+                    done();
+                },
+            ));
         }
         SelectionBar::new(bar)
     }

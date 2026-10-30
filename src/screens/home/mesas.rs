@@ -2,6 +2,7 @@
 //! arrangement of open documents.
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_ui_kit::theme::{Palette, palette};
 use notein_ui_kit::{Button, Icon, IconButton, TapExt, Text, TextRole, tokens, use_press_gesture};
 
@@ -44,7 +45,7 @@ fn tab_count(w: &Workspace) -> usize {
 fn mesa_meta(w: &Workspace, now: u64) -> String {
     format!(
         "{} · {}",
-        crate::format::count(tab_count(w), "pestaña", "pestañas"),
+        tr!("home-desk-tab-count", "count" => tab_count(w)),
         crate::format::ago(w.updated_at, now)
     )
 }
@@ -128,8 +129,8 @@ fn origin(w: &Workspace) -> Option<String> {
         return None;
     }
     Some(sync.trusted.iter().find(|d| d.id == device).map_or_else(
-        || "En otro dispositivo".to_owned(),
-        |d| format!("En {}", d.name),
+        || tr!("home-desk-on-other-device"),
+        |d| tr!("home-desk-on-device", "device" => d.name.clone()),
     ))
 }
 
@@ -177,9 +178,17 @@ impl MesaCard {
                             .background(dot),
                     )
                     .child(
-                        Text::new(if self.current { "CONTINUAR" } else { "MESA" })
-                            .role(TextRole::Label)
-                            .color(if self.current { p.accent_text } else { p.t3 }),
+                        Text::new(if self.current {
+                            tr!("home-desk-continue-heading")
+                        } else {
+                            tr!("home-desk-heading")
+                        })
+                        .role(TextRole::Label)
+                        .color(if self.current {
+                            p.accent_text
+                        } else {
+                            p.t3
+                        }),
                     )
                     .maybe_child(w.pinned.then(|| {
                         Icon::new(lucide::pin())
@@ -289,14 +298,14 @@ fn new_mesa_card(width: f32) -> Element {
         .center()
         .spacing(6.0)
         .a11y_role(AccessibilityRole::Button)
-        .a11y_alt("Nueva mesa")
+        .a11y_alt(tr!("home-desk-new"))
         .on_tap(|_| crate::flows::create::new_mesa())
         .child(
             Icon::new(freya::icons::lucide::plus())
                 .size(20.0)
                 .color(p.t2),
         )
-        .child(Text::new("Nueva mesa").role(TextRole::Meta))
+        .child(Text::new(tr!("home-desk-new")).role(TextRole::Meta))
         .into_element()
 }
 
@@ -395,14 +404,14 @@ fn new_mesa_row(height: f32) -> Element {
         .cross_align(Alignment::Center)
         .spacing(10.0)
         .a11y_role(AccessibilityRole::Button)
-        .a11y_alt("Nueva mesa")
+        .a11y_alt(tr!("home-desk-new"))
         .on_tap(|_| crate::flows::create::new_mesa())
         .child(
             Icon::new(freya::icons::lucide::plus())
                 .size(tokens::size::ICON_SM)
                 .color(p.t2),
         )
-        .child(Text::new("Nueva mesa").role(TextRole::Meta))
+        .child(Text::new(tr!("home-desk-new")).role(TextRole::Meta))
         .into_element()
 }
 
@@ -520,9 +529,9 @@ impl MesaStrip {
             )
             .maybe_child((listed.rest.len() > Self::SHOWN).then(|| {
                 Button::new(if open {
-                    "Ver menos".to_owned()
+                    tr!("home-desk-show-less")
                 } else {
-                    format!("Ver todas ({total})")
+                    tr!("home-desk-show-all", "count" => total)
                 })
                 .ghost()
                 .small()
@@ -570,9 +579,14 @@ impl Component for MesaStrip {
                     .horizontal()
                     .cross_align(Alignment::Center)
                     .content(Content::Flex)
-                    .child(Text::new("MESAS").role(TextRole::Label).color(p.t3).fill())
                     .child(
-                        IconButton::new(freya::icons::lucide::plus(), "Nueva mesa")
+                        Text::new(tr!("home-desks-heading"))
+                            .role(TextRole::Label)
+                            .color(p.t3)
+                            .fill(),
+                    )
+                    .child(
+                        IconButton::new(freya::icons::lucide::plus(), tr!("home-desk-new"))
                             .size(tokens::size::BUTTON_SM)
                             .on_press(|_| crate::flows::create::new_mesa()),
                     ),

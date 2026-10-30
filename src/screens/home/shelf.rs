@@ -7,6 +7,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use freya::prelude::Bytes;
+use notein_i18n::tr;
 
 use super::card::{DocCardData, FolderCardData, Thumb};
 use crate::library::{FolderId, Item, ItemId, LibraryData};
@@ -48,7 +49,7 @@ pub struct FilterChip {
 pub fn filter_chips() -> Vec<FilterChip> {
     let mut chips = vec![FilterChip {
         filter: Filter::All,
-        label: "Todo".to_owned(),
+        label: tr!("home-filter-all"),
     }];
     chips.extend(
         crate::plugins::catalog()
@@ -62,7 +63,7 @@ pub fn filter_chips() -> Vec<FilterChip> {
     );
     chips.push(FilterChip {
         filter: Filter::Folders,
-        label: "Carpetas".to_owned(),
+        label: tr!("home-filter-folders"),
     });
     chips
 }
@@ -204,7 +205,7 @@ pub fn card(data: &LibraryData, item: &Item, shared: bool, now: u64) -> DocCardD
     let glance = Glance::of(item);
     let when = crate::format::ago(item.updated_at, now);
     let label = crate::plugins::kind_info(&item.kind.plugin_id)
-        .map_or_else(|| "Documento".to_owned(), |k| k.label.into_owned());
+        .map_or_else(|| tr!("home-card-document"), |k| k.label.into_owned());
     let meta = glance.summary.map_or_else(
         || format!("{label} · {when}"),
         |summary| format!("{summary} · {when}"),

@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{Avatar, Button, IconButton, Kbd, Text, TextRole, tokens, width_class};
@@ -73,7 +74,7 @@ impl MesaBar {
             .padding((6.0, 10.0))
             .corner_radius(tokens::radius::MD)
             .a11y_role(AccessibilityRole::Button)
-            .a11y_alt("Opciones de la mesa")
+            .a11y_alt(tr!("mesa-bar-options"))
             .on_tap(move |e: Event<PressEventData>| {
                 crate::actions::show(crate::actions::for_mesa(&data, mesa), anchor(&e));
             })
@@ -122,7 +123,7 @@ impl MesaBar {
                     .color(p.t3),
             )
             .child(
-                Text::new("Buscar en la mesa")
+                Text::new(tr!("mesa-bar-search"))
                     .role(TextRole::Meta)
                     .color(p.t3)
                     .fill(),
@@ -153,7 +154,7 @@ impl MesaBar {
                 .horizontal()
                 .cross_align(Alignment::Center)
                 .spacing(-6.0)
-                .a11y_alt(format!("{} en la mesa", present.len()))
+                .a11y_alt(tr!("mesa-bar-people", "count" => present.len()))
                 .on_tap(move |_| crate::flows::share_mesa(mesa))
                 .children(
                     present
@@ -210,12 +211,12 @@ impl Component for MesaBar {
             .content(Content::Flex)
             .spacing(4.0)
             .child(
-                IconButton::new(lucide::arrow_left(), "Volver al inicio").on_press(|_| {
+                IconButton::new(lucide::arrow_left(), tr!("mesa-bar-back-home")).on_press(|_| {
                     crate::screens::home::open_folder(crate::screens::home::Browse::get().folder());
                 }),
             )
             .child(
-                IconButton::new(lucide::panel_left(), "Panel del documento")
+                IconButton::new(lucide::panel_left(), tr!("mesa-document-panel"))
                     .active(panel_open)
                     .on_press(move |_| ui.toggle_panel()),
             )
@@ -227,7 +228,7 @@ impl Component for MesaBar {
                     .child(self.name(compact)),
             )
             .child(if compact {
-                IconButton::new(lucide::search(), "Buscar en la mesa")
+                IconButton::new(lucide::search(), tr!("mesa-bar-search"))
                     .on_press(self.open_palette())
                     .into_element()
             } else {
@@ -235,11 +236,11 @@ impl Component for MesaBar {
             })
             .maybe_child(self.avatars())
             .child(if compact {
-                IconButton::new(lucide::share_2(), "Compartir")
+                IconButton::new(lucide::share_2(), tr!("common-share"))
                     .on_press(move |_| crate::flows::share_mesa(mesa))
                     .into_element()
             } else {
-                Button::new("Compartir")
+                Button::new(tr!("common-share"))
                     .tonal()
                     .small()
                     .icon(lucide::share_2())

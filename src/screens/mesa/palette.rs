@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_plugin::services::Placement;
 use notein_ui_kit::theme::palette as theme;
 use notein_ui_kit::{
@@ -103,7 +104,7 @@ fn pane_commands(focus: &Focus, ops: Ops) -> Vec<Command> {
     let pane = focus.pane;
     let mut out = vec![
         Command::new(
-            "Nueva pestaña",
+            tr!("mesa-tab-new"),
             Some("Ctrl T"),
             lucide::plus(),
             move || {
@@ -111,7 +112,7 @@ fn pane_commands(focus: &Focus, ops: Ops) -> Vec<Command> {
             },
         ),
         Command::new(
-            "Dividir el panel",
+            tr!("mesa-cmd-split-pane"),
             Some("Ctrl \\"),
             lucide::columns_2(),
             move || {
@@ -119,7 +120,7 @@ fn pane_commands(focus: &Focus, ops: Ops) -> Vec<Command> {
             },
         ),
         Command::new(
-            "Borrador en este panel",
+            tr!("mesa-cmd-draft-here"),
             None,
             lucide::pen_line(),
             move || {
@@ -130,7 +131,7 @@ fn pane_commands(focus: &Focus, ops: Ops) -> Vec<Command> {
     if let Some(tab) = focus.tab.clone() {
         let index = focus.index;
         out.push(Command::new(
-            "Cerrar pestaña",
+            tr!("mesa-tab-close"),
             Some("Ctrl W"),
             lucide::x(),
             move || {
@@ -147,24 +148,44 @@ fn document_commands(data: &LibraryData, item: ItemId) -> Vec<Command> {
     use crate::flows;
     use freya::icons::lucide;
     let mut out = vec![
-        Command::new("Abrir al lado", None, lucide::columns_2(), move || {
-            flows::open_beside(item);
-        }),
-        Command::new("Cuaderno", None, lucide::notebook_pen(), move || {
-            flows::notebook(item);
-        }),
-        Command::new("Vincular con…", None, lucide::link(), move || {
+        Command::new(
+            tr!("mesa-cmd-open-beside"),
+            None,
+            lucide::columns_2(),
+            move || {
+                flows::open_beside(item);
+            },
+        ),
+        Command::new(
+            tr!("mesa-cmd-notebook"),
+            None,
+            lucide::notebook_pen(),
+            move || {
+                flows::notebook(item);
+            },
+        ),
+        Command::new(tr!("mesa-cmd-link-with"), None, lucide::link(), move || {
             flows::link_with(item);
         }),
-        Command::new("Compartir…", None, lucide::share_2(), move || {
+        Command::new(tr!("mesa-cmd-share"), None, lucide::share_2(), move || {
             flows::share_item(item);
         }),
-        Command::new("Exportar…", None, lucide::download(), move || {
-            flows::export_items(vec![item]);
-        }),
-        Command::new("Editar…", None, lucide::square_pen(), move || {
-            flows::edit_item(item);
-        }),
+        Command::new(
+            tr!("mesa-cmd-export"),
+            None,
+            lucide::download(),
+            move || {
+                flows::export_items(vec![item]);
+            },
+        ),
+        Command::new(
+            tr!("mesa-cmd-edit"),
+            None,
+            lucide::square_pen(),
+            move || {
+                flows::edit_item(item);
+            },
+        ),
     ];
     if let Some(kind) = data
         .item(item)
@@ -178,7 +199,7 @@ fn document_commands(data: &LibraryData, item: ItemId) -> Vec<Command> {
         }));
     }
     out.push(Command::new(
-        "Mover a la papelera",
+        tr!("common-move-to-trash"),
         None,
         lucide::trash_2(),
         move || {
@@ -193,33 +214,38 @@ fn mesa_commands(ui: MesaUi) -> Vec<Command> {
     use freya::icons::lucide;
     vec![
         Command::new(
-            "Panel del documento",
+            tr!("mesa-document-panel"),
             Some("Ctrl B"),
             lucide::panel_left(),
             move || {
                 ui.toggle_panel();
             },
         ),
-        Command::new("Marcadores", None, lucide::bookmark(), move || {
-            ui.show_panel(PanelTab::Bookmarks);
-        }),
-        Command::new("Vínculos", None, lucide::link(), move || {
+        Command::new(
+            tr!("mesa-panel-bookmarks"),
+            None,
+            lucide::bookmark(),
+            move || {
+                ui.show_panel(PanelTab::Bookmarks);
+            },
+        ),
+        Command::new(tr!("mesa-panel-links"), None, lucide::link(), move || {
             ui.show_panel(PanelTab::Links);
         }),
         Command::new(
-            "Mapa de vínculos",
+            tr!("mesa-cmd-link-map"),
             None,
             lucide::waypoints(),
             crate::screens::map::open,
         ),
         Command::new(
-            "Nueva mesa",
+            tr!("mesa-cmd-new-desk"),
             Some("Ctrl Shift N"),
             lucide::layout_grid(),
             crate::flows::create::new_mesa,
         ),
         Command::new(
-            "Ajustes",
+            tr!("common-settings"),
             Some("Ctrl ,"),
             lucide::settings(),
             crate::screens::settings::open,
@@ -290,7 +316,7 @@ impl Component for Palette {
         let mut sections = found.sections(&mut rows, text.trim().is_empty());
         if sections.is_empty() {
             sections.push(
-                Text::new(format!("Nada con «{}»", text.trim()))
+                Text::new(tr!("mesa-palette-no-results", "query" => text.trim()))
                     .role(TextRole::Hint)
                     .into_element(),
             );
@@ -316,7 +342,7 @@ impl Component for Palette {
                 _ => {}
             })
             .child(
-                SearchField::new(query, "Buscar o hacer algo… («/pdf» filtra por tipo)")
+                SearchField::new(query, tr!("mesa-palette-placeholder"))
                     .auto_focus(true)
                     .height(44.0)
                     .on_change(move |text: String| {
@@ -330,8 +356,10 @@ impl Component for Palette {
                     .as_ref()
                     .and_then(|k| crate::plugins::kind_info(k))
                     .map(|info| {
-                        notein_ui_kit::Tag::new(format!("Solo {}", info.plural))
-                            .dot(kind_color(&p, info.color))
+                        notein_ui_kit::Tag::new(
+                            tr!("mesa-palette-only-kind", "kinds" => info.plural.to_string()),
+                        )
+                        .dot(kind_color(&p, info.color))
                     }),
             )
             .child(
@@ -451,11 +479,15 @@ impl Found {
     fn sections(&self, rows: &mut PaletteRows<'_>, idle: bool) -> Vec<Element> {
         let mut sections = Vec::new();
         if !self.commands.is_empty() {
-            sections.push(rows.section("Acciones".to_owned(), &self.commands));
+            sections.push(rows.section(tr!("mesa-palette-actions"), &self.commands));
         }
         if !self.docs.is_empty() {
-            let title = if idle { "Recientes" } else { "Documentos" };
-            sections.push(rows.section(title.to_owned(), &self.docs));
+            let title = if idle {
+                tr!("mesa-palette-recent")
+            } else {
+                tr!("mesa-palette-documents")
+            };
+            sections.push(rows.section(title, &self.docs));
         }
         for (label, lines) in &self.places {
             sections.push(rows.section(label.clone(), lines));
@@ -494,7 +526,7 @@ impl PaletteRows<'_> {
                 }
             }
             Line::Doc(item) => self.data.item(*item).map_or_else(
-                || ListRow::new("Documento"),
+                || ListRow::new(tr!("mesa-palette-document")),
                 |found| {
                     let info = crate::plugins::kind_info(&found.kind.plugin_id);
                     ListRow::new(found.name.clone())

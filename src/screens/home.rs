@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use freya::prelude::*;
 use freya::router::RouterContext;
+use notein_i18n::tr;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{Button, EmptyState, Skeleton, WidthClass, tokens, width_class};
 
@@ -114,18 +115,18 @@ impl Component for Failed {
             .horizontal()
             .spacing(8.0)
             .child(
-                Button::new("Copiar detalles")
+                Button::new(tr!("home-failed-copy-details"))
                     .ghost()
                     .icon(freya::icons::lucide::copy())
                     .on_press(move |_| {
                         if freya::clipboard::Clipboard::set(why.clone()).is_ok() {
                             notein_ui_kit::Toasts::get()
-                                .show(notein_ui_kit::Toast::new("Detalles copiados"));
+                                .show(notein_ui_kit::Toast::new(tr!("home-failed-details-copied")));
                         }
                     }),
             )
             .child(
-                Button::new("Reintentar")
+                Button::new(tr!("home-failed-retry"))
                     .primary()
                     .icon(freya::icons::lucide::rotate_ccw())
                     .on_press(|_| LibraryView::get().retry()),
@@ -144,21 +145,17 @@ impl Component for Failed {
                     .child(
                         EmptyState::new(
                             freya::icons::lucide::triangle_alert(),
-                            "No se pudo abrir la biblioteca",
+                            tr!("home-failed-title"),
                         )
-                        .body(
-                            "Los datos guardados en este dispositivo no se pueden leer. Si los \
-                         copiaste de otra versión de Notein, borrá la carpeta de datos y \
-                         volvé a abrir la app.",
-                        )
+                        .body(tr!("home-failed-body"))
                         .action(actions),
                     )
                     .child(
                         label()
                             .width(Size::fill())
-                            .text(format!(
-                                "Carpeta de datos: {}",
-                                crate::library::bodies::root_dir().display()
+                            .text(tr!(
+                                "home-failed-data-folder",
+                                "path" => crate::library::bodies::root_dir().display().to_string(),
                             ))
                             .font_size(tokens::text::META)
                             .color(palette().t3)

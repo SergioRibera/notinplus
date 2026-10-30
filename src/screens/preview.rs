@@ -483,7 +483,7 @@ fn sticky_selection_menu() -> Element {
             }),
             document: Some(notein_plugin::DocId([1; 16])),
             extra: vec![(
-                "Compartir",
+                "Compartir".into(),
                 freya::icons::lucide::share_2(),
                 std::rc::Rc::new(|| {}),
             )],

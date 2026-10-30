@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{Button, EmptyState, tokens};
 
@@ -260,19 +261,19 @@ impl Component for Leaf {
         };
         let content = active.as_ref().map_or_else(
             || {
-                EmptyState::new(lucide::layout_panel_left(), "Panel vacío")
-                    .body("Abrí un documento acá o un borrador para escribir rápido.")
+                EmptyState::new(lucide::layout_panel_left(), tr!("mesa-pane-empty-title"))
+                    .body(tr!("mesa-pane-empty-body"))
                     .action(
                         rect()
                             .horizontal()
                             .spacing(8.0)
                             .child(
-                                Button::new("Abrir documento")
+                                Button::new(tr!("mesa-pane-open-document"))
                                     .primary()
                                     .on_press(move |_| ops.new_tab(pane)),
                             )
                             .child(
-                                Button::new("Borrador")
+                                Button::new(tr!("mesa-tab-draft"))
                                     .tonal()
                                     .on_press(move |_| ops.new_scratch(pane)),
                             ),

@@ -2,6 +2,7 @@
 //! one and a drawn cover of the kind otherwise.
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_plugin::face::CoverRequest;
 use notein_ui_kit::theme::{Palette, palette};
 use notein_ui_kit::{Icon, tokens, use_press_gesture};
@@ -531,11 +532,7 @@ impl Component for FolderCard {
                     )
                     .child(
                         label()
-                            .text(crate::format::count(
-                                self.data.count,
-                                "elemento",
-                                "elementos",
-                            ))
+                            .text(tr!("home-item-count", "count" => self.data.count))
                             .font_size(tokens::text::LABEL)
                             .color(p.t3),
                     ),

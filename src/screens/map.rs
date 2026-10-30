@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 use freya::prelude::*;
 use freya_engine::prelude::{Color as SkColor, Paint, PaintStyle, PathEffect};
+use notein_i18n::tr;
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::{Palette, palette};
 use notein_ui_kit::{
@@ -210,7 +211,7 @@ impl Layout {
             })
             .collect();
         let action =
-            |label: &'static str, button: fn(Button) -> Button, run: fn(crate::library::ItemId)| {
+            |label: String, button: fn(Button) -> Button, run: fn(crate::library::ItemId)| {
                 button(Button::new(label)).small().on_press(move |_| {
                     ModalController::get().close();
                     run(id);
@@ -243,10 +244,10 @@ impl Layout {
                 .spacing(10.0)
                 .child(Text::new(node.name.clone()).role(TextRole::Title).lines(2))
                 .child(
-                    Text::new(format!(
-                        "{} · {}",
-                        info.map_or_else(|| "Documento".to_owned(), |k| k.label.into_owned()),
-                        crate::format::count(self.neighbours.len(), "conexión", "conexiones")
+                    Text::new(tr!(
+                        "map-node-meta",
+                        "kind" => info.map_or_else(|| tr!("map-node-document"), |k| k.label.into_owned()),
+                        "count" => self.neighbours.len(),
                     ))
                     .role(TextRole::Meta),
                 )
@@ -263,10 +264,10 @@ impl Layout {
                         .horizontal()
                         .content(Content::wrap_spacing(8.0))
                         .spacing(8.0)
-                        .child(action("Abrir", Button::primary, crate::flows::open))
-                        .child(action("Al lado", Button::tonal, crate::flows::open_beside))
+                        .child(action(tr!("common-open"), Button::primary, crate::flows::open))
+                        .child(action(tr!("map-open-beside"), Button::tonal, crate::flows::open_beside))
                         .child(action(
-                            "Vincular con…",
+                            tr!("map-link-with"),
                             Button::ghost,
                             crate::flows::link_with,
                         )),
@@ -343,18 +344,18 @@ fn title_row(graph: &Graph) -> Rect {
         .content(Content::Flex)
         .spacing(8.0)
         .child(
-            IconButton::new(freya::icons::lucide::arrow_left(), "Volver")
+            IconButton::new(freya::icons::lucide::arrow_left(), tr!("map-back"))
                 .on_press(|_| ModalController::get().close()),
         )
         .child(
             rect()
                 .width(Size::flex(1.0))
-                .child(Text::new("Mapa").role(TextRole::Title))
+                .child(Text::new(tr!("map-title")).role(TextRole::Title))
                 .child(
-                    Text::new(format!(
-                        "{} · {}",
-                        crate::format::count(graph.nodes.len(), "documento", "documentos"),
-                        crate::format::count(graph.edges.len(), "conexión", "conexiones")
+                    Text::new(tr!(
+                        "map-summary",
+                        "documents" => graph.nodes.len(),
+                        "connections" => graph.edges.len(),
                     ))
                     .role(TextRole::Meta),
                 ),
@@ -401,12 +402,9 @@ impl Component for Map {
             .height(Size::fill());
 
         let body = if layout.graph.nodes.is_empty() {
-            EmptyState::new(
-                freya::icons::lucide::waypoints(),
-                "Todavía no hay nada para mostrar",
-            )
-            .body("Cuando crees documentos y los vincules, vas a ver acá cómo se conectan.")
-            .into_element()
+            EmptyState::new(freya::icons::lucide::waypoints(), tr!("map-empty-title"))
+                .body(tr!("map-empty-body"))
+                .into_element()
         } else {
             let nodes: Vec<Element> = (0..layout.graph.nodes.len())
                 .filter(|i| layout.visible[*i])

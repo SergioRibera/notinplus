@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_plugin::services::Placement;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
@@ -91,7 +92,7 @@ impl Line {
     }
 }
 
-/// One "Crear … «query»" line per entry a name is enough for.
+/// One "Create … “query”" line per entry a name is enough for.
 fn create_lines(query: &str) -> Vec<Line> {
     let name = query.trim().to_owned();
     crate::flows::pickers::named_entries()
@@ -243,13 +244,13 @@ fn field_row(query: State<String>, compact: bool) -> Rect {
         .spacing(8.0)
         .child(
             rect().width(Size::flex(1.0)).child(
-                SearchField::new(query, "Buscar documentos, versículos, notas…")
+                SearchField::new(query, tr!("search-placeholder"))
                     .auto_focus(true)
                     .height(44.0),
             ),
         )
         .maybe_child(compact.then(|| {
-            notein_ui_kit::Button::new("Cancelar")
+            notein_ui_kit::Button::new(tr!("common-cancel"))
                 .ghost()
                 .on_press(|_| ModalController::get().close())
         }))
@@ -261,11 +262,11 @@ fn key_hints() -> Rect {
         .cross_align(Alignment::Center)
         .spacing(6.0)
         .child(Kbd::new("↑↓"))
-        .child(Text::new("elegir").role(TextRole::Hint))
+        .child(Text::new(tr!("search-hint-choose")).role(TextRole::Hint))
         .child(Kbd::new("Enter"))
-        .child(Text::new("abrir").role(TextRole::Hint))
+        .child(Text::new(tr!("search-hint-open")).role(TextRole::Hint))
         .child(Kbd::new("Ctrl Enter"))
-        .child(Text::new("abrir al lado").role(TextRole::Hint))
+        .child(Text::new(tr!("search-hint-open-beside")).role(TextRole::Hint))
 }
 
 /// Builds the rows in the order the arrow keys walk them.
@@ -306,9 +307,10 @@ impl Rows<'_> {
                 })
             }
             Line::Recent(text) => ListRow::new(text.clone()).icon(lucide::history()),
-            Line::Create(entry, name) => ListRow::new(format!(
-                "Crear {} «{name}»",
-                entry.entry.label.to_lowercase()
+            Line::Create(entry, name) => ListRow::new(tr!(
+                "search-create",
+                "kind" => entry.entry.label.to_lowercase(),
+                "name" => name.clone(),
             ))
             .kind(
                 entry.entry.icon.clone(),
@@ -331,7 +333,7 @@ impl Rows<'_> {
         if has_history {
             let rows = self.rows(list.iter().filter(|l| matches!(l, Line::Recent(_))));
             sections.push(
-                Section::new("Búsquedas recientes")
+                Section::new(tr!("search-recent-searches"))
                     .child(rows)
                     .into_element(),
             );
@@ -340,7 +342,7 @@ impl Rows<'_> {
         if !docs.is_empty() {
             let rows = self.rows(docs.into_iter());
             sections.push(
-                Section::new("Abiertos hace poco")
+                Section::new(tr!("search-recently-opened"))
                     .child(rows)
                     .into_element(),
             );
@@ -361,7 +363,11 @@ impl Rows<'_> {
         let mut sections = Vec::new();
         if !current.documents.is_empty() {
             let rows = self.rows(list.iter().take(current.documents.len()));
-            sections.push(Section::new("Documentos").child(rows).into_element());
+            sections.push(
+                Section::new(tr!("search-documents"))
+                    .child(rows)
+                    .into_element(),
+            );
         }
         for group in &current.groups {
             let hits: Vec<Line> = group.hits.iter().cloned().map(Line::Place).collect();
@@ -384,7 +390,10 @@ impl Rows<'_> {
                 rect()
                     .width(Size::fill())
                     .spacing(8.0)
-                    .child(Text::new(format!("Nada con «{}»", text.trim())).role(TextRole::Strong))
+                    .child(
+                        Text::new(tr!("search-no-results", "query" => text.trim()))
+                            .role(TextRole::Strong),
+                    )
                     .children(create_lines(text).iter().map(|line| self.row(line)))
                     .into_element(),
             );
@@ -401,9 +410,11 @@ impl Rows<'_> {
                 .spacing(6.0)
                 .child(Notice::new(
                     NoticeTone::Info,
-                    format!(
-                        "Todavía leyendo «{}» ({} de {}). Puede que falten resultados.",
-                        job.name, job.done, job.total
+                    tr!(
+                        "search-still-indexing",
+                        "name" => job.name.clone(),
+                        "done" => job.done,
+                        "total" => job.total,
                     ),
                 ))
                 .child(ProgressBar::new(fraction).height(3.0))

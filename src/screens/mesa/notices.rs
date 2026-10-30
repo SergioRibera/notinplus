@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{Button, Icon, Text, TextRole, tokens};
 
@@ -35,7 +36,7 @@ impl Notice {
         };
         let Some(item) = data.item(id) else {
             return Some(Self::Gone {
-                name: "Este documento".to_owned(),
+                name: tr!("mesa-notice-this-document"),
             });
         };
         if let Some(trashed) = item.trashed {
@@ -85,29 +86,24 @@ impl Component for TabNotice {
             Notice::Offline => (
                 lucide::wifi_off(),
                 p.warn,
-                "Sin conexión. Seguís trabajando; se sincroniza al volver.".to_owned(),
+                tr!("mesa-notice-offline"),
                 Vec::new(),
             ),
             Notice::ReadOnly { owner } => (
                 lucide::eye(),
                 p.accent,
-                format!("Solo podés mirar. {owner} organiza esta sesión."),
+                tr!("mesa-notice-read-only", "owner" => owner),
                 Vec::new(),
             ),
             Notice::Trashed { name, days, batch } => (
                 lucide::trash_2(),
                 p.danger,
                 days.map_or_else(
-                    || format!("«{name}» está en la papelera"),
-                    |d| {
-                        format!(
-                            "«{name}» está en la papelera · {} más",
-                            crate::format::count(usize::try_from(d).unwrap_or(0), "día", "días")
-                        )
-                    },
+                    || tr!("mesa-notice-trashed", "name" => name.clone()),
+                    |days| tr!("mesa-notice-trashed-days", "name" => name.clone(), "days" => days),
                 ),
                 vec![
-                    Button::new("Restaurar")
+                    Button::new(tr!("mesa-notice-restore"))
                         .tonal()
                         .small()
                         .on_press(move |_| {
@@ -117,7 +113,7 @@ impl Component for TabNotice {
                             );
                         })
                         .into_element(),
-                    Button::new("Cerrar pestaña")
+                    Button::new(tr!("mesa-tab-close"))
                         .ghost()
                         .small()
                         .on_press(move |_| close())
@@ -127,9 +123,9 @@ impl Component for TabNotice {
             Notice::Gone { name } => (
                 lucide::file_x(),
                 p.danger,
-                format!("{name} se borró para siempre en otro dispositivo."),
+                tr!("mesa-notice-gone", "name" => name),
                 vec![
-                    Button::new("Cerrar pestaña")
+                    Button::new(tr!("mesa-tab-close"))
                         .ghost()
                         .small()
                         .on_press(move |_| close())

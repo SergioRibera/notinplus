@@ -2,6 +2,7 @@
 //! and settings.
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{IconButton, Tag, Text, TextRole, tokens, width_class};
@@ -36,11 +37,11 @@ impl SyncState {
         })
     }
 
-    const fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Self::UpToDate => "Al día",
-            Self::Syncing => "Sincronizando",
-            Self::Offline => "Sin conexión",
+            Self::UpToDate => tr!("home-sync-up-to-date"),
+            Self::Syncing => tr!("home-sync-syncing"),
+            Self::Offline => tr!("home-sync-offline"),
         }
     }
 }
@@ -108,9 +109,9 @@ fn search_field(compact: bool) -> Rect {
         )
         .child(
             Text::new(if compact {
-                "Buscar"
+                tr!("home-search")
             } else {
-                "Buscar documentos, versículos, notas…"
+                tr!("home-search-hint")
             })
             .role(TextRole::Meta)
             .color(p.t3)
@@ -148,16 +149,16 @@ impl Component for AppBar {
             .maybe_child(crate::update::ui::chip(compact))
             .maybe_child(state.map(|s| s.indicator(compact)))
             .child(
-                IconButton::new(lucide::trash_2(), "Papelera")
+                IconButton::new(lucide::trash_2(), tr!("common-trash"))
                     .badge(u32::try_from(self.trash).unwrap_or(u32::MAX))
                     .on_press(|_| crate::screens::trash::open()),
             )
             .child(
-                IconButton::new(lucide::waypoints(), "Mapa de vínculos")
+                IconButton::new(lucide::waypoints(), tr!("home-link-map"))
                     .on_press(|_| crate::screens::map::open()),
             )
             .child(
-                IconButton::new(lucide::settings(), "Ajustes")
+                IconButton::new(lucide::settings(), tr!("common-settings"))
                     .on_press(|_| crate::screens::settings::open()),
             )
     }

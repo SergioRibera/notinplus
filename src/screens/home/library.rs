@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
@@ -33,7 +34,7 @@ fn crumbs(data: &LibraryData, folder: FolderId) -> Vec<(FolderId, String)> {
             break;
         }
     }
-    out.push((ROOT_FOLDER, "Biblioteca".to_owned()));
+    out.push((ROOT_FOLDER, tr!("common-library")));
     out.reverse();
     out
 }
@@ -138,7 +139,7 @@ fn sort_button(sort: SortOrder, mut area: State<Area>) -> Rect {
                 .estimated_height(170.0)
                 .side(PopoverSide::Below)
                 .align(PopoverAlign::End)
-                .sheet_title("Ordenar por")
+                .sheet_title(tr!("home-sort-by"))
                 .open();
         });
     rect()
@@ -170,9 +171,9 @@ fn tools(
                     lucide::list()
                 },
                 if as_list {
-                    "Ver como cuadrícula"
+                    tr!("home-view-grid")
                 } else {
-                    "Ver como lista"
+                    tr!("home-view-list")
                 },
             )
             .size(TOOL)
@@ -187,17 +188,21 @@ fn tools(
             }),
         )
         .child(
-            Button::new(if selecting { "Listo" } else { "Seleccionar" })
-                .ghost()
-                .small()
-                .on_press(move |_| {
-                    let mut s = selection.write();
-                    if s.active {
-                        s.clear();
-                    } else {
-                        s.active = true;
-                    }
-                }),
+            Button::new(if selecting {
+                tr!("common-done")
+            } else {
+                tr!("home-select")
+            })
+            .ghost()
+            .small()
+            .on_press(move |_| {
+                let mut s = selection.write();
+                if s.active {
+                    s.clear();
+                } else {
+                    s.active = true;
+                }
+            }),
         )
 }
 
@@ -338,7 +343,7 @@ fn doc_menu(
         entries.insert(
             0,
             ActionEntry::Item(
-                notein_ui_kit::Action::new("Seleccionar", move |()| {
+                notein_ui_kit::Action::new(tr!("home-select"), move |()| {
                     notein_ui_kit::ModalController::get().close();
                     let mut selection = selection;
                     selection.write().start_with_item(id);
@@ -479,7 +484,7 @@ impl ShelfRow {
         let selection = self.selection;
         let checked = state.of_folder(id);
         let row = ListRow::new(f.card.name.clone())
-            .subtitle(crate::format::count(f.card.count, "elemento", "elementos"))
+            .subtitle(tr!("home-item-count", "count" => f.card.count))
             .kind(lucide::folder(), p.kinds.folder)
             .on_press(move |_| open_folder(selection, id))
             .on_secondary(move |e: Event<PressEventData>| {
@@ -579,23 +584,23 @@ impl Component for EmptyShelf {
         let folder = self.folder;
         let (title, body) = match (self.filtered, folder == ROOT_FOLDER) {
             (true, _) => (
-                "Nada de este tipo acá",
-                "Probá con «Todo» o creá uno nuevo con el botón +.",
+                tr!("home-empty-filtered-title"),
+                tr!("home-empty-filtered-body"),
             ),
             (false, true) => (
-                "Tu biblioteca está vacía",
-                "Creá un lienzo para escribir a mano, importá un PDF o abrí la Biblia.",
+                tr!("home-empty-library-title"),
+                tr!("home-empty-library-body"),
             ),
             (false, false) => (
-                "Esta carpeta está vacía",
-                "Creá algo adentro o mové documentos acá desde su menú.",
+                tr!("home-empty-folder-title"),
+                tr!("home-empty-folder-body"),
             ),
         };
         EmptyState::new(lucide::library(), title)
             .body(body)
             .dashed()
             .action(
-                Button::new("Crear")
+                Button::new(tr!("home-create"))
                     .primary()
                     .icon(lucide::plus())
                     .on_press(move |e: Event<PressEventData>| {
@@ -671,8 +676,8 @@ impl Component for PinnedRow {
                                 crate::actions::Origin::Library,
                             );
                             let moves = [
-                                (index > 0).then(|| ("Mover a la izquierda", index - 1)),
-                                (index < last).then(|| ("Mover a la derecha", index + 1)),
+                                (index > 0).then(|| (tr!("home-pinned-move-left"), index - 1)),
+                                (index < last).then(|| (tr!("home-pinned-move-right"), index + 1)),
                             ];
                             for (label, to) in moves.into_iter().flatten().rev() {
                                 entries.insert(
@@ -706,9 +711,11 @@ impl Component for PinnedRow {
             .width(Size::fill())
             .spacing(8.0)
             .child(
-                rect()
-                    .height(Size::px(PINNED_LABEL))
-                    .child(Text::new("FIJADOS").role(TextRole::Label).color(p.t3)),
+                rect().height(Size::px(PINNED_LABEL)).child(
+                    Text::new(tr!("home-pinned-heading"))
+                        .role(TextRole::Label)
+                        .color(p.t3),
+                ),
             )
             .child(
                 ScrollView::new()
