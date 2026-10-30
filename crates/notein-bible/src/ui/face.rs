@@ -579,19 +579,15 @@ fn chapter_body(
 }
 
 /// Publisher footnotes of the chapter; one citing a verse ("Cited in
-/// John 3:16") jumps there.
+/// John 3:16") jumps there. The citation is read with the book names of
+/// the translation the footnote belongs to.
 fn footnotes(db: &Db, data: &ChapterRow) -> Vec<FootnoteView> {
-    let first_bible = db
-        .list_bibles()
-        .ok()
-        .and_then(|bibles| bibles.into_iter().next())
-        .map(|b| b.id);
     db.footnotes_for_chapter(&data.bible_id, &data.book_id, data.chapter)
         .unwrap_or_default()
         .into_iter()
         .map(|row| {
             let target = crate::reference::parse(&row.text).and_then(|parsed| {
-                let anchor = crate::resolver::resolve_parsed(db, first_bible.as_deref()?, &parsed)?;
+                let anchor = crate::resolver::resolve_parsed(db, &data.bible_id, &parsed)?;
                 Some((anchor.book_id, anchor.start_chapter, anchor.start_verse))
             });
             FootnoteView {

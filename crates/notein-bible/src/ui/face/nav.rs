@@ -8,11 +8,10 @@ use notein_ui_kit::{ModalController, Sheet, tokens};
 
 use super::Reader;
 
-/// Books of the open Bible in canonical order, Genesis first; the
-/// importer stores them alphabetically.
+/// Books of the open Bible in the order its manifest lists them, so
+/// each tradition keeps its own canon.
 pub(super) fn open_books(reader: &Reader) {
-    let mut books = reader.db.list_books(&reader.bible_id()).unwrap_or_default();
-    books.sort_by_key(|b| crate::canon::canonical_order(&b.book_id));
+    let books = reader.db.list_books(&reader.bible_id()).unwrap_or_default();
     let mut grid = grid();
     for book in books {
         let reader = reader.clone();

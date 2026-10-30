@@ -1,11 +1,10 @@
-//! The Protestant canon, keyed by OSIS 3-letter book id.
+//! Short book names, keyed by OSIS 3-letter book id.
 //!
-//! The importer stores books alphabetically, so `BookRow::order_num` is
-//! not the canonical order; any list of books sorts by
-//! [`canonical_order`] instead. Deuterocanonical and publisher-invented
-//! ids are not in the table: they sort last and keep their id as name.
+//! Used for references to books the open translation lacks; ids
+//! outside this table keep their id as name. Book order always comes
+//! from the translation (`BookRow::order_num`, the manifest order).
 
-/// OSIS ids in canonical order.
+/// OSIS ids with a short name.
 const BOOKS: [&str; 66] = [
     "GEN", "EXO", "LEV", "NUM", "DEU", "JOS", "JDG", "RUT", "1SA", "2SA", "1KI", "2KI", "1CH",
     "2CH", "EZR", "NEH", "EST", "JOB", "PSA", "PRO", "ECC", "SNG", "ISA", "JER", "LAM", "EZK",
@@ -18,15 +17,6 @@ const BOOKS: [&str; 66] = [
 /// Index of `book_id` (any case) in [`BOOKS`].
 fn position(book_id: &str) -> Option<usize> {
     BOOKS.iter().position(|id| id.eq_ignore_ascii_case(book_id))
-}
-
-/// Canonical 1-based position of `book_id` (any case), or `u16::MAX`
-/// for ids outside the Protestant canon.
-#[must_use]
-pub fn canonical_order(book_id: &str) -> u16 {
-    position(book_id)
-        .and_then(|i| u16::try_from(i + 1).ok())
-        .unwrap_or(u16::MAX)
 }
 
 /// Short name for references ("Jn 3:16") in the interface language;
@@ -45,26 +35,6 @@ pub fn short_name(book_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn canonical_order_matches_protestant_canon() {
-        assert_eq!(canonical_order("GEN"), 1);
-        assert_eq!(canonical_order("REV"), 66);
-        assert_eq!(canonical_order("MAT"), 40);
-        assert_eq!(canonical_order("PSA"), 19);
-    }
-
-    #[test]
-    fn canonical_order_case_insensitive() {
-        assert_eq!(canonical_order("gen"), 1);
-        assert_eq!(canonical_order("Gen"), 1);
-    }
-
-    #[test]
-    fn canonical_order_unknown_trails() {
-        assert_eq!(canonical_order("TOB"), u16::MAX);
-        assert_eq!(canonical_order("XYZ"), u16::MAX);
-    }
 
     #[test]
     fn short_names_fall_back_to_the_id() {
