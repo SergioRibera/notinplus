@@ -1,7 +1,6 @@
 ## Home: app bar, desks, pinned documents, library shelf and selection.
 
 home-failed-title = Couldn't open the library
-home-failed-body = The data saved on this device can't be read. If you copied it from another version of Notein, delete the data folder and open the app again.
 # $path: folder on disk where the library lives.
 home-failed-data-folder = Data folder: { $path }
 home-failed-copy-details = Copy details

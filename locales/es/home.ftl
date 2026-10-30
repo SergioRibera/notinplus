@@ -1,7 +1,6 @@
 ## Inicio: barra superior, mesas, documentos fijados, biblioteca y selección.
 
 home-failed-title = No se pudo abrir la biblioteca
-home-failed-body = Los datos guardados en este dispositivo no se pueden leer. Si los copiaste de otra versión de Notein, borra la carpeta de datos y vuelve a abrir la app.
 # $path: carpeta en disco donde vive la biblioteca.
 home-failed-data-folder = Carpeta de datos: { $path }
 home-failed-copy-details = Copiar detalles

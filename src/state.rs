@@ -6,16 +6,29 @@ use std::sync::Arc;
 
 use freya::prelude::*;
 use notein_i18n::tr;
+use notein_plugin::UserMessage;
 use notein_ui_kit::{Toast, ToastTone, Toasts};
 
 use crate::library::{self, LibHandle, Library, LibraryData, LibraryError};
 
-/// Loading state of the library.
-#[derive(Clone, Debug, PartialEq)]
+/// Loading state of the library. A failure keeps the typed error so the
+/// screen words it in the current language.
+#[derive(Clone, Debug)]
 pub enum LibraryState {
     Loading,
     Ready(Arc<LibraryData>),
-    Failed(String),
+    Failed(Arc<LibraryError>),
+}
+
+impl PartialEq for LibraryState {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Loading, Self::Loading) => true,
+            (Self::Ready(a), Self::Ready(b)) => a == b,
+            (Self::Failed(a), Self::Failed(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
 }
 
 /// Reactive library snapshot, provided at the app root.
@@ -90,7 +103,7 @@ impl LibraryView {
                         );
                     }
                     let retry = library::changes();
-                    self.state.set(LibraryState::Failed(err.to_string()));
+                    self.state.set(LibraryState::Failed(Arc::new(err)));
                     if retry.recv_async().await.is_err() {
                         std::future::pending::<()>().await;
                     }
@@ -221,7 +234,8 @@ where
         };
         if let Err(err) = result {
             log::error!("{what:?}: {err}");
-            Toasts::get().show(Toast::new(what.failure()).tone(ToastTone::Error));
+            let text = tr!("errors-headline-detail", "headline" => what.failure(), "detail" => err.user_message());
+            Toasts::get().show(Toast::new(text).tone(ToastTone::Error));
         }
     });
 }

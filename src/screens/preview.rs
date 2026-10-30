@@ -389,7 +389,9 @@ fn map_renders() {
 
 fn library_failed() -> Element {
     crate::screens::home::Failed {
-        why: "library codec error: UnexpectedVariant".to_owned(),
+        error: std::sync::Arc::new(crate::library::LibraryError::Codec(
+            "UnexpectedVariant".to_owned(),
+        )),
     }
     .into_element()
 }

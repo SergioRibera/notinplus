@@ -14,6 +14,7 @@ use std::sync::Arc;
 use freya::prelude::*;
 use freya::router::RouterContext;
 use notein_i18n::tr;
+use notein_plugin::UserMessage;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{Button, EmptyState, Skeleton, WidthClass, tokens, width_class};
 
@@ -23,7 +24,7 @@ use self::library::{Columns, EmptyShelf, GridRow, LibraryBar, PinnedRow, ShelfRo
 use self::mesas::MesaStrip;
 use self::selection::{Selection, SelectionActions};
 use self::shelf::{Filter, Shelf};
-use crate::library::{FolderId, LibraryData, ROOT_FOLDER};
+use crate::library::{FolderId, LibraryData, LibraryError, ROOT_FOLDER};
 use crate::route::Route;
 use crate::settings::{SettingsStore, ShelfLayout};
 use crate::state::{LibraryState, LibraryView};
@@ -90,7 +91,7 @@ impl Component for Home {
         let insets = *crate::hooks::use_safe_area_insets().read();
         let body = match view.state() {
             LibraryState::Loading => Loading.into_element(),
-            LibraryState::Failed(why) => Failed { why }.into_element(),
+            LibraryState::Failed(error) => Failed { error }.into_element(),
             LibraryState::Ready(data) => Loaded { data }.into_element(),
         };
         rect()
@@ -103,14 +104,20 @@ impl Component for Home {
 
 /// The library could not be read: a plain explanation, a retry, and the
 /// technical cause on the clipboard for a bug report.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub(super) struct Failed {
-    pub(super) why: String,
+    pub(super) error: Arc<LibraryError>,
+}
+
+impl PartialEq for Failed {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.error, &other.error)
+    }
 }
 
 impl Component for Failed {
     fn render(&self) -> impl IntoElement {
-        let why = self.why.clone();
+        let details = self.error.to_string();
         let actions = rect()
             .horizontal()
             .spacing(8.0)
@@ -119,7 +126,7 @@ impl Component for Failed {
                     .ghost()
                     .icon(freya::icons::lucide::copy())
                     .on_press(move |_| {
-                        if freya::clipboard::Clipboard::set(why.clone()).is_ok() {
+                        if freya::clipboard::Clipboard::set(details.clone()).is_ok() {
                             notein_ui_kit::Toasts::get()
                                 .show(notein_ui_kit::Toast::new(tr!("home-failed-details-copied")));
                         }
@@ -147,7 +154,7 @@ impl Component for Failed {
                             freya::icons::lucide::triangle_alert(),
                             tr!("home-failed-title"),
                         )
-                        .body(tr!("home-failed-body"))
+                        .body(self.error.user_message())
                         .action(actions),
                     )
                     .child(

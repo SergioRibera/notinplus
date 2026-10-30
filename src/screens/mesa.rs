@@ -12,6 +12,7 @@ pub(crate) mod panes;
 use std::sync::Arc;
 
 use freya::prelude::*;
+use notein_plugin::UserMessage;
 use notein_plugin::services::{HistoryRequest, HistoryStep};
 use notein_ui_kit::theme::palette as theme;
 use notein_ui_kit::{
@@ -255,11 +256,11 @@ impl Component for Mesa {
         crate::hooks::provide_safe_area_override(istmo::plugins::EdgeInsets::default());
         let body = match view.state() {
             LibraryState::Loading => rect().expanded().into_element(),
-            LibraryState::Failed(why) => EmptyState::new(
+            LibraryState::Failed(error) => EmptyState::new(
                 freya::icons::lucide::triangle_alert(),
                 tr!("mesa-failed-title"),
             )
-            .body(why)
+            .body(error.user_message())
             .into_element(),
             LibraryState::Ready(data) => match data.workspace(self.id) {
                 Some(_) => Open { data, id: self.id }.into_element(),
