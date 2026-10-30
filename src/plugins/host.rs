@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_plugin::bookmark::SourceRef;
 use notein_plugin::doc::DocId;
 use notein_plugin::face::RawStore;
@@ -268,7 +269,11 @@ fn apply(event: HostEvent, jobs: &mut HashMap<(String, String), ToastId>) {
                 let (value, caption) = match total {
                     Some(total) if total > 0 => {
                         let fraction = done as f32 / total as f32;
-                        (fraction, format!("{} %", (fraction * 100.0).round()))
+                        let percent = (fraction * 100.0).round();
+                        (
+                            fraction,
+                            tr!("plugins-progress-percent", "percent" => percent),
+                        )
                     }
                     _ => (0.0, String::new()),
                 };

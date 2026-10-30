@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_plugin::services::{
     AnnotationDone, AnnotationOutcome, AnnotationPreview, AnnotationRequest,
 };
@@ -311,15 +312,21 @@ impl AnnotationCard {
             None
         } else if self.expanded {
             Some(
-                IconButton::new(freya::icons::lucide::panel_right_close(), "Volver al popup")
-                    .size(32.0)
-                    .on_press(move |_| AnnotationPopover::collapse(id)),
+                IconButton::new(
+                    freya::icons::lucide::panel_right_close(),
+                    tr!("annotation-back-to-popup"),
+                )
+                .size(32.0)
+                .on_press(move |_| AnnotationPopover::collapse(id)),
             )
         } else {
             Some(
-                IconButton::new(freya::icons::lucide::panel_right_open(), "Abrir al costado")
-                    .size(32.0)
-                    .on_press(move |_| AnnotationPopover::expand(id)),
+                IconButton::new(
+                    freya::icons::lucide::panel_right_open(),
+                    tr!("annotation-open-aside"),
+                )
+                .size(32.0)
+                .on_press(move |_| AnnotationPopover::expand(id)),
             )
         };
         rect()
@@ -348,7 +355,7 @@ impl AnnotationCard {
             )
             .maybe_child(toggle)
             .child(
-                IconButton::new(freya::icons::lucide::x(), "Cerrar")
+                IconButton::new(freya::icons::lucide::x(), tr!("common-close"))
                     .size(32.0)
                     .on_press(move |_| self.close()),
             )
@@ -401,14 +408,14 @@ impl AnnotationCard {
                 let rgb = [color.r(), color.g(), color.b()];
                 swatch(*color, current == Some(rgb))
                     .key(color.to_hex_string())
-                    .a11y_alt("Color de resaltado")
+                    .a11y_alt(tr!("annotation-highlight-color"))
                     .on_tap(move |_| recolor(id, Some(rgb)))
                     .into_element()
             }))
             .child(Self::custom_swatch(id, current, custom))
             .child(Spacer)
             .child(
-                Button::new("Sin color")
+                Button::new(tr!("annotation-no-color"))
                     .ghost()
                     .small()
                     .on_press(move |_| recolor(id, None)),
@@ -423,7 +430,7 @@ impl AnnotationCard {
             .map(|[r, g, b]| Color::from_rgb(r, g, b))
             .filter(|c| !p.highlighters.contains(c));
         swatch(custom.unwrap_or(p.s3), custom.is_some())
-            .a11y_alt("Otro color")
+            .a11y_alt(tr!("annotation-other-color"))
             .center()
             .on_sized(move |e: Event<SizedEventData>| area.set_if_modified(e.area))
             .on_tap(move |_| {
@@ -431,7 +438,7 @@ impl AnnotationCard {
                     .width(PICKER_WIDTH + 24.0)
                     .align(PopoverAlign::Center)
                     .estimated_height(340.0)
-                    .sheet_title("Otro color")
+                    .sheet_title(tr!("annotation-other-color"))
                     .open();
             })
             .maybe_child(custom.is_none().then(|| {
@@ -441,18 +448,18 @@ impl AnnotationCard {
             }))
     }
 
-    /// Cancelar and Guardar, with Borrar for an existing annotation.
+    /// Cancel and Save, with Delete for an existing annotation.
     fn footer(self, existing: bool) -> SheetFooter {
         let id = self.id;
         let footer = SheetFooter::new([
-            Button::new("Cancelar")
+            Button::new(tr!("common-cancel"))
                 .ghost()
                 .on_press(move |_| {
                     finish(id, AnnotationOutcome::Cancelled);
                     self.dismiss();
                 })
                 .into_element(),
-            Button::new("Guardar")
+            Button::new(tr!("common-save"))
                 .primary()
                 .on_press(move |_| {
                     settle_saving(id);
@@ -464,7 +471,7 @@ impl AnnotationCard {
             return footer;
         }
         footer.leading(
-            Button::new("Borrar")
+            Button::new(tr!("common-delete"))
                 .variant(ButtonVariant::Danger)
                 .on_press(move |_| {
                     finish(id, AnnotationOutcome::Deleted);
@@ -513,7 +520,7 @@ impl Component for AnnotationCard {
             .child(self.swatches(current.color, custom))
             .child(
                 EditorField::new(body)
-                    .placeholder("Escribí una nota… «/ref» para citar")
+                    .placeholder(tr!("annotation-placeholder"))
                     .min_height(if expanded { 360.0 } else { 96.0 })
                     .auto_focus(),
             )

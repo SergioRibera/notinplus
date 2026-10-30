@@ -7,6 +7,7 @@
 use std::rc::Rc;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_plugin::ui::SelectionMenu;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{BarItem, Modal, ModalController, SelectionBar, width_class};
@@ -105,7 +106,7 @@ impl Bar {
         if let Some(note) = menu.on_note.clone() {
             let noted = menu.clone();
             items.push(BarItem::action(
-                "Nota",
+                tr!("misc-selection-note"),
                 lucide::message_square_text(),
                 move |()| {
                     close(&noted, false);
@@ -116,7 +117,7 @@ impl Bar {
         if let (Some(target), Some(document)) = (menu.reference.clone(), menu.document) {
             let document = ItemId(document.0);
             items.push(BarItem::action(
-                "Al cuaderno",
+                tr!("misc-selection-to-notebook"),
                 lucide::notebook_pen(),
                 self.finish(move || {
                     crate::references::insert_in_notebook(document, target.clone());
@@ -126,7 +127,7 @@ impl Bar {
         for (label, icon, run) in &menu.extra {
             let run = Rc::clone(run);
             items.push(BarItem::action(
-                *label,
+                label.clone(),
                 icon.clone(),
                 self.finish(move || run()),
             ));

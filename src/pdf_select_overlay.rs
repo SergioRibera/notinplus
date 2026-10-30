@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use freya::prelude::*;
 use freya_engine::prelude::{Color as SkColor, Paint, PaintStyle, Rect as SkRect};
+use notein_i18n::tr;
 
 use crate::active_boards;
 use crate::app::CanvasMount;
@@ -178,7 +179,7 @@ pub(crate) fn show_bar(item: ItemId, mount: CanvasMount, at: (f32, f32)) {
                 notein_plugin::services::AnnotationRequest {
                     doc: crate::plugins::content::doc_id(item),
                     kind: crate::plugins::builtin::pdf::KIND.to_owned(),
-                    title: format!("Página {}", sel.start_page + 1),
+                    title: tr!("misc-pdf-page", "page" => sel.start_page + 1),
                     quote: (!quote.is_empty()).then(|| quote.clone()),
                     color: None,
                     body: String::new(),
@@ -194,7 +195,7 @@ pub(crate) fn show_bar(item: ItemId, mount: CanvasMount, at: (f32, f32)) {
         reference: Some(reference),
         document: Some(crate::plugins::content::doc_id(item)),
         extra: vec![(
-            "Marcador",
+            tr!("misc-pdf-bookmark").into(),
             freya::icons::lucide::bookmark(),
             std::rc::Rc::new(move || plain_mark(None, String::new())),
         )],

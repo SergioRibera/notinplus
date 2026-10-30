@@ -4,6 +4,7 @@
 use freya::prelude::*;
 use freya_markdown_editor::document::{Block, BlockKind, Document, Inline};
 use freya_markdown_editor::markdown::Dialect;
+use notein_i18n::tr;
 use notein_plugin::bookmark::SourceRef;
 use notein_plugin::doc::DocMeta;
 use notein_plugin::kind::{KindColor, Quote, SearchQuery};
@@ -80,7 +81,10 @@ pub fn display(src: &SourceRef, data: Option<&LibraryData>) -> ChipDisplay {
             let name = doc.and_then(|d| data?.item(ItemId(d.0)).map(|i| i.name.clone()));
             ChipDisplay {
                 broken: name.is_none(),
-                label: name.map_or_else(|| "Marcador".to_owned(), |n| format!("{n} · marcador")),
+                label: name.map_or_else(
+                    || tr!("references-bookmark"),
+                    |n| tr!("references-bookmark-in", "name" => n),
+                ),
                 icon: freya::icons::lucide::bookmark(),
                 color: ChipColor::Kind(KindColor::Canvas),
             }
@@ -93,7 +97,7 @@ pub fn display(src: &SourceRef, data: Option<&LibraryData>) -> ChipDisplay {
         } => {
             let Some(kind) = crate::plugins::kind(plugin_id) else {
                 return ChipDisplay {
-                    label: "Necesita un plugin".to_owned(),
+                    label: tr!("references-needs-plugin"),
                     icon: freya::icons::lucide::puzzle(),
                     color: ChipColor::Neutral,
                     broken: true,
@@ -177,13 +181,13 @@ pub fn suggestions(query: &str, data: Option<&LibraryData>) -> Vec<Suggestion> {
             if quotes && rank < QUOTED_PER_KIND {
                 out.push(Suggestion {
                     label: hit.title.clone(),
-                    subtitle: format!("{label} · Referencia"),
+                    subtitle: tr!("references-suggest-reference", "kind" => label.as_str()),
                     target: target.clone(),
                     quote: false,
                 });
                 out.push(Suggestion {
                     label: hit.title,
-                    subtitle: format!("{label} · Insertar el texto"),
+                    subtitle: tr!("references-suggest-insert-text", "kind" => label.as_str()),
                     target,
                     quote: true,
                 });
@@ -340,7 +344,7 @@ pub fn insert_in_notebook(from: ItemId, target: SourceRef) {
             Err(err) => {
                 log::error!("notebook for {from}: {err}");
                 Toasts::get()
-                    .show(Toast::new("No se pudo usar el cuaderno").tone(ToastTone::Error));
+                    .show(Toast::new(tr!("references-notebook-failed")).tone(ToastTone::Error));
                 return;
             }
         };
@@ -360,7 +364,7 @@ pub fn insert_in_notebook(from: ItemId, target: SourceRef) {
             }
         }
         crate::space::open(TabTarget::Item(notebook), OpenHint::Beside);
-        Toasts::get().show(Toast::new("Agregado al cuaderno").tone(ToastTone::Done));
+        Toasts::get().show(Toast::new(tr!("references-added-to-notebook")).tone(ToastTone::Done));
     });
 }
 

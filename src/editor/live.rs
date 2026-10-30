@@ -2,6 +2,7 @@
 
 use freya::prelude::*;
 use freya_markdown_editor::prelude::*;
+use notein_i18n::tr;
 use notein_plugin::bookmark::SourceRef;
 use notein_plugin::services::Placement;
 use notein_ui_kit::theme::palette;
@@ -112,7 +113,7 @@ impl Component for LiveQuote {
                             .max_lines(1)
                             .text_overflow(TextOverflow::Ellipsis)
                             .text(if gone {
-                                format!("{source} · ya no existe")
+                                tr!("editor-quote-gone", "source" => source)
                             } else {
                                 source
                             }),

@@ -33,6 +33,7 @@ use freya_canvas_bg::{
 use freya_engine::prelude::{
     BlendMode, Color as SkColor, Paint, PaintStyle, Path, PathBuilder, SaveLayerRec,
 };
+use notein_i18n::tr;
 
 use crate::bookmark::{Bookmark, Rgba, SourceRef, StrokeAnchor, TimestampMs, WorldPoint};
 use crate::brush::{
@@ -1273,7 +1274,7 @@ impl Board {
         self.undo.begin();
         self.apply_op(DocOp::AddLayer {
             id,
-            name: format!("Layer {n}"),
+            name: tr!("canvas-layer-name", "number" => n),
         });
         self.apply_op(DocOp::SetActiveLayer { id });
         self.undo.commit();

@@ -1,6 +1,7 @@
 //! Opening references: chips, search results, outline rows and marks
 //! all end here.
 
+use notein_i18n::tr;
 use notein_plugin::bookmark::SourceRef;
 use notein_plugin::payload::Payload;
 use notein_plugin::services::Placement;
@@ -27,8 +28,8 @@ fn hint(placement: Placement) -> OpenHint {
     }
 }
 
-fn missing(text: &str) {
-    Toasts::get().show(Toast::new(text.to_owned()).tone(ToastTone::Error));
+fn missing(text: String) {
+    Toasts::get().show(Toast::new(text).tone(ToastTone::Error));
 }
 
 /// Open `target` with `placement`.
@@ -37,7 +38,7 @@ pub fn open(target: &SourceRef, placement: Placement) {
         SourceRef::External { url } => crate::external::open_url(url),
         SourceRef::Canvas { bookmark } => {
             let Some(doc) = super::builtin::canvas_kind().doc_of_bookmark(bookmark.0) else {
-                missing("Ese marcador ya no existe");
+                missing(tr!("plugins-navigate-bookmark-gone"));
                 return;
             };
             let anchor = CanvasAnchor {
@@ -69,7 +70,7 @@ pub fn open(target: &SourceRef, placement: Placement) {
 
 fn open_plugin_ref(kind_id: String, item: ItemId, anchor: Vec<u8>, hint: OpenHint) {
     let Some(kind) = super::kind(&kind_id) else {
-        missing("Esa referencia necesita un plugin que no está instalado");
+        missing(tr!("plugins-navigate-needs-plugin"));
         return;
     };
     let shared = kind.info().shared_refs;
@@ -93,7 +94,7 @@ fn open_plugin_ref(kind_id: String, item: ItemId, anchor: Vec<u8>, hint: OpenHin
         };
         match target {
             Some(doc) => open_at(&kind_id, doc, &anchor, hint),
-            None => missing("La referencia apunta a un documento que ya no existe"),
+            None => missing(tr!("plugins-navigate-document-gone")),
         }
     });
 }

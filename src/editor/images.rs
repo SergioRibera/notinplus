@@ -18,6 +18,7 @@ use freya_markdown_editor::prelude::{
     Decorator, EditorColors, EditorController, ImageContext, ImagePicker, ImageRequest,
 };
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader};
+use notein_i18n::tr;
 
 use crate::library::model::ItemId;
 
@@ -181,7 +182,7 @@ async fn add_picked(
     request: ImageRequest,
 ) -> Result<(), ImageError> {
     let picked = crate::files::pick(
-        "Imagen",
+        &tr!("editor-image-pick-title"),
         &["png", "jpg", "jpeg", "webp", "gif"],
         &["image/png", "image/jpeg", "image/webp", "image/gif"],
     )
@@ -376,7 +377,7 @@ impl NoteImage {
                         label()
                             .font_size(11.5 * self.zoom)
                             .color(colors.muted)
-                            .text("No se pudo cargar la imagen"),
+                            .text(tr!("editor-image-failed")),
                     ),
             )
             .into_element()

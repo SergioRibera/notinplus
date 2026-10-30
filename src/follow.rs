@@ -3,6 +3,7 @@
 //! place inside a document (see `Presence::followed`).
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_sync::DeviceId;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::tokens;
@@ -92,7 +93,7 @@ fn frame(name: &str, color: Color, top: f32) -> Element {
                         .font_size(12.5)
                         .font_weight(FontWeight::BOLD)
                         .color(Color::from_rgb(21, 21, 26))
-                        .text(format!("Siguiendo a {name}")),
+                        .text(tr!("misc-follow-following", "name" => name)),
                 )
                 .child(
                     rect()
@@ -106,7 +107,12 @@ fn frame(name: &str, color: Color, top: f32) -> Element {
                             event.stop_propagation();
                             presence::follow(None);
                         })
-                        .child(label().font_size(12.).color(p.t1).text("Dejar de seguir")),
+                        .child(
+                            label()
+                                .font_size(12.)
+                                .color(p.t1)
+                                .text(tr!("misc-follow-stop")),
+                        ),
                 ),
         )
         .into_element()

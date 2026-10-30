@@ -1,6 +1,7 @@
 //! Unified search: documents by name and tag, and places inside them
 //! from every kind's own search.
 
+use notein_i18n::tr;
 use notein_plugin::bookmark::SourceRef;
 use notein_plugin::kind::{KindColor, SearchQuery};
 
@@ -78,10 +79,10 @@ impl Results {
 
 fn folder_name(data: &LibraryData, folder: crate::library::FolderId) -> String {
     if folder == ROOT_FOLDER {
-        "Biblioteca".to_owned()
+        tr!("common-library")
     } else {
         data.folder(folder)
-            .map_or_else(|| "Biblioteca".to_owned(), |f| f.name.clone())
+            .map_or_else(|| tr!("common-library"), |f| f.name.clone())
     }
 }
 
@@ -113,7 +114,7 @@ pub fn run(query: &str, data: &LibraryData) -> Results {
         .take(DOCS)
         .map(|item| {
             let label = crate::plugins::kind_info(&item.kind.plugin_id)
-                .map_or_else(|| "Documento".to_owned(), |k| k.label.into_owned());
+                .map_or_else(|| tr!("find-document"), |k| k.label.into_owned());
             DocMatch {
                 item: item.id,
                 name: item.name.clone(),

@@ -18,6 +18,7 @@ use freya::icons::lucide::{check, grip, rotate_cw, trash_2};
 use freya::prelude::*;
 use freya_markdown_editor::prelude::*;
 use istmo::plugins::EdgeInsets;
+use notein_i18n::tr;
 use notein_ui_kit::TapExt;
 
 use crate::canvas::{
@@ -481,7 +482,7 @@ impl Component for TextBoxEditor {
                 crate::editor::editor(value, controller)
                     .theme(self.theme.clone())
                     .font_family(FONT_FAMILY)
-                    .placeholder("Escribí… (/ para insertar)")
+                    .placeholder(tr!("canvas-text-placeholder"))
                     .width(Size::fill()),
             )
     }

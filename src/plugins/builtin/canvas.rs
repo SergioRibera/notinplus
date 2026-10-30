@@ -1,10 +1,11 @@
-//! The Lienzo kind: infinite ink canvases, scratch canvases and
+//! The canvas kind: infinite ink canvases, scratch canvases and
 //! notebooks beside another document.
 
 use std::sync::{PoisonError, RwLock, RwLockReadGuard};
 
 use bincode::{Decode, Encode};
 use freya::icons::lucide;
+use notein_i18n::tr;
 use notein_plugin::create::{Created, CreationEntry, CreationError, CreationFlow, CreationRequest};
 use notein_plugin::doc::{DocId, DocMeta};
 use notein_plugin::kind::{
@@ -47,7 +48,7 @@ impl CanvasMark {
             .lines()
             .map(|line| line.trim_start_matches('#').trim())
             .find(|line| !line.is_empty())
-            .map_or_else(|| "Marcador".to_owned(), str::to_owned)
+            .map_or_else(|| tr!("plugins-canvas-bookmark"), str::to_owned)
     }
 }
 
@@ -108,7 +109,7 @@ impl Iterator for MarkHits<'_> {
                             layer: None,
                         },
                         title: mark.title(),
-                        snippet: format!("Lienzo · {name}"),
+                        snippet: tr!("plugins-canvas-hit-snippet", "name" => name.as_str()),
                         score: 1.0,
                     });
                 }
@@ -142,9 +143,9 @@ impl DocumentKind for CanvasKind {
     fn info(&self) -> KindInfo {
         KindInfo {
             id: KIND.into(),
-            label: "Lienzo".into(),
-            plural: "Lienzos".into(),
-            search_group: "Marcadores".into(),
+            label: tr!("plugins-canvas-label").into(),
+            plural: tr!("plugins-canvas-plural").into(),
+            search_group: tr!("plugins-canvas-search-group").into(),
             icon: lucide::pen_line(),
             color: KindColor::Canvas,
             supports_ink: true,
@@ -205,11 +206,15 @@ impl DocumentKind for CanvasKind {
                 };
                 OutlineNode::new(layer.name.clone(), Some(anchor))
                     .icon(OutlineIcon::Layer)
-                    .meta(if layer.visible { "" } else { "oculta" })
+                    .meta(if layer.visible {
+                        String::new()
+                    } else {
+                        tr!("plugins-canvas-layer-hidden")
+                    })
             })
             .collect();
         vec![
-            OutlineNode::new("Capas", None)
+            OutlineNode::new(tr!("plugins-canvas-outline-layers"), None)
                 .icon(OutlineIcon::Section)
                 .children(layers),
         ]
@@ -235,14 +240,13 @@ impl DocumentKind for CanvasKind {
     fn summary(&self, content: &CanvasContent) -> Option<String> {
         match content.marks.len() {
             0 => None,
-            1 => Some("1 marcador".to_owned()),
-            n => Some(format!("{n} marcadores")),
+            n => Some(tr!("plugins-canvas-summary", "count" => n)),
         }
     }
 
     fn chip(&self, doc: DocMeta<'_>, anchor: &CanvasAnchor) -> ChipView {
         match anchor.bookmark {
-            Some(_) => ChipView::new(format!("{} · marcador", doc.name)),
+            Some(_) => ChipView::new(tr!("plugins-canvas-chip-bookmark", "name" => doc.name)),
             None => ChipView::new(doc.name),
         }
     }
@@ -255,28 +259,28 @@ impl DocumentKind for CanvasKind {
         vec![
             CreationEntry::new(
                 ENTRY_CANVAS,
-                "Lienzo",
+                tr!("plugins-canvas-label"),
                 lucide::pen_line(),
                 KindColor::Canvas,
             )
-            .subtitle("Escribir a mano")
+            .subtitle(tr!("plugins-canvas-entry-canvas"))
             .starter(0)
             .named(),
             CreationEntry::new(
                 ENTRY_SCRATCH,
-                "Borrador",
+                tr!("plugins-canvas-scratch"),
                 lucide::pencil(),
                 KindColor::Scratch,
             )
-            .subtitle("Se descarta al cerrar si no lo guardás")
+            .subtitle(tr!("plugins-canvas-entry-scratch"))
             .flow(CreationFlow::Launch),
             CreationEntry::new(
                 ENTRY_NOTEBOOK,
-                "Cuaderno",
+                tr!("plugins-canvas-notebook"),
                 lucide::notebook_pen(),
                 KindColor::Canvas,
             )
-            .subtitle("Al lado de un documento")
+            .subtitle(tr!("plugins-canvas-entry-notebook"))
             .flow(CreationFlow::Launch),
         ]
     }
@@ -290,7 +294,7 @@ impl DocumentKind for CanvasKind {
             return Err(CreationError::UnknownEntry(entry.to_owned()));
         }
         let name = if request.name.trim().is_empty() {
-            "Lienzo".to_owned()
+            tr!("plugins-canvas-label")
         } else {
             request.name.trim().to_owned()
         };
@@ -298,7 +302,7 @@ impl DocumentKind for CanvasKind {
             name,
             content: CanvasContent {
                 layers: vec![LayerSummary {
-                    name: "Tinta".to_owned(),
+                    name: tr!("plugins-canvas-ink-layer"),
                     visible: true,
                 }],
                 marks: Vec::new(),

@@ -9,6 +9,7 @@ use std::io::{Cursor, Write};
 
 use freya_engine::prelude::{AlphaType, ColorType, ImageInfo, raster_n32_premul};
 use freya_pdf::write::{PAGE_GAP, PageImage, image_pdf, page_world_rects};
+use notein_i18n::tr;
 
 use crate::doc::Doc;
 use crate::library::{ItemId, LibraryData, bodies};
@@ -58,7 +59,7 @@ fn file_name(name: &str) -> String {
         })
         .collect();
     if clean.is_empty() {
-        "Sin título".to_owned()
+        tr!("common-untitled")
     } else {
         clean
     }
@@ -180,7 +181,7 @@ pub(crate) fn canvas_pdf(item: ItemId, paper: [u8; 4]) -> Option<Vec<u8>> {
 
 /// The marks of a document as a markdown list.
 fn marks_markdown(marks: &[notein_plugin::kind::Mark<Vec<u8>>]) -> String {
-    let mut out = String::from("# Marcadores\n\n");
+    let mut out = format!("# {}\n\n", tr!("misc-export-bookmarks-heading"));
     for mark in marks {
         out.push_str("- **");
         out.push_str(&mark.title);
@@ -253,7 +254,7 @@ pub fn build(
         let marks = kind.marks(&content);
         if !marks.is_empty() {
             files.push((
-                format!("{base} — marcadores.md"),
+                tr!("misc-export-bookmarks-file", "name" => base.as_str()),
                 marks_markdown(&marks).into_bytes(),
             ));
         }

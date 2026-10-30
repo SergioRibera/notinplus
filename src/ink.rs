@@ -5,6 +5,7 @@
 use std::sync::{Arc, Mutex};
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
@@ -92,17 +93,17 @@ impl Tool {
         }
     }
 
-    const fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Self::Pen => "Pluma",
-            Self::Pencil => "Lápiz",
-            Self::Marker => "Marcador",
-            Self::Highlighter => "Resaltador",
-            Self::Eraser => "Goma",
-            Self::Shape => "Formas",
-            Self::Lasso => "Lazo",
-            Self::Text => "Texto",
-            Self::Select => "Seleccionar texto",
+            Self::Pen => tr!("ink-tool-pen"),
+            Self::Pencil => tr!("ink-tool-pencil"),
+            Self::Marker => tr!("ink-tool-marker"),
+            Self::Highlighter => tr!("ink-tool-highlighter"),
+            Self::Eraser => tr!("ink-tool-eraser"),
+            Self::Shape => tr!("ink-tool-shapes"),
+            Self::Lasso => tr!("ink-tool-lasso"),
+            Self::Text => tr!("ink-tool-text"),
+            Self::Select => tr!("ink-tool-select-text"),
         }
     }
 
@@ -312,7 +313,7 @@ struct Dock {
     state: InkState,
     mask: MaskSlot,
     lift: f32,
-    /// Show "Mover": fingers write, holding it pans.
+    /// Show the hold-to-pan button: fingers write, holding it pans.
     mover: bool,
 }
 
@@ -325,7 +326,7 @@ impl PartialEq for Dock {
     }
 }
 
-fn dock_button(icon: Bytes, label: &'static str, on: bool, tint: Option<Color>) -> Rect {
+fn dock_button(icon: Bytes, label: String, on: bool, tint: Option<Color>) -> Rect {
     let p = palette();
     rect()
         .width(Size::px(40.0))
@@ -377,7 +378,7 @@ impl Dock {
         let (down, up) = (Arc::clone(&self.board), Arc::clone(&self.board));
         dock_button(
             freya::icons::lucide::hand(),
-            "Mover (mantené apretado)",
+            tr!("ink-dock-hold-to-pan"),
             false,
             None,
         )
@@ -395,7 +396,7 @@ impl Dock {
             .height(Size::px(40.0))
             .center()
             .a11y_role(AccessibilityRole::Button)
-            .a11y_alt("Color")
+            .a11y_alt(tr!("ink-color"))
             .on_tap(move |e: Event<PressEventData>| {
                 ColorPopover::open(Arc::clone(&board), anchor(&e));
             })
@@ -417,7 +418,7 @@ impl Dock {
 
     fn undo(&self) -> Element {
         let board = Arc::clone(&self.board);
-        IconButton::new(freya::icons::lucide::undo_2(), "Deshacer")
+        IconButton::new(freya::icons::lucide::undo_2(), tr!("ink-undo"))
             .enabled(*self.state.can_undo.read())
             .on_press(move |_| {
                 lock(&board).undo();
@@ -427,7 +428,7 @@ impl Dock {
 
     fn redo(&self) -> Element {
         let board = Arc::clone(&self.board);
-        IconButton::new(freya::icons::lucide::redo_2(), "Rehacer")
+        IconButton::new(freya::icons::lucide::redo_2(), tr!("ink-redo"))
             .enabled(*self.state.can_redo.read())
             .on_press(move |_| {
                 lock(&board).redo();
@@ -435,7 +436,7 @@ impl Dock {
             .into_element()
     }
 
-    /// Phones: the everyday tools; the rest live under "Más".
+    /// Phones: the everyday tools; the rest live under "More".
     fn phone_items(&self) -> Vec<Element> {
         let mut items: Vec<Element> = [Tool::Pen, Tool::Highlighter, Tool::Eraser, Tool::Lasso]
             .into_iter()
@@ -445,7 +446,7 @@ impl Dock {
         items.push(self.undo());
         let (board, state) = (Arc::clone(&self.board), self.state);
         items.push(
-            IconButton::new(freya::icons::lucide::ellipsis(), "Más herramientas")
+            IconButton::new(freya::icons::lucide::ellipsis(), tr!("ink-more-tools"))
                 .on_press(move |_| more_sheet(&board, &state))
                 .into_element(),
         );
@@ -471,7 +472,7 @@ impl Dock {
         items.push(
             dock_button(
                 lucide::signature(),
-                "Escritura suavizada",
+                tr!("ink-handwriting"),
                 *self.state.handwriting.read(),
                 None,
             )
@@ -489,7 +490,7 @@ impl Dock {
         items.push(self.redo());
         let board = Arc::clone(&self.board);
         items.push(
-            IconButton::new(lucide::layers(), "Capas")
+            IconButton::new(lucide::layers(), tr!("ink-layers"))
                 .on_press(move |e: Event<PressEventData>| {
                     Layers::open(Arc::clone(&board), anchor(&e));
                 })
@@ -562,7 +563,7 @@ fn more_sheet(board: &Arc<Mutex<Board>>, state: &InkState) {
         .chain([
             {
                 let board = Arc::clone(board);
-                notein_ui_kit::ListRow::new("Rehacer")
+                notein_ui_kit::ListRow::new(tr!("ink-redo"))
                     .icon(lucide::redo_2())
                     .enabled(*state.can_redo.peek())
                     .on_press(move |_| {
@@ -573,7 +574,7 @@ fn more_sheet(board: &Arc<Mutex<Board>>, state: &InkState) {
             },
             {
                 let board = Arc::clone(board);
-                notein_ui_kit::ListRow::new("Escritura suavizada")
+                notein_ui_kit::ListRow::new(tr!("ink-handwriting"))
                     .icon(lucide::signature())
                     .trailing(notein_ui_kit::Trailing::Switch {
                         on: *state.handwriting.peek(),
@@ -583,7 +584,7 @@ fn more_sheet(board: &Arc<Mutex<Board>>, state: &InkState) {
             },
             {
                 let board = Arc::clone(board);
-                notein_ui_kit::ListRow::new("Capas")
+                notein_ui_kit::ListRow::new(tr!("ink-layers"))
                     .icon(lucide::layers())
                     .chevron()
                     .on_press(move |_| {
@@ -597,7 +598,7 @@ fn more_sheet(board: &Arc<Mutex<Board>>, state: &InkState) {
             },
         ])
         .collect();
-    notein_ui_kit::Sheet::titled("Herramientas")
+    notein_ui_kit::Sheet::titled(tr!("ink-tools-title"))
         .child(notein_ui_kit::Group::default().children(rows))
         .open();
 }
@@ -629,8 +630,8 @@ impl BrushPopover {
 
 /// A labelled choice between a few options.
 fn choice(
-    title: &'static str,
-    labels: impl IntoIterator<Item = &'static str>,
+    title: String,
+    labels: impl IntoIterator<Item = String>,
     selected: usize,
     on_select: impl FnMut(usize) + 'static,
 ) -> Element {
@@ -709,8 +710,12 @@ impl BrushPopover {
                 ];
                 let selected = curves.iter().position(|c| *c == curve).unwrap_or(0);
                 Some(choice(
-                    "Presión",
-                    ["Lineal", "Suave", "Dura"],
+                    tr!("ink-pressure"),
+                    [
+                        tr!("ink-pressure-linear"),
+                        tr!("ink-pressure-soft"),
+                        tr!("ink-pressure-hard"),
+                    ],
                     selected,
                     move |i| {
                         edit_config(&board, kind, |config| {
@@ -725,8 +730,8 @@ impl BrushPopover {
             (Tool::Highlighter, BrushConfig::Highlighter { tip, .. }) => {
                 let bevel = matches!(tip, HighlighterTip::Bevel { .. });
                 Some(choice(
-                    "Punta",
-                    ["Redonda", "Bisel"],
+                    tr!("ink-tip"),
+                    [tr!("ink-tip-round"), tr!("ink-tip-bevel")],
                     usize::from(bevel),
                     move |i| {
                         edit_config(&board, kind, |config| {
@@ -744,7 +749,8 @@ impl BrushPopover {
             }
             (Tool::Eraser, BrushConfig::Eraser { mode, .. }) => {
                 let stroke = usize::from(mode == EraserMode::Stroke);
-                Some(choice("Borra", ["Punto", "Trazo"], stroke, move |i| {
+                let labels = [tr!("ink-erase-point"), tr!("ink-erase-stroke")];
+                Some(choice(tr!("ink-erases"), labels, stroke, move |i| {
                     edit_config(&board, kind, |config| {
                         if let BrushConfig::Eraser { mode, .. } = config {
                             *mode = if i == 1 {
@@ -770,8 +776,14 @@ impl BrushPopover {
                     _ => ShapeMode::Line,
                 };
                 let selected = modes.iter().position(|m| *m == current).unwrap_or(0);
-                let labels = ["Línea", "Guiones", "Flecha", "Rect.", "Círculo"];
-                Some(choice("Forma", labels, selected, move |i| {
+                let labels = [
+                    tr!("ink-shape-line"),
+                    tr!("ink-shape-dashed"),
+                    tr!("ink-shape-arrow"),
+                    tr!("ink-shape-rect"),
+                    tr!("ink-shape-circle"),
+                ];
+                Some(choice(tr!("ink-shape"), labels, selected, move |i| {
                     let mut guard = lock(&board);
                     let keep = guard.current_color();
                     guard.choose_preset(BrushPreset::shape(modes[i]));
@@ -815,7 +827,7 @@ impl Component for BrushPopover {
                 rect()
                     .width(Size::fill())
                     .spacing(6.0)
-                    .child(Text::new("Grosor").role(TextRole::Label))
+                    .child(Text::new(tr!("ink-size")).role(TextRole::Label))
                     .child(
                         Slider::new(move |value: f64| {
                             #[allow(clippy::cast_possible_truncation)] // a percentage
@@ -832,7 +844,7 @@ impl Component for BrushPopover {
                 rect()
                     .width(Size::fill())
                     .spacing(6.0)
-                    .child(Text::new("Color").role(TextRole::Label))
+                    .child(Text::new(tr!("ink-color")).role(TextRole::Label))
                     .child(self.swatches(ink, bump))
             }))
             .maybe_child(self.specific(kind, config, bump))
@@ -858,7 +870,7 @@ impl ColorPopover {
             .side(PopoverSide::Above)
             .align(PopoverAlign::Center)
             .estimated_height(320.0)
-            .sheet_title("Color")
+            .sheet_title(tr!("ink-color"))
             .open();
     }
 }
@@ -910,8 +922,8 @@ impl Component for LassoBar {
         let color_board = Arc::clone(board);
         let text_board = Arc::clone(board);
         let items = vec![
-            BarItem::action("Mover", lucide::hand_grab(), |()| {
-                Toasts::get().show(Toast::new("Arrastrá la selección para moverla"));
+            BarItem::action(tr!("ink-lasso-move"), lucide::hand_grab(), |()| {
+                Toasts::get().show(Toast::new(tr!("ink-lasso-move-hint")));
             }),
             BarItem::Swatches {
                 colors: INKS.iter().map(|c| color(*c)).collect(),
@@ -920,15 +932,23 @@ impl Component for LassoBar {
                     lock(&color_board).selection_recolor(INKS[i]);
                 }),
             },
-            BarItem::action("Duplicar", lucide::copy(), b(Board::selection_duplicate)),
-            BarItem::action("A texto", lucide::icon_type(), move |()| {
+            BarItem::action(
+                tr!("ink-lasso-duplicate"),
+                lucide::copy(),
+                b(Board::selection_duplicate),
+            ),
+            BarItem::action(tr!("ink-lasso-to-text"), lucide::icon_type(), move |()| {
                 let read = lock(&text_board).selection_to_text();
                 if read.is_none() {
-                    Toasts::get().show(Toast::new("No pudimos leer esa letra"));
+                    Toasts::get().show(Toast::new(tr!("ink-lasso-unreadable")));
                 }
             }),
             BarItem::Divider,
-            BarItem::action("Borrar", lucide::trash_2(), b(Board::selection_delete)),
+            BarItem::action(
+                tr!("ink-lasso-delete"),
+                lucide::trash_2(),
+                b(Board::selection_delete),
+            ),
         ];
         // The selection is in pane coordinates; the bar floats over it in
         // the window, kept inside the pane.
@@ -992,10 +1012,10 @@ impl Component for Zoom {
                     .alignment(BorderAlignment::Inner),
             )
             .a11y_role(AccessibilityRole::Button)
-            .a11y_alt("Volver al 100 %")
+            .a11y_alt(tr!("ink-zoom-reset"))
             .on_sized(move |e: Event<SizedEventData>| mask.publish(e.area))
             .on_tap(move |_| crate::canvas::glide(&board, crate::canvas::Viewport::default()))
-            .child(Text::new(format!("{pct} %")).role(TextRole::Meta))
+            .child(Text::new(tr!("ink-zoom-percent", "percent" => pct)).role(TextRole::Meta))
     }
 }
 
@@ -1018,7 +1038,7 @@ impl Layers {
             .side(PopoverSide::Above)
             .align(PopoverAlign::End)
             .estimated_height(320.0)
-            .sheet_title("Capas")
+            .sheet_title(tr!("ink-layers"))
             .open();
     }
 }
@@ -1040,7 +1060,7 @@ impl Layers {
             Arc::clone(&self.board),
         );
         notein_ui_kit::ListRow::new(layer.name.clone())
-            .subtitle(crate::format::count(layer.stroke_count, "trazo", "trazos"))
+            .subtitle(tr!("ink-layer-strokes", "count" => layer.stroke_count))
             .selected(active)
             .dense(true)
             .on_press(move |_| {
@@ -1058,7 +1078,7 @@ impl Layers {
                             } else {
                                 lucide::eye_off()
                             },
-                            "Mostrar u ocultar",
+                            tr!("ink-layer-toggle-visible"),
                         )
                         .size(tokens::size::BUTTON_SM)
                         .on_press(move |_| {
@@ -1073,7 +1093,7 @@ impl Layers {
                             } else {
                                 lucide::lock_open()
                             },
-                            "Bloquear",
+                            tr!("ink-layer-lock"),
                         )
                         .size(tokens::size::BUTTON_SM)
                         .on_press(move |_| {
@@ -1086,14 +1106,14 @@ impl Layers {
             .into_element()
     }
 
-    /// Nueva capa and Borrar capa.
+    /// New layer and delete layer.
     fn actions(&self, bump: impl Fn() + Copy + 'static) -> Rect {
         let (add, remove) = (Arc::clone(&self.board), Arc::clone(&self.board));
         rect()
             .horizontal()
             .spacing(8.0)
             .child(
-                notein_ui_kit::Button::new("Nueva capa")
+                notein_ui_kit::Button::new(tr!("ink-layer-new"))
                     .tonal()
                     .small()
                     .icon(freya::icons::lucide::plus())
@@ -1103,7 +1123,7 @@ impl Layers {
                     }),
             )
             .child(
-                notein_ui_kit::Button::new("Borrar capa")
+                notein_ui_kit::Button::new(tr!("ink-layer-delete"))
                     .ghost()
                     .small()
                     .on_press(move |_| {
@@ -1141,7 +1161,7 @@ impl Component for Layers {
             .child(notein_ui_kit::Group::default().children(rows))
             .child(self.actions(bump))
             .child(
-                Text::new("La capa elegida recibe lo que escribís.")
+                Text::new(tr!("ink-layer-hint"))
                     .role(TextRole::Hint)
                     .color(palette().t3),
             )
@@ -1149,7 +1169,7 @@ impl Component for Layers {
 }
 
 /// A bookmark picked on the canvas opens as an annotation: its note,
-/// its colour, and Borrar.
+/// its colour, and delete.
 #[derive(Clone)]
 pub struct PinNotes {
     pub board: Arc<Mutex<Board>>,
@@ -1238,7 +1258,7 @@ impl PinNotes {
                     crate::plugins::content::doc_id,
                 ),
                 kind: crate::plugins::builtin::canvas::KIND.to_owned(),
-                title: "Marcador".to_owned(),
+                title: tr!("ink-bookmark"),
                 quote,
                 color: bookmark.color.map(|c| [c[0], c[1], c[2]]),
                 body: bookmark.body,

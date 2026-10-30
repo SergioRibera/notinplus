@@ -6,6 +6,7 @@ use std::sync::{PoisonError, RwLock, RwLockReadGuard};
 use bincode::{Decode, Encode};
 use freya::icons::lucide;
 use freya_pdf::{PdfDocument, TocEntry};
+use notein_i18n::tr;
 use notein_plugin::create::{
     Created, CreationEntry, CreationError, CreationRequest, ImportPreview, ImportedFile,
 };
@@ -125,7 +126,7 @@ impl Iterator for PageHits<'_> {
                             text: None,
                             range: None,
                         },
-                        title: format!("p. {}", page + 1),
+                        title: tr!("plugins-pdf-page-short", "page" => page + 1),
                         snippet,
                         score: 1.0,
                     });
@@ -187,12 +188,8 @@ impl PdfKind {
     /// [`CreationError::Unreadable`] when the bytes are not a PDF the
     /// renderer can open.
     pub fn read_file(name: &str, bytes: &[u8]) -> Result<(PdfDocument, PdfContent), CreationError> {
-        let pdf = PdfDocument::open_bytes(bytes.to_vec()).map_err(|_| {
-            CreationError::Unreadable(
-                "Puede estar dañado o protegido con contraseña. Probá abrirlo en otro programa y guardarlo de nuevo."
-                    .to_owned(),
-            )
-        })?;
+        let pdf = PdfDocument::open_bytes(bytes.to_vec())
+            .map_err(|_| CreationError::Unreadable(tr!("plugins-pdf-unreadable")))?;
         let content = PdfContent {
             file_name: name.to_owned(),
             size_bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
@@ -220,7 +217,7 @@ pub fn name_from_file(file_name: &str) -> String {
         })
         .map_or(trimmed, |cut| &trimmed[..cut]);
     if stem.is_empty() {
-        "Documento PDF".to_owned()
+        tr!("plugins-pdf-default-name")
     } else {
         stem.to_owned()
     }
@@ -243,7 +240,7 @@ fn outline_of(contents: &[Contents]) -> Vec<OutlineNode<PdfAnchor>> {
                 })
                 .children(outline_of(&entry.children));
             match entry.page {
-                Some(page) => node.meta(format!("p. {}", page + 1)),
+                Some(page) => node.meta(tr!("plugins-pdf-page-short", "page" => page + 1)),
                 None => node,
             }
         })
@@ -260,7 +257,7 @@ impl DocumentKind for PdfKind {
             id: KIND.into(),
             label: "PDF".into(),
             plural: "PDF".into(),
-            search_group: "En PDFs".into(),
+            search_group: tr!("plugins-pdf-search-group").into(),
             icon: lucide::file_text(),
             color: KindColor::Pdf,
             supports_ink: true,
@@ -340,7 +337,10 @@ impl DocumentKind for PdfKind {
                     .body
                     .lines()
                     .find(|l| !l.trim().is_empty())
-                    .map_or_else(|| format!("p. {}", mark.anchor.page + 1), str::to_owned),
+                    .map_or_else(
+                        || tr!("plugins-pdf-page-short", "page" => mark.anchor.page + 1),
+                        str::to_owned,
+                    ),
                 snippet: mark.anchor.text.clone().unwrap_or_default(),
                 color: mark.color,
                 updated_at: mark.updated_at,
@@ -351,15 +351,16 @@ impl DocumentKind for PdfKind {
     fn summary(&self, content: &PdfContent) -> Option<String> {
         match content.page_count {
             0 => None,
-            1 => Some("1 página".to_owned()),
-            n => Some(format!("{n} páginas")),
+            n => Some(tr!("plugins-pdf-pages", "count" => n)),
         }
     }
 
     fn chip(&self, doc: DocMeta<'_>, anchor: &PdfAnchor) -> ChipView {
-        ChipView::new(match &anchor.text {
-            Some(_) => format!("PDF p.{} · fragmento", anchor.page + 1),
-            None => format!("{} p.{}", doc.name, anchor.page + 1),
+        let page = anchor.page + 1;
+        ChipView::new(if anchor.text.is_some() {
+            tr!("plugins-pdf-chip-excerpt", "page" => page)
+        } else {
+            tr!("plugins-pdf-chip-page", "name" => doc.name, "page" => page)
         })
     }
 
@@ -370,8 +371,12 @@ impl DocumentKind for PdfKind {
     fn creation_entries(&self) -> Vec<CreationEntry> {
         vec![
             CreationEntry::new(ENTRY_IMPORT, "PDF", lucide::file_text(), KindColor::Pdf)
-                .subtitle("Importar y escribir encima")
-                .import("Elegí un PDF", &["pdf"], &["application/pdf"])
+                .subtitle(tr!("plugins-pdf-entry-subtitle"))
+                .import(
+                    tr!("plugins-pdf-pick-title"),
+                    &["pdf"],
+                    &["application/pdf"],
+                )
                 .starter(2),
         ]
     }
@@ -408,7 +413,7 @@ impl DocumentKind for PdfKind {
             name: name_from_file(file.name),
             details: Some(format!(
                 "{} · {} · {}",
-                crate::format::count(pdf.page_count as usize, "página", "páginas"),
+                tr!("plugins-pdf-pages", "count" => pdf.page_count),
                 crate::format::size(pdf.size_bytes),
                 file.name
             )),
@@ -435,7 +440,7 @@ impl DocumentKind for PdfKind {
         Some(format!(
             "{} · {} · {}",
             content.file_name,
-            crate::format::count(content.page_count as usize, "página", "páginas"),
+            tr!("plugins-pdf-pages", "count" => content.page_count),
             crate::format::size(content.size_bytes)
         ))
     }
@@ -464,6 +469,7 @@ mod tests {
 
     #[test]
     fn names_drop_the_extension() {
+        notein_i18n::Lang::Es.make_current();
         assert_eq!(
             name_from_file("Comentario_Romanos.pdf"),
             "Comentario_Romanos"
@@ -483,6 +489,7 @@ mod tests {
 
     #[test]
     fn search_reads_stored_pages() {
+        notein_i18n::Lang::Es.make_current();
         let kind = PdfKind::default();
         kind.store_text(
             DocId([3; 16]),

@@ -2,6 +2,7 @@
 //! any document through the catalog.
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_plugin::face::{CoverRequest, Face, FaceContext, FaceRequest, PaneKey};
 
 use super::builtin::{canvas::CanvasKind, pdf::PdfKind};
@@ -66,15 +67,12 @@ struct MissingFace {
 
 impl Component for MissingFace {
     fn render(&self) -> impl IntoElement {
-        notein_ui_kit::EmptyState::new(freya::icons::lucide::puzzle(), "Necesita un plugin")
-            .body(format!(
-                "Este documento se abre con un plugin que no está instalado o está desactivado ({}). Instalalo desde Ajustes › Plugins.",
-                self.kind
-            ))
+        notein_ui_kit::EmptyState::new(freya::icons::lucide::puzzle(), tr!("plugins-missing-title"))
+            .body(tr!("plugins-missing-body", "kind" => self.kind.as_str()))
     }
 }
 
-/// Lienzo.
+/// Canvas.
 #[derive(Debug, Default)]
 pub struct CanvasFace;
 

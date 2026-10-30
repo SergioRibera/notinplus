@@ -12,6 +12,7 @@ use freya_engine::prelude::{
     AlphaType, Color as SkColor, ColorType, ImageInfo, Paint, PaintStyle, RRect, Rect, SkData,
     SkImage, raster_from_data,
 };
+use notein_i18n::tr;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{Button, Sheet, SheetFooter, Spinner, Text, TextRole, tokens};
 
@@ -55,12 +56,12 @@ type Outcome = Result<Option<String>, ScanError>;
 /// [`ScanError`] when there is no camera, no permission, or it fails.
 pub fn scan_qr(prompt: &str) -> impl Future<Output = Outcome> + use<> {
     let (tx, rx) = flume::bounded(1);
-    Sheet::titled("Escanear código QR")
+    Sheet::titled(tr!("scan-title"))
         .child(Scanner {
             prompt: prompt.to_owned(),
             reply: Reply(Rc::new(RefCell::new(Some(tx)))),
         })
-        .footer(SheetFooter::new([Button::new("Cancelar")
+        .footer(SheetFooter::new([Button::new(tr!("common-cancel"))
             .ghost()
             .on_press(|_| Sheet::close())
             .into_element()]))
@@ -225,7 +226,7 @@ impl Component for Scanner {
                 starting
                     .child(Spinner::default().size(24.0).color(Color::WHITE))
                     .child(
-                        Text::new("Abriendo la cámara…")
+                        Text::new(tr!("scan-opening-camera"))
                             .role(TextRole::Meta)
                             .color(Color::WHITE),
                     )
