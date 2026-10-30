@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use notein_i18n::tr;
+use notein_plugin::UserMessage;
 use notein_plugin::catalog::{Failed, Origin, PluginCatalog};
 use notein_plugin::loader::{self, Loaded, LoaderError};
 
@@ -40,7 +41,7 @@ pub fn load_installed(catalog: &mut PluginCatalog) {
                         .file_name()
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_default(),
-                    reason: err.user_message(),
+                    reason: std::sync::Arc::new(err),
                 });
             }
         }
@@ -59,7 +60,7 @@ fn register(catalog: &mut PluginCatalog, loaded: Loaded, manifest_path: &Path) {
             log::warn!("plugin {}: {err}", manifest_path.display());
             catalog.record_failure(Failed {
                 name,
-                reason: err.to_string(),
+                reason: std::sync::Arc::new(err),
             });
         }
     }
@@ -87,22 +88,40 @@ pub enum InstallError {
 impl std::fmt::Display for InstallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Load(err) => f.write_str(&err.user_message()),
-            Self::Copy(err) => {
-                f.write_str(&tr!("plugin-host-copy-failed", "error" => err.to_string()))
-            }
-            Self::Catalog(err) => write!(f, "{err}"),
-            Self::Package(err) => {
-                f.write_str(&tr!("plugin-host-not-a-package", "error" => err.to_string()))
-            }
-            Self::NoManifest => {
-                f.write_str(&tr!("plugin-host-no-manifest", "manifest" => MANIFEST))
-            }
+            Self::Load(err) => write!(f, "load: {err}"),
+            Self::Copy(err) => write!(f, "copy: {err}"),
+            Self::Catalog(err) => write!(f, "catalog: {err}"),
+            Self::Package(err) => write!(f, "package: {err}"),
+            Self::NoManifest => write!(f, "package has no {MANIFEST}"),
         }
     }
 }
 
-impl std::error::Error for InstallError {}
+impl std::error::Error for InstallError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Load(err) => Some(err),
+            Self::Copy(err) => Some(err),
+            Self::Catalog(err) => Some(err),
+            Self::Package(err) => Some(err),
+            Self::NoManifest => None,
+        }
+    }
+}
+
+impl UserMessage for InstallError {
+    fn user_message(&self) -> String {
+        match self {
+            Self::Load(err) => err.user_message(),
+            Self::Copy(err) | Self::Package(zip::result::ZipError::Io(err)) => {
+                tr!("errors-plugin-copy", "reason" => err.user_message())
+            }
+            Self::Catalog(err) => err.user_message(),
+            Self::Package(_) => tr!("errors-plugin-not-a-package"),
+            Self::NoManifest => tr!("errors-plugin-no-manifest", "manifest" => MANIFEST),
+        }
+    }
+}
 
 /// Copy the plugin in `folder` into the plugins directory and load it
 /// right away. Returns the plugin name.

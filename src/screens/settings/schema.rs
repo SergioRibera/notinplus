@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use freya::prelude::*;
+use notein_plugin::UserMessage;
 use notein_plugin::config::{ConfigEnumOption, ConfigField, ConfigFieldKind, ConfigValue};
 use notein_plugin::plugin::PluginSettings;
 use notein_ui_kit::TapExt;
@@ -108,7 +109,7 @@ impl FieldRow {
                 revision.set(next);
                 None
             }
-            Err(err) => Some(err.to_string()),
+            Err(err) => Some(err.user_message()),
         }
     }
 
@@ -363,7 +364,7 @@ impl FieldRow {
                                 ))),
                                 Err(err) => {
                                     error
-                                        .set(Some(tr!("settings-plugins-field-save-failed", "error" => err.to_string())));
+                                        .set(Some(tr!("settings-plugins-field-save-failed", "error" => err.user_message())));
                                 }
                             }
                         }

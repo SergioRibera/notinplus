@@ -34,6 +34,7 @@ use std::path::{Path, PathBuf};
 
 use notein_i18n::tr;
 
+use crate::failure::UserMessage;
 use crate::target::{Fit, Target};
 
 /// Parsed `plugin.ntp.kdl` manifest.
@@ -109,7 +110,23 @@ impl std::fmt::Display for ManifestError {
     }
 }
 
-impl std::error::Error for ManifestError {}
+impl std::error::Error for ManifestError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io { error, .. } => Some(error),
+            Self::Parse { .. } | Self::MissingField { .. } => None,
+        }
+    }
+}
+
+impl UserMessage for ManifestError {
+    fn user_message(&self) -> String {
+        match self {
+            Self::Io { error, .. } => error.user_message(),
+            Self::Parse { .. } | Self::MissingField { .. } => tr!("plugin-load-damaged"),
+        }
+    }
+}
 
 impl PluginManifest {
     pub fn from_path(path: &Path) -> Result<Self, ManifestError> {

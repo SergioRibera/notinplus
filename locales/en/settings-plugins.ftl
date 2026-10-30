@@ -49,6 +49,6 @@ settings-plugins-field-color = Change color
 settings-plugins-field-no-file = No file
 settings-plugins-field-choose-file = Choose…
 settings-plugins-field-pick-file = Choose file
-# $error: the system's error message.
-settings-plugins-field-save-failed = Couldn't save the file: { $error }
+# $error: a sentence explaining why.
+settings-plugins-field-save-failed = Couldn't save the file. { $error }
 settings-plugins-field-confirm = Sure? Tap again

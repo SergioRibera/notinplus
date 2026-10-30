@@ -15,6 +15,7 @@ use libloading::Library;
 use notein_i18n::{Lang, tr};
 
 use crate::create::CreationEntry;
+use crate::failure::UserMessage;
 use crate::info::PluginInfo;
 use crate::kind::KindInfo;
 use crate::manifest::{ManifestError, PluginManifest};
@@ -101,12 +102,10 @@ pub enum LoaderError {
     },
 }
 
-impl LoaderError {
-    /// Plain-language explanation for the install sheet.
-    #[must_use]
-    pub fn user_message(&self) -> String {
+impl UserMessage for LoaderError {
+    fn user_message(&self) -> String {
         match self {
-            Self::Manifest(_) => tr!("plugin-load-damaged"),
+            Self::Manifest(err) => err.user_message(),
             Self::MissingLibrary { .. } | Self::Open { .. } | Self::MissingEntry { .. } => {
                 tr!("plugin-load-not-for-device")
             }

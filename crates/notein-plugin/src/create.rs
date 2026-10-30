@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use bytes::Bytes;
 use notein_i18n::tr;
 
+use crate::failure::UserMessage;
 use crate::kind::KindColor;
 
 /// What the shell shows between picking an entry and opening the new
@@ -219,12 +220,14 @@ pub struct Created<C> {
     pub attachment: Option<Vec<u8>>,
 }
 
-/// Why a creation failed. Messages are shown to the user as is.
+/// Why a creation failed. [`UserMessage::user_message`] is what the
+/// user sees; `Display` is for logs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CreationError {
     UnknownEntry(String),
-    /// The imported file cannot be read; the text explains why in plain
-    /// words ("Puede estar dañado o protegido con contraseña").
+    /// The imported file cannot be read; the plugin explains why in
+    /// plain words, in the interface language (`tr!`), and that text
+    /// is shown as is ("It may be damaged or password protected").
     Unreadable(String),
     /// Missing input the flow needs.
     MissingFile,
@@ -233,13 +236,21 @@ pub enum CreationError {
 impl std::fmt::Display for CreationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnknownEntry(id) => {
-                f.write_str(&tr!("plugin-create-unknown-entry", "id" => id.as_str()))
-            }
-            Self::Unreadable(why) => f.write_str(why),
-            Self::MissingFile => f.write_str(&tr!("plugin-create-missing-file")),
+            Self::UnknownEntry(id) => write!(f, "unknown creation entry {id}"),
+            Self::Unreadable(why) => write!(f, "unreadable file: {why}"),
+            Self::MissingFile => f.write_str("no file given"),
         }
     }
 }
 
 impl std::error::Error for CreationError {}
+
+impl UserMessage for CreationError {
+    fn user_message(&self) -> String {
+        match self {
+            Self::UnknownEntry(id) => tr!("plugin-create-unknown-entry", "id" => id.as_str()),
+            Self::Unreadable(why) => why.clone(),
+            Self::MissingFile => tr!("plugin-create-missing-file"),
+        }
+    }
+}

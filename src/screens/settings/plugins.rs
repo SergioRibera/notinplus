@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
+use notein_plugin::UserMessage;
 use notein_plugin::catalog::{Installed, Origin};
 use notein_plugin::loader::Review;
 use notein_ui_kit::theme::palette;
@@ -98,7 +99,7 @@ impl Component for Plugins {
             .iter()
             .map(|f| {
                 ListRow::new(f.name.clone())
-                    .subtitle(tr!("settings-plugins-failed", "reason" => f.reason.clone()))
+                    .subtitle(tr!("settings-plugins-failed", "reason" => f.reason.user_message()))
                     .icon(lucide::triangle_alert())
                     .danger(true)
                     .into_element()
@@ -283,7 +284,7 @@ fn install() {
         let staged = match Staged::unpack(&picked.bytes) {
             Ok(staged) => staged,
             Err(err) => {
-                incompatible(&picked.name, err.to_string());
+                incompatible(&picked.name, err.user_message());
                 return;
             }
         };
@@ -363,7 +364,10 @@ fn review_sheet(staged: Arc<Staged>, review: &Review) {
                             crate::plugins::content::index_library();
                             Toasts::get().show(Toast::new(tr!("settings-plugins-installed-toast", "name" => installed)));
                         }
-                        Err(err) => incompatible(&name, err.to_string()),
+                        Err(err) => {
+                            log::warn!("install plugin {name}: {err}");
+                            incompatible(&name, err.user_message());
+                        }
                     }
                 })
                 .into_element(),

@@ -14,6 +14,8 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use notein_i18n::tr;
+use notein_sdk::UserMessage;
 use rusqlite::{Connection, OpenFlags};
 
 mod queries;
@@ -46,6 +48,30 @@ impl std::error::Error for DbError {
             Self::Sqlite(e) => Some(e),
             Self::Io(e) => Some(e),
             Self::MissingBible { .. } => None,
+        }
+    }
+}
+
+impl UserMessage for DbError {
+    fn user_message(&self) -> String {
+        use rusqlite::ErrorCode;
+        use std::io::ErrorKind;
+        match self {
+            Self::Io(err) => err.user_message(),
+            Self::Sqlite(rusqlite::Error::SqliteFailure(failure, _)) => match failure.code {
+                ErrorCode::DiskFull => ErrorKind::StorageFull.user_message(),
+                ErrorCode::PermissionDenied | ErrorCode::CannotOpen => {
+                    ErrorKind::PermissionDenied.user_message()
+                }
+                ErrorCode::ReadOnly => ErrorKind::ReadOnlyFilesystem.user_message(),
+                ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked => {
+                    ErrorKind::ResourceBusy.user_message()
+                }
+                ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase => tr!("errors-db-damaged"),
+                _ => tr!("errors-db-other"),
+            },
+            Self::Sqlite(_) => tr!("errors-db-other"),
+            Self::MissingBible { id } => tr!("errors-db-missing-bible", "id" => id.as_str()),
         }
     }
 }

@@ -17,6 +17,8 @@ use bincode::{Decode, Encode};
 use notein_i18n::tr;
 use rkyv::{Archive, Deserialize, Serialize};
 
+use crate::failure::UserMessage;
+
 /// A plugin's full settings schema.
 ///
 /// `version` is monotonic: bump on add/remove/type-change. Pure renames
@@ -294,14 +296,21 @@ pub enum ConfigError {
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnknownKey(k) => {
-                f.write_str(&tr!("plugin-config-unknown-key", "key" => k.as_str()))
-            }
-            Self::TypeMismatch => f.write_str(&tr!("plugin-config-type-mismatch")),
-            Self::OutOfRange => f.write_str(&tr!("plugin-config-out-of-range")),
-            Self::Rejected(msg) => {
-                f.write_str(&tr!("plugin-config-rejected", "reason" => msg.as_str()))
-            }
+            Self::UnknownKey(k) => write!(f, "unknown setting {k}"),
+            Self::TypeMismatch => f.write_str("value of the wrong type"),
+            Self::OutOfRange => f.write_str("value out of range"),
+            Self::Rejected(msg) => write!(f, "value rejected: {msg}"),
+        }
+    }
+}
+
+impl UserMessage for ConfigError {
+    fn user_message(&self) -> String {
+        match self {
+            Self::UnknownKey(k) => tr!("plugin-config-unknown-key", "key" => k.as_str()),
+            Self::TypeMismatch => tr!("plugin-config-type-mismatch"),
+            Self::OutOfRange => tr!("plugin-config-out-of-range"),
+            Self::Rejected(msg) => tr!("plugin-config-rejected", "reason" => msg.as_str()),
         }
     }
 }

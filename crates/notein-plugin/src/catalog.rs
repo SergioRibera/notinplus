@@ -8,6 +8,7 @@ use notein_i18n::{Lang, tr};
 use crate::create::CreationEntry;
 use crate::erased::ErasedKind;
 use crate::face::ErasedFace;
+use crate::failure::UserMessage;
 use crate::info::PluginInfo;
 use crate::kind::{Hit, SearchQuery};
 use crate::loader::PluginLibrary;
@@ -69,10 +70,11 @@ impl Installed {
 }
 
 /// A plugin that could not be loaded, kept so Settings can say why.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The reason is the typed failure, translated when Settings shows it.
+#[derive(Clone, Debug)]
 pub struct Failed {
     pub name: String,
-    pub reason: String,
+    pub reason: Arc<dyn UserMessage + Send + Sync>,
 }
 
 /// A create-menu entry with its owners.
@@ -100,12 +102,19 @@ pub enum CatalogError {
 impl std::fmt::Display for CatalogError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::DuplicatePlugin(id) => write!(f, "duplicate plugin id {id}"),
+            Self::DuplicateKind(id) => write!(f, "duplicate document kind id {id}"),
+        }
+    }
+}
+
+impl UserMessage for CatalogError {
+    fn user_message(&self) -> String {
+        match self {
             Self::DuplicatePlugin(id) => {
-                f.write_str(&tr!("plugin-catalog-duplicate-plugin", "id" => id.as_str()))
+                tr!("plugin-catalog-duplicate-plugin", "id" => id.as_str())
             }
-            Self::DuplicateKind(id) => {
-                f.write_str(&tr!("plugin-catalog-duplicate-kind", "id" => id.as_str()))
-            }
+            Self::DuplicateKind(id) => tr!("plugin-catalog-duplicate-kind", "id" => id.as_str()),
         }
     }
 }
@@ -169,7 +178,6 @@ impl PluginCatalog {
     /// Switch every plugin to `lang`: third-party libraries get it
     /// through their setter (builtins share the app's), and the
     /// [`PluginInfo`] kept at registration is asked for again.
-    /// Failure reasons stay in the language they were recorded in.
     pub fn set_lang(&mut self, lang: Lang) {
         for library in &self.libraries {
             library.set_lang(lang);

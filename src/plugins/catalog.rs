@@ -3,6 +3,7 @@
 use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use notein_i18n::{Lang, tr};
+use notein_plugin::UserMessage;
 use notein_plugin::catalog::{Failed, Origin, PluginCatalog};
 use notein_plugin::erased::ErasedKind;
 use notein_plugin::kind::KindInfo;
@@ -29,10 +30,13 @@ fn init() -> RwLock<PluginCatalog> {
                 log::error!("builtin plugin: {err}");
             }
         }
-        Err(err) => catalog.record_failure(Failed {
-            name: tr!("plugin-host-bible-name"),
-            reason: tr!("plugin-host-bible-unavailable", "error" => err.to_string()),
-        }),
+        Err(err) => {
+            log::error!("bible plugin: {err}");
+            catalog.record_failure(Failed {
+                name: tr!("plugin-host-bible-name"),
+                reason: Arc::new(BibleUnavailable(err)),
+            });
+        }
     }
     super::dynamic::load_installed(&mut catalog);
     for id in <crate::settings::Settings as crate::persist::Persisted>::load()
@@ -43,6 +47,16 @@ fn init() -> RwLock<PluginCatalog> {
     }
     catalog.install_host(&super::host::handle());
     RwLock::new(catalog)
+}
+
+/// The Bible's database could not be opened, so the builtin is missing.
+#[derive(Debug)]
+struct BibleUnavailable(notein_bible::db::DbError);
+
+impl UserMessage for BibleUnavailable {
+    fn user_message(&self) -> String {
+        tr!("errors-plugin-bible-unavailable", "reason" => self.0.user_message())
+    }
 }
 
 /// Read access to the catalog.
