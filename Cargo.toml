@@ -126,8 +126,6 @@ istmo-macros = { path = "../istmo/crates/macros" }
 istmo-build = { path = "../istmo/crates/build" }
 # System locale (`SystemInfo`) is not published yet.
 istmo-plugins = { path = "../istmo/crates/plugins" }
-# Reconnection fixes not yet released on crates.io.
-zudp = { path = "../../GamerOS/zudp" }
 winit = { git = "https://github.com/SergioRibera/winit", branch = "notein-native-input" }
 # Touch editing and soft keyboard work, on top of freya 0.5.0-rc.13 (main).
 freya = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }

@@ -10733,7 +10733,9 @@ dependencies = [
 
 [[package]]
 name = "zudp"
-version = "0.3.8"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4613c7c841c1b9246800e4de61d360e9e4468f94e53d55003ac5b613c1c3193b"
 dependencies = [
  "bytes",
  "dashmap",

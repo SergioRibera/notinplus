@@ -1,7 +1,7 @@
 set shell := ["bash", "-cu"]
 
 image := "sergioribera/rust-android:1.98-sdk-36"
-mount := "-v $(pwd)/../:/src -v $(pwd)/../../sismo:/sismo -v $(pwd)/../../GamerOS/zudp:/GamerOS/zudp -v $HOME/.android:/root/.android -v gradle-cache:/root/.gradle -v cargo-cache:/root/.cargo"
+mount := "-v $(pwd)/../:/src -v $(pwd)/../../sismo:/sismo -v $HOME/.android:/root/.android -v gradle-cache:/root/.gradle -v cargo-cache:/root/.cargo"
 
 # Desktop build (host toolchain).
 build:
