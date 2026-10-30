@@ -135,7 +135,7 @@ impl Updates {
     }
 
     /// Look for a newer release in the background. `force` skips the
-    /// kept manifest (the "Buscar ahora" button); without it nothing is
+    /// kept manifest (the "Check now" button); without it nothing is
     /// fetched while the copy is fresh, and nothing at all when the
     /// person turned checks off.
     pub fn check(self, force: bool) {

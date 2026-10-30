@@ -1,5 +1,5 @@
-//! Ajustes › Dispositivos, and the two modals that link devices and
-//! act on links: Vincular, and Escanear o pegar enlace.
+//! Settings › Devices, and the two modals that link devices and
+//! act on links: Link, and Scan or paste link.
 
 use std::time::{Duration, Instant};
 
@@ -9,6 +9,8 @@ use notein_ui_kit::{
     Button, ButtonVariant, Group, Icon, IconButton, ListRow, ModalController, Notice, NoticeTone,
     Section, Segmented, Sheet, SheetFooter, Text, TextField, TextRole, Trailing, tokens,
 };
+
+use notein_i18n::tr;
 
 use crate::sync::{LinkTarget, SyncSnapshot};
 use notein_sync::TrustedDevice;
@@ -32,14 +34,14 @@ fn qr_svg(text: &str) -> Option<Bytes> {
     Some(Bytes::from(svg.into_bytes()))
 }
 
-/// The Dispositivos section.
+/// The Devices section.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Devices;
 
-/// A row being edited in place: a field and Guardar. Leaving the field
+/// A row being edited in place: a field and Save. Leaving the field
 /// saves too, and the row goes back to reading.
 fn edit_row(
-    title: &'static str,
+    title: String,
     icon: Bytes,
     field: TextField,
     text: State<String>,
@@ -59,7 +61,7 @@ fn edit_row(
             .spacing(6.0)
             .child(rect().width(Size::px(width)).child(field))
             .child(
-                Button::new("Guardar")
+                Button::new(tr!("common-save"))
                     .primary()
                     .small()
                     .on_press(move |_| save(text.peek().clone())),
@@ -74,7 +76,7 @@ fn this_device(snapshot: &SyncSnapshot, mut renaming: State<bool>, name: State<S
     if renaming() {
         let before = snapshot.name.clone();
         return edit_row(
-            "Este dispositivo",
+            tr!("settings-devices-this-device"),
             lucide::monitor_smartphone(),
             TextField::new(name).max_len(40),
             name,
@@ -90,14 +92,14 @@ fn this_device(snapshot: &SyncSnapshot, mut renaming: State<bool>, name: State<S
     }
     let current = snapshot.name.clone();
     ListRow::new(if snapshot.name.is_empty() {
-        "Este dispositivo".to_owned()
+        tr!("settings-devices-this-device")
     } else {
         snapshot.name.clone()
     })
-    .subtitle("Este dispositivo · así te ven los demás")
+    .subtitle(tr!("settings-devices-this-device-hint"))
     .icon(lucide::monitor_smartphone())
     .trailing(Trailing::Element(
-        Button::new("Renombrar")
+        Button::new(tr!("common-rename"))
             .ghost()
             .small()
             .on_press(move |_| {
@@ -109,7 +111,7 @@ fn this_device(snapshot: &SyncSnapshot, mut renaming: State<bool>, name: State<S
     ))
 }
 
-/// A linked device; Quitar asks for a second tap.
+/// A linked device; Remove asks for a second tap.
 fn linked_device(
     snapshot: &SyncSnapshot,
     device: &TrustedDevice,
@@ -126,9 +128,9 @@ fn linked_device(
     let since = crate::format::day(device.since, crate::format::now());
     ListRow::new(device.name.clone())
         .subtitle(if online {
-            format!("Conectado · vinculado el {since}")
+            tr!("settings-devices-linked-online", "since" => since)
         } else {
-            format!("Sin conexión · vinculado el {since}")
+            tr!("settings-devices-linked-offline", "since" => since)
         })
         .leading(notein_ui_kit::Leading::Element(
             rect()
@@ -140,9 +142,9 @@ fn linked_device(
         ))
         .trailing(Trailing::Element(
             Button::new(if armed {
-                "¿Seguro? Tocá de nuevo"
+                tr!("settings-devices-confirm")
             } else {
-                "Quitar"
+                tr!("settings-devices-remove")
             })
             .variant(if armed {
                 ButtonVariant::DangerFill
@@ -169,9 +171,9 @@ fn server_row(snapshot: &SyncSnapshot, mut editing: State<bool>, server: State<S
     if editing() {
         let before = snapshot.relay.clone();
         return edit_row(
-            "Servidor",
+            tr!("settings-devices-server"),
             lucide::server(),
-            TextField::new(server).placeholder("relay.ejemplo.com:7400"),
+            TextField::new(server).placeholder(tr!("settings-devices-server-placeholder")),
             server,
             240.0,
             move |text: String| {
@@ -186,15 +188,17 @@ fn server_row(snapshot: &SyncSnapshot, mut editing: State<bool>, server: State<S
     }
     let relay = snapshot.relay.clone();
     let current = relay.clone().unwrap_or_default();
-    ListRow::new("Servidor")
+    ListRow::new(tr!("settings-devices-server"))
         .subtitle(match &relay {
-            Some(addr) if snapshot.relay_online => format!("{addr} · conectado"),
-            Some(addr) => format!("{addr} · sin conexión"),
-            None => "Ninguno · solo en la misma red".to_owned(),
+            Some(addr) if snapshot.relay_online => {
+                tr!("settings-devices-server-online", "address" => addr.as_str())
+            }
+            Some(addr) => tr!("settings-devices-server-offline", "address" => addr.as_str()),
+            None => tr!("settings-devices-server-none"),
         })
         .icon(lucide::server())
         .trailing(Trailing::Element(
-            Button::new("Cambiar")
+            Button::new(tr!("settings-devices-change"))
                 .ghost()
                 .small()
                 .on_press(move |_| {
@@ -226,22 +230,21 @@ impl Component for Devices {
             .spacing(24.0)
             .child(Group::default().child(this_device(&snapshot, renaming, name)))
             .child(
-                Section::new("Vinculados")
+                Section::new(tr!("settings-devices-linked"))
                     .maybe_child(none_linked.then(|| {
-                        Text::new("Todavía no vinculaste otro dispositivo. Tus documentos se sincronizan entre los dispositivos vinculados.")
-                            .role(TextRole::Hint)
+                        Text::new(tr!("settings-devices-linked-empty")).role(TextRole::Hint)
                     }))
                     .maybe_child((!none_linked).then(|| Group::default().children(linked)))
                     .child(
                         Group::default()
                             .child(
-                                ListRow::new("Vincular otro dispositivo")
+                                ListRow::new(tr!("settings-devices-link-another"))
                                     .icon(lucide::link())
                                     .chevron()
                                     .on_press(|_| open_pairing()),
                             )
                             .child(
-                                ListRow::new("Escanear o pegar enlace")
+                                ListRow::new(tr!("settings-devices-scan-or-paste"))
                                     .icon(lucide::scan_qr_code())
                                     .chevron()
                                     .on_press(|_| open_link_sheet()),
@@ -249,15 +252,20 @@ impl Component for Devices {
                     ),
             )
             .child(
-                Section::new("Sincronización")
+                Section::new(tr!("settings-devices-sync"))
                     .child(Group::default().child(server_row(&snapshot, editing_server, server))),
             )
-            .maybe_child(snapshot.error.clone().map(|err| Notice::new(NoticeTone::Warning, err)))
+            .maybe_child(
+                snapshot
+                    .error
+                    .clone()
+                    .map(|err| Notice::new(NoticeTone::Warning, err)),
+            )
             .into_element()
     }
 }
 
-/// Open Vincular: show this device's code, or type another's.
+/// Open Link: show this device's code, or type another's.
 pub fn open_pairing() {
     crate::sync::begin_pairing();
     ModalController::get().push(
@@ -309,13 +317,13 @@ impl Component for Pairing {
                 .spacing(12.0)
                 .padding(12.0)
                 .child(Icon::new(lucide::circle_check()).size(44.0).color(p.ok))
-                .child(Text::new(format!("Vinculado con {name}")).role(TextRole::Title))
                 .child(
-                    Text::new(
-                        "Tus documentos se van a sincronizar cuando los dos estén conectados.",
-                    )
-                    .role(TextRole::Hint)
-                    .align(TextAlign::Center),
+                    Text::new(tr!("settings-devices-paired", "name" => name)).role(TextRole::Title),
+                )
+                .child(
+                    Text::new(tr!("settings-devices-paired-hint"))
+                        .role(TextRole::Hint)
+                        .align(TextAlign::Center),
                 )
                 .into_element()
         } else if *tab.read() == 0 {
@@ -337,26 +345,17 @@ impl Component for Pairing {
             .corner_radius(tokens::radius::SHEET)
             .shadow(Shadow::new().y(16.0).blur(48.0).color(p.shadow))
             .a11y_role(AccessibilityRole::Dialog)
-            .child(
-                rect()
-                    .width(Size::fill())
-                    .horizontal()
-                    .cross_align(Alignment::Center)
-                    .content(Content::Flex)
-                    .child(
-                        Text::new("Vincular dispositivo")
-                            .role(TextRole::Title)
-                            .fill(),
-                    )
-                    .child(
-                        IconButton::new(lucide::x(), "Cerrar")
-                            .on_press(|_| ModalController::get().close()),
-                    ),
-            )
+            .child(pairing_header())
             .maybe_child((!paired).then(|| {
-                Segmented::new(["Mostrar mi código", "Tengo un código"], *tab.read())
-                    .full_width()
-                    .on_select(move |i: usize| tab.set(i))
+                Segmented::new(
+                    [
+                        tr!("settings-devices-pairing-show-code"),
+                        tr!("settings-devices-pairing-have-code"),
+                    ],
+                    *tab.read(),
+                )
+                .full_width()
+                .on_select(move |i: usize| tab.set(i))
             }))
             .child(body)
             .child(
@@ -365,16 +364,38 @@ impl Component for Pairing {
                     .horizontal()
                     .main_align(Alignment::End)
                     .child(
-                        Button::new(if paired { "Listo" } else { "Cancelar" })
-                            .variant(if paired {
-                                ButtonVariant::Primary
-                            } else {
-                                ButtonVariant::Ghost
-                            })
-                            .on_press(|_| ModalController::get().close()),
+                        Button::new(if paired {
+                            tr!("common-done")
+                        } else {
+                            tr!("common-cancel")
+                        })
+                        .variant(if paired {
+                            ButtonVariant::Primary
+                        } else {
+                            ButtonVariant::Ghost
+                        })
+                        .on_press(|_| ModalController::get().close()),
                     ),
             )
     }
+}
+
+/// The Link device modal's title row, with its close button.
+fn pairing_header() -> Rect {
+    rect()
+        .width(Size::fill())
+        .horizontal()
+        .cross_align(Alignment::Center)
+        .content(Content::Flex)
+        .child(
+            Text::new(tr!("settings-devices-pairing-title"))
+                .role(TextRole::Title)
+                .fill(),
+        )
+        .child(
+            IconButton::new(freya::icons::lucide::x(), tr!("common-close"))
+                .on_press(|_| ModalController::get().close()),
+        )
 }
 
 fn show_code(snapshot: &SyncSnapshot, left: Duration) -> Element {
@@ -389,7 +410,7 @@ fn show_code(snapshot: &SyncSnapshot, left: Duration) -> Element {
                     snapshot
                         .error
                         .clone()
-                        .unwrap_or_else(|| "Preparando el código…".to_owned()),
+                        .unwrap_or_else(|| tr!("settings-devices-pairing-preparing")),
                 )
                 .role(TextRole::Meta),
             )
@@ -404,7 +425,7 @@ fn show_code(snapshot: &SyncSnapshot, left: Duration) -> Element {
         .cross_align(Alignment::Center)
         .spacing(12.0)
         .child(
-            Text::new("En el otro dispositivo abrí Ajustes › Dispositivos › Escanear o pegar enlace, o elegí «Tengo un código».")
+            Text::new(tr!("settings-devices-pairing-show-hint"))
                 .role(TextRole::Hint)
                 .align(TextAlign::Center),
         )
@@ -415,7 +436,11 @@ fn show_code(snapshot: &SyncSnapshot, left: Duration) -> Element {
                 .corner_radius(tokens::radius::LG)
                 .background(Color::WHITE)
                 .center()
-                .child(SvgViewer::new(svg).width(Size::px(QR - 16.0)).height(Size::px(QR - 16.0)))
+                .child(
+                    SvgViewer::new(svg)
+                        .width(Size::px(QR - 16.0))
+                        .height(Size::px(QR - 16.0)),
+                )
         }))
         .child(
             rect()
@@ -429,22 +454,33 @@ fn show_code(snapshot: &SyncSnapshot, left: Duration) -> Element {
                         .corner_radius(tokens::radius::MD)
                         .background(p.s2)
                         .center()
-                        .child(label().text(d.to_string()).font_size(26.0).font_weight(FontWeight::BOLD).color(p.t1))
+                        .child(
+                            label()
+                                .text(d.to_string())
+                                .font_size(26.0)
+                                .font_weight(FontWeight::BOLD)
+                                .color(p.t1),
+                        )
                         .into_element()
                 })),
         )
         .child(
-            Text::new(format!("Se renueva en {minutes}:{seconds:02}"))
-                .role(TextRole::Meta),
+            Text::new(tr!(
+                "settings-devices-pairing-renews",
+                "time" => format!("{minutes}:{seconds:02}"),
+            ))
+            .role(TextRole::Meta),
         )
         .child(
-            Button::new("Copiar enlace")
+            Button::new(tr!("settings-devices-pairing-copy-link"))
                 .ghost()
                 .small()
                 .icon(freya::icons::lucide::copy())
                 .on_press(move |_| {
                     if freya::clipboard::Clipboard::set(link.clone()).is_ok() {
-                        notein_ui_kit::Toasts::get().show(notein_ui_kit::Toast::new("Enlace copiado"));
+                        notein_ui_kit::Toasts::get().show(notein_ui_kit::Toast::new(tr!(
+                            "settings-devices-link-copied"
+                        )));
                     }
                 }),
         )
@@ -515,10 +551,10 @@ impl Component for EnterCode {
         }
         let failure = snapshot.last_pair_failure.map(|(_, why)| match why {
             notein_sync::PairFailure::Rejected => {
-                "El código no coincide. Revisalo en el otro dispositivo."
+                tr!("settings-devices-pair-rejected")
             }
             notein_sync::PairFailure::Unreachable => {
-                "No encontramos ese dispositivo. Tienen que estar en la misma red."
+                tr!("settings-devices-pair-unreachable")
             }
         });
         let peers = snapshot.discovered.iter().map(|peer| {
@@ -536,19 +572,17 @@ impl Component for EnterCode {
         rect()
             .width(Size::fill())
             .spacing(12.0)
-            .child(
-                Text::new("Elegí el dispositivo que muestra el código y escribí sus seis dígitos.")
-                    .role(TextRole::Hint),
-            )
+            .child(Text::new(tr!("settings-devices-pairing-enter-hint")).role(TextRole::Hint))
             .maybe_child(
-                no_peers
-                    .then(|| Notice::new(NoticeTone::Info, "Buscando dispositivos en esta red…")),
+                no_peers.then(|| {
+                    Notice::new(NoticeTone::Info, tr!("settings-devices-pairing-searching"))
+                }),
             )
             .maybe_child((!no_peers).then(|| Group::default().children(peers)))
             .child(code_boxes(&digits))
             .child(
                 TextField::new(code)
-                    .label("Código")
+                    .label(tr!("settings-devices-pairing-code"))
                     .placeholder("123456")
                     .max_len(12)
                     .auto_focus(true)
@@ -561,14 +595,18 @@ impl Component for EnterCode {
                         sent.set(false);
                     }),
             )
-            .maybe_child(sent().then(|| Text::new("Vinculando…").role(TextRole::Meta)))
+            .maybe_child(
+                sent().then(|| {
+                    Text::new(tr!("settings-devices-pairing-linking")).role(TextRole::Meta)
+                }),
+            )
             .maybe_child(failure.map(|why| Notice::new(NoticeTone::Danger, why)))
     }
 }
 
-/// Open Escanear o pegar enlace.
+/// Open Scan or paste link.
 pub fn open_link_sheet() {
-    Sheet::titled("Escanear o pegar enlace")
+    Sheet::titled(tr!("settings-devices-scan-or-paste"))
         .child(LinkSheet)
         .push();
 }
@@ -604,21 +642,21 @@ fn link_card(target: &Recognized, raw: String) -> Rect {
     let (icon, title, subtitle, action) = match target {
         Recognized::Sync(LinkTarget::Join { title, owner, .. }) => (
             lucide::users(),
-            format!("«{title}»"),
-            format!("Invitación de {owner}"),
-            "Unirse",
+            tr!("settings-devices-link-join-title", "title" => title.as_str()),
+            tr!("settings-devices-link-join-from", "owner" => owner.as_str()),
+            tr!("settings-devices-link-join"),
         ),
         Recognized::Sync(LinkTarget::Pair { name }) => (
             lucide::link(),
             name.clone(),
-            "Vincular este dispositivo".to_owned(),
-            "Vincular",
+            tr!("settings-devices-link-pair-hint"),
+            tr!("settings-devices-link-pair"),
         ),
         Recognized::Document(_) => (
             lucide::file_text(),
-            "Enlace a un documento".to_owned(),
-            "Se abre en tu biblioteca si lo tenés".to_owned(),
-            "Abrir",
+            tr!("settings-devices-link-document"),
+            tr!("settings-devices-link-document-hint"),
+            tr!("common-open"),
         ),
     };
     rect()
@@ -652,13 +690,13 @@ fn link_card(target: &Recognized, raw: String) -> Rect {
 }
 
 /// Scan a QR code into `pasted`; a camera problem lands in `error`.
-fn scan_button(mut error: State<Option<&'static str>>, mut pasted: State<String>) -> Button {
-    Button::new("Escanear un código QR")
+fn scan_button(mut error: State<Option<String>>, mut pasted: State<String>) -> Button {
+    Button::new(tr!("settings-devices-scan-qr"))
         .tonal()
         .full_width()
         .icon(freya::icons::lucide::scan_qr_code())
         .on_press(move |_| {
-            let scan = crate::scan::scan_qr("Apuntá al código del otro dispositivo");
+            let scan = crate::scan::scan_qr(&tr!("settings-devices-scan-prompt"));
             spawn(async move {
                 match scan.await {
                     Ok(Some(text)) => {
@@ -666,15 +704,15 @@ fn scan_button(mut error: State<Option<&'static str>>, mut pasted: State<String>
                         pasted.set(text);
                     }
                     Ok(None) => {}
-                    Err(crate::scan::ScanError::Denied) => error.set(Some(
-                        "Notein no tiene permiso para usar la cámara. Podés dárselo en los ajustes del sistema, o pegar el enlace.",
-                    )),
+                    Err(crate::scan::ScanError::Denied) => {
+                        error.set(Some(tr!("settings-devices-scan-denied")));
+                    }
                     Err(crate::scan::ScanError::Unavailable) => {
-                        error.set(Some("Este dispositivo no tiene cámara. Pegá el enlace."));
+                        error.set(Some(tr!("settings-devices-scan-unavailable")));
                     }
                     Err(crate::scan::ScanError::Failed(why)) => {
                         log::warn!("scan: {why}");
-                        error.set(Some("No se pudo abrir la cámara. Pegá el enlace."));
+                        error.set(Some(tr!("settings-devices-scan-failed")));
                     }
                 }
             });
@@ -685,7 +723,7 @@ impl Component for LinkSheet {
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let pasted = use_state(String::new);
-        let scan_error = use_state(|| None::<&'static str>);
+        let scan_error = use_state(|| None::<String>);
         let clipboard = use_hook(|| {
             freya::clipboard::Clipboard::get()
                 .ok()
@@ -702,13 +740,18 @@ impl Component for LinkSheet {
             .width(Size::fill())
             .spacing(14.0)
             .child(scan_button(scan_error, paste_target))
-            .maybe_child(scan_error().map(|why| Notice::new(NoticeTone::Warning, why)))
+            .maybe_child(
+                scan_error
+                    .read()
+                    .clone()
+                    .map(|why| Notice::new(NoticeTone::Warning, why)),
+            )
             .maybe_child(clipboard.filter(|_| text.trim().is_empty()).map(|link| {
-                ListRow::new("Hay un enlace copiado")
+                ListRow::new(tr!("settings-devices-clipboard-link"))
                     .subtitle(link.clone())
                     .icon(lucide::clipboard())
                     .trailing(Trailing::Element(
-                        Button::new("Usar")
+                        Button::new(tr!("settings-devices-clipboard-use"))
                             .tonal()
                             .small()
                             .on_press(move |_| paste_target.set(link.clone()))
@@ -717,19 +760,16 @@ impl Component for LinkSheet {
             }))
             .child(
                 TextField::new(pasted)
-                    .label("O pegá el enlace")
+                    .label(tr!("settings-devices-paste-label"))
                     .placeholder("notein://…")
                     .icon(lucide::link()),
             )
             .maybe_child(card)
             .maybe_child(typed_unknown.then(|| {
-                Notice::new(
-                    NoticeTone::Danger,
-                    "Ese enlace no es de Notein o ya venció.",
-                )
-                .detail("Pedí uno nuevo: las invitaciones y los códigos duran unos minutos.")
+                Notice::new(NoticeTone::Danger, tr!("settings-devices-link-unknown"))
+                    .detail(tr!("settings-devices-link-unknown-hint"))
             }))
-            .child(SheetFooter::new([Button::new("Cerrar")
+            .child(SheetFooter::new([Button::new(tr!("common-close"))
                 .ghost()
                 .on_press(|_| ModalController::get().close())
                 .into_element()]))

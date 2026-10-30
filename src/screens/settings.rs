@@ -1,4 +1,4 @@
-//! Ajustes: seven sections, side by side on wide screens and a list
+//! Settings: seven sections, side by side on wide screens and a list
 //! that opens each one on phones.
 
 mod about;
@@ -16,9 +16,11 @@ use notein_ui_kit::{
     IconButton, ListRow, Modal, ModalController, SearchField, Text, TextRole, tokens, width_class,
 };
 
+use notein_i18n::tr;
+
 pub use devices::{open_link_sheet, open_pairing};
 
-/// A section of Ajustes.
+/// A section of Settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Section {
     #[default]
@@ -43,15 +45,15 @@ impl Section {
     ];
 
     #[must_use]
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Appearance => "Apariencia",
-            Self::Pen => "Lápiz y escritura",
-            Self::Notes => "Notas",
-            Self::Library => "Biblioteca",
-            Self::Devices => "Dispositivos",
-            Self::Plugins => "Plugins",
-            Self::About => "Acerca de",
+            Self::Appearance => tr!("settings-section-appearance"),
+            Self::Pen => tr!("settings-section-pen"),
+            Self::Notes => tr!("settings-section-notes"),
+            Self::Library => tr!("settings-section-library"),
+            Self::Devices => tr!("settings-section-devices"),
+            Self::Plugins => tr!("settings-section-plugins"),
+            Self::About => tr!("settings-section-about"),
         }
     }
 
@@ -68,53 +70,17 @@ impl Section {
         }
     }
 
-    /// Words that find this section from "Buscar un ajuste".
-    const fn keywords(self) -> &'static [&'static str] {
+    /// Words that find this section from the settings search, in the
+    /// active language: one comma-separated message per section.
+    fn keywords(self) -> String {
         match self {
-            Self::Appearance => &[
-                "tema",
-                "noche",
-                "día",
-                "sepia",
-                "contraste",
-                "oled",
-                "color",
-                "acento",
-                "texto",
-                "tamaño",
-                "movimiento",
-                "oscuro",
-                "claro",
-            ],
-            Self::Pen => &[
-                "dedo",
-                "palma",
-                "doble toque",
-                "goma",
-                "escritura",
-                "letra",
-                "atajos",
-                "lápiz",
-                "pen",
-                "stylus",
-            ],
-            Self::Notes => &["markdown", "formato", "referencias", "al lado", "marcas"],
-            Self::Library => &[
-                "papelera", "exportar", "importar", "espacio", "copia", "backup", "días",
-            ],
-            Self::Devices => &[
-                "vincular",
-                "sincronizar",
-                "código",
-                "qr",
-                "escanear",
-                "enlace",
-                "servidor",
-                "nombre",
-                "dispositivo",
-            ],
-            Self::Plugins => &["instalar", "plugin", "extensiones", "biblia", "pdf"],
-            Self::About => &["versión", "licencias", "carpeta", "datos"],
+            Self::Appearance => tr!("settings-keywords-appearance"),
+            Self::Pen => tr!("settings-keywords-pen"),
+            Self::Notes => tr!("settings-keywords-notes"),
+            Self::Library => tr!("settings-keywords-library"),
+            Self::Devices => tr!("settings-keywords-devices"),
+            Self::Plugins => tr!("settings-keywords-plugins"),
+            Self::About => tr!("settings-keywords-about"),
         }
     }
 
@@ -122,7 +88,10 @@ impl Section {
         let query = query.trim().to_lowercase();
         query.is_empty()
             || self.label().to_lowercase().contains(&query)
-            || self.keywords().iter().any(|k| k.contains(&query))
+            || self
+                .keywords()
+                .split(',')
+                .any(|k| k.trim().to_lowercase().contains(&query))
     }
 
     fn body(self) -> Element {
@@ -138,12 +107,12 @@ impl Section {
     }
 }
 
-/// Open Ajustes on its first section.
+/// Open Settings on its first section.
 pub fn open() {
     open_at(Section::default());
 }
 
-/// Open Ajustes on `section`.
+/// Open Settings on `section`.
 pub fn open_at(section: Section) {
     let compact = width_class().is_compact();
     let modal = Modal::new(Settings {
@@ -183,10 +152,10 @@ fn section_list(mut open: State<Option<Section>>, query: State<String>, compact:
     rect()
         .width(Size::fill())
         .spacing(10.0)
-        .child(SearchField::new(query, "Buscar un ajuste").height(38.0))
+        .child(SearchField::new(query, tr!("settings-search-placeholder")).height(38.0))
         .child(notein_ui_kit::Group::default().children(nav))
         .maybe_child(none.then(|| {
-            Text::new(format!("Ningún ajuste con «{}»", text.trim())).role(TextRole::Hint)
+            Text::new(tr!("settings-search-empty", "query" => text.trim())).role(TextRole::Hint)
         }))
 }
 
@@ -195,7 +164,7 @@ fn phone_layout(mut open: State<Option<Section>>, list: Rect) -> Element {
     use freya::icons::lucide;
     let size = *Platform::get().current_window().root_size.read();
     let insets = *crate::hooks::use_safe_area_insets().read();
-    let header = |title: &'static str, back: bool| {
+    let header = |title: String, back: bool| {
         rect()
             .width(Size::fill())
             .height(Size::px(tokens::size::BAR))
@@ -204,18 +173,18 @@ fn phone_layout(mut open: State<Option<Section>>, list: Rect) -> Element {
             .content(Content::Flex)
             .spacing(4.0)
             .child(if back {
-                IconButton::new(lucide::arrow_left(), "Volver")
+                IconButton::new(lucide::arrow_left(), tr!("settings-back"))
                     .on_press(move |_| open.set(None))
                     .into_element()
             } else {
-                IconButton::new(lucide::x(), "Cerrar")
+                IconButton::new(lucide::x(), tr!("common-close"))
                     .on_press(|_| ModalController::get().close())
                     .into_element()
             })
             .child(Text::new(title).role(TextRole::Title).fill())
     };
     let (head, content) = open.read().map_or_else(
-        || (header("Ajustes", false), list.into_element()),
+        || (header(tr!("common-settings"), false), list.into_element()),
         |section| (header(section.label(), true), section.body()),
     );
     rect()
@@ -282,7 +251,7 @@ fn wide_layout(section: Section, list: Rect) -> Element {
                 .spacing(12.0)
                 .corner_radius(CornerRadius::new(inner, 0.0, 0.0, inner))
                 .background(p.s1)
-                .child(Text::new("Ajustes").role(TextRole::Heading))
+                .child(Text::new(tr!("common-settings")).role(TextRole::Heading))
                 .child(list),
         )
         .child(
@@ -300,7 +269,7 @@ fn wide_layout(section: Section, list: Rect) -> Element {
                         .content(Content::Flex)
                         .child(Text::new(section.label()).role(TextRole::Title).fill())
                         .child(
-                            IconButton::new(freya::icons::lucide::x(), "Cerrar")
+                            IconButton::new(freya::icons::lucide::x(), tr!("common-close"))
                                 .on_press(|_| ModalController::get().close()),
                         ),
                 )

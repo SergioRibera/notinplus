@@ -1,12 +1,14 @@
-//! Ajustes › Notas.
+//! Settings › Notes.
 
 use freya::prelude::*;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{ChoiceCard, Group, ListRow, Section, Trailing, tokens};
 
+use notein_i18n::tr;
+
 use crate::settings::SettingsStore;
 
-/// The Notas section.
+/// The Notes section.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Notes;
 
@@ -16,12 +18,14 @@ fn typing_preview(marks: bool) -> Rect {
     let p = palette();
     let word = if marks {
         label()
-            .text("**negrita**")
+            .text(
+                tr!("settings-notes-preview-marked", "word" => tr!("settings-notes-preview-bold")),
+            )
             .font_size(tokens::text::BODY)
             .color(p.t3)
     } else {
         label()
-            .text("negrita")
+            .text(tr!("settings-notes-preview-bold"))
             .font_size(tokens::text::BODY)
             .font_weight(FontWeight::BOLD)
             .color(p.t1)
@@ -37,7 +41,7 @@ fn typing_preview(marks: bool) -> Rect {
         .spacing(4.0)
         .child(
             label()
-                .text("Una idea")
+                .text(tr!("settings-notes-preview-line"))
                 .font_size(tokens::text::BODY)
                 .color(p.t1)
                 .max_lines(1),
@@ -62,7 +66,7 @@ fn quote_preview(live: bool) -> Rect {
         .spacing(2.0)
         .child(
             label()
-                .text("Sea la luz.")
+                .text(tr!("settings-notes-preview-quote"))
                 .font_size(tokens::text::BODY)
                 .color(p.t1)
                 .max_lines(1),
@@ -85,7 +89,7 @@ fn quote_preview(live: bool) -> Rect {
         .child(
             label()
                 .width(Size::flex(1.0))
-                .text("— Génesis 1:3")
+                .text(tr!("settings-notes-preview-source"))
                 .font_size(tokens::text::CAPTION)
                 .color(p.t2)
                 .max_lines(1),
@@ -128,7 +132,7 @@ impl Component for Notes {
     fn render(&self) -> impl IntoElement {
         let store = SettingsStore::get();
         let notes = store.read().notes;
-        let quoting = |live: bool, title: &'static str, detail: &'static str| {
+        let quoting = |live: bool, title: String, detail: String| {
             ChoiceCard::new(quote_preview(live), title)
                 .detail(detail)
                 .chosen(notes.live_quotes == live)
@@ -137,7 +141,7 @@ impl Component for Notes {
                     store.update(|s| s.notes.live_quotes = live);
                 })
         };
-        let format = |marks: bool, title: &'static str, detail: &'static str| {
+        let format = |marks: bool, title: String, detail: String| {
             ChoiceCard::new(typing_preview(marks), title)
                 .detail(detail)
                 .chosen(notes.show_markdown_marks == marks)
@@ -150,7 +154,7 @@ impl Component for Notes {
             .width(Size::fill())
             .spacing(24.0)
             .child(
-                Section::new("Formato al escribir").child(
+                Section::new(tr!("settings-notes-format")).child(
                     rect()
                         .width(Size::fill())
                         .horizontal()
@@ -158,18 +162,18 @@ impl Component for Notes {
                         .spacing(10.0)
                         .child(format(
                             false,
-                            "Como en un procesador de texto",
-                            "Ves negrita, no los asteriscos.",
+                            tr!("settings-notes-format-rich"),
+                            tr!("settings-notes-format-rich-hint"),
                         ))
                         .child(format(
                             true,
-                            "Mostrar marcas de markdown",
-                            "Cerca del cursor aparece **negrita**.",
+                            tr!("settings-notes-format-marks"),
+                            tr!("settings-notes-format-marks-hint"),
                         )),
                 ),
             )
             .child(
-                Section::new("Al citar contenido").child(
+                Section::new(tr!("settings-notes-quoting")).child(
                     rect()
                         .width(Size::fill())
                         .horizontal()
@@ -177,21 +181,21 @@ impl Component for Notes {
                         .spacing(10.0)
                         .child(quoting(
                             true,
-                            "Bloque vivo",
-                            "Se actualiza si cambia el original.",
+                            tr!("settings-notes-quoting-live"),
+                            tr!("settings-notes-quoting-live-hint"),
                         ))
                         .child(quoting(
                             false,
-                            "Copia fija",
-                            "Queda como texto tuyo y puedes editarla.",
+                            tr!("settings-notes-quoting-copy"),
+                            tr!("settings-notes-quoting-copy-hint"),
                         )),
                 ),
             )
             .child(
-                Section::new("Referencias").child(
+                Section::new(tr!("settings-notes-references")).child(
                     Group::default().child(
-                        ListRow::new("Abrir referencias al lado")
-                            .subtitle("Tocar un versículo, una página o una nota citada la abre en el otro panel.")
+                        ListRow::new(tr!("settings-notes-references-beside"))
+                            .subtitle(tr!("settings-notes-references-beside-hint"))
                             .trailing(Trailing::Switch {
                                 on: notes.open_refs_beside,
                                 on_toggle: EventHandler::new(move |on| {

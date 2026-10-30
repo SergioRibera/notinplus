@@ -1,4 +1,4 @@
-//! Ajustes › Plugins: what is installed, turning plugins on and off,
+//! Settings › Plugins: what is installed, turning plugins on and off,
 //! their settings, and installing a new one.
 
 use std::sync::Arc;
@@ -12,16 +12,18 @@ use notein_ui_kit::{
     Switch, Text, TextRole, Toast, Toasts, Trailing,
 };
 
+use notein_i18n::tr;
+
 use super::schema::SchemaForm;
 use crate::plugins::dynamic::{self, Staged};
 use crate::references::kind_color;
 use crate::settings::SettingsStore;
 
-fn status(plugin: &Installed) -> &'static str {
+fn status(plugin: &Installed) -> String {
     match (&plugin.origin, plugin.is_active()) {
-        (_, false) => "Desactivado",
-        (Origin::Builtin, true) => "Incluido",
-        (Origin::ThirdParty { .. }, true) => "De terceros",
+        (_, false) => tr!("settings-plugins-status-off"),
+        (Origin::Builtin, true) => tr!("settings-plugins-status-builtin"),
+        (Origin::ThirdParty { .. }, true) => tr!("settings-plugins-status-third-party"),
     }
 }
 
@@ -58,7 +60,7 @@ impl Component for Plugins {
                 .width(Size::fill())
                 .spacing(16.0)
                 .child(
-                    Button::new("Todos los plugins")
+                    Button::new(tr!("settings-plugins-all"))
                         .ghost()
                         .small()
                         .icon(lucide::arrow_left())
@@ -77,7 +79,7 @@ impl Component for Plugins {
                 let icon = plugin.kinds.first().map(|k| k.info());
                 let toggle_id = id.clone();
                 ListRow::new(plugin.info.name.clone())
-                    .subtitle(format!("{} · {}", status(plugin), plugin.info.description))
+                    .subtitle(tr!("settings-plugins-summary", "status" => status(plugin), "description" => plugin.info.description.to_string()))
                     .kind(
                         icon.as_ref()
                             .map_or_else(lucide::puzzle, |k| k.icon.clone()),
@@ -96,7 +98,7 @@ impl Component for Plugins {
             .iter()
             .map(|f| {
                 ListRow::new(f.name.clone())
-                    .subtitle(format!("No se pudo cargar · {}", f.reason))
+                    .subtitle(tr!("settings-plugins-failed", "reason" => f.reason.clone()))
                     .icon(lucide::triangle_alert())
                     .danger(true)
                     .into_element()
@@ -108,19 +110,21 @@ impl Component for Plugins {
             .spacing(20.0)
             .child(
                 Group::default().child(
-                    ListRow::new("Instalar plugin…")
-                        .subtitle("Desde un archivo .ntp")
+                    ListRow::new(tr!("settings-plugins-install"))
+                        .subtitle(tr!("settings-plugins-install-hint"))
                         .icon(lucide::package_plus())
                         .chevron()
                         .on_press(|_| install()),
                 ),
             )
-            .child(Section::new("Instalados").child(Group::default().children(rows)))
-            .maybe_child(
-                (!failed.is_empty()).then(|| {
-                    Section::new("Con problemas").child(Group::default().children(failed))
-                }),
+            .child(
+                Section::new(tr!("settings-plugins-installed"))
+                    .child(Group::default().children(rows)),
             )
+            .maybe_child((!failed.is_empty()).then(|| {
+                Section::new(tr!("settings-plugins-with-problems"))
+                    .child(Group::default().children(failed))
+            }))
             .into_element()
     }
 }
@@ -153,7 +157,7 @@ impl Detail {
                     .spacing(4.0)
                     .child(Text::new(plugin.info.name.clone()).role(TextRole::Heading))
                     .child(
-                        Text::new(format!("{} · {}", status(plugin), plugin.info.description))
+                        Text::new(tr!("settings-plugins-summary", "status" => status(plugin), "description" => plugin.info.description.to_string()))
                             .role(TextRole::Meta),
                     ),
             )
@@ -178,7 +182,7 @@ impl Detail {
                     .subtitle(if creates.is_empty() {
                         info.search_group.to_string()
                     } else {
-                        format!("Crear: {creates}")
+                        tr!("settings-plugins-creates", "entries" => creates)
                     })
                     .kind(info.icon.clone(), kind_color(&p, info.color))
                     .into_element()
@@ -191,19 +195,19 @@ impl Detail {
         use freya::icons::lucide;
         let plugin = &self.plugin;
         let file = match &plugin.origin {
-            Origin::Builtin => "Incluido en Notein".to_owned(),
+            Origin::Builtin => tr!("settings-plugins-file-builtin"),
             Origin::ThirdParty { library, .. } => library.display().to_string(),
         };
         let details = [
-            format!("Id: {}", plugin.info.id),
-            format!("Versión: {}", plugin.info.version),
-            format!("Autor: {}", plugin.info.author),
-            format!("Archivo: {file}"),
-            format!("SDK: {}", notein_plugin::loader::SDK_ABI_VERSION),
+            tr!("settings-plugins-tech-id", "id" => plugin.info.id.to_string()),
+            tr!("settings-plugins-tech-version", "version" => plugin.info.version.to_string()),
+            tr!("settings-plugins-tech-author", "author" => plugin.info.author.to_string()),
+            tr!("settings-plugins-tech-file", "file" => file),
+            tr!("settings-plugins-tech-sdk", "sdk" => notein_plugin::loader::SDK_ABI_VERSION.to_string()),
         ];
         Group::default()
             .child(
-                ListRow::new("Detalles técnicos")
+                ListRow::new(tr!("settings-plugins-tech"))
                     .icon(lucide::code())
                     .trailing(Trailing::Element(
                         Icon::new(if open() {
@@ -236,11 +240,14 @@ impl Component for Detail {
             .width(Size::fill())
             .spacing(18.0)
             .child(self.header())
-            .child(Section::new("Qué agrega").child(Group::default().children(self.adds())))
             .child(
-                Section::new("Ajustes").child(self.plugin.settings.as_ref().map_or_else(
+                Section::new(tr!("settings-plugins-adds"))
+                    .child(Group::default().children(self.adds())),
+            )
+            .child(Section::new(tr!("common-settings")).child(
+                self.plugin.settings.as_ref().map_or_else(
                     || {
-                        Text::new("Este plugin no tiene ajustes.")
+                        Text::new(tr!("settings-plugins-no-settings"))
                             .role(TextRole::Hint)
                             .into_element()
                     },
@@ -250,8 +257,8 @@ impl Component for Detail {
                         }
                         .into_element()
                     },
-                )),
-            )
+                ),
+            ))
             .child(self.technical(technical))
     }
 }
@@ -260,7 +267,7 @@ impl Component for Detail {
 fn install() {
     spawn(async move {
         let picked = match crate::files::pick(
-            "Instalar plugin",
+            &tr!("settings-plugins-install-pick"),
             &["ntp"],
             &["application/zip", "application/octet-stream"],
         )
@@ -292,14 +299,14 @@ fn install() {
 }
 
 fn incompatible(name: &str, why: String) {
-    Sheet::titled(format!("No se puede instalar «{name}»"))
+    Sheet::titled(tr!("settings-plugins-incompatible", "name" => name))
         .child(Notice::new(NoticeTone::Danger, why))
         .footer(SheetFooter::new([
-            Button::new("Cerrar")
+            Button::new(tr!("common-close"))
                 .ghost()
                 .on_press(|_| ModalController::get().close())
                 .into_element(),
-            Button::new("Elegir otro")
+            Button::new(tr!("settings-plugins-choose-another"))
                 .primary()
                 .on_press(|_| {
                     ModalController::get().close();
@@ -318,35 +325,35 @@ fn review_sheet(staged: Arc<Staged>, review: &Review) {
         .iter()
         .map(|k| {
             ListRow::new(k.label.clone())
-                .subtitle("Un tipo de documento nuevo")
+                .subtitle(tr!("settings-plugins-review-kind"))
                 .kind(k.icon.clone(), kind_color(&p, k.color))
                 .into_element()
         })
         .chain(review.entries.iter().map(|e| {
             ListRow::new(e.label.clone())
-                .subtitle("En el menú Crear")
+                .subtitle(tr!("settings-plugins-review-entry"))
                 .kind(e.icon.clone(), kind_color(&p, e.color))
                 .into_element()
         }))
         .collect();
     let name = review.info.name.to_string();
-    Sheet::titled(format!("Instalar «{name}»"))
-        .subtitle(format!("Versión {} · {}", review.info.version, review.info.author))
+    Sheet::titled(tr!("settings-plugins-review-title", "name" => name.clone()))
+        .subtitle(tr!("settings-plugins-review-subtitle", "version" => review.info.version.to_string(), "author" => review.info.author.to_string()))
         .child(
             rect()
                 .width(Size::fill())
                 .spacing(14.0)
                 .child(Text::new(review.info.description.clone()))
-                .child(Section::new("Qué agrega").child(Group::default().children(rows)))
+                .child(Section::new(tr!("settings-plugins-adds")).child(Group::default().children(rows)))
                 .maybe_child((review.settings > 0).then(|| {
-                    Text::new(format!("Trae {} que podés cambiar en Ajustes › Plugins.", crate::format::count(review.settings, "ajuste", "ajustes")))
+                    Text::new(tr!("settings-plugins-review-settings", "count" => review.settings))
                         .role(TextRole::Hint)
                 }))
-                .child(Notice::new(NoticeTone::Warning, "Los plugins de terceros corren con los mismos permisos que Notein. Instalá solo los que conozcas.")),
+                .child(Notice::new(NoticeTone::Warning, tr!("settings-plugins-review-warning"))),
         )
         .footer(SheetFooter::new([
-            Button::new("Cancelar").ghost().on_press(|_| ModalController::get().close()).into_element(),
-            Button::new("Instalar")
+            Button::new(tr!("common-cancel")).ghost().on_press(|_| ModalController::get().close()).into_element(),
+            Button::new(tr!("settings-plugins-review-install"))
                 .primary()
                 .icon(lucide::download())
                 .on_press(move |_| {
@@ -354,7 +361,7 @@ fn review_sheet(staged: Arc<Staged>, review: &Review) {
                     match dynamic::install(staged.folder()) {
                         Ok(installed) => {
                             crate::plugins::content::index_library();
-                            Toasts::get().show(Toast::new(format!("«{installed}» instalado")));
+                            Toasts::get().show(Toast::new(tr!("settings-plugins-installed-toast", "name" => installed)));
                         }
                         Err(err) => incompatible(&name, err.to_string()),
                     }

@@ -1,4 +1,4 @@
-//! Ajustes › Lápiz y escritura.
+//! Settings › Pen and handwriting.
 
 use freya::prelude::*;
 use freya_engine::prelude::{Color as SkColor, Paint, PaintStyle};
@@ -8,11 +8,13 @@ use notein_ui_kit::{
     ModalController, Section, Segmented, Sheet, Text, TextRole, Trailing, tokens,
 };
 
+use notein_i18n::tr;
+
 use crate::ink_glyph::GlyphFont;
 use crate::references::kind_color;
 use crate::settings::{EntryKey, FingerDraw, PenDoubleTap, SettingsStore};
 
-/// Pick what shortcut `slot` creates, in a sheet over Ajustes.
+/// Pick what shortcut `slot` creates, in a sheet over Settings.
 fn pick_shortcut(slot: usize, current: Option<&EntryKey>) {
     let p = palette();
     let choose = move |key: Option<EntryKey>| {
@@ -23,7 +25,7 @@ fn pick_shortcut(slot: usize, current: Option<&EntryKey>) {
         }
     };
     let mut entries = vec![ActionEntry::Item(
-        Action::new("Ninguno", choose(None))
+        Action::new(tr!("settings-pen-shortcut-none"), choose(None))
             .icon(freya::icons::lucide::circle_off())
             .checked(current.is_none()),
     )];
@@ -44,7 +46,7 @@ fn pick_shortcut(slot: usize, current: Option<&EntryKey>) {
             }),
     );
     Sheet::titled(slot_title(slot))
-        .subtitle("Lo que crea la burbuja con un toque.")
+        .subtitle(tr!("settings-pen-shortcut-pick-hint"))
         .on_back(|()| ModalController::get().close())
         .without_close()
         .width(420.0)
@@ -52,15 +54,15 @@ fn pick_shortcut(slot: usize, current: Option<&EntryKey>) {
         .push();
 }
 
-const fn slot_title(slot: usize) -> &'static str {
-    if slot == 0 { "Atajo 1" } else { "Atajo 2" }
+fn slot_title(slot: usize) -> String {
+    tr!("settings-pen-shortcut-slot", "slot" => slot + 1)
 }
 
-/// The Lápiz y escritura section.
+/// The Pen and handwriting section.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Pen;
 
-/// «Hola Romanos» drawn with a font's own outlines: the fonts are not
+/// A sample phrase drawn with a font's own outlines: the fonts are not
 /// installed as text fonts, only baked as ink.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct FontSample {
@@ -74,13 +76,14 @@ impl Component for FontSample {
             font,
             color: [r, g, b],
         } = *self;
+        let sample = tr!("settings-pen-font-sample");
         rect()
             .background(RenderCallback::new(move |ctx| {
                 let RenderTarget::Background { canvas, .. } = &ctx.target else {
                     return;
                 };
                 // Already clipped to the element and with its origin at 0, 0.
-                let fit = |height| font.sample("Hola Romanos", (0.0, 0.0), height);
+                let fit = |height| font.sample(&sample, (0.0, 0.0), height);
                 let Some((mut path, width)) = fit(ctx.size.height) else {
                     return;
                 };
@@ -124,9 +127,10 @@ fn font_card(font: GlyphFont, chosen: bool) -> Element {
 fn shortcut_row(slot: usize, current: Option<EntryKey>) -> Element {
     let p = palette();
     let entry = current.as_ref().and_then(crate::flows::create::entry_for);
-    let value = entry
-        .as_ref()
-        .map_or_else(|| "Ninguno".to_owned(), |e| e.entry.label.to_string());
+    let value = entry.as_ref().map_or_else(
+        || tr!("settings-pen-shortcut-none"),
+        |e| e.entry.label.to_string(),
+    );
     let badge = entry.as_ref().map_or_else(
         || {
             Icon::new(freya::icons::lucide::circle_plus())
@@ -144,9 +148,13 @@ fn shortcut_row(slot: usize, current: Option<EntryKey>) -> Element {
                 .cross_align(Alignment::Center)
                 .spacing(10.0)
                 .child(badge)
-                .child(Button::new("Cambiar").small().on_press(move |_| {
-                    pick_shortcut(slot, current.as_ref());
-                }))
+                .child(
+                    Button::new(tr!("settings-pen-shortcut-change"))
+                        .small()
+                        .on_press(move |_| {
+                            pick_shortcut(slot, current.as_ref());
+                        }),
+                )
                 .into_element(),
         ))
         .into_element()
@@ -184,16 +192,16 @@ impl Component for Pen {
             .width(Size::fill())
             .spacing(24.0)
             .child(choice_section(
-                "Dibujar con el dedo",
+                tr!("settings-pen-finger"),
                 FingerDraw::ALL.map(FingerDraw::label),
                 finger_index,
-                "Automático: el dedo dibuja hasta que uses un lápiz en este dispositivo; después mueve la hoja.",
+                tr!("settings-pen-finger-hint"),
                 |i| SettingsStore::get().update(|s| s.pen.finger_draws = FingerDraw::ALL[i]),
             ))
             .child(
                 Group::default().child(
-                    ListRow::new("Ignorar la palma")
-                        .subtitle("Mientras el lápiz toca la pantalla, la mano no dibuja ni mueve.")
+                    ListRow::new(tr!("settings-pen-palm"))
+                        .subtitle(tr!("settings-pen-palm-hint"))
                         .trailing(Trailing::Switch {
                             on: pen.palm_rejection,
                             on_toggle: EventHandler::new(|on| {
@@ -203,41 +211,33 @@ impl Component for Pen {
                 ),
             )
             .child(choice_section(
-                "Doble toque del lápiz",
+                tr!("settings-pen-double-tap"),
                 PenDoubleTap::ALL.map(PenDoubleTap::label),
                 tap_index,
-                "En lápices que lo permiten (Apple Pencil 2, S Pen, lápices con botón).",
+                tr!("settings-pen-double-tap-hint"),
                 |i| SettingsStore::get().update(|s| s.pen.double_tap = PenDoubleTap::ALL[i]),
             ))
             .child(
-                Section::new("Escritura suavizada")
-                    .child(
-                        Text::new("La letra con la que la herramienta de firma redibuja lo que escribís.")
-                            .role(TextRole::Hint),
-                    )
-                    .child(
-                        rect().width(Size::fill()).spacing(10.0).children(
-                            GlyphFont::ALL.chunks(2).map(|pair| {
-                                rect()
-                                    .width(Size::fill())
-                                    .horizontal()
-                                    .content(Content::Flex)
-                                    .spacing(10.0)
-                                    .children(
-                                        pair.iter()
-                                            .map(|font| font_card(*font, *font == pen.smooth_font)),
-                                    )
-                                    .into_element()
-                            }),
-                        ),
-                    ),
+                Section::new(tr!("settings-pen-smooth"))
+                    .child(Text::new(tr!("settings-pen-smooth-hint")).role(TextRole::Hint))
+                    .child(rect().width(Size::fill()).spacing(10.0).children(
+                        GlyphFont::ALL.chunks(2).map(|pair| {
+                            rect()
+                                .width(Size::fill())
+                                .horizontal()
+                                .content(Content::Flex)
+                                .spacing(10.0)
+                                .children(
+                                    pair.iter()
+                                        .map(|font| font_card(*font, *font == pen.smooth_font)),
+                                )
+                                .into_element()
+                        }),
+                    )),
             )
             .child(
-                Section::new("Atajos sobre el +")
-                    .child(
-                        Text::new("Dos burbujas encima del botón + para crear algo con un toque.")
-                            .role(TextRole::Hint),
-                    )
+                Section::new(tr!("settings-pen-shortcuts"))
+                    .child(Text::new(tr!("settings-pen-shortcuts-hint")).role(TextRole::Hint))
                     .child(
                         Group::default()
                             .child(shortcut_row(0, pen.fab_shortcuts[0].clone()))

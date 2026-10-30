@@ -14,6 +14,8 @@ use notein_ui_kit::{
     PopoverAlign, PopoverSide, Segmented, Stepper, Switch, Text, TextField, TextRole, Trailing,
 };
 
+use notein_i18n::tr;
+
 /// Widest integer range drawn as a stepper; wider ranges get a field.
 const STEPPER_RANGE: i64 = 50;
 /// Most enum options drawn as a segmented control.
@@ -66,7 +68,7 @@ impl Component for SchemaForm {
             })
             .collect();
         if rows.is_empty() {
-            return Text::new("Este plugin no tiene ajustes.")
+            return Text::new(tr!("settings-plugins-no-settings"))
                 .role(TextRole::Hint)
                 .into_element();
         }
@@ -145,7 +147,9 @@ impl FieldRow {
             .child(TextField::new(text).on_submit(move |typed: String| {
                 match typed.trim().parse::<i64>() {
                     Ok(n) if (min..=max).contains(&n) => error.set(set(ConfigValue::Int(n))),
-                    _ => error.set(Some(format!("Un número entre {min} y {max}"))),
+                    _ => error.set(Some(
+                        tr!("settings-plugins-field-range", "min" => min, "max" => max),
+                    )),
                 }
             }))
             .into_element()
@@ -193,7 +197,9 @@ impl FieldRow {
             .child(TextField::new(text).error(error.read().clone()).on_submit(
                 move |typed: String| {
                     if typed.chars().count() > max_len {
-                        error.set(Some(format!("Hasta {max_len} caracteres")));
+                        error.set(Some(
+                            tr!("settings-plugins-field-max-len", "max" => max_len),
+                        ));
                     } else {
                         error.set(set(ConfigValue::String(typed)));
                     }
@@ -235,7 +241,8 @@ impl FieldRow {
             ConfigValue::String(v) => options.iter().find(|o| o.value == *v),
             _ => None,
         };
-        let shown = chosen.map_or_else(|| "Elegir".to_owned(), |o| o.label.clone());
+        let shown =
+            chosen.map_or_else(|| tr!("settings-plugins-field-choose"), |o| o.label.clone());
         let options = options.to_vec();
         let selected = chosen.map(|o| o.value.clone());
         Button::new(shown)
@@ -293,7 +300,7 @@ impl FieldRow {
                             .alignment(BorderAlignment::Outer),
                     )
                     .a11y_role(AccessibilityRole::Button)
-                    .a11y_alt("Cambiar color")
+                    .a11y_alt(tr!("settings-plugins-field-color"))
                     .on_tap(move |_| {
                         let next = !wheel_open();
                         wheel_open.set(next);
@@ -326,7 +333,7 @@ impl FieldRow {
             ConfigValue::FilePath(path) if !path.is_empty() => std::path::Path::new(path)
                 .file_name()
                 .map_or_else(|| path.clone(), |n| n.to_string_lossy().into_owned()),
-            _ => "Ningún archivo".to_owned(),
+            _ => tr!("settings-plugins-field-no-file"),
         };
         let extensions = extensions.to_vec();
         let key = self.field.key.clone();
@@ -335,13 +342,13 @@ impl FieldRow {
             .cross_align(Alignment::Center)
             .spacing(8.0)
             .child(Text::new(shown).role(TextRole::Meta).lines(1))
-            .child(Button::new("Elegir…").ghost().small().on_press(move |_| {
+            .child(Button::new(tr!("settings-plugins-field-choose-file")).ghost().small().on_press(move |_| {
                 let set = set.clone();
                 let extensions = extensions.clone();
                 let key = key.clone();
                 spawn(async move {
                     let exts: Vec<&str> = extensions.iter().map(String::as_str).collect();
-                    match crate::files::pick("Elegir archivo", &exts, &[]).await {
+                    match crate::files::pick(&tr!("settings-plugins-field-pick-file"), &exts, &[]).await {
                         Ok(Some(picked)) => {
                             let dir = crate::plugins::dynamic::plugins_dir()
                                 .join(".files")
@@ -356,7 +363,7 @@ impl FieldRow {
                                 ))),
                                 Err(err) => {
                                     error
-                                        .set(Some(format!("No se pudo guardar el archivo: {err}")));
+                                        .set(Some(tr!("settings-plugins-field-save-failed", "error" => err.to_string())));
                                 }
                             }
                         }
@@ -379,7 +386,7 @@ impl FieldRow {
         let set = self.setter();
         let is_armed = armed.read().is_some_and(|at| at.elapsed() < CONFIRM_WINDOW);
         let label = if is_armed {
-            "¿Seguro? Tocá de nuevo".to_owned()
+            tr!("settings-plugins-field-confirm")
         } else {
             button_label.to_owned()
         };

@@ -13,6 +13,8 @@ use notein_ui_kit::{
     Toast, Toasts, Trailing, tokens, width_class,
 };
 
+use notein_i18n::tr;
+
 use crate::library::{ItemId, LibraryData, WorkspaceId};
 use crate::session_end::SessionEnd;
 use crate::state::LibraryView;
@@ -101,7 +103,7 @@ pub fn share(target: ShareTarget) {
         read_only,
         created,
     };
-    Sheet::titled("Compartir")
+    Sheet::titled(tr!("common-share"))
         .width(600.0)
         .sticky()
         .child(form)
@@ -135,7 +137,7 @@ impl std::fmt::Debug for ShareForm {
 fn card(
     on: bool,
     icon: Bytes,
-    title: &'static str,
+    title: String,
     sub: String,
     enabled: bool,
     on_pick: impl Fn() + 'static,
@@ -156,7 +158,7 @@ fn card(
         .spacing(6.0)
         .opacity(if enabled { 1.0 } else { 0.45 })
         .a11y_role(AccessibilityRole::RadioButton)
-        .a11y_alt(title)
+        .a11y_alt(title.clone())
         .maybe(enabled, |r| r.on_tap(move |_| on_pick()))
         .child(
             Icon::new(icon)
@@ -189,7 +191,7 @@ impl ShareForm {
                 scope.set(chosen);
             }
         };
-        Section::new("Qué").child(
+        Section::new(tr!("collab-share-what")).child(
             rect()
                 .width(Size::fill())
                 .height(Size::px(112.0))
@@ -199,7 +201,7 @@ impl ShareForm {
                 .child(card(
                     current == Scope::Document,
                     lucide::file_text(),
-                    "Este documento",
+                    tr!("collab-share-scope-document"),
                     doc_name,
                     target.item.is_some(),
                     choose(Scope::Document),
@@ -207,16 +209,16 @@ impl ShareForm {
                 .child(card(
                     current == Scope::WithNotebooks,
                     lucide::notebook_pen(),
-                    "Con sus cuadernos",
-                    crate::format::count(notebooks, "cuaderno", "cuadernos"),
+                    tr!("collab-share-scope-notebooks"),
+                    tr!("collab-share-notebook-count", "count" => notebooks),
                     notebooks > 0,
                     choose(Scope::WithNotebooks),
                 ))
                 .child(card(
                     current == Scope::Mesa,
                     lucide::layout_grid(),
-                    "Toda la mesa",
-                    crate::format::count(mesa_docs, "documento", "documentos"),
+                    tr!("collab-share-scope-desk"),
+                    tr!("collab-share-document-count", "count" => mesa_docs),
                     mesa_docs > 0,
                     choose(Scope::Mesa),
                 )),
@@ -228,25 +230,28 @@ impl ShareForm {
         let (mut permanent, mut read_only) = (self.permanent, self.read_only);
         let lasting = *permanent.read();
         [
-            Section::new("Cómo")
+            Section::new(tr!("collab-share-how"))
                 .child(
-                    Segmented::new(["Solo esta sesión", "Permanente"], usize::from(lasting))
-                        .full_width()
-                        .on_select(move |i: usize| permanent.set(i == 1)),
+                    Segmented::new(
+                        [tr!("collab-mode-session"), tr!("collab-mode-permanent")],
+                        usize::from(lasting),
+                    )
+                    .full_width()
+                    .on_select(move |i: usize| permanent.set(i == 1)),
                 )
                 .child(
                     Text::new(if lasting {
-                        "Cada uno guarda una copia y los cambios se juntan cuando vuelven a verse."
+                        tr!("collab-share-permanent-hint")
                     } else {
-                        "Mientras estés conectado. Al terminar, los invitados pueden guardarse una copia."
+                        tr!("collab-share-session-hint")
                     })
                     .role(TextRole::Hint),
                 )
                 .into_element(),
             Group::default()
                 .child(
-                    ListRow::new("Solo lectura")
-                        .subtitle("Los invitados miran y siguen tu página, pero no escriben.")
+                    ListRow::new(tr!("collab-share-read-only"))
+                        .subtitle(tr!("collab-share-read-only-hint"))
                         .trailing(Trailing::Switch {
                             on: *read_only.read(),
                             on_toggle: EventHandler::new(move |on| read_only.set(on)),
@@ -268,7 +273,7 @@ impl Component for ShareForm {
                 || {
                     rect()
                         .padding(20.0)
-                        .child(Text::new("Preparando la invitación…").role(TextRole::Meta))
+                        .child(Text::new(tr!("collab-share-preparing")).role(TextRole::Meta))
                         .into_element()
                 },
                 |view| Session { view: view.clone() }.into_element(),
@@ -279,12 +284,12 @@ impl Component for ShareForm {
             .spacing(18.0)
             .child(self.what(&data))
             .children(self.how())
-            .maybe_child(snapshot.trusted.is_empty().then(|| {
-                Notice::new(
-                    NoticeTone::Info,
-                    "Los invitados entran con el enlace o el QR. Si no están en la misma red, hace falta un servidor (Ajustes › Dispositivos).",
-                )
-            }))
+            .maybe_child(
+                snapshot
+                    .trusted
+                    .is_empty()
+                    .then(|| Notice::new(NoticeTone::Info, tr!("collab-share-relay-hint"))),
+            )
             .into_element()
     }
 }
@@ -317,19 +322,19 @@ impl Component for ShareFooter {
                 .map(|v| v.invite_link.clone())
                 .unwrap_or_default();
             return SheetFooter::new([
-                Button::new("Terminar sesión")
+                Button::new(tr!("collab-session-end"))
                     .danger()
                     .on_press(move |_| {
                         crate::sync::end_share(id);
                         ModalController::get().close();
-                        Toasts::get().show(Toast::new("Sesión terminada"));
+                        Toasts::get().show(Toast::new(tr!("collab-session-ended-toast")));
                     })
                     .into_element(),
-                Button::new("Listo")
+                Button::new(tr!("common-done"))
                     .ghost()
                     .on_press(|_| ModalController::get().close())
                     .into_element(),
-                Button::new("Copiar enlace")
+                Button::new(tr!("collab-copy-link"))
                     .primary()
                     .icon(lucide::copy())
                     .on_press(move |_| copy_link(&link))
@@ -356,11 +361,11 @@ impl Component for ShareFooter {
         };
         let enabled = !docs.is_empty();
         SheetFooter::new([
-            Button::new("Cancelar")
+            Button::new(tr!("common-cancel"))
                 .ghost()
                 .on_press(|_| ModalController::get().close())
                 .into_element(),
-            Button::new("Crear invitación")
+            Button::new(tr!("collab-share-create"))
                 .primary()
                 .icon(lucide::users())
                 .enabled(enabled)
@@ -394,7 +399,7 @@ impl Component for ShareFooter {
 fn copy_link(link: &str) {
     match freya::clipboard::Clipboard::set(link.to_owned()) {
         Ok(()) => {
-            Toasts::get().show(Toast::new("Enlace copiado"));
+            Toasts::get().show(Toast::new(tr!("collab-link-copied")));
         }
         Err(err) => log::warn!("copy invite: {err:?}"),
     }
@@ -425,11 +430,11 @@ enum Role {
 }
 
 impl Role {
-    const fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Self::Owner => "Organiza",
-            Self::Editor => "Edita",
-            Self::Viewer => "Mira",
+            Self::Owner => tr!("collab-role-owner"),
+            Self::Editor => tr!("collab-role-editor"),
+            Self::Viewer => tr!("collab-role-viewer"),
         }
     }
 }
@@ -490,7 +495,7 @@ impl Component for Session {
                 .map(|person| Person {
                     initials: initials(&person.name).into(),
                     name: if person.me {
-                        format!("{} (vos)", person.name).into()
+                        tr!("collab-person-me", "name" => person.name.as_str()).into()
                     } else {
                         person.name.clone().into()
                     },
@@ -539,13 +544,16 @@ impl Component for Session {
                                     .cross_align(Alignment::Center)
                                     .spacing(6.0)
                                     .child(Icon::new(lucide::circle_check()).size(16.0).color(p.ok))
-                                    .child(Text::new("Invitación lista").role(TextRole::Strong)),
+                                    .child(
+                                        Text::new(tr!("collab-invite-ready"))
+                                            .role(TextRole::Strong),
+                                    ),
                             )
                             .child(Text::new(view.title.clone()).role(TextRole::Title).lines(2))
                             .child(
                                 Text::new(match view.mode {
-                                    ShareMode::Session => "Solo esta sesión",
-                                    ShareMode::Permanent => "Permanente",
+                                    ShareMode::Session => tr!("collab-mode-session"),
+                                    ShareMode::Permanent => tr!("collab-mode-permanent"),
                                 })
                                 .role(TextRole::Meta),
                             )
@@ -560,9 +568,9 @@ impl Component for Session {
                     ),
             )
             .child(
-                Section::new(format!(
-                    "Personas en la sesión · {}",
-                    self.view.members.len() + 1
+                Section::new(tr!(
+                    "collab-session-people",
+                    "count" => self.view.members.len() + 1,
                 ))
                 .child(list),
             )
@@ -581,7 +589,7 @@ fn qr(text: &str) -> Option<Bytes> {
 }
 
 fn people_sheet(share: ShareId, people: Vec<Participant>, is_owner: bool) {
-    Sheet::titled(format!("Personas · {}", people.len()))
+    Sheet::titled(tr!("collab-people-title", "count" => people.len()))
         .child(People {
             share,
             participants: people,
@@ -616,12 +624,12 @@ impl Component for People {
                     .as_ref()
                     .is_some_and(|(k, at)| *k == key && at.elapsed() < CONFIRM_WINDOW);
                 let status = match (person.role, person.online) {
-                    (Role::Owner, _) => Role::Owner.label().to_owned(),
-                    (role, true) => format!("{} · conectado", role.label()),
-                    (role, false) => format!("{} · sin conexión", role.label()),
+                    (Role::Owner, _) => Role::Owner.label(),
+                    (role, true) => tr!("collab-person-online", "role" => role.label()),
+                    (role, false) => tr!("collab-person-offline", "role" => role.label()),
                 };
                 let name = if person.me {
-                    format!("{} (vos)", person.name)
+                    tr!("collab-person-me", "name" => person.name.as_str())
                 } else {
                     person.name.clone()
                 };
@@ -644,9 +652,9 @@ impl Component for People {
                             .spacing(6.0)
                             .child(
                                 Button::new(if viewer {
-                                    "Puede editar"
+                                    tr!("collab-person-allow-edit")
                                 } else {
-                                    "Solo puede mirar"
+                                    tr!("collab-person-view-only")
                                 })
                                 .ghost()
                                 .small()
@@ -654,9 +662,9 @@ impl Component for People {
                             )
                             .child(
                                 Button::new(if removing {
-                                    "¿Seguro?"
+                                    tr!("collab-person-confirm")
                                 } else {
-                                    "Quitar de la sesión"
+                                    tr!("collab-person-remove")
                                 })
                                 .variant(if removing {
                                     ButtonVariant::DangerFill
@@ -685,10 +693,10 @@ impl Component for People {
         rect()
             .width(Size::fill())
             .spacing(12.0)
-            .child(SearchField::new(query, "Buscar una persona").height(38.0))
+            .child(SearchField::new(query, tr!("collab-people-search")).height(38.0))
             .child(Group::default().children(rows))
             .maybe_child(empty.then(|| {
-                Text::new("Nadie con ese nombre")
+                Text::new(tr!("collab-people-empty"))
                     .role(TextRole::Hint)
                     .color(p.t3)
             }))
@@ -715,7 +723,10 @@ pub fn invitation(link: String) {
                             )
                             .size(56.0),
                         )
-                        .child(Text::new(format!("{owner} te invita")).role(TextRole::Meta))
+                        .child(
+                            Text::new(tr!("collab-invite-from", "owner" => owner.as_str()))
+                                .role(TextRole::Meta),
+                        )
                         .child(
                             Text::new(title)
                                 .role(TextRole::Heading)
@@ -723,18 +734,18 @@ pub fn invitation(link: String) {
                         )
                         .child(
                             notein_ui_kit::Tag::new(match mode {
-                                ShareMode::Session => "Solo esta sesión",
-                                ShareMode::Permanent => "Permanente · te queda una copia",
+                                ShareMode::Session => tr!("collab-mode-session"),
+                                ShareMode::Permanent => tr!("collab-mode-permanent-copy"),
                             })
                             .icon(freya::icons::lucide::users()),
                         ),
                 )
                 .footer(SheetFooter::new([
-                    Button::new("Ahora no")
+                    Button::new(tr!("collab-not-now"))
                         .ghost()
                         .on_press(|_| ModalController::get().close())
                         .into_element(),
-                    Button::new("Unirme")
+                    Button::new(tr!("collab-join"))
                         .primary()
                         .on_press(move |_| {
                             ModalController::get().close();
@@ -747,22 +758,21 @@ pub fn invitation(link: String) {
                 .open();
         }
         Some(LinkTarget::Pair { name }) => {
-            Sheet::titled(format!("¿Vincular con {name}?"))
-                .child(
-                    Text::new("Sus documentos y los tuyos se van a sincronizar entre los dos.")
-                        .role(TextRole::Hint),
-                )
+            Sheet::titled(tr!("collab-pair-title", "name" => name.as_str()))
+                .child(Text::new(tr!("collab-pair-hint")).role(TextRole::Hint))
                 .footer(SheetFooter::new([
-                    Button::new("Ahora no")
+                    Button::new(tr!("collab-not-now"))
                         .ghost()
                         .on_press(|_| ModalController::get().close())
                         .into_element(),
-                    Button::new("Vincular")
+                    Button::new(tr!("collab-pair"))
                         .primary()
                         .on_press(move |_| {
                             ModalController::get().close();
                             if crate::sync::open_link(&link).is_some() {
-                                Toasts::get().show(Toast::new(format!("Vinculando con {name}…")));
+                                Toasts::get().show(Toast::new(
+                                    tr!("collab-pairing-toast", "name" => name.as_str()),
+                                ));
                             }
                         })
                         .into_element(),
@@ -773,7 +783,7 @@ pub fn invitation(link: String) {
     }
 }
 
-/// The "Uniéndose…" sheet, following the join until it lands or fails.
+/// The "Joining…" sheet, following the join until it lands or fails.
 pub fn joining() {
     Sheet::default().without_close().child(Joining).open();
 }
@@ -781,27 +791,27 @@ pub fn joining() {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Joining;
 
-/// Why the join did not work, and Entendido.
+/// Why the join did not work, and Got it.
 fn join_failed(failure: notein_sync::JoinFailure) -> Element {
     let why = match failure {
         notein_sync::JoinFailure::Refused => {
-            "La invitación ya no vale o el organizador no te dejó entrar."
+            tr!("collab-join-refused")
         }
         notein_sync::JoinFailure::Unreachable => {
-            "No encontramos a quien te invitó. Tienen que estar conectados al mismo tiempo."
+            tr!("collab-join-unreachable")
         }
     };
     rect()
         .width(Size::fill())
         .spacing(14.0)
-        .child(Notice::new(NoticeTone::Danger, "No se pudo entrar").detail(why))
+        .child(Notice::new(NoticeTone::Danger, tr!("collab-join-failed")).detail(why))
         .child(
             rect()
                 .width(Size::fill())
                 .horizontal()
                 .main_align(Alignment::End)
                 .child(
-                    Button::new("Entendido")
+                    Button::new(tr!("collab-got-it"))
                         .primary()
                         .on_press(|_| ModalController::get().close()),
                 ),
@@ -878,9 +888,9 @@ impl Component for Joining {
                     .child(notein_ui_kit::Spinner::default())
                     .child(
                         Text::new(if title.is_empty() {
-                            "Uniéndose…".to_owned()
+                            tr!("collab-joining")
                         } else {
-                            format!("Uniéndose a «{title}»…")
+                            tr!("collab-joining-title", "title" => title.as_str())
                         })
                         .role(TextRole::Strong),
                     ),
@@ -888,9 +898,9 @@ impl Component for Joining {
             .child(ProgressBar::new(fraction))
             .child(
                 Text::new(if total == 0 {
-                    "Buscando a quien te invitó…".to_owned()
+                    tr!("collab-joining-searching")
                 } else {
-                    format!("Descargando {done} de {total}")
+                    tr!("collab-joining-progress", "done" => done, "total" => total)
                 })
                 .role(TextRole::Meta),
             )
@@ -899,46 +909,47 @@ impl Component for Joining {
                     .width(Size::fill())
                     .horizontal()
                     .main_align(Alignment::End)
-                    .child(Button::new("Cancelar").ghost().on_press(move |_| {
-                        if let Some(view) = crate::sync::snapshot()
-                            .shares
-                            .into_iter()
-                            .find(|s| !s.is_owner && !known.contains(&s.id))
-                        {
-                            crate::sync::leave_share(view.id);
-                        }
-                        ModalController::get().close();
-                    })),
+                    .child(
+                        Button::new(tr!("common-cancel"))
+                            .ghost()
+                            .on_press(move |_| {
+                                if let Some(view) = crate::sync::snapshot()
+                                    .shares
+                                    .into_iter()
+                                    .find(|s| !s.is_owner && !known.contains(&s.id))
+                                {
+                                    crate::sync::leave_share(view.id);
+                                }
+                                ModalController::get().close();
+                            }),
+                    ),
             )
             .into_element()
     }
 }
 
-/// "La sesión terminó": keep a copy of what was open, or let it go.
+/// "The session ended": keep a copy of what was open, or let it go.
 pub fn session_ended(end: &SessionEnd) {
-    let reason = match end.reason {
-        Removal::Ended => "El organizador terminó la sesión.",
-        Removal::Expelled => "El organizador te quitó de la sesión.",
-        Removal::Left => "Saliste de la sesión.",
-    };
     let count = end.docs.len();
+    let body = match end.reason {
+        Removal::Ended => tr!("collab-ended-by-owner", "count" => count),
+        Removal::Expelled => tr!("collab-ended-expelled", "count" => count),
+        Removal::Left => tr!("collab-ended-left", "count" => count),
+    };
     let keep = end.clone();
     let close = end.clone();
-    Sheet::titled(format!("La sesión «{}» terminó", end.title))
+    Sheet::titled(tr!("collab-ended-title", "title" => end.title.as_str()))
         .without_close()
-        .child(Text::new(format!(
-            "{reason} Podés guardarte una copia de {} para seguir por tu cuenta.",
-            crate::format::count(count, "documento", "documentos")
-        )))
+        .child(Text::new(body))
         .footer(SheetFooter::new([
-            Button::new("Cerrar")
+            Button::new(tr!("common-close"))
                 .ghost()
                 .on_press(move |_| {
                     ModalController::get().close();
                     crate::session_end::resolve(close.clone());
                 })
                 .into_element(),
-            Button::new("Guardar una copia")
+            Button::new(tr!("collab-ended-save-copy"))
                 .primary()
                 .icon(freya::icons::lucide::download())
                 .on_press(move |_| {
@@ -965,10 +976,7 @@ fn save_copy(end: SessionEnd) {
                 }
             }
         }
-        Toasts::get().show(Toast::new(format!(
-            "{} en tu biblioteca",
-            crate::format::count(saved, "copia guardada", "copias guardadas")
-        )));
+        Toasts::get().show(Toast::new(tr!("collab-ended-saved", "count" => saved)));
         crate::session_end::resolve(end);
     });
 }

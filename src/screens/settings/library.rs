@@ -1,10 +1,12 @@
-//! Ajustes › Biblioteca: trash retention, copies in and out, space.
+//! Settings › Library: trash retention, copies in and out, space.
 
 use std::sync::Arc;
 
 use freya::prelude::*;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{Group, ListRow, ModalController, Section, Segmented, Text, TextRole, tokens};
+
+use notein_i18n::tr;
 
 use crate::flows::transfer::{self, ExportScope};
 use crate::library::{ItemId, LibraryData, bodies};
@@ -74,7 +76,7 @@ impl Usage {
     }
 }
 
-/// The Biblioteca section.
+/// The Library section.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Library;
 
@@ -108,7 +110,7 @@ fn use_usage(data: Option<Arc<LibraryData>>) -> State<Option<Usage>> {
     usage
 }
 
-/// What Notein takes, against the whole disk it lives on: a bar split
+/// What the app takes, against the whole disk it lives on: a bar split
 /// by what holds the space, the rest of the disk's contents in a
 /// quieter tone and the free part left empty.
 fn usage_view(u: Usage) -> Element {
@@ -136,15 +138,15 @@ fn usage_view(u: Usage) -> Element {
             )
             .child(Text::new(label).role(TextRole::Meta))
     };
-    let named = |label: &str, bytes: u64| format!("{label} {}", crate::format::size(bytes));
+    let size = crate::format::size;
     let others = p.t3.with_a(120);
     let summary = u.disk.map_or_else(
-        || "En este dispositivo".to_owned(),
+        || tr!("settings-library-usage-on-device"),
         |d| {
-            format!(
-                "{} libres de {}",
-                crate::format::size(d.available),
-                crate::format::size(d.total)
+            tr!(
+                "settings-library-usage-disk",
+                "free" => size(d.available),
+                "total" => size(d.total),
             )
         },
     );
@@ -159,7 +161,7 @@ fn usage_view(u: Usage) -> Element {
                 .content(Content::Flex)
                 .spacing(8.0)
                 .child(
-                    Text::new(format!("{} de Notein", crate::format::size(u.total())))
+                    Text::new(tr!("settings-library-usage-total", "size" => size(u.total())))
                         .role(TextRole::Title)
                         .fill(),
                 )
@@ -183,15 +185,30 @@ fn usage_view(u: Usage) -> Element {
                 .horizontal()
                 .content(Content::wrap_spacing(8.0))
                 .spacing(14.0)
-                .child(legend(p.accent, named("Documentos", u.documents)))
-                .child(legend(p.kinds.pdf, named("PDF originales", u.pdfs)))
-                .child(legend(p.warn, named("Papelera", u.trash)))
-                .maybe_child(
-                    u.disk
-                        .is_some()
-                        .then(|| legend(others, named("Otras apps y archivos", u.others()))),
-                )
-                .maybe_child(u.disk.map(|d| legend(p.s3, named("Libre", d.available)))),
+                .child(legend(
+                    p.accent,
+                    tr!("settings-library-usage-documents", "size" => size(u.documents)),
+                ))
+                .child(legend(
+                    p.kinds.pdf,
+                    tr!("settings-library-usage-pdfs", "size" => size(u.pdfs)),
+                ))
+                .child(legend(
+                    p.warn,
+                    tr!("settings-library-usage-trash", "size" => size(u.trash)),
+                ))
+                .maybe_child(u.disk.is_some().then(|| {
+                    legend(
+                        others,
+                        tr!("settings-library-usage-others", "size" => size(u.others())),
+                    )
+                }))
+                .maybe_child(u.disk.map(|d| {
+                    legend(
+                        p.s3,
+                        tr!("settings-library-usage-free", "size" => size(d.available)),
+                    )
+                })),
         )
         .into_element()
 }
@@ -202,11 +219,8 @@ fn trash_section(retention: TrashRetention, trash_count: usize) -> Section {
         .iter()
         .position(|r| *r == retention)
         .unwrap_or(1);
-    Section::new("Papelera")
-        .child(
-            Text::new("Cuánto tiempo se guarda lo que borrás antes de borrarse solo.")
-                .role(TextRole::Hint),
-        )
+    Section::new(tr!("common-trash"))
+        .child(Text::new(tr!("settings-library-trash-hint")).role(TextRole::Hint))
         .child(
             Segmented::new(TrashRetention::ALL.map(TrashRetention::label), index)
                 .full_width()
@@ -217,8 +231,8 @@ fn trash_section(retention: TrashRetention, trash_count: usize) -> Section {
         )
         .child(
             Group::default().child(
-                ListRow::new("Ver papelera")
-                    .subtitle(crate::format::count(trash_count, "elemento", "elementos"))
+                ListRow::new(tr!("settings-library-trash-open"))
+                    .subtitle(tr!("settings-library-trash-count", "count" => trash_count))
                     .icon(freya::icons::lucide::trash_2())
                     .chevron()
                     .on_press(|_| {
@@ -239,7 +253,11 @@ impl Component for Library {
             .map_or(0, |d| crate::screens::trash::groups(d).len());
         let usage = use_usage(data);
         let space = (*usage.read()).map_or_else(
-            || Text::new("Midiendo…").role(TextRole::Meta).into_element(),
+            || {
+                Text::new(tr!("settings-library-usage-measuring"))
+                    .role(TextRole::Meta)
+                    .into_element()
+            },
             usage_view,
         );
         rect()
@@ -247,27 +265,25 @@ impl Component for Library {
             .spacing(24.0)
             .child(trash_section(retention, trash_count))
             .child(
-                Section::new("Copias").child(
+                Section::new(tr!("settings-library-copies")).child(
                     Group::default()
                         .child(
-                            ListRow::new("Exportar…")
-                                .subtitle(
-                                    "Una copia de seguridad o archivos para leer en otras apps.",
-                                )
+                            ListRow::new(tr!("settings-library-export"))
+                                .subtitle(tr!("settings-library-export-hint"))
                                 .icon(lucide::download())
                                 .chevron()
                                 .on_press(|_| transfer::export(ExportScope::Library)),
                         )
                         .child(
-                            ListRow::new("Importar…")
-                                .subtitle("Desde una copia .notein de este u otro dispositivo.")
+                            ListRow::new(tr!("settings-library-import"))
+                                .subtitle(tr!("settings-library-import-hint"))
                                 .icon(lucide::upload())
                                 .chevron()
                                 .on_press(|_| transfer::import()),
                         ),
                 ),
             )
-            .child(Section::new("Espacio usado").child(space))
+            .child(Section::new(tr!("settings-library-usage")).child(space))
             .into_element()
     }
 }

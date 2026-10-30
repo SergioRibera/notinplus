@@ -1,5 +1,5 @@
 //! The update chip on Home, the release card it opens, the download
-//! sheet and the Ajustes rows.
+//! sheet and the Settings rows.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,6 +16,8 @@ use notein_ui_kit::{
     TextRole, Toast, ToastTone, Toasts, Trailing, press_anchor,
 };
 
+use notein_i18n::tr;
+
 use super::download::{self, Finish, Progress};
 use super::{Asset, CheckStatus, Device, INSTALLED, Release, Updates};
 
@@ -28,7 +30,7 @@ const PROGRESS_POLL: Duration = Duration::from_millis(120);
 pub fn chip(compact: bool) -> Option<Element> {
     let release = Updates::get().read().announced().cloned()?;
     let p = palette();
-    let label = format!("{} disponible", release.version);
+    let label = tr!("update-chip", "version" => release.version.as_str());
     Some(if compact {
         IconButton::new(lucide::sparkles(), label)
             .tint(p.accent)
@@ -49,9 +51,9 @@ pub fn chip(compact: bool) -> Option<Element> {
 }
 
 /// The release card: hanging from `anchor` (a bottom sheet on phones),
-/// or as a sheet when opened from Ajustes.
+/// or as a sheet when opened from Settings.
 pub fn open_release(anchor: Option<Area>, release: &Arc<Release>) {
-    let title = format!("Notein {}", release.version);
+    let title = tr!("update-release-title", "version" => release.version.as_str());
     let card = |framed| ReleaseCard {
         release: Arc::clone(release),
         framed,
@@ -96,8 +98,8 @@ impl Component for ReleaseCard {
             .or_else(|| assets.first())
             .cloned();
         let subtitle = release.published_on().map_or_else(
-            || format!("Tenés la {INSTALLED}"),
-            |day| format!("Tenés la {INSTALLED} · publicada {day}"),
+            || tr!("update-release-installed", "installed" => INSTALLED),
+            |day| tr!("update-release-installed-published", "installed" => INSTALLED, "day" => day),
         );
         let url = release.url.clone();
         let version = release.version.clone();
@@ -105,17 +107,16 @@ impl Component for ReleaseCard {
             .width(Size::fill())
             .spacing(14.0)
             .padding(if self.framed { 18.0 } else { 0.0 })
-            .maybe_child(
-                self.framed.then(|| {
-                    Text::new(format!("Notein {}", release.version)).role(TextRole::Title)
-                }),
-            )
+            .maybe_child(self.framed.then(|| {
+                Text::new(tr!("update-release-title", "version" => release.version.as_str()))
+                    .role(TextRole::Title)
+            }))
             .child(Text::new(subtitle).role(TextRole::Meta))
             .child(Notes {
                 markdown: release.notes.clone(),
             })
             .child(
-                Button::new("Ver la versión completa en GitHub")
+                Button::new(tr!("update-release-full-notes"))
                     .ghost()
                     .small()
                     .icon(lucide::arrow_up_right())
@@ -162,7 +163,7 @@ fn file_row(asset: &Asset, all: &[Asset], chosen: State<usize>) -> Element {
         .enumerate()
         .map(|(index, other)| {
             ActionEntry::Item(
-                Action::closing(other.format_label().to_owned(), move || {
+                Action::closing(other.format_label().into_owned(), move || {
                     let mut chosen = chosen;
                     chosen.set(index);
                 })
@@ -177,23 +178,23 @@ fn file_row(asset: &Asset, all: &[Asset], chosen: State<usize>) -> Element {
         .collect();
     let hint = match Finish::current() {
         Finish::Install if cfg!(target_os = "android") => {
-            "Android te pide confirmar la instalación; tus documentos no se tocan."
+            tr!("update-file-hint-android")
         }
-        Finish::Install => "Al terminar se abre el instalador.",
-        Finish::Reveal => "Se guarda en Descargas; lo instalás vos.",
+        Finish::Install => tr!("update-file-hint-install"),
+        Finish::Reveal => tr!("update-file-hint-reveal"),
     };
     Group::default()
         .child(
-            ListRow::new(format!(
-                "{} · {}",
-                asset.format_label(),
-                crate::format::size(asset.size)
+            ListRow::new(tr!(
+                "update-file",
+                "format" => asset.format_label().into_owned(),
+                "size" => crate::format::size(asset.size),
             ))
             .subtitle(hint)
             .icon(lucide::download())
             .trailing(if others {
                 Trailing::Element(
-                    Button::new("Otros formatos")
+                    Button::new(tr!("update-file-other-formats"))
                         .ghost()
                         .small()
                         .on_press(move |e: Event<PressEventData>| {
@@ -215,7 +216,7 @@ fn actions(version: &str, page: &str, asset: Option<Asset>) -> Element {
     let primary = asset.map_or_else(
         || {
             let page = page.to_owned();
-            Button::new("Abrir en GitHub")
+            Button::new(tr!("update-open-github"))
                 .primary()
                 .icon(lucide::arrow_up_right())
                 .on_press(move |_| {
@@ -225,7 +226,7 @@ fn actions(version: &str, page: &str, asset: Option<Asset>) -> Element {
         },
         |asset| {
             let version = version.to_owned();
-            Button::new("Descargar")
+            Button::new(tr!("update-download"))
                 .primary()
                 .icon(lucide::download())
                 .on_press(move |_| {
@@ -241,7 +242,7 @@ fn actions(version: &str, page: &str, asset: Option<Asset>) -> Element {
         .content(Content::Flex)
         .spacing(8.0)
         .child(
-            Button::new("Omitir esta versión")
+            Button::new(tr!("update-skip"))
                 .ghost()
                 .small()
                 .on_press(move |_| {
@@ -250,14 +251,18 @@ fn actions(version: &str, page: &str, asset: Option<Asset>) -> Element {
                 }),
         )
         .child(rect().width(Size::flex(1.0)))
-        .child(Button::new("Ahora no").small().on_press(|_| close()))
+        .child(
+            Button::new(tr!("update-not-now"))
+                .small()
+                .on_press(|_| close()),
+        )
         .child(primary)
         .into_element()
 }
 
 /// Open the download sheet; the download runs while it is open.
 fn start_download(version: &str, asset: Asset) {
-    Sheet::titled(format!("Descargando Notein {version}"))
+    Sheet::titled(tr!("update-downloading-title", "version" => version))
         .child(DownloadSheet { asset })
         .sticky()
         .open();
@@ -268,7 +273,7 @@ fn start_download(version: &str, asset: Asset) {
 enum Phase {
     Downloading,
     Ready(PathBuf),
-    /// Android sent the person to allow installs; "Instalar" retries.
+    /// Android sent the person to allow installs; "Install" retries.
     NeedsPermission(PathBuf),
     /// The installer is open (Windows) or showing (Android).
     Handed,
@@ -336,19 +341,18 @@ impl Component for DownloadSheet {
         let fraction = got as f32 / total as f32;
         let p = palette();
         let status: Element = match &current {
-            Phase::Downloading => Text::new(format!(
-                "{} de {}",
-                crate::format::size(got),
-                crate::format::size(self.asset.size)
+            Phase::Downloading => Text::new(tr!(
+                "update-download-progress",
+                "done" => crate::format::size(got),
+                "total" => crate::format::size(self.asset.size),
             ))
             .role(TextRole::Meta)
             .into_element(),
             Phase::Ready(path) => Notice::new(NoticeTone::Success, ready_text(path)).into_element(),
-            Phase::NeedsPermission(_) => Notice::new(
-                NoticeTone::Warning,
-                "Permití que Notein instale apps y tocá «Instalar» de nuevo.",
-            )
-            .into_element(),
+            Phase::NeedsPermission(_) => {
+                Notice::new(NoticeTone::Warning, tr!("update-download-needs-permission"))
+                    .into_element()
+            }
             Phase::Handed => Notice::new(NoticeTone::Info, handed_text()).into_element(),
             Phase::Failed(message) => {
                 Notice::new(NoticeTone::Danger, message.clone()).into_element()
@@ -376,7 +380,7 @@ fn footer(current: &Phase, progress: &Arc<Progress>, phase: State<Phase>) -> Ele
         Phase::Downloading => {
             let progress = Arc::clone(progress);
             vec![
-                Button::new("Cancelar")
+                Button::new(tr!("common-cancel"))
                     .on_press(move |_| {
                         progress.cancel();
                         close();
@@ -387,21 +391,27 @@ fn footer(current: &Phase, progress: &Arc<Progress>, phase: State<Phase>) -> Ele
         Phase::Ready(path) | Phase::NeedsPermission(path) => {
             let path = path.clone();
             let main = match Finish::current() {
-                Finish::Install => Button::new("Instalar")
+                Finish::Install => Button::new(tr!("update-install"))
                     .primary()
                     .on_press(move |_| install(path.clone(), phase)),
-                Finish::Reveal => Button::new("Mostrar en la carpeta")
+                Finish::Reveal => Button::new(tr!("update-reveal"))
                     .primary()
                     .icon(lucide::folder_open())
                     .on_press(move |_| reveal(&path)),
             };
             vec![
-                Button::new("Cerrar").on_press(|_| close()).into_element(),
+                Button::new(tr!("common-close"))
+                    .on_press(|_| close())
+                    .into_element(),
                 main.into_element(),
             ]
         }
         Phase::Handed | Phase::Failed(_) => {
-            vec![Button::new("Cerrar").on_press(|_| close()).into_element()]
+            vec![
+                Button::new(tr!("common-close"))
+                    .on_press(|_| close())
+                    .into_element(),
+            ]
         }
     };
     SheetFooter::new(buttons).into_element()
@@ -409,30 +419,30 @@ fn footer(current: &Phase, progress: &Arc<Progress>, phase: State<Phase>) -> Ele
 
 fn ready_text(path: &std::path::Path) -> String {
     match Finish::current() {
-        Finish::Install => "Descargada y verificada.".to_owned(),
-        Finish::Reveal => format!("Descargada y verificada en {}.", path.display()),
+        Finish::Install => tr!("update-download-ready"),
+        Finish::Reveal => tr!("update-download-ready-at", "path" => path.display().to_string()),
     }
 }
 
-const fn handed_text() -> &'static str {
+fn handed_text() -> String {
     if cfg!(target_os = "windows") {
-        "El instalador está abierto. Cerrá Notein para que pueda reemplazarla."
+        tr!("update-handed-windows")
     } else {
-        "Seguí los pasos del instalador de Android."
+        tr!("update-handed-android")
     }
 }
 
 fn failure(err: &super::UpdateError) -> String {
     match err {
         super::UpdateError::Checksum => {
-            "El archivo llegó dañado y se borró. Probá de nuevo.".to_owned()
+            tr!("update-failed-checksum")
         }
-        super::UpdateError::Http(_) => "No se pudo descargar. Revisá la conexión.".to_owned(),
+        super::UpdateError::Http(_) => tr!("update-failed-network"),
         super::UpdateError::Io(_) => {
-            "No se pudo guardar el archivo en este dispositivo.".to_owned()
+            tr!("update-failed-disk")
         }
         super::UpdateError::Manifest(_) | super::UpdateError::Cancelled => {
-            "No se pudo descargar.".to_owned()
+            tr!("update-failed")
         }
     }
 }
@@ -455,7 +465,7 @@ fn install(path: PathBuf, mut phase: State<Phase>) {
             Err(InstallError::Unsupported) => reveal(&path),
             Err(err) => {
                 log::warn!("install {}: {err}", path.display());
-                phase.set(Phase::Failed("No se pudo abrir el instalador.".to_owned()));
+                phase.set(Phase::Failed(tr!("update-failed-installer")));
             }
         }
     });
@@ -467,7 +477,7 @@ fn reveal(path: &std::path::Path) {
     crate::external::open_url(&format!("file://{}", folder.display()));
 }
 
-/// Ajustes › Acerca de › Actualizaciones.
+/// Settings › About › Updates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UpdatesSection;
 
@@ -477,26 +487,25 @@ impl Component for UpdatesSection {
         let snapshot = updates.read();
         let checking = snapshot.status == CheckStatus::Checking;
         let last = if snapshot.record.fetched_at == 0 {
-            "Todavía no se buscó".to_owned()
+            tr!("update-never-checked")
         } else {
-            format!(
-                "Última búsqueda: {}",
-                crate::format::ago(snapshot.record.fetched_at, crate::format::now()).to_lowercase()
+            tr!(
+                "update-last-checked",
+                "ago" => crate::format::ago(snapshot.record.fetched_at, crate::format::now())
+                    .to_lowercase(),
             )
         };
         let state = match (&snapshot.newer, snapshot.status) {
-            (_, CheckStatus::Checking) => "Buscando…".to_owned(),
-            (_, CheckStatus::Failed) => "No se pudo buscar. Revisá la conexión.".to_owned(),
-            (Some(release), _) => format!("Hay una versión nueva: {}", release.version),
-            (None, CheckStatus::UpToDate) => format!("Estás al día · {last}"),
+            (_, CheckStatus::Checking) => tr!("update-checking"),
+            (_, CheckStatus::Failed) => tr!("update-check-failed"),
+            (Some(release), _) => tr!("update-newer", "version" => release.version.as_str()),
+            (None, CheckStatus::UpToDate) => tr!("update-up-to-date", "last" => last),
             (None, CheckStatus::Idle) => last,
         };
         let mut group = Group::default()
             .child(
-                ListRow::new("Buscar actualizaciones")
-                    .subtitle(
-                        "Cada dos días. Solo lee un archivo público de GitHub; no manda nada tuyo.",
-                    )
+                ListRow::new(tr!("update-automatic"))
+                    .subtitle(tr!("update-automatic-hint"))
                     .icon(lucide::refresh_cw())
                     .trailing(Trailing::Switch {
                         on: !snapshot.record.manual_only,
@@ -504,11 +513,11 @@ impl Component for UpdatesSection {
                     }),
             )
             .child(
-                ListRow::new(format!("Notein {INSTALLED}"))
+                ListRow::new(tr!("update-release-title", "version" => INSTALLED))
                     .subtitle(state)
                     .icon(lucide::package())
                     .trailing(Trailing::Element(
-                        Button::new("Buscar ahora")
+                        Button::new(tr!("update-check-now"))
                             .ghost()
                             .small()
                             .loading(checking)
@@ -519,7 +528,7 @@ impl Component for UpdatesSection {
             );
         if let Some(release) = snapshot.newer.clone() {
             group = group.child(
-                ListRow::new(format!("Ver novedades de la {}", release.version))
+                ListRow::new(tr!("update-whats-new", "version" => release.version.as_str()))
                     .icon(lucide::sparkles())
                     .chevron()
                     .on_press(move |_| open_release(None, &release)),
@@ -527,26 +536,26 @@ impl Component for UpdatesSection {
         }
         if let Some(skipped) = snapshot.record.skipped {
             group = group.child(
-                ListRow::new("Versión omitida")
-                    .subtitle(format!(
-                        "No te avisa de la {skipped}. Te avisa de la siguiente."
+                ListRow::new(tr!("update-skipped"))
+                    .subtitle(tr!(
+                        "update-skipped-hint", "version" => skipped.as_str()
                     ))
                     .icon(lucide::eye_off())
                     .trailing(Trailing::Element(
-                        Button::new("Mostrar de nuevo")
+                        Button::new(tr!("update-unskip"))
                             .ghost()
                             .small()
                             .on_press(move |_| {
                                 updates.unskip();
                                 Toasts::get().show(
-                                    Toast::new("Se va a volver a avisar").tone(ToastTone::Info),
+                                    Toast::new(tr!("update-unskipped-toast")).tone(ToastTone::Info),
                                 );
                             })
                             .into_element(),
                     )),
             );
         }
-        Section::new("Actualizaciones").child(group)
+        Section::new(tr!("update-section")).child(group)
     }
 }
 

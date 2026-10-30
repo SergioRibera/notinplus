@@ -18,6 +18,8 @@ use notein_sync::{
     TrustedDevice,
 };
 
+use notein_i18n::tr;
+
 use crate::library::{ItemId, Library, bodies};
 use crate::session_end::SessionEnd;
 
@@ -464,7 +466,7 @@ pub fn start() {
         .spawn(move || run(&rx));
     if let Err(err) = spawned {
         publish(SyncSnapshot {
-            error: Some(format!("sync thread: {err}")),
+            error: Some(tr!("sync-error-thread", "error" => err.to_string())),
             ..SyncSnapshot::default()
         });
     }
@@ -478,7 +480,7 @@ fn default_device_name() -> String {
         .ok()
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "Este dispositivo".to_owned())
+        .unwrap_or_else(|| tr!("sync-default-device-name"))
 }
 
 fn now_ms() -> u64 {
@@ -538,15 +540,17 @@ impl Service {
                 notein_sync::PROTOCOL_VERSION
             );
         }
-        self.error = Some(format!(
-            "{name} usa otra versión de Notein (protocolo {version}); actualizalo para sincronizar."
+        self.error = Some(tr!(
+            "sync-error-outdated",
+            "name" => name,
+            "version" => version,
         ));
     }
 
     fn save_profile(&mut self) {
         if let Err(err) = self.driver.profile().save(&self.profile_path) {
             log::error!("device profile save: {err}");
-            self.error = Some(format!("perfil: {err}"));
+            self.error = Some(tr!("sync-error-profile-save", "error" => err.to_string()));
         }
     }
 
@@ -556,7 +560,7 @@ impl Service {
         };
         if let Err(err) = std::fs::write(&self.shares_path, book.encode()) {
             log::error!("share book save: {err}");
-            self.error = Some(format!("compartidos: {err}"));
+            self.error = Some(tr!("sync-error-shares-save", "error" => err.to_string()));
         }
     }
 
@@ -789,7 +793,7 @@ impl Service {
                 let parsed = relay.as_deref().map(str::parse::<RelayAddr>);
                 match parsed {
                     Some(Err(err)) => {
-                        self.error = Some(format!("servidor: {err}"));
+                        self.error = Some(tr!("sync-error-server", "error" => err.to_string()));
                         Vec::new()
                     }
                     Some(Ok(addr)) => {
@@ -912,7 +916,7 @@ impl Service {
             Ok(profile) => profile,
             Err(err) => {
                 publish(SyncSnapshot {
-                    error: Some(format!("perfil del dispositivo: {err}")),
+                    error: Some(tr!("sync-error-profile-load", "error" => err.to_string())),
                     ..SyncSnapshot::default()
                 });
                 return None;
@@ -925,7 +929,7 @@ impl Service {
                     device: Some(profile.id()),
                     name: profile.name().to_owned(),
                     trusted: profile.trusted().to_vec(),
-                    error: Some(format!("red: {err}")),
+                    error: Some(tr!("sync-error-network", "error" => err.to_string())),
                     ..SyncSnapshot::default()
                 });
                 return None;

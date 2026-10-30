@@ -1,8 +1,10 @@
 //! `latest.json`, the update manifest every stable release publishes,
 //! and which of its files fits this device.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 
+use notein_i18n::tr;
 use serde::Deserialize;
 
 /// The newest stable release, as `latest.json` describes it.
@@ -62,7 +64,7 @@ impl Release {
         }
     }
 
-    /// When it was published ("ayer", "26/10"), if the manifest says.
+    /// When it was published ("yesterday", "26/10"), if the manifest says.
     #[must_use]
     pub fn published_on(&self) -> Option<String> {
         let date = chrono::DateTime::parse_from_rfc3339(&self.published_at).ok()?;
@@ -86,21 +88,21 @@ impl Release {
 impl Asset {
     /// How the format reads in a menu: `AppImage`, `.deb`, `APK`…
     #[must_use]
-    pub fn format_label(&self) -> &str {
+    pub fn format_label(&self) -> Cow<'_, str> {
         match self.kind.as_str() {
-            "apk" => "APK",
-            "appimage" => "AppImage",
-            "deb" => ".deb",
-            "rpm" => ".rpm",
-            "flatpak" => "Flatpak",
-            "tar.gz" => ".tar.gz",
-            "dmg" => "Imagen de disco (.dmg)",
-            "pkg" => "Instalador (.pkg)",
-            "app" => "App (.zip)",
-            "nsis" => "Instalador (.exe)",
-            "msi" => "Instalador MSI",
-            "zip" => "Portátil (.zip)",
-            other => other,
+            "apk" => "APK".into(),
+            "appimage" => "AppImage".into(),
+            "deb" => ".deb".into(),
+            "rpm" => ".rpm".into(),
+            "flatpak" => "Flatpak".into(),
+            "tar.gz" => ".tar.gz".into(),
+            "dmg" => tr!("update-format-dmg").into(),
+            "pkg" => tr!("update-format-pkg").into(),
+            "app" => tr!("update-format-app").into(),
+            "nsis" => tr!("update-format-nsis").into(),
+            "msi" => tr!("update-format-msi").into(),
+            "zip" => tr!("update-format-zip").into(),
+            other => other.into(),
         }
     }
 }
