@@ -105,6 +105,7 @@ pub fn open_space(workspace: WorkspaceId) {
 ///
 /// # Errors
 /// Library persistence failures, or a hint naming a pane that is gone.
+#[sismo::function]
 pub async fn open_in(lib: &mut Library, target: TabTarget, hint: OpenHint) -> Result<Opened> {
     open_in_with(lib, target, hint, true).await
 }

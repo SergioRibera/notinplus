@@ -103,6 +103,7 @@ impl Library {
     /// # Errors
     /// Any runtime / backend / codec failure surfacing through
     /// [`LibraryError`].
+    #[sismo::function]
     pub async fn open(runtime: &Arc<Runtime>) -> Result<Self> {
         let client = DataStoreClient::from_runtime_with(
             runtime,
@@ -635,6 +636,7 @@ impl Library {
     // Async signature mirrors `save_doc` so call sites can `.await`
     // both halves of a load/save cycle without special-casing the read.
     #[allow(clippy::unused_async)]
+    #[sismo::function]
     pub async fn load_doc(&self, id: ItemId) -> Result<Doc> {
         if self.data.index.item(id).is_none() {
             return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
@@ -647,6 +649,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`] / body I/O.
+    #[sismo::function]
     pub async fn save_doc(&mut self, id: ItemId, doc: &Doc) -> Result<()> {
         if self.data.index.item(id).is_none() {
             return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
@@ -662,6 +665,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`] / body I/O.
+    #[sismo::function]
     pub async fn save_doc_snapshot(
         &mut self,
         id: ItemId,
@@ -1323,6 +1327,7 @@ impl Library {
     ///
     /// # Errors
     /// Filesystem / persistence failures.
+    #[sismo::function]
     pub async fn import_bundle(&mut self, bundle: &crate::bundle::ParsedBundle) -> Result<()> {
         let known_folders: std::collections::HashSet<FolderId> = bundle
             .manifest

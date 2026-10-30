@@ -187,6 +187,7 @@ impl Doc {
     /// # Errors
     /// Store export failure.
     /// The snapshot to store, with the references it holds for the index.
+    #[sismo::function]
     pub fn saved_state(&self) -> Result<(Vec<u8>, crate::library::refs::Captured), DocError> {
         self.snapshot_bytes()
             .map(|bytes| (bytes, crate::library::refs::capture(self)))
@@ -217,6 +218,7 @@ impl Doc {
     ///
     /// # Errors
     /// Corrupt bytes or a container shape this build does not read.
+    #[sismo::function]
     pub fn import_updates(&mut self, bytes: &[u8]) -> Result<(), DocError> {
         self.store.import(bytes)?;
         self.refresh()

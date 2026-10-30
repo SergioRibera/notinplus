@@ -2053,6 +2053,7 @@ impl Board {
     /// The committed ink (and the paper under it, for the bottom pass)
     /// comes from `cache` whenever it can; see [`InkCache`]. The active
     /// stroke and the overlays are drawn fresh every frame on top.
+    #[sismo::function]
     pub fn paint(
         &mut self,
         canvas: &freya_engine::prelude::Canvas,
@@ -2942,6 +2943,7 @@ impl Board {
 
     /// Apply what another device is doing: extend or finish its ghost
     /// stroke, move its pointer. Silent hands expire here too.
+    #[sismo::function]
     pub fn apply_live(&mut self, from: notein_sync::DeviceId, name: &str, message: LiveMessage) {
         let now = Instant::now();
         self.remote

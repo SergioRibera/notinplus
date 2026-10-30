@@ -157,6 +157,7 @@ pub fn run_now(key: &str) {
 
 /// Run everything that waits now, on this thread, and wait for what
 /// the background thread already started. For when the app may go away.
+#[sismo::function]
 pub fn flush() {
     let deferred = deferred();
     let jobs: Vec<Job> = {
