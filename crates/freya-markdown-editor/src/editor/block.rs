@@ -425,7 +425,7 @@ impl BlockView {
                 label()
                     .color(color)
                     .font_size(theme.px(12.))
-                    .text(theme.labels.get(caption)),
+                    .text(theme.labels.get(caption).to_owned()),
             )
             .into_element()
     }
@@ -491,7 +491,7 @@ impl BlockView {
                     .color(color)
                     .font_size(theme.px(11.5))
                     .font_weight(FontWeight::BOLD)
-                    .text(theme.labels.get(Label::Comment)),
+                    .text(theme.labels.get(Label::Comment).to_owned()),
             )
             .child(
                 label()
@@ -570,7 +570,7 @@ impl BlockView {
             )
             .maybe_child(self.editable().then(|| RenameButton {
                 current: summary.to_owned(),
-                placeholder: theme.labels.get(Label::DetailsSummary),
+                placeholder: theme.labels.get(Label::DetailsSummary).to_owned(),
                 hint: None,
                 color: colors.muted,
                 theme: theme.clone(),
@@ -764,8 +764,8 @@ impl BlockView {
                         let block = self.block.id;
                         RenameButton {
                             current: title.clone().unwrap_or_default(),
-                            placeholder: theme.labels.callout(*kind),
-                            hint: Some(theme.labels.get(Label::RenameHint)),
+                            placeholder: theme.labels.callout(*kind).to_owned(),
+                            hint: Some(theme.labels.get(Label::RenameHint).to_owned()),
                             color: accent,
                             theme: theme.clone(),
                             on_rename: EventHandler::new(move |title: String| {
@@ -1013,22 +1013,29 @@ impl BlockView {
                 .into_element()
         });
         let tools = (in_table && !self.shared.read_only).then(|| {
-            let button = |text: &'static str, action: fn(crate::EditorController)| {
+            let button = |text: Label, action: fn(crate::EditorController)| {
                 rect()
                     .padding((3., 8.))
                     .corner_radius(6.)
                     .background(colors.code_background)
                     .cursor(CursorIcon::Pointer)
                     .on_press(move |_| action(controller))
-                    .child(label().font_size(11.5).color(colors.muted).text(text))
+                    .child(
+                        label()
+                            .font_size(11.5)
+                            .color(colors.muted)
+                            .text(theme.labels.get(text).to_owned()),
+                    )
             };
             rect()
                 .horizontal()
                 .spacing(6.)
-                .child(button("+ Row", |c| c.table_insert_row()))
-                .child(button("+ Column", |c| c.table_insert_column()))
-                .child(button("− Row", |c| c.table_remove_row()))
-                .child(button("− Column", |c| c.table_remove_column()))
+                .child(button(Label::TableAddRow, |c| c.table_insert_row()))
+                .child(button(Label::TableAddColumn, |c| c.table_insert_column()))
+                .child(button(Label::TableRemoveRow, |c| c.table_remove_row()))
+                .child(button(Label::TableRemoveColumn, |c| {
+                    c.table_remove_column();
+                }))
         });
         rect()
             .width(Size::fill())
@@ -1126,7 +1133,7 @@ impl BlockView {
                 label()
                     .color(colors.muted)
                     .font_size(theme.px(13.))
-                    .text(theme.labels.get(Label::EmptyContents))
+                    .text(theme.labels.get(Label::EmptyContents).to_owned())
                     .into_element(),
             ]
         } else {
@@ -1169,7 +1176,7 @@ impl BlockView {
                     .color(colors.muted)
                     .font_size(theme.px(11.))
                     .font_weight(FontWeight::BOLD)
-                    .text("CONTENTS"),
+                    .text(theme.labels.get(Label::Contents).to_owned()),
             )
             .children(entries)
             .into_element()

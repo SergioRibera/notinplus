@@ -7,7 +7,6 @@
 //! markdown-marks setting.
 
 pub(crate) mod images;
-mod labels;
 mod live;
 
 pub use live::LIVE_QUOTE;
@@ -17,6 +16,7 @@ use std::rc::Rc;
 
 use freya::prelude::*;
 use freya_markdown_editor::prelude::*;
+use notein_i18n::tr;
 use notein_plugin::bookmark::SourceRef;
 use notein_plugin::services::Placement;
 use notein_ui_kit::theme::{Palette, palette};
@@ -36,7 +36,6 @@ pub fn theme(p: &Palette) -> EditorTheme {
     };
     theme.body_size = tokens::text::BODY;
     theme.heading_sizes = [22.0, 19.0, 16.5, 15.0, 14.0, 13.5];
-    theme.labels = labels::labels();
     let colors = &mut theme.colors;
     colors.text = p.t1;
     colors.muted = p.t2;
@@ -107,7 +106,7 @@ pub fn configure(editor: MarkdownEditor) -> MarkdownEditor {
         .on_input_context(crate::soft_keyboard::input_context)
         .on_request_keyboard(crate::soft_keyboard::show_soon)
         .suggestions(
-            SuggestionGroup::new("Referencias", move |query| {
+            SuggestionGroup::new(tr!("editor-suggest-references"), move |query| {
                 let data = LibraryView::get().data();
                 references::suggestions(query, data.as_deref())
                     .into_iter()
@@ -187,9 +186,13 @@ fn quote_suggestion(found: references::Suggestion) -> Suggestion {
         };
         controller.insert_markdown(&markdown);
     });
-    let mode = if live { "bloque vivo" } else { "copia fija" };
+    let detail = if live {
+        tr!("editor-quote-live", "source" => found.subtitle)
+    } else {
+        tr!("editor-quote-copy", "source" => found.subtitle)
+    };
     Suggestion::new(found.label, SuggestionAction::Run(run))
-        .detail(format!("{} · {mode}", found.subtitle))
+        .detail(detail)
         .icon("❝")
 }
 

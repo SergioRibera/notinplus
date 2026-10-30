@@ -5,6 +5,7 @@ use freya::animation::{
     use_animation_with_dependencies,
 };
 use freya::prelude::*;
+use notein_i18n::tr;
 
 use crate::components::TapExt;
 use crate::theme::palette;
@@ -105,7 +106,11 @@ impl Component for Switch {
             .a11y_id(a11y_id)
             .a11y_focusable(self.enabled)
             .a11y_role(AccessibilityRole::Switch)
-            .a11y_alt(if on { "Activado" } else { "Desactivado" })
+            .a11y_alt(if on {
+                tr!("kit-switch-on")
+            } else {
+                tr!("kit-switch-off")
+            })
             .width(Size::px(TRACK_W))
             .height(Size::px(TRACK_H))
             .corner_radius(radius::FULL)

@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 
 use super::icon::Icon;
 use super::scroll_content::TapExt;
@@ -144,7 +145,7 @@ impl Component for Tag {
             .maybe_child(self.closable.then(|| {
                 rect()
                     .a11y_role(AccessibilityRole::Button)
-                    .a11y_alt("Quitar")
+                    .a11y_alt(tr!("kit-tag-remove"))
                     .map(on_close, |r, handler| r.on_tap(move |_| handler.call(())))
                     .child(Icon::new(freya::icons::lucide::x()).size(12.0).color(p.t3))
             }))

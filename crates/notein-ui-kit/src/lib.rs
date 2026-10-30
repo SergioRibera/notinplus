@@ -5,6 +5,8 @@
 //! colours come from [`theme::palette`]; all spacing, radii and type
 //! sizes from [`tokens`]; layouts adapt with [`width::WidthClass`].
 
+notein_i18n::catalog!();
+
 pub mod color_wheel;
 pub mod components;
 pub mod modal;

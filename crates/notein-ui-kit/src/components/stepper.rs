@@ -1,6 +1,7 @@
 //! Integer stepper for small ranges.
 
 use freya::prelude::*;
+use notein_i18n::tr;
 
 use super::icon_button::IconButton;
 use crate::theme::palette;
@@ -54,7 +55,7 @@ impl Component for Stepper {
             .horizontal()
             .cross_align(Alignment::Center)
             .child(
-                IconButton::new(freya::icons::lucide::minus(), "Menos")
+                IconButton::new(freya::icons::lucide::minus(), tr!("kit-stepper-decrease"))
                     .size(36.0)
                     .enabled(value > min)
                     .on_press(move |_| {
@@ -73,7 +74,7 @@ impl Component for Stepper {
                     .text_align(TextAlign::Center),
             )
             .child(
-                IconButton::new(freya::icons::lucide::plus(), "Más")
+                IconButton::new(freya::icons::lucide::plus(), tr!("kit-stepper-increase"))
                     .size(36.0)
                     .enabled(value < max)
                     .on_press(move |_| {

@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use freya::icons::lucide;
 use freya::prelude::*;
+use notein_i18n::tr;
 
 use crate::controller::{EditorController, ImageRequest};
 use crate::document::{
@@ -128,7 +129,7 @@ impl Component for MarkdownToolbar {
         let text = theme.labels.clone();
         let editing = !format.read_only;
         let rich = format.can_format();
-        let toggle = |family: MarkFamily, kind: MarkKind, icon: Bytes, tip: &'static str| {
+        let toggle = |family: MarkFamily, kind: MarkKind, icon: Bytes, tip: &str| {
             ToolButton::new(icon, tip)
                 .active(format.has(family))
                 .enabled(rich)
@@ -350,7 +351,7 @@ impl Component for MarkdownToolbar {
             link_menu,
         )];
 
-        let align = |value: Align, icon: Bytes, tip: &'static str| {
+        let align = |value: Align, icon: Bytes, tip: &str| {
             ToolButton::new(icon, tip)
                 .active(format.target.is_some() && format.align == value)
                 .enabled(editing && format.target.is_some_and(|t| t.cell.is_none()))
@@ -381,7 +382,7 @@ impl Component for MarkdownToolbar {
             ),
         ];
 
-        let list = |block_type: BlockType, icon: Bytes, tip: &'static str| {
+        let list = |block_type: BlockType, icon: Bytes, tip: &str| {
             let active = format.block_type == Some(block_type);
             ToolButton::new(icon, tip)
                 .active(active)
@@ -514,7 +515,7 @@ fn block_items(
         .map(|block_type| {
             let caption = match block_type {
                 BlockType::Callout(kind) => {
-                    format!("{} · {}", text.get(Label::Callout), text.callout(kind))
+                    tr!("md-insert-callout", "kind" => text.callout(kind))
                 }
                 other => text.block(Some(other)).to_owned(),
             };
@@ -542,7 +543,7 @@ fn insert_items(
 ) -> Vec<MenuItem> {
     let text = &theme.labels;
     let icon = theme.colors.muted;
-    let text_diagram = text.get(Label::DiagramTemplate);
+    let text_diagram = text.get(Label::DiagramTemplate).to_owned();
     let close = move || {
         let mut menu = menu;
         menu.set(None);
@@ -578,7 +579,7 @@ fn insert_items(
             MenuItem::new(text.get(Label::Diagram), move || {
                 controller.insert_block(BlockKind::Code {
                     language: "mermaid".to_owned(),
-                    code: Inline::from(text_diagram),
+                    code: Inline::from(text_diagram.as_str()),
                 });
                 close();
             })
@@ -652,7 +653,7 @@ fn palette_popup(
                     label()
                         .color(colors.muted)
                         .font_size(12.)
-                        .text(theme.labels.get(Label::DefaultColor)),
+                        .text(theme.labels.get(Label::DefaultColor).to_owned()),
                 ),
         )
         .into_element()
@@ -675,14 +676,14 @@ fn link_popup(
         controller.set_link((!url.is_empty()).then_some(url));
         close();
     };
-    let action = |text: &'static str, color: Color, on_press: Box<dyn Fn()>| {
+    let action = |text: &str, color: Color, on_press: Box<dyn Fn()>| {
         rect()
             .padding((5., 10.))
             .corner_radius(6.)
             .background(colors.popup_selected)
             .cursor(CursorIcon::Pointer)
             .on_press(move |_| on_press())
-            .child(label().font_size(12.).color(color).text(text))
+            .child(label().font_size(12.).color(color).text(text.to_owned()))
     };
     popup_frame(colors)
         .width(Size::px(280.))
@@ -788,7 +789,7 @@ impl Tip {
         self.anchor.set_if_modified(event.area);
     }
 
-    fn render(self, text: &'static str, colors: &ToolButtonColors) -> Option<Element> {
+    fn render(self, text: String, colors: &ToolButtonColors) -> Option<Element> {
         if !*self.shown.read() {
             return None;
         }
@@ -839,7 +840,7 @@ impl Tip {
 #[derive(Clone, PartialEq)]
 struct ToolButton {
     icon: Bytes,
-    tip: &'static str,
+    tip: String,
     active: bool,
     enabled: bool,
     swatch: Option<Color>,
@@ -848,10 +849,10 @@ struct ToolButton {
 }
 
 impl ToolButton {
-    const fn new(icon: Bytes, tip: &'static str) -> Self {
+    fn new(icon: Bytes, tip: impl Into<String>) -> Self {
         Self {
             icon,
-            tip,
+            tip: tip.into(),
             active: false,
             enabled: true,
             swatch: None,
@@ -970,7 +971,7 @@ impl Component for ToolButton {
         rect()
             .on_sized(move |event: Event<SizedEventData>| tip.track(&event))
             .child(button)
-            .maybe_child(tip.render(self.tip, &colors))
+            .maybe_child(tip.render(self.tip.clone(), &colors))
     }
 }
 

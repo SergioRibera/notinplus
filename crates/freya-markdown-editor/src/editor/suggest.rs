@@ -152,7 +152,7 @@ impl BlockSuggestions {
 }
 
 impl SuggestionSource for BlockSuggestions {
-    fn title(&self) -> &'static str {
+    fn title(&self) -> &str {
         self.labels.get(Label::Blocks)
     }
 
@@ -500,7 +500,7 @@ impl Component for SuggestionMenu {
                         label()
                             .color(colors.muted)
                             .font_size(13.)
-                            .text(self.theme.labels.get(Label::NoMatches)),
+                            .text(self.theme.labels.get(Label::NoMatches).to_owned()),
                     ),
                 )
                 .into_element();

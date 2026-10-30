@@ -6,6 +6,7 @@
 //! `.allow_custom(false)` leaves only the swatch strip.
 
 use freya::prelude::*;
+use notein_i18n::tr;
 
 use crate::TextField;
 use crate::components::TapExt;
@@ -534,7 +535,12 @@ fn hex_row(
                         .alignment(BorderAlignment::Inner),
                 ),
         )
-        .child(label().color(palette().t2).font_size(12.0).text("Hex"))
+        .child(
+            label()
+                .color(palette().t2)
+                .font_size(12.0)
+                .text(tr!("kit-color-hex")),
+        )
         .child(
             rect()
                 .width(Size::flex(1.))

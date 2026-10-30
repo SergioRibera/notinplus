@@ -187,7 +187,7 @@ impl Component for DescribeField {
             .spacing(6.)
             .child(
                 Input::new(draft)
-                    .placeholder(theme.labels.get(Label::AltText))
+                    .placeholder(theme.labels.get(Label::AltText).to_owned())
                     .theme_colors(input_colors(colors))
                     .auto_focus(true)
                     .width(Size::fill())
@@ -201,7 +201,7 @@ impl Component for DescribeField {
                 label()
                     .font_size(11.5)
                     .color(colors.muted)
-                    .text(theme.labels.get(Label::AltTextHint)),
+                    .text(theme.labels.get(Label::AltTextHint).to_owned()),
             )
     }
 }

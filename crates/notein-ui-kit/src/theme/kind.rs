@@ -1,6 +1,7 @@
 //! The five built-in themes and the user's choice among them.
 
 use freya::prelude::Color;
+use notein_i18n::tr;
 
 use super::palette::{KindColors, Palette};
 
@@ -36,13 +37,13 @@ impl ThemeKind {
 
     /// User-facing name.
     #[must_use]
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Noche => "Noche",
-            Self::Dia => "Día",
-            Self::Sepia => "Sepia",
-            Self::Contraste => "Alto contraste",
-            Self::Oled => "OLED",
+            Self::Noche => tr!("kit-theme-night"),
+            Self::Dia => tr!("kit-theme-day"),
+            Self::Sepia => tr!("kit-theme-sepia"),
+            Self::Contraste => tr!("kit-theme-high-contrast"),
+            Self::Oled => tr!("kit-theme-oled"),
         }
     }
 

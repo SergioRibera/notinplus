@@ -10,6 +10,7 @@ use std::time::Duration;
 use freya::clipboard::Clipboard;
 use freya::icons::lucide;
 use freya::prelude::*;
+use notein_i18n::tr;
 
 use crate::controller::EditorController;
 use crate::document::{BlockId, CalloutKind};
@@ -295,7 +296,7 @@ impl Component for LanguagePicker {
             let typed = language_id(&query);
             items.push(
                 MenuItem::new(
-                    format!("{} “{typed}”", labels.get(Label::UseLanguage)),
+                    tr!("md-use-language", "language" => typed.clone()),
                     move || pick(typed.clone()),
                 )
                 .icon(lucide::corner_down_left(), colors.accent),
@@ -320,7 +321,7 @@ impl Component for LanguagePicker {
             .spacing(6.)
             .child(
                 Input::new(draft)
-                    .placeholder(labels.get(Label::SearchLanguage))
+                    .placeholder(labels.get(Label::SearchLanguage).to_owned())
                     .theme_colors(input_colors(colors))
                     .auto_focus(self.focus_search)
                     .width(Size::fill())
@@ -344,8 +345,8 @@ impl Component for LanguagePicker {
 #[derive(Clone, PartialEq)]
 pub(crate) struct RenameButton {
     pub(crate) current: String,
-    pub(crate) placeholder: &'static str,
-    pub(crate) hint: Option<&'static str>,
+    pub(crate) placeholder: String,
+    pub(crate) hint: Option<String>,
     pub(crate) color: Color,
     pub(crate) theme: Rc<EditorTheme>,
     pub(crate) on_rename: EventHandler<String>,
@@ -389,7 +390,7 @@ impl Component for RenameButton {
                 .spacing(6.)
                 .child(
                     Input::new(draft)
-                        .placeholder(self.placeholder)
+                        .placeholder(self.placeholder.clone())
                         .theme_colors(input_colors(colors))
                         .auto_focus(true)
                         .width(Size::fill())
@@ -400,6 +401,7 @@ impl Component for RenameButton {
                 )
                 .maybe_child(
                     self.hint
+                        .clone()
                         .map(|hint| label().font_size(11.5).color(colors.muted).text(hint)),
                 )
                 .into_element()
@@ -456,7 +458,7 @@ impl Component for CopyButton {
                 label()
                     .color(color)
                     .font_size(theme.px(12.))
-                    .text(theme.labels.get(caption)),
+                    .text(theme.labels.get(caption).to_owned()),
             )
     }
 }

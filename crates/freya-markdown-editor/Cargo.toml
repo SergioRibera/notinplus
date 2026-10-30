@@ -21,6 +21,10 @@ freya-core = "=0.5.0-rc.13"
 freya-edit = "=0.5.0-rc.13"
 freya-engine = "=0.5.0-rc.13"
 comrak = { version = "0.56", default-features = false, features = ["attributes"] }
+notein-i18n = { path = "../notein-i18n" }
+
+[build-dependencies]
+notein-i18n = { path = "../notein-i18n", features = ["build"] }
 
 [lints.rust]
 missing_debug_implementations = "warn"

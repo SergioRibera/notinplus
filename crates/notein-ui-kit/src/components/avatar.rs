@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 
 use crate::components::TapExt;
 use crate::theme::palette;
@@ -238,7 +239,7 @@ impl Component for PresenceList {
                     .background(p.accent_soft)
                     .center()
                     .a11y_role(AccessibilityRole::Button)
-                    .a11y_alt(format!("Ver {hidden} personas más"))
+                    .a11y_alt(tr!("kit-avatar-more", "count" => hidden))
                     .map(on_more, |r, handler| r.on_tap(move |_| handler.call(())))
                     .child(
                         label()

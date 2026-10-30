@@ -60,7 +60,7 @@ impl PropertiesPanel {
                     label()
                         .font_size(theme.px(12.))
                         .color(colors.accent)
-                        .text(theme.labels.get(caption)),
+                        .text(theme.labels.get(caption).to_owned()),
                 )
         });
         rect()
@@ -95,7 +95,7 @@ impl PropertiesPanel {
                             .font_size(theme.px(13.))
                             .font_weight(FontWeight::BOLD)
                             .color(colors.text)
-                            .text(theme.labels.get(Label::Properties)),
+                            .text(theme.labels.get(Label::Properties).to_owned()),
                     )
                     .maybe_child(count.filter(|_| listed).map(|count| {
                         label()
@@ -210,7 +210,7 @@ impl PropertyRow {
                 open.set(false);
             }
         });
-        let button = |text: &'static str, color: Color, action: Box<dyn Fn()>| {
+        let button = |text: &str, color: Color, action: Box<dyn Fn()>| {
             rect()
                 .height(Size::px(32.))
                 .padding((0., 12.))
@@ -222,12 +222,12 @@ impl PropertyRow {
                     event.stop_propagation();
                     action();
                 })
-                .child(label().font_size(13.).color(color).text(text))
+                .child(label().font_size(13.).color(color).text(text.to_owned()))
         };
         let field = |state: State<String>, placeholder: Label, focus: bool| {
             let submit = save.clone();
             Input::new(state)
-                .placeholder(theme.labels.get(placeholder))
+                .placeholder(theme.labels.get(placeholder).to_owned())
                 .theme_colors(input_colors(colors))
                 .auto_focus(focus)
                 .width(Size::fill())
@@ -327,7 +327,7 @@ impl Component for PropertyRow {
                     label()
                         .font_size(theme.px(13.))
                         .color(colors.accent)
-                        .text(theme.labels.get(Label::AddProperty)),
+                        .text(theme.labels.get(Label::AddProperty).to_owned()),
                 )
             })
             .into_element();

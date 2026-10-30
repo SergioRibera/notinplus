@@ -7,6 +7,7 @@
 use std::borrow::Cow;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 
 use super::divider::Divider;
 use super::icon::Icon;
@@ -176,7 +177,7 @@ impl SheetCard {
                 .content(Content::Flex)
                 .spacing(8.0)
                 .maybe_child(on_back.clone().map(|handler| {
-                    IconButton::new(freya::icons::lucide::chevron_left(), "Atrás")
+                    IconButton::new(freya::icons::lucide::chevron_left(), tr!("kit-sheet-back"))
                         .size(32.0)
                         .on_press(move |_| handler.call(()))
                 }))
@@ -197,7 +198,7 @@ impl SheetCard {
                         .text_overflow(TextOverflow::Ellipsis),
                 )
                 .maybe_child(sheet.closable.then(|| {
-                    IconButton::new(freya::icons::lucide::x(), "Cerrar")
+                    IconButton::new(freya::icons::lucide::x(), tr!("kit-sheet-close"))
                         .size(32.0)
                         .on_press(|_| ModalController::get().close())
                 }))

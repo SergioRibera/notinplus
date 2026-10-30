@@ -80,7 +80,7 @@ impl Component for MathAtom {
                 .spacing(8.)
                 .child(
                     Input::new(draft)
-                        .placeholder(theme.labels.get(Label::Formula))
+                        .placeholder(theme.labels.get(Label::Formula).to_owned())
                         .theme_colors(input_colors(colors))
                         .auto_focus(true)
                         .width(Size::fill())

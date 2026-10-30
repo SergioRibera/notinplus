@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 
 use super::icon::Icon;
 use crate::components::TapExt;
@@ -149,7 +150,7 @@ impl TextField {
         self.error.clone().or_else(|| {
             self.max_len
                 .filter(|max| self.value.read().chars().count() > *max)
-                .map(|max| Cow::Owned(format!("Máximo {max} caracteres")))
+                .map(|max| Cow::Owned(tr!("kit-field-max-length", "max" => max)))
         })
     }
 }
@@ -431,7 +432,7 @@ impl Component for SearchField {
             .maybe_child(has_text.then(|| {
                 rect()
                     .a11y_role(AccessibilityRole::Button)
-                    .a11y_alt("Borrar búsqueda")
+                    .a11y_alt(tr!("kit-search-clear"))
                     .padding(4.0)
                     .on_tap(move |_| {
                         value.set(String::new());

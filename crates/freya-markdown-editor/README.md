@@ -241,13 +241,14 @@ toolbar below picks it up. `EditorTheme::dark()` and `EditorTheme::light()`
 are included.
 
 The text the editor and toolbar show on their own (tooltips, menus, block
-captions, the `/` menu) comes from `EditorTheme::labels`, English by
-default. Translate it with `Labels::from_fn`, matching on every `Label`
-so a new label fails the build until it is translated:
+captions, the `/` menu) comes from `EditorTheme::labels`, built from the
+crate's Fluent catalog (`locales/<lang>/*.ftl`, English and Spanish) in the
+active `notein_i18n::Lang`. Reword it with `Labels::from_fn`, matching on
+every `Label` so a new label fails the build until it is worded:
 
 ```rust,ignore
 theme.labels = Labels::from_fn(|label| match label {
-    Label::Undo => "Deshacer (Ctrl+Z)",
+    Label::Undo => "Undo",
     // ...
 });
 ```
