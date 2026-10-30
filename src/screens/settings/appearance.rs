@@ -8,6 +8,8 @@ use notein_ui_kit::{
     PopoverAlign, Section, Segmented, Text, TextRole, Trailing, tokens,
 };
 
+use notein_i18n::{Lang, tr};
+
 use crate::settings::{SettingsStore, TextSizePref, ThemePref};
 
 const THUMB_W: f32 = 116.0;
@@ -146,7 +148,7 @@ pub(super) struct Appearance;
 /// stands for a pick of the very same colour.
 fn accent_swatch(
     color: Option<Color>,
-    label: &'static str,
+    label: String,
     accent: Option<Color>,
     theme_accent: Color,
 ) -> Element {
@@ -199,7 +201,7 @@ fn custom_swatch(accent: Option<Color>, theme_accent: Color, mut area: State<Are
         )
         .center()
         .a11y_role(AccessibilityRole::Button)
-        .a11y_alt("Otro color")
+        .a11y_alt(tr!("settings-appearance-accent-other"))
         .on_sized(move |e: Event<SizedEventData>| area.set_if_modified(e.area))
         .on_tap(move |_| {
             let initial = accent.unwrap_or(theme_accent);
@@ -207,7 +209,7 @@ fn custom_swatch(accent: Option<Color>, theme_accent: Color, mut area: State<Are
                 .width(PICKER_WIDTH + 32.0)
                 .estimated_height(380.0)
                 .align(PopoverAlign::End)
-                .sheet_title("Otro color")
+                .sheet_title(tr!("settings-appearance-accent-other"))
                 .open();
         })
         .child(
@@ -247,14 +249,15 @@ impl Component for AccentPicker {
         let (tone, note) = if readable == all {
             (
                 NoticeTone::Success,
-                format!("Se lee bien en los {all} temas"),
+                tr!("settings-appearance-accent-readable-all", "all" => all),
             )
         } else {
             (
                 NoticeTone::Info,
-                format!(
-                    "Se ajusta en {} de los {all} temas para que se lea",
-                    all - readable
+                tr!(
+                    "settings-appearance-accent-adjusted",
+                    "adjusted" => all - readable,
+                    "all" => all,
                 ),
             )
         };
@@ -281,18 +284,50 @@ impl Component for AccentPicker {
                     .cross_align(Alignment::Center)
                     .spacing(8.0)
                     .child(
-                        Button::new("Cancelar")
+                        Button::new(tr!("common-cancel"))
                             .ghost()
                             .on_press(|_| ModalController::get().close()),
                     )
-                    .child(Button::new("Usar").primary().on_press(move |_| {
-                        let color = *draft.peek();
-                        ModalController::get().close();
-                        SettingsStore::get().update(|s| s.appearance.accent = Some(rgb(color)));
-                    })),
+                    .child(
+                        Button::new(tr!("settings-appearance-accent-use"))
+                            .primary()
+                            .on_press(move |_| {
+                                let color = *draft.peek();
+                                ModalController::get().close();
+                                SettingsStore::get()
+                                    .update(|s| s.appearance.accent = Some(rgb(color)));
+                            }),
+                    ),
             )
             .background(p.s2)
     }
+}
+
+/// "Device" first, then every language in its own name.
+fn language_section(chosen: Option<Lang>) -> Section {
+    let options: Vec<Option<Lang>> = std::iter::once(None)
+        .chain(Lang::ALL.into_iter().map(Some))
+        .collect();
+    let selected = options.iter().position(|o| *o == chosen).unwrap_or(0);
+    let labels: Vec<String> = options
+        .iter()
+        .map(|o| {
+            o.map_or_else(
+                || tr!("settings-appearance-language-device"),
+                |lang| lang.native_name().to_owned(),
+            )
+        })
+        .collect();
+    Section::new(tr!("settings-appearance-language"))
+        .child(
+            Segmented::new(labels, selected)
+                .full_width()
+                .on_select(move |i: usize| {
+                    let language = options.get(i).copied().flatten();
+                    SettingsStore::get().update(|s| s.appearance.language = language);
+                }),
+        )
+        .child(Text::new(tr!("settings-appearance-language-hint")).role(TextRole::Meta))
 }
 
 /// Swatches, the picker, and a note when the theme had to adjust it.
@@ -300,31 +335,44 @@ fn accent_section(accent: Option<Color>, custom: State<Area>) -> Section {
     let p = palette();
     let resolved = try_theme().map(|t| t.resolved());
     let theme_accent = resolved.map_or(p.accent, |r| r.kind.base().accent);
-    Section::new("Color de acento")
-        .child(
-            Text::new("Se usa en botones, selección, enlaces y la pestaña activa. Los documentos no cambian.")
-                .role(TextRole::Hint),
-        )
+    Section::new(tr!("settings-appearance-accent"))
+        .child(Text::new(tr!("settings-appearance-accent-hint")).role(TextRole::Hint))
         .child(
             rect()
                 .width(Size::fill())
                 .horizontal()
                 .content(Content::wrap_spacing(10.0))
                 .spacing(10.0)
-                .child(accent_swatch(None, "Del tema", accent, theme_accent))
+                .child(accent_swatch(
+                    None,
+                    tr!("settings-appearance-accent-theme"),
+                    accent,
+                    theme_accent,
+                ))
                 .children(
                     // The theme's own accent is already the first swatch.
                     ACCENT_SWATCHES
                         .into_iter()
                         .filter(|c| *c != theme_accent)
-                        .map(|c| accent_swatch(Some(c), "Color", accent, theme_accent)),
+                        .map(|c| {
+                            accent_swatch(
+                                Some(c),
+                                tr!("settings-appearance-accent-swatch"),
+                                accent,
+                                theme_accent,
+                            )
+                        }),
                 )
                 .child(custom_swatch(accent, theme_accent, custom)),
         )
         .maybe_child(resolved.filter(|r| r.accent_adjusted).map(|r| {
             let theme = r.kind.label();
-            let verb = if r.palette.dark { "lo aclaramos" } else { "lo oscurecemos" };
-            Notice::new(NoticeTone::Info, format!("En {theme} {verb} para que se lea."))
+            let note = if r.palette.dark {
+                tr!("settings-appearance-accent-lightened", "theme" => theme)
+            } else {
+                tr!("settings-appearance-accent-darkened", "theme" => theme)
+            };
+            Notice::new(NoticeTone::Info, note)
         }))
 }
 
@@ -347,7 +395,7 @@ impl Component for Appearance {
             .width(Size::fill())
             .spacing(24.0)
             .child(
-                Section::new("Tema").child(
+                Section::new(tr!("settings-appearance-theme")).child(
                     rect()
                         .width(Size::fill())
                         .horizontal()
@@ -356,23 +404,32 @@ impl Component for Appearance {
                         .children(themes),
                 ),
             )
+            .child(language_section(settings.language))
             .child(accent_section(accent, custom))
             .child(
-                Section::new("Tamaño del texto")
+                Section::new(tr!("settings-appearance-text-size"))
                     .child(
-                        Segmented::new(["Chico", "Normal", "Grande", "Más grande"], size_index)
-                            .full_width()
-                            .on_select(move |i: usize| {
-                                SettingsStore::get()
-                                    .update(|s| s.appearance.text_size = TextSizePref::ALL[i]);
-                            }),
+                        Segmented::new(
+                            [
+                                tr!("settings-appearance-text-small"),
+                                tr!("settings-appearance-text-normal"),
+                                tr!("settings-appearance-text-large"),
+                                tr!("settings-appearance-text-larger"),
+                            ],
+                            size_index,
+                        )
+                        .full_width()
+                        .on_select(move |i: usize| {
+                            SettingsStore::get()
+                                .update(|s| s.appearance.text_size = TextSizePref::ALL[i]);
+                        }),
                     )
-                    .child(Text::new("Así se ven los nombres de tus documentos.").role(TextRole::Meta)),
+                    .child(Text::new(tr!("settings-appearance-text-sample")).role(TextRole::Meta)),
             )
             .child(
                 Group::default().child(
-                    ListRow::new("Reducir movimiento")
-                        .subtitle("Sin animaciones al abrir paneles ni destellos al saltar a una referencia.")
+                    ListRow::new(tr!("settings-appearance-reduce-motion"))
+                        .subtitle(tr!("settings-appearance-reduce-motion-hint"))
                         .trailing(Trailing::Switch {
                             on: settings.reduce_motion,
                             on_toggle: EventHandler::new(move |on| {

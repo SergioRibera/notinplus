@@ -154,19 +154,19 @@ fn shortcut_row(slot: usize, current: Option<EntryKey>) -> Element {
 
 /// A section with a choice and a hint under it.
 fn choice_section<const N: usize>(
-    title: &'static str,
-    labels: [&'static str; N],
+    title: impl Into<String>,
+    labels: [String; N],
     selected: usize,
-    hint: &'static str,
+    hint: impl Into<String>,
     on_select: impl FnMut(usize) + 'static,
 ) -> Section {
-    Section::new(title)
+    Section::new(title.into())
         .child(
             Segmented::new(labels, selected)
                 .full_width()
                 .on_select(on_select),
         )
-        .child(Text::new(hint).role(TextRole::Hint))
+        .child(Text::new(hint.into()).role(TextRole::Hint))
 }
 
 impl Component for Pen {

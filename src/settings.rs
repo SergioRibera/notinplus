@@ -5,6 +5,7 @@
 //! and the store writes the file and re-applies the appearance.
 
 use freya::prelude::*;
+use notein_i18n::{Lang, tr};
 use notein_ui_kit::theme::{Appearance, TextSize, ThemeChoice, ThemeHandle, ThemeKind};
 
 use crate::ink_glyph::GlyphFont;
@@ -35,14 +36,14 @@ impl ThemePref {
     ];
 
     #[must_use]
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Automatic => "Automático",
-            Self::Noche => "Noche",
-            Self::Dia => "Día",
-            Self::Sepia => "Sepia",
-            Self::Contraste => "Alto contraste",
-            Self::Oled => "OLED",
+            Self::Automatic => tr!("common-automatic"),
+            Self::Noche => tr!("settings-theme-night"),
+            Self::Dia => tr!("settings-theme-day"),
+            Self::Sepia => tr!("settings-theme-sepia"),
+            Self::Contraste => tr!("settings-theme-contrast"),
+            Self::Oled => tr!("settings-theme-oled"),
         }
     }
 }
@@ -95,6 +96,28 @@ pub struct AppearanceSettings {
     pub accent: Option<[u8; 3]>,
     pub text_size: TextSizePref,
     pub reduce_motion: bool,
+    /// Interface language; `None` follows the device.
+    pub language: Option<Lang>,
+}
+
+impl AppearanceSettings {
+    /// Language the interface shows: the chosen one, else the device's
+    /// when it is supported, else [`Lang::FALLBACK`].
+    #[must_use]
+    pub fn interface_lang(&self) -> Lang {
+        self.language.unwrap_or_else(device_lang)
+    }
+}
+
+/// Supported language of the device locale istmo reports.
+fn device_lang() -> Lang {
+    istmo::plugins::SystemInfo::acquire()
+        .and_then(|info| info.current_locale())
+        .map_err(|err| log::warn!("system locale: {err}"))
+        .ok()
+        .flatten()
+        .and_then(|locale| Lang::from_locale(&locale.bcp47))
+        .unwrap_or(Lang::FALLBACK)
 }
 
 impl From<AppearanceSettings> for Appearance {
@@ -123,11 +146,11 @@ impl FingerDraw {
     pub const ALL: [Self; 3] = [Self::Automatic, Self::Always, Self::Never];
 
     #[must_use]
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Automatic => "Automático",
-            Self::Always => "Sí",
-            Self::Never => "No",
+            Self::Automatic => tr!("common-automatic"),
+            Self::Always => tr!("common-yes"),
+            Self::Never => tr!("common-no"),
         }
     }
 
@@ -156,11 +179,11 @@ impl PenDoubleTap {
     pub const ALL: [Self; 3] = [Self::Eraser, Self::LastBrush, Self::Nothing];
 
     #[must_use]
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Eraser => "Cambiar a goma",
-            Self::LastBrush => "Volver al último pincel",
-            Self::Nothing => "Nada",
+            Self::Eraser => tr!("settings-pen-tap-eraser"),
+            Self::LastBrush => tr!("settings-pen-tap-last-brush"),
+            Self::Nothing => tr!("settings-pen-tap-nothing"),
         }
     }
 }
@@ -258,12 +281,12 @@ impl TrashRetention {
     }
 
     #[must_use]
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Days7 => "7 días",
-            Self::Days30 => "30 días",
-            Self::Days90 => "90 días",
-            Self::Never => "Nunca",
+            Self::Days7 => tr!("settings-retention-days", "days" => 7),
+            Self::Days30 => tr!("settings-retention-days", "days" => 30),
+            Self::Days90 => tr!("settings-retention-days", "days" => 90),
+            Self::Never => tr!("common-never"),
         }
     }
 
@@ -289,12 +312,12 @@ impl SortOrder {
     pub const ALL: [Self; 4] = [Self::Modified, Self::Created, Self::Name, Self::Kind];
 
     #[must_use]
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Modified => "Modificado",
-            Self::Created => "Creado",
-            Self::Name => "Nombre",
-            Self::Kind => "Tipo",
+            Self::Modified => tr!("settings-sort-modified"),
+            Self::Created => tr!("settings-sort-created"),
+            Self::Name => tr!("common-name"),
+            Self::Kind => tr!("settings-sort-kind"),
         }
     }
 }
@@ -361,6 +384,7 @@ impl Settings {
             PenDoubleTap::Nothing => 2,
         };
         PEN_DOUBLE_TAP.store(code, std::sync::atomic::Ordering::Relaxed);
+        self.appearance.interface_lang().make_current();
     }
 }
 

@@ -262,6 +262,9 @@ impl Component for AppShell {
                 lib.purge_expired(retention).await.map(drop)
             });
         });
+        // Text is formatted at render time in the process-global
+        // language, so a language change remounts the routed views.
+        let lang = use_memo(move || settings.read().appearance.interface_lang());
         let insets = *crate::hooks::provide_safe_area_root().read();
         // Share the measured window area with any descendant that
         // wants to clamp its own popup/overlay inside the viewport —
@@ -296,7 +299,12 @@ impl Component for AppShell {
             // component — otherwise the inner `Router` scope creates
             // its own context and siblings outside its subtree would
             // again lose access.
-            .child(Outlet::<Route>::new())
+            .child(
+                rect()
+                    .expanded()
+                    .key(*lang.read())
+                    .child(Outlet::<Route>::new()),
+            )
             .child(crate::selection::StickySelection)
             .child({
                 // Install the host-side ModalChrome context before the

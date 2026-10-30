@@ -63,6 +63,13 @@ pub fn install() -> Result<(), Box<dyn std::error::Error>> {
         Err(err) => log::warn!("share backend unavailable: {err}"),
     }
 
+    // One sample before the settings load, so the interface language
+    // can follow the desktop locale on the first frame.
+    match istmo_plugins::system_info::SystemInfoPublisher::install(&runtime) {
+        Ok(mut system_info) => system_info.tick(),
+        Err(err) => log::warn!("system info unavailable: {err}"),
+    }
+
     log_storage_paths();
 
     // Local-hosted plugin calls short-circuit into dispatch_inbound, so

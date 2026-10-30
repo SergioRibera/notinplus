@@ -72,6 +72,7 @@ freya-markdown-diagrams = { path = "crates/freya-markdown-diagrams", optional = 
 notein-bible = { path = "crates/notein-bible", features = ["ui", "importer"] }
 notein-notes = { path = "crates/notein-notes" }
 notein-handwriting = { path = "crates/notein-handwriting" }
+notein-i18n = { path = "crates/notein-i18n" }
 loro = "1.16.2"
 zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
@@ -101,6 +102,8 @@ winit = { version = "0.30", features = ["android-game-activity"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos")))'.dependencies]
 env_logger = "0.11"
+# Samples the desktop locale for the interface language.
+istmo-plugins = { version = "0.1.1-alpha.4", features = ["desktop-publisher"] }
 istmo-window = "0.1.1-alpha.4"
 istmo-camera = { path = "../istmo/plugins/camera", features = ["desktop"] }
 
@@ -110,6 +113,7 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 
 [build-dependencies]
 istmo-build = "0.1.1-alpha.4"
+notein-i18n = { path = "crates/notein-i18n", features = ["build"] }
 
 [patch.crates-io]
 # istmo-camera is taken from the sibling istmo checkout until it is
@@ -117,6 +121,8 @@ istmo-build = "0.1.1-alpha.4"
 istmo-core = { path = "../istmo/crates/core" }
 istmo-macros = { path = "../istmo/crates/macros" }
 istmo-build = { path = "../istmo/crates/build" }
+# System locale (`SystemInfo`) is not published yet.
+istmo-plugins = { path = "../istmo/crates/plugins" }
 winit = { git = "https://github.com/SergioRibera/winit", branch = "notein-native-input" }
 # Touch editing and soft keyboard work, on top of freya 0.5.0-rc.13 (main).
 freya = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }

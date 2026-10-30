@@ -88,7 +88,9 @@ pub mod desktop_data_store;
 /// Matches [`istmo_pen::PenConfig::window_id`].
 pub const WINDOW_ID: u64 = 1;
 
-use istmo::plugins::{DeepLinks, SafeArea};
+notein_i18n::catalog!();
+
+use istmo::plugins::{DeepLinks, SafeArea, SystemInfo};
 use istmo_camera::CameraClient;
 use istmo_data_store::DataStoreClient;
 use istmo_file_picker::FilePickerClient;
@@ -98,7 +100,7 @@ use istmo_pen::PenClient;
 use istmo_share::ShareClient;
 
 istmo::runtime!(
-    plugins: [PenClient, SafeArea, DeepLinks, FilePickerClient, DataStoreClient, ShareClient, CameraClient, OpenerClient, InstallerClient],
+    plugins: [PenClient, SafeArea, DeepLinks, SystemInfo, FilePickerClient, DataStoreClient, ShareClient, CameraClient, OpenerClient, InstallerClient],
 );
 
 #[cfg(any(
