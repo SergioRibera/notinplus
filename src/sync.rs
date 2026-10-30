@@ -517,9 +517,41 @@ struct ShareMemo {
     docs: Vec<ItemId>,
 }
 
+/// First wait before starting a stopped transport again; it doubles up
+/// to [`RESTART_MAX`].
+const RESTART_FIRST: Duration = Duration::from_secs(1);
+const RESTART_MAX: Duration = Duration::from_secs(60);
+
+/// The LAN transport, started again with backoff whenever it stops.
+struct Transport {
+    node: Option<LanNode>,
+    /// When to try starting it again, and the wait after that.
+    retry: Option<(Instant, Duration)>,
+    /// Whether this device shows itself on the network: a node started
+    /// while the app is away has to start away too.
+    present: bool,
+}
+
+impl Transport {
+    fn start(profile: &DeviceProfile) -> Result<LanNode, notein_sync::NetError> {
+        LanNode::start(LanConfig::new(profile.key().clone(), profile.name()))
+    }
+
+    /// The node is gone or never started: try again later.
+    fn lost(&mut self, now: Instant) {
+        self.node = None;
+        let delay = self.retry.map_or(RESTART_FIRST, |(_, delay)| delay);
+        self.retry = Some((now + delay, (delay * 2).min(RESTART_MAX)));
+    }
+
+    fn retry_due(&self, now: Instant) -> bool {
+        self.node.is_none() && self.retry.is_some_and(|(at, _)| at <= now)
+    }
+}
+
 struct Service {
     driver: SyncDriver<LibraryReplica>,
-    node: LanNode,
+    transport: Transport,
     profile_path: PathBuf,
     shares_path: PathBuf,
     memos: HashMap<ShareId, ShareMemo>,
@@ -589,23 +621,26 @@ impl Service {
 
     fn perform(&mut self, actions: Vec<Action>) {
         for action in actions {
+            // Without a transport there is nobody to send to; the next
+            // round after it is back covers whatever is dropped here.
+            let node = self.transport.node.as_ref();
             match action {
                 Action::Send {
                     device,
                     lane,
                     bytes,
                 } => {
-                    if let Err(err) = self.node.send(device, lane, bytes) {
+                    if let Some(Err(err)) = node.map(|n| n.send(device, lane, bytes)) {
                         log::warn!("sync send: {err}");
                     }
                 }
                 Action::Connect { addr, public } => {
-                    if let Err(err) = self.node.connect(addr, public) {
+                    if let Some(Err(err)) = node.map(|n| n.connect(addr, public)) {
                         log::warn!("sync connect: {err}");
                     }
                 }
                 Action::ConnectHost { host, public } => {
-                    if let Err(err) = self.node.connect_host(host, public) {
+                    if let Some(Err(err)) = node.map(|n| n.connect_host(host, public)) {
                         log::warn!("sync connect: {err}");
                     }
                 }
@@ -753,7 +788,7 @@ impl Service {
             Cmd::SetName(name) => {
                 self.driver.profile_mut().set_name(name.clone());
                 self.save_profile();
-                if let Err(err) = self.node.set_name(name) {
+                if let Some(Err(err)) = self.transport.node.as_ref().map(|n| n.set_name(name)) {
                     log::warn!("sync rename: {err}");
                 }
                 Vec::new()
@@ -761,7 +796,9 @@ impl Service {
             Cmd::Revoke(device) => {
                 if self.driver.profile_mut().revoke(device) {
                     self.save_profile();
-                    let _ = self.node.disconnect(device);
+                    if let Some(node) = &self.transport.node {
+                        let _ = node.disconnect(device);
+                    }
                 }
                 Vec::new()
             }
@@ -780,17 +817,7 @@ impl Service {
                     s.viewers.push(device);
                 }
             }),
-            Cmd::Present(present) => {
-                let result = if present {
-                    self.node.resume()
-                } else {
-                    self.node.pause()
-                };
-                if let Err(err) = result {
-                    log::warn!("sync presence: {err}");
-                }
-                Vec::new()
-            }
+            Cmd::Present(present) => self.set_present(present)?,
             // Handled by the service loop before it gets here.
             Cmd::Quit(_) => Vec::new(),
             Cmd::SetRelay(relay) => {
@@ -816,6 +843,29 @@ impl Service {
         };
         self.perform(actions);
         Ok(())
+    }
+
+    /// Leave the network while the app is away, and come back to it.
+    fn set_present(&mut self, present: bool) -> Result<Vec<Action>, ExchangeError> {
+        self.transport.present = present;
+        let result = self
+            .transport
+            .node
+            .as_ref()
+            .map(|node| if present { node.resume() } else { node.pause() });
+        if let Some(Err(err)) = result {
+            log::warn!("sync presence: {err}");
+        }
+        if !present {
+            return Ok(Vec::new());
+        }
+        // Back on the network: dial everyone now rather than when their
+        // backoff runs out, and say what changed while away.
+        let now = Instant::now();
+        self.driver.redial_now(now);
+        let mut actions = self.driver.supervise(now);
+        actions.extend(self.driver.announce()?);
+        Ok(actions)
     }
 
     fn share_views(&self) -> Vec<ShareView> {
@@ -907,12 +957,16 @@ fn load_shares(path: &Path) -> Vec<Share> {
 enum Step {
     Cmd(Cmd),
     Net(NetEvent),
+    /// The transport thread is gone without a word.
+    NetGone,
+    /// The app dropped its end: nothing will ever ask for sync again.
+    CmdsGone,
 }
 
 impl Service {
     /// Load this device's profile and shares, start the network and
     /// reach the relay. `None`, with the reason published, when this
-    /// device cannot sync.
+    /// device cannot sync. A network that does not start is retried.
     fn start() -> Option<Self> {
         let root = bodies::root_dir();
         let profile_path = root.join(PROFILE_FILE);
@@ -927,29 +981,30 @@ impl Service {
                 return None;
             }
         };
-        let node = match LanNode::start(LanConfig::new(profile.key().clone(), profile.name())) {
-            Ok(node) => node,
-            Err(err) => {
-                publish(SyncSnapshot {
-                    device: Some(profile.id()),
-                    name: profile.name().to_owned(),
-                    trusted: profile.trusted().to_vec(),
-                    error: Some(SyncProblem::Network(Arc::new(err))),
-                    ..SyncSnapshot::default()
-                });
-                return None;
-            }
+        let mut transport = Transport {
+            node: None,
+            retry: None,
+            present: true,
         };
+        let mut error = None;
+        match Transport::start(&profile) {
+            Ok(node) => transport.node = Some(node),
+            Err(err) => {
+                log::warn!("sync network: {err}");
+                error = Some(SyncProblem::Network(Arc::new(err)));
+                transport.lost(Instant::now());
+            }
+        }
         let shares = load_shares(&shares_path);
         let mut service = Self {
             driver: SyncDriver::new(profile, LibraryReplica::default(), shares),
-            node,
+            transport,
             profile_path,
             shares_path,
             memos: HashMap::new(),
             last_failure: None,
             last_join_failure: None,
-            error: None,
+            error,
             outdated: HashSet::new(),
         };
         service.remember_shares();
@@ -979,6 +1034,42 @@ impl Service {
         }
     }
 
+    /// The transport stopped: everyone is offline until it is back.
+    fn transport_lost(&mut self, reason: &str) {
+        log::warn!("sync network stopped: {reason}");
+        self.on_net(NetEvent::Stopped(reason.to_owned()));
+        self.transport.lost(Instant::now());
+        self.error = Some(SyncProblem::Network(Arc::new(
+            notein_sync::NetError::Stopped,
+        )));
+    }
+
+    /// Start the transport again once its wait is over.
+    fn revive_transport(&mut self, now: Instant) {
+        if !self.transport.retry_due(now) {
+            return;
+        }
+        match Transport::start(self.driver.profile()) {
+            Ok(node) => {
+                if !self.transport.present
+                    && let Err(err) = node.pause()
+                {
+                    log::warn!("sync presence: {err}");
+                }
+                self.transport.node = Some(node);
+                self.transport.retry = None;
+                if matches!(self.error, Some(SyncProblem::Network(_))) {
+                    self.error = None;
+                }
+            }
+            Err(err) => {
+                log::warn!("sync network: {err}");
+                self.error = Some(SyncProblem::Network(Arc::new(err)));
+                self.transport.lost(now);
+            }
+        }
+    }
+
     fn local_changed(&mut self) {
         if let Err(err) = self.on_cmd(Cmd::LocalChanged) {
             log::error!("sync: {err}");
@@ -988,42 +1079,52 @@ impl Service {
 }
 
 /// The sync service: commands from the app and network events, with
-/// local changes debounced and a periodic tick.
+/// local changes debounced, a periodic tick, and lost devices dialed
+/// again every [`notein_sync::driver::SUPERVISE`].
 fn run(cmds: &flume::Receiver<Cmd>) {
     let Some(mut service) = Service::start() else {
         return;
     };
     publish(service.snapshot());
     let mut next_tick = Instant::now() + notein_sync::driver::TICK;
+    let mut next_supervise = Instant::now() + notein_sync::driver::SUPERVISE;
     let mut pending_change: Option<Instant> = None;
     loop {
         let now = Instant::now();
-        let deadline = pending_change
-            .map_or(next_tick, |due| due.min(next_tick))
-            .max(now);
-        let events = service.node.events().clone();
-        let step = flume::Selector::new()
-            .recv(cmds, |cmd| cmd.map(Step::Cmd))
-            .recv(&events, |event| event.map(Step::Net))
-            .wait_timeout(deadline.duration_since(now));
-        match step {
-            Ok(Ok(Step::Cmd(Cmd::LocalChanged))) => {
+        let mut deadline = next_tick.min(next_supervise);
+        if let Some(due) = pending_change {
+            deadline = deadline.min(due);
+        }
+        if let Some((due, _)) = service.transport.retry {
+            deadline = deadline.min(due);
+        }
+        let deadline = deadline.max(now);
+        let events = service.transport.node.as_ref().map(|n| n.events().clone());
+        let mut selector =
+            flume::Selector::new().recv(cmds, |cmd| cmd.map_or(Step::CmdsGone, Step::Cmd));
+        if let Some(events) = &events {
+            selector = selector.recv(events, |event| event.map_or(Step::NetGone, Step::Net));
+        }
+        match selector.wait_timeout(deadline.duration_since(now)) {
+            Ok(Step::Cmd(Cmd::LocalChanged)) => {
                 pending_change.get_or_insert_with(|| Instant::now() + DEBOUNCE);
             }
-            Ok(Ok(Step::Cmd(Cmd::Quit(done)))) => {
+            Ok(Step::Cmd(Cmd::Quit(done))) => {
                 // Dropping the node says goodbye on every channel.
                 drop(service);
                 let _ = done.send(());
                 return;
             }
-            Ok(Ok(Step::Cmd(cmd))) => {
+            Ok(Step::Cmd(cmd)) => {
                 if let Err(err) = service.on_cmd(cmd) {
                     log::error!("sync: {err}");
                     service.error = Some(SyncProblem::Exchange(Arc::new(err)));
                 }
             }
-            Ok(Ok(Step::Net(event))) => service.on_net(event),
-            Ok(Err(_)) => break,
+            Ok(Step::Net(NetEvent::Stopped(reason))) => service.transport_lost(&reason),
+            Ok(Step::Net(event)) => service.on_net(event),
+            Ok(Step::NetGone) => service.transport_lost("transport thread exited"),
+            Ok(Step::CmdsGone) => break,
             Err(_) => {}
         }
         let now = Instant::now();
@@ -1041,6 +1142,12 @@ fn run(cmds: &flume::Receiver<Cmd>) {
                 }
             }
         }
+        if next_supervise <= now {
+            next_supervise = now + notein_sync::driver::SUPERVISE;
+            let actions = service.driver.supervise(now);
+            service.perform(actions);
+        }
+        service.revive_transport(now);
         remember_announced(&service);
         publish(service.snapshot());
     }
@@ -1050,4 +1157,34 @@ fn run(cmds: &flume::Receiver<Cmd>) {
 fn remember_announced(service: &Service) {
     let docs = notein_sync::Replica::docs(service.driver.engine().replica());
     service.driver.with_replica(|r| r.remember(&docs));
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::{RESTART_MAX, Transport};
+
+    #[test]
+    fn a_stopped_transport_is_retried_with_growing_waits() {
+        let mut transport = Transport {
+            node: None,
+            retry: None,
+            present: true,
+        };
+        let t0 = Instant::now();
+        let mut waits = Vec::new();
+        let mut at = t0;
+        for _ in 0..8 {
+            transport.lost(at);
+            let (due, _) = transport.retry.expect("a retry is scheduled");
+            assert!(!transport.retry_due(at));
+            assert!(transport.retry_due(due));
+            waits.push(due.duration_since(at));
+            at = due;
+        }
+        assert_eq!(waits[0], Duration::from_secs(1));
+        assert_eq!(waits[1], Duration::from_secs(2));
+        assert_eq!(waits[7], RESTART_MAX);
+    }
 }

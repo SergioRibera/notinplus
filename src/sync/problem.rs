@@ -22,7 +22,7 @@ pub enum SyncProblem {
     SharesSave(Arc<std::io::Error>),
     /// The configured server address does not parse.
     BadRelay,
-    /// The transport could not start.
+    /// The transport could not start, or stopped.
     Network(Arc<NetError>),
     Exchange(Arc<ExchangeError>),
     /// A peer runs a build with another sync protocol.
