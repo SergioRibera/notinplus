@@ -8,9 +8,11 @@
 use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
+use notein_i18n::tr;
+use notein_sdk::{NetFailure, UserMessage};
 use reqwest::blocking::Client;
 
-use crate::db::Db;
+use crate::db::{Db, DbError};
 use crate::import::{biblionlabs, helloao};
 use crate::plugin_config::{self, SharedConfig};
 
@@ -27,7 +29,87 @@ pub struct InstallProgress {
     pub bible_id: String,
     pub stage: InstallStage,
     pub step: Step,
-    pub error: Option<String>,
+    pub error: Option<InstallFailure>,
+}
+
+/// Why a download or the catalogue failed, kept typed so the sheet
+/// words it in the language showing when it is read.
+#[derive(Clone, Debug)]
+pub enum InstallFailure {
+    Net(NetFailure),
+    Disk(std::io::ErrorKind),
+    Database(Arc<DbError>),
+    /// The server answered with something that is not a translation.
+    BadData,
+    /// The download thread could not be spawned.
+    CouldNotStart,
+    /// The Bible database is not open on this device.
+    Unavailable,
+    /// The install stopped without saying why.
+    Unknown,
+}
+
+impl PartialEq for InstallFailure {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Net(a), Self::Net(b)) => a == b,
+            (Self::Disk(a), Self::Disk(b)) => a == b,
+            (Self::Database(a), Self::Database(b)) => Arc::ptr_eq(a, b),
+            (Self::BadData, Self::BadData)
+            | (Self::CouldNotStart, Self::CouldNotStart)
+            | (Self::Unavailable, Self::Unavailable)
+            | (Self::Unknown, Self::Unknown) => true,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for InstallFailure {}
+
+impl std::fmt::Display for InstallFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Net(failure) => write!(f, "network: {failure}"),
+            Self::Disk(kind) => write!(f, "disk: {kind}"),
+            Self::Database(err) => write!(f, "{err}"),
+            Self::BadData => f.write_str("unexpected response"),
+            Self::CouldNotStart => f.write_str("installer thread did not start"),
+            Self::Unavailable => f.write_str("bible database unavailable"),
+            Self::Unknown => f.write_str("install failed"),
+        }
+    }
+}
+
+impl std::error::Error for InstallFailure {}
+
+impl From<biblionlabs::ImportError> for InstallFailure {
+    fn from(err: biblionlabs::ImportError) -> Self {
+        use biblionlabs::ImportError;
+        match err {
+            ImportError::Http(err) => Self::Net(NetFailure::classify(
+                err.is_connect(),
+                err.is_timeout(),
+                err.status().map(|status| status.as_u16()),
+            )),
+            ImportError::Json { .. } | ImportError::Format { .. } => Self::BadData,
+            ImportError::Io(err) => Self::Disk(err.kind()),
+            ImportError::Db(err) => Self::Database(Arc::new(err)),
+        }
+    }
+}
+
+impl UserMessage for InstallFailure {
+    fn user_message(&self) -> String {
+        match self {
+            Self::Net(failure) => failure.user_message(),
+            Self::Disk(kind) => tr!("errors-install-disk", "reason" => kind.user_message()),
+            Self::Database(err) => err.user_message(),
+            Self::BadData => tr!("errors-install-bad-data"),
+            Self::CouldNotStart => tr!("errors-install-could-not-start"),
+            Self::Unavailable => tr!("catalog-unavailable"),
+            Self::Unknown => tr!("errors-install-unknown"),
+        }
+    }
 }
 
 /// The parts of a download, in order.
@@ -238,11 +320,11 @@ pub(crate) fn run(
 
     let client = match http_client() {
         Ok(c) => c,
-        Err(e) => return fail(progress, &format!("http client build: {e}")),
+        Err(e) => return fail(progress, biblionlabs::ImportError::Http(e)),
     };
     let cache_dir = plugin_config::platform_cache_dir();
     if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-        return fail(progress, &format!("mkdir cache: {e}"));
+        return fail(progress, biblionlabs::ImportError::Io(e));
     }
 
     let desc_url = format!("{BIBLIONLABS_BASE}/bibles/{bible_id}/manifest.json");
@@ -278,7 +360,7 @@ pub(crate) fn run(
             // passage opened already has them.
             prefetch_all_headings(db, &client, &cache_dir, bible_id, progress);
             if let Err(e) = db.finish_install(bible_id) {
-                return fail(progress, &e.to_string());
+                return fail(progress, biblionlabs::ImportError::Db(e));
             }
             edit(progress, |p| {
                 p.stage = InstallStage::Finished;
@@ -286,7 +368,7 @@ pub(crate) fn run(
             });
             log::info!("bible install: {bible_id} done, {verses} verses");
         }
-        Err(e) => fail(progress, &e.to_string()),
+        Err(e) => fail(progress, e),
     }
 }
 
@@ -357,10 +439,35 @@ fn prefetch_all_headings(
     }
 }
 
-fn fail(progress: &SharedInstallProgress, message: &str) {
-    log::error!("bible: install failed: {message}");
+fn fail(progress: &SharedInstallProgress, err: biblionlabs::ImportError) {
+    log::error!("bible: install failed: {err}");
+    let failure = InstallFailure::from(err);
     edit(progress, |p| {
         p.stage = InstallStage::Failed;
-        p.error = Some(message.to_owned());
+        p.error = Some(failure);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use notein_i18n::Lang;
+    use notein_sdk::{NetFailure, UserMessage};
+
+    use super::InstallFailure;
+    use crate::import::biblionlabs::ImportError;
+
+    #[test]
+    fn install_failures_read_in_spanish() {
+        Lang::Es.make_current();
+        let disk = InstallFailure::from(ImportError::Io(std::io::ErrorKind::StorageFull.into()));
+        let message = disk.user_message();
+        assert!(message.contains("traducción"), "{message}");
+        assert!(message.contains("espacio"), "{message}");
+        let server = InstallFailure::Net(NetFailure::Status(502)).user_message();
+        assert!(server.contains("502"), "{server}");
+        let garbled = InstallFailure::from(ImportError::Format {
+            reason: "non-JSON response".to_owned(),
+        });
+        assert!(!garbled.user_message().contains("non-JSON"));
+    }
 }

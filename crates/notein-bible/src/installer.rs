@@ -4,11 +4,9 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use notein_i18n::tr;
-
 use crate::db::Db;
 use crate::install_background::{self, InstallStage, SharedInstallProgress};
-pub use crate::install_background::{Phase, Step};
+pub use crate::install_background::{InstallFailure, Phase, Step};
 use crate::plugin_config::SharedConfig;
 
 /// Where one translation is in the queue.
@@ -16,14 +14,17 @@ use crate::plugin_config::SharedConfig;
 pub enum InstallState {
     Queued,
     Downloading(Step),
-    Failed(String),
+    Failed(InstallFailure),
 }
 
 /// How a download ended, for whoever wants to tell the user.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Installed(String),
-    Failed { bible_id: String, reason: String },
+    Failed {
+        bible_id: String,
+        reason: InstallFailure,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -121,7 +122,7 @@ impl Installer {
                 queue.running = false;
                 let stuck: Vec<String> = queue.waiting.drain(..).collect();
                 for bible_id in stuck {
-                    let reason = tr!("installer-could-not-start");
+                    let reason = InstallFailure::CouldNotStart;
                     queue.finish(bible_id.clone(), Some(Outcome::Failed { bible_id, reason }));
                 }
             }
@@ -144,9 +145,7 @@ impl Installer {
             let outcome = match finished.stage {
                 InstallStage::Failed => Some(Outcome::Failed {
                     bible_id: next.clone(),
-                    reason: finished
-                        .error
-                        .unwrap_or_else(|| tr!("installer-download-failed")),
+                    reason: finished.error.unwrap_or(InstallFailure::Unknown),
                 }),
                 InstallStage::Finished => Some(Outcome::Installed(next.clone())),
                 InstallStage::Idle | InstallStage::Starting | InstallStage::Downloading => None,
@@ -266,12 +265,14 @@ mod tests {
 
         let failed = Outcome::Failed {
             bible_id: "nvi".to_owned(),
-            reason: "sin red".to_owned(),
+            reason: InstallFailure::Net(notein_sdk::NetFailure::Offline),
         };
         queue.finish("nvi".to_owned(), Some(failed.clone()));
         assert_eq!(
             queue.states.get("nvi"),
-            Some(&InstallState::Failed("sin red".to_owned()))
+            Some(&InstallState::Failed(InstallFailure::Net(
+                notein_sdk::NetFailure::Offline
+            )))
         );
         assert_eq!(rx.try_recv(), Ok(failed));
     }

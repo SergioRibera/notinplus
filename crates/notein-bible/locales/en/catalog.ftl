@@ -2,8 +2,8 @@
 
 # $name is the translation's short name, e.g. KJV.
 catalog-toast-installed = “{ $name }” is ready to read
-# $reason is the technical cause the download reported.
-catalog-toast-failed = Couldn't download “{ $name }”: { $reason }
+# $reason is a sentence explaining why.
+catalog-toast-failed = Couldn't download “{ $name }”. { $reason }
 catalog-retry = Retry
 catalog-step-preparing = Preparing the download…
 catalog-step-books = Books: { $done } of { $total }
@@ -31,5 +31,3 @@ catalog-first-use-title = Choose a translation to get started
 catalog-first-use-body = It downloads once and stays on this device. After that you can read offline.
 catalog-first-use-browse = See all translations
 
-installer-could-not-start = Couldn't start the download
-installer-download-failed = The download failed

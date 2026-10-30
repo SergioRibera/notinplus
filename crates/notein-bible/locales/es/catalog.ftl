@@ -2,8 +2,8 @@
 
 # $name es el nombre corto de la traducción, p. ej. RVR1960.
 catalog-toast-installed = «{ $name }» lista para leer
-# $reason es la causa técnica que informó la descarga.
-catalog-toast-failed = No se pudo descargar «{ $name }»: { $reason }
+# $reason is a sentence explaining why.
+catalog-toast-failed = No se pudo descargar «{ $name }». { $reason }
 catalog-retry = Reintentar
 catalog-step-preparing = Preparando la descarga…
 catalog-step-books = Libros: { $done } de { $total }
@@ -31,5 +31,3 @@ catalog-first-use-title = Elige una traducción para empezar
 catalog-first-use-body = Se descarga una vez y queda en este dispositivo. Después puedes leer sin conexión.
 catalog-first-use-browse = Ver todas las traducciones
 
-installer-could-not-start = No se pudo iniciar la descarga
-installer-download-failed = La descarga falló

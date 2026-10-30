@@ -5,6 +5,7 @@ use std::sync::{Arc, OnceLock};
 
 use freya::prelude::*;
 use notein_i18n::tr;
+use notein_sdk::UserMessage;
 use notein_sdk::services::{Host, HostToast, ToastTone as HostTone};
 
 use notein_ui_kit::theme::palette;
@@ -14,7 +15,7 @@ use notein_ui_kit::{
 };
 
 use crate::import::biblionlabs::{BibleEntryView, CatalogueView};
-use crate::installer::{InstallState, Installer, Outcome, Phase, Step};
+use crate::installer::{InstallFailure, InstallState, Installer, Outcome, Phase, Step};
 use crate::kind::BibleKind;
 
 /// The Bible the catalog installs into.
@@ -85,7 +86,7 @@ fn outcome_toast(installer: &'static Installer, outcome: Outcome) -> HostToast {
             tr!(
                 "catalog-toast-failed",
                 "name" => bible_name(&bible_id),
-                "reason" => reason,
+                "reason" => reason.user_message(),
             ),
             HostTone::Error,
         )
@@ -131,7 +132,7 @@ fn installed_ids() -> Vec<String> {
 }
 
 /// The catalogue, fetched once per run in the background.
-fn use_catalogue() -> State<Option<Result<Arc<CatalogueView>, String>>> {
+fn use_catalogue() -> State<Option<Result<Arc<CatalogueView>, InstallFailure>>> {
     static CACHE: OnceLock<std::sync::Mutex<Option<Arc<CatalogueView>>>> = OnceLock::new();
     let cached = CACHE
         .get_or_init(Default::default)
@@ -145,18 +146,16 @@ fn use_catalogue() -> State<Option<Result<Arc<CatalogueView>, String>>> {
         }
         let Some(installer) = installer() else {
             let mut state = state;
-            state.set(Some(Err(tr!("catalog-unavailable"))));
+            state.set(Some(Err(InstallFailure::Unavailable)));
             return;
         };
         let (tx, rx) = flume::bounded(1);
         let installer = installer.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(
-                installer
-                    .catalogue()
-                    .map(Arc::new)
-                    .map_err(|e| e.to_string()),
-            );
+            let _ = tx.send(installer.catalogue().map(Arc::new).map_err(|e| {
+                log::warn!("bible catalogue: {e}");
+                InstallFailure::from(e)
+            }));
         });
         let mut state = state;
         spawn(async move {
@@ -266,7 +265,7 @@ impl Component for Catalog {
             Ok(view) => view,
             Err(why) => {
                 return Notice::new(NoticeTone::Danger, tr!("catalog-load-failed"))
-                    .detail(why)
+                    .detail(why.user_message())
                     .into_element();
             }
         };
@@ -404,7 +403,7 @@ impl Component for Row {
                 .into_element(),
         };
         let subtitle = match &state {
-            Some(InstallState::Failed(why)) => why.clone(),
+            Some(InstallState::Failed(why)) => why.user_message(),
             Some(InstallState::Downloading(step)) => step_text(*step),
             Some(InstallState::Queued) | None => {
                 [self.entry.name_english.clone(), self.entry.language.clone()]
@@ -473,7 +472,7 @@ impl Component for FirstUse {
                     .maybe_child(match failed {
                         Some(InstallState::Failed(why)) => Some(
                             Notice::new(NoticeTone::Danger, tr!("catalog-download-failed"))
-                                .detail(why.clone()),
+                                .detail(why.user_message()),
                         ),
                         _ => None,
                     })
@@ -492,7 +491,7 @@ impl Component for FirstUse {
             (None, _) => match current {
                 None => Skeleton::new(40.0).width(260.0).into_element(),
                 Some(Err(why)) => Notice::new(NoticeTone::Warning, tr!("catalog-offline"))
-                    .detail(why)
+                    .detail(why.user_message())
                     .into_element(),
                 Some(Ok(_)) => rect().into_element(),
             },
