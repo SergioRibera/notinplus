@@ -17,9 +17,10 @@ use notein_ui_kit::{
 };
 
 use notein_i18n::tr;
+use notein_plugin::UserMessage;
 
 use super::download::{self, Finish, Progress};
-use super::{Asset, CheckStatus, Device, INSTALLED, Release, Updates};
+use super::{Asset, CheckStatus, Device, INSTALLED, Release, UpdateFailure, Updates};
 
 /// How often the download sheet reads the byte count.
 const PROGRESS_POLL: Duration = Duration::from_millis(120);
@@ -277,7 +278,7 @@ enum Phase {
     NeedsPermission(PathBuf),
     /// The installer is open (Windows) or showing (Android).
     Handed,
-    Failed(String),
+    Failed(UpdateFailure),
 }
 
 #[derive(Clone, PartialEq)]
@@ -323,7 +324,7 @@ impl Component for DownloadSheet {
                         Some(Err(super::UpdateError::Cancelled)) | None => {}
                         Some(Err(err)) => {
                             log::warn!("update download: {err}");
-                            phase.set(Phase::Failed(failure(&err)));
+                            phase.set(Phase::Failed(UpdateFailure::from(&err)));
                         }
                     }
                 });
@@ -354,8 +355,8 @@ impl Component for DownloadSheet {
                     .into_element()
             }
             Phase::Handed => Notice::new(NoticeTone::Info, handed_text()).into_element(),
-            Phase::Failed(message) => {
-                Notice::new(NoticeTone::Danger, message.clone()).into_element()
+            Phase::Failed(failure) => {
+                Notice::new(NoticeTone::Danger, failure.user_message()).into_element()
             }
         };
         rect()
@@ -432,21 +433,6 @@ fn handed_text() -> String {
     }
 }
 
-fn failure(err: &super::UpdateError) -> String {
-    match err {
-        super::UpdateError::Checksum => {
-            tr!("update-failed-checksum")
-        }
-        super::UpdateError::Http(_) => tr!("update-failed-network"),
-        super::UpdateError::Io(_) => {
-            tr!("update-failed-disk")
-        }
-        super::UpdateError::Manifest(_) | super::UpdateError::Cancelled => {
-            tr!("update-failed")
-        }
-    }
-}
-
 /// Hand `path` to the system installer.
 fn install(path: PathBuf, mut phase: State<Phase>) {
     let client = match InstallerClient::acquire() {
@@ -465,7 +451,7 @@ fn install(path: PathBuf, mut phase: State<Phase>) {
             Err(InstallError::Unsupported) => reveal(&path),
             Err(err) => {
                 log::warn!("install {}: {err}", path.display());
-                phase.set(Phase::Failed(tr!("update-failed-installer")));
+                phase.set(Phase::Failed(UpdateFailure::Installer));
             }
         }
     });
@@ -497,7 +483,9 @@ impl Component for UpdatesSection {
         };
         let state = match (&snapshot.newer, snapshot.status) {
             (_, CheckStatus::Checking) => tr!("update-checking"),
-            (_, CheckStatus::Failed) => tr!("update-check-failed"),
+            (_, CheckStatus::Failed(failure)) => {
+                tr!("errors-update-check", "reason" => failure.user_message())
+            }
             (Some(release), _) => tr!("update-newer", "version" => release.version.as_str()),
             (None, CheckStatus::UpToDate) => tr!("update-up-to-date", "last" => last),
             (None, CheckStatus::Idle) => last,

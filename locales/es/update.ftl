@@ -36,8 +36,6 @@ update-download-ready-at = Descargada y verificada en { $path }.
 update-handed-windows = El instalador está abierto. Cierra NotIn Plus para que pueda reemplazarla.
 update-handed-android = Sigue los pasos del instalador de Android.
 update-failed-checksum = El archivo llegó dañado y se borró. Prueba de nuevo.
-update-failed-network = No se pudo descargar. Revisa la conexión.
-update-failed-disk = No se pudo guardar el archivo en este dispositivo.
 update-failed = No se pudo descargar.
 update-failed-installer = No se pudo abrir el instalador.
 update-install = Instalar
@@ -50,7 +48,6 @@ update-never-checked = Todavía no se buscó
 # $ago: hace cuánto, ya con formato y en minúscula.
 update-last-checked = Última búsqueda: { $ago }
 update-checking = Buscando…
-update-check-failed = No se pudo buscar. Revisa la conexión.
 update-newer = Hay una versión nueva: { $version }
 # $last: update-last-checked o update-never-checked.
 update-up-to-date = Estás al día · { $last }

@@ -18,10 +18,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use freya::prelude::*;
+use notein_i18n::tr;
+use notein_plugin::{NetFailure, UserMessage};
 
 pub use check::UpdateRecord;
 pub use release::{Asset, Device, Release};
 
+use crate::failure::NetFailureExt;
 use crate::persist::Persisted;
 
 /// The version this build is.
@@ -66,6 +69,51 @@ impl std::error::Error for UpdateError {
     }
 }
 
+impl UserMessage for UpdateError {
+    fn user_message(&self) -> String {
+        UpdateFailure::from(self).user_message()
+    }
+}
+
+/// What the interface keeps of a failed check, download or install:
+/// small and `Copy`, worded when it is shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpdateFailure {
+    Net(NetFailure),
+    Disk(std::io::ErrorKind),
+    /// `latest.json` could not be read.
+    Manifest,
+    Checksum,
+    Cancelled,
+    /// The system installer would not open the file.
+    Installer,
+}
+
+impl From<&UpdateError> for UpdateFailure {
+    fn from(err: &UpdateError) -> Self {
+        match err {
+            UpdateError::Http(err) => Self::Net(err.net_failure()),
+            UpdateError::Manifest(_) => Self::Manifest,
+            UpdateError::Io(err) => Self::Disk(err.kind()),
+            UpdateError::Checksum => Self::Checksum,
+            UpdateError::Cancelled => Self::Cancelled,
+        }
+    }
+}
+
+impl UserMessage for UpdateFailure {
+    fn user_message(&self) -> String {
+        match self {
+            Self::Net(failure) => failure.user_message(),
+            Self::Disk(kind) => tr!("errors-update-disk", "reason" => kind.user_message()),
+            Self::Manifest => tr!("errors-update-manifest"),
+            Self::Checksum => tr!("update-failed-checksum"),
+            Self::Cancelled => tr!("update-failed"),
+            Self::Installer => tr!("update-failed-installer"),
+        }
+    }
+}
+
 impl From<reqwest::Error> for UpdateError {
     fn from(err: reqwest::Error) -> Self {
         Self::Http(err)
@@ -86,8 +134,8 @@ pub enum CheckStatus {
     Checking,
     /// The last check found nothing newer.
     UpToDate,
-    /// The last manual check could not reach GitHub.
-    Failed,
+    /// The last manual check failed.
+    Failed(UpdateFailure),
 }
 
 /// What the interface knows about updates.
@@ -170,7 +218,7 @@ impl Updates {
                 Err(err) => {
                     log::warn!("update check: {err}");
                     snapshot.status = if force {
-                        CheckStatus::Failed
+                        CheckStatus::Failed(UpdateFailure::from(&err))
                     } else {
                         CheckStatus::Idle
                     };
@@ -240,6 +288,9 @@ pub(crate) fn use_preview_updates(newer: Option<Release>) {
 
 #[cfg(test)]
 mod tests {
+    use notein_i18n::Lang;
+    use notein_plugin::NetFailure;
+
     use super::*;
 
     fn release(version: &str) -> Arc<Release> {
@@ -263,5 +314,16 @@ mod tests {
         assert!(snapshot.announced().is_none());
         snapshot.newer = Some(release("0.3.0"));
         assert!(snapshot.announced().is_some());
+    }
+
+    #[test]
+    fn update_failures_say_what_to_do_in_spanish() {
+        Lang::Es.make_current();
+        let disk = UpdateError::Io(std::io::ErrorKind::StorageFull.into());
+        let message = disk.user_message();
+        assert!(message.contains("descarga"), "{message}");
+        assert!(message.contains("espacio"), "{message}");
+        let offline = UpdateFailure::Net(NetFailure::Offline).user_message();
+        assert!(offline.contains("conexión"), "{offline}");
     }
 }
