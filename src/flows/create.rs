@@ -4,6 +4,7 @@
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_plugin::catalog::CatalogEntry;
 use notein_plugin::create::{CreationFlow, CreationRequest, ImportedFile, Paper};
 use notein_ui_kit::TapExt;
@@ -116,7 +117,7 @@ pub fn open_menu_from_keyboard(context: Context) {
 pub fn open_menu(anchor: Area, context: Context) {
     let body = Menu { context };
     if width_class().is_compact() {
-        Sheet::titled("Crear").child(body).open();
+        Sheet::titled(tr!("flows-create-title")).child(body).open();
     } else {
         Popover::new(anchor, body)
             .width(440.0)
@@ -132,7 +133,7 @@ struct Menu {
     context: Context,
 }
 
-/// "Lo que más creás" (or "Para empezar" before there is history).
+/// "What you create most" (or "To get started" before there is history).
 fn tiles_heading(cold: bool) -> Rect {
     let p = palette();
     rect()
@@ -149,14 +150,14 @@ fn tiles_heading(cold: bool) -> Rect {
         )
         .child(
             Text::new(if cold {
-                "Para empezar"
+                tr!("flows-create-starters")
             } else {
-                "Lo que más creás"
+                tr!("flows-create-frequent")
             })
             .role(TextRole::Label)
             .fill(),
         )
-        .child(Text::new("Se ordena solo").role(TextRole::Meta))
+        .child(Text::new(tr!("flows-create-self-sorting")).role(TextRole::Meta))
 }
 
 impl Menu {
@@ -182,7 +183,7 @@ impl Menu {
             .collect()
     }
 
-    /// Carpeta, every other entry, Mesa nueva and Importar….
+    /// Folder, every other entry, New desk and Import….
     fn list(&self, others: Vec<CatalogEntry>, imports: Vec<CatalogEntry>) -> Vec<ActionEntry> {
         use freya::icons::lucide;
         let p = palette();
@@ -190,9 +191,9 @@ impl Menu {
         let mut list = vec![ActionEntry::Item(
             Action::new(
                 if context.selected() == 0 {
-                    "Carpeta".to_owned()
+                    tr!("flows-create-folder")
                 } else {
-                    format!("Carpeta con {} seleccionados", context.selected())
+                    tr!("flows-create-folder-with", "count" => context.selected())
                 },
                 {
                     let context = context.clone();
@@ -223,7 +224,7 @@ impl Menu {
         }));
         list.push(ActionEntry::Item(
             Action::new(
-                "Mesa nueva",
+                tr!("flows-create-new-desk"),
                 EventHandler::new(|()| {
                     ModalController::get().close();
                     new_mesa();
@@ -235,12 +236,12 @@ impl Menu {
         let import_names: Vec<String> = imports
             .iter()
             .map(|e| e.entry.label.to_string())
-            .chain(std::iter::once("Bundle .notein".to_owned()))
+            .chain(std::iter::once(tr!("flows-create-bundle")))
             .collect();
         let context = context.clone();
         list.push(ActionEntry::Item(
             Action::new(
-                "Importar…",
+                tr!("flows-create-import-menu"),
                 EventHandler::new(move |()| import_submenu(&imports, &context)),
             )
             .subtitle(import_names.join(" · "))
@@ -306,16 +307,16 @@ fn import_submenu(imports: &[CatalogEntry], context: &Context) {
         .collect();
     entries.push(ActionEntry::Item(
         Action::new(
-            "Bundle .notein",
+            tr!("flows-create-bundle"),
             EventHandler::new(|()| {
                 ModalController::get().close();
                 super::transfer::import();
             }),
         )
-        .subtitle("Restaurar o recibir una copia")
+        .subtitle(tr!("flows-create-bundle-hint"))
         .icon(lucide::package()),
     ));
-    Sheet::titled("Importar")
+    Sheet::titled(tr!("flows-create-import"))
         .on_back(|()| ModalController::get().close())
         .child(ActionList::new(entries))
         .push();
@@ -409,8 +410,7 @@ pub fn run(entry: CatalogEntry, context: Context) {
                     Err(err) => {
                         log::error!("pick: {err}");
                         Toasts::get().show(
-                            Toast::new("No se pudo abrir el selector de archivos")
-                                .tone(ToastTone::Error),
+                            Toast::new(tr!("flows-create-picker-failed")).tone(ToastTone::Error),
                         );
                     }
                 }
@@ -456,7 +456,7 @@ fn form(entry: CatalogEntry, context: Context, choice: Option<String>) {
     let last = LastPaper::load();
     let spec = FormSpec {
         title: entry.entry.sheet_title.as_ref().map_or_else(
-            || format!("Nuevo {}", entry.entry.label.to_lowercase()),
+            || tr!("flows-create-new-kind", "kind" => entry.entry.label.to_lowercase()),
             ToString::to_string,
         ),
         kind_icon: Some(entry.entry.icon.clone()),
@@ -465,12 +465,13 @@ fn form(entry: CatalogEntry, context: Context, choice: Option<String>) {
         color: true,
         tags: true,
         location: entry.entry.location,
-        placeholder: "Sin título".to_owned(),
-        hint: entry.entry.name_hint.as_ref().map_or_else(
-            || "Enter crea · Esc cancela".to_owned(),
-            ToString::to_string,
-        ),
-        submit: "Crear y abrir".to_owned(),
+        placeholder: tr!("common-untitled"),
+        hint: entry
+            .entry
+            .name_hint
+            .as_ref()
+            .map_or_else(|| tr!("flows-create-name-hint"), ToString::to_string),
+        submit: tr!("flows-create-submit"),
         ..FormSpec::default()
     };
     let initial = FormValues {
@@ -561,7 +562,7 @@ fn choose(
         );
     }
     sheet
-        .footer(SheetFooter::new([Button::new("Cancelar")
+        .footer(SheetFooter::new([Button::new(tr!("common-cancel"))
             .ghost()
             .on_press(|_| ModalController::get().close())
             .into_element()]))
@@ -588,7 +589,7 @@ fn import_sheet(entry: CatalogEntry, context: Context, picked: crate::files::Pic
     // a notebook to write beside it.
     let keeps_file = kind.info().attachment.is_some();
     let spec = FormSpec {
-        title: format!("Importar {}", entry.entry.label),
+        title: tr!("flows-create-import-kind", "kind" => entry.entry.label.to_string()),
         kind_icon: Some(entry.entry.icon.clone()),
         kind_color: Some(kind_color(&p, entry.entry.color)),
         color: !keeps_file,
@@ -597,8 +598,8 @@ fn import_sheet(entry: CatalogEntry, context: Context, picked: crate::files::Pic
         notebook_toggle: keeps_file,
         file_line: found.details,
         preview: found.preview,
-        placeholder: "Sin título".to_owned(),
-        submit: "Importar y abrir".to_owned(),
+        placeholder: tr!("common-untitled"),
+        submit: tr!("flows-create-import-submit"),
         ..FormSpec::default()
     };
     let initial = FormValues {
@@ -620,20 +621,20 @@ fn import_sheet(entry: CatalogEntry, context: Context, picked: crate::files::Pic
 
 fn import_error(entry: &CatalogEntry, context: Context, file: &str, why: &str) {
     let entry = entry.clone();
-    Sheet::titled(format!("Importar {}", entry.entry.label))
+    Sheet::titled(tr!("flows-create-import-kind", "kind" => entry.entry.label.to_string()))
         .child(
             notein_ui_kit::Notice::new(
                 notein_ui_kit::NoticeTone::Danger,
-                format!("No se pudo leer «{file}»"),
+                tr!("flows-create-read-failed", "file" => file.to_owned()),
             )
             .detail(why.to_owned()),
         )
         .footer(SheetFooter::new([
-            Button::new("Cancelar")
+            Button::new(tr!("common-cancel"))
                 .ghost()
                 .on_press(|_| ModalController::get().close())
                 .into_element(),
-            Button::new("Elegir otro archivo")
+            Button::new(tr!("flows-create-pick-another"))
                 .primary()
                 .on_press(move |_| {
                     ModalController::get().close();
@@ -666,7 +667,7 @@ impl Component for Preparing {
             .width(Size::fill())
             .spacing(10.0)
             .child(
-                Text::new(format!("Preparando páginas · {done} de {}", self.total))
+                Text::new(tr!("flows-create-preparing", "done" => done, "total" => self.total))
                     .role(TextRole::Meta),
             )
             .child(ProgressBar::new(fraction).color(self.color))
@@ -716,7 +717,7 @@ fn create(entry: CatalogEntry, context: Context, request: Request) {
             let mut lib = handle.lock().await;
             let tags = forms::resolve_tags(&mut lib, &values.tags).await;
             let name = if created.name.trim().is_empty() {
-                "Sin título".to_owned()
+                tr!("common-untitled")
             } else {
                 created.name.clone()
             };
@@ -734,7 +735,8 @@ fn create(entry: CatalogEntry, context: Context, request: Request) {
                 Ok(item) => item,
                 Err(err) => {
                     log::error!("create item: {err}");
-                    Toasts::get().show(Toast::new("No se pudo crear").tone(ToastTone::Error));
+                    Toasts::get()
+                        .show(Toast::new(tr!("flows-create-failed")).tone(ToastTone::Error));
                     return;
                 }
             };
@@ -781,15 +783,17 @@ fn prepare_attachment(item: ItemId, kind_id: &str, bytes: Vec<u8>) {
     // the first look at its progress.
     let done = (total >= LARGE_IMPORT).then(|| {
         let done = State::create_in_scope(0u32, ScopeId::ROOT);
-        Sheet::titled("Importando…")
+        Sheet::titled(tr!("flows-create-importing"))
             .child(Preparing {
                 done,
                 total,
                 color: crate::references::kind_color(&palette(), kind.info().color),
             })
-            .footer(SheetFooter::new([Button::new("Seguir en segundo plano")
-                .on_press(|_| ModalController::get().close())
-                .into_element()]))
+            .footer(SheetFooter::new([Button::new(tr!(
+                "flows-create-background"
+            ))
+            .on_press(|_| ModalController::get().close())
+            .into_element()]))
             .open();
         done
     });
@@ -847,7 +851,7 @@ pub fn replace_attachment(item: ItemId, kind_id: String) {
             return;
         };
         let extensions: Vec<&str> = attachment.extensions.iter().map(AsRef::as_ref).collect();
-        let title = format!("Reemplazar {}", info.label);
+        let title = tr!("flows-create-replace-kind", "kind" => info.label.to_string());
         let picked = match crate::files::pick(&title, &extensions, &[]).await {
             Ok(Some(picked)) => picked,
             Ok(None) => return,
@@ -874,7 +878,7 @@ pub fn replace_attachment(item: ItemId, kind_id: String) {
         if let Err(err) = handle.lock().await.attach_pdf(item, &picked.bytes).await {
             log::error!("replace attachment: {err}");
             Toasts::get()
-                .show(Toast::new("No se pudo reemplazar el archivo").tone(ToastTone::Error));
+                .show(Toast::new(tr!("flows-create-replace-failed")).tone(ToastTone::Error));
             return;
         }
         content::write(item, &kind_id, &fresh);
@@ -882,29 +886,31 @@ pub fn replace_attachment(item: ItemId, kind_id: String) {
         content::attachment_replaced(item);
         content::notify_remote(item);
         prepare_attachment(item, &kind_id, picked.bytes);
-        Toasts::get().show(Toast::new(format!("Ahora muestra «{}»", picked.name)));
+        Toasts::get().show(Toast::new(
+            tr!("flows-create-replaced", "file" => picked.name.clone()),
+        ));
     });
 }
 
 fn replace_failed(item: ItemId, kind_id: String, file: &str, why: &str) {
     let title = crate::plugins::kind_info(&kind_id).map_or_else(
-        || "Reemplazar archivo".to_owned(),
-        |k| format!("Reemplazar {}", k.label),
+        || tr!("flows-create-replace-file"),
+        |k| tr!("flows-create-replace-kind", "kind" => k.label.to_string()),
     );
     Sheet::titled(title)
         .child(
             notein_ui_kit::Notice::new(
                 notein_ui_kit::NoticeTone::Danger,
-                format!("No se pudo leer «{file}»"),
+                tr!("flows-create-read-failed", "file" => file.to_owned()),
             )
             .detail(why.to_owned()),
         )
         .footer(SheetFooter::new([
-            Button::new("Cancelar")
+            Button::new(tr!("common-cancel"))
                 .ghost()
                 .on_press(|_| ModalController::get().close())
                 .into_element(),
-            Button::new("Elegir otro archivo")
+            Button::new(tr!("flows-create-pick-another"))
                 .primary()
                 .on_press(move |_| {
                     ModalController::get().close();
@@ -920,15 +926,15 @@ pub fn new_folder(context: Context) {
     let p = palette();
     let selected = context.selected();
     let spec = FormSpec {
-        title: "Nueva carpeta".to_owned(),
+        title: tr!("flows-create-new-folder"),
         kind_icon: Some(freya::icons::lucide::folder()),
         kind_color: Some(p.kinds.folder),
         color: true,
         tags: true,
         location: true,
         move_selected: (selected > 0).then_some(selected),
-        placeholder: "Sin nombre".to_owned(),
-        submit: "Crear".to_owned(),
+        placeholder: tr!("flows-create-unnamed"),
+        submit: tr!("flows-create-submit-folder"),
         ..FormSpec::default()
     };
     let initial = FormValues {
@@ -942,12 +948,12 @@ pub fn new_folder(context: Context) {
         crate::state::edit(crate::state::LibraryEdit::CreateFolder, async move |lib| {
             let tags = forms::resolve_tags(lib, &values.tags).await;
             let name = if values.name.trim().is_empty() {
-                "Carpeta nueva"
+                tr!("flows-create-default-folder")
             } else {
-                values.name.trim()
+                values.name.trim().to_owned()
             };
             let folder = lib
-                .create_folder(values.folder, name, values.color, tags)
+                .create_folder(values.folder, &name, values.color, tags)
                 .await?;
             if values.move_selected {
                 for item in selection {
@@ -1005,14 +1011,18 @@ impl Component for MesaForm {
             .spacing(16.0)
             .child(
                 notein_ui_kit::TextField::new(self.name)
-                    .label("Nombre")
-                    .placeholder("Toma el nombre de lo que abras")
+                    .label(tr!("common-name"))
+                    .placeholder(tr!("flows-create-desk-name-hint"))
                     .auto_focus(true),
             )
             .child(
-                notein_ui_kit::Section::new("Empezar con").child(
+                notein_ui_kit::Section::new(tr!("flows-create-desk-start")).child(
                     notein_ui_kit::Segmented::new(
-                        ["Vacía", "Lo abierto ahora", "Elegir documentos"],
+                        [
+                            tr!("flows-create-desk-start-empty"),
+                            tr!("flows-create-desk-start-open"),
+                            tr!("flows-create-desk-start-pick"),
+                        ],
                         match current {
                             StartWith::Empty => 0,
                             StartWith::OpenNow => 1,
@@ -1032,9 +1042,9 @@ impl Component for MesaForm {
             .maybe_child((current == StartWith::Pick && recent.is_empty()).then(|| {
                 notein_ui_kit::EmptyState::new(
                     freya::icons::lucide::files(),
-                    "Todavía no hay documentos",
+                    tr!("flows-create-desk-empty"),
                 )
-                .body("Creá un lienzo, una nota o importá un PDF; después vas a poder ponerlos en la mesa.")
+                .body(tr!("flows-create-desk-empty-hint"))
                 .dashed()
             }))
             .maybe_child((current == StartWith::Pick && !recent.is_empty()).then(|| {
@@ -1061,23 +1071,23 @@ pub fn new_mesa() {
     let name = State::create_in_scope(String::new(), ScopeId::ROOT);
     let start = State::create_in_scope(StartWith::Empty, ScopeId::ROOT);
     let picked = State::create_in_scope(Vec::<ItemId>::new(), ScopeId::ROOT);
-    Sheet::titled("Nueva mesa")
+    Sheet::titled(tr!("flows-create-new-desk-title"))
         .kind(
             freya::icons::lucide::layout_grid(),
             palette().highlighters[2],
         )
-        .subtitle("Guardá un grupo de documentos abiertos juntos.")
+        .subtitle(tr!("flows-create-new-desk-hint"))
         .child(MesaForm {
             name,
             start,
             picked,
         })
         .footer(SheetFooter::new([
-            Button::new("Cancelar")
+            Button::new(tr!("common-cancel"))
                 .ghost()
                 .on_press(|_| ModalController::get().close())
                 .into_element(),
-            Button::new("Crear mesa")
+            Button::new(tr!("flows-create-desk-submit"))
                 .primary()
                 .on_press(move |_| {
                     ModalController::get().close();

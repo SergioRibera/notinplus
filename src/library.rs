@@ -39,6 +39,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use istmo::Runtime;
 use istmo_data_store::{DataStoreClient, DataStoreConfig};
+use notein_i18n::tr;
 
 /// How long a deletion marker is kept: ninety days, longer than any
 /// device is expected to stay away.
@@ -500,7 +501,7 @@ impl Library {
         self.persist()
     }
 
-    /// Copy `id` into the same folder as «Nombre (copia)». Returns the
+    /// Copy `id` into the same folder as "Name (copy)", in the active language. Returns the
     /// new item.
     ///
     /// # Errors
@@ -517,7 +518,7 @@ impl Library {
         bodies::copy_item(id, copy).map_err(LibraryError::from)?;
         self.data.index.items.push(Item {
             id: copy,
-            name: format!("{} (copia)", source.name),
+            name: tr!("library-item-copy-name", "name" => source.name.clone()),
             created_at: now,
             updated_at: now,
             trashed: None,
@@ -805,7 +806,7 @@ impl Library {
             .ok_or(LibraryError::NotFound(NotFoundKind::Workspace(id)))?;
         let copy = Workspace {
             id: WorkspaceId::new_v4(),
-            name: format!("Copia de {}", source.name),
+            name: tr!("library-desk-copy-name", "name" => source.name.clone()),
             named: true,
             pinned: false,
             color: source.color,
@@ -1611,7 +1612,7 @@ impl LibraryData {
     }
 
     /// Name a mesa shows: what the user typed, or one derived from the
-    /// documents open in it ("Comentario de Romanos y 2 más").
+    /// documents open in it ("Romans commentary and 2 more").
     #[must_use]
     pub fn workspace_title(&self, id: WorkspaceId) -> String {
         let Some(w) = self.workspaces.workspace(id) else {
@@ -1628,11 +1629,10 @@ impl LibraryData {
             .filter_map(crate::library::PaneTab::item)
             .filter_map(|item| self.item(item).map(|i| i.name.clone()));
         names.next().map_or_else(
-            || "Mesa vacía".to_owned(),
+            || tr!("library-empty-desk"),
             |first| match names.count() {
                 0 => first,
-                1 => format!("{first} y 1 más"),
-                more => format!("{first} y {more} más"),
+                more => tr!("library-desk-title-more", "first" => first, "count" => more),
             },
         )
     }

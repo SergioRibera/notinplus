@@ -1,4 +1,4 @@
-//! Trash: deleting moves things here; they come back with Deshacer or
+//! Trash: deleting moves things here; they come back with Undo or
 //! from the trash screen, and leave for good after the retention the
 //! user picked.
 

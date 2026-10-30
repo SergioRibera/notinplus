@@ -1,10 +1,11 @@
 //! Choosing another document or a folder: one selector with search,
-//! recents and creation shortcuts behind "Vincular con…", the notebook
-//! sheet, a new tab and "Mover a…".
+//! recents and creation shortcuts behind "Link with…", the notebook
+//! sheet, a new tab and "Move to…".
 
 use std::rc::Rc;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
     Button, EmptyState, Group, ListRow, ModalController, SearchField, Section, Sheet, SheetFooter,
@@ -31,12 +32,12 @@ pub enum Purpose {
 }
 
 impl Purpose {
-    const fn title(self) -> &'static str {
+    fn title(self) -> String {
         match self {
-            Self::Link { .. } => "Vincular con…",
-            Self::UseAsNotebook { .. } => "Usar un lienzo existente",
-            Self::NotebookFor => "¿Cuaderno de qué documento?",
-            Self::NewTab { .. } => "Abrir en pestaña nueva",
+            Self::Link { .. } => tr!("flows-pickers-link-title"),
+            Self::UseAsNotebook { .. } => tr!("flows-pickers-use-canvas-title"),
+            Self::NotebookFor => tr!("flows-pickers-notebook-for-title"),
+            Self::NewTab { .. } => tr!("flows-pickers-new-tab-title"),
         }
     }
 
@@ -82,15 +83,19 @@ fn link(from: ItemId, to: ItemId, kind: LinkKind) {
                 crate::space::open(TabTarget::Item(to), OpenHint::Beside);
             }
             Ok(_) => {
-                Toasts::get().show(
-                    Toast::new("Vinculado")
-                        .action("Abrir al lado", move |()| super::open_beside(to)),
-                );
+                Toasts::get().show(Toast::new(tr!("flows-pickers-linked")).action(
+                    tr!("flows-pickers-open-beside"),
+                    move |()| {
+                        super::open_beside(to);
+                    },
+                ));
             }
             Err(err) => {
                 log::error!("link: {err}");
-                Toasts::get()
-                    .show(Toast::new("No se pudo vincular").tone(notein_ui_kit::ToastTone::Error));
+                Toasts::get().show(
+                    Toast::new(tr!("flows-pickers-link-failed"))
+                        .tone(notein_ui_kit::ToastTone::Error),
+                );
             }
         }
     });
@@ -140,11 +145,12 @@ impl Component for DocumentPicker {
             let info = crate::plugins::kind_info(&item.kind.plugin_id);
             let label = info
                 .as_ref()
-                .map_or_else(|| "Documento".to_owned(), |k| k.label.to_string());
+                .map_or_else(|| tr!("flows-pickers-document"), |k| k.label.to_string());
             let mut row = ListRow::new(item.name.clone())
-                .subtitle(format!(
-                    "{label} · {}",
-                    crate::format::day(item.updated_at, now)
+                .subtitle(tr!(
+                    "flows-pickers-row-subtitle",
+                    "kind" => label,
+                    "date" => crate::format::day(item.updated_at, now)
                 ))
                 .on_press(move |_| {
                     ModalController::get().close();
@@ -160,7 +166,7 @@ impl Component for DocumentPicker {
         rect()
             .width(Size::fill())
             .spacing(12.0)
-            .child(SearchField::new(query, "Buscar en la biblioteca").auto_focus(true))
+            .child(SearchField::new(query, tr!("flows-pickers-search")).auto_focus(true))
             .maybe_child(purpose.only_kind().is_none().then(|| {
                 rect()
                     .width(Size::fill())
@@ -168,7 +174,7 @@ impl Component for DocumentPicker {
                     .content(Content::wrap_spacing(6.0))
                     .spacing(6.0)
                     .child(
-                        Tag::new("Todo")
+                        Tag::new(tr!("flows-pickers-all"))
                             .active(current_filter.is_none())
                             .on_press(move |_| filter.set(None)),
                     )
@@ -183,9 +189,9 @@ impl Component for DocumentPicker {
             }))
             .maybe_child((!empty).then(|| {
                 Section::new(if needle.is_empty() {
-                    "Recientes"
+                    tr!("flows-pickers-recent")
                 } else {
-                    "Resultados"
+                    tr!("flows-pickers-results")
                 })
                 .child(Group::default().children(rows))
             }))
@@ -197,9 +203,9 @@ impl Component for DocumentPicker {
                     .child(EmptyState::new(
                         freya::icons::lucide::search(),
                         if typed.is_empty() {
-                            "No hay documentos".to_owned()
+                            tr!("flows-pickers-no-documents")
                         } else {
-                            format!("Nada se llama «{typed}»")
+                            tr!("flows-pickers-no-match", "name" => typed.clone())
                         },
                     ))
                     .maybe_child(can_create.then(|| create_named(&typed, purpose)))
@@ -208,21 +214,25 @@ impl Component for DocumentPicker {
     }
 }
 
-/// "Crear con este nombre": every entry a name is enough for.
+/// "Create with this name": every entry a name is enough for.
 fn create_named(name: &str, purpose: Purpose) -> Element {
     let p = palette();
     let entries = named_entries();
-    Section::new("Crear con este nombre")
+    Section::new(tr!("flows-pickers-create-named"))
         .child(Group::default().children(entries.into_iter().map(|entry| {
             let name = name.to_owned();
             let color = kind_color(&p, entry.entry.color);
-            ListRow::new(format!("{} «{name}»", entry.entry.label))
-                .kind(entry.entry.icon.clone(), color)
-                .on_press(move |_| {
-                    ModalController::get().close();
-                    create_quick(entry.clone(), name.clone(), purpose);
-                })
-                .into_element()
+            ListRow::new(tr!(
+                "flows-pickers-create-named-row",
+                "kind" => entry.entry.label.to_string(),
+                "name" => name.clone()
+            ))
+            .kind(entry.entry.icon.clone(), color)
+            .on_press(move |_| {
+                ModalController::get().close();
+                create_quick(entry.clone(), name.clone(), purpose);
+            })
+            .into_element()
         })))
         .into_element()
 }
@@ -289,9 +299,9 @@ pub fn notebook_sheet(item: ItemId) {
                 .filter_map(|parent| data.item(parent).map(|i| i.name.clone()))
                 .collect();
             let subtitle = if others.is_empty() {
-                format!("Editado {}", crate::format::day(nb.updated_at, now))
+                tr!("flows-pickers-edited", "date" => crate::format::day(nb.updated_at, now))
             } else {
-                format!("También cuaderno de {}", others.join(", "))
+                tr!("flows-pickers-also-notebook-of", "documents" => others.join(", "))
             };
             let id = nb.id;
             ListRow::new(nb.name)
@@ -304,13 +314,15 @@ pub fn notebook_sheet(item: ItemId) {
                 .into_element()
         })
         .collect();
-    Sheet::titled("Cuaderno")
+    Sheet::titled(tr!("flows-pickers-notebook"))
         .kind(freya::icons::lucide::notebook_pen(), p.kinds.canvas)
-        .child(Section::new("Cuadernos de este documento").child(Group::default().children(rows)))
+        .child(
+            Section::new(tr!("flows-pickers-notebooks-of")).child(Group::default().children(rows)),
+        )
         .child(
             Group::default()
                 .child(
-                    ListRow::new("Nuevo cuaderno")
+                    ListRow::new(tr!("flows-pickers-new-notebook"))
                         .icon(freya::icons::lucide::plus())
                         .on_press(move |_| {
                             ModalController::get().close();
@@ -318,7 +330,7 @@ pub fn notebook_sheet(item: ItemId) {
                         }),
                 )
                 .child(
-                    ListRow::new("Usar un lienzo existente…")
+                    ListRow::new(tr!("flows-pickers-use-canvas"))
                         .icon(freya::icons::lucide::pen_line())
                         .chevron()
                         .on_press(move |_| {
@@ -373,7 +385,7 @@ impl Component for FolderTree {
         let Some(data) = LibraryView::get().data() else {
             return rect().into_element();
         };
-        let mut rows = vec![(ROOT_FOLDER, "Biblioteca".to_owned(), 0)];
+        let mut rows = vec![(ROOT_FOLDER, tr!("common-library"), 0)];
         walk_folders(&data, ROOT_FOLDER, 1, &mut rows, &self.excluded);
         let current = self.current;
         Group::default()
@@ -390,7 +402,7 @@ impl Component for FolderTree {
                     .indent(indent)
                     .selected(id == current);
                 let row = if id == current {
-                    row.trailing(Trailing::Text("Acá".into()))
+                    row.trailing(Trailing::Text(tr!("flows-pickers-here").into()))
                 } else {
                     row
                 };
@@ -406,7 +418,7 @@ impl Component for FolderTree {
 
 /// Pick a folder on top of the current sheet; `on_pick` gets it.
 pub fn choose_folder(current: FolderId, on_pick: impl Fn(FolderId) + 'static) {
-    Sheet::titled("Se guarda en")
+    Sheet::titled(tr!("flows-forms-saved-in"))
         .on_back(|()| ModalController::get().close())
         .child(FolderTree {
             current,
@@ -416,7 +428,7 @@ pub fn choose_folder(current: FolderId, on_pick: impl Fn(FolderId) + 'static) {
         .push();
 }
 
-/// "Mover a…": pick where `items` and `folders` go.
+/// "Move to…": pick where `items` and `folders` go.
 pub fn folder_picker(items: Vec<ItemId>, folders: Vec<FolderId>) {
     let count = items.len() + folders.len();
     let current = LibraryView::get()
@@ -424,33 +436,29 @@ pub fn folder_picker(items: Vec<ItemId>, folders: Vec<FolderId>) {
         .and_then(|d| items.first().and_then(|i| d.item(*i)).map(|i| i.folder))
         .unwrap_or(ROOT_FOLDER);
     let excluded = folders.clone();
-    Sheet::titled(if count == 1 {
-        "Mover a…".to_owned()
-    } else {
-        format!("Mover {count} elementos a…")
-    })
-    .child(FolderTree {
-        current,
-        excluded,
-        on_pick: OnFolder(Rc::new(move |target| {
-            let items = items.clone();
-            let folders = folders.clone();
-            crate::state::edit(crate::state::LibraryEdit::Move, async move |lib| {
-                for item in items {
-                    lib.move_item(item, target).await?;
-                }
-                for folder in folders {
-                    lib.move_folder(folder, target).await?;
-                }
-                Ok(())
-            });
-        })),
-    })
-    .footer(SheetFooter::new([Button::new("Cancelar")
-        .ghost()
-        .on_press(|_| ModalController::get().close())
-        .into_element()]))
-    .open();
+    Sheet::titled(tr!("flows-pickers-move-to", "count" => count))
+        .child(FolderTree {
+            current,
+            excluded,
+            on_pick: OnFolder(Rc::new(move |target| {
+                let items = items.clone();
+                let folders = folders.clone();
+                crate::state::edit(crate::state::LibraryEdit::Move, async move |lib| {
+                    for item in items {
+                        lib.move_item(item, target).await?;
+                    }
+                    for folder in folders {
+                        lib.move_folder(folder, target).await?;
+                    }
+                    Ok(())
+                });
+            })),
+        })
+        .footer(SheetFooter::new([Button::new(tr!("common-cancel"))
+            .ghost()
+            .on_press(|_| ModalController::get().close())
+            .into_element()]))
+        .open();
 }
 
 /// The create entries a name is enough for, in the catalog's order.

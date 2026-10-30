@@ -2,6 +2,7 @@
 //! [`LinkKind::Companion`] link, opened beside it.
 
 use freya::prelude::spawn_in_window;
+use notein_i18n::tr;
 
 use crate::library::{
     BackgroundStyle, DocKind, ItemId, Library, LibraryError, LinkKind, NotFoundKind, Result,
@@ -26,7 +27,7 @@ pub fn new_notebook(item: ItemId) {
     });
 }
 
-/// Create "Cuaderno de <doc>" next to `item` and link it as its
+/// Create "Notebook of <doc>" (in the active language) next to `item` and link it as its
 /// notebook.
 ///
 /// # Errors
@@ -36,7 +37,7 @@ pub async fn create_notebook(lib: &mut Library, item: ItemId) -> Result<ItemId> 
         .item(item)
         .cloned()
         .ok_or(LibraryError::NotFound(NotFoundKind::Item(item)))?;
-    let name = format!("Cuaderno de {}", parent.name);
+    let name = tr!("notebooks-default-name", "document" => parent.name.clone());
     let kind = crate::plugins::catalog().notebook_kind().map_or_else(
         || crate::plugins::builtin::canvas::KIND.to_owned(),
         |k| k.info().id.into_owned(),

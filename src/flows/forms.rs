@@ -4,6 +4,7 @@
 use std::rc::Rc;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
@@ -34,7 +35,7 @@ pub const TINTS: [Rgba; 6] = [
     [154, 149, 140, 255],
 ];
 
-/// What a secondary button of a form does (Papelera, Reemplazar).
+/// What a secondary button of a form does (Trash, Replace).
 #[derive(Clone)]
 pub struct FormAction(pub Rc<dyn Fn()>);
 
@@ -62,25 +63,25 @@ pub struct FormSpec {
     pub color: bool,
     pub tags: bool,
     pub location: bool,
-    /// "Crear cuaderno al lado" (PDF import).
+    /// "Create a notebook beside it" (PDF import).
     pub notebook_toggle: bool,
-    /// "Fijar en Home" (mesa edit).
+    /// "Pin to Home" (mesa edit).
     pub pin_toggle: bool,
     /// Translation choice (Bible edit): `(id, label)`.
     pub choices: Vec<(String, String)>,
     pub choice_label: String,
     /// File summary line (PDF / markdown import).
     pub file_line: Option<String>,
-    /// Button beside the file line, with its label (Reemplazar).
-    pub file_action: Option<(&'static str, FormAction)>,
+    /// Button beside the file line, with its label (Replace).
+    pub file_action: Option<(String, FormAction)>,
     /// Rendered preview of imported text.
     pub preview: Option<String>,
     pub placeholder: String,
     pub hint: String,
     pub submit: String,
-    /// Edit sheets show Papelera on the left.
+    /// Edit sheets show Trash on the left.
     pub trash: Option<FormAction>,
-    /// "Mover N documentos seleccionados adentro" (new folder).
+    /// "Move N selected documents inside" (new folder).
     pub move_selected: Option<usize>,
 }
 
@@ -135,7 +136,7 @@ fn footer(
 ) -> SheetFooter {
     let submit_label = spec.submit.clone();
     let base = SheetFooter::new([
-        Button::new("Cancelar")
+        Button::new(tr!("common-cancel"))
             .ghost()
             .on_press(|_| ModalController::get().close())
             .into_element(),
@@ -151,7 +152,7 @@ fn footer(
     .hint(spec.hint.clone());
     match spec.trash.clone() {
         Some(trash) => base.leading(
-            Button::new("Papelera")
+            Button::new(tr!("common-trash"))
                 .variant(ButtonVariant::Danger)
                 .icon(freya::icons::lucide::trash_2())
                 .on_press(move |_| {
@@ -164,7 +165,7 @@ fn footer(
 }
 
 impl FormSpec {
-    /// The file summary, with its button (Reemplazar) when there is one.
+    /// The file summary, with its button (Replace) when there is one.
     fn file_line(&self) -> Option<Rect> {
         let line = self.file_line.clone()?;
         Some(
@@ -233,7 +234,7 @@ impl Component for Form {
             }))
             .child(
                 TextField::new(name)
-                    .label("Nombre")
+                    .label(tr!("common-name"))
                     .placeholder(spec.placeholder.clone())
                     .auto_focus(true)
                     .on_submit(move |_| {
@@ -255,8 +256,8 @@ impl Component for Form {
             .maybe_child(spec.tags.then_some(TagsField { values }))
             .maybe_child(spec.notebook_toggle.then(|| {
                 Group::default().child(
-                    ListRow::new("Crear cuaderno al lado")
-                        .subtitle("Un lienzo vinculado para tus apuntes")
+                    ListRow::new(tr!("flows-forms-notebook-beside"))
+                        .subtitle(tr!("flows-forms-notebook-beside-hint"))
                         .icon(freya::icons::lucide::notebook_pen())
                         .trailing(Trailing::Switch {
                             on: current.notebook,
@@ -266,7 +267,7 @@ impl Component for Form {
             }))
             .maybe_child(spec.pin_toggle.then(|| {
                 Group::default().child(
-                    ListRow::new("Fijar en Home")
+                    ListRow::new(tr!("flows-forms-pin-home"))
                         .icon(freya::icons::lucide::pin())
                         .trailing(Trailing::Switch {
                             on: current.pinned,
@@ -276,19 +277,14 @@ impl Component for Form {
             }))
             .maybe_child(spec.move_selected.map(|n| {
                 Group::default().child(
-                    ListRow::new(format!(
-                        "Mover {} adentro",
-                        crate::format::count(
-                            n,
-                            "documento seleccionado",
-                            "documentos seleccionados"
-                        )
-                    ))
-                    .icon(freya::icons::lucide::folder_input())
-                    .trailing(Trailing::Switch {
-                        on: current.move_selected,
-                        on_toggle: EventHandler::new(move |on| values.write().move_selected = on),
-                    }),
+                    ListRow::new(tr!("flows-forms-move-selected", "count" => n))
+                        .icon(freya::icons::lucide::folder_input())
+                        .trailing(Trailing::Switch {
+                            on: current.move_selected,
+                            on_toggle: EventHandler::new(move |on| {
+                                values.write().move_selected = on;
+                            }),
+                        }),
                 )
             }))
             .maybe_child(spec.location.then_some(Location { values }))
@@ -306,16 +302,16 @@ impl Component for PaperPicker {
         let mut values = self.values;
         let current = values.read().paper;
         let options = [
-            (BackgroundStyle::Blank, "Blanco"),
-            (BackgroundStyle::Line, "Líneas"),
-            (BackgroundStyle::Grid, "Cuadrícula"),
-            (BackgroundStyle::DotGrid, "Puntos"),
+            (BackgroundStyle::Blank, tr!("flows-forms-paper-blank")),
+            (BackgroundStyle::Line, tr!("flows-forms-paper-lines")),
+            (BackgroundStyle::Grid, tr!("flows-forms-paper-grid")),
+            (BackgroundStyle::DotGrid, tr!("flows-forms-paper-dots")),
         ];
         let paper = values
             .read()
             .color
             .map_or(p.paper, |c| Color::from_argb(c[3], c[0], c[1], c[2]));
-        Section::new("Papel").child(
+        Section::new(tr!("flows-forms-paper")).child(
             rect()
                 .width(Size::fill())
                 .horizontal()
@@ -324,12 +320,12 @@ impl Component for PaperPicker {
                 .children(options.into_iter().map(|(style, label_text)| {
                     let selected = current == style;
                     rect()
-                        .key(label_text)
+                        .key(format!("{style:?}"))
                         .width(Size::flex(1.0))
                         .spacing(6.0)
                         .cross_align(Alignment::Center)
                         .a11y_role(AccessibilityRole::RadioButton)
-                        .a11y_alt(label_text)
+                        .a11y_alt(label_text.clone())
                         .on_tap(move |_| values.write().paper = style)
                         .child(
                             rect()
@@ -377,9 +373,9 @@ impl Component for ColorRow {
         let current = values.read().color;
         let swatches = if self.paper { COLORS } else { TINTS };
         let title = if self.paper {
-            "Color del papel"
+            tr!("flows-forms-paper-color")
         } else {
-            "Color de la tarjeta"
+            tr!("flows-forms-card-color")
         };
         Section::new(title)
             .child(
@@ -406,10 +402,13 @@ impl Component for ColorRow {
                             .into_element()
                     }))
                     .child(
-                        IconButton::new(freya::icons::lucide::palette(), "Otro color")
-                            .size(32.0)
-                            .active(custom())
-                            .on_press(move |_| custom.toggle()),
+                        IconButton::new(
+                            freya::icons::lucide::palette(),
+                            tr!("flows-forms-other-color"),
+                        )
+                        .size(32.0)
+                        .active(custom())
+                        .on_press(move |_| custom.toggle()),
                     ),
             )
             .maybe_child(custom().then(|| {
@@ -479,7 +478,7 @@ impl Component for TagsField {
             typed.set(String::new());
         };
         let mut add_typed = add;
-        Section::new("Etiquetas")
+        Section::new(tr!("flows-forms-tags"))
             .child(
                 rect()
                     .width(Size::fill())
@@ -496,7 +495,7 @@ impl Component for TagsField {
             )
             .child(
                 TextField::new(typed)
-                    .placeholder("Escribí para buscar o crear")
+                    .placeholder(tr!("flows-forms-tags-placeholder"))
                     .on_submit(move |text: String| add_typed(text)),
             )
             .maybe_child((!suggestions.is_empty()).then(|| {
@@ -516,7 +515,7 @@ impl Component for TagsField {
             }))
             .child(
                 label()
-                    .text("Enter agrega la etiqueta")
+                    .text(tr!("flows-forms-tags-hint"))
                     .font_size(tokens::text::CAPTION)
                     .color(p.t3),
             )
@@ -535,13 +534,13 @@ impl Component for Location {
         let data = LibraryView::get().data();
         let path = data
             .as_deref()
-            .map_or_else(|| "Biblioteca".to_owned(), |d| folder_path(d, folder));
+            .map_or_else(|| tr!("common-library"), |d| folder_path(d, folder));
         Group::default().child(
-            ListRow::new("Se guarda en")
+            ListRow::new(tr!("flows-forms-saved-in"))
                 .subtitle(path)
                 .icon(freya::icons::lucide::folder())
                 .trailing(Trailing::Element(
-                    Button::new("Cambiar")
+                    Button::new(tr!("flows-forms-change"))
                         .ghost()
                         .small()
                         .on_press(move |_| {
@@ -556,7 +555,7 @@ impl Component for Location {
     }
 }
 
-/// "Biblioteca › Estudio › Romanos" for `folder`.
+/// "Library › Study › Romans" for `folder`.
 #[must_use]
 pub fn folder_path(data: &crate::library::LibraryData, folder: FolderId) -> String {
     let mut names = Vec::new();
@@ -571,7 +570,7 @@ pub fn folder_path(data: &crate::library::LibraryData, folder: FolderId) -> Stri
         names.push(f.name.clone());
         cursor = f.parent;
     }
-    names.push("Biblioteca".to_owned());
+    names.push(tr!("common-library"));
     names.reverse();
     names.join(" › ")
 }
@@ -621,14 +620,14 @@ pub fn edit_item(item: ItemId) {
     let p = palette();
     let label = info
         .as_ref()
-        .map_or_else(|| "documento".to_owned(), |k| k.label.to_lowercase());
+        .map_or_else(|| tr!("flows-forms-document"), |k| k.label.to_lowercase());
     let has_paper = info.as_ref().is_some_and(|k| k.has_paper);
     let content = kind.as_ref().map(|k| {
         crate::plugins::content::read(item, &found.kind.plugin_id)
             .unwrap_or_else(|| k.empty_content())
     });
     let mut spec = FormSpec {
-        title: format!("Editar {label}"),
+        title: tr!("flows-forms-edit-kind", "kind" => label),
         kind_icon: info.as_ref().map(|k| k.icon.clone()),
         kind_color: info
             .as_ref()
@@ -637,15 +636,15 @@ pub fn edit_item(item: ItemId) {
         color: info.as_ref().is_none_or(|k| k.tint),
         tags: true,
         location: false,
-        placeholder: "Sin título".to_owned(),
-        submit: "Guardar".to_owned(),
+        placeholder: tr!("common-untitled"),
+        submit: tr!("common-save"),
         trash: Some(FormAction(Rc::new(move || super::trash_item(item)))),
         ..FormSpec::default()
     };
     if info.as_ref().is_some_and(|k| k.attachment.is_some()) {
         let kind_id = found.kind.plugin_id.clone();
         spec.file_action = Some((
-            "Reemplazar",
+            tr!("flows-forms-replace"),
             FormAction(Rc::new(move || {
                 super::create::replace_attachment(item, kind_id.clone());
             })),
@@ -715,13 +714,13 @@ pub fn edit_folder(folder: FolderId) {
     };
     let p = palette();
     let spec = FormSpec {
-        title: "Editar carpeta".to_owned(),
+        title: tr!("flows-forms-edit-folder"),
         kind_icon: Some(freya::icons::lucide::folder()),
         kind_color: Some(p.kinds.folder),
         color: true,
         tags: true,
-        placeholder: "Sin nombre".to_owned(),
-        submit: "Guardar".to_owned(),
+        placeholder: tr!("flows-create-unnamed"),
+        submit: tr!("common-save"),
         trash: Some(FormAction(Rc::new(move || super::trash_folder(folder)))),
         ..FormSpec::default()
     };
@@ -751,13 +750,13 @@ pub fn edit_mesa(workspace: WorkspaceId) {
     };
     let p = palette();
     let spec = FormSpec {
-        title: "Editar mesa".to_owned(),
+        title: tr!("flows-forms-edit-desk"),
         kind_icon: Some(freya::icons::lucide::layout_grid()),
         kind_color: Some(p.highlighters[2]),
         color: true,
         pin_toggle: true,
         placeholder: data.workspace_title(workspace),
-        submit: "Guardar".to_owned(),
+        submit: tr!("common-save"),
         trash: Some(FormAction(Rc::new(move || super::delete_mesa(workspace)))),
         ..FormSpec::default()
     };

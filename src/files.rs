@@ -23,7 +23,7 @@ pub enum FileError {
 impl std::fmt::Display for FileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Picker(why) => write!(f, "selector de archivos: {why}"),
+            Self::Picker(why) => write!(f, "file picker: {why}"),
             Self::Io(err) => write!(f, "{err}"),
         }
     }

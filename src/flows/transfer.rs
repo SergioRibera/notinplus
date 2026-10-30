@@ -1,11 +1,12 @@
-//! Copies in and out: Exportar (a backup to import again, or files
-//! other apps read) and Importar (review collisions before anything is
+//! Copies in and out: Export (a backup to import again, or files
+//! other apps read) and Import (review collisions before anything is
 //! written).
 
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
@@ -103,7 +104,7 @@ fn file_stamp() -> String {
 pub fn export(scope: ExportScope) {
     let choices = State::create_in_scope(Choices::default(), ScopeId::ROOT);
     let footer_scope = scope.clone();
-    Sheet::titled("Exportar")
+    Sheet::titled(tr!("flows-transfer-export-title"))
         .child(ExportForm { scope, choices })
         .footer(ExportFooter {
             scope: footer_scope,
@@ -122,13 +123,13 @@ struct ExportForm {
 fn purpose_card(
     mut choices: State<Choices>,
     purpose: Purpose,
-    (title, sub): (&'static str, &'static str),
+    (title, sub): (String, String),
     icon: Bytes,
 ) -> Element {
     let p = palette();
     let on = choices.read().purpose == purpose;
     rect()
-        .key(title)
+        .key(format!("{purpose:?}"))
         .width(Size::flex(1.0))
         .height(Size::px(100.0))
         .padding((12.0, 14.0))
@@ -175,16 +176,15 @@ impl ExportForm {
     /// How the scope reads: the library, a document, a count, a folder.
     fn what(&self, data: &LibraryData) -> String {
         match &self.scope {
-            ExportScope::Library => "Toda la biblioteca".to_owned(),
-            ExportScope::Items(items) if items.len() == 1 => data
-                .item(items[0])
-                .map_or_else(|| "1 documento".to_owned(), |i| i.name.clone()),
-            ExportScope::Items(items) => {
-                crate::format::count(items.len(), "documento", "documentos")
-            }
+            ExportScope::Library => tr!("flows-transfer-whole-library"),
+            ExportScope::Items(items) if items.len() == 1 => data.item(items[0]).map_or_else(
+                || tr!("flows-transfer-documents", "count" => 1),
+                |i| i.name.clone(),
+            ),
+            ExportScope::Items(items) => tr!("flows-transfer-documents", "count" => items.len()),
             ExportScope::Folder(folder) => data
                 .folder(*folder)
-                .map_or_else(|| "Carpeta".to_owned(), |f| f.name.clone()),
+                .map_or_else(|| tr!("flows-create-folder"), |f| f.name.clone()),
         }
     }
 
@@ -196,16 +196,16 @@ impl ExportForm {
         let (total, pdfs) = sizes(&items);
         let backup = current.purpose == Purpose::Backup;
         Group::default()
-            .child(ListRow::new(self.what(data)).subtitle(format!(
-                "{} · {}",
-                crate::format::count(items.len(), "documento", "documentos"),
-                crate::format::size(total)
+            .child(ListRow::new(self.what(data)).subtitle(tr!(
+                "flows-transfer-contents",
+                "count" => items.len(),
+                "size" => crate::format::size(total)
             )))
             .maybe_child(backup.then(|| {
-                ListRow::new("Incluir los PDF originales")
-                    .subtitle(format!(
-                        "{}. Sin ellos, la copia guarda solo lo escrito encima.",
-                        crate::format::size(pdfs)
+                ListRow::new(tr!("flows-transfer-include-pdfs"))
+                    .subtitle(tr!(
+                        "flows-transfer-include-pdfs-hint",
+                        "size" => crate::format::size(pdfs)
                     ))
                     .trailing(Trailing::Switch {
                         on: current.attachments,
@@ -213,10 +213,10 @@ impl ExportForm {
                     })
             }))
             .maybe_child(backup.then(|| {
-                ListRow::new("Incluir mesas y marcadores")
-                    .subtitle(format!(
-                        "{} y todos los resaltados.",
-                        crate::format::count(data.workspaces().len(), "mesa", "mesas")
+                ListRow::new(tr!("flows-transfer-include-desks"))
+                    .subtitle(tr!(
+                        "flows-transfer-include-desks-hint",
+                        "count" => data.workspaces().len()
                     ))
                     .trailing(Trailing::Switch {
                         on: current.mesas_and_marks,
@@ -238,7 +238,7 @@ impl Component for ExportForm {
             .width(Size::fill())
             .spacing(16.0)
             .child(
-                Section::new("Para qué es").child(
+                Section::new(tr!("flows-transfer-purpose")).child(
                     rect()
                         .width(Size::fill())
                         .horizontal()
@@ -248,8 +248,8 @@ impl Component for ExportForm {
                             self.choices,
                             Purpose::Backup,
                             (
-                                "Copia de seguridad",
-                                "Todo tal cual: para volver a importarlo en Notein, acá o en otro dispositivo.",
+                                tr!("flows-transfer-backup"),
+                                tr!("flows-transfer-backup-hint"),
                             ),
                             lucide::archive(),
                         ))
@@ -257,14 +257,14 @@ impl Component for ExportForm {
                             self.choices,
                             Purpose::Readable,
                             (
-                                "Leer en otras apps",
-                                "PDFs con lo escrito encima y notas en Markdown, en una carpeta.",
+                                tr!("flows-transfer-readable"),
+                                tr!("flows-transfer-readable-hint"),
                             ),
                             lucide::folder(),
                         )),
                 ),
             )
-            .child(Section::new("Qué").child(self.contents(&data)))
+            .child(Section::new(tr!("flows-transfer-what")).child(self.contents(&data)))
             .into_element()
     }
 }
@@ -292,16 +292,16 @@ impl Component for ExportFooter {
         let (name, label_text) = match choices.purpose {
             Purpose::Backup => (
                 format!("notein-{}.notein", file_stamp()),
-                format!("Exportar {}", crate::format::size(size)),
+                tr!("flows-transfer-export-size", "size" => crate::format::size(size)),
             ),
             Purpose::Readable => (
                 format!("notein-{}.zip", file_stamp()),
-                "Exportar".to_owned(),
+                tr!("flows-transfer-export"),
             ),
         };
         let scope = self.scope.clone();
         SheetFooter::new([
-            Button::new("Cancelar")
+            Button::new(tr!("common-cancel"))
                 .ghost()
                 .on_press(|_| ModalController::get().close())
                 .into_element(),
@@ -314,7 +314,7 @@ impl Component for ExportFooter {
                 })
                 .into_element(),
         ])
-        .hint(format!("Se guarda como {name}"))
+        .hint(tr!("flows-transfer-saved-as", "name" => name))
     }
 }
 
@@ -343,9 +343,10 @@ impl Component for Exporting {
                     .horizontal()
                     .content(Content::Flex)
                     .child(
-                        Text::new(format!(
-                            "{done} de {}",
-                            crate::format::count(self.total, "documento", "documentos")
+                        Text::new(tr!(
+                            "flows-transfer-progress",
+                            "done" => done,
+                            "total" => self.total
                         ))
                         .fill(),
                     )
@@ -354,10 +355,7 @@ impl Component for Exporting {
                     ),
             )
             .child(ProgressBar::new(fraction))
-            .child(
-                Text::new("Podés seguir usando la app. Te avisamos al terminar.")
-                    .role(TextRole::Hint),
-            )
+            .child(Text::new(tr!("flows-transfer-progress-hint")).role(TextRole::Hint))
     }
 }
 
@@ -439,14 +437,16 @@ fn run_export(scope: ExportScope, choices: Choices) {
         let items = item_ids(&scope, &data);
         let mut done = State::create_in_scope(0usize, ScopeId::ROOT);
         let mut showing = State::create_in_scope(true, ScopeId::ROOT);
-        Sheet::titled("Exportando")
+        Sheet::titled(tr!("flows-transfer-exporting"))
             .child(Exporting {
                 done,
                 total: items.len(),
             })
-            .footer(SheetFooter::new([Button::new("Seguir en segundo plano")
-                .on_press(|_| ModalController::get().close())
-                .into_element()]))
+            .footer(SheetFooter::new([Button::new(tr!(
+                "flows-create-background"
+            ))
+            .on_press(|_| ModalController::get().close())
+            .into_element()]))
             .open();
         ModalController::get().set_top_on_close(move || showing.set(false));
         let (tx, rx) = flume::unbounded();
@@ -474,7 +474,8 @@ fn run_export(scope: ExportScope, choices: Choices) {
             Ok(bytes) => bytes,
             Err(err) => {
                 log::error!("export: {err}");
-                Toasts::get().show(Toast::new("No se pudo exportar").tone(ToastTone::Error));
+                Toasts::get()
+                    .show(Toast::new(tr!("flows-transfer-export-failed")).tone(ToastTone::Error));
                 return;
             }
         };
@@ -499,7 +500,7 @@ fn save_copy(
     choices: Choices,
 ) {
     spawn_in_window(async move {
-        match crate::files::save("Guardar copia", &name, mime, ext, &bytes).await {
+        match crate::files::save(&tr!("flows-transfer-save-copy"), &name, mime, ext, &bytes).await {
             Ok(Some(saved)) => done_sheet(saved, bytes, mime),
             Ok(None) => {}
             Err(crate::files::FileError::Io(err))
@@ -510,7 +511,7 @@ fn save_copy(
             Err(err) => {
                 log::error!("save copy: {err}");
                 Toasts::get()
-                    .show(Toast::new("No se pudo guardar la copia").tone(ToastTone::Error));
+                    .show(Toast::new(tr!("flows-transfer-save-failed")).tone(ToastTone::Error));
             }
         }
     });
@@ -519,9 +520,9 @@ fn save_copy(
 fn done_sheet(saved: crate::files::Saved, bytes: Vec<u8>, mime: &'static str) {
     let size = crate::format::size(u64::try_from(bytes.len()).unwrap_or(0));
     let crate::files::Saved { name, path } = saved;
-    let subtitle = format!("{name} · {size}");
+    let subtitle = tr!("flows-transfer-saved-subtitle", "name" => name.clone(), "size" => size);
     let mut buttons = vec![
-        Button::new("Listo")
+        Button::new(tr!("common-done"))
             .ghost()
             .on_press(|_| ModalController::get().close())
             .into_element(),
@@ -529,7 +530,7 @@ fn done_sheet(saved: crate::files::Saved, bytes: Vec<u8>, mime: &'static str) {
     if let Some(folder) = path.as_deref().and_then(std::path::Path::parent) {
         let folder = folder.to_path_buf();
         buttons.push(
-            Button::new("Mostrar en la carpeta")
+            Button::new(tr!("flows-transfer-show-in-folder"))
                 .icon(freya::icons::lucide::folder_open())
                 .on_press(move |_| {
                     ModalController::get().close();
@@ -539,7 +540,7 @@ fn done_sheet(saved: crate::files::Saved, bytes: Vec<u8>, mime: &'static str) {
         );
     }
     buttons.push(
-        Button::new("Compartir")
+        Button::new(tr!("common-share"))
             .primary()
             .icon(freya::icons::lucide::share_2())
             .on_press(move |_| {
@@ -551,7 +552,7 @@ fn done_sheet(saved: crate::files::Saved, bytes: Vec<u8>, mime: &'static str) {
     Sheet::default()
         .without_close()
         .child(
-            ListRow::new("Copia guardada")
+            ListRow::new(tr!("flows-transfer-saved"))
                 .subtitle(subtitle)
                 .icon(freya::icons::lucide::circle_check()),
         )
@@ -565,12 +566,11 @@ fn no_space(bytes: usize, scope: ExportScope, choices: Choices) {
     Sheet::default()
         .without_close()
         .child(
-            Notice::new(NoticeTone::Warning, "No entra en este lugar").detail(format!(
-                "Hacen falta {missing}. Elegí otro lugar o exportá sin los PDF originales."
-            )),
+            Notice::new(NoticeTone::Warning, tr!("flows-transfer-no-space"))
+                .detail(tr!("flows-transfer-no-space-hint", "missing" => missing)),
         )
         .footer(SheetFooter::new([
-            Button::new("Sin PDF originales")
+            Button::new(tr!("flows-transfer-without-pdfs"))
                 .ghost()
                 .on_press(move |_| {
                     ModalController::get().close();
@@ -583,7 +583,7 @@ fn no_space(bytes: usize, scope: ExportScope, choices: Choices) {
                     );
                 })
                 .into_element(),
-            Button::new("Elegir otro lugar")
+            Button::new(tr!("flows-transfer-pick-place"))
                 .primary()
                 .on_press(move |_| {
                     ModalController::get().close();
@@ -622,7 +622,7 @@ pub fn undo_import(receipt: ImportReceipt) {
 pub fn import() {
     spawn_in_window(async move {
         let picked = match crate::files::pick(
-            "Importar una copia de Notein",
+            &tr!("flows-transfer-import-picker"),
             &["notein"],
             &["application/octet-stream"],
         )
@@ -636,11 +636,11 @@ pub fn import() {
             }
         };
         let reading = Sheet::default().without_close().child(
-            ListRow::new(format!("Revisando «{}»…", picked.name)).leading(
+            ListRow::new(tr!("flows-transfer-reviewing", "name" => picked.name.clone())).leading(
                 notein_ui_kit::Leading::Element(notein_ui_kit::Spinner::default().into_element()),
             ),
         );
-        // Over whatever asked for it (Ajustes stays underneath).
+        // Over whatever asked for it (Settings stays underneath).
         reading.push();
         let name = picked.name.clone();
         let (tx, rx) = flume::bounded(1);
@@ -671,19 +671,18 @@ fn newer_version() {
     Sheet::default()
         .without_close()
         .child(
-            Notice::new(NoticeTone::Danger, "No se puede abrir este archivo").detail(
-                "Lo creó una versión más nueva de Notein. Actualizá la app y probá de nuevo.",
-            ),
+            Notice::new(NoticeTone::Danger, tr!("flows-transfer-newer"))
+                .detail(tr!("flows-transfer-newer-hint")),
         )
         .footer(SheetFooter::new([
-            Button::new("Elegir otro")
+            Button::new(tr!("flows-transfer-pick-another"))
                 .ghost()
                 .on_press(|_| {
                     ModalController::get().close();
                     import();
                 })
                 .into_element(),
-            Button::new("Buscar actualización")
+            Button::new(tr!("flows-transfer-check-update"))
                 .primary()
                 .on_press(|_| {
                     ModalController::get().close();
@@ -698,16 +697,21 @@ fn damaged(name: &str) {
     Sheet::default()
         .without_close()
         .child(
-            Notice::new(NoticeTone::Danger, format!("No se puede abrir «{name}»"))
-                .detail("Este archivo está incompleto o dañado."),
+            Notice::new(
+                NoticeTone::Danger,
+                tr!("flows-transfer-damaged", "name" => name.to_owned()),
+            )
+            .detail(tr!("flows-transfer-damaged-hint")),
         )
-        .footer(SheetFooter::new([Button::new("Elegir otro")
-            .primary()
-            .on_press(|_| {
-                ModalController::get().close();
-                import();
-            })
-            .into_element()]))
+        .footer(SheetFooter::new([Button::new(tr!(
+            "flows-transfer-pick-another"
+        ))
+        .primary()
+        .on_press(|_| {
+            ModalController::get().close();
+            import();
+        })
+        .into_element()]))
         .open();
 }
 
@@ -739,7 +743,7 @@ fn review(name: &str, bundle: crate::bundle::ParsedBundle) {
     };
     let plan = State::create_in_scope(ImportPlan::default(), ScopeId::ROOT);
     let footer = pending.clone();
-    Sheet::titled(format!("Importar «{name}»"))
+    Sheet::titled(tr!("flows-transfer-import-title", "name" => name.to_owned()))
         .width(600.0)
         .child(ImportReview { pending, plan })
         .footer(ImportFooter {
@@ -755,11 +759,16 @@ struct ImportReview {
     plan: State<ImportPlan>,
 }
 
-const RESOLUTIONS: [(Resolution, &str); 3] = [
-    (Resolution::KeepBoth, "Mantener ambos"),
-    (Resolution::Replace, "Reemplazar"),
-    (Resolution::Skip, "Omitir"),
-];
+const RESOLUTIONS: [Resolution; 3] = [Resolution::KeepBoth, Resolution::Replace, Resolution::Skip];
+
+/// What the resolution segments read.
+fn resolution_labels() -> [String; 3] {
+    RESOLUTIONS.map(|resolution| match resolution {
+        Resolution::KeepBoth => tr!("flows-transfer-keep-both"),
+        Resolution::Replace => tr!("flows-transfer-replace"),
+        Resolution::Skip => tr!("flows-transfer-skip"),
+    })
+}
 
 impl Component for ImportReview {
     fn render(&self) -> impl IntoElement {
@@ -768,11 +777,7 @@ impl Component for ImportReview {
         let current = plan.read().clone();
         let review = &self.pending.review;
         let now = crate::format::now();
-        let destination = if review.source.is_empty() {
-            "Importados".to_owned()
-        } else {
-            format!("Importados de {}", review.source)
-        };
+        let destination = imported_folder_name(&review.source);
         let new_count = review.documents - review.conflicts.len();
         rect()
             .width(Size::fill())
@@ -783,45 +788,42 @@ impl Component for ImportReview {
                     .horizontal()
                     .content(Content::wrap_spacing(6.0))
                     .spacing(6.0)
-                    .child(Tag::new(crate::format::count(review.documents, "documento", "documentos")).icon(lucide::file_text()))
-                    .child(Tag::new(crate::format::count(review.mesas, "mesa", "mesas")).icon(lucide::layout_grid()))
-                    .child(Tag::new(crate::format::count(review.marks, "marcador", "marcadores")).icon(lucide::bookmark()))
+                    .child(Tag::new(tr!("flows-transfer-documents", "count" => review.documents)).icon(lucide::file_text()))
+                    .child(Tag::new(tr!("flows-transfer-desks", "count" => review.mesas)).icon(lucide::layout_grid()))
+                    .child(Tag::new(tr!("flows-transfer-bookmarks", "count" => review.marks)).icon(lucide::bookmark()))
                     .child(Tag::new(crate::format::size(review.bytes)).icon(lucide::hard_drive())),
             )
             .maybe_child((!review.missing_kinds.is_empty()).then(|| {
                 Notice::new(
                     NoticeTone::Warning,
-                    format!(
-                        "{} usan plugins que no están instalados. Se importan igual y se abren cuando los instales.",
-                        crate::format::count(
-                            self.pending
-                                .bundle
-                                .manifest
-                                .items
-                                .iter()
-                                .filter(|i| review.missing_kinds.contains(&i.kind.plugin_id))
-                                .count(),
-                            "documento",
-                            "documentos"
-                        )
+                    tr!(
+                        "flows-transfer-missing-plugins",
+                        "count" => self
+                            .pending
+                            .bundle
+                            .manifest
+                            .items
+                            .iter()
+                            .filter(|i| review.missing_kinds.contains(&i.kind.plugin_id))
+                            .count()
                     ),
                 )
             }))
             .maybe_child((!review.conflicts.is_empty()).then(|| {
-                Section::new(format!("{} ya están en tu biblioteca", review.conflicts.len()))
+                Section::new(tr!("flows-transfer-conflicts", "count" => review.conflicts.len()))
                     .icon(lucide::triangle_alert())
                     .child(
                         rect()
                             .horizontal()
                             .cross_align(Alignment::Center)
                             .spacing(10.0)
-                            .child(Text::new("Para todos:").role(TextRole::Meta))
+                            .child(Text::new(tr!("flows-transfer-for-all")).role(TextRole::Meta))
                             .child(
-                                Segmented::new(RESOLUTIONS.map(|(_, l)| l), RESOLUTIONS.iter().position(|(r, _)| *r == current.rule).unwrap_or(0))
+                                Segmented::new(resolution_labels(), RESOLUTIONS.iter().position(|r| *r == current.rule).unwrap_or(0))
                                     .height(32.0)
                                     .on_select(move |i: usize| {
                                         let mut plan = plan.write();
-                                        plan.rule = RESOLUTIONS[i].0;
+                                        plan.rule = RESOLUTIONS[i];
                                         plan.overrides.clear();
                                     }),
                             ),
@@ -829,13 +831,14 @@ impl Component for ImportReview {
                     .child(Group::default().children(review.conflicts.iter().map(|conflict| {
                         let id = conflict.incoming.id;
                         let subtitle = if conflict.identical {
-                            "Iguales · se omite solo".to_owned()
+                            tr!("flows-transfer-identical")
                         } else {
-                            let newer = if conflict.incoming.updated_at > conflict.existing.updated_at { " (más nuevo)" } else { "" };
-                            format!(
-                                "El tuyo: {} · El de la copia: {}{newer}",
-                                crate::format::day(conflict.existing.updated_at, now),
-                                crate::format::day(conflict.incoming.updated_at, now)
+                            let newer = conflict.incoming.updated_at > conflict.existing.updated_at;
+                            tr!(
+                                "flows-transfer-conflict",
+                                "mine" => crate::format::day(conflict.existing.updated_at, now),
+                                "theirs" => crate::format::day(conflict.incoming.updated_at, now),
+                                "newer" => if newer { "yes" } else { "no" }
                             )
                         };
                         let chosen = current.resolution(id);
@@ -844,10 +847,10 @@ impl Component for ImportReview {
                             row
                         } else {
                             row.trailing(Trailing::Element(
-                                Segmented::new(RESOLUTIONS.map(|(_, l)| l), RESOLUTIONS.iter().position(|(r, _)| *r == chosen).unwrap_or(0))
+                                Segmented::new(resolution_labels(), RESOLUTIONS.iter().position(|r| *r == chosen).unwrap_or(0))
                                     .height(30.0)
                                     .on_select(move |i: usize| {
-                                        plan.write().overrides.insert(id, RESOLUTIONS[i].0);
+                                        plan.write().overrides.insert(id, RESOLUTIONS[i]);
                                     })
                                     .into_element(),
                             ))
@@ -856,10 +859,10 @@ impl Component for ImportReview {
                     })))
             }))
             .child(Group::default().child(
-                ListRow::new(crate::format::count(new_count, "nuevo", "nuevos")).subtitle("Se agregan tal cual").icon(lucide::plus()),
+                ListRow::new(tr!("flows-transfer-new", "count" => new_count)).subtitle(tr!("flows-transfer-new-hint")).icon(lucide::plus()),
             ))
             .child(Group::default().child(
-                ListRow::new("Guardar en").subtitle(format!("Biblioteca › {destination}")).icon(lucide::folder()),
+                ListRow::new(tr!("flows-transfer-save-in")).subtitle(tr!("flows-transfer-destination", "folder" => destination)).icon(lucide::folder()),
             ))
     }
 }
@@ -878,11 +881,11 @@ impl Component for ImportFooter {
         let skipped = review.identical();
         let pending = self.pending.clone();
         SheetFooter::new([
-            Button::new("Cancelar")
+            Button::new(tr!("common-cancel"))
                 .ghost()
                 .on_press(|_| ModalController::get().close())
                 .into_element(),
-            Button::new(format!("Importar {count}"))
+            Button::new(tr!("flows-transfer-import-count", "count" => count))
                 .primary()
                 .icon(freya::icons::lucide::upload())
                 .enabled(count > 0)
@@ -893,14 +896,19 @@ impl Component for ImportFooter {
                 .into_element(),
         ])
         .hint(if skipped > 0 {
-            format!(
-                "{} por ser {}",
-                crate::format::count(skipped, "se omite", "se omiten"),
-                if skipped == 1 { "igual" } else { "iguales" }
-            )
+            tr!("flows-transfer-skipped", "count" => skipped)
         } else {
             String::new()
         })
+    }
+}
+
+/// Name of the folder an import lands in, stored in the active language.
+fn imported_folder_name(source: &str) -> String {
+    if source.is_empty() {
+        tr!("flows-transfer-imported-folder")
+    } else {
+        tr!("flows-transfer-imported-folder-from", "source" => source.to_owned())
     }
 }
 
@@ -910,11 +918,7 @@ fn commit(pending: Pending, mut plan: ImportPlan) {
             return;
         };
         let mut lib = handle.lock().await;
-        let name = if pending.review.source.is_empty() {
-            "Importados".to_owned()
-        } else {
-            format!("Importados de {}", pending.review.source)
-        };
+        let name = imported_folder_name(&pending.review.source);
         let destination = match lib
             .create_folder(ROOT_FOLDER, &name, None, Vec::new())
             .await
@@ -937,18 +941,18 @@ fn commit(pending: Pending, mut plan: ImportPlan) {
                     Some((receipt, Instant::now()));
                 crate::plugins::content::index_library();
                 Toasts::get().show(
-                    Toast::new(format!(
-                        "{} importados",
-                        crate::format::count(count, "documento", "documentos")
-                    ))
-                    .action("Ver", move |()| {
-                        crate::screens::home::open_folder(destination);
-                    }),
+                    Toast::new(tr!("flows-transfer-imported", "count" => count)).action(
+                        tr!("flows-transfer-view"),
+                        move |()| {
+                            crate::screens::home::open_folder(destination);
+                        },
+                    ),
                 );
             }
             Err(err) => {
                 log::error!("import: {err}");
-                Toasts::get().show(Toast::new("No se pudo importar").tone(ToastTone::Error));
+                Toasts::get()
+                    .show(Toast::new(tr!("flows-transfer-import-failed")).tone(ToastTone::Error));
             }
         }
     });

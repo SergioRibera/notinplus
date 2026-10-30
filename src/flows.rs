@@ -13,6 +13,8 @@ use notein_ui_kit::{
     Button, ButtonVariant, ListRow, ModalController, Sheet, SheetFooter, Toast, ToastTone, Toasts,
 };
 
+use notein_i18n::tr;
+
 use crate::library::{FolderId, ItemId, NotebookFate, TabTarget, WorkspaceId};
 use crate::plugins::content;
 use crate::space::OpenHint;
@@ -66,11 +68,7 @@ pub fn pin_items(items: Vec<ItemId>) {
     state::edit(crate::state::LibraryEdit::Pin, async move |lib| {
         lib.pin_items(&items).await
     });
-    toast(crate::format::count(
-        n,
-        "documento fijado",
-        "documentos fijados",
-    ));
+    toast(tr!("flows-pinned-documents", "count" => n));
 }
 
 /// The share sheet for `item`.
@@ -108,11 +106,15 @@ pub fn duplicate(item: ItemId) {
         let copied = handle.lock().await.duplicate_item(item).await;
         match copied {
             Ok(copy) => {
-                Toasts::get().show(Toast::new("Duplicado").action("Abrir", move |()| open(copy)));
+                Toasts::get().show(
+                    Toast::new(tr!("flows-duplicated"))
+                        .action(tr!("common-open"), move |()| open(copy)),
+                );
             }
             Err(err) => {
                 log::error!("duplicate {item}: {err}");
-                Toasts::get().show(Toast::new("No se pudo duplicar").tone(ToastTone::Error));
+                Toasts::get()
+                    .show(Toast::new(tr!("flows-duplicate-failed")).tone(ToastTone::Error));
             }
         }
     });
@@ -162,7 +164,7 @@ pub fn run_kind_action(item: ItemId, action: &str) {
                 Ok(()) => toast(message),
                 Err(err) => {
                     log::warn!("clipboard: {err:?}");
-                    Toasts::get().show(Toast::new("No se pudo copiar").tone(ToastTone::Error));
+                    Toasts::get().show(Toast::new(tr!("flows-copy-failed")).tone(ToastTone::Error));
                 }
             },
             ActionEffect::Share {
@@ -212,25 +214,24 @@ pub fn share(what: notein_plugin::Share) {
         };
         if let Err(err) = result {
             log::warn!("share: {err}");
-            Toasts::get().show(Toast::new("No se pudo compartir").tone(ToastTone::Error));
+            Toasts::get().show(Toast::new(tr!("flows-share-failed")).tone(ToastTone::Error));
         }
     });
 }
 
-/// Toast for a move to the trash, with Deshacer.
+/// Toast for a move to the trash, with Undo.
 fn trashed_toast(text: String, batch: u64) {
-    Toasts::get().show(
-        Toast::new(text)
-            .tone(ToastTone::Trash)
-            .action("Deshacer", move |()| {
-                state::edit(crate::state::LibraryEdit::Restore, async move |lib| {
-                    lib.restore_batch(batch).await.map(drop)
-                });
-            }),
-    );
+    Toasts::get().show(Toast::new(text).tone(ToastTone::Trash).action(
+        tr!("flows-undo"),
+        move |()| {
+            state::edit(crate::state::LibraryEdit::Restore, async move |lib| {
+                lib.restore_batch(batch).await.map(drop)
+            });
+        },
+    ));
 }
 
-/// Move items to the trash in one step, with Deshacer.
+/// Move items to the trash in one step, with Undo.
 pub fn trash_items(items: Vec<ItemId>, fate: NotebookFate) {
     spawn_in_window(async move {
         let Ok(handle) = crate::library::shared().await else {
@@ -248,20 +249,14 @@ pub fn trash_items(items: Vec<ItemId>, fate: NotebookFate) {
                 }
                 drop(lib);
                 let text = single.map_or_else(
-                    || {
-                        format!(
-                            "{} se movieron a la papelera",
-                            crate::format::count(receipt.items, "documento", "documentos")
-                        )
-                    },
-                    |name| format!("«{name}» se movió a la papelera"),
+                    || tr!("flows-trashed-documents", "count" => receipt.items),
+                    |name| tr!("flows-trashed-named", "name" => name),
                 );
                 trashed_toast(text, receipt.batch);
             }
             Err(err) => {
                 log::error!("trash: {err}");
-                Toasts::get()
-                    .show(Toast::new("No se pudo mover a la papelera").tone(ToastTone::Error));
+                Toasts::get().show(Toast::new(tr!("flows-trash-failed")).tone(ToastTone::Error));
             }
         }
     });
@@ -283,13 +278,10 @@ pub fn trash_documents(items: Vec<ItemId>) {
             let notebooks: usize = items.iter().map(|i| lib.live_notebooks_of(*i).len()).sum();
             let title = match items.as_slice() {
                 [one] => match lib.item(*one) {
-                    Some(found) => format!("Mover «{}» a la papelera", found.name),
+                    Some(found) => tr!("flows-trash-title-named", "name" => found.name.clone()),
                     None => return,
                 },
-                many => format!(
-                    "Mover {} a la papelera",
-                    crate::format::count(many.len(), "documento", "documentos")
-                ),
+                many => tr!("flows-trash-title-documents", "count" => many.len()),
             };
             drop(lib);
             (title, notebooks)
@@ -302,26 +294,22 @@ pub fn trash_documents(items: Vec<ItemId>) {
     });
 }
 
-/// "Mover a la papelera" for documents with notebooks: one question,
+/// "Move to trash" for documents with notebooks: one question,
 /// keeping them preselected.
 fn ask_notebook_fate(items: Vec<ItemId>, title: String, notebooks: usize) {
     use freya::icons::lucide;
     let fate = State::create_in_scope(NotebookFate::Keep, ScopeId::ROOT);
-    let subtitle = if notebooks == 1 {
-        "Tiene 1 cuaderno con tus apuntes.".to_owned()
-    } else {
-        format!("Tienen {notebooks} cuadernos con tus apuntes.")
-    };
+    let subtitle = tr!("flows-trash-notebooks", "count" => notebooks);
     Sheet::titled(title)
         .kind(lucide::trash_2(), notein_ui_kit::palette().danger)
         .subtitle(subtitle)
         .child(NotebookFateChoice { fate })
         .footer(SheetFooter::new([
-            Button::new("Cancelar")
+            Button::new(tr!("common-cancel"))
                 .ghost()
                 .on_press(|_| ModalController::get().close())
                 .into_element(),
-            Button::new("Mover a la papelera")
+            Button::new(tr!("common-move-to-trash"))
                 .variant(ButtonVariant::DangerFill)
                 .on_press(move |_| {
                     ModalController::get().close();
@@ -341,7 +329,7 @@ impl Component for NotebookFateChoice {
     fn render(&self) -> impl IntoElement {
         let mut fate = self.fate;
         let current = *fate.read();
-        let row = move |value: NotebookFate, title: &'static str, sub: &'static str| {
+        let row = move |value: NotebookFate, title: String, sub: String| {
             ListRow::new(title)
                 .subtitle(sub)
                 .leading(notein_ui_kit::Leading::Check(current == value))
@@ -352,18 +340,18 @@ impl Component for NotebookFateChoice {
         notein_ui_kit::Group::default()
             .child(row(
                 NotebookFate::Keep,
-                "Mantener los cuadernos",
-                "Quedan en la biblioteca, sin vínculo.",
+                tr!("flows-fate-keep"),
+                tr!("flows-fate-keep-hint"),
             ))
             .child(row(
                 NotebookFate::Trash,
-                "Mandarlos también a la papelera",
-                "Se pueden restaurar juntos.",
+                tr!("flows-fate-trash"),
+                tr!("flows-fate-trash-hint"),
             ))
     }
 }
 
-/// Move a folder and everything in it to the trash, with Deshacer.
+/// Move a folder and everything in it to the trash, with Undo.
 pub fn trash_folder(folder: FolderId) {
     spawn_in_window(async move {
         let Ok(handle) = crate::library::shared().await else {
@@ -378,18 +366,14 @@ pub fn trash_folder(folder: FolderId) {
             Ok(receipt) => {
                 drop(lib);
                 let text = match receipt.items {
-                    0 => format!("«{name}» se movió a la papelera"),
-                    n => format!(
-                        "«{name}» y {} se movieron a la papelera",
-                        crate::format::count(n, "documento", "documentos")
-                    ),
+                    0 => tr!("flows-trashed-named", "name" => name),
+                    n => tr!("flows-trashed-folder", "name" => name, "count" => n),
                 };
                 trashed_toast(text, receipt.batch);
             }
             Err(err) => {
                 log::error!("trash folder: {err}");
-                Toasts::get()
-                    .show(Toast::new("No se pudo mover a la papelera").tone(ToastTone::Error));
+                Toasts::get().show(Toast::new(tr!("flows-trash-failed")).tone(ToastTone::Error));
             }
         }
     });
@@ -416,16 +400,14 @@ pub fn delete_mesa(workspace: WorkspaceId) {
             return;
         };
         let title = handle.lock().await.workspace_title(workspace);
-        Sheet::titled(format!("¿Borrar la mesa «{title}»?"))
-            .subtitle(
-                "Los documentos quedan en la biblioteca. Solo se cierra este grupo de pestañas.",
-            )
+        Sheet::titled(tr!("flows-delete-desk-title", "title" => title))
+            .subtitle(tr!("flows-delete-desk-hint"))
             .footer(SheetFooter::new([
-                Button::new("Cancelar")
+                Button::new(tr!("common-cancel"))
                     .ghost()
                     .on_press(|_| ModalController::get().close())
                     .into_element(),
-                Button::new("Borrar mesa")
+                Button::new(tr!("flows-delete-desk"))
                     .variant(ButtonVariant::DangerFill)
                     .on_press(move |_| {
                         ModalController::get().close();
