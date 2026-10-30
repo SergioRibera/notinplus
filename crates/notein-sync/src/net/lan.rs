@@ -40,6 +40,11 @@ const ASSEMBLY_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_PPS: f64 = 50_000.0;
 /// Frames kept per stream for retransmission, enough for a few parts.
 const SENT_BUFFER: usize = 4096;
+/// How often the scan starts over. zudp 0.3.8's `ScanStream` reports
+/// each address once for its whole life, so a device that left and came
+/// back on the same address is only heard again by a fresh scan. Drop
+/// this once zudp reports a peer again after it was lost.
+const RESCAN: Duration = Duration::from_secs(30);
 
 enum Cmd {
     Connect {
@@ -345,6 +350,24 @@ struct Node {
 impl Node {
     fn emit(&self, event: NetEvent) {
         let _ = self.events.send(event);
+    }
+
+    /// A new scan for other devices, when scanning is on.
+    async fn open_scan(&self) -> Option<zudp::ScanStream<Vec<u8>>> {
+        if !self.config.scan {
+            return None;
+        }
+        let cfg = DiscoveryConfig::new(APP_ID, 0)
+            .discovery_port(self.config.discovery_port)
+            .broadcast_addr(self.config.broadcast)
+            .probe_interval(self.config.probe_interval);
+        match Discovery::scan_stream::<Vec<u8>>(cfg).await {
+            Ok(stream) => Some(stream),
+            Err(err) => {
+                tracing::warn!(target: "notein-sync", "scan failed: {err}");
+                None
+            }
+        }
     }
 
     async fn send_frame(sender: &ZudpSender, addr: SocketAddr, frame: &Frame, stream: u16) {
@@ -930,21 +953,10 @@ async fn run(
         }
     };
     let mut advertise = start_advertising(&node);
-    let mut scan = if node.config.scan {
-        let cfg = DiscoveryConfig::new(APP_ID, 0)
-            .discovery_port(node.config.discovery_port)
-            .broadcast_addr(node.config.broadcast)
-            .probe_interval(node.config.probe_interval);
-        match Discovery::scan_stream::<Vec<u8>>(cfg).await {
-            Ok(stream) => Some(stream),
-            Err(err) => {
-                tracing::warn!(target: "notein-sync", "scan failed: {err}");
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let mut scan = node.open_scan().await;
+    let mut rescan = tokio::time::interval(RESCAN);
+    rescan.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    rescan.tick().await;
 
     let mut ticker = tokio::time::interval(node.config.ping_interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -967,8 +979,15 @@ async fn run(
                 }
                 if pause {
                     advertise = None;
-                } else if resume && advertise.is_none() {
-                    advertise = start_advertising(&node);
+                    // A scan left running while away would swallow every
+                    // beacon it hears (see RESCAN).
+                    scan = None;
+                } else if resume {
+                    if advertise.is_none() {
+                        advertise = start_advertising(&node);
+                    }
+                    scan = node.open_scan().await;
+                    rescan.reset();
                 }
             }
             internal = internal_rx.recv() => {
@@ -978,6 +997,11 @@ async fn run(
                 }
             }
             _ = ticker.tick() => node.on_tick().await,
+            _ = rescan.tick() => {
+                if !node.paused {
+                    scan = node.open_scan().await;
+                }
+            }
             found = next_peer(&mut scan) => {
                 let Some(beacon) = decode_beacon(&found.meta) else { continue };
                 if beacon.is_valid() && beacon.device != node.beacon.device && !node.paused {
@@ -1232,6 +1256,36 @@ mod tests {
         a.resume().unwrap();
         b.connect(loopback(&a), *key_a.public()).unwrap();
         wait_for(&b, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
+    }
+
+    #[test]
+    fn a_resumed_node_finds_the_devices_it_already_knew() {
+        let discovery_port = free_udp_port();
+        let key_b = DeviceKey::generate();
+        let _b = LanNode::start(
+            quiet(key_b.clone(), "Tablet")
+                .advertise(true)
+                .discovery_port(discovery_port),
+        )
+        .unwrap();
+        let a = LanNode::start(
+            quiet(DeviceKey::generate(), "PC")
+                .scan(true)
+                .discovery_port(discovery_port)
+                .broadcast(Ipv4Addr::new(127, 255, 255, 255))
+                .probe_interval(Duration::from_millis(200)),
+        )
+        .unwrap();
+        let discovered = |node: &LanNode| {
+            wait_for(node, |e| match e {
+                NetEvent::Discovered(p) => Some(p.device),
+                _ => None,
+            })
+        };
+        assert_eq!(discovered(&a), key_b.id());
+        a.pause().unwrap();
+        a.resume().unwrap();
+        assert_eq!(discovered(&a), key_b.id(), "heard again after coming back");
     }
 
     #[test]
