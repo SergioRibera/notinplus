@@ -51,9 +51,8 @@ settings-devices-link-document = Enlace a un documento
 settings-devices-link-document-hint = Se abre en tu biblioteca si lo tienes
 settings-devices-scan-qr = Escanear un código QR
 settings-devices-scan-prompt = Apunta al código del otro dispositivo
-settings-devices-scan-denied = NotIn Plus no tiene permiso para usar la cámara. Puedes dárselo en los ajustes del sistema, o pegar el enlace.
-settings-devices-scan-unavailable = Este dispositivo no tiene cámara. Pega el enlace.
-settings-devices-scan-failed = No se pudo abrir la cámara. Pega el enlace.
+# $reason is a sentence saying why the camera could not scan.
+settings-devices-scan-error = { $reason } También puedes pegar el enlace.
 settings-devices-clipboard-link = Hay un enlace copiado
 settings-devices-clipboard-use = Usar
 settings-devices-paste-label = O pega el enlace

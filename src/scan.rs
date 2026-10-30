@@ -13,6 +13,7 @@ use freya_engine::prelude::{
     SkImage, raster_from_data,
 };
 use notein_i18n::tr;
+use notein_plugin::UserMessage;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{Button, Sheet, SheetFooter, Spinner, Text, TextRole, tokens};
 
@@ -31,7 +32,16 @@ pub enum ScanError {
     Unavailable,
     /// The user refused camera access.
     Denied,
-    Failed(String),
+    /// Another session (or app) holds the camera.
+    Busy,
+    /// The system interrupted the capture (a call, the app paused).
+    Interrupted,
+    /// The camera offers no picture format the decoder reads.
+    NoFormat,
+    /// The picture stream ended or failed while scanning.
+    Stopped,
+    /// Any other camera failure.
+    Camera(istmo_camera::CameraError),
 }
 
 impl std::fmt::Display for ScanError {
@@ -39,12 +49,37 @@ impl std::fmt::Display for ScanError {
         match self {
             Self::Unavailable => f.write_str("no camera"),
             Self::Denied => f.write_str("camera access denied"),
-            Self::Failed(why) => f.write_str(why),
+            Self::Busy => f.write_str("camera busy"),
+            Self::Interrupted => f.write_str("camera capture interrupted"),
+            Self::NoFormat => f.write_str("the camera offers no RGBA format"),
+            Self::Stopped => f.write_str("the camera stopped"),
+            Self::Camera(err) => write!(f, "{err}"),
         }
     }
 }
 
-impl std::error::Error for ScanError {}
+impl std::error::Error for ScanError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Camera(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl UserMessage for ScanError {
+    fn user_message(&self) -> String {
+        match self {
+            Self::Unavailable => tr!("errors-scan-unavailable"),
+            Self::Denied => tr!("errors-scan-denied"),
+            Self::Busy => tr!("errors-scan-busy"),
+            Self::Interrupted => tr!("errors-scan-interrupted"),
+            Self::NoFormat => tr!("errors-scan-no-format"),
+            Self::Stopped => tr!("errors-scan-stopped"),
+            Self::Camera(_) => tr!("errors-scan-failed"),
+        }
+    }
+}
 
 type Outcome = Result<Option<String>, ScanError>;
 

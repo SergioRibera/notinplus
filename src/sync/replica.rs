@@ -7,6 +7,8 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use notein_i18n::tr;
+use notein_plugin::UserMessage;
 use notein_sync::{Blob, BlobHead, BlobKey, DocId, Replica, Version};
 
 use crate::active_boards;
@@ -44,6 +46,17 @@ impl std::error::Error for ReplicaError {
             Self::Library(err) => Some(err),
             Self::Doc(err) => Some(err),
             Self::Io(err) => Some(err),
+        }
+    }
+}
+
+impl UserMessage for ReplicaError {
+    fn user_message(&self) -> String {
+        match self {
+            Self::Runtime(_) => tr!("errors-library-runtime"),
+            Self::Library(err) => err.user_message(),
+            Self::Doc(err) => err.user_message(),
+            Self::Io(err) => err.user_message(),
         }
     }
 }

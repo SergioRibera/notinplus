@@ -87,6 +87,16 @@ impl fmt::Display for DocError {
 
 impl std::error::Error for DocError {}
 
+impl notein_plugin::UserMessage for DocError {
+    fn user_message(&self) -> String {
+        match self {
+            Self::Store(_) | Self::Codec(_) | Self::Shape(_) => {
+                notein_i18n::tr!("errors-doc-damaged")
+            }
+        }
+    }
+}
+
 /// A drawing. Brush presets are interned into `brushes`; strokes carry
 /// only a [`BrushId`] into that table and their own colour override.
 #[derive(Debug)]

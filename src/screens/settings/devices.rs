@@ -11,6 +11,7 @@ use notein_ui_kit::{
 };
 
 use notein_i18n::tr;
+use notein_plugin::UserMessage;
 
 use crate::sync::{LinkTarget, SyncSnapshot};
 use notein_sync::TrustedDevice;
@@ -259,7 +260,7 @@ impl Component for Devices {
                 snapshot
                     .error
                     .clone()
-                    .map(|err| Notice::new(NoticeTone::Warning, err)),
+                    .map(|err| Notice::new(NoticeTone::Warning, err.user_message())),
             )
             .into_element()
     }
@@ -406,12 +407,10 @@ fn show_code(snapshot: &SyncSnapshot, left: Duration) -> Element {
             .padding(24.0)
             .cross_align(Alignment::Center)
             .child(
-                Text::new(
-                    snapshot
-                        .error
-                        .clone()
-                        .unwrap_or_else(|| tr!("settings-devices-pairing-preparing")),
-                )
+                Text::new(snapshot.error.as_ref().map_or_else(
+                    || tr!("settings-devices-pairing-preparing"),
+                    UserMessage::user_message,
+                ))
                 .role(TextRole::Meta),
             )
             .into_element();
@@ -704,15 +703,10 @@ fn scan_button(mut error: State<Option<String>>, mut pasted: State<String>) -> B
                         pasted.set(text);
                     }
                     Ok(None) => {}
-                    Err(crate::scan::ScanError::Denied) => {
-                        error.set(Some(tr!("settings-devices-scan-denied")));
-                    }
-                    Err(crate::scan::ScanError::Unavailable) => {
-                        error.set(Some(tr!("settings-devices-scan-unavailable")));
-                    }
-                    Err(crate::scan::ScanError::Failed(why)) => {
-                        log::warn!("scan: {why}");
-                        error.set(Some(tr!("settings-devices-scan-failed")));
+                    Err(err) => {
+                        error.set(Some(
+                            tr!("settings-devices-scan-error", "reason" => err.user_message()),
+                        ));
                     }
                 }
             });

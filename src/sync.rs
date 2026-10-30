@@ -8,7 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use notein_sync::{
@@ -26,9 +26,12 @@ use crate::session_end::SessionEnd;
 pub mod live;
 pub mod open_docs;
 pub mod presence;
+pub mod problem;
 pub mod replica;
 
 use live::{LiveEvent, LiveMessage};
+use problem::ExchangeError;
+pub use problem::SyncProblem;
 use replica::LibraryReplica;
 
 /// Coalescing window for local change bursts.
@@ -91,7 +94,7 @@ pub struct SyncSnapshot {
     /// Relay in use, as configured.
     pub relay: Option<String>,
     pub relay_online: bool,
-    pub error: Option<String>,
+    pub error: Option<SyncProblem>,
 }
 
 /// What a new share should cover.
@@ -466,7 +469,7 @@ pub fn start() {
         .spawn(move || run(&rx));
     if let Err(err) = spawned {
         publish(SyncSnapshot {
-            error: Some(tr!("sync-error-thread", "error" => err.to_string())),
+            error: Some(SyncProblem::Thread(Arc::new(err))),
             ..SyncSnapshot::default()
         });
     }
@@ -517,7 +520,7 @@ struct Service {
     memos: HashMap<ShareId, ShareMemo>,
     last_failure: Option<(DeviceId, PairFailure)>,
     last_join_failure: Option<JoinFailure>,
-    error: Option<String>,
+    error: Option<SyncProblem>,
     /// Devices that spoke another protocol version; each is reported once.
     outdated: HashSet<DeviceId>,
 }
@@ -540,17 +543,13 @@ impl Service {
                 notein_sync::PROTOCOL_VERSION
             );
         }
-        self.error = Some(tr!(
-            "sync-error-outdated",
-            "name" => name,
-            "version" => version,
-        ));
+        self.error = Some(SyncProblem::Outdated { name, version });
     }
 
     fn save_profile(&mut self) {
         if let Err(err) = self.driver.profile().save(&self.profile_path) {
             log::error!("device profile save: {err}");
-            self.error = Some(tr!("sync-error-profile-save", "error" => err.to_string()));
+            self.error = Some(SyncProblem::ProfileSave(Arc::new(err)));
         }
     }
 
@@ -560,7 +559,7 @@ impl Service {
         };
         if let Err(err) = std::fs::write(&self.shares_path, book.encode()) {
             log::error!("share book save: {err}");
-            self.error = Some(tr!("sync-error-shares-save", "error" => err.to_string()));
+            self.error = Some(SyncProblem::SharesSave(Arc::new(err)));
         }
     }
 
@@ -710,11 +709,11 @@ impl Service {
         self.driver.create_share(share)
     }
 
-    fn on_cmd(&mut self, cmd: Cmd) -> Result<(), String> {
+    fn on_cmd(&mut self, cmd: Cmd) -> Result<(), ExchangeError> {
         let actions = match cmd {
-            Cmd::LocalChanged => self.driver.announce().map_err(|e| e.to_string())?,
-            Cmd::DocChanged(doc) => self.driver.push_doc(doc).map_err(|e| e.to_string())?,
-            Cmd::BlobChanged(key) => self.driver.push_blob(key).map_err(|e| e.to_string())?,
+            Cmd::LocalChanged => self.driver.announce()?,
+            Cmd::DocChanged(doc) => self.driver.push_doc(doc)?,
+            Cmd::BlobChanged(key) => self.driver.push_blob(key)?,
             Cmd::Live(doc, bytes) => self.driver.live(doc, &bytes),
             Cmd::BeginPairing => {
                 self.last_failure = None;
@@ -793,7 +792,8 @@ impl Service {
                 let parsed = relay.as_deref().map(str::parse::<RelayAddr>);
                 match parsed {
                     Some(Err(err)) => {
-                        self.error = Some(tr!("sync-error-server", "error" => err.to_string()));
+                        log::warn!("sync relay: {err}");
+                        self.error = Some(SyncProblem::BadRelay);
                         Vec::new()
                     }
                     Some(Ok(addr)) => {
@@ -916,7 +916,7 @@ impl Service {
             Ok(profile) => profile,
             Err(err) => {
                 publish(SyncSnapshot {
-                    error: Some(tr!("sync-error-profile-load", "error" => err.to_string())),
+                    error: Some(SyncProblem::ProfileLoad(Arc::new(err))),
                     ..SyncSnapshot::default()
                 });
                 return None;
@@ -929,7 +929,7 @@ impl Service {
                     device: Some(profile.id()),
                     name: profile.name().to_owned(),
                     trusted: profile.trusted().to_vec(),
-                    error: Some(tr!("sync-error-network", "error" => err.to_string())),
+                    error: Some(SyncProblem::Network(Arc::new(err))),
                     ..SyncSnapshot::default()
                 });
                 return None;
@@ -969,7 +969,7 @@ impl Service {
             Err(notein_sync::SyncError::Version(version)) => self.report_outdated(from, version),
             Err(err) => {
                 log::error!("sync: {err}");
-                self.error = Some(err.to_string());
+                self.error = Some(SyncProblem::Exchange(Arc::new(err)));
             }
         }
     }
@@ -977,7 +977,7 @@ impl Service {
     fn local_changed(&mut self) {
         if let Err(err) = self.on_cmd(Cmd::LocalChanged) {
             log::error!("sync: {err}");
-            self.error = Some(err);
+            self.error = Some(SyncProblem::Exchange(Arc::new(err)));
         }
     }
 }
@@ -1014,7 +1014,7 @@ fn run(cmds: &flume::Receiver<Cmd>) {
             Ok(Ok(Step::Cmd(cmd))) => {
                 if let Err(err) = service.on_cmd(cmd) {
                     log::error!("sync: {err}");
-                    service.error = Some(err);
+                    service.error = Some(SyncProblem::Exchange(Arc::new(err)));
                 }
             }
             Ok(Ok(Step::Net(event))) => service.on_net(event),
@@ -1032,7 +1032,7 @@ fn run(cmds: &flume::Receiver<Cmd>) {
                 Ok(actions) => service.perform(actions),
                 Err(err) => {
                     log::error!("sync tick: {err}");
-                    service.error = Some(err.to_string());
+                    service.error = Some(SyncProblem::Exchange(Arc::new(err)));
                 }
             }
         }

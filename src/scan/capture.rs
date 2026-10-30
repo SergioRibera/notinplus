@@ -28,7 +28,10 @@ impl From<CameraError> for ScanError {
         match err {
             CameraError::PermissionDenied => Self::Denied,
             CameraError::DeviceNotFound(_) => Self::Unavailable,
-            other => Self::Failed(other.to_string()),
+            CameraError::ConcurrencyUnsupported => Self::Busy,
+            CameraError::Interrupted | CameraError::SessionClosed => Self::Interrupted,
+            CameraError::FormatUnsupported => Self::NoFormat,
+            other @ CameraError::Backend(_) => Self::Camera(other),
         }
     }
 }
@@ -129,7 +132,7 @@ async fn open() -> Result<SessionHandle, ScanError> {
             Err(err) => return Err(err.into()),
         }
     }
-    Err(ScanError::Failed("the camera offers no RGBA format".into()))
+    Err(ScanError::NoFormat)
 }
 
 /// Forward pictures until a code is read (`Some`) or `stop` is raised
@@ -143,13 +146,13 @@ fn read(
     while !stop.load(Ordering::Acquire) {
         let frame = match frames.recv() {
             Ok(StreamItem::Event(frame)) => frame,
-            Ok(StreamItem::Completed | StreamItem::Cancelled) => {
-                return Err(ScanError::Failed("the camera stopped".into()));
+            Ok(StreamItem::Completed | StreamItem::Cancelled | StreamItem::Failed(())) => {
+                return Err(ScanError::Stopped);
             }
-            Ok(StreamItem::Failed(())) => {
-                return Err(ScanError::Failed("the camera failed".into()));
+            Err(err) => {
+                log::warn!("scan: frame stream: {err}");
+                return Err(ScanError::Stopped);
             }
-            Err(err) => return Err(ScanError::Failed(err.to_string())),
         };
         let Some(picture) = Picture::of(&frame) else {
             continue;
