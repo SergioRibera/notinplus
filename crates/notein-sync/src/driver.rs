@@ -24,6 +24,40 @@ use crate::share::{Invite, Member, Share, ShareId, ShareMessage, ShareMode, proo
 pub const OFFER_TTL: Duration = Duration::from_secs(5 * 60);
 /// How often [`SyncDriver::tick`] should be called.
 pub const TICK: Duration = Duration::from_secs(15);
+/// How often [`SyncDriver::supervise`] should be called.
+pub const SUPERVISE: Duration = Duration::from_secs(1);
+/// First wait before dialing an unreachable device again; it doubles
+/// up to [`REDIAL_MAX`].
+const REDIAL_BASE: Duration = Duration::from_secs(1);
+const REDIAL_MAX: Duration = Duration::from_secs(30);
+/// Rounds the larger id leaves to the smaller one before it dials too.
+const LARGER_WAITS: u32 = 2;
+
+/// When to dial a related device that is known but not connected.
+#[derive(Debug)]
+struct Redial {
+    rounds: u32,
+    next: Instant,
+}
+
+impl Redial {
+    const fn due(now: Instant) -> Self {
+        Self {
+            rounds: 0,
+            next: now,
+        }
+    }
+
+    /// Back off after one more round. Up to a quarter more at random,
+    /// so devices that lost the network together do not dial in step.
+    fn schedule(&mut self, now: Instant) {
+        self.rounds = self.rounds.saturating_add(1);
+        let base = REDIAL_BASE
+            .saturating_mul(1 << (self.rounds - 1).min(5))
+            .min(REDIAL_MAX);
+        self.next = now + base + base.mul_f64(rand::random::<f64>() / 4.0);
+    }
+}
 
 const LINK_SCHEME: &str = "notein://pair?";
 
@@ -367,6 +401,7 @@ pub struct SyncDriver<R> {
     /// Public keys of every device heard of, so a message can be
     /// routed through the relay when no direct channel exists.
     known_keys: HashMap<DeviceId, [u8; 32]>,
+    redials: HashMap<DeviceId, Redial>,
 }
 
 impl<R> std::fmt::Debug for SyncDriver<R> {
@@ -403,6 +438,7 @@ impl<R: Replica> SyncDriver<R> {
             joins: HashMap::new(),
             relay: None,
             known_keys: HashMap::new(),
+            redials: HashMap::new(),
         }
     }
 
@@ -823,6 +859,12 @@ impl<R: Replica> SyncDriver<R> {
         self.refresh_name(&peer, out);
         let device = peer.device;
         self.known_keys.insert(device, peer.public);
+        // A channel can replace another without a disconnect in between;
+        // what the old one carried may never have arrived.
+        self.engine.forget_peer(device);
+        for link in self.shares.values_mut() {
+            link.engine.forget_peer(device);
+        }
         self.connected.insert(device, peer);
         if let Some(relay) = self.relay.as_mut()
             && relay.device == device
@@ -1520,6 +1562,47 @@ impl<R: Replica> SyncDriver<R> {
         Ok(out)
     }
 
+    /// Dial every related device that is known but not connected,
+    /// backing off while it stays unreachable. Call every [`SUPERVISE`].
+    pub fn supervise(&mut self, now: Instant) -> Vec<Action> {
+        let me = self.profile.id();
+        let wanted: Vec<(DeviceId, SocketAddr, [u8; 32])> = self
+            .discovered
+            .values()
+            .filter(|p| !self.connected.contains_key(&p.device) && self.is_related(p.device))
+            .map(|p| (p.device, p.addr, p.public))
+            .collect();
+        // Connected or no longer related: start from scratch next time.
+        self.redials
+            .retain(|device, _| wanted.iter().any(|(d, ..)| d == device));
+        let mut out = Vec::new();
+        for (device, addr, public) in wanted {
+            let redial = self
+                .redials
+                .entry(device)
+                .or_insert_with(|| Redial::due(now));
+            if now < redial.next {
+                continue;
+            }
+            // The smaller id dials; the larger joins in after a few
+            // rounds in case the smaller one cannot see it.
+            let dials = me < device || redial.rounds >= LARGER_WAITS;
+            redial.schedule(now);
+            if dials {
+                out.push(Action::Connect { addr, public });
+            }
+        }
+        out
+    }
+
+    /// Dial every disconnected device at the next [`Self::supervise`],
+    /// for a device coming back to the network.
+    pub fn redial_now(&mut self, now: Instant) {
+        for redial in self.redials.values_mut() {
+            redial.next = now;
+        }
+    }
+
     /// Shares we are still waiting to be let into.
     pub fn pending_joins(&self) -> impl Iterator<Item = &Invite> {
         self.joins.values().map(|j| &j.invite)
@@ -1916,6 +1999,7 @@ mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
     use super::*;
+    use crate::DocStatus;
     use crate::replica::BlobKind;
     use crate::share::{ShareMode, SharePolicy, Who};
     use crate::testing::MemReplica;
@@ -2100,6 +2184,131 @@ mod tests {
                 device: a.profile.id(),
                 online: false
             })]
+        );
+    }
+
+    fn trusted_pair() -> (SyncDriver<MemReplica>, SyncDriver<MemReplica>) {
+        let mut a = driver("Tablet");
+        let mut b = driver("PC");
+        let a_dev = TrustedDevice::new(*a.profile.key().public(), "Tablet", 1);
+        let b_dev = TrustedDevice::new(*b.profile.key().public(), "PC", 1);
+        a.profile_mut().trust(b_dev);
+        b.profile_mut().trust(a_dev);
+        // `small` dials first.
+        if a.profile.id() < b.profile.id() {
+            (a, b)
+        } else {
+            (b, a)
+        }
+    }
+
+    fn dials(actions: &[Action]) -> usize {
+        actions
+            .iter()
+            .filter(|a| matches!(a, Action::Connect { .. }))
+            .count()
+    }
+
+    #[test]
+    fn a_lost_device_is_dialed_again_with_backoff() {
+        let (mut small, large) = trusted_pair();
+        small
+            .on_event(NetEvent::Discovered(info(&large, 2)))
+            .unwrap();
+        small
+            .on_event(NetEvent::Connected(info(&large, 2)))
+            .unwrap();
+        let t0 = Instant::now();
+        assert_eq!(dials(&small.supervise(t0)), 0, "connected: nothing to do");
+
+        small
+            .on_event(NetEvent::Disconnected(large.profile.id()))
+            .unwrap();
+        assert_eq!(dials(&small.supervise(t0)), 1, "dials right away");
+        assert_eq!(dials(&small.supervise(t0)), 0, "then waits");
+        let mut at = t0;
+        let mut gaps = Vec::new();
+        let mut last = t0;
+        while gaps.len() < 3 {
+            at += Duration::from_millis(100);
+            if dials(&small.supervise(at)) == 1 {
+                gaps.push(at - last);
+                last = at;
+            }
+        }
+        assert!(gaps[0] >= Duration::from_secs(1), "{gaps:?}");
+        assert!(gaps[1] >= Duration::from_secs(2), "{gaps:?}");
+        assert!(gaps[2] >= Duration::from_secs(4), "{gaps:?}");
+        assert!(gaps[2] <= Duration::from_secs(5) + Duration::from_millis(100));
+
+        // Back for good: the backoff starts over after the next loss.
+        small
+            .on_event(NetEvent::Connected(info(&large, 2)))
+            .unwrap();
+        small.supervise(at);
+        small
+            .on_event(NetEvent::Disconnected(large.profile.id()))
+            .unwrap();
+        assert_eq!(dials(&small.supervise(at)), 1);
+    }
+
+    #[test]
+    fn the_larger_id_dials_once_the_smaller_stays_silent() {
+        let (small, mut large) = trusted_pair();
+        large
+            .on_event(NetEvent::Discovered(info(&small, 1)))
+            .unwrap();
+        let t0 = Instant::now();
+        let mut first = None;
+        let mut at = t0;
+        while at < t0 + Duration::from_secs(10) {
+            if dials(&large.supervise(at)) == 1 {
+                first = Some(at - t0);
+                break;
+            }
+            at += Duration::from_millis(100);
+        }
+        let first = first.expect("the larger id dials eventually");
+        assert!(first >= Duration::from_secs(3), "{first:?}");
+    }
+
+    #[test]
+    fn unrelated_devices_are_never_dialed() {
+        let mut a = driver("Tablet");
+        let b = driver("PC");
+        a.on_event(NetEvent::Discovered(info(&b, 2))).unwrap();
+        let t0 = Instant::now();
+        assert_eq!(dials(&a.supervise(t0)), 0);
+        assert_eq!(dials(&a.supervise(t0 + Duration::from_secs(60))), 0);
+    }
+
+    #[test]
+    fn a_replaced_channel_forgets_what_the_old_one_claimed() {
+        let (mut small, mut large) = trusted_pair();
+        mark(&large, D1, 2, 1);
+        mark(&small, D1, 1, 1);
+        let from_small = small
+            .on_event(NetEvent::Connected(info(&large, 2)))
+            .unwrap();
+        let from_large = large
+            .on_event(NetEvent::Connected(info(&small, 1)))
+            .unwrap();
+        deliver(from_small, &mut small, &mut large);
+        deliver(from_large, &mut large, &mut small);
+        assert_eq!(marks(&small, D1), vec![(1, 1), (2, 1)]);
+        // An edit pushed into a channel that dies on the way: the push
+        // notes the peer as holding it.
+        mark(&large, D1, 2, 2);
+        large.push_doc(D1).unwrap();
+        assert_eq!(large.engine().status(D1), DocStatus::Synced);
+        // A new channel replaces the old one without a disconnect.
+        large
+            .on_event(NetEvent::Connected(info(&small, 1)))
+            .unwrap();
+        assert_eq!(
+            large.engine().status(D1),
+            DocStatus::Unknown,
+            "nothing is known until the peer announces again"
         );
     }
 
