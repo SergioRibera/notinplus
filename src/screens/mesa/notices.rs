@@ -111,9 +111,10 @@ impl Component for TabNotice {
                         .tonal()
                         .small()
                         .on_press(move |_| {
-                            crate::state::edit("restaurar", async move |lib| {
-                                lib.restore_batch(batch).await.map(drop)
-                            });
+                            crate::state::edit(
+                                crate::state::LibraryEdit::Restore,
+                                async move |lib| lib.restore_batch(batch).await.map(drop),
+                            );
                         })
                         .into_element(),
                     Button::new("Cerrar pestaña")

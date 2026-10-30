@@ -84,7 +84,7 @@ pub fn open() {
 }
 
 fn restore(batches: Vec<u64>) {
-    crate::state::edit("restaurar", async move |lib| {
+    crate::state::edit(crate::state::LibraryEdit::Restore, async move |lib| {
         let mut restored = 0;
         for batch in batches {
             restored += lib.restore_batch(batch).await?;
@@ -98,7 +98,7 @@ fn restore(batches: Vec<u64>) {
 }
 
 fn purge(batches: Vec<u64>) {
-    crate::state::edit("borrar para siempre", async move |lib| {
+    crate::state::edit(crate::state::LibraryEdit::DeleteForever, async move |lib| {
         for batch in &batches {
             lib.purge_batch(*batch).await?;
         }

@@ -683,7 +683,7 @@ pub fn edit_item(item: ItemId) {
             .choice
             .clone()
             .filter(|choice| Some(choice) != initial_choice.as_ref());
-        state::edit("guardar los cambios", async move |lib| {
+        state::edit(crate::state::LibraryEdit::SaveChanges, async move |lib| {
             let tags = resolve_tags(lib, &values.tags).await;
             lib.rename_item(item, values.name.trim()).await?;
             lib.set_item_color(item, values.color).await?;
@@ -732,7 +732,7 @@ pub fn edit_folder(folder: FolderId) {
         ..FormValues::default()
     };
     open(spec, initial, move |values| {
-        state::edit("guardar la carpeta", async move |lib| {
+        state::edit(crate::state::LibraryEdit::SaveFolder, async move |lib| {
             let tags = resolve_tags(lib, &values.tags).await;
             lib.rename_folder(folder, values.name.trim()).await?;
             lib.set_folder_color(folder, values.color).await?;
@@ -772,7 +772,7 @@ pub fn edit_mesa(workspace: WorkspaceId) {
         ..FormValues::default()
     };
     open(spec, initial, move |values| {
-        state::edit("guardar la mesa", async move |lib| {
+        state::edit(crate::state::LibraryEdit::SaveDesk, async move |lib| {
             lib.rename_workspace(workspace, values.name.trim()).await?;
             lib.set_workspace_color(workspace, values.color).await?;
             lib.set_workspace_pinned(workspace, values.pinned).await

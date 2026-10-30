@@ -435,7 +435,7 @@ pub fn folder_picker(items: Vec<ItemId>, folders: Vec<FolderId>) {
         on_pick: OnFolder(Rc::new(move |target| {
             let items = items.clone();
             let folders = folders.clone();
-            crate::state::edit("mover", async move |lib| {
+            crate::state::edit(crate::state::LibraryEdit::Move, async move |lib| {
                 for item in items {
                     lib.move_item(item, target).await?;
                 }

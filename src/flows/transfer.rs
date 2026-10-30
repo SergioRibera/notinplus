@@ -613,7 +613,7 @@ pub fn undoable_import(folder: FolderId) -> Option<ImportReceipt> {
 /// Remove everything the last import wrote.
 pub fn undo_import(receipt: ImportReceipt) {
     *LAST_IMPORT.lock().unwrap_or_else(PoisonError::into_inner) = None;
-    crate::state::edit("deshacer la importación", async move |lib| {
+    crate::state::edit(crate::state::LibraryEdit::UndoImport, async move |lib| {
         lib.undo_import(&receipt).await
     });
 }

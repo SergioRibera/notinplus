@@ -37,14 +37,14 @@ impl Ops {
     /// Make `pane` the focused one.
     pub fn focus(self, pane: PaneId) {
         let mesa = self.mesa;
-        state::edit("enfocar el panel", async move |lib| {
+        state::edit(crate::state::LibraryEdit::FocusPane, async move |lib| {
             lib.focus_workspace_pane(mesa, Some(pane)).await
         });
     }
 
     pub fn select_tab(self, pane: PaneId, index: usize) {
         let mesa = self.mesa;
-        state::edit("cambiar de pestaña", async move |lib| {
+        state::edit(crate::state::LibraryEdit::SwitchTab, async move |lib| {
             lib.focus_pane_tab(mesa, pane, index).await
         });
     }
@@ -56,7 +56,7 @@ impl Ops {
         if let TabTarget::Scratch(scratch) = tab.target {
             scratch_closed(scratch);
         }
-        state::edit("cerrar la pestaña", async move |lib| {
+        state::edit(crate::state::LibraryEdit::CloseTab, async move |lib| {
             lib.close_pane_tab(mesa, pane, index).await
         });
     }
@@ -71,7 +71,7 @@ impl Ops {
     /// Open a scratch canvas in `pane`.
     pub fn new_scratch(self, pane: PaneId) {
         let mesa = self.mesa;
-        state::edit("abrir un borrador", async move |lib| {
+        state::edit(crate::state::LibraryEdit::OpenDraft, async move |lib| {
             lib.add_scratch_tab(mesa, pane).await
         });
     }
@@ -79,7 +79,7 @@ impl Ops {
     /// Split `pane`, the new pane on the right or below.
     pub fn split(self, pane: PaneId, orientation: SplitOrientation) {
         let mesa = self.mesa;
-        state::edit("dividir el panel", async move |lib| {
+        state::edit(crate::state::LibraryEdit::SplitPane, async move |lib| {
             lib.split_workspace_pane(mesa, pane, orientation, SplitSide::Second)
                 .await
                 .map(drop)
@@ -88,28 +88,28 @@ impl Ops {
 
     pub fn close_pane(self, pane: PaneId) {
         let mesa = self.mesa;
-        state::edit("cerrar el panel", async move |lib| {
+        state::edit(crate::state::LibraryEdit::ClosePane, async move |lib| {
             lib.close_workspace_pane(mesa, pane).await
         });
     }
 
     pub fn resize(self, path: Vec<SplitSide>, ratio: f32) {
         let mesa = self.mesa;
-        state::edit("cambiar el tamaño", async move |lib| {
+        state::edit(crate::state::LibraryEdit::Resize, async move |lib| {
             lib.set_workspace_split_ratio(mesa, &path, ratio).await
         });
     }
 
     pub fn move_tab(self, src: PaneId, index: usize, dst: PaneId) {
         let mesa = self.mesa;
-        state::edit("mover la pestaña", async move |lib| {
+        state::edit(crate::state::LibraryEdit::MoveTab, async move |lib| {
             lib.move_workspace_tab(mesa, src, index, dst).await
         });
     }
 
     pub fn reorder(self, pane: PaneId, from: usize, to: usize) {
         let mesa = self.mesa;
-        state::edit("ordenar las pestañas", async move |lib| {
+        state::edit(crate::state::LibraryEdit::ReorderTabs, async move |lib| {
             lib.reorder_pane_tab(mesa, pane, from, to).await
         });
     }
@@ -117,7 +117,7 @@ impl Ops {
     /// Move a tab onto `edge` of `dst`, splitting it.
     pub fn split_with_tab(self, src: PaneId, index: usize, dst: PaneId, edge: SplitEdge) {
         let mesa = self.mesa;
-        state::edit("dividir el panel", async move |lib| {
+        state::edit(crate::state::LibraryEdit::SplitPane, async move |lib| {
             lib.move_workspace_tab_to_split(
                 mesa,
                 src,
@@ -157,7 +157,7 @@ fn scratch_closed(scratch: crate::library::ScratchId) {
 
 fn save_scratch(doc: crate::doc::Doc, folder: crate::library::FolderId) {
     let name = format!("Borrador del {}", chrono::Local::now().format("%d/%m"));
-    state::edit("guardar el borrador", async move |lib| {
+    state::edit(crate::state::LibraryEdit::SaveDraft, async move |lib| {
         let item = lib
             .create_item(
                 folder,

@@ -50,9 +50,11 @@ pub fn link_with(item: ItemId) {
 /// Pin or unpin `item`.
 pub fn toggle_pin(item: ItemId, pin: bool) {
     if pin {
-        state::edit("fijar", async move |lib| lib.pin_items(&[item]).await);
+        state::edit(crate::state::LibraryEdit::Pin, async move |lib| {
+            lib.pin_items(&[item]).await
+        });
     } else {
-        state::edit("quitar de fijados", async move |lib| {
+        state::edit(crate::state::LibraryEdit::Unpin, async move |lib| {
             lib.unpin_items(&[item]).await
         });
     }
@@ -61,7 +63,9 @@ pub fn toggle_pin(item: ItemId, pin: bool) {
 /// Pin several items at once.
 pub fn pin_items(items: Vec<ItemId>) {
     let n = items.len();
-    state::edit("fijar", async move |lib| lib.pin_items(&items).await);
+    state::edit(crate::state::LibraryEdit::Pin, async move |lib| {
+        lib.pin_items(&items).await
+    });
     toast(crate::format::count(
         n,
         "documento fijado",
@@ -219,7 +223,7 @@ fn trashed_toast(text: String, batch: u64) {
         Toast::new(text)
             .tone(ToastTone::Trash)
             .action("Deshacer", move |()| {
-                state::edit("restaurar", async move |lib| {
+                state::edit(crate::state::LibraryEdit::Restore, async move |lib| {
                     lib.restore_batch(batch).await.map(drop)
                 });
             }),
@@ -393,14 +397,14 @@ pub fn trash_folder(folder: FolderId) {
 
 /// Show or stop showing a mesa first in Home.
 pub fn pin_mesa(workspace: WorkspaceId, pin: bool) {
-    state::edit("fijar la mesa", async move |lib| {
+    state::edit(crate::state::LibraryEdit::PinDesk, async move |lib| {
         lib.set_workspace_pinned(workspace, pin).await
     });
 }
 
 /// Copy a mesa with the same documents.
 pub fn duplicate_mesa(workspace: WorkspaceId) {
-    state::edit("duplicar la mesa", async move |lib| {
+    state::edit(crate::state::LibraryEdit::DuplicateDesk, async move |lib| {
         lib.duplicate_workspace(workspace).await.map(drop)
     });
 }
@@ -425,7 +429,7 @@ pub fn delete_mesa(workspace: WorkspaceId) {
                     .variant(ButtonVariant::DangerFill)
                     .on_press(move |_| {
                         ModalController::get().close();
-                        state::edit("borrar la mesa", async move |lib| {
+                        state::edit(crate::state::LibraryEdit::DeleteDesk, async move |lib| {
                             lib.delete_workspace(workspace).await
                         });
                     })

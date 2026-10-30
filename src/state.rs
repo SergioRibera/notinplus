@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_ui_kit::{Toast, ToastTone, Toasts};
 
 use crate::library::{self, LibHandle, Library, LibraryData, LibraryError};
@@ -140,9 +141,74 @@ pub fn use_library_root() {
     });
 }
 
+/// A background change to the library, named so its failure can be
+/// told to the user.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LibraryEdit {
+    OpenDraft,
+    DeleteDesk,
+    DeleteForever,
+    SwitchTab,
+    Resize,
+    ClosePane,
+    CloseTab,
+    CreateFolder,
+    UndoImport,
+    SplitPane,
+    DuplicateDesk,
+    FocusPane,
+    PinDesk,
+    Pin,
+    SaveDraft,
+    SaveFolder,
+    SaveDesk,
+    SaveChanges,
+    MoveTab,
+    Move,
+    ReorderTabs,
+    Unpin,
+    ReorderPinned,
+    Restore,
+    EmptyTrash,
+}
+
+impl LibraryEdit {
+    /// The toast shown when the change fails.
+    #[must_use]
+    pub fn failure(self) -> String {
+        match self {
+            Self::OpenDraft => tr!("state-failed-open-draft"),
+            Self::DeleteDesk => tr!("state-failed-delete-desk"),
+            Self::DeleteForever => tr!("state-failed-delete-forever"),
+            Self::SwitchTab => tr!("state-failed-switch-tab"),
+            Self::Resize => tr!("state-failed-resize"),
+            Self::ClosePane => tr!("state-failed-close-pane"),
+            Self::CloseTab => tr!("state-failed-close-tab"),
+            Self::CreateFolder => tr!("state-failed-create-folder"),
+            Self::UndoImport => tr!("state-failed-undo-import"),
+            Self::SplitPane => tr!("state-failed-split-pane"),
+            Self::DuplicateDesk => tr!("state-failed-duplicate-desk"),
+            Self::FocusPane => tr!("state-failed-focus-pane"),
+            Self::PinDesk => tr!("state-failed-pin-desk"),
+            Self::Pin => tr!("state-failed-pin"),
+            Self::SaveDraft => tr!("state-failed-save-draft"),
+            Self::SaveFolder => tr!("state-failed-save-folder"),
+            Self::SaveDesk => tr!("state-failed-save-desk"),
+            Self::SaveChanges => tr!("state-failed-save-changes"),
+            Self::MoveTab => tr!("state-failed-move-tab"),
+            Self::Move => tr!("state-failed-move"),
+            Self::ReorderTabs => tr!("state-failed-reorder-tabs"),
+            Self::Unpin => tr!("state-failed-unpin"),
+            Self::ReorderPinned => tr!("state-failed-reorder-pinned"),
+            Self::Restore => tr!("state-failed-restore"),
+            Self::EmptyTrash => tr!("state-failed-empty-trash"),
+        }
+    }
+}
+
 /// Run `change` on the library in the background. A failure becomes a
-/// toast saying what could not be done ("No se pudo renombrar").
-pub fn edit<F>(what: &'static str, change: F)
+/// toast saying what could not be done.
+pub fn edit<F>(what: LibraryEdit, change: F)
 where
     F: AsyncFnOnce(&mut Library) -> Result<(), LibraryError> + 'static,
 {
@@ -155,8 +221,8 @@ where
             Err(err) => Err(err),
         };
         if let Err(err) = result {
-            log::error!("{what}: {err}");
-            Toasts::get().show(Toast::new(format!("No se pudo {what}")).tone(ToastTone::Error));
+            log::error!("{what:?}: {err}");
+            Toasts::get().show(Toast::new(what.failure()).tone(ToastTone::Error));
         }
     });
 }

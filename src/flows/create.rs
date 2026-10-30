@@ -939,7 +939,7 @@ pub fn new_folder(context: Context) {
     forms::open(spec, initial, move |values| {
         let selection = context.selection.clone();
         let folders = context.folders.clone();
-        crate::state::edit("crear la carpeta", async move |lib| {
+        crate::state::edit(crate::state::LibraryEdit::CreateFolder, async move |lib| {
             let tags = forms::resolve_tags(lib, &values.tags).await;
             let name = if values.name.trim().is_empty() {
                 "Carpeta nueva"

@@ -258,7 +258,7 @@ impl Component for AppShell {
         use_hook(move || {
             crate::plugins::content::index_library();
             let retention = settings.read().library.trash_retention.millis();
-            crate::state::edit("vaciar la papelera", async move |lib| {
+            crate::state::edit(crate::state::LibraryEdit::EmptyTrash, async move |lib| {
                 lib.purge_expired(retention).await.map(drop)
             });
         });

@@ -681,7 +681,7 @@ impl Component for PinnedRow {
                                         notein_ui_kit::Action::new(label, move |()| {
                                             notein_ui_kit::ModalController::get().close();
                                             crate::state::edit(
-                                                "reordenar los fijados",
+                                                crate::state::LibraryEdit::ReorderPinned,
                                                 async move |lib| lib.move_pin(index, to).await,
                                             );
                                         })
