@@ -56,7 +56,8 @@ pub mod prelude {
         ChipView, ConfigSchema, ConfigValue, CoverRequest, Created, CreationEntry, CreationError,
         CreationRequest, DocId, DocMeta, DocumentKind, ExportFile, Face, FaceContext, Folded, Font,
         Hit, HostServices, HostUi, ImportPreview, ImportedFile, IndexReport, KindChoice, KindColor,
-        KindInfo, Mark, OutlineIcon, OutlineNode, Payload, PayloadError, Plugin, PluginInfo,
-        Registrar, SearchQuery, SelectionMenu, Share, SourceRef, TextBody, Ui, tr,
+        KindInfo, Mark, NetFailure, OutlineIcon, OutlineNode, Payload, PayloadError, Plugin,
+        PluginInfo, Registrar, SearchQuery, SelectionMenu, Share, SourceRef, TextBody, Ui,
+        UserMessage, tr,
     };
 }

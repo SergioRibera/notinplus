@@ -32,6 +32,7 @@ pub mod create;
 pub mod doc;
 pub mod erased;
 pub mod face;
+pub mod failure;
 pub mod ids;
 pub mod info;
 pub mod kind;
@@ -66,6 +67,7 @@ pub use erased::ErasedKind;
 pub use face::{
     ContentStore, CoverRequest, ErasedFace, Face, FaceContext, FaceRequest, HeaderAction, PaneKey,
 };
+pub use failure::{NetFailure, UserMessage};
 pub use ids::{ActorId, BookmarkId, DeviceId, OpId, StrokeId, UserId};
 pub use info::PluginInfo;
 pub use kind::{
