@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use freya::prelude::*;
 use notein_i18n::tr;
+use notein_plugin::UserMessage;
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
@@ -379,6 +380,16 @@ impl std::fmt::Display for ExportError {
 
 impl std::error::Error for ExportError {}
 
+impl UserMessage for ExportError {
+    fn user_message(&self) -> String {
+        match self {
+            Self::Bundle(err) => err.user_message(),
+            Self::Readable(err) => err.user_message(),
+            Self::Stopped => tr!("errors-export-stopped"),
+        }
+    }
+}
+
 /// What the export worker reports back.
 enum Progress {
     Item(usize),
@@ -474,8 +485,8 @@ fn run_export(scope: ExportScope, choices: Choices) {
             Ok(bytes) => bytes,
             Err(err) => {
                 log::error!("export: {err}");
-                Toasts::get()
-                    .show(Toast::new(tr!("flows-transfer-export-failed")).tone(ToastTone::Error));
+                let text = tr!("errors-headline-detail", "headline" => tr!("flows-transfer-export-failed"), "detail" => err.user_message());
+                Toasts::get().show(Toast::new(text).tone(ToastTone::Error));
                 return;
             }
         };
@@ -510,8 +521,8 @@ fn save_copy(
             }
             Err(err) => {
                 log::error!("save copy: {err}");
-                Toasts::get()
-                    .show(Toast::new(tr!("flows-transfer-save-failed")).tone(ToastTone::Error));
+                let text = tr!("errors-headline-detail", "headline" => tr!("flows-transfer-save-failed"), "detail" => err.user_message());
+                Toasts::get().show(Toast::new(text).tone(ToastTone::Error));
             }
         }
     });
@@ -926,6 +937,8 @@ fn commit(pending: Pending, mut plan: ImportPlan) {
             Ok(folder) => folder,
             Err(err) => {
                 log::error!("import folder: {err}");
+                let text = tr!("errors-headline-detail", "headline" => tr!("flows-transfer-import-failed"), "detail" => err.user_message());
+                Toasts::get().show(Toast::new(text).tone(ToastTone::Error));
                 return;
             }
         };
@@ -951,8 +964,8 @@ fn commit(pending: Pending, mut plan: ImportPlan) {
             }
             Err(err) => {
                 log::error!("import: {err}");
-                Toasts::get()
-                    .show(Toast::new(tr!("flows-transfer-import-failed")).tone(ToastTone::Error));
+                let text = tr!("errors-headline-detail", "headline" => tr!("flows-transfer-import-failed"), "detail" => err.user_message());
+                Toasts::get().show(Toast::new(text).tone(ToastTone::Error));
             }
         }
     });

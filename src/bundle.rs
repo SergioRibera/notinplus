@@ -18,6 +18,8 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bincode::config::{self, Configuration};
+use notein_i18n::tr;
+use notein_plugin::UserMessage;
 
 use crate::bookmark::SourceRef;
 use crate::doc::Doc;
@@ -193,6 +195,21 @@ impl std::error::Error for BundleError {
             Self::Io(err) => Some(err),
             Self::Library(err) => Some(err),
             _ => None,
+        }
+    }
+}
+
+impl UserMessage for BundleError {
+    fn user_message(&self) -> String {
+        match self {
+            Self::Io(err) => err.user_message(),
+            Self::Library(err) => err.user_message(),
+            Self::UnknownVersion(_) => tr!("errors-bundle-newer"),
+            Self::Codec(_)
+            | Self::MissingManifest
+            | Self::MissingItem(_)
+            | Self::MissingFolder(_)
+            | Self::MissingWorkspace(_) => tr!("errors-bundle-damaged"),
         }
     }
 }

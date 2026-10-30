@@ -19,6 +19,10 @@ use freya_markdown_editor::prelude::{
 };
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader};
 use notein_i18n::tr;
+use notein_plugin::UserMessage;
+use notein_ui_kit::{Toast, ToastTone, Toasts};
+
+use crate::failure::NetFailureExt;
 
 use crate::library::model::ItemId;
 
@@ -59,6 +63,18 @@ impl std::error::Error for ImageError {
             Self::Decode(err) => Some(err),
             Self::Download(err) => Some(err),
             Self::TooLarge | Self::Unsupported => None,
+        }
+    }
+}
+
+impl UserMessage for ImageError {
+    fn user_message(&self) -> String {
+        match self {
+            Self::Io(err) | Self::Decode(image::ImageError::IoError(err)) => err.user_message(),
+            Self::Decode(_) => tr!("errors-image-unreadable"),
+            Self::Download(err) => err.net_failure().user_message(),
+            Self::TooLarge => tr!("errors-image-too-large"),
+            Self::Unsupported => tr!("errors-image-unsupported"),
         }
     }
 }
@@ -167,6 +183,8 @@ impl ItemImages {
             spawn_in_window(async move {
                 if let Err(err) = add_picked(item, &root, controller, request).await {
                     log::warn!("adding an image: {err}");
+                    let text = tr!("errors-image-add", "reason" => err.user_message());
+                    Toasts::get().show(Toast::new(text).tone(ToastTone::Error));
                 }
             });
         })

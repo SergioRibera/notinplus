@@ -10,6 +10,7 @@ use std::io::{Cursor, Write};
 use freya_engine::prelude::{AlphaType, ColorType, ImageInfo, raster_n32_premul};
 use freya_pdf::write::{PAGE_GAP, PageImage, image_pdf, page_world_rects};
 use notein_i18n::tr;
+use notein_plugin::UserMessage;
 
 use crate::doc::Doc;
 use crate::library::{ItemId, LibraryData, bodies};
@@ -34,7 +35,23 @@ impl std::fmt::Display for ReadableError {
     }
 }
 
-impl std::error::Error for ReadableError {}
+impl std::error::Error for ReadableError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Zip(err) => Some(err),
+            Self::Io(err) => Some(err),
+        }
+    }
+}
+
+impl UserMessage for ReadableError {
+    fn user_message(&self) -> String {
+        match self {
+            Self::Zip(zip::result::ZipError::Io(err)) | Self::Io(err) => err.user_message(),
+            Self::Zip(_) => tr!("errors-readable-zip"),
+        }
+    }
+}
 
 impl From<zip::result::ZipError> for ReadableError {
     fn from(err: zip::result::ZipError) -> Self {

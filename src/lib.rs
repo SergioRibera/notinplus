@@ -29,6 +29,7 @@ pub mod doc;
 pub mod doc_op;
 pub mod editor;
 pub mod external;
+pub(crate) mod failure;
 pub mod files;
 pub mod flows;
 pub mod follow;

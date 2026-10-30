@@ -5,6 +5,7 @@ use std::sync::{Mutex, OnceLock, PoisonError};
 
 use freya::prelude::*;
 use notein_i18n::tr;
+use notein_plugin::UserMessage;
 use notein_plugin::catalog::CatalogEntry;
 use notein_plugin::create::{CreationFlow, CreationRequest, ImportedFile, Paper};
 use notein_ui_kit::TapExt;
@@ -581,7 +582,7 @@ fn import_sheet(entry: CatalogEntry, context: Context, picked: crate::files::Pic
     let found = match kind.inspect(&entry.entry.id, file) {
         Ok(found) => found,
         Err(err) => {
-            import_error(&entry, context, &picked.name, &err.to_string());
+            import_error(&entry, context, &picked.name, &err.user_message());
             return;
         }
     };
@@ -703,9 +704,9 @@ fn create(entry: CatalogEntry, context: Context, request: Request) {
             Ok(created) => created,
             Err(err) => {
                 if let Some(file) = &file {
-                    import_error(&entry, context, &file.name, &err.to_string());
+                    import_error(&entry, context, &file.name, &err.user_message());
                 } else {
-                    Toasts::get().show(Toast::new(err.to_string()).tone(ToastTone::Error));
+                    Toasts::get().show(Toast::new(err.user_message()).tone(ToastTone::Error));
                 }
                 return;
             }
@@ -868,7 +869,7 @@ pub fn replace_attachment(item: ItemId, kind_id: String) {
         let fresh = match kind.replace_attachment(file, &old) {
             Ok(fresh) => fresh,
             Err(err) => {
-                replace_failed(item, kind_id, &picked.name, &err.to_string());
+                replace_failed(item, kind_id, &picked.name, &err.user_message());
                 return;
             }
         };

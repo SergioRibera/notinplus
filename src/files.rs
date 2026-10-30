@@ -5,6 +5,8 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 
 use istmo_file_picker::{FileFilter, FilePickerClient, FilePickerError, PickConfig, SaveConfig};
+use notein_i18n::tr;
+use notein_plugin::UserMessage;
 
 /// A file the user chose, read into memory.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,7 +31,23 @@ impl std::fmt::Display for FileError {
     }
 }
 
-impl std::error::Error for FileError {}
+impl std::error::Error for FileError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(err) => Some(err),
+            Self::Picker(_) => None,
+        }
+    }
+}
+
+impl UserMessage for FileError {
+    fn user_message(&self) -> String {
+        match self {
+            Self::Picker(_) => tr!("errors-file-picker"),
+            Self::Io(err) => err.user_message(),
+        }
+    }
+}
 
 impl From<std::io::Error> for FileError {
     fn from(err: std::io::Error) -> Self {
