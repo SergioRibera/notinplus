@@ -411,7 +411,7 @@ pub fn run(entry: CatalogEntry, context: Context) {
                     Err(err) => {
                         log::error!("pick: {err}");
                         Toasts::get().show(
-                            Toast::new(tr!("flows-create-picker-failed")).tone(ToastTone::Error),
+                            Toast::new(tr!("errors-headline-detail", "headline" => tr!("flows-create-picker-failed"), "detail" => err.user_message())).tone(ToastTone::Error),
                         );
                     }
                 }
@@ -737,7 +737,7 @@ fn create(entry: CatalogEntry, context: Context, request: Request) {
                 Err(err) => {
                     log::error!("create item: {err}");
                     Toasts::get()
-                        .show(Toast::new(tr!("flows-create-failed")).tone(ToastTone::Error));
+                        .show(Toast::new(tr!("errors-headline-detail", "headline" => tr!("flows-create-failed"), "detail" => err.user_message())).tone(ToastTone::Error));
                     return;
                 }
             };

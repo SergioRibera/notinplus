@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use freya::prelude::*;
 use notein_i18n::tr;
+use notein_plugin::UserMessage;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
     Button, EmptyState, Group, ListRow, ModalController, SearchField, Section, Sheet, SheetFooter,
@@ -93,7 +94,7 @@ fn link(from: ItemId, to: ItemId, kind: LinkKind) {
             Err(err) => {
                 log::error!("link: {err}");
                 Toasts::get().show(
-                    Toast::new(tr!("flows-pickers-link-failed"))
+                    Toast::new(tr!("errors-headline-detail", "headline" => tr!("flows-pickers-link-failed"), "detail" => err.user_message()))
                         .tone(notein_ui_kit::ToastTone::Error),
                 );
             }

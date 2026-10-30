@@ -8,6 +8,7 @@ pub mod pickers;
 pub mod transfer;
 
 use freya::prelude::*;
+use notein_plugin::UserMessage;
 use notein_plugin::kind::ActionEffect;
 use notein_ui_kit::{
     Button, ButtonVariant, ListRow, ModalController, Sheet, SheetFooter, Toast, ToastTone, Toasts,
@@ -114,7 +115,7 @@ pub fn duplicate(item: ItemId) {
             Err(err) => {
                 log::error!("duplicate {item}: {err}");
                 Toasts::get()
-                    .show(Toast::new(tr!("flows-duplicate-failed")).tone(ToastTone::Error));
+                    .show(Toast::new(tr!("errors-headline-detail", "headline" => tr!("flows-duplicate-failed"), "detail" => err.user_message())).tone(ToastTone::Error));
             }
         }
     });
@@ -256,7 +257,7 @@ pub fn trash_items(items: Vec<ItemId>, fate: NotebookFate) {
             }
             Err(err) => {
                 log::error!("trash: {err}");
-                Toasts::get().show(Toast::new(tr!("flows-trash-failed")).tone(ToastTone::Error));
+                Toasts::get().show(Toast::new(tr!("errors-headline-detail", "headline" => tr!("flows-trash-failed"), "detail" => err.user_message())).tone(ToastTone::Error));
             }
         }
     });
@@ -373,7 +374,7 @@ pub fn trash_folder(folder: FolderId) {
             }
             Err(err) => {
                 log::error!("trash folder: {err}");
-                Toasts::get().show(Toast::new(tr!("flows-trash-failed")).tone(ToastTone::Error));
+                Toasts::get().show(Toast::new(tr!("errors-headline-detail", "headline" => tr!("flows-trash-failed"), "detail" => err.user_message())).tone(ToastTone::Error));
             }
         }
     });
