@@ -197,10 +197,12 @@ pub fn run() {
 fn launch_config() -> LaunchConfig {
     let fonts = crate::plugins::catalog().fonts();
     fonts.into_iter().fold(
-        LaunchConfig::new().with_font(
-            crate::canvas_text::FONT_FAMILY,
-            crate::canvas_text::FONT_BYTES,
-        ),
+        LaunchConfig::new()
+            .with_plugin(sismo_freya::SismoPlugin::default())
+            .with_font(
+                crate::canvas_text::FONT_FAMILY,
+                crate::canvas_text::FONT_BYTES,
+            ),
         |config, font| config.with_font(font.family, font.bytes),
     )
 }

@@ -15,7 +15,7 @@ settings-keywords-notes = markdown, format, references, beside, marks, quotes
 settings-keywords-library = trash, export, import, space, copy, backup, days, storage
 settings-keywords-devices = link, sync, code, qr, scan, server, name, device, pairing
 settings-keywords-plugins = install, plugin, extensions, bible, pdf
-settings-keywords-about = version, licenses, folder, data, updates
+settings-keywords-about = version, licenses, folder, data, updates, diagnostics, debug, sismo, performance
 
 settings-search-placeholder = Search settings
 # $query: what the person typed.

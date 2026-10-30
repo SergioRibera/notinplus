@@ -4850,7 +4850,7 @@ dependencies = [
  "bytes",
  "ensure-cov",
  "loro-common",
- "lz4_flex",
+ "lz4_flex 0.11.6",
  "once_cell",
  "quick_cache",
  "rustc-hash 2.1.3",
@@ -4909,6 +4909,12 @@ checksum = "373f5eceeeab7925e0c1098212f2fbc4d416adec9d35051a6ab251e824c1854a"
 dependencies = [
  "twox-hash",
 ]
+
+[[package]]
+name = "lz4_flex"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecbdfe44b1bd960b68170b417450a628c43f7cf56bb3c5317e61cb230ee7f226"
 
 [[package]]
 name = "malloc_buf"
@@ -5518,6 +5524,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sismo",
+ "sismo-freya",
  "tar",
  "torin",
  "uuid",
@@ -7827,6 +7835,46 @@ name = "siphasher"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
+
+[[package]]
+name = "sismo"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "log",
+ "sismo-format",
+ "sismo-macros",
+ "thiserror 2.0.21",
+ "tokio",
+ "zudp",
+]
+
+[[package]]
+name = "sismo-format"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "lz4_flex 0.14.0",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "sismo-freya"
+version = "0.1.0"
+dependencies = [
+ "freya-core",
+ "freya-winit",
+ "sismo",
+]
+
+[[package]]
+name = "sismo-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "sized-chunks"

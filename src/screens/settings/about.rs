@@ -131,6 +131,7 @@ impl Component for About {
                     ),
             )
             .child(crate::update::ui::UpdatesSection)
+            .child(crate::diagnostics::ui::DiagnosticsSection)
             .child(
                 Section::new(tr!("settings-about-your-data"))
                     .child(Text::new(tr!("settings-about-your-data-hint")).role(TextRole::Hint)),

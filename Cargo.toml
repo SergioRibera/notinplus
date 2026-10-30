@@ -85,6 +85,9 @@ serde_json = "1"
 sha2 = "0.10"
 semver = "1"
 istmo-installer = { path = "crates/istmo-installer" }
+# Remote diagnostics, streamed to the sismo viewer on the LAN.
+sismo = { path = "../../sismo/crates/sismo", default-features = false, features = ["log", "net"] }
+sismo-freya = { path = "../../sismo/crates/sismo-freya" }
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.14"

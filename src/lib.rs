@@ -25,6 +25,7 @@ pub mod components;
 pub mod creation;
 pub mod deep_link;
 pub mod deferred;
+pub mod diagnostics;
 pub mod doc;
 pub mod doc_op;
 pub mod editor;
@@ -114,10 +115,16 @@ istmo::runtime!(
 #[istmo::mobile_app]
 fn mobile_main() {
     #[cfg(target_os = "android")]
-    android_logger::init_once(
-        android_logger::Config::default().with_max_level(log::LevelFilter::Info),
+    diagnostics::init_logging(
+        Some(Box::new(android_logger::AndroidLogger::new(
+            android_logger::Config::default().with_max_level(log::LevelFilter::Info),
+        ))),
+        log::LevelFilter::Info,
     );
+    #[cfg(not(target_os = "android"))]
+    diagnostics::init_logging(None, log::LevelFilter::Off);
     log::info!("notinplus mobile entry point running");
+    diagnostics::start_if_enabled();
 
     pen_pump::spawn(WINDOW_ID);
     app::run();
