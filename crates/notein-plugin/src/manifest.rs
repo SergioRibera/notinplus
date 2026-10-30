@@ -32,6 +32,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use notein_i18n::tr;
+
 use crate::target::{Fit, Target};
 
 /// Parsed `plugin.ntp.kdl` manifest.
@@ -206,7 +208,7 @@ impl PluginManifest {
                 library
                     .target
                     .as_ref()
-                    .map_or_else(|| "cualquiera".to_owned(), ToString::to_string)
+                    .map_or_else(|| tr!("plugin-manifest-any-target"), ToString::to_string)
             })
             .collect()
     }

@@ -17,6 +17,7 @@ use notein_sdk::kind::{
 };
 use notein_sdk::services::Host;
 use notein_sdk::text::Folded;
+use notein_sdk::tr;
 
 use crate::anchor::NoteAnchor;
 use crate::index::{IndexedNote, NotesIndex};
@@ -154,7 +155,7 @@ impl Iterator for NoteHits<'_> {
                                 id,
                                 NoteAnchor::default(),
                                 note.title.clone(),
-                                "Nota".to_owned(),
+                                tr!("notes-hit-note"),
                                 3.0,
                             ));
                         }
@@ -168,7 +169,7 @@ impl Iterator for NoteHits<'_> {
                                     id,
                                     NoteAnchor::heading(slug.clone()),
                                     format!("{} › {text}", note.title),
-                                    "Sección de nota".to_owned(),
+                                    tr!("notes-hit-section"),
                                     2.0,
                                 ));
                             }
@@ -224,7 +225,7 @@ fn nest(headings: &[HeadingRef]) -> Vec<OutlineNode<NoteAnchor>> {
             attach(&mut stack, &mut roots, done);
         }
         let label = if heading.text.trim().is_empty() {
-            "(sin título)".to_owned()
+            tr!("notes-outline-untitled")
         } else {
             heading.text.clone()
         };
@@ -246,9 +247,9 @@ impl DocumentKind for NotesKind {
     fn info(&self) -> KindInfo {
         KindInfo {
             id: KIND.into(),
-            label: "Nota".into(),
-            plural: "Notas".into(),
-            search_group: "En notas".into(),
+            label: tr!("notes-kind-label").into(),
+            plural: tr!("notes-kind-plural").into(),
+            search_group: tr!("notes-kind-search-group").into(),
             icon: lucide::sticky_note(),
             color: KindColor::Note,
             supports_ink: false,
@@ -326,12 +327,12 @@ impl DocumentKind for NotesKind {
         vec![
             KindAction {
                 id: ACTION_COPY_MARKDOWN.into(),
-                label: "Copiar como markdown".into(),
+                label: tr!("notes-action-copy-markdown").into(),
                 icon: lucide::clipboard_copy(),
             },
             KindAction {
                 id: ACTION_SHARE_FILE.into(),
-                label: "Enviar como archivo .md".into(),
+                label: tr!("notes-action-share-file").into(),
                 icon: lucide::share_2(),
             },
         ]
@@ -341,7 +342,7 @@ impl DocumentKind for NotesKind {
         match id {
             ACTION_COPY_MARKDOWN => ActionEffect::Copy {
                 text: content.markdown.clone(),
-                toast: "Nota copiada como markdown".to_owned(),
+                toast: tr!("notes-toast-copied-markdown"),
             },
             ACTION_SHARE_FILE => ActionEffect::Share {
                 file_name: format!("{}.md", doc.name.trim()),
@@ -354,24 +355,29 @@ impl DocumentKind for NotesKind {
 
     fn creation_entries(&self) -> Vec<CreationEntry> {
         vec![
-            CreationEntry::new(ENTRY_NOTE, "Nota", lucide::sticky_note(), KindColor::Note)
-                .subtitle("Texto y referencias")
-                .starter(1)
-                .named()
-                .sheet(
-                    "Nueva nota",
-                    Some("Vacío = toma el nombre de la primera línea"),
-                    false,
-                ),
+            CreationEntry::new(
+                ENTRY_NOTE,
+                tr!("notes-entry-note"),
+                lucide::sticky_note(),
+                KindColor::Note,
+            )
+            .subtitle(tr!("notes-entry-note-subtitle"))
+            .starter(1)
+            .named()
+            .sheet(
+                tr!("notes-entry-note-sheet-title"),
+                Some(tr!("notes-entry-note-name-hint")),
+                false,
+            ),
             CreationEntry::new(
                 ENTRY_IMPORT_MARKDOWN,
                 "Markdown",
                 lucide::file_input(),
                 KindColor::Note,
             )
-            .subtitle("Importar un archivo .md")
+            .subtitle(tr!("notes-entry-import-subtitle"))
             .import(
-                "Elegí un archivo markdown",
+                tr!("notes-entry-import-title"),
                 &IMPORT_EXTENSIONS,
                 &IMPORT_MIME_TYPES,
             ),
@@ -392,7 +398,7 @@ impl DocumentKind for NotesKind {
             ENTRY_IMPORT_MARKDOWN => {
                 let file = request.file.ok_or(CreationError::MissingFile)?;
                 let markdown = String::from_utf8(file.bytes.to_vec())
-                    .map_err(|_| CreationError::Unreadable("El archivo no es texto.".to_owned()))?;
+                    .map_err(|_| CreationError::Unreadable(tr!("notes-import-not-text")))?;
                 let name = if request.name.trim().is_empty() {
                     import_name(Some(file.name), &markdown)
                 } else {
@@ -418,11 +424,11 @@ impl DocumentKind for NotesKind {
         let words = text.split_whitespace().count();
         Ok(ImportPreview {
             name: import_name(Some(file.name), &text),
-            details: Some(format!(
-                "{} · {} · {}",
-                file.name,
-                notein_ui_kit::count(headings, "título", "títulos"),
-                notein_ui_kit::count(words, "palabra", "palabras")
+            details: Some(tr!(
+                "notes-import-details",
+                "file" => file.name,
+                "headings" => headings,
+                "words" => words,
             )),
             preview: Some(text.lines().take(8).collect::<Vec<_>>().join("\n")),
         })

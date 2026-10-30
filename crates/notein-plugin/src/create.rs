@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 
 use bytes::Bytes;
+use notein_i18n::tr;
 
 use crate::kind::KindColor;
 
@@ -155,11 +156,11 @@ impl CreationEntry {
     pub fn sheet(
         mut self,
         title: impl Into<Cow<'static, str>>,
-        name_hint: Option<&'static str>,
+        name_hint: Option<impl Into<Cow<'static, str>>>,
         location: bool,
     ) -> Self {
         self.sheet_title = Some(title.into());
-        self.name_hint = name_hint.map(Cow::Borrowed);
+        self.name_hint = name_hint.map(Into::into);
         self.location = location;
         self
     }
@@ -232,9 +233,11 @@ pub enum CreationError {
 impl std::fmt::Display for CreationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnknownEntry(id) => write!(f, "entrada desconocida: {id}"),
+            Self::UnknownEntry(id) => {
+                f.write_str(&tr!("plugin-create-unknown-entry", "id" => id.as_str()))
+            }
             Self::Unreadable(why) => f.write_str(why),
-            Self::MissingFile => f.write_str("Falta el archivo"),
+            Self::MissingFile => f.write_str(&tr!("plugin-create-missing-file")),
         }
     }
 }

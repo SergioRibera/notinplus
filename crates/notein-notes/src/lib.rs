@@ -6,6 +6,8 @@
 //! point at headings. [`NotesIndex`] keeps every note's title and
 //! headings so references can be offered without opening each note.
 
+use notein_sdk::tr;
+
 pub mod anchor;
 mod face;
 pub mod index;
@@ -17,6 +19,8 @@ pub use anchor::NoteAnchor;
 pub use index::NotesIndex;
 pub use kind::{NoteContent, NotesKind};
 pub use plugin::{NoteFace, NotesPlugin};
+
+notein_sdk::i18n::catalog!();
 
 /// Kind id of the note page (`PluginCanvas` items and their snapshots).
 pub const KIND_ID: &str = kind::KIND;
@@ -52,7 +56,7 @@ pub fn import_name(file_name: Option<&str>, markdown: &str) -> String {
         .into_iter()
         .map(|heading| heading.text)
         .find(|text| !text.trim().is_empty())
-        .unwrap_or_else(|| "Nota importada".to_owned())
+        .unwrap_or_else(|| tr!("notes-imported-name"))
 }
 
 /// Fix the anchor of the heading `slug` names in `markdown`.
@@ -153,6 +157,7 @@ mod tests {
 
     #[test]
     fn imported_notes_are_named_after_the_file_or_first_heading() {
+        notein_sdk::i18n::Lang::Es.make_current();
         assert_eq!(import_name(Some("Plan.MD"), "# Otro"), "Plan");
         assert_eq!(import_name(Some("notas.txt"), ""), "notas");
         assert_eq!(import_name(None, "texto\n\n## Viaje\n"), "Viaje");

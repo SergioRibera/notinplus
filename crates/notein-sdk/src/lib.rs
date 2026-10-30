@@ -17,7 +17,7 @@
 //!
 //! impl Plugin for RecipesPlugin {
 //!     fn info(&self) -> PluginInfo {
-//!         // id, name, version…
+//!         PluginInfo::new("dev.recipes", tr!("recipes-plugin-name"))
 //!     }
 //!
 //!     fn register(&self, registrar: &mut Registrar) {
@@ -25,6 +25,28 @@
 //!     }
 //! }
 //! ```
+//!
+//! # Translations
+//!
+//! Text the plugin shows lives in Fluent files, one folder per
+//! language (`locales/en/recipes.ftl`, `locales/es/recipes.ftl`), with
+//! the same message ids in every language. Wire them with
+//! `notein-i18n` as a build-dependency (feature `build`):
+//!
+//! ```ignore
+//! // build.rs
+//! fn main() {
+//!     notein_i18n::build::emit();
+//! }
+//!
+//! // lib.rs
+//! notein_sdk::i18n::catalog!();
+//! ```
+//!
+//! [`tr!`] then formats a message in the interface language, which the
+//! host keeps current in the plugin. Since the language can change
+//! while the app runs, build text when it is asked for (`info`,
+//! `creation_entries`, `render`) rather than caching it.
 
 pub use notein_plugin::*;
 
@@ -35,6 +57,6 @@ pub mod prelude {
         CreationRequest, DocId, DocMeta, DocumentKind, ExportFile, Face, FaceContext, Folded, Font,
         Hit, HostServices, HostUi, ImportPreview, ImportedFile, IndexReport, KindChoice, KindColor,
         KindInfo, Mark, OutlineIcon, OutlineNode, Payload, PayloadError, Plugin, PluginInfo,
-        Registrar, SearchQuery, SelectionMenu, Share, SourceRef, TextBody, Ui,
+        Registrar, SearchQuery, SelectionMenu, Share, SourceRef, TextBody, Ui, tr,
     };
 }

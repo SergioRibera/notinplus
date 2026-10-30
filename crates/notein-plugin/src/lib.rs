@@ -16,6 +16,14 @@
 //! [`PluginCatalog`] holds the installed plugins, built in or loaded
 //! from a `.ntp` package by [`loader`]; [`ConfigSchema`] declares a
 //! plugin's settings.
+//!
+//! Plugins translate their text with [`i18n`]: Fluent files under the
+//! plugin crate's `locales/<lang>/*.ftl`, `notein-i18n` (feature
+//! `build`) as a build-dependency whose `build::emit()` runs from
+//! `build.rs`, `notein_plugin::i18n::catalog!();` at the crate root,
+//! and [`tr!`] wherever text is shown. The host keeps every plugin on
+//! the interface language, also inside a shared library
+//! ([`export_plugin!`] exports the setter it calls).
 
 pub mod bookmark;
 pub mod catalog;
@@ -38,7 +46,11 @@ pub mod text;
 pub mod ui;
 
 pub use bytes;
+pub use notein_i18n as i18n;
+pub use notein_i18n::tr;
 pub use rkyv;
+
+notein_i18n::catalog!();
 
 pub use bookmark::{Bookmark, Rgba, SourceRef, StrokeAnchor, TimestampMs, WorldPoint};
 pub use catalog::{CatalogEntry, CatalogError, PluginCatalog};

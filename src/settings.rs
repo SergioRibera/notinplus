@@ -384,7 +384,11 @@ impl Settings {
             PenDoubleTap::Nothing => 2,
         };
         PEN_DOUBLE_TAP.store(code, std::sync::atomic::Ordering::Relaxed);
-        self.appearance.interface_lang().make_current();
+        let lang = self.appearance.interface_lang();
+        if lang != notein_i18n::Lang::current() {
+            lang.make_current();
+            crate::plugins::catalog::set_lang(lang);
+        }
     }
 }
 

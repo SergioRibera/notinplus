@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
+use notein_i18n::tr;
 use notein_plugin::catalog::{Failed, Origin, PluginCatalog};
 use notein_plugin::loader::{self, Loaded, LoaderError};
 
@@ -87,10 +88,16 @@ impl std::fmt::Display for InstallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Load(err) => f.write_str(&err.user_message()),
-            Self::Copy(err) => write!(f, "No se pudo copiar el plugin: {err}"),
+            Self::Copy(err) => {
+                f.write_str(&tr!("plugin-host-copy-failed", "error" => err.to_string()))
+            }
             Self::Catalog(err) => write!(f, "{err}"),
-            Self::Package(err) => write!(f, "El archivo no es un plugin de Notein: {err}"),
-            Self::NoManifest => f.write_str("El paquete no trae plugin.ntp.kdl"),
+            Self::Package(err) => {
+                f.write_str(&tr!("plugin-host-not-a-package", "error" => err.to_string()))
+            }
+            Self::NoManifest => {
+                f.write_str(&tr!("plugin-host-no-manifest", "manifest" => MANIFEST))
+            }
         }
     }
 }
@@ -110,6 +117,7 @@ pub fn install(folder: &Path) -> Result<String, InstallError> {
     let manifest = target.join(MANIFEST);
     let loaded = loader::load(&manifest).map_err(InstallError::Load)?;
     let name = loaded.manifest.name.clone();
+    let id = loaded.plugin.info().id;
     let origin = Origin::ThirdParty {
         manifest: Box::new(loaded.manifest.clone()),
         library: loaded.library_path.clone(),
@@ -119,7 +127,7 @@ pub fn install(folder: &Path) -> Result<String, InstallError> {
         .add(loaded.plugin, origin)
         .map_err(InstallError::Catalog)?;
     catalog.keep_library(loaded.library);
-    if let Some(installed) = catalog.plugin_by_name(&name) {
+    if let Some(installed) = catalog.plugin(&id) {
         installed.install_host(&super::host::handle());
     }
     drop(catalog);

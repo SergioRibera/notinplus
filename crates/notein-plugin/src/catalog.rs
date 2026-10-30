@@ -3,11 +3,14 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use notein_i18n::{Lang, tr};
+
 use crate::create::CreationEntry;
 use crate::erased::ErasedKind;
 use crate::face::ErasedFace;
 use crate::info::PluginInfo;
 use crate::kind::{Hit, SearchQuery};
+use crate::loader::PluginLibrary;
 use crate::manifest::PluginManifest;
 use crate::plugin::{Font, Plugin, PluginSettings, Registrar};
 use crate::services::Host;
@@ -97,8 +100,12 @@ pub enum CatalogError {
 impl std::fmt::Display for CatalogError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::DuplicatePlugin(id) => write!(f, "ya hay un plugin con id {id}"),
-            Self::DuplicateKind(id) => write!(f, "ya hay un tipo de documento con id {id}"),
+            Self::DuplicatePlugin(id) => {
+                f.write_str(&tr!("plugin-catalog-duplicate-plugin", "id" => id.as_str()))
+            }
+            Self::DuplicateKind(id) => {
+                f.write_str(&tr!("plugin-catalog-duplicate-kind", "id" => id.as_str()))
+            }
         }
     }
 }
@@ -112,7 +119,7 @@ pub struct PluginCatalog {
     failed: Vec<Failed>,
     /// Shared libraries of third-party plugins. Declared last so they
     /// drop after every trait object created from them.
-    libraries: Vec<libloading::Library>,
+    libraries: Vec<PluginLibrary>,
 }
 
 impl std::fmt::Debug for PluginCatalog {
@@ -155,8 +162,21 @@ impl PluginCatalog {
     }
 
     /// Keep a third-party library alive for as long as the catalog.
-    pub fn keep_library(&mut self, library: libloading::Library) {
+    pub fn keep_library(&mut self, library: PluginLibrary) {
         self.libraries.push(library);
+    }
+
+    /// Switch every plugin to `lang`: third-party libraries get it
+    /// through their setter (builtins share the app's), and the
+    /// [`PluginInfo`] kept at registration is asked for again.
+    /// Failure reasons stay in the language they were recorded in.
+    pub fn set_lang(&mut self, lang: Lang) {
+        for library in &self.libraries {
+            library.set_lang(lang);
+        }
+        for installed in &mut self.plugins {
+            installed.info = installed.plugin.info();
+        }
     }
 
     pub fn record_failure(&mut self, failed: Failed) {

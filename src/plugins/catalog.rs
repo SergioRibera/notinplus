@@ -2,6 +2,7 @@
 
 use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+use notein_i18n::{Lang, tr};
 use notein_plugin::catalog::{Failed, Origin, PluginCatalog};
 use notein_plugin::erased::ErasedKind;
 use notein_plugin::kind::KindInfo;
@@ -29,8 +30,8 @@ fn init() -> RwLock<PluginCatalog> {
             }
         }
         Err(err) => catalog.record_failure(Failed {
-            name: "Biblia".to_owned(),
-            reason: format!("No se pudo abrir la base de traducciones: {err}"),
+            name: tr!("plugin-host-bible-name"),
+            reason: tr!("plugin-host-bible-unavailable", "error" => err.to_string()),
         }),
     }
     super::dynamic::load_installed(&mut catalog);
@@ -58,6 +59,17 @@ pub fn catalog_mut() -> RwLockWriteGuard<'static, PluginCatalog> {
         .get_or_init(init)
         .write()
         .unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Switch every loaded plugin to `lang`. A no-op before the catalog
+/// is first used: plugins pick up the current language as they load.
+pub fn set_lang(lang: Lang) {
+    if let Some(catalog) = CATALOG.get() {
+        catalog
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .set_lang(lang);
+    }
 }
 
 /// The active kind with id `id`.

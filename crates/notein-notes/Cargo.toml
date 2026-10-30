@@ -35,3 +35,6 @@ bincode = { version = "2", features = ["derive", "std"] }
 [dev-dependencies]
 freya-testing = "=0.5.0-rc.13"
 freya-markdown-editor = { path = "../freya-markdown-editor" }
+
+[build-dependencies]
+notein-i18n = { path = "../notein-i18n", features = ["build"] }

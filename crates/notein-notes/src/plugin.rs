@@ -7,6 +7,7 @@ use notein_sdk::face::{CoverRequest, Face, FaceContext, HeaderAction};
 use notein_sdk::info::PluginInfo;
 use notein_sdk::plugin::{Plugin, Registrar};
 use notein_sdk::services::Host;
+use notein_sdk::tr;
 
 use crate::face;
 use crate::kind::{KIND, NotesKind};
@@ -27,8 +28,7 @@ impl NotesPlugin {
 
 impl Plugin for NotesPlugin {
     fn info(&self) -> PluginInfo {
-        PluginInfo::new(KIND, "Notas")
-            .description("Notas de texto con títulos, listas y referencias a todo lo demás.")
+        PluginInfo::new(KIND, tr!("notes-plugin-name")).description(tr!("notes-plugin-description"))
     }
 
     fn register(&self, registrar: &mut Registrar) {

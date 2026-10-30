@@ -5,6 +5,7 @@ use freya::icons::lucide;
 use freya::prelude::*;
 use freya_markdown_editor::prelude::*;
 use notein_sdk::services::{Host, HostToast, Share, ToastTone};
+use notein_sdk::tr;
 use notein_ui_kit::{Action, ActionEntry, ActionList};
 
 /// Open the share menu for the note in `controller`, below the press at
@@ -26,7 +27,7 @@ pub(crate) fn open_menu(
     if host.can_share() {
         let (text_host, text_title) = (host.clone(), title.clone());
         entries.push(ActionEntry::Item(
-            Action::closing("Compartir como texto", move || {
+            Action::closing(tr!("notes-share-as-text"), move || {
                 text_host.share(Share::Text {
                     text: controller.markdown(Dialect::Portable),
                     subject: text_title.clone(),
@@ -36,7 +37,7 @@ pub(crate) fn open_menu(
         ));
         let file_host = host.clone();
         entries.push(ActionEntry::Item(
-            Action::closing("Compartir archivo .md", move || {
+            Action::closing(tr!("notes-share-as-file"), move || {
                 file_host.share(Share::File {
                     name: file_name(&title),
                     mime: "text/markdown".to_owned(),
@@ -49,14 +50,14 @@ pub(crate) fn open_menu(
     }
     let portable = host.clone();
     entries.push(ActionEntry::Item(
-        Action::closing("Copiar markdown", move || {
+        Action::closing(tr!("notes-share-copy-markdown"), move || {
             copy_markdown(&portable, controller, Dialect::Portable);
         })
         .icon(lucide::copy()),
     ));
     let rich = host.clone();
     entries.push(ActionEntry::Item(
-        Action::closing("Copiar markdown enriquecido", move || {
+        Action::closing(tr!("notes-share-copy-rich"), move || {
             copy_markdown(&rich, controller, Dialect::Rich);
         })
         .icon(lucide::clipboard_copy()),
@@ -66,10 +67,10 @@ pub(crate) fn open_menu(
 
 fn copy_markdown(host: &Host, controller: EditorController, dialect: Dialect) {
     let toast = match freya::clipboard::Clipboard::set(controller.markdown(dialect)) {
-        Ok(()) => HostToast::new("Markdown copiado", ToastTone::Info),
+        Ok(()) => HostToast::new(tr!("notes-toast-markdown-copied"), ToastTone::Info),
         Err(err) => {
             log::warn!("notes: copy failed: {err:?}");
-            HostToast::new("No se pudo copiar", ToastTone::Error)
+            HostToast::new(tr!("notes-toast-copy-failed"), ToastTone::Error)
         }
     };
     host.toast(toast);

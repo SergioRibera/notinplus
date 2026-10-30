@@ -14,6 +14,7 @@
 use std::ops::RangeInclusive;
 
 use bincode::{Decode, Encode};
+use notein_i18n::tr;
 use rkyv::{Archive, Deserialize, Serialize};
 
 /// A plugin's full settings schema.
@@ -293,10 +294,14 @@ pub enum ConfigError {
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnknownKey(k) => write!(f, "unknown config key: {k}"),
-            Self::TypeMismatch => f.write_str("config value type mismatch"),
-            Self::OutOfRange => f.write_str("config value out of range"),
-            Self::Rejected(msg) => write!(f, "config value rejected: {msg}"),
+            Self::UnknownKey(k) => {
+                f.write_str(&tr!("plugin-config-unknown-key", "key" => k.as_str()))
+            }
+            Self::TypeMismatch => f.write_str(&tr!("plugin-config-type-mismatch")),
+            Self::OutOfRange => f.write_str(&tr!("plugin-config-out-of-range")),
+            Self::Rejected(msg) => {
+                f.write_str(&tr!("plugin-config-rejected", "reason" => msg.as_str()))
+            }
         }
     }
 }

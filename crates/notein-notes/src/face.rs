@@ -20,6 +20,7 @@ use freya_markdown_editor::prelude::*;
 use notein_sdk::doc::DocId;
 use notein_sdk::face::{ContentStore, FaceContext, HeaderAction};
 use notein_sdk::services::{HistoryStep, Peer, Presence, TextBody};
+use notein_sdk::tr;
 
 use crate::anchor::NoteAnchor;
 use crate::kind::{NoteContent, NotesKind};
@@ -44,8 +45,12 @@ thread_local! {
 pub(crate) fn header_actions() -> Vec<HeaderAction> {
     use freya::icons::lucide;
     vec![
-        HeaderAction::new("reading", "Leer o editar", lucide::book_open()),
-        HeaderAction::new("share", "Enviar o copiar", lucide::share_2()),
+        HeaderAction::new(
+            "reading",
+            tr!("notes-header-read-or-edit"),
+            lucide::book_open(),
+        ),
+        HeaderAction::new("share", tr!("notes-header-share"), lucide::share_2()),
     ]
 }
 
@@ -164,7 +169,7 @@ impl Component for NotePage {
             )
             .remote_carets(peers.read().iter().filter_map(remote_caret).collect())
             .reorderable(true)
-            .placeholder("Escribí tu nota… (/ para insertar)")
+            .placeholder(tr!("notes-editor-placeholder"))
             .width(Size::fill())
             .max_width(Size::px(COLUMN_WIDTH))
             .padding((24., 20., 160., 20.));
@@ -173,7 +178,7 @@ impl Component for NotePage {
             .expanded()
             .background(notein_ui_kit::theme::palette().bg)
             .content(Content::flex())
-            .maybe_child(locked_now.then(|| banner("Solo lectura: podés mirar, no editar.")))
+            .maybe_child(locked_now.then(|| banner(tr!("notes-read-only-banner"))))
             .maybe_child((!read_only).then(|| toolbar(ctx.ui.editor_theme(), controller)))
             .child(
                 ScrollView::new_controlled(scroll)

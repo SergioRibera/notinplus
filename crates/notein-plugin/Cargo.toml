@@ -21,6 +21,7 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 
 [dependencies]
+notein-i18n = { path = "../notein-i18n" }
 uuid = { version = "1", features = ["v4"] }
 libloading = "0.8"
 flume = { version = "0.11", features = ["async"] }
@@ -37,3 +38,6 @@ bytes = "1"
 freya-core = "=0.5.0-rc.13"
 freya-markdown-editor = { path = "../freya-markdown-editor", default-features = false }
 log = "0.4"
+
+[build-dependencies]
+notein-i18n = { path = "../notein-i18n", features = ["build"] }
