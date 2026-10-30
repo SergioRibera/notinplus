@@ -1,0 +1,3 @@
+/* Avisos de permisos y textos del paquete, español. */
+"NSLocalNetworkUsageDescription" = "Notein busca tus otros dispositivos y a las personas con quienes compartes en esta red para sincronizar sin servidor.";
+"NSCameraUsageDescription" = "Notein usa la cámara para escanear el código QR de otro dispositivo o de una invitación.";

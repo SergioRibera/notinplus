@@ -1,0 +1,3 @@
+/* Permission prompts and bundle strings, English. */
+"NSLocalNetworkUsageDescription" = "Notein looks for your other devices and the people you share with on this network to sync without a server.";
+"NSCameraUsageDescription" = "Notein uses the camera to scan the QR code of another device or an invitation.";
