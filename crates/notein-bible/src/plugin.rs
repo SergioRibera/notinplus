@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_sdk::face::{CoverRequest, Face, FaceContext, HeaderAction};
 use notein_sdk::info::PluginInfo;
 use notein_sdk::plugin::{Font, Plugin, Registrar};
@@ -38,8 +39,8 @@ impl BiblePlugin {
 
 impl Plugin for BiblePlugin {
     fn info(&self) -> PluginInfo {
-        PluginInfo::new(crate::kind::KIND, "Biblia")
-            .description("Leé la Biblia, resaltá y anotá versos, y citalos con /ref.")
+        PluginInfo::new(crate::kind::KIND, tr!("plugin-name"))
+            .description(tr!("plugin-description"))
     }
 
     fn register(&self, registrar: &mut Registrar) {
@@ -95,7 +96,7 @@ impl Face for BibleFace {
                 .spacing(4.0)
                 .child(
                     label()
-                        .text("Biblia")
+                        .text(tr!("plugin-cover-title"))
                         .font_size(18.0)
                         .font_family(typography::FAMILY)
                         .color(Color::from_rgb(243, 226, 190)),

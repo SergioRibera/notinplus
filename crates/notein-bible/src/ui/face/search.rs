@@ -4,6 +4,7 @@
 use crate::db::{BibleRow, BookRow, SearchHit};
 use crate::ui::search::{SearchHitView, hit_to_view};
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
@@ -14,11 +15,8 @@ use super::Reader;
 
 /// Most verse matches listed.
 const LIMIT: usize = 50;
-/// How to search, shown until something is typed.
-const HELP: &str = "Todas las palabras deben aparecer, también como comienzo de otra (amor encuentra amoroso). \"frase exacta\" · fe OR esperanza · -palabra para excluir.";
-
 pub(super) fn open(reader: &Reader) {
-    Sheet::titled("Buscar en la Biblia")
+    Sheet::titled(tr!("search-title"))
         .child(SearchPane {
             reader: reader.clone(),
         })
@@ -45,8 +43,8 @@ impl Component for SearchPane {
         };
         let found = hits.len();
         let results: Element = if !typed.is_empty() && hits.is_empty() {
-            EmptyState::new(freya::icons::lucide::search_x(), "Sin resultados")
-                .body("Probá con otras palabras o con una cita como Juan 3:16.")
+            EmptyState::new(freya::icons::lucide::search_x(), tr!("search-empty-title"))
+                .body(tr!("search-empty-body"))
                 .into_element()
         } else {
             rect()
@@ -58,10 +56,10 @@ impl Component for SearchPane {
         rect()
             .width(Size::fill())
             .spacing(12.0)
-            .child(SearchField::new(query, "Palabras o una cita (Juan 3:16)").auto_focus(true))
+            .child(SearchField::new(query, tr!("search-placeholder")).auto_focus(true))
             .maybe_child(several.then(|| {
                 Segmented::new(
-                    ["Esta traducción", "Todas"],
+                    [tr!("search-scope-this"), tr!("search-scope-all")],
                     usize::from(*everywhere.read()),
                 )
                 .full_width()
@@ -70,11 +68,11 @@ impl Component for SearchPane {
             }))
             .child(
                 Text::new(if typed.is_empty() {
-                    HELP.to_owned()
+                    tr!("search-help")
                 } else if found >= LIMIT {
-                    format!("Los {LIMIT} más cercanos")
+                    tr!("search-closest", "count" => LIMIT)
                 } else {
-                    notein_ui_kit::count(found, "resultado", "resultados")
+                    tr!("search-results", "count" => found)
                 })
                 .role(TextRole::Hint),
             )
@@ -179,7 +177,7 @@ fn reference(reader: &Reader, books: &[BookRow], query: &str) -> Option<SearchHi
         format!("{name} {}", parsed.chapter)
     };
     Some(SearchHitView {
-        reference: format!("Ir a {place}"),
+        reference: tr!("search-go-to", "place" => place),
         snippet_runs: Vec::new(),
         source: SearchHit {
             bible_id,

@@ -2,6 +2,7 @@
 //! has room for it, a sheet from the bottom when it does not.
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
@@ -69,7 +70,7 @@ impl VerseRefs {
             .map(|row| {
                 let found = book_of(&row.tgt_book);
                 let name = found.map_or_else(
-                    || crate::canon::short_name(&row.tgt_book).to_owned(),
+                    || crate::canon::short_name(&row.tgt_book),
                     |b| b.name.clone(),
                 );
                 Target {
@@ -101,7 +102,7 @@ impl VerseRefs {
     }
 
     fn count(&self) -> String {
-        notein_ui_kit::count(self.targets.len(), "referencia", "referencias")
+        tr!("reader-refs-count", "count" => self.targets.len())
     }
 }
 
@@ -118,7 +119,7 @@ pub(super) fn open(reader: &Reader, verse: u16, wide: bool) {
         open.set((!same).then_some(refs));
         return;
     }
-    Sheet::titled(format!("Referencias de {}", refs.place))
+    Sheet::titled(tr!("reader-refs-title", "place" => refs.place.clone()))
         .subtitle(refs.count())
         .child(List {
             reader: reader.clone(),
@@ -177,13 +178,13 @@ impl Panel {
                             .width(Size::flex(1.0))
                             .spacing(2.0)
                             .child(
-                                Text::new(format!("Referencias de {}", refs.place))
+                                Text::new(tr!("reader-refs-title", "place" => refs.place.clone()))
                                     .role(TextRole::Strong),
                             )
                             .child(Text::new(refs.count()).role(TextRole::Meta)),
                     )
                     .child(
-                        IconButton::new(freya::icons::lucide::x(), "Cerrar")
+                        IconButton::new(freya::icons::lucide::x(), tr!("reader-refs-close"))
                             .size(32.0)
                             .on_press(move |_| {
                                 let mut open = open;

@@ -4,6 +4,7 @@
 //! They live on the UI thread: [`HostUi`] is handed to faces in their
 //! [`FaceContext`](crate::face::FaceContext) and is not `Send`.
 
+use std::borrow::Cow;
 use std::rc::Rc;
 
 use bytes::Bytes;
@@ -17,7 +18,7 @@ pub type Ui = Rc<dyn HostUi>;
 
 /// A button of the selection bar only one kind has: label, icon and
 /// what it does ("Marcador" in PDFs).
-pub type SelectionExtra = (&'static str, Bytes, Rc<dyn Fn()>);
+pub type SelectionExtra = (Cow<'static, str>, Bytes, Rc<dyn Fn()>);
 
 /// The bar over a text selection: five highlighters, a note, copy as
 /// reference and send to the notebook.

@@ -4,6 +4,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use notein_i18n::tr;
+
 use crate::db::Db;
 use crate::install_background::{self, InstallStage, SharedInstallProgress};
 pub use crate::install_background::{Phase, Step};
@@ -119,7 +121,7 @@ impl Installer {
                 queue.running = false;
                 let stuck: Vec<String> = queue.waiting.drain(..).collect();
                 for bible_id in stuck {
-                    let reason = "No se pudo iniciar la descarga".to_owned();
+                    let reason = tr!("installer-could-not-start");
                     queue.finish(bible_id.clone(), Some(Outcome::Failed { bible_id, reason }));
                 }
             }
@@ -144,7 +146,7 @@ impl Installer {
                     bible_id: next.clone(),
                     reason: finished
                         .error
-                        .unwrap_or_else(|| "La descarga falló".to_owned()),
+                        .unwrap_or_else(|| tr!("installer-download-failed")),
                 }),
                 InstallStage::Finished => Some(Outcome::Installed(next.clone())),
                 InstallStage::Idle | InstallStage::Starting | InstallStage::Downloading => None,

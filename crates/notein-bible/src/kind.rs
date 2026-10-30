@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::{PoisonError, RwLock};
 
 use freya_icons::lucide;
+use notein_i18n::{Lang, tr};
 use notein_sdk::create::{
     Created, CreationChoice, CreationEntry, CreationError, CreationFlow, CreationRequest,
 };
@@ -14,7 +15,7 @@ use notein_sdk::kind::{
 };
 
 use crate::anchor::BibleAnchor;
-use crate::db::{BookRow, Db};
+use crate::db::{BibleRow, BookRow, Db};
 use crate::plugin_config::{self, SharedConfig};
 use crate::state::{BibleSnapshot, u32_to_rgba};
 
@@ -25,6 +26,22 @@ pub const ENTRY_BIBLE: &str = "bible";
 /// What the create sheet's last row launches: the catalog of
 /// translations.
 pub const ENTRY_CATALOG: &str = "catalog";
+
+/// ISO 639-3 code of the interface language, the prefix translation ids
+/// carry (`spa_rvr1960`): pickers offer those translations first.
+#[must_use]
+pub fn interface_language() -> &'static str {
+    match Lang::current() {
+        Lang::En => "eng",
+        Lang::Es => "spa",
+    }
+}
+
+/// ISO 639-3 language of translation `bible_id`, its id prefix.
+#[must_use]
+pub fn language_of(bible_id: &str) -> &str {
+    bible_id.split('_').next().unwrap_or_default()
+}
 
 /// What the shell stores for the Bible document: reading position and
 /// highlights. Highlights are per verse, so they survive a change of
@@ -259,14 +276,25 @@ impl BibleKind {
         .filter(|id| !id.is_empty())
     }
 
-    /// Name of a new Bible left unnamed: "Biblia RVR1909".
+    /// Installed translations, those in the interface language first.
+    fn installed_for_picking(&self) -> Vec<BibleRow> {
+        let mut bibles = self.db.list_bibles().unwrap_or_default();
+        let interface = interface_language();
+        bibles.sort_by_key(|b| language_of(&b.id) != interface);
+        bibles
+    }
+
+    /// Name of a new Bible left unnamed: "Bible KJV".
     fn default_name(&self, bible_id: &str) -> String {
         self.db
             .list_bibles()
             .unwrap_or_default()
             .into_iter()
             .find(|b| b.id == bible_id)
-            .map_or_else(|| "Biblia".to_owned(), |b| format!("Biblia {}", b.abbrev))
+            .map_or_else(
+                || tr!("kind-default-name"),
+                |b| tr!("kind-default-name-of", "abbrev" => b.abbrev),
+            )
     }
 }
 
@@ -278,9 +306,9 @@ impl DocumentKind for BibleKind {
     fn info(&self) -> KindInfo {
         KindInfo {
             id: KIND.into(),
-            label: "Biblia".into(),
-            plural: "Biblia".into(),
-            search_group: "En la Biblia".into(),
+            label: tr!("kind-label").into(),
+            plural: tr!("kind-plural").into(),
+            search_group: tr!("kind-search-group").into(),
             icon: lucide::book_open(),
             color: KindColor::Bible,
             supports_ink: false,
@@ -390,8 +418,7 @@ impl DocumentKind for BibleKind {
         };
         Some(match content.highlights.len() {
             0 => name,
-            1 => format!("{name} · 1 resaltado"),
-            n => format!("{name} · {n} resaltados"),
+            n => tr!("kind-meta-highlights", "name" => name, "count" => n),
         })
     }
 
@@ -414,7 +441,7 @@ impl DocumentKind for BibleKind {
     fn actions(&self) -> Vec<KindAction> {
         vec![KindAction {
             id: "change-translation".into(),
-            label: "Cambiar traducción".into(),
+            label: tr!("kind-action-change-translation").into(),
             icon: lucide::languages(),
         }]
     }
@@ -424,15 +451,23 @@ impl DocumentKind for BibleKind {
     }
 
     fn creation_entries(&self) -> Vec<CreationEntry> {
-        let installed = self.db.list_bibles().unwrap_or_default();
-        let entry =
-            CreationEntry::new(ENTRY_BIBLE, "Biblia", lucide::book_open(), KindColor::Bible)
-                .subtitle("Leer y resaltar")
-                .starter(3)
-                .sheet("Nueva Biblia", Some("Ej.: Biblia de estudio"), true);
+        let installed = self.installed_for_picking();
+        let entry = CreationEntry::new(
+            ENTRY_BIBLE,
+            tr!("kind-entry-label"),
+            lucide::book_open(),
+            KindColor::Bible,
+        )
+        .subtitle(tr!("kind-entry-subtitle"))
+        .starter(3)
+        .sheet(
+            tr!("kind-sheet-title"),
+            Some(tr!("kind-sheet-name-hint")),
+            true,
+        );
         let entry = if installed.len() > 1 {
             entry.flow(CreationFlow::Choose {
-                title: "Abrir Biblia".into(),
+                title: tr!("kind-choose-title").into(),
                 options: installed
                     .into_iter()
                     .map(|b| CreationChoice {
@@ -443,7 +478,7 @@ impl DocumentKind for BibleKind {
                     .collect(),
                 more: Some(CreationChoice {
                     id: ENTRY_CATALOG.into(),
-                    label: "Agregar traducción".into(),
+                    label: tr!("kind-choose-add-translation").into(),
                     subtitle: "".into(),
                 }),
                 named: true,
@@ -505,11 +540,9 @@ impl DocumentKind for BibleKind {
 
     fn choice(&self, content: &BibleContent) -> Option<KindChoice> {
         Some(KindChoice {
-            label: "Traducción".into(),
+            label: tr!("kind-choice-label").into(),
             options: self
-                .db
-                .list_bibles()
-                .unwrap_or_default()
+                .installed_for_picking()
                 .into_iter()
                 .map(|b| CreationChoice {
                     label: format!("{} · {}", b.abbrev, b.name_local).into(),

@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use freya::components::{ScrollConfig, ScrollController, use_scroll_controller};
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_sdk::doc::DocId;
 use notein_sdk::face::{ContentStore, FaceContext, HeaderAction};
 use notein_sdk::services::Host;
@@ -44,8 +45,12 @@ const FLASH: Duration = Duration::from_secs(3);
 pub(crate) fn header_actions() -> Vec<HeaderAction> {
     use freya::icons::lucide;
     vec![
-        HeaderAction::new("translation", "Traducción", lucide::languages()),
-        HeaderAction::new("search", "Buscar en la Biblia", lucide::search()),
+        HeaderAction::new(
+            "translation",
+            tr!("reader-action-translation"),
+            lucide::languages(),
+        ),
+        HeaderAction::new("search", tr!("reader-action-search"), lucide::search()),
     ]
 }
 
@@ -458,7 +463,11 @@ impl Component for BibleViewer {
                 rect()
                     .expanded()
                     .center()
-                    .child(label().color(palette().t2).text("Cargando capítulo…"))
+                    .child(
+                        label()
+                            .color(palette().t2)
+                            .text(tr!("reader-loading-chapter")),
+                    )
                     .into_element()
             },
             |data| {

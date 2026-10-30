@@ -8,6 +8,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_sdk::bookmark::SourceRef;
 use notein_sdk::services::{AnnotationOutcome, AnnotationRequest, Share};
 use notein_sdk::ui::{SelectionExtra, SelectionMenu};
@@ -147,17 +148,13 @@ impl Selection {
     }
 
     fn caption(&self) -> String {
-        if self.count == 1 {
-            "1 versículo".to_owned()
-        } else {
-            format!("{} versículos", self.count)
-        }
+        tr!("reader-selection-verses", "count" => self.count)
     }
 
     fn title(&self) -> String {
         match self.single() {
-            Some((lo, hi)) if lo == hi => format!("Verso {lo}"),
-            Some((lo, hi)) => format!("Versos {lo}–{hi}"),
+            Some((lo, hi)) if lo == hi => tr!("reader-selection-verse", "verse" => lo),
+            Some((lo, hi)) => tr!("reader-selection-verse-range", "first" => lo, "last" => hi),
             None => self.caption(),
         }
     }
@@ -354,7 +351,11 @@ impl Gesture {
             }
             self.end();
         });
-        Some(("Compartir", freya::icons::lucide::share_2(), share))
+        Some((
+            tr!("reader-selection-share").into(),
+            freya::icons::lucide::share_2(),
+            share,
+        ))
     }
 
     /// The note popover for a selection of one run; its colour previews

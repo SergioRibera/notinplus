@@ -1,6 +1,7 @@
 //! The book and chapter picker opened from the bottom bar.
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{ModalController, Sheet, tokens};
@@ -19,7 +20,7 @@ pub(super) fn open_books(reader: &Reader) {
             open_chapters(&reader, &book.book_id, &book.name);
         }));
     }
-    Sheet::titled("Libros").child(grid).open();
+    Sheet::titled(tr!("reader-books-title")).child(grid).open();
 }
 
 /// Chapters of `book_id`; picking one moves the reader there.

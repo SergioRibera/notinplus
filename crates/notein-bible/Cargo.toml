@@ -50,6 +50,7 @@ ui = [
 [dependencies]
 freya-icons = { version = "=0.5.0-rc.13", features = ["lucide"] }
 notein-sdk = { path = "../notein-sdk" }
+notein-i18n = { path = "../notein-i18n" }
 # `istmo-core` is pulled in strictly for its `path::data_dir()`
 # resolver so the plugin writes its DB + cache alongside every other
 # notein data file. The transport / runtime pieces are unused — the
@@ -80,3 +81,6 @@ freya-core = { version = "=0.5.0-rc.13", optional = true }
 freya-engine = { version = "=0.5.0-rc.13", optional = true }
 async-io = { version = "2", optional = true }
 notein-ui-kit = { path = "../notein-ui-kit", optional = true }
+
+[build-dependencies]
+notein-i18n = { path = "../notein-i18n", features = ["build"] }

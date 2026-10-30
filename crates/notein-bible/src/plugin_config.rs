@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, PoisonError, RwLock};
 
+use notein_i18n::tr;
 use notein_sdk::{ConfigEnumOption, ConfigError, ConfigField, ConfigSchema, ConfigValue};
 
 use crate::db::Db;
@@ -83,52 +84,50 @@ pub fn build_schema(db: &Db) -> ConfigSchema {
     let default_bible = options.first().map(|o| o.value.clone()).unwrap_or_default();
     let bible = if options.is_empty() {
         // Nothing installed yet: a text row, the catalog is the next step.
-        ConfigField::string(KEY_DEFAULT_BIBLE, "Biblia por defecto", 64, "")
+        ConfigField::string(KEY_DEFAULT_BIBLE, &tr!("config-default-bible"), 64, "")
     } else {
         ConfigField::choice(
             KEY_DEFAULT_BIBLE,
-            "Biblia por defecto",
+            &tr!("config-default-bible"),
             options,
             &default_bible,
         )
     };
 
     ConfigSchema::new(1)
-        .field(bible.help("Traducción abierta al crear una pestaña nueva."))
+        .field(bible.help(&tr!("config-default-bible-help")))
         .field(
             ConfigField::string(
                 KEY_MANIFEST_URL,
-                "URL del catálogo",
+                &tr!("config-manifest-url"),
                 256,
                 DEFAULT_MANIFEST_URL,
             )
-            .help("Endpoint del manifest biblionlabs / fetch.bible."),
+            .help(&tr!("config-manifest-url-help")),
         )
         .field(
             ConfigField::float(
                 KEY_FONT_SIZE,
-                "Tamaño del texto",
+                &tr!("config-font-size"),
                 14.0..=32.0,
                 1.0,
                 DEFAULT_FONT_SIZE,
             )
-            .help("Tamaño en píxeles del cuerpo del versículo."),
+            .help(&tr!("config-font-size-help")),
         )
         .field(
             ConfigField::float(
                 KEY_LINE_HEIGHT,
-                "Interlineado",
+                &tr!("config-line-height"),
                 1.2..=2.2,
                 0.05,
                 DEFAULT_LINE_HEIGHT,
             )
-            .help("Multiplicador de altura de línea del párrafo."),
+            .help(&tr!("config-line-height-help")),
         )
         .field(
-            ConfigField::boolean(KEY_ENABLE_CROSSREF, "Referencias cruzadas avanzadas", true).help(
-                "Muestra el ícono y la lista con todas las referencias de fetch.bible. \
-                 Las notas TSK (letras a/b/c) se ven siempre.",
-            ),
+            ConfigField::boolean(KEY_ENABLE_CROSSREF, &tr!("config-cross-refs"), true)
+                .help(&tr!("config-cross-refs-help")),
         )
 }
 

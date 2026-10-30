@@ -4,6 +4,7 @@
 
 use freya::icons::lucide;
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{IconButton, tokens};
@@ -60,7 +61,7 @@ where
         .corner_radius(PILL_HEIGHT / 2.0)
         .background(palette().s2)
         .child(
-            IconButton::new(lucide::chevron_left(), "Capítulo anterior")
+            IconButton::new(lucide::chevron_left(), tr!("reader-nav-previous-chapter"))
                 .on_press(move |_| on_prev()),
         )
         .child(
@@ -80,7 +81,7 @@ where
                 ),
         )
         .child(
-            IconButton::new(lucide::chevron_right(), "Capítulo siguiente")
+            IconButton::new(lucide::chevron_right(), tr!("reader-nav-next-chapter"))
                 .on_press(move |_| on_next()),
         );
     rect()
@@ -91,7 +92,11 @@ where
         .horizontal()
         .content(Content::Flex)
         .cross_align(Alignment::Center)
-        .child(history_button(lucide::undo_2(), "Pasaje anterior", on_back))
+        .child(history_button(
+            lucide::undo_2(),
+            tr!("reader-nav-previous-passage"),
+            on_back,
+        ))
         .child(
             rect()
                 .width(Size::flex(1.))
@@ -101,14 +106,14 @@ where
         )
         .child(history_button(
             lucide::redo_2(),
-            "Pasaje siguiente",
+            tr!("reader-nav-next-passage"),
             on_forward,
         ))
 }
 
 /// A history button, or an empty slot of its size so the pill stays
 /// centred.
-fn history_button(icon: Bytes, label: &'static str, handler: Option<NavHandler>) -> Element {
+fn history_button(icon: Bytes, label: String, handler: Option<NavHandler>) -> Element {
     handler.map_or_else(
         || {
             rect()

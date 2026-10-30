@@ -4,6 +4,7 @@
 use std::sync::{Arc, OnceLock};
 
 use freya::prelude::*;
+use notein_i18n::tr;
 use notein_sdk::services::{Host, HostToast, ToastTone as HostTone};
 
 use notein_ui_kit::theme::palette;
@@ -77,14 +78,18 @@ pub(crate) fn announce(host: Host) {
 fn outcome_toast(installer: &'static Installer, outcome: Outcome) -> HostToast {
     match outcome {
         Outcome::Installed(bible_id) => HostToast::new(
-            format!("«{}» lista para leer", bible_name(&bible_id)),
+            tr!("catalog-toast-installed", "name" => bible_name(&bible_id)),
             HostTone::Download,
         ),
         Outcome::Failed { bible_id, reason } => HostToast::new(
-            format!("No se pudo descargar «{}»: {reason}", bible_name(&bible_id)),
+            tr!(
+                "catalog-toast-failed",
+                "name" => bible_name(&bible_id),
+                "reason" => reason,
+            ),
             HostTone::Error,
         )
-        .action("Reintentar", move || installer.enqueue(&bible_id)),
+        .action(tr!("catalog-retry"), move || installer.enqueue(&bible_id)),
     }
 }
 
@@ -92,11 +97,11 @@ fn outcome_toast(installer: &'static Installer, outcome: Outcome) -> HostToast {
 fn step_text(step: Step) -> String {
     let Step { phase, done, total } = step;
     match phase {
-        Phase::Books if total == 0 => "Preparando la descarga…".to_owned(),
-        Phase::Books => format!("Libros: {done} de {total}"),
-        Phase::CrossRefs => format!("Referencias cruzadas: {done} de {total} libros"),
-        Phase::Headings if total == 0 => "Subtítulos de sección…".to_owned(),
-        Phase::Headings => format!("Subtítulos: {done} de {total} libros"),
+        Phase::Books if total == 0 => tr!("catalog-step-preparing"),
+        Phase::Books => tr!("catalog-step-books", "done" => done, "total" => total),
+        Phase::CrossRefs => tr!("catalog-step-cross-refs", "done" => done, "total" => total),
+        Phase::Headings if total == 0 => tr!("catalog-step-headings-preparing"),
+        Phase::Headings => tr!("catalog-step-headings", "done" => done, "total" => total),
     }
 }
 
@@ -106,34 +111,6 @@ fn bible_name(bible_id: &str) -> String {
         .and_then(|kind| kind.db().list_bibles().ok())
         .and_then(|bibles| bibles.into_iter().find(|b| b.id == bible_id))
         .map_or_else(|| bible_id.to_owned(), |b| b.abbrev)
-}
-
-/// The system language as a two-letter code.
-fn system_language() -> String {
-    ["LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"]
-        .iter()
-        .filter_map(|var| std::env::var(var).ok())
-        .find(|v| !v.is_empty() && v != "C" && v != "POSIX")
-        .map_or_else(
-            || "es".to_owned(),
-            |v| v.chars().take(2).collect::<String>().to_lowercase(),
-        )
-}
-
-/// ISO 639-3 code the catalogue uses for a two-letter one.
-fn catalogue_language(two: &str) -> &'static str {
-    match two {
-        "en" => "eng",
-        "pt" => "por",
-        "fr" => "fra",
-        "de" => "deu",
-        "it" => "ita",
-        "ru" => "rus",
-        "zh" => "zho",
-        "ko" => "kor",
-        "ja" => "jpn",
-        _ => "spa",
-    }
 }
 
 fn label(entry: &BibleEntryView) -> String {
@@ -168,9 +145,7 @@ fn use_catalogue() -> State<Option<Result<Arc<CatalogueView>, String>>> {
         }
         let Some(installer) = installer() else {
             let mut state = state;
-            state.set(Some(Err(
-                "La Biblia no está disponible en este dispositivo.".to_owned(),
-            )));
+            state.set(Some(Err(tr!("catalog-unavailable"))));
             return;
         };
         let (tx, rx) = flume::bounded(1);
@@ -200,8 +175,8 @@ fn use_catalogue() -> State<Option<Result<Arc<CatalogueView>, String>>> {
 
 /// Open the catalog of translations.
 pub(crate) fn open() {
-    Sheet::titled("Traducciones de la Biblia")
-        .subtitle("Se descargan una por vez; podés cerrar y siguen.")
+    Sheet::titled(tr!("catalog-title"))
+        .subtitle(tr!("catalog-subtitle"))
         .child(Catalog)
         .push();
 }
@@ -230,11 +205,11 @@ fn matches(entry: &BibleEntryView, needle: &str) -> bool {
             .is_some_and(|l| l.to_lowercase().contains(needle))
 }
 
-/// The languages to offer as chips: the system one first, then the ones
+/// The languages to offer as chips: the interface one first, then the ones
 /// with the most translations, and `chosen` even when it is neither.
 fn language_chips(
     view: &CatalogueView,
-    system: &str,
+    interface: &str,
     chosen: Option<&str>,
 ) -> Vec<(String, String)> {
     let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
@@ -251,8 +226,8 @@ fn language_chips(
         })
         .collect();
     languages.sort_by(|a, b| {
-        (b.0 == system)
-            .cmp(&(a.0 == system))
+        (b.0 == interface)
+            .cmp(&(a.0 == interface))
             .then(b.2.cmp(&a.2))
             .then(a.1.cmp(b.1))
     });
@@ -275,8 +250,8 @@ impl Component for Catalog {
         let _installs = *use_installs().read();
         let catalogue = use_catalogue();
         let query = use_state(String::new);
-        let system = catalogue_language(&system_language());
-        // `None` until the reader picks a chip: then the system language
+        let interface = crate::kind::interface_language();
+        // `None` until the reader picks a chip: then the interface language
         // when the catalogue has it, every language otherwise.
         let mut language = use_state(|| None::<Option<String>>);
         let current = catalogue.read().clone();
@@ -290,7 +265,7 @@ impl Component for Catalog {
         let view = match result {
             Ok(view) => view,
             Err(why) => {
-                return Notice::new(NoticeTone::Danger, "No se pudo cargar el catálogo")
+                return Notice::new(NoticeTone::Danger, tr!("catalog-load-failed"))
                     .detail(why)
                     .into_element();
             }
@@ -300,17 +275,17 @@ impl Component for Catalog {
         let chosen = language.read().clone().unwrap_or_else(|| {
             view.bibles
                 .iter()
-                .any(|b| b.language_code == system)
-                .then(|| system.to_owned())
+                .any(|b| b.language_code == interface)
+                .then(|| interface.to_owned())
         });
         let chips = std::iter::once(
-            Tag::new("Todos")
+            Tag::new(tr!("catalog-filter-all"))
                 .active(chosen.is_none())
                 .on_press(move |_| language.set(Some(None)))
                 .into_element(),
         )
         .chain(
-            language_chips(&view, system, chosen.as_deref())
+            language_chips(&view, interface, chosen.as_deref())
                 .into_iter()
                 .map(|(id, name)| {
                     let on = chosen.as_deref() == Some(id.as_str());
@@ -323,7 +298,7 @@ impl Component for Catalog {
         );
         // A search looks through every language: the chip only narrows
         // the list while browsing.
-        let shown: Vec<&BibleEntryView> = view
+        let mut shown: Vec<&BibleEntryView> = view
             .bibles
             .iter()
             .filter(|b| {
@@ -331,6 +306,9 @@ impl Component for Catalog {
             })
             .filter(|b| matches(b, &needle))
             .collect();
+        // Searching or showing every language, translations in the
+        // interface language still come first.
+        shown.sort_by_key(|b| b.language_code != interface);
         let total = shown.len();
         let rows: Vec<Element> = shown
             .into_iter()
@@ -347,7 +325,7 @@ impl Component for Catalog {
         rect()
             .width(Size::fill())
             .spacing(12.0)
-            .child(SearchField::new(query, "Buscar por nombre o idioma").height(38.0))
+            .child(SearchField::new(query, tr!("catalog-search-placeholder")).height(38.0))
             .child(
                 rect()
                     .width(Size::fill())
@@ -357,12 +335,14 @@ impl Component for Catalog {
                     .children(chips),
             )
             .child(Group::default().children(rows))
-            .maybe_child((total == 0).then(|| {
-                Text::new("No hay traducciones con ese nombre.").role(TextRole::Hint)
-            }))
+            .maybe_child(
+                (total == 0).then(|| Text::new(tr!("catalog-no-matches")).role(TextRole::Hint)),
+            )
             .maybe_child((total > MAX_ROWS).then(|| {
-                Text::new(format!(
-                    "Se muestran {MAX_ROWS} de {total}. Buscá por nombre o idioma para encontrar el resto."
+                Text::new(tr!(
+                    "catalog-truncated",
+                    "shown" => MAX_ROWS,
+                    "total" => total,
                 ))
                 .role(TextRole::Hint)
             }))
@@ -397,10 +377,10 @@ impl Component for Row {
                     .child(ProgressBar::new(fraction.max(0.02)))
                     .into_element()
             }
-            (Some(InstallState::Queued), _) => {
-                Text::new("En cola").role(TextRole::Meta).into_element()
-            }
-            (Some(InstallState::Failed(_)), _) => Button::new("Reintentar")
+            (Some(InstallState::Queued), _) => Text::new(tr!("catalog-queued"))
+                .role(TextRole::Meta)
+                .into_element(),
+            (Some(InstallState::Failed(_)), _) => Button::new(tr!("catalog-retry"))
                 .danger()
                 .small()
                 .on_press(move |_| {
@@ -409,11 +389,11 @@ impl Component for Row {
                     }
                 })
                 .into_element(),
-            (None, true) => Text::new("Instalada")
+            (None, true) => Text::new(tr!("catalog-installed"))
                 .role(TextRole::Meta)
                 .color(p.ok)
                 .into_element(),
-            (None, false) => Button::new("Instalar")
+            (None, false) => Button::new(tr!("catalog-install"))
                 .tonal()
                 .small()
                 .on_press(move |_| {
@@ -450,7 +430,7 @@ impl Component for FirstUse {
         use freya::icons::lucide;
         let _installs = *use_installs().read();
         let catalogue = use_catalogue();
-        let language = catalogue_language(&system_language());
+        let language = crate::kind::interface_language();
         let current = catalogue.read().clone();
         let recommended = current
             .as_ref()
@@ -478,13 +458,13 @@ impl Component for FirstUse {
                 .spacing(6.0)
                 .child(ProgressBar::new(step.fraction().max(0.02)))
                 .child(
-                    Text::new(format!("{} · Se abre al terminar", step_text(*step)))
+                    Text::new(tr!("catalog-first-use-step", "step" => step_text(*step)))
                         .role(TextRole::Meta),
                 )
                 .into_element(),
-            (_, Some(InstallState::Queued)) => {
-                Text::new("En cola…").role(TextRole::Meta).into_element()
-            }
+            (_, Some(InstallState::Queued)) => Text::new(tr!("catalog-first-use-queued"))
+                .role(TextRole::Meta)
+                .into_element(),
             (Some(entry), failed) => {
                 let id = entry.id.clone();
                 rect()
@@ -492,13 +472,13 @@ impl Component for FirstUse {
                     .cross_align(Alignment::Center)
                     .maybe_child(match failed {
                         Some(InstallState::Failed(why)) => Some(
-                            Notice::new(NoticeTone::Danger, "No se pudo descargar")
+                            Notice::new(NoticeTone::Danger, tr!("catalog-download-failed"))
                                 .detail(why.clone()),
                         ),
                         _ => None,
                     })
                     .child(
-                        Button::new(format!("Descargar {} y abrir", label(entry)))
+                        Button::new(tr!("catalog-first-use-download", "name" => label(entry)))
                             .primary()
                             .icon(lucide::download())
                             .on_press(move |_| {
@@ -511,26 +491,26 @@ impl Component for FirstUse {
             }
             (None, _) => match current {
                 None => Skeleton::new(40.0).width(260.0).into_element(),
-                Some(Err(why)) => Notice::new(NoticeTone::Warning, "Sin conexión al catálogo")
+                Some(Err(why)) => Notice::new(NoticeTone::Warning, tr!("catalog-offline"))
                     .detail(why)
                     .into_element(),
                 Some(Ok(_)) => rect().into_element(),
             },
         };
-        rect()
-            .expanded()
-            .center()
-            .padding(tokens::space::XL)
-            .child(
-                EmptyState::new(lucide::book_open(), "Elegí una traducción para empezar")
-                    .body("Se descarga una vez y queda en este dispositivo. Después podés leer sin conexión.")
-                    .action(
-                        rect()
-                            .spacing(12.0)
-                            .cross_align(Alignment::Center)
-                            .child(action)
-                            .child(Button::new("Ver todas las traducciones").ghost().on_press(|_| open())),
-                    ),
-            )
+        rect().expanded().center().padding(tokens::space::XL).child(
+            EmptyState::new(lucide::book_open(), tr!("catalog-first-use-title"))
+                .body(tr!("catalog-first-use-body"))
+                .action(
+                    rect()
+                        .spacing(12.0)
+                        .cross_align(Alignment::Center)
+                        .child(action)
+                        .child(
+                            Button::new(tr!("catalog-first-use-browse"))
+                                .ghost()
+                                .on_press(|_| open()),
+                        ),
+                ),
+        )
     }
 }

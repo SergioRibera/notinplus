@@ -5,6 +5,8 @@
 //! store; [`installer`] downloads translations into it in the
 //! background.
 
+notein_i18n::catalog!();
+
 pub mod anchor;
 pub mod canon;
 pub mod db;
