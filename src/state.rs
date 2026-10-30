@@ -86,8 +86,7 @@ impl LibraryView {
                     log::error!("library open: {err}");
                     if retried {
                         Toasts::get().show(
-                            Toast::new("Todavía no se puede abrir la biblioteca")
-                                .tone(ToastTone::Error),
+                            Toast::new(tr!("state-library-unavailable")).tone(ToastTone::Error),
                         );
                     }
                     let retry = library::changes();

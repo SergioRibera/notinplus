@@ -55,5 +55,5 @@ pub use spinner::Spinner;
 pub use stepper::Stepper;
 pub use switch::Switch;
 pub use tag::Tag;
-pub use text::{Text, TextRole, count};
+pub use text::{Text, TextRole};
 pub use toast::{Toast, ToastHost, ToastId, ToastTone, Toasts};

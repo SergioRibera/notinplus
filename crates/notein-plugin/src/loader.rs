@@ -335,6 +335,8 @@ mod tests {
         fn register(&self, _registrar: &mut Registrar) {}
     }
 
+    // The macro emits `pub` items meant for a cdylib root.
+    #[allow(unreachable_pub)]
     mod exported {
         crate::export_plugin!(super::Blank);
     }

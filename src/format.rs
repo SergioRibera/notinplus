@@ -75,8 +75,6 @@ pub fn size(bytes: u64) -> String {
     }
 }
 
-pub use notein_ui_kit::count;
-
 /// Unix millis now.
 #[must_use]
 pub fn now() -> u64 {
@@ -99,12 +97,6 @@ mod tests {
         assert_eq!(size(512), "512 B");
         assert_eq!(size(13_002_342), "12,4 MB");
         assert_eq!(size(1_288_490_189), "1,2 GB");
-    }
-
-    #[test]
-    fn counts_pick_the_right_noun() {
-        assert_eq!(count(1, "elemento", "elementos"), "1 elemento");
-        assert_eq!(count(12, "elemento", "elementos"), "12 elementos");
     }
 
     #[test]

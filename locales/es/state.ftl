@@ -25,3 +25,4 @@ state-failed-unpin = No se pudo quitar de fijados
 state-failed-reorder-pinned = No se pudieron reordenar los fijados
 state-failed-restore = No se pudo restaurar
 state-failed-empty-trash = No se pudo vaciar la papelera
+state-library-unavailable = Todavía no se puede abrir la biblioteca

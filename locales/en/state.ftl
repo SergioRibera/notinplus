@@ -25,3 +25,4 @@ state-failed-unpin = Couldn't unpin
 state-failed-reorder-pinned = Couldn't reorder the pinned items
 state-failed-restore = Couldn't restore
 state-failed-empty-trash = Couldn't empty the trash
+state-library-unavailable = The library can’t be opened yet
