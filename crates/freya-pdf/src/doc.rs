@@ -388,6 +388,7 @@ impl PdfDocument {
     ///
     /// # Errors
     /// [`PdfError::PageOutOfRange`] / [`PdfError::Backend`].
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::render_page"))]
     pub fn render_page_rgba(
         &self,
         page: usize,

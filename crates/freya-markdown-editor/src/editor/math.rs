@@ -50,6 +50,7 @@ impl MathAtom {
 }
 
 impl Component for MathAtom {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::math"))]
     fn render(&self) -> impl IntoElement {
         let initial = self.tex.clone();
         let draft = use_state(move || initial);

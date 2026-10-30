@@ -221,6 +221,7 @@ impl Recognizer {
     /// that only differ in size (`o`/`O`, `,`/`'`). Empty when the
     /// strokes hold no points.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("handwriting::recognize"))]
     pub fn recognize<S: AsRef<[Point]>>(
         &self,
         strokes: &[S],

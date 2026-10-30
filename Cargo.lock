@@ -2766,6 +2766,7 @@ dependencies = [
  "freya-engine",
  "freya-testing",
  "notein-i18n",
+ "sismo",
 ]
 
 [[package]]
@@ -2804,6 +2805,7 @@ dependencies = [
  "image",
  "log",
  "pdfium-render",
+ "sismo",
 ]
 
 [[package]]
@@ -4275,6 +4277,7 @@ dependencies = [
  "objc2 0.6.5",
  "pollster",
  "tracing",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5382,6 +5385,7 @@ name = "notein-handwriting"
 version = "0.1.0"
 dependencies = [
  "rkyv 0.8.18",
+ "sismo",
 ]
 
 [[package]]

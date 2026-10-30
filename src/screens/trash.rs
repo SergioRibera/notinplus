@@ -111,6 +111,7 @@ pub struct Trash;
 
 impl Component for Trash {
     fn render(&self) -> impl IntoElement {
+        use_hook(|| sismo::marker("screen: trash"));
         let p = palette();
         let insets = *crate::hooks::use_safe_area_insets().read();
         let data = LibraryView::get().data();

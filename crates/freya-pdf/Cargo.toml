@@ -8,7 +8,12 @@ authors     = ["Sergio Ribera <contact@sergioribera.rs>"]
 description = "PDF rendering backend for Freya canvases: async worker pool, LRU tile cache, virtualised page stack. Integrates via freya-canvas-bg."
 repository  = "https://github.com/SergioRibera/notinplus"
 
+[features]
+sismo = ["dep:sismo"]
+
 [dependencies]
+# Spans for the sismo profiler; off unless an app turns it on.
+sismo = { path = "../../../../sismo/crates/sismo", default-features = false, optional = true }
 freya-canvas-bg = { path = "../freya-canvas-bg" }
 freya-engine    = "0.5.0-rc.13"
 # Direct dep for `skia_safe::canvas::SrcRectConstraint`, which

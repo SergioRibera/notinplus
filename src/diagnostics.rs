@@ -16,6 +16,15 @@ use crate::persist::Persisted;
 /// chatter too so streaming does not record itself.
 const FILTER: &str = "info,freya_core=off,freya_winit::renderer=off,torin=off,ragnarok=off,zbus=warn,tracing=warn,zudp=warn,sismo=warn";
 
+/// Workspace crates whose names would otherwise read as Freya (`freya*`)
+/// or a third party, counted as the app in the viewer.
+const APP_CRATES: [&str; 4] = [
+    "notein_*",
+    "freya_markdown_*",
+    "freya_pdf",
+    "freya_canvas_bg",
+];
+
 /// Whether a phone or tablet build: those only stream, never export.
 pub const MOBILE: bool = cfg!(any(
     target_os = "android",
@@ -84,10 +93,13 @@ fn data_dir() -> PathBuf {
 }
 
 fn config() -> sismo::Config {
-    let config = sismo::config!().filter(FILTER).live(sismo::LiveConfig {
-        data_dir: Some(data_dir()),
-        ..sismo::LiveConfig::default()
-    });
+    let config = sismo::config!()
+        .filter(FILTER)
+        .app_crates(APP_CRATES)
+        .live(sismo::LiveConfig {
+            data_dir: Some(data_dir()),
+            ..sismo::LiveConfig::default()
+        });
     if MOBILE {
         config
     } else {

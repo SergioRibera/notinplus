@@ -51,6 +51,11 @@ pub fn open(target: TabTarget, hint: OpenHint) {
 }
 
 fn open_with(target: TabTarget, hint: OpenHint, dedupe: bool) {
+    sismo::marker(match target {
+        TabTarget::Item(_) => "open document",
+        TabTarget::Scratch(_) => "open scratch canvas",
+        TabTarget::Annotation(_) => "open annotation",
+    });
     freya::prelude::spawn_in_window(async move {
         let Ok(handle) = open_library().await else {
             log::warn!("space::open: library unavailable");
@@ -105,7 +110,6 @@ pub fn open_space(workspace: WorkspaceId) {
 ///
 /// # Errors
 /// Library persistence failures, or a hint naming a pane that is gone.
-#[sismo::function]
 pub async fn open_in(lib: &mut Library, target: TabTarget, hint: OpenHint) -> Result<Opened> {
     open_in_with(lib, target, hint, true).await
 }
@@ -126,6 +130,7 @@ async fn open_in_new_space(lib: &mut Library, target: TabTarget) -> Result<Opene
     Ok(Opened { workspace, pane })
 }
 
+#[sismo::function("notinplus::space::open")]
 async fn open_in_with(
     lib: &mut Library,
     target: TabTarget,

@@ -65,6 +65,7 @@ impl Component for TextBlock {
         clippy::too_many_lines,
         reason = "event wiring of a single editable paragraph"
     )]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::text_block"))]
     fn render(&self) -> impl IntoElement {
         let a11y_id = use_a11y();
         let focus = use_focus(a11y_id);
@@ -1031,6 +1032,7 @@ impl Component for TextBlock {
 /// Bring the rope in line with the model (undo, commands, autoformat) and
 /// with the markdown source revealed around the caret. Returns the reveal
 /// now shown.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::sync_rope"))]
 fn sync_rope(
     editable: &mut freya_edit::UseEditable,
     content: &Inline,
@@ -1421,6 +1423,7 @@ fn caret_rect(holder: &ParagraphHolder, text: &str, cursor: usize) -> Option<(f3
     Some((rect.top / scale, rect.bottom / scale))
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("markdown::paint_decor"))]
 fn paint_decor(context: &mut FillRenderContext, holder: &ParagraphHolder, decor: &[Decor]) {
     let RenderTarget::Background { canvas, .. } = &context.target else {
         return;
@@ -1475,6 +1478,7 @@ fn paint_decor(context: &mut FillRenderContext, holder: &ParagraphHolder, decor:
     }
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("markdown::atom"))]
 fn atom_element(
     atom: Option<&Atom>,
     slot: AtomSlot,
@@ -1650,6 +1654,7 @@ struct RemotePaint {
 
 /// Other people's carets: a bar in their color. Their names are
 /// [`caret_tags`].
+#[cfg_attr(feature = "sismo", sismo::function("markdown::paint_carets"))]
 fn paint_carets(context: &mut FillRenderContext, holder: &ParagraphHolder, carets: &[RemotePaint]) {
     let RenderTarget::Background { canvas, .. } = &context.target else {
         return;

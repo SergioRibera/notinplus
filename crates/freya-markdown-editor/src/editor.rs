@@ -403,6 +403,7 @@ struct Sync {
 }
 
 impl Component for MarkdownEditor {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::editor"))]
     fn render(&self) -> impl IntoElement {
         let context_theme = use_try_consume::<EditorTheme>();
         let theme = Rc::new(self.theme.clone().or(context_theme).unwrap_or_default());
@@ -432,6 +433,8 @@ impl Component for MarkdownEditor {
 
         let view = controller.view();
         let document = &view.document;
+        #[cfg(feature = "sismo")]
+        sismo::counter!("markdown.blocks", document.blocks().len());
         let read_only = view.read_only;
         let shared = Shared {
             controller,

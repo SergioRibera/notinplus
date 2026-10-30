@@ -86,6 +86,7 @@ pub struct Home;
 
 impl Component for Home {
     fn render(&self) -> impl IntoElement {
+        use_hook(|| sismo::marker("screen: home"));
         let p = palette();
         let view = LibraryView::get();
         let insets = *crate::hooks::use_safe_area_insets().read();

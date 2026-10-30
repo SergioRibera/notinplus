@@ -59,6 +59,7 @@ pub struct Space {
 
 impl Component for Space {
     fn render(&self) -> impl IntoElement {
+        use_hook(|| sismo::marker("screen: desk"));
         crate::screens::mesa::Mesa { id: self.id }
     }
 }

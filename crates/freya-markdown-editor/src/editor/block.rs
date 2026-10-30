@@ -1185,6 +1185,7 @@ impl BlockView {
 
 impl Component for BlockView {
     #[allow(clippy::too_many_lines, reason = "one match over the block kinds")]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::block"))]
     fn render(&self) -> impl IntoElement {
         let theme = self.shared.theme.clone();
         let fallback = || match &self.block.kind {

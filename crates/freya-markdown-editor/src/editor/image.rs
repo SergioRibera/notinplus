@@ -55,6 +55,7 @@ impl ImageAtom {
 }
 
 impl Component for ImageAtom {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::image"))]
     fn render(&self) -> impl IntoElement {
         // The text block gets the press and opens the menu through the
         // controller, see `image_at` there.
