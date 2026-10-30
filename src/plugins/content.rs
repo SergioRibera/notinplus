@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use notein_i18n::Lang;
 use notein_plugin::doc::{DocId, DocMeta};
 use notein_plugin::face::RawStore;
 
@@ -21,7 +22,11 @@ pub struct Glance {
 /// Characters of a text preview on a card.
 const PREVIEW_CHARS: usize = 180;
 
-static GLANCES: std::sync::LazyLock<Mutex<HashMap<ItemId, (u64, Glance)>>> =
+/// A glance and what it was computed for: the item revision and the
+/// interface language.
+type CachedGlance = (u64, Lang, Glance);
+
+static GLANCES: std::sync::LazyLock<Mutex<HashMap<ItemId, CachedGlance>>> =
     std::sync::LazyLock::new(Mutex::default);
 
 impl Glance {
@@ -47,17 +52,20 @@ impl Glance {
             .remove(&item);
     }
 
-    /// The glance of `item`, recomputed only when it changed.
+    /// The glance of `item`, recomputed when it or the interface
+    /// language changed.
     #[must_use]
     pub fn of(item: &Item) -> Self {
         let mut cache = GLANCES.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some((at, glance)) = cache.get(&item.id)
+        let lang = Lang::current();
+        if let Some((at, at_lang, glance)) = cache.get(&item.id)
             && *at == item.updated_at
+            && *at_lang == lang
         {
             return glance.clone();
         }
         let glance = Self::compute(item);
-        cache.insert(item.id, (item.updated_at, glance.clone()));
+        cache.insert(item.id, (item.updated_at, lang, glance.clone()));
         glance
     }
 }
