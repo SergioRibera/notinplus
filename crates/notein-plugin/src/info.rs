@@ -23,7 +23,7 @@ impl PluginInfo {
             id: id.into(),
             name: name.into(),
             version: Cow::Borrowed(env!("CARGO_PKG_VERSION")),
-            author: Cow::Borrowed("Notein"),
+            author: Cow::Borrowed("NotIn Plus"),
             description: Cow::Borrowed(""),
         }
     }

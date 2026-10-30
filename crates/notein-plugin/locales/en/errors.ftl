@@ -2,10 +2,10 @@
 ## by the app and every plugin.
 
 io-not-found = The file or folder couldn't be found. It may have been moved or deleted.
-io-permission-denied = Notein doesn't have permission to access this file or folder.
+io-permission-denied = NotIn Plus doesn't have permission to access this file or folder.
 io-storage-full = There isn't enough space on this device. Free up some space and try again.
 io-file-too-large = The file is too large.
-io-read-only = This location is read-only, so Notein can't save there.
+io-read-only = This location is read-only, so NotIn Plus can't save there.
 io-already-exists = Something with that name already exists.
 io-timed-out = It took too long to respond. Try again.
 io-connection = The connection was lost. Check your network and try again.

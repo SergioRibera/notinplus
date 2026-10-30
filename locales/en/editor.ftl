@@ -1,4 +1,4 @@
-## Notein's additions to the editor (src/editor.rs, src/editor/).
+## NotIn Plus's additions to the editor (src/editor.rs, src/editor/).
 
 editor-suggest-references = References
 # $source: where the quote comes from, e.g. "Genesis 1:3 · Bible".

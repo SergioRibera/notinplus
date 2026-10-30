@@ -1,4 +1,4 @@
-## Agregados de Notein al editor (src/editor.rs, src/editor/).
+## Agregados de NotIn Plus al editor (src/editor.rs, src/editor/).
 
 editor-suggest-references = Referencias
 editor-quote-live = { $source } · bloque vivo

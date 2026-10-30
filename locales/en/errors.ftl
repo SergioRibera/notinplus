@@ -3,9 +3,9 @@
 # A short headline ("Couldn't save the desk") followed by a sentence explaining why.
 errors-headline-detail = { $headline }. { $detail }
 
-errors-library-runtime = Notein couldn't reach its storage. Close the app and open it again.
+errors-library-runtime = NotIn Plus couldn't reach its storage. Close the app and open it again.
 errors-library-store = This device couldn't read or save the library. Try again.
-errors-library-damaged = The data saved on this device can't be read. If you copied it from another version of Notein, delete the data folder and open the app again.
+errors-library-damaged = The data saved on this device can't be read. If you copied it from another version of NotIn Plus, delete the data folder and open the app again.
 errors-library-missing-folder = This folder no longer exists.
 errors-library-missing-item = This document no longer exists.
 errors-library-missing-tag = This tag no longer exists.

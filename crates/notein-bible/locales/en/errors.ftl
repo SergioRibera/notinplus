@@ -7,6 +7,6 @@ errors-db-missing-bible = The translation { $id } isn't installed.
 
 # $reason is a sentence explaining why.
 errors-install-disk = Couldn't save the translation on this device. { $reason }
-errors-install-bad-data = The server sent data Notein couldn't read. Try again later.
+errors-install-bad-data = The server sent data NotIn Plus couldn't read. Try again later.
 errors-install-could-not-start = The download couldn't start. Try again.
 errors-install-unknown = The download didn't finish. Try again.

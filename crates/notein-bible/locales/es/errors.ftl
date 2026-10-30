@@ -7,6 +7,6 @@ errors-db-missing-bible = La traducción { $id } no está instalada.
 
 # $reason is a sentence explaining why.
 errors-install-disk = No se pudo guardar la traducción en este dispositivo. { $reason }
-errors-install-bad-data = El servidor envió datos que Notein no pudo leer. Inténtalo más tarde.
+errors-install-bad-data = El servidor envió datos que NotIn Plus no pudo leer. Inténtalo más tarde.
 errors-install-could-not-start = La descarga no pudo iniciar. Inténtalo de nuevo.
 errors-install-unknown = La descarga no terminó. Inténtalo de nuevo.
