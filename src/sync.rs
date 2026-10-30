@@ -327,7 +327,12 @@ pub fn use_presence() {
         let focused = *focused.read();
         if !focused {
             crate::route::save_open_documents();
-            std::thread::spawn(crate::deferred::flush);
+            if let Err(err) = std::thread::Builder::new()
+                .name("notein-flush".into())
+                .spawn(crate::deferred::flush)
+            {
+                log::warn!("flush thread: {err}");
+            }
         }
         let _ = changes.send(focused);
     });
