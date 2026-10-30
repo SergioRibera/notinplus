@@ -10734,8 +10734,6 @@ dependencies = [
 [[package]]
 name = "zudp"
 version = "0.3.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6f7d83b69f54fd227a3b5b529f394f8b3727e746a9e395cbbbfc4c5e16f2397"
 dependencies = [
  "bytes",
  "dashmap",
@@ -10745,6 +10743,7 @@ dependencies = [
  "socket2 0.5.10",
  "tokio",
  "tracing",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

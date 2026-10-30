@@ -40,11 +40,6 @@ const ASSEMBLY_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_PPS: f64 = 50_000.0;
 /// Frames kept per stream for retransmission, enough for a few parts.
 const SENT_BUFFER: usize = 4096;
-/// How often the scan starts over. zudp 0.3.8's `ScanStream` reports
-/// each address once for its whole life, so a device that left and came
-/// back on the same address is only heard again by a fresh scan. Drop
-/// this once zudp reports a peer again after it was lost.
-const RESCAN: Duration = Duration::from_secs(30);
 
 enum Cmd {
     Connect {
@@ -954,9 +949,6 @@ async fn run(
     };
     let mut advertise = start_advertising(&node);
     let mut scan = node.open_scan().await;
-    let mut rescan = tokio::time::interval(RESCAN);
-    rescan.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    rescan.tick().await;
 
     let mut ticker = tokio::time::interval(node.config.ping_interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -979,15 +971,14 @@ async fn run(
                 }
                 if pause {
                     advertise = None;
-                    // A scan left running while away would swallow every
-                    // beacon it hears (see RESCAN).
+                    // Nothing is heard while away; the scan restarts on resume
+                    // and reports everyone still there as found.
                     scan = None;
                 } else if resume {
                     if advertise.is_none() {
                         advertise = start_advertising(&node);
                     }
                     scan = node.open_scan().await;
-                    rescan.reset();
                 }
             }
             internal = internal_rx.recv() => {
@@ -997,11 +988,6 @@ async fn run(
                 }
             }
             _ = ticker.tick() => node.on_tick().await,
-            _ = rescan.tick() => {
-                if !node.paused {
-                    scan = node.open_scan().await;
-                }
-            }
             found = next_peer(&mut scan) => {
                 let Some(beacon) = decode_beacon(&found.meta) else { continue };
                 if beacon.is_valid() && beacon.device != node.beacon.device && !node.paused {
@@ -1018,8 +1004,12 @@ async fn run(
 async fn next_peer(scan: &mut Option<zudp::ScanStream<Vec<u8>>>) -> zudp::DiscoveredPeer<Vec<u8>> {
     match scan {
         Some(stream) => loop {
-            match stream.next().await {
-                Ok(peer) => return peer,
+            match stream.next_event().await {
+                // A restarted device comes back as found again or updated.
+                Ok(zudp::DiscoveryEvent::Found(peer) | zudp::DiscoveryEvent::Updated(peer)) => {
+                    return peer;
+                }
+                Ok(_) => {}
                 Err(err) => {
                     tracing::warn!(target: "notein-sync", "scan error: {err}");
                     tokio::time::sleep(Duration::from_secs(1)).await;
