@@ -262,6 +262,21 @@ struct Link {
     last_seen: Instant,
     /// The socket behind an outbound link, closed with it.
     conn: Option<ConnTask>,
+    /// Which end opened the channel.
+    dialer: DeviceId,
+    since: Instant,
+}
+
+impl Link {
+    /// Whether this link stays when the same device says hello on
+    /// another channel that `dialer` opened. When both ends dial at once
+    /// each sees two channels; both keep the one the smaller id opened,
+    /// or each would send on a channel the other has dropped. Past the
+    /// race a new channel always wins: the device only dials again once
+    /// it has lost this one.
+    fn outranks(&self, dialer: DeviceId, race: Duration) -> bool {
+        self.dialer < dialer && self.since.elapsed() < race
+    }
 }
 
 /// One writer task per stream of a link, so the node never waits on a
@@ -427,8 +442,24 @@ impl Node {
             Self::send_frame(&sender, addr, &Frame::Bye, CONTROL_STREAM).await;
             return;
         }
+        let dialer = if conn.is_some() {
+            self.beacon.device
+        } else {
+            beacon.device
+        };
+        if self
+            .links
+            .get(&beacon.device)
+            .is_some_and(|current| current.outranks(dialer, self.config.connect_timeout))
+        {
+            return;
+        }
         if let Some(previous) = self.links.remove(&beacon.device) {
             self.by_addr.remove(&previous.addr);
+            // Parts of the old channel can never complete, and a restarted
+            // sender may reuse their ids.
+            self.assemblies
+                .retain(|(from, _), _| *from != beacon.device);
         }
         let info = PeerInfo::from_beacon(&beacon, addr);
         self.links.insert(
@@ -439,6 +470,8 @@ impl Node {
                 sender: sender.clone(),
                 last_seen: Instant::now(),
                 conn,
+                dialer,
+                since: Instant::now(),
             },
         );
         self.by_addr.insert(addr, beacon.device);
@@ -874,7 +907,9 @@ async fn run(
         events,
         config,
         paused: false,
-        next_part: 0,
+        // Random, so a restart does not reuse the ids of parts still
+        // being assembled on the other side.
+        next_part: rand::random(),
         assemblies: HashMap::new(),
     };
     spawn_listener(socket, internal_tx.clone());
@@ -1197,6 +1232,35 @@ mod tests {
         a.resume().unwrap();
         b.connect(loopback(&a), *key_a.public()).unwrap();
         wait_for(&b, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
+    }
+
+    #[test]
+    fn dialing_each_other_at_once_settles_on_one_channel() {
+        // The race only bites in some orderings: run it a few times.
+        for _ in 0..4 {
+            let key_a = DeviceKey::generate();
+            let key_b = DeviceKey::generate();
+            let a = LanNode::start(quiet(key_a.clone(), "A")).unwrap();
+            let b = LanNode::start(quiet(key_b.clone(), "B")).unwrap();
+            a.connect(loopback(&b), *key_b.public()).unwrap();
+            b.connect(loopback(&a), *key_a.public()).unwrap();
+            wait_for(&a, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
+            wait_for(&b, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
+            // Let the second channel arrive and be kept or dropped.
+            std::thread::sleep(Duration::from_millis(500));
+            a.send(key_b.id(), Lane::Data, b"a->b".to_vec()).unwrap();
+            b.send(key_a.id(), Lane::Data, b"b->a".to_vec()).unwrap();
+            let got_b = wait_for(&b, |e| match e {
+                NetEvent::Message { bytes, .. } => Some(bytes),
+                _ => None,
+            });
+            let got_a = wait_for(&a, |e| match e {
+                NetEvent::Message { bytes, .. } => Some(bytes),
+                _ => None,
+            });
+            assert_eq!(got_b, b"a->b");
+            assert_eq!(got_a, b"b->a");
+        }
     }
 
     #[test]
