@@ -179,6 +179,26 @@ pub(super) fn left(item: ItemId, from: DeviceId) {
     }
 }
 
+/// `from` left the network: it is in no document any more. Returns the
+/// documents it was in.
+pub(super) fn gone(from: DeviceId) -> Vec<ItemId> {
+    let items: Vec<ItemId> = peers()
+        .as_mut()
+        .map(|all| {
+            all.iter_mut()
+                .filter_map(|(item, here)| here.remove(&from).map(|_| *item))
+                .collect()
+        })
+        .unwrap_or_default();
+    for item in &items {
+        notify(*item);
+    }
+    if following() == Some(from) {
+        follow(None);
+    }
+    items
+}
+
 /// Everyone else with `item` open.
 #[must_use]
 pub fn here(item: ItemId) -> Vec<Peer> {
@@ -386,5 +406,20 @@ mod tests {
         left(bible, beto);
         sweep();
         assert_eq!(following(), None);
+    }
+
+    #[test]
+    fn a_peer_off_the_network_leaves_every_document_at_once() {
+        let (notes, board) = (ItemId([7; 16]), ItemId([8; 16]));
+        let caro = DeviceId([3; 32]);
+        seen(notes, caro, "Caro", Some(vec![1]));
+        seen(board, caro, "Caro", Some(vec![2]));
+        let changes = watch(board);
+        let mut was_in = gone(caro);
+        was_in.sort_by_key(|item| item.0);
+        assert_eq!(was_in, vec![notes, board]);
+        assert!(here(notes).is_empty() && here(board).is_empty());
+        assert!(changes.try_recv().is_ok());
+        assert!(gone(caro).is_empty());
     }
 }

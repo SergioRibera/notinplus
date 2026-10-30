@@ -689,7 +689,17 @@ impl Service {
             DriverEvent::JoinFailed { reason, .. } => {
                 self.last_join_failure = Some(reason);
             }
-            DriverEvent::PeerOnline { .. } | DriverEvent::RelayOnline(_) => {}
+            DriverEvent::PeerOnline {
+                device,
+                online: false,
+            } => {
+                // Gone from the network is gone from every document at
+                // once, not only after its presence goes quiet.
+                for item in presence::gone(device) {
+                    on_live(item, device, String::new(), LiveMessage::Left);
+                }
+            }
+            DriverEvent::PeerOnline { online: true, .. } | DriverEvent::RelayOnline(_) => {}
             DriverEvent::Live {
                 from,
                 name,
@@ -709,17 +719,7 @@ impl Service {
                         presence::seen(item, from, &name, None);
                     }
                 }
-                for (_, board) in crate::active_boards::for_item(item) {
-                    crate::canvas::lock(&board).apply_live(from, &name, message.clone());
-                }
-                live::dispatch(
-                    item,
-                    &LiveEvent {
-                        from,
-                        name,
-                        message,
-                    },
-                );
+                on_live(item, from, name, message);
             }
         }
     }
@@ -943,6 +943,21 @@ impl Service {
             error: self.error.clone(),
         }
     }
+}
+
+/// Hand a live message about `item` to its open boards and listeners.
+fn on_live(item: ItemId, from: DeviceId, name: String, message: LiveMessage) {
+    for (_, board) in crate::active_boards::for_item(item) {
+        crate::canvas::lock(&board).apply_live(from, &name, message.clone());
+    }
+    live::dispatch(
+        item,
+        &LiveEvent {
+            from,
+            name,
+            message,
+        },
+    );
 }
 
 fn load_shares(path: &Path) -> Vec<Share> {
