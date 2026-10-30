@@ -203,14 +203,23 @@ impl LanSender {
 
 /// Something that happened on a socket task.
 enum Internal {
-    /// An outbound channel finished its handshake.
+    /// `host:port` of a [`Cmd::ConnectHost`] resolved to `addr`.
+    Resolved { addr: SocketAddr, public: [u8; 32] },
+    /// Outbound channel `dial` finished its handshake.
     Outbound {
         addr: SocketAddr,
-        public: [u8; 32],
+        dial: u64,
         sender: ZudpSender,
     },
-    /// An outbound connection attempt failed.
-    OutboundFailed { addr: SocketAddr, reason: String },
+    /// An outbound connection attempt failed; `dial` is `None` when it
+    /// never got as far as dialing.
+    OutboundFailed {
+        addr: SocketAddr,
+        dial: Option<u64>,
+        reason: String,
+    },
+    /// The socket of outbound channel `dial` stopped.
+    OutboundClosed { addr: SocketAddr, dial: u64 },
     /// A frame arrived; `key` is the authenticated remote key when
     /// the socket can tell.
     Frame {
@@ -222,11 +231,37 @@ enum Internal {
     ListenStopped(String),
 }
 
+/// The task that owns an outbound channel's socket. Dropping it aborts
+/// the task, which drops the socket: zudp never tells a channel its
+/// peer is gone, so nothing else would ever close it.
+struct ConnTask {
+    dial: u64,
+    abort: tokio::task::AbortHandle,
+}
+
+impl Drop for ConnTask {
+    fn drop(&mut self) {
+        self.abort.abort();
+    }
+}
+
+/// An outbound channel that is not a link yet.
+struct Dial {
+    public: [u8; 32],
+    /// Set once the handshake is done and our hello went out.
+    sender: Option<ZudpSender>,
+    /// When the dial started, then when the hello went out.
+    since: Instant,
+    task: ConnTask,
+}
+
 struct Link {
     addr: SocketAddr,
     sender: ZudpSender,
     lanes: Lanes,
     last_seen: Instant,
+    /// The socket behind an outbound link, closed with it.
+    conn: Option<ConnTask>,
 }
 
 /// One writer task per stream of a link, so the node never waits on a
@@ -280,9 +315,9 @@ struct Node {
     beacon: Beacon,
     links: HashMap<DeviceId, Link>,
     by_addr: HashMap<SocketAddr, DeviceId>,
-    /// Outbound channels that completed the handshake but have not
-    /// heard a hello back yet.
-    outbound: HashMap<SocketAddr, ([u8; 32], ZudpSender)>,
+    /// Outbound channels dialing or waiting for the hello back.
+    dials: HashMap<SocketAddr, Dial>,
+    next_dial: u64,
     listen_sender: ZudpSender,
     events: flume::Sender<NetEvent>,
     /// Away: no channels, no hellos answered, nothing discovered.
@@ -313,6 +348,13 @@ impl Node {
             return;
         }
         let Some(device) = self.by_addr.get(&addr).copied() else {
+            // A device away from the network turns our dial down.
+            if frame == Frame::Bye && self.dials.remove(&addr).is_some() {
+                self.emit(NetEvent::ConnectFailed {
+                    addr,
+                    reason: "refused".into(),
+                });
+            }
             return;
         };
         if let Some(link) = self.links.get_mut(&device) {
@@ -349,20 +391,40 @@ impl Node {
             self.emit(NetEvent::Renamed(PeerInfo::from_beacon(&beacon, addr)));
             return;
         }
-        let (sender, reply) = if let Some((pinned, sender)) = self.outbound.remove(&addr) {
-            if pinned != beacon.public {
-                tracing::warn!(target: "notein-sync", peer = %addr, "hello key differs from pinned key");
+        let (sender, conn, reply) = match self.dials.remove(&addr) {
+            Some(Dial {
+                public,
+                sender: Some(sender),
+                task,
+                ..
+            }) => {
+                if public != beacon.public {
+                    tracing::warn!(target: "notein-sync", peer = %addr, "hello key differs from pinned key");
+                    return;
+                }
+                (sender, Some(task), false)
+            }
+            Some(dial) => {
+                // The handshake is reported before any frame of the same
+                // channel, so this is a stray frame of an older dial.
+                self.dials.insert(addr, dial);
                 return;
             }
-            (sender, false)
-        } else {
-            if key != Some(beacon.public) {
-                tracing::warn!(target: "notein-sync", peer = %addr, "hello key differs from channel key");
-                return;
+            None => {
+                if key != Some(beacon.public) {
+                    tracing::warn!(target: "notein-sync", peer = %addr, "hello key differs from channel key");
+                    return;
+                }
+                (self.listen_sender.clone(), None, true)
             }
-            (self.listen_sender.clone(), true)
         };
-        if beacon.device == self.beacon.device || self.paused {
+        if beacon.device == self.beacon.device {
+            return;
+        }
+        if self.paused {
+            // Say so instead of staying silent, so the dialer gives up
+            // now rather than waiting on a hello that never comes.
+            Self::send_frame(&sender, addr, &Frame::Bye, CONTROL_STREAM).await;
             return;
         }
         if let Some(previous) = self.links.remove(&beacon.device) {
@@ -376,6 +438,7 @@ impl Node {
                 lanes: Lanes::spawn(&sender, addr),
                 sender: sender.clone(),
                 last_seen: Instant::now(),
+                conn,
             },
         );
         self.by_addr.insert(addr, beacon.device);
@@ -465,13 +528,47 @@ impl Node {
         }
     }
 
+    /// Dial `addr` unless a channel to it is open or on its way.
+    fn dial(
+        &mut self,
+        addr: SocketAddr,
+        public: [u8; 32],
+        internal: &tmpsc::UnboundedSender<Internal>,
+    ) {
+        if self.paused || self.by_addr.contains_key(&addr) || self.dials.contains_key(&addr) {
+            return;
+        }
+        let dial = self.next_dial;
+        self.next_dial = self.next_dial.wrapping_add(1);
+        let outbound = Outbound {
+            keypair: self.config.key.keypair().clone(),
+            addr,
+            public,
+            dial,
+            timeout: self.config.connect_timeout,
+        };
+        let abort = tokio::spawn(outbound.run(internal.clone())).abort_handle();
+        self.dials.insert(
+            addr,
+            Dial {
+                public,
+                sender: None,
+                since: Instant::now(),
+                task: ConnTask { dial, abort },
+            },
+        );
+    }
+
+    /// Whether `dial` is still the attempt in flight towards `addr`.
+    fn is_current(&self, addr: SocketAddr, dial: u64) -> bool {
+        self.dials.get(&addr).is_some_and(|d| d.task.dial == dial)
+    }
+
     async fn on_cmd(&mut self, cmd: Cmd, internal: &tmpsc::UnboundedSender<Internal>) -> bool {
         match cmd {
             Cmd::ConnectHost { .. } if self.paused => {}
             Cmd::ConnectHost { host, public } => {
                 let internal = internal.clone();
-                let keypair = self.config.key.keypair().clone();
-                let timeout = self.config.connect_timeout;
                 tokio::spawn(async move {
                     let resolved = match tokio::net::lookup_host(host.as_str()).await {
                         Ok(mut addrs) => addrs.next(),
@@ -480,32 +577,18 @@ impl Node {
                             None
                         }
                     };
-                    match resolved {
-                        Some(addr) => run_outbound(keypair, addr, public, timeout, internal).await,
-                        None => {
-                            let _ = internal.send(Internal::OutboundFailed {
-                                addr: SocketAddr::from(([0, 0, 0, 0], 0)),
-                                reason: format!("could not resolve {host}"),
-                            });
-                        }
-                    }
+                    let event = resolved.map_or_else(
+                        || Internal::OutboundFailed {
+                            addr: SocketAddr::from(([0, 0, 0, 0], 0)),
+                            dial: None,
+                            reason: format!("could not resolve {host}"),
+                        },
+                        |addr| Internal::Resolved { addr, public },
+                    );
+                    let _ = internal.send(event);
                 });
             }
-            Cmd::Connect { addr, public } => {
-                if self.paused
-                    || self.by_addr.contains_key(&addr)
-                    || self.outbound.contains_key(&addr)
-                {
-                    return true;
-                }
-                spawn_outbound(
-                    self.config.key.keypair().clone(),
-                    addr,
-                    public,
-                    self.config.connect_timeout,
-                    internal.clone(),
-                );
-            }
+            Cmd::Connect { addr, public } => self.dial(addr, public, internal),
             Cmd::Send {
                 device,
                 lane,
@@ -524,10 +607,13 @@ impl Node {
                 for device in devices {
                     self.drop_link(device);
                 }
-                self.outbound.clear();
+                self.dials.clear();
                 self.paused = true;
             }
-            Cmd::Resume => self.paused = false,
+            Cmd::Resume => {
+                self.dials.clear();
+                self.paused = false;
+            }
             Cmd::Disconnect(device) => {
                 if let Some(link) = self.links.get(&device) {
                     Self::send_frame(&link.sender, link.addr, &Frame::Bye, CONTROL_STREAM).await;
@@ -539,13 +625,17 @@ impl Node {
         true
     }
 
-    async fn on_internal(&mut self, internal: Internal) -> bool {
-        match internal {
-            Internal::Outbound {
-                addr,
-                public,
-                sender,
-            } => {
+    async fn on_internal(
+        &mut self,
+        event: Internal,
+        internal: &tmpsc::UnboundedSender<Internal>,
+    ) -> bool {
+        match event {
+            Internal::Resolved { addr, public } => self.dial(addr, public, internal),
+            Internal::Outbound { addr, dial, sender } => {
+                if !self.is_current(addr, dial) {
+                    return true;
+                }
                 Self::send_frame(
                     &sender,
                     addr,
@@ -553,10 +643,36 @@ impl Node {
                     CONTROL_STREAM,
                 )
                 .await;
-                self.outbound.insert(addr, (public, sender));
+                if let Some(pending) = self.dials.get_mut(&addr) {
+                    pending.sender = Some(sender);
+                    pending.since = Instant::now();
+                }
             }
-            Internal::OutboundFailed { addr, reason } => {
+            Internal::OutboundFailed { addr, dial, reason } => {
+                if let Some(dial) = dial {
+                    if !self.is_current(addr, dial) {
+                        return true;
+                    }
+                    self.dials.remove(&addr);
+                }
                 self.emit(NetEvent::ConnectFailed { addr, reason });
+            }
+            Internal::OutboundClosed { addr, dial } => {
+                if self.is_current(addr, dial) {
+                    self.dials.remove(&addr);
+                    self.emit(NetEvent::ConnectFailed {
+                        addr,
+                        reason: "channel closed".into(),
+                    });
+                }
+                let linked = self
+                    .links
+                    .iter()
+                    .find(|(_, link)| link.conn.as_ref().is_some_and(|c| c.dial == dial))
+                    .map(|(device, _)| *device);
+                if let Some(device) = linked {
+                    self.drop_link(device);
+                }
             }
             Internal::Frame { addr, bytes, key } => self.on_frame(addr, bytes, key).await,
             Internal::ListenStopped(reason) => {
@@ -571,6 +687,24 @@ impl Node {
         let now = Instant::now();
         self.assemblies
             .retain(|_, assembly| now.duration_since(assembly.started) < ASSEMBLY_TIMEOUT);
+        // A handshake that went through without a hello back: the far
+        // side never saw our hello or chose to stay quiet.
+        let unanswered: Vec<SocketAddr> = self
+            .dials
+            .iter()
+            .filter(|(_, dial)| {
+                dial.sender.is_some()
+                    && now.duration_since(dial.since) > self.config.connect_timeout
+            })
+            .map(|(addr, _)| *addr)
+            .collect();
+        for addr in unanswered {
+            self.dials.remove(&addr);
+            self.emit(NetEvent::ConnectFailed {
+                addr,
+                reason: "no hello back".into(),
+            });
+        }
         let silent: Vec<DeviceId> = self
             .links
             .iter()
@@ -592,24 +726,24 @@ impl Node {
     }
 }
 
-fn spawn_outbound(
+/// One outbound channel: handshake, then forward every frame.
+struct Outbound {
     keypair: zudp::Keypair,
     addr: SocketAddr,
     public: [u8; 32],
+    dial: u64,
     timeout: Duration,
-    internal: tmpsc::UnboundedSender<Internal>,
-) {
-    tokio::spawn(run_outbound(keypair, addr, public, timeout, internal));
 }
 
-async fn run_outbound(
-    keypair: zudp::Keypair,
-    addr: SocketAddr,
-    public: [u8; 32],
-    timeout: Duration,
-    internal: tmpsc::UnboundedSender<Internal>,
-) {
-    {
+impl Outbound {
+    async fn run(self, internal: tmpsc::UnboundedSender<Internal>) {
+        let Self {
+            keypair,
+            addr,
+            public,
+            dial,
+            timeout,
+        } = self;
         let conn = zudp::Zudp::default()
             .port(0)
             .rate_limit(MAX_PPS)
@@ -622,6 +756,7 @@ async fn run_outbound(
             Ok(Err(err)) => {
                 let _ = internal.send(Internal::OutboundFailed {
                     addr,
+                    dial: Some(dial),
                     reason: err.to_string(),
                 });
                 return;
@@ -629,6 +764,7 @@ async fn run_outbound(
             Err(_) => {
                 let _ = internal.send(Internal::OutboundFailed {
                     addr,
+                    dial: Some(dial),
                     reason: "handshake timed out".into(),
                 });
                 return;
@@ -637,7 +773,7 @@ async fn run_outbound(
         if internal
             .send(Internal::Outbound {
                 addr,
-                public,
+                dial,
                 sender: conn.sender(),
             })
             .is_err()
@@ -656,6 +792,7 @@ async fn run_outbound(
                 return;
             }
         }
+        let _ = internal.send(Internal::OutboundClosed { addr, dial });
     }
 }
 
@@ -731,7 +868,8 @@ async fn run(
         beacon: beacon.clone(),
         links: HashMap::new(),
         by_addr: HashMap::new(),
-        outbound: HashMap::new(),
+        dials: HashMap::new(),
+        next_dial: 0,
         listen_sender: socket.sender(),
         events,
         config,
@@ -800,7 +938,7 @@ async fn run(
             }
             internal = internal_rx.recv() => {
                 let Some(internal) = internal else { break };
-                if !node.on_internal(internal).await {
+                if !node.on_internal(internal, &internal_tx).await {
                     break;
                 }
             }
@@ -1033,6 +1171,31 @@ mod tests {
         }
         a.resume().unwrap();
         a.connect(loopback(&b), *key_b.public()).unwrap();
+        wait_for(&b, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
+    }
+
+    #[test]
+    fn a_paused_node_turns_dials_away_and_takes_them_after_resume() {
+        let key_a = DeviceKey::generate();
+        let key_b = DeviceKey::generate();
+        let a = LanNode::start(quiet(key_a.clone(), "A")).unwrap();
+        let b = LanNode::start(quiet(key_b, "B")).unwrap();
+        a.pause().unwrap();
+        b.connect(loopback(&a), *key_a.public()).unwrap();
+        // Told off right away, not after a timeout.
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let refused = loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match b.events().recv_timeout(left) {
+                Ok(NetEvent::ConnectFailed { .. }) => break true,
+                Ok(_) => {}
+                Err(_) => break false,
+            }
+        };
+        assert!(refused, "a paused node must refuse the dial");
+        // The refused dial no longer blocks the next one.
+        a.resume().unwrap();
+        b.connect(loopback(&a), *key_a.public()).unwrap();
         wait_for(&b, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
     }
 
