@@ -24,12 +24,15 @@ pub struct PageImage {
 ///
 /// # Errors
 /// [`PdfError`] when `PDFium` is unavailable or rejects an image.
+#[cfg_attr(feature = "sismo", sismo::function("pdf::export_image_pdf"))]
 pub fn image_pdf(pages: &[PageImage]) -> Result<Vec<u8>, PdfError> {
     let pdfium = pdfium()?;
     let mut doc = pdfium
         .create_new_pdf()
         .map_err(|e| PdfError::Backend(e.to_string()))?;
     for page in pages {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("pdf::export_page");
         let Some(buffer) =
             image::RgbaImage::from_raw(page.width_px, page.height_px, page.rgba.clone())
         else {
@@ -57,6 +60,10 @@ pub fn image_pdf(pages: &[PageImage]) -> Result<Vec<u8>, PdfError> {
             )
             .map_err(|e| PdfError::Backend(e.to_string()))?;
     }
+    #[cfg(feature = "sismo")]
+    sismo::counter!("pdf.export_pages", pages.len());
+    #[cfg(feature = "sismo")]
+    sismo::scope!("pdf::export_save");
     doc.save_to_bytes()
         .map_err(|e| PdfError::Backend(e.to_string()))
 }

@@ -56,6 +56,7 @@ impl RenderPool {
     /// mutex serialises heavy operations, so extra threads mostly buy
     /// concurrency for page-level bookkeeping.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::pool_new"))]
     pub fn new(doc: &PdfDocument, cache: &Arc<Cache>, worker_count: usize) -> Arc<Self> {
         let worker_count = worker_count.max(1);
         let (tx, rx) = flume::unbounded::<RenderRequest>();
@@ -109,8 +110,12 @@ impl RenderPool {
                 return;
             }
         }
+        #[cfg(feature = "sismo")]
+        sismo::scope!("pdf::pool_enqueue");
         let cancel = CancelToken::new();
         pending.insert(key, cancel.clone());
+        #[cfg(feature = "sismo")]
+        sismo::counter!("pdf.queued_jobs", pending.len());
         drop(pending);
         let tx = lock(&self.tx);
         if let Some(tx) = tx.as_ref() {
@@ -120,13 +125,23 @@ impl RenderPool {
 
     /// Mark every pending request whose page is outside `keep_pages`
     /// as cancelled. Workers pop those and skip the pdfium call.
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::pool_cancel_outside"))]
     pub fn cancel_outside(&self, keep_pages: &HashSet<PageId>) {
         let pending = lock(&self.pending);
+        #[cfg(feature = "sismo")]
+        let mut cancelled = 0_usize;
         for (key, token) in pending.iter() {
             if !keep_pages.contains(&key.page) {
+                #[cfg(feature = "sismo")]
+                if !token.is_cancelled() {
+                    cancelled += 1;
+                }
                 token.cancel();
             }
         }
+        drop(pending);
+        #[cfg(feature = "sismo")]
+        sismo::counter!("pdf.jobs_cancelled", cancelled);
     }
 
     /// Access the document handle — callers use it for text
@@ -144,6 +159,7 @@ impl RenderPool {
 }
 
 impl Drop for RenderPool {
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::pool_drop"))]
     fn drop(&mut self) {
         // Close the channel so worker `rx.recv()` calls return Err
         // and the loop exits cleanly.
@@ -163,16 +179,27 @@ fn worker_loop(
     redraw: &Mutex<RedrawHandle>,
 ) {
     while let Ok(req) = rx.recv() {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("pdf::render_job");
         let key = req.key;
         if req.cancel.is_cancelled() {
+            #[cfg(feature = "sismo")]
+            sismo::instant!("pdf::render_job_cancelled");
             forget_pending(pending, key);
             continue;
         }
         if let Some(tile) = render_entry(doc, key) {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("pdf::render_job_store");
             cache.insert(key, Arc::new(tile));
             lock(redraw).ping();
+        } else {
+            #[cfg(feature = "sismo")]
+            sismo::instant!("pdf::render_job_failed");
         }
         forget_pending(pending, key);
+        #[cfg(feature = "sismo")]
+        sismo::counter!("pdf.queued_jobs", lock(pending).len());
     }
 }
 
@@ -185,6 +212,7 @@ fn forget_pending(pending: &Mutex<HashMap<CacheKey, CancelToken>>, key: CacheKey
 /// `translate + clip` render config so pdfium only rasterises pixels
 /// that land in the tile bitmap.
 #[allow(clippy::cast_possible_wrap)] // pdfium pixel counts fit i32 for any realistic zoom
+#[cfg_attr(feature = "sismo", sismo::function("pdf::render_entry"))]
 fn render_entry(doc: &PdfDocument, key: CacheKey) -> Option<CachedTile> {
     let page_slot = usize::try_from(key.page.0).ok()?;
     let (width_points, height_points) = doc.page_size(page_slot).ok()?;
@@ -192,14 +220,22 @@ fn render_entry(doc: &PdfDocument, key: CacheKey) -> Option<CachedTile> {
     let pdf_doc = doc.pdfium_doc();
     let pages = pdf_doc.pages();
     #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-    let pdf_page = pages.get(key.page.0 as i32).ok()?;
+    let pdf_page = {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("pdf::page_load");
+        pages.get(key.page.0 as i32).ok()?
+    };
 
     match key.tile {
         TileCoord::Full => {
             let target_w = pixel_dim(width_points * scale)? as Pixels;
             let target_h = pixel_dim(height_points * scale)? as Pixels;
             let config = PdfRenderConfig::new().set_target_size(target_w, target_h);
-            let bitmap = pdf_page.render_with_config(&config).ok()?;
+            let bitmap = {
+                #[cfg(feature = "sismo")]
+                sismo::scope!("pdf::render_full_page");
+                pdf_page.render_with_config(&config).ok()?
+            };
             Some(cache_tile_from_bitmap(&bitmap))
         }
         TileCoord::Cell { x, y } => {
@@ -227,14 +263,19 @@ fn render_entry(doc: &PdfDocument, key: CacheKey) -> Option<CachedTile> {
             let config = PdfRenderConfig::new()
                 .set_target_size(full_w, full_h)
                 .set_origin(-start_x, -start_y);
-            pdf_page
-                .render_into_bitmap_with_config(&mut bitmap, &config)
-                .ok()?;
+            {
+                #[cfg(feature = "sismo")]
+                sismo::scope!("pdf::render_tile");
+                pdf_page
+                    .render_into_bitmap_with_config(&mut bitmap, &config)
+                    .ok()?;
+            }
             Some(cache_tile_from_bitmap(&bitmap))
         }
     }
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("pdf::bitmap_to_rgba"))]
 fn cache_tile_from_bitmap(bitmap: &PdfBitmap) -> CachedTile {
     let bytes = bitmap.as_rgba_bytes();
     #[allow(clippy::cast_sign_loss)]

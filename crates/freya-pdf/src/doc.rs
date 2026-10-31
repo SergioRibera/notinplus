@@ -35,6 +35,7 @@ pub(crate) fn pdfium() -> Result<&'static Pdfium, PdfError> {
     }
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("pdf::pdfium_bind"))]
 fn load_pdfium() -> Result<Pdfium, String> {
     // 1. Explicit override — devshell-friendly and gives packagers a
     //    knob when the library lives outside the default loader path.
@@ -98,6 +99,13 @@ struct Inner {
     page_sizes: Vec<(f32, f32)>,
 }
 
+#[cfg(feature = "sismo")]
+impl Drop for Inner {
+    fn drop(&mut self) {
+        sismo::instant!("pdf::doc_drop");
+    }
+}
+
 impl std::fmt::Debug for Inner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PdfDocumentInner")
@@ -131,8 +139,13 @@ impl PdfDocument {
     /// # Errors
     ///
     /// See [`Self::open`].
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::doc_open_path"))]
     pub fn open_with_password(path: &Path, password: Option<&str>) -> Result<Self, PdfError> {
-        let bytes = std::fs::read(path).map_err(|e| PdfError::Open(e.to_string()))?;
+        let bytes = {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("pdf::file_read");
+            std::fs::read(path).map_err(|e| PdfError::Open(e.to_string()))?
+        };
         Self::open_bytes_with_password(bytes, password)
     }
 
@@ -151,15 +164,24 @@ impl PdfDocument {
     /// # Errors
     ///
     /// See [`Self::open`].
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::doc_open"))]
     pub fn open_bytes_with_password(
         bytes: Vec<u8>,
         password: Option<&str>,
     ) -> Result<Self, PdfError> {
         let pdfium = pdfium()?;
-        let doc = pdfium
-            .load_pdf_from_byte_vec(bytes, password)
-            .map_err(|e| PdfError::Open(e.to_string()))?;
+        #[cfg(feature = "sismo")]
+        sismo::counter!("pdf.doc_bytes", bytes.len());
+        let doc = {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("pdf::doc_parse");
+            pdfium
+                .load_pdf_from_byte_vec(bytes, password)
+                .map_err(|e| PdfError::Open(e.to_string()))?
+        };
         let page_sizes = collect_page_sizes(&doc);
+        #[cfg(feature = "sismo")]
+        sismo::counter!("pdf.page_count", page_sizes.len());
         Ok(Self {
             inner: Arc::new(Inner { doc, page_sizes }),
         })
@@ -229,6 +251,7 @@ impl PdfDocument {
     ///
     /// Returns [`PdfError::PageOutOfRange`] when `page` is out of
     /// range, [`PdfError::Backend`] on pdfium failure.
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::extract_text"))]
     pub fn extract_page_text_indexed(&self, page: usize) -> Result<(String, Vec<usize>), PdfError> {
         let pdf_page = self.pdf_page(page)?;
         let text = pdf_page
@@ -245,6 +268,8 @@ impl PdfDocument {
             }
         }
         starts.push(out.len());
+        #[cfg(feature = "sismo")]
+        sismo::counter!("pdf.text_chars", char_count);
         Ok((out, starts))
     }
 
@@ -260,6 +285,7 @@ impl PdfDocument {
     ///
     /// Returns [`PdfError::PageOutOfRange`] when `page` is out of
     /// range, [`PdfError::Backend`] on pdfium failure.
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::char_rects"))]
     pub fn char_rects(&self, page: usize, start: usize, end: usize) -> Result<Vec<Rect>, PdfError> {
         if end <= start {
             return Ok(Vec::new());
@@ -299,6 +325,8 @@ impl PdfDocument {
                 _ => merged.push(rect),
             }
         }
+        #[cfg(feature = "sismo")]
+        sismo::counter!("pdf.selection_rects", merged.len());
         Ok(merged)
     }
 
@@ -315,6 +343,7 @@ impl PdfDocument {
     ///
     /// Returns [`PdfError::PageOutOfRange`] when `page` is out of
     /// range, [`PdfError::Backend`] on pdfium failure.
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::hit_char"))]
     pub fn hit_char_at(&self, page: usize, x: f32, y: f32) -> Result<Option<usize>, PdfError> {
         let (_, page_height) = self.page_size(page)?;
         let pdf_page = self.pdf_page(page)?;
@@ -355,6 +384,7 @@ impl PdfDocument {
         Ok(best_same_line.map(|(idx, _)| idx))
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::page_get"))]
     fn pdf_page(&self, page: usize) -> Result<pdfium_render::prelude::PdfPage<'_>, PdfError> {
         let count = self.page_count();
         if page >= count {
@@ -411,6 +441,7 @@ impl PdfDocument {
     }
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("pdf::page_sizes"))]
 fn collect_page_sizes(doc: &PdfiumDoc<'_>) -> Vec<(f32, f32)> {
     doc.pages()
         .iter()
@@ -485,6 +516,7 @@ pub struct TocEntry {
 impl PdfDocument {
     /// The document's table of contents. Empty when the file has none.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::toc"))]
     pub fn table_of_contents(&self) -> Vec<TocEntry> {
         use pdfium_render::prelude::PdfBookmark;
 

@@ -112,6 +112,7 @@ impl PdfBackground {
     /// Wrap a document with an explicit gap between pages and backdrop
     /// color.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::background_new"))]
     pub fn with_settings(doc: PdfDocument, gap: f32, backdrop: Color) -> Self {
         let (pages, bounds) = compute_layout(&doc, gap);
         let cache = Arc::new(Cache::new(CACHE_CAPACITY, CACHE_BUDGET));
@@ -153,6 +154,7 @@ impl PdfBackground {
     /// references a page missing from this backend's layout;
     /// propagates any pdfium failure surfaced by
     /// [`crate::PdfSearchIndex::hit_rects`].
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::world_hit_rects"))]
     pub fn world_hit_rects(
         &self,
         hit: crate::search::SearchHit,
@@ -217,6 +219,7 @@ impl CanvasBackground for PdfBackground {
         })
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::paint"))]
     fn paint(&self, cx: &mut BgPaintCtx<'_>) {
         // Route worker wake-ups through the freya redraw notifier.
         // Called every frame; cheap since the pool just swaps an
@@ -236,10 +239,20 @@ impl CanvasBackground for PdfBackground {
             .store(effective_scale.to_bits(), Ordering::Relaxed);
         let bucket = bucket_for(effective_scale);
         let image_paint = Paint::default();
+        #[cfg(feature = "sismo")]
+        sismo::counter!("pdf.bucket", bucket);
+        #[cfg(feature = "sismo")]
+        let mut visible_pages = 0_usize;
 
         for pl in &self.pages {
             if !pl.rect.intersects(&cx.visible) {
                 continue;
+            }
+            #[cfg(feature = "sismo")]
+            sismo::scope!("pdf::paint_page");
+            #[cfg(feature = "sismo")]
+            {
+                visible_pages += 1;
             }
             draw_page_fill(cx.canvas, pl.rect);
             // Kick off the persistent thumbnail render if we don't have
@@ -301,8 +314,11 @@ impl CanvasBackground for PdfBackground {
                 }
             }
         }
+        #[cfg(feature = "sismo")]
+        sismo::counter!("pdf.visible_pages", visible_pages);
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::tick"))]
     fn tick(&self, visible: Rect, _scale: f32) {
         // Use paint's captured effective scale so prefetch buckets
         // match the visible resolution. Falls back to 1.0 before the
@@ -373,6 +389,8 @@ impl PdfBackground {
             dst_world.max_y,
         );
         if let Some(tile) = self.cache.get(key) {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("pdf::tile_hit");
             if key.bucket == 0 && matches!(key.tile, TileCoord::Full) {
                 self.remember_thumb(key.page, &tile);
             }
@@ -398,6 +416,8 @@ impl PdfBackground {
             .cache
             .nearest_full_at_or_below(key.page, key.bucket - 1)
             .or_else(|| self.thumb_for(key.page));
+        #[cfg(feature = "sismo")]
+        sismo::scope!("pdf::tile_miss");
         if let Some(placeholder) = placeholder {
             if let Some(img) = self.tile_to_image_pinned(&placeholder) {
                 let src = placeholder_src_rect(page_rect, dst_world, &placeholder);
@@ -424,6 +444,7 @@ impl PdfBackground {
     /// Wraps `tile` as a Skia `Image` without copying and pins the
     /// owning `Arc<CachedTile>` for the current paint frame. See
     /// [`Self::frame_pins`] for the lifetime contract.
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::tile_to_image"))]
     fn tile_to_image_pinned(&self, tile: &Arc<CachedTile>) -> Option<Image> {
         let img = tile_to_image_zero_copy(tile)?;
         lock(&self.frame_pins).push(Arc::clone(tile));
@@ -462,6 +483,7 @@ fn canvas_scale_x(canvas: &freya_engine::prelude::Canvas) -> f32 {
     }
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("pdf::compute_layout"))]
 fn compute_layout(doc: &PdfDocument, gap: f32) -> (Vec<PageLayout>, Rect) {
     let sizes = doc.page_sizes();
     if sizes.is_empty() {

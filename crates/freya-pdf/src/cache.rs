@@ -78,12 +78,19 @@ impl Cache {
     }
 
     /// Insert or replace a tile.
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::cache_insert"))]
     pub fn insert(&self, key: CacheKey, tile: Arc<CachedTile>) {
         let mut tiles = self.lock();
+        #[cfg(feature = "sismo")]
+        let mut evicted = 0_usize;
         tiles.bytes += tile.size();
         let full = tiles.lru.len() == tiles.lru.capacity() && !tiles.lru.contains_key(&key);
         if full && let Some((_, gone)) = tiles.lru.remove_lru() {
             tiles.bytes -= gone.size();
+            #[cfg(feature = "sismo")]
+            {
+                evicted += 1;
+            }
         }
         if let Some(old) = tiles.lru.insert(key, tile) {
             tiles.bytes -= old.size();
@@ -93,6 +100,19 @@ impl Cache {
                 break;
             };
             tiles.bytes -= gone.size();
+            #[cfg(feature = "sismo")]
+            {
+                evicted += 1;
+            }
+        }
+        #[cfg(feature = "sismo")]
+        {
+            sismo::counter!("pdf.cache_bytes", tiles.bytes);
+            sismo::counter!("pdf.pages_cached", tiles.lru.len());
+            if evicted > 0 {
+                sismo::instant!("pdf::cache_evict");
+                sismo::counter!("pdf.cache_evicted", evicted);
+            }
         }
         drop(tiles);
     }
@@ -124,6 +144,7 @@ impl Cache {
         self.nearest_with(page, max_bucket, |k| matches!(k.tile, TileCoord::Full))
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::cache_nearest"))]
     fn nearest_with(
         &self,
         page: PageId,
