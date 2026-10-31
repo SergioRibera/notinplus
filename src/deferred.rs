@@ -24,6 +24,25 @@ struct Waiting {
     last: Instant,
 }
 
+/// Run one job under a span named after the kind of its key
+/// (`body:<id>`, `snapshot:<id>:<kind>`).
+fn run_job(key: &str, job: Job) {
+    match key.split(':').next() {
+        Some("body") => {
+            sismo::scope!("deferred::job::body");
+            job();
+        }
+        Some("snapshot") => {
+            sismo::scope!("deferred::job::snapshot");
+            job();
+        }
+        _ => {
+            sismo::scope!("deferred::job::other");
+            job();
+        }
+    }
+}
+
 impl Waiting {
     fn due(&self) -> Instant {
         (self.last + QUIET).min(self.first + AT_MOST)
@@ -96,16 +115,18 @@ impl Deferred {
                     .filter(|(_, w)| w.due() <= now)
                     .map(|(key, _)| key.clone())
                     .collect();
-                let jobs: Vec<Job> = due
-                    .iter()
-                    .filter_map(|key| queue.waiting.remove(key))
-                    .map(|w| w.job)
+                let jobs: Vec<(String, Job)> = due
+                    .into_iter()
+                    .filter_map(|key| queue.waiting.remove(&key).map(|w| (key, w.job)))
                     .collect();
                 queue.running += jobs.len();
+                sismo::counter!("deferred.waiting", queue.waiting.len());
+                sismo::counter!("deferred.running", queue.running);
                 jobs
             };
-            for job in jobs {
-                job();
+            sismo::scope!("deferred::run_due");
+            for (key, job) in jobs {
+                run_job(&key, job);
                 self.queue().running -= 1;
                 self.wake.notify_all();
             }
@@ -128,6 +149,7 @@ impl Deferred {
 
 /// Run `job` once `key` has been quiet for a moment, replacing whatever
 /// was waiting under it.
+#[sismo::function("deferred::schedule")]
 pub fn schedule(key: impl Into<String>, job: impl FnOnce() + Send + 'static) {
     let deferred = deferred();
     let key = key.into();
@@ -142,15 +164,17 @@ pub fn schedule(key: impl Into<String>, job: impl FnOnce() + Send + 'static) {
             last: now,
         },
     );
+    sismo::counter!("deferred.waiting", queue.waiting.len());
     drop(queue);
     deferred.wake.notify_all();
 }
 
 /// Run what waits under `key` now, on this thread.
+#[sismo::function("deferred::run_now")]
 pub fn run_now(key: &str) {
     let deferred = deferred();
     if let Some(job) = deferred.take(key) {
-        job();
+        run_job(key, job);
         deferred.finish();
     }
 }
@@ -160,16 +184,18 @@ pub fn run_now(key: &str) {
 #[sismo::function]
 pub fn flush() {
     let deferred = deferred();
-    let jobs: Vec<Job> = {
+    let jobs: Vec<(String, Job)> = {
         let mut queue = deferred.queue();
-        let jobs: Vec<Job> = queue.waiting.drain().map(|(_, w)| w.job).collect();
+        let jobs: Vec<(String, Job)> = queue.waiting.drain().map(|(k, w)| (k, w.job)).collect();
         queue.running += jobs.len();
         jobs
     };
-    for job in jobs {
-        job();
+    sismo::counter!("deferred.flushed", jobs.len());
+    for (key, job) in jobs {
+        run_job(&key, job);
         deferred.finish();
     }
+    sismo::scope!("deferred::flush_wait_running");
     let mut queue = deferred.queue();
     while queue.running > 0 {
         queue = deferred

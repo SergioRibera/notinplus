@@ -89,6 +89,7 @@ fn folder_name(data: &LibraryData, folder: crate::library::FolderId) -> String {
 /// Run `query` against the library and every active kind. Blocking:
 /// call it off the UI thread.
 #[must_use]
+#[sismo::function("search::run")]
 pub fn run(query: &str, data: &LibraryData) -> Results {
     let text = query.trim();
     let mut results = Results {
@@ -99,33 +100,39 @@ pub fn run(query: &str, data: &LibraryData) -> Results {
         return results;
     }
     let needle = text.to_lowercase();
-    let tag_hits: Vec<_> = data
-        .tags()
-        .iter()
-        .filter(|t| t.name.to_lowercase().contains(&needle))
-        .map(|t| t.id)
-        .collect();
-    results.documents = data
-        .live_items()
-        .filter(|item| {
-            item.name.to_lowercase().contains(&needle)
-                || item.tags.iter().any(|t| tag_hits.contains(t))
-        })
-        .take(DOCS)
-        .map(|item| {
-            let label = crate::plugins::kind_info(&item.kind.plugin_id)
-                .map_or_else(|| tr!("find-document"), |k| k.label.into_owned());
-            DocMatch {
-                item: item.id,
-                name: item.name.clone(),
-                kind: item.kind.plugin_id.clone(),
-                meta: format!("{label} · {}", folder_name(data, item.folder)),
-            }
-        })
-        .collect();
+    results.documents = {
+        sismo::scope!("search::library");
+        let tag_hits: Vec<_> = data
+            .tags()
+            .iter()
+            .filter(|t| t.name.to_lowercase().contains(&needle))
+            .map(|t| t.id)
+            .collect();
+        data.live_items()
+            .filter(|item| {
+                item.name.to_lowercase().contains(&needle)
+                    || item.tags.iter().any(|t| tag_hits.contains(t))
+            })
+            .take(DOCS)
+            .map(|item| {
+                let label = crate::plugins::kind_info(&item.kind.plugin_id)
+                    .map_or_else(|| tr!("find-document"), |k| k.label.into_owned());
+                DocMatch {
+                    item: item.id,
+                    name: item.name.clone(),
+                    kind: item.kind.plugin_id.clone(),
+                    meta: format!("{label} · {}", folder_name(data, item.folder)),
+                }
+            })
+            .collect()
+    };
 
     let catalog = crate::plugins::catalog();
-    for found in catalog.search(&SearchQuery::new(text, HITS_PER_KIND)) {
+    let found_by_kind = {
+        sismo::scope!("search::kinds");
+        catalog.search(&SearchQuery::new(text, HITS_PER_KIND))
+    };
+    for found in found_by_kind {
         let Some(kind) = catalog.kind(&found.kind) else {
             continue;
         };
@@ -159,6 +166,7 @@ pub fn run(query: &str, data: &LibraryData) -> Results {
             hits,
         });
     }
+    sismo::scope!("search::index_status");
     results.indexing = catalog
         .kinds()
         .iter()

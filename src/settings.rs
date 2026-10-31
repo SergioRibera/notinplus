@@ -377,6 +377,7 @@ impl Settings {
         }
     }
 
+    #[sismo::function("settings::publish")]
     fn publish(&self) {
         let code = match self.pen.double_tap {
             PenDoubleTap::Eraser => 0,
@@ -431,6 +432,7 @@ impl SettingsStore {
     }
 
     /// Edit, persist and re-apply.
+    #[sismo::function("settings::update")]
     pub fn update(&mut self, edit: impl FnOnce(&mut Settings)) {
         edit(&mut self.state.write());
         let settings = self.state.peek().clone();

@@ -241,6 +241,7 @@ type Result<T> = core::result::Result<T, BundleError>;
 /// # Errors
 /// Filesystem / codec / library failures surface through
 /// [`BundleError`].
+#[sismo::function("bundle::write_bundle")]
 pub fn write_bundle<W: Write>(
     sink: W,
     lib: &LibraryData,
@@ -264,7 +265,9 @@ pub fn write_bundle<W: Write>(
         bincode::encode_to_vec(&manifest, CODEC).map_err(|e| BundleError::Codec(e.to_string()))?;
     append_file(&mut tar, MANIFEST_ENTRY, &manifest_bytes)?;
 
+    sismo::counter!("bundle.export_items", manifest.items.len());
     for (done, item) in manifest.items.iter().enumerate() {
+        sismo::scope!("bundle::export_item");
         progress(done);
         if let Some(doc_bytes) = read_doc_bytes(item.id) {
             let doc_bytes = if options.include_marks {
@@ -296,6 +299,7 @@ pub fn write_bundle<W: Write>(
         }
     }
 
+    sismo::scope!("bundle::finish_archive");
     tar.into_inner()?.flush()?;
     Ok(())
 }
@@ -305,6 +309,7 @@ pub fn write_bundle<W: Write>(
 ///
 /// # Errors
 /// See [`write_bundle`].
+#[sismo::function("bundle::write_bundle_to_path")]
 pub fn write_bundle_to_path(
     dest: &Path,
     lib: &LibraryData,
@@ -333,6 +338,7 @@ pub struct ParsedBundle {
 ///
 /// # Errors
 /// Filesystem / codec / unknown-version failures.
+#[sismo::function("bundle::parse_bundle")]
 pub fn parse_bundle<R: Read>(src: R) -> Result<ParsedBundle> {
     let decoder = zstd::stream::read::Decoder::new(src)?;
     let mut archive = tar::Archive::new(decoder);
@@ -344,6 +350,7 @@ pub fn parse_bundle<R: Read>(src: R) -> Result<ParsedBundle> {
     let mut assets: HashMap<ItemId, Vec<(String, Vec<u8>)>> = HashMap::new();
 
     for entry in archive.entries()? {
+        sismo::scope!("bundle::read_entry");
         let mut entry = entry?;
         let path = entry.path()?.to_path_buf();
         let name = path
@@ -352,6 +359,7 @@ pub fn parse_bundle<R: Read>(src: R) -> Result<ParsedBundle> {
             .to_owned();
         let mut buf = Vec::new();
         entry.read_to_end(&mut buf)?;
+        sismo::counter!("bundle.entry_bytes", buf.len());
         if name == MANIFEST_ENTRY {
             let (m, _) = bincode::decode_from_slice::<BundleManifest, _>(&buf, CODEC)
                 .map_err(|e| BundleError::Codec(e.to_string()))?;
@@ -393,6 +401,7 @@ pub fn parse_bundle<R: Read>(src: R) -> Result<ParsedBundle> {
 ///
 /// # Errors
 /// See [`parse_bundle`].
+#[sismo::function("bundle::parse_bundle_from_path")]
 pub fn parse_bundle_from_path(src: &Path) -> Result<ParsedBundle> {
     let file = File::open(src)?;
     parse_bundle(file)
@@ -431,6 +440,7 @@ struct ExportPlan {
 /// [`BundleError::MissingItem`] / [`BundleError::MissingFolder`] /
 /// [`BundleError::MissingWorkspace`] when `selection` names an id the
 /// library does not know.
+#[sismo::function("bundle::preview_export")]
 pub fn preview_export(lib: &LibraryData, selection: &ExportSelection) -> Result<ExportPreview> {
     let plan = plan_export(lib, selection, true)?;
     let manifest = build_manifest(lib, &plan, false);
@@ -456,6 +466,7 @@ pub fn preview_export(lib: &LibraryData, selection: &ExportSelection) -> Result<
 
 /// Items one hop away from `in_bundle` through `neighbours`, in
 /// library order, that are not bundled yet.
+#[sismo::function("bundle::extra_items")]
 fn extra_items(
     lib: &LibraryData,
     in_bundle: &HashSet<ItemId>,
@@ -481,6 +492,7 @@ fn extra_items(
 /// every notebook attached to a selected item (transitively) joins the
 /// plan; the writer passes `false` because its selection is already
 /// the user-trimmed final list.
+#[sismo::function("bundle::plan_export")]
 fn plan_export(
     lib: &LibraryData,
     selection: &ExportSelection,
@@ -548,6 +560,7 @@ fn plan_export(
 
 /// Grow `items` with every notebook hanging off any of them, following
 /// notebooks of notebooks until nothing new appears.
+#[sismo::function("bundle::expand_notebooks")]
 fn expand_notebooks(items: &mut HashSet<ItemId>, links: &LinkIndex) {
     let mut queue: Vec<ItemId> = items.iter().copied().collect();
     while let Some(id) = queue.pop() {
@@ -559,6 +572,7 @@ fn expand_notebooks(items: &mut HashSet<ItemId>, links: &LinkIndex) {
     }
 }
 
+#[sismo::function("bundle::build_manifest")]
 fn build_manifest(
     lib: &LibraryData,
     plan: &ExportPlan,
@@ -642,6 +656,7 @@ fn build_manifest(
 }
 
 /// Ink document bytes with every bookmark removed.
+#[sismo::function("bundle::strip_doc_marks")]
 fn strip_doc_marks(bytes: &[u8]) -> Vec<u8> {
     let Ok(mut doc) = crate::doc::Doc::from_snapshot(bytes) else {
         return bytes.to_vec();
@@ -654,12 +669,14 @@ fn strip_doc_marks(bytes: &[u8]) -> Vec<u8> {
 }
 
 /// A kind snapshot with its highlights and marks removed.
+#[sismo::function("bundle::strip_snapshot_marks")]
 fn strip_snapshot_marks(kind: &str, snapshot: Vec<u8>) -> Vec<u8> {
     crate::plugins::kind(kind)
         .and_then(|kind| kind.without_marks(&snapshot))
         .unwrap_or(snapshot)
 }
 
+#[sismo::function("bundle::append_file")]
 fn append_file<W: Write>(tar: &mut tar::Builder<W>, name: &str, bytes: &[u8]) -> Result<()> {
     let mut header = tar::Header::new_gnu();
     header.set_size(bytes.len() as u64);

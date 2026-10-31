@@ -27,6 +27,7 @@ pub trait Persisted: Encode + Decode<()> + Default {
 
     /// Read the record, falling back to `Default`.
     #[must_use]
+    #[sismo::function("persist::load")]
     fn load() -> Self {
         std::fs::read(Self::path())
             .ok()
@@ -39,6 +40,7 @@ pub trait Persisted: Encode + Decode<()> + Default {
     ///
     /// # Errors
     /// Encoding or filesystem failures.
+    #[sismo::function("persist::save")]
     fn save(&self) -> io::Result<()> {
         let bytes = bincode::encode_to_vec(self, CODEC)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
@@ -50,6 +52,7 @@ pub trait Persisted: Encode + Decode<()> + Default {
 ///
 /// # Errors
 /// Filesystem failures.
+#[sismo::function("persist::write_atomic")]
 pub fn write_atomic(dest: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
