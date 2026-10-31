@@ -39,6 +39,7 @@ pub struct PdfFace {
 }
 
 impl Component for PdfFace {
+    #[sismo::function("pdf_face::render")]
     fn render(&self) -> impl IntoElement {
         let item = self.item;
         let mount = CanvasMount::Item {
@@ -75,6 +76,7 @@ impl Component for PdfFace {
         );
         let loaded_pages = Arc::clone(&pages);
         use_hook(move || {
+            sismo::instant!("pdf_face::mount");
             let replaced = crate::plugins::content::watch_attachment(item);
             spawn(async move {
                 loop {
@@ -82,6 +84,7 @@ impl Component for PdfFace {
                     if replaced.recv_async().await.is_err() {
                         return;
                     }
+                    sismo::instant!("pdf_face::attachment_replaced");
                 }
             });
         });
@@ -99,6 +102,7 @@ impl Component for PdfFace {
 }
 
 /// Load `item`'s file and put it under the ink of `mount`'s board.
+#[sismo::function("pdf_face::install_background")]
 fn install_background(item: ItemId, mount: CanvasMount, pages: &PageRects) {
     let bg = match load_pdf_background(item, pages) {
         Ok(bg) => bg,
@@ -111,6 +115,7 @@ fn install_background(item: ItemId, mount: CanvasMount, pages: &PageRects) {
         log::warn!("PdfFace install_background: no board registered for {item:?}");
         return;
     };
+    sismo::scope!("pdf_face::set_background");
     lock(&board).set_background(bg);
 }
 
@@ -137,18 +142,26 @@ impl std::error::Error for LoadError {}
 
 /// Decode the PDF blob at [`bodies::pdf_path`] into a
 /// [`PdfBackground`] usable by the stroke canvas as its backdrop.
+#[sismo::function("pdf_face::load")]
 fn load_pdf_background(
     id: ItemId,
     pages: &PageRects,
 ) -> Result<Arc<dyn freya_canvas_bg::CanvasBackground>, LoadError> {
-    let bytes = bodies::read_pdf(id).map_err(LoadError::Read)?;
+    let bytes = {
+        sismo::scope!("pdf_face::read_file");
+        bodies::read_pdf(id).map_err(LoadError::Read)?
+    };
     let doc = PdfDocument::open_bytes(bytes).map_err(LoadError::Open)?;
     *pages
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(
         freya_pdf::write::page_world_rects(doc.page_sizes(), freya_pdf::write::PAGE_GAP),
     );
-    Ok(Arc::new(PdfBackground::new(doc)))
+    let bg = {
+        sismo::scope!("pdf_face::build_background");
+        PdfBackground::new(doc)
+    };
+    Ok(Arc::new(bg))
 }
 
 /// Build the per-item [`AnchorSourceRef`] closure. Long-press pins
@@ -158,6 +171,7 @@ fn load_pdf_background(
 fn pdf_anchor_source(item: ItemId) -> AnchorSourceRef {
     Arc::new(move |att| {
         use notein_plugin::payload::Payload;
+        sismo::scope!("pdf_face::anchor_source");
         let anchor = crate::plugins::builtin::pdf::PdfAnchor {
             page: u32::try_from(att.page.0).unwrap_or(u32::MAX),
             text: None,
@@ -182,6 +196,7 @@ struct PageTarget {
 }
 
 impl crate::plugins::faces::Apply for PageTarget {
+    #[sismo::function("pdf_face::jump")]
     fn apply(&self, anchor: &[u8]) -> bool {
         use notein_plugin::payload::Payload;
         let Ok(anchor) = crate::plugins::builtin::pdf::PdfAnchor::from_bytes(anchor) else {

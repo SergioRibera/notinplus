@@ -36,13 +36,17 @@ pub struct PdfSelectOverlay {
 }
 
 impl Component for PdfSelectOverlay {
+    #[sismo::function("pdf_select::render")]
     fn render(&self) -> impl IntoElement {
         let item = self.item;
         let mount = self.mount;
         let mut dragging = use_state(|| false);
         let mut last_down_at = use_state(|| Option::<Instant>::None);
         let mut paint_tick = use_state(|| 0u64);
-        use_drop(move || PdfText::get().forget(item));
+        use_drop(move || {
+            sismo::scope!("pdf_select::drop");
+            PdfText::get().forget(item);
+        });
 
         let world_of = move |evt: &Event<PointerEventData>| {
             let board = active_boards::get(mount)?;
@@ -54,6 +58,7 @@ impl Component for PdfSelectOverlay {
             if !in_select_mode(mount) {
                 return;
             }
+            sismo::scope!("pdf_select::pointer_down");
             let Some((wx, wy)) = world_of(&evt) else {
                 return;
             };
@@ -74,6 +79,7 @@ impl Component for PdfSelectOverlay {
             if !*dragging.read() {
                 return;
             }
+            sismo::scope!("pdf_select::pointer_move");
             let Some((wx, wy)) = world_of(&evt) else {
                 return;
             };
@@ -85,6 +91,7 @@ impl Component for PdfSelectOverlay {
             if !*dragging.read() {
                 return;
             }
+            sismo::scope!("pdf_select::pointer_up");
             PdfText::get().end(item);
             dragging.set(false);
             if PdfText::get().selection(item).is_some() {
@@ -111,6 +118,7 @@ impl Component for PdfSelectOverlay {
 /// The selection bar for what is selected in the PDF of `item`: the
 /// five highlighters, a note, copy as reference, to the notebook and a
 /// plain bookmark.
+#[sismo::function("pdf_select::show_bar")]
 pub(crate) fn show_bar(item: ItemId, mount: CanvasMount, at: (f32, f32)) {
     use notein_plugin::payload::Payload;
     let engine = PdfText::get();
@@ -138,6 +146,7 @@ pub(crate) fn show_bar(item: ItemId, mount: CanvasMount, at: (f32, f32)) {
     let mark = {
         let reference = reference.clone();
         std::rc::Rc::new(move |color: Option<[u8; 3]>, body: String| {
+            sismo::scope!("pdf_select::add_mark");
             let Some(board) = active_boards::get(mount) else {
                 return;
             };
@@ -205,6 +214,7 @@ pub(crate) fn show_bar(item: ItemId, mount: CanvasMount, at: (f32, f32)) {
     });
 }
 
+#[sismo::function("pdf_select::clear")]
 fn clear(item: ItemId) {
     PdfText::get().clear(item);
     if let Some(board) = active_boards::get_item(item) {
@@ -214,6 +224,7 @@ fn clear(item: ItemId) {
 
 /// Long-press on a page: select the word under the finger and offer
 /// the selection bar. `false` when the press was not on text.
+#[sismo::function("pdf_select::select_word_at")]
 pub(crate) fn select_word_at(
     item: ItemId,
     mount: CanvasMount,
@@ -233,6 +244,7 @@ pub(crate) fn select_word_at(
 }
 
 /// The selection wash, mapped through the board's viewport.
+#[sismo::function("pdf_select::selection_paint")]
 fn selection_paint(item: ItemId, mount: CanvasMount, tick: State<u64>) -> impl IntoElement {
     let _ = *tick.read();
     rect()
@@ -240,6 +252,7 @@ fn selection_paint(item: ItemId, mount: CanvasMount, tick: State<u64>) -> impl I
             let RenderTarget::Background { canvas, .. } = &ctx.target else {
                 return;
             };
+            sismo::scope!("pdf_select::paint");
             let rects = PdfText::get().selection_rects(item);
             if rects.is_empty() {
                 return;

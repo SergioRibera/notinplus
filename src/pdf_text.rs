@@ -79,8 +79,12 @@ struct OpenPdf {
 }
 
 impl OpenPdf {
+    #[sismo::function("pdf_text::open")]
     fn open(item: ItemId) -> Option<Self> {
-        let bytes = bodies::read_pdf(item).ok()?;
+        let bytes = {
+            sismo::scope!("pdf_text::read_file");
+            bodies::read_pdf(item).ok()?
+        };
         let doc = PdfDocument::open_bytes(bytes).ok()?;
         let pages =
             freya_pdf::write::page_world_rects(doc.page_sizes(), freya_pdf::write::PAGE_GAP)
@@ -101,6 +105,7 @@ impl OpenPdf {
     }
 
     /// `(page, local_x, local_y)` under world point `(x, y)`.
+    #[sismo::function("pdf_text::hit_page")]
     fn hit_page(&self, x: f32, y: f32) -> Option<(u32, f32, f32)> {
         self.pages.iter().enumerate().find_map(|(index, page)| {
             (y >= page.min_y && y < page.max_y).then(|| {
@@ -114,12 +119,14 @@ impl OpenPdf {
         })
     }
 
+    #[sismo::function("pdf_text::char_at")]
     fn char_at(&self, x: f32, y: f32) -> Option<(u32, usize)> {
         let (page, lx, ly) = self.hit_page(x, y)?;
         let index = self.doc.hit_char_at(page as usize, lx, ly).ok()??;
         Some((page, index))
     }
 
+    #[sismo::function("pdf_text::word_around")]
     fn word_around(&self, page: u32, index: usize) -> (usize, usize) {
         self.doc
             .extract_page_text_indexed(page as usize)
@@ -128,6 +135,7 @@ impl OpenPdf {
             })
     }
 
+    #[sismo::function("pdf_text::page_chars")]
     fn page_chars(&self, page: u32) -> usize {
         self.doc
             .extract_page_text(page as usize)
@@ -175,6 +183,7 @@ fn word_bounds(text: &str, starts: &[usize], anchor: usize) -> (usize, usize) {
 }
 
 /// Text of `page` between char indices, `end = usize::MAX` to the end.
+#[sismo::function("pdf_text::page_slice")]
 fn page_slice(doc: &PdfDocument, page: u32, start: usize, end: usize) -> Option<String> {
     let (text, starts) = doc.extract_page_text_indexed(page as usize).ok()?;
     let last = starts.len().saturating_sub(1);
@@ -205,6 +214,7 @@ impl PdfText {
         match self.lock().entry(item) {
             std::collections::hash_map::Entry::Occupied(entry) => Some(f(entry.into_mut())),
             std::collections::hash_map::Entry::Vacant(entry) => {
+                sismo::instant!("pdf_text::doc_miss");
                 Some(f(entry.insert(OpenPdf::open(item)?)))
             }
         }
@@ -212,6 +222,7 @@ impl PdfText {
 
     /// Start a selection at world point `(x, y)`; `false` when it is not
     /// on text.
+    #[sismo::function("pdf_text::begin")]
     pub fn begin(&self, item: ItemId, x: f32, y: f32, mode: SelectMode) -> bool {
         self.with(item, |pdf| {
             let Some((page, index)) = pdf.char_at(x, y) else {
@@ -242,6 +253,7 @@ impl PdfText {
     }
 
     /// Extend the selection being dragged to world point `(x, y)`.
+    #[sismo::function("pdf_text::extend")]
     pub fn extend(&self, item: ItemId, x: f32, y: f32) {
         self.with(item, |pdf| {
             let Some(drag) = pdf.drag else {
@@ -283,10 +295,12 @@ impl PdfText {
     }
 
     /// The drag ended; the range stays selected.
+    #[sismo::function("pdf_text::end")]
     pub fn end(&self, item: ItemId) {
         self.with(item, |pdf| pdf.drag = None);
     }
 
+    #[sismo::function("pdf_text::clear")]
     pub fn clear(&self, item: ItemId) {
         self.with(item, |pdf| {
             pdf.drag = None;
@@ -295,6 +309,7 @@ impl PdfText {
     }
 
     /// Close the document (its face went away).
+    #[sismo::function("pdf_text::forget")]
     pub fn forget(&self, item: ItemId) {
         self.lock().remove(&item);
     }
@@ -311,6 +326,7 @@ impl PdfText {
 
     /// World rectangles covering the selection.
     #[must_use]
+    #[sismo::function("pdf_text::selection_rects")]
     pub fn selection_rects(&self, item: ItemId) -> Vec<Rect> {
         let open = self.lock();
         let Some(pdf) = open.get(&item) else {
@@ -336,13 +352,15 @@ impl PdfText {
                 }))
             })
             .flatten()
-            .collect();
+            .collect::<Vec<_>>();
         drop(open);
+        sismo::counter!("pdf_text.selection_rects", rects.len());
         rects
     }
 
     /// The selected text; pages joined with a line break.
     #[must_use]
+    #[sismo::function("pdf_text::selected_text")]
     pub fn selected_text(&self, item: ItemId) -> Option<String> {
         let open = self.lock();
         let pdf = open.get(&item)?;

@@ -110,6 +110,7 @@ fn snippet(text: &str, needle: &str) -> Option<String> {
 impl Iterator for PageHits<'_> {
     type Item = Hit<PdfAnchor>;
 
+    #[sismo::function("pdf_kind::search_next")]
     fn next(&mut self) -> Option<Self::Item> {
         if self.needle.is_empty() {
             return None;
@@ -142,6 +143,7 @@ impl Iterator for PageHits<'_> {
 impl PdfKind {
     /// Extract every page's text from `pdf`, reporting progress through
     /// `on_page(done, total)` as it goes.
+    #[sismo::function("pdf_kind::extract_text")]
     pub fn extract_text(
         &self,
         doc: DocId,
@@ -151,6 +153,7 @@ impl PdfKind {
         let total = u32::try_from(pdf.page_count()).unwrap_or(u32::MAX);
         let mut pages = Vec::with_capacity(pdf.page_count());
         for page in 0..pdf.page_count() {
+            sismo::scope!("pdf_kind::extract_page");
             pages.push(pdf.extract_page_text(page).unwrap_or_default());
             let done = u32::try_from(page + 1).unwrap_or(total);
             self.index
@@ -160,10 +163,12 @@ impl PdfKind {
                 .insert(doc, IndexReport { done, total });
             on_page(done, total);
         }
+        sismo::counter!("pdf_kind.pages_extracted", pages.len());
         pages
     }
 
     /// Store the page texts of `doc` (from extraction or a cache).
+    #[sismo::function("pdf_kind::store_text")]
     pub fn store_text(&self, doc: DocId, pages: Vec<String>) {
         let mut index = self.index.write().unwrap_or_else(PoisonError::into_inner);
         index.progress.remove(&doc);
@@ -187,6 +192,7 @@ impl PdfKind {
     /// # Errors
     /// [`CreationError::Unreadable`] when the bytes are not a PDF the
     /// renderer can open.
+    #[sismo::function("pdf_kind::read_file")]
     pub fn read_file(name: &str, bytes: &[u8]) -> Result<(PdfDocument, PdfContent), CreationError> {
         let pdf = PdfDocument::open_bytes(bytes.to_vec())
             .map_err(|_| CreationError::Unreadable(tr!("plugins-pdf-unreadable")))?;
@@ -223,6 +229,7 @@ pub fn name_from_file(file_name: &str) -> String {
     }
 }
 
+#[sismo::function("pdf_kind::outline")]
 fn outline_of(contents: &[Contents]) -> Vec<OutlineNode<PdfAnchor>> {
     contents
         .iter()
@@ -273,6 +280,7 @@ impl DocumentKind for PdfKind {
         }
     }
 
+    #[sismo::function("pdf_kind::search")]
     fn search<'a>(&'a self, query: &'a SearchQuery) -> PageHits<'a> {
         PageHits {
             index: self.index.read().unwrap_or_else(PoisonError::into_inner),
@@ -282,6 +290,7 @@ impl DocumentKind for PdfKind {
         }
     }
 
+    #[sismo::function("pdf_kind::index")]
     fn index(
         &self,
         doc: DocMeta<'_>,
@@ -317,6 +326,7 @@ impl DocumentKind for PdfKind {
             .collect()
     }
 
+    #[sismo::function("pdf_kind::forget")]
     fn forget(&self, doc: DocId) {
         let mut index = self.index.write().unwrap_or_else(PoisonError::into_inner);
         index.docs.retain(|(id, _)| *id != doc);
@@ -327,6 +337,7 @@ impl DocumentKind for PdfKind {
         outline_of(&content.contents)
     }
 
+    #[sismo::function("pdf_kind::marks")]
     fn marks(&self, content: &PdfContent) -> Vec<Mark<PdfAnchor>> {
         content
             .marks
@@ -381,6 +392,7 @@ impl DocumentKind for PdfKind {
         ]
     }
 
+    #[sismo::function("pdf_kind::create")]
     fn create(
         &self,
         entry: &str,
@@ -403,6 +415,7 @@ impl DocumentKind for PdfKind {
         })
     }
 
+    #[sismo::function("pdf_kind::inspect")]
     fn inspect(
         &self,
         _entry: &str,
@@ -421,6 +434,7 @@ impl DocumentKind for PdfKind {
         })
     }
 
+    #[sismo::function("pdf_kind::replace_attachment")]
     fn replace_attachment(
         &self,
         file: ImportedFile<'_>,
@@ -431,6 +445,7 @@ impl DocumentKind for PdfKind {
         Ok(fresh)
     }
 
+    #[sismo::function("pdf_kind::thumbnail")]
     fn thumbnail(&self, _content: &PdfContent, attachment: &[u8]) -> Option<Vec<u8>> {
         let pdf = PdfDocument::open_bytes(attachment.to_vec()).ok()?;
         crate::thumbnail::pdf(&pdf)
@@ -449,6 +464,7 @@ impl DocumentKind for PdfKind {
         content.marks.clear();
     }
 
+    #[sismo::function("pdf_kind::export")]
     fn export(
         &self,
         doc: DocMeta<'_>,
