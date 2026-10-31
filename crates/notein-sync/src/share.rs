@@ -288,7 +288,7 @@ impl Share {
 }
 
 /// What travels in an invitation link or QR.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
 pub struct Invite {
     pub share: ShareId,
     pub owner: Member,
@@ -398,6 +398,8 @@ pub struct ShareBook {
     pub shares: Vec<Share>,
     /// Shares this device owned and closed.
     pub ended: Vec<EndedShare>,
+    /// Invitations accepted whose owner has not let us in yet.
+    pub joins: Vec<Invite>,
 }
 
 impl ShareBook {

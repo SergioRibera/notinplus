@@ -700,6 +700,7 @@ impl Service {
             }
             DriverEvent::JoinFailed { reason, .. } => {
                 self.last_join_failure = Some(reason);
+                self.save_shares();
             }
             DriverEvent::PeerOnline {
                 device,
@@ -822,7 +823,10 @@ impl Service {
             Cmd::CreateShare(request) => self.create_share(request),
             Cmd::Join(invite) => {
                 self.last_join_failure = None;
-                self.driver.join(invite)
+                let actions = self.driver.join(invite);
+                // A join outlives the app until the owner answers.
+                self.save_shares();
+                actions
             }
             Cmd::Leave(id) => self.driver.leave_share(id),
             Cmd::End(id) => self.driver.end_share(id),
@@ -1048,6 +1052,8 @@ impl Service {
             .relay()
             .and_then(|text| text.parse::<RelayAddr>().ok());
         let actions = service.driver.set_relay(relay);
+        service.perform(actions);
+        let actions = service.driver.resume_joins();
         service.perform(actions);
         Some(service)
     }

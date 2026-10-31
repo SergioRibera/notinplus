@@ -194,7 +194,7 @@ pub enum JoinFailure {
 }
 
 /// Why a share is no longer held here.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(bincode::Encode, bincode::Decode, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Removal {
     /// The owner closed it for everyone.
     Ended,
@@ -440,7 +440,17 @@ impl<R: Replica> SyncDriver<R> {
             connected: HashMap::new(),
             offer: None,
             intent: None,
-            joins: HashMap::new(),
+            joins: book
+                .joins
+                .into_iter()
+                .map(|invite| {
+                    let intent = JoinIntent {
+                        invite,
+                        since: Instant::now(),
+                    };
+                    (intent.invite.share, intent)
+                })
+                .collect(),
             relay: None,
             known_keys: HashMap::new(),
             redials: HashMap::new(),
@@ -454,6 +464,7 @@ impl<R: Replica> SyncDriver<R> {
         ShareBook {
             shares: self.shares().cloned().collect(),
             ended: self.ended.values().cloned().collect(),
+            joins: self.pending_joins().cloned().collect(),
         }
     }
 
@@ -1696,6 +1707,17 @@ impl<R: Replica> SyncDriver<R> {
     pub fn pending_joins(&self) -> impl Iterator<Item = &Invite> {
         self.joins.values().map(|j| &j.invite)
     }
+
+    /// Ask again into every share [`Self::new`] restored as pending:
+    /// reach the invitation's relay when none is set, then the owner.
+    pub fn resume_joins(&mut self) -> Vec<Action> {
+        let invites: Vec<Invite> = self.joins.drain().map(|(_, j)| j.invite).collect();
+        let mut out = Vec::new();
+        for invite in invites {
+            out.extend(self.join(invite));
+        }
+        out
+    }
 }
 
 // ---------- Relay ---------------------------------------------------
@@ -2706,6 +2728,26 @@ mod tests {
         assert!(removed(&events, id, Removal::Expelled), "{events:?}");
         assert!(guest.share(id).is_none());
         assert!(owner.share(id).unwrap().members.is_empty());
+    }
+
+    #[test]
+    fn a_pending_join_survives_a_restart() {
+        let mut owner = driver("Sergio");
+        let mut guest = driver("Ana");
+        let share = shared_doc(&owner);
+        let id = share.id;
+        let invite = share.invite();
+        owner.create_share(share);
+        assert!(guest.join(invite).is_empty(), "the owner is nowhere yet");
+
+        let book = ShareBook::decode(&guest.book().encode()).unwrap();
+        let mut guest = SyncDriver::new(guest.profile.clone(), MemReplica::default(), book);
+        assert_eq!(guest.pending_joins().count(), 1);
+        guest.resume_joins();
+        assert_eq!(guest.pending_joins().count(), 1);
+        connect_both(&mut owner, &mut guest);
+        assert!(guest.share(id).is_some());
+        assert_eq!(guest.pending_joins().count(), 0);
     }
 
     #[test]
