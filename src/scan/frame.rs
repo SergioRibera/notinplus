@@ -37,6 +37,7 @@ fn luma(r: u8, g: u8, b: u8) -> u8 {
 impl Picture {
     /// Shrink a packed RGBA or BGRA frame. `None` for other formats or
     /// a buffer shorter than its planes say.
+    #[sismo::function("scan::raster")]
     pub(super) fn of(frame: &CameraFrame) -> Option<Self> {
         let bgra = match frame.pixel_format {
             PixelFormat::Rgba8 => false,
@@ -78,14 +79,23 @@ impl Picture {
     }
 
     /// Text of the first QR code found in the picture.
+    #[sismo::function("scan::decode")]
     pub(super) fn read_qr(&self) -> Option<String> {
         let width = usize::try_from(self.width).ok()?;
         let height = usize::try_from(self.height).ok()?;
-        let mut image = rqrr::PreparedImage::prepare_from_greyscale(width, height, |x, y| {
-            self.luma.get(y * width + x).copied().unwrap_or(u8::MAX)
-        });
-        image
-            .detect_grids()
+        let mut image = {
+            sismo::scope!("scan::decode::prepare");
+            rqrr::PreparedImage::prepare_from_greyscale(width, height, |x, y| {
+                self.luma.get(y * width + x).copied().unwrap_or(u8::MAX)
+            })
+        };
+        let grids = {
+            sismo::scope!("scan::decode::detect_grids");
+            image.detect_grids()
+        };
+        sismo::counter!("scan.grids", grids.len());
+        sismo::scope!("scan::decode::grids");
+        grids
             .into_iter()
             .find_map(|grid| grid.decode().ok().map(|(_, text)| text))
     }

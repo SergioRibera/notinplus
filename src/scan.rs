@@ -129,6 +129,7 @@ struct Shown {
 }
 
 impl Shown {
+    #[sismo::function("scan::preview_image")]
     fn of(picture: &Picture) -> Option<Self> {
         let width = i32::try_from(picture.width).ok()?;
         let height = i32::try_from(picture.height).ok()?;
@@ -150,6 +151,7 @@ impl Shown {
     }
 
     /// Fill `size` with the picture turned upright, cropping the excess.
+    #[sismo::function("scan::paint_preview")]
     fn paint(&self, canvas: &freya_engine::prelude::Canvas, (width, height): (f32, f32)) {
         #[allow(
             clippy::cast_precision_loss,
@@ -174,6 +176,7 @@ impl Shown {
 }
 
 /// The square to hold the code in.
+#[sismo::function("scan::paint_finder")]
 fn paint_finder(canvas: &freya_engine::prelude::Canvas, (width, height): (f32, f32)) {
     let side = width.min(height) * FINDER;
     let square = Rect::from_xywh((width - side) * 0.5, (height - side) * 0.5, side, side);

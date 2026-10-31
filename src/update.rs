@@ -186,6 +186,7 @@ impl Updates {
     /// kept manifest (the "Check now" button); without it nothing is
     /// fetched while the copy is fresh, and nothing at all when the
     /// person turned checks off.
+    #[sismo::function("update::check")]
     pub fn check(self, force: bool) {
         let mut state = self.state;
         if !force && state.peek().record.manual_only {
@@ -196,9 +197,16 @@ impl Updates {
         }
         state.write().status = CheckStatus::Checking;
         let (tx, rx) = flume::bounded(1);
-        std::thread::spawn(move || {
-            let _ = tx.send(check::latest(force));
-        });
+        let spawned = std::thread::Builder::new()
+            .name("notein-update-check".to_owned())
+            .spawn(move || {
+                let _ = tx.send(check::latest(force));
+            });
+        if let Err(err) = spawned {
+            log::warn!("update check thread: {err}");
+            state.write().status = CheckStatus::Idle;
+            return;
+        }
         spawn_in_window(async move {
             let Ok(result) = rx.recv_async().await else {
                 return;
@@ -228,16 +236,19 @@ impl Updates {
     }
 
     /// Stop announcing `version`; the next one is announced again.
+    #[sismo::function("update::skip")]
     pub fn skip(self, version: &str) {
         self.edit(|record| record.skipped = Some(version.to_owned()));
     }
 
     /// Announce the skipped version again.
+    #[sismo::function("update::unskip")]
     pub fn unskip(self) {
         self.edit(|record| record.skipped = None);
     }
 
     /// Turn automatic checks on or off.
+    #[sismo::function("update::set_automatic")]
     pub fn set_automatic(self, on: bool) {
         self.edit(|record| record.manual_only = !on);
         if on {
@@ -245,6 +256,7 @@ impl Updates {
         }
     }
 
+    #[sismo::function("update::edit")]
     fn edit(self, change: impl FnOnce(&mut UpdateRecord)) {
         let mut state = self.state;
         let mut record = UpdateRecord::load();

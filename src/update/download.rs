@@ -55,10 +55,12 @@ pub fn folder() -> PathBuf {
 ///
 /// # Errors
 /// Network or disk failures, a hash mismatch, or a cancel.
+#[sismo::function("update::download::fetch")]
 pub fn fetch(asset: &Asset, progress: &Arc<Progress>) -> Result<PathBuf, UpdateError> {
     fetch_into(&folder(), asset, progress)
 }
 
+#[sismo::function("update::download::fetch_into")]
 fn fetch_into(dir: &Path, asset: &Asset, progress: &Progress) -> Result<PathBuf, UpdateError> {
     std::fs::create_dir_all(dir)?;
     let dest = dir.join(file_name(&asset.name));
@@ -81,12 +83,16 @@ fn fetch_into(dir: &Path, asset: &Asset, progress: &Progress) -> Result<PathBuf,
     }
 }
 
+#[sismo::function("update::download::write")]
 fn write(asset: &Asset, partial: &Path, progress: &Progress) -> Result<(), UpdateError> {
     let client = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(15))
         .user_agent(concat!("notinplus/", env!("CARGO_PKG_VERSION")))
         .build()?;
-    let mut response = client.get(&asset.url).send()?.error_for_status()?;
+    let mut response = {
+        sismo::scope!("update::download::connect");
+        client.get(&asset.url).send()?.error_for_status()?
+    };
     let mut file = std::io::BufWriter::new(std::fs::File::create(partial)?);
     let mut hasher = Sha256::new();
     let mut buf = vec![0; CHUNK];
@@ -95,14 +101,19 @@ fn write(asset: &Asset, partial: &Path, progress: &Progress) -> Result<(), Updat
         if progress.is_cancelled() {
             return Err(UpdateError::Cancelled);
         }
-        let read = response.read(&mut buf)?;
+        let read = {
+            sismo::scope!("update::download::read");
+            response.read(&mut buf)?
+        };
         if read == 0 {
             break;
         }
+        sismo::scope!("update::download::hash_write");
         hasher.update(&buf[..read]);
         file.write_all(&buf[..read])?;
         received += read as u64;
         progress.received.store(received, Ordering::Relaxed);
+        sismo::counter!("update.download.received", received);
     }
     file.flush()?;
     let actual = hex(&hasher.finalize());
@@ -119,6 +130,7 @@ fn file_name(name: &str) -> &str {
     name.rsplit(['/', '\\']).next().unwrap_or(name)
 }
 
+#[sismo::function("update::download::matches_hash")]
 fn matches_hash(path: &Path, expected: &str) -> bool {
     let Ok(mut file) = std::fs::File::open(path) else {
         return false;
@@ -139,6 +151,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// An `AppImage` only runs once it is executable.
+#[sismo::function("update::download::mark_executable")]
 fn mark_executable(path: &Path) {
     #[cfg(unix)]
     {

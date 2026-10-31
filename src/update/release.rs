@@ -47,6 +47,7 @@ impl Release {
     ///
     /// # Errors
     /// The body is not the manifest.
+    #[sismo::function("update::parse_manifest")]
     pub fn parse(body: &str) -> serde_json::Result<Self> {
         serde_json::from_str(body)
     }
@@ -74,6 +75,7 @@ impl Release {
 
     /// Files `device` can use, best first.
     #[must_use]
+    #[sismo::function("update::assets_for")]
     pub fn assets_for(&self, device: &Device) -> Vec<&Asset> {
         let mut fits: Vec<_> = self
             .assets

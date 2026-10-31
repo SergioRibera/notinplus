@@ -262,6 +262,7 @@ fn actions(version: &str, page: &str, asset: Option<Asset>) -> Element {
 }
 
 /// Open the download sheet; the download runs while it is open.
+#[sismo::function("update::start_download")]
 fn start_download(version: &str, asset: Asset) {
     Sheet::titled(tr!("update-downloading-title", "version" => version))
         .child(DownloadSheet { asset })
@@ -297,9 +298,14 @@ impl Component for DownloadSheet {
                 let (tx, rx) = flume::bounded(1);
                 {
                     let progress = Arc::clone(&progress);
-                    std::thread::spawn(move || {
-                        let _ = tx.send(download::fetch(&asset, &progress));
-                    });
+                    let spawned = std::thread::Builder::new()
+                        .name("notein-update-download".to_owned())
+                        .spawn(move || {
+                            let _ = tx.send(download::fetch(&asset, &progress));
+                        });
+                    if let Err(err) = spawned {
+                        log::warn!("update download thread: {err}");
+                    }
                 }
                 let watched = Arc::clone(&progress);
                 spawn_in_window(async move {
@@ -434,6 +440,7 @@ fn handed_text() -> String {
 }
 
 /// Hand `path` to the system installer.
+#[sismo::function("update::install")]
 fn install(path: PathBuf, mut phase: State<Phase>) {
     let client = match InstallerClient::acquire() {
         Ok(client) => client,
@@ -458,6 +465,7 @@ fn install(path: PathBuf, mut phase: State<Phase>) {
 }
 
 /// Show the downloaded file's folder in the file manager.
+#[sismo::function("update::reveal")]
 fn reveal(path: &std::path::Path) {
     let folder = path.parent().unwrap_or(path);
     crate::external::open_url(&format!("file://{}", folder.display()));

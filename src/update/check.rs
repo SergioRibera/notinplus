@@ -62,6 +62,7 @@ impl UpdateRecord {
 /// # Errors
 /// The fetch failed and there was nothing kept to fall back on (or
 /// `force` asked for a fresh answer), or the manifest did not read.
+#[sismo::function("update::check_latest")]
 pub fn latest(force: bool) -> Result<Release, UpdateError> {
     let mut record = UpdateRecord::load();
     let now = crate::format::now();
@@ -91,6 +92,7 @@ pub fn latest(force: bool) -> Result<Release, UpdateError> {
     }
 }
 
+#[sismo::function("update::fetch_manifest")]
 fn fetch() -> Result<String, UpdateError> {
     let client = reqwest::blocking::Client::builder()
         .timeout(TIMEOUT)

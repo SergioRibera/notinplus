@@ -1469,7 +1469,9 @@ impl Library {
         for (item, cover) in self.data.index.items.iter_mut().zip(covers) {
             item.thumbnail = cover;
         }
-        index::store(&self.client, index::INDEX_KEY, bytes?);
+        let bytes = bytes?;
+        sismo::counter!("library.index_bytes", bytes.len());
+        index::store(&self.client, index::INDEX_KEY, bytes);
         crate::sync::local_changed();
         shared::notify();
         Ok(())

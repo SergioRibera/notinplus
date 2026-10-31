@@ -51,6 +51,7 @@ impl Drop for Capture {
 
 impl Capture {
     /// Open the camera and read frames until a code turns up.
+    #[sismo::function("scan::start_capture")]
     pub(super) fn start() -> (Self, flume::Receiver<Event>) {
         // Room for one picture in flight: the sheet only shows the newest.
         let (tx, rx) = flume::bounded(2);
@@ -86,6 +87,7 @@ impl Capture {
 }
 
 /// Ask for access and open the back camera (any camera without one).
+#[sismo::function("scan::open_camera")]
 async fn open() -> Result<SessionHandle, ScanError> {
     let client = CameraClient::acquire_with(CameraInitConfig::default())
         .await
@@ -137,6 +139,7 @@ async fn open() -> Result<SessionHandle, ScanError> {
 
 /// Forward pictures until a code is read (`Some`) or `stop` is raised
 /// (`None`).
+#[sismo::function("scan::read_frames")]
 fn read(
     session: &SessionHandle,
     stop: &AtomicBool,
@@ -144,7 +147,12 @@ fn read(
 ) -> Result<Option<String>, ScanError> {
     let frames = session.frames()?;
     while !stop.load(Ordering::Acquire) {
-        let frame = match frames.recv() {
+        let next = {
+            sismo::scope!("scan::wait_frame");
+            frames.recv()
+        };
+        sismo::scope!("scan::frame");
+        let frame = match next {
             Ok(StreamItem::Event(frame)) => frame,
             Ok(StreamItem::Completed | StreamItem::Cancelled | StreamItem::Failed(())) => {
                 return Err(ScanError::Stopped);
@@ -160,8 +168,10 @@ fn read(
         if let Some(text) = picture.read_qr() {
             return Ok(Some(text));
         }
-        if let Err(flume::TrySendError::Disconnected(_)) = tx.try_send(Event::Picture(picture)) {
-            break;
+        match tx.try_send(Event::Picture(picture)) {
+            Err(flume::TrySendError::Disconnected(_)) => break,
+            Err(flume::TrySendError::Full(_)) => sismo::instant!("scan::preview_dropped"),
+            Ok(()) => {}
         }
     }
     Ok(None)
