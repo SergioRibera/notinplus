@@ -38,6 +38,7 @@ const fn item_of<K: notein_plugin::kind::DocumentKind>(ctx: &FaceContext<K>) -> 
 
 /// Pane body for `item`; a notice when its plugin is missing or off.
 #[must_use]
+#[sismo::function("plugins::face_body")]
 pub fn render(item: ItemId, kind: &DocKind, slot: Option<ViewSlot>) -> Element {
     let face = super::catalog().face(&kind.plugin_id);
     face.map_or_else(
@@ -66,6 +67,7 @@ struct MissingFace {
 }
 
 impl Component for MissingFace {
+    #[sismo::function("plugins::missing_face")]
     fn render(&self) -> impl IntoElement {
         notein_ui_kit::EmptyState::new(freya::icons::lucide::puzzle(), tr!("plugins-missing-title"))
             .body(tr!("plugins-missing-body", "kind" => self.kind.as_str()))
@@ -79,6 +81,7 @@ pub struct CanvasFace;
 impl Face for CanvasFace {
     type Kind = CanvasKind;
 
+    #[sismo::function("plugins::canvas_face")]
     fn render(&self, ctx: FaceContext<CanvasKind>) -> Element {
         let item = item_of(&ctx);
         CanvasWithJumps {
@@ -99,6 +102,7 @@ pub struct PdfFace;
 impl Face for PdfFace {
     type Kind = PdfKind;
 
+    #[sismo::function("plugins::pdf_face")]
     fn render(&self, ctx: FaceContext<PdfKind>) -> Element {
         crate::builtin::pdf_face::PdfFace {
             item: item_of(&ctx),
@@ -107,12 +111,14 @@ impl Face for PdfFace {
         .into_element()
     }
 
+    #[sismo::function("plugins::faces_cover")]
     fn cover(&self, cover: &CoverRequest) -> Option<Element> {
         Some(pdf_cover(cover))
     }
 }
 
 /// The paper of a drawn cover: the document's tint, else the theme's.
+#[sismo::function("plugins::faces_cover_paper")]
 fn cover_paper(cover: &CoverRequest) -> Color {
     cover.tint.map_or_else(
         || notein_ui_kit::palette().paper,
@@ -121,6 +127,7 @@ fn cover_paper(cover: &CoverRequest) -> Color {
 }
 
 /// A page with a heading and a highlighted line.
+#[sismo::function("plugins::faces_pdf_cover")]
 fn pdf_cover(cover: &CoverRequest) -> Element {
     let p = notein_ui_kit::palette();
     let w = cover.width;
@@ -174,6 +181,7 @@ pub(crate) trait Apply: Clone + 'static {
 
 /// Follow the jumps queued for one document of `kind`: the one that
 /// opened it, then those sent while it is on screen.
+#[sismo::function("plugins::faces_use_jumps")]
 pub(crate) fn use_jumps(kind: &'static str, item: ItemId, target: impl Apply) {
     use notein_plugin::services::HostServices;
     use_hook(move || {
@@ -181,7 +189,7 @@ pub(crate) fn use_jumps(kind: &'static str, item: ItemId, target: impl Apply) {
         let host = super::host::shell();
         let first = host.take_jump(kind, doc);
         let rx = host.jumps(kind);
-        spawn(async move {
+        spawn(traced!("task::plugins::jumps", async move {
             let apply = |anchor: Vec<u8>| {
                 let target = target.clone();
                 async move {
@@ -199,17 +207,19 @@ pub(crate) fn use_jumps(kind: &'static str, item: ItemId, target: impl Apply) {
             }
             while let Ok(jump) = rx.recv_async().await {
                 if jump.doc == doc {
+                    sismo::instant!("plugins::jump");
                     super::host::shell().take_jump(kind, doc);
                     apply(jump.anchor).await;
                 }
             }
-        });
+        }));
     });
 }
 
 /// Undo and redo asked of `item` in the pane of `mount`, applied to its
 /// board. Skipped while a text box on it is edited: its editor took the
 /// keystroke.
+#[sismo::function("plugins::faces_use_board_history")]
 pub(crate) fn use_board_history(kind: &'static str, item: ItemId, mount: CanvasMount) {
     use notein_plugin::services::{HistoryStep, HostServices};
     let pane = match mount {
@@ -219,11 +229,12 @@ pub(crate) fn use_board_history(kind: &'static str, item: ItemId, mount: CanvasM
     use_hook(move || {
         let doc = doc_id(item);
         let rx = super::host::shell().history_steps(kind);
-        spawn(async move {
+        spawn(traced!("task::plugins::board_history", async move {
             while let Ok(request) = rx.recv_async().await {
                 if request.doc != doc || request.pane != pane {
                     continue;
                 }
+                sismo::scope!("plugins::history_step");
                 let Some(board) = crate::active_boards::get(mount) else {
                     continue;
                 };
@@ -236,7 +247,7 @@ pub(crate) fn use_board_history(kind: &'static str, item: ItemId, mount: CanvasM
                     HistoryStep::Redo => board.redo(),
                 };
             }
-        });
+        }));
     });
 }
 
@@ -277,6 +288,7 @@ struct CanvasWithJumps {
 }
 
 impl Component for CanvasWithJumps {
+    #[sismo::function("plugins::canvas_with_jumps")]
     fn render(&self) -> impl IntoElement {
         use_jumps(
             super::builtin::canvas::KIND,

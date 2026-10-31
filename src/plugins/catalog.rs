@@ -12,6 +12,7 @@ use super::builtin::{CanvasPlugin, PdfPlugin};
 
 static CATALOG: OnceLock<RwLock<PluginCatalog>> = OnceLock::new();
 
+#[sismo::function("plugins::catalog_init")]
 fn init() -> RwLock<PluginCatalog> {
     let mut catalog = PluginCatalog::default();
     let builtins: [Arc<dyn notein_plugin::plugin::Plugin>; 3] = [
@@ -68,6 +69,7 @@ pub fn catalog() -> RwLockReadGuard<'static, PluginCatalog> {
 }
 
 /// Write access (install, enable, disable).
+#[sismo::function("plugins::catalog_mut")]
 pub fn catalog_mut() -> RwLockWriteGuard<'static, PluginCatalog> {
     CATALOG
         .get_or_init(init)
@@ -77,6 +79,7 @@ pub fn catalog_mut() -> RwLockWriteGuard<'static, PluginCatalog> {
 
 /// Switch every loaded plugin to `lang`. A no-op before the catalog
 /// is first used: plugins pick up the current language as they load.
+#[sismo::function("plugins::catalog_set_lang")]
 pub fn set_lang(lang: Lang) {
     if let Some(catalog) = CATALOG.get() {
         catalog

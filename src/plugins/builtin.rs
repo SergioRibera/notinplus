@@ -17,12 +17,14 @@ static PDF: OnceLock<Arc<pdf::PdfKind>> = OnceLock::new();
 
 /// The canvas kind, for the shell code that writes its summaries.
 #[must_use]
+#[sismo::function("plugins::builtin_canvas_kind")]
 pub fn canvas_kind() -> Arc<canvas::CanvasKind> {
     Arc::clone(CANVAS.get_or_init(Arc::default))
 }
 
 /// The PDF kind, for import and text extraction.
 #[must_use]
+#[sismo::function("plugins::builtin_pdf_kind")]
 pub fn pdf_kind() -> Arc<pdf::PdfKind> {
     Arc::clone(PDF.get_or_init(Arc::default))
 }

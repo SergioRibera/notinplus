@@ -71,11 +71,13 @@ fn shell_host() -> &'static Arc<ShellHost> {
 
 /// The host handle handed to plugins.
 #[must_use]
+#[sismo::function("plugins::host_handle")]
 pub fn handle() -> Host {
     Arc::clone(shell_host()) as Host
 }
 
 impl ShellHost {
+    #[sismo::function("plugins::host_send")]
     fn send(&self, event: HostEvent) {
         if self.events.send(event).is_err() {
             log::warn!("host event dropped: pump gone");
@@ -84,6 +86,7 @@ impl ShellHost {
 
     /// Queue a move to `anchor` inside `doc` (a document of `kind`) and
     /// wake its open faces.
+    #[sismo::function("plugins::host_queue_jump")]
     pub fn queue_jump(&self, kind: &str, doc: DocId, anchor: &[u8]) {
         self.pending_jumps
             .lock()
@@ -103,6 +106,7 @@ impl ShellHost {
             });
     }
     /// Hand a header press to the open faces of `kind`.
+    #[sismo::function("plugins::host_press_header")]
     pub fn press_header(&self, kind: &str, press: &HeaderPress) {
         self.header_listeners
             .lock()
@@ -112,6 +116,7 @@ impl ShellHost {
 
     /// Ask the open faces of `kind` to undo or redo. `false` when no face
     /// of that kind listens (the keystroke stays unhandled).
+    #[sismo::function("plugins::host_step_history")]
     pub fn step_history(&self, kind: &str, request: HistoryRequest) -> bool {
         let mut sent = false;
         self.history_listeners
@@ -136,10 +141,12 @@ pub fn shell() -> Arc<ShellHost> {
 }
 
 impl HostServices for ShellHost {
+    #[sismo::function("plugins::host_toast")]
     fn toast(&self, toast: HostToast) {
         self.send(HostEvent::Toast(toast));
     }
 
+    #[sismo::function("plugins::host_progress")]
     fn progress(&self, plugin: &str, token: &str, progress: Progress) {
         self.send(HostEvent::Progress {
             key: (plugin.to_owned(), token.to_owned()),
@@ -147,18 +154,22 @@ impl HostServices for ShellHost {
         });
     }
 
+    #[sismo::function("plugins::host_open_url")]
     fn open_url(&self, url: &str) {
         crate::external::open_url(url);
     }
 
+    #[sismo::function("plugins::host_load_font")]
     fn load_font(&self, family: &str, data: Vec<u8>) {
         self.send(HostEvent::Font(family.to_owned(), data));
     }
 
+    #[sismo::function("plugins::host_navigate")]
     fn navigate(&self, target: SourceRef, placement: Placement) {
         self.send(HostEvent::Navigate(target, placement));
     }
 
+    #[sismo::function("plugins::host_annotate")]
     fn annotate(
         &self,
         request: AnnotationRequest,
@@ -172,6 +183,7 @@ impl HostServices for ShellHost {
         });
     }
 
+    #[sismo::function("plugins::host_insert_in_notebook")]
     fn insert_in_notebook(&self, from: DocId, reference: SourceRef) {
         self.send(HostEvent::InsertInNotebook(from, reference));
     }
@@ -214,6 +226,7 @@ impl HostServices for ShellHost {
         CAN_SHARE.load(Ordering::Relaxed)
     }
 
+    #[sismo::function("plugins::host_share")]
     fn share(&self, what: Share) {
         self.send(HostEvent::Share(what));
     }
@@ -230,12 +243,14 @@ impl HostServices for ShellHost {
         super::body::SharedBody::open(crate::library::ItemId(doc.0))
     }
 
+    #[sismo::function("plugins::host_doc_name")]
     fn doc_name(&self, doc: DocId) -> Option<String> {
         let data = crate::state::LibraryView::try_get()?.peek_data()?;
         data.item(crate::library::ItemId(doc.0))
             .map(|item| item.name.clone())
     }
 
+    #[sismo::function("plugins::host_presence")]
     fn presence(&self, doc: DocId) -> Arc<dyn notein_plugin::Presence> {
         crate::sync::presence::open(crate::library::ItemId(doc.0))
     }
@@ -253,6 +268,7 @@ const fn tone(tone: HostTone) -> ToastTone {
     }
 }
 
+#[sismo::function("plugins::host_apply")]
 fn apply(event: HostEvent, jobs: &mut HashMap<(String, String), ToastId>) {
     let mut toasts = Toasts::get();
     match event {
@@ -324,20 +340,22 @@ fn apply(event: HostEvent, jobs: &mut HashMap<(String, String), ToastId>) {
 static CAN_SHARE: AtomicBool = AtomicBool::new(false);
 
 /// Apply queued host events on the UI thread. Call once at the root.
+#[sismo::function("plugins::host_use_host_pump")]
 pub fn use_host_pump() {
     use_hook(|| {
-        spawn_in_window(async {
+        spawn_in_window(traced!("task::plugins::share_caps", async {
             if let Ok(client) = istmo_share::ShareClient::acquire() {
                 let send = client.capabilities().await.is_ok_and(|c| c.send);
                 CAN_SHARE.store(send, Ordering::Relaxed);
             }
-        });
+        }));
         let pump = shell_host().pump.clone();
-        spawn_in_window(async move {
+        spawn_in_window(traced!("task::plugins::host_pump", async move {
             let mut jobs = HashMap::new();
             while let Ok(event) = pump.recv_async().await {
+                sismo::counter!("plugins.host_queue", pump.len());
                 apply(event, &mut jobs);
             }
-        });
+        }));
     });
 }

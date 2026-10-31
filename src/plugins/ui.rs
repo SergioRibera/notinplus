@@ -36,6 +36,7 @@ impl HostUi for ShellUi {
 
 /// The handle faces receive.
 #[must_use]
+#[sismo::function("plugins::ui_handle")]
 pub fn handle() -> Ui {
     Rc::new(ShellUi)
 }

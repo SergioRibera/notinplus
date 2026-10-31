@@ -28,11 +28,13 @@ fn hint(placement: Placement) -> OpenHint {
     }
 }
 
+#[sismo::function("plugins::navigate_missing")]
 fn missing(text: String) {
     Toasts::get().show(Toast::new(text).tone(ToastTone::Error));
 }
 
 /// Open `target` with `placement`.
+#[sismo::function("plugins::navigate_open")]
 pub fn open(target: &SourceRef, placement: Placement) {
     match target {
         SourceRef::External { url } => crate::external::open_url(url),
@@ -68,13 +70,14 @@ pub fn open(target: &SourceRef, placement: Placement) {
     }
 }
 
+#[sismo::function("plugins::navigate_open_plugin_ref")]
 fn open_plugin_ref(kind_id: String, item: ItemId, anchor: Vec<u8>, hint: OpenHint) {
     let Some(kind) = super::kind(&kind_id) else {
         missing(tr!("plugins-navigate-needs-plugin"));
         return;
     };
     let shared = kind.info().shared_refs;
-    freya::prelude::spawn_in_window(async move {
+    freya::prelude::spawn_in_window(traced!("task::plugins::open_ref", async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };
@@ -96,9 +99,10 @@ fn open_plugin_ref(kind_id: String, item: ItemId, anchor: Vec<u8>, hint: OpenHin
             Some(doc) => open_at(&kind_id, doc, &anchor, hint),
             None => missing(tr!("plugins-navigate-document-gone")),
         }
-    });
+    }));
 }
 
+#[sismo::function("plugins::navigate_open_at")]
 fn open_at(kind: &str, doc: ItemId, anchor: &[u8], hint: OpenHint) {
     super::host::shell().queue_jump(kind, doc_id(doc), anchor);
     crate::space::open(TabTarget::Item(doc), hint);

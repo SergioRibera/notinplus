@@ -30,6 +30,7 @@ static GLANCES: std::sync::LazyLock<Mutex<HashMap<ItemId, CachedGlance>>> =
     std::sync::LazyLock::new(Mutex::default);
 
 impl Glance {
+    #[sismo::function("plugins::content_compute")]
     fn compute(item: &Item) -> Self {
         let kind = &item.kind.plugin_id;
         let (Some(bytes), Some(kind)) = (read(item.id, kind), crate::plugins::kind(kind)) else {
@@ -45,6 +46,7 @@ impl Glance {
         }
     }
 
+    #[sismo::function("plugins::content_glance_forget")]
     fn forget(item: ItemId) {
         GLANCES
             .lock()
@@ -71,6 +73,7 @@ impl Glance {
 }
 
 /// Tell open faces of `item` that its content changed elsewhere.
+#[sismo::function("plugins::content_notify_remote")]
 pub fn notify_remote(item: ItemId) {
     Glance::forget(item);
     crate::sync::open_docs::notify_snapshot(item);
@@ -78,11 +81,13 @@ pub fn notify_remote(item: ItemId) {
 
 /// Content bytes of `item` for kind `kind`; `None` when never saved.
 #[must_use]
+#[sismo::function("plugins::content_read")]
 pub fn read(item: ItemId, kind: &str) -> Option<Vec<u8>> {
     bodies::read_plugin_snapshot(item, kind).ok().flatten()
 }
 
 /// Replace the content bytes of `item` and let sync and search know.
+#[sismo::function("plugins::content_write")]
 pub fn write(item: ItemId, kind: &str, bytes: &[u8]) {
     if let Err(err) = bodies::write_plugin_snapshot(item, kind, bytes) {
         log::error!("content write {item}: {err}");
@@ -93,6 +98,7 @@ pub fn write(item: ItemId, kind: &str, bytes: &[u8]) {
 }
 
 /// Keep what the content of `item` links to, when its kind says.
+#[sismo::function("plugins::content_record_references")]
 pub fn record_references(item: ItemId, kind: &str, bytes: &[u8]) {
     if let Some(refs) = super::kind(kind).and_then(|k| k.references(bytes)) {
         crate::library::refs::record_content(item, refs);
@@ -117,12 +123,14 @@ impl SnapshotStore {
 }
 
 impl RawStore for SnapshotStore {
+    #[sismo::function("plugins::content_load")]
     fn load(&self) -> Option<Vec<u8>> {
         let unsaved = unsaved().get(&(self.item, self.kind.clone())).cloned();
         unsaved.or_else(|| read(self.item, &self.kind))
     }
 
     /// Kept in memory at once and written once changes pause.
+    #[sismo::function("plugins::content_save")]
     fn save(&self, bytes: Vec<u8>) {
         let (item, kind) = (self.item, self.kind.clone());
         unsaved().insert((item, kind.clone()), bytes);
@@ -145,6 +153,7 @@ impl RawStore for SnapshotStore {
 type Unsaved = HashMap<(ItemId, String), Vec<u8>>;
 
 /// Snapshots saved by a face and not on disk yet.
+#[sismo::function("plugins::content_unsaved")]
 fn unsaved() -> std::sync::MutexGuard<'static, Unsaved> {
     static UNSAVED: std::sync::LazyLock<Mutex<Unsaved>> = std::sync::LazyLock::new(Mutex::default);
     UNSAVED.lock().unwrap_or_else(PoisonError::into_inner)
@@ -154,6 +163,7 @@ fn store_key(item: ItemId, kind: &str) -> String {
     format!("snapshot:{item}:{kind}")
 }
 
+#[sismo::function("plugins::content_store_unsaved")]
 fn store_unsaved(item: ItemId, kind: &str) {
     let key = (item, kind.to_owned());
     let Some(bytes) = unsaved().get(&key).cloned() else {
@@ -183,6 +193,7 @@ pub const fn doc_id(item: ItemId) -> DocId {
 }
 
 /// Feed `item`'s content to its kind's search index.
+#[sismo::function("plugins::content_index")]
 pub fn index(item: &Item) {
     let Some(kind) = super::kind(&item.kind.plugin_id) else {
         return;
@@ -198,6 +209,7 @@ pub fn index(item: &Item) {
 /// Re-index `item` in the background after its content changed. One
 /// thread works through the requests; a burst for the same document
 /// indexes it once.
+#[sismo::function("plugins::content_reindex")]
 pub fn reindex(item: ItemId) {
     static QUEUE: std::sync::OnceLock<Option<flume::Sender<ItemId>>> = std::sync::OnceLock::new();
     let queue = QUEUE.get_or_init(|| {
@@ -212,6 +224,7 @@ pub fn reindex(item: ItemId) {
                             batch.push(item);
                         }
                     }
+                    sismo::counter!("plugins.reindex_batch", batch.len());
                     for item in batch {
                         index_blocking(item);
                     }
@@ -227,6 +240,7 @@ pub fn reindex(item: ItemId) {
 }
 
 /// Index `item` on this thread, if it is still in the library.
+#[sismo::function("plugins::content_index_blocking")]
 pub fn index_blocking(item: ItemId) {
     let Ok(handle) = crate::library::shared_blocking() else {
         return;
@@ -238,10 +252,12 @@ pub fn index_blocking(item: ItemId) {
 }
 
 /// Index every live document, on a background thread, once at start.
+#[sismo::function("plugins::content_index_library")]
 pub fn index_library() {
     std::thread::Builder::new()
         .name("notein-index".to_owned())
         .spawn(|| {
+            sismo::scope!("plugins::index_library_run");
             let Ok(handle) = crate::library::shared_blocking() else {
                 return;
             };
@@ -257,6 +273,7 @@ pub fn index_library() {
 }
 
 /// Drop `item` from its kind's index (it left the library).
+#[sismo::function("plugins::content_forget")]
 pub fn forget(item: &Item) {
     if let Some(kind) = super::kind(&item.kind.plugin_id) {
         kind.forget(doc_id(item.id));
@@ -269,6 +286,7 @@ static ATTACHMENT_WATCHERS: AttachmentWatchers = Mutex::new(Vec::new());
 
 /// Wake whenever the file `item` keeps is replaced.
 #[must_use]
+#[sismo::function("plugins::content_watch_attachment")]
 pub fn watch_attachment(item: ItemId) -> flume::Receiver<()> {
     let (tx, rx) = flume::unbounded();
     ATTACHMENT_WATCHERS
@@ -282,6 +300,7 @@ static ASSET_WATCHERS: Mutex<Vec<(ItemId, flume::Sender<()>)>> = Mutex::new(Vec:
 
 /// Fires when files `item` links to (images) arrive from another device.
 #[must_use]
+#[sismo::function("plugins::content_watch_assets")]
 pub fn watch_assets(item: ItemId) -> flume::Receiver<()> {
     let (tx, rx) = flume::unbounded();
     ASSET_WATCHERS
@@ -292,6 +311,7 @@ pub fn watch_assets(item: ItemId) -> flume::Receiver<()> {
 }
 
 /// Tell whoever shows `item` that more of its files are here.
+#[sismo::function("plugins::content_assets_arrived")]
 pub fn assets_arrived(item: ItemId) {
     ASSET_WATCHERS
         .lock()
@@ -300,6 +320,7 @@ pub fn assets_arrived(item: ItemId) {
 }
 
 /// Tell the open faces of `item` that its kept file changed.
+#[sismo::function("plugins::content_attachment_replaced")]
 pub fn attachment_replaced(item: ItemId) {
     ATTACHMENT_WATCHERS
         .lock()
@@ -309,6 +330,7 @@ pub fn attachment_replaced(item: ItemId) {
 
 /// What kinds are told about `item`.
 #[must_use]
+#[sismo::function("plugins::content_meta")]
 pub fn meta(item: &Item) -> DocMeta<'_> {
     DocMeta {
         id: doc_id(item.id),

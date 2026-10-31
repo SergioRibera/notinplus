@@ -23,6 +23,7 @@ pub fn plugins_dir() -> PathBuf {
 
 /// Load every installed plugin into `catalog`; failures are recorded
 /// so Settings can show them.
+#[sismo::function("plugins::dynamic_load_installed")]
 pub fn load_installed(catalog: &mut PluginCatalog) {
     let Ok(entries) = std::fs::read_dir(plugins_dir()) else {
         return;
@@ -48,6 +49,7 @@ pub fn load_installed(catalog: &mut PluginCatalog) {
     }
 }
 
+#[sismo::function("plugins::dynamic_register")]
 fn register(catalog: &mut PluginCatalog, loaded: Loaded, manifest_path: &Path) {
     let origin = Origin::ThirdParty {
         manifest: Box::new(loaded.manifest.clone()),
@@ -71,6 +73,7 @@ fn register(catalog: &mut PluginCatalog, loaded: Loaded, manifest_path: &Path) {
 ///
 /// # Errors
 /// [`LoaderError`] when it is not a compatible plugin.
+#[sismo::function("plugins::dynamic_inspect")]
 pub fn inspect(folder: &Path) -> Result<Loaded, LoaderError> {
     loader::load(&folder.join(MANIFEST))
 }
@@ -128,6 +131,7 @@ impl UserMessage for InstallError {
 ///
 /// # Errors
 /// [`InstallError`].
+#[sismo::function("plugins::dynamic_install")]
 pub fn install(folder: &Path) -> Result<String, InstallError> {
     let probe = inspect(folder).map_err(InstallError::Load)?;
     let target = plugins_dir().join(sanitize(&probe.manifest.id));
@@ -165,6 +169,7 @@ fn sanitize(id: &str) -> String {
         .collect()
 }
 
+#[sismo::function("plugins::dynamic_copy_dir")]
 fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(to)?;
     for entry in std::fs::read_dir(from)? {
@@ -192,6 +197,7 @@ impl Staged {
     /// # Errors
     /// [`InstallError::Package`] when it is not a readable package, or
     /// [`InstallError::Copy`] when the files cannot be written.
+    #[sismo::function("plugins::dynamic_unpack")]
     pub fn unpack(bytes: &[u8]) -> Result<Self, InstallError> {
         let root = plugins_dir()
             .join(".staging")
@@ -230,6 +236,7 @@ impl Staged {
 
 impl Drop for Staged {
     fn drop(&mut self) {
+        sismo::scope!("drop::plugin_staging");
         if let Err(err) = std::fs::remove_dir_all(&self.root) {
             log::warn!("plugin staging {}: {err}", self.root.display());
         }
