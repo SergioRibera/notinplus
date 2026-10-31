@@ -49,6 +49,7 @@ fn key(entry: &CatalogEntry) -> EntryKey {
 
 /// Ranked entries in starting order: starters first by rank, then the
 /// rest in catalog order.
+#[sismo::function("flows::ranked_entries")]
 fn ranked_entries() -> Vec<CatalogEntry> {
     let mut entries: Vec<CatalogEntry> = crate::plugins::catalog()
         .entries()
@@ -62,6 +63,7 @@ fn ranked_entries() -> Vec<CatalogEntry> {
 static SESSION_TILES: OnceLock<Mutex<Vec<EntryKey>>> = OnceLock::new();
 
 /// The four tiles of this session, chosen once when the app opens.
+#[sismo::function("flows::session_tiles")]
 fn session_tiles() -> Vec<EntryKey> {
     SESSION_TILES
         .get_or_init(|| {
@@ -78,6 +80,7 @@ fn session_tiles() -> Vec<EntryKey> {
         .clone()
 }
 
+#[sismo::function("flows::record_use")]
 fn record_use(entry: &CatalogEntry) {
     let mut log = UsageLog::load();
     log.record(key(entry), crate::format::now());
@@ -87,6 +90,7 @@ fn record_use(entry: &CatalogEntry) {
 }
 
 /// The tiles and whether the log is still in its starting state.
+#[sismo::function("flows::tiles")]
 fn tiles() -> (Vec<CatalogEntry>, bool) {
     let entries = ranked_entries();
     let wanted = session_tiles();
@@ -106,6 +110,7 @@ fn tiles() -> (Vec<CatalogEntry>, bool) {
 }
 
 /// Open the create menu from the keyboard (Ctrl+N): near the top centre.
+#[sismo::function("flows::open_menu_from_keyboard")]
 pub fn open_menu_from_keyboard(context: Context) {
     let size = *Platform::get().current_window().root_size.read();
     open_menu(
@@ -115,6 +120,7 @@ pub fn open_menu_from_keyboard(context: Context) {
 }
 
 /// Open the create menu hanging from `anchor` (the + button).
+#[sismo::function("flows::open_menu")]
 pub fn open_menu(anchor: Area, context: Context) {
     let body = Menu { context };
     if width_class().is_compact() {
@@ -163,6 +169,7 @@ fn tiles_heading(cold: bool) -> Rect {
 
 impl Menu {
     /// The frequent entries as tiles, two per row.
+    #[sismo::function("flows::tile_rows")]
     fn tile_rows(&self, tiles: &[CatalogEntry]) -> Vec<Element> {
         tiles
             .chunks(2)
@@ -185,6 +192,7 @@ impl Menu {
     }
 
     /// Folder, every other entry, New desk and Import….
+    #[sismo::function("flows::menu_list")]
     fn list(&self, others: Vec<CatalogEntry>, imports: Vec<CatalogEntry>) -> Vec<ActionEntry> {
         use freya::icons::lucide;
         let p = palette();
@@ -254,6 +262,7 @@ impl Menu {
 }
 
 impl Component for Menu {
+    #[sismo::function("flows::menu")]
     fn render(&self) -> impl IntoElement {
         let (tiles, cold) = tiles();
         let rest: Vec<CatalogEntry> = crate::plugins::catalog()
@@ -284,6 +293,7 @@ impl Component for Menu {
     }
 }
 
+#[sismo::function("flows::import_submenu")]
 fn import_submenu(imports: &[CatalogEntry], context: &Context) {
     use freya::icons::lucide;
     let p = palette();
@@ -330,6 +340,7 @@ struct Tile {
 }
 
 impl Component for Tile {
+    #[sismo::function("flows::tile")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let mut hover = use_state(|| false);
@@ -378,6 +389,7 @@ impl Component for Tile {
 }
 
 /// Run `entry`: show what its flow needs, then create and open.
+#[sismo::function("flows::run")]
 pub fn run(entry: CatalogEntry, context: Context) {
     let kind_id = entry.kind.clone();
     match entry.entry.flow.clone() {
@@ -402,7 +414,7 @@ pub fn run(entry: CatalogEntry, context: Context) {
             extensions,
             mime_types,
         } => {
-            spawn_in_window(async move {
+            spawn_in_window(traced!("task::flows::create_menu", async move {
                 let extensions: Vec<&str> = extensions.iter().map(AsRef::as_ref).collect();
                 let mimes: Vec<&str> = mime_types.iter().map(AsRef::as_ref).collect();
                 match crate::files::pick(&title, &extensions, &mimes).await {
@@ -415,7 +427,7 @@ pub fn run(entry: CatalogEntry, context: Context) {
                         );
                     }
                 }
-            });
+            }));
         }
     }
 }
@@ -450,6 +462,7 @@ impl Persisted for LastPaper {
 
 /// The create sheet: name, folder, tags and, for a kind with paper, its
 /// paper. `choice` is what a [`CreationFlow::Choose`] already picked.
+#[sismo::function("flows::create_form")]
 fn form(entry: CatalogEntry, context: Context, choice: Option<String>) {
     let p = palette();
     let info = crate::plugins::kind_info(&entry.kind);
@@ -504,6 +517,7 @@ fn form(entry: CatalogEntry, context: Context, choice: Option<String>) {
     });
 }
 
+#[sismo::function("flows::choose")]
 fn choose(
     entry: &CatalogEntry,
     context: &Context,
@@ -570,6 +584,7 @@ fn choose(
         .open();
 }
 
+#[sismo::function("flows::import_sheet")]
 fn import_sheet(entry: CatalogEntry, context: Context, picked: crate::files::Picked) {
     let p = palette();
     let Some(kind) = crate::plugins::kind(&entry.kind) else {
@@ -620,6 +635,7 @@ fn import_sheet(entry: CatalogEntry, context: Context, picked: crate::files::Pic
     });
 }
 
+#[sismo::function("flows::import_error")]
 fn import_error(entry: &CatalogEntry, context: Context, file: &str, why: &str) {
     let entry = entry.clone();
     Sheet::titled(tr!("flows-create-import-kind", "kind" => entry.entry.label.to_string()))
@@ -656,6 +672,7 @@ struct Preparing {
 }
 
 impl Component for Preparing {
+    #[sismo::function("flows::preparing")]
     fn render(&self) -> impl IntoElement {
         let done = *self.done.read();
         #[allow(clippy::cast_precision_loss)]
@@ -680,8 +697,9 @@ const LARGE_IMPORT: u32 = 40;
 /// How often the progress sheet asks how far indexing got.
 const PROGRESS_POLL: std::time::Duration = std::time::Duration::from_millis(120);
 
+#[sismo::function("flows::create")]
 fn create(entry: CatalogEntry, context: Context, request: Request) {
-    spawn_in_window(async move {
+    spawn_in_window(traced!("task::flows::create", async move {
         let Some(kind) = crate::plugins::kind(&entry.kind) else {
             return;
         };
@@ -768,11 +786,12 @@ fn create(entry: CatalogEntry, context: Context, request: Request) {
         } else {
             super::open(item);
         }
-    });
+    }));
 }
 
 /// Draw the cover of an attachment and index it in the background,
 /// showing progress while a large one prepares.
+#[sismo::function("flows::prepare_attachment")]
 fn prepare_attachment(item: ItemId, kind_id: &str, bytes: Vec<u8>) {
     let Some(kind) = crate::plugins::kind(kind_id) else {
         return;
@@ -802,6 +821,7 @@ fn prepare_attachment(item: ItemId, kind_id: &str, bytes: Vec<u8>) {
     {
         let kind = std::sync::Arc::clone(&kind);
         std::thread::spawn(move || {
+            sismo::scope!("flows::attachment_cover");
             match kind.thumbnail(&content, &bytes) {
                 Some(cover) => match crate::library::shared_blocking() {
                     Ok(handle) => {
@@ -823,7 +843,7 @@ fn prepare_attachment(item: ItemId, kind_id: &str, bytes: Vec<u8>) {
     let Some(mut done) = done else {
         return;
     };
-    spawn_in_window(async move {
+    spawn_in_window(traced!("task::flows::prepare_attachment", async move {
         while done_rx.try_recv().is_err() && !done_rx.is_disconnected() {
             async_io::Timer::after(PROGRESS_POLL).await;
             let report = kind
@@ -837,13 +857,14 @@ fn prepare_attachment(item: ItemId, kind_id: &str, bytes: Vec<u8>) {
         if ModalController::get().is_open() {
             ModalController::get().close();
         }
-    });
+    }));
 }
 
 /// Swap the file `item` keeps for another one. Ink, bookmarks and
 /// notebooks stay: they belong to the document, not to the file.
+#[sismo::function("flows::replace_attachment")]
 pub fn replace_attachment(item: ItemId, kind_id: String) {
-    spawn(async move {
+    spawn(traced!("task::flows::replace_attachment", async move {
         let Some(kind) = crate::plugins::kind(&kind_id) else {
             return;
         };
@@ -890,9 +911,10 @@ pub fn replace_attachment(item: ItemId, kind_id: String) {
         Toasts::get().show(Toast::new(
             tr!("flows-create-replaced", "file" => picked.name.clone()),
         ));
-    });
+    }));
 }
 
+#[sismo::function("flows::replace_failed")]
 fn replace_failed(item: ItemId, kind_id: String, file: &str, why: &str) {
     let title = crate::plugins::kind_info(&kind_id).map_or_else(
         || tr!("flows-create-replace-file"),
@@ -923,6 +945,7 @@ fn replace_failed(item: ItemId, kind_id: String, file: &str, why: &str) {
 }
 
 /// A new folder, optionally taking the selected documents along.
+#[sismo::function("flows::new_folder")]
 pub fn new_folder(context: Context) {
     let p = palette();
     let selected = context.selected();
@@ -986,6 +1009,7 @@ struct MesaForm {
 }
 
 impl Component for MesaForm {
+    #[sismo::function("flows::mesa_form")]
     fn render(&self) -> impl IntoElement {
         let mut start = self.start;
         let mut picked = self.picked;
@@ -1068,6 +1092,7 @@ impl Component for MesaForm {
 }
 
 /// A new mesa: empty, with what is open now, or with chosen documents.
+#[sismo::function("flows::new_mesa")]
 pub fn new_mesa() {
     let name = State::create_in_scope(String::new(), ScopeId::ROOT);
     let start = State::create_in_scope(StartWith::Empty, ScopeId::ROOT);
@@ -1095,7 +1120,7 @@ pub fn new_mesa() {
                     let title = name.peek().clone();
                     let how = *start.peek();
                     let chosen = picked.peek().clone();
-                    spawn_in_window(async move {
+                    spawn_in_window(traced!("task::flows::new_mesa", async move {
                         let Ok(handle) = crate::library::shared().await else {
                             return;
                         };
@@ -1135,7 +1160,7 @@ pub fn new_mesa() {
                         }
                         drop(lib);
                         crate::space::open_space(workspace);
-                    });
+                    }));
                 })
                 .into_element(),
         ]))
@@ -1144,6 +1169,7 @@ pub fn new_mesa() {
 
 /// Apply option `id` of the edit sheet's list to `item`, a document of
 /// `kind_id`.
+#[sismo::function("flows::apply_choice")]
 pub fn apply_choice(item: ItemId, kind_id: &str, id: &str) {
     let Some(kind) = crate::plugins::kind(kind_id) else {
         return;
@@ -1218,6 +1244,7 @@ pub fn paper_swatch(style: BackgroundStyle) -> Element {
 
 /// Every creation entry by key, for the FAB shortcut bubbles.
 #[must_use]
+#[sismo::function("flows::entry_for")]
 pub fn entry_for(shortcut: &EntryKey) -> Option<CatalogEntry> {
     crate::plugins::catalog()
         .entries()

@@ -60,6 +60,7 @@ impl Purpose {
         }
     }
 
+    #[sismo::function("flows::pick")]
     fn pick(self, item: ItemId) {
         match self {
             Self::Link { from } => link(from, item, LinkKind::Related),
@@ -73,8 +74,9 @@ impl Purpose {
     }
 }
 
+#[sismo::function("flows::link")]
 fn link(from: ItemId, to: ItemId, kind: LinkKind) {
-    spawn_in_window(async move {
+    spawn_in_window(traced!("task::flows::link_picker", async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };
@@ -99,10 +101,11 @@ fn link(from: ItemId, to: ItemId, kind: LinkKind) {
                 );
             }
         }
-    });
+    }));
 }
 
 /// Open the document selector for `purpose`.
+#[sismo::function("flows::open_document_picker")]
 pub fn document_picker(purpose: Purpose) {
     Sheet::titled(purpose.title())
         .child(DocumentPicker { purpose })
@@ -115,6 +118,7 @@ struct DocumentPicker {
 }
 
 impl Component for DocumentPicker {
+    #[sismo::function("flows::document_picker")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let query = use_state(String::new);
@@ -216,6 +220,7 @@ impl Component for DocumentPicker {
 }
 
 /// "Create with this name": every entry a name is enough for.
+#[sismo::function("flows::create_named")]
 fn create_named(name: &str, purpose: Purpose) -> Element {
     let p = palette();
     let entries = named_entries();
@@ -238,8 +243,9 @@ fn create_named(name: &str, purpose: Purpose) -> Element {
         .into_element()
 }
 
+#[sismo::function("flows::create_quick")]
 pub fn create_quick(entry: notein_plugin::catalog::CatalogEntry, name: String, purpose: Purpose) {
-    spawn_in_window(async move {
+    spawn_in_window(traced!("task::flows::create_quick", async move {
         let Some(kind) = crate::plugins::kind(&entry.kind) else {
             return;
         };
@@ -274,11 +280,12 @@ pub fn create_quick(entry: notein_plugin::catalog::CatalogEntry, name: String, p
             }
             Err(err) => log::error!("create named: {err}"),
         }
-    });
+    }));
 }
 
 /// The notebooks of `item`: open one, make a new one beside, or use an
 /// existing canvas.
+#[sismo::function("flows::notebook_sheet")]
 pub fn notebook_sheet(item: ItemId) {
     let Some(data) = LibraryView::get().data() else {
         return;
@@ -362,6 +369,7 @@ struct FolderTree {
 }
 
 /// Folders under `parent`, depth first and by name, with their depth.
+#[sismo::function("flows::walk_folders")]
 fn walk_folders(
     data: &crate::library::LibraryData,
     parent: FolderId,
@@ -382,6 +390,7 @@ fn walk_folders(
 }
 
 impl Component for FolderTree {
+    #[sismo::function("flows::folder_tree")]
     fn render(&self) -> impl IntoElement {
         let Some(data) = LibraryView::get().data() else {
             return rect().into_element();
@@ -418,6 +427,7 @@ impl Component for FolderTree {
 }
 
 /// Pick a folder on top of the current sheet; `on_pick` gets it.
+#[sismo::function("flows::choose_folder")]
 pub fn choose_folder(current: FolderId, on_pick: impl Fn(FolderId) + 'static) {
     Sheet::titled(tr!("flows-forms-saved-in"))
         .on_back(|()| ModalController::get().close())
@@ -430,6 +440,7 @@ pub fn choose_folder(current: FolderId, on_pick: impl Fn(FolderId) + 'static) {
 }
 
 /// "Move to…": pick where `items` and `folders` go.
+#[sismo::function("flows::folder_picker")]
 pub fn folder_picker(items: Vec<ItemId>, folders: Vec<FolderId>) {
     let count = items.len() + folders.len();
     let current = LibraryView::get()
@@ -464,6 +475,7 @@ pub fn folder_picker(items: Vec<ItemId>, folders: Vec<FolderId>) {
 
 /// The create entries a name is enough for, in the catalog's order.
 #[must_use]
+#[sismo::function("flows::named_entries")]
 pub fn named_entries() -> Vec<notein_plugin::catalog::CatalogEntry> {
     crate::plugins::catalog()
         .entries()

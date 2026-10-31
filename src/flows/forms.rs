@@ -101,6 +101,7 @@ pub struct FormValues {
 
 /// Open `spec` prefilled with `initial`; `on_submit` receives the
 /// values when the primary button (or Enter in the name) is pressed.
+#[sismo::function("flows::form_open")]
 pub fn open(spec: FormSpec, initial: FormValues, on_submit: impl Fn(FormValues) + 'static) {
     let values = State::create_in_scope(initial, ScopeId::ROOT);
     let submit: Rc<dyn Fn(FormValues)> = Rc::new(on_submit);
@@ -129,6 +130,7 @@ impl PartialEq for SubmitHandle {
     }
 }
 
+#[sismo::function("flows::footer")]
 fn footer(
     spec: &FormSpec,
     values: State<FormValues>,
@@ -200,6 +202,7 @@ struct Form {
 }
 
 impl Component for Form {
+    #[sismo::function("flows::form")]
     fn render(&self) -> impl IntoElement {
         let spec = &self.spec;
         let mut values = self.values;
@@ -297,6 +300,7 @@ struct PaperPicker {
 }
 
 impl Component for PaperPicker {
+    #[sismo::function("flows::paper_picker")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let mut values = self.values;
@@ -366,6 +370,7 @@ struct ColorRow {
 }
 
 impl Component for ColorRow {
+    #[sismo::function("flows::color_row")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let mut values = self.values;
@@ -429,6 +434,7 @@ struct ChoiceList {
 }
 
 impl Component for ChoiceList {
+    #[sismo::function("flows::choice_list")]
     fn render(&self) -> impl IntoElement {
         let mut values = self.values;
         let current = values.read().choice.clone();
@@ -452,6 +458,7 @@ struct TagsField {
 }
 
 impl Component for TagsField {
+    #[sismo::function("flows::tags_field")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let mut values = self.values;
@@ -528,6 +535,7 @@ struct Location {
 }
 
 impl Component for Location {
+    #[sismo::function("flows::location")]
     fn render(&self) -> impl IntoElement {
         let values = self.values;
         let folder = values.read().folder;
@@ -576,6 +584,7 @@ pub fn folder_path(data: &crate::library::LibraryData, folder: FolderId) -> Stri
 }
 
 /// Turn tag names into ids, creating the missing ones.
+#[sismo::function("flows::resolve_tags")]
 pub async fn resolve_tags(lib: &mut crate::library::Library, names: &[String]) -> Vec<TagId> {
     let mut ids = Vec::new();
     for name in names {
@@ -608,6 +617,7 @@ fn tag_names(data: &crate::library::LibraryData, ids: &[TagId]) -> Vec<String> {
 }
 
 /// The edit sheet of `item`, shaped by its kind.
+#[sismo::function("flows::edit_item_form")]
 pub fn edit_item(item: ItemId) {
     let Some(data) = LibraryView::get().data() else {
         return;
@@ -705,6 +715,7 @@ pub fn edit_item(item: ItemId) {
 }
 
 /// The edit sheet of `folder`.
+#[sismo::function("flows::edit_folder_form")]
 pub fn edit_folder(folder: FolderId) {
     let Some(data) = LibraryView::get().data() else {
         return;
@@ -741,6 +752,7 @@ pub fn edit_folder(folder: FolderId) {
 }
 
 /// The edit sheet of a mesa.
+#[sismo::function("flows::edit_mesa_form")]
 pub fn edit_mesa(workspace: WorkspaceId) {
     let Some(data) = LibraryView::get().data() else {
         return;

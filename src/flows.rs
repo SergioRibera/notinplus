@@ -26,31 +26,37 @@ fn toast(text: impl Into<String>) {
 }
 
 /// Open `item` in the other pane.
+#[sismo::function("flows::open_beside")]
 pub fn open_beside(item: ItemId) {
     crate::space::open(TabTarget::Item(item), OpenHint::Beside);
 }
 
 /// Open `item` alone in a new mesa.
+#[sismo::function("flows::open_in_new_mesa")]
 pub fn open_in_new_mesa(item: ItemId) {
     crate::space::open(TabTarget::Item(item), OpenHint::NewSpace);
 }
 
 /// Open `item` where the user is.
+#[sismo::function("flows::open")]
 pub fn open(item: ItemId) {
     crate::space::open(TabTarget::Item(item), OpenHint::Focused);
 }
 
 /// The notebooks sheet of `item`.
+#[sismo::function("flows::notebook")]
 pub fn notebook(item: ItemId) {
     pickers::notebook_sheet(item);
 }
 
 /// Pick a document to link `item` with.
+#[sismo::function("flows::link_with")]
 pub fn link_with(item: ItemId) {
     pickers::document_picker(pickers::Purpose::Link { from: item });
 }
 
 /// Pin or unpin `item`.
+#[sismo::function("flows::toggle_pin")]
 pub fn toggle_pin(item: ItemId, pin: bool) {
     if pin {
         state::edit(crate::state::LibraryEdit::Pin, async move |lib| {
@@ -64,6 +70,7 @@ pub fn toggle_pin(item: ItemId, pin: bool) {
 }
 
 /// Pin several items at once.
+#[sismo::function("flows::pin_items")]
 pub fn pin_items(items: Vec<ItemId>) {
     let n = items.len();
     state::edit(crate::state::LibraryEdit::Pin, async move |lib| {
@@ -73,6 +80,7 @@ pub fn pin_items(items: Vec<ItemId>) {
 }
 
 /// The share sheet for `item`.
+#[sismo::function("flows::share_item")]
 pub fn share_item(item: ItemId) {
     crate::screens::collab::share(crate::screens::collab::ShareTarget {
         item: Some(item),
@@ -81,6 +89,7 @@ pub fn share_item(item: ItemId) {
 }
 
 /// The share sheet for a whole mesa.
+#[sismo::function("flows::share_mesa")]
 pub fn share_mesa(workspace: WorkspaceId) {
     crate::screens::collab::share(crate::screens::collab::ShareTarget {
         item: None,
@@ -89,18 +98,21 @@ pub fn share_mesa(workspace: WorkspaceId) {
 }
 
 /// Export the given items.
+#[sismo::function("flows::export_items")]
 pub fn export_items(items: Vec<ItemId>) {
     transfer::export(transfer::ExportScope::Items(items));
 }
 
 /// Export a folder and its contents.
+#[sismo::function("flows::export_folder")]
 pub fn export_folder(folder: FolderId) {
     transfer::export(transfer::ExportScope::Folder(folder));
 }
 
 /// Duplicate `item` next to it.
+#[sismo::function("flows::duplicate")]
 pub fn duplicate(item: ItemId) {
-    spawn_in_window(async move {
+    spawn_in_window(traced!("task::flows::duplicate", async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };
@@ -118,33 +130,38 @@ pub fn duplicate(item: ItemId) {
                     .show(Toast::new(tr!("errors-headline-detail", "headline" => tr!("flows-duplicate-failed"), "detail" => err.user_message())).tone(ToastTone::Error));
             }
         }
-    });
+    }));
 }
 
 /// Pick a folder to move `items` and `folders` into.
+#[sismo::function("flows::move_items")]
 pub fn move_items(items: Vec<ItemId>, folders: Vec<FolderId>) {
     pickers::folder_picker(items, folders);
 }
 
 /// The edit sheet of `item`'s kind.
+#[sismo::function("flows::edit_item")]
 pub fn edit_item(item: ItemId) {
     forms::edit_item(item);
 }
 
 /// The edit sheet of a folder.
+#[sismo::function("flows::edit_folder")]
 pub fn edit_folder(folder: FolderId) {
     forms::edit_folder(folder);
 }
 
 /// The edit sheet of a mesa.
+#[sismo::function("flows::edit_mesa")]
 pub fn edit_mesa(workspace: WorkspaceId) {
     forms::edit_mesa(workspace);
 }
 
 /// Run one of `item`'s kind actions and carry out its effect.
+#[sismo::function("flows::run_kind_action")]
 pub fn run_kind_action(item: ItemId, action: &str) {
     let action = action.to_owned();
-    spawn_in_window(async move {
+    spawn_in_window(traced!("task::flows::kind_action", async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };
@@ -175,10 +192,11 @@ pub fn run_kind_action(item: ItemId, action: &str) {
             } => share_file(file_name, mime, bytes),
             ActionEffect::Edit => edit_item(item),
         }
-    });
+    }));
 }
 
 /// Hand a file to the system share sheet.
+#[sismo::function("flows::share_file")]
 pub fn share_file(name: String, mime: String, bytes: Vec<u8>) {
     share(notein_plugin::Share::File {
         subject: name.clone(),
@@ -189,11 +207,12 @@ pub fn share_file(name: String, mime: String, bytes: Vec<u8>) {
 }
 
 /// Hand `what` to the system share sheet.
+#[sismo::function("flows::share")]
 pub fn share(what: notein_plugin::Share) {
     use istmo_share::{ShareClient, ShareFile, ShareRequest};
     // A menu that runs this closes first, unmounting the scope `spawn`
     // would tie the task to; dropping the task cancels the call.
-    spawn_in_window(async move {
+    spawn_in_window(traced!("task::flows::share", async move {
         let request = match what {
             notein_plugin::Share::Text { text, subject } => {
                 ShareRequest::text(text).with_subject(subject)
@@ -217,10 +236,11 @@ pub fn share(what: notein_plugin::Share) {
             log::warn!("share: {err}");
             Toasts::get().show(Toast::new(tr!("flows-share-failed")).tone(ToastTone::Error));
         }
-    });
+    }));
 }
 
 /// Toast for a move to the trash, with Undo.
+#[sismo::function("flows::trashed_toast")]
 fn trashed_toast(text: String, batch: u64) {
     Toasts::get().show(Toast::new(text).tone(ToastTone::Trash).action(
         tr!("flows-undo"),
@@ -233,8 +253,9 @@ fn trashed_toast(text: String, batch: u64) {
 }
 
 /// Move items to the trash in one step, with Undo.
+#[sismo::function("flows::trash_items")]
 pub fn trash_items(items: Vec<ItemId>, fate: NotebookFate) {
-    spawn_in_window(async move {
+    spawn_in_window(traced!("task::flows::trash_items", async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };
@@ -260,17 +281,19 @@ pub fn trash_items(items: Vec<ItemId>, fate: NotebookFate) {
                 Toasts::get().show(Toast::new(tr!("errors-headline-detail", "headline" => tr!("flows-trash-failed"), "detail" => err.user_message())).tone(ToastTone::Error));
             }
         }
-    });
+    }));
 }
 
 /// Move `item` to the trash. Asks only when it has notebooks.
+#[sismo::function("flows::trash_item")]
 pub fn trash_item(item: ItemId) {
     trash_documents(vec![item]);
 }
 
 /// Move `items` to the trash. Asks once when any of them has notebooks.
+#[sismo::function("flows::trash_documents")]
 pub fn trash_documents(items: Vec<ItemId>) {
-    spawn_in_window(async move {
+    spawn_in_window(traced!("task::flows::trash_documents", async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };
@@ -292,11 +315,12 @@ pub fn trash_documents(items: Vec<ItemId>) {
             return;
         }
         ask_notebook_fate(items, title, notebooks);
-    });
+    }));
 }
 
 /// "Move to trash" for documents with notebooks: one question,
 /// keeping them preselected.
+#[sismo::function("flows::ask_notebook_fate")]
 fn ask_notebook_fate(items: Vec<ItemId>, title: String, notebooks: usize) {
     use freya::icons::lucide;
     let fate = State::create_in_scope(NotebookFate::Keep, ScopeId::ROOT);
@@ -327,6 +351,7 @@ struct NotebookFateChoice {
 }
 
 impl Component for NotebookFateChoice {
+    #[sismo::function("flows::notebook_fate_choice")]
     fn render(&self) -> impl IntoElement {
         let mut fate = self.fate;
         let current = *fate.read();
@@ -353,8 +378,9 @@ impl Component for NotebookFateChoice {
 }
 
 /// Move a folder and everything in it to the trash, with Undo.
+#[sismo::function("flows::trash_folder")]
 pub fn trash_folder(folder: FolderId) {
-    spawn_in_window(async move {
+    spawn_in_window(traced!("task::flows::trash_folder", async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };
@@ -377,10 +403,11 @@ pub fn trash_folder(folder: FolderId) {
                 Toasts::get().show(Toast::new(tr!("errors-headline-detail", "headline" => tr!("flows-trash-failed"), "detail" => err.user_message())).tone(ToastTone::Error));
             }
         }
-    });
+    }));
 }
 
 /// Show or stop showing a mesa first in Home.
+#[sismo::function("flows::pin_mesa")]
 pub fn pin_mesa(workspace: WorkspaceId, pin: bool) {
     state::edit(crate::state::LibraryEdit::PinDesk, async move |lib| {
         lib.set_workspace_pinned(workspace, pin).await
@@ -388,6 +415,7 @@ pub fn pin_mesa(workspace: WorkspaceId, pin: bool) {
 }
 
 /// Copy a mesa with the same documents.
+#[sismo::function("flows::duplicate_mesa")]
 pub fn duplicate_mesa(workspace: WorkspaceId) {
     state::edit(crate::state::LibraryEdit::DuplicateDesk, async move |lib| {
         lib.duplicate_workspace(workspace).await.map(drop)
@@ -395,8 +423,9 @@ pub fn duplicate_mesa(workspace: WorkspaceId) {
 }
 
 /// Delete a mesa after one confirmation; its documents stay.
+#[sismo::function("flows::delete_mesa")]
 pub fn delete_mesa(workspace: WorkspaceId) {
-    spawn_in_window(async move {
+    spawn_in_window(traced!("task::flows::delete_mesa", async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };
@@ -419,5 +448,5 @@ pub fn delete_mesa(workspace: WorkspaceId) {
                     .into_element(),
             ]))
             .open();
-    });
+    }));
 }

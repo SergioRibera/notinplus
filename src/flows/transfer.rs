@@ -102,6 +102,7 @@ fn file_stamp() -> String {
 }
 
 /// Open the export sheet.
+#[sismo::function("flows::export")]
 pub fn export(scope: ExportScope) {
     let choices = State::create_in_scope(Choices::default(), ScopeId::ROOT);
     let footer_scope = scope.clone();
@@ -121,6 +122,7 @@ struct ExportForm {
 }
 
 /// A purpose card: icon, title and what it gives.
+#[sismo::function("flows::purpose_card")]
 fn purpose_card(
     mut choices: State<Choices>,
     purpose: Purpose,
@@ -190,6 +192,7 @@ impl ExportForm {
     }
 
     /// What goes in, with the backup's options.
+    #[sismo::function("flows::contents")]
     fn contents(&self, data: &LibraryData) -> Group {
         let mut choices = self.choices;
         let current = *choices.read();
@@ -230,6 +233,7 @@ impl ExportForm {
 }
 
 impl Component for ExportForm {
+    #[sismo::function("flows::export_form")]
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let Some(data) = LibraryView::get().data() else {
@@ -277,6 +281,7 @@ struct ExportFooter {
 }
 
 impl Component for ExportFooter {
+    #[sismo::function("flows::export_footer")]
     fn render(&self) -> impl IntoElement {
         let choices = *self.choices.read();
         let data = LibraryView::get().data();
@@ -327,6 +332,7 @@ struct Exporting {
 }
 
 impl Component for Exporting {
+    #[sismo::function("flows::exporting")]
     fn render(&self) -> impl IntoElement {
         let done = *self.done.read();
         #[allow(clippy::cast_precision_loss)]
@@ -404,6 +410,7 @@ impl Purpose {
         }
     }
 
+    #[sismo::function("flows::write")]
     fn write(
         self,
         data: &crate::library::LibraryData,
@@ -440,8 +447,9 @@ impl Purpose {
     }
 }
 
+#[sismo::function("flows::run_export")]
 fn run_export(scope: ExportScope, choices: Choices) {
-    spawn_in_window(async move {
+    spawn_in_window(traced!("task::flows::export", async move {
         let Some(data) = LibraryView::get().data() else {
             return;
         };
@@ -463,6 +471,7 @@ fn run_export(scope: ExportScope, choices: Choices) {
         let (tx, rx) = flume::unbounded();
         let worker_scope = scope.clone();
         std::thread::spawn(move || {
+            sismo::scope!("flows::export_write");
             let progress = tx.clone();
             let result = choices
                 .purpose
@@ -499,9 +508,10 @@ fn run_export(scope: ExportScope, choices: Choices) {
             scope,
             choices,
         );
-    });
+    }));
 }
 
+#[sismo::function("flows::save_copy")]
 fn save_copy(
     name: String,
     mime: &'static str,
@@ -510,7 +520,7 @@ fn save_copy(
     scope: ExportScope,
     choices: Choices,
 ) {
-    spawn_in_window(async move {
+    spawn_in_window(traced!("task::flows::save_copy", async move {
         match crate::files::save(&tr!("flows-transfer-save-copy"), &name, mime, ext, &bytes).await {
             Ok(Some(saved)) => done_sheet(saved, bytes, mime),
             Ok(None) => {}
@@ -525,9 +535,10 @@ fn save_copy(
                 Toasts::get().show(Toast::new(text).tone(ToastTone::Error));
             }
         }
-    });
+    }));
 }
 
+#[sismo::function("flows::done_sheet")]
 fn done_sheet(saved: crate::files::Saved, bytes: Vec<u8>, mime: &'static str) {
     let size = crate::format::size(u64::try_from(bytes.len()).unwrap_or(0));
     let crate::files::Saved { name, path } = saved;
@@ -571,6 +582,7 @@ fn done_sheet(saved: crate::files::Saved, bytes: Vec<u8>, mime: &'static str) {
         .open();
 }
 
+#[sismo::function("flows::no_space")]
 fn no_space(bytes: usize, scope: ExportScope, choices: Choices) {
     let missing = crate::format::size(u64::try_from(bytes).unwrap_or(0));
     let retry_scope = scope.clone();
@@ -612,6 +624,7 @@ static LAST_IMPORT: Mutex<Option<(ImportReceipt, Instant)>> = Mutex::new(None);
 
 /// The last import into `folder`, while it can still be undone.
 #[must_use]
+#[sismo::function("flows::undoable_import")]
 pub fn undoable_import(folder: FolderId) -> Option<ImportReceipt> {
     LAST_IMPORT
         .lock()
@@ -622,6 +635,7 @@ pub fn undoable_import(folder: FolderId) -> Option<ImportReceipt> {
 }
 
 /// Remove everything the last import wrote.
+#[sismo::function("flows::undo_import")]
 pub fn undo_import(receipt: ImportReceipt) {
     *LAST_IMPORT.lock().unwrap_or_else(PoisonError::into_inner) = None;
     crate::state::edit(crate::state::LibraryEdit::UndoImport, async move |lib| {
@@ -630,8 +644,9 @@ pub fn undo_import(receipt: ImportReceipt) {
 }
 
 /// Pick a `.notein` file and review it.
+#[sismo::function("flows::import")]
 pub fn import() {
-    spawn_in_window(async move {
+    spawn_in_window(traced!("task::flows::import", async move {
         let picked = match crate::files::pick(
             &tr!("flows-transfer-import-picker"),
             &["notein"],
@@ -656,6 +671,7 @@ pub fn import() {
         let name = picked.name.clone();
         let (tx, rx) = flume::bounded(1);
         std::thread::spawn(move || {
+            sismo::scope!("flows::import_parse");
             let _ = tx.send(crate::bundle::parse_bundle(std::io::Cursor::new(
                 picked.bytes,
             )));
@@ -675,9 +691,10 @@ pub fn import() {
             }
             Err(_) => damaged(&name),
         }
-    });
+    }));
 }
 
+#[sismo::function("flows::newer_version")]
 fn newer_version() {
     Sheet::default()
         .without_close()
@@ -704,6 +721,7 @@ fn newer_version() {
         .open();
 }
 
+#[sismo::function("flows::damaged")]
 fn damaged(name: &str) {
     Sheet::default()
         .without_close()
@@ -738,6 +756,7 @@ impl PartialEq for Pending {
     }
 }
 
+#[sismo::function("flows::review")]
 fn review(name: &str, bundle: crate::bundle::ParsedBundle) {
     let Some(data) = LibraryView::get().data() else {
         return;
@@ -782,6 +801,7 @@ fn resolution_labels() -> [String; 3] {
 }
 
 impl Component for ImportReview {
+    #[sismo::function("flows::import_review")]
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let mut plan = self.plan;
@@ -885,6 +905,7 @@ struct ImportFooter {
 }
 
 impl Component for ImportFooter {
+    #[sismo::function("flows::import_footer")]
     fn render(&self) -> impl IntoElement {
         let plan = self.plan.read().clone();
         let review = self.pending.review.clone();
@@ -923,8 +944,9 @@ fn imported_folder_name(source: &str) -> String {
     }
 }
 
+#[sismo::function("flows::commit")]
 fn commit(pending: Pending, mut plan: ImportPlan) {
-    spawn_in_window(async move {
+    spawn_in_window(traced!("task::flows::import_commit", async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };
@@ -968,5 +990,5 @@ fn commit(pending: Pending, mut plan: ImportPlan) {
                 Toasts::get().show(Toast::new(text).tone(ToastTone::Error));
             }
         }
-    });
+    }));
 }
