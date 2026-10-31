@@ -54,6 +54,7 @@ impl std::fmt::Debug for LibraryBar {
 }
 
 /// Where you are; every folder above is a link.
+#[sismo::function("home::breadcrumb")]
 fn breadcrumb(data: &LibraryData, browse: Browse) -> Rect {
     let p = palette();
     let path = crumbs(data, browse.folder());
@@ -92,6 +93,7 @@ fn breadcrumb(data: &LibraryData, browse: Browse) -> Rect {
 }
 
 /// One chip per filter, kinds with their colour.
+#[sismo::function("home::filter_chips")]
 fn chips(mut filter: State<Filter>) -> Vec<Element> {
     let p = palette();
     let current = filter.read().clone();
@@ -227,6 +229,7 @@ impl LibraryBar {
 }
 
 impl Component for LibraryBar {
+    #[sismo::function("home::library_bar")]
     fn render(&self) -> impl IntoElement {
         let library = SettingsStore::get().read().library;
         let sort_area = use_state(Area::default);
@@ -309,6 +312,7 @@ impl Columns {
     }
 }
 
+#[sismo::function("home::open_item")]
 fn open_item(selection: State<Selection>, id: ItemId) {
     let mut selection = selection;
     if selection.peek().active {
@@ -318,6 +322,7 @@ fn open_item(selection: State<Selection>, id: ItemId) {
     }
 }
 
+#[sismo::function("home::open_folder")]
 fn open_folder(selection: State<Selection>, id: FolderId) {
     let mut selection = selection;
     if selection.peek().active {
@@ -334,6 +339,7 @@ fn doc_menu(
 ) -> impl Fn(CursorPoint) + 'static {
     let data = Arc::clone(data);
     move |at| {
+        sismo::scope!("home::doc_menu");
         if selection.peek().active {
             let mut selection = selection;
             selection.write().toggle_item(id);
@@ -426,6 +432,7 @@ impl GridRow {
 }
 
 impl Component for GridRow {
+    #[sismo::function("home::grid_row")]
     fn render(&self) -> impl IntoElement {
         let state = self.selection.read().clone();
         let start = self.row * self.columns.count;
@@ -442,6 +449,7 @@ impl Component for GridRow {
                 }
             })
             .collect();
+        sismo::counter!("home.row_cards", cards.len());
         rect()
             .width(Size::fill())
             .horizontal()
@@ -528,6 +536,7 @@ impl ShelfRow {
 }
 
 impl Component for ShelfRow {
+    #[sismo::function("home::shelf_row")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let state = self.selection.read().clone();
@@ -579,6 +588,7 @@ pub struct EmptyShelf {
 }
 
 impl Component for EmptyShelf {
+    #[sismo::function("home::empty_shelf")]
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let folder = self.folder;
@@ -643,6 +653,7 @@ impl PinnedRow {
 }
 
 impl Component for PinnedRow {
+    #[sismo::function("home::pinned_row")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let now = crate::format::now();

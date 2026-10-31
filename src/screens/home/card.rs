@@ -1,6 +1,10 @@
 //! Library cards: documents and folders, with real covers when there is
 //! one and a drawn cover of the kind otherwise.
 
+use std::cell::RefCell;
+use std::collections::HashSet;
+use std::sync::atomic::AtomicU64;
+
 use freya::prelude::*;
 use notein_i18n::tr;
 use notein_plugin::face::CoverRequest;
@@ -63,6 +67,18 @@ impl Eq for Thumb {}
 pub struct Cover {
     pub data: DocCardData,
     pub width: f32,
+}
+
+/// Running totals for the profiler: cards and covers built, covers drawn
+/// from a picture, and pictures seen for the first time (each one costs
+/// a decode).
+static CARDS: AtomicU64 = AtomicU64::new(0);
+static COVERS: AtomicU64 = AtomicU64::new(0);
+static IMAGE_COVERS: AtomicU64 = AtomicU64::new(0);
+static IMAGES_DECODED: AtomicU64 = AtomicU64::new(0);
+
+thread_local! {
+    static SEEN_IMAGES: RefCell<HashSet<u64>> = RefCell::new(HashSet::new());
 }
 
 const fn rgba(color: Rgba) -> Color {
@@ -136,6 +152,7 @@ impl Cover {
 
 impl Cover {
     /// The paper pattern with the kind's icon.
+    #[sismo::function("home::cover_generic")]
     fn generic(&self, base: Rect, p: &Palette, h: f32) -> Element {
         base.background(self.paper(p))
             .maybe_child(self.pattern(h, Color::from_rgb(222, 218, 208)))
@@ -153,7 +170,9 @@ impl Cover {
 }
 
 impl Component for Cover {
+    #[sismo::function("home::cover")]
     fn render(&self) -> impl IntoElement {
+        sismo::counter!("home.covers_rendered", super::tally(&COVERS, 1));
         let p = palette();
         let w = self.width;
         let h = (w * COVER_RATIO).round();
@@ -163,6 +182,11 @@ impl Component for Cover {
             .corner_radius(tokens::radius::LG)
             .overflow(Overflow::Clip);
         if let Some(thumb) = self.data.thumbnail.clone() {
+            sismo::scope!("home::cover_image");
+            sismo::counter!("home.covers_image", super::tally(&IMAGE_COVERS, 1));
+            if SEEN_IMAGES.with(|seen| seen.borrow_mut().insert(thumb.key)) {
+                sismo::counter!("home.images_decoded", super::tally(&IMAGES_DECODED, 1));
+            }
             return base
                 .background(self.paper(&p))
                 .child(
@@ -180,9 +204,12 @@ impl Component for Cover {
             width: w,
             height: h,
         };
-        let drawn = crate::plugins::catalog()
-            .face(&self.data.kind)
-            .and_then(|face| face.cover(&request));
+        let drawn = {
+            sismo::scope!("home::cover_face");
+            crate::plugins::catalog()
+                .face(&self.data.kind)
+                .and_then(|face| face.cover(&request))
+        };
         match drawn {
             Some(cover) => base.child(cover).into_element(),
             None => self.generic(base, &p, h),
@@ -317,6 +344,7 @@ fn caption(data: &DocCardData) -> Rect {
 impl DocCard {
     /// The cover with its kind, notebooks, pin, sharing and selection
     /// marks.
+    #[sismo::function("home::doc_card_cover")]
     fn cover(&self, hovering: bool) -> Rect {
         let p = palette();
         let data = &self.data;
@@ -372,7 +400,9 @@ impl DocCard {
 }
 
 impl Component for DocCard {
+    #[sismo::function("home::doc_card")]
     fn render(&self) -> impl IntoElement {
+        sismo::counter!("home.cards_rendered", super::tally(&CARDS, 1));
         let gesture = use_press_gesture();
         let mut hovering = use_state(|| false);
         let open = self.actions.on_open.clone();
@@ -419,6 +449,7 @@ impl FolderCard {
     const FAN: [(f32, f32, f32); 3] = [(0.0, 30.0, 0.0), (-0.19, 18.0, -9.0), (0.19, 18.0, 9.0)];
 
     /// The covers of its latest documents, fanned out.
+    #[sismo::function("home::folder_fan")]
     fn fan(&self, w: f32, p: &Palette) -> Vec<Element> {
         let mini = (w * 0.56).round();
         let middle = (w - mini) / 2.0;
@@ -476,7 +507,9 @@ impl FolderCard {
 }
 
 impl Component for FolderCard {
+    #[sismo::function("home::folder_card")]
     fn render(&self) -> impl IntoElement {
+        sismo::counter!("home.cards_rendered", super::tally(&CARDS, 1));
         let p = palette();
         let gesture = use_press_gesture();
         let w = self.width;

@@ -51,6 +51,7 @@ fn mesa_meta(w: &Workspace, now: u64) -> String {
 }
 
 /// Boxes of the panes of `layout`, drawn small.
+#[sismo::function("home::mesa_miniature")]
 fn miniature(layout: &PaneLayout, data: &LibraryData, p: &Palette) -> Element {
     match layout {
         PaneLayout::Leaf(pane) => {
@@ -218,6 +219,7 @@ impl MesaCard {
 }
 
 impl Component for MesaCard {
+    #[sismo::function("home::mesa_card")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let gesture = use_press_gesture();
@@ -317,6 +319,7 @@ struct Listed {
 }
 
 impl From<&LibraryData> for Listed {
+    #[sismo::function("home::mesas_listed")]
     fn from(data: &LibraryData) -> Self {
         let current = continue_target(data);
         let rest = others(data, current)
@@ -337,6 +340,7 @@ struct MesaRow {
 }
 
 impl Component for MesaRow {
+    #[sismo::function("home::mesa_row")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let gesture = use_press_gesture();
@@ -477,6 +481,7 @@ impl MesaStrip {
 
     /// Height of the whole block for `data`, as laid out by `render`.
     #[must_use]
+    #[sismo::function("home::mesa_strip_height")]
     pub fn height(data: &LibraryData, compact: bool, expanded: bool) -> f32 {
         let listed = Listed::from(data);
         let list = Self::list_height(&listed, compact, expanded);
@@ -498,6 +503,7 @@ impl MesaStrip {
         }
     }
 
+    #[sismo::function("home::mesa_list")]
     fn list(&self, listed: &Listed) -> Element {
         let mut expanded = self.expanded;
         let open = expanded();
@@ -542,6 +548,7 @@ impl MesaStrip {
 }
 
 impl Component for MesaStrip {
+    #[sismo::function("home::mesa_strip")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let listed = Listed::from(&*self.data);

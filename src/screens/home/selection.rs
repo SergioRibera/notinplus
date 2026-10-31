@@ -84,6 +84,7 @@ impl std::fmt::Debug for SelectionActions {
 }
 
 impl Component for SelectionActions {
+    #[sismo::function("home::selection_actions")]
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let selection = self.selection;

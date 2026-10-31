@@ -42,6 +42,7 @@ pub struct Fab {
 }
 
 impl Component for Fab {
+    #[sismo::function("home::fab")]
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let p = palette();

@@ -56,6 +56,7 @@ pub struct AppBar {
 
 impl SyncState {
     /// A dot on phones, a tag with the label on wider screens.
+    #[sismo::function("home::sync_indicator")]
     fn indicator(self, compact: bool) -> Element {
         let p = palette();
         let dot = match self {
@@ -78,6 +79,7 @@ impl SyncState {
 }
 
 /// The field look-alike that opens search.
+#[sismo::function("home::search_field")]
 fn search_field(compact: bool) -> Rect {
     let p = palette();
     rect()
@@ -123,6 +125,7 @@ fn search_field(compact: bool) -> Rect {
 }
 
 impl Component for AppBar {
+    #[sismo::function("home::app_bar")]
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let compact = width_class().is_compact();

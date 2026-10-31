@@ -10,6 +10,7 @@ pub mod selection;
 pub mod shelf;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use freya::prelude::*;
 use freya::router::RouterContext;
@@ -28,6 +29,11 @@ use crate::library::{FolderId, LibraryData, LibraryError, ROOT_FOLDER};
 use crate::route::Route;
 use crate::settings::{SettingsStore, ShelfLayout};
 use crate::state::{LibraryState, LibraryView};
+
+/// Bump a running total the profiler graphs and return it.
+pub(crate) fn tally(total: &AtomicU64, by: u64) -> u64 {
+    total.fetch_add(by, Ordering::Relaxed) + by
+}
 
 /// The folder Home is browsing, shared by every surface that opens one.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -61,6 +67,7 @@ impl Browse {
 }
 
 /// Install the browse state at the app root.
+#[sismo::function("home::use_browse_root")]
 pub fn use_browse_root() {
     let folder = use_state(|| ROOT_FOLDER);
     use_hook(|| provide_context_for_scope_id(Browse { folder }, ScopeId::ROOT));
@@ -85,6 +92,7 @@ const fn gutter(class: WidthClass) -> f32 {
 pub struct Home;
 
 impl Component for Home {
+    #[sismo::function("home::home")]
     fn render(&self) -> impl IntoElement {
         use_hook(|| sismo::marker("screen: home"));
         let p = palette();
@@ -117,6 +125,7 @@ impl PartialEq for Failed {
 }
 
 impl Component for Failed {
+    #[sismo::function("home::failed")]
     fn render(&self) -> impl IntoElement {
         let details = self.error.to_string();
         let actions = rect()
@@ -177,6 +186,7 @@ impl Component for Failed {
 struct Loading;
 
 impl Component for Loading {
+    #[sismo::function("home::loading")]
     fn render(&self) -> impl IntoElement {
         let pad = gutter(width_class());
         rect()
@@ -255,6 +265,7 @@ impl Body {
         }
     }
 
+    #[sismo::function("home::block")]
     fn build(&self, block: Block, height: f32) -> Element {
         let content = match block {
             Block::Top | Block::End => None,
@@ -330,6 +341,7 @@ struct BottomActions {
 }
 
 impl Component for BottomActions {
+    #[sismo::function("home::bottom_actions")]
     fn render(&self) -> impl IntoElement {
         use freya::animation::{
             AnimNum, Ease, Function, OnChange, OnCreation, use_animation_with_dependencies,
@@ -374,6 +386,7 @@ impl Component for BottomActions {
 
 impl Loaded {
     /// The blocks of the body, top to bottom.
+    #[sismo::function("home::blocks")]
     fn blocks(shelf: &Shelf, columns: Columns, (at_root, pinned): (bool, bool)) -> Vec<Block> {
         let mut blocks = vec![Block::Top];
         if at_root {
@@ -396,6 +409,7 @@ impl Loaded {
 }
 
 impl Component for Loaded {
+    #[sismo::function("home::loaded")]
     fn render(&self) -> impl IntoElement {
         let class = width_class();
         let pad = gutter(class);
@@ -418,6 +432,7 @@ impl Component for Loaded {
         }
         // Entering another folder ends the selection made in this one.
         use_side_effect(move || {
+            sismo::scope!("home::selection_reset");
             let _entered = Browse::get().folder();
             selection.write().clear();
         });
@@ -449,6 +464,7 @@ impl Component for Loaded {
         };
         let heights: Vec<f32> = body.blocks.iter().map(|b| body.height(*b)).collect();
         let length = heights.len();
+        sismo::counter!("home.blocks", length);
         // Only the body scrolls: the bar with search, sync state and the
         // trash stays in reach.
         let scroll = VirtualScrollView::new_with_data(body, |item, body: &Body| {
@@ -484,6 +500,7 @@ impl Component for Loaded {
 /// Esc leaves the selection, Alt+Backspace goes up a folder, and Ctrl+K
 /// (search), Ctrl+N (create), Ctrl+Shift+N (new mesa) and Ctrl+,
 /// (settings) work as in a mesa.
+#[sismo::function("home::on_key")]
 fn on_key(e: &Event<KeyboardEventData>, mut selection: State<Selection>, folder: FolderId) {
     if notein_ui_kit::ModalController::get().is_open() {
         return;
@@ -574,6 +591,7 @@ type Built = (ShelfKey, Arc<Shelf>, usize);
 struct ShelfMemo(std::rc::Rc<std::cell::RefCell<Option<Built>>>);
 
 impl ShelfMemo {
+    #[sismo::function("home::shelf_memo")]
     fn get(
         &self,
         data: &Arc<LibraryData>,
@@ -586,7 +604,10 @@ impl ShelfMemo {
             folder,
             filter: filter.clone(),
             sort,
-            shared: crate::sync::shared_docs(),
+            shared: {
+                sismo::scope!("home::shared_docs");
+                crate::sync::shared_docs()
+            },
             minute: crate::format::now() / 60_000,
         };
         if let Some((held, built, count)) = self.0.borrow().as_ref()
@@ -595,7 +616,10 @@ impl ShelfMemo {
             return (Arc::clone(built), *count);
         }
         let listed = Arc::new(Shelf::build(data, folder, filter, sort, &key.shared));
-        let trash = crate::screens::trash::groups(data).len();
+        let trash = {
+            sismo::scope!("home::trash_count");
+            crate::screens::trash::groups(data).len()
+        };
         *self.0.borrow_mut() = Some((key, Arc::clone(&listed), trash));
         (listed, trash)
     }

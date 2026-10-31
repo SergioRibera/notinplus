@@ -5,6 +5,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 use freya::prelude::Bytes;
 use notein_i18n::tr;
@@ -92,6 +93,7 @@ pub struct Shelf {
 impl Shelf {
     /// Contents of `folder` under `filter`, in `sort` order.
     #[must_use]
+    #[sismo::function("home::shelf_build")]
     pub fn build(
         data: &LibraryData,
         folder: FolderId,
@@ -170,6 +172,7 @@ struct Inside<'a> {
 }
 
 impl<'a> Inside<'a> {
+    #[sismo::function("home::shelf_inside")]
     fn of(data: &'a LibraryData, listed: impl Iterator<Item = FolderId>) -> Self {
         let mut folders: HashMap<FolderId, (usize, Vec<&'a Item>)> =
             listed.map(|id| (id, (0, Vec::new()))).collect();
@@ -201,6 +204,7 @@ impl<'a> Inside<'a> {
 
 /// Card content of `item`.
 #[must_use]
+#[sismo::function("home::card_data")]
 pub fn card(data: &LibraryData, item: &Item, shared: bool, now: u64) -> DocCardData {
     let glance = Glance::of(item);
     let when = crate::format::ago(item.updated_at, now);
@@ -224,9 +228,13 @@ pub fn card(data: &LibraryData, item: &Item, shared: bool, now: u64) -> DocCardD
     }
 }
 
+/// Running total of covers handed to cards, for the profiler.
+static COVERS_LOADED: AtomicU64 = AtomicU64::new(0);
+
 /// `cover` shared with the card, keyed by the item and the very bytes
 /// it holds: a new cover is a new allocation.
 fn thumb(id: ItemId, cover: &Arc<[u8]>) -> Thumb {
+    sismo::counter!("home.covers_loaded", super::tally(&COVERS_LOADED, 1));
     let mut hasher = DefaultHasher::new();
     (id, cover.as_ptr() as usize, cover.len()).hash(&mut hasher);
     Thumb {
