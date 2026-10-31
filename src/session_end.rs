@@ -54,6 +54,7 @@ fn path() -> PathBuf {
     crate::library::bodies::root_dir().join(FILE)
 }
 
+#[sismo::function("session_end::load")]
 fn load() -> Vec<SessionEnd> {
     std::fs::read(path())
         .ok()
@@ -65,6 +66,7 @@ fn load() -> Vec<SessionEnd> {
         .unwrap_or_default()
 }
 
+#[sismo::function("session_end::store")]
 fn store(ends: &[SessionEnd]) {
     let path = path();
     let written = if ends.is_empty() {
@@ -87,6 +89,7 @@ fn store(ends: &[SessionEnd]) {
 }
 
 /// Queue a session end for the UI. Callable from any thread.
+#[sismo::function("session_end::announce")]
 pub(crate) fn announce(end: SessionEnd) {
     with_unresolved(|ends| {
         ends.push(end.clone());
@@ -98,6 +101,7 @@ pub(crate) fn announce(end: SessionEnd) {
 
 /// Tell the person a permanent share is no longer shared with them; their
 /// copy stays. Callable from any thread.
+#[sismo::function("session_end::announce_unshared")]
 pub(crate) fn announce_unshared(title: String, reason: Removal) {
     locked(&UNSHARED).push((title, reason));
     wake();
@@ -116,18 +120,21 @@ pub fn listen() {
     locked(&WAKERS).push(tx);
     freya::prelude::spawn_in_window(async move {
         loop {
-            let ends: Vec<SessionEnd> = locked(&PENDING).drain(..).collect();
-            for end in ends {
-                match end.reason {
-                    Removal::Left => resolve(end),
-                    Removal::Ended | Removal::Expelled => {
-                        crate::screens::collab::session_ended(&end);
+            {
+                sismo::scope!("session_end::wake");
+                let ends: Vec<SessionEnd> = locked(&PENDING).drain(..).collect();
+                for end in ends {
+                    match end.reason {
+                        Removal::Left => resolve(end),
+                        Removal::Ended | Removal::Expelled => {
+                            crate::screens::collab::session_ended(&end);
+                        }
                     }
                 }
-            }
-            let unshared: Vec<(String, Removal)> = locked(&UNSHARED).drain(..).collect();
-            for (title, reason) in unshared {
-                crate::screens::collab::share_stopped(&title, reason);
+                let unshared: Vec<(String, Removal)> = locked(&UNSHARED).drain(..).collect();
+                for (title, reason) in unshared {
+                    crate::screens::collab::share_stopped(&title, reason);
+                }
             }
             if rx.recv_async().await.is_err() {
                 break;
@@ -137,6 +144,7 @@ pub fn listen() {
 }
 
 /// Close the session's tabs, drop its copies and go home.
+#[sismo::function("session_end::resolve")]
 pub fn resolve(end: SessionEnd) {
     with_unresolved(|ends| {
         if let Some(at) = ends.iter().position(|e| *e == end) {

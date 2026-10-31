@@ -72,6 +72,7 @@ impl ShareTarget {
 }
 
 /// The share of `docs` this device already runs, if any.
+#[sismo::function("collab::existing")]
 fn existing(docs: &[ItemId]) -> Option<ShareView> {
     crate::sync::snapshot()
         .shares
@@ -80,6 +81,7 @@ fn existing(docs: &[ItemId]) -> Option<ShareView> {
 }
 
 /// Open the share sheet.
+#[sismo::function("collab::share")]
 pub fn share(target: ShareTarget) {
     let scope = if target.item.is_some() {
         Scope::Document
@@ -134,6 +136,7 @@ impl std::fmt::Debug for ShareForm {
     }
 }
 
+#[sismo::function("collab::card")]
 fn card(
     on: bool,
     icon: Bytes,
@@ -264,6 +267,7 @@ impl ShareForm {
 
 impl Component for ShareForm {
     fn render(&self) -> impl IntoElement {
+        sismo::scope!("collab::render_shareform");
         let snapshot = crate::sync::use_sync().read().clone();
         let Some(data) = LibraryView::get().data() else {
             return rect().into_element();
@@ -311,6 +315,7 @@ impl std::fmt::Debug for ShareFooter {
 
 impl Component for ShareFooter {
     fn render(&self) -> impl IntoElement {
+        sismo::scope!("collab::render_sharefooter");
         use freya::icons::lucide;
         let sync = crate::sync::use_sync();
         let snapshot = sync.read().clone();
@@ -390,6 +395,7 @@ impl Component for ShareFooter {
     }
 }
 
+#[sismo::function("collab::copy_link")]
 fn copy_link(link: &str) {
     match freya::clipboard::Clipboard::set(link.to_owned()) {
         Ok(()) => {
@@ -443,6 +449,7 @@ struct Participant {
     role: Role,
 }
 
+#[sismo::function("collab::participants")]
 fn participants(view: &ShareView, me: Option<DeviceId>) -> Vec<Participant> {
     let read_only = view.policy.edit_content == notein_sync::Who::Nobody;
     let mut people: Vec<Participant> = std::iter::once(Participant {
@@ -476,6 +483,7 @@ struct Session {
 
 impl Component for Session {
     fn render(&self) -> impl IntoElement {
+        sismo::scope!("collab::render_session");
         use freya::icons::lucide;
         let p = palette();
         let me = crate::sync::snapshot().device;
@@ -571,6 +579,7 @@ impl Component for Session {
     }
 }
 
+#[sismo::function("collab::qr")]
 fn qr(text: &str) -> Option<Bytes> {
     let code = qrcode::QrCode::new(text.as_bytes()).ok()?;
     let svg = code
@@ -582,6 +591,7 @@ fn qr(text: &str) -> Option<Bytes> {
     Some(Bytes::from(svg.into_bytes()))
 }
 
+#[sismo::function("collab::people_sheet")]
 fn people_sheet(share: ShareId, people: Vec<Participant>, is_owner: bool) {
     Sheet::titled(tr!("collab-people-title", "count" => people.len()))
         .child(People {
@@ -601,6 +611,7 @@ struct People {
 
 impl Component for People {
     fn render(&self) -> impl IntoElement {
+        sismo::scope!("collab::render_people");
         let p = palette();
         let query = use_state(String::new);
         let mut armed = use_state(|| None::<(String, Instant)>);
@@ -698,6 +709,7 @@ impl Component for People {
 }
 
 /// The invitation card for a link: who invites, to what, and how.
+#[sismo::function("collab::invitation")]
 pub fn invitation(link: String) {
     match crate::sync::recognize_link(&link) {
         Some(LinkTarget::Join {
@@ -778,6 +790,7 @@ pub fn invitation(link: String) {
 }
 
 /// The "Joining…" sheet, following the join until it lands or fails.
+#[sismo::function("collab::joining")]
 pub fn joining() {
     Sheet::default().without_close().child(Joining).open();
 }
@@ -786,6 +799,7 @@ pub fn joining() {
 struct Joining;
 
 /// Why the join did not work, and Got it.
+#[sismo::function("collab::join_failed")]
 fn join_failed(failure: notein_sync::JoinFailure) -> Element {
     let why = match failure {
         notein_sync::JoinFailure::Refused => {
@@ -814,6 +828,7 @@ fn join_failed(failure: notein_sync::JoinFailure) -> Element {
 }
 
 /// The share being joined: its title, and how many documents arrived.
+#[sismo::function("collab::join_progress")]
 fn join_progress(snapshot: &SyncSnapshot, joined: Option<&ShareView>) -> (String, usize, usize) {
     joined.map_or_else(
         || {
@@ -836,6 +851,7 @@ fn join_progress(snapshot: &SyncSnapshot, joined: Option<&ShareView>) -> (String
 
 impl Component for Joining {
     fn render(&self) -> impl IntoElement {
+        sismo::scope!("collab::render_joining");
         let snapshot = crate::sync::use_sync().read().clone();
         // Shares that existed before this join; the new one is the other.
         let known = use_hook(|| {
@@ -925,6 +941,7 @@ impl Component for Joining {
 /// The owner's way out of a share it just created. A session ends for
 /// everyone; a permanent share only stops being shared, every member
 /// keeps its copy, so that one asks for a second tap first.
+#[sismo::function("collab::end_button")]
 fn end_button(id: ShareId, mode: Option<ShareMode>, mut confirming: State<bool>) -> Element {
     if mode != Some(ShareMode::Permanent) {
         return Button::new(tr!("collab-session-end"))
@@ -957,6 +974,7 @@ fn end_button(id: ShareId, mode: Option<ShareMode>, mut confirming: State<bool>)
 
 /// A permanent share is no longer shared with this device; its copy
 /// stays in the library as the person's own.
+#[sismo::function("collab::share_stopped")]
 pub fn share_stopped(title: &str, reason: Removal) {
     let message = match reason {
         Removal::Expelled => tr!("collab-unshared-expelled", "title" => title),
@@ -966,6 +984,7 @@ pub fn share_stopped(title: &str, reason: Removal) {
 }
 
 /// "The session ended": keep a copy of what was open, or let it go.
+#[sismo::function("collab::session_ended")]
 pub fn session_ended(end: &SessionEnd) {
     let count = end.docs.len();
     let body = match end.reason {
@@ -998,6 +1017,7 @@ pub fn session_ended(end: &SessionEnd) {
         .push();
 }
 
+#[sismo::function("collab::save_copy")]
 fn save_copy(end: SessionEnd) {
     spawn_in_window(async move {
         let Ok(handle) = crate::library::shared().await else {
