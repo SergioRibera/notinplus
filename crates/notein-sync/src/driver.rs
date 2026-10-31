@@ -97,10 +97,12 @@ pub enum Payload {
 }
 
 impl Payload {
+    #[cfg_attr(feature = "sismo", sismo::function("sync::payload::encode"))]
     fn to_bytes(&self) -> Vec<u8> {
         bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::payload::decode"))]
     fn from_bytes(bytes: &[u8]) -> Option<Self> {
         bincode::decode_from_slice(bytes, bincode::config::standard())
             .ok()
@@ -298,6 +300,7 @@ impl Published {
     /// Records for the documents in `docs` that changed since the last
     /// publish: updates when the relay can build on what it has, else a
     /// snapshot.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay::doc_records"))]
     fn doc_records<R: Replica>(
         &mut self,
         replica: &R,
@@ -334,6 +337,7 @@ impl Published {
 
     /// Records for the blobs in `share`'s scope that `me` may publish and
     /// that changed since the last publish.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay::blob_records"))]
     fn blob_records<R: Replica>(
         &mut self,
         replica: &R,
@@ -420,6 +424,7 @@ impl<R> std::fmt::Debug for SyncDriver<R> {
 
 impl<R: Replica> SyncDriver<R> {
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::new"))]
     pub fn new(profile: DeviceProfile, replica: R, book: ShareBook) -> Self {
         let replica = Arc::new(Mutex::new(replica));
         let engine = SyncEngine::new(Arc::clone(&replica), Scope::All);
@@ -484,6 +489,7 @@ impl<R: Replica> SyncDriver<R> {
     }
 
     /// Run `f` against the library replica.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::with_replica"))]
     pub fn with_replica<T>(&self, f: impl FnOnce(&mut R) -> T) -> T {
         let mut guard = self
             .replica
@@ -573,6 +579,7 @@ impl<R: Replica> SyncDriver<R> {
 
     /// Pair with the device described by `offer` (scanned, pasted or
     /// picked from the discovered list with its code typed in).
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::pair_with"))]
     pub fn pair_with(&mut self, offer: &PairingOffer) -> Vec<Action> {
         self.intent = Some(PairIntent {
             device: offer.device,
@@ -587,6 +594,7 @@ impl<R: Replica> SyncDriver<R> {
         self.connect_to(offer.device).into_iter().collect()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::pair_request"))]
     fn pair_request(&self, device: DeviceId) -> Action {
         let code = self.intent.as_ref().map_or(0, |i| i.code.value());
         send(
@@ -623,6 +631,7 @@ impl<R: Replica> SyncDriver<R> {
     // ---------- Shares ------------------------------------------------
 
     /// Start owning a share. `share.owner` must be this device.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::create_share"))]
     pub fn create_share(&mut self, share: Share) -> Vec<Action> {
         let id = share.id;
         let engine = SyncEngine::new(Arc::clone(&self.replica), share.scope());
@@ -634,6 +643,7 @@ impl<R: Replica> SyncDriver<R> {
 
     /// Owner-side change of scope, policy or title; members learn it
     /// on their next message.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::update_share"))]
     pub fn update_share(&mut self, id: ShareId, change: impl FnOnce(&mut Share)) -> Vec<Action> {
         let Some(link) = self.shares.get_mut(&id) else {
             return Vec::new();
@@ -648,6 +658,7 @@ impl<R: Replica> SyncDriver<R> {
     }
 
     /// Owner throws a member out.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::expel"))]
     pub fn expel(&mut self, id: ShareId, device: DeviceId) -> Vec<Action> {
         let Some(link) = self.shares.get_mut(&id) else {
             return Vec::new();
@@ -671,6 +682,7 @@ impl<R: Replica> SyncDriver<R> {
     }
 
     /// Owner closes the share for everyone.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::end_share"))]
     pub fn end_share(&mut self, id: ShareId) -> Vec<Action> {
         let Some(link) = self.shares.remove(&id) else {
             return Vec::new();
@@ -699,6 +711,7 @@ impl<R: Replica> SyncDriver<R> {
     }
 
     /// A member walks away from a share it does not own.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::leave_share"))]
     pub fn leave_share(&mut self, id: ShareId) -> Vec<Action> {
         let Some(link) = self.shares.remove(&id) else {
             return Vec::new();
@@ -719,6 +732,7 @@ impl<R: Replica> SyncDriver<R> {
     }
 
     /// Accept an invitation: connect to the owner and ask in.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::join"))]
     pub fn join(&mut self, invite: Invite) -> Vec<Action> {
         let mut out = Vec::new();
         if self.relay.is_none()
@@ -731,6 +745,7 @@ impl<R: Replica> SyncDriver<R> {
         out
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::join_inner"))]
     fn join_inner(&mut self, invite: Invite) -> Vec<Action> {
         let owner = invite.owner.device;
         let share = invite.share;
@@ -751,6 +766,7 @@ impl<R: Replica> SyncDriver<R> {
         self.connect_to(owner).into_iter().collect()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::join_request"))]
     fn join_request(&self, share: ShareId) -> Option<Action> {
         let intent = self.joins.get(&share)?;
         self.route(
@@ -792,6 +808,7 @@ impl<R: Replica> SyncDriver<R> {
     }
 
     /// Owner's current view sent to every connected member.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::broadcast_meta"))]
     fn broadcast_meta(&self, id: ShareId) -> Vec<Action> {
         let Some(link) = self.shares.get(&id) else {
             return Vec::new();
@@ -827,6 +844,7 @@ impl<R: Replica> SyncDriver<R> {
     // ---------- Events ------------------------------------------------
 
     /// React to the transport.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::on_event"))]
     pub fn on_event(&mut self, event: NetEvent) -> Result<Vec<Action>, SyncError<R::Error>> {
         let mut out = Vec::new();
         match event {
@@ -883,6 +901,7 @@ impl<R: Replica> SyncDriver<R> {
         }));
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::on_discovered"))]
     fn on_discovered(&mut self, peer: PeerInfo, out: &mut Vec<Action>) {
         self.refresh_name(&peer, out);
         let device = peer.device;
@@ -902,6 +921,7 @@ impl<R: Replica> SyncDriver<R> {
         self.discovered.insert(device, peer);
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::on_connected"))]
     fn on_connected(
         &mut self,
         peer: PeerInfo,
@@ -959,6 +979,7 @@ impl<R: Replica> SyncDriver<R> {
         Ok(())
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::on_disconnected"))]
     fn on_disconnected(&mut self, device: DeviceId, out: &mut Vec<Action>) {
         self.connected.remove(&device);
         self.engine.forget_peer(device);
@@ -980,31 +1001,48 @@ impl<R: Replica> SyncDriver<R> {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::on_message"))]
     fn on_message(
         &mut self,
         from: DeviceId,
         bytes: &[u8],
         out: &mut Vec<Action>,
     ) -> Result<(), SyncError<R::Error>> {
+        #[cfg(feature = "sismo")]
+        sismo::counter!("sync.in.bytes", bytes.len());
         let Some(payload) = Payload::from_bytes(bytes) else {
+            #[cfg(feature = "sismo")]
+            sismo::instant!("sync::in::undecodable");
             return Ok(());
         };
         match payload {
             Payload::Sync(bytes) => {
+                #[cfg(feature = "sismo")]
+                sismo::counter!("sync.in.sync_bytes", bytes.len());
                 if self.profile.is_trusted(from) {
                     self.on_sync(from, &bytes, out)?;
                 }
             }
             Payload::Pair(message) => self.on_pair(from, message, out),
-            Payload::Share { share, sealed } => self.on_share(from, share, &sealed, out)?,
+            Payload::Share { share, sealed } => {
+                #[cfg(feature = "sismo")]
+                sismo::counter!("sync.in.share_bytes", sealed.len());
+                self.on_share(from, share, &sealed, out)?;
+            }
             Payload::Join { share, name, proof } => {
                 self.on_join(from, share, name, &proof, out)?;
             }
             Payload::JoinReply { share, sealed } => {
                 self.on_join_reply(from, share, &sealed, out)?;
             }
-            Payload::Relay(bytes) => self.on_relay(from, &bytes, out)?,
+            Payload::Relay(bytes) => {
+                #[cfg(feature = "sismo")]
+                sismo::counter!("sync.in.relay_bytes", bytes.len());
+                self.on_relay(from, &bytes, out)?;
+            }
             Payload::Live { doc, bytes } => {
+                #[cfg(feature = "sismo")]
+                sismo::counter!("sync.in.live_bytes", bytes.len());
                 if self.profile.is_trusted(from) {
                     out.push(Action::Event(DriverEvent::Live {
                         from,
@@ -1019,6 +1057,7 @@ impl<R: Replica> SyncDriver<R> {
     }
 
     /// A dial failed: a pairing or join waiting on that device fails too.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::on_connect_failed"))]
     fn on_connect_failed(&mut self, addr: SocketAddr, out: &mut Vec<Action>) {
         let Some(device) = self
             .discovered
@@ -1044,6 +1083,7 @@ impl<R: Replica> SyncDriver<R> {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::on_stopped"))]
     fn on_stopped(&mut self, out: &mut Vec<Action>) {
         for device in self.connected.keys().copied() {
             self.engine.forget_peer(device);
@@ -1060,6 +1100,7 @@ impl<R: Replica> SyncDriver<R> {
         self.connected.clear();
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::on_sync"))]
     fn on_sync(
         &mut self,
         from: DeviceId,
@@ -1080,6 +1121,7 @@ impl<R: Replica> SyncDriver<R> {
         Ok(())
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::on_share"))]
     fn on_share(
         &mut self,
         from: DeviceId,
@@ -1104,6 +1146,8 @@ impl<R: Replica> SyncDriver<R> {
         let me = self.profile.id();
         match message {
             ShareMessage::Live { doc, bytes } => {
+                #[cfg(feature = "sismo")]
+                sismo::counter!("sync.in.share_live_bytes", bytes.len());
                 if link.share.docs.contains(&doc) {
                     out.push(Action::Event(DriverEvent::Live {
                         from,
@@ -1114,6 +1158,8 @@ impl<R: Replica> SyncDriver<R> {
                 }
             }
             ShareMessage::Sync(bytes) => {
+                #[cfg(feature = "sismo")]
+                sismo::counter!("sync.in.share_sync_bytes", bytes.len());
                 let message = Message::from_bytes(&bytes)?;
                 let Some(message) = permitted(&link.share, from, message) else {
                     return Ok(());
@@ -1183,6 +1229,7 @@ impl<R: Replica> SyncDriver<R> {
     /// this device closed, or threw it out of, while it was away. `None`
     /// when `from` is still welcome or was never inside; empty when the
     /// answer has no way to it.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::removal_for"))]
     fn removal_for(&self, from: DeviceId, id: ShareId, sealed: &[u8]) -> Option<Vec<Action>> {
         let me = self.profile.id();
         let (key, message) = if let Some(link) = self.shares.get(&id) {
@@ -1215,6 +1262,7 @@ impl<R: Replica> SyncDriver<R> {
 
     /// The owner closed the share for this device: drop it and say
     /// why. Returns whether anything was dropped.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::removed_by_owner"))]
     fn removed_by_owner(
         &mut self,
         from: DeviceId,
@@ -1233,6 +1281,7 @@ impl<R: Replica> SyncDriver<R> {
         true
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::on_join"))]
     fn on_join(
         &mut self,
         from: DeviceId,
@@ -1287,6 +1336,7 @@ impl<R: Replica> SyncDriver<R> {
         Ok(())
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::on_join_reply"))]
     fn on_join_reply(
         &mut self,
         from: DeviceId,
@@ -1336,6 +1386,7 @@ impl<R: Replica> SyncDriver<R> {
         Ok(())
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::on_pair"))]
     fn on_pair(&mut self, from: DeviceId, message: PairMessage, out: &mut Vec<Action>) {
         let Some(peer) = self.connected.get(&from).cloned() else {
             return;
@@ -1398,6 +1449,7 @@ impl<R: Replica> SyncDriver<R> {
 
     /// One round towards `device`: whatever it lacks according to its
     /// last announcement, then our own announcement so it answers back.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::round_for"))]
     fn round_for(&self, device: DeviceId) -> Result<Vec<Action>, SyncError<R::Error>> {
         let mut out = Vec::new();
         for message in self.engine.push_for(device)? {
@@ -1411,6 +1463,7 @@ impl<R: Replica> SyncDriver<R> {
     }
 
     /// Same as [`Self::round_for`] inside one share.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::share_round_for"))]
     fn share_round_for(
         &self,
         id: ShareId,
@@ -1440,6 +1493,7 @@ impl<R: Replica> SyncDriver<R> {
 
     /// A round towards every online trusted device and share member.
     /// Call after local edits land and on every [`TICK`].
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::announce"))]
     pub fn announce(&mut self) -> Result<Vec<Action>, SyncError<R::Error>> {
         let mut out = Vec::new();
         let devices: Vec<DeviceId> = self.online().map(|p| p.device).collect();
@@ -1470,6 +1524,7 @@ impl<R: Replica> SyncDriver<R> {
     ///
     /// # Errors
     /// Replica failure while exporting.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::push_doc"))]
     pub fn push_doc(&mut self, doc: DocId) -> Result<Vec<Action>, SyncError<R::Error>> {
         let mut out = Vec::new();
         let devices: Vec<DeviceId> = self.online().map(|p| p.device).collect();
@@ -1516,6 +1571,7 @@ impl<R: Replica> SyncDriver<R> {
     ///
     /// # Errors
     /// Replica failure while reading.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::push_blob"))]
     pub fn push_blob(&mut self, key: BlobKey) -> Result<Vec<Action>, SyncError<R::Error>> {
         let mut out = Vec::new();
         let devices: Vec<DeviceId> = self.online().map(|p| p.device).collect();
@@ -1565,6 +1621,7 @@ impl<R: Replica> SyncDriver<R> {
     /// now: trusted devices in the clear, share members sealed. Nothing
     /// is queued for whoever is away.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::live"))]
     pub fn live(&self, doc: DocId, bytes: &[u8]) -> Vec<Action> {
         let mut out: Vec<Action> = self
             .online()
@@ -1601,6 +1658,11 @@ impl<R: Replica> SyncDriver<R> {
                 ));
             }
         }
+        #[cfg(feature = "sismo")]
+        {
+            sismo::counter!("sync.live.bytes", bytes.len());
+            sismo::counter!("sync.live.targets", out.len());
+        }
         out
     }
 
@@ -1621,7 +1683,16 @@ impl<R: Replica> SyncDriver<R> {
     }
 
     /// Periodic housekeeping plus an announcement round.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::tick"))]
     pub fn tick(&mut self) -> Result<Vec<Action>, SyncError<R::Error>> {
+        #[cfg(feature = "sismo")]
+        {
+            sismo::counter!("sync.peers.discovered", self.discovered.len());
+            sismo::counter!("sync.peers.connected", self.connected.len());
+            sismo::counter!("sync.shares", self.shares.len());
+            sismo::counter!("sync.joins_pending", self.joins.len());
+            sismo::counter!("sync.redials", self.redials.len());
+        }
         let mut out = Vec::new();
         if self
             .offer
@@ -1669,6 +1740,7 @@ impl<R: Replica> SyncDriver<R> {
 
     /// Dial every related device that is known but not connected,
     /// backing off while it stays unreachable. Call every [`SUPERVISE`].
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::supervise"))]
     pub fn supervise(&mut self, now: Instant) -> Vec<Action> {
         let me = self.profile.id();
         let wanted: Vec<(DeviceId, SocketAddr, [u8; 32])> = self
@@ -1715,6 +1787,7 @@ impl<R: Replica> SyncDriver<R> {
 
     /// Ask again into every share [`Self::new`] restored as pending:
     /// reach the invitation's relay when none is set, then the owner.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::resume_joins"))]
     pub fn resume_joins(&mut self) -> Vec<Action> {
         let invites: Vec<Invite> = self.joins.drain().map(|(_, j)| j.invite).collect();
         let mut out = Vec::new();
@@ -1750,6 +1823,7 @@ pub fn relay_message(bytes: &[u8]) -> Option<RelayMessage> {
 impl<R: Replica> SyncDriver<R> {
     /// Use (or drop) a relay. Connecting happens on the next tick or
     /// right away when the relay is already known.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::set_relay"))]
     pub fn set_relay(&mut self, addr: Option<RelayAddr>) -> Vec<Action> {
         self.relay = addr.map(|addr| RelayLink {
             device: addr.device(),
@@ -1779,6 +1853,7 @@ impl<R: Replica> SyncDriver<R> {
         Some(invite)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::relay_reconnect"))]
     fn relay_reconnect(&self) -> Option<Action> {
         let relay = self.relay.as_ref()?;
         if relay.connected || self.connected.contains_key(&relay.device) {
@@ -1800,6 +1875,7 @@ impl<R: Replica> SyncDriver<R> {
     }
 
     /// Owner tells the relay who may use the share's mailbox.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::relay_register"))]
     fn relay_register(&self, id: ShareId) -> Vec<Action> {
         let Some(share) = self.share(id) else {
             return Vec::new();
@@ -1818,6 +1894,7 @@ impl<R: Replica> SyncDriver<R> {
 
     /// Just connected to the relay: register what we own, subscribe to
     /// everything, hand in what the relay has not seen.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::relay_hello"))]
     fn relay_hello(&mut self) -> Result<Vec<Action>, SyncError<R::Error>> {
         let mut out = vec![Action::Event(DriverEvent::RelayOnline(true))];
         let ids: Vec<ShareId> = self.shares.keys().copied().collect();
@@ -1841,6 +1918,7 @@ impl<R: Replica> SyncDriver<R> {
     }
 
     /// Hand the relay whatever changed since the last time.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay::publish"))]
     fn relay_publish(&mut self) -> Result<Vec<Action>, SyncError<R::Error>> {
         let mut out = Vec::new();
         if !self.relay_online() {
@@ -1863,6 +1941,8 @@ impl<R: Replica> SyncDriver<R> {
                 Vec::new()
             };
             records.extend(published.blob_records(&self.replica, &share, me));
+            #[cfg(feature = "sismo")]
+            sismo::counter!("sync.relay.records_out", records.len());
             for (kind, message) in records {
                 let sealed = ShareMessage::Sync(message.to_bytes()?).seal(&share.key);
                 out.push(Action::Send {
@@ -1891,6 +1971,7 @@ impl<R: Replica> SyncDriver<R> {
         Ok(out)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay::on_message"))]
     fn on_relay(
         &mut self,
         from: DeviceId,
@@ -1905,6 +1986,8 @@ impl<R: Replica> SyncDriver<R> {
         };
         match message {
             RelayMessage::Records { share, records } => {
+                #[cfg(feature = "sismo")]
+                sismo::counter!("sync.relay.records_in", records.len());
                 let mut touched = false;
                 for record in records {
                     touched |= self.apply_record(share, &record, out)?;
@@ -1986,6 +2069,7 @@ impl<R: Replica> SyncDriver<R> {
     }
 
     /// Apply one mailbox record; returns whether the share changed.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay::apply_record"))]
     fn apply_record(
         &mut self,
         id: ShareId,
@@ -2068,6 +2152,7 @@ impl<R: Replica> SyncDriver<R> {
 }
 
 /// Drop what `from` may not do inside `share`.
+#[cfg_attr(feature = "sismo", sismo::function("sync::driver::permitted"))]
 fn permitted(share: &Share, from: DeviceId, message: Message) -> Option<Message> {
     match message {
         Message::Inventory { .. } => Some(message),
@@ -2092,25 +2177,32 @@ fn permitted(share: &Share, from: DeviceId, message: Message) -> Option<Message>
     }
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("sync::driver::seal_answer"))]
 fn seal_answer(share: &Share, answer: &JoinAnswer) -> Vec<u8> {
     let plain = bincode::encode_to_vec(answer, bincode::config::standard()).unwrap_or_default();
     share.key.seal(&plain).unwrap_or_default()
 }
 
 fn send(device: DeviceId, payload: &Payload) -> Action {
+    let bytes = payload.to_bytes();
+    #[cfg(feature = "sismo")]
+    sismo::counter!("sync.out.data_bytes", bytes.len());
     Action::Send {
         device,
         lane: Lane::Data,
-        bytes: payload.to_bytes(),
+        bytes,
     }
 }
 
 /// [`send`] on the live lane: small, urgent, soon stale.
 fn send_live(device: DeviceId, payload: &Payload) -> Action {
+    let bytes = payload.to_bytes();
+    #[cfg(feature = "sismo")]
+    sismo::counter!("sync.out.live_bytes", bytes.len());
     Action::Send {
         device,
         lane: Lane::Live,
-        bytes: payload.to_bytes(),
+        bytes,
     }
 }
 

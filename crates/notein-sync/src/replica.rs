@@ -162,48 +162,56 @@ pub trait Replica {
 impl<R: Replica> Replica for std::sync::Arc<std::sync::Mutex<R>> {
     type Error = R::Error;
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::replica::locked_docs"))]
     fn docs(&self) -> Vec<(DocId, Version)> {
         self.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .docs()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::replica::locked_doc_version"))]
     fn doc_version(&self, doc: DocId) -> Option<Version> {
         self.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .doc_version(doc)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::replica::locked_updates_since"))]
     fn doc_updates_since(&self, doc: DocId, since: &Version) -> Result<Vec<u8>, Self::Error> {
         self.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .doc_updates_since(doc, since)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::replica::locked_snapshot"))]
     fn doc_snapshot(&self, doc: DocId) -> Result<Vec<u8>, Self::Error> {
         self.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .doc_snapshot(doc)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::replica::locked_import"))]
     fn doc_import(&mut self, doc: DocId, bytes: &[u8]) -> Result<(), Self::Error> {
         self.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .doc_import(doc, bytes)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::replica::locked_blob_heads"))]
     fn blob_heads(&self) -> Vec<BlobHead> {
         self.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .blob_heads()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::replica::locked_blobs"))]
     fn blobs(&self, keys: &[BlobKey]) -> Vec<Blob> {
         self.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .blobs(keys)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::replica::locked_blob_merge"))]
     fn blob_merge(&mut self, blob: Blob) -> Result<bool, Self::Error> {
         self.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

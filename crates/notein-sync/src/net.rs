@@ -254,11 +254,13 @@ enum Frame {
 }
 
 impl Frame {
+    #[cfg_attr(feature = "sismo", sismo::function("sync::net::frame_encode"))]
     fn to_bytes(&self) -> Vec<u8> {
         // Every variant is plain data; the standard config cannot fail on it.
         bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::net::frame_decode"))]
     fn from_bytes(bytes: &[u8]) -> Option<Self> {
         bincode::decode_from_slice(bytes, bincode::config::standard())
             .ok()

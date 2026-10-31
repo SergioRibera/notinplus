@@ -302,6 +302,7 @@ pub struct Invite {
 impl Invite {
     /// `notein://join?share=…&owner=…&name=…&title=…&mode=…[&server=…]#<key>`.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::share::to_link"))]
     pub fn to_link(&self) -> String {
         let mode = match self.mode {
             ShareMode::Session => "session",
@@ -325,6 +326,7 @@ impl Invite {
 
     /// Reverse of [`Self::to_link`].
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::share::parse_link"))]
     pub fn parse_link(link: &str) -> Option<Self> {
         let rest = link.trim().strip_prefix(LINK_SCHEME)?;
         let (query, fragment) = rest.split_once('#')?;
@@ -371,6 +373,7 @@ impl Invite {
 
     /// Proof that the joiner holds the key: the share id sealed with it.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::share::proof"))]
     pub fn proof(&self) -> Vec<u8> {
         self.key.seal(&self.share.0).unwrap_or_default()
     }
@@ -378,6 +381,7 @@ impl Invite {
 
 /// Check a joiner's proof against the share's key.
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("sync::share::proof_is_valid"))]
 pub fn proof_is_valid(share: &Share, proof: &[u8]) -> bool {
     share.key.open(proof).is_ok_and(|plain| plain == share.id.0)
 }
@@ -404,11 +408,13 @@ pub struct ShareBook {
 
 impl ShareBook {
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::share_book::encode"))]
     pub fn encode(&self) -> Vec<u8> {
         bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default()
     }
 
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::share_book::decode"))]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         bincode::decode_from_slice(bytes, bincode::config::standard())
             .ok()
@@ -464,6 +470,7 @@ pub enum ShareMessage {
 impl ShareMessage {
     /// Seal for the wire.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::share::seal"))]
     pub fn seal(&self, key: &ShareKey) -> Vec<u8> {
         let plain = bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default();
         key.seal(&plain).unwrap_or_default()
@@ -471,6 +478,7 @@ impl ShareMessage {
 
     /// Open from the wire.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::share::open"))]
     pub fn open(key: &ShareKey, sealed: &[u8]) -> Option<Self> {
         let plain = key.open(sealed).ok()?;
         bincode::decode_from_slice(&plain, bincode::config::standard())

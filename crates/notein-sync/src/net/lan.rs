@@ -309,6 +309,8 @@ fn writer(
     let (queue, frames) = flume::unbounded::<Vec<u8>>();
     tokio::spawn(async move {
         while let Ok(frame) = frames.recv_async().await {
+            #[cfg(feature = "sismo")]
+            sismo::counter!("sync.lan.frame_bytes", frame.len());
             if let Err(err) = sender.send_stream(frame, addr, stream).await {
                 tracing::warn!(target: "notein-sync", peer = %addr, stream, "send failed: {err}");
             }
@@ -347,9 +349,12 @@ struct Node {
 impl Node {
     fn emit(&self, event: NetEvent) {
         let _ = self.events.send(event);
+        #[cfg(feature = "sismo")]
+        sismo::counter!("sync.lan.events_queued", self.events.len());
     }
 
     /// A new scan for other devices, when scanning is on.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::lan::open_scan"))]
     async fn open_scan(&self) -> Option<zudp::ScanStream<Vec<u8>>> {
         if !self.config.scan {
             return None;
@@ -373,7 +378,10 @@ impl Node {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::lan::on_frame"))]
     async fn on_frame(&mut self, addr: SocketAddr, bytes: Vec<u8>, key: Option<[u8; 32]>) {
+        #[cfg(feature = "sismo")]
+        sismo::counter!("sync.lan.in_bytes", bytes.len());
         let Some(frame) = Frame::from_bytes(&bytes) else {
             tracing::warn!(target: "notein-sync", peer = %addr, "undecodable frame");
             return;
@@ -416,6 +424,7 @@ impl Node {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::lan::on_hello"))]
     async fn on_hello(&mut self, addr: SocketAddr, beacon: Beacon, key: Option<[u8; 32]>) {
         if !beacon.is_valid() {
             tracing::warn!(target: "notein-sync", peer = %addr, "hello with inconsistent identity");
@@ -516,16 +525,24 @@ impl Node {
 
     /// Queue an app payload on its lane, in parts on the bulk stream when
     /// it is too big for one frame.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::lan::send_app"))]
     fn send_app(&mut self, device: DeviceId, lane: Lane, bytes: Vec<u8>) {
         let Some(link) = self.links.get(&device) else {
             return;
         };
+        #[cfg(feature = "sismo")]
+        sismo::counter!("sync.lan.out_bytes", bytes.len());
         if bytes.len() <= PART_SIZE {
             let queue = match lane {
                 Lane::Data => &link.lanes.data,
                 Lane::Live => &link.lanes.live,
             };
             let _ = queue.send(Frame::App(bytes).to_bytes());
+            #[cfg(feature = "sismo")]
+            match lane {
+                Lane::Data => sismo::counter!("sync.lan.data_queue", queue.len()),
+                Lane::Live => sismo::counter!("sync.lan.live_queue", queue.len()),
+            }
             return;
         }
         let Ok(total) = u32::try_from(bytes.len().div_ceil(PART_SIZE)) else {
@@ -546,9 +563,15 @@ impl Node {
             };
             let _ = link.lanes.bulk.send(part.to_bytes());
         }
+        #[cfg(feature = "sismo")]
+        {
+            sismo::counter!("sync.lan.parts_out", total);
+            sismo::counter!("sync.lan.bulk_queue", link.lanes.bulk.len());
+        }
     }
 
     /// Keep a part; once a payload has them all, it is a message.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::lan::on_part"))]
     fn on_part(&mut self, device: DeviceId, id: u32, index: u32, total: u32, bytes: Vec<u8>) {
         if total == 0 || total > MAX_PARTS || index >= total {
             return;
@@ -572,6 +595,8 @@ impl Node {
             return;
         }
         if let Some(assembly) = self.assemblies.remove(&(device, id)) {
+            #[cfg(feature = "sismo")]
+            sismo::counter!("sync.lan.assemblies", self.assemblies.len());
             let bytes = assembly.parts.into_iter().flatten().flatten().collect();
             self.emit(NetEvent::Message {
                 from: device,
@@ -580,6 +605,7 @@ impl Node {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::lan::drop_link"))]
     fn drop_link(&mut self, device: DeviceId) {
         if let Some(link) = self.links.remove(&device) {
             self.by_addr.remove(&link.addr);
@@ -589,6 +615,7 @@ impl Node {
     }
 
     /// Dial `addr` unless a channel to it is open or on its way.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::lan::dial"))]
     fn dial(
         &mut self,
         addr: SocketAddr,
@@ -624,6 +651,7 @@ impl Node {
         self.dials.get(&addr).is_some_and(|d| d.task.dial == dial)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::lan::on_cmd"))]
     async fn on_cmd(&mut self, cmd: Cmd, internal: &tmpsc::UnboundedSender<Internal>) -> bool {
         match cmd {
             Cmd::ConnectHost { .. } if self.paused => {}
@@ -685,6 +713,7 @@ impl Node {
         true
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::lan::on_internal"))]
     async fn on_internal(
         &mut self,
         event: Internal,
@@ -743,6 +772,7 @@ impl Node {
         true
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::lan::on_tick"))]
     async fn on_tick(&mut self) {
         let now = Instant::now();
         self.assemblies
@@ -779,6 +809,7 @@ impl Node {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::lan::say_goodbye"))]
     async fn say_goodbye(&self) {
         for link in self.links.values() {
             Self::send_frame(&link.sender, link.addr, &Frame::Bye, CONTROL_STREAM).await;
@@ -841,6 +872,8 @@ impl Outbound {
             return;
         }
         while let Ok(packet) = conn.recv().await {
+            #[cfg(feature = "sismo")]
+            sismo::instant!("sync::lan::outbound_packet");
             if internal
                 .send(Internal::Frame {
                     addr,
@@ -861,6 +894,8 @@ fn spawn_listener(mut socket: ZudpSocket<Vec<u8>>, internal: tmpsc::UnboundedSen
         loop {
             match socket.recv().await {
                 Ok(packet) => {
+                    #[cfg(feature = "sismo")]
+                    sismo::instant!("sync::lan::inbound_packet");
                     let key = socket.peer_remote_static_key(packet.from);
                     if internal
                         .send(Internal::Frame {
@@ -882,10 +917,12 @@ fn spawn_listener(mut socket: ZudpSocket<Vec<u8>>, internal: tmpsc::UnboundedSen
     });
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("sync::lan::beacon_bytes"))]
 fn beacon_bytes(beacon: &Beacon) -> Vec<u8> {
     bincode::encode_to_vec(beacon, bincode::config::standard()).unwrap_or_default()
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("sync::lan::decode_beacon"))]
 fn decode_beacon(bytes: &[u8]) -> Option<Beacon> {
     bincode::decode_from_slice(bytes, bincode::config::standard())
         .ok()
@@ -998,6 +1035,8 @@ async fn run(
             }
             _ = ticker.tick() => node.on_tick().await,
             found = next_peer(&mut scan) => {
+                #[cfg(feature = "sismo")]
+                sismo::scope!("sync::lan::discovered");
                 let Some(beacon) = decode_beacon(&found.meta) else { continue };
                 if beacon.is_valid() && beacon.device != node.beacon.device && !node.paused {
                     node.emit(NetEvent::Discovered(PeerInfo::from_beacon(&beacon, found.data_addr)));

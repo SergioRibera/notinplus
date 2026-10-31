@@ -131,11 +131,13 @@ pub enum RelayMessage {
 
 impl RelayMessage {
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay::encode"))]
     pub fn to_bytes(&self) -> Vec<u8> {
         bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default()
     }
 
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay::decode"))]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         bincode::decode_from_slice(bytes, bincode::config::standard())
             .ok()
@@ -210,6 +212,7 @@ impl Store {
     }
 
     /// Mirrored under `dir`, one file per share, loaded now.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay_server::load"))]
     pub fn on_disk(dir: PathBuf) -> std::io::Result<Self> {
         std::fs::create_dir_all(&dir)?;
         let mut boxes = HashMap::new();
@@ -243,6 +246,7 @@ impl Store {
             .map(|dir| dir.join(format!("{}.bin", hex::encode(share.0))))
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay_server::flush"))]
     fn flush(&self, share: ShareId) {
         let Some(path) = self.path(share) else {
             return;
@@ -330,6 +334,7 @@ impl Serving {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay_server::on_message"))]
     fn on_message(&mut self, from: DeviceId, message: RelayMessage) {
         let Some(public) = self.keys.get(&from).copied() else {
             return;
@@ -384,6 +389,7 @@ impl Serving {
     }
 
     /// Open the mailbox of `share`, or update it when `public` owns it.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay_server::register"))]
     fn register(
         &mut self,
         from: DeviceId,
@@ -422,6 +428,7 @@ impl Serving {
     }
 
     /// The owner closed `share`: drop its mailbox and tell the others.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay_server::unregister"))]
     fn unregister(&mut self, from: DeviceId, public: [u8; 32], share: ShareId) {
         if self
             .store
@@ -441,6 +448,7 @@ impl Serving {
     }
 
     /// Store a record and hand it to every other subscriber.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay_server::publish"))]
     fn publish(
         &mut self,
         from: DeviceId,
