@@ -169,14 +169,20 @@ impl<R: Replica> Replica for std::sync::Arc<std::sync::Mutex<R>> {
             .docs()
     }
 
-    #[cfg_attr(feature = "sismo", sismo::function("sync::replica::locked_doc_version"))]
+    #[cfg_attr(
+        feature = "sismo",
+        sismo::function("sync::replica::locked_doc_version")
+    )]
     fn doc_version(&self, doc: DocId) -> Option<Version> {
         self.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .doc_version(doc)
     }
 
-    #[cfg_attr(feature = "sismo", sismo::function("sync::replica::locked_updates_since"))]
+    #[cfg_attr(
+        feature = "sismo",
+        sismo::function("sync::replica::locked_updates_since")
+    )]
     fn doc_updates_since(&self, doc: DocId, since: &Version) -> Result<Vec<u8>, Self::Error> {
         self.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
