@@ -314,6 +314,7 @@ impl Component for ShareFooter {
         use freya::icons::lucide;
         let sync = crate::sync::use_sync();
         let snapshot = sync.read().clone();
+        let confirming = use_state(|| false);
         let mut created = self.created;
         if let Some(id) = *created.read() {
             let view = snapshot.shares.iter().find(|s| s.id == id).cloned();
@@ -322,14 +323,7 @@ impl Component for ShareFooter {
                 .map(|v| v.invite_link.clone())
                 .unwrap_or_default();
             return SheetFooter::new([
-                Button::new(tr!("collab-session-end"))
-                    .danger()
-                    .on_press(move |_| {
-                        crate::sync::end_share(id);
-                        ModalController::get().close();
-                        Toasts::get().show(Toast::new(tr!("collab-session-ended-toast")));
-                    })
-                    .into_element(),
+                end_button(id, view.as_ref().map(|v| v.mode), confirming),
                 Button::new(tr!("common-done"))
                     .ghost()
                     .on_press(|_| ModalController::get().close())
@@ -926,6 +920,49 @@ impl Component for Joining {
             )
             .into_element()
     }
+}
+
+/// The owner's way out of a share it just created. A session ends for
+/// everyone; a permanent share only stops being shared, every member
+/// keeps its copy, so that one asks for a second tap first.
+fn end_button(id: ShareId, mode: Option<ShareMode>, mut confirming: State<bool>) -> Element {
+    if mode != Some(ShareMode::Permanent) {
+        return Button::new(tr!("collab-session-end"))
+            .danger()
+            .on_press(move |_| {
+                crate::sync::end_share(id);
+                ModalController::get().close();
+                Toasts::get().show(Toast::new(tr!("collab-session-ended-toast")));
+            })
+            .into_element();
+    }
+    let armed = *confirming.read();
+    Button::new(if armed {
+        tr!("collab-unshare-confirm")
+    } else {
+        tr!("collab-unshare")
+    })
+    .danger()
+    .on_press(move |_| {
+        if !*confirming.peek() {
+            confirming.set(true);
+            return;
+        }
+        crate::sync::end_share(id);
+        ModalController::get().close();
+        Toasts::get().show(Toast::new(tr!("collab-unshared-toast")));
+    })
+    .into_element()
+}
+
+/// A permanent share is no longer shared with this device; its copy
+/// stays in the library as the person's own.
+pub fn share_stopped(title: &str, reason: Removal) {
+    let message = match reason {
+        Removal::Expelled => tr!("collab-unshared-expelled", "title" => title),
+        Removal::Ended | Removal::Left => tr!("collab-unshared-by-owner", "title" => title),
+    };
+    Toasts::get().show(Toast::new(message));
 }
 
 /// "The session ended": keep a copy of what was open, or let it go.

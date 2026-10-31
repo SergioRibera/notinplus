@@ -27,6 +27,8 @@ pub struct SessionEnd {
 static PENDING: Mutex<Vec<SessionEnd>> = Mutex::new(Vec::new());
 /// Ends announced and not resolved yet, as on disk; `None` until read.
 static UNRESOLVED: Mutex<Option<Vec<SessionEnd>>> = Mutex::new(None);
+/// Permanent shares that stopped being shared with us, by title.
+static UNSHARED: Mutex<Vec<(String, Removal)>> = Mutex::new(Vec::new());
 static WAKERS: Mutex<Vec<flume::Sender<()>>> = Mutex::new(Vec::new());
 
 fn locked<T>(slot: &'static Mutex<T>) -> std::sync::MutexGuard<'static, T> {
@@ -94,6 +96,13 @@ pub(crate) fn announce(end: SessionEnd) {
     wake();
 }
 
+/// Tell the person a permanent share is no longer shared with them; their
+/// copy stays. Callable from any thread.
+pub(crate) fn announce_unshared(title: String, reason: Removal) {
+    locked(&UNSHARED).push((title, reason));
+    wake();
+}
+
 fn wake() {
     locked(&WAKERS).retain(|tx| tx.send(()).is_ok());
 }
@@ -115,6 +124,10 @@ pub fn listen() {
                         crate::screens::collab::session_ended(&end);
                     }
                 }
+            }
+            let unshared: Vec<(String, Removal)> = locked(&UNSHARED).drain(..).collect();
+            for (title, reason) in unshared {
+                crate::screens::collab::share_stopped(&title, reason);
             }
             if rx.recv_async().await.is_err() {
                 break;

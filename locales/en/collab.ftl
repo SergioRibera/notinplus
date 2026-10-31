@@ -26,6 +26,13 @@ collab-share-relay-hint = Guests join with the link or the QR code. If they're n
 collab-share-create = Create invitation
 collab-session-end = End session
 collab-session-ended-toast = Session ended
+collab-unshare = Stop sharing
+collab-unshare-confirm = Everyone keeps their copy · Confirm
+collab-unshared-toast = No longer shared
+# $title: the title of the share.
+collab-unshared-by-owner = The organizer stopped sharing “{ $title }”. Your copy stays in your library.
+# $title: the title of the share.
+collab-unshared-expelled = The organizer removed you from “{ $title }”. Your copy stays in your library.
 collab-copy-link = Copy link
 collab-link-copied = Link copied
 collab-invite-ready = Invitation ready

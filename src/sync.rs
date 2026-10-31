@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use notein_sync::{
     Action, BlobKey, BlobKind, DeviceId, DeviceProfile, DocId, DocStatus, DriverEvent, Invite,
     JoinFailure, LanConfig, LanNode, Member, NetEvent, PairFailure, PairingCode, PairingOffer,
-    PeerInfo, RelayAddr, Share, ShareBook, ShareId, ShareMode, SharePolicy, SyncDriver,
+    PeerInfo, RelayAddr, Removal, Share, ShareBook, ShareId, ShareMode, SharePolicy, SyncDriver,
     TrustedDevice,
 };
 
@@ -686,15 +686,21 @@ impl Service {
             }
             DriverEvent::ShareRemoved { share, reason } => {
                 self.save_shares();
-                if let Some(memo) = self.memos.remove(&share)
-                    && memo.mode == ShareMode::Session
-                    && !memo.is_owner
-                {
-                    crate::session_end::announce(SessionEnd {
-                        title: memo.title,
-                        docs: memo.docs,
-                        reason,
-                    });
+                match self.memos.remove(&share) {
+                    Some(memo) if memo.is_owner => {}
+                    Some(memo) if memo.mode == ShareMode::Session => {
+                        crate::session_end::announce(SessionEnd {
+                            title: memo.title,
+                            docs: memo.docs,
+                            reason,
+                        });
+                    }
+                    // A permanent share leaves every member its copy: the
+                    // guest only hears that it is no longer shared.
+                    Some(memo) if reason != Removal::Left => {
+                        crate::session_end::announce_unshared(memo.title, reason);
+                    }
+                    Some(_) | None => {}
                 }
                 crate::space::notify_changed();
             }
