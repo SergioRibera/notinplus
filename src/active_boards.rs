@@ -76,3 +76,9 @@ pub(crate) fn for_item(item: ItemId) -> Vec<(CanvasMount, Arc<Mutex<Board>>)> {
         .map(|(k, v)| (*k, Arc::clone(v)))
         .collect()
 }
+
+/// Every board currently mounted.
+#[must_use]
+pub(crate) fn all() -> Vec<Arc<Mutex<Board>>> {
+    lock().values().map(Arc::clone).collect()
+}

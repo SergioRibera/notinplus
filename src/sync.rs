@@ -696,6 +696,11 @@ impl Service {
                 for item in presence::gone(device) {
                     on_live(item, device, String::new(), LiveMessage::Left);
                 }
+                // Ink it was drawing on a board it never announced
+                // presence on, or whose presence already went quiet.
+                for board in crate::active_boards::all() {
+                    crate::canvas::lock(&board).forget_hand(device);
+                }
             }
             DriverEvent::PeerOnline { online: true, .. } | DriverEvent::RelayOnline(_) => {}
             DriverEvent::Live {

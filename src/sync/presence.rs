@@ -336,6 +336,11 @@ fn ensure_ticker() {
                         presence.repeat();
                     }
                     sweep();
+                    // A peer that died mid-stroke sends nothing more; its
+                    // ghost must not wait for someone else to draw.
+                    for board in crate::active_boards::all() {
+                        crate::canvas::lock(&board).expire_hands();
+                    }
                 }
             });
         if let Err(err) = spawned {

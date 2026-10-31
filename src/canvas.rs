@@ -3006,6 +3006,28 @@ impl Board {
         self.notify();
     }
 
+    /// `from` is gone: its ghost ink and pointer go with it.
+    pub fn forget_hand(&mut self, from: notein_sync::DeviceId) {
+        if self.remote.remove(&from).is_some() {
+            self.notify();
+        }
+    }
+
+    /// Drop hands that went silent and settled ghost strokes, without
+    /// waiting for another live message to arrive.
+    pub fn expire_hands(&mut self) {
+        let now = Instant::now();
+        let before = self.remote.len();
+        let strokes = self.remote.values().filter(|h| h.stroke.is_some()).count();
+        self.remote
+            .retain(|_, hand| now.duration_since(hand.seen) < REMOTE_TTL);
+        self.settle_remote();
+        let after = self.remote.values().filter(|h| h.stroke.is_some()).count();
+        if self.remote.len() != before || after != strokes {
+            self.notify();
+        }
+    }
+
     /// Drop ghost strokes whose committed twin is in the document, or
     /// that finished a while ago without one.
     fn settle_remote(&mut self) {
@@ -3693,6 +3715,57 @@ mod tests {
         let pts = vec![pt(0.0, 0.0), pt(100.0, 0.0)];
         let out = split_polyline(&pts, CapStyle::Round, CapStyle::Round, 50.0, 500.0, 10.0);
         assert!(!out.touched);
+    }
+
+    fn ghost(b: &mut Board, from: notein_sync::DeviceId) {
+        b.apply_live(
+            from,
+            "Ana",
+            LiveMessage::Ink {
+                stroke: StrokeId([4; 16]),
+                preset: BrushPreset::pen(),
+                color: [0, 0, 0, 255],
+                opacity: 1.0,
+                points: vec![
+                    crate::brush::InkPoint::new(0.0, 0.0, 128, 0, 0),
+                    crate::brush::InkPoint::new(5.0, 5.0, 128, 0, 0),
+                ],
+                done: false,
+            },
+        );
+        b.apply_live(
+            from,
+            "Ana",
+            LiveMessage::Pointer {
+                x: 5.0,
+                y: 5.0,
+                shown: true,
+            },
+        );
+    }
+
+    #[test]
+    fn a_peer_that_leaves_takes_its_ghost_ink_and_pointer() {
+        let mut b = Board::default();
+        let ana = notein_sync::DeviceId([1; 32]);
+        ghost(&mut b, ana);
+        assert_eq!(b.remote_hands().count(), 1);
+        b.forget_hand(ana);
+        assert_eq!(b.remote_hands().count(), 0);
+    }
+
+    #[test]
+    fn a_silent_hand_expires_without_another_message() {
+        let mut b = Board::default();
+        let ana = notein_sync::DeviceId([1; 32]);
+        ghost(&mut b, ana);
+        b.expire_hands();
+        assert_eq!(b.remote_hands().count(), 1, "still fresh");
+        if let Some(hand) = b.remote.get_mut(&ana) {
+            hand.seen = Instant::now() - REMOTE_TTL * 2;
+        }
+        b.expire_hands();
+        assert_eq!(b.remote_hands().count(), 0);
     }
 
     #[test]
