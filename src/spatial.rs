@@ -29,6 +29,7 @@ impl SpatialIndex {
         Self::default()
     }
 
+    #[sismo::function("spatial::clear")]
     pub fn clear(&mut self) {
         self.buckets.clear();
     }
@@ -36,6 +37,7 @@ impl SpatialIndex {
     /// Index every bucket the point set touches. Duplicate keys are
     /// collapsed so a wiggly stroke doesn't register N times in the
     /// same bucket.
+    #[sismo::function("spatial::insert")]
     pub fn insert(&mut self, id: StrokeId, points: &[InkPoint]) {
         let mut seen = HashSet::new();
         for p in points {
@@ -46,6 +48,7 @@ impl SpatialIndex {
         }
     }
 
+    #[sismo::function("spatial::remove")]
     pub fn remove(&mut self, id: StrokeId, points: &[InkPoint]) {
         let mut seen = HashSet::new();
         for p in points {
@@ -68,6 +71,7 @@ impl SpatialIndex {
     /// `HashSet` here and dedupe via sort — for the handful of ids a
     /// bucket-cell union produces, sort + dedup beats a hash-set alloc.
     #[must_use]
+    #[sismo::function("spatial::query_circle")]
     pub fn query_circle(&self, cx: f32, cy: f32, r: f32) -> Vec<StrokeId> {
         let (min_x, min_y) = bucket_of(cx - r, cy - r);
         let (max_x, max_y) = bucket_of(cx + r, cy + r);
@@ -91,6 +95,7 @@ impl SpatialIndex {
     /// own geometry. Used by the paint pass to skip cached strokes
     /// far outside the viewport at high zoom.
     #[must_use]
+    #[sismo::function("spatial::query_rect")]
     pub fn query_rect(&self, min_x: f32, min_y: f32, max_x: f32, max_y: f32) -> Vec<StrokeId> {
         let (bmin_x, bmin_y) = bucket_of(min_x, min_y);
         let (bmax_x, bmax_y) = bucket_of(max_x, max_y);

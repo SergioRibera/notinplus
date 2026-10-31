@@ -506,6 +506,7 @@ impl Board {
     /// Swap the background layer painted underneath every stroke.
     /// Triggers a redraw so the new backdrop / pages appear on the
     /// next frame.
+    #[sismo::function("canvas::set_background")]
     pub fn set_background(&mut self, background: Arc<dyn CanvasBackground>) {
         self.background = background;
         self.ink_rev += 1;
@@ -611,6 +612,7 @@ impl Board {
         }
     }
 
+    #[sismo::function("canvas::notify_commit")]
     fn notify_commit(&mut self) {
         self.notify();
         self.ping_commit();
@@ -781,6 +783,7 @@ impl Board {
     /// `[VIEWPORT_SCALE_MIN, VIEWPORT_SCALE_MAX]`; translation is
     /// additionally clamped against the current background's content
     /// bounds when one is exposed (see [`Self::clamp_viewport_to_background`]).
+    #[sismo::function("canvas::set_viewport")]
     pub fn set_viewport(&mut self, mut viewport: Viewport) {
         viewport.scale = viewport.scale.clamp(VIEWPORT_SCALE_MIN, VIEWPORT_SCALE_MAX);
         if !viewport.scale.is_finite() {
@@ -807,6 +810,7 @@ impl Board {
     /// Called at the top of [`Self::paint`] and at the end of every
     /// viewport-mutating method so drift correction happens both under
     /// user gestures and under background swaps.
+    #[sismo::function("canvas::clamp_viewport_to_background")]
     pub fn clamp_viewport_to_background(&mut self) {
         let Some(bounds) = self.background.content_bounds() else {
             return;
@@ -833,6 +837,7 @@ impl Board {
     }
 
     /// Translate the viewport by `(dx, dy)` in surface pixels.
+    #[sismo::function("canvas::viewport_pan")]
     pub fn viewport_pan(&mut self, dx: f32, dy: f32) {
         if !dx.is_finite() || !dy.is_finite() {
             return;
@@ -849,6 +854,7 @@ impl Board {
     /// currently under the surface-pixel cursor `(cx, cy)` pinned.
     /// Scale clamps to `[VIEWPORT_SCALE_MIN, VIEWPORT_SCALE_MAX]`; a
     /// no-op factor (already at the clamp boundary) skips the notify.
+    #[sismo::function("canvas::viewport_zoom_at")]
     pub fn viewport_zoom_at(&mut self, cx: f32, cy: f32, factor: f32) {
         if !factor.is_finite() || factor <= 0.0 {
             return;
@@ -886,6 +892,7 @@ impl Board {
 
     /// Consume one drag sample: pan the viewport by the delta from the
     /// last anchor, then rebase the anchor. No-op when no pan is active.
+    #[sismo::function("canvas::pan_move")]
     pub fn pan_move(&mut self, sx: f32, sy: f32) {
         let Some((ax, ay)) = self.pan_anchor else {
             return;
@@ -939,6 +946,7 @@ impl Board {
     /// Replace the doc wholesale — used by load-from-disk. Rebuilds the
     /// spatial index, the `stroke_id → index` table and every cached
     /// stroke path, and drops any in-flight session.
+    #[sismo::function("canvas::replace_doc")]
     pub fn replace_doc(&mut self, doc: Doc) {
         self.doc = doc;
         self.active = None;
@@ -959,6 +967,7 @@ impl Board {
     ///
     /// # Errors
     /// Corrupt update bytes.
+    #[sismo::function("canvas::merge_updates")]
     pub fn merge_updates(&mut self, updates: &[u8]) -> Result<(), DocError> {
         self.doc.import_updates(updates)?;
         self.settle_remote();
@@ -969,6 +978,7 @@ impl Board {
 
     /// Rebuild the spatial index, cached paths, glyph paths and stroke
     /// positions from the current doc, then ask for a repaint.
+    #[sismo::function("canvas::rebuild_derived")]
     fn rebuild_derived(&mut self) {
         self.ink_rev += 1;
         self.spatial.clear();
@@ -979,8 +989,12 @@ impl Board {
             .iter()
             .flat_map(|layer| layer.glyphs.iter().copied())
             .collect();
-        for glyph in &glyphs {
-            self.cache_glyph(glyph);
+        sismo::counter!("canvas.glyphs", glyphs.len());
+        {
+            sismo::scope!("canvas::rebuild_glyph_paths");
+            for glyph in &glyphs {
+                self.cache_glyph(glyph);
+            }
         }
         self.cached_paths.clear();
         self.stroke_index.clear();
@@ -988,6 +1002,7 @@ impl Board {
         // without holding a borrow to `self.brush_registry` — the mut
         // borrows on `self.cached_paths` below would otherwise clash.
         let registry = Arc::clone(&self.brush_registry);
+        sismo::scope!("canvas::rebuild_stroke_paths");
         for layer in &self.doc.layers {
             for (idx, stroke) in layer.strokes.iter().enumerate() {
                 self.spatial.insert(stroke.id, &stroke.points);
@@ -1001,9 +1016,12 @@ impl Board {
                 }
             }
         }
+        sismo::counter!("canvas.strokes_total", self.stroke_index.len());
+        sismo::counter!("canvas.cached_paths", self.cached_paths.len());
         self.notify();
     }
 
+    #[sismo::function("canvas::begin")]
     pub fn begin(&mut self, point: InkPoint) {
         if self.read_only {
             return;
@@ -1057,6 +1075,7 @@ impl Board {
         self.notify();
     }
 
+    #[sismo::function("canvas::extend")]
     pub fn extend(&mut self, point: InkPoint) {
         let point = self.shape_sample(point);
         if self.erase_session.is_some() {
@@ -1126,6 +1145,7 @@ impl Board {
         self.extend(point);
     }
 
+    #[sismo::function("canvas::end")]
     pub fn end(&mut self) {
         if let Some(mut session) = self.erase_session.take() {
             self.undo.begin();
@@ -1149,6 +1169,7 @@ impl Board {
         }
     }
 
+    #[sismo::function("canvas::cancel")]
     pub fn cancel(&mut self) {
         if self.erase_session.take().is_some() {
             // Deferred model: accumulation never mutates the doc, so
@@ -1170,6 +1191,7 @@ impl Board {
         }
     }
 
+    #[sismo::function("canvas::clear")]
     pub fn clear(&mut self) {
         // Single op with a snapshot inverse — undo rebuilds every
         // layer + stroke the clear removed. UI-only state (in-flight
@@ -1189,6 +1211,7 @@ impl Board {
     /// so the log stays append-only (CRDT contract), and parks the
     /// forward ops on the redo stack. Returns `true` iff something
     /// was undone.
+    #[sismo::function("canvas::undo")]
     pub fn undo(&mut self) -> bool {
         if self.read_only {
             return false;
@@ -1223,6 +1246,7 @@ impl Board {
     /// [`Self::undo`] — pops redo, re-emits every forward op through
     /// `Doc::emit`, parks the entry back on the undo stack. Returns
     /// `true` iff something was redone.
+    #[sismo::function("canvas::redo")]
     pub fn redo(&mut self) -> bool {
         if self.read_only {
             return false;
@@ -1244,6 +1268,7 @@ impl Board {
     /// locked, opacity). Returned bottom-to-top; caller reverses for
     /// a top-of-stack-first display.
     #[must_use]
+    #[sismo::function("canvas::layers_snapshot")]
     pub fn layers_snapshot(&self) -> Vec<LayerSnapshot> {
         self.doc
             .layers
@@ -1268,6 +1293,7 @@ impl Board {
     /// the current count, and adopt it as the active layer. Returns
     /// the new id. `AddLayer` + `SetActiveLayer` group into a single
     /// undo entry so the pair rolls back together.
+    #[sismo::function("canvas::add_layer")]
     pub fn add_layer(&mut self) -> u32 {
         let n = self.doc.layers.len() + 1;
         let id = self.doc.next_layer_id;
@@ -1285,6 +1311,7 @@ impl Board {
     /// Remove the currently active layer. No-op if it's the only
     /// layer. Derived index entries + the in-flight stroke (if its
     /// target layer vanished) are cleaned up by [`Self::apply_op`].
+    #[sismo::function("canvas::remove_active_layer")]
     pub fn remove_active_layer(&mut self) {
         let id = self.doc.active_layer;
         if self.doc.layers.len() <= 1 || self.doc.layer(id).is_none() {
@@ -1298,6 +1325,7 @@ impl Board {
         self.notify_commit();
     }
 
+    #[sismo::function("canvas::set_active_layer")]
     pub fn set_active_layer(&mut self, id: u32) {
         if self.doc.active_layer == id || self.doc.layer(id).is_none() {
             return;
@@ -1313,10 +1341,12 @@ impl Board {
     /// "sticky anchor" lookup (Phase 1+); exposed on `Board` so plugin
     /// code never reaches into the private spatial index.
     #[must_use]
+    #[sismo::function("canvas::strokes_near")]
     pub fn strokes_near(&self, world_x: f32, world_y: f32, radius: f32) -> Vec<StrokeId> {
         self.spatial.query_circle(world_x, world_y, radius)
     }
 
+    #[sismo::function("canvas::set_layer_visible")]
     pub fn set_layer_visible(&mut self, id: u32, visible: bool) {
         let Some(layer) = self.doc.layer(id) else {
             return;
@@ -1339,6 +1369,7 @@ impl Board {
         self.notify_commit();
     }
 
+    #[sismo::function("canvas::set_layer_opacity")]
     pub fn set_layer_opacity(&mut self, id: u32, opacity: f32) {
         let Some(layer) = self.doc.layer(id) else {
             return;
@@ -1385,6 +1416,7 @@ impl Board {
     /// Full-form create: body + refs land in a single op so the "create
     /// bookmark from a source selection" flow doesn't need a follow-up
     /// `UpdateBookmark` just to seed the snippet into the body.
+    #[sismo::function("canvas::add_bookmark_full")]
     pub fn add_bookmark_full(
         &mut self,
         world: WorldPoint,
@@ -1493,6 +1525,7 @@ impl Board {
         radius_px: f32,
     ) -> Option<BookmarkId> {
         let mut best: Option<(f32, BookmarkId)> = None;
+        sismo::scope!("canvas::paint_bookmark_pins");
         for bm in self.doc.bookmarks() {
             let world = self.bookmark_world_position(bm);
             let (sx, sy) = self.viewport.world_to_screen(world.x, world.y);
@@ -1581,6 +1614,7 @@ impl Board {
     /// stroke under later `MoveStroke` ops (Phase 2+). `None` when no
     /// stroke lies in range — caller stores the pin as a free world
     /// position.
+    #[sismo::function("canvas::resolve_sticky")]
     fn resolve_sticky(&self, world: WorldPoint, radius: f32) -> Option<StrokeAnchor> {
         if radius <= 0.0 {
             return None;
@@ -1615,6 +1649,7 @@ impl Board {
         })
     }
 
+    #[sismo::function("canvas::commit_stroke")]
     fn commit_stroke(&mut self, stroke: Stroke) {
         let layer_id = self
             .active_layer_at_begin
@@ -1640,6 +1675,7 @@ impl Board {
     /// through this method. Undo and redo use [`Self::apply_op_untracked`]
     /// so re-applying a pre-captured inverse / forward op does not
     /// append another entry.
+    #[sismo::function("canvas::apply_op")]
     fn apply_op(&mut self, op: DocOp) {
         if self.read_only {
             return;
@@ -1653,6 +1689,7 @@ impl Board {
     /// state (spatial index, cached paths, `stroke_index`). No undo
     /// recording — used by both the forward path (indirectly via
     /// [`Self::apply_op`]) and the undo / redo replays.
+    #[sismo::function("canvas::apply_op_untracked")]
     fn apply_op_untracked(&mut self, op: DocOp) {
         self.ink_rev += 1;
         self.touch_text_scene();
@@ -1669,6 +1706,7 @@ impl Board {
                 self.doc.emit(DocOp::RemoveStroke { id });
                 self.spatial.remove(id, &points);
                 self.stroke_index.remove(&id);
+                sismo::scope!("canvas::reindex_after_remove");
                 for entry in self.stroke_index.values_mut() {
                     if entry.0 == layer_id && entry.1 > idx {
                         entry.1 -= 1;
@@ -1706,6 +1744,8 @@ impl Board {
                     stroke: stroke.clone(),
                 });
                 if let Some(preset) = preset {
+                    sismo::scope!("canvas::build_stroke_path");
+                    sismo::counter!("canvas.stroke_points", stroke.points.len());
                     let path = self.brush_registry.brush(preset.kind).build_path(
                         &preset,
                         &stroke,
@@ -1756,6 +1796,7 @@ impl Board {
     /// `None` when the stroke lives in the doc but has no derived
     /// state (shouldn't happen under invariant — doc + indices stay
     /// in sync) OR when the stroke has already been removed.
+    #[sismo::function("canvas::capture_stroke_derived")]
     fn capture_stroke_derived(&self, id: StrokeId) -> Option<(u32, Vec<InkPoint>, usize)> {
         let &(layer_id, idx) = self.stroke_index.get(&id)?;
         let layer = self.doc.layer(layer_id)?;
@@ -1771,6 +1812,7 @@ impl Board {
     /// the doc itself is not mutated here. The final split runs once
     /// at pen-up in [`Board::finalize_erase_session`], keeping the
     /// stroke count minimal and letting cancel be a true no-op.
+    #[sismo::function("canvas::apply_erase")]
     fn apply_erase(&mut self, sample: InkPoint) {
         if self.erase_session.is_none() {
             return;
@@ -1781,6 +1823,7 @@ impl Board {
             return;
         }
         let candidates = self.spatial.query_circle(sample.x, sample.y, radius);
+        sismo::counter!("canvas.erase_candidates", candidates.len());
         // Erase gestures are scoped to the active layer only. Strokes
         // on other layers (even overlapping the eraser circle) stay
         // untouched — layer isolation is what users expect from a
@@ -1843,20 +1886,26 @@ impl Board {
     /// each resulting fragment. The caller wraps this in a single
     /// [`UndoStack`] transaction, so the whole gesture rolls back as
     /// one undo entry.
+    #[sismo::function("canvas::finalize_erase_session")]
     fn finalize_erase_session(&mut self, session: &mut EraseAccum) {
+        sismo::counter!("canvas.eraser_circles", session.circles.len());
+        sismo::counter!("canvas.erase_originals", session.originals.len());
         let mut texts: Vec<TextBoxId> = Vec::new();
-        for &(cx, cy, r) in &session.circles {
-            for id in self.texts_touching_circle(cx, cy, r) {
-                if !texts.contains(&id) {
-                    texts.push(id);
+        let mut glyphs: Vec<InkGlyphId> = Vec::new();
+        {
+            sismo::scope!("canvas::erase_hit_texts_glyphs");
+            for &(cx, cy, r) in &session.circles {
+                for id in self.texts_touching_circle(cx, cy, r) {
+                    if !texts.contains(&id) {
+                        texts.push(id);
+                    }
                 }
             }
-        }
-        let mut glyphs: Vec<InkGlyphId> = Vec::new();
-        for &(cx, cy, r) in &session.circles {
-            for id in self.glyphs_touching_circle(cx, cy, r) {
-                if !glyphs.contains(&id) {
-                    glyphs.push(id);
+            for &(cx, cy, r) in &session.circles {
+                for id in self.glyphs_touching_circle(cx, cy, r) {
+                    if !glyphs.contains(&id) {
+                        glyphs.push(id);
+                    }
                 }
             }
         }
@@ -1868,6 +1917,7 @@ impl Board {
         let circles = std::mem::take(&mut session.circles);
         let originals = std::mem::take(&mut session.originals);
         for (layer_id, original) in originals {
+            sismo::scope!("canvas::erase_split_stroke");
             let fragments = cumulative_split(
                 &original.points,
                 original.cap_start,
@@ -1959,6 +2009,7 @@ impl Board {
     /// Delete the topmost stroke intersecting a tap at `(x, y)` in the
     /// active layer. No-op when no stroke is hit. Emits a single
     /// `RemoveStroke` op so [`Board::undo`] restores it exactly.
+    #[sismo::function("canvas::erase_stroke_at")]
     fn erase_stroke_at(&mut self, x: f32, y: f32) {
         let radius = self.eraser_tap_radius();
         let active_layer = self.doc.active_layer;
@@ -2009,6 +2060,7 @@ impl Board {
     /// intersects the world-space rect. Empty selection is a no-op —
     /// no undo entry is pushed. All removals fall under one transaction
     /// so a marquee erase undoes in a single step.
+    #[sismo::function("canvas::erase_strokes_in_rect")]
     fn erase_strokes_in_rect(&mut self, min_x: f32, min_y: f32, max_x: f32, max_y: f32) {
         if (max_x - min_x).abs() < f32::EPSILON || (max_y - min_y).abs() < f32::EPSILON {
             return;
@@ -2053,7 +2105,7 @@ impl Board {
     /// The committed ink (and the paper under it, for the bottom pass)
     /// comes from `cache` whenever it can; see [`InkCache`]. The active
     /// stroke and the overlays are drawn fresh every frame on top.
-    #[sismo::function]
+    #[sismo::function("canvas::paint")]
     pub fn paint(
         &mut self,
         canvas: &freya_engine::prelude::Canvas,
@@ -2065,6 +2117,7 @@ impl Board {
             self.settle_surface(surface);
         }
         if !self.paint_cached(canvas, surface, pass, cache) {
+            sismo::scope!("canvas::paint_direct");
             if pass.base {
                 self.paint_base(canvas, surface);
             }
@@ -2078,6 +2131,7 @@ impl Board {
             self.tick_background(surface);
         }
         if pass.overlays {
+            sismo::scope!("canvas::paint_overlays");
             canvas.save();
             canvas.translate((self.viewport.tx, self.viewport.ty));
             canvas.scale((self.viewport.scale, self.viewport.scale));
@@ -2092,6 +2146,7 @@ impl Board {
     /// to be painted directly: the ink is moving under an eraser or a
     /// lasso, it blends with what lies under the pass, or the canvas
     /// cannot hold an image.
+    #[sismo::function("canvas::paint_cached")]
     fn paint_cached(
         &self,
         canvas: &freya_engine::prelude::Canvas,
@@ -2103,22 +2158,31 @@ impl Board {
             .erase_session
             .as_ref()
             .is_some_and(|s| !s.circles.is_empty());
-        if erasing || self.lasso_dragging() {
+        if erasing {
+            sismo::instant!("canvas::cache_skip_erasing");
+            return false;
+        }
+        if self.lasso_dragging() {
+            sismo::instant!("canvas::cache_skip_lasso");
             return false;
         }
         if !pass.base && !self.has_ink(pass.layers.clone()) {
+            sismo::instant!("canvas::cache_skip_no_ink");
             return false;
         }
         if !pass.base && cache.blends(self.ink_rev, || self.ink_blends(pass.layers.clone())) {
+            sismo::instant!("canvas::cache_skip_blends");
             return false;
         }
         let size = (surface.max_x - surface.min_x, surface.max_y - surface.min_y);
         let Some(frame) = ink_cache::Frame::of(canvas, size, self.viewport) else {
+            sismo::instant!("canvas::cache_skip_no_frame");
             return false;
         };
         let content = (self.ink_rev, self.paper_rev.load(Ordering::Relaxed));
         if !cache.fits(&frame, content, self.gesture_active) {
             let drawn = cache.redraw(canvas, &frame, content, |target, bounds| {
+                sismo::scope!("canvas::cache_redraw_content");
                 if pass.base {
                     self.paint_base(target, bounds);
                 }
@@ -2129,6 +2193,7 @@ impl Board {
                 target.restore();
             });
             if !drawn {
+                sismo::instant!("canvas::cache_skip_redraw_failed");
                 return false;
             }
         }
@@ -2137,6 +2202,7 @@ impl Board {
     }
 
     /// Whether the layers at `range` hold anything to paint.
+    #[sismo::function("canvas::has_ink")]
     fn has_ink(&self, range: std::ops::Range<usize>) -> bool {
         self.doc.layers.get(range).is_some_and(|layers| {
             layers
@@ -2147,6 +2213,7 @@ impl Board {
 
     /// Whether any visible ink of the layers at `range` blends with what
     /// lies under it instead of covering it (a highlighter multiplies).
+    #[sismo::function("canvas::ink_blends")]
     fn ink_blends(&self, range: std::ops::Range<usize>) -> bool {
         let Some(layers) = self.doc.layers.get(range) else {
             return false;
@@ -2169,6 +2236,7 @@ impl Board {
 
     /// Note the surface size and pull the viewport back inside the
     /// background before anything is painted.
+    #[sismo::function("canvas::settle_surface")]
     fn settle_surface(&mut self, surface: SurfaceBounds) {
         // Cache surface size so off-paint mutators (`pan_move`,
         // `viewport_zoom_at`, `viewport_zoom_by`) can consult it when
@@ -2182,6 +2250,7 @@ impl Board {
     }
 
     /// Let the background fetch what the view now shows.
+    #[sismo::function("canvas::tick_background")]
     fn tick_background(&self, surface: SurfaceBounds) {
         self.background
             .tick(self.visible_world(surface), self.viewport.scale);
@@ -2200,6 +2269,7 @@ impl Board {
 
     /// Backdrop and background (PDF pages, paper, …): everything below the
     /// first layer.
+    #[sismo::function("canvas::paint_base")]
     fn paint_base(&self, canvas: &freya_engine::prelude::Canvas, surface: SurfaceBounds) {
         // Backdrop fill lives inside the paint callback so a runtime
         // `set_background` swap (edit sheet re-tint) actually repaints
@@ -2208,6 +2278,7 @@ impl Board {
         // only refreshes on remount, which is unacceptable for an in-
         // place colour change on the active canvas.
         if let Some(bd) = self.background.viewport_backdrop() {
+            sismo::scope!("canvas::paint_backdrop");
             let mut paint = freya_engine::prelude::Paint::default();
             paint.set_color(bd);
             paint.set_anti_alias(false);
@@ -2235,12 +2306,16 @@ impl Board {
             scale: self.viewport.scale,
             redraw: self.redraw_handle.clone(),
         };
-        self.background.paint(&mut bg_ctx);
+        {
+            sismo::scope!("canvas::paint_background");
+            self.background.paint(&mut bg_ctx);
+        }
         canvas.restore();
     }
 
     /// Committed strokes of the layers at `range` (paint order indices), in
     /// world coordinates.
+    #[sismo::function("canvas::paint_layers")]
     fn paint_layers(
         &self,
         canvas: &freya_engine::prelude::Canvas,
@@ -2259,6 +2334,11 @@ impl Board {
         // off-screen strokes is what actually saves cycles at high
         // zoom — that's the "500 strokes, only 20 visible" regime.
         let visible = self.visible_stroke_set(surface);
+        sismo::counter!("canvas.layers", layers.len());
+        sismo::counter!("canvas.cached_paths", self.cached_paths.len());
+        if let Some(set) = visible.as_ref() {
+            sismo::counter!("canvas.strokes_visible", set.len());
+        }
 
         // Live eraser preview. During an in-flight erase gesture the
         // doc is not mutated (see `finalize_erase_session`) — instead
@@ -2277,47 +2357,58 @@ impl Board {
             if !layer.visible {
                 continue;
             }
+            sismo::scope!("canvas::paint_layer");
+            sismo::counter!("canvas.layer_strokes", layer.strokes.len());
             let mask_this = mask_circles.is_some() && layer.id == active_layer;
             if mask_this {
+                sismo::scope!("canvas::eraser_save_layer");
                 canvas.save_layer(&SaveLayerRec::default());
             }
             let opacity = layer.opacity.clamp(0.0, 1.0);
-            for stroke in &layer.strokes {
-                let dragged = self.drag_offset_of_stroke(stroke.id);
-                if dragged.is_none()
-                    && let Some(set) = visible.as_ref()
-                    && !set.contains(&stroke.id)
-                {
-                    continue;
-                }
-                let Some(cached) = self.cached_paths.get(&stroke.id) else {
-                    continue;
-                };
-                let Some(preset) = self.doc.preset(stroke.brush) else {
-                    continue;
-                };
-                let mut paint = self
-                    .brush_registry
-                    .brush(preset.kind)
-                    .paint(preset, stroke.color);
-                if opacity < 0.999 {
-                    let base = paint.color();
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    let scaled = (f32::from(base.a()) * opacity).clamp(0.0, 255.0) as u8;
-                    paint.set_color(base.with_a(scaled));
-                }
-                if let Some((dx, dy)) = dragged {
-                    canvas.save();
-                    canvas.translate((dx, dy));
+            let mut drawn = 0usize;
+            {
+                sismo::scope!("canvas::paint_strokes");
+                for stroke in &layer.strokes {
+                    let dragged = self.drag_offset_of_stroke(stroke.id);
+                    if dragged.is_none()
+                        && let Some(set) = visible.as_ref()
+                        && !set.contains(&stroke.id)
+                    {
+                        continue;
+                    }
+                    drawn += 1;
+                    let Some(cached) = self.cached_paths.get(&stroke.id) else {
+                        continue;
+                    };
+                    let Some(preset) = self.doc.preset(stroke.brush) else {
+                        continue;
+                    };
+                    let mut paint = self
+                        .brush_registry
+                        .brush(preset.kind)
+                        .paint(preset, stroke.color);
+                    if opacity < 0.999 {
+                        let base = paint.color();
+                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                        let scaled = (f32::from(base.a()) * opacity).clamp(0.0, 255.0) as u8;
+                        paint.set_color(base.with_a(scaled));
+                    }
+                    if let Some((dx, dy)) = dragged {
+                        canvas.save();
+                        canvas.translate((dx, dy));
+                        canvas.draw_path(cached, &paint);
+                        canvas.restore();
+                        continue;
+                    }
                     canvas.draw_path(cached, &paint);
-                    canvas.restore();
-                    continue;
                 }
-                canvas.draw_path(cached, &paint);
             }
+            sismo::counter!("canvas.layer_strokes_drawn", drawn);
             self.paint_glyphs(canvas, layer, opacity);
             if mask_this {
                 if let Some(circles) = mask_circles {
+                    sismo::scope!("canvas::eraser_mask");
+                    sismo::counter!("canvas.eraser_circles", circles.len());
                     let mut mask = Paint::default();
                     mask.set_blend_mode(BlendMode::DstOut);
                     mask.set_color(SkColor::from_argb(255, 0, 0, 0));
@@ -2326,17 +2417,21 @@ impl Board {
                         canvas.draw_circle((cx, cy), r, &mask);
                     }
                 }
+                sismo::scope!("canvas::eraser_restore_layer");
                 canvas.restore();
             }
         }
     }
 
     /// In-flight stroke and eraser marquee, in world coordinates.
+    #[sismo::function("canvas::paint_world_overlays")]
     fn paint_world_overlays(&self, canvas: &freya_engine::prelude::Canvas) {
         for hand in self.remote.values() {
             let Some(remote) = &hand.stroke else {
                 continue;
             };
+            sismo::scope!("canvas::paint_remote_stroke");
+            sismo::counter!("canvas.remote_stroke_points", remote.stroke.points.len());
             let renderer = self.brush_registry.brush(remote.preset.kind);
             let mut paint = renderer.paint(&remote.preset, remote.stroke.color);
             let base = paint.color();
@@ -2349,6 +2444,8 @@ impl Board {
             canvas.draw_path(&path, &paint);
         }
         if let Some(active) = &self.active {
+            sismo::scope!("canvas::paint_live_stroke");
+            sismo::counter!("canvas.live_stroke_points", active.points.len());
             if let Some(preset) = self.doc.preset(active.brush) {
                 let layer_opacity = self
                     .active_layer_at_begin
@@ -2369,10 +2466,14 @@ impl Board {
         if let Some((ax, ay, cx, cy)) = self.selection_rect {
             draw_selection_rect(canvas, ax, ay, cx, cy);
         }
-        self.paint_lasso(canvas);
+        {
+            sismo::scope!("canvas::paint_lasso");
+            self.paint_lasso(canvas);
+        }
     }
 
     /// Pointer disc and bookmark pins, in surface pixels.
+    #[sismo::function("canvas::paint_screen_overlays")]
     fn paint_screen_overlays(&self, canvas: &freya_engine::prelude::Canvas) {
         // Pointer overlay paints in surface-pixel space — the brush's
         // world-unit radius multiplied by the current zoom matches the
@@ -2385,6 +2486,7 @@ impl Board {
             && !self.is_panning()
             && self.input_mode != InputMode::Text
         {
+            sismo::scope!("canvas::paint_pointer");
             let preset = self.current_preset;
             let color = self.current_color;
             let style = self
@@ -2396,6 +2498,7 @@ impl Board {
 
         for (device, hand) in &self.remote {
             if let Some((wx, wy)) = hand.pointer {
+                sismo::scope!("canvas::paint_remote_pointer");
                 let (sx, sy) = self.viewport.world_to_screen(wx, wy);
                 draw_remote_pointer(canvas, sx, sy, device_color(*device), &hand.name);
             }
@@ -2428,6 +2531,7 @@ impl Board {
     /// zoom showing "most of it") — the caller then paints every
     /// stroke, matching pre-culling behaviour and skipping the
     /// per-frame hash-set build.
+    #[sismo::function("canvas::visible_stroke_set")]
     fn visible_stroke_set(&self, surface: SurfaceBounds) -> Option<HashSet<StrokeId>> {
         // Total committed strokes across every layer. Below this
         // threshold the per-frame `HashSet` build costs more than the
@@ -2567,6 +2671,7 @@ impl PinGesture {
 
     /// Start a press at `(x, y)` (surface pixels). The pin drops after
     /// [`PIN_LONG_PRESS`] unless the press ends first.
+    #[sismo::function("canvas::pin_down")]
     fn down(
         mut self,
         board: &Arc<Mutex<Board>>,
@@ -2612,6 +2717,7 @@ impl PinGesture {
     }
 
     /// The pointer lifted. A still, short press on a pin opens it.
+    #[sismo::function("canvas::pin_lift")]
     fn lift(mut self, board: &Arc<Mutex<Board>>) {
         let Some(press) = *self.press.peek() else {
             return;
@@ -2623,6 +2729,7 @@ impl PinGesture {
         }
     }
 
+    #[sismo::function("canvas::pin_open")]
     fn open(mut self, board: &Arc<Mutex<Board>>, id: crate::ids::BookmarkId) {
         let body = lock(board)
             .doc()
@@ -2634,6 +2741,7 @@ impl PinGesture {
     }
 
     /// The press was held long enough: open the pin under it, or drop one.
+    #[sismo::function("canvas::pin_hold")]
     fn hold(
         mut self,
         board: &Arc<Mutex<Board>>,
@@ -2699,6 +2807,7 @@ struct Surface {
 
 impl Surface {
     /// The surface was laid out: tell the pen pump where it is.
+    #[sismo::function("canvas::surface_sized")]
     fn sized(&self, area: Area) {
         let rect = crate::pen_pump::SurfaceRect {
             min_x: area.min_x(),
@@ -2712,6 +2821,7 @@ impl Surface {
     }
 
     /// Scrolling up zooms in around the pointer.
+    #[sismo::function("canvas::surface_wheel")]
     fn wheel(&self, e: &WheelEventData) {
         let (x, y) = point(e.element_location);
         #[allow(clippy::cast_possible_truncation)] // a wheel delta
@@ -2721,6 +2831,7 @@ impl Surface {
 
     /// Left presses only matter to text mode, and not when they echo the
     /// pen's own contact (libinput does so for tablets). Middle pans.
+    #[sismo::function("canvas::surface_mouse_down")]
     fn mouse_down(&self, e: &MouseEventData) {
         if e.button == Some(MouseButton::Left) {
             let (gx, gy) = point(e.global_location);
@@ -2743,6 +2854,7 @@ impl Surface {
 
     /// Touches arrive as global pointer events too; they are handled by
     /// the touch handlers in element space, so skip them here.
+    #[sismo::function("canvas::surface_global_move")]
     fn global_move(&self, e: &PointerEventData) {
         if matches!(e, PointerEventData::Touch(_)) {
             return;
@@ -2757,6 +2869,7 @@ impl Surface {
         }
     }
 
+    #[sismo::function("canvas::surface_global_up")]
     fn global_up(&self, e: &PointerEventData) {
         if matches!(e, PointerEventData::Touch(_)) {
             return;
@@ -2771,6 +2884,7 @@ impl Surface {
 
     /// A finger: ignored when it is the pen seen as touch, or the palm
     /// resting while the pen is in use.
+    #[sismo::function("canvas::surface_touch_start")]
     fn touch_start(&self, e: &TouchEventData) {
         let (x, y) = point(e.element_location);
         let (ox, oy) = *self.origin.peek();
@@ -2789,6 +2903,7 @@ impl Surface {
         }
     }
 
+    #[sismo::function("canvas::surface_touch_move")]
     fn touch_move(&self, e: &TouchEventData) {
         let (x, y) = point(e.element_location);
         // Finger drags do not reach `on_pointer_move`, so a pan ends the
@@ -2797,23 +2912,27 @@ impl Surface {
         lock(&self.board).touch_move(e.finger_id, x, y);
     }
 
+    #[sismo::function("canvas::surface_touch_end")]
     fn touch_end(&self, e: &TouchEventData) {
         self.pin.lift(&self.board);
         lock(&self.board).touch_up(e.finger_id);
     }
 
+    #[sismo::function("canvas::surface_touch_cancel")]
     fn touch_cancel(&self, e: &TouchEventData) {
         self.pin.cancel();
         lock(&self.board).touch_up(e.finger_id);
     }
 
     /// The mouse cursor feeds the overlay like pen hover does.
+    #[sismo::function("canvas::surface_pointer_move")]
     fn pointer_move(&self, e: &PointerEventData) {
         let (x, y) = point(e.element_location());
         lock(&self.board).set_pointer(Some((x, y)));
         self.pin.moved(x, y);
     }
 
+    #[sismo::function("canvas::surface_pointer_down")]
     fn pointer_down(&self, e: &PointerEventData) {
         self.pin.down(
             &self.board,
@@ -2825,6 +2944,7 @@ impl Surface {
     }
 }
 
+#[sismo::function("canvas::drawing_surface")]
 pub fn drawing_surface(
     board: &Arc<Mutex<Board>>,
     selected_bookmark: freya::prelude::State<Option<crate::ids::BookmarkId>>,
@@ -2842,7 +2962,10 @@ pub fn drawing_surface(
     // Keyed per mount, so two surfaces of one board (a document open in
     // two panes) each keep their pen-pump entry.
     let id = freya::prelude::use_hook(crate::pen_pump::allocate_canvas_surface_id);
-    freya::prelude::use_drop(move || crate::pen_pump::unregister_canvas_surface(id));
+    freya::prelude::use_drop(move || {
+        sismo::scope!("canvas::surface_drop");
+        crate::pen_pump::unregister_canvas_surface(id);
+    });
     let surface = Surface {
         board: Arc::clone(board),
         origin: freya::prelude::use_state(|| (0.0_f32, 0.0_f32)),
@@ -2919,6 +3042,7 @@ impl Board {
     }
 
     /// Refuse every edit while `read_only`; what others do still lands.
+    #[sismo::function("canvas::set_read_only")]
     pub fn set_read_only(&mut self, read_only: bool) {
         if self.read_only == read_only {
             return;
@@ -3007,6 +3131,7 @@ impl Board {
     }
 
     /// `from` is gone: its ghost ink and pointer go with it.
+    #[sismo::function("canvas::forget_hand")]
     pub fn forget_hand(&mut self, from: notein_sync::DeviceId) {
         if self.remote.remove(&from).is_some() {
             self.notify();
@@ -3015,6 +3140,7 @@ impl Board {
 
     /// Drop hands that went silent and settled ghost strokes, without
     /// waiting for another live message to arrive.
+    #[sismo::function("canvas::expire_hands")]
     pub fn expire_hands(&mut self) {
         let now = Instant::now();
         let before = self.remote.len();
@@ -3030,6 +3156,7 @@ impl Board {
 
     /// Drop ghost strokes whose committed twin is in the document, or
     /// that finished a while ago without one.
+    #[sismo::function("canvas::settle_remote")]
     fn settle_remote(&mut self) {
         let now = Instant::now();
         for hand in self.remote.values_mut() {
@@ -3056,6 +3183,7 @@ impl Board {
         self.active = Some(active);
     }
 
+    #[sismo::function("canvas::emit_live_ink_for")]
     fn emit_live_ink_for(&mut self, stroke: &Stroke, done: bool) {
         let Some(sink) = self.live_sink.clone() else {
             return;
@@ -3093,6 +3221,7 @@ impl Board {
         self.live_last = Some(Instant::now());
     }
 
+    #[sismo::function("canvas::emit_live_pointer")]
     fn emit_live_pointer(&mut self) {
         let Some(sink) = self.live_sink.clone() else {
             return;
@@ -3182,6 +3311,7 @@ fn draw_name_tag(
     canvas.draw_str(name, (x + PAD_X, y + PAD_Y - metrics.ascent), &font, &ink);
 }
 
+#[sismo::function("canvas::lock")]
 pub fn lock(board: &Arc<Mutex<Board>>) -> std::sync::MutexGuard<'_, Board> {
     match board.lock() {
         Ok(g) => g,
@@ -3199,6 +3329,7 @@ const GLIDE_STEPS: u16 = 15;
 /// A jump (a page, a bookmark, back to 100 %) keeps the reader oriented. A
 /// jump farther than two screens, or with reduced motion, cuts straight
 /// there; touching the canvas mid-way stops the glide where it is.
+#[sismo::function("canvas::glide")]
 pub fn glide(board: &Arc<Mutex<Board>>, target: Viewport) {
     let (from, (sw, sh)) = {
         let guard = lock(board);
@@ -3471,6 +3602,7 @@ fn segment_hits_rect(
 /// perpendicular to the local tangent at every cut, avoiding the
 /// unwanted round bulge that used to appear where the eraser bit
 /// the stroke.
+#[sismo::function("canvas::split_polyline")]
 fn split_polyline(
     points: &[InkPoint],
     stroke_cap_start: CapStyle,
@@ -3573,6 +3705,7 @@ fn split_polyline(
 /// mutation cascade: each intermediate polyline stays local to this
 /// call. Fragments shorter than two points are pruned (nothing to
 /// render, easy to leave behind accidentally).
+#[sismo::function("canvas::cumulative_split")]
 fn cumulative_split(
     points: &[InkPoint],
     stroke_cap_start: CapStyle,

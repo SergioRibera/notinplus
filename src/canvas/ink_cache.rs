@@ -187,21 +187,39 @@ impl InkCache {
     /// Whether the held image can serve `frame` without drawing again.
     /// A stretched image only serves while `zooming`.
     #[must_use]
+    #[sismo::function("ink_cache::fits")]
     pub fn fits(&self, frame: &Frame, content: Content, zooming: bool) -> bool {
         let Some(held) = &self.held else {
+            sismo::instant!("ink_cache::miss_empty");
             return false;
         };
-        self.image.is_some()
-            && held.content == content
-            && (held.density - frame.density).abs() <= f32::EPSILON
-            && held.size == frame.size
-            && (zooming || matches!(held.placement(frame), Placement::Shifted(..)))
-            && held.covers(frame)
+        if self.image.is_none() {
+            sismo::instant!("ink_cache::miss_no_image");
+            return false;
+        }
+        if held.content != content {
+            sismo::instant!("ink_cache::miss_content");
+            return false;
+        }
+        if (held.density - frame.density).abs() > f32::EPSILON || held.size != frame.size {
+            sismo::instant!("ink_cache::miss_size");
+            return false;
+        }
+        if !zooming && !matches!(held.placement(frame), Placement::Shifted(..)) {
+            sismo::instant!("ink_cache::miss_zoom_changed");
+            return false;
+        }
+        if !held.covers(frame) {
+            sismo::instant!("ink_cache::miss_out_of_margin");
+            return false;
+        }
+        true
     }
 
     /// Draw the image for `frame` again through `paint`, which receives
     /// a canvas already in the surface's local units and the local bounds
     /// to fill. `false` when no image could be made.
+    #[sismo::function("ink_cache::redraw")]
     pub fn redraw(
         &mut self,
         canvas: &Canvas,
@@ -224,13 +242,21 @@ impl InkCache {
             (h as f32 * MARGIN).ceil() as i32,
         );
         let pixels = (w + 2 * margin.0, h + 2 * margin.1);
+        sismo::counter!(
+            "ink_cache.pixels",
+            i64::from(pixels.0) * i64::from(pixels.1)
+        );
         if i64::from(pixels.0) * i64::from(pixels.1) > MAX_PIXELS {
             return false;
         }
         // Let go of the last image first so the surface is drawn in place
         // instead of copied.
-        self.image = None;
+        {
+            sismo::scope!("ink_cache::release_image");
+            self.image = None;
+        }
         if self.surface.as_ref().map(|s| (s.width(), s.height())) != Some(pixels) {
+            sismo::scope!("ink_cache::new_surface");
             self.surface = canvas.new_surface(&ImageInfo::new_n32_premul(pixels, None), None);
         }
         let Some(surface) = self.surface.as_mut() else {
@@ -246,7 +272,10 @@ impl InkCache {
         let target = surface.canvas();
         target.save();
         target.reset_matrix();
-        target.clear(Color::TRANSPARENT);
+        {
+            sismo::scope!("ink_cache::clear");
+            target.clear(Color::TRANSPARENT);
+        }
         target.translate((frame.offset.0 - corner.0, frame.offset.1 - corner.1));
         target.scale((d, d));
         paint(
@@ -259,7 +288,10 @@ impl InkCache {
             },
         );
         target.restore();
-        self.image = Some(surface.image_snapshot());
+        {
+            sismo::scope!("ink_cache::image_snapshot");
+            self.image = Some(surface.image_snapshot());
+        }
         self.held = Some(Held {
             content,
             density: d,
@@ -273,6 +305,7 @@ impl InkCache {
     }
 
     /// Copy the held image onto `canvas` for `frame`.
+    #[sismo::function("ink_cache::draw")]
     pub fn draw(&self, canvas: &Canvas, frame: &Frame) {
         let (Some(image), Some(held)) = (&self.image, &self.held) else {
             return;
@@ -284,6 +317,7 @@ impl InkCache {
                 canvas.draw_image(image, (x, y), None);
             }
             Placement::Stretched { scale, offset } => {
+                sismo::instant!("ink_cache::draw_stretched");
                 canvas.translate(offset);
                 canvas.scale((scale, scale));
                 canvas.draw_image_with_sampling_options(image, (0.0, 0.0), STRETCHED, None);
