@@ -94,6 +94,7 @@ impl TextEditorSlot {
 }
 
 /// Theme for a box whose body colour is `color` (RGBA) at viewport `scale`.
+#[sismo::function("canvas_text::theme")]
 fn canvas_theme(color: [u8; 4], scale: f32) -> EditorTheme {
     let base = crate::editor::theme(&notein_ui_kit::palette());
     let mut theme = base.clone().zoomed(TEXT_BASE_SIZE / base.body_size * scale);
@@ -148,6 +149,7 @@ impl View {
 }
 
 impl Component for CanvasLayers {
+    #[sismo::function("canvas_text::layers_render")]
     fn render(&self) -> impl IntoElement {
         let board = Arc::clone(&self.board);
         let accent = notein_ui_kit::palette().accent;
@@ -201,6 +203,7 @@ impl Component for CanvasLayers {
 
 /// Follow board redraws: refresh the scene when its revision moves, and the
 /// viewport while there is text to place.
+#[sismo::function("canvas_text::watch_board")]
 fn watch_board(
     board: &Arc<Mutex<Board>>,
     mut scene: State<TextScene>,
@@ -231,6 +234,7 @@ fn watch_board(
     });
 }
 
+#[sismo::function("canvas_text::pass_canvas")]
 fn pass_canvas(board: &Arc<Mutex<Board>>, pass: PaintPass, index: usize) -> Element {
     // Render callbacks never compare unequal, so a pass that changes shape
     // must remount: the key carries the whole pass.
@@ -265,6 +269,7 @@ fn pass_canvas(board: &Arc<Mutex<Board>>, pass: PaintPass, index: usize) -> Elem
         .into_element()
 }
 
+#[sismo::function("canvas_text::text_layer")]
 fn text_layer(
     board: &Arc<Mutex<Board>>,
     layer: &TextLayerView,
@@ -329,6 +334,7 @@ impl PartialEq for CanvasTextBox {
 }
 
 impl Component for CanvasTextBox {
+    #[sismo::function("canvas_text::text_box_render")]
     fn render(&self) -> impl IntoElement {
         let text = &self.text.text;
         let view = self.view;
@@ -409,6 +415,7 @@ struct VisualText {
 }
 
 impl Component for VisualText {
+    #[sismo::function("canvas_text::visual_text_render")]
     fn render(&self) -> impl IntoElement {
         let controller = use_editor_controller();
         let mut value = use_state(|| self.markdown.clone());
@@ -445,6 +452,7 @@ impl PartialEq for TextBoxEditor {
 }
 
 impl Component for TextBoxEditor {
+    #[sismo::function("canvas_text::editor_render")]
     fn render(&self) -> impl IntoElement {
         let controller = self.editor.controller;
         let value = use_state(|| self.markdown.clone());
@@ -468,6 +476,7 @@ impl Component for TextBoxEditor {
             });
         });
         use_drop(move || {
+            sismo::scope!("canvas_text::editor_drop");
             // Switching boxes mounts the next editor before this one drops.
             if *editing.peek() == Some(id) {
                 editing.set(None);
@@ -509,6 +518,7 @@ struct HandleDrag {
 impl HandleDrag {
     /// Frame after dragging the pointer to `(px, py)` (window
     /// coordinates).
+    #[sismo::function("canvas_text::handle_frame_at")]
     fn frame_at(&self, view: View, px: f32, py: f32) -> TextFrame {
         let start = self.frame;
         let (dx, dy) = (
@@ -597,6 +607,7 @@ impl PartialEq for TextHandles {
 }
 
 impl Component for TextHandles {
+    #[sismo::function("canvas_text::handles_render")]
     fn render(&self) -> impl IntoElement {
         let mut drag = use_state(|| Option::<HandleDrag>::None);
         let view = self.view;
@@ -651,6 +662,7 @@ impl Component for TextHandles {
 /// One handle centred on `(x, y)`. Resize pills turn with the box
 /// (`rotation`, degrees) so they stay parallel to its edges; round handles
 /// look the same at any angle.
+#[sismo::function("canvas_text::handle_dot")]
 fn handle_dot(
     handle: Handle,
     x: f32,
@@ -719,6 +731,7 @@ fn handle_dot(
 /// window area in `area` (stale while hidden, so read it only while a box
 /// is edited) for other bottom overlays to sit above it. Renders nothing
 /// while no box is edited.
+#[sismo::function("canvas_text::toolbar")]
 pub fn text_toolbar(
     board: &Arc<Mutex<Board>>,
     editor: TextEditorSlot,
@@ -810,6 +823,7 @@ struct SideScroll {
 }
 
 impl Component for SideScroll {
+    #[sismo::function("canvas_text::side_scroll_render")]
     fn render(&self) -> impl IntoElement {
         let mut offset = use_state(|| 0.0_f32);
         let mut viewport = use_state(|| 0.0_f32);

@@ -81,6 +81,7 @@ impl TextFrame {
 
     /// Whether a circle of `radius` around `(wx, wy)` overlaps the box.
     #[must_use]
+    #[sismo::function("text_box::touches_circle")]
     pub fn touches_circle(&self, height: f32, wx: f32, wy: f32, radius: f32) -> bool {
         let (lx, ly) = self.to_local(height, wx, wy);
         let nx = lx.clamp(0.0, self.width);

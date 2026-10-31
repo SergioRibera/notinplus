@@ -53,6 +53,7 @@ impl Board {
         self.touch.finger_draws && !self.touch.pan_hold && !self.read_only
     }
 
+    #[sismo::function("touch::finger_begin")]
     fn finger_begin(&mut self, id: u64, sx: f32, sy: f32) {
         self.touch.writing = Some(id);
         match self.input_mode {
@@ -64,6 +65,7 @@ impl Board {
         }
     }
 
+    #[sismo::function("touch::finger_extend")]
     fn finger_extend(&mut self, sx: f32, sy: f32) {
         match self.input_mode {
             InputMode::Lasso => self.lasso_move(sx, sy),
@@ -74,6 +76,7 @@ impl Board {
         }
     }
 
+    #[sismo::function("touch::finger_end")]
     fn finger_end(&mut self, sx: f32, sy: f32) {
         self.touch.writing = None;
         match self.input_mode {
@@ -83,6 +86,7 @@ impl Board {
         }
     }
 
+    #[sismo::function("touch::finger_abort")]
     fn finger_abort(&mut self) {
         if self.touch.writing.take().is_some() {
             match self.input_mode {
@@ -94,6 +98,7 @@ impl Board {
     }
 
     /// Register a new touch point.
+    #[sismo::function("touch::down")]
     pub fn touch_down(&mut self, id: u64, sx: f32, sy: f32) {
         self.finger_positions.insert(id, (sx, sy));
         let n = self.finger_positions.len();
@@ -127,6 +132,7 @@ impl Board {
     }
 
     /// Update a tracked finger.
+    #[sismo::function("touch::move")]
     pub fn touch_move(&mut self, id: u64, sx: f32, sy: f32) {
         if !self.finger_positions.contains_key(&id) {
             return;
@@ -165,6 +171,7 @@ impl Board {
     }
 
     /// Drop a finger from the tracker.
+    #[sismo::function("touch::up")]
     pub fn touch_up(&mut self, id: u64) {
         let lifted = self.finger_positions.remove(&id);
         if self.touch.writing == Some(id) {
@@ -204,6 +211,7 @@ impl Board {
 
     /// The last finger of a two-finger contact lifted: a short, still
     /// contact is a tap, and two of them undo.
+    #[sismo::function("touch::two_finger_tap")]
     fn two_finger_tap_ended(&mut self) {
         let Some((started, _, _, moved)) = self.touch.two.take() else {
             return;

@@ -120,6 +120,7 @@ impl Tool {
     }
 
     /// Make this the board's tool.
+    #[sismo::function("ink::activate_tool")]
     fn activate(self, board: &Arc<Mutex<Board>>) {
         let mut guard = lock(board);
         match self {
@@ -191,6 +192,7 @@ impl InkState {
     }
 
     /// Copy what changed on `board` into the reactive state.
+    #[sismo::function("ink::sync")]
     pub fn sync(mut self, board: &Board) {
         let tool = Tool::of(board);
         if *self.tool.peek() != tool {
@@ -259,6 +261,7 @@ impl std::fmt::Debug for Chrome {
 }
 
 impl Component for Chrome {
+    #[sismo::function("ink::chrome_render")]
     fn render(&self) -> impl IntoElement {
         let settings = crate::settings::SettingsStore::get().read();
         let pen_seen = crate::pen_pump::use_pen_seen();
@@ -501,6 +504,7 @@ impl Dock {
 }
 
 impl Component for Dock {
+    #[sismo::function("ink::dock_render")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let mut items: Vec<Element> = Vec::new();
@@ -541,6 +545,7 @@ impl Component for Dock {
 }
 
 /// The tools the phone dock leaves out.
+#[sismo::function("ink::more_sheet")]
 fn more_sheet(board: &Arc<Mutex<Board>>, state: &InkState) {
     use freya::icons::lucide;
     let mut tools = vec![Tool::Pencil, Tool::Marker, Tool::Shape, Tool::Text];
@@ -648,6 +653,7 @@ fn choice(
 }
 
 /// Change the settings of brush `kind`.
+#[sismo::function("ink::edit_config")]
 fn edit_config(board: &Arc<Mutex<Board>>, kind: BrushKind, edit: impl FnOnce(&mut BrushConfig)) {
     let mut guard = lock(board);
     let mut next = guard.brush_config(kind);
@@ -798,6 +804,7 @@ impl BrushPopover {
 }
 
 impl Component for BrushPopover {
+    #[sismo::function("ink::brush_popover_render")]
     fn render(&self) -> impl IntoElement {
         let revision = use_state(|| 0u32);
         // Re-render after each change made here; the board is not reactive.
@@ -876,6 +883,7 @@ impl ColorPopover {
 }
 
 impl Component for ColorPopover {
+    #[sismo::function("ink::color_popover_render")]
     fn render(&self) -> impl IntoElement {
         let board = Arc::clone(&self.board);
         let current = lock(&self.board).current_color();
@@ -912,6 +920,7 @@ impl PartialEq for LassoBar {
 }
 
 impl Component for LassoBar {
+    #[sismo::function("ink::lasso_bar_render")]
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let board = &self.board;
@@ -994,6 +1003,7 @@ impl PartialEq for Zoom {
 }
 
 impl Component for Zoom {
+    #[sismo::function("ink::zoom_render")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         #[allow(clippy::cast_possible_truncation)] // a percentage
@@ -1135,6 +1145,7 @@ impl Layers {
 }
 
 impl Component for Layers {
+    #[sismo::function("ink::layers_render")]
     fn render(&self) -> impl IntoElement {
         let revision = use_state(|| 0u32);
         // Re-render after each change made here; the board is not reactive.
@@ -1195,6 +1206,7 @@ impl std::fmt::Debug for PinNotes {
 }
 
 impl Component for PinNotes {
+    #[sismo::function("ink::pin_notes_render")]
     fn render(&self) -> impl IntoElement {
         let mut shown = use_state(|| None::<crate::ids::BookmarkId>);
         let current = *self.selected.read();

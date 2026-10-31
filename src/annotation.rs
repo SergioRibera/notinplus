@@ -73,6 +73,7 @@ fn aside() -> Option<State<Option<AnnotationId>>> {
 }
 
 /// End `id`, reporting `outcome` once.
+#[sismo::function("annotation::finish")]
 fn finish(id: AnnotationId, outcome: AnnotationOutcome) {
     if let Some(session) = SESSIONS.with(|s| s.borrow_mut().remove(&id)) {
         (session.done)(outcome);
@@ -85,6 +86,7 @@ fn finish(id: AnnotationId, outcome: AnnotationOutcome) {
 }
 
 /// Save if the draft changed, otherwise cancel.
+#[sismo::function("annotation::settle")]
 fn settle(id: AnnotationId) {
     let Some(session) = session(id) else {
         return;
@@ -102,6 +104,7 @@ fn settle(id: AnnotationId) {
 }
 
 /// Save the draft as it is.
+#[sismo::function("annotation::settle_saving")]
 fn settle_saving(id: AnnotationId) {
     let Some(session) = session(id) else {
         return;
@@ -117,6 +120,7 @@ fn settle_saving(id: AnnotationId) {
 }
 
 /// Recolour the draft of `id`.
+#[sismo::function("annotation::recolor")]
 fn recolor(id: AnnotationId, color: Option<[u8; 3]>) {
     if let Some(session) = session(id) {
         session.recolor(color);
@@ -130,6 +134,7 @@ pub struct AnnotationPopover;
 impl AnnotationPopover {
     /// Show the annotation popover for `request`; in the sidebar instead
     /// while another annotation is expanded there.
+    #[sismo::function("annotation::open")]
     pub fn open(
         request: AnnotationRequest,
         preview: Option<AnnotationPreview>,
@@ -163,6 +168,7 @@ impl AnnotationPopover {
         }
     }
 
+    #[sismo::function("annotation::show")]
     fn show(id: AnnotationId) {
         let Some(session) = session(id) else {
             return;
@@ -193,6 +199,7 @@ impl AnnotationPopover {
 
     /// Put `id` in the sidebar, settling the one there before; `false`
     /// when there is no sidebar to put it in.
+    #[sismo::function("annotation::dock")]
     fn dock(id: AnnotationId) -> bool {
         let Some(mut aside) = aside().filter(|_| !width_class().is_compact()) else {
             return false;
@@ -206,6 +213,7 @@ impl AnnotationPopover {
     }
 
     /// Move the annotation from the popover to the sidebar.
+    #[sismo::function("annotation::expand")]
     fn expand(id: AnnotationId) {
         if aside().is_none() {
             return;
@@ -217,6 +225,7 @@ impl AnnotationPopover {
     }
 
     /// Back from the sidebar to the popover.
+    #[sismo::function("annotation::collapse")]
     fn collapse(id: AnnotationId) {
         if let Some(mut aside) = aside() {
             aside.set(None);
@@ -231,10 +240,12 @@ impl AnnotationPopover {
 pub struct AnnotationSidebar;
 
 impl Component for AnnotationSidebar {
+    #[sismo::function("annotation::sidebar_render")]
     fn render(&self) -> impl IntoElement {
         let mut aside = use_state(|| None);
         use_hook(|| ASIDE.set(Some(aside)));
         use_drop(move || {
+            sismo::scope!("annotation::sidebar_drop");
             // Unregistered first: settling must not write to the state
             // that is going away.
             ASIDE.set(None);
@@ -482,6 +493,7 @@ impl AnnotationCard {
 }
 
 impl Component for AnnotationCard {
+    #[sismo::function("annotation::card_render")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let id = self.id;
@@ -556,6 +568,7 @@ struct ColorPicker {
 }
 
 impl Component for ColorPicker {
+    #[sismo::function("annotation::color_picker_render")]
     fn render(&self) -> impl IntoElement {
         let id = self.id;
         let Some(session) = session(id) else {

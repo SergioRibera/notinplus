@@ -174,6 +174,7 @@ static ACTIVE_STROKE: Mutex<Option<(Weak<Mutex<Board>>, SurfaceRect)>> = Mutex::
 ///
 /// Called from the surface's `on_sized` handler every time the layout engine
 /// resolves a new area — mount, resize, split-pane divider drag.
+#[sismo::function("pen::register_surface")]
 pub fn register_canvas_surface(id: CanvasSurfaceId, board: &Arc<Mutex<Board>>, rect: SurfaceRect) {
     let Ok(mut g) = CANVAS_SURFACES.lock() else {
         return;
@@ -196,6 +197,7 @@ pub fn register_canvas_surface(id: CanvasSurfaceId, board: &Arc<Mutex<Board>>, r
 /// Drop the registration for `id` if present. Called on unmount so
 /// the hit-test registry does not grow without bound across route
 /// changes. Siblings sharing the same `Board` retain their own entries.
+#[sismo::function("pen::unregister_surface")]
 pub fn unregister_canvas_surface(id: CanvasSurfaceId) {
     if let Ok(mut g) = CANVAS_SURFACES.lock() {
         g.retain(|e| e.id != id);
@@ -204,6 +206,7 @@ pub fn unregister_canvas_surface(id: CanvasSurfaceId) {
 
 /// Window-coord hit-test. Walks the registry in reverse (last-mounted
 /// first) so an overlay canvas (future `PiP`) wins over the base layer.
+#[sismo::function("pen::hit_canvas")]
 fn hit_canvas(x: f32, y: f32) -> Option<(Arc<Mutex<Board>>, SurfaceRect)> {
     CANVAS_SURFACES
         .lock()
@@ -238,6 +241,7 @@ fn clear_active_stroke() {
 /// Resolve the board whose rect the hover sample is over. Used by
 /// `pump_hover` so the pointer-overlay disc shows up in the correct
 /// pane in split-pane layouts.
+#[sismo::function("pen::hover_target")]
 fn hover_target(x: f32, y: f32) -> Option<(Arc<Mutex<Board>>, SurfaceRect)> {
     hit_canvas(x, y)
 }
@@ -251,6 +255,7 @@ fn hover_target(x: f32, y: f32) -> Option<(Arc<Mutex<Board>>, SurfaceRect)> {
 /// `Move` / `Up` / `Cancel` events follow the latched target. Client
 /// ownership stays on that thread so its `Drop` runs only when the
 /// streams close.
+#[sismo::function("pen::spawn")]
 pub fn spawn(window_id: u64) {
     std::thread::spawn(move || {
         let client = match pollster::block_on(PenClient::acquire_with(PenConfig::new(window_id))) {
@@ -299,6 +304,7 @@ fn pump_events(stream: &TypedStream<PenEvent, ()>) {
 fn pump_hover(stream: &TypedStream<PenHoverEvent, ()>) {
     let bridge = hover_bridge();
     while let Ok(StreamItem::Event(event)) = stream.recv() {
+        sismo::scope!("pen::hover");
         let (payload, pointer) = match event {
             PenHoverEvent::ProximityEnter(sample) | PenHoverEvent::Move(sample) => {
                 // Hover often precedes contact — record so the first
@@ -384,6 +390,7 @@ impl DtTracker {
 /// canvas surface and latches the one it lands on; the rest of the
 /// stroke reads that latch, so a stroke crossing a split-pane divider
 /// stays in the pane it started on. `dt` restarts with every stroke.
+#[sismo::function("pen::apply")]
 fn apply(event: PenEvent, dt: &mut DtTracker) {
     match event {
         PenEvent::Down(sample) => pen_down(&sample, dt),
@@ -403,6 +410,7 @@ fn local_point(sample: &PenSample, rect: SurfaceRect, dt_us: u16) -> InkPoint {
     point
 }
 
+#[sismo::function("pen::down")]
 fn pen_down(sample: &PenSample, dt: &mut DtTracker) {
     record_pen_pos(sample.x, sample.y);
     // A press on chrome over the canvas (dock, zoom, cards) does not
@@ -437,6 +445,7 @@ fn pen_down(sample: &PenSample, dt: &mut DtTracker) {
     mark_pen_seen();
 }
 
+#[sismo::function("pen::move")]
 fn pen_move(m: &istmo_pen::PenMove, dt: &mut DtTracker) {
     record_pen_pos(m.sample.x, m.sample.y);
     let Some((board, rect)) = active_stroke() else {
@@ -448,6 +457,7 @@ fn pen_move(m: &istmo_pen::PenMove, dt: &mut DtTracker) {
     guard.set_pointer(Some((lx, ly)));
     if guard.input_mode() == InputMode::Draw {
         // Every coalesced sample inks; the others only need the last.
+        sismo::counter!("pen.coalesced", m.coalesced.len());
         for c in &m.coalesced {
             let d = dt.advance(c.timestamp_us);
             guard.extend_screen(local_point(c, rect, d));
@@ -465,6 +475,7 @@ fn pen_move(m: &istmo_pen::PenMove, dt: &mut DtTracker) {
     }
 }
 
+#[sismo::function("pen::up")]
 fn pen_up(sample: &PenSample, dt: &mut DtTracker) {
     record_pen_pos(sample.x, sample.y);
     let Some((board, rect)) = active_stroke() else {
@@ -498,6 +509,7 @@ fn pen_up(sample: &PenSample, dt: &mut DtTracker) {
 }
 
 /// The platform cancelled the contact: drop what was in progress.
+#[sismo::function("pen::cancel")]
 fn pen_cancel(dt: &mut DtTracker) {
     clear_pen_pos();
     if let Some((board, _)) = active_stroke() {
@@ -515,6 +527,7 @@ fn pen_cancel(dt: &mut DtTracker) {
     clear_active_stroke();
 }
 
+#[sismo::function("pen::lock_board")]
 fn lock_board(board: &Arc<Mutex<Board>>) -> std::sync::MutexGuard<'_, Board> {
     match board.lock() {
         Ok(g) => g,
@@ -538,6 +551,7 @@ pub fn pen_in_use() -> bool {
 
 /// The stylus shortcut (Apple Pencil double tap, S Pen button): run
 /// what Ajustes › Lápiz says on the canvas under the pen.
+#[sismo::function("pen::shortcut")]
 fn shortcut() {
     let action = crate::settings::Settings::current_pen_double_tap();
     let Some((x, y)) = pen_screen_pos_fresh() else {

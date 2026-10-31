@@ -7,6 +7,7 @@ use crate::settings::PenDoubleTap;
 impl Board {
     /// Switch to `preset`, remembering the tool it replaces so the
     /// stylus shortcut can come back to it. Leaves lasso and text.
+    #[sismo::function("tools::choose_preset")]
     pub fn choose_preset(&mut self, preset: BrushPreset) {
         let current = *self.current_preset();
         if current.kind != preset.kind {
@@ -27,6 +28,7 @@ impl Board {
     }
 
     /// Run the stylus shortcut.
+    #[sismo::function("tools::pen_shortcut")]
     pub fn pen_shortcut(&mut self, action: PenDoubleTap) {
         match action {
             PenDoubleTap::Nothing => {}

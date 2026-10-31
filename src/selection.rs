@@ -36,6 +36,7 @@ fn sticky() -> State<Option<SelectionMenu>> {
 }
 
 /// Show the bar for `menu`.
+#[sismo::function("selection::show")]
 pub fn show(menu: SelectionMenu) {
     if menu.sticky {
         sticky().set(Some(menu));
@@ -52,6 +53,7 @@ pub fn show(menu: SelectionMenu) {
 }
 
 /// Take the sticky bar away without dismissing its selection.
+#[sismo::function("selection::close_sticky")]
 pub fn close_sticky() {
     let mut showing = sticky();
     if showing.peek().is_some() {
@@ -61,6 +63,7 @@ pub fn close_sticky() {
 
 /// Close the bar the way `menu` was shown, before (`dismiss = false`) or
 /// after (`true`) an action that is done with the selection.
+#[sismo::function("selection::close")]
 fn close(menu: &SelectionMenu, dismiss: bool) {
     if menu.sticky {
         close_sticky();
@@ -81,6 +84,7 @@ struct Bar {
 }
 
 impl Bar {
+    #[sismo::function("selection::bar_items")]
     fn items(&self) -> Vec<BarItem> {
         use freya::icons::lucide;
         let menu = &self.menu;
@@ -152,6 +156,7 @@ impl Bar {
 }
 
 impl Component for Bar {
+    #[sismo::function("selection::bar_render")]
     fn render(&self) -> impl IntoElement {
         let size = *Platform::get().current_window().root_size.read();
         let bar = SelectionBar::new(self.items());
@@ -194,6 +199,7 @@ impl Component for Bar {
 pub struct StickySelection;
 
 impl Component for StickySelection {
+    #[sismo::function("selection::sticky_render")]
     fn render(&self) -> impl IntoElement {
         let menu = sticky().read().clone();
         menu.map_or_else(|| rect().into_element(), |menu| Bar { menu }.into_element())

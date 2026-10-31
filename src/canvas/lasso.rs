@@ -82,6 +82,7 @@ impl Board {
 
     /// Selection bounds in surface pixels, for placing its action bar.
     #[must_use]
+    #[sismo::function("lasso::selection_screen_bounds")]
     pub fn selection_screen_bounds(&self) -> Option<(f32, f32, f32, f32)> {
         let s = self.lasso.selection.as_ref()?;
         let (x0, y0) = self.world_to_screen(s.bounds.0 + s.offset.0, s.bounds.1 + s.offset.1);
@@ -89,6 +90,7 @@ impl Board {
         Some((x0, y0, x1, y1))
     }
 
+    #[sismo::function("lasso::clear_selection")]
     pub fn clear_selection(&mut self) {
         if self.lasso.selection.take().is_some() || !self.lasso.path.is_empty() {
             self.lasso.path.clear();
@@ -98,6 +100,7 @@ impl Board {
 
     /// Whether surface point `(sx, sy)` grabs the selection.
     #[must_use]
+    #[sismo::function("lasso::selection_hit")]
     pub fn selection_hit(&self, sx: f32, sy: f32) -> bool {
         self.selection_screen_bounds()
             .is_some_and(|(x0, y0, x1, y1)| {
@@ -110,6 +113,7 @@ impl Board {
 
     /// Start a lasso stroke at surface point `(sx, sy)`, or grab the
     /// selection when the point is on it.
+    #[sismo::function("lasso::down")]
     pub fn lasso_down(&mut self, sx: f32, sy: f32) {
         if self.selection_hit(sx, sy) {
             let world = self.screen_to_world(sx, sy);
@@ -123,6 +127,7 @@ impl Board {
         self.notify();
     }
 
+    #[sismo::function("lasso::move")]
     pub fn lasso_move(&mut self, sx: f32, sy: f32) {
         let world = self.screen_to_world(sx, sy);
         if let Some(selection) = self.lasso.selection.as_mut()
@@ -140,6 +145,7 @@ impl Board {
 
     /// Finish the lasso: close the loop and select what it caught, or
     /// drop the selection where a drag left it.
+    #[sismo::function("lasso::up")]
     pub fn lasso_up(&mut self) {
         if let Some(selection) = self.lasso.selection.as_mut()
             && selection.grab.take().is_some()
@@ -158,6 +164,7 @@ impl Board {
         self.notify();
     }
 
+    #[sismo::function("lasso::cancel")]
     pub fn lasso_cancel(&mut self) {
         self.lasso.path.clear();
         if let Some(selection) = self.lasso.selection.as_mut() {
@@ -167,6 +174,7 @@ impl Board {
         self.notify();
     }
 
+    #[sismo::function("lasso::select_in")]
     fn select_in(&self, polygon: &[(f32, f32)]) -> Selection {
         let mut selection = Selection::default();
         let mut bounds = None;
@@ -200,6 +208,7 @@ impl Board {
         selection
     }
 
+    #[sismo::function("lasso::translate_selection")]
     fn translate_selection(&mut self, (dx, dy): (f32, f32)) {
         let Some(selection) = self.lasso.selection.clone() else {
             return;
@@ -242,6 +251,7 @@ impl Board {
     }
 
     /// Paint the selected ink in `color`.
+    #[sismo::function("lasso::recolor")]
     pub fn selection_recolor(&mut self, color: [u8; 4]) {
         let Some(selection) = self.lasso.selection.clone() else {
             return;
@@ -266,6 +276,7 @@ impl Board {
 
     /// Copy the selected ink a little down and right; the copy becomes
     /// the selection.
+    #[sismo::function("lasso::duplicate")]
     pub fn selection_duplicate(&mut self) {
         let Some(selection) = self.lasso.selection.clone() else {
             return;
@@ -306,6 +317,7 @@ impl Board {
     }
 
     /// Delete the selected ink.
+    #[sismo::function("lasso::delete")]
     pub fn selection_delete(&mut self) {
         let Some(selection) = self.lasso.selection.take() else {
             return;
@@ -326,6 +338,7 @@ impl Board {
 
     /// Read the selected handwriting and replace it with a text box.
     /// Returns the text, or `None` when nothing could be read.
+    #[sismo::function("lasso::to_text")]
     pub fn selection_to_text(&mut self) -> Option<String> {
         let selection = self.lasso.selection.clone()?;
         let recognizer = super::handwriting::recognizer()?;
@@ -460,6 +473,7 @@ impl Board {
     }
 
     /// The loop being drawn and the selection frame, in world space.
+    #[sismo::function("lasso::paint")]
     pub(super) fn paint_lasso(&self, canvas: &Canvas) {
         let scale = self.viewport.scale.max(f32::EPSILON);
         let accent = self
