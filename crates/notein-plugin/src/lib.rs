@@ -25,6 +25,29 @@
 //! the interface language, also inside a shared library
 //! ([`export_plugin!`] exports the setter it calls).
 
+/// Wraps a future so the profiler records it as an async span named
+/// `$name`, plus one plain span per poll.
+#[cfg(feature = "sismo")]
+macro_rules! traced {
+    ($name:expr, $fut:expr $(,)?) => {{
+        static CALLSITE: ::sismo::Callsite = ::sismo::Callsite::new(
+            ::sismo::__private::CallsiteKind::Span,
+            $name,
+            module_path!(),
+            file!(),
+            line!(),
+        );
+        ::sismo::Instrumented::new(&CALLSITE, $fut)
+    }};
+}
+
+#[cfg(not(feature = "sismo"))]
+macro_rules! traced {
+    ($name:expr, $fut:expr $(,)?) => {
+        $fut
+    };
+}
+
 pub mod bookmark;
 pub mod catalog;
 pub mod config;

@@ -93,6 +93,7 @@ impl<K: DocumentKind> ErasedKind for KindAdapter<K> {
         self.0.info()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_search"))]
     fn search(&self, query: &SearchQuery) -> Vec<Hit<Vec<u8>>> {
         self.0
             .search(query)
@@ -107,14 +108,17 @@ impl<K: DocumentKind> ErasedKind for KindAdapter<K> {
             .collect()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_index"))]
     fn index(&self, doc: DocMeta<'_>, content: &[u8], attachment: Option<&[u8]>) -> IndexReport {
         self.0.index(doc, &Self::content(content), attachment)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_forget"))]
     fn forget(&self, doc: DocId) {
         self.0.forget(doc);
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_index_status"))]
     fn index_status(&self) -> Vec<(DocId, IndexReport)> {
         self.0.index_status()
     }
@@ -123,6 +127,7 @@ impl<K: DocumentKind> ErasedKind for KindAdapter<K> {
         self.0.index_size(&Self::content(content))
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_outline"))]
     fn outline(&self, content: &[u8]) -> Vec<OutlineNode<Vec<u8>>> {
         self.0
             .outline(&Self::content(content))
@@ -131,6 +136,7 @@ impl<K: DocumentKind> ErasedKind for KindAdapter<K> {
             .collect()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_marks"))]
     fn marks(&self, content: &[u8]) -> Vec<Mark<Vec<u8>>> {
         self.0
             .marks(&Self::content(content))
@@ -145,10 +151,12 @@ impl<K: DocumentKind> ErasedKind for KindAdapter<K> {
             .collect()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_summary"))]
     fn summary(&self, content: &[u8]) -> Option<String> {
         self.0.summary(&Self::content(content))
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_chip"))]
     fn chip(&self, doc: DocMeta<'_>, anchor: &[u8]) -> ChipView {
         K::Anchor::from_bytes(anchor).map_or_else(
             |_| ChipView::broken(doc.name),
@@ -164,6 +172,7 @@ impl<K: DocumentKind> ErasedKind for KindAdapter<K> {
         self.0.actions()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_run_action"))]
     fn run_action(&self, id: &str, doc: DocMeta<'_>, content: &[u8]) -> ActionEffect {
         self.0.run_action(id, doc, &Self::content(content))
     }
@@ -172,6 +181,7 @@ impl<K: DocumentKind> ErasedKind for KindAdapter<K> {
         self.0.creation_entries()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_create"))]
     fn create(
         &self,
         entry: &str,
@@ -188,14 +198,17 @@ impl<K: DocumentKind> ErasedKind for KindAdapter<K> {
         K::Content::default().to_bytes()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_launch"))]
     fn launch(&self, entry: &str) {
         self.0.launch(entry);
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_inspect"))]
     fn inspect(&self, entry: &str, file: ImportedFile<'_>) -> Result<ImportPreview, CreationError> {
         self.0.inspect(entry, file)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_replace_attachment"))]
     fn replace_attachment(
         &self,
         file: ImportedFile<'_>,
@@ -206,10 +219,12 @@ impl<K: DocumentKind> ErasedKind for KindAdapter<K> {
             .map(|content| content.to_bytes())
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_thumbnail"))]
     fn thumbnail(&self, content: &[u8], attachment: &[u8]) -> Option<Vec<u8>> {
         self.0.thumbnail(&Self::content(content), attachment)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_details"))]
     fn details(&self, content: &[u8]) -> Option<String> {
         self.0.details(&Self::content(content))
     }
@@ -218,25 +233,30 @@ impl<K: DocumentKind> ErasedKind for KindAdapter<K> {
         self.0.choice(&Self::content(content))
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_choose"))]
     fn choose(&self, content: &[u8], id: &str) -> Option<Vec<u8>> {
         let mut content = Self::content(content);
         self.0.choose(&mut content, id).then(|| content.to_bytes())
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_excerpt"))]
     fn excerpt(&self, content: &[u8]) -> Option<String> {
         self.0.excerpt(&Self::content(content))
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_references"))]
     fn references(&self, content: &[u8]) -> Option<Vec<SourceRef>> {
         self.0.references(&Self::content(content))
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_without_marks"))]
     fn without_marks(&self, content: &[u8]) -> Option<Vec<u8>> {
         let mut content = K::Content::from_bytes(content).ok()?;
         self.0.without_marks(&mut content);
         Some(content.to_bytes())
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_export"))]
     fn export(
         &self,
         doc: DocMeta<'_>,
@@ -246,16 +266,19 @@ impl<K: DocumentKind> ErasedKind for KindAdapter<K> {
         self.0.export(doc, &Self::content(content), attachment)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_cited"))]
     fn cited(&self, doc: DocId, anchor: &[u8]) {
         if let Ok(anchor) = K::Anchor::from_bytes(anchor) {
             self.0.cited(doc, &anchor);
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_quotes"))]
     fn quotes(&self) -> bool {
         self.0.quotes()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_quote"))]
     fn quote(&self, doc: DocMeta<'_>, anchor: &[u8]) -> Option<Quote> {
         let anchor = K::Anchor::from_bytes(anchor).ok()?;
         self.0.quote(doc, &anchor)

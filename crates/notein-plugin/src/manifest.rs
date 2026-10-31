@@ -129,6 +129,7 @@ impl UserMessage for ManifestError {
 }
 
 impl PluginManifest {
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::manifest_from_path"))]
     pub fn from_path(path: &Path) -> Result<Self, ManifestError> {
         let text = fs::read_to_string(path).map_err(|error| ManifestError::Io {
             path: path.to_path_buf(),
@@ -137,6 +138,7 @@ impl PluginManifest {
         Self::parse(path, &text)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::manifest_parse"))]
     pub fn parse(path: &Path, text: &str) -> Result<Self, ManifestError> {
         let mut id = None;
         let mut name = None;

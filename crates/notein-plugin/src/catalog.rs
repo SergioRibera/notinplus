@@ -145,6 +145,7 @@ impl PluginCatalog {
     ///
     /// # Errors
     /// [`CatalogError`] when its id or one of its kind ids is taken.
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::catalog_add"))]
     pub fn add(&mut self, plugin: Arc<dyn Plugin>, origin: Origin) -> Result<(), CatalogError> {
         let info = plugin.info();
         if self.plugins.iter().any(|p| p.info.id == info.id) {
@@ -178,6 +179,7 @@ impl PluginCatalog {
     /// Switch every plugin to `lang`: third-party libraries get it
     /// through their setter (builtins share the app's), and the
     /// [`PluginInfo`] kept at registration is asked for again.
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::catalog_set_lang"))]
     pub fn set_lang(&mut self, lang: Lang) {
         for library in &self.libraries {
             library.set_lang(lang);
@@ -192,6 +194,7 @@ impl PluginCatalog {
     }
 
     /// Hand `host` to every plugin.
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::catalog_install_host"))]
     pub fn install_host(&self, host: &Host) {
         for plugin in &self.plugins {
             plugin.plugin.install(host);
@@ -220,6 +223,7 @@ impl PluginCatalog {
 
     /// Turn a plugin on or off. Its documents stay; they open again
     /// when it comes back.
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::catalog_set_enabled"))]
     pub fn set_enabled(&mut self, id: &str, enabled: bool) {
         if let Some(plugin) = self.plugins.iter_mut().find(|p| p.info.id == id) {
             plugin.state = if enabled {
@@ -274,6 +278,7 @@ impl PluginCatalog {
     /// The typefaces of every plugin, on or off: text already laid out
     /// with them keeps its face.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::catalog_fonts"))]
     pub fn fonts(&self) -> Vec<Font> {
         self.plugins.iter().flat_map(|p| p.plugin.fonts()).collect()
     }
@@ -288,6 +293,7 @@ impl PluginCatalog {
 
     /// Every create-menu entry of every active kind.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::catalog_entries"))]
     pub fn entries(&self) -> Vec<CatalogEntry> {
         self.active()
             .flat_map(|p| {
@@ -307,6 +313,7 @@ impl PluginCatalog {
 
     /// Search every active kind.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::catalog_search"))]
     pub fn search(&self, query: &SearchQuery) -> Vec<KindHits> {
         self.kinds()
             .into_iter()

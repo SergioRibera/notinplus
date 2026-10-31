@@ -62,7 +62,7 @@ async-lock = "3"
 uuid = { version = "1", features = ["v4"] }
 tar = { version = "0.4", default-features = false }
 zstd = "0.13"
-notein-plugin = { version = "0.1.0", path = "crates/notein-plugin" }
+notein-plugin = { version = "0.1.0", path = "crates/notein-plugin", features = ["sismo"] }
 notein-ui-kit = { path = "crates/notein-ui-kit", features = ["sismo"] }
 notein-sync = { path = "crates/notein-sync", features = ["sismo"] }
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }

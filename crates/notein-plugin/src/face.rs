@@ -151,41 +151,44 @@ impl<K: DocumentKind> FaceContext<K> {
     /// (Ctrl+Z, Ctrl+Shift+Z), in this pane only. A hook: call it from
     /// the face's render. A face whose own text field already took the
     /// keystroke ignores the step.
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::face_use_history"))]
     pub fn use_history(&self, mut on_step: impl FnMut(HistoryStep) + 'static) {
         let (host, doc, pane) = (Arc::clone(&self.host), self.doc, self.pane);
         let kind = self.kind.info().id;
         use_hook(move || {
             let rx = host.history_steps(&kind);
-            spawn(async move {
+            spawn(traced!("task::plugin::history", async move {
                 while let Ok(request) = rx.recv_async().await {
                     if request.doc == doc && request.pane == pane {
                         on_step(request.step);
                     }
                 }
-            });
+            }));
         });
     }
 
     /// Run `on_press` for presses on this face's header actions, in this
     /// pane only. A hook: call it from the face's render.
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::face_use_header_presses"))]
     pub fn use_header_presses(&self, mut on_press: impl FnMut(HeaderPress) + 'static) {
         let (host, doc, pane) = (Arc::clone(&self.host), self.doc, self.pane);
         let kind = self.kind.info().id;
         use_hook(move || {
             let rx = host.header_presses(&kind);
-            spawn(async move {
+            spawn(traced!("task::plugin::header_presses", async move {
                 while let Ok(press) = rx.recv_async().await {
                     if press.doc == doc && press.pane == pane {
                         on_press(press);
                     }
                 }
-            });
+            }));
         });
     }
 
     /// Run `on_jump` with the anchor this document was opened at, then
     /// with every move queued for it while it is on screen (an outline
     /// row, a chip). A hook: call it from the face's render.
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::face_use_jumps"))]
     pub fn use_jumps(&self, mut on_jump: impl FnMut(K::Anchor) + 'static) {
         let (host, doc) = (Arc::clone(&self.host), self.doc);
         let kind = self.kind.info().id;
@@ -195,7 +198,7 @@ impl<K: DocumentKind> FaceContext<K> {
             if let Some(anchor) = first.as_deref().and_then(Self::anchor) {
                 on_jump(anchor);
             }
-            spawn(async move {
+            spawn(traced!("task::plugin::jumps", async move {
                 while let Ok(jump) = rx.recv_async().await {
                     if jump.doc == doc {
                         host.take_jump(&kind, doc);
@@ -204,7 +207,7 @@ impl<K: DocumentKind> FaceContext<K> {
                         }
                     }
                 }
-            });
+            }));
         });
     }
 }
@@ -311,6 +314,7 @@ impl<F: Face> ErasedFace for FaceAdapter<F> {
         self.face.header_actions()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::face"))]
     fn render(&self, request: FaceRequest) -> Element {
         self.face.render(FaceContext {
             doc: request.doc,
@@ -322,6 +326,7 @@ impl<F: Face> ErasedFace for FaceAdapter<F> {
         })
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::face_cover"))]
     fn cover(&self, cover: &CoverRequest) -> Option<Element> {
         self.face.cover(cover)
     }

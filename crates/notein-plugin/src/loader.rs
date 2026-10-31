@@ -208,6 +208,7 @@ impl PluginLibrary {
     }
 
     /// Show the plugin's text in `lang` from now on.
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::loader_set_lang"))]
     pub fn set_lang(&self, lang: Lang) {
         if let Some(set_lang) = self.set_lang {
             set_lang(lang);
@@ -245,6 +246,7 @@ pub struct Review {
 impl Loaded {
     /// Describe what the plugin contributes.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::loader_review"))]
     pub fn review(&self) -> Review {
         let mut registrar = Registrar::default();
         self.plugin.register(&mut registrar);
@@ -266,6 +268,7 @@ impl Loaded {
 /// # Errors
 /// [`LoaderError`] when the manifest, the library or its entry are
 /// missing or the plugin targets another SDK version.
+#[cfg_attr(feature = "sismo", sismo::function("plugin::loader_load"))]
 pub fn load(manifest_path: &Path) -> Result<Loaded, LoaderError> {
     let manifest = PluginManifest::from_path(manifest_path)?;
     let device = Target::current();
