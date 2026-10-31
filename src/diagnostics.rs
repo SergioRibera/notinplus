@@ -40,6 +40,8 @@ pub const MOBILE: bool = cfg!(any(
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct DiagnosticsSettings {
     pub remote: bool,
+    /// Newest crash report already announced, by when it was written.
+    pub seen_crash_ns: u64,
 }
 
 impl Persisted for DiagnosticsSettings {
@@ -92,19 +94,17 @@ fn data_dir() -> PathBuf {
     crate::library::bodies::root_dir().join("diagnostics")
 }
 
+/// Panics leave a crash report in the data folder on every platform, so a
+/// viewer can open it later even when none was connected.
 fn config() -> sismo::Config {
-    let config = sismo::config!()
+    sismo::config!()
         .filter(FILTER)
         .app_crates(APP_CRATES)
         .live(sismo::LiveConfig {
             data_dir: Some(data_dir()),
             ..sismo::LiveConfig::default()
-        });
-    if MOBILE {
-        config
-    } else {
-        config.dump_dir(data_dir())
-    }
+        })
+        .dump_dir(data_dir())
 }
 
 /// Start streaming; does nothing when already running.
@@ -145,4 +145,35 @@ pub fn export() -> std::io::Result<PathBuf> {
 #[must_use]
 pub fn export_dir() -> PathBuf {
     data_dir()
+}
+
+/// Crash reports left by panics, newest first.
+#[must_use]
+pub fn crash_reports() -> Vec<sismo::CrashReport> {
+    sismo::crash_reports(&data_dir())
+}
+
+/// Delete every crash report.
+pub fn delete_crash_reports() {
+    for report in crash_reports() {
+        if let Err(err) = sismo::delete_crash_report(&data_dir(), &report.name) {
+            log::warn!("crash report delete: {err}");
+        }
+    }
+}
+
+/// A crash report not announced yet, marked as announced: the app closed
+/// on an error since the user last heard about it.
+#[must_use]
+pub fn take_unseen_crash() -> Option<sismo::CrashReport> {
+    let newest = crash_reports().into_iter().next()?;
+    let mut settings = DiagnosticsSettings::load();
+    if newest.written_unix_ns <= settings.seen_crash_ns {
+        return None;
+    }
+    settings.seen_crash_ns = newest.written_unix_ns;
+    if let Err(err) = settings.save() {
+        log::warn!("diagnostics settings save: {err}");
+    }
+    Some(newest)
 }

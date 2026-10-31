@@ -20,3 +20,14 @@ errors-diagnostics-network = This device couldn't open the network. Check that W
 errors-diagnostics-internal = Close the app and open it again.
 # $reason is a sentence explaining why.
 errors-diagnostics-export = Couldn't save the diagnostics. { $reason }
+
+## Crash reports left by panics.
+
+settings-diagnostics-crashed = NotIn Plus closed because of an error. A report was saved for sismo.
+settings-diagnostics-crashes = Crash reports
+# $count: how many reports are saved.
+settings-diagnostics-crashes-hint = { $count ->
+    [one] One report from an error that closed the app. Connect sismo to open it.
+   *[other] { $count } reports from errors that closed the app. Connect sismo to open them.
+}
+settings-diagnostics-crashes-delete = Delete

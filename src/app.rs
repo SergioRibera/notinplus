@@ -287,6 +287,7 @@ impl Component for AppShell {
         crate::sync::use_presence();
         use_hook(crate::deep_link::listen);
         use_hook(crate::session_end::listen);
+        use_hook(crate::diagnostics::ui::announce_crash);
         rect()
             .expanded()
             .background(notein_ui_kit::palette().bg)

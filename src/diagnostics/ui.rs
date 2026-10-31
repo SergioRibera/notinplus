@@ -10,7 +10,11 @@ use super::{DiagnosticsSettings, MOBILE};
 use crate::persist::Persisted;
 
 fn remember(remote: bool) {
-    if let Err(err) = (DiagnosticsSettings { remote }).save() {
+    let settings = DiagnosticsSettings {
+        remote,
+        ..DiagnosticsSettings::load()
+    };
+    if let Err(err) = settings.save() {
         log::error!("diagnostics settings save: {err}");
     }
 }
@@ -38,6 +42,24 @@ fn export() {
     Toasts::get().show(toast);
 }
 
+/// Tells, once per crash, that the app closed on an error last time; the
+/// report waits in the data folder for sismo.
+pub fn announce_crash() {
+    if super::take_unseen_crash().is_none() {
+        return;
+    }
+    let toast = Toast::new(tr!("settings-diagnostics-crashed")).tone(ToastTone::Error);
+    let toast = if MOBILE {
+        toast
+    } else {
+        let folder = super::export_dir().display().to_string();
+        toast.action(tr!("settings-diagnostics-show"), move |()| {
+            crate::external::open_url(&format!("file://{folder}"));
+        })
+    };
+    Toasts::get().show(toast);
+}
+
 /// The remote diagnostics switch, the pairing code while it runs and,
 /// on desktop, the export.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,6 +68,7 @@ pub struct DiagnosticsSection;
 impl Component for DiagnosticsSection {
     fn render(&self) -> impl IntoElement {
         let mut code = use_state(super::pairing_code);
+        let mut crashes = use_state(|| super::crash_reports().len());
         let on = code.read().is_some();
         let toggle = move |enable: bool| {
             if !enable {
@@ -68,6 +91,7 @@ impl Component for DiagnosticsSection {
             }
         };
         let current = code.read().clone();
+        let crash_count = *crashes.read();
         Section::new(tr!("settings-diagnostics")).child(
             Group::default()
                 .child(
@@ -84,6 +108,24 @@ impl Component for DiagnosticsSection {
                         .subtitle(tr!("settings-diagnostics-code-hint"))
                         .icon(lucide::key_round())
                         .trailing(Trailing::Text(code.into()))
+                }))
+                .maybe_child((crash_count > 0).then(|| {
+                    ListRow::new(tr!("settings-diagnostics-crashes"))
+                        .subtitle(tr!(
+                            "settings-diagnostics-crashes-hint",
+                            "count" => crash_count
+                        ))
+                        .icon(lucide::bug())
+                        .trailing(Trailing::Element(
+                            Button::new(tr!("settings-diagnostics-crashes-delete"))
+                                .ghost()
+                                .small()
+                                .on_press(move |_| {
+                                    super::delete_crash_reports();
+                                    crashes.set(super::crash_reports().len());
+                                })
+                                .into_element(),
+                        ))
                 }))
                 .maybe_child((on && !MOBILE).then(|| {
                     ListRow::new(tr!("settings-diagnostics-export"))

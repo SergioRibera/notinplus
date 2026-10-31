@@ -20,3 +20,14 @@ errors-diagnostics-network = Este dispositivo no pudo abrir la red. Revisa que e
 errors-diagnostics-internal = Cierra la app y vuelve a abrirla.
 # $reason es una frase que explica por qué.
 errors-diagnostics-export = No se pudo guardar el diagnóstico. { $reason }
+
+## Reportes de error que dejaron los cierres inesperados.
+
+settings-diagnostics-crashed = NotIn Plus se cerró por un error. Se guardó un reporte para sismo.
+settings-diagnostics-crashes = Reportes de error
+# $count: cuántos reportes hay guardados.
+settings-diagnostics-crashes-hint = { $count ->
+    [one] Un reporte de un error que cerró la app. Conecta sismo para abrirlo.
+   *[other] { $count } reportes de errores que cerraron la app. Conecta sismo para abrirlos.
+}
+settings-diagnostics-crashes-delete = Borrar
