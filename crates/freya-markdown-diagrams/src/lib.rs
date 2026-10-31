@@ -24,6 +24,8 @@ const DENSITY: f32 = 2.0;
 const FONT_FAMILY: &str = "DejaVu Sans";
 
 static FONTS: LazyLock<Arc<resvg::usvg::fontdb::Database>> = LazyLock::new(|| {
+    #[cfg(feature = "sismo")]
+    sismo::scope!("diagram::load_fonts");
     let mut fonts = resvg::usvg::fontdb::Database::new();
     fonts.load_font_data(include_bytes!("../assets/fonts/DejaVuSans.ttf").to_vec());
     fonts.load_font_data(include_bytes!("../assets/fonts/DejaVuSans-Bold.ttf").to_vec());
@@ -53,6 +55,7 @@ thread_local! {
 pub struct MermaidDiagrams;
 
 impl Decorator for MermaidDiagrams {
+    #[cfg_attr(feature = "sismo", sismo::function("diagram::render"))]
     fn render_preview(&self, code: &CodeContext<'_>) -> Option<Element> {
         if !code.language.trim().eq_ignore_ascii_case("mermaid") || code.code.trim().is_empty() {
             return None;
@@ -66,6 +69,8 @@ impl Decorator for MermaidDiagrams {
                 } else {
                     1.
                 };
+                #[cfg(feature = "sismo")]
+                sismo::scope!("diagram::image_viewer");
                 ImageViewer::new((drawing.key, drawing.png))
                     .width(Size::px(drawing.width * scale))
                     .height(Size::px(drawing.height * scale))
@@ -80,6 +85,7 @@ impl Decorator for MermaidDiagrams {
     }
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("diagram::draw"))]
 fn draw(source: &str, colors: &EditorColors) -> Result<Drawing, String> {
     let key = (
         source.to_owned(),
@@ -92,17 +98,30 @@ fn draw(source: &str, colors: &EditorColors) -> Result<Drawing, String> {
         .map(u32::from),
     );
     if let Some(done) = DRAWN.with(|cache| cache.borrow().get(&key).cloned()) {
+        #[cfg(feature = "sismo")]
+        sismo::instant!("diagram::cache_hit");
         return done;
     }
-    let done = mermaid_svg::render_with(source, &theme(colors))
+    #[cfg(feature = "sismo")]
+    sismo::instant!("diagram::cache_miss");
+    let svg = {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("diagram::mermaid_svg");
+        mermaid_svg::render_with(source, &theme(colors))
+    };
+    let done = svg
         .map_err(|error| error.to_string())
         .and_then(|svg| rasterize(&svg));
     DRAWN.with(|cache| {
         let mut cache = cache.borrow_mut();
         if cache.len() >= CACHE_LIMIT {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("diagram::cache_clear");
             cache.clear();
         }
         cache.insert(key, done.clone());
+        #[cfg(feature = "sismo")]
+        sismo::counter!("diagram.cache_len", cache.len());
     });
     done
 }
@@ -118,6 +137,7 @@ fn hex(color: Color) -> Cow<'static, str> {
 
 /// Mermaid colors taken from the editor's, so diagrams follow light and
 /// dark themes.
+#[cfg_attr(feature = "sismo", sismo::function("diagram::theme"))]
 fn theme(colors: &EditorColors) -> Theme {
     let surface = colors.surface;
     let dark = u16::from(surface.r()) + u16::from(surface.g()) + u16::from(surface.b()) < 384;
@@ -165,6 +185,7 @@ fn theme(colors: &EditorColors) -> Theme {
 }
 
 /// `svg` drawn as a PNG at [`DENSITY`].
+#[cfg_attr(feature = "sismo", sismo::function("diagram::rasterize"))]
 fn rasterize(svg: &str) -> Result<Drawing, String> {
     use resvg::tiny_skia::{Pixmap, Transform};
     let options = resvg::usvg::Options {
@@ -172,7 +193,11 @@ fn rasterize(svg: &str) -> Result<Drawing, String> {
         fontdb: FONTS.clone(),
         ..resvg::usvg::Options::default()
     };
-    let tree = resvg::usvg::Tree::from_str(svg, &options).map_err(|error| error.to_string())?;
+    let tree = {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("diagram::usvg_parse");
+        resvg::usvg::Tree::from_str(svg, &options).map_err(|error| error.to_string())?
+    };
     let size = tree.size();
     #[allow(
         clippy::cast_possible_truncation,
@@ -184,12 +209,22 @@ fn rasterize(svg: &str) -> Result<Drawing, String> {
         (size.height() * DENSITY).ceil() as u32,
     );
     let mut pixmap = Pixmap::new(width.max(1), height.max(1)).ok_or("empty diagram")?;
-    resvg::render(
-        &tree,
-        Transform::from_scale(DENSITY, DENSITY),
-        &mut pixmap.as_mut(),
-    );
-    let png = pixmap.encode_png().map_err(|error| error.to_string())?;
+    {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("diagram::resvg_render");
+        resvg::render(
+            &tree,
+            Transform::from_scale(DENSITY, DENSITY),
+            &mut pixmap.as_mut(),
+        );
+    }
+    #[cfg(feature = "sismo")]
+    sismo::counter!("diagram.pixels", u64::from(width) * u64::from(height));
+    let png = {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("diagram::encode_png");
+        pixmap.encode_png().map_err(|error| error.to_string())?
+    };
     let mut hasher = std::hash::DefaultHasher::new();
     std::hash::Hash::hash(svg, &mut hasher);
     Ok(Drawing {
