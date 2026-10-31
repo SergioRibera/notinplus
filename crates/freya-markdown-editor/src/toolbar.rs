@@ -115,6 +115,7 @@ impl LayoutExt for MarkdownToolbar {
 impl ContainerExt for MarkdownToolbar {}
 
 impl Component for MarkdownToolbar {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::toolbar"))]
     #[allow(clippy::too_many_lines, reason = "declarative layout of every group")]
     fn render(&self) -> impl IntoElement {
         let context_theme = use_try_consume::<EditorTheme>();
@@ -489,6 +490,7 @@ impl Component for MarkdownToolbar {
     }
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("markdown::toolbar_block_items"))]
 fn block_items(
     controller: EditorController,
     menu: State<Option<Menu>>,
@@ -536,6 +538,7 @@ fn block_items(
         .collect()
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("markdown::toolbar_insert_items"))]
 fn insert_items(
     controller: EditorController,
     menu: State<Option<Menu>>,
@@ -607,6 +610,7 @@ fn separator(colors: &crate::EditorColors) -> Element {
         .into_element()
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("markdown::toolbar_palette"))]
 fn palette_popup(
     theme: &EditorTheme,
     current: Option<Rgba>,
@@ -659,6 +663,7 @@ fn palette_popup(
         .into_element()
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("markdown::toolbar_link_popup"))]
 fn link_popup(
     theme: &EditorTheme,
     controller: EditorController,
@@ -899,6 +904,7 @@ impl ToolButton {
 }
 
 impl Component for ToolButton {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::tool_button"))]
     fn render(&self) -> impl IntoElement {
         let mut hovered = use_state(|| false);
         let tip = Tip::use_tip();
@@ -989,6 +995,7 @@ struct Dropdown {
 }
 
 impl Component for Dropdown {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::toolbar_dropdown"))]
     fn render(&self) -> impl IntoElement {
         let mut hovered = use_state(|| false);
         let colors = &self.colors;

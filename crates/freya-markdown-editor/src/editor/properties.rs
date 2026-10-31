@@ -29,6 +29,7 @@ pub(crate) struct PropertiesPanel {
 }
 
 impl PropertiesPanel {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::properties_header"))]
     fn header(&self) -> Element {
         let theme = &self.theme;
         let colors = &theme.colors;
@@ -120,6 +121,7 @@ impl PropertiesPanel {
 }
 
 impl Component for PropertiesPanel {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::properties_panel"))]
     fn render(&self) -> impl IntoElement {
         let theme = &self.theme;
         let listed = self.properties.as_ref().filter(|_| !(self.as_text)());
@@ -180,6 +182,7 @@ struct PropertyRow {
 }
 
 impl PropertyRow {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::property_form"))]
     fn form(&self, open: State<bool>, name: State<String>, value: State<String>) -> Element {
         let theme = &self.theme;
         let colors = &theme.colors;
@@ -264,6 +267,7 @@ impl PropertyRow {
 }
 
 impl Component for PropertyRow {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::property_row"))]
     fn render(&self) -> impl IntoElement {
         let mut open = use_state(|| false);
         let name = use_state(String::new);

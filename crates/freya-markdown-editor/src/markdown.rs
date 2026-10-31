@@ -170,6 +170,7 @@ impl Document {
 }
 
 /// Markdown source of a single run of inline content.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::inline_source"))]
 pub(crate) fn inline_source(inline: &Inline) -> String {
     serialize::inline_source(inline)
 }

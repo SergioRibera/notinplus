@@ -227,6 +227,7 @@ impl SuggestionSource for SuggestionGroup {
 
 impl BlockSuggestions {
     #[allow(clippy::too_many_lines, reason = "one entry per block kind")]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::slash_entries"))]
     fn entries(&self) -> Vec<Suggestion> {
         let text = |label| self.labels.get(label);
         let block = |label, icon: &str, detail, block_type| {
@@ -381,6 +382,7 @@ impl SlashMenu {
     }
 
     /// Rows for `query` (the text typed after `/`).
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::suggestion_rows"))]
     pub(crate) fn rows(&self, query: &str, labels: &Labels, images: bool) -> Vec<MenuRow> {
         let query = query.trim_start().to_lowercase();
         let blocks = BlockSuggestions::from(labels.clone()).with_images(images);
@@ -473,6 +475,7 @@ pub(crate) struct SuggestionMenu {
 }
 
 impl Component for SuggestionMenu {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::suggestion_menu"))]
     fn render(&self) -> impl IntoElement {
         let mut scroll = use_scroll_controller(ScrollConfig::default);
         let pressed_at = use_hook(|| Rc::new(Cell::new(i32::MIN)));
@@ -574,6 +577,7 @@ impl Component for SuggestionMenu {
 }
 
 /// Scroll so `row` is inside a list of the given `height`.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::suggestion_keep_visible"))]
 fn keep_visible(scroll: &mut ScrollController, row: usize, height: f32) {
     #[allow(
         clippy::cast_possible_truncation,

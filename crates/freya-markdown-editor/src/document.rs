@@ -533,6 +533,7 @@ impl Document {
     /// document ends in anything but a paragraph that already has content
     /// (or cannot hold text, like a table), an empty paragraph follows it.
     /// That is the way out of code blocks, quotes, tables and the like.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_ensure_editable"))]
     pub fn ensure_editable(&mut self) {
         let needs_tail = self.blocks.last().is_none_or(|block| match &block.kind {
             BlockKind::Paragraph(_) => false,
@@ -545,6 +546,7 @@ impl Document {
 
     /// Every editable target in reading order (table cells row by row).
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_targets"))]
     pub fn targets(&self) -> Vec<TextTarget> {
         self.blocks
             .iter()
@@ -580,17 +582,20 @@ impl Document {
         targets.get(index + 1).copied()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_insert"))]
     pub fn insert(&mut self, index: usize, block: Block) -> BlockId {
         let id = block.id;
         self.blocks.insert(index.min(self.blocks.len()), block);
         id
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_insert_after"))]
     pub fn insert_after(&mut self, anchor: BlockId, block: Block) -> BlockId {
         let index = self.index_of(anchor).map_or(self.blocks.len(), |i| i + 1);
         self.insert(index, block)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_remove"))]
     pub fn remove(&mut self, id: BlockId) -> Option<Block> {
         let index = self.index_of(id)?;
         let block = self.blocks.remove(index);
@@ -599,6 +604,7 @@ impl Document {
     }
 
     /// Move a block by `delta` positions (negative moves up).
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_move_block"))]
     pub fn move_block(&mut self, id: BlockId, delta: isize) -> bool {
         let Some(index) = self.index_of(id) else {
             return false;
@@ -610,6 +616,7 @@ impl Document {
     }
 
     /// Move a block so it ends at `index` (clamped to the document).
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_move_block_to"))]
     pub fn move_block_to(&mut self, id: BlockId, index: usize) -> bool {
         let Some(from) = self.index_of(id) else {
             return false;
@@ -627,6 +634,7 @@ impl Document {
 
     /// Move `id` to the position currently held by `target`, the usual
     /// drop semantics of a drag handle.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_move_block_onto"))]
     pub fn move_block_onto(&mut self, id: BlockId, target: BlockId) -> bool {
         self.index_of(target)
             .is_some_and(|index| self.move_block_to(id, index))
@@ -634,6 +642,7 @@ impl Document {
 
     /// Clamp list depths so every item is at most one level deeper than
     /// the item before it, keeping the markdown valid after moves.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_normalize_depths"))]
     fn normalize_depths(&mut self) {
         let mut previous: Option<u8> = None;
         for block in &mut self.blocks {
@@ -649,6 +658,7 @@ impl Document {
     }
 
     /// Convert a block, keeping its text. Unsupported kinds are left as is.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_set_type"))]
     pub fn set_type(&mut self, id: BlockId, block_type: BlockType) -> bool {
         let Some(block) = self.block_mut(id) else {
             return false;
@@ -672,6 +682,7 @@ impl Document {
     }
 
     /// Enter key: split `target` at `offset`.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_split"))]
     pub fn split(&mut self, target: TextTarget, offset: usize) -> Option<Caret> {
         if target.cell.is_some() {
             return None;
@@ -720,6 +731,7 @@ impl Document {
     }
 
     /// Backspace at offset 0 of `target`.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_join_backward"))]
     pub fn join_backward(&mut self, target: TextTarget) -> Option<Caret> {
         if target.cell.is_some() {
             return None;
@@ -792,6 +804,7 @@ impl Document {
     }
 
     /// Delete key at the end of `target`.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_join_forward"))]
     pub fn join_forward(&mut self, target: TextTarget) -> Option<Caret> {
         if target.cell.is_some() {
             return None;
@@ -825,6 +838,7 @@ impl Document {
 
     /// Change the depth of a list item by `delta`, bounded by its previous
     /// sibling so the markdown stays valid.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_indent"))]
     pub fn indent(&mut self, id: BlockId, delta: i8) -> bool {
         let Some(index) = self.index_of(id) else {
             return false;
@@ -845,6 +859,7 @@ impl Document {
         changed
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_toggle_task"))]
     pub fn toggle_task(&mut self, id: BlockId) -> bool {
         let Some(BlockKind::ListItem {
             kind: ListKind::Task { checked },
@@ -860,6 +875,7 @@ impl Document {
     /// Turn a paragraph starting with a markdown block marker (`# `, `- `,
     /// `1. `, `> `, `[ ] `, `` ``` ``, `---`, `$$`) into that block. Only fires
     /// when `cursor` sits right after the marker, i.e. it was just typed.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_apply_block_shortcut"))]
     pub fn apply_block_shortcut(&mut self, id: BlockId, cursor: usize) -> Option<Caret> {
         let index = self.index_of(id)?;
         let block = &mut self.blocks[index];
@@ -945,6 +961,7 @@ impl Document {
     /// Text of every block without formatting, one block per line.
     /// Table rows join their cells with ` | `.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_plain_text"))]
     pub fn plain_text(&self) -> String {
         self.blocks
             .iter()
@@ -983,6 +1000,7 @@ impl Document {
     /// reserved first, so a heading added later never steals one. The
     /// anchors are what `[text](#anchor)` links point to.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_outline"))]
     pub fn outline(&self) -> Vec<HeadingRef> {
         let headings: Vec<(BlockId, HeadingLevel, String, Option<&String>)> = self
             .blocks
@@ -1038,6 +1056,7 @@ impl Document {
     /// back to one derived from its text with `None`. A fixed anchor
     /// keeps links to the heading working when its text changes.
     /// Returns whether `id` is a heading.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_set_heading_anchor"))]
     pub fn set_heading_anchor(&mut self, id: BlockId, new_anchor: Option<String>) -> bool {
         let Some(index) = self.index_of(id) else {
             return false;
@@ -1053,6 +1072,7 @@ impl Document {
 
     /// Block of the heading whose [`Self::outline`] anchor is `slug`.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_heading_by_slug"))]
     pub fn heading_by_slug(&self, slug: &str) -> Option<BlockId> {
         self.outline()
             .into_iter()
@@ -1063,6 +1083,7 @@ impl Document {
     /// Number shown in front of an ordered list item: the run start plus
     /// the number of same depth items before it.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_ordinal"))]
     pub fn ordinal(&self, id: BlockId) -> Option<u32> {
         let index = self.index_of(id)?;
         let BlockKind::ListItem {

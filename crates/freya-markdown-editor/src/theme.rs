@@ -179,6 +179,7 @@ impl EditorTheme {
 
     /// Copy of the theme with every length multiplied by `zoom`.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::theme_zoomed"))]
     pub fn zoomed(mut self, zoom: f32) -> Self {
         let factor = zoom / self.zoom;
         self.body_size *= factor;

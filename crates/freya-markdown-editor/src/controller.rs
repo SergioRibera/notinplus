@@ -228,6 +228,7 @@ impl EditorState {
         self.revision
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::state_markdown"))]
     pub(crate) fn markdown(&self, dialect: Dialect) -> String {
         self.document.to_markdown(dialect)
     }
@@ -240,6 +241,7 @@ impl EditorState {
         self.selection.is_none()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_record"))]
     fn record(&mut self, group: Option<TextTarget>) {
         let now = Instant::now();
         let grouped = matches!(
@@ -259,6 +261,7 @@ impl EditorState {
         self.history.redo.clear();
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_changed"))]
     fn changed(&mut self) {
         self.document.ensure_editable();
         self.revision += 1;
@@ -280,6 +283,7 @@ impl EditorState {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_rich_selection"))]
     fn rich_selection(&self) -> Option<Selection> {
         self.selection
             .filter(|selection| self.document.role(selection.target) == Some(TextRole::Rich))
@@ -292,6 +296,7 @@ impl EditorState {
             .or_else(|| self.document.targets().last().copied())
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_apply_mark"))]
     fn apply_mark(&mut self, apply: impl FnOnce(&mut Inline, Range<usize>), pending: Pending) {
         let Some(selection) = self.rich_selection() else {
             return;
@@ -315,6 +320,7 @@ impl EditorState {
         self.refresh_caret();
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::state_active_format"))]
     fn active_format(&self) -> ActiveFormat {
         let mut format = ActiveFormat {
             can_undo: !self.history.undo.is_empty(),
@@ -476,6 +482,7 @@ pub fn use_editor_controller_with(markdown: impl FnOnce() -> String) -> EditorCo
 impl EditorController {
     /// Create a controller outside of a hook, e.g. in a root context.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_create"))]
     pub fn create(document: Document) -> Self {
         Self {
             state: State::create(EditorState::new(document)),
@@ -510,6 +517,7 @@ impl EditorController {
     }
 
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_markdown"))]
     pub fn markdown(&self, dialect: Dialect) -> String {
         self.read(|state| state.document.to_markdown(dialect))
     }
@@ -545,6 +553,7 @@ impl EditorController {
     }
 
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_active_format"))]
     pub fn active_format(&self) -> ActiveFormat {
         self.read(EditorState::active_format)
     }
@@ -567,6 +576,7 @@ impl EditorController {
     // Content.
 
     /// Replace the document with parsed markdown, dropping history.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_load_markdown"))]
     pub fn load_markdown(&self, markdown: &str) {
         self.update(|state| {
             state.document = Document::parse_with(markdown, &state.parse);
@@ -581,6 +591,7 @@ impl EditorController {
     /// elsewhere while this editor may be in use: history goes, the
     /// caret stays on the same text in reading order, clamped to what
     /// is there now.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_merge_markdown"))]
     pub fn merge_markdown(&self, markdown: &str) {
         self.update(|state| {
             let kept = state.selection.map(|selection| {
@@ -606,6 +617,7 @@ impl EditorController {
     }
 
     /// Replace the document, keeping it undoable.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_document"))]
     pub fn set_document(&self, document: Document) {
         self.update(|state| {
             state.record(None);
@@ -616,6 +628,7 @@ impl EditorController {
     }
 
     /// Options used by [`Self::load_markdown`] and markdown paste.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_parse_options"))]
     pub fn set_parse_options(&self, options: ParseOptions) {
         self.update(|state| state.parse = options);
     }
@@ -633,6 +646,7 @@ impl EditorController {
     // Inline formatting.
 
     /// Toggle a mark over the selection (or for the next typed text).
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_toggle_mark"))]
     pub fn toggle_mark(&self, kind: MarkKind) {
         let active = self.peek(|state| state.active_format().has(kind.family()));
         if active {
@@ -642,6 +656,7 @@ impl EditorController {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_mark"))]
     pub fn set_mark(&self, kind: MarkKind) {
         self.update(|state| {
             let pending = Pending::Add(kind.clone());
@@ -649,6 +664,7 @@ impl EditorController {
         });
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_clear_mark"))]
     pub fn clear_mark(&self, family: MarkFamily) {
         self.update(|state| {
             state.apply_mark(
@@ -659,6 +675,7 @@ impl EditorController {
     }
 
     /// Remove every mark from the selection.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_clear_formatting"))]
     pub fn clear_formatting(&self) {
         self.update(|state| {
             let Some(selection) = state.rich_selection() else {
@@ -684,6 +701,7 @@ impl EditorController {
         });
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_color"))]
     pub fn set_color(&self, color: Option<Rgba>) {
         match color {
             Some(color) => self.set_mark(MarkKind::Color(color)),
@@ -691,6 +709,7 @@ impl EditorController {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_background"))]
     pub fn set_background(&self, color: Option<Rgba>) {
         match color {
             Some(color) => self.set_mark(MarkKind::Background(color)),
@@ -698,6 +717,7 @@ impl EditorController {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_font_family"))]
     pub fn set_font_family(&self, family: Option<String>) {
         match family {
             Some(family) => self.set_mark(MarkKind::FontFamily(family)),
@@ -705,6 +725,7 @@ impl EditorController {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_font_size"))]
     pub fn set_font_size(&self, size: Option<u16>) {
         match size {
             Some(size) => self.set_mark(MarkKind::FontSize(size)),
@@ -714,6 +735,7 @@ impl EditorController {
 
     /// Link the selection to `url`, or unlink it with `None`. With a
     /// collapsed caret inside a link the whole link is updated.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_link"))]
     pub fn set_link(&self, url: Option<String>) {
         self.update(|state| {
             let Some(selection) = state.rich_selection() else {
@@ -750,6 +772,7 @@ impl EditorController {
     /// Insert plain text at the caret, replacing the selection.
     /// Insert `text` into `block`: at its caret when it has one, else at
     /// its end, leaving the caret after it.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_insert_text_in"))]
     pub fn insert_text_in(&self, block: BlockId, text: &str) {
         self.update(|state| {
             let target = TextTarget::from(block);
@@ -770,11 +793,13 @@ impl EditorController {
         });
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_insert_text"))]
     pub fn insert_text(&self, text: &str) {
         self.insert_inline(Inline::from(text));
     }
 
     /// Insert `label` linked to `url`.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_insert_link"))]
     pub fn insert_link(&self, label: &str, url: &str) {
         let mut inline = Inline::from(label);
         inline.add_mark(0..inline.len(), MarkKind::Link(Link::new(url)));
@@ -782,6 +807,7 @@ impl EditorController {
     }
 
     /// Insert an atomic embed (a link claimed by a decorator).
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_insert_embed"))]
     pub fn insert_embed(&self, label: &str, url: &str) {
         self.insert_atom(Atom::Embed {
             url: url.to_owned(),
@@ -810,6 +836,7 @@ impl EditorController {
     }
 
     /// Open the menu of the atom at `slot`, or close it with `None`.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_open_atom_menu"))]
     pub(crate) fn open_atom_menu(&self, slot: Option<AtomSlot>) {
         if self.peek(|state| state.atom_menu != slot) {
             self.update(|state| state.atom_menu = slot);
@@ -822,6 +849,7 @@ impl EditorController {
     }
 
     /// Ask the host for an image, see [`ImagePicker`].
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_request_image"))]
     pub fn request_image(&self, request: ImageRequest) {
         let picker = self.peek(|state| state.image_picker.borrow().clone());
         if let Some(picker) = picker {
@@ -830,6 +858,7 @@ impl EditorController {
     }
 
     /// Add an image after the caret's block, or in place of an empty one.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_insert_image"))]
     pub fn insert_image(&self, url: &str, alt: &str) {
         let mut content = Inline::default();
         content.insert_atom(
@@ -854,6 +883,7 @@ impl EditorController {
         self.edit_image(slot, |_, current| alt.clone_into(current));
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_edit_image"))]
     fn edit_image(&self, slot: AtomSlot, edit: impl FnOnce(&mut String, &mut String)) {
         self.update(|state| {
             let Some(Atom::Image { url, alt, .. }) = state
@@ -882,6 +912,7 @@ impl EditorController {
     }
 
     /// Change the TeX of the inline formula at `slot`.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_math"))]
     pub fn set_math(&self, slot: AtomSlot, tex: &str) {
         self.update(|state| {
             let Some(Atom::Math { tex: current }) = state
@@ -907,6 +938,7 @@ impl EditorController {
     }
 
     /// Take the image at `slot` out of the document.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_remove_image"))]
     pub fn remove_image(&self, slot: AtomSlot) {
         self.update(|state| {
             let Some(at) = state
@@ -925,6 +957,7 @@ impl EditorController {
         });
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_insert_atom"))]
     pub fn insert_atom(&self, atom: Atom) {
         let mut inline = Inline::default();
         inline.insert_atom(0, atom);
@@ -932,6 +965,7 @@ impl EditorController {
     }
 
     /// Insert rich inline content at the caret.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_insert_inline"))]
     pub fn insert_inline(&self, content: Inline) {
         self.update(|state| {
             let Some(target) = state.target_or_last() else {
@@ -964,6 +998,7 @@ impl EditorController {
 
     /// Paste markdown at the caret: one paragraph is inserted inline, more
     /// blocks split the current one around them.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_insert_markdown"))]
     pub fn insert_markdown(&self, markdown: &str) {
         self.update(|state| {
             let parsed = Document::parse_with(markdown, &state.parse);
@@ -1068,6 +1103,7 @@ impl EditorController {
     // Blocks.
 
     /// Convert the block holding the caret.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_block_type"))]
     pub fn set_block_type(&self, block_type: BlockType) {
         let block = self.peek(|state| {
             state
@@ -1081,6 +1117,7 @@ impl EditorController {
     }
 
     /// Convert `block`, wherever the caret is.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_type_of"))]
     pub fn set_type_of(&self, block: BlockId, block_type: BlockType) {
         self.update(|state| {
             let mut document = state.document.clone();
@@ -1094,6 +1131,7 @@ impl EditorController {
     }
 
     /// Replace the YAML of a front matter block.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_front_matter"))]
     pub fn set_front_matter(&self, block: BlockId, yaml: &str) {
         self.update(|state| {
             if let Some(BlockKind::FrontMatter(current)) =
@@ -1112,6 +1150,7 @@ impl EditorController {
     }
 
     /// Rename a callout; an empty title falls back to the kind's name.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_callout_title"))]
     pub fn set_callout_title(&self, block: BlockId, title: &str) {
         let title = title.trim();
         let wanted = (!title.is_empty()).then(|| title.to_owned());
@@ -1132,6 +1171,7 @@ impl EditorController {
     }
 
     /// Rename the summary of a `<details>` block.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_details_summary"))]
     pub fn set_details_summary(&self, block: BlockId, summary: &str) {
         let wanted = summary.trim().to_owned();
         self.update(|state| {
@@ -1152,6 +1192,7 @@ impl EditorController {
     }
 
     /// Change the kind of a callout, keeping its title and content.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_callout_kind"))]
     pub fn set_callout_kind(&self, block: BlockId, kind: CalloutKind) {
         self.update(|state| {
             if let Some(Block {
@@ -1171,6 +1212,7 @@ impl EditorController {
         });
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_align"))]
     pub fn set_align(&self, align: Align) {
         self.update(|state| {
             let Some(selection) = state.selection else {
@@ -1193,6 +1235,7 @@ impl EditorController {
         self.shift_depth(-1);
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_shift_depth"))]
     fn shift_depth(&self, delta: i8) {
         self.update(|state| {
             let Some(selection) = state.selection else {
@@ -1208,6 +1251,7 @@ impl EditorController {
         });
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_toggle_task"))]
     pub fn toggle_task(&self, block: BlockId) {
         self.update(|state| {
             if state.read_only {
@@ -1220,6 +1264,7 @@ impl EditorController {
         });
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_code_language"))]
     pub fn set_code_language(&self, block: BlockId, language: &str) {
         self.update(|state| {
             state.record(None);
@@ -1235,6 +1280,7 @@ impl EditorController {
 
     /// Insert a block after the current one (replacing it when it is an
     /// empty paragraph) and move the caret into it.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_insert_block"))]
     pub fn insert_block(&self, kind: BlockKind) {
         self.update(|state| {
             state.record(None);
@@ -1279,6 +1325,7 @@ impl EditorController {
         self.insert_block(BlockKind::Divider);
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_remove_block"))]
     pub fn remove_block(&self, block: BlockId) {
         self.update(|state| {
             state.record(None);
@@ -1320,6 +1367,7 @@ impl EditorController {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_reorder"))]
     fn reorder(&self, edit: impl FnOnce(&mut Document) -> bool) {
         self.update(|state| {
             let mut document = state.document.clone();
@@ -1370,6 +1418,7 @@ impl EditorController {
         });
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_edit_table"))]
     fn edit_table(&self, edit: impl FnOnce(&mut Table, CellPos) -> Option<CellPos>) {
         self.update(|state| {
             let Some(selection) = state.selection else {
@@ -1403,6 +1452,7 @@ impl EditorController {
 
     // History.
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_undo"))]
     pub fn undo(&self) {
         self.update(|state| {
             let Some(snapshot) = state.history.undo.pop() else {
@@ -1422,6 +1472,7 @@ impl EditorController {
         });
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_redo"))]
     pub fn redo(&self) {
         self.update(|state| {
             let Some(snapshot) = state.history.redo.pop() else {
@@ -1443,6 +1494,7 @@ impl EditorController {
     // Focus.
 
     /// Move the caret to `offset` inside `target` and focus it.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_focus"))]
     pub fn focus(&self, target: impl Into<TextTarget>, offset: usize) {
         let target = target.into();
         self.update(|state| {
@@ -1456,6 +1508,7 @@ impl EditorController {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_focus_end"))]
     pub fn focus_end(&self) {
         let end = self.peek(|state| {
             let target = state.document.targets().last().copied()?;
@@ -1468,6 +1521,7 @@ impl EditorController {
 
     /// Move the caret out of block `id`: to the end of the text before it,
     /// else to the start of the one after it.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_focus_beside"))]
     pub(crate) fn focus_beside(&self, id: BlockId) {
         let beside = self.peek(|state| {
             let document = &state.document;
@@ -1530,6 +1584,7 @@ impl EditorController {
     /// Fix (or release with `None`) the anchor of heading `id`, see
     /// [`Document::set_heading_anchor`]. Not an undoable edit: it only
     /// keeps links stable.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_heading_anchor"))]
     pub fn set_heading_anchor(&self, id: BlockId, anchor: Option<String>) {
         self.update(|state| {
             if state.document.set_heading_anchor(id, anchor) {
@@ -1542,12 +1597,14 @@ impl EditorController {
         self.peek(|state| state.layout.borrow_mut().root = Some(top));
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_record_block_area"))]
     pub(crate) fn record_block_area(&self, id: BlockId, top: f32, bottom: f32) {
         self.peek(|state| {
             state.layout.borrow_mut().blocks.insert(id, (top, bottom));
         });
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_track_focus"))]
     pub(crate) fn track_focus(&self, target: TextTarget, focused: bool, probe: CaretProbe) {
         self.peek(|state| {
             let mut layout = state.layout.borrow_mut();
@@ -1573,6 +1630,7 @@ impl EditorController {
     // Internal hooks used by the text editors.
 
     /// Everything the editor root needs for one render, subscribing to it.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_view"))]
     pub(crate) fn view(&self) -> EditorView {
         self.read(|state| EditorView {
             document: state.document.clone(),
@@ -1582,6 +1640,7 @@ impl EditorController {
         })
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_selection"))]
     pub(crate) fn set_selection(&self, selection: Selection) {
         let current = self.peek(|state| state.selection);
         if current == Some(selection) {
@@ -1602,6 +1661,7 @@ impl EditorController {
     /// Apply the new rope text of `target`. Returns whether the model text
     /// now differs from what the caller typed (autoformat or shortcuts), so
     /// the caller must resync from the model.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_edit_text"))]
     pub(crate) fn edit_text(
         &self,
         target: TextTarget,
@@ -1687,6 +1747,7 @@ impl EditorController {
 
     /// Stop the marks that end at a collapsed caret at `pos` from applying
     /// to the next typed text. Returns whether any mark was escaped.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_escape_marks"))]
     pub(crate) fn escape_marks(&self, target: TextTarget, pos: usize) -> bool {
         let families: Vec<MarkFamily> = self.peek(|state| {
             let Some(inline) = state.document.inline(target) else {
@@ -1722,6 +1783,7 @@ impl EditorController {
 
     /// Replace the whole content of `target` after an edit made on its
     /// markdown source.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_replace_inline"))]
     pub(crate) fn replace_inline(&self, target: TextTarget, inline: Inline, selection: Selection) {
         self.update(|state| {
             if state.document.inline(target) == Some(&inline) {
@@ -1747,6 +1809,7 @@ impl EditorController {
     }
 
     /// Enter: split the block, or open a code block on `` ```lang ``.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_split"))]
     pub(crate) fn split(&self, target: TextTarget, selection: Range<usize>) {
         self.update(|state| {
             state.record(None);
@@ -1791,6 +1854,7 @@ impl EditorController {
         self.structural(|document| document.join_forward(target))
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_structural"))]
     fn structural(&self, edit: impl FnOnce(&mut Document) -> Option<Caret>) -> bool {
         self.update(|state| {
             let mut document = state.document.clone();
@@ -1806,6 +1870,7 @@ impl EditorController {
     }
 
     /// Move the caret to the previous (`forward == false`) or next target.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_step"))]
     pub(crate) fn step(&self, target: TextTarget, forward: bool) -> bool {
         let destination = self.peek(|state| {
             let next = if forward {
@@ -1827,6 +1892,7 @@ impl EditorController {
     }
 
     /// Tab inside a table: next cell, appending a row past the last one.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_next_cell"))]
     pub(crate) fn next_cell(&self, target: TextTarget, backwards: bool) {
         let Some(cell) = target.cell else {
             return;
@@ -1873,6 +1939,7 @@ impl EditorController {
     }
 
     /// Remove the trigger text in `range` and run the picked action.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_commit_suggestion"))]
     pub(crate) fn commit_suggestion(
         &self,
         target: TextTarget,
@@ -1902,6 +1969,7 @@ impl EditorController {
     /// Leave the block of `target` for the paragraph after it, creating
     /// one unless an empty paragraph already follows. With
     /// `trim_newline` a trailing line break typed to get out is removed.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_exit_block"))]
     pub(crate) fn exit_block(&self, target: TextTarget, trim_newline: bool) {
         self.update(|state| {
             state.record(None);
@@ -1930,6 +1998,7 @@ impl EditorController {
         });
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_remember_copy"))]
     pub(crate) fn remember_copy(&self, target: TextTarget, range: Range<usize>) {
         self.update(|state| {
             state.clipboard = state.document.inline(target).map(|inline| {
@@ -1940,6 +2009,7 @@ impl EditorController {
     }
 
     /// Rich content for `plain` if it was copied from this editor.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_recall_copy"))]
     pub(crate) fn recall_copy(&self, plain: &str) -> Option<Inline> {
         self.peek(|state| {
             state
@@ -1951,6 +2021,7 @@ impl EditorController {
     }
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_first_target_from"))]
 fn first_target_from(document: &Document, id: BlockId) -> Option<TextTarget> {
     let index = document.index_of(id)?;
     document.blocks()[index..]
@@ -1965,6 +2036,7 @@ fn first_target_from(document: &Document, id: BlockId) -> Option<TextTarget> {
         })
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_clamp"))]
 fn clamp(document: &Document, selection: Selection) -> Selection {
     let len = document.inline(selection.target).map_or(0, Inline::len);
     Selection {
@@ -1977,6 +2049,7 @@ fn clamp(document: &Document, selection: Selection) -> Selection {
 /// Families whose mark ends where a pure deletion of unmarked text starts.
 /// Typing there afterwards should not grow the mark back over the text that
 /// was just removed.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_deleted_up_to_mark_end"))]
 fn deleted_up_to_mark_end(current: &Inline, text: &str, hint: usize) -> Vec<MarkFamily> {
     let Some(change) = crate::document::diff(current.text(), text, hint) else {
         return Vec::new();

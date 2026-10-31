@@ -11,6 +11,7 @@ pub struct Properties(Vec<(String, String)>);
 impl Properties {
     /// The properties in `yaml`, if it is that simple.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::properties_parse"))]
     pub fn parse(yaml: &str) -> Option<Self> {
         yaml.lines()
             .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
@@ -53,6 +54,7 @@ impl Properties {
 
     /// YAML for these properties, quoting values YAML would misread.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::properties_to_yaml"))]
     pub fn to_yaml(&self) -> String {
         self.0
             .iter()

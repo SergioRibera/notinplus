@@ -15,6 +15,7 @@ pub(super) enum Tag {
 }
 
 impl Tag {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::html_classify"))]
     pub(super) fn classify(raw: &str) -> Self {
         let raw = raw.trim();
         let Some(inner) = raw
@@ -81,6 +82,7 @@ fn marks_for(name: &str, attributes: &[(String, String)]) -> Option<Vec<MarkKind
 }
 
 /// Marks described by a CSS declaration list.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::html_style_marks"))]
 pub(super) fn style_marks(style: &str) -> Vec<MarkKind> {
     style
         .split(';')

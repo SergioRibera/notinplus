@@ -22,6 +22,7 @@ use crate::theme::EditorTheme;
 const CHIP: f32 = 28.0;
 
 /// Lucide icon of a callout kind.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::callout_icon"))]
 pub(crate) fn callout_icon(kind: CalloutKind) -> Bytes {
     match kind {
         CalloutKind::Note => lucide::info(),
@@ -60,6 +61,7 @@ pub(crate) struct HeaderChip {
 }
 
 impl Component for HeaderChip {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::header_chip"))]
     fn render(&self) -> impl IntoElement {
         let mut open = use_state(|| self.auto_open && self.editable);
         // A finger opening the picker means looking through the list: its
@@ -253,6 +255,7 @@ struct LanguagePicker {
 }
 
 impl Component for LanguagePicker {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::language_picker"))]
     fn render(&self) -> impl IntoElement {
         let draft = use_state(String::new);
         let colors = &self.theme.colors;
@@ -353,6 +356,7 @@ pub(crate) struct RenameButton {
 }
 
 impl Component for RenameButton {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::rename_button"))]
     fn render(&self) -> impl IntoElement {
         let mut open = use_state(|| false);
         let mut draft = use_state(String::new);
@@ -420,6 +424,7 @@ pub(crate) struct CopyButton {
 }
 
 impl Component for CopyButton {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::copy_button"))]
     fn render(&self) -> impl IntoElement {
         let mut copied = use_state(|| false);
         let theme = &self.theme;

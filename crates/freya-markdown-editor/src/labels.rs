@@ -179,6 +179,7 @@ impl Label {
 pub struct Labels(Rc<[String; COUNT]>);
 
 impl Default for Labels {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::labels_default"))]
     fn default() -> Self {
         thread_local! {
             static CATALOG: RefCell<Option<(Lang, Labels)>> = const { RefCell::new(None) };

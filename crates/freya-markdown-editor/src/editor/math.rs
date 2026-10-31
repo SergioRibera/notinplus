@@ -19,6 +19,7 @@ pub(crate) struct MathAtom {
 }
 
 impl MathAtom {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::math_drawn"))]
     fn drawn(&self, tex: &str) -> Option<Element> {
         self.shared.decorators.render_math(&MathContext {
             tex,
@@ -30,6 +31,7 @@ impl MathAtom {
     }
 
     /// The TeX itself, when no decorator draws formulas.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::math_source"))]
     fn source(&self) -> Element {
         let theme = &self.shared.theme;
         let colors = &theme.colors;
@@ -54,6 +56,8 @@ impl Component for MathAtom {
     fn render(&self) -> impl IntoElement {
         let initial = self.tex.clone();
         let draft = use_state(move || initial);
+        #[cfg(feature = "sismo")]
+        use_drop(|| sismo::instant!("markdown::math_drop"));
         let shown = self.drawn(&self.tex).unwrap_or_else(|| self.source());
         if self.shared.read_only {
             return shown;
@@ -74,6 +78,8 @@ impl Component for MathAtom {
             .child(shown)
             .into_element();
         let popup = open.then(|| {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("markdown::math_popup");
             let preview = self.drawn(&draft.read());
             popup_frame(colors)
                 .padding(8.)
@@ -86,6 +92,8 @@ impl Component for MathAtom {
                         .auto_focus(true)
                         .width(Size::fill())
                         .on_submit(move |tex: String| {
+                            #[cfg(feature = "sismo")]
+                            sismo::scope!("markdown::math_submit");
                             controller.set_math(slot, tex.trim());
                             controller.open_atom_menu(None);
                         }),

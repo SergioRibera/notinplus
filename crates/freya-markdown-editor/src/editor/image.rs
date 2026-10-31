@@ -22,6 +22,7 @@ pub(crate) struct ImageAtom {
 
 impl ImageAtom {
     /// Shown when no decorator draws the image.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::image_placeholder"))]
     fn placeholder(&self) -> Element {
         let theme = &self.shared.theme;
         let colors = &theme.colors;
@@ -60,9 +61,13 @@ impl Component for ImageAtom {
         // The text block gets the press and opens the menu through the
         // controller, see `image_at` there.
         let describing = use_state(|| false);
+        #[cfg(feature = "sismo")]
+        use_drop(|| sismo::instant!("markdown::image_drop"));
         let theme = &self.shared.theme;
         let colors = &theme.colors;
         let read_only = self.shared.read_only;
+        #[cfg(feature = "sismo")]
+        sismo::scope!("markdown::image_decorator");
         let shown = self
             .shared
             .decorators
@@ -75,6 +80,8 @@ impl Component for ImageAtom {
                 theme,
             })
             .unwrap_or_else(|| self.placeholder());
+        #[cfg(feature = "sismo")]
+        sismo::scope!("markdown::image_chrome");
         if read_only {
             return shown;
         }
@@ -114,6 +121,7 @@ impl Component for ImageAtom {
 }
 
 impl ImageAtom {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::image_menu"))]
     fn actions(&self, mut describing: State<bool>) -> Element {
         let theme = &self.shared.theme;
         let colors = &theme.colors;
@@ -153,6 +161,7 @@ impl ImageAtom {
             .into_element()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::image_describe"))]
     fn describe(&self, mut describing: State<bool>) -> Element {
         DescribeField {
             alt: self.alt.clone(),
@@ -174,6 +183,7 @@ struct DescribeField {
 }
 
 impl Component for DescribeField {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::image_alt_field"))]
     fn render(&self) -> impl IntoElement {
         let initial = self.alt.clone();
         let draft = use_state(move || initial);

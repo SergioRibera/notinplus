@@ -74,11 +74,14 @@ pub(crate) struct ReportedPopup {
 }
 
 impl Component for ReportedPopup {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::reported_popup"))]
     fn render(&self) -> impl IntoElement {
         let reporter = use_try_consume::<PopupReporter>();
         use_drop({
             let reporter = reporter.clone();
             move || {
+                #[cfg(feature = "sismo")]
+                sismo::scope!("markdown::reported_popup_drop");
                 if let Some(reporter) = reporter {
                     (reporter.0)(None);
                 }
@@ -100,6 +103,7 @@ impl Component for ReportedPopup {
 pub(crate) struct PopupArea(pub(crate) Option<Area>);
 
 /// Area popups may use: the closest [`PopupArea`], else the window.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::popup_bounds"))]
 pub(crate) fn popup_bounds() -> Area {
     try_consume_context::<PopupArea>()
         .and_then(|area| area.0)
@@ -140,6 +144,7 @@ impl Anchored {
 }
 
 impl Component for Anchored {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::anchored"))]
     fn render(&self) -> impl IntoElement {
         let mut anchor = use_state(Area::default);
         let mut measured = use_state(Area::default);
@@ -220,6 +225,7 @@ impl Component for Anchored {
 
 /// Window position `(top, left)` of a `popup` sized `(width, height)` for a
 /// button at `anchor`, kept inside `bounds`.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::popup_origin"))]
 pub(crate) fn popup_origin(anchor: Area, popup: (f32, f32), bounds: Area) -> (f32, f32) {
     let (width, height) = popup;
     let below = anchor.max_y() + POPUP_GAP;
@@ -303,6 +309,7 @@ impl MenuItem {
 
     /// The row painted for this entry. `after` runs once the entry's own
     /// action did, typically to close the menu.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::menu_row"))]
     pub(crate) fn row(
         &self,
         key: usize,
