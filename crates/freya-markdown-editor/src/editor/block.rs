@@ -1211,6 +1211,8 @@ impl Component for BlockView {
         };
         let mut hovered = use_state(|| false);
         let mut drop_target = use_state(|| false);
+        #[cfg(feature = "sismo")]
+        use_drop(|| sismo::instant!("markdown::block_drop"));
         let unfolded =
             use_state(|| matches!(self.block.kind, BlockKind::Details { open: true, .. }));
         let as_text = use_state(|| false);
