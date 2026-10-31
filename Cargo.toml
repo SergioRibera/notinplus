@@ -106,7 +106,7 @@ winit = { version = "0.30", features = ["android-game-activity"] }
 [target.'cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos")))'.dependencies]
 env_logger = "0.11"
 # Samples the desktop locale for the interface language.
-istmo-plugins = { version = "0.1.1-alpha.4", features = ["desktop-publisher"] }
+istmo-plugins = "0.1.1-alpha.4"
 istmo-window = "0.1.1-alpha.4"
 istmo-camera = { path = "../istmo/plugins/camera", features = ["desktop"] }
 
