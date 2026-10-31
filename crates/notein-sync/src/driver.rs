@@ -1181,8 +1181,9 @@ impl<R: Replica> SyncDriver<R> {
 
     /// The explicit answer for a member that still writes into a share
     /// this device closed, or threw it out of, while it was away. `None`
-    /// when `from` is still welcome or was never inside.
-    fn removal_for(&self, from: DeviceId, id: ShareId, sealed: &[u8]) -> Option<Option<Action>> {
+    /// when `from` is still welcome or was never inside; empty when the
+    /// answer has no way to it.
+    fn removal_for(&self, from: DeviceId, id: ShareId, sealed: &[u8]) -> Option<Vec<Action>> {
         let me = self.profile.id();
         let (key, message) = if let Some(link) = self.shares.get(&id) {
             let share = &link.share;
@@ -1199,13 +1200,17 @@ impl<R: Replica> SyncDriver<R> {
         };
         // Only someone holding the key hears about it.
         ShareMessage::open(key, sealed)?;
-        Some(self.route(
-            from,
-            &Payload::Share {
-                share: id,
-                sealed: message.seal(key),
-            },
-        ))
+        Some(
+            self.route(
+                from,
+                &Payload::Share {
+                    share: id,
+                    sealed: message.seal(key),
+                },
+            )
+            .into_iter()
+            .collect(),
+        )
     }
 
     /// The owner closed the share for this device: drop it and say
