@@ -315,8 +315,8 @@ impl std::fmt::Debug for ShareFooter {
 
 impl Component for ShareFooter {
     fn render(&self) -> impl IntoElement {
-        sismo::scope!("collab::render_sharefooter");
         use freya::icons::lucide;
+        sismo::scope!("collab::render_sharefooter");
         let sync = crate::sync::use_sync();
         let snapshot = sync.read().clone();
         let confirming = use_state(|| false);
@@ -483,8 +483,8 @@ struct Session {
 
 impl Component for Session {
     fn render(&self) -> impl IntoElement {
-        sismo::scope!("collab::render_session");
         use freya::icons::lucide;
+        sismo::scope!("collab::render_session");
         let p = palette();
         let me = crate::sync::snapshot().device;
         let view = &self.view;
