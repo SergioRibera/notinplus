@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use crate::error::SyncError;
 use crate::identity::DeviceId;
-use crate::replica::{Blob, BlobHead, BlobKey, DocId, Replica, Scope, Version};
+use crate::replica::{Blob, BlobHead, BlobKey, BlobKind, DocId, Replica, Scope, Version};
 
 /// Bumped whenever [`Message`] changes shape.
 pub const PROTOCOL_VERSION: u16 = 5;
@@ -334,6 +334,34 @@ impl<R: Replica> SyncEngine<R> {
         Ok(Some(Message::Blobs(blobs)))
     }
 
+    /// Whether a peer announced a file (attachment or asset) newer than
+    /// the one held here: big ones arrive in parts and take a while.
+    #[must_use]
+    pub fn files_pending(&self) -> bool {
+        let wanted: Vec<(BlobKey, u64)> = self
+            .heard
+            .values()
+            .flat_map(|heard| heard.blobs.iter())
+            .filter(|(key, _)| {
+                matches!(key.kind, BlobKind::Attachment | BlobKind::Asset)
+                    && self.scope.covers_blob(**key)
+            })
+            .map(|(key, at)| (*key, *at))
+            .collect();
+        if wanted.is_empty() {
+            return false;
+        }
+        let local: HashMap<BlobKey, u64> = self
+            .replica
+            .blob_heads()
+            .into_iter()
+            .map(|head| (head.key(), head.updated_at))
+            .collect();
+        wanted
+            .iter()
+            .any(|(key, theirs)| local.get(key).is_none_or(|ours| ours < theirs))
+    }
+
     /// Where `doc` stands against every peer heard from.
     #[must_use]
     pub fn status(&self, doc: DocId) -> DocStatus {
@@ -409,6 +437,22 @@ mod tests {
         round(&mut a, &mut b);
         assert_eq!(a.status(D1), DocStatus::Synced);
         assert_eq!(b.status(D2), DocStatus::Synced);
+    }
+
+    #[test]
+    fn a_file_announced_but_not_yet_here_is_pending() {
+        let mut a = SyncEngine::new(MemReplica::default(), Scope::All);
+        let mut b = SyncEngine::new(MemReplica::default(), Scope::All);
+        a.replica_mut()
+            .put_blob(BlobKind::Attachment, 3, 10, "a big pdf");
+        assert!(!b.files_pending());
+        b.handle(A, a.inventory()).unwrap();
+        assert!(b.files_pending());
+        for reply in a.handle(B, b.inventory()).unwrap().replies {
+            b.handle(A, reply).unwrap();
+        }
+        assert!(!b.files_pending());
+        assert!(!a.files_pending(), "the side that has it waits for nothing");
     }
 
     #[test]

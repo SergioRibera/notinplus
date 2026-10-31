@@ -514,6 +514,13 @@ impl<R: Replica> SyncDriver<R> {
         self.shares.get(&share).map(|link| link.engine.status(doc))
     }
 
+    /// Whether a file another device announced has yet to arrive, here
+    /// or in any share.
+    #[must_use]
+    pub fn files_pending(&self) -> bool {
+        self.engine.files_pending() || self.shares.values().any(|l| l.engine.files_pending())
+    }
+
     /// This device as a share member.
     #[must_use]
     pub fn me(&self) -> Member {

@@ -26,10 +26,11 @@ impl SyncState {
         if snapshot.error.is_some() || (snapshot.online.is_empty() && !snapshot.relay_online) {
             return Some(Self::Offline);
         }
-        let pending = snapshot
-            .docs
-            .values()
-            .any(|s| *s == notein_sync::DocStatus::Pending);
+        let pending = snapshot.files_pending
+            || snapshot
+                .docs
+                .values()
+                .any(|s| *s == notein_sync::DocStatus::Pending);
         Some(if pending {
             Self::Syncing
         } else {

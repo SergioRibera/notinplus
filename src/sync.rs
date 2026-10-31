@@ -87,6 +87,9 @@ pub struct SyncSnapshot {
     pub pairing_with: Option<String>,
     pub last_pair_failure: Option<(DeviceId, PairFailure)>,
     pub docs: HashMap<ItemId, DocStatus>,
+    /// A file another device has (an attachment, an image) is still on
+    /// its way here.
+    pub files_pending: bool,
     pub shares: Vec<ShareView>,
     /// Titles of shares we asked into and are still waiting for.
     pub pending_joins: Vec<String>,
@@ -956,6 +959,7 @@ impl Service {
             last_join_failure: self.last_join_failure,
             relay: self.driver.relay().map(ToString::to_string),
             relay_online: self.driver.relay_online(),
+            files_pending: self.driver.files_pending(),
             error: self.error.clone(),
         }
     }
