@@ -37,13 +37,18 @@ pub struct SearchHit {
     pub score: f64,
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("bible::db_search"))]
 pub(crate) fn search(
     db: &Db,
     bible_id: Option<&str>,
     query: &str,
     limit: usize,
 ) -> Result<Vec<SearchHit>> {
-    let query = sanitise(query);
+    let query = {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("bible::db_search_sanitise");
+        sanitise(query)
+    };
     if query.is_empty() {
         return Ok(Vec::new());
     }
@@ -87,6 +92,8 @@ pub(crate) fn search(
             )?
             .collect::<rusqlite::Result<_>>()?
         };
+        #[cfg(feature = "sismo")]
+        sismo::counter!("bible.search_hits", rows.len());
         Ok(rows)
     })
 }

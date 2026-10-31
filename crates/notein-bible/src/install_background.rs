@@ -178,6 +178,7 @@ pub fn new_shared_progress() -> SharedInstallProgress {
 /// Fetch (or load from on-disk cache) the biblionlabs catalogue.
 /// Blocking HTTP; call from a worker thread. Reuses the install
 /// cache dir so a prior install warms the manifest file.
+#[cfg_attr(feature = "sismo", sismo::function("bible::install_load_catalogue"))]
 pub fn load_catalogue(
     config: &SharedConfig,
 ) -> Result<biblionlabs::CatalogueView, biblionlabs::ImportError> {
@@ -204,6 +205,8 @@ pub fn spawn_fetch_footnotes(
     std::thread::Builder::new()
         .name(format!("bible-footnotes-{book_id}-{chapter}"))
         .spawn(move || {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("bible::fetch_footnotes");
             if db
                 .has_footnotes_for_chapter(&bible_id, &book_id, chapter)
                 .unwrap_or(false)
@@ -252,6 +255,8 @@ pub fn spawn_fetch_headings(db: Db, bible_id: String, book_id: String, chapter: 
     std::thread::Builder::new()
         .name(format!("bible-headings-{book_id}-{chapter}"))
         .spawn(move || {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("bible::fetch_headings");
             if db
                 .has_headers_for_chapter(&bible_id, &book_id, chapter)
                 .unwrap_or(false)
@@ -303,6 +308,7 @@ fn edit(progress: &SharedInstallProgress, f: impl FnOnce(&mut InstallProgress)) 
 
 /// Install `bible_id` into `db`, reporting through `progress`. Blocks
 /// until the download, the verses and the section headings are done.
+#[cfg_attr(feature = "sismo", sismo::function("bible::install_run"))]
 pub(crate) fn run(
     bible_id: &str,
     db: &Db,
@@ -374,6 +380,7 @@ pub(crate) fn run(
 
 /// Name, language and abbreviation of `bible_id` from the catalogue; the
 /// per-Bible manifest leaves them out.
+#[cfg_attr(feature = "sismo", sismo::function("bible::install_catalogue_meta"))]
 fn catalogue_meta(
     client: &Client,
     cache_dir: &std::path::Path,
@@ -407,6 +414,7 @@ fn catalogue_meta(
 ///
 /// Each chapter is rewritten whole and cached on disk, so running it again
 /// is cheap. A chapter that fails is logged and skipped.
+#[cfg_attr(feature = "sismo", sismo::function("bible::install_prefetch_headings"))]
 fn prefetch_all_headings(
     db: &Db,
     client: &Client,

@@ -302,6 +302,7 @@ pub struct Install<'a> {
 impl Install<'_> {
     /// Download and store the translation; returns how many verses
     /// were inserted.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::import_run"))]
     pub fn run(&self, mut on_progress: impl FnMut(Progress)) -> Result<usize> {
         let bible_id = self.bible_id;
         on_progress(Progress::Started {
@@ -324,6 +325,8 @@ impl Install<'_> {
                 continue;
             };
             inserted += verses;
+            #[cfg(feature = "sismo")]
+            sismo::counter!("bible.import_verses", inserted);
             on_progress(Progress::BookDone {
                 book_id: (**book_id).clone(),
                 verses,
@@ -340,6 +343,7 @@ impl Install<'_> {
 
     /// The per-Bible manifest, with the catalogue's name, language and
     /// abbreviation filling what it leaves out (it usually does).
+    #[cfg_attr(feature = "sismo", sismo::function("bible::import_manifest"))]
     fn manifest(&self, bible_dir: &Path) -> Result<BibleDesc> {
         std::fs::create_dir_all(bible_dir)?;
         let desc_path = bible_dir.join("manifest.json");
@@ -371,6 +375,7 @@ impl Install<'_> {
 
     /// The Bible row and one row per book, in `book_ids` order. The Bible
     /// stays pending, out of the lists, until the caller finishes it.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::import_register_books"))]
     fn register_books(&self, desc: &BibleDesc, book_ids: &[&String]) -> Result<()> {
         self.db.with_conn_mut(|conn| {
             upsert_bible(conn, self.bible_id, desc).map_err(crate::db::DbError::from)?;
@@ -394,6 +399,7 @@ impl Install<'_> {
     /// Verses and section headings of one book; `None` when the book
     /// could not be fetched or parsed, which skips it without failing
     /// the install.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::import_book"))]
     fn install_book(
         &self,
         books_dir: &Path,
@@ -410,11 +416,15 @@ impl Install<'_> {
             return Ok(None);
         }
         let book_bytes = std::fs::read(&book_path)?;
-        let book_doc: BookDoc = match serde_json::from_slice(&book_bytes) {
-            Ok(d) => d,
-            Err(e) => {
-                log::warn!("biblionlabs: {book_id} parse failed: {e}");
-                return Ok(None);
+        let book_doc: BookDoc = {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("bible::import_parse_book");
+            match serde_json::from_slice(&book_bytes) {
+                Ok(d) => d,
+                Err(e) => {
+                    log::warn!("biblionlabs: {book_id} parse failed: {e}");
+                    return Ok(None);
+                }
             }
         };
         let verses = self.db.with_conn_mut(|conn| {
@@ -430,6 +440,7 @@ impl Install<'_> {
 
     /// Cross-references for every book. They are optional: a book
     /// without them is logged and skipped.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::import_crossrefs"))]
     fn install_cross_refs(
         &self,
         book_ids: &[&String],
@@ -439,6 +450,8 @@ impl Install<'_> {
         std::fs::create_dir_all(&xref_cache)?;
         let total = book_ids.len();
         for (done, book_id) in book_ids.iter().enumerate() {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("bible::import_crossrefs_book");
             on_progress(Progress::CrossRefs { done, total });
             let xref_path = xref_cache.join(format!("{book_id}.json"));
             let xref_url = CROSSREF_URL_TEMPLATE.replace("{book}", book_id);
@@ -480,6 +493,7 @@ impl Install<'_> {
 /// end_chap?, end_verse?], …] } }`. We insert one row per target
 /// (collapsing ranges to their start since the reader only needs a
 /// clickable anchor, not a span).
+#[cfg_attr(feature = "sismo", sismo::function("bible::import_crossrefs_insert"))]
 fn insert_crossrefs_for_book(
     conn: &rusqlite::Connection,
     bible_id: &str,
@@ -533,18 +547,27 @@ fn insert_crossrefs_for_book(
 /// Download `url` into `dest` when the on-disk copy is missing, older
 /// than `ttl`, or does not start with a JSON prefix (handles the case
 /// where a previous attempt cached an HTML error page from a 200 OK).
+#[cfg_attr(feature = "sismo", sismo::function("bible::import_fetch"))]
 fn fetch_if_stale(client: &Client, url: &str, dest: &Path, ttl: Duration) -> Result<()> {
     if dest.exists() {
         if let Ok(meta) = dest.metadata() {
             if let Ok(modified) = meta.modified() {
                 let fresh = modified.elapsed().is_ok_and(|e| e <= ttl);
                 if fresh && cache_looks_like_json(dest) {
+                    #[cfg(feature = "sismo")]
+                    sismo::instant!("bible::import_fetch_cached");
                     return Ok(());
                 }
             }
         }
     }
-    let bytes = client.get(url).send()?.error_for_status()?.bytes()?;
+    let bytes = {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("bible::import_download");
+        client.get(url).send()?.error_for_status()?.bytes()?
+    };
+    #[cfg(feature = "sismo")]
+    sismo::counter!("bible.download_bytes", bytes.len());
     if !bytes_look_like_json(&bytes) {
         return Err(ImportError::Format {
             reason: format!(
@@ -580,6 +603,7 @@ fn bytes_look_like_json(bytes: &[u8]) -> bool {
         })
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("bible::import_upsert_bible"))]
 fn upsert_bible(
     conn: &rusqlite::Connection,
     bible_id: &str,
@@ -652,6 +676,7 @@ fn upsert_book(
 /// Inline headings carried as `ContentItem::Typed { type = "heading" }`
 /// also materialise as `headers` rows attached to the verse they
 /// precede.
+#[cfg_attr(feature = "sismo", sismo::function("bible::import_insert_verses"))]
 fn insert_book_contents(
     conn: &rusqlite::Connection,
     bible_id: &str,
@@ -741,6 +766,7 @@ fn insert_book_contents(
 /// section ranges (`sections`) from the Bible description. Chapter
 /// headings land at `before_verse = 0`; section headings at the start
 /// verse of each range.
+#[cfg_attr(feature = "sismo", sismo::function("bible::import_insert_headers"))]
 fn insert_headers(
     conn: &rusqlite::Connection,
     bible_id: &str,
@@ -854,6 +880,7 @@ pub fn find_extra(id: &str) -> Option<&'static ExtraBible> {
 /// Load the top-level manifest from `cache_dir/manifest.json`, fetching
 /// via HTTP when the cache is stale. Returns the parsed value so the UI
 /// can list languages / bibles for the picker.
+#[cfg_attr(feature = "sismo", sismo::function("bible::import_load_catalogue"))]
 pub fn load_catalogue(
     client: &Client,
     cache_dir: &Path,
@@ -1006,6 +1033,7 @@ pub(crate) fn _ensure_cache_dir(cache_dir: &Path) -> std::io::Result<PathBuf> {
 // path without a network round-trip.
 
 #[cfg(test)]
+#[cfg_attr(feature = "sismo", sismo::function("bible::import_fixtures"))]
 pub(crate) fn populate_from_fixtures(
     db: &Db,
     bible_id: &str,

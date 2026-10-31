@@ -127,6 +127,7 @@ COMMIT;
 /// Bumped by each one-off data fix below.
 const VERSION: i64 = 1;
 
+#[cfg_attr(feature = "sismo", sismo::function("bible::db_migrate"))]
 pub(crate) fn migrate(db: &Db) -> Result<()> {
     db.with_conn_mut(|conn| {
         conn.execute_batch(SCHEMA_SQL)?;

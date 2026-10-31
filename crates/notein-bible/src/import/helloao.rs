@@ -195,6 +195,7 @@ impl Helloao<'_> {
     /// Idempotent: wipes the matching rows first so a re-run (e.g. cache busted)
     /// never duplicates. `Ok(n)` reports how many rows actually landed — a
     /// chapter with no publisher apparatus returns `Ok(0)` without erroring.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::helloao_footnotes"))]
     pub fn footnotes_for_chapter(
         &self,
         bible_id: &str,
@@ -276,6 +277,7 @@ impl Helloao<'_> {
     /// `on_book_progress(idx, total, book_display_name)` fires after each
     /// book commit so the caller can forward progress to the install
     /// modal.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::helloao_all_headings"))]
     pub fn all_headings(
         &self,
         bible_id: &str,
@@ -372,6 +374,7 @@ impl Helloao<'_> {
     /// domain Reina Valera 1909) return 0 silently — the caller then falls
     /// back to a sibling translation via
     /// [`helloao_headings_id_for_bible`].
+    #[cfg_attr(feature = "sismo", sismo::function("bible::helloao_headings"))]
     pub fn headings_for_chapter(
         &self,
         bible_id: &str,
@@ -585,6 +588,7 @@ pub fn helloao_book_for_osis(book_id: &str) -> Option<String> {
     Some(out.to_string())
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("bible::helloao_fetch"))]
 fn fetch_if_stale(
     client: &Client,
     url: &str,
@@ -596,11 +600,15 @@ fn fetch_if_stale(
             if let Ok(modified) = meta.modified() {
                 let fresh = modified.elapsed().is_ok_and(|e| e <= ttl);
                 if fresh && cache_looks_like_json(dest) {
+                    #[cfg(feature = "sismo")]
+                    sismo::instant!("bible::helloao_fetch_cached");
                     return Ok(());
                 }
             }
         }
     }
+    #[cfg(feature = "sismo")]
+    sismo::scope!("bible::helloao_download");
     let response = client.get(url).send()?;
     // 404 is fine — some chapters simply have no footnotes catalogue.
     if response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -609,6 +617,8 @@ fn fetch_if_stale(
     }
     let response = response.error_for_status()?;
     let bytes = response.bytes()?;
+    #[cfg(feature = "sismo")]
+    sismo::counter!("bible.download_bytes", bytes.len());
     if !bytes_look_like_json(&bytes) {
         return Err(HelloaoError::Io(std::io::Error::other(format!(
             "non-JSON response from {url}"

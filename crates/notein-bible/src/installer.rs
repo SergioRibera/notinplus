@@ -95,6 +95,7 @@ impl Installer {
     }
 
     /// Ask for `bible_id`; it starts when the ones before it finish.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::installer_enqueue"))]
     pub fn enqueue(&self, bible_id: &str) {
         let start = {
             let mut queue = self.lock();
@@ -129,11 +130,14 @@ impl Installer {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("bible::installer_drain"))]
     fn drain(&self) {
         loop {
             let Some(next) = self.lock().start_next() else {
                 return;
             };
+            #[cfg(feature = "sismo")]
+            sismo::scope!("bible::installer_install");
             let watcher = self.watch(&next);
             install_background::run(&next, &self.db, &self.config, &self.progress);
             watcher.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -211,6 +215,7 @@ impl Installer {
     }
 
     /// Queue again every download a closed app cut short.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::installer_resume"))]
     pub fn resume(&self) {
         match self.db.pending_installs() {
             Ok(pending) => pending.iter().for_each(|id| self.enqueue(id)),
@@ -238,6 +243,7 @@ impl Installer {
     ///
     /// # Errors
     /// The catalogue could not be fetched or read.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::installer_catalogue"))]
     pub fn catalogue(
         &self,
     ) -> Result<crate::import::biblionlabs::CatalogueView, crate::import::biblionlabs::ImportError>

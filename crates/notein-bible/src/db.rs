@@ -102,6 +102,7 @@ impl Db {
     /// Open or create the database file. Runs `schema::migrate` so a
     /// first-time call lands a usable schema; a subsequent call is a
     /// cheap no-op (`CREATE … IF NOT EXISTS`).
+    #[cfg_attr(feature = "sismo", sismo::function("bible::db_open"))]
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         if let Some(parent) = path.as_ref().parent() {
             std::fs::create_dir_all(parent)?;
@@ -147,6 +148,7 @@ impl Db {
 
     /// In-memory database — tests only. Each call gets its own fresh
     /// connection, so parallel tests don't trample each other.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::db_open_memory"))]
     pub fn in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
@@ -161,9 +163,12 @@ impl Db {
     /// Run a read on the read-only connection.
     pub(crate) fn with_conn<R>(&self, f: impl FnOnce(&Connection) -> Result<R>) -> Result<R> {
         let conn = self.read.as_ref().unwrap_or(&self.conn);
-        let guard = conn
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let guard = {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("bible::db_read_lock");
+            conn.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        };
         f(&guard)
     }
 
@@ -172,10 +177,13 @@ impl Db {
         &self,
         f: impl FnOnce(&mut Connection) -> Result<R>,
     ) -> Result<R> {
-        let mut guard = self
-            .conn
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("bible::db_write_lock");
+            self.conn
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        };
         f(&mut guard)
     }
 
@@ -227,6 +235,7 @@ impl Db {
     /// per-verse map so the reader can render inline chips without one
     /// query per verse. Includes ALL targets even for the same source
     /// verse — collapsing happens UI-side.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::db_cross_refs"))]
     pub fn cross_refs_for_chapter(
         &self,
         bible_id: &str,
@@ -253,6 +262,8 @@ impl Db {
                     },
                 )?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
+            #[cfg(feature = "sismo")]
+            sismo::counter!("bible.rows_returned", rows.len());
             Ok(rows)
         })
     }
@@ -260,6 +271,7 @@ impl Db {
     /// Fetch the display text of a single verse. Used by the cross-ref
     /// hover popup — the row count is `0..=1` so the call stays cheap
     /// per chip.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::db_verse_text"))]
     pub fn verse_text(
         &self,
         bible_id: &str,
@@ -304,6 +316,7 @@ impl Db {
     /// Publisher-authored footnotes (via helloao.org) for `(book,
     /// chapter)` under `bible_id`. Ordered by verse then `note_id` so the
     /// reader can walk them in-line with the paragraph.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::db_footnotes"))]
     pub fn footnotes_for_chapter(
         &self,
         bible_id: &str,
@@ -330,6 +343,8 @@ impl Db {
                     },
                 )?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
+            #[cfg(feature = "sismo")]
+            sismo::counter!("bible.rows_returned", rows.len());
             Ok(rows)
         })
     }
@@ -337,6 +352,7 @@ impl Db {
     /// `true` when at least one footnote row exists for `(bible, book,
     /// chap)`. Used to decide whether the lazy fetcher needs to hit
     /// helloao this render pass.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::db_has_footnotes"))]
     pub fn has_footnotes_for_chapter(
         &self,
         bible_id: &str,
@@ -358,6 +374,7 @@ impl Db {
     /// book, chap)`. The lazy helloao enricher uses this to skip
     /// chapters already populated (either from the primary importer or
     /// from a prior enrichment pass).
+    #[cfg_attr(feature = "sismo", sismo::function("bible::db_has_headers"))]
     pub fn has_headers_for_chapter(
         &self,
         bible_id: &str,

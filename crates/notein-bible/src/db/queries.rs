@@ -52,6 +52,7 @@ pub struct ChapterRow {
     pub headers: Vec<HeaderRow>,
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("bible::db_list_bibles"))]
 pub(crate) fn list_bibles(db: &Db) -> Result<Vec<BibleRow>> {
     db.with_conn(|conn| {
         let mut stmt = conn.prepare_cached(
@@ -73,6 +74,7 @@ pub(crate) fn list_bibles(db: &Db) -> Result<Vec<BibleRow>> {
     })
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("bible::db_pending_installs"))]
 pub(crate) fn pending_installs(db: &Db) -> Result<Vec<String>> {
     db.with_conn(|conn| {
         let mut stmt =
@@ -84,6 +86,7 @@ pub(crate) fn pending_installs(db: &Db) -> Result<Vec<String>> {
     })
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("bible::db_finish_install"))]
 pub(crate) fn finish_install(db: &Db, bible_id: &str) -> Result<()> {
     db.with_conn_mut(|conn| {
         conn.execute(
@@ -94,6 +97,7 @@ pub(crate) fn finish_install(db: &Db, bible_id: &str) -> Result<()> {
     })
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("bible::db_list_books"))]
 pub(crate) fn list_books(db: &Db, bible_id: &str) -> Result<Vec<BookRow>> {
     db.with_conn(|conn| {
         let mut stmt = conn.prepare_cached(
@@ -117,6 +121,7 @@ pub(crate) fn list_books(db: &Db, bible_id: &str) -> Result<Vec<BookRow>> {
     })
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("bible::db_chapter_count"))]
 pub(crate) fn chapter_count(db: &Db, bible_id: &str, book_id: &str) -> Result<u16> {
     db.with_conn(|conn| {
         let count: Option<i64> = conn
@@ -131,6 +136,7 @@ pub(crate) fn chapter_count(db: &Db, bible_id: &str, book_id: &str) -> Result<u1
     })
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("bible::db_load_chapter"))]
 pub(crate) fn load_chapter(
     db: &Db,
     bible_id: &str,
@@ -138,8 +144,10 @@ pub(crate) fn load_chapter(
     chapter: u16,
 ) -> Result<ChapterRow> {
     db.with_conn(|conn| {
-        let book_name: String = conn
-            .query_row(
+        let book_name: String = {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("bible::db_chapter_book");
+            conn.query_row(
                 "SELECT name FROM books WHERE bible_id = ?1 AND book_id = ?2",
                 params![bible_id, book_id],
                 |r| r.get(0),
@@ -147,38 +155,49 @@ pub(crate) fn load_chapter(
             .optional()?
             .ok_or_else(|| DbError::MissingBible {
                 id: bible_id.to_string(),
-            })?;
-
-        let mut verses_stmt = conn.prepare_cached(
-            "SELECT verse, text, paragraph_break
-             FROM verses
-             WHERE bible_id = ?1 AND book_id = ?2 AND chapter = ?3
-             ORDER BY verse",
-        )?;
-        let verses = verses_stmt
-            .query_map(params![bible_id, book_id, i64::from(chapter)], |r| {
-                Ok(VerseRow {
-                    verse: r.get::<_, u16>(0)?,
-                    text: r.get(1)?,
-                    paragraph_break: r.get::<_, i64>(2)? != 0,
-                })
             })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
+        };
 
-        let mut headers_stmt = conn.prepare_cached(
-            "SELECT before_verse, text
-             FROM headers
-             WHERE bible_id = ?1 AND book_id = ?2 AND chapter = ?3
-             ORDER BY before_verse",
-        )?;
-        let headers = headers_stmt
-            .query_map(params![bible_id, book_id, i64::from(chapter)], |r| {
-                Ok(HeaderRow {
-                    before_verse: r.get::<_, u16>(0)?,
-                    text: r.get(1)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let verses = {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("bible::db_chapter_verses");
+            let mut verses_stmt = conn.prepare_cached(
+                "SELECT verse, text, paragraph_break
+                 FROM verses
+                 WHERE bible_id = ?1 AND book_id = ?2 AND chapter = ?3
+                 ORDER BY verse",
+            )?;
+            verses_stmt
+                .query_map(params![bible_id, book_id, i64::from(chapter)], |r| {
+                    Ok(VerseRow {
+                        verse: r.get::<_, u16>(0)?,
+                        text: r.get(1)?,
+                        paragraph_break: r.get::<_, i64>(2)? != 0,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let headers = {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("bible::db_chapter_headers");
+            let mut headers_stmt = conn.prepare_cached(
+                "SELECT before_verse, text
+                 FROM headers
+                 WHERE bible_id = ?1 AND book_id = ?2 AND chapter = ?3
+                 ORDER BY before_verse",
+            )?;
+            headers_stmt
+                .query_map(params![bible_id, book_id, i64::from(chapter)], |r| {
+                    Ok(HeaderRow {
+                        before_verse: r.get::<_, u16>(0)?,
+                        text: r.get(1)?,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        #[cfg(feature = "sismo")]
+        sismo::counter!("bible.rows_returned", verses.len() + headers.len());
 
         Ok(ChapterRow {
             bible_id: bible_id.to_string(),

@@ -85,6 +85,7 @@ pub type Result<T> = std::result::Result<T, OsisError>;
 /// Returns the number of verses inserted. All rows land under `bible_id` —
 /// the caller controls that id (OSIS files don't always carry a stable
 /// translation code).
+#[cfg_attr(feature = "sismo", sismo::function("bible::osis_import"))]
 pub fn import_osis_xml(db: &Db, bible_id: &str, xml_bytes: &[u8]) -> Result<usize> {
     let parsed = parse(xml_bytes)?;
     materialise(db, bible_id, &parsed)
@@ -92,6 +93,7 @@ pub fn import_osis_xml(db: &Db, bible_id: &str, xml_bytes: &[u8]) -> Result<usiz
 
 /// Same as [`import_osis_xml`] but reads from any `BufRead`. Good for
 /// large files you want to stream from disk without a full `Vec<u8>`.
+#[cfg_attr(feature = "sismo", sismo::function("bible::osis_import_reader"))]
 pub fn import_osis_reader<R: BufRead>(db: &Db, bible_id: &str, reader: R) -> Result<usize> {
     let parsed = parse_from_reader(reader)?;
     materialise(db, bible_id, &parsed)
@@ -136,6 +138,7 @@ fn parse_from_reader<R: BufRead>(reader: R) -> Result<Parsed> {
 }
 
 /// Core XML walk over the subset of OSIS we support.
+#[cfg_attr(feature = "sismo", sismo::function("bible::osis_parse"))]
 fn walk<R: BufRead>(reader: &mut Reader<R>) -> Result<Parsed> {
     reader.config_mut().trim_text(false);
     let mut walker = Walker::default();
@@ -416,6 +419,7 @@ fn parse_verse_num(osis_id: &str) -> Option<(u16, u16)> {
     Some((chap, verse))
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("bible::osis_insert"))]
 fn materialise(db: &Db, bible_id: &str, parsed: &Parsed) -> Result<usize> {
     let mut inserted = 0usize;
 
