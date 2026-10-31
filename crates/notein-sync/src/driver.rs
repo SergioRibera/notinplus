@@ -758,6 +758,21 @@ impl<R: Replica> SyncDriver<R> {
         })
     }
 
+    /// Owner's current view for one member, as [`Self::broadcast_meta`].
+    fn meta_for(&self, id: ShareId, device: DeviceId) -> Option<Action> {
+        let link = self.shares.get(&id)?;
+        if !link.share.is_owner(self.profile.id()) || !link.share.is_member(device) {
+            return None;
+        }
+        Some(send(
+            device,
+            &Payload::Share {
+                share: id,
+                sealed: ShareMessage::Meta(Box::new(link.share.for_member())).seal(&link.share.key),
+            },
+        ))
+    }
+
     /// Owner's current view sent to every connected member.
     fn broadcast_meta(&self, id: ShareId) -> Vec<Action> {
         let Some(link) = self.shares.get(&id) else {
@@ -913,6 +928,8 @@ impl<R: Replica> SyncDriver<R> {
             out.extend(self.round_for(device)?);
         }
         for share in self.shares_with(device) {
+            // Policy, viewers or scope may have changed while it was away.
+            out.extend(self.meta_for(share, device));
             out.extend(self.share_round_for(share, device)?);
         }
         if self.intent.as_ref().is_some_and(|i| i.device == device) {
@@ -1106,13 +1123,15 @@ impl<R: Replica> SyncDriver<R> {
                     && share.id == id
                     && share.updated_at >= link.share.updated_at
                 {
-                    let key = link.share.key.clone();
-                    let cursor = link.share.relay_cursor;
-                    link.share = Share {
-                        key,
-                        relay_cursor: cursor,
+                    let fresh = Share {
+                        key: link.share.key.clone(),
+                        relay_cursor: link.share.relay_cursor,
                         ..*share
                     };
+                    if fresh == link.share {
+                        return Ok(());
+                    }
+                    link.share = fresh;
                     link.engine.set_scope(link.share.scope());
                     out.push(Action::Event(DriverEvent::ShareChanged(id)));
                     if !link.share.is_member(me) {
@@ -2680,6 +2699,22 @@ mod tests {
         assert!(removed(&events, id, Removal::Expelled), "{events:?}");
         assert!(guest.share(id).is_none());
         assert!(owner.share(id).unwrap().members.is_empty());
+    }
+
+    #[test]
+    fn permissions_changed_while_away_arrive_on_return() {
+        let (mut owner, mut guest, id) = joined_then_apart();
+        owner.update_share(id, |s| s.policy = SharePolicy::read_only());
+        assert!(guest.share(id).unwrap().can_edit(guest.profile.id()));
+        connect_both(&mut guest, &mut owner);
+        assert!(!guest.share(id).unwrap().can_edit(guest.profile.id()));
+        // Nothing new the next time: no change is reported.
+        let events = connect_both(&mut guest, &mut owner);
+        assert!(
+            !events
+                .iter()
+                .any(|a| matches!(a, Action::Event(DriverEvent::ShareChanged(_))))
+        );
     }
 
     #[test]
