@@ -19,6 +19,7 @@ mod editor;
 mod labels;
 pub mod markdown;
 mod popup;
+mod profile;
 mod theme;
 #[cfg(feature = "toolbar")]
 mod toolbar;

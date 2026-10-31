@@ -88,6 +88,7 @@ impl Frame {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::frame_render"))]
     fn render(self, theme: &EditorTheme) -> Element {
         let gutter_width = if self.gutter.is_some() {
             theme.px(GUTTER)
@@ -685,6 +686,7 @@ impl BlockView {
     }
 
     #[allow(clippy::too_many_lines, reason = "one arm per text block kind")]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::block_framed"))]
     fn framed(&self, view: View) -> Option<Frame> {
         let View {
             unfolded,
@@ -938,6 +940,7 @@ impl BlockView {
     }
 
     /// Read only replacement for code and math blocks from decorators.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::block_decorated"))]
     fn decorated(&self, width: f32) -> Option<Element> {
         if !self.shared.read_only {
             return None;
@@ -955,6 +958,7 @@ impl BlockView {
         })
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::block_table"))]
     fn table(&self, table: &Table) -> Element {
         let theme = &self.shared.theme;
         let colors = &theme.colors;
@@ -1059,6 +1063,7 @@ impl BlockView {
 
     /// A transcluded quote, as a decorator shows it or as last seen.
     /// Pressing it follows its source.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::block_transclusion"))]
     fn transclusion(&self, transclusion: &Transclusion) -> Element {
         let theme = &self.shared.theme;
         let shown = self
@@ -1118,6 +1123,7 @@ impl BlockView {
             .into_element()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::block_toc"))]
     fn table_of_contents(&self) -> Element {
         let theme = &self.shared.theme;
         let colors = &theme.colors;
@@ -1218,10 +1224,11 @@ impl Component for BlockView {
             as_text,
             width: width(),
         };
-        let body = self
-            .decorated(view.width)
-            .or_else(|| self.framed(view).map(|frame| frame.render(&theme)))
-            .unwrap_or_else(fallback);
+        let body = crate::profile::kind_span(&self.block.kind, || {
+            self.decorated(view.width)
+                .or_else(|| self.framed(view).map(|frame| frame.render(&theme)))
+                .unwrap_or_else(fallback)
+        });
         let block = rect()
             .width(Size::fill())
             .on_sized(move |event: Event<SizedEventData>| {
@@ -1233,6 +1240,8 @@ impl Component for BlockView {
             return block.into_element();
         }
 
+        #[cfg(feature = "sismo")]
+        sismo::scope!("markdown::block_reorder_chrome");
         let colors = &theme.colors;
         let controller = self.shared.controller;
         let id = self.block.id;

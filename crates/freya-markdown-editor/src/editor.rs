@@ -420,8 +420,12 @@ impl Component for MarkdownEditor {
             .unwrap_or_default();
         let initial_parse = parse.clone();
         let owned = use_hook(move || {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("markdown::editor_create");
             EditorController::create(Document::parse_with(&initial, &initial_parse))
         });
+        #[cfg(feature = "sismo")]
+        use_drop(|| sismo::instant!("markdown::editor_unmount"));
         let controller = self.controller.unwrap_or(owned);
         use_hook(move || controller.set_parse_options(parse));
         if let Some(read_only) = self.read_only {
@@ -435,6 +439,8 @@ impl Component for MarkdownEditor {
         let document = &view.document;
         #[cfg(feature = "sismo")]
         sismo::counter!("markdown.blocks", document.blocks().len());
+        #[cfg(feature = "sismo")]
+        crate::profile::count_document(document);
         let read_only = view.read_only;
         let shared = Shared {
             controller,
@@ -461,6 +467,8 @@ impl Component for MarkdownEditor {
         let toc = toc_entries(document);
         let focused = view.selection.map(|selection| selection.target);
 
+        #[cfg(feature = "sismo")]
+        sismo::scope!("markdown::editor_blocks");
         let blocks = document.blocks().iter().map(|block| {
             let toc = if matches!(block.kind, BlockKind::TableOfContents) {
                 toc.clone()
@@ -515,6 +523,7 @@ impl Component for MarkdownEditor {
     }
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("markdown::toc_entries"))]
 fn toc_entries(document: &Document) -> Vec<TocEntry> {
     if !document
         .blocks()
@@ -558,6 +567,7 @@ fn overlay_text_style(base: &mut TextStyleData, overlay: &TextStyleData) {
 
 /// Keep `value` and the controller document in sync in both directions:
 /// outside writes are parsed, edits are written back in `dialect`.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::use_value_sync"))]
 fn use_value_sync(value: Option<Writable<String>>, controller: EditorController, dialect: Dialect) {
     let sync = use_hook(|| {
         Rc::new(RefCell::new(Sync {
@@ -573,6 +583,8 @@ fn use_value_sync(value: Option<Writable<String>>, controller: EditorController,
         let Some(value) = &incoming else {
             return;
         };
+        #[cfg(feature = "sismo")]
+        sismo::scope!("markdown::value_sync_incoming");
         let text = value.read().clone();
         let mut sync = incoming_sync.borrow_mut();
         if sync.text.as_deref() == Some(text.as_str()) {
@@ -597,6 +609,8 @@ fn use_value_sync(value: Option<Writable<String>>, controller: EditorController,
             return;
         }
         sync.revision = revision;
+        #[cfg(feature = "sismo")]
+        sismo::scope!("markdown::value_sync_outgoing");
         let markdown = controller.peek(|state| state.markdown(*dialect.peek()));
         if sync.text.as_deref() != Some(markdown.as_str()) {
             sync.text = Some(markdown.clone());
@@ -606,6 +620,7 @@ fn use_value_sync(value: Option<Writable<String>>, controller: EditorController,
 }
 
 /// `carets` with the text field of `document` each points at.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::remote_targets"))]
 fn remote_targets(document: &Document, carets: &[RemoteCaret]) -> Vec<(TextTarget, RemoteCaret)> {
     if carets.is_empty() {
         return Vec::new();
