@@ -2335,6 +2335,7 @@ impl Board {
         // zoom — that's the "500 strokes, only 20 visible" regime.
         let visible = self.visible_stroke_set(surface);
         sismo::counter!("canvas.layers", layers.len());
+        sismo::counter!("canvas.strokes_total", self.stroke_index.len());
         sismo::counter!("canvas.cached_paths", self.cached_paths.len());
         if let Some(set) = visible.as_ref() {
             sismo::counter!("canvas.strokes_visible", set.len());

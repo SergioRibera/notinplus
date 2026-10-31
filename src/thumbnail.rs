@@ -19,17 +19,20 @@ const MARGIN: f32 = 24.0;
 #[sismo::function("thumbnail::canvas")]
 pub fn canvas(doc: &Doc, paper: [u8; 4]) -> Option<Vec<u8>> {
     let mut bounds: Option<(f32, f32, f32, f32)> = None;
-    for stroke in doc
-        .layers
-        .iter()
-        .filter(|l| l.visible)
-        .flat_map(|l| l.strokes.iter())
     {
-        for p in &stroke.points {
-            bounds = Some(match bounds {
-                None => (p.x, p.y, p.x, p.y),
-                Some((x0, y0, x1, y1)) => (x0.min(p.x), y0.min(p.y), x1.max(p.x), y1.max(p.y)),
-            });
+        sismo::scope!("thumbnail::bounds");
+        for stroke in doc
+            .layers
+            .iter()
+            .filter(|l| l.visible)
+            .flat_map(|l| l.strokes.iter())
+        {
+            for p in &stroke.points {
+                bounds = Some(match bounds {
+                    None => (p.x, p.y, p.x, p.y),
+                    Some((x0, y0, x1, y1)) => (x0.min(p.x), y0.min(p.y), x1.max(p.x), y1.max(p.y)),
+                });
+            }
         }
     }
     let (x0, y0, x1, y1) = bounds?;
@@ -46,19 +49,26 @@ pub fn canvas(doc: &Doc, paper: [u8; 4]) -> Option<Vec<u8>> {
     sk.translate((x0.mul_add(-scale, MARGIN), y0.mul_add(-scale, MARGIN)));
     sk.scale((scale, scale));
     let registry = BrushRegistry::default();
-    for layer in doc.layers.iter().filter(|l| l.visible) {
-        for stroke in &layer.strokes {
-            let Some(preset) = doc.preset(stroke.brush) else {
-                continue;
-            };
-            let brush = registry.brush(preset.kind);
-            let path = brush.build_path(preset, stroke, registry.caps());
-            let paint: Paint = brush.paint(preset, stroke.color);
-            sk.draw_path(&path, &paint);
+    {
+        sismo::scope!("thumbnail::strokes");
+        sismo::counter!("thumbnail.strokes", doc.stroke_count());
+        for layer in doc.layers.iter().filter(|l| l.visible) {
+            for stroke in &layer.strokes {
+                let Some(preset) = doc.preset(stroke.brush) else {
+                    continue;
+                };
+                let brush = registry.brush(preset.kind);
+                let path = brush.build_path(preset, stroke, registry.caps());
+                let paint: Paint = brush.paint(preset, stroke.color);
+                sk.draw_path(&path, &paint);
+            }
         }
     }
     sk.restore();
-    let image = surface.image_snapshot();
+    let image = {
+        sismo::scope!("thumbnail::image_snapshot");
+        surface.image_snapshot()
+    };
     encode(&image)
 }
 

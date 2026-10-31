@@ -340,6 +340,14 @@ impl InkCache {
     }
 }
 
+impl Drop for InkCache {
+    fn drop(&mut self) {
+        sismo::scope!("ink_cache::drop");
+        self.surface = None;
+        self.image = None;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

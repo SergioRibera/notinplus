@@ -252,6 +252,7 @@ fn pass_canvas(board: &Arc<Mutex<Board>>, pass: PaintPass, index: usize) -> Elem
         .child(
             rect()
                 .background(RenderCallback::new(move |ctx| {
+                    sismo::scope!("canvas::pass_render");
                     let RenderTarget::Background { canvas, .. } = &ctx.target else {
                         return;
                     };
