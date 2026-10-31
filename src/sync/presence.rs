@@ -97,6 +97,7 @@ fn awaiting() -> MutexGuard<'static, Option<(DeviceId, Instant)>> {
 
 /// `from` is back in sight: follow it again if it was followed when it
 /// dropped out, not too long ago.
+#[sismo::function("sync::presence::resume_following")]
 fn resume_following(from: DeviceId) {
     let mut awaiting = awaiting();
     let Some((device, since)) = *awaiting else {
@@ -114,6 +115,7 @@ fn resume_following(from: DeviceId) {
     set_following(Some(from));
 }
 
+#[sismo::function("sync::presence::set_following")]
 fn set_following(device: Option<DeviceId>) {
     let mut following = FOLLOWING.lock().unwrap_or_else(PoisonError::into_inner);
     if *following == device {
@@ -179,6 +181,7 @@ pub fn color(device: DeviceId) -> [u8; 3] {
 /// `from` sent something about `item`: it is there. `state` replaces
 /// what it last published, when given. Returns whether that changed
 /// anything.
+#[sismo::function("sync::presence::seen")]
 pub(super) fn seen(item: ItemId, from: DeviceId, name: &str, state: Option<Vec<u8>>) -> bool {
     let mut guard = peers();
     let here = guard
@@ -213,6 +216,7 @@ pub(super) fn seen(item: ItemId, from: DeviceId, name: &str, state: Option<Vec<u
 }
 
 /// `from` closed `item`.
+#[sismo::function("sync::presence::left")]
 pub(super) fn left(item: ItemId, from: DeviceId) {
     let removed = peers()
         .as_mut()
@@ -225,6 +229,7 @@ pub(super) fn left(item: ItemId, from: DeviceId) {
 
 /// `from` left the network: it is in no document any more. Returns the
 /// documents it was in.
+#[sismo::function("sync::presence::gone")]
 pub(super) fn gone(from: DeviceId) -> Vec<ItemId> {
     let items: Vec<ItemId> = peers()
         .as_mut()
@@ -245,6 +250,7 @@ pub(super) fn gone(from: DeviceId) -> Vec<ItemId> {
 
 /// Everyone else with `item` open.
 #[must_use]
+#[sismo::function("sync::presence::here")]
 pub fn here(item: ItemId) -> Vec<Peer> {
     let guard = peers();
     let Some(here) = guard.as_ref().and_then(|all| all.get(&item)) else {
@@ -280,6 +286,7 @@ pub fn watch(item: ItemId) -> flume::Receiver<()> {
 /// This device's presence in `item`: shared by everything showing it, so
 /// the header and the face publish through the same one.
 #[must_use]
+#[sismo::function("sync::presence::open")]
 pub fn open(item: ItemId) -> Arc<DocPresence> {
     let mut mine = MINE.lock().unwrap_or_else(PoisonError::into_inner);
     mine.retain(|(_, held)| held.strong_count() > 0);
@@ -316,6 +323,7 @@ impl std::fmt::Debug for DocPresence {
 }
 
 impl DocPresence {
+    #[sismo::function("sync::presence::repeat")]
     fn repeat(&self) {
         let state = self
             .state
@@ -327,6 +335,7 @@ impl DocPresence {
 }
 
 impl Presence for DocPresence {
+    #[sismo::function("sync::presence::publish")]
     fn publish(&self, state: Vec<u8>) {
         let mut held = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         if *held == state {
@@ -370,6 +379,7 @@ fn ensure_ticker() {
             .spawn(|| {
                 loop {
                     std::thread::sleep(HEARTBEAT);
+                    sismo::scope!("sync::presence::heartbeat");
                     let open: Vec<Arc<DocPresence>> = MINE
                         .lock()
                         .unwrap_or_else(PoisonError::into_inner)
@@ -382,6 +392,7 @@ fn ensure_ticker() {
                     sweep();
                     // A peer that died mid-stroke sends nothing more; its
                     // ghost must not wait for someone else to draw.
+                    sismo::scope!("sync::presence::expire_hands");
                     for board in crate::active_boards::all() {
                         crate::canvas::lock(&board).expire_hands();
                     }
@@ -394,6 +405,7 @@ fn ensure_ticker() {
 }
 
 /// Forget peers gone quiet, telling whoever watches their documents.
+#[sismo::function("sync::presence::sweep")]
 fn sweep() {
     let mut gone = Vec::new();
     if let Some(all) = peers().as_mut() {

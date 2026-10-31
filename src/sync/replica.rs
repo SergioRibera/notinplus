@@ -129,6 +129,7 @@ impl LibraryReplica {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    #[sismo::function("sync::replica::open_library")]
     fn open() -> Result<async_lock::MutexGuardArc<Library>, ReplicaError> {
         let handle = crate::library::shared_blocking()?;
         Ok(pollster::block_on(handle.lock_arc()))
@@ -150,6 +151,7 @@ impl LibraryReplica {
         {
             return Some(version.clone());
         }
+        sismo::scope!("sync::replica::version_from_disk");
         let bytes = bodies::read_doc_bytes(item)?;
         let version = Version(Doc::from_snapshot(&bytes).ok()?.version());
         self.versions().insert(item, (current, version.clone()));
@@ -159,6 +161,7 @@ impl LibraryReplica {
 
 /// Run `f` on the document as an open board or face holds it, when
 /// the item is on screen, without copying it.
+#[sismo::function("sync::replica::with_live")]
 fn with_live<T>(item: ItemId, f: impl FnOnce(&Doc) -> T) -> Option<T> {
     if let Some(board) = active_boards::get_item(item) {
         return Some(f(lock(&board).doc()));
@@ -169,6 +172,7 @@ fn with_live<T>(item: ItemId, f: impl FnOnce(&Doc) -> T) -> Option<T> {
 impl Replica for LibraryReplica {
     type Error = ReplicaError;
 
+    #[sismo::function("sync::replica::docs")]
     fn docs(&self) -> Vec<(DocId, Version)> {
         let Ok(lib) = Self::open() else {
             return Vec::new();
@@ -179,9 +183,12 @@ impl Replica for LibraryReplica {
                 out.push((DocId(item.id.0), version));
             }
         }
+        sismo::counter!("sync.replica.items", lib.index().items.len());
+        sismo::counter!("sync.replica.docs", out.len());
         out
     }
 
+    #[sismo::function("sync::replica::doc_version")]
     fn doc_version(&self, doc: DocId) -> Option<Version> {
         let Ok(lib) = Self::open() else {
             return None;
@@ -189,6 +196,7 @@ impl Replica for LibraryReplica {
         self.version_of(ItemId(doc.0), &lib)
     }
 
+    #[sismo::function("sync::replica::updates_since")]
     fn doc_updates_since(&self, doc: DocId, since: &Version) -> Result<Vec<u8>, ReplicaError> {
         let item = ItemId(doc.0);
         let updates = |doc: &Doc| {
@@ -207,6 +215,7 @@ impl Replica for LibraryReplica {
         }
     }
 
+    #[sismo::function("sync::replica::snapshot")]
     fn doc_snapshot(&self, doc: DocId) -> Result<Vec<u8>, ReplicaError> {
         match with_live(ItemId(doc.0), Doc::snapshot_bytes) {
             Some(bytes) => Ok(bytes?),
@@ -217,6 +226,7 @@ impl Replica for LibraryReplica {
         }
     }
 
+    #[sismo::function("sync::replica::import")]
     fn doc_import(&mut self, doc: DocId, bytes: &[u8]) -> Result<(), ReplicaError> {
         let item = ItemId(doc.0);
         let boards = active_boards::for_item(item);
@@ -241,13 +251,23 @@ impl Replica for LibraryReplica {
             }
             lock(&boards[0].1).doc().clone()
         };
-        let snapshot = merged.snapshot_bytes()?;
-        bodies::write_doc_bytes(item, &snapshot)?;
-        refs::record_doc(item, &merged);
+        let snapshot = {
+            sismo::scope!("sync::replica::import_snapshot");
+            merged.snapshot_bytes()?
+        };
+        {
+            sismo::scope!("sync::replica::import_write");
+            bodies::write_doc_bytes(item, &snapshot)?;
+        }
+        {
+            sismo::scope!("sync::replica::import_refs");
+            refs::record_doc(item, &merged);
+        }
         self.versions().remove(&item);
         Ok(())
     }
 
+    #[sismo::function("sync::replica::blob_heads")]
     fn blob_heads(&self) -> Vec<BlobHead> {
         let Ok(lib) = Self::open() else {
             return Vec::new();
@@ -255,6 +275,7 @@ impl Replica for LibraryReplica {
         lib.sync_heads(&Graveyard::load())
     }
 
+    #[sismo::function("sync::replica::blobs")]
     fn blobs(&self, keys: &[BlobKey]) -> Vec<Blob> {
         let Ok(lib) = Self::open() else {
             return Vec::new();
@@ -277,7 +298,9 @@ impl Replica for LibraryReplica {
             .collect()
     }
 
+    #[sismo::function("sync::replica::blob_merge")]
     fn blob_merge(&mut self, blob: Blob) -> Result<bool, ReplicaError> {
+        sismo::counter!("sync.in.blob_bytes", blob.bytes.len());
         let Some(record) = SyncRecord::decode(&blob.bytes) else {
             log::warn!("sync: undecodable record for {:?}", blob.head.key());
             return Ok(false);
@@ -287,6 +310,7 @@ impl Replica for LibraryReplica {
         let applied = pollster::block_on(lib.apply_sync_record(blob.head, record, &mut yard))?;
         drop(lib);
         if applied {
+            sismo::scope!("sync::replica::graveyard_save");
             yard.save()?;
         }
         Ok(applied)
@@ -296,6 +320,7 @@ impl Replica for LibraryReplica {
 /// Keep the shared cache in step after a `docs` pass. Called by the
 /// service with the list it just announced.
 impl LibraryReplica {
+    #[sismo::function("sync::replica::remember")]
     pub fn remember(&mut self, docs: &[(DocId, Version)]) {
         self.known = docs.iter().map(|(d, _)| *d).collect();
         for (doc, version) in docs {

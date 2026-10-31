@@ -36,11 +36,13 @@ pub enum LiveMessage {
 
 impl LiveMessage {
     #[must_use]
+    #[sismo::function("sync::live::encode")]
     pub fn to_bytes(&self) -> Vec<u8> {
         bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default()
     }
 
     #[must_use]
+    #[sismo::function("sync::live::decode")]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         bincode::decode_from_slice(bytes, bincode::config::standard())
             .ok()
@@ -68,6 +70,7 @@ pub fn watch(item: ItemId) -> flume::Receiver<LiveEvent> {
 }
 
 /// Hand `event` to every face watching `item`.
+#[sismo::function("sync::live::dispatch")]
 pub(super) fn dispatch(item: ItemId, event: &LiveEvent) {
     listeners().retain(|(watched, tx)| *watched != item || tx.send(event.clone()).is_ok());
 }
