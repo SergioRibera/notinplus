@@ -32,6 +32,7 @@ pub struct ParagraphSpan {
 }
 
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("bible::plan_chapter"))]
 pub fn plan_chapter(data: &ChapterRow) -> ChapterPlan {
     let mut blocks: Vec<Block> = Vec::new();
     let mut header_cursor = 0usize;

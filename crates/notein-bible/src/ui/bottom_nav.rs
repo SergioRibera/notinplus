@@ -32,6 +32,7 @@ where
     pub on_forward: Option<NavHandler>,
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("bible::bottom_nav"))]
 pub fn bottom_nav<FP, FN, FC>(
     book_name: &str,
     chapter: u16,

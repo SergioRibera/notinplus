@@ -24,6 +24,7 @@ impl BiblePlugin {
     ///
     /// # Errors
     /// [`DbError`] when the database cannot be opened.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::plugin_open"))]
     pub fn open() -> Result<Self, DbError> {
         let kind = Arc::new(BibleKind::new(Db::open_default()?, crate::new_shared()));
         catalog::register(&kind);
@@ -48,10 +49,12 @@ impl Plugin for BiblePlugin {
         registrar.face(BibleFace, kind);
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("bible::plugin_install"))]
     fn install(&self, host: &Host) {
         catalog::announce(Arc::clone(host));
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("bible::plugin_fonts"))]
     fn fonts(&self) -> Vec<Font> {
         crate::fonts::FACES
             .into_iter()
@@ -74,11 +77,13 @@ impl Face for BibleFace {
         face::header_actions()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("bible::plugin_render"))]
     fn render(&self, ctx: FaceContext<BibleKind>) -> Element {
         face::BiblePage { ctx }.into_element()
     }
 
     /// A leather cover with the translation's name.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::plugin_cover"))]
     fn cover(&self, cover: &CoverRequest) -> Option<Element> {
         let p = notein_ui_kit::palette();
         let translation = cover

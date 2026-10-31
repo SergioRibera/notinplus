@@ -58,6 +58,7 @@ pub(crate) fn use_installs() -> State<u64> {
 
 /// Toast every download as it ends, with a retry on failures, and pick up
 /// the ones a closed app cut short. Runs for the life of the app.
+#[cfg_attr(feature = "sismo", sismo::function("bible::catalog_announce"))]
 pub(crate) fn announce(host: Host) {
     let Some(installer) = installer() else {
         return;
@@ -76,6 +77,7 @@ pub(crate) fn announce(host: Host) {
     installer.resume();
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("bible::catalog_outcome"))]
 fn outcome_toast(installer: &'static Installer, outcome: Outcome) -> HostToast {
     match outcome {
         Outcome::Installed(bible_id) => HostToast::new(
@@ -122,6 +124,7 @@ fn label(entry: &BibleEntryView) -> String {
         .unwrap_or_else(|| entry.id.clone())
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("bible::catalog_installed"))]
 fn installed_ids() -> Vec<String> {
     kind()
         .and_then(|k| k.db().list_bibles().ok())
@@ -132,6 +135,7 @@ fn installed_ids() -> Vec<String> {
 }
 
 /// The catalogue, fetched once per run in the background.
+#[cfg_attr(feature = "sismo", sismo::function("bible::catalog_use"))]
 fn use_catalogue() -> State<Option<Result<Arc<CatalogueView>, InstallFailure>>> {
     static CACHE: OnceLock<std::sync::Mutex<Option<Arc<CatalogueView>>>> = OnceLock::new();
     let cached = CACHE
@@ -151,12 +155,19 @@ fn use_catalogue() -> State<Option<Result<Arc<CatalogueView>, InstallFailure>>> 
         };
         let (tx, rx) = flume::bounded(1);
         let installer = installer.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send(installer.catalogue().map(Arc::new).map_err(|e| {
-                log::warn!("bible catalogue: {e}");
-                InstallFailure::from(e)
-            }));
-        });
+        let spawned = std::thread::Builder::new()
+            .name("bible-catalogue".to_owned())
+            .spawn(move || {
+                #[cfg(feature = "sismo")]
+                sismo::scope!("bible::catalog_fetch");
+                let _ = tx.send(installer.catalogue().map(Arc::new).map_err(|e| {
+                    log::warn!("bible catalogue: {e}");
+                    InstallFailure::from(e)
+                }));
+            });
+        if let Err(err) = spawned {
+            log::warn!("bible catalogue thread: {err}");
+        }
         let mut state = state;
         spawn(async move {
             if let Ok(result) = rx.recv_async().await {
@@ -173,6 +184,7 @@ fn use_catalogue() -> State<Option<Result<Arc<CatalogueView>, InstallFailure>>> 
 }
 
 /// Open the catalog of translations.
+#[cfg_attr(feature = "sismo", sismo::function("bible::catalog_open"))]
 pub(crate) fn open() {
     Sheet::titled(tr!("catalog-title"))
         .subtitle(tr!("catalog-subtitle"))
@@ -245,6 +257,7 @@ fn language_chips(
 }
 
 impl Component for Catalog {
+    #[cfg_attr(feature = "sismo", sismo::function("bible::catalog"))]
     fn render(&self) -> impl IntoElement {
         let _installs = *use_installs().read();
         let catalogue = use_catalogue();
@@ -360,6 +373,7 @@ struct Row {
 }
 
 impl Component for Row {
+    #[cfg_attr(feature = "sismo", sismo::function("bible::catalog_row"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let id = self.entry.id.clone();
@@ -425,6 +439,7 @@ impl Component for Row {
 pub(crate) struct FirstUse;
 
 impl Component for FirstUse {
+    #[cfg_attr(feature = "sismo", sismo::function("bible::catalog_first_use"))]
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let _installs = *use_installs().read();

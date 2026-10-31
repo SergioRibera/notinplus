@@ -26,6 +26,7 @@ pub struct SnippetRun {
 /// the private-use markers written by `db::search::snippet()` and
 /// derives the reference label from the hit coordinates.
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("bible::search_hit_view"))]
 pub fn hit_to_view(hit: DbSearchHit, book_name: Option<&str>) -> SearchHitView {
     let (open, close) = snippet_markers();
     let runs = split_snippet(&hit.snippet, open, close);

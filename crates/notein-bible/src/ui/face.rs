@@ -67,7 +67,10 @@ impl PartialEq for BiblePage {
 }
 
 impl Component for BiblePage {
+    #[cfg_attr(feature = "sismo", sismo::function("bible::page"))]
     fn render(&self) -> impl IntoElement {
+        #[cfg(feature = "sismo")]
+        use_lifecycle_marks();
         // Re-render when an install finishes, so the first-use card
         // gives way to the reader.
         let _installs = *super::catalog::use_installs().read();
@@ -105,6 +108,7 @@ impl PartialEq for FirstUseFace {
 }
 
 impl Component for FirstUseFace {
+    #[cfg_attr(feature = "sismo", sismo::function("bible::first_use"))]
     fn render(&self) -> impl IntoElement {
         self.ctx.use_header_presses(|_| super::catalog::open());
         super::catalog::FirstUse
@@ -151,6 +155,7 @@ impl Reader {
     }
 
     /// Go to `book` `chapter`, bring `verse` into view and wash it.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::go"))]
     pub(super) fn go(&self, book: &str, chapter: u16, verse: u16) {
         let mut state = self.state;
         if let Err(e) = state.write().jump_to(&self.db, book, chapter) {
@@ -161,6 +166,7 @@ impl Reader {
     }
 
     /// Scroll to `verse` (the top for 0) and wash it for a moment.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::scroll_to_verse"))]
     fn show(&self, verse: u16) {
         if verse == 0 {
             let mut scroll = self.scroll;
@@ -180,6 +186,7 @@ impl Reader {
     }
 
     /// Follow `anchor`, switching translation when it names another one.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::follow"))]
     fn follow(&self, anchor: &BibleAnchor) {
         if self.bible_id() != anchor.bible_id {
             self.switch_bible(&anchor.bible_id);
@@ -188,6 +195,7 @@ impl Reader {
         self.go(&book, anchor.start_chapter, anchor.start_verse);
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("bible::switch_bible"))]
     fn switch_bible(&self, bible_id: &str) {
         let mut state = self.state;
         if let Err(e) = state.write().switch_bible(&self.db, bible_id) {
@@ -196,6 +204,7 @@ impl Reader {
     }
 
     /// The chapter after (or before) the current one, across books.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::chapter_step"))]
     fn step(&self, forward: bool) {
         let books = self.db.list_books(&self.bible_id()).unwrap_or_default();
         let mut state = self.state;
@@ -210,6 +219,7 @@ impl Reader {
     }
 
     /// Back (or forward) through the passages visited.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::history"))]
     fn history(&self, back: bool) {
         let mut state = self.state;
         let entry = if back {
@@ -228,6 +238,7 @@ impl Reader {
 /// The installed `book_id` of `bible_id` matching `candidate` in any
 /// case, else `candidate`. Stored anchors may carry the upper-case OSIS
 /// id while an install keys its books in lower case.
+#[cfg_attr(feature = "sismo", sismo::function("bible::canonical_book"))]
 fn canonical_book_id(db: &Db, bible_id: &str, candidate: &str) -> String {
     db.list_books(bible_id)
         .ok()
@@ -244,6 +255,7 @@ fn canonical_book_id(db: &Db, bible_id: &str, candidate: &str) -> String {
 /// translation was installed saved an empty translation and book; one
 /// whose translation was removed names one that is gone. Either way the
 /// reader starts at the first chapter of `fallback_bible`.
+#[cfg_attr(feature = "sismo", sismo::function("bible::settle_place"))]
 fn settle_place(db: &Db, state: &mut BibleViewerState, fallback_bible: &str) {
     let installed = db.list_bibles().unwrap_or_default();
     if !installed.iter().any(|b| b.id == state.bible_id) {
@@ -273,6 +285,7 @@ fn settle_place(db: &Db, state: &mut BibleViewerState, fallback_bible: &str) {
 
 /// The reader state at mount: the saved place, overridden by a jump
 /// queued while the document was closed. Returns the verse to wash.
+#[cfg_attr(feature = "sismo", sismo::function("bible::initial_state"))]
 fn initial_state(ctx: &FaceContext<BibleKind>, db: &Db) -> (BibleViewerState, Option<u16>) {
     let saved: BibleContent = ctx.store.load();
     let jump = ctx
@@ -303,6 +316,7 @@ fn initial_state(ctx: &FaceContext<BibleKind>, db: &Db) -> (BibleViewerState, Op
 
 /// The reader's state and the hooks that keep it: jumps sent while it is
 /// open, saving, and the lazy footnote fetch.
+#[cfg_attr(feature = "sismo", sismo::function("bible::use_reader"))]
 fn use_reader(ctx: &FaceContext<BibleKind>, db: &Db) -> Reader {
     // The verse a queued jump asked for, read once the state exists.
     let start = use_hook(|| Rc::new(Cell::new(None::<u16>)));
@@ -347,7 +361,7 @@ fn use_reader(ctx: &FaceContext<BibleKind>, db: &Db) -> Reader {
     });
     use_side_effect({
         let store: ContentStore<BibleContent> = ctx.store.clone();
-        move || store.save(&BibleSnapshot::from_state(&state.read()))
+        move || save_place(&store, &state.read())
     });
     // Content written elsewhere: another device, or the translation
     // picked in the edit sheet.
@@ -358,6 +372,8 @@ fn use_reader(ctx: &FaceContext<BibleKind>, db: &Db) -> Reader {
             let mut state = state;
             spawn(async move {
                 while changes.recv_async().await.is_ok() {
+                    #[cfg(feature = "sismo")]
+                    sismo::scope!("bible::content_changed");
                     let saved = store.load();
                     // Highlights merge as records; where someone else reads is
                     // theirs. Only another translation (the edit sheet) moves
@@ -393,6 +409,8 @@ fn use_reader(ctx: &FaceContext<BibleKind>, db: &Db) -> Reader {
             tx
         });
         move || {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("bible::footnotes_effect");
             let st = state.read();
             let landed = landed.clone();
             crate::install_background::spawn_fetch_footnotes(
@@ -409,6 +427,19 @@ fn use_reader(ctx: &FaceContext<BibleKind>, db: &Db) -> Reader {
     reader
 }
 
+/// Save where the reader is into the document.
+#[cfg_attr(feature = "sismo", sismo::function("bible::save_place"))]
+fn save_place(store: &ContentStore<BibleContent>, state: &BibleViewerState) {
+    store.save(&BibleSnapshot::from_state(state));
+}
+
+/// Marks in the profile for when a Bible face mounts and goes away.
+#[cfg(feature = "sismo")]
+fn use_lifecycle_marks() {
+    use_hook(|| sismo::instant!("bible::face_mount"));
+    use_drop(|| sismo::instant!("bible::face_drop"));
+}
+
 struct BibleViewer {
     ctx: FaceContext<BibleKind>,
     db: Db,
@@ -421,6 +452,7 @@ impl PartialEq for BibleViewer {
 }
 
 impl Component for BibleViewer {
+    #[cfg_attr(feature = "sismo", sismo::function("bible::viewer"))]
     fn render(&self) -> impl IntoElement {
         let reader = use_reader(&self.ctx, &self.db);
         let gesture = highlight::Gesture::use_gesture();
@@ -532,6 +564,7 @@ impl Component for BibleViewer {
 }
 
 /// The chapter: verses with highlights, footnotes and cross-references.
+#[cfg_attr(feature = "sismo", sismo::function("bible::chapter_body"))]
 fn chapter_body(
     reader: &Reader,
     data: &ChapterRow,
@@ -581,6 +614,7 @@ fn chapter_body(
 /// Publisher footnotes of the chapter; one citing a verse ("Cited in
 /// John 3:16") jumps there. The citation is read with the book names of
 /// the translation the footnote belongs to.
+#[cfg_attr(feature = "sismo", sismo::function("bible::footnotes_load"))]
 fn footnotes(db: &Db, data: &ChapterRow) -> Vec<FootnoteView> {
     db.footnotes_for_chapter(&data.bible_id, &data.book_id, data.chapter)
         .unwrap_or_default()
@@ -601,6 +635,7 @@ fn footnotes(db: &Db, data: &ChapterRow) -> Vec<FootnoteView> {
 }
 
 /// Cross-references of the chapter; the panel reads their text.
+#[cfg_attr(feature = "sismo", sismo::function("bible::cross_refs_load"))]
 fn cross_refs(db: &Db, data: &ChapterRow) -> Vec<CrossRefView> {
     db.cross_refs_for_chapter(&data.bible_id, &data.book_id, data.chapter)
         .unwrap_or_default()
@@ -641,6 +676,7 @@ impl Reader {
     /// The annotations of `data`, read from the database only when the
     /// chapter, the settings or its footnotes changed: the reader renders
     /// again on every flash, colour tried and panel toggle.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::annotations"))]
     fn annotations(&self, data: &ChapterRow) -> Annotations {
         let show_cross_refs = plugin_config::effective_enable_crossref(self.kind.config());
         let key = AnnotationKey {
@@ -653,6 +689,8 @@ impl Reader {
         if let Some((held, annotations)) = self.annotations.borrow().as_ref()
             && *held == key
         {
+            #[cfg(feature = "sismo")]
+            sismo::instant!("bible::annotations_cached");
             return annotations.clone();
         }
         let cross_refs = if show_cross_refs {

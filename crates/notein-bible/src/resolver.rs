@@ -24,12 +24,14 @@ use crate::reference::{self, ParsedRef};
 /// Resolve `input` against `bible_id`. Returns `None` when the string
 /// does not parse OR the parsed book cannot be matched.
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("bible::resolve"))]
 pub fn resolve(db: &Db, bible_id: &str, input: &str) -> Option<BibleAnchor> {
     let parsed = reference::parse(input)?;
     resolve_parsed(db, bible_id, &parsed)
 }
 
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("bible::resolve_parsed"))]
 pub fn resolve_parsed(db: &Db, bible_id: &str, parsed: &ParsedRef) -> Option<BibleAnchor> {
     let book_id = resolve_book_token(db, bible_id, &parsed.book_token)?;
     let start_verse = parsed.start_verse.unwrap_or(1);
@@ -50,6 +52,7 @@ pub fn resolve_parsed(db: &Db, bible_id: &str, parsed: &ParsedRef) -> Option<Bib
 /// the translation's own casing (biblionlabs ships lowercase `jhn`) so
 /// chapter queries hit the right row.
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("bible::resolve_book"))]
 pub fn resolve_book_token(db: &Db, bible_id: &str, token: &str) -> Option<String> {
     let wanted = book_key(token);
     if wanted.is_empty() {

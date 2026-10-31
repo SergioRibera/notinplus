@@ -14,6 +14,7 @@ use crate::ui::reader::{Other, Verses};
 
 /// This reader's place: chapter, how many verses, the verses, then the
 /// book id, all little endian.
+#[cfg_attr(feature = "sismo", sismo::function("bible::presence_encode"))]
 fn encode(book: &str, chapter: u16, verses: &Verses) -> Vec<u8> {
     let count = u16::try_from(verses.len()).unwrap_or(u16::MAX);
     let mut out = Vec::with_capacity(4 + verses.len() * 2 + book.len());
@@ -27,6 +28,7 @@ fn encode(book: &str, chapter: u16, verses: &Verses) -> Vec<u8> {
 }
 
 /// Book, chapter and verses from what [`encode`] made.
+#[cfg_attr(feature = "sismo", sismo::function("bible::presence_decode"))]
 fn decode(bytes: &[u8]) -> Option<(String, u16, BTreeSet<u16>)> {
     let word = |at: usize| -> Option<u16> {
         Some(u16::from_le_bytes(bytes.get(at..at + 2)?.try_into().ok()?))
@@ -41,6 +43,7 @@ fn decode(bytes: &[u8]) -> Option<(String, u16, BTreeSet<u16>)> {
 }
 
 /// Publish this reader's place and return the others in its chapter.
+#[cfg_attr(feature = "sismo", sismo::function("bible::presence_others"))]
 pub(super) fn use_others(reader: &Reader, gesture: Gesture) -> Rc<Vec<Other>> {
     let presence = use_hook({
         let (host, doc) = (Arc::clone(&reader.host), reader.doc);
@@ -57,6 +60,8 @@ pub(super) fn use_others(reader: &Reader, gesture: Gesture) -> Rc<Vec<Other>> {
     use_side_effect({
         let (presence, reader) = (Arc::clone(&presence), reader.clone());
         move || {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("bible::presence_publish");
             let verses = gesture.selected(&reader);
             let st = reader.state.read();
             presence.publish(encode(&st.current_book, st.current_chapter, &verses));
@@ -90,6 +95,8 @@ fn follow(presence: Arc<dyn Presence>, mut peers: State<Vec<Peer>>, reader: Read
         // Their place last taken, so only their moves move this reader.
         let mut taken: Option<(String, u16, Option<u16>)> = None;
         while changes.recv_async().await.is_ok() {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("bible::presence_changed");
             peers.set(presence.peers());
             let Some((book, chapter, verses)) =
                 presence.followed().and_then(|peer| decode(&peer.state))

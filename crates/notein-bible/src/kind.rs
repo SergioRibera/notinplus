@@ -60,6 +60,7 @@ pub struct BibleKind {
 
 impl BibleKind {
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("bible::kind_new"))]
     pub fn new(db: Db, config: SharedConfig) -> Self {
         Self {
             db,
@@ -87,6 +88,7 @@ impl BibleKind {
         &self.config
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("bible::kind_books"))]
     fn books_of(&self, bible: &str) -> Vec<BookRow> {
         if let Some(books) = self
             .books
@@ -105,6 +107,7 @@ impl BibleKind {
     }
 
     /// Drop cached book lists (after installing a translation).
+    #[cfg_attr(feature = "sismo", sismo::function("bible::kind_refresh"))]
     pub fn refresh(&self) {
         self.books
             .write()
@@ -121,6 +124,7 @@ impl BibleKind {
 
     /// "Romanos 8:16–17" for an anchor.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("bible::kind_label"))]
     pub fn label(&self, anchor: &BibleAnchor) -> String {
         let book = self.book_name(&anchor.bible_id, &anchor.book_id);
         if anchor.start_chapter != anchor.end_chapter {
@@ -139,6 +143,7 @@ impl BibleKind {
     }
 
     /// Text of every verse `anchor` covers, `(verse, text)` in order.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::kind_verses"))]
     fn verses(&self, anchor: &BibleAnchor) -> Vec<(u16, String)> {
         (anchor.start_chapter..=anchor.end_chapter)
             .filter_map(|chapter| {
@@ -179,6 +184,7 @@ impl BibleKind {
     }
 
     /// The verses `anchors` cover and where they come from.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::kind_passage_quote"))]
     fn passage_quote(&self, anchors: &[BibleAnchor]) -> Option<Quote> {
         let first = anchors.first()?;
         let verses: Vec<(u16, String)> = anchors.iter().flat_map(|a| self.verses(a)).collect();
@@ -207,6 +213,7 @@ impl BibleKind {
     /// "Génesis 1:1, 3–4" for passages of one chapter, each label joined
     /// by "; " otherwise.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("bible::kind_label_passages"))]
     pub fn label_of_passages(&self, anchors: &[BibleAnchor]) -> String {
         let one_chapter = anchors.first().filter(|first| {
             anchors.iter().all(|a| {
@@ -246,6 +253,7 @@ impl BibleKind {
     /// The verses `anchors` cover as plain text for other apps, closed by
     /// their reference.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("bible::kind_shared_text"))]
     pub fn shared_text(&self, anchors: &[BibleAnchor]) -> Option<String> {
         self.passage_quote(anchors)
             .map(|quote| format!("{}\n\n— {}", quote.body, quote.source))
@@ -253,6 +261,7 @@ impl BibleKind {
 
     /// The passage `text` names, when it reads as a reference that
     /// exists in translation `bible`.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::kind_passage"))]
     fn passage(&self, bible: &str, text: &str) -> Option<Hit<BibleAnchor>> {
         let anchor = crate::resolver::resolve(&self.db, bible, text)?;
         let verses = self.verses(&anchor);
@@ -322,6 +331,7 @@ impl DocumentKind for BibleKind {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("bible::kind_search"))]
     fn search<'a>(&'a self, query: &'a SearchQuery) -> Self::Hits<'a> {
         let (open, close) = crate::db::snippet_markers();
         let bible = self.default_bible();
@@ -353,6 +363,7 @@ impl DocumentKind for BibleKind {
             .into_iter()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("bible::kind_outline"))]
     fn outline(&self, content: &BibleContent) -> Vec<OutlineNode<BibleAnchor>> {
         let bible = &content.bible_id;
         if bible.is_empty() {
@@ -378,6 +389,7 @@ impl DocumentKind for BibleKind {
             .collect()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("bible::kind_marks"))]
     fn marks(&self, content: &BibleContent) -> Vec<Mark<BibleAnchor>> {
         content
             .highlights
@@ -404,6 +416,7 @@ impl DocumentKind for BibleKind {
             .collect()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("bible::kind_summary"))]
     fn summary(&self, content: &BibleContent) -> Option<String> {
         let bible = self
             .db
@@ -430,6 +443,7 @@ impl DocumentKind for BibleKind {
         true
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("bible::kind_quote"))]
     fn quote(&self, _doc: DocMeta<'_>, anchor: &BibleAnchor) -> Option<Quote> {
         self.passage_quote(std::slice::from_ref(anchor))
     }
@@ -493,6 +507,7 @@ impl DocumentKind for BibleKind {
         vec![entry]
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("bible::kind_create"))]
     fn create(
         &self,
         entry: &str,
@@ -529,6 +544,7 @@ impl DocumentKind for BibleKind {
         })
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("bible::kind_launch"))]
     fn launch(&self, entry: &str) {
         #[cfg(feature = "ui")]
         if entry == ENTRY_CATALOG {

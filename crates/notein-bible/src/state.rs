@@ -124,11 +124,13 @@ impl BibleSnapshot {
     }
 
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("bible::snapshot_encode"))]
     pub fn encode(&self) -> Vec<u8> {
         notein_sdk::Payload::to_bytes(self)
     }
 
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("bible::snapshot_decode"))]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         bincode::decode_from_slice(bytes, bincode::config::standard())
             .ok()
@@ -246,6 +248,7 @@ impl BibleViewerState {
     /// evicting the oldest entry when capacity is exceeded. If an entry
     /// for the same (book, chapter) already exists it is replaced in
     /// place rather than duplicated.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::push_chapter"))]
     pub fn push_chapter(&mut self, chapter: ChapterRow) {
         if let Some(pos) = self
             .chapter_cache
@@ -272,6 +275,7 @@ impl BibleViewerState {
     /// already present. Scroll resets on an actual load (i.e. after a
     /// navigation step) but is preserved when the chapter was already
     /// cached.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::ensure_loaded"))]
     pub fn ensure_current_loaded(&mut self, db: &Db) -> Result<(), DbError> {
         if self.current_chapter_data().is_some() {
             return Ok(());
@@ -285,6 +289,7 @@ impl BibleViewerState {
     /// Move to the previous chapter. Crosses book boundaries by walking
     /// `books` backwards; the first chapter of the first book is a
     /// no-op (returns `false`).
+    #[cfg_attr(feature = "sismo", sismo::function("bible::prev_chapter"))]
     pub fn go_prev_chapter(&mut self, db: &Db, books: &[BookRow]) -> Result<bool, DbError> {
         if self.current_chapter > 1 {
             self.current_chapter -= 1;
@@ -310,6 +315,7 @@ impl BibleViewerState {
     /// Move to the next chapter. Crosses book boundaries by walking
     /// `books` forward; the last chapter of the last book is a no-op
     /// (returns `false`).
+    #[cfg_attr(feature = "sismo", sismo::function("bible::next_chapter"))]
     pub fn go_next_chapter(&mut self, db: &Db, books: &[BookRow]) -> Result<bool, DbError> {
         let max_in_current = db.chapter_count(&self.bible_id, &self.current_book)?;
         if self.current_chapter < max_in_current {
@@ -334,6 +340,7 @@ impl BibleViewerState {
 
     /// Swap the active translation while staying on the same book +
     /// chapter. Clears the chapter cache so the new text loads fresh.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::state_switch_bible"))]
     pub fn switch_bible(&mut self, db: &Db, new_bible_id: &str) -> Result<(), DbError> {
         let from = self.current_as_nav();
         self.bible_id = new_bible_id.into();
@@ -353,6 +360,7 @@ impl BibleViewerState {
     /// Jump directly to `(book, chapter)`. Pushes the current position
     /// onto the back stack so the user can rewind via the toolbar.
     /// Fails if the chapter does not exist in the installed Bible.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::jump_to"))]
     pub fn jump_to(&mut self, db: &Db, book: &str, chapter: u16) -> Result<(), DbError> {
         let from = self.current_as_nav();
         self.current_book = book.into();
@@ -367,6 +375,7 @@ impl BibleViewerState {
     /// Jump directly to a stored history entry WITHOUT re-pushing the
     /// current position — used by the back arrow so a repeated back
     /// click walks the stack monotonically.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::jump_to_entry"))]
     pub fn jump_to_entry(&mut self, db: &Db, entry: &NavEntry) -> Result<(), DbError> {
         self.bible_id.clone_from(&entry.bible_id);
         self.current_book.clone_from(&entry.book_id);
@@ -408,6 +417,7 @@ impl BibleViewerState {
     /// Convert the current selection into a persistent highlight.
     /// Returns the created bookmark id, or `None` when there is no
     /// selection to promote.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::highlight_commit"))]
     pub fn commit_selection_as_highlight(
         &mut self,
         color: Option<u32>,
@@ -427,6 +437,7 @@ impl BibleViewerState {
         Some(id)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("bible::highlight_remove"))]
     pub fn remove_highlight(&mut self, id: BookmarkId) -> bool {
         let before = self.highlights.len();
         self.highlights.retain(|h| h.id != id);
@@ -439,6 +450,7 @@ impl BibleViewerState {
     /// unioned with the new span and its colour / note replaced.
     ///
     /// Returns the `BookmarkId` of the mutated / inserted bookmark.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::highlight_upsert"))]
     pub fn upsert_highlight(
         &mut self,
         book_id: &str,
@@ -480,6 +492,7 @@ impl BibleViewerState {
     /// per chapter render to decide which verses need a background
     /// wash + gutter note icon.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("bible::highlights_on"))]
     pub fn highlights_on(&self, book_id: &str, chapter: u16) -> Vec<&BibleBookmark> {
         self.highlights
             .iter()

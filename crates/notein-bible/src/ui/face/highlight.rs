@@ -65,6 +65,7 @@ struct Selection {
 }
 
 impl Selection {
+    #[cfg_attr(feature = "sismo", sismo::function("bible::highlight_verses"))]
     fn of(reader: &Reader, verses: &BTreeSet<u16>) -> Self {
         let runs = runs(verses);
         let st = reader.state.peek();
@@ -183,6 +184,7 @@ impl Gesture {
 
     /// The verses the selection holds, when it is on the chapter `reader`
     /// shows.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::selected_verses"))]
     pub(super) fn selected(self, reader: &Reader) -> Verses {
         let st = reader.state.read();
         let here = self.place.read().as_ref().is_some_and(|(book, chapter)| {
@@ -203,6 +205,8 @@ impl Gesture {
         use_drop({
             let (reader, place) = (reader.clone(), self.place);
             move || {
+                #[cfg(feature = "sismo")]
+                sismo::scope!("bible::selection_drop");
                 // Unknown once the state went first: close it to be safe.
                 if !place.try_peek().is_some_and(|place| place.is_none()) {
                     reader.ui.close_selection();
@@ -210,6 +214,8 @@ impl Gesture {
             }
         });
         use_side_effect(move || {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("bible::selection_place_check");
             let here = {
                 let st = reader.state.read();
                 (st.current_book.clone(), st.current_chapter)
@@ -238,6 +244,7 @@ impl Gesture {
         EventHandler::new(move |verse| self.toggle(&reader, verse))
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("bible::selection_end"))]
     fn end(self) {
         let (mut verses, mut place, mut preview) = (self.verses, self.place, self.preview);
         verses.set(Verses::default());
@@ -247,6 +254,7 @@ impl Gesture {
 
     /// The verses `target` names join the selection, which starts over
     /// when it was on another chapter.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::selection_open"))]
     fn open(self, reader: &Reader, target: HighlightTarget) {
         let here = {
             let st = reader.state.peek();
@@ -267,6 +275,7 @@ impl Gesture {
 
     /// `verse` leaves the selection when it held it, else joins it. The
     /// bar goes away with the last verse.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::selection_toggle"))]
     fn toggle(self, reader: &Reader, verse: u16) {
         let mut verses = (**self.verses.peek()).clone();
         if !verses.remove(&verse) {
@@ -281,6 +290,7 @@ impl Gesture {
     }
 
     /// Hold `verses` and show the bar for them.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::selection_show"))]
     fn show(self, reader: &Reader, verses: BTreeSet<u16>) {
         let selection = Rc::new(Selection::of(reader, &verses));
         let mut held = self.verses;
@@ -336,6 +346,7 @@ impl Gesture {
 
     /// The bar button that sends the selected verses, with their reference,
     /// to another app; `None` where the system cannot share.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::selection_share"))]
     fn share(self, reader: &Reader, selection: &Selection) -> Option<SelectionExtra> {
         if !reader.host.can_share() {
             return None;
@@ -360,6 +371,7 @@ impl Gesture {
 
     /// The note popover for a selection of one run; its colour previews
     /// live on the verses.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::selection_annotate"))]
     fn annotate(self, reader: &Reader, selection: &Selection, x: f32, y: f32) {
         let Some((lo, hi)) = selection.single() else {
             return;

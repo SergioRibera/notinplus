@@ -15,6 +15,7 @@ use super::Reader;
 
 /// Most verse matches listed.
 const LIMIT: usize = 50;
+#[cfg_attr(feature = "sismo", sismo::function("bible::search_open"))]
 pub(super) fn open(reader: &Reader) {
     Sheet::titled(tr!("search-title"))
         .child(SearchPane {
@@ -29,6 +30,7 @@ struct SearchPane {
 }
 
 impl Component for SearchPane {
+    #[cfg_attr(feature = "sismo", sismo::function("bible::search_pane"))]
     fn render(&self) -> impl IntoElement {
         let query = use_state(String::new);
         let mut everywhere = use_state(|| false);
@@ -81,6 +83,7 @@ impl Component for SearchPane {
 }
 
 /// One result; pressing it opens the verse and closes the search.
+#[cfg_attr(feature = "sismo", sismo::function("bible::search_hit_row"))]
 fn hit_row(reader: &Reader, hit: SearchHitView) -> Element {
     let p = palette();
     let reader = reader.clone();
@@ -119,6 +122,7 @@ fn hit_row(reader: &Reader, hit: SearchHitView) -> Element {
 /// Matches for `query`: a reference it names first, then verses with
 /// its words, in the open translation or in every one of `everywhere`
 /// (each hit then says which).
+#[cfg_attr(feature = "sismo", sismo::function("bible::search_find"))]
 fn find(reader: &Reader, query: &str, everywhere: Option<&[BibleRow]>) -> Vec<SearchHitView> {
     let db = &reader.db;
     let bible_id = reader.bible_id();
@@ -149,11 +153,14 @@ fn find(reader: &Reader, query: &str, everywhere: Option<&[BibleRow]>) -> Vec<Se
     if let Some(place) = reference(reader, &books, query) {
         views.insert(0, place);
     }
+    #[cfg(feature = "sismo")]
+    sismo::counter!("bible.search_results", views.len());
     views
 }
 
 /// `query` read as a reference to a verse that exists in the open
 /// translation.
+#[cfg_attr(feature = "sismo", sismo::function("bible::search_reference"))]
 fn reference(reader: &Reader, books: &[BookRow], query: &str) -> Option<SearchHitView> {
     let db = &reader.db;
     let bible_id = reader.bible_id();

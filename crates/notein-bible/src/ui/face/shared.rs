@@ -22,6 +22,7 @@ fn key(highlight: &BibleBookmark) -> String {
 }
 
 /// Every highlight in `records`, in reading order.
+#[cfg_attr(feature = "sismo", sismo::function("bible::records_highlights"))]
 pub(super) fn highlights(records: &dyn Records) -> Vec<BibleBookmark> {
     let mut out: Vec<BibleBookmark> = records
         .entries()
@@ -50,6 +51,7 @@ pub(super) struct Synced(RefCell<HashSet<String>>);
 
 impl Synced {
     /// Write what changed in `highlights` since the last call.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::records_push"))]
     pub(super) fn push(&self, records: &dyn Records, highlights: &[BibleBookmark]) {
         let held: BTreeMap<String, Vec<u8>> = records.entries().into_iter().collect();
         let mut now = HashSet::new();
@@ -73,12 +75,14 @@ impl Synced {
     }
 
     /// Note what arrived, so it is not taken for a local removal.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::records_pulled"))]
     fn pulled(&self, highlights: &[BibleBookmark]) {
         *self.0.borrow_mut() = highlights.iter().map(key).collect();
     }
 }
 
 /// Keep `state`'s highlights merged with `records` both ways.
+#[cfg_attr(feature = "sismo", sismo::function("bible::records_use"))]
 pub(super) fn use_shared_highlights(records: &Arc<dyn Records>, state: State<BibleViewerState>) {
     let synced = use_hook(|| Rc::new(Synced::default()));
     use_hook({
@@ -96,6 +100,8 @@ pub(super) fn use_shared_highlights(records: &Arc<dyn Records>, state: State<Bib
             let changes = records.changes();
             spawn(async move {
                 while changes.recv_async().await.is_ok() {
+                    #[cfg(feature = "sismo")]
+                    sismo::scope!("bible::records_changed");
                     let stored = highlights(&*records);
                     if state.peek().highlights != stored {
                         synced.pulled(&stored);

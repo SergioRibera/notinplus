@@ -7,6 +7,7 @@ use notein_ui_kit::{Action, ActionEntry, ActionList};
 use super::Reader;
 
 /// Open the menu under the header button at `at`.
+#[cfg_attr(feature = "sismo", sismo::function("bible::translation_open"))]
 pub(super) fn open(reader: &Reader, at: (f32, f32)) {
     use freya::icons::lucide;
     let current = reader.bible_id();

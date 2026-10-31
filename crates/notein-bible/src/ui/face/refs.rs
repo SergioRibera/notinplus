@@ -40,6 +40,7 @@ struct Target {
 
 impl VerseRefs {
     /// The references of `verse` in the chapter `reader` shows.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::refs_load"))]
     fn of(reader: &Reader, verse: u16) -> Self {
         let st = reader.state.peek();
         let (bible_id, book, chapter) = (
@@ -108,6 +109,7 @@ impl VerseRefs {
 
 /// Show the references of `verse`: in the panel when `wide`, in a sheet
 /// otherwise. Pressing the open verse again closes the panel.
+#[cfg_attr(feature = "sismo", sismo::function("bible::refs_open"))]
 pub(super) fn open(reader: &Reader, verse: u16, wide: bool) {
     let refs = VerseRefs::of(reader, verse);
     if wide {
@@ -137,6 +139,7 @@ pub(super) struct Panel {
 }
 
 impl Component for Panel {
+    #[cfg_attr(feature = "sismo", sismo::function("bible::refs_panel"))]
     fn render(&self) -> impl IntoElement {
         let open = self.reader.refs;
         let current = open.read().clone();
@@ -155,6 +158,7 @@ impl Component for Panel {
 
 impl Panel {
     /// The verse and the count over the list.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::refs_body"))]
     fn body(&self, refs: VerseRefs) -> Element {
         let open = self.reader.refs;
         let p = palette();
@@ -217,6 +221,7 @@ struct List {
 }
 
 impl Component for List {
+    #[cfg_attr(feature = "sismo", sismo::function("bible::refs_list"))]
     fn render(&self) -> impl IntoElement {
         rect()
             .width(Size::fill())
@@ -243,6 +248,7 @@ struct Row {
 }
 
 impl Component for Row {
+    #[cfg_attr(feature = "sismo", sismo::function("bible::refs_row"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let mut hovered = use_state(|| false);

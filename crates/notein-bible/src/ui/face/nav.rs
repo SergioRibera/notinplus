@@ -10,6 +10,7 @@ use super::Reader;
 
 /// Books of the open Bible in the order its manifest lists them, so
 /// each tradition keeps its own canon.
+#[cfg_attr(feature = "sismo", sismo::function("bible::nav_books"))]
 pub(super) fn open_books(reader: &Reader) {
     let books = reader.db.list_books(&reader.bible_id()).unwrap_or_default();
     let mut grid = grid();
@@ -23,6 +24,7 @@ pub(super) fn open_books(reader: &Reader) {
 }
 
 /// Chapters of `book_id`; picking one moves the reader there.
+#[cfg_attr(feature = "sismo", sismo::function("bible::nav_chapters"))]
 fn open_chapters(reader: &Reader, book_id: &str, name: &str) {
     let count = reader
         .db

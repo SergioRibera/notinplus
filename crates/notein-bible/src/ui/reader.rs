@@ -91,6 +91,7 @@ pub struct FootnoteView {
 }
 
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("bible::footnotes_by_verse"))]
 pub fn footnotes_by_verse(notes: &[FootnoteView]) -> HashMap<u16, Vec<FootnoteView>> {
     let mut out: HashMap<u16, Vec<FootnoteView>> = HashMap::new();
     for n in notes {
@@ -114,6 +115,7 @@ pub struct CrossRefView {
 /// Build a map keyed by source-verse so the paragraph renderer can look
 /// up chips in O(1) per verse without walking the full list.
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("bible::cross_refs_by_verse"))]
 pub fn cross_refs_by_verse(refs: &[CrossRefView]) -> HashMap<u16, Vec<CrossRefView>> {
     let mut out: HashMap<u16, Vec<CrossRefView>> = HashMap::new();
     for r in refs {
@@ -140,6 +142,7 @@ pub struct VerseStyle {
 /// passes `state.highlights_on(book, chapter)` for the chapter being
 /// rendered.
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("bible::style_map"))]
 pub fn style_map(highlights: &[&BibleBookmark]) -> HashMap<u16, VerseStyle> {
     let mut out: HashMap<u16, VerseStyle> = HashMap::new();
     for h in highlights {
@@ -284,6 +287,8 @@ impl DragSelect {
     /// The long press armed with `token` came due: select its verse when
     /// the press is still the same, still and on one verse.
     fn hold_due(mut self, token: u64) {
+        #[cfg(feature = "sismo")]
+        sismo::instant!("bible::verse_hold_due");
         let still_pressing = *self.pressing.peek() && *self.hold.peek() == token;
         let start = *self.start.peek();
         if let Some(verse) = start.filter(|_| still_pressing && *self.end.peek() == start) {
@@ -448,6 +453,7 @@ impl std::fmt::Debug for Reading {
 /// `scroll_ctx` when the host drives it. `flash_verse` is washed over any
 /// highlight so a jump target stands out.
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("bible::chapter_view"))]
 pub fn chapter_view(
     plan: &ChapterPlan,
     highlights: &[&BibleBookmark],
@@ -551,12 +557,24 @@ fn book_title_header(plan: &ChapterPlan) -> impl IntoElement {
 /// Walk every block in reading order. The paragraph that owns verse 1
 /// gets its "1" slot replaced by the big chapter number — the rest
 /// render as regular verse-number superscripts.
+#[cfg_attr(feature = "sismo", sismo::function("bible::verse_layout"))]
 fn all_blocks(
     plan: &ChapterPlan,
     styles: &HashMap<u16, VerseStyle>,
     reading: &Reading,
 ) -> impl IntoElement {
     let mut root = rect().width(Size::fill()).spacing(14.);
+    #[cfg(feature = "sismo")]
+    sismo::counter!(
+        "bible.verses_rendered",
+        plan.blocks
+            .iter()
+            .map(|b| match b {
+                Block::Paragraph(spans) => spans.len(),
+                Block::Header(_) => 0,
+            })
+            .sum::<usize>()
+    );
     for block in &plan.blocks {
         match block {
             Block::Paragraph(spans) => {
@@ -630,6 +648,7 @@ fn offset_to_verse(ranges: &[VerseRange], offset: usize) -> Option<u16> {
 /// The laid-out paragraph measures in physical pixels, the pointer in
 /// logical ones: the point is scaled before the hit test, or on a dense
 /// screen it lands up and to the left, on an earlier verse.
+#[cfg_attr(feature = "sismo", sismo::function("bible::verse_hit_test"))]
 fn hit_offset(holder: &ParagraphHolder, global: CursorPoint, area: Area) -> Option<usize> {
     if area.width() <= 0.0 || area.height() <= 0.0 {
         return None;
@@ -670,6 +689,7 @@ fn character_at(paragraph: &SkParagraph, caret: usize, (x, y): (f64, f64)) -> us
 impl VerseParagraph {
     /// Add the verses to `p`; returns it with each verse's UTF-16 range
     /// and the ranges to tint.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::verse_compose"))]
     fn compose(
         &self,
         mut p: Paragraph,
@@ -787,6 +807,7 @@ impl Component for VerseParagraph {
         clippy::too_many_lines,
         reason = "one handler per pointer event of the gestures"
     )]
+    #[cfg_attr(feature = "sismo", sismo::function("bible::verse_paragraph"))]
     fn render(&self) -> impl IntoElement {
         let holder = use_hook(ParagraphHolder::default);
         let drag = use_consume::<DragSelect>();
@@ -931,6 +952,7 @@ const UNDERLINE_GAP: f32 = 2.5;
 ///
 /// Before the first layout publishes into the holder it returns an
 /// empty rect; the paragraph's `on_sized` renders again once laid out.
+#[cfg_attr(feature = "sismo", sismo::function("bible::highlight_paint"))]
 fn build_bg_rects(
     holder: &ParagraphHolder,
     items: &[(usize, usize, Color)],
@@ -1075,6 +1097,7 @@ impl std::fmt::Debug for VerseMarker {
 }
 
 impl Component for VerseMarker {
+    #[cfg_attr(feature = "sismo", sismo::function("bible::verse_marker"))]
     fn render(&self) -> impl IntoElement {
         let verse = self.verse;
         let inner = match self.display {
@@ -1263,6 +1286,7 @@ impl std::fmt::Debug for FootnoteLetter {
 }
 
 impl Component for FootnoteLetter {
+    #[cfg_attr(feature = "sismo", sismo::function("bible::footnote_letter"))]
     fn render(&self) -> impl IntoElement {
         const POPUP_WIDTH: f32 = 300.0;
         let hover = Hover::use_hover();
@@ -1344,6 +1368,7 @@ struct RefButton {
 }
 
 impl Component for RefButton {
+    #[cfg_attr(feature = "sismo", sismo::function("bible::ref_button"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let icon_size = self.font_size * 0.6;
