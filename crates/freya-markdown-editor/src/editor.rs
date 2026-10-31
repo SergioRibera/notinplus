@@ -420,12 +420,9 @@ impl Component for MarkdownEditor {
             .unwrap_or_default();
         let initial_parse = parse.clone();
         let owned = use_hook(move || {
-            #[cfg(feature = "sismo")]
-            sismo::scope!("markdown::editor_create");
             EditorController::create(Document::parse_with(&initial, &initial_parse))
         });
-        #[cfg(feature = "sismo")]
-        use_drop(|| sismo::instant!("markdown::editor_unmount"));
+        crate::profile::mark_unmount();
         let controller = self.controller.unwrap_or(owned);
         use_hook(move || controller.set_parse_options(parse));
         if let Some(read_only) = self.read_only {
@@ -437,9 +434,6 @@ impl Component for MarkdownEditor {
 
         let view = controller.view();
         let document = &view.document;
-        #[cfg(feature = "sismo")]
-        sismo::counter!("markdown.blocks", document.blocks().len());
-        #[cfg(feature = "sismo")]
         crate::profile::count_document(document);
         let read_only = view.read_only;
         let shared = Shared {

@@ -1,9 +1,9 @@
 //! Profiler helpers that name work after the block kind it is for. Without
 //! the `sismo` feature they compile to nothing.
 
+use crate::document::{BlockKind, Document};
 #[cfg(feature = "sismo")]
-use crate::document::{Atom, Document};
-use crate::document::BlockKind;
+use crate::document::Atom;
 
 /// Runs `build` inside a span named after `kind`.
 #[cfg(feature = "sismo")]
@@ -46,6 +46,7 @@ pub(crate) fn kind_span<T>(_kind: &BlockKind, build: impl FnOnce() -> T) -> T {
 #[cfg(feature = "sismo")]
 pub(crate) fn count_document(document: &Document) {
     sismo::scope!("markdown::count_document");
+    sismo::counter!("markdown.blocks", document.blocks().len());
     let mut kinds = [0usize; 17];
     let (mut formulas, mut images, mut embeds, mut chars) = (0usize, 0usize, 0usize, 0usize);
     let mut atoms = |content: &crate::document::Inline| {
@@ -108,3 +109,15 @@ pub(crate) fn count_document(document: &Document) {
     sismo::counter!("markdown.embeds", embeds);
     sismo::counter!("markdown.chars", chars);
 }
+
+#[cfg(not(feature = "sismo"))]
+pub(crate) const fn count_document(_document: &Document) {}
+
+/// Marks when the calling component unmounts.
+#[cfg(feature = "sismo")]
+pub(crate) fn mark_unmount() {
+    freya::prelude::use_drop(|| sismo::instant!("markdown::editor_unmount"));
+}
+
+#[cfg(not(feature = "sismo"))]
+pub(crate) const fn mark_unmount() {}

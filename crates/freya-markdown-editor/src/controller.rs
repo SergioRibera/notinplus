@@ -191,6 +191,19 @@ pub(crate) struct EditorState {
     atom_menu: Option<AtomSlot>,
 }
 
+/// Names the teardown of an editor's undo history in profiles.
+#[cfg(feature = "sismo")]
+impl Drop for EditorState {
+    fn drop(&mut self) {
+        sismo::scope!("markdown::state_drop");
+        sismo::counter!(
+            "markdown.history_len",
+            self.history.undo.len() + self.history.redo.len()
+        );
+        drop(std::mem::take(&mut self.history));
+    }
+}
+
 /// Where the editor, its blocks and its caret are, in window coordinates.
 #[derive(Default)]
 struct BlockLayout {
