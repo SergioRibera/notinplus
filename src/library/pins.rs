@@ -9,6 +9,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`]; persistence errors.
+    #[sismo::function]
     pub async fn pin_items(&mut self, ids: &[ItemId]) -> Result<()> {
         for id in ids {
             if self.item(*id).is_none() {
@@ -23,6 +24,7 @@ impl Library {
 
     /// # Errors
     /// Persistence errors.
+    #[sismo::function]
     pub async fn unpin_items(&mut self, ids: &[ItemId]) -> Result<()> {
         self.data.index.pins.retain(|p| !ids.contains(p));
         self.persist()
@@ -32,6 +34,7 @@ impl Library {
     ///
     /// # Errors
     /// Persistence errors.
+    #[sismo::function]
     pub async fn move_pin(&mut self, from: usize, to: usize) -> Result<()> {
         if from >= self.data.index.pins.len() {
             return Ok(());

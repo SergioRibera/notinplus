@@ -166,6 +166,7 @@ impl Library {
     ///
     /// # Errors
     /// Filesystem or persistence errors.
+    #[sismo::function]
     pub async fn import_planned(
         &mut self,
         bundle: &ParsedBundle,
@@ -326,6 +327,7 @@ impl Library {
     ///
     /// # Errors
     /// Persistence errors.
+    #[sismo::function]
     pub async fn undo_import(&mut self, receipt: &ImportReceipt) -> Result<()> {
         for item in &receipt.items {
             if self.data.index.item(*item).is_some() {

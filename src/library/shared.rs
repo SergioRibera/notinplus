@@ -21,6 +21,7 @@ static LISTENERS: Mutex<Vec<flume::Sender<()>>> = Mutex::new(Vec::new());
 /// # Errors
 /// [`LibraryError`] when the runtime is not up or the store cannot be
 /// read.
+#[sismo::function]
 pub async fn shared() -> Result<LibHandle> {
     SHARED
         .get_or_try_init(|| async {

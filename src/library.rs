@@ -180,6 +180,7 @@ impl Library {
     /// # Errors
     /// [`LibraryError::NotFound`] when `parent` is neither the root
     /// nor a known folder id.
+    #[sismo::function]
     pub async fn create_folder(
         &mut self,
         parent: FolderId,
@@ -214,6 +215,7 @@ impl Library {
 
     /// # Errors
     /// [`LibraryError::NotFound`] / [`LibraryError::RootImmutable`].
+    #[sismo::function]
     pub async fn rename_folder(&mut self, id: FolderId, name: &str) -> Result<()> {
         Self::reject_root(id)?;
         let now = now_millis();
@@ -231,6 +233,7 @@ impl Library {
     /// [`LibraryError::NotFound`], [`LibraryError::Cycle`] when the
     /// requested move would place a folder inside its own subtree, or
     /// [`LibraryError::RootImmutable`] when reparenting the root.
+    #[sismo::function]
     pub async fn move_folder(&mut self, id: FolderId, new_parent: FolderId) -> Result<()> {
         Self::reject_root(id)?;
         self.ensure_folder_target(new_parent)?;
@@ -250,6 +253,7 @@ impl Library {
 
     /// # Errors
     /// [`LibraryError::NotFound`] / [`LibraryError::RootImmutable`].
+    #[sismo::function]
     pub async fn set_folder_color(&mut self, id: FolderId, color: Option<Rgba>) -> Result<()> {
         Self::reject_root(id)?;
         let now = now_millis();
@@ -265,6 +269,7 @@ impl Library {
 
     /// # Errors
     /// [`LibraryError::NotFound`] / [`LibraryError::RootImmutable`].
+    #[sismo::function]
     pub async fn set_folder_icon(&mut self, id: FolderId, icon: Option<String>) -> Result<()> {
         Self::reject_root(id)?;
         let now = now_millis();
@@ -286,6 +291,7 @@ impl Library {
     /// [`LibraryError::NotFound`] when any referenced tag / the folder
     /// itself is unknown, or [`LibraryError::RootImmutable`] when `id`
     /// is the root.
+    #[sismo::function]
     pub async fn set_folder_tags(&mut self, id: FolderId, mut tags: Vec<TagId>) -> Result<()> {
         Self::reject_root(id)?;
         for t in &tags {
@@ -311,6 +317,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`] / [`LibraryError::RootImmutable`].
+    #[sismo::function]
     pub async fn purge_folder(&mut self, id: FolderId) -> Result<()> {
         Self::reject_root(id)?;
         if self.data.index.folder(id).is_none() {
@@ -355,6 +362,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`] when `folder` is unknown.
+    #[sismo::function]
     pub async fn create_item(
         &mut self,
         folder: FolderId,
@@ -393,6 +401,7 @@ impl Library {
 
     /// # Errors
     /// [`LibraryError::NotFound`].
+    #[sismo::function]
     pub async fn rename_item(&mut self, id: ItemId, name: &str) -> Result<()> {
         let now = now_millis();
         let item = self
@@ -407,6 +416,7 @@ impl Library {
 
     /// # Errors
     /// [`LibraryError::NotFound`] when either id is unknown.
+    #[sismo::function]
     pub async fn move_item(&mut self, id: ItemId, folder: FolderId) -> Result<()> {
         self.ensure_folder_target(folder)?;
         let now = now_millis();
@@ -422,6 +432,7 @@ impl Library {
 
     /// # Errors
     /// [`LibraryError::NotFound`].
+    #[sismo::function]
     pub async fn set_item_color(&mut self, id: ItemId, color: Option<Rgba>) -> Result<()> {
         let now = now_millis();
         let item = self
@@ -441,6 +452,7 @@ impl Library {
     /// # Errors
     /// [`LibraryError::NotFound`] when any referenced tag / the item
     /// itself is unknown.
+    #[sismo::function]
     pub async fn set_item_tags(&mut self, id: ItemId, mut tags: Vec<TagId>) -> Result<()> {
         for t in &tags {
             if self.data.index.tag(*t).is_none() {
@@ -464,6 +476,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`].
+    #[sismo::function]
     pub async fn set_item_background(
         &mut self,
         id: ItemId,
@@ -485,6 +498,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`].
+    #[sismo::function]
     pub async fn set_item_thumbnail(
         &mut self,
         id: ItemId,
@@ -507,6 +521,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`]; filesystem or persistence errors.
+    #[sismo::function]
     pub async fn duplicate_item(&mut self, id: ItemId) -> Result<ItemId> {
         let source = self
             .data
@@ -533,6 +548,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`].
+    #[sismo::function]
     pub async fn purge_item(&mut self, id: ItemId) -> Result<()> {
         let before = self.data.index.items.len();
         self.data.index.items.retain(|i| i.id != id);
@@ -555,6 +571,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`].
+    #[sismo::function]
     pub async fn forget_item(&mut self, id: ItemId) -> Result<()> {
         let before = self.data.index.items.len();
         self.data.index.items.retain(|i| i.id != id);
@@ -570,6 +587,7 @@ impl Library {
 
     /// # Errors
     /// Runtime / codec / backend failure.
+    #[sismo::function]
     pub async fn create_tag(&mut self, name: &str, color: Rgba) -> Result<TagId> {
         let id = TagId::new_v4();
         self.data.index.tags.push(Tag {
@@ -584,6 +602,7 @@ impl Library {
 
     /// # Errors
     /// [`LibraryError::NotFound`].
+    #[sismo::function]
     pub async fn rename_tag(&mut self, id: TagId, name: &str) -> Result<()> {
         let tag = self
             .data
@@ -597,6 +616,7 @@ impl Library {
 
     /// # Errors
     /// [`LibraryError::NotFound`].
+    #[sismo::function]
     pub async fn set_tag_color(&mut self, id: TagId, color: Rgba) -> Result<()> {
         let tag = self
             .data
@@ -612,6 +632,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`].
+    #[sismo::function]
     pub async fn delete_tag(&mut self, id: TagId) -> Result<()> {
         let before = self.data.index.tags.len();
         self.data.index.tags.retain(|t| t.id != id);
@@ -696,6 +717,7 @@ impl Library {
     /// # Errors
     /// [`LibraryError::NotFound`] when either item is unknown,
     /// [`LibraryError::SelfLink`] when both ends are the same item.
+    #[sismo::function]
     pub async fn create_link(
         &mut self,
         from: ItemId,
@@ -720,6 +742,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`] when no live link has that id.
+    #[sismo::function]
     pub async fn delete_link(&mut self, id: LinkId) -> Result<()> {
         if !self.data.links.remove(id, now_millis()) {
             return Err(LibraryError::NotFound(NotFoundKind::Link(id)));
@@ -745,6 +768,7 @@ impl Library {
     /// # Errors
     /// [`LibraryError::NotFound`] when the item is unknown, plus body
     /// I/O failures.
+    #[sismo::function]
     pub async fn attach_pdf(&mut self, id: ItemId, bytes: &[u8]) -> Result<()> {
         if self.data.index.item(id).is_none() {
             return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
@@ -763,6 +787,7 @@ impl Library {
     /// # Errors
     /// [`LibraryError::NotFound`] / body I/O.
     #[allow(clippy::unused_async)]
+    #[sismo::function]
     pub async fn read_pdf(&self, id: ItemId) -> Result<Vec<u8>> {
         if self.data.index.item(id).is_none() {
             return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
@@ -778,6 +803,7 @@ impl Library {
     /// # Errors
     /// Runtime / data-store / codec failures surfacing through
     /// [`LibraryError`].
+    #[sismo::function]
     pub async fn create_workspace(
         &mut self,
         name: &str,
@@ -801,6 +827,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`].
+    #[sismo::function]
     pub async fn duplicate_workspace(&mut self, id: WorkspaceId) -> Result<WorkspaceId> {
         let now = now_millis();
         let source = self
@@ -828,6 +855,7 @@ impl Library {
 
     /// # Errors
     /// [`LibraryError::NotFound`].
+    #[sismo::function]
     pub async fn rename_workspace(&mut self, id: WorkspaceId, name: &str) -> Result<()> {
         let now = now_millis();
         let w = self
@@ -845,6 +873,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`]; persistence errors.
+    #[sismo::function]
     pub async fn set_workspace_pinned(&mut self, id: WorkspaceId, pinned: bool) -> Result<()> {
         let now = now_millis();
         let w = self
@@ -859,6 +888,7 @@ impl Library {
 
     /// # Errors
     /// [`LibraryError::NotFound`].
+    #[sismo::function]
     pub async fn set_workspace_color(
         &mut self,
         id: WorkspaceId,
@@ -882,6 +912,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`].
+    #[sismo::function]
     pub async fn set_workspace_layout(
         &mut self,
         id: WorkspaceId,
@@ -906,6 +937,7 @@ impl Library {
     /// # Errors
     /// * [`LibraryError::NotFound`] when the workspace or target pane
     ///   is unknown.
+    #[sismo::function]
     pub async fn split_workspace_pane(
         &mut self,
         workspace: WorkspaceId,
@@ -938,6 +970,7 @@ impl Library {
     /// # Errors
     /// * [`LibraryError::NotFound`] when the workspace is unknown or
     ///   `path` does not land on a split node.
+    #[sismo::function]
     pub async fn set_workspace_split_ratio(
         &mut self,
         workspace: WorkspaceId,
@@ -965,6 +998,7 @@ impl Library {
     /// # Errors
     /// * [`LibraryError::NotFound`] when the workspace / either pane /
     ///   source index is unknown, or `src == dst`.
+    #[sismo::function]
     pub async fn move_workspace_tab(
         &mut self,
         workspace: WorkspaceId,
@@ -996,6 +1030,7 @@ impl Library {
     /// # Errors
     /// * [`LibraryError::NotFound`] when the workspace, either pane or
     ///   the source index is unknown.
+    #[sismo::function]
     pub async fn move_workspace_tab_to_split(
         &mut self,
         workspace: WorkspaceId,
@@ -1031,6 +1066,7 @@ impl Library {
     /// # Errors
     /// * [`LibraryError::NotFound`] when the workspace or pane is
     ///   unknown, or `from` is out of range.
+    #[sismo::function]
     pub async fn reorder_pane_tab(
         &mut self,
         workspace: WorkspaceId,
@@ -1066,6 +1102,7 @@ impl Library {
     /// # Errors
     /// * [`LibraryError::NotFound`] when the workspace is unknown or
     ///   `target` is not a leaf.
+    #[sismo::function]
     pub async fn close_workspace_pane(
         &mut self,
         workspace: WorkspaceId,
@@ -1094,6 +1131,7 @@ impl Library {
     /// # Errors
     /// * [`LibraryError::NotFound`] when the workspace or pane is
     ///   unknown.
+    #[sismo::function]
     pub async fn add_pane_tab(
         &mut self,
         workspace: WorkspaceId,
@@ -1108,6 +1146,7 @@ impl Library {
     /// # Errors
     /// * [`LibraryError::NotFound`] when the workspace or pane is
     ///   unknown.
+    #[sismo::function]
     pub async fn add_scratch_tab(&mut self, workspace: WorkspaceId, pane: PaneId) -> Result<()> {
         self.push_tab(workspace, pane, PaneTab::scratch()).await
     }
@@ -1117,6 +1156,7 @@ impl Library {
     /// # Errors
     /// * [`LibraryError::NotFound`] when the workspace or pane is
     ///   unknown.
+    #[sismo::function]
     pub async fn add_tab(
         &mut self,
         workspace: WorkspaceId,
@@ -1152,6 +1192,7 @@ impl Library {
     /// # Errors
     /// * [`LibraryError::NotFound`] when the workspace or pane is
     ///   unknown, or `index` is out of range.
+    #[sismo::function]
     pub async fn close_pane_tab(
         &mut self,
         workspace: WorkspaceId,
@@ -1194,6 +1235,7 @@ impl Library {
     ///
     /// # Errors
     /// Runtime / codec / backend failure.
+    #[sismo::function]
     pub async fn close_item_tabs(&mut self, items: &[ItemId]) -> Result<()> {
         let now = now_millis();
         let mut touched = false;
@@ -1226,6 +1268,7 @@ impl Library {
     /// # Errors
     /// * [`LibraryError::NotFound`] when the workspace or pane is
     ///   unknown.
+    #[sismo::function]
     pub async fn focus_pane_tab(
         &mut self,
         workspace: WorkspaceId,
@@ -1255,6 +1298,7 @@ impl Library {
     /// # Errors
     /// * [`LibraryError::NotFound`] when the workspace is unknown or
     ///   `pane` is given but not present in the layout.
+    #[sismo::function]
     pub async fn focus_workspace_pane(
         &mut self,
         workspace: WorkspaceId,
@@ -1282,6 +1326,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`] when `id` is not in the index.
+    #[sismo::function]
     pub async fn set_active_workspace(&mut self, id: Option<WorkspaceId>) -> Result<()> {
         if let Some(wid) = id
             && self.data.workspaces.workspace(wid).is_none()
@@ -1298,6 +1343,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`].
+    #[sismo::function]
     pub async fn delete_workspace(&mut self, id: WorkspaceId) -> Result<()> {
         let pos = self
             .data

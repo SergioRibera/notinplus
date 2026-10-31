@@ -32,6 +32,7 @@ pub fn new_notebook(item: ItemId) {
 ///
 /// # Errors
 /// [`LibraryError`] when `item` is gone or the library cannot write.
+#[sismo::function]
 pub async fn create_notebook(lib: &mut Library, item: ItemId) -> Result<ItemId> {
     let parent = lib
         .item(item)

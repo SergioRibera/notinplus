@@ -101,6 +101,7 @@ impl Library {
     ///
     /// # Errors
     /// Store failure while persisting.
+    #[sismo::function]
     pub async fn apply_sync_record(
         &mut self,
         incoming: BlobHead,

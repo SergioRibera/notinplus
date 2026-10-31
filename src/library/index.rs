@@ -39,6 +39,7 @@ pub const NAMESPACE: &str = "rs.sergioribera.notinplus";
 ///
 /// # Errors
 /// Runtime / data-store / codec failures.
+#[sismo::function]
 pub async fn load(client: &DataStoreClient) -> Result<Option<LibraryIndex>> {
     let raw = client.get_bytes(INDEX_KEY.to_owned()).await?;
     let Some(bytes) = raw else {
@@ -60,6 +61,7 @@ pub async fn load(client: &DataStoreClient) -> Result<Option<LibraryIndex>> {
 ///
 /// # Errors
 /// Runtime / data-store / codec failures.
+#[sismo::function]
 pub async fn load_workspaces(client: &DataStoreClient) -> Result<WorkspaceIndex> {
     let raw = client.get_bytes(WORKSPACES_KEY.to_owned()).await?;
     let Some(bytes) = raw else {
@@ -77,6 +79,7 @@ pub const LINKS_KEY: &str = "library.links.v1";
 ///
 /// # Errors
 /// Runtime / data-store / codec failures.
+#[sismo::function]
 pub async fn load_links(client: &DataStoreClient) -> Result<LinkIndex> {
     let raw = client.get_bytes(LINKS_KEY.to_owned()).await?;
     let Some(bytes) = raw else {

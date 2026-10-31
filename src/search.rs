@@ -176,6 +176,7 @@ pub fn run(query: &str, data: &LibraryData) -> Results {
 }
 
 /// Run `query` on a background thread.
+#[sismo::function]
 pub async fn run_async(query: String, data: std::sync::Arc<LibraryData>) -> Results {
     let (tx, rx) = flume::bounded(1);
     let spawned = std::thread::Builder::new()

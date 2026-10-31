@@ -75,6 +75,7 @@ impl Library {
     ///
     /// # Errors
     /// [`LibraryError::NotFound`] for an unknown id; persistence errors.
+    #[sismo::function]
     pub async fn trash_items(
         &mut self,
         ids: &[ItemId],
@@ -129,6 +130,7 @@ impl Library {
     /// # Errors
     /// [`LibraryError::NotFound`] / [`LibraryError::RootImmutable`];
     /// persistence errors.
+    #[sismo::function]
     pub async fn trash_folder(&mut self, id: FolderId) -> Result<TrashReceipt> {
         Self::reject_root(id)?;
         if self.data.index.folder(id).is_none() {
@@ -183,6 +185,7 @@ impl Library {
     ///
     /// # Errors
     /// Persistence errors.
+    #[sismo::function]
     pub async fn restore_batch(&mut self, batch: u64) -> Result<usize> {
         let at = now_millis();
         let mut restored = 0;
@@ -253,6 +256,7 @@ impl Library {
     ///
     /// # Errors
     /// Persistence errors.
+    #[sismo::function]
     pub async fn purge_batch(&mut self, batch: u64) -> Result<()> {
         let folders: Vec<FolderId> = self
             .data
@@ -290,6 +294,7 @@ impl Library {
     ///
     /// # Errors
     /// Persistence errors.
+    #[sismo::function]
     pub async fn empty_trash(&mut self) -> Result<()> {
         let mut batches: Vec<u64> = self
             .data
@@ -317,6 +322,7 @@ impl Library {
     ///
     /// # Errors
     /// Persistence errors.
+    #[sismo::function]
     pub async fn purge_expired(&mut self, retention: Option<u64>) -> Result<usize> {
         let Some(retention) = retention else {
             return Ok(0);

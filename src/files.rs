@@ -77,6 +77,7 @@ fn filter(extensions: &[&str], mime_types: &[&str]) -> FileFilter {
 ///
 /// # Errors
 /// [`FileError`] when the picker or the read fails.
+#[sismo::function]
 pub async fn pick(
     title: &str,
     extensions: &[&str],
@@ -119,6 +120,7 @@ pub struct Saved {
 ///
 /// # Errors
 /// [`FileError`] when the picker or the write fails (no space).
+#[sismo::function]
 pub async fn save(
     title: &str,
     suggested: &str,

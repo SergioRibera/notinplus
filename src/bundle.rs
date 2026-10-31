@@ -407,6 +407,7 @@ impl ParsedBundle {
     ///
     /// # Errors
     /// Library persistence failures.
+    #[sismo::function]
     pub async fn merge(&self, lib: &mut Library) -> Result<()> {
         lib.import_bundle(self).await.map_err(BundleError::Library)
     }
