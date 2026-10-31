@@ -265,6 +265,8 @@ struct Link {
     /// Which end opened the channel.
     dialer: DeviceId,
     since: Instant,
+    /// The run of the process at the far end; another one is a restart.
+    session: u64,
 }
 
 impl Link {
@@ -419,7 +421,13 @@ impl Node {
             tracing::warn!(target: "notein-sync", peer = %addr, "hello with inconsistent identity");
             return;
         }
-        if self.by_addr.get(&addr) == Some(&beacon.device) && key == Some(beacon.public) {
+        if self.by_addr.get(&addr) == Some(&beacon.device)
+            && key == Some(beacon.public)
+            && self
+                .links
+                .get(&beacon.device)
+                .is_some_and(|link| link.session == beacon.session)
+        {
             // A hello on a channel already open: the device renamed itself.
             self.emit(NetEvent::Renamed(PeerInfo::from_beacon(&beacon, addr)));
             return;
@@ -490,6 +498,7 @@ impl Node {
                 conn,
                 dialer,
                 since: Instant::now(),
+                session: beacon.session,
             },
         );
         self.by_addr.insert(addr, beacon.device);

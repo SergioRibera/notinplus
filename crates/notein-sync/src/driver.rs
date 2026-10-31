@@ -865,7 +865,19 @@ impl<R: Replica> SyncDriver<R> {
         for link in self.shares.values_mut() {
             link.engine.forget_peer(device);
         }
+        let restarted = self
+            .connected
+            .get(&device)
+            .is_some_and(|known| known.session != peer.session);
         self.connected.insert(device, peer);
+        if restarted && self.is_related(device) {
+            // Another run of the app: whatever the old one was doing
+            // (ink under the pen, a pointer, a place in a document) is gone.
+            out.push(Action::Event(DriverEvent::PeerOnline {
+                device,
+                online: false,
+            }));
+        }
         if let Some(relay) = self.relay.as_mut()
             && relay.device == device
         {
@@ -2025,6 +2037,7 @@ mod tests {
             public: *driver.profile.key().public(),
             name: driver.profile.name().to_owned(),
             addr: addr(port),
+            session: 7,
         }
     }
 
@@ -2310,6 +2323,40 @@ mod tests {
             DocStatus::Unknown,
             "nothing is known until the peer announces again"
         );
+    }
+
+    #[test]
+    fn a_peer_back_with_another_session_leaves_and_rejoins() {
+        let (mut small, large) = trusted_pair();
+        let online = |device| {
+            move |out: &[Action], online: bool| {
+                out.contains(&Action::Event(DriverEvent::PeerOnline { device, online }))
+            }
+        };
+        let seen = online(large.profile.id());
+        let out = small
+            .on_event(NetEvent::Connected(info(&large, 2)))
+            .unwrap();
+        assert!(seen(&out, true) && !seen(&out, false));
+        // The same run on a new channel is no departure.
+        let out = small
+            .on_event(NetEvent::Connected(info(&large, 2)))
+            .unwrap();
+        assert!(!seen(&out, false));
+        let restarted = PeerInfo {
+            session: 8,
+            ..info(&large, 2)
+        };
+        let out = small.on_event(NetEvent::Connected(restarted)).unwrap();
+        let left = out
+            .iter()
+            .position(|a| seen(std::slice::from_ref(a), false))
+            .expect("the old run leaves");
+        let back = out
+            .iter()
+            .position(|a| seen(std::slice::from_ref(a), true))
+            .expect("the new run arrives");
+        assert!(left < back);
     }
 
     #[test]

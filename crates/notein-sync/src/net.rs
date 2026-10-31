@@ -7,6 +7,7 @@
 
 use std::fmt;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::identity::{DeviceId, DeviceKey};
@@ -21,6 +22,14 @@ pub const DEFAULT_PORT: u16 = 7710;
 /// Bumped whenever the frames exchanged on a channel change shape.
 pub const WIRE_VERSION: u16 = 1;
 
+/// Random for each run of the process: a device that comes back with
+/// another one was restarted, whatever its channels looked like.
+#[must_use]
+pub fn session_id() -> u64 {
+    static SESSION: OnceLock<u64> = OnceLock::new();
+    *SESSION.get_or_init(rand::random)
+}
+
 /// What a device says about itself, both in LAN beacons and as the
 /// first frame on every channel.
 #[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
@@ -29,6 +38,8 @@ pub struct Beacon {
     pub public: [u8; 32],
     pub name: String,
     pub wire: u16,
+    /// See [`session_id`].
+    pub session: u64,
 }
 
 impl Beacon {
@@ -39,6 +50,7 @@ impl Beacon {
             public: *key.public(),
             name: name.into(),
             wire: WIRE_VERSION,
+            session: session_id(),
         }
     }
 
@@ -57,6 +69,8 @@ pub struct PeerInfo {
     pub public: [u8; 32],
     pub name: String,
     pub addr: SocketAddr,
+    /// The run of the process it is in, see [`session_id`].
+    pub session: u64,
 }
 
 impl PeerInfo {
@@ -67,6 +81,7 @@ impl PeerInfo {
             public: beacon.public,
             name: beacon.name.clone(),
             addr,
+            session: beacon.session,
         }
     }
 }
