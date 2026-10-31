@@ -1811,13 +1811,13 @@ impl<R: Replica> SyncDriver<R> {
             }
             RelayMessage::Gone { share } => {
                 let me = self.profile.id();
-                if self.share(share).is_some_and(|s| s.is_owner(me)) {
-                    out.extend(self.relay_register(share));
-                } else if self.shares.remove(&share).is_some() {
-                    out.push(Action::Event(DriverEvent::ShareRemoved {
-                        share,
-                        reason: Removal::Ended,
-                    }));
+                match self.share(share).map(|s| (s.is_owner(me), s.owner.device)) {
+                    Some((true, _)) => out.extend(self.relay_register(share)),
+                    // A relay that lost its mailboxes says the same as one
+                    // whose owner closed the share: only the owner can tell
+                    // which, so ask it.
+                    Some((false, owner)) => out.extend(self.share_round_for(share, owner)?),
+                    None => {}
                 }
             }
             RelayMessage::Registered { share } => {
@@ -2528,6 +2528,66 @@ mod tests {
                 .any(|a| matches!(a, Action::Event(e) if e == ended))
         );
         assert!(owner.share(id).is_none());
+    }
+
+    /// A relay this driver uses, already connected.
+    fn on_relay(driver: &mut SyncDriver<MemReplica>) -> DeviceId {
+        let key = crate::identity::DeviceKey::generate();
+        driver.set_relay(Some(RelayAddr {
+            host: "relay:7710".into(),
+            public: *key.public(),
+        }));
+        driver
+            .on_event(NetEvent::Connected(PeerInfo {
+                device: key.id(),
+                public: *key.public(),
+                name: "relay".into(),
+                addr: addr(9),
+                session: 1,
+            }))
+            .unwrap();
+        key.id()
+    }
+
+    fn from_relay(relay: DeviceId, message: &RelayMessage) -> NetEvent {
+        NetEvent::Message {
+            from: relay,
+            bytes: relay_payload(message),
+        }
+    }
+
+    #[test]
+    fn a_relay_that_lost_a_share_does_not_end_it() {
+        let mut owner = driver("Sergio");
+        let mut guest = driver("Ana");
+        let share = shared_doc(&owner);
+        let id = share.id;
+        let invite = share.invite();
+        owner.create_share(share);
+        connect_both(&mut owner, &mut guest);
+        deliver(guest.join(invite), &mut guest, &mut owner);
+        guest
+            .on_event(NetEvent::Disconnected(owner.profile.id()))
+            .unwrap();
+
+        let relay = on_relay(&mut guest);
+        let out = guest
+            .on_event(from_relay(relay, &RelayMessage::Gone { share: id }))
+            .unwrap();
+        assert!(guest.share(id).is_some());
+        assert!(
+            !out.iter()
+                .any(|a| matches!(a, Action::Event(DriverEvent::ShareRemoved { .. })))
+        );
+        // The owner is asked instead, through the relay.
+        let asked = out.iter().any(|a| match a {
+            Action::Send { device, bytes, .. } if *device == relay => matches!(
+                relay_message(bytes),
+                Some(RelayMessage::Forward { to, .. }) if to == *owner.profile.key().public()
+            ),
+            _ => false,
+        });
+        assert!(asked, "{out:?}");
     }
 
     #[test]
