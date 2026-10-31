@@ -28,6 +28,7 @@ use crate::state::LibraryView;
 
 /// Editor theme for the active palette.
 #[must_use]
+#[sismo::function("editor::theme")]
 pub fn theme(p: &Palette) -> EditorTheme {
     let mut theme = if p.dark {
         EditorTheme::dark()
@@ -56,12 +57,14 @@ pub fn theme(p: &Palette) -> EditorTheme {
 
 /// Whether editors show `**markdown**` marks near the caret.
 #[must_use]
+#[sismo::function("editor::show_marks")]
 pub fn show_marks() -> bool {
     crate::settings::SettingsStore::try_get().is_some_and(|s| s.read().notes.show_markdown_marks)
 }
 
 /// Whether quoted content is inserted as a live quote.
 #[must_use]
+#[sismo::function("editor::live_quotes")]
 pub fn live_quotes() -> bool {
     crate::settings::SettingsStore::try_get().is_none_or(|s| s.read().notes.live_quotes)
 }
@@ -74,6 +77,7 @@ pub fn editor(value: impl Into<Writable<String>>, controller: EditorController) 
 /// [`configure`] for the body of `item`: its images load from the item's
 /// folder and new ones are stored there.
 #[must_use]
+#[sismo::function("editor::configure_for")]
 pub fn configure_for(
     editor: MarkdownEditor,
     item: crate::library::model::ItemId,
@@ -85,6 +89,7 @@ pub fn configure_for(
 }
 
 /// Set `editor` up the way every editor in Notein is.
+#[sismo::function("editor::configure")]
 pub fn configure(editor: MarkdownEditor) -> MarkdownEditor {
     let editor = editor
         .theme(theme(&palette()))
@@ -107,6 +112,7 @@ pub fn configure(editor: MarkdownEditor) -> MarkdownEditor {
         .on_request_keyboard(crate::soft_keyboard::show_soon)
         .suggestions(
             SuggestionGroup::new(tr!("editor-suggest-references"), move |query| {
+                sismo::scope!("editor::reference_suggestions");
                 let data = LibraryView::get().data();
                 references::suggestions(query, data.as_deref())
                     .into_iter()
@@ -123,6 +129,7 @@ pub fn configure(editor: MarkdownEditor) -> MarkdownEditor {
     editor
 }
 
+#[sismo::function("editor::suggestion")]
 fn suggestion(found: references::Suggestion) -> Suggestion {
     if found.quote {
         return quote_suggestion(found);
@@ -142,6 +149,7 @@ fn suggestion(found: references::Suggestion) -> Suggestion {
                 anchor.clone(),
             );
             SuggestionAction::Run(SuggestionRun::new(move |controller| {
+                sismo::scope!("editor::insert_reference");
                 if let Some(kind) = crate::plugins::kind(&kind) {
                     kind.cited(doc, &anchor);
                 }
@@ -161,10 +169,12 @@ fn suggestion(found: references::Suggestion) -> Suggestion {
 }
 
 /// Entry that inserts what `found` points at as a block quote.
+#[sismo::function("editor::quote_suggestion")]
 fn quote_suggestion(found: references::Suggestion) -> Suggestion {
     let target = found.target;
     let live = live_quotes();
     let run = SuggestionRun::new(move |controller| {
+        sismo::scope!("editor::insert_quote");
         let data = LibraryView::get().data();
         let Some(quote) = references::quote(&target, data.as_deref()) else {
             return;
@@ -223,6 +233,7 @@ struct Chip {
 }
 
 impl Component for Chip {
+    #[sismo::function("editor::chip")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let data = LibraryView::get().data();
@@ -240,6 +251,7 @@ impl Component for Chip {
         rect()
             .scale((self.zoom, self.zoom))
             .on_pointer_down(move |event: Event<PointerEventData>| {
+                sismo::scope!("editor::chip_open");
                 event.stop_propagation();
                 let in_app = !matches!(target, SourceRef::External { .. });
                 crate::plugins::navigate::open(&target, Placement::Preferred);
@@ -299,6 +311,7 @@ impl EditorField {
 }
 
 impl Component for EditorField {
+    #[sismo::function("editor::field")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let controller = use_editor_controller();

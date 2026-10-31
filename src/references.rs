@@ -64,6 +64,7 @@ pub struct ChipDisplay {
 
 /// Resolve `src` against the library and the catalog.
 #[must_use]
+#[sismo::function("references::display")]
 pub fn display(src: &SourceRef, data: Option<&LibraryData>) -> ChipDisplay {
     match src {
         SourceRef::External { url } => ChipDisplay {
@@ -141,6 +142,7 @@ pub struct Suggestion {
 /// from every kind's search. The first places of a kind that can quote
 /// them come with a second entry that inserts their content.
 #[must_use]
+#[sismo::function("references::suggestions")]
 pub fn suggestions(query: &str, data: Option<&LibraryData>) -> Vec<Suggestion> {
     let needle = notein_plugin::fold(query.trim());
     let mut out: Vec<Suggestion> = data
@@ -207,6 +209,7 @@ pub fn suggestions(query: &str, data: Option<&LibraryData>) -> Vec<Suggestion> {
 /// What `target` holds, quoted by its kind. `None` when the kind cannot
 /// quote or the place is gone.
 #[must_use]
+#[sismo::function("references::quote")]
 pub fn quote(target: &SourceRef, data: Option<&LibraryData>) -> Option<Quote> {
     let SourceRef::Plugin {
         plugin_id,
@@ -233,6 +236,7 @@ pub fn quote(target: &SourceRef, data: Option<&LibraryData>) -> Option<Quote> {
 /// Markdown of `quote` as a block quote of plain lines (lists become
 /// bullets, headings bold) closed by a chip to `target`.
 #[must_use]
+#[sismo::function("references::quote_markdown")]
 pub fn quote_markdown(quote: &Quote, target: &SourceRef) -> String {
     let mut lines = quote_lines(&quote.body);
     lines.push(format!("— {}", chip_markdown(&quote.source, target)));
@@ -246,6 +250,7 @@ pub fn quote_markdown(quote: &Quote, target: &SourceRef) -> String {
 /// Markdown of `quote` as a quote that keeps showing what `target` holds
 /// now; the lines written are what it held when inserted.
 #[must_use]
+#[sismo::function("references::live_quote_markdown")]
 pub fn live_quote_markdown(quote: &Quote, target: &SourceRef) -> String {
     format!(
         "> [!{}]\n>\n{}",
@@ -265,6 +270,7 @@ pub struct QuoteLine {
 
 /// The blocks of `markdown` as plain lines.
 #[must_use]
+#[sismo::function("references::quote_text")]
 pub fn quote_text(markdown: &str) -> Vec<QuoteLine> {
     Document::parse(markdown)
         .blocks()
@@ -286,6 +292,7 @@ pub fn quote_text(markdown: &str) -> Vec<QuoteLine> {
 }
 
 /// One line per block of `markdown`, in the shape a quote keeps.
+#[sismo::function("references::quote_lines")]
 fn quote_lines(markdown: &str) -> Vec<String> {
     let document = Document::parse(markdown);
     document
@@ -316,12 +323,14 @@ fn quote_lines(markdown: &str) -> Vec<String> {
 
 /// Markdown that renders as a chip for `target`.
 #[must_use]
+#[sismo::function("references::chip_markdown")]
 pub fn chip_markdown(label: &str, target: &SourceRef) -> String {
     format!("[{}]({})", label.replace(['[', ']'], ""), target.to_url())
 }
 
 /// Insert a chip for `target` in `from`'s notebook, creating the
 /// notebook when `from` has none, and show it beside.
+#[sismo::function("references::insert_in_notebook")]
 pub fn insert_in_notebook(from: ItemId, target: SourceRef) {
     spawn_in_window(async move {
         let Ok(handle) = crate::library::shared().await else {

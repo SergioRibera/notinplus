@@ -18,6 +18,7 @@ pub const LIVE_QUOTE: &str = "notein:live";
 pub(super) struct LiveQuotes;
 
 impl Decorator for LiveQuotes {
+    #[sismo::function("editor::live_quotes")]
     fn render_transclusion(&self, transclusion: &TransclusionContext<'_>) -> Option<Element> {
         (transclusion.kind == LIVE_QUOTE).then(|| {
             LiveQuote {
@@ -44,6 +45,7 @@ struct LiveQuote {
 }
 
 impl Component for LiveQuote {
+    #[sismo::function("editor::live_quote")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let mut hovered = use_state(|| false);
@@ -128,6 +130,7 @@ impl Component for LiveQuote {
     }
 }
 
+#[sismo::function("editor::quote_line")]
 fn quote_line(line: QuoteLine, size: f32, color: Color, indent: f32) -> Element {
     let text = match line.bullet {
         Some(_) => format!("• {}", line.text),

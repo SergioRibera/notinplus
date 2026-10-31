@@ -84,6 +84,7 @@ fn file_name(name: &str) -> String {
 
 /// Draw `doc`'s ink inside world rectangle `area` onto `rgba` (`w`×`h`
 /// pixels).
+#[sismo::function("readable::composite")]
 fn composite(doc: &Doc, area: (f32, f32, f32, f32), rgba: &mut [u8], w: u32, h: u32) {
     let info = ImageInfo::new(
         (i32::try_from(w).unwrap_or(0), i32::try_from(h).unwrap_or(0)),
@@ -109,6 +110,7 @@ fn composite(doc: &Doc, area: (f32, f32, f32, f32), rgba: &mut [u8], w: u32, h: 
     canvas.scale((scale, scale));
     canvas.translate((-area.0, -area.1));
     let registry = BrushRegistry::default();
+    sismo::scope!("readable::draw_strokes");
     for layer in doc.layers.iter().filter(|l| l.visible) {
         for stroke in &layer.strokes {
             let Some(preset) = doc.preset(stroke.brush) else {
@@ -126,6 +128,7 @@ fn composite(doc: &Doc, area: (f32, f32, f32, f32), rgba: &mut [u8], w: u32, h: 
 }
 
 /// The PDF `bytes` kept by `item` with the ink drawn on its pages.
+#[sismo::function("readable::flattened_pdf")]
 pub(crate) fn flattened_pdf(item: ItemId, bytes: &[u8]) -> Option<Vec<u8>> {
     let bytes = bytes.to_vec();
     let pdf = freya_pdf::PdfDocument::open_bytes(bytes.clone()).ok()?;
@@ -138,7 +141,10 @@ pub(crate) fn flattened_pdf(item: ItemId, bytes: &[u8]) -> Option<Vec<u8>> {
             (rect.2 * PAGE_SCALE).round() as u32,
             (rect.3 * PAGE_SCALE).round() as u32,
         );
-        let (mut rgba, w, h) = pdf.render_page_rgba(index, w.max(1), h.max(1)).ok()?;
+        let (mut rgba, w, h) = {
+            sismo::scope!("readable::render_page");
+            pdf.render_page_rgba(index, w.max(1), h.max(1)).ok()?
+        };
         if let Some(doc) = &doc {
             composite(doc, *rect, &mut rgba, w, h);
         }
@@ -151,10 +157,12 @@ pub(crate) fn flattened_pdf(item: ItemId, bytes: &[u8]) -> Option<Vec<u8>> {
             height_pt: rect.3.round() as u32,
         });
     }
+    sismo::scope!("readable::encode_pdf");
     image_pdf(&pages).ok().or(Some(bytes))
 }
 
 /// Canvas `item` as one page of `paper`, cropped to its ink.
+#[sismo::function("readable::canvas_pdf")]
 pub(crate) fn canvas_pdf(item: ItemId, paper: [u8; 4]) -> Option<Vec<u8>> {
     let doc = bodies::read_doc(item).ok()?;
     let mut bounds: Option<(f32, f32, f32, f32)> = None;
@@ -197,6 +205,7 @@ pub(crate) fn canvas_pdf(item: ItemId, paper: [u8; 4]) -> Option<Vec<u8>> {
 }
 
 /// The marks of a document as a markdown list.
+#[sismo::function("readable::marks_markdown")]
 fn marks_markdown(marks: &[notein_plugin::kind::Mark<Vec<u8>>]) -> String {
     let mut out = format!("# {}\n\n", tr!("misc-export-bookmarks-heading"));
     for mark in marks {
@@ -216,6 +225,7 @@ fn marks_markdown(marks: &[notein_plugin::kind::Mark<Vec<u8>>]) -> String {
 ///
 /// # Errors
 /// [`ReadableError`] when the archive cannot be written.
+#[sismo::function("readable::build")]
 pub fn build(
     data: &LibraryData,
     items: &[ItemId],
@@ -227,6 +237,7 @@ pub fn build(
     // Files linked from several items of a folder are written once.
     let mut written = std::collections::HashSet::new();
     for (done, id) in items.iter().enumerate() {
+        sismo::scope!("readable::item");
         progress(done);
         let Some(item) = data.item(*id) else {
             continue;

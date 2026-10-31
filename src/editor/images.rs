@@ -106,16 +106,24 @@ pub(crate) struct CleanImage {
 impl CleanImage {
     /// Decode `raw` (PNG, JPEG, WebP or the first frame of a GIF), turn it
     /// upright, cap its size and encode it again.
+    #[sismo::function("images::clean")]
     pub(crate) fn from_raw(raw: &[u8]) -> Result<Self, ImageError> {
+        sismo::counter!("images.raw_bytes", raw.len());
         let reader = ImageReader::new(Cursor::new(raw)).with_guessed_format()?;
         let format = reader.format();
-        let mut decoder = reader.into_decoder()?;
-        let orientation = decoder.orientation()?;
-        let mut image = DynamicImage::from_decoder(decoder)?;
-        image.apply_orientation(orientation);
+        let mut image = {
+            sismo::scope!("images::decode");
+            let mut decoder = reader.into_decoder()?;
+            let orientation = decoder.orientation()?;
+            let mut image = DynamicImage::from_decoder(decoder)?;
+            image.apply_orientation(orientation);
+            image
+        };
         if image.width().max(image.height()) > MAX_SIDE {
+            sismo::scope!("images::resize");
             image = image.resize(MAX_SIDE, MAX_SIDE, image::imageops::FilterType::Lanczos3);
         }
+        sismo::scope!("images::encode");
         let mut bytes = Vec::new();
         let photo = format == Some(ImageFormat::Jpeg) && !image.color().has_alpha();
         let extension = if photo {
@@ -164,6 +172,7 @@ impl ItemImages {
 
     /// Only links inside the item are read from disk: a note someone
     /// shared must not show files of the device it is opened on.
+    #[sismo::function("images::resolve")]
     fn resolve(&self, url: &str) -> Option<Source> {
         if url.starts_with("https://") || url.starts_with("http://") {
             return Some(Source::Remote(url.to_owned()));
@@ -193,6 +202,7 @@ impl ItemImages {
 
 /// Ask for a file, clean it off the UI thread, store it and link it.
 #[allow(clippy::future_not_send, reason = "runs on the UI executor")]
+#[sismo::function("images::add_picked")]
 async fn add_picked(
     item: ItemId,
     root: &Path,
@@ -245,6 +255,7 @@ async fn off_thread<T: Send + 'static>(
     std::thread::Builder::new()
         .name("notein-image".to_owned())
         .spawn(move || {
+            sismo::scope!("images::worker");
             let _ = done.send(work());
         })?;
     result
@@ -254,6 +265,7 @@ async fn off_thread<T: Send + 'static>(
 }
 
 impl Decorator for ItemImages {
+    #[sismo::function("images::decorate")]
     fn render_image(&self, image: &ImageContext<'_>) -> Option<Element> {
         Some(
             NoteImage {
@@ -295,9 +307,11 @@ thread_local! {
 }
 
 /// Bytes of `source`, cleaned when they come from the network.
+#[sismo::function("images::fetch")]
 fn fetch(source: &Source) -> Result<Vec<u8>, ImageError> {
     match source {
         Source::File(path) => {
+            sismo::scope!("images::read_file");
             if std::fs::metadata(path)?.len() > MAX_BYTES {
                 return Err(ImageError::TooLarge);
             }
@@ -310,11 +324,18 @@ fn fetch(source: &Source) -> Result<Vec<u8>, ImageError> {
                 .join("note-images")
                 .join(format!("{:016x}", hasher.finish()));
             if let Ok(bytes) = std::fs::read(&cached) {
+                sismo::instant!("images::disk_cache_hit");
                 return Ok(bytes);
             }
-            let response = reqwest::blocking::get(url)?.error_for_status()?;
+            sismo::instant!("images::disk_cache_miss");
             let mut raw = Vec::new();
-            response.take(MAX_BYTES + 1).read_to_end(&mut raw)?;
+            {
+                sismo::scope!("images::download");
+                let response = reqwest::blocking::get(url)
+                    .and_then(reqwest::blocking::Response::error_for_status)
+                    .inspect_err(|_| sismo::instant!("images::download_failed"))?;
+                response.take(MAX_BYTES + 1).read_to_end(&mut raw)?;
+            }
             if raw.len() as u64 > MAX_BYTES {
                 return Err(ImageError::TooLarge);
             }
@@ -322,17 +343,25 @@ fn fetch(source: &Source) -> Result<Vec<u8>, ImageError> {
             if let Some(dir) = cached.parent() {
                 std::fs::create_dir_all(dir)?;
             }
-            std::fs::write(&cached, &clean.bytes)?;
+            {
+                sismo::scope!("images::write_disk_cache");
+                std::fs::write(&cached, &clean.bytes)?;
+            }
             Ok(clean.bytes)
         }
     }
 }
 
+#[sismo::function("images::load")]
 fn load(source: &Source) -> Result<Loaded, ImageError> {
     let bytes = fetch(source)?;
-    let (width, height) = ImageReader::new(Cursor::new(&bytes))
-        .with_guessed_format()?
-        .into_dimensions()?;
+    sismo::counter!("images.bytes", bytes.len());
+    let (width, height) = {
+        sismo::scope!("images::dimensions");
+        ImageReader::new(Cursor::new(&bytes))
+            .with_guessed_format()?
+            .into_dimensions()?
+    };
     let mut hasher = DefaultHasher::new();
     source.hash(&mut hasher);
     bytes.len().hash(&mut hasher);
@@ -403,15 +432,26 @@ impl NoteImage {
 }
 
 impl Component for NoteImage {
+    #[sismo::function("images::note_image")]
     fn render(&self) -> impl IntoElement {
         let source = self.source.clone();
         let cached = source
             .as_ref()
             .and_then(|source| LOADED.with(|loaded| loaded.borrow().get(source).cloned()));
+        use_drop(|| sismo::instant!("images::note_image_drop"));
         let mut state = use_state(|| match (&source, cached) {
-            (_, Some(loaded)) => Load::Ready(loaded),
-            (Some(_), None) => Load::Loading,
-            (None, None) => Load::Failed,
+            (_, Some(loaded)) => {
+                sismo::instant!("images::memory_cache_hit");
+                Load::Ready(loaded)
+            }
+            (Some(_), None) => {
+                sismo::instant!("images::memory_cache_miss");
+                Load::Loading
+            }
+            (None, None) => {
+                sismo::instant!("images::unresolved");
+                Load::Failed
+            }
         });
         let item = self.item;
         use_hook(move || {
@@ -427,8 +467,10 @@ impl Component for NoteImage {
                         return;
                     }
                     let wanted = source.clone();
+                    sismo::instant!("images::load_attempt");
                     match off_thread(move || load(&wanted)).await {
                         Ok(loaded) => {
+                            sismo::scope!("images::loaded");
                             let loaded = Rc::new(loaded);
                             LOADED.with(|cache| {
                                 let mut cache = cache.borrow_mut();
@@ -441,6 +483,7 @@ impl Component for NoteImage {
                             return;
                         }
                         Err(err) => {
+                            sismo::instant!("images::load_failed");
                             log::warn!("{err}");
                             state.set(Load::Failed);
                         }
@@ -454,6 +497,7 @@ impl Component for NoteImage {
 
         match &*state.read() {
             Load::Ready(loaded) => {
+                sismo::scope!("images::viewer");
                 #[allow(clippy::cast_precision_loss, reason = "pixel sizes")]
                 let (natural, ratio) = (
                     loaded.width as f32,
