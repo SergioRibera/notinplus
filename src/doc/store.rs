@@ -99,6 +99,7 @@ impl From<LoroEncodeError> for DocError {
 
 impl DocStore {
     /// Fresh store holding the state of [`Doc::default`].
+    #[sismo::function("doc_store::seeded")]
     pub(super) fn seeded() -> Result<Self, DocError> {
         let store = Self {
             doc: LoroDoc::new(),
@@ -117,6 +118,7 @@ impl DocStore {
     }
 
     /// Store decoded from a full snapshot.
+    #[sismo::function("doc_store::from_snapshot")]
     pub(super) fn from_snapshot(bytes: &[u8]) -> Result<Self, DocError> {
         let doc = LoroDoc::new();
         doc.import(bytes)?;
@@ -124,6 +126,7 @@ impl DocStore {
     }
 
     /// Independent copy with the same history.
+    #[sismo::function("doc_store::fork")]
     pub(super) fn fork(&self) -> Self {
         Self {
             doc: self.doc.fork(),
@@ -131,16 +134,19 @@ impl DocStore {
     }
 
     /// Full history + state.
+    #[sismo::function("doc_store::snapshot")]
     pub(super) fn snapshot(&self) -> Result<Vec<u8>, DocError> {
         Ok(self.doc.export(ExportMode::Snapshot)?)
     }
 
     /// Opaque version marker for [`Self::updates_since`].
+    #[sismo::function("doc_store::version")]
     pub(super) fn version(&self) -> Vec<u8> {
         self.doc.oplog_vv().encode()
     }
 
     /// Every change this store knows that `version` does not.
+    #[sismo::function("doc_store::updates_since")]
     pub(super) fn updates_since(&self, version: &[u8]) -> Result<Vec<u8>, DocError> {
         let from = VersionVector::decode(version)?;
         Ok(self.doc.export(ExportMode::Updates {
@@ -149,12 +155,14 @@ impl DocStore {
     }
 
     /// Merge changes produced elsewhere.
+    #[sismo::function("doc_store::import")]
     pub(super) fn import(&self, bytes: &[u8]) -> Result<(), DocError> {
         self.doc.import(bytes)?;
         Ok(())
     }
 
     /// The text body, for documents that are text (notes).
+    #[sismo::function("doc_store::body")]
     pub(super) fn body(&self) -> String {
         self.doc.get_text(BODY).to_string()
     }
@@ -162,6 +170,7 @@ impl DocStore {
     /// Replace the text body with `text`, recorded as the smallest edit
     /// that gets there so concurrent typing on other devices merges per
     /// character. Returns whether anything changed.
+    #[sismo::function("doc_store::set_body")]
     pub(super) fn set_body(&self, text: &str) -> Result<bool, DocError> {
         let body = self.doc.get_text(BODY);
         if body.to_string() == text {
@@ -174,6 +183,7 @@ impl DocStore {
     }
 
     /// Every record, by key.
+    #[sismo::function("doc_store::records")]
     pub(super) fn records(&self) -> Vec<(String, Vec<u8>)> {
         let mut out = Vec::new();
         self.doc.get_map(RECORDS).for_each(|key, value| {
@@ -189,6 +199,7 @@ impl DocStore {
 
     /// Set the record `key`; two devices setting different keys both
     /// keep theirs, the same key keeps one. Returns whether it changed.
+    #[sismo::function("doc_store::set_record")]
     pub(super) fn set_record(&self, key: &str, bytes: &[u8]) -> Result<bool, DocError> {
         let map = self.doc.get_map(RECORDS);
         if let Some(ValueOrContainer::Value(value)) = map.get(key)
@@ -204,6 +215,7 @@ impl DocStore {
     }
 
     /// Remove the record `key`. Returns whether it was there.
+    #[sismo::function("doc_store::remove_record")]
     pub(super) fn remove_record(&self, key: &str) -> Result<bool, DocError> {
         let map = self.doc.get_map(RECORDS);
         if map.get(key).is_none() {
@@ -217,6 +229,7 @@ impl DocStore {
     /// Translate `op` into container edits. `state` is the
     /// materialised state *before* the op so positional lookups match
     /// the containers.
+    #[sismo::function("doc_store::apply")]
     pub(super) fn apply(&self, op: &DocOp, state: &Doc) -> Result<(), DocError> {
         self.apply_inner(op, state)?;
         self.doc.commit();
@@ -387,6 +400,7 @@ impl DocStore {
     }
 
     /// Read the plain state back from the containers.
+    #[sismo::function("doc_store::materialize")]
     pub(super) fn materialize(&self) -> Result<State, DocError> {
         let meta = self.meta();
         let active_layer = read_u32(&meta, ACTIVE_LAYER)?;
@@ -439,6 +453,7 @@ impl DocStore {
     }
 
     /// Drop every layer and seed the single default one.
+    #[sismo::function("doc_store::reset_layers")]
     fn reset_layers(&self) -> Result<(), DocError> {
         self.doc.get_movable_list(LAYERS).clear()?;
         self.push_layer(0, "Layer 1")?;

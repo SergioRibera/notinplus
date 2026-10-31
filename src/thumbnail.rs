@@ -16,6 +16,7 @@ const MARGIN: f32 = 24.0;
 
 /// PNG of `doc`'s ink fitted on `paper`; `None` when it has no ink.
 #[must_use]
+#[sismo::function("thumbnail::canvas")]
 pub fn canvas(doc: &Doc, paper: [u8; 4]) -> Option<Vec<u8>> {
     let mut bounds: Option<(f32, f32, f32, f32)> = None;
     for stroke in doc
@@ -63,6 +64,7 @@ pub fn canvas(doc: &Doc, paper: [u8; 4]) -> Option<Vec<u8>> {
 
 /// PNG of `pdf`'s first page; `None` when it cannot be rendered.
 #[must_use]
+#[sismo::function("thumbnail::pdf")]
 pub fn pdf(pdf: &freya_pdf::PdfDocument) -> Option<Vec<u8>> {
     let (page_w, page_h) = pdf.page_size(0).ok()?;
     #[allow(clippy::cast_precision_loss)]
@@ -84,6 +86,7 @@ pub fn pdf(pdf: &freya_pdf::PdfDocument) -> Option<Vec<u8>> {
     encode(&image)
 }
 
+#[sismo::function("thumbnail::encode")]
 fn encode(image: &SkImage) -> Option<Vec<u8>> {
     image
         .encode(None, EncodedImageFormat::PNG, None)

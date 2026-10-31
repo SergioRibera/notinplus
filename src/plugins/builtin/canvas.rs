@@ -97,6 +97,7 @@ impl std::fmt::Debug for MarkHits<'_> {
 impl Iterator for MarkHits<'_> {
     type Item = Hit<CanvasAnchor>;
 
+    #[sismo::function("canvas_kind::mark_hits_next")]
     fn next(&mut self) -> Option<Self::Item> {
         while let Some((doc, name, marks)) = self.index.docs.get(self.doc) {
             while let Some(mark) = marks.get(self.mark) {
@@ -124,6 +125,7 @@ impl Iterator for MarkHits<'_> {
 impl CanvasKind {
     /// The canvas holding bookmark `bookmark`, if indexed.
     #[must_use]
+    #[sismo::function("canvas_kind::doc_of_bookmark")]
     pub fn doc_of_bookmark(&self, bookmark: [u8; 16]) -> Option<DocId> {
         self.index
             .read()
@@ -159,6 +161,7 @@ impl DocumentKind for CanvasKind {
         }
     }
 
+    #[sismo::function("canvas_kind::search")]
     fn search<'a>(&'a self, query: &'a SearchQuery) -> MarkHits<'a> {
         MarkHits {
             index: self.index.read().unwrap_or_else(PoisonError::into_inner),
@@ -168,6 +171,7 @@ impl DocumentKind for CanvasKind {
         }
     }
 
+    #[sismo::function("canvas_kind::index")]
     fn index(
         &self,
         doc: DocMeta<'_>,
@@ -185,6 +189,7 @@ impl DocumentKind for CanvasKind {
         IndexReport::complete(1)
     }
 
+    #[sismo::function("canvas_kind::forget")]
     fn forget(&self, doc: DocId) {
         self.index
             .write()
@@ -193,6 +198,7 @@ impl DocumentKind for CanvasKind {
             .retain(|(id, _, _)| *id != doc);
     }
 
+    #[sismo::function("canvas_kind::outline")]
     fn outline(&self, content: &CanvasContent) -> Vec<OutlineNode<CanvasAnchor>> {
         let layers = content
             .layers
@@ -220,6 +226,7 @@ impl DocumentKind for CanvasKind {
         ]
     }
 
+    #[sismo::function("canvas_kind::marks")]
     fn marks(&self, content: &CanvasContent) -> Vec<Mark<CanvasAnchor>> {
         content
             .marks
@@ -237,6 +244,7 @@ impl DocumentKind for CanvasKind {
             .collect()
     }
 
+    #[sismo::function("canvas_kind::summary")]
     fn summary(&self, content: &CanvasContent) -> Option<String> {
         match content.marks.len() {
             0 => None,
@@ -244,6 +252,7 @@ impl DocumentKind for CanvasKind {
         }
     }
 
+    #[sismo::function("canvas_kind::chip")]
     fn chip(&self, doc: DocMeta<'_>, anchor: &CanvasAnchor) -> ChipView {
         match anchor.bookmark {
             Some(_) => ChipView::new(tr!("plugins-canvas-chip-bookmark", "name" => doc.name)),
@@ -285,6 +294,7 @@ impl DocumentKind for CanvasKind {
         ]
     }
 
+    #[sismo::function("canvas_kind::create")]
     fn create(
         &self,
         entry: &str,
@@ -311,6 +321,7 @@ impl DocumentKind for CanvasKind {
         })
     }
 
+    #[sismo::function("canvas_kind::launch")]
     fn launch(&self, entry: &str) {
         match entry {
             ENTRY_SCRATCH => {
@@ -326,10 +337,12 @@ impl DocumentKind for CanvasKind {
         }
     }
 
+    #[sismo::function("canvas_kind::without_marks")]
     fn without_marks(&self, content: &mut CanvasContent) {
         content.marks.clear();
     }
 
+    #[sismo::function("canvas_kind::export")]
     fn export(
         &self,
         doc: DocMeta<'_>,
@@ -349,6 +362,7 @@ impl DocumentKind for CanvasKind {
 impl CanvasContent {
     /// Summary of an ink document.
     #[must_use]
+    #[sismo::function("canvas_kind::content_of")]
     pub fn of(doc: &crate::doc::Doc) -> Self {
         Self {
             layers: doc
@@ -383,6 +397,7 @@ static LAST_COVER: std::sync::LazyLock<
 /// After a canvas was saved: refresh its summary (layers, bookmarks),
 /// search index and, at most every few seconds, its cover. Runs on the
 /// thread that saved it.
+#[sismo::function("canvas_kind::after_save")]
 pub fn after_save(item: crate::library::ItemId, content: &CanvasContent, snapshot: &[u8]) {
     let due = {
         let mut last = LAST_COVER.lock().unwrap_or_else(PoisonError::into_inner);

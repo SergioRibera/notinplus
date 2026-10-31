@@ -139,6 +139,7 @@ impl Default for Doc {
 
 impl Clone for Doc {
     /// Deep copy: the clone owns an independent history.
+    #[sismo::function("doc::clone")]
     fn clone(&self) -> Self {
         Self {
             brushes: self.brushes.clone(),
@@ -154,6 +155,7 @@ impl Clone for Doc {
 impl PartialEq for Doc {
     /// Compares the materialised state only; two docs with the same
     /// content but different histories are equal.
+    #[sismo::function("doc::eq")]
     fn eq(&self, other: &Self) -> bool {
         self.brushes == other.brushes
             && self.layers == other.layers
@@ -168,6 +170,7 @@ impl Doc {
     ///
     /// # Errors
     /// Corrupt bytes or a container shape this build does not read.
+    #[sismo::function("doc::from_snapshot")]
     pub fn from_snapshot(bytes: &[u8]) -> Result<Self, DocError> {
         let store = DocStore::from_snapshot(bytes)?;
         let mut doc = Self {
@@ -187,12 +190,13 @@ impl Doc {
     /// # Errors
     /// Store export failure.
     /// The snapshot to store, with the references it holds for the index.
-    #[sismo::function]
+    #[sismo::function("doc::saved_state")]
     pub fn saved_state(&self) -> Result<(Vec<u8>, crate::library::refs::Captured), DocError> {
         self.snapshot_bytes()
             .map(|bytes| (bytes, crate::library::refs::capture(self)))
     }
 
+    #[sismo::function("doc::snapshot_bytes")]
     pub fn snapshot_bytes(&self) -> Result<Vec<u8>, DocError> {
         self.store.snapshot()
     }
@@ -201,6 +205,7 @@ impl Doc {
     /// another replica's [`Self::updates_since`] to get what is
     /// missing here.
     #[must_use]
+    #[sismo::function("doc::version")]
     pub fn version(&self) -> Vec<u8> {
         self.store.version()
     }
@@ -209,6 +214,7 @@ impl Doc {
     ///
     /// # Errors
     /// Malformed `version` or store export failure.
+    #[sismo::function("doc::updates_since")]
     pub fn updates_since(&self, version: &[u8]) -> Result<Vec<u8>, DocError> {
         self.store.updates_since(version)
     }
@@ -218,12 +224,13 @@ impl Doc {
     ///
     /// # Errors
     /// Corrupt bytes or a container shape this build does not read.
-    #[sismo::function]
+    #[sismo::function("doc::import_updates")]
     pub fn import_updates(&mut self, bytes: &[u8]) -> Result<(), DocError> {
         self.store.import(bytes)?;
         self.refresh()
     }
 
+    #[sismo::function("doc::refresh")]
     fn refresh(&mut self) -> Result<(), DocError> {
         let state = self.store.materialize()?;
         self.brushes = state.brushes;
@@ -237,6 +244,7 @@ impl Doc {
     /// The markdown body, for documents that are text. Empty for a
     /// drawing.
     #[must_use]
+    #[sismo::function("doc::body")]
     pub fn body(&self) -> String {
         self.store.body()
     }
@@ -244,6 +252,7 @@ impl Doc {
     /// Replace the markdown body; returns whether it changed. The store
     /// records the smallest edit, so two people typing merge per
     /// character.
+    #[sismo::function("doc::set_body")]
     pub fn set_body(&mut self, text: &str) -> bool {
         match self.store.set_body(text) {
             Ok(changed) => changed,
@@ -256,11 +265,13 @@ impl Doc {
 
     /// Records a plugin keeps here, merged per key with other devices.
     #[must_use]
+    #[sismo::function("doc::records")]
     pub fn records(&self) -> Vec<(String, Vec<u8>)> {
         self.store.records()
     }
 
     /// Set the record `key`; returns whether it changed.
+    #[sismo::function("doc::set_record")]
     pub fn set_record(&mut self, key: &str, bytes: &[u8]) -> bool {
         self.store.set_record(key, bytes).unwrap_or_else(|err| {
             log::error!("doc record update: {err}");
@@ -269,6 +280,7 @@ impl Doc {
     }
 
     /// Remove the record `key`; returns whether it was there.
+    #[sismo::function("doc::remove_record")]
     pub fn remove_record(&mut self, key: &str) -> bool {
         self.store.remove_record(key).unwrap_or_else(|err| {
             log::error!("doc record removal: {err}");
@@ -280,6 +292,7 @@ impl Doc {
     /// state. A store failure is logged and the materialised state
     /// still moves, so the user never loses the edit on screen.
     #[allow(clippy::needless_pass_by_value)] // callers hand the op over; it has landed once this returns
+    #[sismo::function("doc::emit")]
     pub fn emit(&mut self, op: DocOp) {
         if let Err(err) = self.store.apply(&op, self) {
             log::error!("doc store apply: {err}");
@@ -291,6 +304,7 @@ impl Doc {
     /// shapes that matter (duplicate `PushStroke`, duplicate
     /// `RegisterBrush`, repeated `SetActiveLayer` on the same id).
     #[allow(clippy::too_many_lines)]
+    #[sismo::function("doc::apply")]
     fn apply(&mut self, op: &DocOp) {
         match op {
             DocOp::RegisterBrush { preset } => {
@@ -445,6 +459,7 @@ impl Doc {
     /// registrations are additive forever.
     #[must_use]
     #[allow(clippy::too_many_lines)]
+    #[sismo::function("doc::inverse_before_apply")]
     pub fn inverse_before_apply(&self, op: &DocOp) -> Vec<DocOp> {
         match op {
             DocOp::RegisterBrush { .. } => Vec::new(),
@@ -665,6 +680,7 @@ impl Doc {
 
     /// `(layer_id, glyph)` for the ink glyph carrying `id`.
     #[must_use]
+    #[sismo::function("doc::locate_glyph")]
     pub fn locate_glyph(&self, id: InkGlyphId) -> Option<(u32, InkGlyph)> {
         self.layers.iter().find_map(|layer| {
             layer
@@ -712,6 +728,7 @@ impl Doc {
 
     /// `(layer_id, cloned_stroke)` for the stroke carrying `id`.
     #[must_use]
+    #[sismo::function("doc::locate_stroke")]
     pub fn locate_stroke(&self, id: StrokeId) -> Option<(u32, Stroke)> {
         for layer in &self.layers {
             if let Some(stroke) = layer.strokes.iter().find(|s| s.id == id) {
@@ -727,6 +744,7 @@ impl Doc {
     /// and edited across sessions.
     /// `None` once the registry holds `u16::MAX` presets, which no real
     /// document reaches.
+    #[sismo::function("doc::register_brush")]
     pub fn register_brush(&mut self, preset: BrushPreset) -> Option<BrushId> {
         if let Some(idx) = self.brushes.iter().position(|b| *b == preset) {
             return u16::try_from(idx).ok().map(BrushId);
@@ -893,6 +911,7 @@ impl Doc {
 
     /// Nothing written on it: no strokes, text, glyphs or bookmarks.
     #[must_use]
+    #[sismo::function("doc::is_blank")]
     pub fn is_blank(&self) -> bool {
         self.bookmarks.is_empty()
             && self
