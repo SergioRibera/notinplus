@@ -18,6 +18,7 @@ pub use typeset::{Formula, MathError, Style, typeset};
 pub struct TypstMath;
 
 impl Decorator for TypstMath {
+    #[cfg_attr(feature = "sismo", sismo::function("math::render"))]
     fn render_math(&self, math: &MathContext<'_>) -> Option<Element> {
         let tex = math.tex.trim();
         if tex.is_empty() {
@@ -33,6 +34,8 @@ impl Decorator for TypstMath {
         );
         Some(match typeset(tex, &style) {
             Ok(formula) => {
+                #[cfg(feature = "sismo")]
+                sismo::scope!("math::svg_viewer");
                 // Shrink what does not fit rather than overflow the note.
                 let scale = if math.max_width > 0. && formula.width > math.max_width {
                     math.max_width / formula.width

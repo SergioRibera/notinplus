@@ -97,24 +97,48 @@ thread_local! {
 ///
 /// # Errors
 /// [`MathError`] when the TeX cannot be read or laid out.
+#[cfg_attr(feature = "sismo", sismo::function("math::typeset"))]
 pub fn typeset(tex: &str, style: &Style) -> Result<Formula, MathError> {
     let key = (tex.to_owned(), style.clone());
-    if let Some(done) = TYPESET.with(|cache| cache.borrow().get(&key).cloned()) {
+    let cached = {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("math::cache_lookup");
+        TYPESET.with(|cache| cache.borrow().get(&key).cloned())
+    };
+    if let Some(done) = cached {
+        #[cfg(feature = "sismo")]
+        sismo::instant!("math::cache_hit");
         return done;
     }
+    #[cfg(feature = "sismo")]
+    sismo::instant!("math::cache_miss");
+    #[cfg(feature = "sismo")]
+    sismo::counter!("math.tex_len", tex.len());
     let done = typeset_now(tex, style);
     TYPESET.with(|cache| {
         let mut cache = cache.borrow_mut();
         if cache.len() >= CACHE_LIMIT {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("math::cache_clear");
             cache.clear();
         }
         cache.insert(key, done.clone());
+        #[cfg(feature = "sismo")]
+        sismo::counter!("math.cache_len", cache.len());
     });
     done
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("math::typeset_now"))]
 fn typeset_now(tex: &str, style: &Style) -> Result<Formula, MathError> {
-    let math = mitex::convert_math(tex, None).map_err(|message| {
+    let math = {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("math::mitex_convert");
+        mitex::convert_math(tex, None)
+    }
+    .map_err(|message| {
+        #[cfg(feature = "sismo")]
+        sismo::instant!("math::convert_error");
         MathError::Convert(
             message
                 .strip_prefix("error: ")
@@ -138,14 +162,28 @@ fn typeset_now(tex: &str, style: &Style) -> Result<Formula, MathError> {
         color = style.color,
         display = style.display,
     );
-    let world = MathWorld {
-        base: &BASE,
-        main: Source::detached(main),
+    let world = {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("math::world_new");
+        MathWorld {
+            base: &BASE,
+            main: Source::detached(main),
+        }
     };
-    let document = typst::compile::<PagedDocument>(&world).output;
-    // Typst memoizes across runs; keep that bounded.
-    typst::comemo::evict(30);
+    let document = {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("math::typst_compile");
+        typst::compile::<PagedDocument>(&world).output
+    };
+    {
+        // Typst memoizes across runs; keep that bounded.
+        #[cfg(feature = "sismo")]
+        sismo::scope!("math::comemo_evict");
+        typst::comemo::evict(30);
+    }
     let document = document.map_err(|errors| {
+        #[cfg(feature = "sismo")]
+        sismo::instant!("math::typeset_error");
         MathError::Typeset(
             errors
                 .first()
@@ -156,8 +194,18 @@ fn typeset_now(tex: &str, style: &Style) -> Result<Formula, MathError> {
         .pages()
         .first()
         .ok_or_else(|| MathError::Typeset(String::new()))?;
-    let svg = inline_symbols(&typst_svg::svg(page, &typst_svg::SvgOptions::default()));
+    let raw = {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("math::typst_svg");
+        typst_svg::svg(page, &typst_svg::SvgOptions::default())
+    };
+    let svg = inline_symbols(&raw);
     let (width, height) = svg_size(&svg).ok_or_else(|| MathError::Typeset(String::new()))?;
+    #[cfg(feature = "sismo")]
+    sismo::counter!("math.svg_bytes", svg.len());
+    // Covers dropping the laid-out Typst document and the world on return.
+    #[cfg(feature = "sismo")]
+    sismo::scope!("math::drop_document");
     Ok(Formula {
         svg: freya::prelude::Bytes::from(svg.into_bytes()),
         width,
@@ -169,6 +217,7 @@ fn typeset_now(tex: &str, style: &Style) -> Result<Formula, MathError> {
 ///
 /// Typst draws each glyph once as a symbol and places it with `<use>`;
 /// Skia's SVG renderer draws no symbols.
+#[cfg_attr(feature = "sismo", sismo::function("math::inline_symbols"))]
 fn inline_symbols(svg: &str) -> String {
     let mut symbols = HashMap::new();
     let mut rest = String::with_capacity(svg.len());
@@ -252,13 +301,29 @@ struct Base {
 }
 
 static BASE: LazyLock<Base> = LazyLock::new(|| {
-    let fonts: Vec<Font> = FONTS
-        .into_iter()
-        .flat_map(|data| Font::iter(Bytes::new(data)))
-        .collect();
+    #[cfg(feature = "sismo")]
+    sismo::scope!("math::base_init");
+    let fonts: Vec<Font> = {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("math::load_fonts");
+        FONTS
+            .into_iter()
+            .flat_map(|data| Font::iter(Bytes::new(data)))
+            .collect()
+    };
+    let library = {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("math::build_library");
+        LazyHash::new(Library::builder().build())
+    };
+    let book = {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("math::font_book");
+        LazyHash::new(FontBook::from_fonts(&fonts))
+    };
     Base {
-        library: LazyHash::new(Library::builder().build()),
-        book: LazyHash::new(FontBook::from_fonts(&fonts)),
+        library,
+        book,
         fonts,
     }
 });
@@ -288,6 +353,7 @@ impl World for MathWorld<'_> {
         self.main.id()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("math::world_source"))]
     fn source(&self, id: FileId) -> FileResult<Source> {
         if id == self.main.id() {
             return Ok(self.main.clone());
