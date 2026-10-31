@@ -506,7 +506,10 @@ fn now_ms() -> u64 {
 #[sismo::function("sync::open_library")]
 fn open_library() -> Option<async_lock::MutexGuardArc<Library>> {
     match crate::library::shared_blocking() {
-        Ok(handle) => Some(pollster::block_on(handle.lock_arc())),
+        Ok(handle) => {
+            sismo::scope!("sync::lock_wait");
+            Some(pollster::block_on(handle.lock_arc()))
+        }
         Err(err) => {
             log::error!("sync: open library: {err}");
             None

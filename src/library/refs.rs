@@ -82,6 +82,7 @@ struct RefsIndex {
 }
 
 impl RefsIndex {
+    #[sismo::function("library::refs::load")]
     fn load() -> Self {
         let Ok(bytes) = fs::read(path()) else {
             return Self::default();
@@ -98,6 +99,7 @@ impl RefsIndex {
         }
     }
 
+    #[sismo::function("library::refs::save")]
     fn save(&self) -> io::Result<()> {
         let file = RefsFile {
             version: VERSION,
@@ -117,6 +119,7 @@ impl RefsIndex {
     }
 
     /// Replace everything `from` references.
+    #[sismo::function("library::refs::replace")]
     fn replace(&mut self, from: ItemId, found: Vec<(RefOrigin, SourceRef)>) {
         self.entries.retain(|e| e.from != from);
         self.pending_pins.retain(|(src, _, _)| *src != from);
@@ -145,6 +148,7 @@ impl RefsIndex {
 
     /// Register which item owns `bookmarks`, resolving any reference
     /// that was waiting for them.
+    #[sismo::function("library::refs::record_pins")]
     fn record_pins(&mut self, owner: ItemId, bookmarks: impl IntoIterator<Item = [u8; 16]>) {
         self.pins.retain(|_, o| *o != owner);
         for key in bookmarks {
@@ -186,6 +190,7 @@ fn index() -> MutexGuard<'static, RefsIndex> {
     }
 }
 
+#[sismo::function("library::refs::persist")]
 fn persist(guard: &RefsIndex) {
     if let Err(err) = guard.save() {
         log::warn!("refs index save: {err}");
@@ -194,6 +199,7 @@ fn persist(guard: &RefsIndex) {
 
 /// Everything a canvas doc references: bookmark chips, bookmark
 /// bodies and text box bodies.
+#[sismo::function("library::refs::doc_refs")]
 fn doc_refs(doc: &Doc) -> Vec<(RefOrigin, SourceRef)> {
     let mut out = Vec::new();
     for bm in doc.bookmarks() {
@@ -219,6 +225,7 @@ pub struct Captured {
 
 /// Collect what `doc` references right now.
 #[must_use]
+#[sismo::function("library::refs::capture")]
 pub fn capture(doc: &Doc) -> Captured {
     Captured {
         refs: doc_refs(doc),
@@ -227,11 +234,13 @@ pub fn capture(doc: &Doc) -> Captured {
 }
 
 /// Re-index the references a canvas doc makes. Call after every save.
+#[sismo::function("library::refs::record_doc")]
 pub fn record_doc(item: ItemId, doc: &Doc) {
     record_captured(item, capture(doc));
 }
 
 /// Re-index from a [`Captured`] set taken earlier with [`capture`].
+#[sismo::function("library::refs::record_captured")]
 pub fn record_captured(item: ItemId, captured: Captured) {
     let mut guard = index();
     guard.record_pins(item, captured.pins);
@@ -242,6 +251,7 @@ pub fn record_captured(item: ItemId, captured: Captured) {
 
 /// Re-index the references the content of a plugin document makes (a
 /// note's links). Call after every content write.
+#[sismo::function("library::refs::record_content")]
 pub fn record_content(item: ItemId, refs: Vec<SourceRef>) {
     let found: Vec<(RefOrigin, SourceRef)> =
         refs.into_iter().map(|r| (RefOrigin::Note, r)).collect();
@@ -252,6 +262,7 @@ pub fn record_content(item: ItemId, refs: Vec<SourceRef>) {
 }
 
 /// Drop every reference from or to `item`.
+#[sismo::function("library::refs::forget")]
 pub fn forget(item: ItemId) {
     let mut guard = index();
     guard.forget(item);
@@ -261,6 +272,7 @@ pub fn forget(item: ItemId) {
 
 /// References `item` makes.
 #[must_use]
+#[sismo::function("library::refs::refs_from")]
 pub fn refs_from(item: ItemId) -> Vec<RefEntry> {
     index()
         .entries
@@ -272,6 +284,7 @@ pub fn refs_from(item: ItemId) -> Vec<RefEntry> {
 
 /// References pointing at `item`.
 #[must_use]
+#[sismo::function("library::refs::refs_to")]
 pub fn refs_to(item: ItemId) -> Vec<RefEntry> {
     index()
         .entries
@@ -283,12 +296,14 @@ pub fn refs_to(item: ItemId) -> Vec<RefEntry> {
 
 /// Item that owns the bookmark with the given id, if indexed.
 #[must_use]
+#[sismo::function("library::refs::bookmark_owner")]
 pub fn bookmark_owner(bookmark: [u8; 16]) -> Option<ItemId> {
     index().pins.get(&bookmark).copied()
 }
 
 /// Rebuild the whole cache from `docs` (canvas bodies) and `contents`
 /// (what plugin documents link to). Everything not mentioned is dropped.
+#[sismo::function("library::refs::rebuild")]
 pub fn rebuild<'a>(
     docs: impl IntoIterator<Item = (ItemId, &'a Doc)>,
     contents: impl IntoIterator<Item = (ItemId, Vec<SourceRef>)>,

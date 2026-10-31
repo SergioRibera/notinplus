@@ -94,6 +94,7 @@ pub async fn load_links(client: &DataStoreClient) -> Result<LinkIndex> {
 ///
 /// # Errors
 /// Codec failure.
+#[sismo::function("library::index::encode")]
 pub fn encode<T: bincode::Encode>(snapshot: &T) -> Result<Vec<u8>> {
     bincode::encode_to_vec(snapshot, CODEC).map_err(|e| LibraryError::Codec(e.to_string()))
 }
@@ -140,7 +141,11 @@ impl Writer {
                 queue.busy = true;
                 queue.waiting.drain().collect()
             };
+            sismo::scope!("library::store::write_batch");
+            sismo::counter!("library.store.batch", batch.len());
             for (key, bytes) in batch {
+                sismo::scope!("library::store::set_bytes");
+                sismo::counter!("library.store.bytes", bytes.len());
                 if let Err(err) = pollster::block_on(client.set_bytes(key.to_owned(), bytes)) {
                     log::error!("library store {key}: {err}");
                 }
@@ -153,6 +158,7 @@ impl Writer {
 
 /// Hand `bytes` to the store under `key` without waiting for it. Bursts
 /// collapse: only the newest bytes of a key are written.
+#[sismo::function("library::index::store")]
 pub fn store(client: &Arc<DataStoreClient>, key: &'static str, bytes: Vec<u8>) {
     static STARTED: OnceLock<()> = OnceLock::new();
     STARTED.get_or_init(|| {
@@ -165,11 +171,15 @@ pub fn store(client: &Arc<DataStoreClient>, key: &'static str, bytes: Vec<u8>) {
         }
     });
     let writer = writer();
-    writer.queue().waiting.insert(key, bytes);
+    let mut queue = writer.queue();
+    queue.waiting.insert(key, bytes);
+    sismo::counter!("library.store.waiting", queue.waiting.len());
+    drop(queue);
     writer.wake.notify_all();
 }
 
 /// Block until everything handed to [`store`] is written.
+#[sismo::function("library::store::flush")]
 pub fn flush() {
     let writer = writer();
     let mut queue = writer.queue();

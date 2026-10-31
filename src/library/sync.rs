@@ -46,11 +46,13 @@ const ASSET_STAMP: u64 = 1;
 
 impl SyncRecord {
     #[must_use]
+    #[sismo::function("library::sync::record_encode")]
     pub fn encode(&self) -> Vec<u8> {
         bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default()
     }
 
     #[must_use]
+    #[sismo::function("library::sync::record_decode")]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         bincode::decode_from_slice(bytes, bincode::config::standard())
             .ok()
@@ -193,6 +195,7 @@ impl Library {
     }
 
     /// Something was deleted on another device: delete it here too.
+    #[sismo::function("library::sync::apply_gone")]
     async fn apply_gone(&mut self, stone: &Tombstone, yard: &mut Graveyard) -> Result<()> {
         yard.bury(stone.kind, stone.id, stone.at);
         match stone.kind {
@@ -253,6 +256,7 @@ impl LibraryData {
     /// Freshness of every record, live or buried. When a tombstone and
     /// a live record share an id the newer one speaks.
     #[must_use]
+    #[sismo::function("library::sync::sync_heads")]
     pub fn sync_heads(&self, yard: &Graveyard) -> Vec<BlobHead> {
         let mut heads: Vec<BlobHead> = Vec::new();
         heads.extend(
@@ -316,11 +320,13 @@ impl LibraryData {
                 }
             }
         }
+        sismo::counter!("library.sync.heads", heads.len());
         heads
     }
 
     /// The record behind a head, as it should travel.
     #[must_use]
+    #[sismo::function("library::sync::sync_record")]
     pub fn sync_record(&self, key: BlobKey, yard: &Graveyard) -> Option<SyncRecord> {
         let stone = buried_of(key.kind).and_then(|b| yard.get(b, key.id).copied());
         let live = match key.kind {
@@ -366,6 +372,7 @@ impl LibraryData {
         }
     }
 
+    #[sismo::function("library::sync::snapshot_record")]
     fn snapshot_record(&self, item: super::ItemId) -> Option<(u64, SyncRecord)> {
         let entry = self.index.item(item)?;
         let plugin_id = entry.kind.plugin_id.clone();
@@ -396,6 +403,7 @@ impl LibraryData {
             })
     }
 
+    #[sismo::function("library::sync::attachment_record")]
     fn attachment_record(&self, item: super::ItemId) -> Option<(u64, SyncRecord)> {
         self.index.item(item)?;
         let updated_at = bodies::pdf_stamp(item)?;
@@ -410,6 +418,7 @@ impl LibraryData {
         ))
     }
 
+    #[sismo::function("library::sync::asset_record")]
     fn asset_record(&self, key: [u8; 16]) -> Option<(u64, SyncRecord)> {
         let (item, name) = self.asset_of(key)?;
         let bytes = bodies::read_asset(item, &name).ok()?;
@@ -417,6 +426,7 @@ impl LibraryData {
     }
 
     /// Freshness of what is held locally under `key`, if anything.
+    #[sismo::function("library::sync::local_freshness")]
     fn local_freshness(&self, key: BlobKey, yard: &Graveyard) -> Option<u64> {
         let stone = buried_of(key.kind).and_then(|b| yard.get(b, key.id).map(|s| s.at));
         let live = match key.kind {

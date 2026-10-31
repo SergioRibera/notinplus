@@ -91,6 +91,7 @@ pub struct ImportReceipt {
 impl LibraryData {
     /// Compare `bundle` against the library.
     #[must_use]
+    #[sismo::function("library::import::review_import")]
     pub fn review_import(&self, bundle: &ParsedBundle, installed_kinds: &[String]) -> Review {
         let manifest = &bundle.manifest;
         let conflicts = manifest
@@ -214,6 +215,7 @@ impl Library {
 
     /// The bundle's folders, under `destination`; an id already in the
     /// library gets a new one.
+    #[sismo::function("library::import::import_folders")]
     fn import_folders(
         &mut self,
         manifest: &BundleManifest,
@@ -251,6 +253,7 @@ impl Library {
     /// The bundle's documents and their bodies, resolving the ones
     /// already in the library as `plan` says. Returns bundle id →
     /// library id.
+    #[sismo::function("library::import::import_items")]
     fn import_items(
         &mut self,
         bundle: &ParsedBundle,
@@ -303,6 +306,7 @@ impl Library {
 }
 
 /// The ink, PDF and plugin content of bundled `item`, stored as `id`.
+#[sismo::function("library::import::write_bodies")]
 fn write_bodies(bundle: &ParsedBundle, item: &Item, id: ItemId) -> Result<()> {
     if let Some(bytes) = bundle.docs.get(&item.id) {
         bodies::write_doc_bytes(id, bytes)?;

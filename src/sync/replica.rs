@@ -132,6 +132,7 @@ impl LibraryReplica {
     #[sismo::function("sync::replica::open_library")]
     fn open() -> Result<async_lock::MutexGuardArc<Library>, ReplicaError> {
         let handle = crate::library::shared_blocking()?;
+        sismo::scope!("sync::replica::lock_wait");
         Ok(pollster::block_on(handle.lock_arc()))
     }
 

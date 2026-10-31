@@ -110,6 +110,7 @@ impl Library {
             DataStoreConfig::new(index::NAMESPACE.to_owned()),
         )
         .await?;
+        sismo::instant!("library::store_client_ready");
         let mut index = index::load(&client).await?.unwrap_or_else(|| {
             // Nothing readable under the current key: whatever the
             // item store holds belongs to an older schema.
@@ -125,6 +126,9 @@ impl Library {
             }
         }
         let links = index::load_links(&client).await?;
+        sismo::counter!("library.items", index.items.len());
+        sismo::counter!("library.folders", index.folders.len());
+        sismo::counter!("library.links", links.links.len());
         let mut lib = Self {
             client: Arc::new(client),
             data: LibraryData {
@@ -140,6 +144,7 @@ impl Library {
 
     /// Drop deletion markers old enough that no device is expected to
     /// still carry the record they cancel.
+    #[sismo::function("library::compact_tombstones")]
     async fn compact_tombstones(&mut self) -> Result<()> {
         let now = now_millis();
         if self.data.links.compact(now, TOMBSTONE_TTL_MS) > 0 {
@@ -158,6 +163,7 @@ impl Library {
     /// at least one workspace exists and that `active` points at it.
     /// Idempotent — a fresh install mints "Workspace 1" exactly once;
     /// subsequent opens pass through.
+    #[sismo::function("library::ensure_default_workspace")]
     async fn ensure_default_workspace(&mut self) -> Result<()> {
         if !self.data.workspaces.workspaces.is_empty() {
             if self.data.workspaces.active.is_none() {
@@ -701,6 +707,7 @@ impl Library {
         self.touch_item(id).await
     }
 
+    #[sismo::function("library::touch_item")]
     async fn touch_item(&mut self, id: ItemId) -> Result<()> {
         let now = now_millis();
         if let Some(item) = self.data.index.item_mut(id) {
@@ -750,6 +757,7 @@ impl Library {
         self.persist_links()
     }
 
+    #[sismo::function("library::persist_links")]
     fn persist_links(&self) -> Result<()> {
         index::store(
             &self.client,
@@ -1167,6 +1175,7 @@ impl Library {
             .await
     }
 
+    #[sismo::function("library::push_tab")]
     async fn push_tab(&mut self, workspace: WorkspaceId, pane: PaneId, tab: PaneTab) -> Result<()> {
         let now = now_millis();
         let w = self
@@ -1447,6 +1456,7 @@ impl Library {
     // ---------- Internal helpers ---------------------------------------
 
     /// Store the index. Covers stay out of it: each lives in its own file.
+    #[sismo::function("library::persist")]
     fn persist(&mut self) -> Result<()> {
         let covers: Vec<_> = self
             .data
@@ -1465,6 +1475,7 @@ impl Library {
         Ok(())
     }
 
+    #[sismo::function("library::persist_workspaces")]
     fn persist_workspaces(&self) -> Result<()> {
         index::store(
             &self.client,
@@ -1487,6 +1498,7 @@ impl Library {
 }
 
 /// Read every cover from its file.
+#[sismo::function("library::read_covers")]
 fn read_covers(index: &mut LibraryIndex) {
     for item in &mut index.items {
         item.thumbnail = bodies::read_cover(item.id).map(Arc::from);
@@ -1494,6 +1506,7 @@ fn read_covers(index: &mut LibraryIndex) {
 }
 
 /// Store the cover a record arrived with; failures are logged.
+#[sismo::function("library::keep_cover")]
 fn keep_cover(id: ItemId, cover: Option<&[u8]>) {
     if let Err(err) = bodies::write_cover(id, cover) {
         log::error!("cover {id}: {err}");
@@ -1523,6 +1536,7 @@ impl LibraryData {
 
     /// A copy of the in-memory state for a screen to render from.
     #[must_use]
+    #[sismo::function("library::snapshot")]
     pub fn snapshot(&self) -> Self {
         self.clone()
     }
@@ -1700,6 +1714,7 @@ impl LibraryData {
 
     /// Every folder id that would be caught in a recursive delete
     /// starting from `root` (inclusive).
+    #[sismo::function("library::collect_subtree")]
     fn collect_subtree(&self, root: FolderId) -> Vec<FolderId> {
         let mut out = vec![root];
         let mut cursor = 0;

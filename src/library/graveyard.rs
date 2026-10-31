@@ -42,6 +42,7 @@ impl Graveyard {
     /// The last yard read or saved is kept and reused while the file
     /// is unchanged.
     #[must_use]
+    #[sismo::function("library::graveyard::load")]
     pub fn load() -> Self {
         let path = Self::path();
         let stamp = file_stamp(&path);
@@ -63,6 +64,7 @@ impl Graveyard {
         yard
     }
 
+    #[sismo::function("library::graveyard::save")]
     pub fn save(&self) -> std::io::Result<()> {
         let bytes = bincode::encode_to_vec(self, config::standard())
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
@@ -102,6 +104,7 @@ impl Graveyard {
 
     /// Forget stones older than `max_age` milliseconds. Returns how
     /// many went.
+    #[sismo::function("library::graveyard::compact")]
     pub fn compact(&mut self, now: u64, max_age: u64) -> usize {
         let before = self.stones.len();
         self.stones.retain(|s| now.saturating_sub(s.at) <= max_age);
@@ -125,6 +128,7 @@ fn cache() -> std::sync::MutexGuard<'static, Option<(Stamp, Graveyard)>> {
 }
 
 /// Load, bury and save in one go; failures are logged, never fatal.
+#[sismo::function("library::graveyard::bury_saved")]
 pub fn bury(kind: Buried, id: [u8; 16], at: u64) {
     let mut yard = Graveyard::load();
     yard.bury(kind, id, at);

@@ -37,6 +37,7 @@ pub async fn shared() -> Result<LibHandle> {
 ///
 /// # Errors
 /// Same as [`shared`].
+#[sismo::function("library::shared_blocking")]
 pub fn shared_blocking() -> Result<LibHandle> {
     pollster::block_on(shared())
 }
@@ -54,6 +55,7 @@ pub fn changes() -> flume::Receiver<()> {
 }
 
 /// Wake every [`changes`] subscriber.
+#[sismo::function("library::notify_changed")]
 pub fn notify() {
     LISTENERS
         .lock()

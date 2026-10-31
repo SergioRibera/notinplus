@@ -361,6 +361,7 @@ pub const fn days_left(at: u64, now: u64, retention: Option<u64>) -> Option<u64>
 impl LibraryData {
     /// Notebooks (companion canvases) of `item` that are still live.
     #[must_use]
+    #[sismo::function("library::trash::live_notebooks_of")]
     pub fn live_notebooks_of(&self, item: ItemId) -> Vec<ItemId> {
         self.companions_of(item)
             .filter(|id| self.item(*id).is_some_and(|i| i.trashed.is_none()))
@@ -369,6 +370,7 @@ impl LibraryData {
 
     /// Top-level trash entries, most recently trashed first.
     #[must_use]
+    #[sismo::function("library::trash::trash_entries")]
     pub fn trash_entries(&self) -> Vec<TrashEntry> {
         let index = &self.index;
         let parent_in_same_batch = |folder: FolderId, batch: u64| {
@@ -411,6 +413,7 @@ impl LibraryData {
 
     /// Bytes on disk held by trashed items.
     #[must_use]
+    #[sismo::function("library::trash::trash_size")]
     pub fn trash_size(&self) -> u64 {
         self.index
             .items
