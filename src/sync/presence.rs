@@ -19,6 +19,9 @@ use crate::library::ItemId;
 const GONE_AFTER: Duration = Duration::from_secs(8);
 /// How often an open document tells the others it is still open.
 const HEARTBEAT: Duration = Duration::from_secs(3);
+/// Following someone who dropped out of sight resumes if they are back
+/// within this long.
+const RESUME_FOLLOW: Duration = Duration::from_secs(120);
 
 struct Here {
     name: String,
@@ -37,6 +40,9 @@ static WATCHERS: Mutex<Vec<(ItemId, flume::Sender<()>)>> = Mutex::new(Vec::new()
 static MINE: Mutex<Vec<(ItemId, Weak<DocPresence>)>> = Mutex::new(Vec::new());
 /// Whom this device follows: its view goes wherever theirs does.
 static FOLLOWING: Mutex<Option<DeviceId>> = Mutex::new(None);
+/// Whom this device followed until they dropped out of sight, and
+/// since when: following picks up again if they are back in time.
+static AWAITING: Mutex<Option<(DeviceId, Instant)>> = Mutex::new(None);
 /// Woken on any arrival, move, departure or follow change, anywhere.
 static ALL_WATCHERS: Mutex<Vec<flume::Sender<()>>> = Mutex::new(Vec::new());
 
@@ -74,6 +80,41 @@ pub fn watch_all() -> flume::Receiver<()> {
 
 /// Follow `device`, or stop with `None`.
 pub fn follow(device: Option<DeviceId>) {
+    *awaiting() = None;
+    set_following(device);
+}
+
+/// The followed peer dropped out of sight: stop moving with it, and
+/// start again if it comes back soon.
+fn lose_sight(device: DeviceId) {
+    set_following(None);
+    *awaiting() = Some((device, Instant::now()));
+}
+
+fn awaiting() -> MutexGuard<'static, Option<(DeviceId, Instant)>> {
+    AWAITING.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// `from` is back in sight: follow it again if it was followed when it
+/// dropped out, not too long ago.
+fn resume_following(from: DeviceId) {
+    let mut awaiting = awaiting();
+    let Some((device, since)) = *awaiting else {
+        return;
+    };
+    if since.elapsed() > RESUME_FOLLOW {
+        *awaiting = None;
+        return;
+    }
+    if device != from {
+        return;
+    }
+    *awaiting = None;
+    drop(awaiting);
+    set_following(Some(from));
+}
+
+fn set_following(device: Option<DeviceId>) {
     let mut following = FOLLOWING.lock().unwrap_or_else(PoisonError::into_inner);
     if *following == device {
         return;
@@ -162,6 +203,9 @@ pub(super) fn seen(item: ItemId, from: DeviceId, name: &str, state: Option<Vec<u
         changed
     });
     drop(guard);
+    if arrived {
+        resume_following(from);
+    }
     if arrived || moved {
         notify(item);
     }
@@ -194,7 +238,7 @@ pub(super) fn gone(from: DeviceId) -> Vec<ItemId> {
         notify(*item);
     }
     if following() == Some(from) {
-        follow(None);
+        lose_sight(from);
     }
     items
 }
@@ -369,13 +413,38 @@ fn sweep() {
     if let Some(device) = following()
         && whereabouts(device).is_none()
     {
-        follow(None);
+        lose_sight(device);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Tests that follow someone share one global; take turns.
+    fn serial() -> MutexGuard<'static, ()> {
+        static SERIAL: Mutex<()> = Mutex::new(());
+        SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    #[test]
+    fn following_resumes_when_the_followed_peer_comes_back() {
+        let _serial = serial();
+        let notes = ItemId([10; 16]);
+        let dani = DeviceId([4; 32]);
+        seen(notes, dani, "Dani", Some(vec![1]));
+        follow(Some(dani));
+        gone(dani);
+        assert_eq!(following(), None);
+        seen(notes, dani, "Dani", Some(vec![1]));
+        assert_eq!(following(), Some(dani));
+        // Stopping by hand is not undone by a return.
+        follow(None);
+        gone(dani);
+        seen(notes, dani, "Dani", Some(vec![1]));
+        assert_eq!(following(), None);
+        left(notes, dani);
+    }
 
     #[test]
     fn peers_arrive_move_and_leave() {
@@ -396,6 +465,7 @@ mod tests {
 
     #[test]
     fn following_goes_where_they_last_moved() {
+        let _serial = serial();
         let (notes, bible) = (ItemId([5; 16]), ItemId([6; 16]));
         let beto = DeviceId([2; 32]);
         seen(notes, beto, "Beto", Some(vec![1]));
