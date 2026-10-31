@@ -89,6 +89,7 @@ impl GlyphFont {
     /// Baked outlines, decoded once. `None` (logged) if the bundled
     /// archive is stale; re-run `glyph-bake fonts`.
     #[must_use]
+    #[sismo::function("ink_glyph::font_ink")]
     pub fn ink(self) -> Option<&'static FontInk> {
         static INKS: [OnceLock<Option<FontInk>>; 4] = [const { OnceLock::new() }; 4];
         INKS[self.index()]
@@ -106,6 +107,7 @@ impl GlyphFont {
     /// `(x, y)`, for previews of the font itself. Returns the outline
     /// and its width.
     #[must_use]
+    #[sismo::function("ink_glyph::sample")]
     pub fn sample(self, text: &str, (x, y): (f32, f32), height: f32) -> Option<(Path, f32)> {
         let ink = self.ink()?;
         // Y grows downwards: `min` is the top of the tallest letter.
@@ -167,6 +169,7 @@ pub struct InkGlyph {
 impl InkGlyph {
     /// World-space `(min_x, min_y, max_x, max_y)` of the outline.
     #[must_use]
+    #[sismo::function("ink_glyph::bounds")]
     pub fn bounds(&self) -> Option<(f32, f32, f32, f32)> {
         let ink = self.font.ink()?.glyph(self.glyph)?;
         let world = |[x, y]: [i16; 2]| {
@@ -182,6 +185,7 @@ impl InkGlyph {
 
     /// Filled outline in world units.
     #[must_use]
+    #[sismo::function("ink_glyph::path")]
     pub fn path(&self) -> Option<Path> {
         let ink = self.font.ink()?.glyph(self.glyph)?;
         let world = |point: notein_handwriting::Point| (point.x + self.x, point.y + self.y);
@@ -210,6 +214,7 @@ impl InkGlyph {
 
     /// Whether the outline's bounds come within `radius` of `(x, y)`.
     #[must_use]
+    #[sismo::function("ink_glyph::touches_circle")]
     pub fn touches_circle(&self, x: f32, y: f32, radius: f32) -> bool {
         self.bounds().is_some_and(|(x0, y0, x1, y1)| {
             let dx = x - x.clamp(x0, x1);

@@ -110,6 +110,7 @@ impl FontInk {
     /// [`HandwritingError::Archive`] for bytes that are not a valid
     /// archive, [`HandwritingError::Format`] for one baked by an
     /// incompatible version.
+    #[cfg_attr(feature = "sismo", sismo::function("handwriting::font_from_bytes"))]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, HandwritingError> {
         archive::decode(bytes)
     }

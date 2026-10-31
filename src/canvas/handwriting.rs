@@ -53,10 +53,12 @@ fn fits_ink_size(glyph: char, pen_widths: f32) -> bool {
 
 /// Bundled recognizer, decoded once. `None` (logged) if the archive is
 /// stale; re-run `glyph-bake templates`.
+#[sismo::function("handwriting::recognizer")]
 pub(super) fn recognizer() -> Option<&'static Recognizer> {
     static RECOGNIZER: OnceLock<Option<Recognizer>> = OnceLock::new();
     RECOGNIZER
         .get_or_init(|| {
+            sismo::scope!("handwriting::load_templates");
             Recognizer::from_bytes(include_bytes!("../../assets/handwriting/templates.rkyv"))
                 .inspect_err(|err| log::error!("handwriting templates: {err}"))
                 .ok()
@@ -140,6 +142,7 @@ impl Board {
 
     /// Turn smoothing on or off. Turning it off closes the pending
     /// letter right away.
+    #[sismo::function("handwriting::set_enabled")]
     pub fn set_handwriting(&mut self, enabled: bool) {
         if enabled != self.handwriting.enabled {
             log::info!(
@@ -164,6 +167,7 @@ impl Board {
 
     /// Close the pending letter if it is still the one armed as
     /// `generation` and the pen is up.
+    #[sismo::function("handwriting::flush")]
     pub fn flush_handwriting(&mut self, generation: u64) {
         if generation != self.handwriting.generation {
             log::info!(
@@ -187,6 +191,7 @@ impl Board {
     /// Close the previous letter first when the stroke does not overlap it
     /// (decided on the whole stroke, so a `t` bar starting left of its stem
     /// still joins).
+    #[sismo::function("handwriting::after_stroke")]
     pub(super) fn handwriting_after_stroke(&mut self, id: StrokeId, kind: BrushKind) {
         if !self.handwriting.enabled {
             return;
@@ -235,6 +240,7 @@ impl Board {
     }
 
     /// Drop the pending letter without recognizing it (undo, reload).
+    #[sismo::function("handwriting::forget")]
     pub(super) fn forget_handwriting(&mut self, why: &str) {
         if !self.handwriting.pending.is_empty() {
             log::info!(
@@ -250,6 +256,7 @@ impl Board {
     /// Whether stroke `id` overlaps the pending letter grown by the join
     /// slack. The horizontal slack never drops below two pen widths so a
     /// tittle drifting off its stem still lands.
+    #[sismo::function("handwriting::joins_pending")]
     fn joins_pending(&self, id: StrokeId) -> bool {
         let Some(stroke) = self.doc.find_stroke(id) else {
             return true;
@@ -281,6 +288,7 @@ impl Board {
         joins
     }
 
+    #[sismo::function("handwriting::pending_bounds")]
     fn pending_bounds(&self) -> Option<Bounds> {
         Bounds::of(
             self.handwriting
@@ -292,6 +300,7 @@ impl Board {
     }
 
     /// Recognize the pending letter and swap its ink for a glyph.
+    #[sismo::function("handwriting::close_letter")]
     fn close_letter(&mut self) {
         let ids = std::mem::take(&mut self.handwriting.pending);
         self.handwriting.generation += 1;
@@ -384,6 +393,7 @@ impl Board {
     }
 
     /// Ids of the active layer's glyphs an eraser circle touches.
+    #[sismo::function("handwriting::glyphs_touching_circle")]
     pub(super) fn glyphs_touching_circle(&self, x: f32, y: f32, radius: f32) -> Vec<InkGlyphId> {
         self.active_editable_glyphs()
             .filter(|glyph| glyph.touches_circle(x, y, radius))
@@ -392,6 +402,7 @@ impl Board {
     }
 
     /// Ids of the active layer's glyphs whose bounds overlap the rect.
+    #[sismo::function("handwriting::glyphs_in_rect")]
     pub(super) fn glyphs_in_rect(
         &self,
         min_x: f32,
@@ -418,6 +429,7 @@ impl Board {
     }
 
     /// Delete glyphs as part of the caller's undo transaction.
+    #[sismo::function("handwriting::erase_glyphs")]
     pub(super) fn erase_glyphs(&mut self, ids: &[InkGlyphId]) {
         for id in ids {
             self.apply_op(DocOp::DeleteGlyph { id: *id });
@@ -425,6 +437,7 @@ impl Board {
     }
 
     /// Keep the outline cache in step with a glyph op just applied.
+    #[sismo::function("handwriting::cache_glyph")]
     pub(super) fn cache_glyph(&mut self, glyph: &InkGlyph) {
         if let Some(path) = glyph.path() {
             self.glyph_paths.insert(glyph.id, path);
@@ -432,6 +445,7 @@ impl Board {
     }
 
     /// Glyphs of `layer`, filled in their ink colour.
+    #[sismo::function("handwriting::paint_glyphs")]
     pub(super) fn paint_glyphs(&self, canvas: &Canvas, layer: &Layer, opacity: f32) {
         for glyph in &layer.glyphs {
             let Some(path) = self.glyph_paths.get(&glyph.id) else {
@@ -462,6 +476,7 @@ impl Board {
 
 /// The candidate `ink` reads as, or `None` (logged why) when it reads as
 /// no character of its size.
+#[sismo::function("handwriting::pick")]
 fn pick(recognizer: &Recognizer, ink: &[Vec<Point>], pen_widths: f32) -> Option<Candidate> {
     let started = std::time::Instant::now();
     let candidates = recognizer.recognize(ink, None, CANDIDATES);
@@ -515,6 +530,7 @@ fn describe(candidates: &[Candidate], pen_widths: f32) -> String {
 
 /// Font glyph for `glyph` fitted over the ink `bounds`: scaled to the
 /// ink height (width for flat marks like `-`) and centred on it.
+#[sismo::function("handwriting::place")]
 fn place(glyph: char, font: GlyphFont, bounds: Bounds, color: [u8; 4]) -> Option<InkGlyph> {
     let outline = font.ink()?.glyph(glyph)?;
     let (min_x, min_y) = (f32::from(outline.min[0]), f32::from(outline.min[1]));
