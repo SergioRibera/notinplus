@@ -30,6 +30,7 @@ missing_panics_doc = "allow"
 redundant_pub_crate = "allow"
 
 [features]
+sismo = ["dep:sismo"]
 default = []
 # Guarded import pipeline — pulls `reqwest` + `serde_json`. Off by
 # default so headless library bins (tests, CLIs) don't drag the HTTP
@@ -48,6 +49,8 @@ ui = [
 ]
 
 [dependencies]
+# Spans for the sismo profiler; off unless an app turns it on.
+sismo = { path = "../../../../sismo/crates/sismo", default-features = false, optional = true }
 freya-icons = { version = "=0.5.0-rc.13", features = ["lucide"] }
 notein-sdk = { path = "../notein-sdk" }
 notein-i18n = { path = "../notein-i18n" }

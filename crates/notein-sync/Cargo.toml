@@ -21,7 +21,12 @@ missing_panics_doc = "allow"
 # Conflicts with rustc's `unreachable_pub`, which this crate keeps on.
 redundant_pub_crate = "allow"
 
+[features]
+sismo = ["dep:sismo"]
+
 [dependencies]
+# Spans for the sismo profiler; off unless an app turns it on.
+sismo = { path = "../../../../sismo/crates/sismo", default-features = false, optional = true }
 zudp = { version = "0.3.9", features = ["security", "discovery"] }
 bincode = { version = "2", features = ["derive", "std"] }
 blake2 = "0.10"
