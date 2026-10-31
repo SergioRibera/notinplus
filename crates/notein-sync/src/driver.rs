@@ -18,7 +18,9 @@ use crate::identity::{DeviceId, DeviceProfile, PairingCode, TrustedDevice};
 use crate::net::{Lane, NetEvent, PeerInfo};
 use crate::relay::{RecordKind, RelayAddr, RelayMessage};
 use crate::replica::{BlobKey, BlobKind, DocId, Replica, Scope, Version};
-use crate::share::{Invite, Member, Share, ShareId, ShareMessage, ShareMode, proof_is_valid};
+use crate::share::{
+    EndedShare, Invite, Member, Share, ShareBook, ShareId, ShareMessage, ShareMode, proof_is_valid,
+};
 
 /// How long a pairing offer stays valid.
 pub const OFFER_TTL: Duration = Duration::from_secs(5 * 60);
@@ -402,6 +404,8 @@ pub struct SyncDriver<R> {
     /// routed through the relay when no direct channel exists.
     known_keys: HashMap<DeviceId, [u8; 32]>,
     redials: HashMap<DeviceId, Redial>,
+    /// Shares this device owned and closed.
+    ended: HashMap<ShareId, EndedShare>,
 }
 
 impl<R> std::fmt::Debug for SyncDriver<R> {
@@ -416,10 +420,11 @@ impl<R> std::fmt::Debug for SyncDriver<R> {
 
 impl<R: Replica> SyncDriver<R> {
     #[must_use]
-    pub fn new(profile: DeviceProfile, replica: R, shares: Vec<Share>) -> Self {
+    pub fn new(profile: DeviceProfile, replica: R, book: ShareBook) -> Self {
         let replica = Arc::new(Mutex::new(replica));
         let engine = SyncEngine::new(Arc::clone(&replica), Scope::All);
-        let shares = shares
+        let shares = book
+            .shares
             .into_iter()
             .map(|share| {
                 let engine = SyncEngine::new(Arc::clone(&replica), share.scope());
@@ -439,6 +444,16 @@ impl<R: Replica> SyncDriver<R> {
             relay: None,
             known_keys: HashMap::new(),
             redials: HashMap::new(),
+            ended: book.ended.into_iter().map(|e| (e.id, e)).collect(),
+        }
+    }
+
+    /// What to persist about shares, for [`Self::new`] after a restart.
+    #[must_use]
+    pub fn book(&self) -> ShareBook {
+        ShareBook {
+            shares: self.shares().cloned().collect(),
+            ended: self.ended.values().cloned().collect(),
         }
     }
 
@@ -642,6 +657,9 @@ impl<R: Replica> SyncDriver<R> {
         let Some(link) = self.shares.remove(&id) else {
             return Vec::new();
         };
+        if link.share.is_owner(self.profile.id()) {
+            self.ended.insert(id, link.share.ended());
+        }
         let mut out = Vec::new();
         out.extend(self.relay_send(&RelayMessage::Unregister { share: id }));
         for member in &link.share.members {
@@ -1035,6 +1053,10 @@ impl<R: Replica> SyncDriver<R> {
         out: &mut Vec<Action>,
     ) -> Result<(), SyncError<R::Error>> {
         let name = self.peer_name(from);
+        if let Some(reply) = self.removal_for(from, id, sealed) {
+            out.extend(reply);
+            return Ok(());
+        }
         let Some(link) = self.shares.get_mut(&id) else {
             return Ok(());
         };
@@ -1109,7 +1131,7 @@ impl<R: Replica> SyncDriver<R> {
                 self.removed_by_owner(from, id, Removal::Expelled, out);
             }
             ShareMessage::Left => {
-                if link.share.is_owner(me) && link.share.expel(from) {
+                if link.share.is_owner(me) && link.share.remove_member(from) {
                     link.share.updated_at = now_ms();
                     link.engine.forget_peer(from);
                     out.extend(self.broadcast_meta(id));
@@ -1118,6 +1140,35 @@ impl<R: Replica> SyncDriver<R> {
             }
         }
         Ok(())
+    }
+
+    /// The explicit answer for a member that still writes into a share
+    /// this device closed, or threw it out of, while it was away. `None`
+    /// when `from` is still welcome or was never inside.
+    fn removal_for(&self, from: DeviceId, id: ShareId, sealed: &[u8]) -> Option<Option<Action>> {
+        let me = self.profile.id();
+        let (key, message) = if let Some(link) = self.shares.get(&id) {
+            let share = &link.share;
+            if !share.is_owner(me) || !share.was_expelled(from) {
+                return None;
+            }
+            (&share.key, ShareMessage::Expelled)
+        } else {
+            let ended = self.ended.get(&id)?;
+            if !ended.members.contains(&from) {
+                return None;
+            }
+            (&ended.key, ShareMessage::Ended)
+        };
+        // Only someone holding the key hears about it.
+        ShareMessage::open(key, sealed)?;
+        Some(self.route(
+            from,
+            &Payload::Share {
+                share: id,
+                sealed: message.seal(key),
+            },
+        ))
     }
 
     /// The owner closed the share for this device: drop it and say
@@ -1820,6 +1871,18 @@ impl<R: Replica> SyncDriver<R> {
                     None => {}
                 }
             }
+            RelayMessage::Refused { share } => {
+                // Turned away from a mailbox: maybe thrown out while away,
+                // maybe the owner has not registered us yet. Its answer says.
+                let me = self.profile.id();
+                if let Some(owner) = self
+                    .share(share)
+                    .filter(|s| !s.is_owner(me))
+                    .map(|s| s.owner.device)
+                {
+                    out.extend(self.share_round_for(share, owner)?);
+                }
+            }
             RelayMessage::Registered { share } => {
                 if let Some(s) = self.share(share)
                     && let Some(action) = self.relay_send(&RelayMessage::Subscribe {
@@ -1860,8 +1923,7 @@ impl<R: Replica> SyncDriver<R> {
                     Some(Payload::Sync(_) | Payload::Pair(_) | Payload::Relay(_)) | None => {}
                 }
             }
-            RelayMessage::Refused { .. }
-            | RelayMessage::Forward { .. }
+            RelayMessage::Forward { .. }
             | RelayMessage::Register { .. }
             | RelayMessage::Unregister { .. }
             | RelayMessage::Subscribe { .. }
@@ -1941,7 +2003,7 @@ impl<R: Replica> SyncDriver<R> {
                 }
             }
             ShareMessage::Left => {
-                if link.share.is_owner(me) && link.share.expel(record.from) {
+                if link.share.is_owner(me) && link.share.remove_member(record.from) {
                     link.share.updated_at = now_ms();
                     out.extend(self.broadcast_meta(id));
                     out.extend(self.relay_register(id));
@@ -2023,7 +2085,7 @@ mod tests {
         SyncDriver::new(
             DeviceProfile::generate(name),
             MemReplica::default(),
-            Vec::new(),
+            ShareBook::default(),
         )
     }
 
@@ -2554,6 +2616,113 @@ mod tests {
             from: relay,
             bytes: relay_payload(message),
         }
+    }
+
+    /// Owner and guest inside one share, then apart.
+    fn joined_then_apart() -> (SyncDriver<MemReplica>, SyncDriver<MemReplica>, ShareId) {
+        let mut owner = driver("Sergio");
+        let mut guest = driver("Ana");
+        let share = shared_doc(&owner);
+        let id = share.id;
+        let invite = share.invite();
+        owner.create_share(share);
+        connect_both(&mut owner, &mut guest);
+        deliver(guest.join(invite), &mut guest, &mut owner);
+        assert!(guest.share(id).is_some());
+        owner
+            .on_event(NetEvent::Disconnected(guest.profile.id()))
+            .unwrap();
+        guest
+            .on_event(NetEvent::Disconnected(owner.profile.id()))
+            .unwrap();
+        (owner, guest, id)
+    }
+
+    fn removed(events: &[DriverEvent], share: ShareId, reason: Removal) -> bool {
+        events.contains(&DriverEvent::ShareRemoved { share, reason })
+    }
+
+    #[test]
+    fn a_guest_away_while_the_share_ended_is_told_when_it_returns() {
+        let (mut owner, mut guest, id) = joined_then_apart();
+        assert!(
+            owner
+                .end_share(id)
+                .iter()
+                .all(|a| !matches!(a, Action::Send { .. }))
+        );
+        // The owner restarts in between: the ending is remembered.
+        let book = ShareBook::decode(&owner.book().encode()).unwrap();
+        let mut owner = SyncDriver::new(owner.profile.clone(), MemReplica::default(), book);
+
+        let events = connect_both(&mut owner, &mut guest)
+            .into_iter()
+            .filter_map(|a| match a {
+                Action::Event(e) => Some(e),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(removed(&events, id, Removal::Ended), "{events:?}");
+        assert!(guest.share(id).is_none());
+    }
+
+    #[test]
+    fn a_guest_away_while_expelled_is_told_when_it_returns() {
+        let (mut owner, mut guest, id) = joined_then_apart();
+        owner.expel(id, guest.profile.id());
+        let events: Vec<DriverEvent> = connect_both(&mut owner, &mut guest)
+            .into_iter()
+            .filter_map(|a| match a {
+                Action::Event(e) => Some(e),
+                _ => None,
+            })
+            .collect();
+        assert!(removed(&events, id, Removal::Expelled), "{events:?}");
+        assert!(guest.share(id).is_none());
+        assert!(owner.share(id).unwrap().members.is_empty());
+    }
+
+    #[test]
+    fn a_share_ended_while_away_is_told_through_the_relay() {
+        let (mut owner, mut guest, id) = joined_then_apart();
+        let owner_public = *owner.profile.key().public();
+        let guest_public = *guest.profile.key().public();
+        owner.end_share(id);
+        let at_guest = on_relay(&mut guest);
+        let at_owner = on_relay(&mut owner);
+        // Carry `Forward`s from one side as `Forwarded`s to the other.
+        let forwarded = |out: Vec<Action>, relay: DeviceId, from: [u8; 32], to: [u8; 32]| {
+            out.into_iter()
+                .filter_map(move |a| match a {
+                    Action::Send { device, bytes, .. } if device == relay => {
+                        match relay_message(&bytes) {
+                            Some(RelayMessage::Forward { to: t, bytes }) if t == to => {
+                                Some(RelayMessage::Forwarded { from, bytes })
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let asked = guest
+            .on_event(from_relay(at_guest, &RelayMessage::Gone { share: id }))
+            .unwrap();
+        let mut answers = Vec::new();
+        for message in forwarded(asked, at_guest, guest_public, owner_public) {
+            let out = owner.on_event(from_relay(at_owner, &message)).unwrap();
+            answers.extend(forwarded(out, at_owner, owner_public, guest_public));
+        }
+        assert!(!answers.is_empty());
+        let mut events = Vec::new();
+        for message in answers {
+            events.extend(guest.on_event(from_relay(at_guest, &message)).unwrap());
+        }
+        assert!(events.contains(&Action::Event(DriverEvent::ShareRemoved {
+            share: id,
+            reason: Removal::Ended,
+        })));
     }
 
     #[test]

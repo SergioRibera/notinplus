@@ -7,7 +7,9 @@ use std::net::{Ipv4Addr, UdpSocket};
 use std::time::{Duration, Instant};
 
 use common::MemReplica;
-use notein_sync::{Action, DeviceProfile, DocId, LanConfig, LanNode, SyncDriver, TrustedDevice};
+use notein_sync::{
+    Action, DeviceProfile, DocId, LanConfig, LanNode, ShareBook, SyncDriver, TrustedDevice,
+};
 
 const D1: DocId = DocId([1; 16]);
 
@@ -42,7 +44,7 @@ impl Device {
         )
         .unwrap();
         Self {
-            driver: SyncDriver::new(profile.clone(), MemReplica::default(), Vec::new()),
+            driver: SyncDriver::new(profile.clone(), MemReplica::default(), ShareBook::default()),
             profile,
             port,
             discovery_port,

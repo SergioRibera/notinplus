@@ -10,7 +10,7 @@ use common::MemReplica;
 use notein_sync::driver::DriverEvent;
 use notein_sync::{
     Action, DeviceKey, DeviceProfile, DocId, Invite, LanConfig, LanNode, RelayAddr, RelayConfig,
-    RelayServer, RelayStore, Share, ShareMode, SyncDriver,
+    RelayServer, RelayStore, Share, ShareBook, ShareMode, SyncDriver,
 };
 /// A device: its transport plus its driver, pumped by hand.
 struct Device {
@@ -33,7 +33,7 @@ impl Device {
         .unwrap();
         Self {
             node,
-            driver: SyncDriver::new(profile, MemReplica::default(), Vec::new()),
+            driver: SyncDriver::new(profile, MemReplica::default(), ShareBook::default()),
             events: Vec::new(),
         }
     }
@@ -162,7 +162,7 @@ fn guest_joins_and_syncs_through_the_relay_only() {
     std::thread::sleep(Duration::from_millis(300));
     owner.pump();
     let cursor_before = guest.driver.share(id).unwrap().relay_cursor;
-    let shares: Vec<Share> = guest.driver.shares().cloned().collect();
+    let book = guest.driver.book();
     let profile = guest.driver.profile().clone();
     let relay_addr = guest.driver.relay().cloned();
     drop(guest);
@@ -174,7 +174,7 @@ fn guest_joins_and_syncs_through_the_relay_only() {
                 .scan(false),
         )
         .unwrap(),
-        driver: SyncDriver::new(profile, MemReplica::default(), shares),
+        driver: SyncDriver::new(profile, MemReplica::default(), book),
         events: Vec::new(),
     };
     let actions = returning.driver.set_relay(relay_addr);

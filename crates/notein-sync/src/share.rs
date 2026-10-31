@@ -110,6 +110,9 @@ pub struct Share {
     pub members: Vec<Member>,
     /// Members the owner set to only look, whatever the policy says.
     pub viewers: Vec<DeviceId>,
+    /// Members the owner threw out, so one that was away hears it when
+    /// it comes back. Kept by the owner only.
+    pub expelled: Vec<DeviceId>,
     pub key: ShareKey,
     pub created_at: u64,
     pub updated_at: u64,
@@ -150,6 +153,7 @@ impl Share {
             policy: SharePolicy::default(),
             members: Vec::new(),
             viewers: Vec::new(),
+            expelled: Vec::new(),
             key: ShareKey::generate(),
             created_at: now,
             updated_at: now,
@@ -213,6 +217,7 @@ impl Share {
         if member.device == self.owner.device {
             return false;
         }
+        self.expelled.retain(|d| *d != member.device);
         if let Some(existing) = self.members.iter_mut().find(|m| m.device == member.device) {
             *existing = member;
             false
@@ -222,10 +227,25 @@ impl Share {
         }
     }
 
-    pub fn expel(&mut self, device: DeviceId) -> bool {
+    /// A member is gone of its own accord; returns whether it was in.
+    pub fn remove_member(&mut self, device: DeviceId) -> bool {
         let before = self.members.len();
         self.members.retain(|m| m.device != device);
         before != self.members.len()
+    }
+
+    /// Throw a member out, remembering it; returns whether it was in.
+    pub fn expel(&mut self, device: DeviceId) -> bool {
+        let removed = self.remove_member(device);
+        if removed && !self.expelled.contains(&device) {
+            self.expelled.push(device);
+        }
+        removed
+    }
+
+    #[must_use]
+    pub fn was_expelled(&self, device: DeviceId) -> bool {
+        self.expelled.contains(&device)
     }
 
     /// The invitation for this share.
@@ -244,13 +264,25 @@ impl Share {
         }
     }
 
-    /// What a member sees after joining: the share minus nothing, since
-    /// the member already holds the key from the invitation.
+    /// What a member sees after joining: the share minus the owner's
+    /// bookkeeping. The key stays, since the member already holds it
+    /// from the invitation.
     #[must_use]
     pub fn for_member(&self) -> Self {
         Self {
             relay_cursor: 0,
+            expelled: Vec::new(),
             ..self.clone()
+        }
+    }
+
+    /// What the owner keeps of this share once it is closed.
+    #[must_use]
+    pub fn ended(&self) -> EndedShare {
+        EndedShare {
+            id: self.id,
+            key: self.key.clone(),
+            members: self.members.iter().map(|m| m.device).collect(),
         }
     }
 }
@@ -350,10 +382,22 @@ pub fn proof_is_valid(share: &Share, proof: &[u8]) -> bool {
     share.key.open(proof).is_ok_and(|plain| plain == share.id.0)
 }
 
+/// A share its owner closed, kept so a member that was away is told
+/// when it comes back instead of editing into the void.
+#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+pub struct EndedShare {
+    pub id: ShareId,
+    pub key: ShareKey,
+    /// Who was inside when it closed.
+    pub members: Vec<DeviceId>,
+}
+
 /// Every share a device takes part in, as persisted.
 #[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug, Default)]
 pub struct ShareBook {
     pub shares: Vec<Share>,
+    /// Shares this device owned and closed.
+    pub ended: Vec<EndedShare>,
 }
 
 impl ShareBook {

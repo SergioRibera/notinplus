@@ -36,5 +36,6 @@ pub use net::{Beacon, LanConfig, Lane, NetError, NetEvent, PeerInfo};
 pub use relay::{RelayAddr, RelayConfig, RelayMessage, RelayServer, Store as RelayStore};
 pub use replica::{Blob, BlobHead, BlobKey, BlobKind, DocId, Replica, Scope, Version};
 pub use share::{
-    Invite, Member, Share, ShareBook, ShareId, ShareMessage, ShareMode, SharePolicy, Who,
+    EndedShare, Invite, Member, Share, ShareBook, ShareId, ShareMessage, ShareMode, SharePolicy,
+    Who,
 };

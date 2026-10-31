@@ -591,9 +591,7 @@ impl Service {
     }
 
     fn save_shares(&mut self) {
-        let book = ShareBook {
-            shares: self.driver.shares().cloned().collect(),
-        };
+        let book = self.driver.book();
         if let Err(err) = std::fs::write(&self.shares_path, book.encode()) {
             log::error!("share book save: {err}");
             self.error = Some(SyncProblem::SharesSave(Arc::new(err)));
@@ -960,11 +958,10 @@ fn on_live(item: ItemId, from: DeviceId, name: String, message: LiveMessage) {
     );
 }
 
-fn load_shares(path: &Path) -> Vec<Share> {
+fn load_shares(path: &Path) -> ShareBook {
     std::fs::read(path)
         .ok()
         .and_then(|bytes| ShareBook::decode(&bytes))
-        .map(|book| book.shares)
         .unwrap_or_default()
 }
 
@@ -1010,9 +1007,9 @@ impl Service {
                 transport.lost(Instant::now());
             }
         }
-        let shares = load_shares(&shares_path);
+        let book = load_shares(&shares_path);
         let mut service = Self {
-            driver: SyncDriver::new(profile, LibraryReplica::default(), shares),
+            driver: SyncDriver::new(profile, LibraryReplica::default(), book),
             transport,
             profile_path,
             shares_path,
