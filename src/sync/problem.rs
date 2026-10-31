@@ -85,6 +85,33 @@ impl UserMessage for SyncProblem {
     }
 }
 
+/// Something in the service went right again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Recovery {
+    /// An exchange step against the library went through.
+    Exchanged,
+    /// The transport is running.
+    TransportUp,
+    ProfileSaved,
+    SharesSaved,
+    /// A relay address was accepted, or the relay dropped.
+    RelaySet,
+}
+
+impl SyncProblem {
+    /// Whether `recovery` means this problem is over.
+    pub(super) const fn cleared_by(&self, recovery: Recovery) -> bool {
+        matches!(
+            (self, recovery),
+            (Self::Exchange(_), Recovery::Exchanged)
+                | (Self::Network(_), Recovery::TransportUp)
+                | (Self::ProfileSave(_), Recovery::ProfileSaved)
+                | (Self::SharesSave(_), Recovery::SharesSaved)
+                | (Self::BadRelay, Recovery::RelaySet)
+        )
+    }
+}
+
 fn identity_message(err: &IdentityError) -> String {
     match err {
         IdentityError::Io(err) => err.user_message(),
@@ -99,7 +126,22 @@ mod tests {
     use notein_i18n::Lang;
     use notein_plugin::UserMessage;
 
-    use super::SyncProblem;
+    use super::{Recovery, SyncProblem};
+
+    #[test]
+    fn a_problem_clears_once_its_cause_recovers() {
+        let exchange = SyncProblem::Exchange(Arc::new(notein_sync::SyncError::Codec("x".into())));
+        assert!(exchange.cleared_by(Recovery::Exchanged));
+        assert!(!exchange.cleared_by(Recovery::TransportUp));
+        let network = SyncProblem::Network(Arc::new(notein_sync::NetError::Stopped));
+        assert!(network.cleared_by(Recovery::TransportUp));
+        assert!(!network.cleared_by(Recovery::Exchanged));
+        let outdated = SyncProblem::Outdated {
+            name: "Tablet".to_owned(),
+            version: 3,
+        };
+        assert!(!outdated.cleared_by(Recovery::Exchanged));
+    }
 
     #[test]
     fn sync_problems_read_in_spanish_without_system_text() {

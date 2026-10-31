@@ -30,8 +30,8 @@ pub mod problem;
 pub mod replica;
 
 use live::{LiveEvent, LiveMessage};
-use problem::ExchangeError;
 pub use problem::SyncProblem;
+use problem::{ExchangeError, Recovery};
 use replica::LibraryReplica;
 
 /// Coalescing window for local change bursts.
@@ -583,10 +583,19 @@ impl Service {
         self.error = Some(SyncProblem::Outdated { name, version });
     }
 
+    /// Forget the last problem when `recovery` is what it waited for.
+    fn recovered(&mut self, recovery: Recovery) {
+        if self.error.as_ref().is_some_and(|e| e.cleared_by(recovery)) {
+            self.error = None;
+        }
+    }
+
     fn save_profile(&mut self) {
         if let Err(err) = self.driver.profile().save(&self.profile_path) {
             log::error!("device profile save: {err}");
             self.error = Some(SyncProblem::ProfileSave(Arc::new(err)));
+        } else {
+            self.recovered(Recovery::ProfileSaved);
         }
     }
 
@@ -595,6 +604,8 @@ impl Service {
         if let Err(err) = std::fs::write(&self.shares_path, book.encode()) {
             log::error!("share book save: {err}");
             self.error = Some(SyncProblem::SharesSave(Arc::new(err)));
+        } else {
+            self.recovered(Recovery::SharesSaved);
         }
     }
 
@@ -832,11 +843,13 @@ impl Service {
                         Vec::new()
                     }
                     Some(Ok(addr)) => {
+                        self.recovered(Recovery::RelaySet);
                         self.driver.profile_mut().set_relay(relay);
                         self.save_profile();
                         self.driver.set_relay(Some(addr))
                     }
                     None => {
+                        self.recovered(Recovery::RelaySet);
                         self.driver.profile_mut().set_relay(None);
                         self.save_profile();
                         self.driver.set_relay(None)
@@ -1042,7 +1055,10 @@ impl Service {
             _ => None,
         };
         match self.driver.on_event(event) {
-            Ok(actions) => self.perform(actions),
+            Ok(actions) => {
+                self.recovered(Recovery::Exchanged);
+                self.perform(actions);
+            }
             Err(notein_sync::SyncError::Version(version)) => self.report_outdated(from, version),
             Err(err) => {
                 log::error!("sync: {err}");
@@ -1075,9 +1091,7 @@ impl Service {
                 }
                 self.transport.node = Some(node);
                 self.transport.retry = None;
-                if matches!(self.error, Some(SyncProblem::Network(_))) {
-                    self.error = None;
-                }
+                self.recovered(Recovery::TransportUp);
             }
             Err(err) => {
                 log::warn!("sync network: {err}");
@@ -1088,9 +1102,12 @@ impl Service {
     }
 
     fn local_changed(&mut self) {
-        if let Err(err) = self.on_cmd(Cmd::LocalChanged) {
-            log::error!("sync: {err}");
-            self.error = Some(SyncProblem::Exchange(Arc::new(err)));
+        match self.on_cmd(Cmd::LocalChanged) {
+            Ok(()) => self.recovered(Recovery::Exchanged),
+            Err(err) => {
+                log::error!("sync: {err}");
+                self.error = Some(SyncProblem::Exchange(Arc::new(err)));
+            }
         }
     }
 }
@@ -1152,7 +1169,10 @@ fn run(cmds: &flume::Receiver<Cmd>) {
         if next_tick <= now {
             next_tick = now + notein_sync::driver::TICK;
             match service.driver.tick() {
-                Ok(actions) => service.perform(actions),
+                Ok(actions) => {
+                    service.recovered(Recovery::Exchanged);
+                    service.perform(actions);
+                }
                 Err(err) => {
                     log::error!("sync tick: {err}");
                     service.error = Some(SyncProblem::Exchange(Arc::new(err)));
