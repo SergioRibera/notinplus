@@ -28,13 +28,14 @@ static PDFIUM: OnceLock<Result<Pdfium, String>> = OnceLock::new();
 /// that isn't on the default loader path.
 const ENV_PDFIUM_LIB_DIR: &str = "PDFIUM_LIB_PATH";
 
-fn pdfium() -> Result<&'static Pdfium, PdfError> {
+pub(crate) fn pdfium() -> Result<&'static Pdfium, PdfError> {
     match PDFIUM.get_or_init(load_pdfium) {
         Ok(p) => Ok(p),
         Err(msg) => Err(PdfError::PdfiumUnavailable(msg.clone())),
     }
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("pdf::pdfium_bind"))]
 fn load_pdfium() -> Result<Pdfium, String> {
     // 1. Explicit override — devshell-friendly and gives packagers a
     //    knob when the library lives outside the default loader path.
@@ -50,7 +51,28 @@ fn load_pdfium() -> Result<Pdfium, String> {
             }
         }
     }
-    // 2. Default: let dlopen search the process' loader path. Works
+    // 2. Next to the executable — where release bundles ship it:
+    //    `bin/` (Windows), `../lib` (Linux packages, Nix) and
+    //    `../Frameworks` (macOS `.app`). macOS `dlopen` ignores
+    //    `LC_RPATH` for bare names, so the system search alone misses it.
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf));
+    if let Some(exe_dir) = exe_dir {
+        let bound = [
+            exe_dir.clone(),
+            exe_dir.join("../lib"),
+            exe_dir.join("../Frameworks"),
+        ]
+        .iter()
+        .map(Pdfium::pdfium_platform_library_name_at_path)
+        .filter(|path| path.is_file())
+        .find_map(|path| Pdfium::bind_to_library(&path).ok());
+        if let Some(b) = bound {
+            return Ok(Pdfium::new(b));
+        }
+    }
+    // 3. Default: let dlopen search the process' loader path. Works
     //    on Android (nativeLibraryDir), Linux with pdfium on
     //    LD_LIBRARY_PATH (see the nix devshell), macOS with
     //    DYLD_FALLBACK_LIBRARY_PATH, Windows with pdfium.dll on PATH.
@@ -75,6 +97,13 @@ struct Inner {
     /// open time so hot `page_size` / layout calls don't traverse
     /// pdfium's page collection on every access.
     page_sizes: Vec<(f32, f32)>,
+}
+
+#[cfg(feature = "sismo")]
+impl Drop for Inner {
+    fn drop(&mut self) {
+        sismo::instant!("pdf::doc_drop");
+    }
 }
 
 impl std::fmt::Debug for Inner {
@@ -110,8 +139,13 @@ impl PdfDocument {
     /// # Errors
     ///
     /// See [`Self::open`].
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::doc_open_path"))]
     pub fn open_with_password(path: &Path, password: Option<&str>) -> Result<Self, PdfError> {
-        let bytes = std::fs::read(path).map_err(|e| PdfError::Open(e.to_string()))?;
+        let bytes = {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("pdf::file_read");
+            std::fs::read(path).map_err(|e| PdfError::Open(e.to_string()))?
+        };
         Self::open_bytes_with_password(bytes, password)
     }
 
@@ -130,15 +164,24 @@ impl PdfDocument {
     /// # Errors
     ///
     /// See [`Self::open`].
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::doc_open"))]
     pub fn open_bytes_with_password(
         bytes: Vec<u8>,
         password: Option<&str>,
     ) -> Result<Self, PdfError> {
         let pdfium = pdfium()?;
-        let doc = pdfium
-            .load_pdf_from_byte_vec(bytes, password)
-            .map_err(|e| PdfError::Open(e.to_string()))?;
+        #[cfg(feature = "sismo")]
+        sismo::counter!("pdf.doc_bytes", bytes.len());
+        let doc = {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("pdf::doc_parse");
+            pdfium
+                .load_pdf_from_byte_vec(bytes, password)
+                .map_err(|e| PdfError::Open(e.to_string()))?
+        };
         let page_sizes = collect_page_sizes(&doc);
+        #[cfg(feature = "sismo")]
+        sismo::counter!("pdf.page_count", page_sizes.len());
         Ok(Self {
             inner: Arc::new(Inner { doc, page_sizes }),
         })
@@ -208,6 +251,7 @@ impl PdfDocument {
     ///
     /// Returns [`PdfError::PageOutOfRange`] when `page` is out of
     /// range, [`PdfError::Backend`] on pdfium failure.
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::extract_text"))]
     pub fn extract_page_text_indexed(&self, page: usize) -> Result<(String, Vec<usize>), PdfError> {
         let pdf_page = self.pdf_page(page)?;
         let text = pdf_page
@@ -224,6 +268,8 @@ impl PdfDocument {
             }
         }
         starts.push(out.len());
+        #[cfg(feature = "sismo")]
+        sismo::counter!("pdf.text_chars", char_count);
         Ok((out, starts))
     }
 
@@ -239,6 +285,7 @@ impl PdfDocument {
     ///
     /// Returns [`PdfError::PageOutOfRange`] when `page` is out of
     /// range, [`PdfError::Backend`] on pdfium failure.
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::char_rects"))]
     pub fn char_rects(&self, page: usize, start: usize, end: usize) -> Result<Vec<Rect>, PdfError> {
         if end <= start {
             return Ok(Vec::new());
@@ -278,6 +325,8 @@ impl PdfDocument {
                 _ => merged.push(rect),
             }
         }
+        #[cfg(feature = "sismo")]
+        sismo::counter!("pdf.selection_rects", merged.len());
         Ok(merged)
     }
 
@@ -294,6 +343,7 @@ impl PdfDocument {
     ///
     /// Returns [`PdfError::PageOutOfRange`] when `page` is out of
     /// range, [`PdfError::Backend`] on pdfium failure.
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::hit_char"))]
     pub fn hit_char_at(&self, page: usize, x: f32, y: f32) -> Result<Option<usize>, PdfError> {
         let (_, page_height) = self.page_size(page)?;
         let pdf_page = self.pdf_page(page)?;
@@ -334,6 +384,7 @@ impl PdfDocument {
         Ok(best_same_line.map(|(idx, _)| idx))
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::page_get"))]
     fn pdf_page(&self, page: usize) -> Result<pdfium_render::prelude::PdfPage<'_>, PdfError> {
         let count = self.page_count();
         if page >= count {
@@ -367,6 +418,7 @@ impl PdfDocument {
     ///
     /// # Errors
     /// [`PdfError::PageOutOfRange`] / [`PdfError::Backend`].
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::render_page"))]
     pub fn render_page_rgba(
         &self,
         page: usize,
@@ -389,6 +441,7 @@ impl PdfDocument {
     }
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("pdf::page_sizes"))]
 fn collect_page_sizes(doc: &PdfiumDoc<'_>) -> Vec<(f32, f32)> {
     doc.pages()
         .iter()
@@ -444,5 +497,76 @@ mod tests {
     #[test]
     fn same_line_false_for_touching_but_non_overlapping_rects() {
         assert!(!same_line(&line(100.0, 12.0), &line(112.0, 12.0)));
+    }
+}
+
+/// One entry of a document's table of contents (its PDF bookmarks).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TocEntry {
+    /// Entry title as written in the file.
+    pub title: String,
+    /// Zero-based page the entry points at, if it points anywhere.
+    pub page: Option<usize>,
+    /// Vertical offset inside the page from its top edge, in points.
+    pub y_from_top: Option<f32>,
+    /// Nested entries.
+    pub children: Vec<Self>,
+}
+
+impl PdfDocument {
+    /// The document's table of contents. Empty when the file has none.
+    #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::toc"))]
+    pub fn table_of_contents(&self) -> Vec<TocEntry> {
+        use pdfium_render::prelude::PdfBookmark;
+
+        fn walk(node: &PdfBookmark<'_>, heights: &[f32]) -> TocEntry {
+            let destination = node.destination();
+            let page = destination
+                .as_ref()
+                .and_then(|d| d.page_index().ok())
+                .and_then(|index| usize::try_from(index).ok());
+            let y_from_top = destination
+                .and_then(|d| d.view_settings().ok())
+                .and_then(extract_dest_y_bottom)
+                .and_then(|y| page.and_then(|p| heights.get(p)).map(|h| (h - y).max(0.0)));
+            let mut children = Vec::new();
+            let mut child = node.first_child();
+            while let Some(c) = child {
+                children.push(walk(&c, heights));
+                child = c.next_sibling();
+            }
+            TocEntry {
+                title: node.title().unwrap_or_else(|| "(sin título)".to_owned()),
+                page,
+                y_from_top,
+                children,
+            }
+        }
+
+        let heights: Vec<f32> = self.page_sizes().iter().map(|&(_, h)| h).collect();
+        let bookmarks = self.pdfium_doc().bookmarks();
+        let mut entries = Vec::new();
+        let mut sibling = bookmarks.root();
+        while let Some(node) = sibling {
+            entries.push(walk(&node, &heights));
+            sibling = node.next_sibling();
+        }
+        entries
+    }
+}
+
+/// Pull a bottom-up y (PDF points) out of a destination view setting
+/// when the variant specifies one. Fit-type destinations pin the whole
+/// page and carry none.
+pub(crate) const fn extract_dest_y_bottom(
+    settings: pdfium_render::prelude::PdfDestinationViewSettings,
+) -> Option<f32> {
+    use pdfium_render::prelude::PdfDestinationViewSettings as V;
+    match settings {
+        V::SpecificCoordinatesAndZoom(_, Some(y), _)
+        | V::FitPageHorizontallyToWindow(Some(y))
+        | V::FitBoundsHorizontallyToWindow(Some(y)) => Some(y.value),
+        _ => None,
     }
 }

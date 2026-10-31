@@ -107,11 +107,40 @@ pub struct EmbedContext<'a> {
     pub theme: &'a EditorTheme,
 }
 
-/// Data available when rendering a fenced code block in read only mode.
+/// Data available when rendering a fenced code block.
 #[derive(Clone, Copy, Debug)]
 pub struct CodeContext<'a> {
     pub language: &'a str,
     pub code: &'a str,
+    /// Widest a drawing of it may be, in logical pixels.
+    pub max_width: f32,
+    pub theme: &'a EditorTheme,
+}
+
+/// Data available when rendering a [`Transclusion`] block.
+///
+/// [`Transclusion`]: crate::document::Transclusion
+#[derive(Clone, Copy, Debug)]
+pub struct TransclusionContext<'a> {
+    pub kind: &'a str,
+    pub url: &'a str,
+    pub label: &'a str,
+    /// Markdown of the content as last seen.
+    pub fallback: &'a str,
+    pub read_only: bool,
+    pub theme: &'a EditorTheme,
+}
+
+/// Data available when drawing a formula.
+#[derive(Clone, Copy, Debug)]
+pub struct MathContext<'a> {
+    pub tex: &'a str,
+    /// A block of its own (`$$`) rather than inside a line (`$`).
+    pub display: bool,
+    /// Size of the text around it, in logical pixels.
+    pub font_size: f32,
+    /// Widest it may be drawn, in logical pixels.
+    pub max_width: f32,
     pub theme: &'a EditorTheme,
 }
 
@@ -121,6 +150,10 @@ pub struct ImageContext<'a> {
     pub url: &'a str,
     pub alt: &'a str,
     pub title: Option<&'a str>,
+    /// Widest the image may be drawn, in logical pixels: the width of the
+    /// text it sits in.
+    pub max_width: f32,
+    pub read_only: bool,
     pub theme: &'a EditorTheme,
 }
 
@@ -155,6 +188,24 @@ pub trait Decorator {
 
     /// Replace the default image placeholder.
     fn render_image(&self, _image: &ImageContext<'_>) -> Option<Element> {
+        None
+    }
+
+    /// Draw a formula. Without one, formulas show their TeX source.
+    fn render_math(&self, _math: &MathContext<'_>) -> Option<Element> {
+        None
+    }
+
+    /// Draw what a code block describes, like a diagram, under its source
+    /// while editing and instead of it while reading. `None` for languages
+    /// the decorator does not draw.
+    fn render_preview(&self, _code: &CodeContext<'_>) -> Option<Element> {
+        None
+    }
+
+    /// Show a transcluded quote as its source holds it now. `None` keeps
+    /// the default: the content as last seen.
+    fn render_transclusion(&self, _transclusion: &TransclusionContext<'_>) -> Option<Element> {
         None
     }
 }
@@ -196,12 +247,14 @@ impl Decorators {
     }
 
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::decorators_claims_link"))]
     pub fn claims_link(&self, url: &str) -> bool {
         self.0.iter().any(|decorator| decorator.claims_link(url))
     }
 
     /// Parser hook built from [`Self::claims_link`].
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::decorators_embed_filter"))]
     pub fn embed_filter(&self) -> Option<EmbedFilter> {
         if self.0.is_empty() {
             return None;
@@ -211,6 +264,7 @@ impl Decorators {
     }
 
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::decorators_render_embed"))]
     pub fn render_embed(&self, embed: &EmbedContext<'_>) -> Option<Element> {
         self.0
             .iter()
@@ -219,6 +273,7 @@ impl Decorators {
     }
 
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::decorators_link_style"))]
     pub fn link_style(&self, url: &str) -> Option<SpanStyle> {
         self.0
             .iter()
@@ -227,6 +282,7 @@ impl Decorators {
     }
 
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::decorators_match_text"))]
     pub fn match_text(&self, text: &str) -> Vec<TextMatch> {
         self.0
             .iter()
@@ -235,6 +291,7 @@ impl Decorators {
     }
 
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::decorators_render_code_block"))]
     pub fn render_code_block(&self, code: &CodeContext<'_>) -> Option<Element> {
         self.0
             .iter()
@@ -242,10 +299,35 @@ impl Decorators {
     }
 
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::decorators_render_image"))]
     pub fn render_image(&self, image: &ImageContext<'_>) -> Option<Element> {
         self.0
             .iter()
             .find_map(|decorator| decorator.render_image(image))
+    }
+
+    #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::decorators_render_math"))]
+    pub fn render_math(&self, math: &MathContext<'_>) -> Option<Element> {
+        self.0
+            .iter()
+            .find_map(|decorator| decorator.render_math(math))
+    }
+
+    #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::decorators_render_preview"))]
+    pub fn render_preview(&self, code: &CodeContext<'_>) -> Option<Element> {
+        self.0
+            .iter()
+            .find_map(|decorator| decorator.render_preview(code))
+    }
+
+    #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::decorators_render_transclusion"))]
+    pub fn render_transclusion(&self, transclusion: &TransclusionContext<'_>) -> Option<Element> {
+        self.0
+            .iter()
+            .find_map(|decorator| decorator.render_transclusion(transclusion))
     }
 }
 

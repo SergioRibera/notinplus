@@ -57,6 +57,7 @@ impl MaskSlot {
     }
 
     /// Mask `area` (window coordinates). An empty area clears the slot.
+    #[sismo::function("ui_mask::slot_publish")]
     pub fn publish(self, area: Area) {
         write(self.0, rect_of(area));
     }
@@ -75,7 +76,10 @@ impl From<UiRegion> for MaskSlot {
 /// Allocate a slot for the calling component, cleared when it unmounts.
 pub fn use_mask_slot() -> MaskSlot {
     let slot = use_hook(MaskSlot::next);
-    use_drop(move || slot.clear());
+    use_drop(move || {
+        sismo::scope!("ui_mask::slot_drop");
+        slot.clear();
+    });
     slot
 }
 
@@ -99,6 +103,7 @@ fn rect_of(area: Area) -> Option<Rect> {
         .then(|| (area.min_x(), area.min_y(), area.max_x(), area.max_y()))
 }
 
+#[sismo::function("ui_mask::write")]
 fn write(key: u64, rect: Option<Rect>) {
     if let Ok(mut slots) = mask().write() {
         match rect {
@@ -109,12 +114,14 @@ fn write(key: u64, rect: Option<Rect>) {
 }
 
 /// Mask `area` for a singleton overlay. An empty area clears it.
+#[sismo::function("ui_mask::publish")]
 pub fn publish_mask(region: UiRegion, area: Area) {
     MaskSlot::from(region).publish(area);
 }
 
 /// Replace the rect associated with `region`. `None` clears the slot
 /// — call this when an overlay hides so the mask does not linger.
+#[sismo::function("ui_mask::set")]
 pub fn set(region: UiRegion, rect: Option<Rect>) {
     write(MaskSlot::from(region).0, rect);
 }
@@ -124,6 +131,7 @@ pub fn set(region: UiRegion, rect: Option<Rect>) {
 /// draw one stroke on the canvas than to silently drop pen input
 /// forever.
 #[must_use]
+#[sismo::function("ui_mask::contains")]
 pub fn contains(x: f32, y: f32) -> bool {
     mask().read().is_ok_and(|slots| {
         slots.values().any(|(min_x, min_y, max_x, max_y)| {

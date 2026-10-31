@@ -59,7 +59,7 @@ static PEN_SURFACE_POS: Mutex<Option<(f32, f32, Instant)>> = Mutex::new(None);
 const PEN_POS_FRESHNESS: Duration = Duration::from_millis(300);
 
 /// Radius (surface px) around a fresh pen position within which an
-/// incoming touch_down is treated as a pen artifact and dropped.
+/// incoming `touch_down` is treated as a pen artifact and dropped.
 pub const PEN_TOUCH_FILTER_RADIUS: f32 = 48.0;
 
 fn record_pen_pos(x: f32, y: f32) {
@@ -79,15 +79,15 @@ fn clear_pen_pos() {
 /// a touch at the same coord is unlikely to be a stylus artifact.
 #[must_use]
 pub fn pen_screen_pos_fresh() -> Option<(f32, f32)> {
-    let g = PEN_SURFACE_POS.lock().ok()?;
-    let (x, y, t) = (*g)?;
+    let (x, y, t) = (*PEN_SURFACE_POS.lock().ok()?)?;
     (t.elapsed() < PEN_POS_FRESHNESS).then_some((x, y))
 }
 
 /// `true` when a fresh pen sample sits within `radius` surface pixels
-/// of `(sx, sy)` — the heuristic the canvas uses to drop stylus events
-/// that leak through as touch on platforms without native tool-type
-/// disambiguation.
+/// of `(sx, sy)`.
+///
+/// The canvas drops touches near the pen: on platforms that cannot tell
+/// the tool type, stylus events also arrive as touch.
 #[must_use]
 pub fn is_pen_near(sx: f32, sy: f32, radius: f32) -> bool {
     pen_screen_pos_fresh().is_some_and(|(px, py)| (px - sx).hypot(py - sy) < radius)
@@ -108,10 +108,11 @@ pub fn hover_receiver() -> Receiver<Option<HoverPoint>> {
 }
 
 /// On-screen rect occupied by a mounted canvas, in surface-logical
-/// pixels. Published by `drawing_surface` from its `on_sized` handler so
-/// the pump can route pen samples (which arrive in window coordinates)
-/// to the canvas they land on and translate them into canvas-local
-/// space before dispatch.
+/// pixels.
+///
+/// Published by `drawing_surface` from its `on_sized` handler so the pump can
+/// route pen samples (which arrive in window coordinates) to the canvas they
+/// land on and translate them into canvas-local space before dispatch.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SurfaceRect {
     pub min_x: f32,
@@ -127,11 +128,12 @@ impl SurfaceRect {
     }
 }
 
-/// Opaque per-surface identifier. Each `drawing_surface` mount
-/// allocates one via [`allocate_canvas_surface_id`] and uses it as the
-/// key for register / unregister calls — multiple surfaces can share
-/// the same `Board` (DocLinked split view) without clobbering each
-/// other's rect on update.
+/// Opaque per-surface identifier.
+///
+/// Each `drawing_surface` mount allocates one via
+/// [`allocate_canvas_surface_id`] and uses it as the key for register /
+/// unregister calls — multiple surfaces can share the same `Board`
+/// (`DocLinked` split view) without clobbering each other's rect on update.
 pub type CanvasSurfaceId = u64;
 
 static NEXT_SURFACE_ID: AtomicU64 = AtomicU64::new(1);
@@ -168,9 +170,11 @@ static CANVAS_SURFACES: Mutex<Vec<SurfaceEntry>> = Mutex::new(Vec::new());
 static ACTIVE_STROKE: Mutex<Option<(Weak<Mutex<Board>>, SurfaceRect)>> = Mutex::new(None);
 
 /// Register or update the on-screen rect for the surface identified by
-/// `id`. Called from the surface's `on_sized` handler every time the
-/// layout engine resolves a new area — mount, resize, split-pane
-/// divider drag.
+/// `id`.
+///
+/// Called from the surface's `on_sized` handler every time the layout engine
+/// resolves a new area — mount, resize, split-pane divider drag.
+#[sismo::function("pen::register_surface")]
 pub fn register_canvas_surface(id: CanvasSurfaceId, board: &Arc<Mutex<Board>>, rect: SurfaceRect) {
     let Ok(mut g) = CANVAS_SURFACES.lock() else {
         return;
@@ -193,6 +197,7 @@ pub fn register_canvas_surface(id: CanvasSurfaceId, board: &Arc<Mutex<Board>>, r
 /// Drop the registration for `id` if present. Called on unmount so
 /// the hit-test registry does not grow without bound across route
 /// changes. Siblings sharing the same `Board` retain their own entries.
+#[sismo::function("pen::unregister_surface")]
 pub fn unregister_canvas_surface(id: CanvasSurfaceId) {
     if let Ok(mut g) = CANVAS_SURFACES.lock() {
         g.retain(|e| e.id != id);
@@ -200,23 +205,25 @@ pub fn unregister_canvas_surface(id: CanvasSurfaceId) {
 }
 
 /// Window-coord hit-test. Walks the registry in reverse (last-mounted
-/// first) so an overlay canvas (future PiP) wins over the base layer.
+/// first) so an overlay canvas (future `PiP`) wins over the base layer.
+#[sismo::function("pen::hit_canvas")]
 fn hit_canvas(x: f32, y: f32) -> Option<(Arc<Mutex<Board>>, SurfaceRect)> {
-    let g = CANVAS_SURFACES.lock().ok()?;
-    for entry in g.iter().rev() {
-        if let Some(b) = entry.board.upgrade()
-            && entry.rect.contains(x, y)
-        {
-            return Some((b, entry.rect));
-        }
-    }
-    None
+    CANVAS_SURFACES
+        .lock()
+        .ok()?
+        .iter()
+        .rev()
+        .filter(|entry| entry.rect.contains(x, y))
+        .find_map(|entry| Some((entry.board.upgrade()?, entry.rect)))
 }
 
 fn active_stroke() -> Option<(Arc<Mutex<Board>>, SurfaceRect)> {
-    let g = ACTIVE_STROKE.lock().ok()?;
-    let (w, r) = g.as_ref()?;
-    Some((w.upgrade()?, *r))
+    let (board, rect) = ACTIVE_STROKE
+        .lock()
+        .ok()?
+        .as_ref()
+        .map(|(board, rect)| (board.upgrade(), *rect))?;
+    Some((board?, rect))
 }
 
 fn set_active_stroke(board: &Arc<Mutex<Board>>, rect: SurfaceRect) {
@@ -234,6 +241,7 @@ fn clear_active_stroke() {
 /// Resolve the board whose rect the hover sample is over. Used by
 /// `pump_hover` so the pointer-overlay disc shows up in the correct
 /// pane in split-pane layouts.
+#[sismo::function("pen::hover_target")]
 fn hover_target(x: f32, y: f32) -> Option<(Arc<Mutex<Board>>, SurfaceRect)> {
     hit_canvas(x, y)
 }
@@ -247,6 +255,7 @@ fn hover_target(x: f32, y: f32) -> Option<(Arc<Mutex<Board>>, SurfaceRect)> {
 /// `Move` / `Up` / `Cancel` events follow the latched target. Client
 /// ownership stays on that thread so its `Drop` runs only when the
 /// streams close.
+#[sismo::function("pen::spawn")]
 pub fn spawn(window_id: u64) {
     std::thread::spawn(move || {
         let client = match pollster::block_on(PenClient::acquire_with(PenConfig::new(window_id))) {
@@ -295,6 +304,7 @@ fn pump_events(stream: &TypedStream<PenEvent, ()>) {
 fn pump_hover(stream: &TypedStream<PenHoverEvent, ()>) {
     let bridge = hover_bridge();
     while let Ok(StreamItem::Event(event)) = stream.recv() {
+        sismo::scope!("pen::hover");
         let (payload, pointer) = match event {
             PenHoverEvent::ProximityEnter(sample) | PenHoverEvent::Move(sample) => {
                 // Hover often precedes contact — record so the first
@@ -376,145 +386,148 @@ impl DtTracker {
     }
 }
 
+/// Pen samples arrive in window coordinates. `Down` hit-tests every
+/// canvas surface and latches the one it lands on; the rest of the
+/// stroke reads that latch, so a stroke crossing a split-pane divider
+/// stays in the pane it started on. `dt` restarts with every stroke.
+#[sismo::function("pen::apply")]
 fn apply(event: PenEvent, dt: &mut DtTracker) {
-    // Pen samples arrive in window coordinates. `Down` hit-tests the
-    // sample against every registered canvas surface and latches the
-    // owning board for the stroke. Follow-up samples (`Move` / `Up` /
-    // `Cancel`) read that latch rather than re-hit-testing — a stroke
-    // that happens to cross a split-pane divider still belongs to the
-    // pane it started on. `dt` clears on skip so the next real stroke
-    // starts with a fresh baseline.
     match event {
-        PenEvent::Down(sample) => {
-            record_pen_pos(sample.x, sample.y);
-            // Mask gate: a `Down` landing inside any chrome overlay
-            // (palette, zoom HUD, bookmark card, back pill) must not
-            // start a stroke on the canvas underneath. Rects are
-            // published in window coords, same as `sample.x/y`.
-            if crate::ui_mask::contains(sample.x, sample.y) {
-                dt.clear();
-                clear_active_stroke();
-                return;
-            }
-            let Some((board, rect)) = hit_canvas(sample.x, sample.y) else {
-                dt.clear();
-                clear_active_stroke();
-                return;
-            };
-            set_active_stroke(&board, rect);
-            let (lx, ly) = (sample.x - rect.min_x, sample.y - rect.min_y);
-            let d = dt.reset(sample.timestamp_us);
-            let mut point = point_from_sample(&sample, d);
-            point.x = lx;
-            point.y = ly;
-            let mut guard = lock_board(&board);
-            guard.set_pointer(Some((lx, ly)));
-            match guard.input_mode() {
-                // A tap on a bookmark pin opens it; it must not ink a dot.
-                InputMode::Draw
-                    if guard
-                        .bookmark_near_screen(lx, ly, PIN_TAP_RADIUS_PX)
-                        .is_some() => {}
-                InputMode::Draw => guard.begin_screen(point),
-                InputMode::Pan => guard.pan_begin(lx, ly),
-                // Pen is deferred to the sibling overlay; pump is inert.
-                InputMode::Select => {}
-                InputMode::Text => guard.text_press_down(lx, ly),
-            }
-        }
-        PenEvent::Move(m) => {
-            record_pen_pos(m.sample.x, m.sample.y);
-            let Some((board, rect)) = active_stroke() else {
-                dt.clear();
-                return;
-            };
-            let (lx, ly) = (m.sample.x - rect.min_x, m.sample.y - rect.min_y);
-            let mut guard = lock_board(&board);
-            guard.set_pointer(Some((lx, ly)));
-            match guard.input_mode() {
-                InputMode::Draw => {
-                    let mut points = Vec::with_capacity(m.coalesced.len() + 1);
-                    for c in &m.coalesced {
-                        let d = dt.advance(c.timestamp_us);
-                        let mut p = point_from_sample(c, d);
-                        p.x = c.x - rect.min_x;
-                        p.y = c.y - rect.min_y;
-                        points.push(p);
-                    }
-                    let d = dt.advance(m.sample.timestamp_us);
-                    let mut p = point_from_sample(&m.sample, d);
-                    p.x = lx;
-                    p.y = ly;
-                    points.push(p);
-                    for p in points {
-                        guard.extend_screen(p);
-                    }
-                }
-                InputMode::Pan => {
-                    // Only the final sample's screen position matters —
-                    // intermediate coalesced samples would thrash the
-                    // anchor without changing the net viewport delta.
-                    let _ = dt.advance(m.sample.timestamp_us);
-                    guard.pan_move(lx, ly);
-                }
-                InputMode::Select => {
-                    let _ = dt.advance(m.sample.timestamp_us);
-                }
-                InputMode::Text => {
-                    let _ = dt.advance(m.sample.timestamp_us);
-                    guard.text_press_move(lx, ly);
-                }
-            }
-        }
-        PenEvent::Up(sample) => {
-            record_pen_pos(sample.x, sample.y);
-            let Some((board, rect)) = active_stroke() else {
-                dt.clear();
-                return;
-            };
-            let (lx, ly) = (sample.x - rect.min_x, sample.y - rect.min_y);
-            let d = dt.advance(sample.timestamp_us);
-            {
-                let mut guard = lock_board(&board);
-                guard.set_pointer(Some((lx, ly)));
-                match guard.input_mode() {
-                    InputMode::Draw => {
-                        let mut point = point_from_sample(&sample, d);
-                        point.x = lx;
-                        point.y = ly;
-                        guard.extend_screen(point);
-                        guard.end();
-                    }
-                    InputMode::Pan => {
-                        guard.pan_move(lx, ly);
-                        guard.pan_end();
-                    }
-                    InputMode::Select => {}
-                    InputMode::Text => guard.text_press_up(lx, ly),
-                }
-            }
-            dt.clear();
-            clear_active_stroke();
-        }
-        PenEvent::Cancel(_) => {
-            clear_pen_pos();
-            if let Some((board, _)) = active_stroke() {
-                let mut guard = lock_board(&board);
-                guard.set_pointer(None);
-                match guard.input_mode() {
-                    InputMode::Draw => guard.cancel(),
-                    InputMode::Pan => guard.pan_end(),
-                    InputMode::Select => {}
-                    InputMode::Text => guard.text_press_cancel(),
-                }
-            }
-            dt.clear();
-            clear_active_stroke();
-        }
+        PenEvent::Down(sample) => pen_down(&sample, dt),
+        PenEvent::Move(m) => pen_move(&m, dt),
+        PenEvent::Up(sample) => pen_up(&sample, dt),
+        PenEvent::Cancel(_) => pen_cancel(dt),
         PenEvent::ButtonChanged(_) => {}
+        PenEvent::Gesture(_) => shortcut(),
     }
 }
 
+/// `sample` in the surface's coordinates.
+fn local_point(sample: &PenSample, rect: SurfaceRect, dt_us: u16) -> InkPoint {
+    let mut point = point_from_sample(sample, dt_us);
+    point.x = sample.x - rect.min_x;
+    point.y = sample.y - rect.min_y;
+    point
+}
+
+#[sismo::function("pen::down")]
+fn pen_down(sample: &PenSample, dt: &mut DtTracker) {
+    record_pen_pos(sample.x, sample.y);
+    // A press on chrome over the canvas (dock, zoom, cards) does not
+    // start a stroke underneath.
+    let target = (!crate::ui_mask::contains(sample.x, sample.y))
+        .then(|| hit_canvas(sample.x, sample.y))
+        .flatten();
+    let Some((board, rect)) = target else {
+        dt.clear();
+        clear_active_stroke();
+        return;
+    };
+    set_active_stroke(&board, rect);
+    let point = local_point(sample, rect, dt.reset(sample.timestamp_us));
+    let (lx, ly) = (point.x, point.y);
+    let mut guard = lock_board(&board);
+    guard.set_pointer(Some((lx, ly)));
+    match guard.input_mode() {
+        // A tap on a bookmark pin opens it; it must not ink a dot.
+        InputMode::Draw
+            if guard
+                .bookmark_near_screen(lx, ly, PIN_TAP_RADIUS_PX)
+                .is_some() => {}
+        InputMode::Draw => guard.begin_screen(point),
+        InputMode::Pan => guard.pan_begin(lx, ly),
+        // The selection overlay takes the pen in select mode.
+        InputMode::Select => {}
+        InputMode::Text => guard.text_press_down(lx, ly),
+        InputMode::Lasso => guard.lasso_down(lx, ly),
+    }
+    drop(guard);
+    mark_pen_seen();
+}
+
+#[sismo::function("pen::move")]
+fn pen_move(m: &istmo_pen::PenMove, dt: &mut DtTracker) {
+    record_pen_pos(m.sample.x, m.sample.y);
+    let Some((board, rect)) = active_stroke() else {
+        dt.clear();
+        return;
+    };
+    let (lx, ly) = (m.sample.x - rect.min_x, m.sample.y - rect.min_y);
+    let mut guard = lock_board(&board);
+    guard.set_pointer(Some((lx, ly)));
+    if guard.input_mode() == InputMode::Draw {
+        // Every coalesced sample inks; the others only need the last.
+        sismo::counter!("pen.coalesced", m.coalesced.len());
+        for c in &m.coalesced {
+            let d = dt.advance(c.timestamp_us);
+            guard.extend_screen(local_point(c, rect, d));
+        }
+        let d = dt.advance(m.sample.timestamp_us);
+        guard.extend_screen(local_point(&m.sample, rect, d));
+        return;
+    }
+    dt.advance(m.sample.timestamp_us);
+    match guard.input_mode() {
+        InputMode::Pan => guard.pan_move(lx, ly),
+        InputMode::Text => guard.text_press_move(lx, ly),
+        InputMode::Lasso => guard.lasso_move(lx, ly),
+        InputMode::Draw | InputMode::Select => {}
+    }
+}
+
+#[sismo::function("pen::up")]
+fn pen_up(sample: &PenSample, dt: &mut DtTracker) {
+    record_pen_pos(sample.x, sample.y);
+    let Some((board, rect)) = active_stroke() else {
+        dt.clear();
+        return;
+    };
+    let point = local_point(sample, rect, dt.advance(sample.timestamp_us));
+    let (lx, ly) = (point.x, point.y);
+    {
+        let mut guard = lock_board(&board);
+        guard.set_pointer(Some((lx, ly)));
+        match guard.input_mode() {
+            InputMode::Draw => {
+                guard.extend_screen(point);
+                guard.end();
+            }
+            InputMode::Pan => {
+                guard.pan_move(lx, ly);
+                guard.pan_end();
+            }
+            InputMode::Select => {}
+            InputMode::Text => guard.text_press_up(lx, ly),
+            InputMode::Lasso => {
+                guard.lasso_move(lx, ly);
+                guard.lasso_up();
+            }
+        }
+    }
+    dt.clear();
+    clear_active_stroke();
+}
+
+/// The platform cancelled the contact: drop what was in progress.
+#[sismo::function("pen::cancel")]
+fn pen_cancel(dt: &mut DtTracker) {
+    clear_pen_pos();
+    if let Some((board, _)) = active_stroke() {
+        let mut guard = lock_board(&board);
+        guard.set_pointer(None);
+        match guard.input_mode() {
+            InputMode::Draw => guard.cancel(),
+            InputMode::Pan => guard.pan_end(),
+            InputMode::Select => {}
+            InputMode::Text => guard.text_press_cancel(),
+            InputMode::Lasso => guard.lasso_cancel(),
+        }
+    }
+    dt.clear();
+    clear_active_stroke();
+}
+
+#[sismo::function("pen::lock_board")]
 fn lock_board(board: &Arc<Mutex<Board>>) -> std::sync::MutexGuard<'_, Board> {
     match board.lock() {
         Ok(g) => g,
@@ -527,4 +540,88 @@ fn point_from_sample(sample: &PenSample, dt_us: u16) -> InkPoint {
     // 0.0..=1.0, but clamp defensively before quantising.
     let tilt = sample.tilt_x.hypot(sample.tilt_y);
     InkPoint::from_normalized(sample.x, sample.y, sample.pressure, tilt, dt_us)
+}
+
+/// Whether a pen was near the screen a moment ago: touches then are
+/// the writing hand, not a gesture.
+#[must_use]
+pub fn pen_in_use() -> bool {
+    pen_screen_pos_fresh().is_some()
+}
+
+/// The stylus shortcut (Apple Pencil double tap, S Pen button): run
+/// what Ajustes › Lápiz says on the canvas under the pen.
+#[sismo::function("pen::shortcut")]
+fn shortcut() {
+    let action = crate::settings::Settings::current_pen_double_tap();
+    let Some((x, y)) = pen_screen_pos_fresh() else {
+        return;
+    };
+    if let Some((board, _)) = hover_target(x, y).or_else(|| hit_canvas(x, y)) {
+        lock_board(&board).pen_shortcut(action);
+    }
+}
+
+/// Whether this device has ever shown a pen, remembered across runs.
+#[istmo::message]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PenPresence {
+    pub seen: bool,
+}
+
+impl crate::persist::Persisted for PenPresence {
+    const FILE: &'static str = "pen-presence.v1.bin";
+}
+
+static PEN_SEEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static PEN_SEEN_LOADED: std::sync::Once = std::sync::Once::new();
+
+/// Whether a pen has been used on this device.
+#[must_use]
+pub fn pen_seen() -> bool {
+    use crate::persist::Persisted;
+    PEN_SEEN_LOADED.call_once(|| {
+        PEN_SEEN.store(
+            PenPresence::load().seen,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    });
+    PEN_SEEN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn mark_pen_seen() {
+    use crate::persist::Persisted;
+    if pen_seen() {
+        return;
+    }
+    PEN_SEEN.store(true, std::sync::atomic::Ordering::Relaxed);
+    if let Err(err) = (PenPresence { seen: true }).save() {
+        log::warn!("pen presence: {err}");
+    }
+    PEN_LISTENERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .retain(|tx| tx.send(()).is_ok());
+}
+
+static PEN_LISTENERS: Mutex<Vec<flume::Sender<()>>> = Mutex::new(Vec::new());
+
+/// [`pen_seen`] as reactive state: flips once the first pen touches.
+pub fn use_pen_seen() -> freya::prelude::State<bool> {
+    use freya::prelude::{WritableUtils, spawn, use_hook, use_state};
+    let state = use_state(pen_seen);
+    use_hook(move || {
+        let (tx, rx) = flume::unbounded();
+        PEN_LISTENERS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(tx);
+        let mut state = state;
+        spawn(async move {
+            if rx.recv_async().await.is_ok() {
+                state.set(true);
+            }
+        });
+    });
+    state
 }

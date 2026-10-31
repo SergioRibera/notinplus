@@ -1,69 +1,111 @@
 //! Plugin surface for notinplus.
 //!
-//! Defines the two trait kinds the host dispatches to:
+//! A plugin adds document kinds to the library. Each kind is a
+//! [`DocumentKind`]: it owns a typed content ([`Payload`]), an anchor
+//! type that points inside that content, and the search hits it yields
+//! through the `Hits<'a>` generic associated type, so a kind can borrow
+//! its own index while it streams matches. A kind may come with a
+//! [`Face`], the pane that shows its content, and with
+//! [`CreationEntry`]s for the "new" menu.
 //!
-//! - [`Source`] — read-mostly content viewers (PDF, EPUB, Bible, custom).
-//!   The host hands the plugin bytes to open, asks for render tiles, and
-//!   consults it for anchor resolution + full-text search.
-//! - [`CanvasKind`] — owns the full pane. Renders, consumes input, holds
-//!   bookmarks, and emits CRDT ops. Stroke canvas, mind map, code editor,
-//!   whatever third parties build.
+//! The shell talks to kinds through [`ErasedKind`] / [`ErasedFace`],
+//! which the [`Registrar`] builds from the typed traits, and plugins
+//! reach the shell through [`HostServices`] (toasts, progress,
+//! annotations, jumps).
 //!
-//! The crate also defines the data-driven surfaces plugins declare to
-//! the shell: [`ConfigSchema`] for the generic settings panel and
-//! [`CreationEntry`] for the home FAB `+` menu.
+//! [`PluginCatalog`] holds the installed plugins, built in or loaded
+//! from a `.ntp` package by [`loader`]; [`ConfigSchema`] declares a
+//! plugin's settings.
 //!
-//! Shared types ([`Bookmark`], [`BookmarkId`], [`InputEvent`],
-//! `ConfigSchema`, …) cross the trait boundary as typed Rust values —
-//! no bincode encode / decode on the hot path. Only payloads whose
-//! shape is private to the plugin (CRDT op bytes, snapshots, stored
-//! item bytes, source anchors) stay opaque `Vec<u8>` / `&[u8]`; the
-//! shell is pure transport for those.
-//!
-//! Phase 3 adds a stabby wrapper around this trait for dynamic
-//! plugins loaded via dlopen — the wrapper serializes the typed
-//! values at the FFI boundary only. In-process built-in plugins
-//! (Phase 2.3–2.7) consume the trait directly through `Arc<dyn
-//! CanvasKind>` with zero codec overhead.
+//! Plugins translate their text with [`i18n`]: Fluent files under the
+//! plugin crate's `locales/<lang>/*.ftl`, `notein-i18n` (feature
+//! `build`) as a build-dependency whose `build::emit()` runs from
+//! `build.rs`, `notein_plugin::i18n::catalog!();` at the crate root,
+//! and [`tr!`] wherever text is shown. The host keeps every plugin on
+//! the interface language, also inside a shared library
+//! ([`export_plugin!`] exports the setter it calls).
+
+/// Wraps a future so the profiler records it as an async span named
+/// `$name`, plus one plain span per poll.
+#[cfg(feature = "sismo")]
+macro_rules! traced {
+    ($name:expr, $fut:expr $(,)?) => {{
+        static CALLSITE: ::sismo::Callsite = ::sismo::Callsite::new(
+            ::sismo::__private::CallsiteKind::Span,
+            $name,
+            module_path!(),
+            file!(),
+            line!(),
+        );
+        ::sismo::Instrumented::new(&CALLSITE, $fut)
+    }};
+}
+
+#[cfg(not(feature = "sismo"))]
+macro_rules! traced {
+    ($name:expr, $fut:expr $(,)?) => {
+        $fut
+    };
+}
 
 pub mod bookmark;
-pub mod canvas;
+pub mod catalog;
 pub mod config;
-pub mod creation;
-pub mod dynamic;
-pub mod error;
-pub mod host;
-pub mod icon;
+pub mod create;
+pub mod doc;
+pub mod erased;
+pub mod face;
+pub mod failure;
 pub mod ids;
+pub mod info;
+pub mod kind;
+pub mod link;
+pub mod loader;
 pub mod manifest;
-pub mod outline;
-pub mod registry;
-pub mod source;
+pub mod payload;
+pub mod plugin;
+pub mod services;
+pub mod target;
+pub mod text;
+pub mod ui;
 
-pub use rkyv;
 pub use bytes;
+pub use notein_i18n as i18n;
+pub use notein_i18n::tr;
+pub use rkyv;
+
+notein_i18n::catalog!();
 
 pub use bookmark::{Bookmark, Rgba, SourceRef, StrokeAnchor, TimestampMs, WorldPoint};
-pub use canvas::{CanvasKind, FrameCtxHandle, HostOpSink, InputEvent, PointerKind};
-pub use config::{ConfigEnumOption, ConfigField, ConfigFieldKind, ConfigSchema, ConfigValue};
-pub use creation::{CreationCategory, CreationEntry, CreationKind, ItemCreationResult};
-pub use dynamic::{
-    ENTRY_SYMBOL, LoadedPlugin, LoaderError, PluginBundle, PluginEntryFn, Registrations,
-    SDK_ABI_VERSION, load_from_manifest,
+pub use catalog::{CatalogEntry, CatalogError, PluginCatalog};
+pub use config::{
+    ConfigEnumOption, ConfigError, ConfigField, ConfigFieldKind, ConfigSchema, ConfigValue,
 };
-pub use error::{CanvasError, ConfigError, CreationError, SourceError};
-pub use host::{
-    BookmarkDraft, BookmarkEditCallback, BookmarkEditPreview, BookmarkEditRequest, Host, HostApi,
-    NotificationKind, Progress,
+pub use create::{
+    Created, CreationChoice, CreationEntry, CreationError, CreationFlow, CreationRequest,
+    ImportPreview, ImportedFile, Paper,
 };
-pub use icon::IconType;
+pub use doc::{DocId, DocMeta};
+pub use erased::ErasedKind;
+pub use face::{
+    ContentStore, CoverRequest, ErasedFace, Face, FaceContext, FaceRequest, HeaderAction, PaneKey,
+};
+pub use failure::{NetFailure, UserMessage};
 pub use ids::{ActorId, BookmarkId, DeviceId, OpId, StrokeId, UserId};
-pub use manifest::{ManifestError, ManifestRequirement, PluginManifest};
-pub use outline::{Outline, OutlineIcon, OutlineNode, OutlineNodeId};
-pub use registry::{
-    DynamicOrigin, InstalledPlugin, PluginOrigin, PluginRegistry, PluginRole,
-    RegistryCreationEntry, RegistryError, RegistrySchemaEntry,
+pub use info::PluginInfo;
+pub use kind::{
+    ActionEffect, Attachment, ChipView, DocumentKind, ExportFile, Hit, IndexReport, KindAction,
+    KindChoice, KindColor, KindInfo, Mark, OutlineIcon, OutlineNode, Quote, SearchQuery,
+    SelectionSupport,
 };
-pub use source::{
-    AnchorView, ChipView, Completion, SearchHit, SelectMode, Selection, Source, Tile, TileRequest,
+pub use loader::{LoaderError, SDK_ABI_VERSION};
+pub use manifest::{ManifestError, ManifestLibrary, ManifestRequirement, PluginManifest};
+pub use payload::{Payload, PayloadError};
+pub use plugin::{Font, Plugin, PluginSettings, Registrar};
+pub use services::{
+    HeaderPress, Host, HostServices, HostToast, Jump, Peer, Presence, Progress, Records, Share,
+    TextBody, ToastTone,
 };
+pub use target::Target;
+pub use text::{Folded, fold};
+pub use ui::{HostUi, SelectionMenu, Ui};

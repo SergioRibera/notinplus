@@ -1,0 +1,40 @@
+[package]
+name = "freya-markdown-diagrams"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+authors = ["Sergio Ribera <contact@sergioribera.rs>"]
+description = "Mermaid diagrams for freya-markdown-editor, drawn in pure Rust."
+repository = "https://github.com/SergioRibera/notinplus"
+keywords = ["freya", "markdown", "mermaid", "diagram"]
+categories = ["gui", "visualization"]
+
+[features]
+sismo = ["dep:sismo"]
+
+[dependencies]
+# Spans for the sismo profiler; off unless an app turns it on.
+sismo = { path = "../../../../sismo/crates/sismo", default-features = false, optional = true }
+freya = { version = "=0.5.0-rc.13" }
+freya-markdown-editor = { path = "../freya-markdown-editor" }
+mermaid-svg = "=0.7.0"
+# Skia draws neither SVG text without a font manager nor markers, so
+# diagrams are rasterized here with a bundled font.
+resvg = { version = "=0.47.0", default-features = false, features = ["text"] }
+
+[lints.rust]
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+redundant_pub_crate = "allow"
+
+[dev-dependencies]
+freya-testing = "=0.5.0-rc.13"

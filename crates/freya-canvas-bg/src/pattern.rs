@@ -66,6 +66,7 @@ impl CanvasBackground for LinedBackground {
     }
 
     #[allow(clippy::cast_precision_loss)]
+    #[cfg_attr(feature = "sismo", sismo::function("bg::lined_paint"))]
     fn paint(&self, cx: &mut BgPaintCtx<'_>) {
         if self.spacing <= 0.0 || self.width <= 0.0 {
             return;
@@ -128,6 +129,7 @@ impl CanvasBackground for GridBackground {
     }
 
     #[allow(clippy::cast_precision_loss)]
+    #[cfg_attr(feature = "sismo", sismo::function("bg::grid_paint"))]
     fn paint(&self, cx: &mut BgPaintCtx<'_>) {
         if self.spacing <= 0.0 || self.width <= 0.0 {
             return;
@@ -196,6 +198,7 @@ impl CanvasBackground for DotGridBackground {
     }
 
     #[allow(clippy::cast_precision_loss)]
+    #[cfg_attr(feature = "sismo", sismo::function("bg::dot_grid_paint"))]
     fn paint(&self, cx: &mut BgPaintCtx<'_>) {
         if self.spacing <= 0.0 || self.radius <= 0.0 {
             return;
@@ -207,6 +210,8 @@ impl CanvasBackground for DotGridBackground {
             .set_anti_alias(true);
         let (start_x, count_x) = grid_axis(cx.visible.min_x, cx.visible.max_x, self.spacing);
         let (start_y, count_y) = grid_axis(cx.visible.min_y, cx.visible.max_y, self.spacing);
+        #[cfg(feature = "sismo")]
+        sismo::counter!("bg.dots", count_x * count_y);
         for j in 0..count_y {
             let y = (j as f32).mul_add(self.spacing, start_y);
             for i in 0..count_x {
@@ -238,6 +243,7 @@ pub enum PatternKind {
 /// unbounded backgrounds use. Intended for small preview widgets — the
 /// full-screen canvas uses the dedicated background impls above.
 #[allow(clippy::cast_precision_loss)]
+#[cfg_attr(feature = "sismo", sismo::function("bg::paint_preview"))]
 pub fn paint_preview(
     canvas: &crate::Canvas,
     rect: Rect,

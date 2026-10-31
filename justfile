@@ -1,7 +1,7 @@
 set shell := ["bash", "-cu"]
 
 image := "sergioribera/rust-android:1.98-sdk-36"
-mount := "-v $(pwd)/../:/src -v $HOME/.android:/root/.android -v gradle-cache:/root/.gradle -v cargo-cache:/root/.cargo"
+mount := "-v $(pwd)/../:/src -v $(pwd)/../../sismo:/sismo -v $HOME/.android:/root/.android -v gradle-cache:/root/.gradle -v cargo-cache:/root/.cargo"
 
 # Desktop build (host toolchain).
 build:
@@ -69,7 +69,7 @@ build-ios:
 
 # Desktop distribution bundles via nix-bundle-app.
 bundle-desktop:
-    nix build .#bundle
+    nix build .#bundles
 
 # Run the desktop shell (uses the mock runtime + emulator thread).
 android: (clean) (build-android) (install-android)

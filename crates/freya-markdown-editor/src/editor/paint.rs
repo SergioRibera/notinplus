@@ -50,9 +50,11 @@ pub(crate) struct PaintContext<'a> {
 struct Look {
     style: SpanStyle,
     strike: bool,
+    dotted: bool,
 }
 
 impl PaintContext<'_> {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::paint"))]
     pub(crate) fn paint(&self, inline: &Inline) -> Painted {
         let text = inline.text();
         let len = inline.len();
@@ -109,6 +111,12 @@ impl PaintContext<'_> {
                     kind: DecorKind::Underline(color.into()),
                 });
             }
+            if look.dotted {
+                decor.push(Decor {
+                    range: range.clone(),
+                    kind: DecorKind::Dotted(self.theme.colors.muted.into()),
+                });
+            }
             pieces.push(Piece::Text(span(segment, &look, underline)));
         }
         if !self.plain {
@@ -120,6 +128,7 @@ impl PaintContext<'_> {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::text_matches"))]
     fn text_matches(&self, text: &str) -> Vec<(Range<usize>, SpanStyle)> {
         let to_units = |range: Range<usize>| {
             utf16_len(&text[..range.start.min(text.len())])
@@ -141,6 +150,7 @@ impl PaintContext<'_> {
     }
 
     /// Abbreviation occurrences, underlined with dots like `<abbr>`.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::abbreviation_decor"))]
     fn abbreviation_decor(&self, text: &str) -> Vec<Decor> {
         let color: u32 = self.theme.colors.muted.into();
         let boundary = |ch: Option<char>| ch.is_none_or(|ch| !ch.is_alphanumeric());
@@ -214,6 +224,7 @@ impl PaintContext<'_> {
                 MarkKind::FontSize(size) => {
                     style.font_size = Some(self.theme.px(f32::from(*size)));
                 }
+                MarkKind::Abbreviation(_) => look.dotted = true,
             }
         }
         for (_, style) in matches
@@ -252,6 +263,7 @@ fn span(text: &str, look: &Look, underline: bool) -> Span<'static> {
 
 /// Join touching ranges with the same decoration so rounded fills do not
 /// show seams between spans.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::merge_decor"))]
 fn merge_adjacent(decor: Vec<Decor>) -> Vec<Decor> {
     let mut merged: Vec<Decor> = Vec::with_capacity(decor.len());
     for item in decor {

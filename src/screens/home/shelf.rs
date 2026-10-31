@@ -1,0 +1,244 @@
+//! What the library area of Home lists: the folders and documents of
+//! one folder, filtered by kind and sorted, ready for cards.
+
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+
+use freya::prelude::Bytes;
+use notein_i18n::tr;
+
+use super::card::{DocCardData, FolderCardData, Thumb};
+use crate::library::{FolderId, Item, ItemId, LibraryData};
+use crate::plugins::content::Glance;
+use crate::settings::SortOrder;
+
+/// Which documents the type filter keeps.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub enum Filter {
+    #[default]
+    All,
+    Kind(String),
+    Folders,
+}
+
+impl Filter {
+    fn keeps(&self, item: &Item) -> bool {
+        match self {
+            Self::All => true,
+            Self::Kind(kind) => item.kind.plugin_id == *kind,
+            Self::Folders => false,
+        }
+    }
+
+    const fn keeps_folders(&self) -> bool {
+        matches!(self, Self::All | Self::Folders)
+    }
+}
+
+/// One filter chip.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FilterChip {
+    pub filter: Filter,
+    pub label: String,
+}
+
+/// The filter chips: everything, each installed kind, then folders.
+#[must_use]
+pub fn filter_chips() -> Vec<FilterChip> {
+    let mut chips = vec![FilterChip {
+        filter: Filter::All,
+        label: tr!("home-filter-all"),
+    }];
+    chips.extend(
+        crate::plugins::catalog()
+            .kinds()
+            .iter()
+            .map(|k| k.info())
+            .map(|info| FilterChip {
+                filter: Filter::Kind(info.id.into_owned()),
+                label: info.plural.into_owned(),
+            }),
+    );
+    chips.push(FilterChip {
+        filter: Filter::Folders,
+        label: tr!("home-filter-folders"),
+    });
+    chips
+}
+
+/// A folder on the shelf.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FolderEntry {
+    pub id: FolderId,
+    pub card: FolderCardData,
+}
+
+/// A document on the shelf.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocEntry {
+    pub id: ItemId,
+    pub card: DocCardData,
+}
+
+/// The listed folder.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct Shelf {
+    pub folders: Vec<FolderEntry>,
+    pub docs: Vec<DocEntry>,
+}
+
+impl Shelf {
+    /// Contents of `folder` under `filter`, in `sort` order.
+    #[must_use]
+    #[sismo::function("home::shelf_build")]
+    pub fn build(
+        data: &LibraryData,
+        folder: FolderId,
+        filter: &Filter,
+        sort: SortOrder,
+        shared: &HashSet<ItemId>,
+    ) -> Self {
+        let now = crate::format::now();
+        let mut items: Vec<&Item> = data
+            .items_of(folder)
+            .into_iter()
+            .filter(|i| filter.keeps(i))
+            .collect();
+        let mut folders = if filter.keeps_folders() {
+            data.folders_of(folder)
+        } else {
+            Vec::new()
+        };
+        match sort {
+            SortOrder::Modified => {
+                items.sort_by_key(|i| std::cmp::Reverse(i.updated_at));
+                folders.sort_by_key(|f| std::cmp::Reverse(f.updated_at));
+            }
+            SortOrder::Created => {
+                items.sort_by_key(|i| std::cmp::Reverse(i.created_at));
+                folders.sort_by_key(|f| std::cmp::Reverse(f.created_at));
+            }
+            SortOrder::Name | SortOrder::Kind => {
+                items.sort_by_cached_key(|i| i.name.to_lowercase());
+                folders.sort_by_cached_key(|f| f.name.to_lowercase());
+                if sort == SortOrder::Kind {
+                    items.sort_by(|a, b| a.kind.plugin_id.cmp(&b.kind.plugin_id));
+                }
+            }
+        }
+        let mut inside = Inside::of(data, folders.iter().map(|f| f.id));
+        Self {
+            folders: folders
+                .into_iter()
+                .map(|f| {
+                    let (count, latest) = inside.take(f.id);
+                    FolderEntry {
+                        id: f.id,
+                        card: FolderCardData {
+                            name: f.name.clone(),
+                            color: f.color,
+                            count,
+                            previews: latest
+                                .into_iter()
+                                .map(|item| card(data, item, false, now))
+                                .collect(),
+                        },
+                    }
+                })
+                .collect(),
+            docs: items
+                .into_iter()
+                .map(|item| DocEntry {
+                    id: item.id,
+                    card: card(data, item, shared.contains(&item.id), now),
+                })
+                .collect(),
+        }
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.folders.is_empty() && self.docs.is_empty()
+    }
+}
+
+/// How many entries each listed folder holds and its three documents
+/// changed last, newest first, gathered in one pass over the library.
+struct Inside<'a> {
+    folders: HashMap<FolderId, (usize, Vec<&'a Item>)>,
+}
+
+impl<'a> Inside<'a> {
+    #[sismo::function("home::shelf_inside")]
+    fn of(data: &'a LibraryData, listed: impl Iterator<Item = FolderId>) -> Self {
+        let mut folders: HashMap<FolderId, (usize, Vec<&'a Item>)> =
+            listed.map(|id| (id, (0, Vec::new()))).collect();
+        if folders.is_empty() {
+            return Self { folders };
+        }
+        for sub in data.live_folders() {
+            if let Some((count, _)) = folders.get_mut(&sub.parent) {
+                *count += 1;
+            }
+        }
+        for item in data.live_items() {
+            if let Some((count, latest)) = folders.get_mut(&item.folder) {
+                *count += 1;
+                let at = latest.partition_point(|held| held.updated_at >= item.updated_at);
+                if at < 3 {
+                    latest.insert(at, item);
+                    latest.truncate(3);
+                }
+            }
+        }
+        Self { folders }
+    }
+
+    fn take(&mut self, folder: FolderId) -> (usize, Vec<&'a Item>) {
+        self.folders.remove(&folder).unwrap_or_default()
+    }
+}
+
+/// Card content of `item`.
+#[must_use]
+#[sismo::function("home::card_data")]
+pub fn card(data: &LibraryData, item: &Item, shared: bool, now: u64) -> DocCardData {
+    let glance = Glance::of(item);
+    let when = crate::format::ago(item.updated_at, now);
+    let label = crate::plugins::kind_info(&item.kind.plugin_id)
+        .map_or_else(|| tr!("home-card-document"), |k| k.label.into_owned());
+    let meta = glance.summary.map_or_else(
+        || format!("{label} · {when}"),
+        |summary| format!("{summary} · {when}"),
+    );
+    DocCardData {
+        name: item.name.clone(),
+        kind: item.kind.plugin_id.clone(),
+        meta,
+        color: item.color,
+        background: item.background,
+        thumbnail: item.thumbnail.as_ref().map(|cover| thumb(item.id, cover)),
+        notebooks: data.live_notebooks_of(item.id).len(),
+        pinned: data.is_pinned(item.id),
+        shared,
+        preview: glance.preview,
+    }
+}
+
+/// Running total of covers handed to cards, for the profiler.
+static COVERS_LOADED: AtomicU64 = AtomicU64::new(0);
+
+/// `cover` shared with the card, keyed by the item and the very bytes
+/// it holds: a new cover is a new allocation.
+fn thumb(id: ItemId, cover: &Arc<[u8]>) -> Thumb {
+    sismo::counter!("home.covers_loaded", super::tally(&COVERS_LOADED, 1));
+    let mut hasher = DefaultHasher::new();
+    (id, cover.as_ptr() as usize, cover.len()).hash(&mut hasher);
+    Thumb {
+        key: hasher.finish(),
+        bytes: Bytes::from_owner(Arc::clone(cover)),
+    }
+}

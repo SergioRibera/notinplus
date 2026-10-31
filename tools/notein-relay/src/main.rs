@@ -55,7 +55,7 @@ impl Args {
                     args.port = text.parse().map_err(|_| ArgError::BadPort(text))?;
                 }
                 "--data" => {
-                    args.data = PathBuf::from(raw.next().ok_or(ArgError::Missing("--data"))?)
+                    args.data = PathBuf::from(raw.next().ok_or(ArgError::Missing("--data"))?);
                 }
                 "--name" => args.name = raw.next().ok_or(ArgError::Missing("--name"))?,
                 "--advertise" => {

@@ -8,24 +8,30 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use notein_sync::{
     Action, BlobKey, BlobKind, DeviceId, DeviceProfile, DocId, DocStatus, DriverEvent, Invite,
     JoinFailure, LanConfig, LanNode, Member, NetEvent, PairFailure, PairingCode, PairingOffer,
-    PeerInfo, RelayAddr, Share, ShareBook, ShareId, ShareMode, SharePolicy, SyncDriver,
+    PeerInfo, RelayAddr, Removal, Share, ShareBook, ShareId, ShareMode, SharePolicy, SyncDriver,
     TrustedDevice,
 };
+
+use notein_i18n::tr;
 
 use crate::library::{ItemId, Library, bodies};
 use crate::session_end::SessionEnd;
 
 pub mod live;
 pub mod open_docs;
+pub mod presence;
+pub mod problem;
 pub mod replica;
 
 use live::{LiveEvent, LiveMessage};
+pub use problem::SyncProblem;
+use problem::{ExchangeError, Recovery};
 use replica::LibraryReplica;
 
 /// Coalescing window for local change bursts.
@@ -49,6 +55,21 @@ pub struct ShareView {
     pub invite_link: String,
     /// Whether this device may edit the share's documents.
     pub can_edit: bool,
+    /// Members set to only look.
+    pub viewers: Vec<DeviceId>,
+}
+
+impl ShareView {
+    /// Whether someone else in the session is connected to this device
+    /// (`me`): the owner, for a guest, or any other member.
+    #[must_use]
+    pub fn anyone_here(&self, me: Option<DeviceId>) -> bool {
+        (!self.is_owner && self.owner_online)
+            || self
+                .members
+                .iter()
+                .any(|(member, online)| *online && Some(member.device) != me)
+    }
 }
 
 /// What the UI reads.
@@ -66,6 +87,9 @@ pub struct SyncSnapshot {
     pub pairing_with: Option<String>,
     pub last_pair_failure: Option<(DeviceId, PairFailure)>,
     pub docs: HashMap<ItemId, DocStatus>,
+    /// A file another device has (an attachment, an image) is still on
+    /// its way here.
+    pub files_pending: bool,
     pub shares: Vec<ShareView>,
     /// Titles of shares we asked into and are still waiting for.
     pub pending_joins: Vec<String>,
@@ -73,7 +97,7 @@ pub struct SyncSnapshot {
     /// Relay in use, as configured.
     pub relay: Option<String>,
     pub relay_online: bool,
-    pub error: Option<String>,
+    pub error: Option<SyncProblem>,
 }
 
 /// What a new share should cover.
@@ -93,7 +117,10 @@ enum Cmd {
     BeginPairing,
     CancelPairing,
     PairWith(PairingOffer),
-    PairDiscovered { device: DeviceId, code: PairingCode },
+    PairDiscovered {
+        device: DeviceId,
+        code: PairingCode,
+    },
     SetName(String),
     Revoke(DeviceId),
     CreateShare(ShareRequest),
@@ -102,7 +129,13 @@ enum Cmd {
     End(ShareId),
     Expel(ShareId, DeviceId),
     SetPolicy(ShareId, SharePolicy),
+    SetViewer(ShareId, DeviceId, bool),
     SetRelay(Option<String>),
+    /// The app came to the front (`true`) or went to the background.
+    Present(bool),
+    /// Say goodbye and end the service; answered once the network is
+    /// down.
+    Quit(flume::Sender<()>),
 }
 
 static CMDS: OnceLock<flume::Sender<Cmd>> = OnceLock::new();
@@ -119,6 +152,20 @@ fn snapshot_slot() -> std::sync::MutexGuard<'static, Option<SyncSnapshot>> {
 #[must_use]
 pub fn snapshot() -> SyncSnapshot {
     snapshot_slot().clone().unwrap_or_default()
+}
+
+/// Every document some share carries.
+#[must_use]
+pub fn shared_docs() -> std::collections::HashSet<ItemId> {
+    snapshot_slot()
+        .as_ref()
+        .map(|s| {
+            s.shares
+                .iter()
+                .flat_map(|v| v.docs.iter().copied())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Where `item` stands against the other devices.
@@ -160,6 +207,24 @@ pub fn changes() -> flume::Receiver<()> {
     rx
 }
 
+/// The sync snapshot as reactive state; re-renders the caller on change.
+pub fn use_sync() -> freya::prelude::State<SyncSnapshot> {
+    use freya::prelude::{WritableUtils, spawn, use_hook, use_state};
+    let state = use_state(snapshot);
+    use_hook(move || {
+        let changes = changes();
+        let mut state = state;
+        spawn(async move {
+            while changes.recv_async().await.is_ok() {
+                while changes.try_recv().is_ok() {}
+                state.set(snapshot());
+            }
+        });
+    });
+    state
+}
+
+#[sismo::function("sync::publish")]
 fn publish(snapshot: SyncSnapshot) {
     *snapshot_slot() = Some(snapshot);
     LISTENERS
@@ -171,6 +236,7 @@ fn publish(snapshot: SyncSnapshot) {
 fn command(cmd: Cmd) {
     if let Some(tx) = CMDS.get() {
         let _ = tx.send(cmd);
+        sismo::counter!("sync.cmds_queued", tx.len());
     }
 }
 
@@ -184,6 +250,22 @@ pub fn snapshot_changed(item: ItemId) {
     command(Cmd::BlobChanged(BlobKey {
         kind: BlobKind::Snapshot,
         id: item.0,
+    }));
+}
+
+/// The attachment of `item` changed; push it.
+pub fn attachment_changed(item: ItemId) {
+    command(Cmd::BlobChanged(BlobKey {
+        kind: BlobKind::Attachment,
+        id: item.0,
+    }));
+}
+
+/// `item` got the file `name`; push it.
+pub fn asset_added(item: ItemId, name: &str) {
+    command(Cmd::BlobChanged(BlobKey {
+        kind: BlobKind::Asset,
+        id: crate::library::bodies::asset_key(item, name),
     }));
 }
 
@@ -219,6 +301,75 @@ pub fn set_device_name(name: impl Into<String>) {
     command(Cmd::SetName(name.into()));
 }
 
+/// Whether this device should look present to the others: an app in
+/// the background leaves the network until it comes back.
+pub fn set_present(present: bool) {
+    command(Cmd::Present(present));
+}
+
+/// On phones and tablets an app in the background stays alive with
+/// its sockets open; after this long out of sight it leaves the
+/// network so the other devices stop showing it as connected.
+const AWAY_AFTER: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Follow the window to the background and back, from the app root.
+///
+/// Writes waiting for a pause go to disk as soon as the app loses
+/// focus. Desktop windows lose focus all the time without the app
+/// going anywhere, so only mobile targets leave the network.
+pub fn use_presence() {
+    let focused = freya::prelude::Platform::get()
+        .current_window()
+        .is_app_focused;
+    let changes = freya::prelude::use_hook(|| {
+        let (tx, rx) = flume::unbounded::<bool>();
+        if cfg!(any(target_os = "android", target_os = "ios")) {
+            follow_presence(rx);
+        }
+        tx
+    });
+    freya::prelude::use_side_effect(move || {
+        let focused = *focused.read();
+        if !focused {
+            crate::route::save_open_documents();
+            if let Err(err) = std::thread::Builder::new()
+                .name("notein-flush".into())
+                .spawn(crate::deferred::flush)
+            {
+                log::warn!("flush thread: {err}");
+            }
+        }
+        let _ = changes.send(focused);
+    });
+}
+
+fn follow_presence(changes: flume::Receiver<bool>) {
+    freya::prelude::spawn_in_window(async move {
+        let mut present = true;
+        while let Ok(mut focused) = changes.recv_async().await {
+            if !focused && present {
+                // Coming back within the grace keeps the channels.
+                async_io::Timer::after(AWAY_AFTER).await;
+                focused = changes.try_iter().last().unwrap_or(focused);
+            }
+            if focused != present {
+                present = focused;
+                set_present(present);
+            }
+        }
+    });
+}
+
+/// Leave the network before the process ends, so the other devices see
+/// this one go at once instead of after a silence. Waits a moment for
+/// the goodbye to go out.
+pub fn stop() {
+    let (tx, rx) = flume::bounded(1);
+    command(Cmd::Quit(tx));
+    // Nothing to do if the service never started or is already gone.
+    let _ = rx.recv_timeout(std::time::Duration::from_secs(1));
+}
+
 pub fn revoke(device: DeviceId) {
     command(Cmd::Revoke(device));
 }
@@ -240,13 +391,31 @@ pub enum LinkTarget {
         share: ShareId,
         title: String,
         owner: String,
+        mode: ShareMode,
     },
     Pair {
         name: String,
     },
 }
 
+/// What `text` would do as a link, without acting on it.
+#[must_use]
+pub fn recognize_link(text: &str) -> Option<LinkTarget> {
+    let text = text.trim();
+    if let Some(invite) = Invite::parse_link(text) {
+        Some(LinkTarget::Join {
+            share: invite.share,
+            title: invite.title,
+            owner: invite.owner.name,
+            mode: invite.mode,
+        })
+    } else {
+        PairingOffer::parse_link(text).map(|offer| LinkTarget::Pair { name: offer.name })
+    }
+}
+
 /// Act on a pairing or invitation link; `None` when `text` is neither.
+#[must_use]
 pub fn open_link(text: &str) -> Option<LinkTarget> {
     let text = text.trim();
     if let Some(invite) = Invite::parse_link(text) {
@@ -254,6 +423,7 @@ pub fn open_link(text: &str) -> Option<LinkTarget> {
             share: invite.share,
             title: invite.title.clone(),
             owner: invite.owner.name.clone(),
+            mode: invite.mode,
         };
         join(invite);
         Some(target)
@@ -284,6 +454,11 @@ pub fn set_share_policy(id: ShareId, policy: SharePolicy) {
     command(Cmd::SetPolicy(id, policy));
 }
 
+/// Let `device` only look at share `id` (`true`), or edit again.
+pub fn set_viewer(id: ShareId, device: DeviceId, viewer: bool) {
+    command(Cmd::SetViewer(id, device, viewer));
+}
+
 /// Use a relay (`host:port/<key>`), or none.
 pub fn set_relay(relay: Option<String>) {
     command(Cmd::SetRelay(relay));
@@ -301,10 +476,10 @@ pub fn start() {
     }
     let spawned = std::thread::Builder::new()
         .name("notein-sync".into())
-        .spawn(move || run(rx));
+        .spawn(move || run(&rx));
     if let Err(err) = spawned {
         publish(SyncSnapshot {
-            error: Some(format!("sync thread: {err}")),
+            error: Some(SyncProblem::Thread(Arc::new(err))),
             ..SyncSnapshot::default()
         });
     }
@@ -318,7 +493,7 @@ fn default_device_name() -> String {
         .ok()
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "Este dispositivo".to_owned())
+        .unwrap_or_else(|| tr!("sync-default-device-name"))
 }
 
 fn now_ms() -> u64 {
@@ -328,10 +503,13 @@ fn now_ms() -> u64 {
         .unwrap_or_default()
 }
 
-fn open_library() -> Option<Library> {
-    let runtime = istmo::Runtime::global().ok()?;
-    match pollster::block_on(Library::open(&runtime)) {
-        Ok(lib) => Some(lib),
+#[sismo::function("sync::open_library")]
+fn open_library() -> Option<async_lock::MutexGuardArc<Library>> {
+    match crate::library::shared_blocking() {
+        Ok(handle) => {
+            sismo::scope!("sync::lock_wait");
+            Some(pollster::block_on(handle.lock_arc()))
+        }
         Err(err) => {
             log::error!("sync: open library: {err}");
             None
@@ -348,15 +526,47 @@ struct ShareMemo {
     docs: Vec<ItemId>,
 }
 
+/// First wait before starting a stopped transport again; it doubles up
+/// to [`RESTART_MAX`].
+const RESTART_FIRST: Duration = Duration::from_secs(1);
+const RESTART_MAX: Duration = Duration::from_secs(60);
+
+/// The LAN transport, started again with backoff whenever it stops.
+struct Transport {
+    node: Option<LanNode>,
+    /// When to try starting it again, and the wait after that.
+    retry: Option<(Instant, Duration)>,
+    /// Whether this device shows itself on the network: a node started
+    /// while the app is away has to start away too.
+    present: bool,
+}
+
+impl Transport {
+    fn start(profile: &DeviceProfile) -> Result<LanNode, notein_sync::NetError> {
+        LanNode::start(LanConfig::new(profile.key().clone(), profile.name()))
+    }
+
+    /// The node is gone or never started: try again later.
+    fn lost(&mut self, now: Instant) {
+        self.node = None;
+        let delay = self.retry.map_or(RESTART_FIRST, |(_, delay)| delay);
+        self.retry = Some((now + delay, (delay * 2).min(RESTART_MAX)));
+    }
+
+    fn retry_due(&self, now: Instant) -> bool {
+        self.node.is_none() && self.retry.is_some_and(|(at, _)| at <= now)
+    }
+}
+
 struct Service {
     driver: SyncDriver<LibraryReplica>,
-    node: LanNode,
+    transport: Transport,
     profile_path: PathBuf,
     shares_path: PathBuf,
     memos: HashMap<ShareId, ShareMemo>,
     last_failure: Option<(DeviceId, PairFailure)>,
     last_join_failure: Option<JoinFailure>,
-    error: Option<String>,
+    error: Option<SyncProblem>,
     /// Devices that spoke another protocol version; each is reported once.
     outdated: HashSet<DeviceId>,
 }
@@ -364,6 +574,7 @@ struct Service {
 impl Service {
     /// A peer runs a build with another sync protocol. Said once per
     /// device, and shown in settings so the user knows what to update.
+    #[sismo::function("sync::report_outdated")]
     fn report_outdated(&mut self, from: Option<DeviceId>, version: u16) {
         let Some(from) = from else {
             return;
@@ -379,28 +590,38 @@ impl Service {
                 notein_sync::PROTOCOL_VERSION
             );
         }
-        self.error = Some(format!(
-            "{name} usa otra versión de Notein (protocolo {version}); actualizalo para sincronizar."
-        ));
+        self.error = Some(SyncProblem::Outdated { name, version });
     }
 
+    /// Forget the last problem when `recovery` is what it waited for.
+    fn recovered(&mut self, recovery: Recovery) {
+        if self.error.as_ref().is_some_and(|e| e.cleared_by(recovery)) {
+            self.error = None;
+        }
+    }
+
+    #[sismo::function("sync::save_profile")]
     fn save_profile(&mut self) {
         if let Err(err) = self.driver.profile().save(&self.profile_path) {
             log::error!("device profile save: {err}");
-            self.error = Some(format!("perfil: {err}"));
+            self.error = Some(SyncProblem::ProfileSave(Arc::new(err)));
+        } else {
+            self.recovered(Recovery::ProfileSaved);
         }
     }
 
+    #[sismo::function("sync::save_shares")]
     fn save_shares(&mut self) {
-        let book = ShareBook {
-            shares: self.driver.shares().cloned().collect(),
-        };
+        let book = self.driver.book();
         if let Err(err) = std::fs::write(&self.shares_path, book.encode()) {
             log::error!("share book save: {err}");
-            self.error = Some(format!("compartidos: {err}"));
+            self.error = Some(SyncProblem::SharesSave(Arc::new(err)));
+        } else {
+            self.recovered(Recovery::SharesSaved);
         }
     }
 
+    #[sismo::function("sync::remember_shares")]
     fn remember_shares(&mut self) {
         let me = self.driver.profile().id();
         self.memos = self
@@ -420,21 +641,34 @@ impl Service {
             .collect();
     }
 
+    #[sismo::function("sync::perform")]
     fn perform(&mut self, actions: Vec<Action>) {
+        sismo::counter!("sync.out.actions", actions.len());
         for action in actions {
+            // Without a transport there is nobody to send to; the next
+            // round after it is back covers whatever is dropped here.
+            let node = self.transport.node.as_ref();
             match action {
-                Action::Send { device, bytes } => {
-                    if let Err(err) = self.node.send(device, bytes) {
+                Action::Send {
+                    device,
+                    lane,
+                    bytes,
+                } => {
+                    sismo::scope!("sync::perform::send");
+                    sismo::counter!("sync.out.bytes", bytes.len());
+                    if let Some(Err(err)) = node.map(|n| n.send(device, lane, bytes)) {
                         log::warn!("sync send: {err}");
                     }
                 }
                 Action::Connect { addr, public } => {
-                    if let Err(err) = self.node.connect(addr, public) {
+                    sismo::scope!("sync::perform::connect");
+                    if let Some(Err(err)) = node.map(|n| n.connect(addr, public)) {
                         log::warn!("sync connect: {err}");
                     }
                 }
                 Action::ConnectHost { host, public } => {
-                    if let Err(err) = self.node.connect_host(host, public) {
+                    sismo::scope!("sync::perform::connect_host");
+                    if let Some(Err(err)) = node.map(|n| n.connect_host(host, public)) {
                         log::warn!("sync connect: {err}");
                     }
                 }
@@ -443,6 +677,7 @@ impl Service {
         }
     }
 
+    #[sismo::function("sync::driver_event")]
     fn on_driver_event(&mut self, event: DriverEvent) {
         match event {
             DriverEvent::Paired(device) => {
@@ -450,62 +685,93 @@ impl Service {
                 self.last_failure = None;
                 self.save_profile();
             }
+            DriverEvent::Renamed { device, name } => {
+                log::info!("sync: {device:?} is now {name}");
+                self.save_profile();
+            }
             DriverEvent::PairFailed { device, reason } => {
                 self.last_failure = Some((device, reason));
             }
-            DriverEvent::PeerOnline { .. } => {}
             DriverEvent::Imported(_) | DriverEvent::Merged(_) => {
+                sismo::scope!("sync::event::imported");
                 crate::space::notify_changed();
             }
             DriverEvent::ShareChanged(_) => {
+                sismo::scope!("sync::event::share_changed");
                 self.last_join_failure = None;
                 self.save_shares();
                 self.remember_shares();
                 crate::space::notify_changed();
             }
             DriverEvent::ShareRemoved { share, reason } => {
+                sismo::scope!("sync::event::share_removed");
                 self.save_shares();
-                if let Some(memo) = self.memos.remove(&share)
-                    && memo.mode == ShareMode::Session
-                    && !memo.is_owner
-                {
-                    crate::session_end::announce(SessionEnd {
-                        title: memo.title,
-                        docs: memo.docs,
-                        reason,
-                    });
+                match self.memos.remove(&share) {
+                    Some(memo) if memo.is_owner => {}
+                    Some(memo) if memo.mode == ShareMode::Session => {
+                        crate::session_end::announce(SessionEnd {
+                            title: memo.title,
+                            docs: memo.docs,
+                            reason,
+                        });
+                    }
+                    // A permanent share leaves every member its copy: the
+                    // guest only hears that it is no longer shared.
+                    Some(memo) if reason != Removal::Left => {
+                        crate::session_end::announce_unshared(memo.title, reason);
+                    }
+                    Some(_) | None => {}
                 }
                 crate::space::notify_changed();
             }
             DriverEvent::JoinFailed { reason, .. } => {
                 self.last_join_failure = Some(reason);
+                self.save_shares();
             }
-            DriverEvent::RelayOnline(_) => {}
+            DriverEvent::PeerOnline {
+                device,
+                online: false,
+            } => {
+                sismo::scope!("sync::event::peer_gone");
+                // Gone from the network is gone from every document at
+                // once, not only after its presence goes quiet.
+                for item in presence::gone(device) {
+                    on_live(item, device, String::new(), LiveMessage::Left);
+                }
+                // Ink it was drawing on a board it never announced
+                // presence on, or whose presence already went quiet.
+                for board in crate::active_boards::all() {
+                    crate::canvas::lock(&board).forget_hand(device);
+                }
+            }
+            DriverEvent::PeerOnline { online: true, .. } | DriverEvent::RelayOnline(_) => {}
             DriverEvent::Live {
                 from,
                 name,
                 doc,
                 bytes,
             } => {
+                sismo::scope!("sync::event::live");
+                sismo::counter!("sync.in.live_message_bytes", bytes.len());
                 let Some(message) = LiveMessage::from_bytes(&bytes) else {
                     return;
                 };
                 let item = ItemId(doc.0);
-                for (_, board) in crate::active_boards::for_item(item) {
-                    crate::canvas::lock(&board).apply_live(from, &name, message.clone());
+                match &message {
+                    LiveMessage::Left => presence::left(item, from),
+                    LiveMessage::Presence { state } => {
+                        presence::seen(item, from, &name, Some(state.clone()));
+                    }
+                    _ => {
+                        presence::seen(item, from, &name, None);
+                    }
                 }
-                live::dispatch(
-                    item,
-                    &LiveEvent {
-                        from,
-                        name,
-                        message,
-                    },
-                );
+                on_live(item, from, name, message);
             }
         }
     }
 
+    #[sismo::function("sync::create_share")]
     fn create_share(&mut self, request: ShareRequest) -> Vec<Action> {
         let mut share = Share::new(self.driver.me(), request.title, request.mode, now_ms());
         share.policy = request.policy;
@@ -531,12 +797,26 @@ impl Service {
         self.driver.create_share(share)
     }
 
-    fn on_cmd(&mut self, cmd: Cmd) -> Result<(), String> {
+    #[sismo::function("sync::on_cmd")]
+    fn on_cmd(&mut self, cmd: Cmd) -> Result<(), ExchangeError> {
         let actions = match cmd {
-            Cmd::LocalChanged => self.driver.announce().map_err(|e| e.to_string())?,
-            Cmd::DocChanged(doc) => self.driver.push_doc(doc).map_err(|e| e.to_string())?,
-            Cmd::BlobChanged(key) => self.driver.push_blob(key).map_err(|e| e.to_string())?,
-            Cmd::Live(doc, bytes) => self.driver.live(doc, bytes),
+            Cmd::LocalChanged => {
+                sismo::scope!("sync::cmd::announce");
+                self.driver.announce()?
+            }
+            Cmd::DocChanged(doc) => {
+                sismo::scope!("sync::cmd::doc_changed");
+                self.driver.push_doc(doc)?
+            }
+            Cmd::BlobChanged(key) => {
+                sismo::scope!("sync::cmd::blob_changed");
+                self.driver.push_blob(key)?
+            }
+            Cmd::Live(doc, bytes) => {
+                sismo::scope!("sync::cmd::live");
+                sismo::counter!("sync.out.live_message_bytes", bytes.len());
+                self.driver.live(doc, &bytes)
+            }
             Cmd::BeginPairing => {
                 self.last_failure = None;
                 self.driver.begin_pairing();
@@ -570,7 +850,7 @@ impl Service {
             Cmd::SetName(name) => {
                 self.driver.profile_mut().set_name(name.clone());
                 self.save_profile();
-                if let Err(err) = self.node.set_name(name) {
+                if let Some(Err(err)) = self.transport.node.as_ref().map(|n| n.set_name(name)) {
                     log::warn!("sync rename: {err}");
                 }
                 Vec::new()
@@ -578,32 +858,57 @@ impl Service {
             Cmd::Revoke(device) => {
                 if self.driver.profile_mut().revoke(device) {
                     self.save_profile();
-                    let _ = self.node.disconnect(device);
+                    if let Some(node) = &self.transport.node {
+                        let _ = node.disconnect(device);
+                    }
                 }
                 Vec::new()
             }
-            Cmd::CreateShare(request) => self.create_share(request),
+            Cmd::CreateShare(request) => {
+                sismo::scope!("sync::cmd::create_share");
+                self.create_share(request)
+            }
             Cmd::Join(invite) => {
+                sismo::scope!("sync::cmd::join");
                 self.last_join_failure = None;
-                self.driver.join(invite)
+                let actions = self.driver.join(invite);
+                // A join outlives the app until the owner answers.
+                self.save_shares();
+                actions
             }
             Cmd::Leave(id) => self.driver.leave_share(id),
             Cmd::End(id) => self.driver.end_share(id),
             Cmd::Expel(id, device) => self.driver.expel(id, device),
             Cmd::SetPolicy(id, policy) => self.driver.update_share(id, |s| s.policy = policy),
+            Cmd::SetViewer(id, device, viewer) => self.driver.update_share(id, |s| {
+                s.viewers.retain(|d| *d != device);
+                if viewer {
+                    s.viewers.push(device);
+                }
+            }),
+            Cmd::Present(present) => {
+                sismo::scope!("sync::cmd::present");
+                self.set_present(present)?
+            }
+            // Handled by the service loop before it gets here.
+            Cmd::Quit(_) => Vec::new(),
             Cmd::SetRelay(relay) => {
+                sismo::scope!("sync::cmd::set_relay");
                 let parsed = relay.as_deref().map(str::parse::<RelayAddr>);
                 match parsed {
                     Some(Err(err)) => {
-                        self.error = Some(format!("servidor: {err}"));
+                        log::warn!("sync relay: {err}");
+                        self.error = Some(SyncProblem::BadRelay);
                         Vec::new()
                     }
                     Some(Ok(addr)) => {
+                        self.recovered(Recovery::RelaySet);
                         self.driver.profile_mut().set_relay(relay);
                         self.save_profile();
                         self.driver.set_relay(Some(addr))
                     }
                     None => {
+                        self.recovered(Recovery::RelaySet);
                         self.driver.profile_mut().set_relay(None);
                         self.save_profile();
                         self.driver.set_relay(None)
@@ -615,6 +920,31 @@ impl Service {
         Ok(())
     }
 
+    /// Leave the network while the app is away, and come back to it.
+    #[sismo::function("sync::set_present")]
+    fn set_present(&mut self, present: bool) -> Result<Vec<Action>, ExchangeError> {
+        self.transport.present = present;
+        let result = self
+            .transport
+            .node
+            .as_ref()
+            .map(|node| if present { node.resume() } else { node.pause() });
+        if let Some(Err(err)) = result {
+            log::warn!("sync presence: {err}");
+        }
+        if !present {
+            return Ok(Vec::new());
+        }
+        // Back on the network: dial everyone now rather than when their
+        // backoff runs out, and say what changed while away.
+        let now = Instant::now();
+        self.driver.redial_now(now);
+        let mut actions = self.driver.supervise(now);
+        actions.extend(self.driver.announce()?);
+        Ok(actions)
+    }
+
+    #[sismo::function("sync::share_views")]
     fn share_views(&self) -> Vec<ShareView> {
         let me = self.driver.profile().id();
         let online: Vec<DeviceId> = self.driver.connected().map(|p| p.device).collect();
@@ -639,18 +969,36 @@ impl Service {
                     .invite_for(share.id)
                     .map_or_else(|| share.invite().to_link(), |i| i.to_link()),
                 can_edit: share.can_edit(me),
+                viewers: share.viewers.clone(),
             })
             .collect()
     }
 
+    #[sismo::function("sync::snapshot")]
     fn snapshot(&self) -> SyncSnapshot {
         let profile = self.driver.profile();
-        let docs = self
+        let mut docs: HashMap<ItemId, DocStatus> = self
             .driver
             .with_replica(|r| r.known_docs().to_vec())
             .into_iter()
             .map(|doc| (ItemId(doc.0), self.driver.engine().status(doc)))
             .collect();
+        // A shared document travels on its share, not between this
+        // user's devices: its share knows where it stands.
+        for share in self.driver.shares() {
+            for doc in &share.docs {
+                let Some(status) = self.driver.share_status(share.id, *doc) else {
+                    continue;
+                };
+                docs.entry(ItemId(doc.0))
+                    .and_modify(|known| {
+                        if *known == DocStatus::Unknown {
+                            *known = status;
+                        }
+                    })
+                    .or_insert(status);
+            }
+        }
         SyncSnapshot {
             device: Some(profile.id()),
             name: profile.name().to_owned(),
@@ -670,16 +1018,33 @@ impl Service {
             last_join_failure: self.last_join_failure,
             relay: self.driver.relay().map(ToString::to_string),
             relay_online: self.driver.relay_online(),
+            files_pending: self.driver.files_pending(),
             error: self.error.clone(),
         }
     }
 }
 
-fn load_shares(path: &Path) -> Vec<Share> {
+/// Hand a live message about `item` to its open boards and listeners.
+#[sismo::function("sync::on_live")]
+fn on_live(item: ItemId, from: DeviceId, name: String, message: LiveMessage) {
+    for (_, board) in crate::active_boards::for_item(item) {
+        crate::canvas::lock(&board).apply_live(from, &name, message.clone());
+    }
+    live::dispatch(
+        item,
+        &LiveEvent {
+            from,
+            name,
+            message,
+        },
+    );
+}
+
+#[sismo::function("sync::load_shares")]
+fn load_shares(path: &Path) -> ShareBook {
     std::fs::read(path)
         .ok()
         .and_then(|bytes| ShareBook::decode(&bytes))
-        .map(|book| book.shares)
         .unwrap_or_default()
 }
 
@@ -687,124 +1052,261 @@ fn load_shares(path: &Path) -> Vec<Share> {
 enum Step {
     Cmd(Cmd),
     Net(NetEvent),
+    /// The transport thread is gone without a word.
+    NetGone,
+    /// The app dropped its end: nothing will ever ask for sync again.
+    CmdsGone,
 }
 
-fn run(cmds: flume::Receiver<Cmd>) {
-    let root = bodies::root_dir();
-    let profile_path = root.join(PROFILE_FILE);
-    let shares_path = root.join(SHARES_FILE);
-    let profile = match DeviceProfile::load_or_create(&profile_path, &default_device_name()) {
-        Ok(profile) => profile,
-        Err(err) => {
-            publish(SyncSnapshot {
-                error: Some(format!("perfil del dispositivo: {err}")),
-                ..SyncSnapshot::default()
-            });
-            return;
+impl Service {
+    /// Load this device's profile and shares, start the network and
+    /// reach the relay. `None`, with the reason published, when this
+    /// device cannot sync. A network that does not start is retried.
+    #[sismo::function("sync::service_start")]
+    fn start() -> Option<Self> {
+        let root = bodies::root_dir();
+        let profile_path = root.join(PROFILE_FILE);
+        let shares_path = root.join(SHARES_FILE);
+        let profile = match DeviceProfile::load_or_create(&profile_path, &default_device_name()) {
+            Ok(profile) => profile,
+            Err(err) => {
+                publish(SyncSnapshot {
+                    error: Some(SyncProblem::ProfileLoad(Arc::new(err))),
+                    ..SyncSnapshot::default()
+                });
+                return None;
+            }
+        };
+        let mut transport = Transport {
+            node: None,
+            retry: None,
+            present: true,
+        };
+        let mut error = None;
+        match Transport::start(&profile) {
+            Ok(node) => transport.node = Some(node),
+            Err(err) => {
+                log::warn!("sync network: {err}");
+                error = Some(SyncProblem::Network(Arc::new(err)));
+                transport.lost(Instant::now());
+            }
         }
-    };
-    let node = match LanNode::start(LanConfig::new(profile.key().clone(), profile.name())) {
-        Ok(node) => node,
-        Err(err) => {
-            publish(SyncSnapshot {
-                device: Some(profile.id()),
-                name: profile.name().to_owned(),
-                trusted: profile.trusted().to_vec(),
-                error: Some(format!("red: {err}")),
-                ..SyncSnapshot::default()
-            });
-            return;
-        }
-    };
-    let shares = load_shares(&shares_path);
-    let mut service = Service {
-        driver: SyncDriver::new(profile, LibraryReplica::default(), shares),
-        node,
-        profile_path,
-        shares_path,
-        memos: HashMap::new(),
-        last_failure: None,
-        last_join_failure: None,
-        error: None,
-        outdated: HashSet::new(),
-    };
-    service.remember_shares();
-    let relay = service
-        .driver
-        .profile()
-        .relay()
-        .and_then(|text| text.parse::<RelayAddr>().ok());
-    let actions = service.driver.set_relay(relay);
-    service.perform(actions);
-    publish(service.snapshot());
+        let book = load_shares(&shares_path);
+        let mut service = Self {
+            driver: SyncDriver::new(profile, LibraryReplica::default(), book),
+            transport,
+            profile_path,
+            shares_path,
+            memos: HashMap::new(),
+            last_failure: None,
+            last_join_failure: None,
+            error,
+            outdated: HashSet::new(),
+        };
+        service.remember_shares();
+        let relay = service
+            .driver
+            .profile()
+            .relay()
+            .and_then(|text| text.parse::<RelayAddr>().ok());
+        let actions = service.driver.set_relay(relay);
+        service.perform(actions);
+        let actions = service.driver.resume_joins();
+        service.perform(actions);
+        Some(service)
+    }
 
+    /// Something arrived from the network.
+    #[sismo::function("sync::on_net")]
+    fn on_net(&mut self, event: NetEvent) {
+        let from = match &event {
+            NetEvent::Message { from, .. } => Some(*from),
+            _ => None,
+        };
+        match self.driver.on_event(event) {
+            Ok(actions) => {
+                self.recovered(Recovery::Exchanged);
+                self.perform(actions);
+            }
+            Err(notein_sync::SyncError::Version(version)) => self.report_outdated(from, version),
+            Err(err) => {
+                log::error!("sync: {err}");
+                self.error = Some(SyncProblem::Exchange(Arc::new(err)));
+            }
+        }
+    }
+
+    /// The transport stopped: everyone is offline until it is back.
+    #[sismo::function("sync::transport_lost")]
+    fn transport_lost(&mut self, reason: &str) {
+        log::warn!("sync network stopped: {reason}");
+        self.on_net(NetEvent::Stopped(reason.to_owned()));
+        self.transport.lost(Instant::now());
+        self.error = Some(SyncProblem::Network(Arc::new(
+            notein_sync::NetError::Stopped,
+        )));
+    }
+
+    /// Start the transport again once its wait is over.
+    #[sismo::function("sync::revive_transport")]
+    fn revive_transport(&mut self, now: Instant) {
+        if !self.transport.retry_due(now) {
+            return;
+        }
+        match Transport::start(self.driver.profile()) {
+            Ok(node) => {
+                if !self.transport.present
+                    && let Err(err) = node.pause()
+                {
+                    log::warn!("sync presence: {err}");
+                }
+                self.transport.node = Some(node);
+                self.transport.retry = None;
+                self.recovered(Recovery::TransportUp);
+            }
+            Err(err) => {
+                log::warn!("sync network: {err}");
+                self.error = Some(SyncProblem::Network(Arc::new(err)));
+                self.transport.lost(now);
+            }
+        }
+    }
+
+    #[sismo::function("sync::local_changed")]
+    fn local_changed(&mut self) {
+        match self.on_cmd(Cmd::LocalChanged) {
+            Ok(()) => self.recovered(Recovery::Exchanged),
+            Err(err) => {
+                log::error!("sync: {err}");
+                self.error = Some(SyncProblem::Exchange(Arc::new(err)));
+            }
+        }
+    }
+}
+
+/// The sync service: commands from the app and network events, with
+/// local changes debounced, a periodic tick, and lost devices dialed
+/// again every [`notein_sync::driver::SUPERVISE`].
+fn run(cmds: &flume::Receiver<Cmd>) {
+    let Some(mut service) = Service::start() else {
+        return;
+    };
+    publish(service.snapshot());
     let mut next_tick = Instant::now() + notein_sync::driver::TICK;
+    let mut next_supervise = Instant::now() + notein_sync::driver::SUPERVISE;
     let mut pending_change: Option<Instant> = None;
     loop {
         let now = Instant::now();
-        let deadline = pending_change
-            .map_or(next_tick, |due| due.min(next_tick))
-            .max(now);
-        let wait = deadline.duration_since(now);
-        let events = service.node.events().clone();
-        let step = flume::Selector::new()
-            .recv(&cmds, |cmd| cmd.map(Step::Cmd))
-            .recv(&events, |event| event.map(Step::Net))
-            .wait_timeout(wait);
+        let mut deadline = next_tick.min(next_supervise);
+        if let Some(due) = pending_change {
+            deadline = deadline.min(due);
+        }
+        if let Some((due, _)) = service.transport.retry {
+            deadline = deadline.min(due);
+        }
+        let deadline = deadline.max(now);
+        let events = service.transport.node.as_ref().map(|n| n.events().clone());
+        let mut selector =
+            flume::Selector::new().recv(cmds, |cmd| cmd.map_or(Step::CmdsGone, Step::Cmd));
+        if let Some(events) = &events {
+            selector = selector.recv(events, |event| event.map_or(Step::NetGone, Step::Net));
+        }
+        let step = {
+            sismo::scope!("sync::wait");
+            selector.wait_timeout(deadline.duration_since(now))
+        };
+        sismo::counter!("sync.cmds_queued", cmds.len());
+        if let Some(events) = &events {
+            sismo::counter!("sync.net_queued", events.len());
+        }
         match step {
-            Ok(Ok(Step::Cmd(Cmd::LocalChanged))) => {
-                pending_change.get_or_insert(Instant::now() + DEBOUNCE);
+            Ok(Step::Cmd(Cmd::LocalChanged)) => {
+                pending_change.get_or_insert_with(|| Instant::now() + DEBOUNCE);
             }
-            Ok(Ok(Step::Cmd(cmd))) => {
+            Ok(Step::Cmd(Cmd::Quit(done))) => {
+                // Dropping the node says goodbye on every channel.
+                drop(service);
+                let _ = done.send(());
+                return;
+            }
+            Ok(Step::Cmd(cmd)) => {
                 if let Err(err) = service.on_cmd(cmd) {
                     log::error!("sync: {err}");
-                    service.error = Some(err);
+                    service.error = Some(SyncProblem::Exchange(Arc::new(err)));
                 }
             }
-            Ok(Ok(Step::Net(event))) => {
-                let from = match &event {
-                    NetEvent::Message { from, .. } => Some(*from),
-                    _ => None,
-                };
-                match service.driver.on_event(event) {
-                    Ok(actions) => service.perform(actions),
-                    Err(notein_sync::SyncError::Version(version)) => {
-                        service.report_outdated(from, version);
-                    }
-                    Err(err) => {
-                        log::error!("sync: {err}");
-                        service.error = Some(err.to_string());
-                    }
-                }
-            }
-            Ok(Err(_)) => break,
+            Ok(Step::Net(NetEvent::Stopped(reason))) => service.transport_lost(&reason),
+            Ok(Step::Net(event)) => service.on_net(event),
+            Ok(Step::NetGone) => service.transport_lost("transport thread exited"),
+            Ok(Step::CmdsGone) => break,
             Err(_) => {}
         }
         let now = Instant::now();
         if pending_change.is_some_and(|due| due <= now) {
+            sismo::scope!("sync::debounced_announce");
             pending_change = None;
-            if let Err(err) = service.on_cmd(Cmd::LocalChanged) {
-                log::error!("sync: {err}");
-                service.error = Some(err);
-            }
+            service.local_changed();
         }
         if next_tick <= now {
+            sismo::scope!("sync::tick");
             next_tick = now + notein_sync::driver::TICK;
             match service.driver.tick() {
-                Ok(actions) => service.perform(actions),
+                Ok(actions) => {
+                    service.recovered(Recovery::Exchanged);
+                    service.perform(actions);
+                }
                 Err(err) => {
                     log::error!("sync tick: {err}");
-                    service.error = Some(err.to_string());
+                    service.error = Some(SyncProblem::Exchange(Arc::new(err)));
                 }
             }
         }
+        if next_supervise <= now {
+            sismo::scope!("sync::supervise");
+            next_supervise = now + notein_sync::driver::SUPERVISE;
+            let actions = service.driver.supervise(now);
+            service.perform(actions);
+        }
+        service.revive_transport(now);
         remember_announced(&service);
-        publish(service.snapshot());
+        let snapshot = service.snapshot();
+        publish(snapshot);
     }
 }
 
 /// Refresh the replica's doc list so statuses cover every document.
+#[sismo::function("sync::remember_announced")]
 fn remember_announced(service: &Service) {
     let docs = notein_sync::Replica::docs(service.driver.engine().replica());
     service.driver.with_replica(|r| r.remember(&docs));
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::{RESTART_MAX, Transport};
+
+    #[test]
+    fn a_stopped_transport_is_retried_with_growing_waits() {
+        let mut transport = Transport {
+            node: None,
+            retry: None,
+            present: true,
+        };
+        let t0 = Instant::now();
+        let mut waits = Vec::new();
+        let mut at = t0;
+        for _ in 0..8 {
+            transport.lost(at);
+            let (due, _) = transport.retry.expect("a retry is scheduled");
+            assert!(!transport.retry_due(at));
+            assert!(transport.retry_due(due));
+            waits.push(due.duration_since(at));
+            at = due;
+        }
+        assert_eq!(waits[0], Duration::from_secs(1));
+        assert_eq!(waits[1], Duration::from_secs(2));
+        assert_eq!(waits[7], RESTART_MAX);
+    }
 }

@@ -20,12 +20,22 @@ module_name_repetitions = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 
+[features]
+sismo = ["dep:sismo"]
+
 [dependencies]
-freya = { version = "=0.5.0-rc.8", features = [
+# Spans for the sismo profiler; off unless an app turns it on.
+sismo = { path = "../../../../sismo/crates/sismo", default-features = false, optional = true }
+freya = { version = "=0.5.0-rc.13", features = [
     "router",
     "icons",
     "icons-lucide",
 ] }
-freya-components = "=0.5.0-rc.8"
-freya-core = "=0.5.0-rc.8"
-freya-animation = "=0.5.0-rc.8"
+freya-components = "=0.5.0-rc.13"
+freya-core = "=0.5.0-rc.13"
+freya-animation = "=0.5.0-rc.13"
+async-io = "2"
+notein-i18n = { path = "../notein-i18n" }
+
+[build-dependencies]
+notein-i18n = { path = "../notein-i18n", features = ["build"] }

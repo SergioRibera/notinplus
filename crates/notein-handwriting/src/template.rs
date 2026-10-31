@@ -34,6 +34,7 @@ impl Extent {
     /// Measures `strokes` against `line`. `None` when there are no
     /// points or the line has no height.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("handwriting::extent_measure"))]
     pub fn measure<S: AsRef<[Point]>>(strokes: &[S], line: Line) -> Option<Self> {
         if line.x_height <= f32::EPSILON {
             return None;
@@ -116,6 +117,7 @@ impl Template {
     /// composed letter and its marks split off cleanly, the whole
     /// sample otherwise. Mirrors how [`crate::Recognizer`] reads ink.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("handwriting::template_extract"))]
     pub fn extract<S: AsRef<[Point]>>(glyph: char, strokes: &[S], line: Line) -> Vec<Self> {
         let decomposed = Mark::decompose(glyph).and_then(|(base, mark)| {
             let split = Split::of(strokes)?;
@@ -184,6 +186,10 @@ impl TemplateSet {
     /// [`HandwritingError::Archive`] for bytes that are not a valid
     /// archive, [`HandwritingError::Format`] for one baked by an
     /// incompatible version.
+    #[cfg_attr(
+        feature = "sismo",
+        sismo::function("handwriting::templates_from_bytes")
+    )]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, HandwritingError> {
         archive::decode(bytes)
     }

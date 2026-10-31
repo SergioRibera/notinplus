@@ -92,6 +92,7 @@ impl TextScene {
     /// Layer index ranges painted by each canvas pass: one pass below each
     /// layer's text boxes, plus a last pass up to the top layer.
     #[must_use]
+    #[sismo::function("canvas_text::paint_passes")]
     pub fn paint_passes(&self) -> Vec<std::ops::Range<usize>> {
         let mut passes = Vec::with_capacity(self.layers.len() + 1);
         let mut start = 0;
@@ -107,6 +108,7 @@ impl TextScene {
 impl Board {
     /// Enter [`InputMode::Text`], or go back to the mode used before it.
     /// Returns the new mode.
+    #[sismo::function("canvas_text::toggle_mode")]
     pub fn toggle_text_mode(&mut self) -> InputMode {
         let next = if self.input_mode == InputMode::Text {
             self.mode_before_text
@@ -133,6 +135,7 @@ impl Board {
     /// Snapshot of the text boxes to lay out, with the edit session's copy
     /// in place of the stored box.
     #[must_use]
+    #[sismo::function("canvas_text::scene")]
     pub fn text_scene(&self) -> TextScene {
         let session = self.text_session.as_ref();
         let layers = self
@@ -177,6 +180,7 @@ impl Board {
 
     /// Record the laid-out height of a box, in world units. Hit testing
     /// and the edit handles use it; nothing is persisted.
+    #[sismo::function("canvas_text::set_height")]
     pub fn set_text_height(&mut self, id: TextBoxId, height: f32) {
         if !height.is_finite() || height <= 0.0 {
             return;
@@ -196,6 +200,7 @@ impl Board {
     }
 
     /// Topmost box under the world point, on a visible and unlocked layer.
+    #[sismo::function("canvas_text::editable_at")]
     fn editable_text_at(&self, wx: f32, wy: f32) -> Option<TextBoxId> {
         self.doc
             .layers
@@ -214,6 +219,7 @@ impl Board {
     }
 
     /// Start editing a stored box.
+    #[sismo::function("canvas_text::begin_edit")]
     pub fn begin_text_edit(&mut self, id: TextBoxId) {
         self.end_text_session();
         if self.is_read_only() {
@@ -234,6 +240,7 @@ impl Board {
 
     /// Start a new box on the active layer with its first line centred on
     /// the world point. Ignored when the active layer is hidden or locked.
+    #[sismo::function("canvas_text::begin_draft")]
     pub fn begin_text_draft(&mut self, wx: f32, wy: f32) {
         self.end_text_session();
         if self.is_read_only() {
@@ -263,6 +270,7 @@ impl Board {
     }
 
     /// Keep the edited body. Does not touch the doc until the session ends.
+    #[sismo::function("canvas_text::set_session_markdown")]
     pub fn set_session_markdown(&mut self, markdown: &str) {
         if let Some(session) = self.text_session.as_mut()
             && session.current.markdown != markdown
@@ -272,6 +280,7 @@ impl Board {
     }
 
     /// Move, resize or rotate the edited box.
+    #[sismo::function("canvas_text::set_session_frame")]
     pub fn set_session_frame(&mut self, frame: TextFrame) {
         let Some(session) = self.text_session.as_mut() else {
             return;
@@ -286,6 +295,7 @@ impl Board {
 
     /// Close the edit session and write it to the doc as one undo entry. A
     /// blank box is dropped (and deleted when it was stored).
+    #[sismo::function("canvas_text::end_session")]
     pub fn end_text_session(&mut self) {
         let Some(session) = self.text_session.take() else {
             return;
@@ -326,6 +336,7 @@ impl Board {
     }
 
     /// Discard the edited box: a draft vanishes, a stored box is deleted.
+    #[sismo::function("canvas_text::delete_session")]
     pub fn delete_session_text(&mut self) {
         let Some(session) = self.text_session.take() else {
             return;
@@ -339,6 +350,7 @@ impl Board {
 
     /// Emit `ops` as a single undo entry and ping autosave. No-op when
     /// empty.
+    #[sismo::function("canvas_text::apply_ops_as_one")]
     pub(super) fn apply_ops_as_one(&mut self, ops: Vec<DocOp>) {
         if ops.is_empty() {
             return;
@@ -355,6 +367,7 @@ impl Board {
     /// the edited box (or its handles) is left to the editor, a tap
     /// elsewhere ends the session and opens the box under it, and a tap on
     /// empty canvas with no session starts a new box.
+    #[sismo::function("canvas_text::tap")]
     pub fn text_tap(&mut self, sx: f32, sy: f32) {
         let (wx, wy) = self.viewport.screen_to_world(sx, sy);
         if let Some(session) = &self.text_session {
@@ -376,6 +389,7 @@ impl Board {
     }
 
     /// Start tracking a press that may become a text tap.
+    #[sismo::function("canvas_text::press_down")]
     pub fn text_press_down(&mut self, sx: f32, sy: f32) {
         self.tap = Some(TapTrack::new(sx, sy));
     }
@@ -394,6 +408,7 @@ impl Board {
 
     /// Finish the tracked press. Runs [`Self::text_tap`] when it was a tap
     /// and the board is still in text mode.
+    #[sismo::function("canvas_text::press_up")]
     pub fn text_press_up(&mut self, sx: f32, sy: f32) {
         let Some(mut tap) = self.tap.take() else {
             return;
@@ -405,6 +420,7 @@ impl Board {
     }
 
     /// Ids of the active layer's boxes an eraser circle touches.
+    #[sismo::function("canvas_text::touching_circle")]
     pub(super) fn texts_touching_circle(&self, wx: f32, wy: f32, radius: f32) -> Vec<TextBoxId> {
         self.active_editable_texts()
             .filter(|text| {
@@ -416,6 +432,7 @@ impl Board {
     }
 
     /// Ids of the active layer's boxes whose bounds overlap the world rect.
+    #[sismo::function("canvas_text::in_rect")]
     pub(super) fn texts_in_rect(
         &self,
         min_x: f32,
@@ -442,6 +459,7 @@ impl Board {
 
     /// Delete text boxes as part of the caller's undo transaction. The edit
     /// session is closed first when it holds one of them.
+    #[sismo::function("canvas_text::erase")]
     pub(super) fn erase_texts(&mut self, ids: &[TextBoxId]) {
         if ids.is_empty() {
             return;
@@ -456,6 +474,56 @@ impl Board {
         for id in ids {
             self.apply_op(DocOp::DeleteText { id: *id });
         }
+    }
+}
+
+impl Board {
+    /// Add a text box holding `markdown` at the centre of what the pane
+    /// shows, as one undo step. Returns `false` when the canvas cannot
+    /// take text (read only, hidden or locked layer, size unknown).
+    #[sismo::function("canvas_text::insert_at_view_center")]
+    pub fn insert_text_at_view_center(&mut self, markdown: &str) -> bool {
+        let (sw, sh) = self.last_surface_size;
+        if sw <= 0.0 || sh <= 0.0 || self.viewport.scale <= 0.0 {
+            return false;
+        }
+        let wx = crate::text_box::TEXT_DEFAULT_WIDTH.mul_add(
+            -0.5,
+            sw.mul_add(0.5, -self.viewport.tx) / self.viewport.scale,
+        );
+        let wy = sh.mul_add(0.5, -self.viewport.ty) / self.viewport.scale;
+        self.begin_text_draft(wx, wy);
+        if self.text_session.is_none() {
+            return false;
+        }
+        self.set_session_markdown(markdown);
+        self.end_text_session();
+        true
+    }
+}
+
+impl crate::doc::Doc {
+    /// Append a text box with `markdown` below the existing ones on the
+    /// active layer (for documents that are not open).
+    #[sismo::function("canvas_text::append")]
+    pub fn append_text(&mut self, markdown: &str, color: [u8; 4]) {
+        let layer_id = self.active_layer;
+        let below = self.layer(layer_id).map_or(0.0, |layer| {
+            layer
+                .texts
+                .iter()
+                .map(|t| crate::text_box::TEXT_FALLBACK_HEIGHT.mul_add(3.0, t.frame.y))
+                .fold(0.0_f32, f32::max)
+        });
+        self.emit(crate::doc_op::DocOp::AddText {
+            layer_id,
+            text: crate::text_box::TextBox {
+                id: crate::text_box::TextBoxId::new_v4(),
+                frame: crate::text_box::TextFrame::at(0.0, below),
+                markdown: markdown.to_owned(),
+                color,
+            },
+        });
     }
 }
 

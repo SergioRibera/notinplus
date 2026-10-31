@@ -1,7 +1,11 @@
 //! The [`MarkdownEditor`] component.
 
 mod block;
+pub(crate) mod header;
+mod image;
+mod math;
 mod paint;
+mod properties;
 mod reveal;
 mod suggest;
 mod text;
@@ -19,11 +23,12 @@ pub use suggest::{
 };
 
 use self::block::{BlockView, TocEntry};
-use self::suggest::SlashMenu;
-use crate::controller::{EditorController, EditorState};
+use self::suggest::{MenuSource, SlashMenu};
+use crate::controller::{EditorController, EditorState, ImagePicker, RemoteCaret};
 use crate::decorator::{Decorator, Decorators};
-use crate::document::{Abbreviation, BlockKind, Document, Inline};
+use crate::document::{Abbreviation, BlockKind, Document, Inline, TextTarget};
 use crate::markdown::{Dialect, Extensions, ParseOptions};
+use crate::popup::PopupArea;
 use crate::theme::EditorTheme;
 
 /// Text of the focused text field and its selection, as the platform input
@@ -88,6 +93,30 @@ impl LinkHandler {
     }
 }
 
+/// Called when a button of the editor put the caret in a text field, so a
+/// soft keyboard that only opens for taps on the field itself can be asked
+/// for.
+#[derive(Clone, Default)]
+pub(crate) struct KeyboardRequest(Option<Rc<dyn Fn()>>);
+
+impl PartialEq for KeyboardRequest {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+}
+
+impl KeyboardRequest {
+    pub(crate) fn call(&self) {
+        if let Some(handler) = &self.0 {
+            handler();
+        }
+    }
+}
+
 /// Values every block needs, compared cheaply between renders.
 #[derive(Clone, PartialEq)]
 pub(crate) struct Shared {
@@ -96,11 +125,14 @@ pub(crate) struct Shared {
     pub(crate) decorators: Decorators,
     pub(crate) slash: SlashMenu,
     pub(crate) on_link: LinkHandler,
+    pub(crate) request_keyboard: KeyboardRequest,
     pub(crate) on_input_context: InputContextHandler,
     pub(crate) read_only: bool,
     pub(crate) reorderable: bool,
     pub(crate) syntax_reveal: bool,
     pub(crate) abbreviations: Rc<Vec<Abbreviation>>,
+    /// Other people's carets, with the text field each is in.
+    pub(crate) remote_carets: Rc<Vec<(TextTarget, RemoteCaret)>>,
 }
 
 /// Block based Markdown editor and viewer.
@@ -141,7 +173,11 @@ pub struct MarkdownEditor {
     reorderable: bool,
     syntax_reveal: bool,
     on_link: LinkHandler,
+    request_keyboard: KeyboardRequest,
     on_input_context: InputContextHandler,
+    image_picker: Option<ImagePicker>,
+    popup_area: Option<Area>,
+    remote_carets: Vec<RemoteCaret>,
     layout: LayoutData,
     text_style: TextStyleData,
     key: DiffKey,
@@ -173,7 +209,11 @@ impl Default for MarkdownEditor {
             reorderable: false,
             syntax_reveal: false,
             on_link: LinkHandler::default(),
+            request_keyboard: KeyboardRequest::default(),
             on_input_context: InputContextHandler::default(),
+            image_picker: None,
+            popup_area: None,
+            remote_carets: Vec::new(),
             layout: LayoutData::default(),
             text_style: TextStyleData::default(),
             key: DiffKey::None,
@@ -251,14 +291,15 @@ impl MarkdownEditor {
     /// are added.
     #[must_use]
     pub fn suggestions(mut self, source: impl SuggestionSource + 'static) -> Self {
-        Rc::make_mut(&mut self.slash.0).push(Rc::new(source));
+        Rc::make_mut(&mut self.slash.0).push(MenuSource::Custom(Rc::new(source)));
         self
     }
 
     /// Enable the `/` menu with the built in [`BlockSuggestions`].
     #[must_use]
-    pub fn slash_menu(self) -> Self {
-        self.suggestions(BlockSuggestions)
+    pub fn slash_menu(mut self) -> Self {
+        Rc::make_mut(&mut self.slash.0).push(MenuSource::Blocks);
+        self
     }
 
     /// Show a drag handle next to every block (edit mode only). Blocks can
@@ -277,6 +318,41 @@ impl MarkdownEditor {
     #[must_use]
     pub const fn syntax_reveal(mut self, syntax_reveal: bool) -> Self {
         self.syntax_reveal = syntax_reveal;
+        self
+    }
+
+    /// Other people's carets and selections, drawn in their colors with
+    /// their names.
+    #[must_use]
+    pub fn remote_carets(mut self, carets: Vec<RemoteCaret>) -> Self {
+        self.remote_carets = carets;
+        self
+    }
+
+    /// How people choose image files, see [`ImagePicker`]. It also turns on
+    /// the image entries of the toolbar and the `/` menu.
+    #[must_use]
+    pub fn image_picker(mut self, picker: ImagePicker) -> Self {
+        self.image_picker = Some(picker);
+        self
+    }
+
+    /// Region (window coordinates) the menus of blocks and images must stay
+    /// inside. Defaults to the window; pass the part left visible when
+    /// something covers it, like a soft keyboard drawn over the window.
+    #[must_use]
+    pub const fn popup_area(mut self, area: Area) -> Self {
+        self.popup_area = Some(area);
+        self
+    }
+
+    /// Called when one of the editor's own buttons (like the one that opens
+    /// the source of a formula) puts the caret in a text field. Platforms
+    /// whose soft keyboard only opens when the field itself is tapped show it
+    /// from here.
+    #[must_use]
+    pub fn on_request_keyboard(mut self, request: impl Fn() + 'static) -> Self {
+        self.request_keyboard = KeyboardRequest(Some(Rc::new(request)));
         self
     }
 
@@ -301,13 +377,13 @@ impl MarkdownEditor {
 }
 
 impl KeyExt for MarkdownEditor {
-    fn write_key(&mut self) -> &mut DiffKey {
+    fn key_mut(&mut self) -> &mut DiffKey {
         &mut self.key
     }
 }
 
 impl LayoutExt for MarkdownEditor {
-    fn get_layout(&mut self) -> &mut LayoutData {
+    fn layout_mut(&mut self) -> &mut LayoutData {
         &mut self.layout
     }
 }
@@ -315,7 +391,7 @@ impl LayoutExt for MarkdownEditor {
 impl ContainerExt for MarkdownEditor {}
 
 impl TextStyleExt for MarkdownEditor {
-    fn get_text_style_data(&mut self) -> &mut TextStyleData {
+    fn text_style_data_mut(&mut self) -> &mut TextStyleData {
         &mut self.text_style
     }
 }
@@ -327,9 +403,11 @@ struct Sync {
 }
 
 impl Component for MarkdownEditor {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::editor"))]
     fn render(&self) -> impl IntoElement {
         let context_theme = use_try_consume::<EditorTheme>();
         let theme = Rc::new(self.theme.clone().or(context_theme).unwrap_or_default());
+        provide_context(PopupArea(self.popup_area));
         let parse = ParseOptions {
             extensions: self.extensions,
             embed: self.decorators.embed_filter(),
@@ -344,16 +422,19 @@ impl Component for MarkdownEditor {
         let owned = use_hook(move || {
             EditorController::create(Document::parse_with(&initial, &initial_parse))
         });
+        crate::profile::mark_unmount();
         let controller = self.controller.unwrap_or(owned);
         use_hook(move || controller.set_parse_options(parse));
         if let Some(read_only) = self.read_only {
             controller.set_read_only(read_only);
         }
+        controller.set_image_picker(self.image_picker.clone());
 
         use_value_sync(self.value.clone(), controller, self.dialect);
 
         let view = controller.view();
         let document = &view.document;
+        crate::profile::count_document(document);
         let read_only = view.read_only;
         let shared = Shared {
             controller,
@@ -361,11 +442,13 @@ impl Component for MarkdownEditor {
             decorators: self.decorators.clone(),
             slash: self.slash.clone(),
             on_link: self.on_link.clone(),
+            request_keyboard: self.request_keyboard.clone(),
             on_input_context: self.on_input_context.clone(),
             read_only,
             reorderable: self.reorderable,
             syntax_reveal: self.syntax_reveal,
             abbreviations: Rc::new(document.abbreviations.clone()),
+            remote_carets: Rc::new(remote_targets(document, &self.remote_carets)),
         };
 
         let empty = matches!(
@@ -378,6 +461,8 @@ impl Component for MarkdownEditor {
         let toc = toc_entries(document);
         let focused = view.selection.map(|selection| selection.target);
 
+        #[cfg(feature = "sismo")]
+        sismo::scope!("markdown::editor_blocks");
         let blocks = document.blocks().iter().map(|block| {
             let toc = if matches!(block.kind, BlockKind::TableOfContents) {
                 toc.clone()
@@ -432,6 +517,7 @@ impl Component for MarkdownEditor {
     }
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("markdown::toc_entries"))]
 fn toc_entries(document: &Document) -> Vec<TocEntry> {
     if !document
         .blocks()
@@ -475,6 +561,7 @@ fn overlay_text_style(base: &mut TextStyleData, overlay: &TextStyleData) {
 
 /// Keep `value` and the controller document in sync in both directions:
 /// outside writes are parsed, edits are written back in `dialect`.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::use_value_sync"))]
 fn use_value_sync(value: Option<Writable<String>>, controller: EditorController, dialect: Dialect) {
     let sync = use_hook(|| {
         Rc::new(RefCell::new(Sync {
@@ -490,6 +577,8 @@ fn use_value_sync(value: Option<Writable<String>>, controller: EditorController,
         let Some(value) = &incoming else {
             return;
         };
+        #[cfg(feature = "sismo")]
+        sismo::scope!("markdown::value_sync_incoming");
         let text = value.read().clone();
         let mut sync = incoming_sync.borrow_mut();
         if sync.text.as_deref() == Some(text.as_str()) {
@@ -514,10 +603,28 @@ fn use_value_sync(value: Option<Writable<String>>, controller: EditorController,
             return;
         }
         sync.revision = revision;
+        #[cfg(feature = "sismo")]
+        sismo::scope!("markdown::value_sync_outgoing");
         let markdown = controller.peek(|state| state.markdown(*dialect.peek()));
         if sync.text.as_deref() != Some(markdown.as_str()) {
             sync.text = Some(markdown.clone());
             *value.write() = markdown;
         }
     });
+}
+
+/// `carets` with the text field of `document` each points at.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::remote_targets"))]
+fn remote_targets(document: &Document, carets: &[RemoteCaret]) -> Vec<(TextTarget, RemoteCaret)> {
+    if carets.is_empty() {
+        return Vec::new();
+    }
+    let targets = document.targets();
+    carets
+        .iter()
+        .filter_map(|caret| {
+            let target = *targets.get(caret.position.target)?;
+            Some((target, caret.clone()))
+        })
+        .collect()
 }

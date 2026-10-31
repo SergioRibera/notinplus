@@ -7,18 +7,22 @@ use freya::clipboard::Clipboard;
 use freya::prelude::*;
 use freya_core::elements::paragraph::{ParagraphCursorExt, ParagraphHolderInner};
 use freya_edit::{
-    EditableConfig, EditableEvent, EditorLine, TextEditor as _, TextSelection, use_editable,
+    EditableConfig, EditableEvent, EditorLine, LONG_PRESS_TIMEOUT, TextEditor as _, TextSelection,
+    TouchEditEvent, use_editable,
 };
 use freya_engine::prelude::{
     Paint, PaintStyle, PathEffect, RectHeightStyle, RectWidthStyle, SkRect,
 };
 
+use super::image::ImageAtom;
+use super::math::MathAtom;
 use super::paint::{Decor, DecorKind, PaintContext, Piece};
 use super::reveal::{Reveal, RevealEdit};
 use super::suggest::{MENU_WIDTH, MenuRow, OpenMenu, SuggestionMenu, item, item_count};
 use super::{InputContext, Shared};
+use crate::controller::AtomSlot;
 use crate::controller::{CaretRequest, Selection};
-use crate::decorator::{EmbedContext, ImageContext};
+use crate::decorator::EmbedContext;
 use crate::document::{
     Atom, BlockType, HeadingLevel, Inline, MarkFamily, MarkKind, OBJECT_REPLACEMENT, TextRole,
     TextTarget, byte_index, utf16_len,
@@ -61,13 +65,21 @@ impl Component for TextBlock {
         clippy::too_many_lines,
         reason = "event wiring of a single editable paragraph"
     )]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::text_block"))]
     fn render(&self) -> impl IntoElement {
         let a11y_id = use_a11y();
         let focus = use_focus(a11y_id);
         let holder = use_state(ParagraphHolder::default);
         let mut area = use_state(Area::default);
+        // Apart from `area` so scrolling, which moves the area, re-renders
+        // nothing; images size themselves to it.
+        let mut width = use_state(|| 0f32);
         let mut dragging = use_state(|| false);
+        let mut long_press = use_state(|| None::<TaskHandle>);
+        let scroll_views = use_hook(EnclosingScrollViews::get);
         let mut menu = use_state(|| None::<OpenMenu>);
+        // Title of the `<abbr>` last pressed and where, in element coordinates.
+        let mut abbreviation = use_state(|| None::<(String, f32, f32)>);
         let menu_cache = use_hook(|| Rc::new(RefCell::new(None::<(String, Rc<Vec<MenuRow>>)>)));
         let applied_caret = use_hook(|| Rc::new(Cell::new(0u64)));
         let command_held = use_hook(|| Rc::new(Cell::new(false)));
@@ -89,7 +101,11 @@ impl Component for TextBlock {
             // The probe outlives this block when a paste or a split
             // replaces it, so every state access is fallible: a dropped
             // or borrowed state means "no caret here" rather than a panic.
+            #[cfg(feature = "sismo")]
+            sismo::scope!("markdown::track_focus");
             let probe = Rc::new(move || {
+                #[cfg(feature = "sismo")]
+                sismo::scope!("markdown::caret_probe");
                 let editor = editable.editor().try_peek()?;
                 let holder = holder.try_peek()?;
                 let (top, bottom) =
@@ -99,7 +115,11 @@ impl Component for TextBlock {
             });
             controller.track_focus(target, focus().is_focused(), probe);
         });
-        use_drop(move || controller.track_focus(target, false, Rc::new(|| None)));
+        use_drop(move || {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("markdown::text_block_drop");
+            controller.track_focus(target, false, Rc::new(|| None));
+        });
         let request = self
             .caret
             .filter(|request| request.seq > applied_caret.get());
@@ -115,11 +135,23 @@ impl Component for TextBlock {
         let content = self.content.clone();
         let shown = revealed.as_ref().map_or_else(
             || content.clone(),
-            |revealed| revealed.display_inline(&content, shared.theme.colors.muted.into()),
+            |revealed| {
+                #[cfg(feature = "sismo")]
+                sismo::scope!("markdown::reveal_display");
+                revealed.display_inline(&content, shared.theme.colors.muted.into())
+            },
         );
-        let rope_text = editable.editor().read().rope().to_string();
+        let rope_text = {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("markdown::rope_text");
+            editable.editor().read().rope().to_string()
+        };
+        #[cfg(feature = "sismo")]
+        sismo::counter!("markdown.rope_len", rope_text.len());
         if shared.on_input_context.is_set() {
             if is_focused && !read_only {
+                #[cfg(feature = "sismo")]
+                sismo::scope!("markdown::input_context_report");
                 let shown = input_context(&editable);
                 if input_shown.borrow().as_ref() != Some(&shown) {
                     shared.on_input_context.call(&shown);
@@ -146,7 +178,13 @@ impl Component for TextBlock {
                 let rows = match &*cache {
                     Some((cached, rows)) if *cached == query => rows.clone(),
                     _ => {
-                        let rows = Rc::new(shared.slash.rows(&query));
+                        #[cfg(feature = "sismo")]
+                        sismo::scope!("markdown::slash_rows");
+                        let rows = Rc::new(shared.slash.rows(
+                            &query,
+                            &shared.theme.labels,
+                            controller.can_pick_image(),
+                        ));
                         *cache = Some((query, rows.clone()));
                         rows
                     }
@@ -161,8 +199,10 @@ impl Component for TextBlock {
         let shared_for_keys = shared.clone();
         let command_for_keys = command_held.clone();
         let reveal_for_keys = reveal.clone();
-        let input_for_keys = input_shown;
+        let input_for_keys = input_shown.clone();
         let on_key_down = move |event: Event<KeyboardEventData>| {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("markdown::key_down");
             let key = enter_from_text(event.key.clone());
             let modifiers = event.modifiers;
             event.stop_propagation();
@@ -174,6 +214,8 @@ impl Component for TextBlock {
             let alt = modifiers.contains(Modifiers::ALT);
 
             if let Some((open, entries)) = &entries_for_keys {
+                #[cfg(feature = "sismo")]
+                sismo::scope!("markdown::slash_menu_key");
                 let count = item_count(entries);
                 match &key {
                     Key::Named(NamedKey::Escape) => {
@@ -284,6 +326,8 @@ impl Component for TextBlock {
             }
 
             if command && let Key::Character(ch) = &key {
+                #[cfg(feature = "sismo")]
+                sismo::scope!("markdown::shortcut");
                 let lower = ch.to_lowercase();
                 let handled = match (lower.as_str(), shift, alt) {
                     ("b", false, false) if rich => {
@@ -481,12 +525,16 @@ impl Component for TextBlock {
             };
 
             let hint = selection.map_or(cursor_pos, |(from, to)| from.min(to));
-            editable.process_event(EditableEvent::KeyDown {
-                key: &key,
-                modifiers,
-                editor_line: Some(EditorLine::SingleParagraph),
-                holder: Some(&holder.read()),
-            });
+            {
+                #[cfg(feature = "sismo")]
+                sismo::scope!("markdown::editable_key");
+                editable.process_event(EditableEvent::KeyDown {
+                    key: &key,
+                    modifiers,
+                    editor_line: Some(EditorLine::SingleParagraph),
+                    holder: Some(&holder.read()),
+                });
+            }
             commit_rope(&editable, controller, target, hint, &reveal_for_keys);
             // The input method made this edit itself, so it already knows it.
             if !command
@@ -516,12 +564,16 @@ impl Component for TextBlock {
 
         let command_for_up = command_held.clone();
         let on_key_up = move |event: Event<KeyboardEventData>| {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("markdown::key_up");
             event.stop_propagation();
             command_for_up.set(event.modifiers.contains(Modifiers::ctrl_or_meta()));
             editable.process_event(EditableEvent::KeyUp { key: &event.key });
         };
 
         let on_ime_preedit = move |event: Event<ImePreeditEventData>| {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("markdown::ime_preedit");
             if read_only {
                 return;
             }
@@ -533,21 +585,92 @@ impl Component for TextBlock {
             }
         };
 
+        let reveal_for_ime = reveal.clone();
+        let input_for_ime = input_shown;
+        let on_ime_edit = move |event: Event<ImeEditEventData>| {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("markdown::ime_edit");
+            event.stop_propagation();
+            if read_only {
+                return;
+            }
+            let hint = {
+                let editor = editable.editor().peek();
+                editor
+                    .get_selection()
+                    .map_or_else(|| editor.cursor_pos(), |(from, to)| from.min(to))
+            };
+            match *event.data() {
+                ImeEditEventData::DeleteSurrounding {
+                    before_bytes,
+                    after_bytes,
+                } => {
+                    editable
+                        .editor_mut()
+                        .write()
+                        .delete_surrounding(before_bytes, after_bytes);
+                    commit_rope(&editable, controller, target, hint, &reveal_for_ime);
+                }
+                ImeEditEventData::Selection {
+                    cursor_bytes,
+                    anchor_bytes,
+                } => {
+                    editable
+                        .editor_mut()
+                        .write()
+                        .move_selection_by_bytes(cursor_bytes, anchor_bytes);
+                    controller.set_selection(rope_selection(
+                        &editable,
+                        target,
+                        reveal_for_ime.borrow().as_ref(),
+                    ));
+                }
+            }
+            // The input method made this change itself, so it already knows it.
+            *input_for_ime.borrow_mut() = Some(input_context(&editable));
+        };
+
         let content_for_press = shown.clone();
         let reveal_for_press = reveal.clone();
         let shared_for_press = shared.clone();
         let command_for_press = command_held;
         let on_focus_press = move |event: Event<FocusPressEventData>| {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("markdown::focus_press");
             let location = event.element_location();
             let link = link_at(&holder.read(), location, &content_for_press);
+            #[allow(clippy::cast_possible_truncation, reason = "element coordinates")]
+            abbreviation.set_if_modified(
+                abbreviation_at(&holder.read(), location, &content_for_press)
+                    .map(|title| (title, location.x as f32, location.y as f32)),
+            );
             // Read only text is not a field: no focus, caret or selection,
             // and presses outside links reach whatever lies below.
+            if !read_only && let Some(atom) = atom_at(&holder.read(), location, &content_for_press)
+            {
+                event.stop_propagation();
+                event.prevent_default();
+                shared_for_press
+                    .controller
+                    .open_atom_menu(Some(AtomSlot { target, atom }));
+                return;
+            }
             if read_only {
                 if let Some(url) = link {
                     event.stop_propagation();
                     event.prevent_default();
                     shared_for_press.on_link.call(&url);
                 }
+                return;
+            }
+            if let FocusPressEventData::Touch(_) = event.data() {
+                // Touches edit the text when the finger lifts, see `on_global_pointer_up`. The
+                // press keeps going up so the note can scroll with it.
+                if content_for_press.is_empty() {
+                    editable.editor_mut().write().move_cursor_to(0);
+                }
+                a11y_id.request_focus();
+                menu.set_if_modified(None);
                 return;
             }
             event.stop_propagation();
@@ -575,8 +698,82 @@ impl Component for TextBlock {
             ));
         };
 
+        // Touch editing as on mobile platforms, see `freya_edit::TouchSelection`.
+        let content_for_touch = shown.clone();
+        let reveal_for_touch = reveal.clone();
+        // A touch handler of its own: the pointer down slot belongs to `on_focus_press`.
+        let on_touch_start = move |event: Event<TouchEventData>| {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("markdown::touch_start");
+            if read_only || content_for_touch.is_empty() {
+                return;
+            }
+            let location = event.element_location;
+            // An image or a formula opens its menu instead, see `on_focus_press`:
+            // the finger lifting there must not raise the keyboard.
+            if atom_at(&holder.read(), location, &content_for_touch).is_some() {
+                return;
+            }
+            editable.process_touch(TouchEditEvent::Down { location });
+            let scroll_views = scroll_views.clone();
+            let reveal = reveal_for_touch.clone();
+            let task = spawn(async move {
+                timer(LONG_PRESS_TIMEOUT).await;
+                #[cfg(feature = "sismo")]
+                sismo::scope!("markdown::long_press");
+                editable.process_touch(TouchEditEvent::LongPress {
+                    location,
+                    editor_line: EditorLine::SingleParagraph,
+                    holder: &holder.read(),
+                });
+                if editable.touch().peek().is_selecting() {
+                    scroll_views.take_over_drag();
+                    a11y_id.request_focus();
+                    controller.set_selection(rope_selection(
+                        &editable,
+                        target,
+                        reveal.borrow().as_ref(),
+                    ));
+                }
+            });
+            if let Some(previous) = long_press.write().replace(task) {
+                previous.cancel();
+            }
+        };
+
+        let reveal_for_move = reveal.clone();
         let on_global_pointer_move = move |event: Event<PointerEventData>| {
+            if let PointerEventData::Touch(_) = event.data() {
+                #[cfg(feature = "sismo")]
+                sismo::scope!("markdown::touch_move");
+                let touch = editable.touch().peek().clone();
+                // Handles report their own moves.
+                if !touch.is_active() || touch.dragged_handle().is_some() {
+                    return;
+                }
+                let origin = area.read().to_f64();
+                editable.process_touch(TouchEditEvent::Move {
+                    location: (event.global_location() - origin.min()).to_point(),
+                    editor_line: EditorLine::SingleParagraph,
+                    holder: &holder.read(),
+                });
+                if !editable.touch().peek().is_pressed()
+                    && let Some(task) = long_press.write().take()
+                {
+                    task.cancel();
+                }
+                if editable.touch().peek().is_selecting() {
+                    controller.set_selection(rope_selection(
+                        &editable,
+                        target,
+                        reveal_for_move.borrow().as_ref(),
+                    ));
+                }
+                return;
+            }
             if a11y_id.is_focused() && *dragging.read() {
+                #[cfg(feature = "sismo")]
+                sismo::scope!("markdown::drag_select");
                 let origin = area.read().to_f64();
                 let location = (event.global_location() - origin.min()).to_point();
                 editable.process_event(EditableEvent::Move {
@@ -588,7 +785,33 @@ impl Component for TextBlock {
         };
 
         let reveal_for_up = reveal.clone();
-        let on_global_pointer_up = move |_: Event<PointerEventData>| {
+        let on_global_pointer_up = move |event: Event<PointerEventData>| {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("markdown::pointer_up");
+            if let PointerEventData::Touch(_) = event.data() {
+                if let Some(task) = long_press.write().take() {
+                    task.cancel();
+                }
+                let touch = editable.touch().peek().clone();
+                if !touch.is_active() {
+                    return;
+                }
+                let origin = area.read().to_f64();
+                editable.process_touch(TouchEditEvent::Up {
+                    location: (event.global_location() - origin.min()).to_point(),
+                    editor_line: EditorLine::SingleParagraph,
+                    holder: &holder.read(),
+                });
+                if touch.is_pressed() {
+                    a11y_id.request_focus();
+                }
+                controller.set_selection(rope_selection(
+                    &editable,
+                    target,
+                    reveal_for_up.borrow().as_ref(),
+                ));
+                return;
+            }
             if *dragging.peek() {
                 editable.process_event(EditableEvent::Release);
                 dragging.set(false);
@@ -600,7 +823,55 @@ impl Component for TextBlock {
             }
         };
 
-        let on_sized = move |event: Event<SizedEventData>| area.set_if_modified(event.area);
+        let on_sized = move |event: Event<SizedEventData>| {
+            width.set_if_modified(event.area.width());
+            area.set_if_modified(event.area);
+        };
+
+        let shared_for_toolbar = shared.clone();
+        let reveal_for_toolbar = reveal.clone();
+        let on_toolbar_action = move |action: TextToolbarAction| {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("markdown::text_toolbar_action");
+            let (selection, hint) = {
+                let editor = editable.editor().peek();
+                let selection = editor.get_selection();
+                let hint = selection.map_or_else(|| editor.cursor_pos(), |(from, to)| from.min(to));
+                (selection, hint)
+            };
+            let model = |display: usize| model_offset(&reveal_for_toolbar, display);
+            if let (TextToolbarAction::Copy | TextToolbarAction::Cut, Some((from, to))) =
+                (action, selection)
+            {
+                controller.remember_copy(target, model(from.min(to))..model(from.max(to)));
+            }
+            if action == TextToolbarAction::Paste && paste(&shared_for_toolbar, role, place) {
+                return;
+            }
+            let (key, modifiers) = action.shortcut();
+            editable.process_event(EditableEvent::KeyDown {
+                key: &key,
+                modifiers,
+                editor_line: Some(EditorLine::SingleParagraph),
+                holder: Some(&holder.read()),
+            });
+            match action {
+                TextToolbarAction::Cut | TextToolbarAction::Paste => {
+                    commit_rope(&editable, controller, target, hint, &reveal_for_toolbar);
+                }
+                TextToolbarAction::Copy | TextToolbarAction::SelectAll => {
+                    controller.set_selection(rope_selection(
+                        &editable,
+                        target,
+                        reveal_for_toolbar.borrow().as_ref(),
+                    ));
+                    // The toolbar stays around what was selected or copied.
+                    let mut touch = editable.touch_mut().write();
+                    touch.show();
+                    touch.set_toolbar_visible(action == TextToolbarAction::SelectAll);
+                }
+            }
+        };
 
         let theme = shared.theme.clone();
         let colors = &theme.colors;
@@ -653,26 +924,59 @@ impl Component for TextBlock {
                 .span(Span::new(preedit).text_decoration(TextDecoration::Underline))
                 .span(after);
         } else {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("markdown::text_spans");
             let painted = paint_context.paint(&shown);
             decor_list = painted.decor;
+            #[cfg(feature = "sismo")]
+            sismo::counter!("markdown.text_pieces", painted.pieces.len());
             for piece in painted.pieces {
                 paragraph = match piece {
                     Piece::Text(span) => paragraph.span(span),
-                    Piece::Atom(index) => {
-                        paragraph.child(atom_element(shown.atoms().get(index), &shared, base_size))
-                    }
+                    Piece::Atom(index) => paragraph.child(atom_element(
+                        shown.atoms().get(index),
+                        AtomSlot {
+                            target,
+                            atom: index,
+                        },
+                        width(),
+                        &shared,
+                        base_size,
+                    )),
                 };
             }
         }
         drop(editor);
 
+        #[cfg(feature = "sismo")]
+        sismo::scope!("markdown::text_tree");
+        let carets: Vec<RemotePaint> = shared
+            .remote_carets
+            .iter()
+            .filter(|(at, _)| *at == target)
+            .map(|(_, caret)| {
+                let (anchor, head) = (caret.position.anchor, caret.position.head);
+                if anchor != head {
+                    decor_list.push(Decor {
+                        range: anchor.min(head)..anchor.max(head),
+                        kind: DecorKind::Fill(caret.color.with_a(70).into()),
+                    });
+                }
+                RemotePaint {
+                    head,
+                    color: caret.color.into(),
+                    name: caret.name.clone(),
+                }
+            })
+            .collect();
         let decor_key = {
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             decor_list.hash(&mut hasher);
+            carets.hash(&mut hasher);
             hasher.finish()
         };
-        let has_decor = !decor_list.is_empty();
+        let has_decor = !decor_list.is_empty() || !carets.is_empty();
         *decor.borrow_mut() = decor_list;
 
         let popup = entries.map(|(open, rows)| {
@@ -692,6 +996,15 @@ impl Component for TextBlock {
             rect()
                 .layer(Layer::Overlay)
                 .position(Position::new_absolute().top(open.top).left(open.left))
+                // The menu hangs outside the editor's bounds, so whatever
+                // holds the editor (a canvas box) would take a touch on it
+                // for a tap elsewhere.
+                .on_pointer_down(|event: Event<PointerEventData>| event.stop_propagation())
+                .on_mouse_down(|event: Event<MouseEventData>| event.stop_propagation())
+                .on_touch_start(|event: Event<TouchEventData>| event.stop_propagation())
+                .on_touch_move(|event: Event<TouchEventData>| event.stop_propagation())
+                .on_touch_end(|event: Event<TouchEventData>| event.stop_propagation())
+                .on_wheel(|event: Event<WheelEventData>| event.stop_propagation())
                 .child(ReportedPopup {
                     child: SuggestionMenu {
                         rows,
@@ -703,16 +1016,27 @@ impl Component for TextBlock {
                 })
         });
 
+        // Tags are placed from the last layout; reading the width renders
+        // again once there is one.
+        let tags = if carets.is_empty() || width() <= 0. {
+            Vec::new()
+        } else {
+            caret_tags(&holder.read(), &carets, shared.theme.px(10.5))
+        };
         let painter_holder = holder.read().clone();
         let painter_decor = decor;
         let background = has_decor.then(|| {
-            canvas(RenderCallback::new(move |context| {
-                paint_decor(context, &painter_holder, &painter_decor.borrow());
-            }))
-            .key(decor_key)
-            .position(Position::new_absolute().top(0.).left(0.))
-            .width(Size::fill())
-            .height(Size::fill())
+            rect()
+                .background(RenderCallback::new(move |context| {
+                    #[cfg(feature = "sismo")]
+                    sismo::scope!("markdown::paint_background");
+                    paint_decor(context, &painter_holder, &painter_decor.borrow());
+                    paint_carets(context, &painter_holder, &carets);
+                }))
+                .key(decor_key)
+                .position(Position::new_absolute().top(0.).left(0.))
+                .width(Size::fill())
+                .height(Size::fill())
         });
 
         // The popup is a sibling of the editable area, not a child, so
@@ -739,19 +1063,36 @@ impl Component for TextBlock {
                     .on_key_down(on_key_down)
                     .on_key_up(on_key_up)
                     .on_ime_preedit(on_ime_preedit)
+                    .on_ime_edit(on_ime_edit)
                     .on_focus_press(on_focus_press)
+                    .on_touch_start(on_touch_start)
                     .on_global_pointer_move(on_global_pointer_move)
                     .on_global_pointer_up(on_global_pointer_up)
                     .maybe_child(background)
-                    .child(paragraph.layer(Layer::Relative(1))),
+                    .child(paragraph.layer(Layer::Relative(1)))
+                    .children(tags),
+            )
+            .maybe_child(
+                abbreviation
+                    .read()
+                    .clone()
+                    .filter(|_| read_only || is_focused)
+                    .map(|(title, x, y)| abbreviation_bubble(&shared.theme, title, x, y)),
             )
             .maybe_child(popup)
+            .maybe_child((is_focused && !read_only).then(|| {
+                TextSelectionControls::new(editable, holder, rope_text.clone(), on_toolbar_action)
+                    .paragraph_area(area())
+                    .visible_area(area())
+                    .text_align(self.look.align)
+            }))
     }
 }
 
 /// Bring the rope in line with the model (undo, commands, autoformat) and
 /// with the markdown source revealed around the caret. Returns the reveal
 /// now shown.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::sync_rope"))]
 fn sync_rope(
     editable: &mut freya_edit::UseEditable,
     content: &Inline,
@@ -833,6 +1174,7 @@ fn syntax_delimiter(key: &str, shift: bool, alt: bool) -> Option<&'static str> {
 /// Formatting shortcut with a bare caret while syntax is shown: type the
 /// delimiter pair around the caret, or remove an empty pair it sits in.
 /// A fresh pair only lives on screen until something is typed inside it.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::type_delimiters"))]
 fn type_delimiters(
     editable: &mut freya_edit::UseEditable,
     controller: crate::EditorController,
@@ -899,6 +1241,7 @@ fn model_offset(reveal: &RefCell<Option<Reveal>>, display: usize) -> usize {
         .map_or(display, |reveal| reveal.to_model(display))
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("markdown::rope_selection"))]
 fn rope_selection(
     editable: &freya_edit::UseEditable,
     target: TextTarget,
@@ -918,6 +1261,7 @@ fn rope_selection(
 
 /// Push the rope text and selection into the controller, re-parsing the
 /// revealed markdown source when the edit touched it.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::commit_rope"))]
 fn commit_rope(
     editable: &freya_edit::UseEditable,
     controller: crate::EditorController,
@@ -961,6 +1305,7 @@ fn commit_rope(
 }
 
 /// Text typed after the trigger symbol, or `None` when the menu must close.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::menu_query"))]
 fn menu_query(text: &str, at: usize, cursor: usize) -> Option<String> {
     if cursor <= at {
         return None;
@@ -1002,6 +1347,7 @@ fn heading_shortcut(digit: &str) -> Option<BlockType> {
 
 /// Ctrl+K: link the selection to the URL in the clipboard, or to itself when
 /// the selected text already is a URL.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::link_from_clipboard"))]
 fn link_from_clipboard(shared: &Shared, content: &Inline, selection: Option<(usize, usize)>) {
     let looks_like_url = |text: &str| {
         let text = text.trim();
@@ -1020,6 +1366,7 @@ fn link_from_clipboard(shared: &Shared, content: &Inline, selection: Option<(usi
 
 /// Ctrl+V. Returns whether the paste was handled here (rich content) or
 /// should fall through to the plain text rope.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::paste"))]
 fn paste(shared: &Shared, role: TextRole, place: TextPlace) -> bool {
     if role != TextRole::Rich {
         return false;
@@ -1035,6 +1382,7 @@ fn paste(shared: &Shared, role: TextRole, place: TextPlace) -> bool {
 }
 
 /// Insert `text` as parsed markdown when it looks like markdown.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::paste_markdown"))]
 fn paste_markdown(shared: &Shared, place: TextPlace, text: &str) -> bool {
     let markdown_like = text.contains('\n')
         || ["**", "__", "`", "](", "~~", "==", "<span"]
@@ -1058,7 +1406,35 @@ fn is_committed_paste(text: &str) -> bool {
         || (count > 4 && (text.contains("**") || text.contains("](")))
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("markdown::link_at"))]
 fn link_at(holder: &ParagraphHolder, location: CursorPoint, content: &Inline) -> Option<String> {
+    match mark_at_point(holder, location, content, MarkFamily::Link)? {
+        MarkKind::Link(link) => Some(link.url),
+        _ => None,
+    }
+}
+
+/// Title of the `<abbr>` under `location`.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::abbreviation_at"))]
+fn abbreviation_at(
+    holder: &ParagraphHolder,
+    location: CursorPoint,
+    content: &Inline,
+) -> Option<String> {
+    match mark_at_point(holder, location, content, MarkFamily::Abbreviation)? {
+        MarkKind::Abbreviation(title) => Some(title).filter(|title| !title.is_empty()),
+        _ => None,
+    }
+}
+
+/// Mark of `family` covering the character under `location`.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::mark_at_point"))]
+fn mark_at_point(
+    holder: &ParagraphHolder,
+    location: CursorPoint,
+    content: &Inline,
+    family: MarkFamily,
+) -> Option<MarkKind> {
     let location = holder.visible_location(location);
     let inner = holder.0.borrow();
     let ParagraphHolderInner {
@@ -1070,19 +1446,12 @@ fn link_at(holder: &ParagraphHolder, location: CursorPoint, content: &Inline) ->
         paragraph.cursor_index_at_point((location.x * scale_factor, location.y * scale_factor));
     [index, index.saturating_sub(1)]
         .into_iter()
-        .find_map(|pos| {
-            match content
-                .mark_at(pos, MarkFamily::Link)
-                .map(|mark| &mark.kind)
-            {
-                Some(MarkKind::Link(link)) => Some(link.url.clone()),
-                _ => None,
-            }
-        })
+        .find_map(|pos| content.mark_at(pos, family).map(|mark| mark.kind.clone()))
 }
 
 /// `(top, left)` in paragraph coordinates right under the caret at
 /// `cursor`, used to place the suggestion menu once when it opens.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::menu_anchor"))]
 fn menu_anchor(holder: &ParagraphHolder, text: &str, cursor: usize) -> (f32, f32) {
     let inner = holder.0.borrow();
     inner.as_ref().map_or((24.0, 0.0), |inner| {
@@ -1098,6 +1467,7 @@ fn menu_anchor(holder: &ParagraphHolder, text: &str, cursor: usize) -> (f32, f32
 
 /// What the input method should see of this field: the shown text and the
 /// selection in byte offsets.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::input_context"))]
 fn input_context(editable: &freya_edit::UseEditable) -> InputContext {
     let editor = editable.editor().peek();
     let text = editor.rope().to_string();
@@ -1113,6 +1483,7 @@ fn input_context(editable: &freya_edit::UseEditable) -> InputContext {
 }
 
 /// Top and bottom edge of the caret at `cursor`, relative to the paragraph.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::caret_rect"))]
 fn caret_rect(holder: &ParagraphHolder, text: &str, cursor: usize) -> Option<(f32, f32)> {
     let inner = holder.0.borrow();
     let inner = inner.as_ref()?;
@@ -1125,7 +1496,11 @@ fn caret_rect(holder: &ParagraphHolder, text: &str, cursor: usize) -> Option<(f3
     Some((rect.top / scale, rect.bottom / scale))
 }
 
-fn paint_decor(context: &mut CanvasContext, holder: &ParagraphHolder, decor: &[Decor]) {
+#[cfg_attr(feature = "sismo", sismo::function("markdown::paint_decor"))]
+fn paint_decor(context: &mut FillRenderContext, holder: &ParagraphHolder, decor: &[Decor]) {
+    let RenderTarget::Background { canvas, .. } = &context.target else {
+        return;
+    };
     let inner = holder.0.borrow();
     let Some(inner) = inner.as_ref() else {
         return;
@@ -1156,29 +1531,34 @@ fn paint_decor(context: &mut CanvasContext, holder: &ParagraphHolder, decor: &[D
                     paint.set_style(PaintStyle::Fill);
                     paint.set_color(Color::from(color));
                     let area = SkRect::new(left - 1.5, top, right + 1.5, bottom);
-                    context.canvas.draw_round_rect(area, 3.0, 3.0, &paint);
+                    canvas.draw_round_rect(area, 3.0, 3.0, &paint);
                 }
                 DecorKind::Underline(color) => {
                     paint.set_style(PaintStyle::Fill);
                     paint.set_color(Color::from(color));
                     let area = SkRect::new(left, bottom - 1.5, right, bottom - 0.5);
-                    context.canvas.draw_rect(area, &paint);
+                    canvas.draw_rect(area, &paint);
                 }
                 DecorKind::Dotted(color) => {
                     paint.set_style(PaintStyle::Stroke);
                     paint.set_stroke_width(1.0);
                     paint.set_color(Color::from(color));
                     paint.set_path_effect(PathEffect::dash(&[1.5, 2.0], 0.0));
-                    context
-                        .canvas
-                        .draw_line((left, bottom - 0.5), (right, bottom - 0.5), &paint);
+                    canvas.draw_line((left, bottom - 0.5), (right, bottom - 0.5), &paint);
                 }
             }
         }
     }
 }
 
-fn atom_element(atom: Option<&Atom>, shared: &Shared, base_size: f32) -> Element {
+#[cfg_attr(feature = "sismo", sismo::function("markdown::atom"))]
+fn atom_element(
+    atom: Option<&Atom>,
+    slot: AtomSlot,
+    max_width: f32,
+    shared: &Shared,
+    base_size: f32,
+) -> Element {
     let theme = &shared.theme;
     let colors = &theme.colors;
     let pill = |text: String, background: Color, color: Color| {
@@ -1215,22 +1595,15 @@ fn atom_element(atom: Option<&Atom>, shared: &Shared, base_size: f32) -> Element
                 .render_embed(&context)
                 .unwrap_or_else(|| pill(text.clone(), colors.popup_selected, colors.accent))
         }
-        Some(Atom::Image { url, alt, title }) => {
-            let context = ImageContext {
-                url,
-                alt,
-                title: title.as_deref(),
-                theme,
-            };
-            shared.decorators.render_image(&context).unwrap_or_else(|| {
-                let text = if alt.is_empty() {
-                    url.clone()
-                } else {
-                    alt.clone()
-                };
-                pill(format!("🖼 {text}"), colors.code_background, colors.muted)
-            })
+        Some(Atom::Image { url, alt, title }) => ImageAtom {
+            url: url.clone(),
+            alt: alt.clone(),
+            title: title.clone(),
+            slot,
+            max_width,
+            shared: shared.clone(),
         }
+        .into_element(),
         Some(Atom::FootnoteRef { label: name }) => rect()
             .height(Size::px(base_size))
             .child(
@@ -1240,12 +1613,207 @@ fn atom_element(atom: Option<&Atom>, shared: &Shared, base_size: f32) -> Element
                     .text(format!("[{name}]")),
             )
             .into_element(),
-        Some(Atom::Math { tex }) => pill(tex.clone(), colors.code_background, colors.code_text),
-        Some(Atom::Html { raw }) => pill(raw.clone(), Color::TRANSPARENT, colors.muted),
+        Some(Atom::Math { tex }) => MathAtom {
+            tex: tex.clone(),
+            slot,
+            font_size: base_size,
+            max_width,
+            shared: shared.clone(),
+        }
+        .into_element(),
+        Some(Atom::Html { raw }) => match html_comment(raw) {
+            Some(_) if shared.read_only => rect().into_element(),
+            Some(note) => pill(
+                format!("\u{1f4ac} {note}"),
+                colors.muted.with_a(22),
+                colors.muted,
+            ),
+            None => pill(raw.clone(), Color::TRANSPARENT, colors.muted),
+        },
         None => pill(
             OBJECT_REPLACEMENT.to_string(),
             Color::TRANSPARENT,
             colors.muted,
         ),
     }
+}
+
+/// Text of an inline `<!-- ... -->` comment.
+fn html_comment(raw: &str) -> Option<&str> {
+    raw.trim()
+        .strip_prefix("<!--")
+        .and_then(|rest| rest.strip_suffix("-->"))
+        .map(str::trim)
+}
+
+/// What an `<abbr>` stands for, shown under where it was pressed.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::abbreviation_bubble"))]
+fn abbreviation_bubble(
+    theme: &crate::theme::EditorTheme,
+    title: String,
+    x: f32,
+    y: f32,
+) -> Element {
+    let colors = &theme.colors;
+    rect()
+        .layer(Layer::Overlay)
+        .position(
+            Position::new_absolute()
+                .top(y + theme.px(14.))
+                .left((x - theme.px(12.)).max(0.)),
+        )
+        .max_width(Size::px(theme.px(280.)))
+        .padding((theme.px(6.), theme.px(10.)))
+        .corner_radius(theme.px(8.))
+        .background(colors.popup_background)
+        .border(
+            Border::new()
+                .width(1.)
+                .alignment(BorderAlignment::Inner)
+                .fill(colors.border),
+        )
+        .shadow(
+            Shadow::new()
+                .y(4.)
+                .blur(12.)
+                .color(Color::from_argb(60, 0, 0, 0)),
+        )
+        .child(
+            label()
+                .font_size(theme.px(13.))
+                .color(colors.text)
+                .text(title),
+        )
+        .into_element()
+}
+
+/// Index into [`Inline::atoms`] of the image or formula drawn under
+/// `location`.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::atom_at"))]
+fn atom_at(holder: &ParagraphHolder, location: CursorPoint, content: &Inline) -> Option<usize> {
+    let location = holder.visible_location(location);
+    let inner = holder.0.borrow();
+    let ParagraphHolderInner {
+        paragraph,
+        scale_factor,
+        ..
+    } = inner.as_ref()?;
+    #[allow(clippy::cast_possible_truncation, reason = "pixel coordinates")]
+    let (x, y) = (
+        (location.x * scale_factor) as f32,
+        (location.y * scale_factor) as f32,
+    );
+    // Every atom is a placeholder, in order.
+    paragraph
+        .get_rects_for_placeholders()
+        .iter()
+        .position(|placeholder| {
+            let rect = placeholder.rect;
+            (rect.left..=rect.right).contains(&x) && (rect.top..=rect.bottom).contains(&y)
+        })
+        .filter(|index| {
+            matches!(
+                content.atoms().get(*index),
+                Some(Atom::Image { .. } | Atom::Math { .. })
+            )
+        })
+}
+
+/// Someone else's caret in this text field.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct RemotePaint {
+    head: usize,
+    color: u32,
+    name: String,
+}
+
+/// Other people's carets: a bar in their color. Their names are
+/// [`caret_tags`].
+#[cfg_attr(feature = "sismo", sismo::function("markdown::paint_carets"))]
+fn paint_carets(context: &mut FillRenderContext, holder: &ParagraphHolder, carets: &[RemotePaint]) {
+    let RenderTarget::Background { canvas, .. } = &context.target else {
+        return;
+    };
+    let inner = holder.0.borrow();
+    let Some(inner) = inner.as_ref() else {
+        return;
+    };
+    for caret in carets {
+        let Some((x, top, bottom)) = caret_place(inner, caret.head) else {
+            continue;
+        };
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_style(PaintStyle::Fill);
+        paint.set_color(Color::from(caret.color));
+        canvas.draw_rect(SkRect::new(x - 1.0, top, x + 1.0, bottom), &paint);
+    }
+}
+
+/// `(x, top, bottom)` in logical pixels of a caret at `head`, from the
+/// paragraph's last layout.
+fn caret_place(inner: &ParagraphHolderInner, head: usize) -> Option<(f32, f32, f32)> {
+    #[allow(clippy::cast_possible_truncation, reason = "scale factors are small")]
+    let scale = inner.scale_factor as f32;
+    if scale <= 0.0 {
+        return None;
+    }
+    let at = |range: std::ops::Range<usize>| {
+        inner
+            .paragraph
+            .get_rects_for_range(range, RectHeightStyle::Max, RectWidthStyle::Tight)
+            .first()
+            .map(|text_box| text_box.rect)
+    };
+    // Before the character at `head`, else after the one before it (the
+    // end of the text), else an empty field.
+    let (x, top, bottom) = at(head..head + 1).map_or_else(
+        || {
+            head.checked_sub(1)
+                .and_then(|before| at(before..head))
+                .map_or_else(
+                    || (0.0, 0.0, inner.paragraph.height()),
+                    |rect| (rect.right, rect.top, rect.bottom),
+                )
+        },
+        |rect| (rect.left, rect.top, rect.bottom),
+    );
+    Some((x / scale, top / scale, bottom / scale))
+}
+
+/// Name tags of other people's carets, above each caret. Elements rather
+/// than paint, so they can rise above the text field.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::caret_tags"))]
+fn caret_tags(holder: &ParagraphHolder, carets: &[RemotePaint], size: f32) -> Vec<Element> {
+    let inner = holder.0.borrow();
+    let Some(inner) = inner.as_ref() else {
+        return Vec::new();
+    };
+    carets
+        .iter()
+        .filter(|caret| !caret.name.is_empty())
+        .filter_map(|caret| {
+            let (x, top, _) = caret_place(inner, caret.head)?;
+            let height = size + 4.0;
+            Some(
+                rect()
+                    .layer(Layer::Relative(2))
+                    .position(Position::new_absolute().top(top - height).left(x - 1.0))
+                    .height(Size::px(height))
+                    .padding((0., 4.))
+                    .corner_radius(3.)
+                    .background(Color::from(caret.color))
+                    .center()
+                    .child(
+                        label()
+                            .font_size(size)
+                            .font_weight(FontWeight::BOLD)
+                            .color(Color::from_rgb(21, 21, 26))
+                            .max_lines(1)
+                            .text(caret.name.clone()),
+                    )
+                    .into_element(),
+            )
+        })
+        .collect()
 }

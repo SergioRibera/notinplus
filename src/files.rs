@@ -1,0 +1,183 @@
+//! The system file pickers, as async calls that read or write the
+//! whole file.
+
+use std::io::{Read, Write};
+use std::sync::Arc;
+
+use istmo_file_picker::{FileFilter, FilePickerClient, FilePickerError, PickConfig, SaveConfig};
+use notein_i18n::tr;
+use notein_plugin::UserMessage;
+
+/// A file the user chose, read into memory.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Picked {
+    pub name: String,
+    pub bytes: Vec<u8>,
+}
+
+/// Why a file could not be read or written.
+#[derive(Debug)]
+pub enum FileError {
+    Picker(String),
+    Io(std::io::Error),
+}
+
+impl std::fmt::Display for FileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Picker(why) => write!(f, "file picker: {why}"),
+            Self::Io(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for FileError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(err) => Some(err),
+            Self::Picker(_) => None,
+        }
+    }
+}
+
+impl UserMessage for FileError {
+    fn user_message(&self) -> String {
+        match self {
+            Self::Picker(_) => tr!("errors-file-picker"),
+            Self::Io(err) => err.user_message(),
+        }
+    }
+}
+
+impl From<std::io::Error> for FileError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
+    }
+}
+
+impl From<FilePickerError> for FileError {
+    fn from(err: FilePickerError) -> Self {
+        Self::Picker(format!("{err:?}"))
+    }
+}
+
+fn client() -> Result<FilePickerClient, FileError> {
+    FilePickerClient::acquire().map_err(|err| FileError::Picker(err.to_string()))
+}
+
+fn filter(extensions: &[&str], mime_types: &[&str]) -> FileFilter {
+    FileFilter {
+        mime_types: mime_types.iter().map(|m| (*m).to_owned()).collect(),
+        extensions: extensions.iter().map(|e| (*e).to_owned()).collect(),
+        uti_types: Vec::new(),
+    }
+}
+
+/// Ask for one file and read it. `Ok(None)` when the user cancels.
+///
+/// # Errors
+/// [`FileError`] when the picker or the read fails.
+#[sismo::function]
+pub async fn pick(
+    title: &str,
+    extensions: &[&str],
+    mime_types: &[&str],
+) -> Result<Option<Picked>, FileError> {
+    let picker = client()?;
+    let config = PickConfig {
+        dialog_title: Some(title.to_owned()),
+        filter: filter(extensions, mime_types),
+        start_directory_hint: None,
+        allow_multiple: false,
+    };
+    let Some(file) = picker
+        .pick_file_owned(config)
+        .await
+        .map_err(|e| FileError::Picker(e.to_string()))?
+    else {
+        return Ok(None);
+    };
+    let name = file.display_name.clone();
+    let file = Arc::new(file);
+    let mut reader = file.open_reader(&picker).await?;
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes)?;
+    Ok(Some(Picked { name, bytes }))
+}
+
+/// A file [`save`] wrote.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Saved {
+    /// Name the system shows for it.
+    pub name: String,
+    /// Where it lives, when the system lets the app know (Linux): what
+    /// "Mostrar en la carpeta" opens.
+    pub path: Option<std::path::PathBuf>,
+}
+
+/// Ask where to save and write `bytes` there. `Ok(None)` when the user
+/// cancels.
+///
+/// # Errors
+/// [`FileError`] when the picker or the write fails (no space).
+#[sismo::function]
+pub async fn save(
+    title: &str,
+    suggested: &str,
+    mime: &str,
+    extension: &str,
+    bytes: &[u8],
+) -> Result<Option<Saved>, FileError> {
+    let picker = client()?;
+    let config = SaveConfig {
+        dialog_title: Some(title.to_owned()),
+        suggested_name: Some(suggested.to_owned()),
+        mime_type: Some(mime.to_owned()),
+        filter: filter(&[extension], &[mime]),
+        start_directory_hint: None,
+        overwrite_prompt: true,
+    };
+    let Some(file) = picker
+        .save_file_owned(config)
+        .await
+        .map_err(|e| FileError::Picker(e.to_string()))?
+    else {
+        return Ok(None);
+    };
+    let name = file.display_name.clone();
+    let file = Arc::new(file);
+    let mut writer = file.open_writer(&picker).await?;
+    writer.write_all(bytes)?;
+    writer.flush()?;
+    Ok(Some(Saved {
+        name,
+        path: written_path(&writer),
+    }))
+}
+
+/// The path behind the descriptor the picker handed out. Only Linux
+/// names it (`/proc/self/fd`); elsewhere the descriptor may point into
+/// a document provider with no folder to show.
+#[cfg(target_os = "linux")]
+fn written_path(file: &impl std::os::fd::AsRawFd) -> Option<std::path::PathBuf> {
+    std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))
+        .ok()
+        .filter(|path| path.is_absolute() && path.exists())
+}
+
+#[cfg(not(target_os = "linux"))]
+const fn written_path<F>(_file: &F) -> Option<std::path::PathBuf> {
+    None
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    #[test]
+    fn an_open_file_names_its_path() {
+        let path = std::env::temp_dir().join(format!("notein-saved-{}.notein", std::process::id()));
+        let file = std::fs::File::create(&path).expect("create");
+        let named = super::written_path(&file);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(named, Some(path));
+    }
+}

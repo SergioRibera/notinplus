@@ -15,12 +15,18 @@ struct Harness {
 #[derive(Clone, Copy)]
 struct RevealSyntax(bool);
 
+/// Touches that reached the page holding the editor, like a canvas does.
+#[derive(Clone, Copy)]
+struct TouchesBelow(State<u32>);
+
 fn app() -> impl IntoElement {
     let value = use_consume::<State<String>>();
     let controller = use_consume::<EditorController>();
     let reveal = use_consume::<RevealSyntax>().0;
+    let mut below = use_consume::<TouchesBelow>().0;
     rect()
         .expanded()
+        .on_touch_start(move |_| *below.write() += 1)
         .background((30, 32, 38))
         .padding(12.)
         .child(
@@ -78,6 +84,7 @@ impl Harness {
             (600., 400.).into(),
             move |runner| {
                 runner.provide_root_context(|| RevealSyntax(reveal));
+                runner.provide_root_context(|| TouchesBelow(State::create(0)));
                 let value = runner.provide_root_context(|| State::create(markdown.to_owned()));
                 let controller =
                     runner.provide_root_context(|| EditorController::create(Document::default()));
@@ -189,6 +196,54 @@ fn slash_menu_turns_block_into_quote() {
     harness.named(NamedKey::Enter);
     harness.type_text("wise words");
     assert_eq!(harness.value(), "> wise words\n");
+}
+
+#[test]
+fn a_transclusion_pasted_mid_paragraph_splits_it_and_keeps_typing_after() {
+    let mut harness = Harness::new("antesdespués");
+    let first = harness.block(0);
+    harness.focus(first, 5);
+    let controller = harness.controller;
+    harness.runner.run_in(|| {
+        controller.insert_markdown("> [!app:live]\n>\n> texto\n>\n> — [Fuente](app://x)");
+    });
+    harness.settle();
+    harness.type_text("!");
+    assert_eq!(
+        harness.value(),
+        "antes\n\n> [!app:live]\n>\n> texto\n>\n> — [Fuente](app://x)\n\n!después\n"
+    );
+}
+
+#[test]
+fn a_transclusion_pasted_at_a_line_start_goes_before_it() {
+    let mut harness = Harness::new("arriba\n\nabajo");
+    let empty = harness.block(1);
+    harness.focus(empty, 0);
+    let controller = harness.controller;
+    harness.runner.run_in(|| {
+        controller.insert_markdown("> [!app:live]\n>\n> texto\n>\n> — [Fuente](app://x)");
+    });
+    harness.settle();
+    assert_eq!(
+        harness.value(),
+        "arriba\n\n> [!app:live]\n>\n> texto\n>\n> — [Fuente](app://x)\n\nabajo\n"
+    );
+}
+
+#[test]
+fn backspace_after_a_transclusion_removes_it_whole() {
+    let mut harness =
+        Harness::new("antes\n\n> [!app:live]\n>\n> texto\n>\n> — [Fuente](app://x)\n\ndespués");
+    assert!(matches!(
+        harness.document().blocks()[1].kind,
+        BlockKind::Transclusion(_)
+    ));
+    harness.snapshot("transclusion");
+    let after = harness.block(2);
+    harness.focus(after, 0);
+    harness.named(NamedKey::Backspace);
+    assert_eq!(harness.value(), "antes\n\ndespués\n");
 }
 
 #[test]
@@ -542,4 +597,132 @@ fn pasted_markdown_splits_around_the_caret() {
         Modifiers::empty(),
     );
     assert_eq!(harness.value(), "before \n\n## Mid\n\ntext\n\nafter\n");
+}
+
+fn tap(harness: &mut Harness, at: (f64, f64)) {
+    for (name, phase) in [
+        (TouchEventName::TouchStart, TouchPhase::Started),
+        (TouchEventName::TouchEnd, TouchPhase::Ended),
+    ] {
+        harness.runner.send_event(PlatformEvent::Touch {
+            name,
+            location: at.into(),
+            finger_id: 0,
+            phase,
+            force: None,
+        });
+        harness.runner.sync_and_update();
+    }
+    harness.settle();
+}
+
+#[test]
+fn a_tap_on_the_quote_converter_reaches_it() {
+    let mut harness = Harness::new("> quoted\n\nafter\n");
+    let quote = harness.block(0);
+    harness.focus(quote, 2);
+    tap(&mut harness, (60., 31.));
+    tap(&mut harness, (80., 73.));
+    assert!(matches!(
+        harness.document().blocks()[0].kind,
+        BlockKind::Callout { .. }
+    ));
+}
+
+#[test]
+fn folding_details_with_the_caret_inside_moves_it_out() {
+    let mut harness =
+        Harness::new("before\n\n<details>\n<summary>Hola</summary>\n\nhidden\n\n</details>\n");
+    let details = harness.block(1);
+    harness.focus(details, 2);
+    tap(&mut harness, (40., 63.));
+    let controller = harness.controller;
+    let selection = harness.runner.run_in(|| controller.selection());
+    assert_eq!(
+        selection.map(|selection| selection.target),
+        Some(harness.block(0))
+    );
+}
+
+/// Draws every formula as a plain box.
+struct DrawnMath;
+
+impl Decorator for DrawnMath {
+    fn render_math(&self, _math: &MathContext<'_>) -> Option<Element> {
+        Some(
+            rect()
+                .width(Size::px(120.))
+                .height(Size::px(40.))
+                .background((200, 80, 80))
+                .into_element(),
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
+struct KeyboardAsks(State<u32>);
+
+fn drawn_math_app() -> impl IntoElement {
+    let value = use_consume::<State<String>>();
+    let controller = use_consume::<EditorController>();
+    let asks = use_consume::<KeyboardAsks>().0;
+    rect().expanded().padding(12.).child(
+        MarkdownEditor::new(value)
+            .controller(controller)
+            .decorator(DrawnMath)
+            .on_request_keyboard(move || {
+                let mut asks = asks;
+                *asks.write() += 1;
+            })
+            .width(Size::fill()),
+    )
+}
+
+#[test]
+fn edit_opens_the_source_of_a_drawing_and_done_folds_it_again() {
+    let (runner, (value, controller, asks)) = TestingRunner::new(
+        drawn_math_app,
+        (600., 400.).into(),
+        move |runner| {
+            let value =
+                runner.provide_root_context(|| State::create("$$\nx^2\n$$\n\nafter\n".to_owned()));
+            let controller =
+                runner.provide_root_context(|| EditorController::create(Document::default()));
+            let asks = runner.provide_root_context(|| KeyboardAsks(State::create(0)));
+            (value, controller, asks)
+        },
+        1.0,
+    );
+    let mut harness = Harness {
+        runner,
+        value,
+        controller,
+    };
+    harness.settle();
+    tap(&mut harness, (560., 30.));
+    let formula = harness.block(0);
+    let selection = harness.runner.run_in(|| controller.selection());
+    assert_eq!(selection.map(|selection| selection.target), Some(formula));
+    assert_eq!(*asks.0.peek(), 1);
+    tap(&mut harness, (560., 30.));
+    let selection = harness.runner.run_in(|| controller.selection());
+    assert_eq!(
+        selection.map(|selection| selection.target),
+        Some(harness.block(1))
+    );
+}
+
+#[test]
+fn a_tap_on_a_suggestion_picks_it_and_stays_in_the_menu() {
+    let mut harness = Harness::new("see");
+    let first = harness.block(0);
+    harness.focus(first, 3);
+    harness.type_text(" /doc");
+    let below = harness
+        .runner
+        .run_in(try_consume_root_context::<TouchesBelow>)
+        .map(|touches| touches.0);
+    tap(&mut harness, (100., 65.));
+    assert_eq!(harness.value(), "see [Doc](app://doc)\n");
+    assert_eq!(below.map(|touches| *touches.peek()), Some(0));
 }

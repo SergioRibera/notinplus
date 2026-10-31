@@ -2,93 +2,16 @@
 //! relay: the guest joins with the invitation, both publish, both
 //! receive.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::convert::Infallible;
+mod common;
+
 use std::time::{Duration, Instant};
 
+use common::MemReplica;
 use notein_sync::driver::DriverEvent;
 use notein_sync::{
-    Action, Blob, BlobHead, BlobKey, DeviceKey, DeviceProfile, DocId, Invite, LanConfig, LanNode,
-    NetEvent, RelayAddr, RelayConfig, RelayServer, RelayStore, Replica, Share, ShareMode,
-    SyncDriver, Version,
+    Action, DeviceKey, DeviceProfile, DocId, Invite, LanConfig, LanNode, RelayAddr, RelayConfig,
+    RelayServer, RelayStore, Share, ShareBook, ShareMode, SyncDriver,
 };
-
-/// Toy mergeable document: a set of `(author, counter)` marks.
-#[derive(Default, Debug)]
-struct MemReplica {
-    docs: BTreeMap<DocId, BTreeSet<(u64, u64)>>,
-    blobs: BTreeMap<BlobKey, Blob>,
-}
-
-fn encode<T: bincode::Encode>(value: T) -> Vec<u8> {
-    bincode::encode_to_vec(value, bincode::config::standard()).unwrap()
-}
-
-fn decode<T: bincode::Decode<()>>(bytes: &[u8]) -> T {
-    bincode::decode_from_slice(bytes, bincode::config::standard())
-        .unwrap()
-        .0
-}
-
-impl Replica for MemReplica {
-    type Error = Infallible;
-
-    fn docs(&self) -> Vec<(DocId, Version)> {
-        self.docs
-            .keys()
-            .map(|doc| (*doc, self.doc_version(*doc).unwrap()))
-            .collect()
-    }
-
-    fn doc_version(&self, doc: DocId) -> Option<Version> {
-        self.docs
-            .get(&doc)
-            .map(|marks| Version(encode(marks.iter().copied().collect::<Vec<_>>())))
-    }
-
-    fn doc_updates_since(&self, doc: DocId, since: &Version) -> Result<Vec<u8>, Infallible> {
-        let seen: BTreeSet<(u64, u64)> = decode::<Vec<(u64, u64)>>(&since.0).into_iter().collect();
-        let missing: Vec<(u64, u64)> = self.docs[&doc].difference(&seen).copied().collect();
-        Ok(if missing.is_empty() {
-            Vec::new()
-        } else {
-            encode(missing)
-        })
-    }
-
-    fn doc_snapshot(&self, doc: DocId) -> Result<Vec<u8>, Infallible> {
-        Ok(encode(self.docs[&doc].iter().copied().collect::<Vec<_>>()))
-    }
-
-    fn doc_import(&mut self, doc: DocId, bytes: &[u8]) -> Result<(), Infallible> {
-        let marks: Vec<(u64, u64)> = decode(bytes);
-        self.docs.entry(doc).or_default().extend(marks);
-        Ok(())
-    }
-
-    fn blob_heads(&self) -> Vec<BlobHead> {
-        self.blobs.values().map(|b| b.head).collect()
-    }
-
-    fn blobs(&self, keys: &[BlobKey]) -> Vec<Blob> {
-        keys.iter()
-            .filter_map(|k| self.blobs.get(k).cloned())
-            .collect()
-    }
-
-    fn blob_merge(&mut self, blob: Blob) -> Result<bool, Infallible> {
-        let key = blob.head.key();
-        let newer = self
-            .blobs
-            .get(&key)
-            .is_none_or(|held| held.head.updated_at < blob.head.updated_at);
-        if newer {
-            self.blobs.insert(key, blob);
-        }
-        Ok(newer)
-    }
-}
-
 /// A device: its transport plus its driver, pumped by hand.
 struct Device {
     node: LanNode,
@@ -110,7 +33,7 @@ impl Device {
         .unwrap();
         Self {
             node,
-            driver: SyncDriver::new(profile, MemReplica::default(), Vec::new()),
+            driver: SyncDriver::new(profile, MemReplica::default(), ShareBook::default()),
             events: Vec::new(),
         }
     }
@@ -118,7 +41,11 @@ impl Device {
     fn perform(&mut self, actions: Vec<Action>) {
         for action in actions {
             match action {
-                Action::Send { device, bytes } => self.node.send(device, bytes).unwrap(),
+                Action::Send {
+                    device,
+                    lane,
+                    bytes,
+                } => self.node.send(device, lane, bytes).unwrap(),
                 Action::Connect { addr, public } => self.node.connect(addr, public).unwrap(),
                 Action::ConnectHost { host, public } => {
                     self.node.connect_host(host, public).unwrap();
@@ -142,7 +69,7 @@ impl Device {
             .unwrap_or_default()
     }
 
-    fn mark(&mut self, doc: DocId, author: u64, counter: u64) {
+    fn mark(&self, doc: DocId, author: u64, counter: u64) {
         self.driver
             .with_replica(|r| r.docs.entry(doc).or_default().insert((author, counter)));
     }
@@ -235,7 +162,7 @@ fn guest_joins_and_syncs_through_the_relay_only() {
     std::thread::sleep(Duration::from_millis(300));
     owner.pump();
     let cursor_before = guest.driver.share(id).unwrap().relay_cursor;
-    let shares: Vec<Share> = guest.driver.shares().cloned().collect();
+    let book = guest.driver.book();
     let profile = guest.driver.profile().clone();
     let relay_addr = guest.driver.relay().cloned();
     drop(guest);
@@ -247,7 +174,7 @@ fn guest_joins_and_syncs_through_the_relay_only() {
                 .scan(false),
         )
         .unwrap(),
-        driver: SyncDriver::new(profile, MemReplica::default(), shares),
+        driver: SyncDriver::new(profile, MemReplica::default(), book),
         events: Vec::new(),
     };
     let actions = returning.driver.set_relay(relay_addr);

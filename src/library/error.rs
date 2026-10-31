@@ -7,6 +7,8 @@ use std::io;
 
 use istmo::IstmoError;
 use istmo_data_store::DataStoreError;
+use notein_i18n::tr;
+use notein_plugin::UserMessage;
 
 use super::model::{FolderId, ItemId, LinkId, TagId, WorkspaceId};
 
@@ -99,5 +101,49 @@ impl From<DataStoreError> for LibraryError {
 impl From<io::Error> for LibraryError {
     fn from(err: io::Error) -> Self {
         Self::Io(err)
+    }
+}
+
+impl UserMessage for LibraryError {
+    fn user_message(&self) -> String {
+        match self {
+            Self::Runtime(_) => tr!("errors-library-runtime"),
+            Self::Store(DataStoreError::Backend(_)) => tr!("errors-library-store"),
+            Self::Store(DataStoreError::Corrupted(_)) | Self::Codec(_) => {
+                tr!("errors-library-damaged")
+            }
+            Self::Io(err) => err.user_message(),
+            Self::NotFound(kind) => match kind {
+                NotFoundKind::Folder(_) => tr!("errors-library-missing-folder"),
+                NotFoundKind::Item(_) => tr!("errors-library-missing-item"),
+                NotFoundKind::Tag(_) => tr!("errors-library-missing-tag"),
+                NotFoundKind::Workspace(_) => tr!("errors-library-missing-desk"),
+                NotFoundKind::Link(_) => tr!("errors-library-missing-link"),
+            },
+            Self::Cycle => tr!("errors-library-cycle"),
+            Self::RootImmutable => tr!("errors-library-root"),
+            Self::SelfLink => tr!("errors-library-self-link"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use notein_i18n::Lang;
+    use notein_plugin::UserMessage;
+
+    use super::{LibraryError, NotFoundKind};
+    use crate::library::ItemId;
+
+    #[test]
+    fn library_errors_explain_themselves_in_spanish() {
+        Lang::Es.make_current();
+        let damaged = LibraryError::Codec("UnexpectedVariant".to_owned()).user_message();
+        assert!(damaged.contains("no se pueden leer"), "{damaged}");
+        assert!(!damaged.contains("UnexpectedVariant"), "{damaged}");
+        let full = LibraryError::Io(std::io::ErrorKind::StorageFull.into()).user_message();
+        assert!(full.contains("espacio"), "{full}");
+        let gone = LibraryError::NotFound(NotFoundKind::Item(ItemId([1; 16]))).user_message();
+        assert!(gone.contains("ya no existe"), "{gone}");
     }
 }

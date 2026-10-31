@@ -1,0 +1,19 @@
+## Document, folder and desk menus (src/actions.rs).
+
+actions-open-beside = Open beside
+actions-open-new-desk = Open in a new desk
+actions-new-notebook = New notebook
+actions-notebook = Notebook
+actions-link-with = Link with…
+actions-pin = Pin
+actions-unpin = Unpin
+actions-share = Share…
+actions-export = Export…
+actions-duplicate = Duplicate
+actions-move-to = Move to…
+actions-edit = Edit…
+actions-undo-import = Undo the import
+actions-pin-home = Pin to Home
+actions-unpin-home = Remove from Home
+actions-share-desk = Share desk…
+actions-delete-desk = Delete desk

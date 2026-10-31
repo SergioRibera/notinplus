@@ -1,0 +1,40 @@
+[package]
+name = "freya-markdown-math"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+authors = ["Sergio Ribera <contact@sergioribera.rs>"]
+description = "LaTeX formulas for freya-markdown-editor, typeset by Typst through MiTeX."
+repository = "https://github.com/SergioRibera/notinplus"
+keywords = ["freya", "markdown", "latex", "math", "typst"]
+categories = ["gui", "mathematics"]
+
+[features]
+sismo = ["dep:sismo"]
+
+[dependencies]
+# Spans for the sismo profiler; off unless an app turns it on.
+sismo = { path = "../../../../sismo/crates/sismo", default-features = false, optional = true }
+freya = { version = "=0.5.0-rc.13" }
+freya-markdown-editor = { path = "../freya-markdown-editor" }
+mitex = "0.2.4"
+typst = "0.15.1"
+typst-layout = "0.15.1"
+typst-svg = "0.15.1"
+
+[lints.rust]
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+redundant_pub_crate = "allow"
+
+[dev-dependencies]
+freya-testing = "=0.5.0-rc.13"

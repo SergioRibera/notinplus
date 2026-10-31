@@ -13,7 +13,7 @@ pub const ROOT_FOLDER: FolderId = FolderId([0u8; 16]);
 
 /// Schema version encoded into the index blob. Bump on any breaking
 /// change to the surrounding types.
-pub const INDEX_VERSION: u32 = 3;
+pub const INDEX_VERSION: u32 = 4;
 
 macro_rules! uuid_newtype {
     ($(#[$meta:meta])* $name:ident) => {
@@ -72,8 +72,10 @@ uuid_newtype!(
     ItemId
 );
 uuid_newtype!(
-    /// Stable identifier for a folder. [`ROOT_FOLDER`] uses the nil
-    /// UUID; user-created folders carry random UUID v4 bytes.
+    /// Stable identifier for a folder.
+    ///
+    /// [`ROOT_FOLDER`] uses the nil UUID; user-created folders carry
+    /// random UUID v4 bytes.
     FolderId
 );
 uuid_newtype!(
@@ -89,9 +91,10 @@ uuid_newtype!(
     LinkId
 );
 uuid_newtype!(
-    /// Stable identifier for a pane within a single workspace. Scoped
-    /// per workspace — a [`PaneId`] from workspace A has no meaning in
-    /// B. Default is the nil UUID used by transient layout snapshots
+    /// Stable identifier for a pane within a single workspace.
+    ///
+    /// Scoped per workspace — a [`PaneId`] from workspace A has no
+    /// meaning in B. Default is the nil UUID used by transient layout snapshots
     /// that never persist; the [`Workspace`] allocator rewrites it on
     /// insertion.
     PaneId
@@ -152,6 +155,20 @@ pub enum BackgroundStyle {
     DotGrid,
 }
 
+/// When and from where something was moved to the trash.
+#[istmo::message]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Trashed {
+    /// Unix millis of the move.
+    pub at: u64,
+    /// Folder it lived in; restoring puts it back there, or at the
+    /// root when that folder is gone.
+    pub from: FolderId,
+    /// Shared by everything trashed by one action (a folder and its
+    /// content, a document and its notebooks) so they restore together.
+    pub batch: u64,
+}
+
 /// User-defined tag. Colour is chosen at creation time and can be
 /// updated independently of the name.
 #[istmo::message]
@@ -175,6 +192,8 @@ pub struct Folder {
     pub tags: Vec<TagId>,
     pub created_at: u64,
     pub updated_at: u64,
+    /// `Some` while the folder sits in the trash.
+    pub trashed: Option<Trashed>,
 }
 
 /// Item metadata. The corresponding doc body lives on disk at
@@ -194,7 +213,12 @@ pub struct Item {
     pub updated_at: u64,
     /// Optional PNG thumbnail bytes. Populated by the UI layer when it
     /// re-renders a preview; the library never generates one itself.
-    pub thumbnail: Option<Vec<u8>>,
+    /// Shared, so a screen holds it without copying. On this device it
+    /// lives in its own file next to the body; the stored index
+    /// carries none, only the copy that travels to other devices does.
+    pub thumbnail: Option<std::sync::Arc<[u8]>>,
+    /// `Some` while the item sits in the trash.
+    pub trashed: Option<Trashed>,
 }
 
 /// One open tab inside a pane. Names what it shows via [`TabTarget`];
@@ -248,7 +272,16 @@ pub enum TabTarget {
     /// tab discards it; a persisted workspace keeps the tab but the
     /// canvas starts blank on the next mount.
     Scratch(ScratchId),
+    /// An annotation that older builds expanded into a tab. Annotations
+    /// expand into a sidebar now; the variant stays so mesas saved with
+    /// one still load, and loading drops these tabs.
+    Annotation(AnnotationId),
 }
+
+/// Identifies an annotation being edited (see `crate::annotation`).
+#[istmo::message]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub struct AnnotationId(pub u64);
 
 impl PaneTab {
     #[must_use]
@@ -285,7 +318,7 @@ impl PaneTab {
     pub const fn item(&self) -> Option<ItemId> {
         match self.target {
             TabTarget::Item(id) => Some(id),
-            TabTarget::Scratch(_) => None,
+            TabTarget::Scratch(_) | TabTarget::Annotation(_) => None,
         }
     }
 }
@@ -331,11 +364,11 @@ pub enum SplitSide {
     Second,
 }
 
-/// Recursive binary tree describing a workspace's pane layout. Every
-/// leaf is a [`Pane`]; every internal node is a split along one axis
-/// with the drag position stored as `ratio` (fraction of the parent's
-/// extent allocated to the first child, clamped to `0.05..=0.95` by
-/// the shell).
+/// Recursive binary tree describing a workspace's pane layout.
+///
+/// Every leaf is a [`Pane`]; every internal node is a split along one axis with
+/// the drag position stored as `ratio` (fraction of the parent's extent
+/// allocated to the first child, clamped to `0.05..=0.95` by the shell).
 ///
 /// Not `Eq` / `Hash` because the `ratio` field is `f32`; the layout is
 /// compared structurally only via `PartialEq`.
@@ -349,8 +382,8 @@ pub enum PaneLayout {
         /// clamps on load so a corrupted ratio cannot push the handle
         /// off-screen.
         ratio: f32,
-        first: Box<PaneLayout>,
-        second: Box<PaneLayout>,
+        first: Box<Self>,
+        second: Box<Self>,
     },
 }
 
@@ -358,7 +391,7 @@ impl PaneLayout {
     /// Convenience: wrap a leaf with the given id. Used by
     /// [`Workspace::new_leaf`] when minting a fresh layout.
     #[must_use]
-    pub fn leaf(id: PaneId) -> Self {
+    pub const fn leaf(id: PaneId) -> Self {
         Self::Leaf(Pane {
             id,
             tabs: Vec::new(),
@@ -376,6 +409,7 @@ impl PaneLayout {
     /// Walk every leaf, yielding a reference to each pane in a stable
     /// depth-first (first-then-second) order. The shell uses this to
     /// hand ids to the renderer / event router.
+    #[must_use]
     pub fn leaves(&self) -> Vec<&Pane> {
         let mut out = Vec::new();
         self.collect_leaves(&mut out);
@@ -427,11 +461,7 @@ impl PaneLayout {
             Self::Leaf(p) if p.id == id => Some(p),
             Self::Leaf(_) => None,
             Self::Split { first, second, .. } => {
-                if let Some(p) = first.find_leaf_mut(id) {
-                    Some(p)
-                } else {
-                    second.find_leaf_mut(id)
-                }
+                first.find_leaf_mut(id).or_else(|| second.find_leaf_mut(id))
             }
         }
     }
@@ -557,9 +587,8 @@ impl PaneLayout {
             return false;
         }
         let tab = {
-            let leaf = match self.find_leaf_mut(src) {
-                Some(leaf) => leaf,
-                None => return false,
+            let Some(leaf) = self.find_leaf_mut(src) else {
+                return false;
             };
             if src_index >= leaf.tabs.len() {
                 return false;
@@ -685,6 +714,23 @@ impl PaneLayout {
     }
 }
 
+impl PaneLayout {
+    /// Point tabs at new item ids (an imported copy); tabs of items not in
+    /// `ids` close.
+    pub fn retarget_items(&mut self, ids: &std::collections::HashMap<ItemId, ItemId>) {
+        for pane in self.leaves_mut() {
+            pane.tabs.retain_mut(|tab| match tab.target {
+                TabTarget::Item(old) => ids.get(&old).is_some_and(|new| {
+                    tab.target = TabTarget::Item(*new);
+                    true
+                }),
+                TabTarget::Scratch(_) => true,
+                TabTarget::Annotation(_) => false,
+            });
+        }
+    }
+}
+
 impl Default for PaneLayout {
     fn default() -> Self {
         Self::empty()
@@ -701,6 +747,11 @@ impl Default for PaneLayout {
 pub struct Workspace {
     pub id: WorkspaceId,
     pub name: String,
+    /// The user typed `name`. Until then the shell derives it from the
+    /// documents open in the mesa.
+    pub named: bool,
+    /// Shown first in Home.
+    pub pinned: bool,
     pub color: Option<Rgba>,
     pub layout: PaneLayout,
     /// Which leaf has keyboard / input focus. The shell clamps on
@@ -708,6 +759,9 @@ pub struct Workspace {
     pub focused_pane: Option<PaneId>,
     pub created_at: u64,
     pub updated_at: u64,
+    /// The device the mesa was made on; `None` when it was made before
+    /// this device had a sync identity.
+    pub device: Option<notein_sync::DeviceId>,
 }
 
 impl Workspace {
@@ -730,11 +784,14 @@ impl Workspace {
         Self {
             id,
             name,
+            named: false,
+            pinned: false,
             color,
             layout: PaneLayout::leaf(root),
             focused_pane: Some(root),
             created_at: now,
             updated_at: now,
+            device: None,
         }
     }
 
@@ -778,15 +835,11 @@ impl WorkspaceIndex {
     pub fn workspace_mut(&mut self, id: WorkspaceId) -> Option<&mut Workspace> {
         self.workspaces.iter_mut().find(|w| w.id == id)
     }
-
-    pub(super) fn alloc_workspace_id(&self) -> WorkspaceId {
-        WorkspaceId::new_v4()
-    }
 }
 
 /// Schema version for [`WorkspaceIndex`]. Bump on any breaking change
 /// to the surrounding types.
-pub const WORKSPACE_INDEX_VERSION: u32 = 3;
+pub const WORKSPACE_INDEX_VERSION: u32 = 4;
 
 /// The single blob persisted under `library.index.v2` in data-store.
 ///
@@ -801,6 +854,8 @@ pub struct LibraryIndex {
     pub folders: Vec<Folder>,
     pub items: Vec<Item>,
     pub tags: Vec<Tag>,
+    /// Pinned items, in the order Home shows them.
+    pub pins: Vec<ItemId>,
 }
 
 impl Default for LibraryIndex {
@@ -810,6 +865,7 @@ impl Default for LibraryIndex {
             folders: Vec::new(),
             items: Vec::new(),
             tags: Vec::new(),
+            pins: Vec::new(),
         }
     }
 }
@@ -866,17 +922,5 @@ impl LibraryIndex {
             cursor = f.parent;
         }
         false
-    }
-
-    pub(super) fn alloc_folder_id(&self) -> FolderId {
-        FolderId::new_v4()
-    }
-
-    pub(super) fn alloc_item_id(&self) -> ItemId {
-        ItemId::new_v4()
-    }
-
-    pub(super) fn alloc_tag_id(&self) -> TagId {
-        TagId::new_v4()
     }
 }

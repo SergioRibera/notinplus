@@ -29,16 +29,20 @@ pub const DEFAULT_MANIFEST_URL: &str = "https://v1.fetch.bible/manifest.json";
 
 /// fetch.bible cross-reference bundle, per lowercase book id.
 /// Shape: `{ chapter_str: { verse_str: [[tgt_book, chap, verse, …], …] } }`.
-pub const CROSSREF_URL_TEMPLATE: &str =
-    "https://v1.fetch.bible/crossref/large/{book}.json";
+pub const CROSSREF_URL_TEMPLATE: &str = "https://v1.fetch.bible/crossref/large/{book}.json";
 
 #[derive(Debug)]
 pub enum ImportError {
     Http(reqwest::Error),
-    Json { context: String, source: serde_json::Error },
+    Json {
+        context: String,
+        source: serde_json::Error,
+    },
     Io(std::io::Error),
     Db(crate::db::DbError),
-    Format { reason: String },
+    Format {
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for ImportError {
@@ -79,10 +83,25 @@ pub type Result<T> = std::result::Result<T, ImportError>;
 /// translation-picker UI to drive its progress bar.
 #[derive(Clone, Debug)]
 pub enum Progress {
-    Started { bible_id: String },
-    ManifestFetched { total_books: usize },
-    BookDone { book_id: String, verses: usize },
-    Finished { bible_id: String, inserted_verses: usize },
+    Started {
+        bible_id: String,
+    },
+    ManifestFetched {
+        total_books: usize,
+    },
+    BookDone {
+        book_id: String,
+        verses: usize,
+    },
+    /// Cross-references of `done` books of `total` are in.
+    CrossRefs {
+        done: usize,
+        total: usize,
+    },
+    Finished {
+        bible_id: String,
+        inserted_verses: usize,
+    },
 }
 
 /// Catalogue manifest entry — the top-level `manifest.json` is roughly
@@ -112,12 +131,12 @@ struct LanguageEntry {
 #[derive(Debug, Default, Deserialize, Serialize)]
 struct BibleDesc {
     #[serde(default)]
-    book_names: HashMap<String, BookName>,
+    book_names: BookNames,
     #[serde(default)]
     chapter_headings: HashMap<String, Vec<String>>,
     #[serde(default)]
     sections: HashMap<String, Vec<SectionEntry>>,
-    /// Optional language id — if absent we fall back to the bible_id prefix.
+    /// Optional language id — if absent we fall back to the `bible_id` prefix.
     #[serde(default)]
     language: Option<String>,
     #[serde(default)]
@@ -126,6 +145,72 @@ struct BibleDesc {
     name_english: Option<String>,
     #[serde(default)]
     abbrev: Option<String>,
+}
+
+/// Book names keyed by book id, in the order the manifest lists them:
+/// reading order, deuterocanonical books where each tradition puts them.
+#[derive(Debug, Default)]
+struct BookNames(Vec<(String, BookName)>);
+
+impl BookNames {
+    fn get(&self, book_id: &str) -> Option<&BookName> {
+        self.0
+            .iter()
+            .find(|(id, _)| id == book_id)
+            .map(|(_, name)| name)
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Book ids in reading order.
+    fn ids(&self) -> Vec<&String> {
+        self.0.iter().map(|(id, _)| id).collect()
+    }
+}
+
+impl<'de> Deserialize<'de> for BookNames {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        struct Ordered;
+
+        impl<'de> serde::de::Visitor<'de> for Ordered {
+            type Value = BookNames;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a map of book ids to names")
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> std::result::Result<BookNames, A::Error> {
+                let mut books = Vec::with_capacity(map.size_hint().unwrap_or(0));
+                while let Some(entry) = map.next_entry::<String, BookName>()? {
+                    books.push(entry);
+                }
+                Ok(BookNames(books))
+            }
+        }
+
+        deserializer.deserialize_map(Ordered)
+    }
+}
+
+impl Serialize for BookNames {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        for (id, name) in &self.0 {
+            map.serialize_entry(id, name)?;
+        }
+        map.end()
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -180,12 +265,13 @@ enum ContentItem {
     Raw(String),
 }
 
-/// Metadata overrides from the top-level catalogue. The per-bible
-/// biblionlabs manifest only carries `book_names` / `chapter_headings`
-/// / `sections` — the user-facing name, language, and abbreviation
-/// live on the catalogue entry, so the caller resolves them there and
-/// hands them in here. Any field left `None` falls back to a sensible
-/// default (bible_id prefix for language, bible_id itself for name /
+/// Metadata overrides from the top-level catalogue.
+///
+/// The per-bible biblionlabs manifest only carries `book_names` /
+/// `chapter_headings` / `sections` — the user-facing name, language, and
+/// abbreviation live on the catalogue entry, so the caller resolves them there
+/// and hands them in here. Any field left `None` falls back to a sensible
+/// default (`bible_id` prefix for language, `bible_id` itself for name /
 /// abbrev).
 #[derive(Debug, Default, Clone)]
 pub struct BibleMeta {
@@ -195,157 +281,211 @@ pub struct BibleMeta {
     pub abbrev: Option<String>,
 }
 
-/// Download the whole catalogue entry for `bible_id`, land JSON files
-/// into `cache_dir`, then populate `db`. The HTTP step is skipped per
-/// file when the cache is fresher than `cache_ttl`.
-pub fn install_bible(
-    db: &Db,
-    client: &Client,
-    bible_id: &str,
-    cache_dir: &Path,
-    desc_url: &str,
-    books_url_template: &str,
-    cache_ttl: Duration,
-    meta: BibleMeta,
-    mut on_progress: impl FnMut(Progress),
-) -> Result<usize> {
-    on_progress(Progress::Started { bible_id: bible_id.into() });
+/// One translation download: the catalogue entry `bible_id` lands as JSON
+/// files under `cache_dir` and is then written to `db`.
+///
+/// Each file is fetched again only when its cached copy is older than
+/// `cache_ttl`.
+#[derive(Debug)]
+pub struct Install<'a> {
+    pub db: &'a Db,
+    pub client: &'a Client,
+    pub bible_id: &'a str,
+    pub cache_dir: &'a Path,
+    pub desc_url: &'a str,
+    /// Book URL with `{bible_id}` and `{book}` placeholders.
+    pub books_url_template: &'a str,
+    pub cache_ttl: Duration,
+    pub meta: &'a BibleMeta,
+}
 
-    let bible_dir = cache_dir.join("bibles").join(bible_id);
-    std::fs::create_dir_all(&bible_dir)?;
+impl Install<'_> {
+    /// Download and store the translation; returns how many verses
+    /// were inserted.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::import_run"))]
+    pub fn run(&self, mut on_progress: impl FnMut(Progress)) -> Result<usize> {
+        let bible_id = self.bible_id;
+        on_progress(Progress::Started {
+            bible_id: bible_id.into(),
+        });
+        let bible_dir = self.cache_dir.join("bibles").join(bible_id);
+        let desc = self.manifest(&bible_dir)?;
+        let books_dir = bible_dir.join("books");
+        std::fs::create_dir_all(&books_dir)?;
+        on_progress(Progress::ManifestFetched {
+            total_books: desc.book_names.len(),
+        });
 
-    let desc_path = bible_dir.join("manifest.json");
-    fetch_if_stale(client, desc_url, &desc_path, cache_ttl)?;
-    let desc_bytes = std::fs::read(&desc_path)?;
-    let mut desc: BibleDesc = serde_json::from_slice(&desc_bytes)
-        .map_err(|e| ImportError::Json { context: format!("{bible_id} desc"), source: e })?;
-    // Catalogue-provided fields override the per-bible manifest when
-    // the latter is silent (which is the common case on biblionlabs —
-    // the per-bible manifest ships without name/language/abbrev).
-    if desc.name_local.is_none() {
-        desc.name_local = meta.name_local.clone().or_else(|| meta.name_english.clone());
-    }
-    if desc.name_english.is_none() {
-        desc.name_english = meta.name_english.clone();
-    }
-    if desc.language.is_none() {
-        desc.language = meta.language.clone();
-    }
-    if desc.abbrev.is_none() {
-        desc.abbrev = meta.abbrev.clone();
-    }
+        let book_ids = desc.book_names.ids();
+        self.register_books(&desc, &book_ids)?;
 
-    let books_dir = bible_dir.join("books");
-    std::fs::create_dir_all(&books_dir)?;
-
-    on_progress(Progress::ManifestFetched { total_books: desc.book_names.len() });
-
-    // Collect + sort book ids by `order_num` later; biblionlabs stores
-    // them in a HashMap so iteration order is unstable, which would make
-    // the install non-deterministic.
-    let mut book_ids: Vec<&String> = desc.book_names.keys().collect();
-    book_ids.sort();
-
-    let mut inserted = 0usize;
-
-    db.with_conn_mut(|conn| {
-        upsert_bible(conn, bible_id, &desc).map_err(crate::db::DbError::from)?;
-        let tx = conn.transaction().map_err(crate::db::DbError::from)?;
-        for (order_num, book_id) in book_ids.iter().enumerate() {
-            upsert_book(&tx, bible_id, book_id, &desc, order_num as u16)
-                .map_err(crate::db::DbError::from)?;
-        }
-        tx.commit().map_err(crate::db::DbError::from)?;
-        Ok(())
-    })?;
-
-    for (order_num, book_id) in book_ids.iter().enumerate() {
-        let book_path = books_dir.join(format!("{book_id}.json"));
-        let url = books_url_template
-            .replace("{bible_id}", bible_id)
-            .replace("{book}", book_id);
-        if let Err(e) = fetch_if_stale(client, &url, &book_path, cache_ttl) {
-            // Keep going — missing books are tolerated so a slow network
-            // doesn't nuke an otherwise-complete install.
-            log::warn!("biblionlabs: skipping {book_id}: {e}");
-            continue;
-        }
-
-        let book_bytes = std::fs::read(&book_path)?;
-        let book_doc: BookDoc = match serde_json::from_slice(&book_bytes) {
-            Ok(d) => d,
-            Err(e) => {
-                log::warn!("biblionlabs: {book_id} parse failed: {e}");
+        let mut inserted = 0usize;
+        for book_id in &book_ids {
+            let Some(verses) = self.install_book(&books_dir, book_id, &desc)? else {
                 continue;
+            };
+            inserted += verses;
+            #[cfg(feature = "sismo")]
+            sismo::counter!("bible.import_verses", inserted);
+            on_progress(Progress::BookDone {
+                book_id: (**book_id).clone(),
+                verses,
+            });
+        }
+        self.install_cross_refs(&book_ids, &mut on_progress)?;
+
+        on_progress(Progress::Finished {
+            bible_id: bible_id.into(),
+            inserted_verses: inserted,
+        });
+        Ok(inserted)
+    }
+
+    /// The per-Bible manifest, with the catalogue's name, language and
+    /// abbreviation filling what it leaves out (it usually does).
+    #[cfg_attr(feature = "sismo", sismo::function("bible::import_manifest"))]
+    fn manifest(&self, bible_dir: &Path) -> Result<BibleDesc> {
+        std::fs::create_dir_all(bible_dir)?;
+        let desc_path = bible_dir.join("manifest.json");
+        fetch_if_stale(self.client, self.desc_url, &desc_path, self.cache_ttl)?;
+        let desc_bytes = std::fs::read(&desc_path)?;
+        let mut desc: BibleDesc =
+            serde_json::from_slice(&desc_bytes).map_err(|e| ImportError::Json {
+                context: format!("{} desc", self.bible_id),
+                source: e,
+            })?;
+        let meta = self.meta;
+        if desc.name_local.is_none() {
+            desc.name_local.clone_from(&meta.name_local);
+            if desc.name_local.is_none() {
+                desc.name_local.clone_from(&meta.name_english);
+            }
+        }
+        if desc.name_english.is_none() {
+            desc.name_english.clone_from(&meta.name_english);
+        }
+        if desc.language.is_none() {
+            desc.language.clone_from(&meta.language);
+        }
+        if desc.abbrev.is_none() {
+            desc.abbrev.clone_from(&meta.abbrev);
+        }
+        Ok(desc)
+    }
+
+    /// The Bible row and one row per book, in `book_ids` order. The Bible
+    /// stays pending, out of the lists, until the caller finishes it.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::import_register_books"))]
+    fn register_books(&self, desc: &BibleDesc, book_ids: &[&String]) -> Result<()> {
+        self.db.with_conn_mut(|conn| {
+            upsert_bible(conn, self.bible_id, desc).map_err(crate::db::DbError::from)?;
+            conn.execute(
+                "INSERT OR IGNORE INTO installs_pending (bible_id) VALUES (?1)",
+                [self.bible_id],
+            )
+            .map_err(crate::db::DbError::from)?;
+            let tx = conn.transaction().map_err(crate::db::DbError::from)?;
+            for (order_num, book_id) in book_ids.iter().enumerate() {
+                let order_num = u16::try_from(order_num).unwrap_or(u16::MAX);
+                upsert_book(&tx, self.bible_id, book_id, desc, order_num)
+                    .map_err(crate::db::DbError::from)?;
+            }
+            tx.commit().map_err(crate::db::DbError::from)?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    /// Verses and section headings of one book; `None` when the book
+    /// could not be fetched or parsed, which skips it without failing
+    /// the install.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::import_book"))]
+    fn install_book(
+        &self,
+        books_dir: &Path,
+        book_id: &str,
+        desc: &BibleDesc,
+    ) -> Result<Option<usize>> {
+        let book_path = books_dir.join(format!("{book_id}.json"));
+        let url = self
+            .books_url_template
+            .replace("{bible_id}", self.bible_id)
+            .replace("{book}", book_id);
+        if let Err(e) = fetch_if_stale(self.client, &url, &book_path, self.cache_ttl) {
+            log::warn!("biblionlabs: skipping {book_id}: {e}");
+            return Ok(None);
+        }
+        let book_bytes = std::fs::read(&book_path)?;
+        let book_doc: BookDoc = {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("bible::import_parse_book");
+            match serde_json::from_slice(&book_bytes) {
+                Ok(d) => d,
+                Err(e) => {
+                    log::warn!("biblionlabs: {book_id} parse failed: {e}");
+                    return Ok(None);
+                }
             }
         };
-
-        let book_insert_count = db.with_conn_mut(|conn| {
+        let verses = self.db.with_conn_mut(|conn| {
             let tx = conn.transaction().map_err(crate::db::DbError::from)?;
-            let n = insert_book_contents(&tx, bible_id, book_id, &book_doc)
+            let n = insert_book_contents(&tx, self.bible_id, book_id, &book_doc)
                 .map_err(crate::db::DbError::from)?;
-            insert_headers(&tx, bible_id, book_id, &desc)
-                .map_err(crate::db::DbError::from)?;
-            let _ = order_num;
+            insert_headers(&tx, self.bible_id, book_id, desc).map_err(crate::db::DbError::from)?;
             tx.commit().map_err(crate::db::DbError::from)?;
             Ok(n)
         })?;
-
-        inserted += book_insert_count;
-        on_progress(Progress::BookDone {
-            book_id: (**book_id).clone(),
-            verses: book_insert_count,
-        });
+        Ok(Some(verses))
     }
 
-    // Cross-references land once per installed Bible. Each per-book
-    // file is small (~1-5 MB total across the canon) and the upstream
-    // caches at the HTTP layer, so a background re-install only pays
-    // the parse cost.
-    let xref_cache = cache_dir.join("crossrefs");
-    std::fs::create_dir_all(&xref_cache)?;
-    for book_id in &book_ids {
-        let xref_path = xref_cache.join(format!("{book_id}.json"));
-        let xref_url = CROSSREF_URL_TEMPLATE.replace("{book}", book_id);
-        if let Err(e) = fetch_if_stale(client, &xref_url, &xref_path, cache_ttl) {
-            log::debug!("biblionlabs: no cross-refs for {book_id}: {e}");
-            continue;
-        }
-        let bytes = match std::fs::read(&xref_path) {
-            Ok(b) => b,
-            Err(e) => {
-                log::debug!("biblionlabs: read {book_id} xrefs: {e}");
+    /// Cross-references for every book. They are optional: a book
+    /// without them is logged and skipped.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::import_crossrefs"))]
+    fn install_cross_refs(
+        &self,
+        book_ids: &[&String],
+        on_progress: &mut impl FnMut(Progress),
+    ) -> Result<()> {
+        let xref_cache = self.cache_dir.join("crossrefs");
+        std::fs::create_dir_all(&xref_cache)?;
+        let total = book_ids.len();
+        for (done, book_id) in book_ids.iter().enumerate() {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("bible::import_crossrefs_book");
+            on_progress(Progress::CrossRefs { done, total });
+            let xref_path = xref_cache.join(format!("{book_id}.json"));
+            let xref_url = CROSSREF_URL_TEMPLATE.replace("{book}", book_id);
+            if let Err(e) = fetch_if_stale(self.client, &xref_url, &xref_path, self.cache_ttl) {
+                log::debug!("biblionlabs: no cross-refs for {book_id}: {e}");
                 continue;
             }
-        };
-        let value: serde_json::Value = match serde_json::from_slice(&bytes) {
-            Ok(v) => v,
-            Err(e) => {
-                log::debug!("biblionlabs: parse {book_id} xrefs: {e}");
-                continue;
-            }
-        };
-        if let Err(e) = db.with_conn_mut(|conn| {
-            let tx = conn.transaction().map_err(crate::db::DbError::from)?;
-            tx.execute(
-                "DELETE FROM cross_refs WHERE bible_id = ?1 AND src_book = ?2",
-                rusqlite::params![bible_id, book_id],
-            )
-            .map_err(crate::db::DbError::from)?;
-            insert_crossrefs_for_book(&tx, bible_id, book_id, &value)
+            let value: serde_json::Value = match std::fs::read(&xref_path)
+                .map_err(|e| e.to_string())
+                .and_then(|bytes| serde_json::from_slice(&bytes).map_err(|e| e.to_string()))
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    log::debug!("biblionlabs: read {book_id} xrefs: {e}");
+                    continue;
+                }
+            };
+            if let Err(e) = self.db.with_conn_mut(|conn| {
+                let tx = conn.transaction().map_err(crate::db::DbError::from)?;
+                tx.execute(
+                    "DELETE FROM cross_refs WHERE bible_id = ?1 AND src_book = ?2",
+                    rusqlite::params![self.bible_id, book_id],
+                )
                 .map_err(crate::db::DbError::from)?;
-            tx.commit().map_err(crate::db::DbError::from)?;
-            Ok(())
-        }) {
-            log::debug!("biblionlabs: insert {book_id} xrefs: {e}");
+                insert_crossrefs_for_book(&tx, self.bible_id, book_id, &value)
+                    .map_err(crate::db::DbError::from)?;
+                tx.commit().map_err(crate::db::DbError::from)?;
+                Ok(())
+            }) {
+                log::debug!("biblionlabs: insert {book_id} xrefs: {e}");
+            }
         }
+        Ok(())
     }
-
-    on_progress(Progress::Finished {
-        bible_id: bible_id.into(),
-        inserted_verses: inserted,
-    });
-    Ok(inserted)
 }
 
 /// Walk the fetch.bible crossref payload for one book + emit rows. The
@@ -353,26 +493,39 @@ pub fn install_bible(
 /// end_chap?, end_verse?], …] } }`. We insert one row per target
 /// (collapsing ranges to their start since the reader only needs a
 /// clickable anchor, not a span).
+#[cfg_attr(feature = "sismo", sismo::function("bible::import_crossrefs_insert"))]
 fn insert_crossrefs_for_book(
     conn: &rusqlite::Connection,
     bible_id: &str,
     src_book: &str,
     value: &serde_json::Value,
 ) -> rusqlite::Result<()> {
-    let Some(chapters) = value.as_object() else { return Ok(()) };
+    let Some(chapters) = value.as_object() else {
+        return Ok(());
+    };
     let mut stmt = conn.prepare_cached(
         "INSERT INTO cross_refs
          (bible_id, src_book, src_chap, src_verse, tgt_book, tgt_chap, tgt_verse)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )?;
     for (chap_key, verses) in chapters {
-        let Ok(src_chap) = chap_key.parse::<i64>() else { continue };
-        let Some(verses) = verses.as_object() else { continue };
+        let Ok(src_chap) = chap_key.parse::<i64>() else {
+            continue;
+        };
+        let Some(verses) = verses.as_object() else {
+            continue;
+        };
         for (verse_key, targets) in verses {
-            let Ok(src_verse) = verse_key.parse::<i64>() else { continue };
-            let Some(targets) = targets.as_array() else { continue };
+            let Ok(src_verse) = verse_key.parse::<i64>() else {
+                continue;
+            };
+            let Some(targets) = targets.as_array() else {
+                continue;
+            };
             for target in targets {
-                let Some(items) = target.as_array() else { continue };
+                let Some(items) = target.as_array() else {
+                    continue;
+                };
                 let Some(tgt_book) = items.first().and_then(serde_json::Value::as_str) else {
                     continue;
                 };
@@ -394,18 +547,27 @@ fn insert_crossrefs_for_book(
 /// Download `url` into `dest` when the on-disk copy is missing, older
 /// than `ttl`, or does not start with a JSON prefix (handles the case
 /// where a previous attempt cached an HTML error page from a 200 OK).
+#[cfg_attr(feature = "sismo", sismo::function("bible::import_fetch"))]
 fn fetch_if_stale(client: &Client, url: &str, dest: &Path, ttl: Duration) -> Result<()> {
     if dest.exists() {
         if let Ok(meta) = dest.metadata() {
             if let Ok(modified) = meta.modified() {
-                let fresh = modified.elapsed().map(|e| e <= ttl).unwrap_or(false);
+                let fresh = modified.elapsed().is_ok_and(|e| e <= ttl);
                 if fresh && cache_looks_like_json(dest) {
+                    #[cfg(feature = "sismo")]
+                    sismo::instant!("bible::import_fetch_cached");
                     return Ok(());
                 }
             }
         }
     }
-    let bytes = client.get(url).send()?.error_for_status()?.bytes()?;
+    let bytes = {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("bible::import_download");
+        client.get(url).send()?.error_for_status()?.bytes()?
+    };
+    #[cfg(feature = "sismo")]
+    sismo::counter!("bible.download_bytes", bytes.len());
     if !bytes_look_like_json(&bytes) {
         return Err(ImportError::Format {
             reason: format!(
@@ -421,7 +583,9 @@ fn fetch_if_stale(client: &Client, url: &str, dest: &Path, ttl: Duration) -> Res
 
 fn cache_looks_like_json(path: &Path) -> bool {
     use std::io::Read;
-    let Ok(mut f) = std::fs::File::open(path) else { return false };
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
     let mut buf = [0u8; 16];
     let n = f.read(&mut buf).unwrap_or(0);
     bytes_look_like_json(&buf[..n])
@@ -431,9 +595,15 @@ fn bytes_look_like_json(bytes: &[u8]) -> bool {
     bytes
         .iter()
         .position(|b| !b.is_ascii_whitespace())
-        .is_some_and(|i| matches!(bytes[i], b'{' | b'[' | b'"' | b't' | b'f' | b'n' | b'-' | b'0'..=b'9'))
+        .is_some_and(|i| {
+            matches!(
+                bytes[i],
+                b'{' | b'[' | b'"' | b't' | b'f' | b'n' | b'-' | b'0'..=b'9'
+            )
+        })
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("bible::import_upsert_bible"))]
 fn upsert_bible(
     conn: &rusqlite::Connection,
     bible_id: &str,
@@ -467,16 +637,20 @@ fn upsert_book(
     desc: &BibleDesc,
     order_num: u16,
 ) -> rusqlite::Result<()> {
-    let name = desc
-        .book_names
-        .get(book_id)
-        .map(|n| if n.long.is_empty() { n.normal.clone() } else { n.long.clone() })
-        .unwrap_or_else(|| book_id.to_string());
+    let name = desc.book_names.get(book_id).map_or_else(
+        || book_id.to_string(),
+        |n| {
+            if n.long.is_empty() {
+                n.normal.clone()
+            } else {
+                n.long.clone()
+            }
+        },
+    );
     let abbrev = desc
         .book_names
         .get(book_id)
-        .map(|n| n.abbrev.clone())
-        .unwrap_or_else(|| book_id.to_string());
+        .map_or_else(|| book_id.to_string(), |n| n.abbrev.clone());
     let testament = testament_for(book_id);
     conn.execute(
         "INSERT INTO books (bible_id, book_id, name, abbrev, order_num, testament)
@@ -486,7 +660,14 @@ fn upsert_book(
              abbrev = excluded.abbrev,
              order_num = excluded.order_num,
              testament = excluded.testament",
-        params![bible_id, book_id, name, abbrev, order_num as i64, testament],
+        params![
+            bible_id,
+            book_id,
+            name,
+            abbrev,
+            i64::from(order_num),
+            testament
+        ],
     )?;
     Ok(())
 }
@@ -495,6 +676,7 @@ fn upsert_book(
 /// Inline headings carried as `ContentItem::Typed { type = "heading" }`
 /// also materialise as `headers` rows attached to the verse they
 /// precede.
+#[cfg_attr(feature = "sismo", sismo::function("bible::import_insert_verses"))]
 fn insert_book_contents(
     conn: &rusqlite::Connection,
     bible_id: &str,
@@ -522,14 +704,14 @@ fn insert_book_contents(
         if chapter_idx == 0 {
             continue;
         }
-        let chapter_num = chapter_idx as u16;
+        let chapter_num = u16::try_from(chapter_idx).unwrap_or(u16::MAX);
         let mut pending_header: Option<String> = None;
         for (verse_idx, verse_contents) in chapter.iter().enumerate() {
             if verse_idx == 0 {
                 // Same 1-based convention for verses.
                 continue;
             }
-            let verse_num = verse_idx as u16;
+            let verse_num = u16::try_from(verse_idx).unwrap_or(u16::MAX);
             let mut text = String::new();
             let mut paragraph_break = false;
             for item in verse_contents {
@@ -561,18 +743,18 @@ fn insert_book_contents(
                 insert_header.execute(params![
                     bible_id,
                     book_id,
-                    chapter_num as i64,
-                    verse_num as i64,
+                    i64::from(chapter_num),
+                    i64::from(verse_num),
                     h
                 ])?;
             }
             insert.execute(params![
                 bible_id,
                 book_id,
-                chapter_num as i64,
-                verse_num as i64,
+                i64::from(chapter_num),
+                i64::from(verse_num),
                 text,
-                paragraph_break as i64,
+                i64::from(paragraph_break),
             ])?;
             count += 1;
         }
@@ -584,6 +766,7 @@ fn insert_book_contents(
 /// section ranges (`sections`) from the Bible description. Chapter
 /// headings land at `before_verse = 0`; section headings at the start
 /// verse of each range.
+#[cfg_attr(feature = "sismo", sismo::function("bible::import_insert_headers"))]
 fn insert_headers(
     conn: &rusqlite::Connection,
     bible_id: &str,
@@ -601,11 +784,11 @@ fn insert_headers(
             if chapter_idx == 0 || heading.is_empty() {
                 continue;
             }
-            let chapter_num = chapter_idx as u16;
+            let chapter_num = u16::try_from(chapter_idx).unwrap_or(u16::MAX);
             insert_header.execute(params![
                 bible_id,
                 book_id,
-                chapter_num as i64,
+                i64::from(chapter_num),
                 0i64,
                 heading
             ])?;
@@ -614,7 +797,13 @@ fn insert_headers(
 
     if let Some(sections) = desc.sections.get(book_id) {
         for section in sections {
-            if let SectionEntry::Range { start_chapter, start_verse, heading, .. } = section {
+            if let SectionEntry::Range {
+                start_chapter,
+                start_verse,
+                heading,
+                ..
+            } = section
+            {
                 let Some(text) = heading else { continue };
                 if text.is_empty() {
                     continue;
@@ -637,15 +826,11 @@ fn insert_headers(
 /// `"OT"`; the deuterocanon is grouped with the OT per convention.
 fn testament_for(book_id: &str) -> &'static str {
     const NT: &[&str] = &[
-        "MAT", "MRK", "LUK", "JHN", "ACT", "ROM", "1CO", "2CO", "GAL", "EPH", "PHP", "COL",
-        "1TH", "2TH", "1TI", "2TI", "TIT", "PHM", "HEB", "JAS", "1PE", "2PE", "1JN", "2JN",
-        "3JN", "JUD", "REV",
+        "MAT", "MRK", "LUK", "JHN", "ACT", "ROM", "1CO", "2CO", "GAL", "EPH", "PHP", "COL", "1TH",
+        "2TH", "1TI", "2TI", "TIT", "PHM", "HEB", "JAS", "1PE", "2PE", "1JN", "2JN", "3JN", "JUD",
+        "REV",
     ];
-    if NT.contains(&book_id) {
-        "NT"
-    } else {
-        "OT"
-    }
+    if NT.contains(&book_id) { "NT" } else { "OT" }
 }
 
 // ─── Catalogue extras ────────────────────────────────────────────
@@ -695,6 +880,7 @@ pub fn find_extra(id: &str) -> Option<&'static ExtraBible> {
 /// Load the top-level manifest from `cache_dir/manifest.json`, fetching
 /// via HTTP when the cache is stale. Returns the parsed value so the UI
 /// can list languages / bibles for the picker.
+#[cfg_attr(feature = "sismo", sismo::function("bible::import_load_catalogue"))]
 pub fn load_catalogue(
     client: &Client,
     cache_dir: &Path,
@@ -705,8 +891,10 @@ pub fn load_catalogue(
     std::fs::create_dir_all(cache_dir)?;
     fetch_if_stale(client, manifest_url, &path, cache_ttl)?;
     let bytes = std::fs::read(&path)?;
-    let cat: Catalogue = serde_json::from_slice(&bytes)
-        .map_err(|e| ImportError::Json { context: "catalogue".into(), source: e })?;
+    let cat: Catalogue = serde_json::from_slice(&bytes).map_err(|e| ImportError::Json {
+        context: "catalogue".into(),
+        source: e,
+    })?;
     Ok(CatalogueView::from_raw(cat))
 }
 
@@ -721,6 +909,10 @@ pub struct CatalogueView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BibleEntryView {
     pub id: String,
+    /// ISO 639-3 code of the language, the prefix of the id (`spa_rvr` is
+    /// `spa`). What filters and defaults compare.
+    pub language_code: String,
+    /// Name of the language to show, in itself when known.
     pub language: Option<String>,
     pub name_local: Option<String>,
     pub name_english: Option<String>,
@@ -732,6 +924,11 @@ pub struct LanguageEntryView {
     pub local: String,
     pub english: String,
     pub direction: String,
+}
+
+/// The ISO 639-3 prefix of a catalogue id.
+fn language_code(id: &str) -> String {
+    id.split('_').next().unwrap_or_default().to_owned()
 }
 
 impl CatalogueView {
@@ -748,7 +945,10 @@ impl CatalogueView {
             .map(|(id, v)| {
                 let name = v.get("name");
                 let non_empty = |s: &serde_json::Value| {
-                    s.as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
+                    s.as_str()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
                 };
                 let name_local = name
                     .and_then(|n| n.get("local"))
@@ -757,7 +957,10 @@ impl CatalogueView {
                 let name_english = name
                     .and_then(|n| n.get("english"))
                     .and_then(non_empty)
-                    .or_else(|| name.and_then(|n| n.get("english_abbrev")).and_then(non_empty));
+                    .or_else(|| {
+                        name.and_then(|n| n.get("english_abbrev"))
+                            .and_then(non_empty)
+                    });
                 let language = id
                     .split('_')
                     .next()
@@ -778,6 +981,7 @@ impl CatalogueView {
                     });
                 BibleEntryView {
                     id: id.clone(),
+                    language_code: language_code(id),
                     language,
                     name_local,
                     name_english,
@@ -794,6 +998,7 @@ impl CatalogueView {
             }
             bibles.push(BibleEntryView {
                 id: extra.id.to_string(),
+                language_code: language_code(extra.id),
                 language: Some(extra.language.to_string()),
                 name_local: Some(extra.name_local.to_string()),
                 name_english: Some(extra.name_english.to_string()),
@@ -828,24 +1033,33 @@ pub(crate) fn _ensure_cache_dir(cache_dir: &Path) -> std::io::Result<PathBuf> {
 // path without a network round-trip.
 
 #[cfg(test)]
+#[cfg_attr(feature = "sismo", sismo::function("bible::import_fixtures"))]
 pub(crate) fn populate_from_fixtures(
     db: &Db,
     bible_id: &str,
     desc: &serde_json::Value,
     books: &[(String, serde_json::Value)],
 ) -> Result<usize> {
-    let desc_parsed: BibleDesc = serde_json::from_value(desc.clone())
-        .map_err(|e| ImportError::Json { context: "desc fixture".into(), source: e })?;
+    let desc_parsed: BibleDesc =
+        serde_json::from_value(desc.clone()).map_err(|e| ImportError::Json {
+            context: "desc fixture".into(),
+            source: e,
+        })?;
 
-    let mut book_ids: Vec<&String> = desc_parsed.book_names.keys().collect();
-    book_ids.sort();
+    let book_ids = desc_parsed.book_names.ids();
 
     db.with_conn_mut(|conn| {
         upsert_bible(conn, bible_id, &desc_parsed).map_err(crate::db::DbError::from)?;
         let tx = conn.transaction().map_err(crate::db::DbError::from)?;
         for (order_num, book_id) in book_ids.iter().enumerate() {
-            upsert_book(&tx, bible_id, book_id, &desc_parsed, order_num as u16)
-                .map_err(crate::db::DbError::from)?;
+            upsert_book(
+                &tx,
+                bible_id,
+                book_id,
+                &desc_parsed,
+                u16::try_from(order_num).unwrap_or(u16::MAX),
+            )
+            .map_err(crate::db::DbError::from)?;
         }
         tx.commit().map_err(crate::db::DbError::from)?;
         Ok(())
@@ -853,8 +1067,11 @@ pub(crate) fn populate_from_fixtures(
 
     let mut inserted = 0usize;
     for (book_id, raw) in books {
-        let book_doc: BookDoc = serde_json::from_value(raw.clone())
-            .map_err(|e| ImportError::Json { context: format!("{book_id} fixture"), source: e })?;
+        let book_doc: BookDoc =
+            serde_json::from_value(raw.clone()).map_err(|e| ImportError::Json {
+                context: format!("{book_id} fixture"),
+                source: e,
+            })?;
         let n = db.with_conn_mut(|conn| {
             let tx = conn.transaction().map_err(crate::db::DbError::from)?;
             let n = insert_book_contents(&tx, bible_id, book_id, &book_doc)
@@ -873,6 +1090,26 @@ pub(crate) fn populate_from_fixtures(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn books_keep_the_order_the_manifest_lists_them_in() {
+        let desc: BibleDesc = serde_json::from_str(
+            r#"{"book_names": {
+                "gen": {"normal": "Génesis"},
+                "exo": {"normal": "Éxodo"},
+                "tob": {"normal": "Tobías"},
+                "1ch": {"normal": "1 Crónicas"}
+            }}"#,
+        )
+        .unwrap();
+        assert_eq!(desc.book_names.ids(), ["gen", "exo", "tob", "1ch"]);
+        assert_eq!(
+            desc.book_names.get("tob").map(|b| b.normal.as_str()),
+            Some("Tobías")
+        );
+        let written = serde_json::to_string(&desc.book_names).unwrap();
+        assert!(written.find("gen") < written.find("1ch"), "{written}");
+    }
 
     fn eph_fixture() -> (serde_json::Value, serde_json::Value) {
         let desc = json!({
@@ -930,13 +1167,8 @@ mod tests {
     fn populate_fixture_round_trips_verses_and_headers() {
         let db = Db::in_memory().unwrap();
         let (desc, book) = eph_fixture();
-        let n = populate_from_fixtures(
-            &db,
-            "spa_rv1960",
-            &desc,
-            &[("EPH".into(), book)],
-        )
-        .expect("populate");
+        let n = populate_from_fixtures(&db, "spa_rv1960", &desc, &[("EPH".into(), book)])
+            .expect("populate");
         assert_eq!(n, 9, "expected 9 verses inserted across chapters 1..6");
 
         let chap = db.load_chapter("spa_rv1960", "EPH", 6).unwrap();
@@ -947,12 +1179,21 @@ mod tests {
 
         // Two source-section headings + one chapter-level heading.
         assert_eq!(chap.headers.len(), 3);
-        assert!(chap.headers.iter().any(|h| h.before_verse == 0
-            && h.text == "La armadura de Dios"));
-        assert!(chap.headers.iter().any(|h| h.before_verse == 1
-            && h.text == "Instrucciones a hijos y padres"));
-        assert!(chap.headers.iter().any(|h| h.before_verse == 5
-            && h.text == "Siervos y amos"));
+        assert!(
+            chap.headers
+                .iter()
+                .any(|h| h.before_verse == 0 && h.text == "La armadura de Dios")
+        );
+        assert!(
+            chap.headers
+                .iter()
+                .any(|h| h.before_verse == 1 && h.text == "Instrucciones a hijos y padres")
+        );
+        assert!(
+            chap.headers
+                .iter()
+                .any(|h| h.before_verse == 5 && h.text == "Siervos y amos")
+        );
     }
 
     #[test]

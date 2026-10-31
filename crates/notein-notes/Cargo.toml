@@ -18,15 +18,28 @@ nursery = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+# Conflicts with rustc's `unreachable_pub`, which this crate keeps on.
+redundant_pub_crate = "allow"
+
+[features]
+sismo = ["dep:sismo"]
 
 [dependencies]
+# Spans for the sismo profiler; off unless an app turns it on.
+sismo = { path = "../../../../sismo/crates/sismo", default-features = false, optional = true }
 notein-sdk = { path = "../notein-sdk" }
-freya-markdown-editor = { path = "../freya-markdown-editor", default-features = false }
-freya = { version = "=0.5.0-rc.8", features = ["icons", "icons-lucide"] }
+freya-markdown-editor = { path = "../freya-markdown-editor", default-features = false, features = ["toolbar"] }
+notein-ui-kit = { path = "../notein-ui-kit" }
+async-io = "2"
+log = "0.4"
+freya = { version = "=0.5.0-rc.13", features = ["icons", "icons-lucide"] }
 # Standalone icons crate: `creation_entries` needs SVG bytes.
 freya-icons = { version = "=0.4.0", features = ["lucide"] }
 bincode = { version = "2", features = ["derive", "std"] }
 
 [dev-dependencies]
-freya-testing = "=0.5.0-rc.8"
+freya-testing = "=0.5.0-rc.13"
 freya-markdown-editor = { path = "../freya-markdown-editor" }
+
+[build-dependencies]
+notein-i18n = { path = "../notein-i18n", features = ["build"] }

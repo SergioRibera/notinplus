@@ -7,7 +7,7 @@
 //! open the same way on every platform.
 //!
 //! Layout: one bincoded file per namespace under
-//! [`istmo::path::data_dir`]`/data_store/<namespace>.bin`. Each file
+//! `<data dir>/data_store/<namespace>.bin` (see [`istmo::path::data_dir`]). Each file
 //! carries a `HashMap<String, Value>` — the `Value` tag disambiguates
 //! the typed getters (`get_string`, `get_i64`, …). A wrong-type read
 //! surfaces as [`DataStoreError::Corrupted`].
@@ -37,8 +37,9 @@ pub struct DesktopFactory;
 impl DataStoreFactory for DesktopFactory {
     type Instance = DesktopStore;
 
+    #[sismo::function("data_store::create")]
     fn create(&self, config: DataStoreConfig) -> DesktopStore {
-        DesktopStore::open(config.namespace)
+        DesktopStore::open(&config.namespace)
     }
 }
 
@@ -68,12 +69,13 @@ pub struct DesktopStore {
 
 type SharedMap = Arc<Mutex<HashMap<String, Value>>>;
 
+#[sismo::function("data_store::shared_map")]
 fn shared_map(path: &Path) -> SharedMap {
     static MAPS: OnceLock<Mutex<HashMap<PathBuf, SharedMap>>> = OnceLock::new();
     let mut maps = MAPS
         .get_or_init(Mutex::default)
         .lock()
-        .unwrap_or_else(|p| p.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     Arc::clone(
         maps.entry(path.to_path_buf())
             .or_insert_with(|| Arc::new(Mutex::new(load(path).unwrap_or_default()))),
@@ -81,7 +83,8 @@ fn shared_map(path: &Path) -> SharedMap {
 }
 
 impl DesktopStore {
-    fn open(namespace: String) -> Self {
+    #[sismo::function("data_store::open")]
+    fn open(namespace: &str) -> Self {
         let dir = istmo::path::data_dir().join("data_store");
         let path = dir.join(format!("{namespace}.bin"));
         let map = shared_map(&path);
@@ -89,16 +92,21 @@ impl DesktopStore {
     }
 
     fn with_map<R>(&self, f: impl FnOnce(&mut HashMap<String, Value>) -> R) -> R {
-        let mut guard = self.map.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = self
+            .map
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         f(&mut guard)
     }
 
     /// Write the map while holding its lock, so two instances flushing
     /// at once cannot land an older snapshot after a newer one.
+    #[sismo::function("data_store::flush")]
     fn flush(&self) -> Result<(), DataStoreError> {
         self.with_map(|m| Self::write_map(&self.path, m))
     }
 
+    #[sismo::function("data_store::write_map")]
     fn write_map(path: &Path, map: &HashMap<String, Value>) -> Result<(), DataStoreError> {
         let bytes = bincode::encode_to_vec(map, standard())
             .map_err(|e| DataStoreError::Backend(format!("encode: {e}")))?;
@@ -114,6 +122,7 @@ impl DesktopStore {
     }
 }
 
+#[sismo::function("data_store::load")]
 fn load(path: &std::path::Path) -> Option<HashMap<String, Value>> {
     let bytes = std::fs::read(path).ok()?;
     let (map, _) =
@@ -126,6 +135,7 @@ fn wrong_type(kind: &str, key: &str) -> DataStoreError {
 }
 
 impl DataStore for DesktopStore {
+    #[sismo::function("data_store::get_string")]
     async fn get_string(&self, key: String) -> Result<Option<String>, DataStoreError> {
         self.with_map(|m| match m.get(&key) {
             None => Ok(None),
@@ -134,11 +144,13 @@ impl DataStore for DesktopStore {
         })
     }
 
+    #[sismo::function("data_store::set_string")]
     async fn set_string(&self, key: String, value: String) -> Result<(), DataStoreError> {
         self.with_map(|m| m.insert(key, Value::Str(value)));
         self.flush()
     }
 
+    #[sismo::function("data_store::get_i64")]
     async fn get_i64(&self, key: String) -> Result<Option<i64>, DataStoreError> {
         self.with_map(|m| match m.get(&key) {
             None => Ok(None),
@@ -147,11 +159,13 @@ impl DataStore for DesktopStore {
         })
     }
 
+    #[sismo::function("data_store::set_i64")]
     async fn set_i64(&self, key: String, value: i64) -> Result<(), DataStoreError> {
         self.with_map(|m| m.insert(key, Value::I64(value)));
         self.flush()
     }
 
+    #[sismo::function("data_store::get_f64")]
     async fn get_f64(&self, key: String) -> Result<Option<f64>, DataStoreError> {
         self.with_map(|m| match m.get(&key) {
             None => Ok(None),
@@ -160,11 +174,13 @@ impl DataStore for DesktopStore {
         })
     }
 
+    #[sismo::function("data_store::set_f64")]
     async fn set_f64(&self, key: String, value: f64) -> Result<(), DataStoreError> {
         self.with_map(|m| m.insert(key, Value::F64(value)));
         self.flush()
     }
 
+    #[sismo::function("data_store::get_bool")]
     async fn get_bool(&self, key: String) -> Result<Option<bool>, DataStoreError> {
         self.with_map(|m| match m.get(&key) {
             None => Ok(None),
@@ -173,11 +189,13 @@ impl DataStore for DesktopStore {
         })
     }
 
+    #[sismo::function("data_store::set_bool")]
     async fn set_bool(&self, key: String, value: bool) -> Result<(), DataStoreError> {
         self.with_map(|m| m.insert(key, Value::Bool(value)));
         self.flush()
     }
 
+    #[sismo::function("data_store::get_bytes")]
     async fn get_bytes(&self, key: String) -> Result<Option<Vec<u8>>, DataStoreError> {
         self.with_map(|m| match m.get(&key) {
             None => Ok(None),
@@ -186,11 +204,14 @@ impl DataStore for DesktopStore {
         })
     }
 
+    #[sismo::function("data_store::set_bytes")]
     async fn set_bytes(&self, key: String, value: Vec<u8>) -> Result<(), DataStoreError> {
+        sismo::counter!("data_store.set_bytes", value.len());
         self.with_map(|m| m.insert(key, Value::Bytes(value)));
         self.flush()
     }
 
+    #[sismo::function("data_store::remove")]
     async fn remove(&self, key: String) -> Result<bool, DataStoreError> {
         let existed = self.with_map(|m| m.remove(&key).is_some());
         if existed {
@@ -199,14 +220,17 @@ impl DataStore for DesktopStore {
         Ok(existed)
     }
 
+    #[sismo::function("data_store::contains")]
     async fn contains(&self, key: String) -> Result<bool, DataStoreError> {
         Ok(self.with_map(|m| m.contains_key(&key)))
     }
 
+    #[sismo::function("data_store::keys")]
     async fn keys(&self) -> Result<Vec<String>, DataStoreError> {
         Ok(self.with_map(|m| m.keys().cloned().collect()))
     }
 
+    #[sismo::function("data_store::clear")]
     async fn clear(&self) -> Result<(), DataStoreError> {
         self.with_map(HashMap::clear);
         self.flush()

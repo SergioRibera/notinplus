@@ -14,13 +14,20 @@ categories = ["gui", "text-editors"]
 default = ["toolbar", "emoji"]
 toolbar = []
 emoji = ["comrak/shortcodes"]
+sismo = ["dep:sismo"]
 
 [dependencies]
-freya = { version = "=0.5.0-rc.8", features = ["icons", "icons-lucide"] }
-freya-core = "=0.5.0-rc.8"
-freya-edit = "=0.5.0-rc.8"
-freya-engine = "=0.5.0-rc.8"
+# Spans for the sismo profiler; off unless an app turns it on.
+sismo = { path = "../../../../sismo/crates/sismo", default-features = false, optional = true }
+freya = { version = "=0.5.0-rc.13", features = ["icons", "icons-lucide"] }
+freya-core = "=0.5.0-rc.13"
+freya-edit = "=0.5.0-rc.13"
+freya-engine = "=0.5.0-rc.13"
 comrak = { version = "0.56", default-features = false, features = ["attributes"] }
+notein-i18n = { path = "../notein-i18n" }
+
+[build-dependencies]
+notein-i18n = { path = "../notein-i18n", features = ["build"] }
 
 [lints.rust]
 missing_debug_implementations = "warn"
@@ -37,4 +44,4 @@ missing_panics_doc = "allow"
 redundant_pub_crate = "allow"
 
 [dev-dependencies]
-freya-testing = "=0.5.0-rc.8"
+freya-testing = "=0.5.0-rc.13"

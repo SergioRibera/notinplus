@@ -202,6 +202,7 @@ impl DeviceProfile {
 
     /// Read the profile at `path`, or create one named `default_name`
     /// and write it there.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::profile::load_or_create"))]
     pub fn load_or_create(path: &Path, default_name: &str) -> Result<Self, IdentityError> {
         match std::fs::read(path) {
             Ok(bytes) => Self::decode(&bytes),
@@ -214,6 +215,7 @@ impl DeviceProfile {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::profile::save"))]
     pub fn save(&self, path: &Path) -> Result<(), IdentityError> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
@@ -224,6 +226,7 @@ impl DeviceProfile {
         Ok(())
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::profile::encode"))]
     pub fn encode(&self) -> Result<Vec<u8>, IdentityError> {
         let file = ProfileFile {
             version: PROFILE_VERSION,
@@ -237,28 +240,28 @@ impl DeviceProfile {
             .map_err(|err| IdentityError::Codec(err.to_string()))
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::profile::decode"))]
     pub fn decode(bytes: &[u8]) -> Result<Self, IdentityError> {
         let config = bincode::config::standard();
         let current: Option<ProfileFile> = bincode::decode_from_slice(bytes, config)
             .ok()
             .map(|(file, _): (ProfileFile, usize)| file)
             .filter(|file| file.version == PROFILE_VERSION);
-        let file = match current {
-            Some(file) => file,
-            None => {
-                let (old, _): (ProfileFileV1, usize) = bincode::decode_from_slice(bytes, config)
-                    .map_err(|err| IdentityError::Codec(err.to_string()))?;
-                if old.version != 1 {
-                    return Err(IdentityError::Version(old.version));
-                }
-                ProfileFile {
-                    version: PROFILE_VERSION,
-                    public: old.public,
-                    private: old.private,
-                    name: old.name,
-                    trusted: old.trusted,
-                    relay: None,
-                }
+        let file = if let Some(file) = current {
+            file
+        } else {
+            let (old, _): (ProfileFileV1, usize) = bincode::decode_from_slice(bytes, config)
+                .map_err(|err| IdentityError::Codec(err.to_string()))?;
+            if old.version != 1 {
+                return Err(IdentityError::Version(old.version));
+            }
+            ProfileFile {
+                version: PROFILE_VERSION,
+                public: old.public,
+                private: old.private,
+                name: old.name,
+                trusted: old.trusted,
+                relay: None,
             }
         };
         Ok(Self {

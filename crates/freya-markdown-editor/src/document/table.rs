@@ -36,6 +36,7 @@ impl Table {
 
     /// Build from parsed rows, padding short rows so the shape stays square.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::table_from_rows"))]
     pub fn from_rows(columns: Vec<ColumnAlign>, mut rows: Vec<Vec<Inline>>) -> Self {
         let width = rows
             .iter()
@@ -80,12 +81,14 @@ impl Table {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::table_insert_row"))]
     pub fn insert_row(&mut self, at: usize) {
         let at = at.clamp(1, self.rows.len());
         self.rows
             .insert(at, vec![Inline::default(); self.columns.len()]);
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::table_insert_column"))]
     pub fn insert_column(&mut self, at: usize) {
         let at = at.min(self.columns.len());
         self.columns.insert(at, ColumnAlign::None);
@@ -95,6 +98,7 @@ impl Table {
     }
 
     /// Remove a body row. The header row is kept.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::table_remove_row"))]
     pub fn remove_row(&mut self, row: usize) -> bool {
         if row == 0 || row >= self.rows.len() {
             return false;
@@ -103,6 +107,7 @@ impl Table {
         true
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::table_remove_column"))]
     pub fn remove_column(&mut self, column: usize) -> bool {
         if self.columns.len() <= 1 || column >= self.columns.len() {
             return false;

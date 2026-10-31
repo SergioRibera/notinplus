@@ -8,13 +8,18 @@ authors     = ["Sergio Ribera <contact@sergioribera.rs>"]
 description = "PDF rendering backend for Freya canvases: async worker pool, LRU tile cache, virtualised page stack. Integrates via freya-canvas-bg."
 repository  = "https://github.com/SergioRibera/notinplus"
 
+[features]
+sismo = ["dep:sismo"]
+
 [dependencies]
+# Spans for the sismo profiler; off unless an app turns it on.
+sismo = { path = "../../../../sismo/crates/sismo", default-features = false, optional = true }
 freya-canvas-bg = { path = "../freya-canvas-bg" }
-freya-engine    = "0.5.0-rc.8"
+freya-engine    = "0.5.0-rc.13"
 # Direct dep for `skia_safe::canvas::SrcRectConstraint`, which
 # `freya-engine` doesn't re-export. Version matches the one
-# `freya-engine 0.4` pulls in, so cargo dedups.
-freya-skia-safe = { version = "=0.100.0-beta.1", default-features = false }
+# `freya-engine` pulls in, so cargo dedups.
+freya-skia-safe = { version = "0.104.0", default-features = false }
 flume           = "0.11"
 hashlink        = "0.10"
 # Default features pick `pdfium_latest` (currently → 7881-shaped
@@ -43,6 +48,7 @@ pdfium-render = { version = "0.9", default-features = false, features = [
     "thread_safe",
 ] }
 log             = "0.4"
+image           = { version = "0.25", default-features = false }
 
 [lints.rust]
 missing_debug_implementations = "warn"

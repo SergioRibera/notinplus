@@ -72,6 +72,7 @@ impl<L: Copy + PartialEq> Bank<L> {
 
     /// The `limit` closest labels, best first. `extent` adds a
     /// placement penalty; stroke count differences add another.
+    #[cfg_attr(feature = "sismo", sismo::function("handwriting::rank"))]
     fn rank(
         &self,
         trace: &Trace,
@@ -81,6 +82,8 @@ impl<L: Copy + PartialEq> Bank<L> {
     ) -> Vec<Ranked<L>> {
         let strokes = trace.starts().count_ones();
         let mut ranked: Vec<Ranked<L>> = Vec::with_capacity(limit + 1);
+        #[cfg(feature = "sismo")]
+        let mut matched = 0usize;
         for class in &self.classes {
             // Once `limit` labels are held a class must beat the worst
             // of them; that bound abandons most DTW matches early.
@@ -101,6 +104,10 @@ impl<L: Copy + PartialEq> Bank<L> {
                 if remaining <= 0.0 {
                     continue;
                 }
+                #[cfg(feature = "sismo")]
+                {
+                    matched += 1;
+                }
                 let distance = trace.distance(&sample.trace, remaining);
                 if distance < remaining {
                     bound = distance + penalty;
@@ -117,6 +124,8 @@ impl<L: Copy + PartialEq> Bank<L> {
                 ranked.truncate(limit);
             }
         }
+        #[cfg(feature = "sismo")]
+        sismo::counter!("handwriting.dtw_matches", matched);
         ranked
     }
 }
@@ -144,6 +153,7 @@ impl Default for Recognizer {
 impl TryFrom<TemplateSet> for Recognizer {
     type Error = HandwritingError;
 
+    #[cfg_attr(feature = "sismo", sismo::function("handwriting::recognizer_from_set"))]
     fn try_from(set: TemplateSet) -> Result<Self, Self::Error> {
         if set.format != TemplateSet::FORMAT {
             return Err(HandwritingError::Format {
@@ -181,6 +191,10 @@ impl Recognizer {
     /// # Errors
     ///
     /// As [`TemplateSet::from_bytes`].
+    #[cfg_attr(
+        feature = "sismo",
+        sismo::function("handwriting::recognizer_from_bytes")
+    )]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, HandwritingError> {
         Self::try_from(TemplateSet::from_bytes(bytes)?)
     }
@@ -221,6 +235,7 @@ impl Recognizer {
     /// that only differ in size (`o`/`O`, `,`/`'`). Empty when the
     /// strokes hold no points.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("handwriting::recognize"))]
     pub fn recognize<S: AsRef<[Point]>>(
         &self,
         strokes: &[S],
@@ -257,6 +272,7 @@ impl Recognizer {
     }
 
     /// Body × mark combinations that form a known letter.
+    #[cfg_attr(feature = "sismo", sismo::function("handwriting::composed"))]
     fn composed(&self, split: &Split<'_>, body_extent: Option<Extent>) -> Vec<Candidate> {
         let (Some(body), Some(marks)) = (
             Trace::from_strokes(&split.body),

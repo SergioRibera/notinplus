@@ -1,0 +1,3 @@
+/* Avisos de permisos y textos del paquete, español. */
+"NSLocalNetworkUsageDescription" = "NotIn Plus busca tus otros dispositivos y a las personas con quienes compartes en esta red para sincronizar sin servidor.";
+"NSCameraUsageDescription" = "NotIn Plus usa la cámara para escanear el código QR de otro dispositivo o de una invitación.";

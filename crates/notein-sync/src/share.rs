@@ -108,6 +108,11 @@ pub struct Share {
     pub mode: ShareMode,
     pub policy: SharePolicy,
     pub members: Vec<Member>,
+    /// Members the owner set to only look, whatever the policy says.
+    pub viewers: Vec<DeviceId>,
+    /// Members the owner threw out, so one that was away hears it when
+    /// it comes back. Kept by the owner only.
+    pub expelled: Vec<DeviceId>,
     pub key: ShareKey,
     pub created_at: u64,
     pub updated_at: u64,
@@ -147,6 +152,8 @@ impl Share {
             mode,
             policy: SharePolicy::default(),
             members: Vec::new(),
+            viewers: Vec::new(),
+            expelled: Vec::new(),
             key: ShareKey::generate(),
             created_at: now,
             updated_at: now,
@@ -171,15 +178,14 @@ impl Share {
 
     fn allows(&self, who: Who, device: DeviceId) -> bool {
         match who {
-            Who::Owner => self.is_owner(device),
+            Who::Owner | Who::Nobody => self.is_owner(device),
             Who::Everyone => self.is_member(device),
-            Who::Nobody => self.is_owner(device),
         }
     }
 
     #[must_use]
     pub fn can_edit(&self, device: DeviceId) -> bool {
-        self.allows(self.policy.edit_content, device)
+        self.allows(self.policy.edit_content, device) && !self.viewers.contains(&device)
     }
 
     #[must_use]
@@ -211,22 +217,35 @@ impl Share {
         if member.device == self.owner.device {
             return false;
         }
-        match self.members.iter_mut().find(|m| m.device == member.device) {
-            Some(existing) => {
-                *existing = member;
-                false
-            }
-            None => {
-                self.members.push(member);
-                true
-            }
+        self.expelled.retain(|d| *d != member.device);
+        if let Some(existing) = self.members.iter_mut().find(|m| m.device == member.device) {
+            *existing = member;
+            false
+        } else {
+            self.members.push(member);
+            true
         }
     }
 
-    pub fn expel(&mut self, device: DeviceId) -> bool {
+    /// A member is gone of its own accord; returns whether it was in.
+    pub fn remove_member(&mut self, device: DeviceId) -> bool {
         let before = self.members.len();
         self.members.retain(|m| m.device != device);
         before != self.members.len()
+    }
+
+    /// Throw a member out, remembering it; returns whether it was in.
+    pub fn expel(&mut self, device: DeviceId) -> bool {
+        let removed = self.remove_member(device);
+        if removed && !self.expelled.contains(&device) {
+            self.expelled.push(device);
+        }
+        removed
+    }
+
+    #[must_use]
+    pub fn was_expelled(&self, device: DeviceId) -> bool {
+        self.expelled.contains(&device)
     }
 
     /// The invitation for this share.
@@ -245,19 +264,31 @@ impl Share {
         }
     }
 
-    /// What a member sees after joining: the share minus nothing, since
-    /// the member already holds the key from the invitation.
+    /// What a member sees after joining: the share minus the owner's
+    /// bookkeeping. The key stays, since the member already holds it
+    /// from the invitation.
     #[must_use]
     pub fn for_member(&self) -> Self {
         Self {
             relay_cursor: 0,
+            expelled: Vec::new(),
             ..self.clone()
+        }
+    }
+
+    /// What the owner keeps of this share once it is closed.
+    #[must_use]
+    pub fn ended(&self) -> EndedShare {
+        EndedShare {
+            id: self.id,
+            key: self.key.clone(),
+            members: self.members.iter().map(|m| m.device).collect(),
         }
     }
 }
 
 /// What travels in an invitation link or QR.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
 pub struct Invite {
     pub share: ShareId,
     pub owner: Member,
@@ -271,6 +302,7 @@ pub struct Invite {
 impl Invite {
     /// `notein://join?share=…&owner=…&name=…&title=…&mode=…[&server=…]#<key>`.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::share::to_link"))]
     pub fn to_link(&self) -> String {
         let mode = match self.mode {
             ShareMode::Session => "session",
@@ -294,6 +326,7 @@ impl Invite {
 
     /// Reverse of [`Self::to_link`].
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::share::parse_link"))]
     pub fn parse_link(link: &str) -> Option<Self> {
         let rest = link.trim().strip_prefix(LINK_SCHEME)?;
         let (query, fragment) = rest.split_once('#')?;
@@ -340,6 +373,7 @@ impl Invite {
 
     /// Proof that the joiner holds the key: the share id sealed with it.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::share::proof"))]
     pub fn proof(&self) -> Vec<u8> {
         self.key.seal(&self.share.0).unwrap_or_default()
     }
@@ -347,23 +381,40 @@ impl Invite {
 
 /// Check a joiner's proof against the share's key.
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("sync::share::proof_is_valid"))]
 pub fn proof_is_valid(share: &Share, proof: &[u8]) -> bool {
     share.key.open(proof).is_ok_and(|plain| plain == share.id.0)
+}
+
+/// A share its owner closed, kept so a member that was away is told
+/// when it comes back instead of editing into the void.
+#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+pub struct EndedShare {
+    pub id: ShareId,
+    pub key: ShareKey,
+    /// Who was inside when it closed.
+    pub members: Vec<DeviceId>,
 }
 
 /// Every share a device takes part in, as persisted.
 #[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug, Default)]
 pub struct ShareBook {
     pub shares: Vec<Share>,
+    /// Shares this device owned and closed.
+    pub ended: Vec<EndedShare>,
+    /// Invitations accepted whose owner has not let us in yet.
+    pub joins: Vec<Invite>,
 }
 
 impl ShareBook {
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::share_book::encode"))]
     pub fn encode(&self) -> Vec<u8> {
         bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default()
     }
 
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::share_book::decode"))]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         bincode::decode_from_slice(bytes, bincode::config::standard())
             .ok()
@@ -404,7 +455,7 @@ pub enum ShareMessage {
     /// An exchange message for the share's documents.
     Sync(Vec<u8>),
     /// The owner's current view of the share (policy, members, scope).
-    Meta(Share),
+    Meta(Box<Share>),
     /// The owner closed the share.
     Ended,
     /// A member walked away.
@@ -419,6 +470,7 @@ pub enum ShareMessage {
 impl ShareMessage {
     /// Seal for the wire.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::share::seal"))]
     pub fn seal(&self, key: &ShareKey) -> Vec<u8> {
         let plain = bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default();
         key.seal(&plain).unwrap_or_default()
@@ -426,6 +478,7 @@ impl ShareMessage {
 
     /// Open from the wire.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::share::open"))]
     pub fn open(key: &ShareKey, sealed: &[u8]) -> Option<Self> {
         let plain = key.open(sealed).ok()?;
         bincode::decode_from_slice(&plain, bincode::config::standard())

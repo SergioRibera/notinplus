@@ -157,23 +157,27 @@ impl Document {
     }
 
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::parse"))]
     pub fn parse_with(markdown: &str, options: &ParseOptions) -> Self {
         parse::parse(markdown, options)
     }
 
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::serialize"))]
     pub fn to_markdown(&self, dialect: Dialect) -> String {
         serialize::serialize(self, dialect)
     }
 }
 
 /// Markdown source of a single run of inline content.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::inline_source"))]
 pub(crate) fn inline_source(inline: &Inline) -> String {
     serialize::inline_source(inline)
 }
 
 /// Parse `source` as the content of one paragraph. `None` when it reads as
 /// anything else (a heading, a list, several blocks...).
+#[cfg_attr(feature = "sismo", sismo::function("markdown::parse_inline"))]
 pub(crate) fn parse_inline(source: &str, options: &ParseOptions) -> Option<Inline> {
     if source.trim().is_empty() {
         return Some(Inline::from(source));

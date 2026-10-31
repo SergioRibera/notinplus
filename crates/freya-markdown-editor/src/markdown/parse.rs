@@ -5,11 +5,14 @@ use super::html::Tag;
 use super::{Extensions, ParseOptions};
 use crate::document::{
     Abbreviation, Align, Atom, Block, BlockKind, CalloutKind, ColumnAlign, Document, HeadingLevel,
-    Inline, Link, ListKind, MarkKind, Table,
+    Inline, Link, ListKind, MarkKind, Table, Transclusion,
 };
 
+#[cfg_attr(feature = "sismo", sismo::function("markdown::parse_document"))]
 pub(super) fn parse(markdown: &str, options: &ParseOptions) -> Document {
     let extensions = options.extensions;
+    #[cfg(feature = "sismo")]
+    sismo::counter!("markdown.parse_bytes", markdown.len());
     let (source, abbreviations) = if extensions.abbreviations {
         extract_abbreviations(markdown)
     } else {
@@ -17,17 +20,30 @@ pub(super) fn parse(markdown: &str, options: &ParseOptions) -> Document {
     };
 
     let arena = Arena::new();
-    let root = parse_document(&arena, &source, &comrak_options(extensions));
+    let root = {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("markdown::comrak_parse");
+        parse_document(&arena, &source, &comrak_options(extensions))
+    };
     let mut lowering = Lowering {
         options,
         blocks: Vec::new(),
         align: Vec::new(),
+        details: None,
     };
-    for child in root.children() {
-        lowering.block(child, 0);
+    {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("markdown::lower");
+        for child in root.children() {
+            lowering.block(child, 0);
+        }
     }
 
-    let mut document = Document::from(lowering.blocks);
+    let mut document = {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("markdown::document_from_blocks");
+        Document::from(lowering.blocks)
+    };
     document.abbreviations = abbreviations;
     document
 }
@@ -60,6 +76,7 @@ fn comrak_options(extensions: Extensions) -> Options<'static> {
 }
 
 /// Pull `*[term]: expansion` lines out of the source (outside code fences).
+#[cfg_attr(feature = "sismo", sismo::function("markdown::parse_abbreviations"))]
 fn extract_abbreviations(markdown: &str) -> (String, Vec<Abbreviation>) {
     let mut source = String::with_capacity(markdown.len());
     let mut abbreviations = Vec::new();
@@ -94,14 +111,63 @@ struct Lowering<'o> {
     options: &'o ParseOptions,
     blocks: Vec<Block>,
     align: Vec<Align>,
+    /// Index of the `<details>` block still waiting for its `</details>`;
+    /// the paragraphs met meanwhile become its content.
+    details: Option<usize>,
 }
 
 impl Lowering<'_> {
     fn push(&mut self, kind: BlockKind) {
+        if let (Some(index), BlockKind::Paragraph(paragraph)) = (self.details, &kind)
+            && let Some(content) = self.blocks[index].kind.content_mut()
+        {
+            if !content.is_empty() {
+                content.push_str("\n", &[]);
+            }
+            content.append(paragraph.clone());
+            return;
+        }
         let align = self.align.last().copied().unwrap_or_default();
         self.blocks.push(Block::from(kind).with_align(align));
     }
 
+    /// The quote `node` as a [`Transclusion`]: its first paragraph opens
+    /// with `[!kind]` (a kind with a colon) and its last names the source
+    /// with `— [label](url)`.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::parse_transclusion"))]
+    fn transclusion<'a>(&self, node: &'a AstNode<'a>) -> Option<Transclusion> {
+        let paragraphs = node
+            .children()
+            .map(|child| {
+                matches!(child.data().value, NodeValue::Paragraph).then(|| self.inline(child))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let [first, middle @ .., last] = paragraphs.as_slice() else {
+            return None;
+        };
+        let open = first.text().strip_prefix("[!")?;
+        let kind = &open[..open.find(']')?];
+        if !kind.contains(':') || kind.contains(char::is_whitespace) {
+            return None;
+        }
+        let (url, label) = source_link(last)?;
+        let marker = "[!]".encode_utf16().count() + kind.encode_utf16().count();
+        let lead = first.slice(marker..first.len());
+        let fallback = std::iter::once(&lead)
+            .chain(middle)
+            .map(|paragraph| super::inline_source(paragraph).trim().to_owned())
+            .filter(|paragraph| !paragraph.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        Some(Transclusion {
+            kind: kind.to_owned(),
+            url,
+            label,
+            fallback,
+        })
+    }
+
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::parse_inline_node"))]
     fn inline<'a>(&self, node: &'a AstNode<'a>) -> Inline {
         let mut builder = InlineBuilder::new(self.options);
         for child in node.children() {
@@ -111,6 +177,7 @@ impl Lowering<'_> {
     }
 
     /// Paragraph children joined with hard breaks.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::parse_paragraphs"))]
     fn paragraphs<'a>(&mut self, node: &'a AstNode<'a>, depth: u8) -> Inline {
         let mut content = Inline::default();
         for child in node.children() {
@@ -127,6 +194,7 @@ impl Lowering<'_> {
     }
 
     #[allow(clippy::too_many_lines, reason = "one arm per comrak block node")]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::parse_block"))]
     fn block<'a>(&mut self, node: &'a AstNode<'a>, depth: u8) {
         let value = node.data().value.clone();
         match value {
@@ -146,6 +214,10 @@ impl Lowering<'_> {
                 });
             }
             NodeValue::BlockQuote | NodeValue::MultilineBlockQuote(_) => {
+                if let Some(transclusion) = self.transclusion(node) {
+                    self.push(BlockKind::Transclusion(transclusion));
+                    return;
+                }
                 for child in node.children() {
                     if matches!(child.data().value, NodeValue::Paragraph) {
                         let content = self.inline(child);
@@ -248,6 +320,7 @@ impl Lowering<'_> {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::parse_paragraph"))]
     fn paragraph<'a>(&mut self, node: &'a AstNode<'a>) {
         let mut children = node.children();
         if let (Some(only), None) = (children.next(), children.next())
@@ -270,6 +343,7 @@ impl Lowering<'_> {
         self.push(BlockKind::Paragraph(content));
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::parse_list_item"))]
     fn list_item<'a>(&mut self, item: &'a AstNode<'a>, list: &NodeList, depth: u8) {
         let kind = match &item.data().value {
             NodeValue::TaskItem(task) => ListKind::Task {
@@ -310,9 +384,34 @@ impl Lowering<'_> {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::parse_html_block"))]
     fn html_block(&mut self, literal: &str) {
         let trimmed = literal.trim();
         let lower = trimmed.to_ascii_lowercase();
+        if let Some(note) = trimmed
+            .strip_prefix("<!--")
+            .and_then(|rest| rest.strip_suffix("-->"))
+            .filter(|note| !note.contains("-->"))
+        {
+            self.push(BlockKind::Comment(Inline::from(note.trim())));
+            return;
+        }
+        if lower == "</details>" && self.details.is_some() {
+            self.details = None;
+            return;
+        }
+        if let Some(details) = Details::parse(trimmed) {
+            let closed = details.closed;
+            self.push(BlockKind::Details {
+                summary: details.summary,
+                open: details.open,
+                content: Inline::from(details.body.as_str()),
+            });
+            if !closed {
+                self.details = Some(self.blocks.len() - 1);
+            }
+            return;
+        }
         if lower == "</div>" && !self.align.is_empty() {
             self.align.pop();
             return;
@@ -327,6 +426,77 @@ impl Lowering<'_> {
         }
         self.push(BlockKind::Html(Inline::from(trimmed)));
     }
+}
+
+/// A `<details>` element opened by one HTML block. Blank lines split the
+/// element into several blocks, so its body and closing tag may come later.
+struct Details {
+    summary: String,
+    open: bool,
+    /// Text after the summary within this same block.
+    body: String,
+    /// Whether `</details>` was in this same block.
+    closed: bool,
+}
+
+impl Details {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::parse_html_tag"))]
+    fn parse(html: &str) -> Option<Self> {
+        // ASCII lowercasing keeps byte offsets, so `lower` indexes `html`.
+        let lower = html.to_ascii_lowercase();
+        let tag_end = lower.find('>')?;
+        let attributes = lower.get(..tag_end)?.strip_prefix("<details")?;
+        if !(attributes.is_empty() || attributes.starts_with(char::is_whitespace)) {
+            return None;
+        }
+        let open = attributes
+            .split_whitespace()
+            .any(|attribute| attribute == "open" || attribute.starts_with("open="));
+        let mut rest = tag_end + 1;
+        let mut summary = String::new();
+        if let Some(start) = lower[rest..].find("<summary") {
+            let start = rest + start;
+            let inner = start + lower[start..].find('>')? + 1;
+            let end = inner + lower[inner..].find("</summary>")?;
+            summary = super::html::unescape(html[inner..end].trim());
+            rest = end + "</summary>".len();
+        }
+        let (body, closed) = lower[rest..]
+            .find("</details>")
+            .map_or((&html[rest..], false), |end| {
+                (&html[rest..rest + end], true)
+            });
+        Some(Self {
+            summary,
+            open,
+            body: body.trim().to_owned(),
+            closed,
+        })
+    }
+}
+
+/// URL and label of the link on a `— [label](url)` line, whether the link
+/// stayed a link or was claimed as an embed.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::parse_source_link"))]
+fn source_link(line: &Inline) -> Option<(String, String)> {
+    if !line.text().trim_start().starts_with('—') {
+        return None;
+    }
+    line.marks()
+        .iter()
+        .find_map(|mark| match &mark.kind {
+            MarkKind::Link(target) => Some((
+                target.url.clone(),
+                line.slice(mark.range.clone()).plain_text(),
+            )),
+            _ => None,
+        })
+        .or_else(|| {
+            line.atoms().iter().find_map(|atom| match atom {
+                Atom::Embed { url, label, .. } => Some((url.clone(), label.clone())),
+                _ => None,
+            })
+        })
 }
 
 const fn callout_kind(alert: comrak::nodes::AlertType) -> CalloutKind {
@@ -349,6 +519,7 @@ const fn column_align(align: TableAlignment) -> ColumnAlign {
     }
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("markdown::parse_front_matter"))]
 fn front_matter_body(raw: &str) -> String {
     let lines: Vec<&str> = raw.trim().lines().collect();
     match lines.as_slice() {

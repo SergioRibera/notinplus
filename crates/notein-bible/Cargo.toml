@@ -26,8 +26,11 @@ nursery = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+# Conflicts with rustc's `unreachable_pub`, which this crate keeps on.
+redundant_pub_crate = "allow"
 
 [features]
+sismo = ["dep:sismo"]
 default = []
 # Guarded import pipeline — pulls `reqwest` + `serde_json`. Off by
 # default so headless library bins (tests, CLIs) don't drag the HTTP
@@ -36,6 +39,7 @@ importer = ["dep:reqwest", "dep:serde", "dep:serde_json"]
 # Freya rsx components. Off by default so library + import tests do not
 # drag the GPU stack. The host enables this to render the Bible viewer.
 ui = [
+    "importer",
     "dep:freya",
     "dep:freya-components",
     "dep:freya-core",
@@ -45,23 +49,23 @@ ui = [
 ]
 
 [dependencies]
+# Spans for the sismo profiler; off unless an app turns it on.
+sismo = { path = "../../../../sismo/crates/sismo", default-features = false, optional = true }
+freya-icons = { version = "=0.5.0-rc.13", features = ["lucide"] }
 notein-sdk = { path = "../notein-sdk" }
+notein-i18n = { path = "../notein-i18n" }
 # `istmo-core` is pulled in strictly for its `path::data_dir()`
 # resolver so the plugin writes its DB + cache alongside every other
 # notein data file. The transport / runtime pieces are unused — the
 # core crate itself only depends on `bincode` + `flume` + a tiny set of
 # workspace crates, so there is no hidden weight.
-istmo-core = { path = "../../../istmo/crates/core" }
+istmo-core = "0.1.1-alpha.4"
 rusqlite = { version = "0.37", features = ["bundled"] }
 regex = "1.12"
 bincode = { version = "2", features = ["derive", "std"] }
 log = "0.4"
+flume = { version = "0.11", features = ["async"] }
 quick-xml = "0.37"
-# Standalone icons crate (no Freya runtime pulled in). `creation_entries`
-# needs real SVG bytes the host's SvgViewer can render; emoji text in
-# the icon field silently fails to decode.
-freya-icons = { version = "=0.4.0", features = ["lucide"] }
-
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "blocking",
@@ -70,13 +74,16 @@ reqwest = { version = "0.12", default-features = false, features = [
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 
-freya = { version = "=0.5.0-rc.8", features = [
+freya = { version = "=0.5.0-rc.13", features = [
     "router",
     "icons",
     "icons-lucide",
 ], optional = true }
-freya-components = { version = "=0.5.0-rc.8", optional = true }
-freya-core = { version = "=0.5.0-rc.8", optional = true }
-freya-engine = { version = "=0.5.0-rc.8", optional = true }
+freya-components = { version = "=0.5.0-rc.13", optional = true }
+freya-core = { version = "=0.5.0-rc.13", optional = true }
+freya-engine = { version = "=0.5.0-rc.13", optional = true }
 async-io = { version = "2", optional = true }
 notein-ui-kit = { path = "../notein-ui-kit", optional = true }
+
+[build-dependencies]
+notein-i18n = { path = "../notein-i18n", features = ["build"] }

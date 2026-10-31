@@ -13,7 +13,11 @@ repository = "https://github.com/SergioRibera/notinplus"
 publish = false
 
 [features]
-default = []
+default = ["math", "diagrams"]
+# Mermaid diagrams drawn in pure Rust.
+diagrams = ["dep:freya-markdown-diagrams"]
+# LaTeX formulas drawn with Typst (adds ~30 MB to a release build).
+math = ["dep:freya-markdown-math"]
 # Hot reload is driven by `dx serve --hot-patch --features hotreload`.
 # Freya gates its subsecond wrap-sites + patch handler on this flag, so
 # the feature name must match what the dioxus-cli invocation passes or
@@ -31,21 +35,24 @@ path = "src/main.rs"
 # The istmo facade's default feature enables `native-activity`; the pen
 # plugin needs Kotlin-side `MotionEvent` interception, which only fires
 # under `GameActivity`. Switch the activity flavor at the facade level.
-istmo = { path = "../istmo", default-features = false, features = [
+istmo = { version = "0.1.1-alpha.4", default-features = false, features = [
     "game-activity",
 ] }
-istmo-pen = { path = "../istmo/plugins/istmo-pen" }
-istmo-file-picker = { path = "../istmo/plugins/file-picker" }
-istmo-data-store = { path = "../istmo/plugins/data-store" }
-istmo-share = { path = "../istmo/plugins/share" }
-freya = { version = "=0.5.0-rc.8", features = ["router", "icons", "icons-lucide"] }
-freya-engine = "=0.5.0-rc.8"
-freya-components = "=0.5.0-rc.8"
-freya-edit = "=0.5.0-rc.8"
-freya-core = "=0.5.0-rc.8"
-torin = "=0.5.0-rc.8"
-freya-canvas-bg = { path = "crates/freya-canvas-bg" }
-freya-pdf = { path = "crates/freya-pdf" }
+istmo-pen = "0.1.1-alpha.4"
+istmo-file-picker = "0.1.1-alpha.4"
+istmo-data-store = "0.1.1-alpha.4"
+istmo-share = "0.1.1-alpha.4"
+istmo-camera = { path = "../istmo/plugins/camera" }
+rqrr = "0.10"
+istmo-opener = "0.1.1-alpha.4"
+freya = { version = "=0.5.0-rc.13", features = ["router", "icons", "icons-lucide"] }
+freya-engine = "=0.5.0-rc.13"
+freya-components = "=0.5.0-rc.13"
+freya-edit = "=0.5.0-rc.13"
+freya-core = "=0.5.0-rc.13"
+torin = "=0.5.0-rc.13"
+freya-canvas-bg = { path = "crates/freya-canvas-bg", features = ["sismo"] }
+freya-pdf = { path = "crates/freya-pdf", features = ["sismo"] }
 bincode = { version = "2", features = ["derive", "std"] }
 flume = { version = "0.11", features = ["async"] }
 pollster = "0.4"
@@ -55,19 +62,36 @@ async-lock = "3"
 uuid = { version = "1", features = ["v4"] }
 tar = { version = "0.4", default-features = false }
 zstd = "0.13"
-notein-plugin = { version = "0.1.0", path = "crates/notein-plugin" }
-notein-ui-kit = { path = "crates/notein-ui-kit" }
-notein-sync = { path = "crates/notein-sync" }
+notein-plugin = { version = "0.1.0", path = "crates/notein-plugin", features = ["sismo"] }
+notein-ui-kit = { path = "crates/notein-ui-kit", features = ["sismo"] }
+notein-sync = { path = "crates/notein-sync", features = ["sismo"] }
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
-freya-markdown-editor = { path = "crates/freya-markdown-editor" }
-notein-bible = { path = "crates/notein-bible", features = ["ui", "importer"] }
-notein-notes = { path = "crates/notein-notes" }
-notein-handwriting = { path = "crates/notein-handwriting" }
+freya-markdown-editor = { path = "crates/freya-markdown-editor", features = ["sismo"] }
+freya-markdown-math = { path = "crates/freya-markdown-math", optional = true, features = ["sismo"] }
+freya-markdown-diagrams = { path = "crates/freya-markdown-diagrams", optional = true, features = ["sismo"] }
+notein-bible = { path = "crates/notein-bible", features = ["ui", "importer", "sismo"] }
+notein-notes = { path = "crates/notein-notes", features = ["sismo"] }
+notein-handwriting = { path = "crates/notein-handwriting", features = ["sismo"] }
+notein-i18n = { path = "crates/notein-i18n" }
 loro = "1.16.2"
+zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+fs4 = { version = "0.13", default-features = false }
+# Note images: decoded and written back without their metadata.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+semver = "1"
+istmo-installer = { path = "crates/istmo-installer" }
+# Remote diagnostics, streamed to the sismo viewer on the LAN.
+sismo = { path = "../../sismo/crates/sismo", default-features = false, features = ["log", "net"] }
+sismo-freya = { path = "../../sismo/crates/sismo-freya" }
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.14"
-freya-clipboard = "=0.5.0-rc.8"
+freya-clipboard = "=0.5.0-rc.13"
 jni = { version = "0.21", default-features = false }
 # Freya-winit doesn't pin an Android activity backend on winit, so we
 # opt in additively. Cargo feature unification propagates the feature
@@ -81,13 +105,60 @@ winit = { version = "0.30", features = ["android-game-activity"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos")))'.dependencies]
 env_logger = "0.11"
-istmo-window = { path = "../istmo/crates/window" }
+# Samples the desktop locale for the interface language.
+istmo-plugins = "0.1.1-alpha.4"
+istmo-window = "0.1.1-alpha.4"
+istmo-camera = { path = "../istmo/plugins/camera", features = ["desktop"] }
+
+[dev-dependencies]
+freya-testing = "=0.5.0-rc.13"
+rusqlite = { version = "0.37", features = ["bundled"] }
 
 [build-dependencies]
-istmo-build = { path = "../istmo/crates/build" }
+istmo-build = "0.1.1-alpha.4"
+notein-i18n = { path = "crates/notein-i18n", features = ["build"] }
 
 [patch.crates-io]
-winit = { git = "https://github.com/SergioRibera/winit", branch = "notein" }
+# istmo-camera is taken from the sibling istmo checkout until it is
+# published; its istmo-core must be the one every other plugin links.
+istmo-core = { path = "../istmo/crates/core" }
+istmo-macros = { path = "../istmo/crates/macros" }
+istmo-build = { path = "../istmo/crates/build" }
+# System locale (`SystemInfo`) is not published yet.
+istmo-plugins = { path = "../istmo/crates/plugins" }
+winit = { git = "https://github.com/SergioRibera/winit", branch = "notein-native-input" }
+# Touch editing and soft keyboard work, on top of freya 0.5.0-rc.13 (main).
+freya = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-android = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-animation = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-clipboard = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-components = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-core = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-edit = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-engine = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-icons = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-markdown = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-metrics-plugin = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-router = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-router-macro = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-sdk = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-testing = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+freya-winit = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+torin = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+ragnarok = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+pathgraph = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
+
+# The debug APK is built with the dev profile: optimise dependencies
+# fully and the app lightly so it stays usable on a phone.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
 
 [lints.rust]
 missing_debug_implementations = "warn"
@@ -100,4 +171,6 @@ nursery = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+# Conflicts with rustc's `unreachable_pub`, which this crate keeps on.
+redundant_pub_crate = "allow"
 missing_safety_doc = "allow"

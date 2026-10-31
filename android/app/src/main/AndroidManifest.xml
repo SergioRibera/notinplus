@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Scanning the QR code of another device or an invitation. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Devices on the same Wi-Fi find each other through UDP broadcast;
          Android drops those packets unless the app holds a multicast lock. -->
@@ -11,6 +14,7 @@
         android:label="${istmoLabel}"
         android:icon="${istmoIcon}"
         android:hasCode="true"
+        android:localeConfig="@xml/locales_config"
         android:theme="@style/Theme.AppCompat.NoActionBar">
         <!-- GameActivity (androidx.games:games-activity) so
              `dispatchTouchEvent` runs on the Java side — the Kotlin
@@ -23,6 +27,7 @@
             android:name="rs.sergioribera.notinplus.NotinplusActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|keyboardHidden|screenSize">
             <meta-data
                 android:name="android.app.lib_name"

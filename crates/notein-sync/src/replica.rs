@@ -39,6 +39,12 @@ pub enum BlobKind {
     /// A plugin's own state for a document, keyed by the document id;
     /// which plugin travels inside the record.
     Snapshot,
+    /// A file a document links to, like an image. Keyed by the first 8
+    /// bytes of the document id and 8 bytes naming the file; files are
+    /// named after their content, so they never change.
+    Asset,
+    /// The file a document shows (a PDF), keyed by the document id.
+    Attachment,
 }
 
 /// Identity plus freshness of a blob; enough to decide who is newer.
@@ -112,7 +118,10 @@ impl Scope {
             Self::All => true,
             Self::Subset { docs, blobs } => {
                 blobs.contains(&key)
-                    || (key.kind == BlobKind::Snapshot && docs.contains(&DocId(key.id)))
+                    || (matches!(key.kind, BlobKind::Snapshot | BlobKind::Attachment)
+                        && docs.contains(&DocId(key.id)))
+                    || (key.kind == BlobKind::Asset
+                        && docs.iter().any(|doc| doc.0[..8] == key.id[..8]))
             }
         }
     }
@@ -153,51 +162,93 @@ pub trait Replica {
 impl<R: Replica> Replica for std::sync::Arc<std::sync::Mutex<R>> {
     type Error = R::Error;
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::replica::locked_docs"))]
     fn docs(&self) -> Vec<(DocId, Version)> {
         self.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .docs()
     }
 
+    #[cfg_attr(
+        feature = "sismo",
+        sismo::function("sync::replica::locked_doc_version")
+    )]
     fn doc_version(&self, doc: DocId) -> Option<Version> {
         self.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .doc_version(doc)
     }
 
+    #[cfg_attr(
+        feature = "sismo",
+        sismo::function("sync::replica::locked_updates_since")
+    )]
     fn doc_updates_since(&self, doc: DocId, since: &Version) -> Result<Vec<u8>, Self::Error> {
         self.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .doc_updates_since(doc, since)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::replica::locked_snapshot"))]
     fn doc_snapshot(&self, doc: DocId) -> Result<Vec<u8>, Self::Error> {
         self.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .doc_snapshot(doc)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::replica::locked_import"))]
     fn doc_import(&mut self, doc: DocId, bytes: &[u8]) -> Result<(), Self::Error> {
         self.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .doc_import(doc, bytes)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::replica::locked_blob_heads"))]
     fn blob_heads(&self) -> Vec<BlobHead> {
         self.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .blob_heads()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::replica::locked_blobs"))]
     fn blobs(&self, keys: &[BlobKey]) -> Vec<Blob> {
         self.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .blobs(keys)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::replica::locked_blob_merge"))]
     fn blob_merge(&mut self, blob: Blob) -> Result<bool, Self::Error> {
         self.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .blob_merge(blob)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::{BlobKey, BlobKind, DocId, Scope};
+
+    #[test]
+    fn a_share_covers_the_files_of_its_documents() {
+        let doc = DocId([7; 16]);
+        let scope = Scope::Subset {
+            docs: HashSet::from([doc]),
+            blobs: HashSet::new(),
+        };
+        let mut mine = [7; 16];
+        mine[8..].copy_from_slice(&42u64.to_le_bytes());
+        let mut other = mine;
+        other[0] = 1;
+        assert!(scope.covers_blob(BlobKey {
+            kind: BlobKind::Asset,
+            id: mine
+        }));
+        assert!(!scope.covers_blob(BlobKey {
+            kind: BlobKind::Asset,
+            id: other
+        }));
     }
 }

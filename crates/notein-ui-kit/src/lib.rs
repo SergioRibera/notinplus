@@ -1,25 +1,51 @@
-//! Shared Freya widgets reused across notinplus + its plugins.
+//! Notein design system: themes, tokens and the components every
+//! screen and plugin is built from.
 //!
-//! The kit lives outside `notinplus` itself so third-party plugin
-//! authors can build drop-in UI that visually matches the shell —
-//! theme palette, form field, color picker, modal (future). All items
-//! are plain Freya builders / `Component` impls; no notinplus-only
-//! context is required.
-//!
-//! Keep the surface additive: `pub use` reexports from the sub-modules
-//! so consumer `use` lines stay stable even if internals move.
+//! Plugins depend on this crate so their UI matches the shell. All
+//! colours come from [`theme::palette`]; all spacing, radii and type
+//! sizes from [`tokens`]; layouts adapt with [`width::WidthClass`].
 
-pub mod bottom_sheet;
+notein_i18n::catalog!();
+
+/// Wraps a future so the profiler records it as an async span named
+/// `$name`, plus one plain span per poll.
+#[cfg(feature = "sismo")]
+macro_rules! traced {
+    ($name:expr, $fut:expr $(,)?) => {{
+        static CALLSITE: ::sismo::Callsite = ::sismo::Callsite::new(
+            ::sismo::__private::CallsiteKind::Span,
+            $name,
+            module_path!(),
+            file!(),
+            line!(),
+        );
+        ::sismo::Instrumented::new(&CALLSITE, $fut)
+    }};
+}
+
+#[cfg(not(feature = "sismo"))]
+macro_rules! traced {
+    ($name:expr, $fut:expr $(,)?) => {
+        $fut
+    };
+}
+
 pub mod color_wheel;
-pub mod form_input;
+pub mod components;
 pub mod modal;
 pub mod theme;
+pub mod tokens;
 pub mod viewport;
+pub mod width;
 
-pub use bottom_sheet::{BottomSheet, SheetPager};
 pub use color_wheel::{ColorWheel, DEFAULT_SWATCHES, auto_color, color_swatch_strip};
-pub use form_input::FormInput;
-pub use modal::{Modal, ModalChrome, ModalController, ModalPlacement, ModalPortal};
-pub use viewport::{
-    PaneArea, ViewportArea, clamp_popup_left, clamp_popup_top, clamp_popup_top_from_point,
+pub use components::*;
+pub use modal::{
+    Modal, ModalChrome, ModalController, ModalDrag, ModalMotion, ModalPlacement, ModalPortal,
 };
+pub use theme::{palette, reduce_motion};
+pub use viewport::{
+    Gutters, PaneArea, ViewportArea, clamp_popup_left, clamp_popup_top, clamp_popup_top_from_point,
+    place_popup, safe_frame,
+};
+pub use width::{WidthClass, width_class};

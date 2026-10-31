@@ -1,56 +1,29 @@
 //! Text notes plugin.
 //!
 //! A note is a library item whose content is a markdown document,
-//! edited with [`freya_markdown_editor`]. The crate exposes:
-//!
-//! - [`NotesCanvas`] — the page kind (`io.notein.notes.viewer`). Its
-//!   outline is the heading tree of the note, which the shell shows in
-//!   the sidebar "Contents" tab.
-//! - [`NotesSource`] — lets any other note or bookmark reference a note
-//!   or one of its headings through the `/` menu, and routes chip taps
-//!   back to the page.
-//! - [`ui`] — the page chrome (top bar).
-//!
-//! The note body is stored by the shell as the item snapshot: the raw
-//! UTF-8 markdown. The shell keeps [`NotesIndex`] up to date with every
-//! note's title and headings so references can be offered without
-//! opening each note.
+//! edited with [`freya_markdown_editor`]. [`NotesKind`] is the document
+//! kind: its outline is the heading tree of the note and its anchors
+//! point at headings. [`NotesIndex`] keeps every note's title and
+//! headings so references can be offered without opening each note.
 
-use std::sync::Arc;
-
-use notein_sdk::{PluginRegistry, RegistryError};
+use notein_sdk::tr;
 
 pub mod anchor;
-pub mod canvas;
+mod face;
 pub mod index;
-pub mod source;
-pub mod ui;
+pub mod kind;
+pub mod plugin;
+mod share;
 
 pub use anchor::NoteAnchor;
-pub use canvas::NotesCanvas;
 pub use index::NotesIndex;
-pub use source::NotesSource;
+pub use kind::{NoteContent, NotesKind};
+pub use plugin::{NoteFace, NotesPlugin};
+
+notein_sdk::i18n::catalog!();
 
 /// Kind id of the note page (`PluginCanvas` items and their snapshots).
-pub const KIND_ID: &str = "io.notein.notes.viewer";
-
-/// Id of the reference source (`SourceRef::Plugin::plugin_id`).
-pub const SOURCE_ID: &str = "io.notein.notes";
-
-/// Register both plugin halves. The returned index is shared with them:
-/// the shell feeds it note titles and bodies.
-pub fn install(registry: &mut PluginRegistry) -> Result<NotesIndex, RegistryError> {
-    let index = NotesIndex::default();
-    registry.register_canvas(Arc::new(NotesCanvas::default()))?;
-    registry.register_source(Arc::new(NotesSource::new(index.clone())))?;
-    Ok(index)
-}
-
-/// Markdown body stored in a note snapshot.
-#[must_use]
-pub fn body_from_snapshot(snapshot: &[u8]) -> String {
-    String::from_utf8_lossy(snapshot).into_owned()
-}
+pub const KIND_ID: &str = kind::KIND;
 
 /// File extensions a markdown import accepts.
 pub const IMPORT_EXTENSIONS: [&str; 3] = ["md", "markdown", "txt"];
@@ -60,6 +33,7 @@ pub const IMPORT_MIME_TYPES: [&str; 2] = ["text/markdown", "text/plain"];
 /// Name of a note imported from `file_name`: the file stem, else the
 /// first heading of `markdown`, else a generic name.
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("notes::import_name"))]
 pub fn import_name(file_name: Option<&str>, markdown: &str) -> String {
     let stem = file_name
         .map(|name| {
@@ -83,7 +57,7 @@ pub fn import_name(file_name: Option<&str>, markdown: &str) -> String {
         .into_iter()
         .map(|heading| heading.text)
         .find(|text| !text.trim().is_empty())
-        .unwrap_or_else(|| "Nota importada".to_owned())
+        .unwrap_or_else(|| tr!("notes-imported-name"))
 }
 
 /// Fix the anchor of the heading `slug` names in `markdown`.
@@ -92,6 +66,7 @@ pub fn import_name(file_name: Option<&str>, markdown: &str) -> String {
 /// Returns the updated markdown, or `None` when the heading is missing or its
 /// anchor is already fixed.
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("notes::pin_heading"))]
 pub fn pin_heading(markdown: &str, slug: &str) -> Option<String> {
     use freya_markdown_editor::document::Document;
     use freya_markdown_editor::markdown::Dialect;
@@ -105,9 +80,62 @@ pub fn pin_heading(markdown: &str, slug: &str) -> Option<String> {
     Some(document.to_markdown(Dialect::Rich))
 }
 
+/// What `markdown` holds under the heading `slug` names, up to the next
+/// heading of the same or a higher level; the whole note without a slug.
+/// `None` when the heading is missing or nothing sits under it.
+#[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("notes::section"))]
+pub fn section(markdown: &str, slug: Option<&str>) -> Option<String> {
+    use freya_markdown_editor::document::{BlockKind, Document};
+    use freya_markdown_editor::markdown::Dialect;
+
+    let document = Document::parse(markdown);
+    let part = match slug {
+        None => document,
+        Some(slug) => {
+            let at = document.index_of(document.heading_by_slug(slug)?)?;
+            let blocks = document.blocks();
+            let BlockKind::Heading { level, .. } = blocks[at].kind else {
+                return None;
+            };
+            Document::from(
+                blocks[at + 1..]
+                    .iter()
+                    .take_while(|block| {
+                        !matches!(block.kind, BlockKind::Heading { level: next, .. } if next <= level)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            )
+        }
+    };
+    let text = part.to_markdown(Dialect::Rich).trim().to_owned();
+    (!text.is_empty()).then_some(text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_section_runs_to_the_next_heading_of_its_level() {
+        let note =
+            "# Diario\n\nintro\n\n## Ideas\n\nuna\n\n### Detalle\n\n- dos\n\n## Otra\n\nfuera\n";
+        let ideas = section(note, Some("ideas")).expect("section");
+        assert!(ideas.starts_with("una"), "{ideas}");
+        assert!(ideas.contains("### Detalle"), "{ideas}");
+        assert!(ideas.contains("- dos"), "{ideas}");
+        assert!(!ideas.contains("fuera"), "{ideas}");
+        assert!(!ideas.contains("## Ideas"), "{ideas}");
+    }
+
+    #[test]
+    fn an_empty_or_missing_section_quotes_nothing() {
+        let note = "# Diario\n\n## Vacia\n\n## Llena\n\ntexto\n";
+        assert_eq!(section(note, Some("vacia")), None);
+        assert_eq!(section(note, Some("nada")), None);
+        assert!(section(note, None).is_some_and(|all| all.contains("texto")));
+    }
 
     #[test]
     fn pinned_heading_keeps_its_anchor_after_a_rename() {
@@ -132,6 +160,7 @@ mod tests {
 
     #[test]
     fn imported_notes_are_named_after_the_file_or_first_heading() {
+        notein_sdk::i18n::Lang::Es.make_current();
         assert_eq!(import_name(Some("Plan.MD"), "# Otro"), "Plan");
         assert_eq!(import_name(Some("notas.txt"), ""), "notas");
         assert_eq!(import_name(None, "texto\n\n## Viaje\n"), "Viaje");

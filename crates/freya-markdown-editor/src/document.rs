@@ -6,6 +6,7 @@
 
 mod color;
 mod inline;
+mod properties;
 mod table;
 
 use std::collections::HashSet;
@@ -16,6 +17,7 @@ pub use inline::{
     Atom, Inline, Link, Mark, MarkFamily, MarkKind, OBJECT_REPLACEMENT, TextChange, byte_index,
     diff, utf16_len,
 };
+pub use properties::Properties;
 pub use table::{ColumnAlign, Table};
 
 /// Stable identity of a block for the lifetime of the process.
@@ -124,17 +126,6 @@ impl CalloutKind {
             Self::Caution => "CAUTION",
         }
     }
-
-    #[must_use]
-    pub const fn title(self) -> &'static str {
-        match self {
-            Self::Note => "Note",
-            Self::Tip => "Tip",
-            Self::Important => "Important",
-            Self::Warning => "Warning",
-            Self::Caution => "Caution",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -186,6 +177,34 @@ pub enum BlockKind {
     FrontMatter(Inline),
     TableOfContents,
     Html(Inline),
+    /// `<!-- ... -->`: a note for whoever edits the file, never shown when
+    /// reading.
+    Comment(Inline),
+    /// `<details>`: content hidden behind a summary until opened.
+    Details {
+        summary: String,
+        /// Whether it starts open (`<details open>`).
+        open: bool,
+        content: Inline,
+    },
+    Transclusion(Transclusion),
+}
+
+/// A quote whose content lives elsewhere and is shown as it is now.
+///
+/// In markdown it is a block quote opened by `[!<kind>]` (a kind with a
+/// colon, so it never reads as an alert), followed by the content as it
+/// was last seen and closed by a `— [label](url)` line naming the source.
+/// Portable markdown keeps the plain quote and drops the opening line.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Transclusion {
+    /// What the opening marker names, such as `app:live`.
+    pub kind: String,
+    pub url: String,
+    pub label: String,
+    /// Markdown of the content as last seen, paragraphs split by a blank
+    /// line.
+    pub fallback: String,
 }
 
 /// How the text of a block may be edited.
@@ -224,12 +243,14 @@ impl BlockKind {
             | Self::Definition(content)
             | Self::FrontMatter(content)
             | Self::Html(content)
+            | Self::Comment(content)
+            | Self::Details { content, .. }
             | Self::Heading { content, .. }
             | Self::Callout { content, .. }
             | Self::ListItem { content, .. }
             | Self::Footnote { content, .. }
             | Self::Code { code: content, .. } => Some(content),
-            Self::Divider | Self::Table(_) | Self::TableOfContents => None,
+            Self::Divider | Self::Table(_) | Self::TableOfContents | Self::Transclusion(_) => None,
         }
     }
 
@@ -242,22 +263,26 @@ impl BlockKind {
             | Self::Definition(content)
             | Self::FrontMatter(content)
             | Self::Html(content)
+            | Self::Comment(content)
+            | Self::Details { content, .. }
             | Self::Heading { content, .. }
             | Self::Callout { content, .. }
             | Self::ListItem { content, .. }
             | Self::Footnote { content, .. }
             | Self::Code { code: content, .. } => Some(content),
-            Self::Divider | Self::Table(_) | Self::TableOfContents => None,
+            Self::Divider | Self::Table(_) | Self::TableOfContents | Self::Transclusion(_) => None,
         }
     }
 
     #[must_use]
     pub const fn role(&self) -> Option<TextRole> {
         match self {
-            Self::Code { .. } | Self::Math(_) | Self::FrontMatter(_) | Self::Html(_) => {
-                Some(TextRole::Plain)
-            }
-            Self::Divider | Self::TableOfContents => None,
+            Self::Code { .. }
+            | Self::Math(_)
+            | Self::FrontMatter(_)
+            | Self::Html(_)
+            | Self::Comment(_) => Some(TextRole::Plain),
+            Self::Divider | Self::TableOfContents | Self::Transclusion(_) => None,
             _ => Some(TextRole::Rich),
         }
     }
@@ -508,6 +533,7 @@ impl Document {
     /// document ends in anything but a paragraph that already has content
     /// (or cannot hold text, like a table), an empty paragraph follows it.
     /// That is the way out of code blocks, quotes, tables and the like.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_ensure_editable"))]
     pub fn ensure_editable(&mut self) {
         let needs_tail = self.blocks.last().is_none_or(|block| match &block.kind {
             BlockKind::Paragraph(_) => false,
@@ -520,6 +546,7 @@ impl Document {
 
     /// Every editable target in reading order (table cells row by row).
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_targets"))]
     pub fn targets(&self) -> Vec<TextTarget> {
         self.blocks
             .iter()
@@ -555,17 +582,20 @@ impl Document {
         targets.get(index + 1).copied()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_insert"))]
     pub fn insert(&mut self, index: usize, block: Block) -> BlockId {
         let id = block.id;
         self.blocks.insert(index.min(self.blocks.len()), block);
         id
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_insert_after"))]
     pub fn insert_after(&mut self, anchor: BlockId, block: Block) -> BlockId {
         let index = self.index_of(anchor).map_or(self.blocks.len(), |i| i + 1);
         self.insert(index, block)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_remove"))]
     pub fn remove(&mut self, id: BlockId) -> Option<Block> {
         let index = self.index_of(id)?;
         let block = self.blocks.remove(index);
@@ -574,6 +604,7 @@ impl Document {
     }
 
     /// Move a block by `delta` positions (negative moves up).
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_move_block"))]
     pub fn move_block(&mut self, id: BlockId, delta: isize) -> bool {
         let Some(index) = self.index_of(id) else {
             return false;
@@ -585,6 +616,7 @@ impl Document {
     }
 
     /// Move a block so it ends at `index` (clamped to the document).
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_move_block_to"))]
     pub fn move_block_to(&mut self, id: BlockId, index: usize) -> bool {
         let Some(from) = self.index_of(id) else {
             return false;
@@ -602,6 +634,7 @@ impl Document {
 
     /// Move `id` to the position currently held by `target`, the usual
     /// drop semantics of a drag handle.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_move_block_onto"))]
     pub fn move_block_onto(&mut self, id: BlockId, target: BlockId) -> bool {
         self.index_of(target)
             .is_some_and(|index| self.move_block_to(id, index))
@@ -609,6 +642,7 @@ impl Document {
 
     /// Clamp list depths so every item is at most one level deeper than
     /// the item before it, keeping the markdown valid after moves.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_normalize_depths"))]
     fn normalize_depths(&mut self) {
         let mut previous: Option<u8> = None;
         for block in &mut self.blocks {
@@ -624,6 +658,7 @@ impl Document {
     }
 
     /// Convert a block, keeping its text. Unsupported kinds are left as is.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_set_type"))]
     pub fn set_type(&mut self, id: BlockId, block_type: BlockType) -> bool {
         let Some(block) = self.block_mut(id) else {
             return false;
@@ -647,6 +682,7 @@ impl Document {
     }
 
     /// Enter key: split `target` at `offset`.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_split"))]
     pub fn split(&mut self, target: TextTarget, offset: usize) -> Option<Caret> {
         if target.cell.is_some() {
             return None;
@@ -695,6 +731,7 @@ impl Document {
     }
 
     /// Backspace at offset 0 of `target`.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_join_backward"))]
     pub fn join_backward(&mut self, target: TextTarget) -> Option<Caret> {
         if target.cell.is_some() {
             return None;
@@ -724,7 +761,7 @@ impl Document {
         let previous_index = index.checked_sub(1)?;
         let previous_id = self.blocks[previous_index].id;
         match &self.blocks[previous_index].kind {
-            BlockKind::Divider | BlockKind::TableOfContents => {
+            BlockKind::Divider | BlockKind::TableOfContents | BlockKind::Transclusion(_) => {
                 self.blocks.remove(previous_index);
                 Some(Caret::new(target.block, 0))
             }
@@ -767,6 +804,7 @@ impl Document {
     }
 
     /// Delete key at the end of `target`.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_join_forward"))]
     pub fn join_forward(&mut self, target: TextTarget) -> Option<Caret> {
         if target.cell.is_some() {
             return None;
@@ -776,7 +814,7 @@ impl Document {
         let next = self.blocks.get(next_index)?;
         let offset = self.blocks[index].kind.content()?.len();
         match &next.kind {
-            BlockKind::Divider | BlockKind::TableOfContents => {
+            BlockKind::Divider | BlockKind::TableOfContents | BlockKind::Transclusion(_) => {
                 self.blocks.remove(next_index);
             }
             BlockKind::Table(_) => return None,
@@ -800,6 +838,7 @@ impl Document {
 
     /// Change the depth of a list item by `delta`, bounded by its previous
     /// sibling so the markdown stays valid.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_indent"))]
     pub fn indent(&mut self, id: BlockId, delta: i8) -> bool {
         let Some(index) = self.index_of(id) else {
             return false;
@@ -820,6 +859,7 @@ impl Document {
         changed
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_toggle_task"))]
     pub fn toggle_task(&mut self, id: BlockId) -> bool {
         let Some(BlockKind::ListItem {
             kind: ListKind::Task { checked },
@@ -835,10 +875,25 @@ impl Document {
     /// Turn a paragraph starting with a markdown block marker (`# `, `- `,
     /// `1. `, `> `, `[ ] `, `` ``` ``, `---`, `$$`) into that block. Only fires
     /// when `cursor` sits right after the marker, i.e. it was just typed.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_apply_block_shortcut"))]
     pub fn apply_block_shortcut(&mut self, id: BlockId, cursor: usize) -> Option<Caret> {
         let index = self.index_of(id)?;
         let block = &mut self.blocks[index];
         let BlockKind::Paragraph(content) = &block.kind else {
+            if let BlockKind::Quote(content) = &block.kind {
+                let (marker_len, kind) = callout_marker(content.text())?;
+                if marker_len != cursor {
+                    return None;
+                }
+                let mut content = content.clone();
+                content.replace(0..marker_len, "");
+                block.kind = BlockKind::Callout {
+                    kind,
+                    title: None,
+                    content,
+                };
+                return Some(Caret::new(id, 0));
+            }
             if let BlockKind::ListItem {
                 kind: kind @ ListKind::Bullet,
                 content,
@@ -906,6 +961,7 @@ impl Document {
     /// Text of every block without formatting, one block per line.
     /// Table rows join their cells with ` | `.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_plain_text"))]
     pub fn plain_text(&self) -> String {
         self.blocks
             .iter()
@@ -944,6 +1000,7 @@ impl Document {
     /// reserved first, so a heading added later never steals one. The
     /// anchors are what `[text](#anchor)` links point to.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_outline"))]
     pub fn outline(&self) -> Vec<HeadingRef> {
         let headings: Vec<(BlockId, HeadingLevel, String, Option<&String>)> = self
             .blocks
@@ -999,6 +1056,7 @@ impl Document {
     /// back to one derived from its text with `None`. A fixed anchor
     /// keeps links to the heading working when its text changes.
     /// Returns whether `id` is a heading.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_set_heading_anchor"))]
     pub fn set_heading_anchor(&mut self, id: BlockId, new_anchor: Option<String>) -> bool {
         let Some(index) = self.index_of(id) else {
             return false;
@@ -1014,6 +1072,7 @@ impl Document {
 
     /// Block of the heading whose [`Self::outline`] anchor is `slug`.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_heading_by_slug"))]
     pub fn heading_by_slug(&self, slug: &str) -> Option<BlockId> {
         self.outline()
             .into_iter()
@@ -1024,6 +1083,7 @@ impl Document {
     /// Number shown in front of an ordered list item: the run start plus
     /// the number of same depth items before it.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_ordinal"))]
     pub fn ordinal(&self, id: BlockId) -> Option<u32> {
         let index = self.index_of(id)?;
         let BlockKind::ListItem {
@@ -1058,6 +1118,16 @@ enum Shortcut {
     Heading(HeadingLevel),
     List(ListKind),
     Quote,
+}
+
+/// `[!WARNING] ` typed at the start of a quote, in any case.
+fn callout_marker(text: &str) -> Option<(usize, CalloutKind)> {
+    let rest = text.strip_prefix("[!")?;
+    let (name, after) = rest.split_once("] ")?;
+    let kind = CalloutKind::ALL
+        .into_iter()
+        .find(|kind| kind.marker().eq_ignore_ascii_case(name))?;
+    Some((text.len() - after.len(), kind))
 }
 
 fn shortcut_marker(text: &str) -> Option<(usize, Shortcut)> {
@@ -1175,6 +1245,22 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn alert_marker_turns_a_quote_into_a_callout() {
+        let mut document = doc(vec![BlockKind::Quote("[!warning] mind".into())]);
+        let id = document.blocks()[0].id;
+        assert!(document.apply_block_shortcut(id, 4).is_none());
+        document.apply_block_shortcut(id, 11).expect("callout");
+        assert_eq!(
+            document.blocks()[0].kind,
+            BlockKind::Callout {
+                kind: CalloutKind::Warning,
+                title: None,
+                content: "mind".into(),
+            }
+        );
     }
 
     #[test]

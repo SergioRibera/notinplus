@@ -39,7 +39,12 @@ pub struct BibleAnchor {
 
 impl BibleAnchor {
     #[must_use]
-    pub fn single_verse(bible_id: impl Into<String>, book_id: impl Into<String>, chapter: u16, verse: u16) -> Self {
+    pub fn single_verse(
+        bible_id: impl Into<String>,
+        book_id: impl Into<String>,
+        chapter: u16,
+        verse: u16,
+    ) -> Self {
         Self {
             bible_id: bible_id.into(),
             book_id: book_id.into(),
@@ -55,8 +60,7 @@ impl BibleAnchor {
     /// Bincode-encode for storage inside `SourceRef::Plugin::anchor`.
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
-        bincode::encode_to_vec(self, bincode::config::standard())
-            .expect("BibleAnchor encode: standard bincode config cannot fail")
+        notein_sdk::Payload::to_bytes(self)
     }
 
     /// Decode a payload previously produced by [`Self::encode`]. Returns

@@ -5,25 +5,31 @@
 //! own state; chapter navigation and selection live on
 //! [`crate::state::BibleViewerState`].
 
-use std::collections::HashMap;
+use std::cell::Cell;
+use std::collections::{BTreeSet, HashMap};
+use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use freya::components::ScrollController;
 use freya::elements::paragraph::ParagraphCursorExt;
 use freya::prelude::*;
-use freya_engine::prelude::{RectHeightStyle, RectWidthStyle};
+use freya_engine::prelude::{Paragraph as SkParagraph, RectHeightStyle, RectWidthStyle};
+
+use notein_ui_kit::TapExt;
+use notein_ui_kit::theme::palette;
 
 use crate::state::{BibleBookmark, u32_to_rgba};
 
 use super::chapter::{Block, ChapterPlan, ParagraphSpan};
-use super::theme;
 use super::typography;
 
 /// Context the host installs so verse-level widgets can scroll the
 /// chapter viewport into focus when a chip-tap or TSK jump sets
-/// `flash_verse`. `viewport_top` is published by `chapter_view`'s
-/// outer rect `on_sized` and read inside `VerseMarker::on_sized` so
-/// scroll targets translate verse window-coords into content-coords
-/// without pulling in a shared layout crate.
+/// `flash_verse`.
+///
+/// `viewport_top` is published by `chapter_view`'s outer rect `on_sized` and
+/// read inside `VerseMarker::on_sized` so scroll targets translate verse
+/// window-coords into content-coords without pulling in a shared layout crate.
 ///
 /// Vertical margin applied so the target verse sits a comfortable
 /// distance below the chapter header + translation strip.
@@ -73,9 +79,10 @@ impl std::fmt::Debug for VerseScrollCtx {
 
 /// UI-side projection of a publisher footnote. `caller` is the display
 /// letter (publisher-assigned — "a", "b", "c" or "+" for autogen).
+///
 /// `text` is the footnote body shown in the hover popup. `target`, when
 /// present, lets the click handler navigate to the referenced verse.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FootnoteView {
     pub src_verse: u16,
     pub caller: String,
@@ -84,6 +91,7 @@ pub struct FootnoteView {
 }
 
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("bible::footnotes_by_verse"))]
 pub fn footnotes_by_verse(notes: &[FootnoteView]) -> HashMap<u16, Vec<FootnoteView>> {
     let mut out: HashMap<u16, Vec<FootnoteView>> = HashMap::new();
     for n in notes {
@@ -92,18 +100,13 @@ pub fn footnotes_by_verse(notes: &[FootnoteView]) -> HashMap<u16, Vec<FootnoteVi
     out
 }
 
-/// UI-side projection of a cross-reference. The target text is
-/// pre-fetched (`db.verse_text`) so the hover popup renders without
-/// a DB round-trip inside the layout pass.
-#[derive(Clone, Debug, PartialEq)]
+/// UI-side projection of a cross-reference.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CrossRefView {
     pub src_verse: u16,
-    /// Short label shown as the inline chip (e.g. `"2 Co 4:6"`).
+    /// Short label of the target (e.g. `"2 Co 4:6"`).
     pub label: String,
-    /// Target verse text — shown inside the hover popup.
-    pub tooltip: String,
-    /// Target coordinates — the chip's `on_press` hands these back so
-    /// the viewer navigates to the referenced verse.
+    /// Target coordinates, where pressing the reference goes.
     pub tgt_book: String,
     pub tgt_chap: u16,
     pub tgt_verse: u16,
@@ -112,6 +115,7 @@ pub struct CrossRefView {
 /// Build a map keyed by source-verse so the paragraph renderer can look
 /// up chips in O(1) per verse without walking the full list.
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("bible::cross_refs_by_verse"))]
 pub fn cross_refs_by_verse(refs: &[CrossRefView]) -> HashMap<u16, Vec<CrossRefView>> {
     let mut out: HashMap<u16, Vec<CrossRefView>> = HashMap::new();
     for r in refs {
@@ -123,7 +127,7 @@ pub fn cross_refs_by_verse(refs: &[CrossRefView]) -> HashMap<u16, Vec<CrossRefVi
 /// Styling info derived from the active highlights, keyed by verse
 /// number inside a single chapter. Precomputed so the paragraph builder
 /// does one hash lookup per span instead of a linear scan.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct VerseStyle {
     /// Non-default text colour when the verse is highlighted. The
     /// absence of a stored colour on the bookmark falls back to the
@@ -138,13 +142,14 @@ pub struct VerseStyle {
 /// passes `state.highlights_on(book, chapter)` for the chapter being
 /// rendered.
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("bible::style_map"))]
 pub fn style_map(highlights: &[&BibleBookmark]) -> HashMap<u16, VerseStyle> {
     let mut out: HashMap<u16, VerseStyle> = HashMap::new();
     for h in highlights {
         let tint = h
             .color
             .map(|c| rgba_to_freya(u32_to_rgba(c)))
-            .or_else(|| Some(parse_rgb(theme::HIGHLIGHT_YELLOW)));
+            .or_else(|| Some(palette().highlighters[0]));
         let has_note = !h.note.is_empty();
         for v in h.start_verse..=h.end_verse {
             let entry = out.entry(v).or_default();
@@ -157,7 +162,7 @@ pub fn style_map(highlights: &[&BibleBookmark]) -> HashMap<u16, VerseStyle> {
     out
 }
 
-fn rgba_to_freya(rgba: [u8; 4]) -> Color {
+const fn rgba_to_freya(rgba: [u8; 4]) -> Color {
     Color::from_rgb(rgba[0], rgba[1], rgba[2])
 }
 
@@ -172,21 +177,51 @@ fn rgba_to_freya(rgba: [u8; 4]) -> Color {
 /// `jump_to` the referenced verse without re-decoding anchor bytes.
 pub type OnJump = EventHandler<(String, u16, u16)>;
 
-/// Chapter-scoped drag-selection cursor. Provided via `use_provide_context`
-/// at the `chapter_view` root so every `VerseMarker` can co-operate on
-/// a single multi-marker drag without the parent threading state as a
-/// prop. `start` sticks on pointer-down over a marker; `end` tracks the
-/// last marker the pointer entered while held. Global pointer-up reads
-/// both and emits a `HighlightTarget::Range` when they differ.
+/// Callback fired by a verse's cross-reference icon, with the verse.
+pub type OnRefs = EventHandler<u16>;
+
+/// Hold time before a still press on a verse selects it.
+const LONG_PRESS: Duration = Duration::from_millis(450);
+/// Most time between the two taps of a double tap.
+const DOUBLE_TAP: Duration = Duration::from_millis(350);
+/// Travel, in logical pixels, past which a hold is a scroll instead.
+const SLOP_PX: f32 = 8.0;
+
+/// Chapter-scoped gesture state, shared by every paragraph of the
+/// chapter through context.
+///
+/// - A mouse drag across verses: `start` sticks on pointer-down, `end`
+///   follows the verse under the pointer, and the lift opens the menu
+///   for the range. A finger drag scrolls instead, so it never grows
+///   the range.
+/// - A double tap on a verse opens the menu for it.
+/// - A long press selects the verse at once (it shows underlined) and
+///   opens the menu on the lift, so the lifting finger cannot land on
+///   the menu that just appeared under it.
 #[derive(Clone, Copy)]
 struct DragSelect {
     start: State<Option<u16>>,
     end: State<Option<u16>>,
-    /// Set true on the first marker's `pointer_down` and cleared on
-    /// global `pointer_up`. Markers mid-paragraph only extend `end`
-    /// while this is true so a stray `pointer_enter` (hover without
-    /// press) never grows the selection.
+    /// Set on a paragraph's pointer-down and cleared on the global
+    /// pointer-up. Paragraphs only extend `end` while it is set, so
+    /// hovering without a press never grows the range.
     pressing: State<bool>,
+    /// The previous tap, to tell a double tap.
+    last_tap: State<Option<(Instant, u16)>>,
+    /// Bumped by every press; a long press only fires while it holds.
+    hold: State<u64>,
+    /// The verse a long press selected, until the finger lifts.
+    held: State<Option<u16>>,
+    /// Window point the press started at, to tell a tap from a scroll.
+    pressed_at: State<(f32, f32)>,
+}
+
+/// What a lifted press was.
+enum Lifted {
+    /// A long press or a drag across verses: the menu opens on them.
+    Menu(HighlightKind),
+    /// A short press that stayed on one verse.
+    Tap(u16),
 }
 
 impl DragSelect {
@@ -205,10 +240,119 @@ impl DragSelect {
             start: State::create_in_scope(None, ScopeId::ROOT),
             end: State::create_in_scope(None, ScopeId::ROOT),
             pressing: State::create_in_scope(false, ScopeId::ROOT),
+            last_tap: State::create_in_scope(None, ScopeId::ROOT),
+            hold: State::create_in_scope(0, ScopeId::ROOT),
+            held: State::create_in_scope(None, ScopeId::ROOT),
+            pressed_at: State::create_in_scope((0.0, 0.0), ScopeId::ROOT),
         };
         provide_context(fresh);
         fresh
     }
+
+    /// A press on `verse` at window point `at`; returns whether it
+    /// completes a double tap.
+    fn begin(mut self, verse: u16, at: (f32, f32)) -> bool {
+        self.pressed_at.set(at);
+        self.start.set(Some(verse));
+        self.end.set(Some(verse));
+        self.pressing.set(true);
+        let now = Instant::now();
+        let double = self
+            .last_tap
+            .peek()
+            .is_some_and(|(at, v)| v == verse && now.duration_since(at) <= DOUBLE_TAP);
+        self.last_tap.set((!double).then_some((now, verse)));
+        double
+    }
+
+    /// Start the long-press timer of the press just begun on the
+    /// paragraph `placed` tracks.
+    fn arm_hold(mut self, placed: Rc<Cell<Area>>) {
+        let token = self.hold.peek().wrapping_add(1);
+        self.hold.set(token);
+        let origin = placed.get().origin;
+        spawn(async move {
+            async_io::Timer::after(LONG_PRESS).await;
+            // A finger that scrolled moved the paragraph, even when the
+            // scroll view swallowed its moves.
+            let now = placed.get().origin;
+            if (now.x - origin.x).hypot(now.y - origin.y) >= SLOP_PX {
+                self.cancel_hold();
+            } else {
+                self.hold_due(token);
+            }
+        });
+    }
+
+    /// The long press armed with `token` came due: select its verse when
+    /// the press is still the same, still and on one verse.
+    fn hold_due(mut self, token: u64) {
+        #[cfg(feature = "sismo")]
+        sismo::instant!("bible::verse_hold_due");
+        let still_pressing = *self.pressing.peek() && *self.hold.peek() == token;
+        let start = *self.start.peek();
+        if let Some(verse) = start.filter(|_| still_pressing && *self.end.peek() == start) {
+            self.held.set(Some(verse));
+            self.last_tap.set(None);
+        }
+    }
+
+    /// Forget the press: a scroll or a drag took it over.
+    fn cancel_hold(mut self) {
+        let token = self.hold.peek().wrapping_add(1);
+        self.hold.set(token);
+    }
+
+    /// The finger or button lifted at window point `at`: what the press
+    /// was. A press that travelled past the slop scrolled and is nothing.
+    /// Every paragraph hears the lift; the first one ends the press for
+    /// all.
+    fn lift(self, at: (f32, f32)) -> Option<Lifted> {
+        if !*self.pressing.peek() {
+            return None;
+        }
+        let (x, y) = *self.pressed_at.peek();
+        let still = (at.0 - x).hypot(at.1 - y) < SLOP_PX;
+        match self.finish() {
+            (_, _, Some(verse)) => Some(Lifted::Menu(HighlightKind::Verse(verse))),
+            (Some(a), Some(b), None) if a != b => {
+                Some(Lifted::Menu(HighlightKind::Range(a.min(b), a.max(b))))
+            }
+            (Some(a), _, None) if still => Some(Lifted::Tap(a)),
+            _ => None,
+        }
+    }
+
+    /// End the press; returns the verses it spanned and the verse a long
+    /// press selected.
+    fn finish(mut self) -> (Option<u16>, Option<u16>, Option<u16>) {
+        let ends = (*self.start.peek(), *self.end.peek(), *self.held.peek());
+        self.start.set(None);
+        self.end.set(None);
+        self.pressing.set(false);
+        self.cancel_hold();
+        if self.held.peek().is_some() {
+            self.held.set(None);
+        }
+        ends
+    }
+}
+
+/// Re-render a few times right after mount, so highlight rects computed
+/// from the laid-out paragraph appear even when `on_sized` fired before
+/// the handler was attached. At most three renders in the first 150 ms.
+fn use_settle_ticks() {
+    let tick: State<u32> = use_state(|| 0);
+    use_hook(move || {
+        let mut tick = tick;
+        spawn(async move {
+            for i in 1u32..=3 {
+                async_io::Timer::after(std::time::Duration::from_millis(40)).await;
+                tick.set(i);
+            }
+        });
+    });
+    let _ = *tick.read();
 }
 
 /// Which verse(s) a bookmark gesture targets. `Verse` fires for a
@@ -220,10 +364,22 @@ pub enum HighlightKind {
     Range(u16, u16),
 }
 
-/// Full gesture payload. `anchor` is the global (window-relative)
-/// pointer location where the gesture started, so the host can float
-/// the colour picker next to the touch point instead of pinning it to
-/// a fixed corner.
+impl HighlightKind {
+    /// First and last verse.
+    #[must_use]
+    pub const fn span(self) -> (u16, u16) {
+        match self {
+            Self::Verse(v) => (v, v),
+            Self::Range(a, b) => (a, b),
+        }
+    }
+}
+
+/// Full gesture payload.
+///
+/// `anchor` is the global (window-relative) pointer location where the gesture
+/// started, so the host can float the colour picker next to the touch point
+/// instead of pinning it to a fixed corner.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HighlightTarget {
     pub kind: HighlightKind,
@@ -234,35 +390,81 @@ pub struct HighlightTarget {
 /// Callback the reader fires when a bookmark gesture completes.
 pub type OnHighlight = EventHandler<HighlightTarget>;
 
-/// Live-preview highlight shown while the colour picker is open. The
-/// shell forwards whatever colour the user is currently hovering /
-/// dragging on the wheel; the reader overrides those verses' tint so
-/// the paragraph updates in real time instead of only on commit.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// Live-preview highlight shown while the colour picker is open.
+///
+/// The shell forwards whatever colour the user is currently hovering / dragging
+/// on the wheel; the reader overrides those verses' tint so the paragraph
+/// updates in real time instead of only on commit.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HighlightPreview {
-    pub lo: u16,
-    pub hi: u16,
+    pub verses: Verses,
     pub color: Color,
 }
 
+/// Verses of the chapter a selection holds, in order.
+pub type Verses = Rc<BTreeSet<u16>>;
+
+/// Someone else reading this chapter, on the verses they selected.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Other {
+    pub verses: Verses,
+    pub color: Color,
+    pub name: String,
+}
+
+/// What every paragraph of a chapter shares: references, footnotes, the
+/// gesture callbacks and the type settings.
+#[derive(Clone, PartialEq)]
+pub struct Reading {
+    pub cross_refs: Rc<HashMap<u16, Vec<CrossRefView>>>,
+    pub footnotes: Rc<HashMap<u16, Vec<FootnoteView>>>,
+    pub on_jump: OnJump,
+    /// Show the cross-references of a verse.
+    pub on_refs: OnRefs,
+    /// The verse whose cross-references are showing.
+    pub refs_open: Option<u16>,
+    pub on_highlight: OnHighlight,
+    /// A tap on a verse while a selection is open: it joins or leaves it.
+    pub on_tap: EventHandler<u16>,
+    /// Colour being tried on the selection while the note is open.
+    pub preview: Option<HighlightPreview>,
+    /// The verses the selection holds, underlined; empty without one.
+    pub selected: Verses,
+    /// Other people's selections in this chapter.
+    pub others: Rc<Vec<Other>>,
+    pub font_size: f32,
+    pub line_height: f32,
+}
+
+impl std::fmt::Debug for Reading {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Reading")
+            .field("cross_refs", &self.cross_refs.len())
+            .field("footnotes", &self.footnotes.len())
+            .field("preview", &self.preview)
+            .field("selected", &self.selected)
+            .field("font_size", &self.font_size)
+            .field("line_height", &self.line_height)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The whole chapter: title, sections and paragraphs, scrolled through
+/// `scroll_ctx` when the host drives it. `flash_verse` is washed over any
+/// highlight so a jump target stands out.
+#[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("bible::chapter_view"))]
 pub fn chapter_view(
     plan: &ChapterPlan,
     highlights: &[&BibleBookmark],
-    cross_refs: &HashMap<u16, Vec<CrossRefView>>,
-    footnotes: &HashMap<u16, Vec<FootnoteView>>,
-    on_jump: OnJump,
-    on_highlight: OnHighlight,
+    reading: &Reading,
     flash_verse: Option<u16>,
-    preview: Option<HighlightPreview>,
-    font_size: f32,
-    line_height: f32,
     scroll_ctx: Option<VerseScrollCtx>,
 ) -> impl IntoElement {
     // Install the chapter-scoped drag-select cursor so every verse
     // marker rendered under this view shares one `(start, end)` state
     // for the drag-highlight gesture.
     let _drag = DragSelect::use_context();
-    let drop_cap_size = font_size * 4.5;
     let mut styles = style_map(highlights);
     if let Some(v) = flash_verse {
         // Transient wash — overrides any user highlight on the flash
@@ -270,24 +472,23 @@ pub fn chapter_view(
         styles.insert(
             v,
             VerseStyle {
-                tint: Some(Color::from_rgb(255, 225, 110)),
-                has_note: styles.get(&v).map(|s| s.has_note).unwrap_or(false),
+                tint: Some(palette().highlighters[0]),
+                has_note: styles.get(&v).is_some_and(|s| s.has_note),
             },
         );
     }
-    if let Some(prev) = preview {
-        for v in prev.lo..=prev.hi {
+    if let Some(prev) = &reading.preview {
+        for &v in prev.verses.iter() {
             styles.insert(
                 v,
                 VerseStyle {
                     tint: Some(prev.color),
-                    has_note: styles.get(&v).map(|s| s.has_note).unwrap_or(false),
+                    has_note: styles.get(&v).is_some_and(|s| s.has_note),
                 },
             );
         }
     }
 
-    let _ = drop_cap_size;
     // Install the scroll context so inline VerseMarkers can snap the
     // chapter viewport onto a chip-tap / TSK flash target during
     // layout. Controller + flash signal travel together; the outer
@@ -297,14 +498,13 @@ pub fn chapter_view(
     if let Some(ctx) = scroll_ctx.as_ref() {
         provide_context(ctx.clone());
     }
-    let scroll = match scroll_ctx {
-        Some(ctx) => ScrollView::new_controlled(ctx.controller),
-        None => ScrollView::new(),
-    };
+    let scroll = scroll_ctx.map_or_else(ScrollView::new, |ctx| {
+        ScrollView::new_controlled(ctx.controller)
+    });
     rect()
         .width(Size::fill())
         .height(Size::fill())
-        .background(parse_rgb(theme::BG))
+        .background(palette().bg)
         .padding((0., 28., 12., 28.))
         .on_sized(move |e: Event<SizedEventData>| {
             if let Some(mut setter) = viewport_top_setter
@@ -313,25 +513,22 @@ pub fn chapter_view(
                 setter.set(e.area.min_y());
             }
         })
+        .font_family(typography::FAMILY)
         .child(
-            scroll.child(
+            scroll.child(notein_ui_kit::ScrollContent::new(
                 rect()
                     .width(Size::fill())
-                    .padding(16.)
-                    .spacing(14.)
-                    .child(book_title_header(plan))
-                    .child(all_blocks(
-                        plan,
-                        &styles,
-                        cross_refs,
-                        footnotes,
-                        on_jump,
-                        on_highlight,
-                        font_size,
-                        line_height,
-                        preview,
-                    )),
-            ),
+                    .cross_align(Alignment::Center)
+                    .child(
+                        rect()
+                            .width(Size::fill())
+                            .max_width(Size::px(typography::MEASURE_PX))
+                            .padding(16.)
+                            .spacing(14.)
+                            .child(book_title_header(plan))
+                            .child(all_blocks(plan, &styles, reading)),
+                    ),
+            )),
         )
 }
 
@@ -348,7 +545,7 @@ fn book_title_header(plan: &ChapterPlan) -> impl IntoElement {
                 label()
                     .font_family(typography::FAMILY)
                     .font_size(28.0)
-                    .color(parse_rgb(theme::TEXT_PRIMARY))
+                    .color(palette().t1)
                     .text(plan.book_name.to_uppercase()),
             )
             .into_element()
@@ -360,38 +557,34 @@ fn book_title_header(plan: &ChapterPlan) -> impl IntoElement {
 /// Walk every block in reading order. The paragraph that owns verse 1
 /// gets its "1" slot replaced by the big chapter number — the rest
 /// render as regular verse-number superscripts.
+#[cfg_attr(feature = "sismo", sismo::function("bible::verse_layout"))]
 fn all_blocks(
     plan: &ChapterPlan,
     styles: &HashMap<u16, VerseStyle>,
-    cross_refs: &HashMap<u16, Vec<CrossRefView>>,
-    footnotes: &HashMap<u16, Vec<FootnoteView>>,
-    on_jump: OnJump,
-    on_highlight: OnHighlight,
-    font_size: f32,
-    line_height: f32,
-    preview: Option<HighlightPreview>,
+    reading: &Reading,
 ) -> impl IntoElement {
     let mut root = rect().width(Size::fill()).spacing(14.);
+    #[cfg(feature = "sismo")]
+    sismo::counter!(
+        "bible.verses_rendered",
+        plan.blocks
+            .iter()
+            .map(|b| match b {
+                Block::Paragraph(spans) => spans.len(),
+                Block::Header(_) => 0,
+            })
+            .sum::<usize>()
+    );
     for block in &plan.blocks {
         match block {
             Block::Paragraph(spans) => {
                 let starts_chapter = spans.first().is_some_and(|s| s.verse == 1);
-                root = root.child(verse_paragraph(
-                    spans,
-                    styles,
-                    cross_refs,
-                    footnotes,
-                    on_jump.clone(),
-                    on_highlight.clone(),
-                    font_size,
-                    line_height,
-                    if starts_chapter {
-                        Some(plan.chapter)
-                    } else {
-                        None
-                    },
-                    preview,
-                ));
+                root = root.child(VerseParagraph {
+                    spans: spans.clone(),
+                    styles: styles.clone(),
+                    reading: reading.clone(),
+                    starts_chapter: starts_chapter.then_some(plan.chapter),
+                });
             }
             Block::Header(text) => {
                 root = root.child(section_header(text));
@@ -401,41 +594,27 @@ fn all_blocks(
     root
 }
 
-/// A single paragraph with inline superscript verse numbers.
-/// Highlighted verses get their text repainted in the stored tint and
-/// gain an inline note icon when the bookmark has a non-empty body.
-/// Cross-reference chips render as blue clickable widgets right after
-/// each verse that has at least one ref.
+/// A paragraph of verses with inline verse numbers, highlight tints,
+/// note icons, footnote letters and cross-reference buttons.
 ///
-/// `starts_chapter` carries the chapter number when this paragraph
-/// contains verse 1 — the "1" slot is then rendered as the chapter
-/// number at 2.5× body font (drop-cap style, inline).
-/// Paragraph wrapper that owns the bookmark gestures. Taps and drags
-/// hit the whole paragraph (not the tiny verse-number marker), map
-/// element-local coordinates to a UTF-16 offset via `ParagraphHolder::
-/// cursor_index_at_point`, and resolve the offset to a verse number
-/// via the per-verse span ranges computed at build time. Visual-only
-/// inline children (`VerseMarker`, `FootnoteLetter`, `RefHoverButton`)
-/// still render as before; they no longer carry gesture handlers.
+/// It owns the highlight gestures: a tap or drag anywhere on the text is
+/// hit-tested to a UTF-16 offset and mapped to its verse, so the small
+/// inline markers carry no handlers. `starts_chapter` holds the chapter
+/// number when the paragraph contains verse 1, whose number is then drawn
+/// as a large inline chapter number.
 #[derive(Clone, PartialEq)]
 pub(super) struct VerseParagraph {
     pub(super) spans: Vec<ParagraphSpan>,
     pub(super) styles: HashMap<u16, VerseStyle>,
-    pub(super) cross_refs: HashMap<u16, Vec<CrossRefView>>,
-    pub(super) footnotes: HashMap<u16, Vec<FootnoteView>>,
-    pub(super) on_jump: OnJump,
-    pub(super) on_highlight: OnHighlight,
-    pub(super) font_size: f32,
-    pub(super) line_height: f32,
+    pub(super) reading: Reading,
     pub(super) starts_chapter: Option<u16>,
-    pub(super) preview: Option<HighlightPreview>,
 }
 
 impl std::fmt::Debug for VerseParagraph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VerseParagraph")
             .field("spans", &self.spans.len())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -465,71 +644,58 @@ fn offset_to_verse(ranges: &[VerseRange], offset: usize) -> Option<u16> {
 /// returns a stale offset and the handler fires for the wrong verse.
 /// Rebasing from `global_location` against the paragraph's own area
 /// closes the hole.
+///
+/// The laid-out paragraph measures in physical pixels, the pointer in
+/// logical ones: the point is scaled before the hit test, or on a dense
+/// screen it lands up and to the left, on an earlier verse.
+#[cfg_attr(feature = "sismo", sismo::function("bible::verse_hit_test"))]
 fn hit_offset(holder: &ParagraphHolder, global: CursorPoint, area: Area) -> Option<usize> {
     if area.width() <= 0.0 || area.height() <= 0.0 {
         return None;
     }
-    let inner = holder.0.borrow();
-    let data = inner.as_ref()?;
     let elem = CursorPoint::new(
         global.x - f64::from(area.min_x()),
         global.y - f64::from(area.min_y()),
     );
     let vis = holder.visible_location(elem);
-    Some(data.paragraph.cursor_index_at_point((vis.x, vis.y)))
+    let inner = holder.0.borrow();
+    let data = inner.as_ref()?;
+    let point = (vis.x * data.scale_factor, vis.y * data.scale_factor);
+    let caret = data.paragraph.cursor_index_at_point(point);
+    Some(character_at(&data.paragraph, caret, point))
 }
 
-impl Component for VerseParagraph {
-    fn render(&self) -> impl IntoElement {
-        let holder = use_hook(ParagraphHolder::default);
-        let drag = use_consume::<DragSelect>();
-        // Global pointer location captured on `pointer_down`. The
-        // host anchors its colour picker here so the popup opens next
-        // to the finger / cursor instead of pinned to a fixed corner.
-        let anchor: State<(f32, f32)> = use_state(|| (0.0, 0.0));
-        // Paragraph area captured via `on_sized`. Flips 0 → real_size
-        // after first layout; subscribing to it forces a re-render once
-        // the holder has been populated, so the second-pass bg-rect
-        // compute reads a laid-out paragraph.
-        let mut area: State<Area> = use_state(Area::default);
-        // Belt-and-suspenders tick that bumps a few times right after
-        // mount, so the bg-rect compute re-runs even if `on_sized`
-        // misses (first layout before the handler was attached, size
-        // unchanged across frames, etc.). Cheap: at most three extra
-        // renders in the first ~150ms.
-        let tick: State<u32> = use_state(|| 0);
-        use_hook({
-            let mut tick = tick;
-            move || {
-                spawn(async move {
-                    for i in 1u32..=3 {
-                        async_io::Timer::after(std::time::Duration::from_millis(40)).await;
-                        tick.set(i);
-                    }
-                });
-            }
+/// The character under `point`, given the caret `cursor_index_at_point`
+/// found there. Past the middle of a character the caret sits after it,
+/// which at a verse's last character is already the next verse.
+fn character_at(paragraph: &SkParagraph, caret: usize, (x, y): (f64, f64)) -> usize {
+    let Some(before) = caret.checked_sub(1) else {
+        return caret;
+    };
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "pixel coordinates fit an f32"
+    )]
+    let (x, y) = (x as f32, y as f32);
+    let under = paragraph
+        .get_rects_for_range(before..caret, RectHeightStyle::Max, RectWidthStyle::Tight)
+        .iter()
+        .any(|b| {
+            (b.rect.left..=b.rect.right).contains(&x) && (b.rect.top..=b.rect.bottom).contains(&y)
         });
-        let _ = *tick.read();
+    if under { before } else { caret }
+}
 
-        let on_jump = self.on_jump.clone();
-        let on_highlight = self.on_highlight.clone();
-        let font_size = self.font_size;
-        let line_height = self.line_height;
-
-        let mut p = paragraph()
-            .width(Size::fill())
-            .line_height(line_height)
-            .color(parse_rgb(theme::TEXT_PRIMARY))
-            .font_family(typography::FAMILY)
-            .font_size(font_size)
-            .holder(holder.clone())
-            .on_sized(move |e: Event<SizedEventData>| {
-                let new_area = e.data().area;
-                if *area.peek() != new_area {
-                    area.set(new_area);
-                }
-            });
-
+impl VerseParagraph {
+    /// Add the verses to `p`; returns it with each verse's UTF-16 range
+    /// and the ranges to tint.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::verse_compose"))]
+    fn compose(
+        &self,
+        mut p: Paragraph,
+    ) -> (Paragraph, Vec<VerseRange>, Vec<(usize, usize, Color)>) {
+        let on_jump = &self.reading.on_jump;
+        let font_size = self.reading.font_size;
         // UTF-16 offsets drive both pointer hit-testing and the
         // per-verse bg rects we paint behind the text. Each `.child()`
         // adds one placeholder unit; each span contributes
@@ -546,17 +712,17 @@ impl Component for VerseParagraph {
         for span in &self.spans {
             let style = self.styles.get(&span.verse);
             let preview_color = self
+                .reading
                 .preview
                 .as_ref()
-                .filter(|p| span.verse >= p.lo && span.verse <= p.hi)
+                .filter(|p| p.verses.contains(&span.verse))
                 .map(|p| p.color);
 
             p = p.child(VerseMarker {
                 verse: span.verse,
-                display: if span.verse == 1 && self.starts_chapter.is_some() {
-                    MarkerDisplay::Chapter(self.starts_chapter.unwrap())
-                } else {
-                    MarkerDisplay::Verse
+                display: match self.starts_chapter {
+                    Some(chapter) if span.verse == 1 => MarkerDisplay::Chapter(chapter),
+                    _ => MarkerDisplay::Verse,
                 },
                 font_size,
             });
@@ -578,11 +744,11 @@ impl Component for VerseParagraph {
                 highlight_items.push((start, end, c));
             }
 
-            if style.map(|s| s.has_note).unwrap_or(false) {
+            if style.is_some_and(|s| s.has_note) {
                 p = p.child(note_icon(font_size));
                 utf16_offset += 1;
             }
-            if let Some(notes) = self.footnotes.get(&span.verse) {
+            if let Some(notes) = self.reading.footnotes.get(&span.verse) {
                 for (idx, note) in notes.iter().enumerate() {
                     p = p.child(FootnoteLetter {
                         letter: display_letter(&note.caller, idx),
@@ -594,65 +760,137 @@ impl Component for VerseParagraph {
                     utf16_offset += 1;
                 }
             }
-            if let Some(refs) = self.cross_refs.get(&span.verse) {
-                p = p.child(RefHoverButton {
-                    refs: refs.clone(),
-                    jump: on_jump.clone(),
+            if self.reading.cross_refs.contains_key(&span.verse) {
+                p = p.child(RefButton {
+                    verse: span.verse,
+                    open: self.reading.refs_open == Some(span.verse),
+                    on_press: self.reading.on_refs.clone(),
                     font_size,
                 });
                 utf16_offset += 1;
             }
         }
+        (p, verse_ranges, highlight_items)
+    }
 
-        // Subscribe to the area signal so the second pass runs after
-        // the paragraph publishes its laid-out form into the holder.
-        let paragraph_area = *area.read();
-        let bg_rects = build_bg_rects(&holder, &highlight_items, paragraph_area);
+    /// Text ranges of other people's selections, with their color; the
+    /// first range of each also carries their name.
+    fn others(&self, ranges: &[VerseRange]) -> Vec<(usize, usize, Color, Option<String>)> {
+        let mut out = Vec::new();
+        for other in self.reading.others.iter() {
+            let mut named = false;
+            for (start, end, verse) in ranges {
+                if other.verses.contains(verse) {
+                    let name = (!named).then(|| other.name.clone());
+                    named = true;
+                    out.push((*start, *end, other.color, name));
+                }
+            }
+        }
+        out
+    }
+
+    /// Text ranges of the verses the selection works on: the one a long
+    /// press holds and the ones the selection holds.
+    fn underlined(&self, ranges: &[VerseRange], held: Option<u16>) -> Vec<(usize, usize)> {
+        let selected = &self.reading.selected;
+        ranges
+            .iter()
+            .filter(|(_, _, v)| held == Some(*v) || selected.contains(v))
+            .map(|(start, end, _)| (*start, *end))
+            .collect()
+    }
+}
+
+impl Component for VerseParagraph {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one handler per pointer event of the gestures"
+    )]
+    #[cfg_attr(feature = "sismo", sismo::function("bible::verse_paragraph"))]
+    fn render(&self) -> impl IntoElement {
+        let holder = use_hook(ParagraphHolder::default);
+        let drag = use_consume::<DragSelect>();
+        // Global pointer location captured on `pointer_down`. The
+        // host anchors its colour picker here so the popup opens next
+        // to the finger / cursor instead of pinned to a fixed corner.
+        let anchor: State<(f32, f32)> = use_state(|| (0.0, 0.0));
+        // Where the paragraph sits on screen, for hit testing. A plain
+        // cell: it moves every scrolled frame, which must not render
+        // the paragraph again.
+        let placed = use_hook(|| Rc::new(Cell::new(Area::default())));
+        // Its size only flips 0 → real size after the first layout;
+        // reading it renders once more, so the second pass computes the
+        // bg rects from a laid-out paragraph.
+        let mut laid_out: State<(f32, f32)> = use_state(|| (0.0, 0.0));
+        use_settle_ticks();
+
+        let on_highlight = self.reading.on_highlight.clone();
+        let on_tap = self.reading.on_tap.clone();
+        // While a selection is open a tap joins or leaves it, so a quick
+        // second tap is not a double tap.
+        let selecting = !self.reading.selected.is_empty();
+        let p = paragraph()
+            .width(Size::fill())
+            .line_height(self.reading.line_height)
+            .color(palette().t1)
+            .font_family(typography::FAMILY)
+            .font_size(self.reading.font_size)
+            .holder(holder.clone())
+            .on_sized({
+                let placed = Rc::clone(&placed);
+                move |e: Event<SizedEventData>| {
+                    let area = e.data().area;
+                    placed.set(area);
+                    laid_out.set_if_modified((area.width(), area.height()));
+                }
+            });
+        let (p, verse_ranges, highlight_items) = self.compose(p);
+
+        let _ = *laid_out.read();
+        let underlined = self.underlined(&verse_ranges, *drag.held.read());
+        let others = self.others(&verse_ranges);
+        let bg_rects = build_bg_rects(&holder, &highlight_items, &underlined, &others);
 
         // Gesture wiring: paragraph-level so a tap anywhere in verse
         // text — not just the tiny superscript marker — fires.
-        let holder_for_down = holder.clone();
-        let ranges_for_down = verse_ranges.clone();
-        let holder_for_move = holder.clone();
-        let ranges_for_move = verse_ranges.clone();
+        let verse_at = {
+            let (holder, placed) = (holder, Rc::clone(&placed));
+            Rc::new(move |at: CursorPoint| {
+                hit_offset(&holder, at, placed.get())
+                    .and_then(|offset| offset_to_verse(&verse_ranges, offset))
+            })
+        };
+        let verse_at_move = Rc::clone(&verse_at);
 
         let p = p
             .on_pointer_down({
                 let on_highlight = on_highlight.clone();
-                let mut drag = drag;
                 let mut anchor = anchor;
                 move |e: Event<PointerEventData>| {
-                    let g = e.global_location();
-                    let paragraph_area = *area.peek();
-                    let Some(offset) = hit_offset(&holder_for_down, g, paragraph_area) else {
+                    if !e.data().is_primary() {
                         return;
-                    };
-                    let Some(verse) = offset_to_verse(&ranges_for_down, offset) else {
+                    }
+                    let g = e.global_location();
+                    let Some(verse) = verse_at(g) else {
                         return;
                     };
 
+                    #[allow(clippy::cast_possible_truncation)] // window coordinates
                     let anchor_pt = (g.x as f32, g.y as f32);
                     anchor.set(anchor_pt);
 
-                    drag.start.set(Some(verse));
-                    drag.end.set(Some(verse));
-                    drag.pressing.set(true);
-
-                    // Double-tap on a verse is the only way to open the
-                    // highlight picker now — the long-press path was
-                    // dropped because sustained touch is uncomfortable
-                    // on mobile. Drag between verses still produces a
-                    // `Range` highlight on pointer-up.
-                    if EventsCombos::<()>::pressed(g).is_double() {
+                    if drag.begin(verse, anchor_pt) && !selecting {
                         on_highlight.call(HighlightTarget {
                             kind: HighlightKind::Verse(verse),
                             anchor_x: anchor_pt.0,
                             anchor_y: anchor_pt.1,
                         });
-                        drag.start.set(None);
-                        drag.end.set(None);
-                        drag.pressing.set(false);
+                        drag.finish();
+                        return;
                     }
+
+                    drag.arm_hold(Rc::clone(&placed));
                 }
             })
             .on_pointer_move({
@@ -661,43 +899,35 @@ impl Component for VerseParagraph {
                     if !*drag.pressing.peek() {
                         return;
                     }
-                    let paragraph_area = *area.peek();
-                    let Some(offset) =
-                        hit_offset(&holder_for_move, e.global_location(), paragraph_area)
-                    else {
+                    // A finger dragging over the text scrolls it.
+                    if !matches!(e.data(), PointerEventData::Mouse(_)) {
+                        drag.cancel_hold();
+                        return;
+                    }
+                    let Some(verse) = verse_at_move(e.global_location()) else {
                         return;
                     };
-                    let Some(verse) = offset_to_verse(&ranges_for_move, offset) else {
-                        return;
-                    };
-                    let current = *drag.end.peek();
-                    if current != Some(verse) {
+                    if *drag.end.peek() != Some(verse) {
                         drag.end.set(Some(verse));
+                        drag.cancel_hold();
                     }
                 }
             })
             .on_global_pointer_up({
-                let on_highlight = on_highlight.clone();
-                let mut drag = drag;
-                let anchor = anchor;
-                move |_: Event<PointerEventData>| {
-                    let start = *drag.start.peek();
-                    let end = *drag.end.peek();
-                    drag.start.set(None);
-                    drag.end.set(None);
-                    drag.pressing.set(false);
-                    EventsCombos::<()>::released();
-
-                    if let (Some(a), Some(b)) = (start, end)
-                        && a != b
-                    {
-                        let (lo, hi) = if a < b { (a, b) } else { (b, a) };
-                        let (ax, ay) = *anchor.peek();
-                        on_highlight.call(HighlightTarget {
-                            kind: HighlightKind::Range(lo, hi),
-                            anchor_x: ax,
-                            anchor_y: ay,
-                        });
+                move |e: Event<PointerEventData>| {
+                    let g = e.global_location();
+                    #[allow(clippy::cast_possible_truncation)] // window coordinates
+                    match drag.lift((g.x as f32, g.y as f32)) {
+                        Some(Lifted::Menu(kind)) => {
+                            let (ax, ay) = *anchor.peek();
+                            on_highlight.call(HighlightTarget {
+                                kind,
+                                anchor_x: ax,
+                                anchor_y: ay,
+                            });
+                        }
+                        Some(Lifted::Tap(verse)) if selecting => on_tap.call(verse),
+                        _ => {}
                     }
                 }
             });
@@ -710,21 +940,25 @@ impl Component for VerseParagraph {
     }
 }
 
-/// Build the per-verse background-rect overlay. Reads the laid-out
-/// paragraph from `holder` and emits one absolute-positioned coloured
-/// rect per text box the paragraph returned for each highlight range.
-/// Multi-line verses produce one box per visual line, so the paint
-/// hugs the line heights naturally.
+/// Dot of the selection underline and the gap after it, in logical px.
+const UNDERLINE_DOT: f32 = 2.5;
+const UNDERLINE_GAP: f32 = 2.5;
+
+/// Build the per-verse overlay behind the text: one coloured rect per
+/// text box of each highlight range, and a dotted underline under each
+/// text box of the `underlined` ranges, the verses the selection menu
+/// works on. Multi-line verses produce one box per visual line, so the
+/// paint hugs the lines naturally.
 ///
-/// Before the first layout publishes into the holder (`area` still at
-/// its default), returns an empty rect. The `on_sized` callback on the
-/// paragraph flips `area` after layout, which re-runs render and gives
-/// this function a populated holder on the second pass.
+/// Before the first layout publishes into the holder it returns an
+/// empty rect; the paragraph's `on_sized` renders again once laid out.
+#[cfg_attr(feature = "sismo", sismo::function("bible::highlight_paint"))]
 fn build_bg_rects(
     holder: &ParagraphHolder,
     items: &[(usize, usize, Color)],
-    paragraph_area: Area,
-) -> impl IntoElement {
+    underlined: &[(usize, usize)],
+    others: &[(usize, usize, Color, Option<String>)],
+) -> impl IntoElement + use<> {
     // `Layer::Relative(-1)` pushes every bg rect one step behind the
     // paragraph sibling in the paint order. Hit-testing then prefers
     // the paragraph on top, so the gestures keep firing even over a
@@ -735,34 +969,35 @@ fn build_bg_rects(
         .width(Size::fill())
         .height(Size::fill());
     // Skip empty items so unhighlighted paragraphs do not allocate.
-    // Keep the area read for its subscription side-effect so a layout
-    // change schedules a re-render even when the holder data hasn't.
-    let _ = paragraph_area;
-    if items.is_empty() {
+    if items.is_empty() && underlined.is_empty() && others.is_empty() {
         return container;
     }
     let inner = holder.0.borrow();
     let Some(data) = inner.as_ref() else {
         return container;
     };
-    let scale = data.scale_factor.max(1e-3);
-    for (start, end, color) in items {
-        if start == end {
-            continue;
-        }
-        let boxes = data.paragraph.get_rects_for_range(
-            *start..*end,
-            RectHeightStyle::Tight,
-            RectWidthStyle::Tight,
-        );
-        for tb in boxes {
-            let left = (tb.rect.left as f64 / scale) as f32;
-            let top = (tb.rect.top as f64 / scale) as f32;
-            let width = ((tb.rect.right - tb.rect.left) as f64 / scale) as f32;
-            let height = ((tb.rect.bottom - tb.rect.top) as f64 / scale) as f32;
-            if width <= 0.0 || height <= 0.0 {
-                continue;
-            }
+    #[allow(clippy::cast_possible_truncation)] // a display scale factor
+    let scale = data.scale_factor.max(1e-3) as f32;
+    // Text boxes of `start..end`, in logical px.
+    let boxes = |start: usize, end: usize| {
+        data.paragraph
+            .get_rects_for_range(start..end, RectHeightStyle::Tight, RectWidthStyle::Tight)
+            .into_iter()
+            .map(|tb| {
+                Area::new(
+                    (tb.rect.left / scale, tb.rect.top / scale).into(),
+                    (
+                        (tb.rect.right - tb.rect.left) / scale,
+                        (tb.rect.bottom - tb.rect.top) / scale,
+                    )
+                        .into(),
+                )
+            })
+            .filter(|b| b.width() > 0.0 && b.height() > 0.0)
+            .collect::<Vec<_>>()
+    };
+    for (start, end, color) in items.iter().filter(|(s, e, _)| s != e) {
+        for b in boxes(*start, *end) {
             container = container.child(
                 rect()
                     // Mirror the parent's negative relative so each
@@ -773,42 +1008,65 @@ fn build_bg_rects(
                     // ends up on top of the text + swallowing pointer
                     // events.
                     .layer(Layer::Relative(-1))
-                    .position(Position::new_absolute().top(top).left(left))
-                    .width(Size::px(width))
-                    .height(Size::px(height))
+                    .position(Position::new_absolute().top(b.min_y()).left(b.min_x()))
+                    .width(Size::px(b.width()))
+                    .height(Size::px(b.height()))
                     .background(*color),
             );
         }
     }
-    container
-}
-
-/// Legacy entry point. Preserved so `all_blocks` doesn't need to care
-/// about construction details; just forwards to the component.
-fn verse_paragraph(
-    spans: &[ParagraphSpan],
-    styles: &HashMap<u16, VerseStyle>,
-    cross_refs: &HashMap<u16, Vec<CrossRefView>>,
-    footnotes: &HashMap<u16, Vec<FootnoteView>>,
-    on_jump: OnJump,
-    on_highlight: OnHighlight,
-    font_size: f32,
-    line_height: f32,
-    starts_chapter: Option<u16>,
-    preview: Option<HighlightPreview>,
-) -> impl IntoElement {
-    VerseParagraph {
-        spans: spans.to_vec(),
-        styles: styles.clone(),
-        cross_refs: cross_refs.clone(),
-        footnotes: footnotes.clone(),
-        on_jump,
-        on_highlight,
-        font_size,
-        line_height,
-        starts_chapter,
-        preview,
+    for (start, end, color, name) in others.iter().filter(|(s, e, _, _)| s != e) {
+        for (index, b) in boxes(*start, *end).into_iter().enumerate() {
+            container = container.child(
+                rect()
+                    .layer(Layer::Relative(-1))
+                    .position(
+                        Position::new_absolute()
+                            .top(b.max_y() - 1.0)
+                            .left(b.min_x()),
+                    )
+                    .width(Size::px(b.width()))
+                    .height(Size::px(2.5))
+                    .corner_radius(1.25)
+                    .background(*color),
+            );
+            if let Some(name) = name.as_ref().filter(|_| index == 0) {
+                container = container.child(name_tag(name, *color, b.min_x(), b.min_y()));
+            }
+        }
     }
+    let ink = palette().accent;
+    for (start, end) in underlined.iter().filter(|(s, e)| s != e) {
+        for b in boxes(*start, *end) {
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a line holds a few hundred dots at most"
+            )]
+            let dots = ((b.width() + UNDERLINE_GAP) / (UNDERLINE_DOT + UNDERLINE_GAP)) as usize;
+            container = container.child(
+                rect()
+                    .layer(Layer::Relative(-1))
+                    .position(
+                        Position::new_absolute()
+                            .top(b.max_y() - UNDERLINE_DOT / 2.0)
+                            .left(b.min_x()),
+                    )
+                    .horizontal()
+                    .spacing(UNDERLINE_GAP)
+                    .children((0..dots).map(|i| {
+                        rect()
+                            .key(i)
+                            .width(Size::px(UNDERLINE_DOT))
+                            .height(Size::px(UNDERLINE_DOT))
+                            .corner_radius(UNDERLINE_DOT / 2.0)
+                            .background(ink)
+                            .into_element()
+                    })),
+            );
+        }
+    }
+    container
 }
 
 /// What the clickable verse marker should display — the superscript
@@ -834,22 +1092,23 @@ impl std::fmt::Debug for VerseMarker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VerseMarker")
             .field("verse", &self.verse)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
 impl Component for VerseMarker {
+    #[cfg_attr(feature = "sismo", sismo::function("bible::verse_marker"))]
     fn render(&self) -> impl IntoElement {
         let verse = self.verse;
         let inner = match self.display {
             MarkerDisplay::Chapter(chap) => label()
                 .font_family(typography::FAMILY)
                 .font_size(self.font_size * 2.5)
-                .color(parse_rgb(theme::DROP_CAP))
+                .color(palette().line_strong)
                 .text(format!("{chap} ")),
             MarkerDisplay::Verse => label()
                 .font_size(self.font_size * 0.6)
-                .color(parse_rgb(theme::VERSE_NUM))
+                .color(palette().t3)
                 .text(format!(" {verse} ")),
         };
         // Scroll-into-view hook: when a chip-tap / TSK jump has
@@ -902,13 +1161,107 @@ impl Component for VerseMarker {
 fn display_letter(caller: &str, idx: usize) -> String {
     let trimmed = caller.trim();
     if trimmed.is_empty() || trimmed == "+" || trimmed == "*" {
-        if idx < 26 {
-            char::from(b'a' + idx as u8).to_string()
-        } else {
-            format!("{idx}")
-        }
+        u8::try_from(idx)
+            .ok()
+            .filter(|i| *i < 26)
+            .map_or_else(|| idx.to_string(), |i| char::from(b'a' + i).to_string())
     } else {
         trimmed.to_string()
+    }
+}
+
+/// Open state of an inline hover popup. Leaving waits a moment before
+/// closing, and entering cancels that, so the pointer can travel from
+/// the trigger to the popup.
+#[derive(Clone, Copy, PartialEq)]
+struct Hover {
+    open: State<bool>,
+    /// Bumped on every change; a pending close only fires while it
+    /// still holds the value it saw.
+    version: State<u64>,
+}
+
+impl std::fmt::Debug for Hover {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Hover")
+            .field("open", &*self.open.peek())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Hover {
+    fn use_hover() -> Self {
+        Self {
+            open: use_state(|| false),
+            version: use_state(|| 0),
+        }
+    }
+
+    fn bump(mut self) -> u64 {
+        let next = self.version.peek().wrapping_add(1);
+        self.version.set(next);
+        next
+    }
+
+    fn enter(mut self) {
+        self.open.set(true);
+        self.bump();
+    }
+
+    fn close(mut self) {
+        self.open.set(false);
+        self.bump();
+    }
+
+    /// Close after a short delay unless the pointer comes back.
+    fn leave(self) {
+        let token = self.bump();
+        let mut open = self.open;
+        let version = self.version;
+        spawn(async move {
+            async_io::Timer::after(std::time::Duration::from_millis(350)).await;
+            if *version.peek() == token {
+                open.set(false);
+            }
+        });
+    }
+}
+
+/// Place a `width` × `height` popup under the trigger at `anchor`,
+/// clamped inside the viewport; until both are measured it sits
+/// `fallback_top` below the trigger.
+fn place_popup(
+    popup: Rect,
+    anchor: Area,
+    viewport: Option<notein_ui_kit::ViewportArea>,
+    (width, height): (f32, f32),
+    fallback_top: f32,
+) -> Rect {
+    const MARGIN: f32 = 8.0;
+    let viewport_area = viewport.map_or(anchor, notein_ui_kit::ViewportArea::get);
+    let has_viewport = viewport_area.width() > 0.0 && viewport_area.height() > 0.0;
+    if has_viewport && anchor.width() > 0.0 && height > 0.0 {
+        let top = notein_ui_kit::clamp_popup_top(
+            viewport_area,
+            anchor,
+            anchor.max_y() + 4.0,
+            height,
+            MARGIN,
+        );
+        let left = notein_ui_kit::clamp_popup_left(viewport_area, anchor.min_x(), width, MARGIN);
+        popup.position(Position::new_global().top(top).left(left))
+    } else {
+        popup.position(Position::new_absolute().top(fallback_top).left(0.))
+    }
+}
+
+/// A state that follows an element's area.
+fn track_area(mut area: State<Area>) -> impl FnMut(Event<SizedEventData>) + 'static {
+    move |e: Event<SizedEventData>| {
+        let new_area = e.data().area;
+        if *area.peek() != new_area {
+            area.set(new_area);
+        }
     }
 }
 
@@ -928,527 +1281,114 @@ impl std::fmt::Debug for FootnoteLetter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FootnoteLetter")
             .field("letter", &self.letter)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
 impl Component for FootnoteLetter {
+    #[cfg_attr(feature = "sismo", sismo::function("bible::footnote_letter"))]
     fn render(&self) -> impl IntoElement {
-        let hover = use_state(|| false);
-        let version = use_state(|| 0u64);
-        let mut letter_area: State<Area> = use_state(Area::default);
-        let mut popup_area: State<Area> = use_state(Area::default);
+        const POPUP_WIDTH: f32 = 300.0;
+        let hover = Hover::use_hover();
+        let letter_area: State<Area> = use_state(Area::default);
+        let popup_area: State<Area> = use_state(Area::default);
         let viewport = try_consume_context::<notein_ui_kit::ViewportArea>();
-        let letter = self.letter.clone();
-        let text = self.text.clone();
         let target = self.target.clone();
         let on_jump = self.jump.clone();
         let marker_font = self.font_size * 0.55;
-        let blue = Color::from_rgb(80, 150, 230);
-        let popup_width = 300.0_f32;
-        let popup_margin = 8.0_f32;
 
-        let mut container = rect()
+        let container = rect()
             .padding((0., 1.))
             .margin((0., 1.))
-            .on_sized(move |e: Event<SizedEventData>| {
-                let new_area = e.data().area;
-                if *letter_area.peek() != new_area {
-                    letter_area.set(new_area);
-                }
-            })
-            .on_pointer_enter({
-                let mut hover = hover;
-                let mut version = version;
-                move |_| {
-                    hover.set(true);
-                    let next = version.peek().wrapping_add(1);
-                    version.set(next);
-                }
-            })
-            .on_pointer_leave({
-                let mut hover = hover;
-                let mut version = version;
-                move |_| close_soon(&mut hover, &mut version)
-            })
+            .on_sized(track_area(letter_area))
+            .on_pointer_enter(move |_| hover.enter())
+            .on_pointer_leave(move |_| hover.leave())
             // Swallow pointer_down so a footnote tap does not seed
             // the paragraph's drag-highlight or double-tap gestures.
             .on_pointer_down(|e: Event<PointerEventData>| {
                 e.stop_propagation();
             })
-            .on_press({
-                let mut hover = hover;
-                let mut version = version;
-                move |_: Event<PressEventData>| {
-                    hover.set(false);
-                    let next = version.peek().wrapping_add(1);
-                    version.set(next);
-                    if let Some(t) = target.clone() {
-                        on_jump.call(t);
-                    }
+            .on_tap(move |_: Event<PressEventData>| {
+                hover.close();
+                if let Some(t) = target.clone() {
+                    on_jump.call(t);
                 }
             })
-            .child(label().font_size(marker_font).color(blue).text(letter));
-
-        if *hover.read() && !text.is_empty() {
-            let icon = *letter_area.read();
-            let measured = *popup_area.read();
-            let popup_height = measured.height().max(0.0);
-            let viewport_area = viewport.map(|v| v.get()).unwrap_or(icon);
-            let has_viewport = viewport_area.width() > 0.0 && viewport_area.height() > 0.0;
-            let is_measured = icon.width() > 0.0 && popup_height > 0.0;
-
-            let popup = rect()
-                .layer(Layer::Overlay)
-                .width(Size::px(popup_width))
-                .padding((10., 12.))
-                .with_corner_radius(8.0)
-                .background(parse_rgb(theme::CHIP_BG))
-                .on_sized(move |e: Event<SizedEventData>| {
-                    let new_area = e.data().area;
-                    if *popup_area.peek() != new_area {
-                        popup_area.set(new_area);
-                    }
-                })
-                .opacity(if is_measured { 1.0 } else { 0.0 })
-                .on_pointer_down(|e: Event<PointerEventData>| {
-                    e.stop_propagation();
-                })
-                .on_pointer_enter({
-                    let mut hover = hover;
-                    let mut version = version;
-                    move |_| {
-                        hover.set(true);
-                        let next = version.peek().wrapping_add(1);
-                        version.set(next);
-                    }
-                })
-                .on_pointer_leave({
-                    let mut hover = hover;
-                    let mut version = version;
-                    move |_| close_soon(&mut hover, &mut version)
-                })
-                .child(
-                    label()
-                        .font_size(self.font_size * 0.65)
-                        .color(parse_rgb(theme::TEXT_PRIMARY))
-                        .text(text),
-                );
-
-            let popup = if has_viewport && is_measured {
-                let below_top = icon.max_y() + 4.0;
-                let top = notein_ui_kit::clamp_popup_top(
-                    viewport_area,
-                    icon,
-                    below_top,
-                    popup_height,
-                    popup_margin,
-                );
-                let left = notein_ui_kit::clamp_popup_left(
-                    viewport_area,
-                    icon.min_x(),
-                    popup_width,
-                    popup_margin,
-                );
-                popup.position(Position::new_global().top(top).left(left))
-            } else {
-                popup.position(Position::new_absolute().top(marker_font * 1.6).left(0.))
-            };
-            container = container.child(popup);
+            .child(
+                label()
+                    .font_size(marker_font)
+                    .color(palette().accent_text)
+                    .text(self.letter.clone()),
+            );
+        if !*hover.open.read() || self.text.is_empty() {
+            return container;
         }
-        container
-    }
-}
 
-/// Schedule a hover close that only fires if no `enter` event bumps
-/// `version` in the meantime. Shared by every hover-popup widget so
-/// the "move cursor from icon to popup body" gesture is reliable.
-fn close_soon(hover: &mut State<bool>, version: &mut State<u64>) {
-    let my_token = version.peek().wrapping_add(1);
-    version.set(my_token);
-    let mut hover = *hover;
-    let version = *version;
-    spawn(async move {
-        async_io::Timer::after(std::time::Duration::from_millis(350)).await;
-        if *version.peek() == my_token {
-            hover.set(false);
-        }
-    });
-}
-
-/// Inline bookmark icon rendered when a verse has at least one
-/// cross-ref. Hovering opens a floating list of collapsible refs;
-/// each row carries a "Ir a" button that drives `on_jump`. The icon
-/// stays single + unobtrusive so the paragraph flow is not broken by
-/// per-letter superscripts.
-#[derive(Clone, PartialEq)]
-struct RefHoverButton {
-    refs: Vec<CrossRefView>,
-    jump: OnJump,
-    font_size: f32,
-}
-
-impl std::fmt::Debug for RefHoverButton {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RefHoverButton")
-            .field("ref_count", &self.refs.len())
-            .finish()
-    }
-}
-
-impl Component for RefHoverButton {
-    fn render(&self) -> impl IntoElement {
-        // `open` is the shared visibility signal; `pinned` marks it as
-        // tap-opened so hover-leave does not auto-close it on devices
-        // that fire `pointer_leave` right after the touch-up.
-        let open = use_state(|| false);
-        let pinned = use_state(|| false);
-        let version = use_state(|| 0u64);
-        let expanded = use_state(|| std::collections::HashSet::<usize>::new());
-        // Icon area in window coords — captured via `on_sized` on the
-        // trigger container so the popup can anchor against it with
-        // `Position::new_global`.
-        let mut icon_area: State<Area> = use_state(Area::default);
-        // Measured popup height so the first paint can flip above the
-        // trigger if below would clip. Falls back to `max_height` on
-        // the first frame (popup renders invisibly, then re-positions
-        // once `on_sized` publishes).
-        let mut popup_area: State<Area> = use_state(Area::default);
-        // Viewport bounds — provided by `AppShell` so popups can clamp
-        // themselves inside the window. Falls back to naive placement
-        // if the context is missing (plugin running under a shell that
-        // did not opt in).
-        let viewport = try_consume_context::<notein_ui_kit::ViewportArea>();
-
-        let icon_size = self.font_size * 0.55;
-        let popup_max_height = 360.0_f32;
-        let popup_width = 320.0_f32;
-        let popup_margin = 8.0_f32;
-        let blue = Color::from_rgb(100, 150, 230);
-        let refs_for_list = self.refs.clone();
-        let jump_for_list = self.jump.clone();
-        let font_size = self.font_size;
-
-        // Tap on the icon flips the pinned flag — opens on first tap,
-        // closes on second. Touch devices do not fire hover reliably,
-        // and the hover-leave timer used to dismiss the popup before
-        // the user could reach it with their finger.
-        let on_toggle = {
-            let mut open = open;
-            let mut pinned = pinned;
-            let mut version = version;
-            move |_: Event<PressEventData>| {
-                let next_pinned = !*pinned.peek();
-                pinned.set(next_pinned);
-                open.set(next_pinned || *open.peek());
-                if !next_pinned {
-                    open.set(false);
-                }
-                let next = version.peek().wrapping_add(1);
-                version.set(next);
-            }
-        };
-
-        // Outside-tap close for the pinned popup. Focus-based dismissal
-        // conflicts with the collapsible rows inside — expanding a row
-        // moves focus and would snap the popup shut. Instead listen on
-        // the global pointer-up and compare the hit location against
-        // both the trigger icon and the popup rect; a release outside
-        // both areas tears the popup down. Pointer events inside the
-        // popup already `stop_propagation`, but global handlers still
-        // fire — the hit-test discriminates.
-        let on_outside_up = {
-            let mut open = open;
-            let mut pinned = pinned;
-            let mut version = version;
-            let icon_area = icon_area;
-            let popup_area = popup_area;
-            move |e: Event<PointerEventData>| {
-                if !*pinned.peek() {
-                    return;
-                }
-                let g = e.global_location();
-                #[allow(clippy::cast_possible_truncation)]
-                let gx = g.x as f32;
-                #[allow(clippy::cast_possible_truncation)]
-                let gy = g.y as f32;
-                let icon = *icon_area.peek();
-                let popup = *popup_area.peek();
-                let inside_icon = icon.width() > 0.0
-                    && gx >= icon.min_x()
-                    && gx <= icon.max_x()
-                    && gy >= icon.min_y()
-                    && gy <= icon.max_y();
-                let inside_popup = popup.width() > 0.0
-                    && gx >= popup.min_x()
-                    && gx <= popup.max_x()
-                    && gy >= popup.min_y()
-                    && gy <= popup.max_y();
-                if !inside_icon && !inside_popup {
-                    pinned.set(false);
-                    open.set(false);
-                    let next = version.peek().wrapping_add(1);
-                    version.set(next);
-                }
-            }
-        };
-
-        let mut container = rect()
-            .padding((0., 2.))
-            .margin((0., 2.))
-            .cross_align(Alignment::Start)
-            .main_align(Alignment::Start)
-            .on_sized(move |e: Event<SizedEventData>| {
-                let new_area = e.data().area;
-                if *icon_area.peek() != new_area {
-                    icon_area.set(new_area);
-                }
-            })
-            .on_pointer_enter({
-                let mut open = open;
-                let mut version = version;
-                move |_| {
-                    open.set(true);
-                    let next = version.peek().wrapping_add(1);
-                    version.set(next);
-                }
-            })
-            .on_pointer_leave({
-                let mut open = open;
-                let mut version = version;
-                let pinned = pinned;
-                move |_| {
-                    if !*pinned.peek() {
-                        close_soon(&mut open, &mut version);
-                    }
-                }
-            })
-            // Stop the pointer_down from bubbling into the enclosing
-            // paragraph — otherwise a tap on the icon registers as a
-            // verse hit and a second tap would double-tap into the
-            // highlight picker instead of closing the popup.
+        let anchor = *letter_area.read();
+        let height = popup_area.read().height().max(0.0);
+        let measured = anchor.width() > 0.0 && height > 0.0;
+        let popup = rect()
+            .layer(Layer::Overlay)
+            .width(Size::px(POPUP_WIDTH))
+            .padding((10., 12.))
+            .with_corner_radius(8.0)
+            .background(palette().s2)
+            .on_sized(track_area(popup_area))
+            .opacity(if measured { 1.0 } else { 0.0 })
             .on_pointer_down(|e: Event<PointerEventData>| {
                 e.stop_propagation();
             })
-            .on_global_pointer_up(on_outside_up)
-            .on_press(on_toggle)
-            .child(
-                SvgViewer::new(freya::icons::lucide::trending_up_down())
-                    .color(blue)
-                    .width(Size::px(icon_size))
-                    .height(Size::px(icon_size)),
-            );
-
-        if *open.read() {
-            let icon = *icon_area.read();
-            let measured = *popup_area.read();
-            let popup_height = if measured.height() > 0.0 {
-                measured.height().min(popup_max_height)
-            } else {
-                popup_max_height
-            };
-            let viewport_area = viewport.map(|v| v.get()).unwrap_or(icon);
-            let has_viewport = viewport_area.width() > 0.0 && viewport_area.height() > 0.0;
-            let is_measured = icon.width() > 0.0;
-
-            // Anchor the popup globally so it can escape the paragraph
-            // clip region. Without `has_viewport` (shell did not install
-            // the context) or before the icon has been measured, fall
-            // back to the historic absolute placement below the icon.
-            let popup = rect()
-                .layer(Layer::Overlay)
-                .width(Size::px(popup_width))
-                // ScrollView drives the actual height/scroll — the
-                // outer rect only paints the chrome + padding.
-                .padding((6., 8.))
-                .with_corner_radius(10.0)
-                .background(parse_rgb(theme::CHIP_BG))
-                .spacing(4.0)
-                .on_sized(move |e: Event<SizedEventData>| {
-                    let new_area = e.data().area;
-                    if *popup_area.peek() != new_area {
-                        popup_area.set(new_area);
-                    }
-                })
-                // Hide the first frame while measurements are stale so
-                // the user never sees the popup flash at its default
-                // (below-and-clipped) position before the clamp lands.
-                .opacity(if is_measured { 1.0 } else { 0.0 })
-                // Swallow pointer_down inside the popup so taps on
-                // rows do not seed the paragraph's drag-highlight
-                // gesture — the popup sits above an absolute-positioned
-                // overlay layer, but event bubbling still reaches the
-                // enclosing paragraph through the DOM tree.
-                .on_pointer_down(|e: Event<PointerEventData>| {
-                    e.stop_propagation();
-                })
-                // Press events bubble too — without stopping here, a
-                // tap on a row header (expand/collapse) or the "Ir a"
-                // button walks back up to the icon container's
-                // `on_toggle` and flips the popup shut.
-                .on_press(|e: Event<PressEventData>| {
-                    e.stop_propagation();
-                })
-                .on_pointer_enter({
-                    let mut open = open;
-                    let mut version = version;
-                    move |_| {
-                        open.set(true);
-                        let next = version.peek().wrapping_add(1);
-                        version.set(next);
-                    }
-                })
-                .on_pointer_leave({
-                    let mut open = open;
-                    let mut version = version;
-                    let pinned = pinned;
-                    move |_| {
-                        if !*pinned.peek() {
-                            close_soon(&mut open, &mut version);
-                        }
-                    }
-                })
-                .child(
-                    ScrollView::new()
-                        .height(Size::auto())
-                        .max_height(Size::px(popup_max_height))
-                        .child({
-                            let mut col = rect().width(Size::fill()).spacing(4.0);
-                            for (idx, xref) in refs_for_list.iter().enumerate() {
-                                col = col.child(RefListRow {
-                                    idx,
-                                    view: xref.clone(),
-                                    jump: jump_for_list.clone(),
-                                    expanded,
-                                    parent_hover: open,
-                                    parent_version: version,
-                                    font_size,
-                                });
-                            }
-                            col
-                        }),
-                );
-
-            let popup = if has_viewport && is_measured {
-                let below_top = icon.max_y() + 4.0;
-                let top = notein_ui_kit::clamp_popup_top(
-                    viewport_area,
-                    icon,
-                    below_top,
-                    popup_height,
-                    popup_margin,
-                );
-                let left = notein_ui_kit::clamp_popup_left(
-                    viewport_area,
-                    icon.min_x(),
-                    popup_width,
-                    popup_margin,
-                );
-                popup.position(Position::new_global().top(top).left(left))
-            } else {
-                popup.position(Position::new_absolute().top(icon_size * 1.4).left(0.))
-            };
-            container = container.child(popup);
-        }
-        container
-    }
-}
-
-/// One collapsible row inside the hover popup. Clicking anywhere on
-/// the header expands / collapses; the "Ir a" button navigates
-/// unconditionally.
-#[derive(Clone, PartialEq)]
-struct RefListRow {
-    idx: usize,
-    view: CrossRefView,
-    jump: OnJump,
-    expanded: State<std::collections::HashSet<usize>>,
-    parent_hover: State<bool>,
-    parent_version: State<u64>,
-    font_size: f32,
-}
-
-impl std::fmt::Debug for RefListRow {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RefListRow")
-            .field("ref", &self.view.label)
-            .finish()
-    }
-}
-
-impl Component for RefListRow {
-    fn render(&self) -> impl IntoElement {
-        let is_open = self.expanded.read().contains(&self.idx);
-        let idx = self.idx;
-        let mut expanded = self.expanded;
-        let on_header = move |_: Event<PressEventData>| {
-            let mut set = expanded.write();
-            if set.contains(&idx) {
-                set.remove(&idx);
-            } else {
-                set.insert(idx);
-            }
-        };
-        let target = (
-            self.view.tgt_book.clone(),
-            self.view.tgt_chap,
-            self.view.tgt_verse,
-        );
-        let on_jump = self.jump.clone();
-        let mut parent_hover = self.parent_hover;
-        let mut parent_version = self.parent_version;
-        let goto = move |e: Event<PressEventData>| {
-            // "Ir a" sits inside the collapsible header; let its press
-            // navigate but do not let the event bubble into the header
-            // and toggle the expand state too.
-            e.stop_propagation();
-            parent_hover.set(false);
-            let next = parent_version.peek().wrapping_add(1);
-            parent_version.set(next);
-            on_jump.call(target.clone());
-        };
-
-        let header = rect()
-            .width(Size::fill())
-            .padding((6., 10.))
-            .direction(Direction::Horizontal)
-            .cross_align(Alignment::Center)
-            .main_align(Alignment::SpaceBetween)
-            .with_corner_radius(6.0)
-            .background(parse_rgb(theme::BG))
-            .on_press(on_header)
+            .on_pointer_enter(move |_| hover.enter())
+            .on_pointer_leave(move |_| hover.leave())
             .child(
                 label()
                     .font_size(self.font_size * 0.65)
-                    .color(Color::from_rgb(100, 150, 230))
-                    .text(self.view.label.clone()),
-            )
-            .child(
-                rect()
-                    .padding((4., 10.))
-                    .with_corner_radius(5.0)
-                    .background(Color::from_rgb(55, 80, 140))
-                    .on_press(goto)
-                    .child(
-                        label()
-                            .font_size(self.font_size * 0.58)
-                            .color(Color::from_rgb(240, 240, 240))
-                            .text("Ir a"),
-                    ),
+                    .color(palette().t1)
+                    .text(self.text.clone()),
             );
+        container.child(place_popup(
+            popup,
+            anchor,
+            viewport,
+            (POPUP_WIDTH, height),
+            marker_font * 1.6,
+        ))
+    }
+}
 
-        let mut body = rect().width(Size::fill()).spacing(2.0).child(header);
-        if is_open && !self.view.tooltip.is_empty() {
-            body = body.child(
-                rect().width(Size::fill()).padding((8., 10., 8., 16.)).child(
-                    label()
-                        .font_size(self.font_size * 0.65)
-                        .color(parse_rgb(theme::TEXT_SECONDARY))
-                        .text(self.view.tooltip.clone()),
-                ),
-            );
-        }
-        body
+/// The icon closing a verse that has cross-references; pressing it
+/// opens them in the host's panel. Accented while that panel shows this
+/// verse.
+#[derive(Clone, Debug, PartialEq)]
+struct RefButton {
+    verse: u16,
+    open: bool,
+    on_press: OnRefs,
+    font_size: f32,
+}
+
+impl Component for RefButton {
+    #[cfg_attr(feature = "sismo", sismo::function("bible::ref_button"))]
+    fn render(&self) -> impl IntoElement {
+        let p = palette();
+        let icon_size = self.font_size * 0.6;
+        let (verse, on_press) = (self.verse, self.on_press.clone());
+        rect()
+            .padding((2., 4.))
+            .margin((0., 2.))
+            .corner_radius(4.0)
+            .maybe(self.open, |r| r.background(p.accent_soft))
+            .a11y_role(AccessibilityRole::Button)
+            // A tap on the icon must not reach the paragraph, where a
+            // second tap would open the highlight picker.
+            .on_pointer_down(|e: Event<PointerEventData>| e.stop_propagation())
+            .on_tap(move |_| on_press.call(verse))
+            .child(
+                SvgViewer::new(freya::icons::lucide::trending_up_down())
+                    .color(p.accent_text)
+                    .width(Size::px(icon_size))
+                    .height(Size::px(icon_size)),
+            )
     }
 }
 
@@ -1460,7 +1400,7 @@ fn note_icon(font_size: f32) -> impl IntoElement {
         .center()
         .child(
             SvgViewer::new(freya::icons::lucide::file_text())
-                .color(parse_rgb(theme::VERSE_NUM))
+                .color(palette().t3)
                 .width(Size::px(size))
                 .height(Size::px(size)),
         )
@@ -1475,7 +1415,7 @@ fn section_header(text: &str) -> impl IntoElement {
             label()
                 .font_family(typography::FAMILY)
                 .font_size(typography::SECTION_HEADER_PX)
-                .color(parse_rgb(theme::HEADER))
+                .color(palette().t1)
                 .text(text.to_string()),
         )
 }
@@ -1484,18 +1424,23 @@ fn spacer(height: f32) -> impl IntoElement {
     rect().width(Size::fill()).height(Size::px(height))
 }
 
-/// Parse an `"rgb(r, g, b)"` string into a Freya `Color`. The theme
-/// module keeps the strings for parity with the inline markup used in
-/// other Freya components in this project.
-fn parse_rgb(s: &str) -> Color {
-    let trimmed = s.trim_start_matches("rgb(").trim_end_matches(')');
-    let parts: Vec<u8> = trimmed
-        .split(',')
-        .filter_map(|t| t.trim().parse::<u8>().ok())
-        .collect();
-    if parts.len() == 3 {
-        Color::from_rgb(parts[0], parts[1], parts[2])
-    } else {
-        Color::WHITE
-    }
+/// Whose selection starts here, on a tag above the line.
+fn name_tag(name: &str, color: Color, left: f32, top: f32) -> Rect {
+    const SIZE: f32 = 11.0;
+    let height = SIZE + 5.0;
+    rect()
+        .position(Position::new_absolute().top(top - height).left(left))
+        .height(Size::px(height))
+        .padding((0., 5.))
+        .corner_radius(4.)
+        .background(color)
+        .center()
+        .child(
+            label()
+                .font_size(SIZE)
+                .font_weight(FontWeight::BOLD)
+                .color(Color::from_rgb(21, 21, 26))
+                .max_lines(1)
+                .text(name.to_owned()),
+        )
 }

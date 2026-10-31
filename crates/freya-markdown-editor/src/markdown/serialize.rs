@@ -4,9 +4,10 @@ use super::Dialect;
 use super::html::span_open;
 use crate::document::{
     Align, Atom, Block, BlockKind, ColumnAlign, Document, Inline, ListKind, Mark, MarkFamily,
-    MarkKind, OBJECT_REPLACEMENT, Table, byte_index,
+    MarkKind, OBJECT_REPLACEMENT, Table, Transclusion, byte_index,
 };
 
+#[cfg_attr(feature = "sismo", sismo::function("markdown::serialize_document"))]
 pub(super) fn serialize(document: &Document, dialect: Dialect) -> String {
     let mut writer = Writer {
         document,
@@ -16,7 +17,7 @@ pub(super) fn serialize(document: &Document, dialect: Dialect) -> String {
     let mut out = String::new();
     let mut previous: Option<&BlockKind> = None;
     for (index, block) in document.blocks().iter().enumerate() {
-        let Some(chunk) = writer.block(block, index) else {
+        let Some(chunk) = crate::profile::kind_span(&block.kind, || writer.block(block, index)) else {
             continue;
         };
         if let Some(previous) = previous {
@@ -43,6 +44,8 @@ pub(super) fn serialize(document: &Document, dialect: Dialect) -> String {
     if !out.is_empty() {
         out.push('\n');
     }
+    #[cfg(feature = "sismo")]
+    sismo::counter!("markdown.serialized_bytes", out.len());
     out
 }
 
@@ -66,6 +69,7 @@ struct Writer<'d> {
 
 impl Writer<'_> {
     #[allow(clippy::too_many_lines, reason = "one arm per block kind")]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::serialize_block"))]
     fn block(&mut self, block: &Block, index: usize) -> Option<String> {
         if !matches!(block.kind, BlockKind::ListItem { .. }) {
             self.list_columns.clear();
@@ -153,6 +157,22 @@ impl Writer<'_> {
                 }
             }
             BlockKind::Html(raw) => raw.text().to_owned(),
+            BlockKind::Comment(note) => comment(note.text()),
+            BlockKind::Details {
+                summary,
+                open,
+                content,
+            } => {
+                let open = if *open { " open" } else { "" };
+                let head = format!("<details{open}>\n<summary>{}</summary>", html_text(summary));
+                if content.is_empty() {
+                    format!("{head}\n</details>")
+                } else {
+                    let body = self.inline(content, InlineContext::Block);
+                    format!("{head}\n\n{body}\n\n</details>")
+                }
+            }
+            BlockKind::Transclusion(transclusion) => transclusion_source(transclusion, rich),
         };
         let wrap = rich
             && block.align != Align::Left
@@ -170,6 +190,7 @@ impl Writer<'_> {
         })
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::serialize_list_item"))]
     fn list_item(&mut self, block: &Block, kind: ListKind, depth: u8, content: &Inline) -> String {
         let depth = usize::from(depth).min(self.list_columns.len());
         let base = depth
@@ -208,6 +229,7 @@ impl Writer<'_> {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::serialize_table"))]
     fn table(&self, table: &Table) -> String {
         let cells: Vec<Vec<String>> = table
             .rows()
@@ -258,6 +280,7 @@ impl Writer<'_> {
         lines.join("\n")
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::serialize_toc"))]
     fn table_of_contents(&self) -> Option<String> {
         let headings: Vec<_> = self.document.headings().collect();
         let min_level = headings.iter().map(|(_, level, _)| level.get()).min()?;
@@ -282,6 +305,7 @@ impl Writer<'_> {
         Some(lines.join("\n"))
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::serialize_inline"))]
     fn inline(&self, inline: &Inline, context: InlineContext) -> String {
         InlineWriter::new(inline, self.dialect, context).write()
     }
@@ -307,6 +331,30 @@ fn fenced(language: &str, code: &str) -> String {
     format!("{fence}{language}\n{code}\n{fence}")
 }
 
+/// A transcluded quote: the opening marker (rich markdown only), the
+/// content as last seen and the line naming its source.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::serialize_transclusion"))]
+fn transclusion_source(transclusion: &Transclusion, rich: bool) -> String {
+    let mut parts = Vec::new();
+    if rich {
+        parts.push(format!("> [!{}]", transclusion.kind));
+    }
+    parts.extend(
+        transclusion
+            .fallback
+            .split("\n\n")
+            .map(str::trim)
+            .filter(|paragraph| !paragraph.is_empty())
+            .map(|paragraph| prefix_lines(paragraph, "> ", "> ")),
+    );
+    parts.push(format!(
+        "> — [{}]({})",
+        transclusion.label.replace(['[', ']'], ""),
+        transclusion.url
+    ));
+    parts.join("\n>\n")
+}
+
 fn prefix_lines(body: &str, first: &str, rest: &str) -> String {
     body.split('\n')
         .enumerate()
@@ -324,6 +372,7 @@ fn prefix_lines(body: &str, first: &str, rest: &str) -> String {
 
 /// GitHub style heading slug.
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("markdown::slug"))]
 pub fn slug(text: &str) -> String {
     text.trim()
         .to_lowercase()
@@ -518,6 +567,10 @@ impl<'i> InlineWriter<'i> {
             },
             MarkKind::Superscript => pair("<sup>", "</sup>"),
             MarkKind::Subscript => pair("<sub>", "</sub>"),
+            MarkKind::Abbreviation(title) => (
+                format!("<abbr title=\"{}\">", html_attribute(title)),
+                "</abbr>".to_owned(),
+            ),
             MarkKind::Link(link) => {
                 let destination = link_destination(&link.url);
                 let title = link
@@ -633,11 +686,13 @@ const fn priority(kind: &MarkKind) -> u8 {
         MarkKind::Superscript => 8,
         MarkKind::Subscript => 9,
         MarkKind::Code => 10,
+        MarkKind::Abbreviation(_) => 11,
     }
 }
 
 /// Marks that the dialect can express, with whitespace moved outside of
 /// delimiter runs and code split around atoms.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::effective_marks"))]
 fn effective_marks(inline: &Inline, dialect: Dialect) -> Vec<Mark> {
     let text = inline.text();
     let at = |pos: usize| text[byte_index(text, pos)..].chars().next();
@@ -748,6 +803,30 @@ fn link_destination(url: &str) -> String {
     }
 }
 
+/// An HTML comment holding `note`, which can never close it early.
+fn comment(note: &str) -> String {
+    let note = note.replace("-->", "-- >");
+    if note.contains('\n') {
+        format!("<!--\n{note}\n-->")
+    } else {
+        format!("<!-- {note} -->")
+    }
+}
+
+/// `text` escaped to sit between HTML tags.
+fn html_text(text: &str) -> String {
+    text.replace('&', "&amp;").replace('<', "&lt;")
+}
+
+/// `value` escaped for a double quoted HTML attribute.
+fn html_attribute(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+}
+
+#[cfg_attr(feature = "sismo", sismo::function("markdown::escape_text"))]
 fn escape_text(text: &str, mut line_start: bool, context: InlineContext) -> String {
     let mut out = String::with_capacity(text.len() + 8);
     let chars: Vec<char> = text.chars().collect();

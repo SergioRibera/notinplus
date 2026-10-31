@@ -18,10 +18,12 @@ use freya::icons::lucide::{check, grip, rotate_cw, trash_2};
 use freya::prelude::*;
 use freya_markdown_editor::prelude::*;
 use istmo::plugins::EdgeInsets;
+use notein_i18n::tr;
+use notein_ui_kit::TapExt;
 
-use crate::canvas::{Board, PaintPass, SceneText, SurfaceBounds, TextLayerView, TextScene, lock};
-use crate::components::note_editor::{note_theme, notein_editor, use_note_keyboard};
-use crate::components::theme::{BORDER, PRIMARY, SURFACE_PRIMARY, TEXT_PRIMARY, TEXT_SECONDARY};
+use crate::canvas::{
+    Board, InkCache, PaintPass, SceneText, SurfaceBounds, TextLayerView, TextScene, lock,
+};
 use crate::text_box::{TEXT_BASE_SIZE, TEXT_MIN_WIDTH, TextBoxId, TextFrame};
 use crate::ui_mask::{MaskSlot, use_mask_slot};
 
@@ -36,7 +38,6 @@ const HANDLE: f32 = 26.0;
 const ROTATE_OFFSET: f32 = 34.0;
 /// Rotations this close (degrees) to a multiple of 45° snap onto it.
 const ROTATE_SNAP: f32 = 4.0;
-const ACCENT: Color = PRIMARY;
 /// Inner space between a box's bounds and its text, in screen pixels.
 const BOX_PADDING: (f32, f32) = (4.0, 6.0);
 
@@ -93,8 +94,9 @@ impl TextEditorSlot {
 }
 
 /// Theme for a box whose body colour is `color` (RGBA) at viewport `scale`.
+#[sismo::function("canvas_text::theme")]
 fn canvas_theme(color: [u8; 4], scale: f32) -> EditorTheme {
-    let base = note_theme();
+    let base = crate::editor::theme(&notein_ui_kit::palette());
     let mut theme = base.clone().zoomed(TEXT_BASE_SIZE / base.body_size * scale);
     let [r, g, b, a] = color;
     let text = Color::from_argb(a, r, g, b);
@@ -147,8 +149,11 @@ impl View {
 }
 
 impl Component for CanvasLayers {
+    #[sismo::function("canvas_text::layers_render")]
     fn render(&self) -> impl IntoElement {
         let board = Arc::clone(&self.board);
+        let accent = notein_ui_kit::palette().accent;
+        lock(&board).set_lasso_accent([accent.r(), accent.g(), accent.b()]);
         let scene = use_state({
             let board = Arc::clone(&board);
             move || lock(&board).text_scene()
@@ -198,6 +203,7 @@ impl Component for CanvasLayers {
 
 /// Follow board redraws: refresh the scene when its revision moves, and the
 /// viewport while there is text to place.
+#[sismo::function("canvas_text::watch_board")]
 fn watch_board(
     board: &Arc<Mutex<Board>>,
     mut scene: State<TextScene>,
@@ -228,6 +234,7 @@ fn watch_board(
     });
 }
 
+#[sismo::function("canvas_text::pass_canvas")]
 fn pass_canvas(board: &Arc<Mutex<Board>>, pass: PaintPass, index: usize) -> Element {
     // Render callbacks never compare unequal, so a pass that changes shape
     // must remount: the key carries the whole pass.
@@ -236,27 +243,34 @@ fn pass_canvas(board: &Arc<Mutex<Board>>, pass: PaintPass, index: usize) -> Elem
         pass.layers.start, pass.layers.end, pass.base, pass.overlays
     );
     let board = Arc::clone(board);
+    let mut cache = InkCache::default();
     rect()
         .key(key)
         .position(Position::new_absolute().top(0.).left(0.))
         .width(Size::fill())
         .height(Size::fill())
         .child(
-            canvas(RenderCallback::new(move |ctx| {
-                let bounds = SurfaceBounds {
-                    min_x: 0.0,
-                    min_y: 0.0,
-                    max_x: ctx.size.width,
-                    max_y: ctx.size.height,
-                };
-                lock(&board).paint(ctx.canvas, bounds, &pass);
-            }))
-            .width(Size::fill())
-            .height(Size::fill()),
+            rect()
+                .background(RenderCallback::new(move |ctx| {
+                    sismo::scope!("canvas::pass_render");
+                    let RenderTarget::Background { canvas, .. } = &ctx.target else {
+                        return;
+                    };
+                    let bounds = SurfaceBounds {
+                        min_x: 0.0,
+                        min_y: 0.0,
+                        max_x: ctx.size.width,
+                        max_y: ctx.size.height,
+                    };
+                    lock(&board).paint(canvas, bounds, &pass, &mut cache);
+                }))
+                .width(Size::fill())
+                .height(Size::fill()),
         )
         .into_element()
 }
 
+#[sismo::function("canvas_text::text_layer")]
 fn text_layer(
     board: &Arc<Mutex<Board>>,
     layer: &TextLayerView,
@@ -321,6 +335,7 @@ impl PartialEq for CanvasTextBox {
 }
 
 impl Component for CanvasTextBox {
+    #[sismo::function("canvas_text::text_box_render")]
     fn render(&self) -> impl IntoElement {
         let text = &self.text.text;
         let view = self.view;
@@ -385,9 +400,9 @@ impl Component for CanvasTextBox {
 /// text mode is on, none otherwise.
 fn outline(editing: bool, outlined: bool) -> Option<(f32, Color)> {
     if editing {
-        Some((2.0, ACCENT))
+        Some((2.0, notein_ui_kit::palette().accent))
     } else if outlined {
-        Some((1.0, ACCENT.with_a(90)))
+        Some((1.0, notein_ui_kit::palette().accent.with_a(90)))
     } else {
         None
     }
@@ -401,13 +416,14 @@ struct VisualText {
 }
 
 impl Component for VisualText {
+    #[sismo::function("canvas_text::visual_text_render")]
     fn render(&self) -> impl IntoElement {
         let controller = use_editor_controller();
         let mut value = use_state(|| self.markdown.clone());
         if *value.peek() != self.markdown {
             value.set(self.markdown.clone());
         }
-        notein_editor(value, controller, None)
+        crate::editor::editor(value, controller)
             .read_only(true)
             .theme(self.theme.clone())
             .font_family(FONT_FAMILY)
@@ -437,9 +453,9 @@ impl PartialEq for TextBoxEditor {
 }
 
 impl Component for TextBoxEditor {
+    #[sismo::function("canvas_text::editor_render")]
     fn render(&self) -> impl IntoElement {
         let controller = self.editor.controller;
-        use_note_keyboard(controller);
         let value = use_state(|| self.markdown.clone());
         use_side_effect({
             let board = Arc::clone(&self.board);
@@ -461,6 +477,7 @@ impl Component for TextBoxEditor {
             });
         });
         use_drop(move || {
+            sismo::scope!("canvas_text::editor_drop");
             // Switching boxes mounts the next editor before this one drops.
             if *editing.peek() == Some(id) {
                 editing.set(None);
@@ -472,15 +489,11 @@ impl Component for TextBoxEditor {
             .width(Size::fill())
             .on_sized(move |event: Event<SizedEventData>| mask.publish(event.area))
             .child(
-                notein_editor(
-                    value,
-                    controller,
-                    Some(crate::bookmark_ui::plugin_completions_provider().into()),
-                )
-                .theme(self.theme.clone())
-                .font_family(FONT_FAMILY)
-                .placeholder("Escribí… (/ para insertar)")
-                .width(Size::fill()),
+                crate::editor::editor(value, controller)
+                    .theme(self.theme.clone())
+                    .font_family(FONT_FAMILY)
+                    .placeholder(tr!("canvas-text-placeholder"))
+                    .width(Size::fill()),
             )
     }
 }
@@ -506,6 +519,7 @@ struct HandleDrag {
 impl HandleDrag {
     /// Frame after dragging the pointer to `(px, py)` (window
     /// coordinates).
+    #[sismo::function("canvas_text::handle_frame_at")]
     fn frame_at(&self, view: View, px: f32, py: f32) -> TextFrame {
         let start = self.frame;
         let (dx, dy) = (
@@ -594,6 +608,7 @@ impl PartialEq for TextHandles {
 }
 
 impl Component for TextHandles {
+    #[sismo::function("canvas_text::handles_render")]
     fn render(&self) -> impl IntoElement {
         let mut drag = use_state(|| Option::<HandleDrag>::None);
         let view = self.view;
@@ -648,6 +663,7 @@ impl Component for TextHandles {
 /// One handle centred on `(x, y)`. Resize pills turn with the box
 /// (`rotation`, degrees) so they stay parallel to its edges; round handles
 /// look the same at any angle.
+#[sismo::function("canvas_text::handle_dot")]
 fn handle_dot(
     handle: Handle,
     x: f32,
@@ -678,12 +694,12 @@ fn handle_dot(
         })
         .center()
         .corner_radius(HANDLE * 0.5)
-        .background(SURFACE_PRIMARY)
+        .background(notein_ui_kit::palette().s2)
         .border(
             Border::new()
                 .width(1.5)
                 .alignment(BorderAlignment::Inner)
-                .fill(ACCENT),
+                .fill(notein_ui_kit::palette().accent),
         )
         .cursor(match handle {
             Handle::Move => CursorIcon::Move,
@@ -702,7 +718,7 @@ fn handle_dot(
         })
         .maybe_child(icon.map(|icon| {
             SvgViewer::new(icon)
-                .color(ACCENT)
+                .color(notein_ui_kit::palette().accent)
                 .width(Size::px(HANDLE * 0.55))
                 .height(Size::px(HANDLE * 0.55))
         }))
@@ -716,6 +732,7 @@ fn handle_dot(
 /// window area in `area` (stale while hidden, so read it only while a box
 /// is edited) for other bottom overlays to sit above it. Renders nothing
 /// while no box is edited.
+#[sismo::function("canvas_text::toolbar")]
 pub fn text_toolbar(
     board: &Arc<Mutex<Board>>,
     editor: TextEditorSlot,
@@ -727,14 +744,15 @@ pub fn text_toolbar(
         editor.toolbar_mask.clear();
         return rect().into_element();
     }
-    let mut theme = note_theme();
+    let mut theme = crate::editor::theme(&notein_ui_kit::palette());
     theme.fonts.insert(0, FONT_FAMILY.into());
     // Menus must stay above the bar: below it there is only the soft
-    // keyboard, which covers the window instead of shrinking it.
+    // keyboard. Around it, what the system bars leave of the window.
     let bar = *area.read();
+    let frame = notein_ui_kit::safe_frame();
     let popup_area = Area::new(
-        (0., 0.).into(),
-        (Platform::get().root_size.read().width, bar.max_y()).into(),
+        frame.origin,
+        (frame.width(), (bar.max_y() - frame.min_y()).max(0.)).into(),
     );
     let delete_board = Arc::clone(board);
     let done_board = Arc::clone(board);
@@ -753,7 +771,7 @@ pub fn text_toolbar(
                 .width(Size::px(1.))
                 .height(Size::px(18.))
                 .margin((0., 4.))
-                .background(BORDER),
+                .background(notein_ui_kit::palette().line),
         )
         .child(
             MarkdownToolbar::new(controller)
@@ -773,7 +791,7 @@ pub fn text_toolbar(
         .width(Size::fill())
         .layer(Layer::Overlay)
         .padding((6., 8.))
-        .background(SURFACE_PRIMARY)
+        .background(notein_ui_kit::palette().s2)
         .border(
             Border::new()
                 .width(BorderWidth {
@@ -783,7 +801,7 @@ pub fn text_toolbar(
                     left: 0.,
                 })
                 .alignment(BorderAlignment::Inner)
-                .fill(BORDER),
+                .fill(notein_ui_kit::palette().line),
         )
         .on_sized(move |event: Event<SizedEventData>| {
             editor.toolbar_mask.publish(event.area);
@@ -806,6 +824,7 @@ struct SideScroll {
 }
 
 impl Component for SideScroll {
+    #[sismo::function("canvas_text::side_scroll_render")]
     fn render(&self) -> impl IntoElement {
         let mut offset = use_state(|| 0.0_f32);
         let mut viewport = use_state(|| 0.0_f32);
@@ -827,7 +846,7 @@ impl Component for SideScroll {
                 .height(Size::px(3.))
                 .margin((0., 0., 0., current / max * (track - width)))
                 .corner_radius(2.)
-                .background(TEXT_SECONDARY)
+                .background(notein_ui_kit::palette().t2)
         });
         rect()
             .width(Size::fill())
@@ -886,10 +905,10 @@ fn toolbar_action(icon: Bytes, on_press: impl Fn() + 'static) -> Element {
         .center()
         .corner_radius(8.)
         .cursor(CursorIcon::Pointer)
-        .on_press(move |_| on_press())
+        .on_tap(move |_| on_press())
         .child(
             SvgViewer::new(icon)
-                .color(TEXT_PRIMARY)
+                .color(notein_ui_kit::palette().t1)
                 .width(Size::px(16.))
                 .height(Size::px(16.)),
         )

@@ -32,9 +32,10 @@ pub use engine::{DocStatus, Handled, Message, PROTOCOL_VERSION, SyncEngine};
 pub use error::{CipherError, IdentityError, SyncError};
 pub use identity::{DeviceId, DeviceKey, DeviceProfile, PairingCode, TrustedDevice};
 pub use net::lan::LanNode;
-pub use net::{Beacon, LanConfig, NetError, NetEvent, PeerInfo};
+pub use net::{Beacon, LanConfig, Lane, NetError, NetEvent, PeerInfo};
 pub use relay::{RelayAddr, RelayConfig, RelayMessage, RelayServer, Store as RelayStore};
 pub use replica::{Blob, BlobHead, BlobKey, BlobKind, DocId, Replica, Scope, Version};
 pub use share::{
-    Invite, Member, Share, ShareBook, ShareId, ShareMessage, ShareMode, SharePolicy, Who,
+    EndedShare, Invite, Member, Share, ShareBook, ShareId, ShareMessage, ShareMode, SharePolicy,
+    Who,
 };

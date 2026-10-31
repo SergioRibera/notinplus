@@ -29,38 +29,98 @@ pub struct CachedTile {
     pub height: u32,
 }
 
-/// Shared LRU cache. Cheap to clone (Arc<Mutex<..>>). Interior
-/// `Mutex` because `LruCache::get` mutates internal ordering.
+/// Shared LRU cache, bounded by entry count and by the bytes its bitmaps
+/// hold. Interior `Mutex` because `LruCache::get` mutates internal
+/// ordering.
 #[derive(Debug)]
 pub struct Cache {
-    inner: Mutex<LruCache<CacheKey, Arc<CachedTile>>>,
+    inner: Mutex<Tiles>,
+}
+
+#[derive(Debug)]
+struct Tiles {
+    lru: LruCache<CacheKey, Arc<CachedTile>>,
+    bytes: usize,
+    budget: usize,
+}
+
+impl CachedTile {
+    fn size(&self) -> usize {
+        self.bytes.len()
+    }
 }
 
 impl Cache {
-    /// New cache with an upper entry count.
+    /// New cache holding at most `capacity` tiles and `budget` bytes of
+    /// pixels; the least recently used tiles go first.
     #[must_use]
-    pub fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize, budget: usize) -> Self {
         Self {
-            inner: Mutex::new(LruCache::new(capacity)),
+            inner: Mutex::new(Tiles {
+                lru: LruCache::new(capacity),
+                bytes: 0,
+                budget,
+            }),
         }
     }
 
     /// Fetch a tile — touching LRU ordering on hit.
     #[must_use]
     pub fn get(&self, key: CacheKey) -> Option<Arc<CachedTile>> {
-        self.lock().get(&key).cloned()
+        self.lock().lru.get(&key).cloned()
     }
 
     /// Peek without disturbing LRU ordering. Right for placeholder
     /// scans that must not evict live buckets.
     #[must_use]
     pub fn peek(&self, key: CacheKey) -> Option<Arc<CachedTile>> {
-        self.lock().peek(&key).cloned()
+        self.lock().lru.peek(&key).cloned()
     }
 
     /// Insert or replace a tile.
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::cache_insert"))]
     pub fn insert(&self, key: CacheKey, tile: Arc<CachedTile>) {
-        self.lock().insert(key, tile);
+        let mut tiles = self.lock();
+        #[cfg(feature = "sismo")]
+        let mut evicted = 0_usize;
+        tiles.bytes += tile.size();
+        let full = tiles.lru.len() == tiles.lru.capacity() && !tiles.lru.contains_key(&key);
+        if full && let Some((_, gone)) = tiles.lru.remove_lru() {
+            tiles.bytes -= gone.size();
+            #[cfg(feature = "sismo")]
+            {
+                evicted += 1;
+            }
+        }
+        if let Some(old) = tiles.lru.insert(key, tile) {
+            tiles.bytes -= old.size();
+        }
+        while tiles.bytes > tiles.budget && tiles.lru.len() > 1 {
+            let Some((_, gone)) = tiles.lru.remove_lru() else {
+                break;
+            };
+            tiles.bytes -= gone.size();
+            #[cfg(feature = "sismo")]
+            {
+                evicted += 1;
+            }
+        }
+        #[cfg(feature = "sismo")]
+        {
+            sismo::counter!("pdf.cache_bytes", tiles.bytes);
+            sismo::counter!("pdf.pages_cached", tiles.lru.len());
+            if evicted > 0 {
+                sismo::instant!("pdf::cache_evict");
+                sismo::counter!("pdf.cache_evicted", evicted);
+            }
+        }
+        drop(tiles);
+    }
+
+    /// Bytes of pixels held.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        self.lock().bytes
     }
 
     /// Best-effort scan for the highest-resolution cached tile of
@@ -84,6 +144,7 @@ impl Cache {
         self.nearest_with(page, max_bucket, |k| matches!(k.tile, TileCoord::Full))
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::cache_nearest"))]
     fn nearest_with(
         &self,
         page: PageId,
@@ -93,7 +154,7 @@ impl Cache {
         let mut best: Option<(i32, Arc<CachedTile>)> = None;
         {
             let guard = self.lock();
-            for (k, v) in guard.iter() {
+            for (k, v) in &guard.lru {
                 if k.page != page || k.bucket > max_bucket || !pred(k) {
                     continue;
                 }
@@ -107,10 +168,53 @@ impl Cache {
         best.map(|(_, v)| v)
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, LruCache<CacheKey, Arc<CachedTile>>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Tiles> {
         match self.inner.lock() {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(page: u64) -> CacheKey {
+        CacheKey {
+            page: PageId(page),
+            bucket: 0,
+            tile: TileCoord::Full,
+        }
+    }
+
+    fn tile(bytes: usize) -> Arc<CachedTile> {
+        Arc::new(CachedTile {
+            bytes: Arc::new(vec![0; bytes]),
+            width: 1,
+            height: 1,
+        })
+    }
+
+    #[test]
+    fn oldest_tiles_go_once_the_bytes_run_over() {
+        let cache = Cache::new(16, 100);
+        for page in 0..4 {
+            cache.insert(key(page), tile(40));
+        }
+        assert_eq!(cache.bytes(), 80);
+        assert!(cache.peek(key(1)).is_none());
+        assert!(cache.peek(key(3)).is_some());
+    }
+
+    #[test]
+    fn replacing_or_evicting_by_count_keeps_the_byte_count() {
+        let cache = Cache::new(2, 1000);
+        cache.insert(key(0), tile(10));
+        cache.insert(key(0), tile(30));
+        assert_eq!(cache.bytes(), 30);
+        cache.insert(key(1), tile(10));
+        cache.insert(key(2), tile(10));
+        assert_eq!(cache.bytes(), 20);
     }
 }

@@ -8,9 +8,13 @@ authors     = ["Sergio Ribera <contact@sergioribera.rs>"]
 description = "Pluggable background abstraction for Freya canvas widgets: infinite color fill, images, paginated documents, PDF."
 repository  = "https://github.com/SergioRibera/notinplus"
 
+[features]
+sismo = ["dep:sismo"]
+
 [dependencies]
-freya-engine = "0.5.0-rc.8"
-notein-plugin = { path = "../notein-plugin" }
+# Spans for the sismo profiler; off unless an app turns it on.
+sismo = { path = "../../../../sismo/crates/sismo", default-features = false, optional = true }
+freya-engine = "0.5.0-rc.13"
 
 [lints.rust]
 missing_debug_implementations = "warn"

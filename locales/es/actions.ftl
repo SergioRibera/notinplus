@@ -1,0 +1,19 @@
+## Menús de documentos, carpetas y mesas (src/actions.rs).
+
+actions-open-beside = Abrir al lado
+actions-open-new-desk = Abrir en mesa nueva
+actions-new-notebook = Nuevo cuaderno
+actions-notebook = Cuaderno
+actions-link-with = Vincular con…
+actions-pin = Fijar
+actions-unpin = Quitar de fijados
+actions-share = Compartir…
+actions-export = Exportar…
+actions-duplicate = Duplicar
+actions-move-to = Mover a…
+actions-edit = Editar…
+actions-undo-import = Deshacer la importación
+actions-pin-home = Fijar en Home
+actions-unpin-home = Quitar de Home
+actions-share-desk = Compartir mesa…
+actions-delete-desk = Borrar mesa

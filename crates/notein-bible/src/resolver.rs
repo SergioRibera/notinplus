@@ -1,17 +1,21 @@
 //! Reference resolver — maps a human string like `"Juan 3:16"` into a
-//! concrete [`BibleAnchor`] against an installed Bible.
+//! concrete [`BibleAnchor`] against one installed Bible.
 //!
-//! The resolver walks three sources in order, falling through on
-//! miss:
+//! Book names are data of the translation being referenced, never of
+//! the interface language or of another installed Bible: "John" finds
+//! nothing in a Spanish translation, "Juan" nothing in an English one.
+//! A book token matches, in order:
 //!
-//! 1. Spanish aliases hardcoded in [`book_id_for_alias`]. Covers the
-//!    most common spellings used in day-to-day reading.
-//! 2. Book names from the installed `books` table — matches the
-//!    `name_normal` / `abbrev` fields case-insensitively.
-//! 3. Direct OSIS id (`"EPH"`, `"1CO"`) when nothing else hits.
+//! 1. The translation's book name or abbreviation.
+//! 2. The OSIS id (`"EPH"`, `"1co"`), the same in every translation.
+//! 3. The start of exactly one of the translation's book names
+//!    (`"Efe"`, `"1 Cor"`); an ambiguous start matches nothing.
 //!
-//! The returned anchor always clamps `end_verse` ≥ `start_verse`;
-//! chapter-only refs collapse to the whole chapter (start_verse = 1).
+//! Comparison ignores case, accents, spaces, dots and dashes. The
+//! returned anchor always clamps `end_verse` ≥ `start_verse`;
+//! chapter-only refs collapse to the whole chapter (`start_verse` = 1).
+
+use notein_sdk::fold;
 
 use crate::anchor::BibleAnchor;
 use crate::db::Db;
@@ -20,11 +24,14 @@ use crate::reference::{self, ParsedRef};
 /// Resolve `input` against `bible_id`. Returns `None` when the string
 /// does not parse OR the parsed book cannot be matched.
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("bible::resolve"))]
 pub fn resolve(db: &Db, bible_id: &str, input: &str) -> Option<BibleAnchor> {
     let parsed = reference::parse(input)?;
     resolve_parsed(db, bible_id, &parsed)
 }
 
+#[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("bible::resolve_parsed"))]
 pub fn resolve_parsed(db: &Db, bible_id: &str, parsed: &ParsedRef) -> Option<BibleAnchor> {
     let book_id = resolve_book_token(db, bible_id, &parsed.book_token)?;
     let start_verse = parsed.start_verse.unwrap_or(1);
@@ -41,139 +48,38 @@ pub fn resolve_parsed(db: &Db, bible_id: &str, parsed: &ParsedRef) -> Option<Bib
     })
 }
 
-/// Resolve a lowercase book token to an OSIS id. Walks the hardcoded
-/// Spanish alias map first, falls back to the installed catalogue, and
-/// finally accepts the token verbatim if it looks like an OSIS id.
+/// Stored id of the book of `bible_id` that `token` names. The id keeps
+/// the translation's own casing (biblionlabs ships lowercase `jhn`) so
+/// chapter queries hit the right row.
+#[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("bible::resolve_book"))]
 pub fn resolve_book_token(db: &Db, bible_id: &str, token: &str) -> Option<String> {
-    let normalised = normalise(token);
+    let wanted = book_key(token);
+    if wanted.is_empty() {
+        return None;
+    }
     let books = db.list_books(bible_id).ok()?;
-
-    // Alias map returns canonical uppercase OSIS, but the installed
-    // `books` table may store its own casing (biblionlabs ships
-    // lowercase ids like `jhn`). Match the alias output against the
-    // catalogue case-insensitively and return the stored id so
-    // downstream `load_chapter` queries hit the right row.
-    if let Some(osis) = book_id_for_alias(&normalised)
-        && let Some(book) = books
-            .iter()
-            .find(|b| b.book_id.eq_ignore_ascii_case(osis))
-    {
+    let exact = books.iter().find(|book| {
+        book_key(&book.name) == wanted
+            || book_key(&book.abbrev) == wanted
+            || book.book_id.eq_ignore_ascii_case(&wanted)
+    });
+    if let Some(book) = exact {
         return Some(book.book_id.clone());
     }
-
-    for book in &books {
-        if normalise(&book.name) == normalised || normalise(&book.abbrev) == normalised {
-            return Some(book.book_id.clone());
-        }
-    }
-
-    // Last-resort: user may have typed an OSIS id directly. Match the
-    // catalogue case-insensitively and return the stored id.
-    if let Some(book) = books
+    let mut starts = books
         .iter()
-        .find(|b| b.book_id.eq_ignore_ascii_case(token))
-    {
-        return Some(book.book_id.clone());
+        .filter(|book| book_key(&book.name).starts_with(&wanted));
+    match (starts.next(), starts.next()) {
+        (Some(book), None) => Some(book.book_id.clone()),
+        _ => None,
     }
-
-    None
 }
 
-fn normalise(s: &str) -> String {
-    s.to_lowercase()
-        .chars()
-        .filter_map(|c| match c {
-            'á' => Some('a'),
-            'é' => Some('e'),
-            'í' => Some('i'),
-            'ó' => Some('o'),
-            'ú' => Some('u'),
-            'ñ' => Some('n'),
-            ' ' | '.' | '-' => None,
-            _ => Some(c),
-        })
-        .collect()
-}
-
-/// Spanish → OSIS alias dictionary. Keys are the output of
-/// [`normalise`] applied to the user's book token. Values are OSIS book
-/// codes (uppercase, no spaces).
-///
-/// Covers the common spellings (`juan`, `jn`, `1co`, `1 corintios`,
-/// `efesios`, `apocalipsis`, etc.). Not exhaustive — exotic
-/// abbreviations fall through to the installed catalogue match.
-fn book_id_for_alias(token: &str) -> Option<&'static str> {
-    Some(match token {
-        // Antiguo Testamento
-        "genesis" | "gn" | "gen" => "GEN",
-        "exodo" | "ex" | "exo" => "EXO",
-        "levitico" | "lv" | "lev" => "LEV",
-        "numeros" | "nm" | "num" => "NUM",
-        "deuteronomio" | "dt" | "deu" => "DEU",
-        "josue" | "jos" => "JOS",
-        "jueces" | "jue" | "jc" | "jdg" => "JDG",
-        "rut" | "rt" | "ru" => "RUT",
-        "1samuel" | "1s" | "1sam" => "1SA",
-        "2samuel" | "2s" | "2sam" => "2SA",
-        "1reyes" | "1r" | "1re" | "1kg" => "1KI",
-        "2reyes" | "2r" | "2re" | "2kg" => "2KI",
-        "1cronicas" | "1cr" | "1ch" => "1CH",
-        "2cronicas" | "2cr" | "2ch" => "2CH",
-        "esdras" | "esd" | "ezr" => "EZR",
-        "nehemias" | "neh" => "NEH",
-        "ester" | "est" => "EST",
-        "job" | "jb" => "JOB",
-        "salmos" | "sal" | "sl" | "ps" | "psa" => "PSA",
-        "proverbios" | "pr" | "prov" | "pro" => "PRO",
-        "eclesiastes" | "ec" | "ecl" => "ECC",
-        "cantares" | "ct" | "cnt" | "cantar" => "SNG",
-        "isaias" | "is" | "isa" => "ISA",
-        "jeremias" | "jer" | "jr" => "JER",
-        "lamentaciones" | "lam" | "lm" => "LAM",
-        "ezequiel" | "ez" | "eze" => "EZK",
-        "daniel" | "dn" | "dan" => "DAN",
-        "oseas" | "os" | "ose" => "HOS",
-        "joel" | "jl" | "jol" => "JOL",
-        "amos" | "am" | "amo" => "AMO",
-        "abdias" | "abd" | "ab" => "OBA",
-        "jonas" | "jon" => "JON",
-        "miqueas" | "mi" | "miq" => "MIC",
-        "nahum" | "nah" | "na" => "NAM",
-        "habacuc" | "hab" => "HAB",
-        "sofonias" | "sof" | "so" => "ZEP",
-        "hageo" | "ag" | "hag" => "HAG",
-        "zacarias" | "zac" | "zc" => "ZEC",
-        "malaquias" | "mal" => "MAL",
-        // Nuevo Testamento
-        "mateo" | "mt" | "mat" => "MAT",
-        "marcos" | "mr" | "mc" | "mrk" => "MRK",
-        "lucas" | "lc" | "luk" => "LUK",
-        "juan" | "jn" | "jhn" => "JHN",
-        "hechos" | "hch" | "hc" | "act" => "ACT",
-        "romanos" | "ro" | "rom" => "ROM",
-        "1corintios" | "1co" | "1cor" => "1CO",
-        "2corintios" | "2co" | "2cor" => "2CO",
-        "galatas" | "ga" | "gal" => "GAL",
-        "efesios" | "ef" | "eph" => "EPH",
-        "filipenses" | "flp" | "fil" | "php" | "phil" => "PHP",
-        "colosenses" | "col" => "COL",
-        "1tesalonicenses" | "1ts" | "1tes" | "1thess" | "1th" => "1TH",
-        "2tesalonicenses" | "2ts" | "2tes" | "2thess" | "2th" => "2TH",
-        "1timoteo" | "1ti" | "1tim" => "1TI",
-        "2timoteo" | "2ti" | "2tim" => "2TI",
-        "tito" | "tit" | "ti" => "TIT",
-        "filemon" | "flm" | "phm" => "PHM",
-        "hebreos" | "heb" | "he" => "HEB",
-        "santiago" | "stg" | "sant" | "jas" => "JAS",
-        "1pedro" | "1p" | "1pe" | "1ped" => "1PE",
-        "2pedro" | "2p" | "2pe" | "2ped" => "2PE",
-        "1juan" | "1jn" => "1JN",
-        "2juan" | "2jn" => "2JN",
-        "3juan" | "3jn" => "3JN",
-        "judas" | "jud" | "jd" => "JUD",
-        "apocalipsis" | "ap" | "apoc" | "rev" => "REV",
-        _ => return None,
-    })
+/// `text` folded for comparing book names: lower case, no accents,
+/// letters and digits only.
+fn book_key(text: &str) -> String {
+    fold(text).chars().filter(|c| c.is_alphanumeric()).collect()
 }
 
 #[cfg(test)]
@@ -181,24 +87,36 @@ mod tests {
     use super::*;
     use rusqlite::params;
 
+    /// A Spanish and an English translation, with abbreviations cut the
+    /// way the biblionlabs manifests ship them.
     fn seeded_db() -> Db {
         let db = Db::in_memory().unwrap();
         db.with_conn(|conn| {
-            conn.execute(
-                "INSERT INTO bibles (id, abbrev, name_local, language)
-                 VALUES ('spa_rv1960', 'RVR1960', 'Reina Valera 1960', 'spa')",
-                [],
-            )?;
-            for (bid, name, abbrev, order) in [
-                ("GEN", "Génesis", "Gn", 1),
-                ("JHN", "Juan", "Jn", 43),
-                ("EPH", "Efesios", "Ef", 49),
-                ("1CO", "1 Corintios", "1Co", 46),
+            for (id, abbrev, name, language) in [
+                ("spa_rv1960", "RVR1960", "Reina Valera 1960", "spa"),
+                ("eng_kjv", "KJV", "King James Version", "eng"),
+            ] {
+                conn.execute(
+                    "INSERT INTO bibles (id, abbrev, name_local, language)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![id, abbrev, name, language],
+                )?;
+            }
+            for (bible, bid, name, abbrev, order) in [
+                ("spa_rv1960", "gen", "Génesis", "Génesi", 0),
+                ("spa_rv1960", "jos", "Josué", "Josué", 5),
+                ("spa_rv1960", "job", "Job", "Job", 17),
+                ("spa_rv1960", "jhn", "Juan", "Juan", 42),
+                ("spa_rv1960", "1co", "1 Corintios", "1 Cori", 45),
+                ("spa_rv1960", "eph", "Efesios", "Efesio", 48),
+                ("spa_rv1960", "1jn", "1 Juan", "1 Juan", 61),
+                ("eng_kjv", "jhn", "John", "John", 42),
+                ("eng_kjv", "eph", "Ephesians", "Ephesi", 48),
             ] {
                 conn.execute(
                     "INSERT INTO books (bible_id, book_id, name, abbrev, order_num, testament)
-                     VALUES ('spa_rv1960', ?1, ?2, ?3, ?4, 'NT')",
-                    params![bid, name, abbrev, order as i64],
+                     VALUES (?1, ?2, ?3, ?4, ?5, 'NT')",
+                    params![bible, bid, name, abbrev, i64::from(order)],
                 )?;
             }
             Ok(())
@@ -208,46 +126,71 @@ mod tests {
     }
 
     #[test]
-    fn resolve_spanish_full_name() {
+    fn full_name_of_the_referenced_translation() {
         let db = seeded_db();
         let a = resolve(&db, "spa_rv1960", "Juan 3:16").unwrap();
-        assert_eq!(a.book_id, "JHN");
+        assert_eq!(a.book_id, "jhn");
         assert_eq!(a.start_chapter, 3);
         assert_eq!(a.start_verse, 16);
         assert_eq!(a.end_verse, 16);
+        assert_eq!(resolve(&db, "eng_kjv", "John 3:16").unwrap().book_id, "jhn");
     }
 
     #[test]
-    fn resolve_abbrev_with_dot() {
+    fn names_never_cross_translations() {
         let db = seeded_db();
-        let a = resolve(&db, "spa_rv1960", "1 Co. 13:4-7").unwrap();
-        assert_eq!(a.book_id, "1CO");
+        assert!(resolve(&db, "spa_rv1960", "John 3:16").is_none());
+        assert!(resolve(&db, "eng_kjv", "Juan 3:16").is_none());
+    }
+
+    #[test]
+    fn accents_case_and_dots_are_ignored() {
+        let db = seeded_db();
+        assert_eq!(
+            resolve(&db, "spa_rv1960", "genesis 1:1").unwrap().book_id,
+            "gen"
+        );
+        let a = resolve(&db, "spa_rv1960", "1 Cori. 13:4-7").unwrap();
+        assert_eq!(a.book_id, "1co");
         assert_eq!(a.start_verse, 4);
         assert_eq!(a.end_verse, 7);
     }
 
     #[test]
-    fn resolve_chapter_only_defaults_verse_1() {
+    fn osis_id_works_in_any_translation() {
+        let db = seeded_db();
+        assert_eq!(
+            resolve(&db, "spa_rv1960", "EPH 2:8").unwrap().book_id,
+            "eph"
+        );
+        assert_eq!(resolve(&db, "eng_kjv", "1co 13").map(|a| a.book_id), None);
+        assert_eq!(resolve(&db, "spa_rv1960", "1co 13").unwrap().book_id, "1co");
+    }
+
+    #[test]
+    fn unique_start_of_a_name_matches() {
         let db = seeded_db();
         let a = resolve(&db, "spa_rv1960", "Ef 6").unwrap();
-        assert_eq!(a.book_id, "EPH");
+        assert_eq!(a.book_id, "eph");
         assert_eq!(a.start_chapter, 6);
         assert_eq!(a.start_verse, 1);
-        assert_eq!(a.end_verse, 1);
+        assert_eq!(
+            resolve(&db, "spa_rv1960", "1 Cor 13").unwrap().book_id,
+            "1co"
+        );
+        assert_eq!(resolve(&db, "eng_kjv", "Eph 2").unwrap().book_id, "eph");
     }
 
     #[test]
-    fn resolve_falls_back_to_installed_name() {
+    fn ambiguous_start_matches_nothing() {
         let db = seeded_db();
-        // "Génesis" via full catalogue name — the alias map handles
-        // the accented form, but also prove the catalogue walk works
-        // with the OSIS id directly.
-        let a = resolve(&db, "spa_rv1960", "GEN 1:1").unwrap();
-        assert_eq!(a.book_id, "GEN");
+        // Josué, Job and Juan all start with "j".
+        assert!(resolve(&db, "spa_rv1960", "J 1").is_none());
+        assert!(resolve(&db, "spa_rv1960", "Jo 1").is_none());
     }
 
     #[test]
-    fn resolve_unknown_book_returns_none() {
+    fn unknown_book_returns_none() {
         let db = seeded_db();
         assert!(resolve(&db, "spa_rv1960", "Zorg 1:1").is_none());
     }

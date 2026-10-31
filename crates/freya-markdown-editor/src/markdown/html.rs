@@ -15,6 +15,7 @@ pub(super) enum Tag {
 }
 
 impl Tag {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::html_classify"))]
     pub(super) fn classify(raw: &str) -> Self {
         let raw = raw.trim();
         let Some(inner) = raw
@@ -58,6 +59,9 @@ fn marks_for(name: &str, attributes: &[(String, String)]) -> Option<Vec<MarkKind
         "sup" => vec![MarkKind::Superscript],
         "sub" => vec![MarkKind::Subscript],
         "code" | "kbd" => vec![MarkKind::Code],
+        "abbr" => vec![MarkKind::Abbreviation(unescape(
+            attribute("title").unwrap_or_default(),
+        ))],
         "span" => Vec::new(),
         "font" => {
             let mut marks = Vec::new();
@@ -78,6 +82,7 @@ fn marks_for(name: &str, attributes: &[(String, String)]) -> Option<Vec<MarkKind
 }
 
 /// Marks described by a CSS declaration list.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::html_style_marks"))]
 pub(super) fn style_marks(style: &str) -> Vec<MarkKind> {
     style
         .split(';')
@@ -103,6 +108,16 @@ pub(super) fn style_marks(style: &str) -> Vec<MarkKind> {
             }
         })
         .collect()
+}
+
+/// Text of an HTML attribute value with the common entities decoded.
+pub(super) fn unescape(value: &str) -> String {
+    value
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
 }
 
 fn clean_family(value: &str) -> String {

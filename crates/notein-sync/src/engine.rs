@@ -9,10 +9,10 @@ use std::collections::HashMap;
 
 use crate::error::SyncError;
 use crate::identity::DeviceId;
-use crate::replica::{Blob, BlobHead, BlobKey, DocId, Replica, Scope, Version};
+use crate::replica::{Blob, BlobHead, BlobKey, BlobKind, DocId, Replica, Scope, Version};
 
 /// Bumped whenever [`Message`] changes shape.
-pub const PROTOCOL_VERSION: u16 = 4;
+pub const PROTOCOL_VERSION: u16 = 5;
 
 /// One unit of the exchange.
 #[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
@@ -38,6 +38,7 @@ struct Framed {
 
 impl Message {
     /// Wire bytes, prefixed with [`PROTOCOL_VERSION`].
+    #[cfg_attr(feature = "sismo", sismo::function("sync::message::encode"))]
     pub fn to_bytes<E>(&self) -> Result<Vec<u8>, SyncError<E>> {
         bincode::encode_to_vec(
             Framed {
@@ -50,6 +51,7 @@ impl Message {
     }
 
     /// Reverse of [`Self::to_bytes`].
+    #[cfg_attr(feature = "sismo", sismo::function("sync::message::decode"))]
     pub fn from_bytes<E>(bytes: &[u8]) -> Result<Self, SyncError<E>> {
         let (framed, _): (Framed, usize) =
             bincode::decode_from_slice(bytes, bincode::config::standard())
@@ -133,6 +135,7 @@ impl<R: Replica> SyncEngine<R> {
 
     /// The announcement that opens a round.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::engine::inventory"))]
     pub fn inventory(&self) -> Message {
         let docs = self
             .replica
@@ -150,6 +153,7 @@ impl<R: Replica> SyncEngine<R> {
     }
 
     /// Apply a message from `peer`.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::engine::handle"))]
     pub fn handle(
         &mut self,
         peer: DeviceId,
@@ -158,9 +162,16 @@ impl<R: Replica> SyncEngine<R> {
         let mut handled = Handled::default();
         match message {
             Message::Inventory { docs, blobs } => {
+                #[cfg(feature = "sismo")]
+                {
+                    sismo::counter!("sync.in.inventory_docs", docs.len());
+                    sismo::counter!("sync.in.inventory_blobs", blobs.len());
+                }
                 handled.replies = self.answer_inventory(peer, docs, &blobs)?;
             }
             Message::DocUpdates { doc, bytes } | Message::DocSnapshot { doc, bytes } => {
+                #[cfg(feature = "sismo")]
+                sismo::counter!("sync.in.doc_bytes", bytes.len());
                 if self.scope.covers_doc(doc) {
                     self.replica
                         .doc_import(doc, &bytes)
@@ -169,6 +180,8 @@ impl<R: Replica> SyncEngine<R> {
                 }
             }
             Message::Blobs(blobs) => {
+                #[cfg(feature = "sismo")]
+                sismo::counter!("sync.in.blobs", blobs.len());
                 for blob in blobs {
                     let key = blob.head.key();
                     if self.scope.covers_blob(key)
@@ -182,6 +195,7 @@ impl<R: Replica> SyncEngine<R> {
         Ok(handled)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::engine::answer_inventory"))]
     fn answer_inventory(
         &mut self,
         peer: DeviceId,
@@ -204,6 +218,7 @@ impl<R: Replica> SyncEngine<R> {
     /// Everything `peer` lacks according to its last announcement.
     /// Empty when the peer never announced. Send after local edits so
     /// they land without waiting for the peer's next round.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::engine::push_for"))]
     pub fn push_for(&self, peer: DeviceId) -> Result<Vec<Message>, SyncError<R::Error>> {
         let Some(heard) = self.heard.get(&peer) else {
             return Ok(Vec::new());
@@ -242,6 +257,11 @@ impl<R: Replica> SyncEngine<R> {
             .filter(|head| theirs.get(&head.key()).is_none_or(|&t| t < head.updated_at))
             .map(|head| head.key())
             .collect();
+        #[cfg(feature = "sismo")]
+        {
+            sismo::counter!("sync.out.round_docs", out.len());
+            sismo::counter!("sync.out.round_blobs", newer.len());
+        }
         if !newer.is_empty() {
             let blobs = self.replica.blobs(&newer);
             if !blobs.is_empty() {
@@ -258,6 +278,7 @@ impl<R: Replica> SyncEngine<R> {
     ///
     /// # Errors
     /// Replica failure while exporting.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::engine::push_doc"))]
     pub fn push_doc(
         &mut self,
         peer: DeviceId,
@@ -300,6 +321,7 @@ impl<R: Replica> SyncEngine<R> {
     ///
     /// # Errors
     /// Replica failure while reading.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::engine::push_blob"))]
     pub fn push_blob(
         &mut self,
         peer: DeviceId,
@@ -334,8 +356,40 @@ impl<R: Replica> SyncEngine<R> {
         Ok(Some(Message::Blobs(blobs)))
     }
 
+    /// Whether a peer announced a file (attachment or asset) newer than
+    /// the one held here: big ones arrive in parts and take a while.
+    #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::engine::files_pending"))]
+    pub fn files_pending(&self) -> bool {
+        let wanted: Vec<(BlobKey, u64)> = self
+            .heard
+            .values()
+            .flat_map(|heard| heard.blobs.iter())
+            .filter(|(key, _)| {
+                matches!(key.kind, BlobKind::Attachment | BlobKind::Asset)
+                    && self.scope.covers_blob(**key)
+            })
+            .map(|(key, at)| (*key, *at))
+            .collect();
+        #[cfg(feature = "sismo")]
+        sismo::counter!("sync.files_wanted", wanted.len());
+        if wanted.is_empty() {
+            return false;
+        }
+        let local: HashMap<BlobKey, u64> = self
+            .replica
+            .blob_heads()
+            .into_iter()
+            .map(|head| (head.key(), head.updated_at))
+            .collect();
+        wanted
+            .iter()
+            .any(|(key, theirs)| local.get(key).is_none_or(|ours| ours < theirs))
+    }
+
     /// Where `doc` stands against every peer heard from.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::engine::status"))]
     pub fn status(&self, doc: DocId) -> DocStatus {
         let Some(local) = self.replica.doc_version(doc) else {
             return DocStatus::Unknown;
@@ -409,6 +463,22 @@ mod tests {
         round(&mut a, &mut b);
         assert_eq!(a.status(D1), DocStatus::Synced);
         assert_eq!(b.status(D2), DocStatus::Synced);
+    }
+
+    #[test]
+    fn a_file_announced_but_not_yet_here_is_pending() {
+        let mut a = SyncEngine::new(MemReplica::default(), Scope::All);
+        let mut b = SyncEngine::new(MemReplica::default(), Scope::All);
+        a.replica_mut()
+            .put_blob(BlobKind::Attachment, 3, 10, "a big pdf");
+        assert!(!b.files_pending());
+        b.handle(A, a.inventory()).unwrap();
+        assert!(b.files_pending());
+        for reply in a.handle(B, b.inventory()).unwrap().replies {
+            b.handle(A, reply).unwrap();
+        }
+        assert!(!b.files_pending());
+        assert!(!a.files_pending(), "the side that has it waits for nothing");
     }
 
     #[test]

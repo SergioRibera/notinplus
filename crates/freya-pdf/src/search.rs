@@ -112,12 +112,16 @@ impl PdfSearchIndex {
 
     fn page_index(&self, page: PageId) -> Result<PageIndex, PdfError> {
         if let Some(entry) = self.read_cache(page.0) {
+            #[cfg(feature = "sismo")]
+            sismo::instant!("pdf::text_cache_hit");
             return Ok(entry);
         }
         let idx = usize::try_from(page.0).map_err(|_| PdfError::PageOutOfRange {
             requested: usize::MAX,
             page_count: self.inner.doc.page_count(),
         })?;
+        #[cfg(feature = "sismo")]
+        sismo::instant!("pdf::text_cache_miss");
         let (text, starts) = self.inner.doc.extract_page_text_indexed(idx)?;
         let entry = PageIndex {
             text: Arc::new(text),
@@ -129,6 +133,7 @@ impl PdfSearchIndex {
 
     /// Drop every cached page text. Right after a document swap or
     /// low-memory pressure.
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::text_cache_clear"))]
     pub fn clear_cache(&self) {
         self.write_lock().clear();
     }
@@ -138,6 +143,7 @@ impl PdfSearchIndex {
     /// # Errors
     ///
     /// Propagates [`Self::page_text`] failures.
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::search_page"))]
     pub fn find_in_page(
         &self,
         page: PageId,
@@ -148,7 +154,10 @@ impl PdfSearchIndex {
             return Ok(Vec::new());
         }
         let text = self.page_text(page)?;
-        Ok(scan(&text, query, page, opts))
+        let hits = scan(&text, query, page, opts);
+        #[cfg(feature = "sismo")]
+        sismo::counter!("pdf.search_hits", hits.len());
+        Ok(hits)
     }
 
     /// Find every occurrence of `query` across the whole document.
@@ -159,6 +168,7 @@ impl PdfSearchIndex {
     /// # Errors
     ///
     /// Propagates [`Self::page_text`] failures.
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::search_doc"))]
     pub fn find(&self, query: &str, opts: SearchOptions) -> Result<Vec<SearchHit>, PdfError> {
         if query.is_empty() {
             return Ok(Vec::new());
@@ -171,6 +181,8 @@ impl PdfSearchIndex {
             let text = self.page_text(page)?;
             all.extend(scan(&text, query, page, opts));
         }
+        #[cfg(feature = "sismo")]
+        sismo::counter!("pdf.search_hits", all.len());
         Ok(all)
     }
 
@@ -187,6 +199,7 @@ impl PdfSearchIndex {
     ///
     /// Propagates any [`PdfError`] from pdfium (e.g. page out of
     /// range, tight-bounds failure).
+    #[cfg_attr(feature = "sismo", sismo::function("pdf::search_hit_rects"))]
     pub fn hit_rects(&self, hit: SearchHit) -> Result<Vec<Rect>, PdfError> {
         if hit.match_len == 0 {
             return Ok(Vec::new());
@@ -249,6 +262,7 @@ fn char_range_for_bytes(starts: &[usize], start_byte: usize, end_byte: usize) ->
     (start_char, end_char.max(start_char))
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("pdf::search_scan"))]
 fn scan(text: &str, query: &str, page: PageId, opts: SearchOptions) -> Vec<SearchHit> {
     if opts.case_sensitive {
         text.match_indices(query)
