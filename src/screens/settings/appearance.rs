@@ -15,6 +15,7 @@ use crate::settings::{SettingsStore, TextSizePref, ThemePref};
 const THUMB_W: f32 = 116.0;
 const THUMB_H: f32 = 78.0;
 
+#[sismo::function("settings::appearance_thumbnail")]
 fn thumbnail(pal: Palette) -> Rect {
     rect()
         .width(Size::fill())
@@ -61,6 +62,7 @@ fn thumbnail(pal: Palette) -> Rect {
         )
 }
 
+#[sismo::function("settings::appearance_theme_card")]
 fn theme_card(
     pref: ThemePref,
     chosen: bool,
@@ -146,6 +148,7 @@ pub(super) struct Appearance;
 
 /// An accent swatch; `None` is the theme's own accent, which also
 /// stands for a pick of the very same colour.
+#[sismo::function("settings::appearance_accent_swatch")]
 fn accent_swatch(
     color: Option<Color>,
     label: String,
@@ -185,6 +188,7 @@ fn accent_swatch(
 
 /// The button that opens the free colour picker; filled with the
 /// accent when it is not one of the swatches.
+#[sismo::function("settings::appearance_custom_swatch")]
 fn custom_swatch(accent: Option<Color>, theme_accent: Color, mut area: State<Area>) -> Rect {
     let p = palette();
     let chosen = accent.is_some_and(|a| a != theme_accent && !ACCENT_SWATCHES.contains(&a));
@@ -239,6 +243,7 @@ impl AccentPicker {
 }
 
 impl Component for AccentPicker {
+    #[sismo::function("settings::accent_picker")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let initial = self.initial;
@@ -304,6 +309,7 @@ impl Component for AccentPicker {
 }
 
 /// "Device" first, then every language in its own name.
+#[sismo::function("settings::appearance_language_section")]
 fn language_section(chosen: Option<Lang>) -> Section {
     let options: Vec<Option<Lang>> = std::iter::once(None)
         .chain(Lang::ALL.into_iter().map(Some))
@@ -331,6 +337,7 @@ fn language_section(chosen: Option<Lang>) -> Section {
 }
 
 /// Swatches, the picker, and a note when the theme had to adjust it.
+#[sismo::function("settings::appearance_accent_section")]
 fn accent_section(accent: Option<Color>, custom: State<Area>) -> Section {
     let p = palette();
     let resolved = try_theme().map(|t| t.resolved());
@@ -377,6 +384,7 @@ fn accent_section(accent: Option<Color>, custom: State<Area>) -> Section {
 }
 
 impl Component for Appearance {
+    #[sismo::function("settings::appearance")]
     fn render(&self) -> impl IntoElement {
         let store = SettingsStore::get();
         let settings = store.read().appearance;

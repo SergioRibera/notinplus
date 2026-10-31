@@ -51,6 +51,7 @@ enum Line {
 }
 
 impl Line {
+    #[sismo::function("mesa::palette_run")]
     fn run(&self, beside: bool) {
         ModalController::get().close();
         match self {
@@ -86,6 +87,7 @@ impl Command {
 }
 
 /// The commands for the focused document and the mesa.
+#[sismo::function("mesa::palette_commands")]
 fn commands(data: &LibraryData, ops: Ops, ui: MesaUi, focus: Option<&Focus>) -> Vec<Command> {
     let mut out = Vec::new();
     if let Some(focus) = focus {
@@ -99,6 +101,7 @@ fn commands(data: &LibraryData, ops: Ops, ui: MesaUi, focus: Option<&Focus>) -> 
 }
 
 /// What can be done with the focused pane.
+#[sismo::function("mesa::palette_pane_commands")]
 fn pane_commands(focus: &Focus, ops: Ops) -> Vec<Command> {
     use freya::icons::lucide;
     let pane = focus.pane;
@@ -144,6 +147,7 @@ fn pane_commands(focus: &Focus, ops: Ops) -> Vec<Command> {
 
 /// What can be done with document `item`, its kind's own actions
 /// included.
+#[sismo::function("mesa::palette_document_commands")]
 fn document_commands(data: &LibraryData, item: ItemId) -> Vec<Command> {
     use crate::flows;
     use freya::icons::lucide;
@@ -210,6 +214,7 @@ fn document_commands(data: &LibraryData, item: ItemId) -> Vec<Command> {
 }
 
 /// What can be done with the mesa itself.
+#[sismo::function("mesa::palette_mesa_commands")]
 fn mesa_commands(ui: MesaUi) -> Vec<Command> {
     use freya::icons::lucide;
     vec![
@@ -276,7 +281,9 @@ fn parse(text: &str) -> (Option<String>, String) {
 }
 
 /// Open the palette.
+#[sismo::function("mesa::palette_open")]
 pub(super) fn open(data: Arc<LibraryData>, ops: Ops, ui: MesaUi, focus: Option<&Focus>) {
+    sismo::marker("screen: palette");
     let commands = commands(&data, ops, ui, focus);
     ModalController::get().open(
         Modal::new(Palette { data, commands })
@@ -294,6 +301,7 @@ struct Palette {
 }
 
 impl Component for Palette {
+    #[sismo::function("mesa::palette")]
     fn render(&self) -> impl IntoElement {
         let p = theme();
         let query = use_state(String::new);
@@ -375,6 +383,7 @@ impl Component for Palette {
 
 /// Search the query (without its "/kind" filter) a moment after it
 /// stops changing. Returns the results and the highlighted line.
+#[sismo::function("mesa::use_palette_search")]
 fn use_palette_search(
     query: State<String>,
     data: &Arc<LibraryData>,
@@ -383,6 +392,7 @@ fn use_palette_search(
     let mut highlighted = use_state(|| 0usize);
     let data = Arc::clone(data);
     use_side_effect(move || {
+        sismo::scope!("mesa::palette_query");
         let (_, text) = parse(&query.read());
         highlighted.set(0);
         if text.trim().is_empty() {
@@ -390,7 +400,7 @@ fn use_palette_search(
             return;
         }
         let data = Arc::clone(&data);
-        spawn(async move {
+        spawn(traced!("task::mesa::palette_search", async move {
             async_io::Timer::after(DEBOUNCE).await;
             if parse(&query.peek()).1 != text {
                 return;
@@ -399,7 +409,7 @@ fn use_palette_search(
             if parse(&query.peek()).1 == text {
                 results.set(found);
             }
-        });
+        }));
     });
     (results, highlighted)
 }
@@ -413,6 +423,7 @@ struct Found {
 
 impl Palette {
     /// Lines for `needle` (lower-cased), only of `kind` when given.
+    #[sismo::function("mesa::palette_found")]
     fn found(&self, kind: Option<&str>, needle: &str, current: &Results) -> Found {
         let keep_kind = |k: &str| kind.is_none_or(|wanted| wanted == k);
         let docs = if needle.is_empty() {
@@ -467,6 +478,7 @@ impl Palette {
 
 impl Found {
     /// Every line in the order the arrow keys walk them.
+    #[sismo::function("mesa::palette_all")]
     fn all(&self) -> Vec<Line> {
         self.commands
             .iter()
@@ -476,6 +488,7 @@ impl Found {
             .collect()
     }
 
+    #[sismo::function("mesa::palette_sections")]
     fn sections(&self, rows: &mut PaletteRows<'_>, idle: bool) -> Vec<Element> {
         let mut sections = Vec::new();
         if !self.commands.is_empty() {
@@ -505,6 +518,7 @@ struct PaletteRows<'a> {
 }
 
 impl PaletteRows<'_> {
+    #[sismo::function("mesa::palette_section")]
     fn section(&mut self, title: String, lines: &[Line]) -> Element {
         let rows: Vec<Element> = lines.iter().map(|l| self.row(l)).collect();
         Section::new(title)
@@ -512,6 +526,7 @@ impl PaletteRows<'_> {
             .into_element()
     }
 
+    #[sismo::function("mesa::palette_row")]
     fn row(&mut self, line: &Line) -> Element {
         let p = theme();
         let on = self.next == self.selected;

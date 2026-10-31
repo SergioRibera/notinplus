@@ -25,7 +25,9 @@ const LABEL_WIDTH: f32 = 104.0;
 const INNER_PAD: f32 = LABEL_WIDTH / 2.0 + 8.0;
 
 /// Open the map over whatever is on screen.
+#[sismo::function("map::open")]
 pub fn open() {
+    sismo::marker("screen: map");
     ModalController::get().open(Modal::new(Map).manual().dismiss_on_backdrop(false));
 }
 
@@ -129,6 +131,7 @@ impl Layout {
     }
 
     /// Node `i`: a disc sized by its connections, with its name.
+    #[sismo::function("map::node")]
     fn node(&self, i: usize, mut selected: State<Option<usize>>) -> Option<Element> {
         let p = palette();
         let node = self.graph.nodes.get(i)?;
@@ -190,6 +193,7 @@ impl Layout {
 
     /// The card of the selected node: what it is, what it connects to,
     /// and how to open it.
+    #[sismo::function("map::card")]
     fn card(&self, compact: bool, size: Size2D, bottom_inset: f32) -> Option<Rect> {
         let p = palette();
         let node = self.graph.nodes.get(self.current?)?;
@@ -287,6 +291,7 @@ fn toggle<T: PartialEq>(list: &mut Vec<T>, value: T) {
 }
 
 /// Chips to hide kinds of documents and of connections.
+#[sismo::function("map::filters")]
 fn filters(
     mut hidden_kinds: State<Vec<String>>,
     mut hidden_edges: State<Vec<EdgeKind>>,
@@ -336,6 +341,7 @@ fn filters(
 }
 
 /// Back, the title and how much there is.
+#[sismo::function("map::title_row")]
 fn title_row(graph: &Graph) -> Rect {
     rect()
         .width(Size::fill())
@@ -363,6 +369,7 @@ fn title_row(graph: &Graph) -> Rect {
 }
 
 impl Component for Map {
+    #[sismo::function("map::map")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let data = LibraryView::get().data();

@@ -24,6 +24,7 @@ const CONFIRM_WINDOW: Duration = Duration::from_secs(3);
 const QR: f32 = 208.0;
 
 /// SVG of a QR code carrying `text`, black on white for cameras.
+#[sismo::function("settings::devices_qr_svg")]
 fn qr_svg(text: &str) -> Option<Bytes> {
     let code = qrcode::QrCode::new(text.as_bytes()).ok()?;
     let svg = code
@@ -41,6 +42,7 @@ pub(super) struct Devices;
 
 /// A row being edited in place: a field and Save. Leaving the field
 /// saves too, and the row goes back to reading.
+#[sismo::function("settings::devices_edit_row")]
 fn edit_row(
     title: String,
     icon: Bytes,
@@ -72,6 +74,7 @@ fn edit_row(
 }
 
 /// This device's name, renamed in place.
+#[sismo::function("settings::devices_this_device")]
 fn this_device(snapshot: &SyncSnapshot, mut renaming: State<bool>, name: State<String>) -> ListRow {
     use freya::icons::lucide;
     if renaming() {
@@ -113,6 +116,7 @@ fn this_device(snapshot: &SyncSnapshot, mut renaming: State<bool>, name: State<S
 }
 
 /// A linked device; Remove asks for a second tap.
+#[sismo::function("settings::devices_linked_device")]
 fn linked_device(
     snapshot: &SyncSnapshot,
     device: &TrustedDevice,
@@ -167,6 +171,7 @@ fn linked_device(
 }
 
 /// The relay server, edited in place.
+#[sismo::function("settings::devices_server_row")]
 fn server_row(snapshot: &SyncSnapshot, mut editing: State<bool>, server: State<String>) -> ListRow {
     use freya::icons::lucide;
     if editing() {
@@ -212,6 +217,7 @@ fn server_row(snapshot: &SyncSnapshot, mut editing: State<bool>, server: State<S
 }
 
 impl Component for Devices {
+    #[sismo::function("settings::devices")]
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let snapshot = crate::sync::use_sync().read().clone();
@@ -267,6 +273,7 @@ impl Component for Devices {
 }
 
 /// Open Link: show this device's code, or type another's.
+#[sismo::function("settings::devices_open_pairing")]
 pub fn open_pairing() {
     crate::sync::begin_pairing();
     ModalController::get().push(
@@ -282,6 +289,7 @@ pub fn open_pairing() {
 struct Pairing;
 
 impl Component for Pairing {
+    #[sismo::function("settings::pairing")]
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let p = palette();
@@ -293,7 +301,7 @@ impl Component for Pairing {
         let mut minted = use_state(Instant::now);
         let mut now = use_state(Instant::now);
         use_hook(move || {
-            spawn(async move {
+            spawn(traced!("task::settings::pairing_clock", async move {
                 loop {
                     async_io::Timer::after(Duration::from_secs(1)).await;
                     now.set(Instant::now());
@@ -302,7 +310,7 @@ impl Component for Pairing {
                         minted.set(Instant::now());
                     }
                 }
-            });
+            }));
         });
         let left =
             CODE_LIFETIME.saturating_sub(now.read().saturating_duration_since(*minted.read()));
@@ -382,6 +390,7 @@ impl Component for Pairing {
 }
 
 /// The Link device modal's title row, with its close button.
+#[sismo::function("settings::devices_pairing_header")]
 fn pairing_header() -> Rect {
     rect()
         .width(Size::fill())
@@ -399,6 +408,7 @@ fn pairing_header() -> Rect {
         )
 }
 
+#[sismo::function("settings::devices_show_code")]
 fn show_code(snapshot: &SyncSnapshot, left: Duration) -> Element {
     let p = palette();
     let Some(offer) = snapshot.offer.as_ref() else {
@@ -490,6 +500,7 @@ fn show_code(snapshot: &SyncSnapshot, left: Duration) -> Element {
 struct EnterCode;
 
 /// Six boxes showing the digits typed, the next one outlined.
+#[sismo::function("settings::devices_code_boxes")]
 fn code_boxes(digits: &str) -> Rect {
     let p = palette();
     rect()
@@ -525,6 +536,7 @@ fn code_boxes(digits: &str) -> Rect {
 }
 
 impl Component for EnterCode {
+    #[sismo::function("settings::enter_code")]
     fn render(&self) -> impl IntoElement {
         let snapshot = crate::sync::use_sync().read().clone();
         let code = use_state(String::new);
@@ -604,6 +616,7 @@ impl Component for EnterCode {
 }
 
 /// Open Scan or paste link.
+#[sismo::function("settings::devices_open_link_sheet")]
 pub fn open_link_sheet() {
     Sheet::titled(tr!("settings-devices-scan-or-paste"))
         .child(LinkSheet)
@@ -620,6 +633,7 @@ enum Recognized {
     Document(String),
 }
 
+#[sismo::function("settings::devices_recognize")]
 fn recognize(text: &str) -> Option<Recognized> {
     let text = text.trim();
     if text.is_empty() {
@@ -635,6 +649,7 @@ fn recognize(text: &str) -> Option<Recognized> {
 }
 
 /// What a recognised link does, with the button that does it.
+#[sismo::function("settings::devices_link_card")]
 fn link_card(target: &Recognized, raw: String) -> Rect {
     use freya::icons::lucide;
     let p = palette();
@@ -689,6 +704,7 @@ fn link_card(target: &Recognized, raw: String) -> Rect {
 }
 
 /// Scan a QR code into `pasted`; a camera problem lands in `error`.
+#[sismo::function("settings::devices_scan_button")]
 fn scan_button(mut error: State<Option<String>>, mut pasted: State<String>) -> Button {
     Button::new(tr!("settings-devices-scan-qr"))
         .tonal()
@@ -696,7 +712,7 @@ fn scan_button(mut error: State<Option<String>>, mut pasted: State<String>) -> B
         .icon(freya::icons::lucide::scan_qr_code())
         .on_press(move |_| {
             let scan = crate::scan::scan_qr(&tr!("settings-devices-scan-prompt"));
-            spawn(async move {
+            spawn(traced!("task::settings::scan_qr", async move {
                 match scan.await {
                     Ok(Some(text)) => {
                         error.set(None);
@@ -709,11 +725,12 @@ fn scan_button(mut error: State<Option<String>>, mut pasted: State<String>) -> B
                         ));
                     }
                 }
-            });
+            }));
         })
 }
 
 impl Component for LinkSheet {
+    #[sismo::function("settings::link_sheet")]
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let pasted = use_state(String::new);

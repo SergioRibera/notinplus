@@ -27,7 +27,9 @@ const WIDTH: f32 = 640.0;
 const RECENT_DOCS: usize = 6;
 
 /// Open the search panel, starting with `query`.
+#[sismo::function("search::open")]
 pub fn open(query: String) {
+    sismo::marker("screen: search");
     ModalController::get().open(
         Modal::new(SearchPanel { query })
             .manual()
@@ -48,6 +50,7 @@ enum Line {
 }
 
 impl Line {
+    #[sismo::function("search::run")]
     fn run(&self, beside: bool, mut query: State<String>) {
         let remember = query.peek().clone();
         let record = move || {
@@ -93,6 +96,7 @@ impl Line {
 }
 
 /// One "Create … “query”" line per entry a name is enough for.
+#[sismo::function("search::create_lines")]
 fn create_lines(query: &str) -> Vec<Line> {
     let name = query.trim().to_owned();
     crate::flows::pickers::named_entries()
@@ -102,12 +106,14 @@ fn create_lines(query: &str) -> Vec<Line> {
 }
 
 /// Recently changed documents, for the empty field.
+#[sismo::function("search::recent_docs")]
 fn recent_docs(data: &LibraryData) -> Vec<ItemId> {
     let mut items: Vec<_> = data.live_items().collect();
     items.sort_by_key(|i| std::cmp::Reverse(i.updated_at));
     items.into_iter().take(RECENT_DOCS).map(|i| i.id).collect()
 }
 
+#[sismo::function("search::lines")]
 fn lines(results: &Results, history: &[String], recents: &[ItemId], query: &str) -> Vec<Line> {
     if query.trim().is_empty() {
         return history
@@ -140,6 +146,7 @@ struct SearchPanel {
 }
 
 impl Component for SearchPanel {
+    #[sismo::function("search::search_panel")]
     fn render(&self) -> impl IntoElement {
         let initial = self.query.clone();
         let query = use_state(move || initial);
@@ -201,6 +208,7 @@ impl Component for SearchPanel {
 
 /// Run the search `DEBOUNCE` after the query stops changing. Returns
 /// the results, the highlighted line and whether a search is running.
+#[sismo::function("search::use_search")]
 fn use_search(
     query: State<String>,
     data: Option<Arc<LibraryData>>,
@@ -209,6 +217,7 @@ fn use_search(
     let mut highlighted = use_state(|| 0usize);
     let mut searching = use_state(|| false);
     use_side_effect(move || {
+        sismo::scope!("search::query_changed");
         let text = query.read().clone();
         highlighted.set(0);
         let Some(data) = data.clone() else {
@@ -219,7 +228,7 @@ fn use_search(
             return;
         }
         searching.set(true);
-        spawn(async move {
+        spawn(traced!("task::search::query", async move {
             async_io::Timer::after(DEBOUNCE).await;
             if *query.peek() != text {
                 return;
@@ -229,12 +238,13 @@ fn use_search(
                 results.set(found);
                 searching.set(false);
             }
-        });
+        }));
     });
     (results, highlighted, searching)
 }
 
 /// The field, with Cancelar on phones.
+#[sismo::function("search::field_row")]
 fn field_row(query: State<String>, compact: bool) -> Rect {
     rect()
         .width(Size::fill())
@@ -256,6 +266,7 @@ fn field_row(query: State<String>, compact: bool) -> Rect {
         }))
 }
 
+#[sismo::function("search::key_hints")]
 fn key_hints() -> Rect {
     rect()
         .horizontal()
@@ -279,6 +290,7 @@ struct Rows<'a> {
 }
 
 impl Rows<'_> {
+    #[sismo::function("search::row")]
     fn row(&mut self, line: &Line) -> Element {
         use freya::icons::lucide;
         let p = palette();
@@ -328,6 +340,7 @@ impl Rows<'_> {
     }
 
     /// Recent searches and documents, for the empty field.
+    #[sismo::function("search::idle_sections")]
     fn idle_sections(&mut self, list: &[Line], has_history: bool) -> Vec<Element> {
         let mut sections = Vec::new();
         if has_history {
@@ -352,6 +365,7 @@ impl Rows<'_> {
 
     /// Documents, then one section per kind of place, then what is
     /// still being read.
+    #[sismo::function("search::result_sections")]
     fn result_sections(
         &mut self,
         list: &[Line],
@@ -426,6 +440,7 @@ impl Rows<'_> {
 
 /// The floating panel search and the command palette share: centred
 /// under the top on wide screens, the whole screen on phones.
+#[sismo::function("search::overlay_frame")]
 pub(crate) fn overlay_frame(top: f32) -> Rect {
     let p = palette();
     let compact = width_class().is_compact();

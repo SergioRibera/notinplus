@@ -32,6 +32,7 @@ pub(super) struct TabLook {
 }
 
 impl TabLook {
+    #[sismo::function("mesa::tab_look")]
     pub(super) fn of(tab: &PaneTab, data: &LibraryData) -> Self {
         use freya::icons::lucide;
         let p = palette();
@@ -69,6 +70,7 @@ impl TabLook {
     }
 }
 
+#[sismo::function("mesa::header_menu_for")]
 fn menu_for(tab: &PaneTab, data: &Arc<LibraryData>, at: CursorPoint) {
     if let Some(item) = tab.item() {
         crate::actions::show(
@@ -96,6 +98,7 @@ pub(super) struct PaneHeader {
 
 impl PaneHeader {
     /// Buttons the face of `item` adds to this header.
+    #[sismo::function("mesa::header_face_actions")]
     fn face_actions(&self, item: ItemId) -> Vec<Element> {
         let Some(kind) = self.data.item(item).map(|i| i.kind.plugin_id.clone()) else {
             return Vec::new();
@@ -135,6 +138,7 @@ impl PaneHeader {
 }
 
 impl Component for PaneHeader {
+    #[sismo::function("mesa::pane_header")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let pane = self.pane.id;
@@ -172,6 +176,7 @@ impl Component for PaneHeader {
 
 impl PaneHeader {
     /// The face's buttons, then other pane, new tab, more and close.
+    #[sismo::function("mesa::header_trailing")]
     fn trailing(&self) -> Rect {
         use freya::icons::lucide;
         let pane = self.pane.id;
@@ -216,6 +221,7 @@ impl PaneHeader {
     }
 
     /// One document: its colour, its title and close.
+    #[sismo::function("mesa::header_single_tab")]
     fn single_tab(&self) -> Element {
         let (pane, ops) = (self.pane.id, self.ops);
         let tab = &self.pane.tabs[0];
@@ -249,6 +255,7 @@ impl PaneHeader {
     }
 
     /// Several documents: draggable tabs that scroll sideways.
+    #[sismo::function("mesa::header_tab_strip")]
     fn tab_strip(&self) -> Element {
         let (pane, ops) = (self.pane.id, self.ops);
         let active = self.pane.active_tab as usize;
@@ -306,6 +313,7 @@ struct TabCell {
 }
 
 impl Component for TabCell {
+    #[sismo::function("mesa::tab_cell")]
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let p = palette();

@@ -29,6 +29,7 @@ const fn rgba(packed: u32) -> Color {
     Color::from_argb(a, r, g, b)
 }
 
+#[sismo::function("settings::schema_packed")]
 fn packed(color: Color) -> u32 {
     u32::from_be_bytes([color.r(), color.g(), color.b(), color.a()])
 }
@@ -52,6 +53,7 @@ impl std::fmt::Debug for SchemaForm {
 }
 
 impl Component for SchemaForm {
+    #[sismo::function("settings::schema_form")]
     fn render(&self) -> impl IntoElement {
         let revision = use_state(|| 0u32);
         let _ = revision.read();
@@ -113,6 +115,7 @@ impl FieldRow {
         }
     }
 
+    #[sismo::function("settings::schema_switch")]
     fn switch(&self, current: &ConfigValue, mut error: State<Option<String>>) -> Element {
         let set = self.setter();
         Switch::new(matches!(current, ConfigValue::Bool(true)))
@@ -120,6 +123,7 @@ impl FieldRow {
             .into_element()
     }
 
+    #[sismo::function("settings::schema_stepper")]
     fn stepper(
         &self,
         current: &ConfigValue,
@@ -136,6 +140,7 @@ impl FieldRow {
             .into_element()
     }
 
+    #[sismo::function("settings::schema_int_text")]
     fn int_text(
         &self,
         text: State<String>,
@@ -156,6 +161,7 @@ impl FieldRow {
             .into_element()
     }
 
+    #[sismo::function("settings::schema_slider")]
     fn slider(
         &self,
         current: &ConfigValue,
@@ -190,6 +196,7 @@ impl FieldRow {
             .into_element()
     }
 
+    #[sismo::function("settings::schema_text")]
     fn text(&self, text: State<String>, max_len: u32, mut error: State<Option<String>>) -> Element {
         let set = self.setter();
         let max_len = max_len as usize;
@@ -209,6 +216,7 @@ impl FieldRow {
             .into_element()
     }
 
+    #[sismo::function("settings::schema_segmented")]
     fn segmented(
         &self,
         options: &[ConfigEnumOption],
@@ -231,6 +239,7 @@ impl FieldRow {
     }
 
     /// A button opening the options as a menu, for long lists.
+    #[sismo::function("settings::schema_menu")]
     fn menu(
         &self,
         options: &[ConfigEnumOption],
@@ -273,6 +282,7 @@ impl FieldRow {
             .into_element()
     }
 
+    #[sismo::function("settings::schema_color")]
     fn color(
         &self,
         current: &ConfigValue,
@@ -323,6 +333,7 @@ impl FieldRow {
 
     /// The chosen file's name and a picker; the file is copied next to
     /// the plugin so it survives the original moving.
+    #[sismo::function("settings::schema_file")]
     fn file(
         &self,
         extensions: &[String],
@@ -347,7 +358,7 @@ impl FieldRow {
                 let set = set.clone();
                 let extensions = extensions.clone();
                 let key = key.clone();
-                spawn(async move {
+                spawn(traced!("task::settings::schema_file", async move {
                     let exts: Vec<&str> = extensions.iter().map(String::as_str).collect();
                     match crate::files::pick(&tr!("settings-plugins-field-pick-file"), &exts, &[]).await {
                         Ok(Some(picked)) => {
@@ -371,12 +382,13 @@ impl FieldRow {
                         Ok(None) => {}
                         Err(err) => log::warn!("plugin file: {err}"),
                     }
-                });
+                }));
             }))
             .into_element()
     }
 
     /// A button; one with a confirmation asks for a second tap.
+    #[sismo::function("settings::schema_action")]
     fn action(
         &self,
         button_label: &str,
@@ -411,6 +423,7 @@ impl FieldRow {
 }
 
 impl Component for FieldRow {
+    #[sismo::function("settings::field_row")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let current = self.current();

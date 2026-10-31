@@ -14,6 +14,7 @@ pub(super) struct Notes;
 
 /// A line of a note as it looks while typing: plain text, then the
 /// bold word either formatted or between its marks, then the caret.
+#[sismo::function("settings::notes_typing_preview")]
 fn typing_preview(marks: bool) -> Rect {
     let p = palette();
     let word = if marks {
@@ -58,6 +59,7 @@ fn typing_preview(marks: bool) -> Rect {
 
 /// A quoted verse as it sits in a note: the text, its source, then either
 /// the mark of a quote that follows its source or a caret inside the text.
+#[sismo::function("settings::notes_quote_preview")]
 fn quote_preview(live: bool) -> Rect {
     let p = palette();
     let text = rect()
@@ -129,6 +131,7 @@ fn quote_preview(live: bool) -> Rect {
 }
 
 impl Component for Notes {
+    #[sismo::function("settings::notes")]
     fn render(&self) -> impl IntoElement {
         let store = SettingsStore::get();
         let notes = store.read().notes;

@@ -20,6 +20,7 @@ fn anchor(e: &Event<PressEventData>) -> CursorPoint {
 }
 
 /// People sharing any document of the mesa, online first.
+#[sismo::function("mesa::bar_people")]
 fn people(docs: &[ItemId]) -> Vec<(String, bool)> {
     let snapshot = crate::sync::snapshot();
     let mut out: Vec<(String, bool)> = Vec::new();
@@ -51,6 +52,7 @@ pub(super) struct MesaBar {
 }
 
 impl MesaBar {
+    #[sismo::function("mesa::bar_open_palette")]
     fn open_palette(&self) -> impl FnMut(Event<PressEventData>) + 'static {
         let (data, focus) = (Arc::clone(&self.data), self.focus.clone());
         let (mesa, ui) = (self.mesa, self.ui);
@@ -58,6 +60,7 @@ impl MesaBar {
     }
 
     /// The mesa's colour and name; pressing it shows the mesa actions.
+    #[sismo::function("mesa::bar_name")]
     fn name(&self, compact: bool) -> Rect {
         let p = palette();
         let mesa = self.mesa;
@@ -102,6 +105,7 @@ impl MesaBar {
     }
 
     /// The search field look-alike that opens the palette.
+    #[sismo::function("mesa::bar_search")]
     fn search(&self) -> Rect {
         let p = palette();
         rect()
@@ -132,6 +136,7 @@ impl MesaBar {
     }
 
     /// Who else is on the mesa's documents; pressing opens sharing.
+    #[sismo::function("mesa::bar_avatars")]
     fn avatars(&self) -> Option<Rect> {
         let p = palette();
         let mesa = self.mesa;
@@ -195,6 +200,7 @@ impl MesaBar {
 }
 
 impl Component for MesaBar {
+    #[sismo::function("mesa::mesa_bar")]
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         // Re-render when shares change, for the avatars.

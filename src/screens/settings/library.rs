@@ -32,6 +32,7 @@ struct Disk {
 }
 
 impl Disk {
+    #[sismo::function("settings::library_of")]
     fn of(path: &std::path::Path) -> Option<Self> {
         fs4::statvfs(path)
             .inspect_err(|err| log::warn!("disk space of {}: {err}", path.display()))
@@ -45,6 +46,7 @@ impl Disk {
 }
 
 impl Usage {
+    #[sismo::function("settings::library_measure")]
     fn measure(live: &[ItemId], trashed: &[ItemId]) -> Self {
         let pdf = |id: ItemId| std::fs::metadata(bodies::pdf_path(id)).map_or(0, |m| m.len());
         let (documents, pdfs) = live.iter().fold((0, 0), |(docs, pdfs), id| {
@@ -81,6 +83,7 @@ impl Usage {
 pub(super) struct Library;
 
 /// Measure the space the library takes, off the UI thread, once.
+#[sismo::function("settings::library_use_usage")]
 fn use_usage(data: Option<Arc<LibraryData>>) -> State<Option<Usage>> {
     let mut usage = use_state(|| None::<Usage>);
     use_hook(move || {
@@ -101,11 +104,11 @@ fn use_usage(data: Option<Arc<LibraryData>>) -> State<Option<Usage>> {
             // The screen may be gone by then; nothing waits for it.
             let _ = tx.send(Usage::measure(&live, &trashed));
         });
-        spawn(async move {
+        spawn(traced!("task::settings::usage", async move {
             if let Ok(measured) = rx.recv_async().await {
                 usage.set(Some(measured));
             }
-        });
+        }));
     });
     usage
 }
@@ -113,6 +116,7 @@ fn use_usage(data: Option<Arc<LibraryData>>) -> State<Option<Usage>> {
 /// What the app takes, against the whole disk it lives on: a bar split
 /// by what holds the space, the rest of the disk's contents in a
 /// quieter tone and the free part left empty.
+#[sismo::function("settings::library_usage_view")]
 fn usage_view(u: Usage) -> Element {
     let p = palette();
     let whole = u.disk.map_or_else(|| u.total(), |d| d.total).max(1);
@@ -214,6 +218,7 @@ fn usage_view(u: Usage) -> Element {
 }
 
 /// How long the trash keeps things, and the way to it.
+#[sismo::function("settings::library_trash_section")]
 fn trash_section(retention: TrashRetention, trash_count: usize) -> Section {
     let index = TrashRetention::ALL
         .iter()
@@ -244,6 +249,7 @@ fn trash_section(retention: TrashRetention, trash_count: usize) -> Section {
 }
 
 impl Component for Library {
+    #[sismo::function("settings::library")]
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let retention = SettingsStore::get().read().library.trash_retention;

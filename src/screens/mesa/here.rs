@@ -23,6 +23,7 @@ pub(super) struct HereNow {
 }
 
 impl Component for HereNow {
+    #[sismo::function("mesa::here_now")]
     fn render(&self) -> impl IntoElement {
         let item = self.item;
         // Kept for as long as the pane shows `item` (the parent keys this
@@ -31,20 +32,20 @@ impl Component for HereNow {
         let mut people = use_state(move || mine.peers());
         use_hook(move || {
             let changes = presence::watch(item);
-            spawn(async move {
+            spawn(traced!("task::mesa::here_people", async move {
                 while changes.recv_async().await.is_ok() {
                     people.set(presence::here(item));
                 }
-            });
+            }));
         });
         let mut followed = use_state(presence::following);
         use_hook(move || {
             let changes = presence::watch_all();
-            spawn(async move {
+            spawn(traced!("task::mesa::here_following", async move {
                 while changes.recv_async().await.is_ok() {
                     followed.set_if_modified(presence::following());
                 }
-            });
+            }));
         });
         let people = people.read();
         if people.is_empty() {

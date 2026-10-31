@@ -94,6 +94,7 @@ impl Section {
                 .any(|k| k.trim().to_lowercase().contains(&query))
     }
 
+    #[sismo::function("settings::body")]
     fn body(self) -> Element {
         match self {
             Self::Appearance => appearance::Appearance.into_element(),
@@ -108,12 +109,15 @@ impl Section {
 }
 
 /// Open Settings on its first section.
+#[sismo::function("settings::open")]
 pub fn open() {
     open_at(Section::default());
 }
 
 /// Open Settings on `section`.
+#[sismo::function("settings::open_at")]
 pub fn open_at(section: Section) {
+    sismo::marker("screen: settings");
     let compact = width_class().is_compact();
     let modal = Modal::new(Settings {
         start: (!compact).then_some(section),
@@ -133,6 +137,7 @@ struct Settings {
 }
 
 /// The searchable list of sections.
+#[sismo::function("settings::section_list")]
 fn section_list(mut open: State<Option<Section>>, query: State<String>, compact: bool) -> Rect {
     let text = query.read().clone();
     let current = *open.read();
@@ -160,6 +165,7 @@ fn section_list(mut open: State<Option<Section>>, query: State<String>, compact:
 }
 
 /// Phones: the list, or one section with back; the whole screen.
+#[sismo::function("settings::phone_layout")]
 fn phone_layout(mut open: State<Option<Section>>, list: Rect) -> Element {
     use freya::icons::lucide;
     let size = *Platform::get().current_window().root_size.read();
@@ -221,6 +227,7 @@ fn phone_layout(mut open: State<Option<Section>>, list: Rect) -> Element {
 }
 
 /// Wider screens: the list beside the open section.
+#[sismo::function("settings::wide_layout")]
 fn wide_layout(section: Section, list: Rect) -> Element {
     let p = palette();
     // Tall enough to browse, never past the system bars or the keyboard.
@@ -289,6 +296,7 @@ fn wide_layout(section: Section, list: Rect) -> Element {
 }
 
 impl Component for Settings {
+    #[sismo::function("settings::settings")]
     fn render(&self) -> impl IntoElement {
         let start = self.start;
         let open = use_state(move || start);

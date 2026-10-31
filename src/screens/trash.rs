@@ -51,6 +51,7 @@ impl TrashGroup {
     }
 
     /// Documents in the group, counting folder contents.
+    #[sismo::function("trash::documents")]
     fn documents(&self) -> usize {
         self.entries
             .iter()
@@ -64,6 +65,7 @@ impl TrashGroup {
 
 /// Trash entries grouped by the action that trashed them, newest first.
 #[must_use]
+#[sismo::function("trash::groups")]
 pub fn groups(data: &LibraryData) -> Vec<TrashGroup> {
     let mut out: Vec<TrashGroup> = Vec::new();
     for entry in data.trash_entries() {
@@ -80,10 +82,12 @@ pub fn groups(data: &LibraryData) -> Vec<TrashGroup> {
 }
 
 /// Open the trash.
+#[sismo::function("trash::open")]
 pub fn open() {
     let _ = RouterContext::get().push(Route::Trash);
 }
 
+#[sismo::function("trash::restore")]
 fn restore(batches: Vec<u64>) {
     crate::state::edit(crate::state::LibraryEdit::Restore, async move |lib| {
         let mut restored = 0;
@@ -95,6 +99,7 @@ fn restore(batches: Vec<u64>) {
     });
 }
 
+#[sismo::function("trash::purge")]
 fn purge(batches: Vec<u64>) {
     crate::state::edit(crate::state::LibraryEdit::DeleteForever, async move |lib| {
         for batch in &batches {
@@ -110,6 +115,7 @@ fn purge(batches: Vec<u64>) {
 pub struct Trash;
 
 impl Component for Trash {
+    #[sismo::function("trash::trash")]
     fn render(&self) -> impl IntoElement {
         use_hook(|| sismo::marker("screen: trash"));
         let p = palette();
@@ -142,6 +148,7 @@ struct TrashList {
 }
 
 impl Component for TrashList {
+    #[sismo::function("trash::trash_list")]
     fn render(&self) -> impl IntoElement {
         let retention = SettingsStore::get().read().library.trash_retention;
         let ui = TrashUi {
@@ -205,6 +212,7 @@ struct TrashUi {
 
 impl TrashUi {
     /// Back, the title, how much there is and how long it stays.
+    #[sismo::function("trash::header")]
     fn header(self, retention: TrashRetention, total: usize, size: &str, any: bool) -> Rect {
         let (mut selecting, mut picked) = (self.selecting, self.picked);
         let summary = retention.days().map_or_else(
@@ -246,6 +254,7 @@ impl TrashUi {
 
     /// One group: what it was, where from, how long it has left, and
     /// Restaurar (or a check while choosing).
+    #[sismo::function("trash::row")]
     fn row(
         self,
         data: &LibraryData,
@@ -302,6 +311,7 @@ impl TrashUi {
     }
 
     /// "Vaciar papelera", confirmed in place.
+    #[sismo::function("trash::empty_all")]
     fn empty_all(self, batches: Vec<u64>, total: usize) -> Element {
         let mut confirming = self.confirming;
         if !confirming() {
@@ -340,6 +350,7 @@ impl TrashUi {
     }
 
     /// Restore or purge the chosen groups.
+    #[sismo::function("trash::selection_bar")]
     fn selection_bar(self) -> Option<Rect> {
         use freya::icons::lucide;
         let mut selecting = self.selecting;

@@ -37,6 +37,7 @@ pub struct Ops {
 
 impl Ops {
     /// Make `pane` the focused one.
+    #[sismo::function("mesa::focus")]
     pub fn focus(self, pane: PaneId) {
         let mesa = self.mesa;
         state::edit(crate::state::LibraryEdit::FocusPane, async move |lib| {
@@ -44,6 +45,7 @@ impl Ops {
         });
     }
 
+    #[sismo::function("mesa::select_tab")]
     pub fn select_tab(self, pane: PaneId, index: usize) {
         let mesa = self.mesa;
         state::edit(crate::state::LibraryEdit::SwitchTab, async move |lib| {
@@ -53,6 +55,7 @@ impl Ops {
 
     /// Close tab `index` of `pane`. A scratch canvas with something
     /// written offers to keep it for a moment.
+    #[sismo::function("mesa::close_tab")]
     pub fn close_tab(self, pane: PaneId, index: usize, tab: &PaneTab) {
         let mesa = self.mesa;
         if let TabTarget::Scratch(scratch) = tab.target {
@@ -64,6 +67,7 @@ impl Ops {
     }
 
     /// Ask what to open in a new tab of `pane`.
+    #[sismo::function("mesa::new_tab")]
     pub fn new_tab(self, pane: PaneId) {
         crate::flows::pickers::document_picker(crate::flows::pickers::Purpose::NewTab {
             pane: Some(pane),
@@ -71,6 +75,7 @@ impl Ops {
     }
 
     /// Open a scratch canvas in `pane`.
+    #[sismo::function("mesa::new_scratch")]
     pub fn new_scratch(self, pane: PaneId) {
         let mesa = self.mesa;
         state::edit(crate::state::LibraryEdit::OpenDraft, async move |lib| {
@@ -79,6 +84,7 @@ impl Ops {
     }
 
     /// Split `pane`, the new pane on the right or below.
+    #[sismo::function("mesa::split")]
     pub fn split(self, pane: PaneId, orientation: SplitOrientation) {
         let mesa = self.mesa;
         state::edit(crate::state::LibraryEdit::SplitPane, async move |lib| {
@@ -88,6 +94,7 @@ impl Ops {
         });
     }
 
+    #[sismo::function("mesa::close_pane")]
     pub fn close_pane(self, pane: PaneId) {
         let mesa = self.mesa;
         state::edit(crate::state::LibraryEdit::ClosePane, async move |lib| {
@@ -95,6 +102,7 @@ impl Ops {
         });
     }
 
+    #[sismo::function("mesa::resize")]
     pub fn resize(self, path: Vec<SplitSide>, ratio: f32) {
         let mesa = self.mesa;
         state::edit(crate::state::LibraryEdit::Resize, async move |lib| {
@@ -102,6 +110,7 @@ impl Ops {
         });
     }
 
+    #[sismo::function("mesa::move_tab")]
     pub fn move_tab(self, src: PaneId, index: usize, dst: PaneId) {
         let mesa = self.mesa;
         state::edit(crate::state::LibraryEdit::MoveTab, async move |lib| {
@@ -109,6 +118,7 @@ impl Ops {
         });
     }
 
+    #[sismo::function("mesa::reorder")]
     pub fn reorder(self, pane: PaneId, from: usize, to: usize) {
         let mesa = self.mesa;
         state::edit(crate::state::LibraryEdit::ReorderTabs, async move |lib| {
@@ -117,6 +127,7 @@ impl Ops {
     }
 
     /// Move a tab onto `edge` of `dst`, splitting it.
+    #[sismo::function("mesa::split_with_tab")]
     pub fn split_with_tab(self, src: PaneId, index: usize, dst: PaneId, edge: SplitEdge) {
         let mesa = self.mesa;
         state::edit(crate::state::LibraryEdit::SplitPane, async move |lib| {
@@ -140,6 +151,7 @@ const SCRATCH_GRACE: std::time::Duration =
 
 /// A scratch canvas is closing: when it holds anything, keep its doc
 /// for a few seconds behind "Guardar".
+#[sismo::function("mesa::scratch_closed")]
 fn scratch_closed(scratch: crate::library::ScratchId) {
     let mount = crate::app::CanvasMount::Ephemeral(scratch);
     let Some(board) = crate::active_boards::get(mount) else {
@@ -159,6 +171,7 @@ fn scratch_closed(scratch: crate::library::ScratchId) {
     );
 }
 
+#[sismo::function("mesa::save_scratch")]
 fn save_scratch(doc: crate::doc::Doc, folder: crate::library::FolderId) {
     let name = tr!(
         "mesa-draft-name",
@@ -198,11 +211,13 @@ impl std::fmt::Debug for MesaUi {
 }
 
 impl MesaUi {
+    #[sismo::function("mesa::toggle_panel")]
     pub fn toggle_panel(mut self) {
         let open = *self.panel.peek();
         self.panel.set(!open);
     }
 
+    #[sismo::function("mesa::show_panel")]
     pub fn show_panel(mut self, tab: PanelTab) {
         self.panel_tab.set(tab);
         self.panel.set(true);
@@ -247,6 +262,7 @@ pub struct Mesa {
 }
 
 impl Component for Mesa {
+    #[sismo::function("mesa::mesa")]
     fn render(&self) -> impl IntoElement {
         let p = theme();
         let view = LibraryView::get();
@@ -289,6 +305,7 @@ struct Open {
 }
 
 impl Component for Open {
+    #[sismo::function("mesa::open")]
     fn render(&self) -> impl IntoElement {
         let compact = width_class().is_compact();
         let panel = use_state(|| false);
@@ -369,6 +386,7 @@ impl Shortcuts {
     /// Hand undo or redo to the document focused in the mesa; its face
     /// decides what that means (and ignores it when its own text field
     /// already took the keystroke).
+    #[sismo::function("mesa::step_history")]
     fn step_history(&self, step: HistoryStep) -> bool {
         let Some(Focus {
             pane,
@@ -399,6 +417,7 @@ impl Shortcuts {
         )
     }
 
+    #[sismo::function("mesa::handle")]
     fn handle(&self, e: &Event<KeyboardEventData>) {
         let command = e.modifiers.ctrl() || e.modifiers.meta();
         if !command || ModalController::get().is_open() {
@@ -474,6 +493,7 @@ impl Shortcuts {
         }
     }
 
+    #[sismo::function("mesa::next_tab")]
     fn next_tab(&self, back: bool) -> bool {
         let Some(focus) = &self.focus else {
             return false;

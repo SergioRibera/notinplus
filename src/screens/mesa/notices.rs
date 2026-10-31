@@ -30,6 +30,7 @@ enum Notice {
 }
 
 impl Notice {
+    #[sismo::function("mesa::notices_for_tab")]
     fn for_tab(tab: &PaneTab, data: &LibraryData) -> Option<Self> {
         let TabTarget::Item(id) = tab.target else {
             return None;
@@ -72,6 +73,7 @@ pub(super) struct TabNotice {
 }
 
 impl Component for TabNotice {
+    #[sismo::function("mesa::tab_notice")]
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let p = palette();

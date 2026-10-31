@@ -59,6 +59,7 @@ struct Cached {
 }
 
 impl OutlineCache {
+    #[sismo::function("mesa::outline_get")]
     pub(super) fn get(
         &self,
         item: ItemId,
@@ -171,6 +172,7 @@ struct Rows {
 }
 
 impl Rows {
+    #[sismo::function("mesa::outline_row")]
     fn row(&self, line: &Line) -> Element {
         let p = palette();
         let (item, mut folds) = (self.item, self.folds);
@@ -229,6 +231,7 @@ impl Rows {
 }
 
 impl Component for OutlineList {
+    #[sismo::function("mesa::outline_list")]
     fn render(&self) -> impl IntoElement {
         let folds = self.folds.read();
         let mut walk = Walk {

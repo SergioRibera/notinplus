@@ -14,6 +14,7 @@ const APP_NAME: &str = "NotIn Plus";
 
 /// Third-party work the app ships with, and its license. Work and
 /// license names stay as published; only descriptions are translated.
+#[sismo::function("settings::about_third_party")]
 fn third_party() -> [(Cow<'static, str>, Cow<'static, str>); 20] {
     let fixed = |name: &'static str, license: &'static str| (name.into(), license.into());
     [
@@ -46,6 +47,7 @@ fn third_party() -> [(Cow<'static, str>, Cow<'static, str>); 20] {
     ]
 }
 
+#[sismo::function("settings::about_licenses")]
 fn licenses() {
     Sheet::titled(tr!("settings-about-licenses"))
         .child(
@@ -63,6 +65,7 @@ fn licenses() {
         .push();
 }
 
+#[sismo::function("settings::about_data_folder")]
 fn data_folder() -> String {
     crate::library::bodies::root_dir().display().to_string()
 }
@@ -72,6 +75,7 @@ fn data_folder() -> String {
 pub(super) struct About;
 
 impl Component for About {
+    #[sismo::function("settings::about")]
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let folder = data_folder();

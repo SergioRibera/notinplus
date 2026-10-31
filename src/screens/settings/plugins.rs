@@ -20,6 +20,7 @@ use crate::plugins::dynamic::{self, Staged};
 use crate::references::kind_color;
 use crate::settings::SettingsStore;
 
+#[sismo::function("settings::plugins_status")]
 fn status(plugin: &Installed) -> String {
     match (&plugin.origin, plugin.is_active()) {
         (_, false) => tr!("settings-plugins-status-off"),
@@ -28,6 +29,7 @@ fn status(plugin: &Installed) -> String {
     }
 }
 
+#[sismo::function("settings::plugins_set_enabled")]
 fn set_enabled(id: &str, on: bool) {
     crate::plugins::catalog::catalog_mut().set_enabled(id, on);
     let mut store = SettingsStore::get();
@@ -45,6 +47,7 @@ fn set_enabled(id: &str, on: bool) {
 pub(super) struct Plugins;
 
 impl Component for Plugins {
+    #[sismo::function("settings::plugins")]
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let p = palette();
@@ -143,6 +146,7 @@ impl PartialEq for Detail {
 
 impl Detail {
     /// Name, state, description and the on/off switch.
+    #[sismo::function("settings::plugins_header")]
     fn header(&self) -> Rect {
         let plugin = &self.plugin;
         let id = plugin.info.id.to_string();
@@ -166,6 +170,7 @@ impl Detail {
     }
 
     /// The kinds the plugin adds and what each creates.
+    #[sismo::function("settings::plugins_adds")]
     fn adds(&self) -> Vec<Element> {
         let p = palette();
         self.plugin
@@ -192,6 +197,7 @@ impl Detail {
     }
 
     /// Id, version, author, file and SDK, folded.
+    #[sismo::function("settings::plugins_technical")]
     fn technical(&self, mut open: State<bool>) -> Group {
         use freya::icons::lucide;
         let plugin = &self.plugin;
@@ -235,6 +241,7 @@ impl Detail {
 }
 
 impl Component for Detail {
+    #[sismo::function("settings::detail")]
     fn render(&self) -> impl IntoElement {
         let technical = use_state(|| false);
         rect()
@@ -265,8 +272,9 @@ impl Component for Detail {
 }
 
 /// Pick a `.ntp` package and review it.
+#[sismo::function("settings::plugins_install")]
 fn install() {
-    spawn(async move {
+    spawn(traced!("task::settings::plugin_install", async move {
         let picked = match crate::files::pick(
             &tr!("settings-plugins-install-pick"),
             &["ntp"],
@@ -296,9 +304,10 @@ fn install() {
             }
             Err(err) => incompatible(&picked.name, err.user_message()),
         }
-    });
+    }));
 }
 
+#[sismo::function("settings::plugins_incompatible")]
 fn incompatible(name: &str, why: String) {
     Sheet::titled(tr!("settings-plugins-incompatible", "name" => name))
         .child(Notice::new(NoticeTone::Danger, why))
@@ -318,6 +327,7 @@ fn incompatible(name: &str, why: String) {
         .push();
 }
 
+#[sismo::function("settings::plugins_review_sheet")]
 fn review_sheet(staged: Arc<Staged>, review: &Review) {
     use freya::icons::lucide;
     let p = palette();

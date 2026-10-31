@@ -70,6 +70,7 @@ pub(super) struct Graph {
 impl Graph {
     /// The graph of every live document of `data`.
     #[must_use]
+    #[sismo::function("map::graph_of")]
     pub(super) fn of(data: &LibraryData) -> Self {
         let mut nodes: Vec<Node> = data
             .live_items()
@@ -99,6 +100,7 @@ impl Graph {
 
     /// Lay out `nodes` joined by `links` (by item id).
     #[must_use]
+    #[sismo::function("map::graph_build")]
     pub(super) fn build(nodes: Vec<Node>, links: &[(ItemId, ItemId, EdgeKind)]) -> Self {
         let index: HashMap<ItemId, usize> =
             nodes.iter().enumerate().map(|(i, n)| (n.id, i)).collect();
@@ -138,6 +140,7 @@ impl Graph {
 /// Fruchterman-Reingold in the unit square. Deterministic: nodes start
 /// on a circle so the same library always draws the same map.
 #[allow(clippy::cast_precision_loss)] // node counts
+#[sismo::function("map::graph_layout")]
 fn layout(count: usize, edges: &[Edge]) -> Vec<(f32, f32)> {
     match count {
         0 => return Vec::new(),
@@ -194,6 +197,7 @@ fn layout(count: usize, edges: &[Edge]) -> Vec<(f32, f32)> {
 }
 
 /// Stretch the cloud so it fills the unit square on both axes.
+#[sismo::function("map::graph_normalise")]
 fn normalise(pos: &mut [(f32, f32)]) {
     let (min_x, max_x, min_y, max_y) = pos.iter().fold(
         (f32::MAX, f32::MIN, f32::MAX, f32::MIN),

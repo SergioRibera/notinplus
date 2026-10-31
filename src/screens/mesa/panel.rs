@@ -40,6 +40,7 @@ impl PanelTab {
     }
 }
 
+#[sismo::function("mesa::panel_jump")]
 fn jump(kind: &str, item: ItemId, anchor: Vec<u8>) {
     crate::plugins::navigate::open(
         &SourceRef::Plugin {
@@ -61,6 +62,7 @@ pub(super) struct Panel {
 }
 
 impl Component for Panel {
+    #[sismo::function("mesa::panel")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         rect()
@@ -78,6 +80,7 @@ impl Component for Panel {
 }
 
 /// The panel as a sheet, on phones.
+#[sismo::function("mesa::panel_open_sheet")]
 pub(super) fn open_sheet(data: Arc<LibraryData>, focus: Option<&Focus>, start: PanelTab) {
     let tab = State::create_in_scope(start, ScopeId::ROOT);
     Sheet::titled(tr!("mesa-panel-sheet-title"))
@@ -100,6 +103,7 @@ struct PanelBody {
 }
 
 /// The tabs and, except on Vínculos, a search field.
+#[sismo::function("mesa::panel_panel_head")]
 fn panel_head(mut tab: State<PanelTab>, query: State<String>) -> Rect {
     let current = *tab.read();
     let index = PanelTab::ALL
@@ -129,6 +133,7 @@ fn panel_head(mut tab: State<PanelTab>, query: State<String>) -> Rect {
 }
 
 /// The document's marks, newest first, filtered by colour and `text`.
+#[sismo::function("mesa::panel_bookmarks")]
 fn bookmarks(
     marks: Vec<notein_plugin::kind::Mark<Vec<u8>>>,
     text: &str,
@@ -207,6 +212,7 @@ fn bookmarks(
 }
 
 impl Component for PanelBody {
+    #[sismo::function("mesa::panel_body")]
     fn render(&self) -> impl IntoElement {
         let current = *self.tab.read();
         let query = use_state(String::new);
@@ -297,6 +303,7 @@ struct Links {
 }
 
 impl Links {
+    #[sismo::function("mesa::panel_row")]
     fn row(&self, other: ItemId) -> Option<Element> {
         let p = palette();
         let found = self.data.item(other).filter(|i| i.trashed.is_none())?;
@@ -316,6 +323,7 @@ impl Links {
 }
 
 impl Component for Links {
+    #[sismo::function("mesa::links")]
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let item = self.item;

@@ -33,6 +33,7 @@ pub(super) struct Panes {
 }
 
 impl Component for Panes {
+    #[sismo::function("mesa::panes")]
     fn render(&self) -> impl IntoElement {
         let focused = super::Focus::of(&self.mesa).map(|f| f.pane);
         let leaves = self.mesa.layout.leaves();
@@ -72,6 +73,7 @@ struct Ctx {
     next: Option<PaneId>,
 }
 
+#[sismo::function("mesa::panes_node")]
 fn node(layout: &PaneLayout, path: Vec<SplitSide>, ctx: &Ctx) -> Element {
     match layout {
         PaneLayout::Leaf(pane) => rect()
@@ -127,6 +129,7 @@ impl Split {
 }
 
 impl Component for Split {
+    #[sismo::function("mesa::split")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let mut area = use_state(Area::default);
@@ -221,6 +224,7 @@ struct Leaf {
 }
 
 /// The document of `tab`, mounted fresh per tab.
+#[sismo::function("mesa::panes_body")]
 fn body(tab: &PaneTab, data: &LibraryData, slot: ViewSlot) -> Element {
     use crate::app::{CanvasMount, CanvasPane};
     let inner = match tab.target {
@@ -246,6 +250,7 @@ fn body(tab: &PaneTab, data: &LibraryData, slot: ViewSlot) -> Element {
 }
 
 impl Component for Leaf {
+    #[sismo::function("mesa::leaf")]
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let p = palette();
@@ -349,6 +354,7 @@ struct EdgeDrops {
 }
 
 impl Component for EdgeDrops {
+    #[sismo::function("mesa::edge_drops")]
     fn render(&self) -> impl IntoElement {
         let band = |edge: SplitEdge, width: Size, height: Size| EdgeBand {
             pane: self.pane,
@@ -394,6 +400,7 @@ struct EdgeBand {
 }
 
 impl Component for EdgeBand {
+    #[sismo::function("mesa::edge_band")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let mut over = use_state(|| false);

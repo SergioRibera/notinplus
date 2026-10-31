@@ -15,6 +15,7 @@ use crate::references::kind_color;
 use crate::settings::{EntryKey, FingerDraw, PenDoubleTap, SettingsStore};
 
 /// Pick what shortcut `slot` creates, in a sheet over Settings.
+#[sismo::function("settings::pen_pick_shortcut")]
 fn pick_shortcut(slot: usize, current: Option<&EntryKey>) {
     let p = palette();
     let choose = move |key: Option<EntryKey>| {
@@ -54,6 +55,7 @@ fn pick_shortcut(slot: usize, current: Option<&EntryKey>) {
         .push();
 }
 
+#[sismo::function("settings::pen_slot_title")]
 fn slot_title(slot: usize) -> String {
     tr!("settings-pen-shortcut-slot", "slot" => slot + 1)
 }
@@ -71,6 +73,7 @@ struct FontSample {
 }
 
 impl Component for FontSample {
+    #[sismo::function("settings::font_sample")]
     fn render(&self) -> impl IntoElement {
         let Self {
             font,
@@ -105,6 +108,7 @@ impl Component for FontSample {
 }
 
 /// A font for smoothed handwriting, previewed in itself.
+#[sismo::function("settings::pen_font_card")]
 fn font_card(font: GlyphFont, chosen: bool) -> Element {
     let p = palette();
     let ink = if chosen { p.accent_text } else { p.t1 };
@@ -124,6 +128,7 @@ fn font_card(font: GlyphFont, chosen: bool) -> Element {
 }
 
 /// What shortcut bubble `slot` creates.
+#[sismo::function("settings::pen_shortcut_row")]
 fn shortcut_row(slot: usize, current: Option<EntryKey>) -> Element {
     let p = palette();
     let entry = current.as_ref().and_then(crate::flows::create::entry_for);
@@ -161,6 +166,7 @@ fn shortcut_row(slot: usize, current: Option<EntryKey>) -> Element {
 }
 
 /// A section with a choice and a hint under it.
+#[sismo::function("settings::pen_choice_section")]
 fn choice_section<const N: usize>(
     title: impl Into<String>,
     labels: [String; N],
@@ -178,6 +184,7 @@ fn choice_section<const N: usize>(
 }
 
 impl Component for Pen {
+    #[sismo::function("settings::pen")]
     fn render(&self) -> impl IntoElement {
         let pen = SettingsStore::get().read().pen;
         let finger_index = FingerDraw::ALL
