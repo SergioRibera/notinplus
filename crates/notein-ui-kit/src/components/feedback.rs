@@ -52,6 +52,7 @@ impl EmptyState {
 }
 
 impl Component for EmptyState {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::empty_state"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         rect()
@@ -142,6 +143,7 @@ impl Notice {
 }
 
 impl Component for Notice {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::notice"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let (icon, color) = match self.tone {
@@ -222,6 +224,7 @@ impl ProgressBar {
 }
 
 impl Component for ProgressBar {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::progress_bar"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let value = self.value.clamp(0.0, 1.0);
@@ -273,6 +276,7 @@ impl Skeleton {
 }
 
 impl Component for Skeleton {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::skeleton"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         rect()
@@ -297,6 +301,7 @@ impl Kbd {
 }
 
 impl Component for Kbd {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::kbd"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         rect()

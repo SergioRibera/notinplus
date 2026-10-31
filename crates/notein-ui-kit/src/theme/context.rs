@@ -125,9 +125,12 @@ impl ThemeHandle {
 
 /// Install the appearance at the app root. Also keeps Freya's own
 /// component theme and the interface scale in step with it.
+#[cfg_attr(feature = "sismo", sismo::function("kit::use_theme_root"))]
 pub fn use_theme_root(initial: impl FnOnce() -> Appearance) -> ThemeHandle {
     let appearance = use_state(initial);
     let resolved = use_memo(move || {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("kit::theme_resolve");
         let os_dark =
             *Platform::get().current_window().preferred_theme.read() == PreferredTheme::Dark;
         ResolvedTheme::new(*appearance.read(), os_dark)
@@ -142,10 +145,14 @@ pub fn use_theme_root(initial: impl FnOnce() -> Appearance) -> ThemeHandle {
     });
     let mut freya_theme = use_init_theme(|| freya_theme_for(&resolved.read().palette));
     use_side_effect(move || {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("kit::theme_apply");
         let palette = resolved.read().palette;
         freya_theme.set(freya_theme_for(&palette));
     });
     use_side_effect(move || {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("kit::scale_fit");
         let platform = Platform::get().current_window();
         let wanted = appearance.read().text_size.scale();
         let size = *platform.root_size.read();
@@ -184,6 +191,7 @@ pub fn reduce_motion() -> bool {
     try_theme().is_some_and(|handle| handle.appearance().reduce_motion)
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("kit::theme_freya_theme_for"))]
 fn freya_theme_for(palette: &Palette) -> Theme {
     let mut theme = if palette.dark {
         dark_theme()

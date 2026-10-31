@@ -33,6 +33,7 @@ impl std::fmt::Debug for HintState {
 }
 
 /// Hint state for the calling control.
+#[cfg_attr(feature = "sismo", sismo::function("kit::use_hint"))]
 pub fn use_hint() -> HintState {
     HintState {
         shown: use_state(|| false),
@@ -44,19 +45,21 @@ pub fn use_hint() -> HintState {
 impl HintState {
     /// The pointer came in. Touch never shows a hint: there is no
     /// resting finger, and a press already says what it does.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::hint_enter"))]
     pub fn enter(mut self, e: &Event<PointerEventData>) {
         if !matches!(e.data(), PointerEventData::Mouse(_)) {
             return;
         }
         self.cancel();
         let mut shown = self.shown;
-        self.task.set(Some(spawn(async move {
+        self.task.set(Some(spawn(traced!("task::kit::hint_delay", async move {
             timer(DELAY).await;
             shown.set_if_modified(true);
-        })));
+        }))));
     }
 
     /// The pointer left or pressed.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::hint_leave"))]
     pub fn leave(mut self) {
         self.cancel();
         self.shown.set_if_modified(false);
@@ -93,6 +96,7 @@ pub struct Hint {
 }
 
 impl Component for Hint {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::hint"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let frame = crate::viewport::safe_frame();

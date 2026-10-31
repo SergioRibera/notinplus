@@ -39,6 +39,7 @@ impl Checkbox {
 }
 
 impl Component for Checkbox {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::checkbox"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let on = self.checked;

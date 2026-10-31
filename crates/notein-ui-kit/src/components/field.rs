@@ -157,6 +157,7 @@ impl TextField {
 
 /// Call `gained` when the field takes focus and `lost` when it lets it
 /// go.
+#[cfg_attr(feature = "sismo", sismo::function("kit::use_focus_edges"))]
 fn use_focus_edges(
     focus: Memo<Focus>,
     gained: Option<EventHandler<()>>,
@@ -170,6 +171,8 @@ fn use_focus_edges(
             return;
         }
         was_focused.set(now);
+        #[cfg(feature = "sismo")]
+        sismo::scope!("kit::field_focus_edge");
         let edge = if now { &gained } else { &lost };
         if let Some(handler) = edge {
             handler.call(());
@@ -178,6 +181,7 @@ fn use_focus_edges(
 }
 
 impl Component for TextField {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::text_field"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let own_id = use_a11y();
@@ -372,6 +376,7 @@ impl SearchField {
 }
 
 impl Component for SearchField {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::search_field"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let own_id = use_a11y();

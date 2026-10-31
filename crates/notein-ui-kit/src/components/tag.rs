@@ -96,6 +96,7 @@ impl Tag {
 }
 
 impl Component for Tag {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::tag"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let (bg, fg) = if self.active {

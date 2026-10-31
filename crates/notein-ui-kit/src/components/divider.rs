@@ -50,6 +50,7 @@ impl Divider {
 }
 
 impl Component for Divider {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::divider"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let color = if self.strong { p.line_strong } else { p.line };
@@ -66,6 +67,7 @@ impl Component for Divider {
 pub struct Spacer;
 
 impl Component for Spacer {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::spacer"))]
     fn render(&self) -> impl IntoElement {
         rect().width(Size::flex(1.0)).height(Size::px(1.0))
     }

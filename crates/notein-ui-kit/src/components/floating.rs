@@ -69,6 +69,7 @@ impl Floating {
 }
 
 impl Component for Floating {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::floating"))]
     fn render(&self) -> impl IntoElement {
         let mut size = use_state(Area::default);
         let frame = safe_frame();

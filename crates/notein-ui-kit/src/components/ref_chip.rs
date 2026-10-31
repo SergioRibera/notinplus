@@ -64,6 +64,7 @@ impl RefChip {
 }
 
 impl Component for RefChip {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::ref_chip"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let (bg, fg, icon, icon_color) = if self.broken {

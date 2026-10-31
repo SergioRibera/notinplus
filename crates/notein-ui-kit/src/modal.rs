@@ -312,6 +312,7 @@ impl ModalController {
 
     /// Replace the top modal with `modal` (or open it when none is
     /// open). Fires the replaced modal's `on_close`.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::modal_open"))]
     pub fn open(&mut self, modal: Modal) {
         let replaced = self.state.write().stack.pop();
         self.retire(replaced);
@@ -320,12 +321,14 @@ impl ModalController {
 
     /// Open `modal` on top of the current one, which stays underneath
     /// (Settings › Vincular, a confirmation over a sheet).
+    #[cfg_attr(feature = "sismo", sismo::function("kit::modal_push"))]
     pub fn push(&mut self, modal: Modal) {
         self.state.write().stack.push(modal);
     }
 
     /// Dismiss the current modal (fires `on_close` if set). No-op when
     /// nothing is open.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::modal_close"))]
     pub fn close(&mut self) {
         if !self.is_open() {
             return;
@@ -336,6 +339,7 @@ impl ModalController {
 
     /// Play the exit of a modal just taken off the stack and fire its
     /// `on_close`.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::modal_retire"))]
     fn retire(&mut self, modal: Option<Modal>) {
         if let Some(modal) = &modal
             && !modal.instant
@@ -347,15 +351,16 @@ impl ModalController {
     }
 
     /// Keep `modal` on screen while its exit plays, then drop it.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::modal_leave"))]
     fn leave(&mut self, modal: Modal) {
         let id = modal.id;
         let depth = self.state.peek().stack.len();
         self.state.write().leaving.push((depth, modal));
         let mut state = self.state;
-        spawn_in_window(async move {
+        spawn_in_window(traced!("task::kit::modal_leave", async move {
             async_io::Timer::after(std::time::Duration::from_millis(EXIT_MS + 30)).await;
             state.write().leaving.retain(|(_, m)| m.id != id);
-        });
+        }));
     }
 
     /// Run `f` when the top modal closes for any reason (backdrop,
@@ -375,6 +380,7 @@ impl ModalController {
     }
 
     /// Dismiss every open modal, top first.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::modal_close_all"))]
     pub fn close_all(&mut self) {
         while self.is_open() {
             self.close();
@@ -394,6 +400,7 @@ impl ModalController {
         self.state.read().stack.len()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("kit::modal_fire_on_close"))]
     fn fire_on_close(modal: Option<Modal>) {
         if let Some(cb) = modal.and_then(|m| m.on_close) {
             cb.call();
@@ -423,6 +430,7 @@ impl ModalPortal {
 }
 
 impl Component for ModalPortal {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::modal_portal"))]
     fn render(&self) -> impl IntoElement {
         let controller = ModalController::get();
         let ModalState { stack, leaving } = controller.state.read().clone();
@@ -546,6 +554,7 @@ impl std::fmt::Debug for ModalOverlay {
 /// back, a little faster, when `leaving`. `instant` modals skip both.
 /// While `waiting` the entrance holds still and starts once it clears; a
 /// modal that waited found the veil already up and never fades it in.
+#[cfg_attr(feature = "sismo", sismo::function("kit::modal_use_progress"))]
 fn use_progress(instant: bool, leaving: bool, waiting: bool) -> (f32, f32) {
     let took_over = use_hook(|| waiting);
     let entrance = use_animation_with_dependencies(&waiting, |conf, waiting| {
@@ -586,6 +595,7 @@ fn use_progress(instant: bool, leaving: bool, waiting: bool) -> (f32, f32) {
 }
 
 impl Component for ModalOverlay {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::modal_overlay"))]
     fn render(&self) -> impl IntoElement {
         let area = *self.area.read();
         let model = self.model.clone();
@@ -596,6 +606,8 @@ impl Component for ModalOverlay {
         let gutters = chrome.gutters();
         let dismiss_sink = chrome.on_dismiss.clone();
         use_drop(move || {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("drop::modal_overlay");
             if let Some(cb) = dismiss_sink {
                 cb.call(());
             }
@@ -711,6 +723,7 @@ impl Component for ModalOverlay {
 /// the window without its covered edges (`gutters`): centred cards sit in
 /// its middle and sheets rest on its bottom, above the keyboard, so inputs
 /// stay visible while typing.
+#[cfg_attr(feature = "sismo", sismo::function("kit::modal_card_container"))]
 fn card_container(placement: ModalPlacement, frame: Area, gutters: Gutters) -> Rect {
     match placement {
         ModalPlacement::Center => rect()

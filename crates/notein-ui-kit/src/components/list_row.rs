@@ -185,6 +185,7 @@ impl ListRow {
 }
 
 impl Leading {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::leading"))]
     fn render(self, danger: bool) -> Element {
         let p = palette();
         match self {
@@ -200,6 +201,7 @@ impl Leading {
 }
 
 impl Trailing {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::trailing"))]
     fn render(self) -> Element {
         let p = palette();
         match self {
@@ -261,6 +263,7 @@ pub(super) fn strut(height: f32) -> Rect {
 }
 
 impl Component for ListRow {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::list_row"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let mut hovering = use_state(|| false);

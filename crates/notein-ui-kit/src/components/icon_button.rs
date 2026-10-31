@@ -106,6 +106,7 @@ impl IconButton {
 }
 
 impl Component for IconButton {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::icon_button"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let mut hovering = use_state(|| false);

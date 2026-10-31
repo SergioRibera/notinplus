@@ -169,6 +169,7 @@ impl ActionList {
 
     /// Show the list in a popover hanging from `anchor`, in window
     /// coordinates.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::actions_show_at"))]
     pub fn show_at(self, anchor: Area) {
         let height = self
             .entries
@@ -187,6 +188,7 @@ impl ActionList {
     }
 
     /// Show the list hanging from the pointer at `at`.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::actions_show"))]
     pub fn show(self, at: CursorPoint) {
         #[allow(clippy::cast_possible_truncation, reason = "window coordinates")]
         let anchor = Area::new((at.x as f32, at.y as f32).into(), (1.0, 1.0).into());
@@ -195,6 +197,7 @@ impl ActionList {
 }
 
 impl Component for ActionList {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::action_list"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         rect()
@@ -240,6 +243,7 @@ struct ActionRow {
 }
 
 impl Component for ActionRow {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::action_row"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let mut hovering = use_state(|| false);
@@ -268,6 +272,7 @@ impl Component for ActionRow {
 
 impl ActionRow {
     /// Icon, labels and trailing marks.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::actions_content"))]
     fn content(&self) -> Rect {
         let p = palette();
         let action = &self.action;

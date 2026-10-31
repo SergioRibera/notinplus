@@ -198,6 +198,7 @@ impl Button {
 }
 
 impl Component for Button {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::button"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let mut hovering = use_state(|| false);

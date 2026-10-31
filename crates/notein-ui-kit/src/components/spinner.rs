@@ -39,6 +39,7 @@ impl Spinner {
 }
 
 impl Component for Spinner {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::spinner"))]
     fn render(&self) -> impl IntoElement {
         let turn = use_animation(|conf| {
             conf.on_creation(OnCreation::Run);

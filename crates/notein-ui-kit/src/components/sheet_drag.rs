@@ -144,6 +144,7 @@ impl SheetDrag {
         })
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("kit::sheet_drag_press"))]
     fn press(&self, at: CursorPoint, from_content: bool) {
         // A press stops a glide where it is, and the finger takes it from
         // there.
@@ -160,6 +161,7 @@ impl SheetDrag {
 
     /// Follow the pointer; `true` while it moves the sheet. The content and
     /// the rest of the sheet each follow only the presses they started.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::sheet_drag_to"))]
     fn drag_to(&self, at: CursorPoint, via_content: bool) -> bool {
         let mut g = self.gesture.get();
         let Some(origin) = g.origin.filter(|_| g.from_content == via_content) else {
@@ -213,6 +215,7 @@ impl SheetDrag {
     }
 
     /// End the press; `true` when it was dragging the sheet.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::sheet_drag_release"))]
     fn release(&self) -> bool {
         let g = self.gesture.replace(Gesture::default());
         if g.claim != Claim::Sheet {
@@ -248,6 +251,7 @@ impl SheetDrag {
     }
 
     /// Ease the sheet to `to` over `ms`, decelerating.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::sheet_drag_glide_to"))]
     fn glide_to(&self, to: f32, ms: f32) {
         let token = self.glide.get().wrapping_add(1);
         self.glide.set(token);
@@ -257,7 +261,7 @@ impl SheetDrag {
             return;
         }
         let this = self.clone();
-        spawn(async move {
+        spawn(traced!("task::kit::sheet_glide", async move {
             let started = Instant::now();
             loop {
                 async_io::Timer::after(Duration::from_millis(16)).await;
@@ -271,7 +275,7 @@ impl SheetDrag {
                     return;
                 }
             }
-        });
+        }));
     }
 }
 
@@ -290,6 +294,7 @@ pub(super) struct SheetContent {
 }
 
 impl Component for SheetContent {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::sheet_content"))]
     fn render(&self) -> impl IntoElement {
         *self.drag.enclosing.borrow_mut() = Some(EnclosingScrollViews::get());
         self.drag

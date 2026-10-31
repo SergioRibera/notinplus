@@ -98,6 +98,7 @@ impl Segmented {
 }
 
 impl Component for Segmented {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::segmented"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let inner = self.height - 6.0;

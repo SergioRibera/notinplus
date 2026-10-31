@@ -62,6 +62,7 @@ impl ChoiceCard {
 }
 
 impl Component for ChoiceCard {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::choice_card"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let mut hovering = use_state(|| false);

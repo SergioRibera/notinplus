@@ -179,6 +179,7 @@ impl Toasts {
     }
 
     /// Show `toast`; returns its id.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::toast_show"))]
     pub fn show(&mut self, toast: Toast) -> ToastId {
         let duration = toast.duration;
         let id = {
@@ -196,16 +197,17 @@ impl Toasts {
         }
         if let Some(duration) = duration {
             let mut this = *self;
-            spawn_in_window(async move {
+            spawn_in_window(traced!("task::kit::toast_show", async move {
                 async_io::Timer::after(duration).await;
                 this.expire(id);
-            });
+            }));
         }
         id
     }
 
     /// Replace the content of a visible toast (progress updates). No-op
     /// when it is gone.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::toast_update"))]
     pub fn update(&mut self, id: ToastId, toast: Toast) {
         let mut stack = self.stack.write();
         if stack.leaving.contains(&id) {
@@ -217,17 +219,20 @@ impl Toasts {
     }
 
     /// Remove a toast without running `on_expire`.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::toast_dismiss"))]
     pub fn dismiss(&mut self, id: ToastId) {
         self.leave(id);
     }
 
     /// Remove a toast and run its `on_expire`.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::toast_expire"))]
     pub fn expire(&mut self, id: ToastId) {
         if let Some(handler) = self.leave(id).and_then(|t| t.on_expire) {
             handler.call(());
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("kit::toast_press_action"))]
     fn press_action(&mut self, id: ToastId) {
         if let Some((_, handler)) = self.leave(id).and_then(|t| t.action) {
             handler.call(());
@@ -236,6 +241,7 @@ impl Toasts {
 
     /// Take `id` off the queue: it plays its exit, then goes. Returns what
     /// it was, unless it had already left.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::toast_leave"))]
     fn leave(&mut self, id: ToastId) -> Option<Toast> {
         let toast = {
             let stack = self.stack.peek();
@@ -254,12 +260,12 @@ impl Toasts {
         }
         self.stack.write().leaving.push(id);
         let mut stack = self.stack;
-        spawn_in_window(async move {
+        spawn_in_window(traced!("task::kit::toast_leave", async move {
             async_io::Timer::after(Duration::from_millis(EXIT_MS + 30)).await;
             let mut stack = stack.write();
             stack.items.retain(|(tid, _)| *tid != id);
             stack.leaving.retain(|tid| *tid != id);
-        });
+        }));
         Some(toast)
     }
 }
@@ -278,6 +284,7 @@ impl ToastHost {
 }
 
 impl Component for ToastHost {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::toast_host"))]
     fn render(&self) -> impl IntoElement {
         let toasts = Toasts::get();
         let (items, leaving) = {
@@ -308,6 +315,7 @@ impl Component for ToastHost {
 /// How far a toast is in, 0 to 1: it rises a little into place and sinks
 /// back out the same way when `leaving`. Not faded: the card has panels of
 /// its own (the progress bar).
+#[cfg_attr(feature = "sismo", sismo::function("kit::toast_use_shown"))]
 fn use_shown(leaving: bool) -> f32 {
     let motion = use_animation_with_dependencies(&leaving, |conf, leaving| {
         conf.on_creation(OnCreation::Run);
@@ -340,6 +348,7 @@ struct ToastCard {
 }
 
 impl Component for ToastCard {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::toast_card"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let toast = &self.toast;

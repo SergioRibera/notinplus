@@ -7,6 +7,29 @@
 
 notein_i18n::catalog!();
 
+/// Wraps a future so the profiler records it as an async span named
+/// `$name`, plus one plain span per poll.
+#[cfg(feature = "sismo")]
+macro_rules! traced {
+    ($name:expr, $fut:expr $(,)?) => {{
+        static CALLSITE: ::sismo::Callsite = ::sismo::Callsite::new(
+            ::sismo::__private::CallsiteKind::Span,
+            $name,
+            module_path!(),
+            file!(),
+            line!(),
+        );
+        ::sismo::Instrumented::new(&CALLSITE, $fut)
+    }};
+}
+
+#[cfg(not(feature = "sismo"))]
+macro_rules! traced {
+    ($name:expr, $fut:expr $(,)?) => {
+        $fut
+    };
+}
+
 pub mod color_wheel;
 pub mod components;
 pub mod modal;

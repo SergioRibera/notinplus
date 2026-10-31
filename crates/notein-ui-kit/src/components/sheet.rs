@@ -122,6 +122,7 @@ impl Sheet {
         self
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("kit::sheet_into_modal"))]
     fn into_modal(self) -> Modal {
         let compact = width_class().is_compact();
         let dismissable = self.dismissable;
@@ -141,16 +142,19 @@ impl Sheet {
     }
 
     /// Replace the top modal with this sheet.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::sheet_open"))]
     pub fn open(self) {
         ModalController::get().open(self.into_modal());
     }
 
     /// Open on top of the current modal.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::sheet_push"))]
     pub fn push(self) {
         ModalController::get().push(self.into_modal());
     }
 
     /// Close the top modal.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::sheet_close"))]
     pub fn close() {
         ModalController::get().close();
     }
@@ -164,6 +168,7 @@ struct SheetCard {
 
 impl SheetCard {
     /// Back, kind, title and close, when the sheet has any of them.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::sheet_header"))]
     fn header(&self, p: &crate::theme::Palette) -> Option<Rect> {
         let sheet = &self.sheet;
         let on_back = sheet.on_back.clone();
@@ -207,6 +212,7 @@ impl SheetCard {
 }
 
 impl Component for SheetCard {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::sheet_card"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let sheet = &self.sheet;
@@ -343,6 +349,7 @@ impl SheetFooter {
 }
 
 impl Component for SheetFooter {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::sheet_footer"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         rect()
@@ -457,6 +464,7 @@ impl Popover {
 
     /// Open above whatever is showing; a popover never replaces the
     /// sheet it was opened from.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::popover_open"))]
     pub fn open(self) {
         if width_class() == WidthClass::Compact {
             let mut sheet = self
@@ -483,6 +491,7 @@ struct PopoverCard {
 }
 
 impl Component for PopoverCard {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::popover_card"))]
     fn render(&self) -> impl IntoElement {
         /// Space kept between the card and the edges it may not cross.
         const MARGIN: f32 = 12.0;
@@ -593,6 +602,7 @@ impl Section {
 }
 
 impl Component for Section {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::section"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         rect()
@@ -638,6 +648,7 @@ impl ChildrenExt for Group {
 }
 
 impl Component for Group {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::group"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         rect()
@@ -653,6 +664,7 @@ impl Component for Group {
 /// lays the content out against a size it is still working out, and
 /// while a finger scrolls the rows jump; a fixed one does not. Auto only
 /// until the content is measured.
+#[cfg_attr(feature = "sismo", sismo::function("kit::sheet_scroll_height"))]
 fn scroll_height(content: f32, max: f32) -> Size {
     if content > 0.0 {
         Size::px(content.min(max))

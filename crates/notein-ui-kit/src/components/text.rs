@@ -109,6 +109,7 @@ impl Text {
 }
 
 impl Component for Text {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::text"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let color = self.color.unwrap_or(match self.role {

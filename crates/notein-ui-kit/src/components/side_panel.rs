@@ -56,6 +56,7 @@ impl SidePanel {
     }
 
     /// How far the panel is open, 0 to 1.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::side_panel_use_opened"))]
     fn use_opened(open: bool) -> f32 {
         let motion = use_animation_with_dependencies(&open, |conf, open| {
             conf.on_creation(OnCreation::Finish);
@@ -75,6 +76,7 @@ impl SidePanel {
 }
 
 impl Component for SidePanel {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::side_panel"))]
     fn render(&self) -> impl IntoElement {
         let opened = Self::use_opened(self.open);
         if opened <= 0.0 {

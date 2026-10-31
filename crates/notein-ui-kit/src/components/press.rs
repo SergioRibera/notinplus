@@ -53,6 +53,7 @@ impl std::fmt::Debug for PressGesture {
 
 /// Allocate gesture state in the calling component.
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("kit::use_press_gesture"))]
 pub fn use_press_gesture() -> PressGesture {
     PressGesture {
         token: use_state(|| 0),
@@ -66,6 +67,7 @@ impl PressGesture {
     /// Wire `rect`: `on_tap` on a short press, `on_menu` with the global
     /// pointer position on a long press or a secondary click.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("kit::press_apply"))]
     pub fn apply(
         self,
         rect: Rect,
@@ -112,13 +114,13 @@ impl PressGesture {
             token.set(current);
             let menu = on_menu.clone();
             let timer = Rc::clone(&timer);
-            spawn(async move {
+            spawn(traced!("task::kit::press", async move {
                 async_io::Timer::after(LONG_PRESS).await;
                 if *token.peek() == current && !timer.get().travelled() {
                     held.set(true);
                     menu(at);
                 }
-            });
+            }));
         })
         .on_pointer_move(move |e: Event<PointerEventData>| {
             let Some(origin) = *start.peek() else {

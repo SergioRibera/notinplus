@@ -44,6 +44,7 @@ impl Avatar {
 }
 
 impl Component for Avatar {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::avatar"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let side = self.size;
@@ -123,6 +124,7 @@ impl PresenceChip {
 }
 
 impl Component for PresenceChip {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::presence_chip"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let person = &self.person;
@@ -206,6 +208,7 @@ impl PresenceList {
 }
 
 impl Component for PresenceList {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::presence_list"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let (shown, hidden) = Self::split(self.people.len(), self.capacity);

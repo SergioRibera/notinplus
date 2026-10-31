@@ -43,6 +43,7 @@ impl Stepper {
 }
 
 impl Component for Stepper {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::stepper"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let (value, min, max) = (self.value, self.min, self.max);

@@ -59,6 +59,7 @@ impl Switch {
 }
 
 impl Component for Switch {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::switch"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         let a11y_id = use_a11y();

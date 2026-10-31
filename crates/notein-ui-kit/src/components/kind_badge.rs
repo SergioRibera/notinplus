@@ -38,6 +38,7 @@ impl KindBadge {
 }
 
 impl Component for KindBadge {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::kind_badge"))]
     fn render(&self) -> impl IntoElement {
         rect()
             .width(Size::px(self.size))

@@ -293,6 +293,7 @@ impl Component for ColorWheel {
         clippy::too_many_lines,
         reason = "one tree for the wheel, its slider and swatches"
     )]
+    #[cfg_attr(feature = "sismo", sismo::function("kit::color_wheel"))]
     fn render(&self) -> impl IntoElement {
         let initial = self.initial;
         let mut hsva = use_state(move || Hsva::from_color(initial));
@@ -414,6 +415,7 @@ impl Component for ColorWheel {
 }
 
 /// Every hue, left to right.
+#[cfg_attr(feature = "sismo", sismo::function("kit::color_wheel_hue_gradient"))]
 fn hue_gradient() -> LinearGradient {
     [
         (255, 0, 0),
@@ -432,6 +434,7 @@ fn hue_gradient() -> LinearGradient {
 }
 
 /// `opaque` from transparent to solid.
+#[cfg_attr(feature = "sismo", sismo::function("kit::color_wheel_alpha_gradient"))]
 fn alpha_gradient(opaque: Color) -> LinearGradient {
     LinearGradient::new()
         .angle(-90.0)
@@ -440,6 +443,7 @@ fn alpha_gradient(opaque: Color) -> LinearGradient {
 }
 
 /// The saturation × value square.
+#[cfg_attr(feature = "sismo", sismo::function("kit::color_wheel_sv_pane"))]
 fn sv_pane(
     area: State<Area>,
     current: Hsva,
@@ -565,6 +569,7 @@ fn marker_dot(left: f32, top: f32, fill: Color) -> Rect {
         )
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("kit::color_wheel_swatch_strip"))]
 fn swatch_strip(
     swatches: &[Color],
     selected: Color,
@@ -610,6 +615,7 @@ where
 /// is an already-built [`ColorWheel`] element — pass `Some(...)` when
 /// `picker_open` is `true`, `None` otherwise; the strip anchors it
 /// beneath the special slot so it floats instead of pushing content.
+#[cfg_attr(feature = "sismo", sismo::function("kit::color_wheel_color_swatch_strip"))]
 pub fn color_swatch_strip<PresetCb, SpecialCb, Picker>(
     selected: Option<Color>,
     special: Option<Color>,

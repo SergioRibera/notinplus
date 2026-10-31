@@ -123,6 +123,7 @@ impl BarItem {
             .into_element()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("kit::bar_item"))]
     fn render(&self, index: usize) -> Element {
         let p = palette();
         match self {
@@ -231,6 +232,7 @@ impl SelectionBar {
     /// Docked, the bar takes two rows so a phone fits it: the caption, the
     /// inks and icon buttons first, then every labelled action as an icon
     /// over its label.
+    #[cfg_attr(feature = "sismo", sismo::function("kit::selection_bar_docked_rows"))]
     fn docked_rows(&self) -> Rect {
         let p = palette();
         let labelled = |item: &&BarItem| matches!(item, BarItem::Action { label: Some(_), .. });
@@ -293,6 +295,7 @@ impl SelectionBar {
 }
 
 impl Component for SelectionBar {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::selection_bar"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
         if self.docked {

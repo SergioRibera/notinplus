@@ -108,6 +108,7 @@ impl ScrollContent {
 }
 
 impl Component for ScrollContent {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::scroll_content"))]
     fn render(&self) -> impl IntoElement {
         // A plain cell: the gesture never needs a render of its own.
         let touch = use_hook(|| Rc::new(Cell::new(Touch::default())));

@@ -46,6 +46,7 @@ impl Icon {
 }
 
 impl Component for Icon {
+    #[cfg_attr(feature = "sismo", sismo::function("kit::icon"))]
     fn render(&self) -> impl IntoElement {
         let color = self.color.unwrap_or_else(|| palette().t2);
         SvgViewer::new(self.svg.clone())
