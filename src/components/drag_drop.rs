@@ -34,6 +34,7 @@ enum DragPhase {
 
 /// Access the global drag state for payloads of type `T`.
 #[must_use]
+#[sismo::function("ui::drag_use_drag")]
 pub fn use_drag<T: 'static>() -> State<Option<T>> {
     try_consume_root_context().unwrap_or_else(|| {
         let state = State::<Option<T>>::create_in_scope(None, ScopeId::ROOT);
@@ -110,6 +111,7 @@ impl<T: Clone + PartialEq + 'static> DragZone<T> {
 }
 
 impl<T: Clone + PartialEq> Component for DragZone<T> {
+    #[sismo::function("ui::drag_zone")]
     fn render(&self) -> impl IntoElement {
         let mut drags = use_drag::<T>();
         let mut phase = use_state(|| DragPhase::Idle);
@@ -246,6 +248,7 @@ impl<T: PartialEq + Clone + 'static> DropZone<T> {
     }
 
     #[must_use]
+    #[sismo::function("ui::drag_on_drag_over")]
     pub fn on_drag_over(mut self, on_drag_over: impl Into<EventHandler<bool>>) -> Self {
         self.on_drag_over = Some(on_drag_over.into());
         self
@@ -265,6 +268,7 @@ impl<T: PartialEq + Clone + 'static> DropZone<T> {
 }
 
 impl<T: Clone + PartialEq + 'static> Component for DropZone<T> {
+    #[sismo::function("ui::drop_zone")]
     fn render(&self) -> impl IntoElement {
         let mut drags = use_drag::<T>();
         let on_drop = self.on_drop.clone();

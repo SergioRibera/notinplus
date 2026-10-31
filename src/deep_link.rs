@@ -7,6 +7,7 @@ use notein_plugin::SourceRef;
 pub use notein_plugin::link::{SCHEME, scan_links};
 
 /// Route a URL the operating system handed to the app.
+#[sismo::function("deep_link::open")]
 pub fn open(url: &str) {
     log::info!("deep link: {url}");
     if crate::sync::recognize_link(url).is_some() {
@@ -23,6 +24,7 @@ pub fn open(url: &str) {
 
 /// Listen for URLs delivered through the platform, cold-start intents
 /// included, for as long as the app runs.
+#[sismo::function("deep_link::listen")]
 pub fn listen() {
     let stream = match istmo::plugins::DeepLinks::acquire() {
         Ok(plugin) => plugin.stream(),
@@ -31,7 +33,7 @@ pub fn listen() {
             return;
         }
     };
-    freya::prelude::spawn_in_window(async move {
+    freya::prelude::spawn_in_window(traced!("task::deep_link::listen", async move {
         loop {
             match stream.recv_async().await {
                 Ok(link) => open(&link.uri),
@@ -39,5 +41,5 @@ pub fn listen() {
                 Err(err) => log::warn!("deep link: {err}"),
             }
         }
-    });
+    }));
 }

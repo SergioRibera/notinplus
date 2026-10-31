@@ -43,12 +43,14 @@ impl Persisted for UsageLog {
 
 impl UsageLog {
     /// Log a finished creation.
+    #[sismo::function("creation::record")]
     pub fn record(&mut self, key: EntryKey, now: u64) {
         self.uses.push(Use { key, at: now });
         self.prune(now);
     }
 
     /// Drop uses outside the window.
+    #[sismo::function("creation::prune")]
     pub fn prune(&mut self, now: u64) {
         self.uses.retain(|u| now.saturating_sub(u.at) <= WINDOW_MS);
     }
@@ -86,6 +88,7 @@ impl UsageLog {
     ///
     /// `available` lists the entries that compete, in starting order
     /// (the order used on a cold start and to break ties).
+    #[sismo::function("creation::choose_tiles")]
     pub fn choose_tiles(&mut self, available: &[EntryKey], now: u64) -> Vec<EntryKey> {
         self.prune(now);
         let tiles = if self.is_cold() {
@@ -97,6 +100,7 @@ impl UsageLog {
         tiles
     }
 
+    #[sismo::function("creation::rank")]
     fn rank(&self, available: &[EntryKey], now: u64) -> Vec<EntryKey> {
         let order = |key: &EntryKey| {
             available

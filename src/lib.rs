@@ -9,6 +9,22 @@
 //! The runtime is auto-wired by [`istmo::runtime`] using the plugin
 //! manifests every dep's `build.rs` emits.
 
+/// Wraps a future so the profiler records it as an async span named
+/// `$name`, plus one plain span per poll: shows which tasks wake, how
+/// often, and when they end.
+macro_rules! traced {
+    ($name:expr, $fut:expr $(,)?) => {{
+        static CALLSITE: ::sismo::Callsite = ::sismo::Callsite::new(
+            ::sismo::__private::CallsiteKind::Span,
+            $name,
+            module_path!(),
+            file!(),
+            line!(),
+        );
+        ::sismo::Instrumented::new(&CALLSITE, $fut)
+    }};
+}
+
 pub mod actions;
 pub mod active_boards;
 #[cfg(target_os = "android")]

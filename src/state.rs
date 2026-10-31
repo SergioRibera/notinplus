@@ -89,6 +89,7 @@ impl LibraryView {
     /// Open the library, showing each failure and waiting for
     /// [`Self::retry`] before trying again. A retry that fails again says
     /// so, since the screen alone would not change.
+    #[sismo::function("state::library_open")]
     #[allow(clippy::future_not_send)] // runs on the UI executor, never sent
     async fn open(mut self) -> LibHandle {
         let mut retried = false;
@@ -114,6 +115,7 @@ impl LibraryView {
         }
     }
 
+    #[sismo::function("state::library_refresh")]
     #[allow(clippy::future_not_send)] // runs on the UI executor, never sent
     async fn refresh(mut self, handle: &LibHandle) {
         let data = handle.lock().await.snapshot();
@@ -133,6 +135,7 @@ pub(crate) fn use_fixed_library(data: Arc<LibraryData>) -> LibraryView {
 }
 
 /// Open the shared library and keep a snapshot of it for every screen.
+#[sismo::function("state::use_library_root")]
 pub fn use_library_root() {
     let state = use_state(|| LibraryState::Loading);
     let view = use_hook(|| {
@@ -141,15 +144,16 @@ pub fn use_library_root() {
         view
     });
     use_hook(move || {
-        spawn_in_window(async move {
+        spawn_in_window(traced!("task::state::library_view", async move {
             let handle = view.open().await;
             view.refresh(&handle).await;
             let changes = library::changes();
             while changes.recv_async().await.is_ok() {
                 while changes.try_recv().is_ok() {}
+                sismo::instant!("state::library_changed");
                 view.refresh(&handle).await;
             }
-        });
+        }));
     });
 }
 
@@ -224,7 +228,8 @@ pub fn edit<F>(what: LibraryEdit, change: F)
 where
     F: AsyncFnOnce(&mut Library) -> Result<(), LibraryError> + 'static,
 {
-    spawn_in_window(async move {
+    sismo::counter!("state.edit_kind", what as u8);
+    spawn_in_window(traced!("task::state::edit", async move {
         let result = match library::shared().await {
             Ok(handle) => {
                 let mut lib = handle.lock().await;
@@ -237,5 +242,5 @@ where
             let text = tr!("errors-headline-detail", "headline" => what.failure(), "detail" => err.user_message());
             Toasts::get().show(Toast::new(text).tone(ToastTone::Error));
         }
-    });
+    }));
 }

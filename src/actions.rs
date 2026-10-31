@@ -21,6 +21,7 @@ pub enum Origin {
 }
 
 /// A press handler that closes the menu, then runs `f`.
+#[sismo::function("actions::run")]
 pub(crate) fn run(f: impl Fn() + 'static) -> EventHandler<()> {
     EventHandler::new(move |()| {
         ModalController::get().close();
@@ -31,6 +32,7 @@ pub(crate) fn run(f: impl Fn() + 'static) -> EventHandler<()> {
 /// Actions for document `item`.
 #[must_use]
 #[allow(clippy::too_many_lines)] // one flat list of menu entries
+#[sismo::function("actions::for_item")]
 pub fn for_item(data: &LibraryData, item: ItemId, origin: Origin) -> Vec<ActionEntry> {
     use freya::icons::lucide;
     let Some(found) = data.item(item) else {
@@ -156,6 +158,7 @@ pub fn for_item(data: &LibraryData, item: ItemId, origin: Origin) -> Vec<ActionE
 
 /// Actions for folder `folder`.
 #[must_use]
+#[sismo::function("actions::for_folder")]
 pub fn for_folder(folder: FolderId) -> Vec<ActionEntry> {
     use freya::icons::lucide;
     let mut entries = Vec::new();
@@ -203,6 +206,7 @@ pub fn for_folder(folder: FolderId) -> Vec<ActionEntry> {
 
 /// Actions for mesa `workspace`.
 #[must_use]
+#[sismo::function("actions::for_mesa")]
 pub fn for_mesa(data: &LibraryData, workspace: WorkspaceId) -> Vec<ActionEntry> {
     use freya::icons::lucide;
     let pinned = data.workspace(workspace).is_some_and(|w| w.pinned);
@@ -259,6 +263,7 @@ pub fn for_mesa(data: &LibraryData, workspace: WorkspaceId) -> Vec<ActionEntry> 
 }
 
 /// Show `entries` hanging from the pointer at `at`.
+#[sismo::function("actions::show")]
 pub fn show(entries: Vec<ActionEntry>, at: CursorPoint) {
     ActionList::new(entries).show(at);
 }

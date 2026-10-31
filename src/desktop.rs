@@ -30,6 +30,7 @@ pub(crate) static PEN_PUBLISHER: OnceLock<Arc<PenPublisher>> = OnceLock::new();
 ///
 /// Propagates any [`istmo::core::IstmoError`] surfaced during runtime
 /// init.
+#[sismo::function("desktop::install")]
 pub fn install() -> Result<(), Box<dyn std::error::Error>> {
     let RuntimeInit { runtime, outbound } = Runtime::init(RuntimeConfig::inline())?;
 
@@ -89,6 +90,7 @@ pub fn install() -> Result<(), Box<dyn std::error::Error>> {
 /// when the env var is not visible during path-crate compilation —
 /// which is why the folder may currently read `istmo-core` instead
 /// of `notinplus`. Logging the effective path avoids the mystery.
+#[sismo::function("desktop::log_storage_paths")]
 fn log_storage_paths() {
     let data_root = istmo::path::data_dir();
     let library_root = crate::library::bodies::root_dir();

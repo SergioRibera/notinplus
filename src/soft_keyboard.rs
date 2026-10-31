@@ -9,6 +9,7 @@ use freya::prelude::*;
 use freya_markdown_editor::prelude::InputContext;
 
 /// Input context handler for note editors.
+#[sismo::function("soft_keyboard::input_context")]
 pub fn input_context(context: &InputContext) {
     Platform::get().current_window().set_ime_surrounding_text(
         context.text.clone(),
@@ -23,16 +24,18 @@ pub fn input_context(context: &InputContext) {
     clippy::missing_const_for_fn,
     reason = "only the desktop stub of the Android call is const"
 )]
+#[sismo::function("soft_keyboard::show")]
 pub fn show() {
     android::show();
 }
 
 /// [`show`] once the caret a button just placed has landed in its field.
+#[sismo::function("soft_keyboard::show_soon")]
 pub fn show_soon() {
-    spawn(async {
+    spawn(traced!("task::soft_keyboard::show_soon", async {
         async_io::Timer::after(std::time::Duration::from_millis(60)).await;
         show();
-    });
+    }));
 }
 
 #[cfg(target_os = "android")]

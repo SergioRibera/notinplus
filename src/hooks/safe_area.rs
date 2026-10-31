@@ -34,6 +34,7 @@ pub struct SafeAreaOverride(pub EdgeInsets);
 /// Install an override for every descendant that calls
 /// [`use_safe_area_insets`]. Idempotent across re-renders — provider
 /// value only matters on first mount of the owning scope.
+#[sismo::function("hooks::provide_safe_area_override")]
 pub fn provide_safe_area_override(insets: EdgeInsets) {
     use_provide_context(move || SafeAreaOverride(insets));
 }
@@ -45,6 +46,7 @@ struct SafeAreaRoot(Memo<EdgeInsets>);
 /// Subscribe to the platform insets once for the whole window and share
 /// them with every descendant. Call at the app root, before anything
 /// that pads with the insets.
+#[sismo::function("hooks::provide_safe_area_root")]
 pub fn provide_safe_area_root() -> Memo<EdgeInsets> {
     let mut published = use_state(EdgeInsets::default);
     use_hook(move || {
@@ -65,11 +67,12 @@ pub fn provide_safe_area_root() -> Memo<EdgeInsets> {
                 }
             }
         });
-        spawn(async move {
+        spawn(traced!("task::hooks::safe_area", async move {
             while let Ok(next) = rx.recv_async().await {
+                sismo::instant!("hooks::insets_changed");
                 published.set(next);
             }
-        });
+        }));
     });
     let insets = use_memo(move || {
         let scale = *Platform::get().current_window().custom_scale_factor.read();

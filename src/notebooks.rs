@@ -11,8 +11,9 @@ use crate::library::{
 use crate::space::{self, OpenHint};
 
 /// Create a notebook for `item` and open it beside it.
+#[sismo::function("notebooks::new_notebook")]
 pub fn new_notebook(item: ItemId) {
-    spawn_in_window(async move {
+    spawn_in_window(traced!("task::notebooks::new", async move {
         let Ok(handle) = crate::library::shared().await else {
             return;
         };
@@ -24,7 +25,7 @@ pub fn new_notebook(item: ItemId) {
             Ok(id) => space::open(TabTarget::Item(id), OpenHint::Beside),
             Err(err) => log::error!("create notebook: {err}"),
         }
-    });
+    }));
 }
 
 /// Create "Notebook of <doc>" (in the active language) next to `item` and link it as its

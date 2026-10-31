@@ -106,9 +106,10 @@ impl std::fmt::Debug for AnchorSourceCtx {
 /// colour / input-mode mutation, and the drain-loop collapses bursts
 /// into a single disk write.
 fn spawn_prefs_worker(board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
-    spawn(async move {
+    spawn(traced!("task::app::prefs_worker", async move {
         while rx.recv_async().await.is_ok() {
             while rx.try_recv().is_ok() {}
+            sismo::scope!("app::save_prefs");
             let snapshot = {
                 let g = lock(&board);
                 prefs::Prefs {
@@ -122,7 +123,7 @@ fn spawn_prefs_worker(board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
                 log::error!("save_prefs: {err}");
             }
         }
-    });
+    }));
 }
 
 pub fn run() {
@@ -194,6 +195,7 @@ pub fn run() {
 }
 
 /// The bundled fonts: the canvas hand, and those of every plugin.
+#[sismo::function("app::launch_config")]
 fn launch_config() -> LaunchConfig {
     let fonts = crate::plugins::catalog().fonts();
     fonts.into_iter().fold(
@@ -248,16 +250,24 @@ pub fn global_router() -> freya::router::RouterContext {
 struct AppShell;
 
 impl Component for AppShell {
+    #[sismo::function("app::app_shell")]
     fn render(&self) -> impl IntoElement {
         #[cfg(target_os = "android")]
         use_hook(crate::android_clipboard::install);
         let area = use_state(Area::default);
-        let settings = crate::settings::use_settings_root();
-        crate::update::use_updates_root();
+        let settings = {
+            sismo::scope!("app::settings_root");
+            crate::settings::use_settings_root()
+        };
+        {
+            sismo::scope!("app::updates_root");
+            crate::update::use_updates_root();
+        }
         crate::state::use_library_root();
         crate::screens::home::use_browse_root();
         crate::plugins::host::use_host_pump();
         use_hook(move || {
+            sismo::scope!("app::startup_jobs");
             crate::plugins::content::index_library();
             let retention = settings.read().library.trash_retention.millis();
             crate::state::edit(crate::state::LibraryEdit::EmptyTrash, async move |lib| {
@@ -283,11 +293,23 @@ impl Component for AppShell {
         // must run inside the freya scheduler context — `use_hook`
         // runs once per `AppShell` mount, exactly when `Platform::get`
         // becomes safe to call.
-        use_hook(crate::sync::start);
-        crate::sync::use_presence();
+        use_hook(|| {
+            sismo::scope!("app::sync_start");
+            crate::sync::start();
+        });
+        {
+            sismo::scope!("app::presence_root");
+            crate::sync::use_presence();
+        }
         use_hook(crate::deep_link::listen);
-        use_hook(crate::session_end::listen);
-        use_hook(crate::diagnostics::ui::announce_crash);
+        use_hook(|| {
+            sismo::scope!("app::session_end_listen");
+            crate::session_end::listen();
+        });
+        use_hook(|| {
+            sismo::scope!("app::announce_crash");
+            crate::diagnostics::ui::announce_crash();
+        });
         rect()
             .expanded()
             .background(notein_ui_kit::palette().bg)
@@ -412,6 +434,7 @@ pub(crate) struct CanvasPane {
 }
 
 impl Component for CanvasPane {
+    #[sismo::function("app::canvas_pane")]
     fn render(&self) -> impl IntoElement {
         let state = use_chrome_state();
         use_provide_context(move || state.text_editor.popup_reporter());
@@ -435,6 +458,7 @@ impl Component for CanvasPane {
 /// Prefer wrapping call sites inside [`CanvasPane`] when mounting from
 /// a dynamic container (pane tree, tab bar); the free fn is kept for
 /// single-pane routes that call it exactly once per render.
+#[sismo::function("app::canvas_body")]
 pub(crate) fn canvas_body(mount: CanvasMount, state: &ChromeState) -> impl IntoElement {
     // When an ancestor hoisted the mount — e.g.
     // `DocLinkedView::render` creates the board at the shell level so
@@ -463,6 +487,7 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: &ChromeState) -> impl IntoE
         let mut active_setter = state.active_board;
         let mut active_item_setter = state.active_item;
         move || {
+            sismo::scope!("drop::canvas_body");
             // Per-surface pen-pump deregistration lives inside
             // `drawing_surface`; it owns the surface id and runs its
             // own `use_drop`.
@@ -528,6 +553,7 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: &ChromeState) -> impl IntoE
 ///
 /// Must be called inside a component render — spawn + `provide_context`
 /// resolve against the current scope.
+#[sismo::function("app::mount_board")]
 pub(crate) fn mount_board(mount: CanvasMount, state: &ChromeState) -> Arc<Mutex<Board>> {
     let mut active_setter = state.active_board;
     let mut active_item_setter = state.active_item;
@@ -568,12 +594,13 @@ pub(crate) fn mount_board(mount: CanvasMount, state: &ChromeState) -> Arc<Mutex<
     }
     spawn_prefs_worker(Arc::clone(&board), prefs_rx);
     let sync_board = Arc::clone(&board);
-    spawn(async move {
+    spawn(traced!("task::app::redraw_sync", async move {
         while rx.recv_async().await.is_ok() {
+            sismo::scope!("app::redraw_sync");
             window.request_redraw();
             ink.sync(&lock(&sync_board));
         }
-    });
+    }));
     // Provide to descendants (settings modal, split-view sibling
     // panes, …) so they can consume via `try_consume_context::
     // <Arc<Mutex<Board>>>()` and operate on this mount's board.
@@ -596,7 +623,7 @@ fn spawn_handwriting_timer(board: &Arc<Mutex<Board>>) {
     let (tx, rx) = flume::unbounded::<u64>();
     lock(board).set_handwriting_waker(tx);
     let board = Arc::downgrade(board);
-    spawn(async move {
+    spawn(traced!("task::app::handwriting_timer", async move {
         while let Ok(mut generation) = rx.recv_async().await {
             loop {
                 async_io::Timer::after(crate::canvas::LETTER_IDLE).await;
@@ -608,9 +635,10 @@ fn spawn_handwriting_timer(board: &Arc<Mutex<Board>>) {
             let Some(board) = board.upgrade() else {
                 return;
             };
+            sismo::scope!("app::flush_handwriting");
             lock(&board).flush_handwriting(generation);
         }
-    });
+    }));
 }
 
 /// Reuse-path helper: seed a fresh `ChromeState`'s signals from an
@@ -624,6 +652,7 @@ fn seed_chrome_from_board(board: &Arc<Mutex<Board>>, state: &mut ChromeState, mo
     state.active_item.set(mount.item());
 }
 
+#[sismo::function("app::canvas_chrome")]
 pub(crate) fn canvas_chrome(
     state: &ChromeState,
     pad: EdgeInsets,

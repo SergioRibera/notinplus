@@ -22,11 +22,12 @@ pub struct FollowFrame {
 }
 
 impl Component for FollowFrame {
+    #[sismo::function("follow::follow_frame")]
     fn render(&self) -> impl IntoElement {
         let mut followed = use_state(|| None::<(DeviceId, String, Color)>);
         use_hook(move || {
             let changes = presence::watch_all();
-            spawn(async move {
+            spawn(traced!("task::follow::frame", async move {
                 // The document this device last opened for them.
                 let mut shown: Option<ItemId> = None;
                 loop {
@@ -49,7 +50,7 @@ impl Component for FollowFrame {
                         return;
                     }
                 }
-            });
+            }));
         });
         let Some((_, name, color)) = followed.read().clone() else {
             return rect().into_element();
@@ -59,6 +60,7 @@ impl Component for FollowFrame {
 }
 
 /// The colored frame and the chip, over a window.
+#[sismo::function("follow::frame")]
 fn frame(name: &str, color: Color, top: f32) -> Element {
     let p = palette();
     rect()

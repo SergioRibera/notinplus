@@ -56,7 +56,7 @@ fn open_with(target: TabTarget, hint: OpenHint, dedupe: bool) {
         TabTarget::Scratch(_) => "open scratch canvas",
         TabTarget::Annotation(_) => "open annotation",
     });
-    freya::prelude::spawn_in_window(async move {
+    freya::prelude::spawn_in_window(traced!("task::space::open", async move {
         let Ok(handle) = open_library().await else {
             log::warn!("space::open: library unavailable");
             return;
@@ -68,6 +68,7 @@ fn open_with(target: TabTarget, hint: OpenHint, dedupe: bool) {
         match opened {
             Ok(opened) => {
                 notify_changed();
+                sismo::scope!("space::navigate");
                 let router = crate::app::global_router();
                 if router.current::<Route>()
                     != (Route::Space {
@@ -81,12 +82,12 @@ fn open_with(target: TabTarget, hint: OpenHint, dedupe: bool) {
             }
             Err(err) => log::error!("space::open: {err}"),
         }
-    });
+    }));
 }
 
 /// Make `workspace` the active mesa and navigate to it.
 pub fn open_space(workspace: WorkspaceId) {
-    freya::prelude::spawn_in_window(async move {
+    freya::prelude::spawn_in_window(traced!("task::space::open_mesa", async move {
         let Ok(handle) = open_library().await else {
             return;
         };
@@ -97,11 +98,12 @@ pub fn open_space(workspace: WorkspaceId) {
         match switched {
             Ok(()) => {
                 notify_changed();
+                sismo::scope!("space::navigate");
                 let _ = crate::app::global_router().push(Route::Space { id: workspace });
             }
             Err(err) => log::error!("space::open_space: {err}"),
         }
-    });
+    }));
 }
 
 /// Apply the opening rules on `lib`. Callers that already hold the
@@ -122,6 +124,7 @@ pub fn open_copy(item: ItemId) {
 }
 
 /// Open `target` on a mesa of its own.
+#[sismo::function("space::open_in_new_space")]
 async fn open_in_new_space(lib: &mut Library, target: TabTarget) -> Result<Opened> {
     let workspace = lib.create_workspace("", None).await?;
     lib.set_active_workspace(Some(workspace)).await?;
@@ -223,20 +226,23 @@ pub fn changes() -> flume::Receiver<()> {
     let (tx, rx) = flume::unbounded();
     if let Ok(mut list) = listeners().lock() {
         list.push(tx);
+        sismo::counter!("space.listeners", list.len());
     }
     rx
 }
 
 /// Wake every live [`changes`] subscriber.
+#[sismo::function("space::notify_changed")]
 pub fn notify_changed() {
     if let Ok(mut list) = listeners().lock() {
         list.retain(|tx| tx.send(()).is_ok());
+        sismo::counter!("space.listeners", list.len());
     }
 }
 
 /// Close the tab showing `target` on the active mesa, if any.
 pub fn close_tab(target: TabTarget) {
-    freya::prelude::spawn_in_window(async move {
+    freya::prelude::spawn_in_window(traced!("task::space::close_tab", async move {
         let Ok(handle) = open_library().await else {
             return;
         };
@@ -250,5 +256,5 @@ pub fn close_tab(target: TabTarget) {
         {
             log::error!("close_tab: {err}");
         }
-    });
+    }));
 }

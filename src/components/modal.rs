@@ -16,6 +16,7 @@ use crate::ui_mask::{UiRegion, publish_mask, set as set_mask};
 /// Install the host's `ModalChrome` context so descendant modals pick
 /// up the safe-area insets + the shell's pen-mask sink. Call once near
 /// the app root (e.g. inside the modal portal mount).
+#[sismo::function("ui::provide_host_modal_chrome")]
 pub fn provide_host_modal_chrome() {
     let insets = use_safe_area_insets();
     let gutters = use_memo(move || {

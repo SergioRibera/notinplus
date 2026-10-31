@@ -58,6 +58,7 @@ pub struct Space {
 }
 
 impl Component for Space {
+    #[sismo::function("route::space")]
     fn render(&self) -> impl IntoElement {
         use_hook(|| sismo::marker("screen: desk"));
         crate::screens::mesa::Mesa { id: self.id }
@@ -68,6 +69,7 @@ impl Component for Space {
 /// per-board side effects: install queued background, hydrate the doc +
 /// autosave sinks, and (for PDF-backed mounts) load the PDF into the
 /// background slot off the UI thread.
+#[sismo::function("route::init_canvas_mount")]
 pub(crate) fn init_canvas_mount(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
     let had_pending = apply_pending_canvas_background(board, mount);
     // No pending slot — this mount did not come through the home open
@@ -80,7 +82,7 @@ pub(crate) fn init_canvas_mount(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
     if !had_pending && !face_paints {
         if let Some(id) = mount.item() {
             let board = Arc::clone(board);
-            spawn(async move {
+            spawn(traced!("task::route::init_mount", async move {
                 let handle = match crate::library::shared().await {
                     Ok(h) => h,
                     Err(err) => {
@@ -101,7 +103,7 @@ pub(crate) fn init_canvas_mount(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
                     SkColor::from_argb(c[3], c[0], c[1], c[2])
                 });
                 apply_canvas_background(&board, bg, surface);
-            });
+            }));
         }
     }
     load_doc_into_board(mount, Arc::clone(board));
@@ -141,7 +143,7 @@ fn pending() -> &'static Mutex<Option<PendingBackground>> {
 /// sender (via the next `set_commit_sink` / unmount) wakes the old
 /// worker with `Disconnected` so it exits cleanly.
 fn load_doc_into_board(mount: CanvasMount, board: Arc<Mutex<Board>>) {
-    spawn(async move {
+    spawn(traced!("task::route::load_doc", async move {
         let id = mount.item();
         let slot = match mount {
             CanvasMount::Item { slot, .. } => slot,
@@ -176,6 +178,7 @@ fn load_doc_into_board(mount: CanvasMount, board: Arc<Mutex<Board>>) {
         };
         let saved_view = id.and_then(|item| prefs::load_view(prefs::ViewKey { item, slot }));
         {
+            sismo::scope!("route::install_doc");
             let mut guard = lock(&board);
             guard.replace_doc(doc);
             // Reset viewport first so a blank-canvas / fresh-doc flow
@@ -213,7 +216,7 @@ fn load_doc_into_board(mount: CanvasMount, board: Arc<Mutex<Board>>) {
                 guard.clear_live_sink();
             }
         }
-    });
+    }));
 }
 
 /// Quiet time after the last stroke before the document is saved.
@@ -232,6 +235,7 @@ fn spawn_autosave_worker(id: ItemId, board: &Arc<Mutex<Board>>, rx: flume::Recei
         .name("notein-autosave".to_owned())
         .spawn(move || {
             while rx.recv().is_ok() {
+                sismo::instant!("route::autosave_wake");
                 let Some(board) = watched.upgrade() else {
                     return;
                 };
@@ -251,6 +255,7 @@ fn spawn_autosave_worker(id: ItemId, board: &Arc<Mutex<Board>>, rx: flume::Recei
 /// Wait, calling `on_commit` for every commit meanwhile, until commits
 /// stop for [`SAVE_AFTER`], [`SAVE_AT_MOST`] went by
 /// since the first one, or [`save_open_documents`] asked.
+#[sismo::function("route::settle")]
 fn settle(rx: &flume::Receiver<()>, on_commit: impl Fn()) {
     /// How often a waiting save looks whether it was asked to hurry.
     const GLANCE: Duration = Duration::from_millis(100);
@@ -290,6 +295,7 @@ pub fn save_open_documents_and_wait() {
     }
 }
 
+#[sismo::function("route::save")]
 fn save(id: ItemId, board: &Arc<Mutex<Board>>) {
     let (snapshot, content) = {
         let guard = lock(board);
@@ -329,20 +335,21 @@ fn save(id: ItemId, board: &Arc<Mutex<Board>>) {
 /// the document is open here.
 fn spawn_policy_worker(id: ItemId, board: Weak<Mutex<Board>>) {
     let changes = crate::sync::changes();
-    spawn(async move {
+    spawn(traced!("task::route::policy_worker", async move {
         while changes.recv_async().await.is_ok() {
             while changes.try_recv().is_ok() {}
             let Some(board) = board.upgrade() else {
                 return;
             };
+            sismo::scope!("route::policy_apply");
             lock(&board).set_read_only(!crate::sync::can_edit(id));
         }
-    });
+    }));
 }
 
 fn spawn_view_worker(key: prefs::ViewKey, board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
     use notein_plugin::Presence as _;
-    spawn(async move {
+    spawn(traced!("task::route::view_worker", async move {
         let presence = crate::sync::presence::open(key.item);
         // Say where this board looks right away, not only once it moves,
         // so whoever follows lands on it.
@@ -361,6 +368,7 @@ fn spawn_view_worker(key: prefs::ViewKey, board: Arc<Mutex<Board>>, rx: flume::R
         }
         while rx.recv_async().await.is_ok() {
             while rx.try_recv().is_ok() {}
+            sismo::scope!("route::save_view");
             let view = {
                 let guard = lock(&board);
                 if let Some((wx, wy)) = guard.world_center() {
@@ -372,9 +380,10 @@ fn spawn_view_worker(key: prefs::ViewKey, board: Arc<Mutex<Board>>, rx: flume::R
                 log::error!("save_view item={:?}: {err}", key.item);
             }
         }
-    });
+    }));
 }
 
+#[sismo::function("route::apply_pending_background")]
 fn apply_pending_canvas_background(board: &Arc<Mutex<Board>>, mount: CanvasMount) -> bool {
     let wanted = mount.target();
     let queued = pending().lock().ok().and_then(|mut slot| {
@@ -396,6 +405,7 @@ fn apply_pending_canvas_background(board: &Arc<Mutex<Board>>, mount: CanvasMount
 /// Install the `(style, surface)` pair on an already-mounted board.
 /// Used by the edit-sheet flow so a tint / pattern change paints into
 /// the live canvas immediately instead of waiting for the next mount.
+#[sismo::function("route::apply_background")]
 pub fn apply_canvas_background(
     board: &Arc<Mutex<Board>>,
     style: BackgroundStyle,
@@ -413,6 +423,7 @@ pub fn apply_canvas_background(
 /// Push what `board` knows about `item` into every other board showing
 /// the same item, so two panes of one document stay identical while
 /// each keeps its own viewport and undo history.
+#[sismo::function("route::sync_siblings")]
 fn sync_siblings(item: ItemId, board: &Arc<Mutex<Board>>) {
     for (_, sibling) in crate::active_boards::for_item(item) {
         if Arc::ptr_eq(&sibling, board) {
@@ -458,7 +469,7 @@ fn decode_view(bytes: &[u8]) -> Option<(f32, f32, f32)> {
 /// see. Ends with the board.
 fn spawn_follow_worker(item: ItemId, board: std::sync::Weak<Mutex<Board>>) {
     use notein_plugin::Presence as _;
-    spawn(async move {
+    spawn(traced!("task::route::follow_worker", async move {
         let presence = crate::sync::presence::open(item);
         let changes = presence.changes();
         while changes.recv_async().await.is_ok() {
@@ -471,10 +482,11 @@ fn spawn_follow_worker(item: ItemId, board: std::sync::Weak<Mutex<Board>>) {
             else {
                 continue;
             };
+            sismo::scope!("route::follow_glide");
             let target = lock(&board).view_at(wx, wy, scale);
             if let Some(target) = target {
                 crate::canvas::glide(&board, target);
             }
         }
-    });
+    }));
 }
