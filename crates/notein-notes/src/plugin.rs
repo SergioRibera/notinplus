@@ -36,6 +36,7 @@ impl Plugin for NotesPlugin {
         registrar.face(NoteFace, kind);
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("notes::install"))]
     fn install(&self, host: &Host) {
         self.kind.attach(host);
     }
@@ -52,11 +53,13 @@ impl Face for NoteFace {
         face::header_actions()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("notes::face_render"))]
     fn render(&self, ctx: FaceContext<NotesKind>) -> Element {
         face::NotePage { ctx }.into_element()
     }
 
     /// The note's title and the start of its text.
+    #[cfg_attr(feature = "sismo", sismo::function("notes::cover"))]
     fn cover(&self, cover: &CoverRequest) -> Option<Element> {
         let p = notein_ui_kit::palette();
         let paper = cover

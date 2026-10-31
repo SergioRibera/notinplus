@@ -22,6 +22,7 @@ pub struct NotesIndex(Arc<RwLock<HashMap<[u8; 16], IndexedNote>>>);
 
 impl NotesIndex {
     /// Store (or refresh) the note `item`.
+    #[cfg_attr(feature = "sismo", sismo::function("notes::index_update"))]
     pub fn update(&self, item: [u8; 16], title: &str, markdown: &str) {
         let headings = Document::parse(markdown)
             .outline()
@@ -41,6 +42,7 @@ impl NotesIndex {
     }
 
     /// Refresh the headings of a known note, keeping its title.
+    #[cfg_attr(feature = "sismo", sismo::function("notes::index_update_body"))]
     pub fn update_body(&self, item: [u8; 16], markdown: &str) {
         let title = self
             .0
@@ -58,6 +60,7 @@ impl NotesIndex {
         self.0.read().unwrap_or_else(PoisonError::into_inner)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("notes::index_remove"))]
     pub fn remove(&self, item: [u8; 16]) {
         self.0
             .write()
@@ -66,6 +69,7 @@ impl NotesIndex {
     }
 
     /// Drop every note, before re-populating from the library.
+    #[cfg_attr(feature = "sismo", sismo::function("notes::index_clear"))]
     pub fn clear(&self) {
         self.0
             .write()
@@ -75,6 +79,7 @@ impl NotesIndex {
 
     /// Markdown body of note `item`, as last indexed.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("notes::index_body"))]
     pub fn body(&self, item: [u8; 16]) -> Option<String> {
         self.read().get(&item).map(|note| note.body.clone())
     }
@@ -83,6 +88,7 @@ impl NotesIndex {
     /// heading text when the anchor names one. `None` when the note is
     /// gone; a heading that no longer exists falls back to the title.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("notes::index_label"))]
     pub fn label(&self, item: [u8; 16], anchor: &NoteAnchor) -> Option<String> {
         let note = self
             .0

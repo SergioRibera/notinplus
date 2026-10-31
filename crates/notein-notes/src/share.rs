@@ -10,6 +10,7 @@ use notein_ui_kit::{Action, ActionEntry, ActionList};
 
 /// Open the share menu for the note in `controller`, below the press at
 /// `at` in `window` coordinates, or under the top-right corner without one.
+#[cfg_attr(feature = "sismo", sismo::function("notes::share_menu"))]
 pub(crate) fn open_menu(
     host: &Host,
     controller: EditorController,
@@ -65,6 +66,7 @@ pub(crate) fn open_menu(
     ActionList::new(entries).show_at(anchor);
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("notes::copy_markdown"))]
 fn copy_markdown(host: &Host, controller: EditorController, dialect: Dialect) {
     let toast = match freya::clipboard::Clipboard::set(controller.markdown(dialect)) {
         Ok(()) => HostToast::new(tr!("notes-toast-markdown-copied"), ToastTone::Info),

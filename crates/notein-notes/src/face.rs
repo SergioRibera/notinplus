@@ -55,6 +55,7 @@ pub(crate) fn header_actions() -> Vec<HeaderAction> {
 }
 
 /// The editor of `doc`, when the note is on screen.
+#[cfg_attr(feature = "sismo", sismo::function("notes::open_editor"))]
 pub(crate) fn open_editor(doc: DocId) -> Option<EditorController> {
     OPEN_NOTES.with(|open| open.borrow().get(&doc).copied())
 }
@@ -71,6 +72,7 @@ impl PartialEq for NotePage {
 
 impl Component for NotePage {
     #[allow(clippy::too_many_lines, reason = "declarative layout of the page")]
+    #[cfg_attr(feature = "sismo", sismo::function("notes::page"))]
     fn render(&self) -> impl IntoElement {
         let ctx = &self.ctx;
         let doc = ctx.doc;
@@ -80,7 +82,11 @@ impl Component for NotePage {
         });
         let markdown = use_state({
             let body = Arc::clone(&body);
-            move || body.text()
+            move || {
+                #[cfg(feature = "sismo")]
+                sismo::scope!("notes::body_text");
+                body.text()
+            }
         });
         let locked = use_state({
             let store = ctx.store.clone();
@@ -93,8 +99,14 @@ impl Component for NotePage {
         use_side_effect({
             let (body, store) = (Arc::clone(&body), ctx.store.clone());
             move || {
+                #[cfg(feature = "sismo")]
+                sismo::scope!("notes::write_body");
                 let text = markdown.read();
+                #[cfg(feature = "sismo")]
+                sismo::counter!("notes.markdown_len", text.len());
                 body.set(&text);
+                #[cfg(feature = "sismo")]
+                sismo::scope!("notes::store_save");
                 store.save(&NoteContent {
                     markdown: text.clone(),
                 });
@@ -106,7 +118,11 @@ impl Component for NotePage {
         });
         let presence = use_hook({
             let host = Arc::clone(&ctx.host);
-            move || host.presence(doc)
+            move || {
+                #[cfg(feature = "sismo")]
+                sismo::scope!("notes::presence_open");
+                host.presence(doc)
+            }
         });
         let peers = use_state({
             let presence = Arc::clone(&presence);
@@ -118,7 +134,11 @@ impl Component for NotePage {
         });
         use_side_effect({
             let presence = Arc::clone(&presence);
-            move || presence.publish(encode_caret(controller.text_position()))
+            move || {
+                #[cfg(feature = "sismo")]
+                sismo::scope!("notes::publish_caret");
+                presence.publish(encode_caret(controller.text_position()));
+            }
         });
         ctx.use_jumps(move |anchor: NoteAnchor| jump(controller, scroll, anchor));
         use_hook({
@@ -130,6 +150,8 @@ impl Component for NotePage {
             OPEN_NOTES.with(|open| open.borrow_mut().insert(doc, controller));
         });
         use_drop(move || {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("notes::page_drop");
             OPEN_NOTES.with(|open| {
                 let mut open = open.borrow_mut();
                 if open.get(&doc) == Some(&controller) {
@@ -140,6 +162,8 @@ impl Component for NotePage {
 
         // A focused editor already undid it from its own key handler.
         ctx.use_history(move |step| {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("notes::history_step");
             if controller.has_focus() {
                 return;
             }
@@ -149,18 +173,24 @@ impl Component for NotePage {
             }
         });
         let host = Arc::clone(&ctx.host);
-        ctx.use_header_presses(move |press| match press.action.as_str() {
-            "reading" if !*locked.peek() => controller.toggle_read_only(),
-            "share" => {
-                let window = viewport_area.map(|area| *area.0.peek());
-                let title = host.doc_name(doc).unwrap_or_default();
-                crate::share::open_menu(&host, controller, title, Some(press.at), window);
+        ctx.use_header_presses(move |press| {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("notes::header_press");
+            match press.action.as_str() {
+                "reading" if !*locked.peek() => controller.toggle_read_only(),
+                "share" => {
+                    let window = viewport_area.map(|area| *area.0.peek());
+                    let title = host.doc_name(doc).unwrap_or_default();
+                    crate::share::open_menu(&host, controller, title, Some(press.at), window);
+                }
+                _ => {}
             }
-            _ => {}
         });
         let locked_now = *locked.read();
         let read_only = controller.active_format().read_only || locked_now;
 
+        #[cfg(feature = "sismo")]
+        sismo::scope!("notes::page_tree");
         let editor = ctx
             .ui
             .editor_for(
@@ -202,6 +232,7 @@ impl Component for NotePage {
 
 /// The body of the note, taking its markdown from the stored content
 /// once for a note from before bodies were merged.
+#[cfg_attr(feature = "sismo", sismo::function("notes::open_body"))]
 fn open_body(ctx: &FaceContext<NotesKind>) -> Arc<dyn TextBody> {
     let body = ctx.host.body(ctx.doc);
     if body.text().is_empty() {
@@ -214,10 +245,13 @@ fn open_body(ctx: &FaceContext<NotesKind>) -> Arc<dyn TextBody> {
 }
 
 /// Keep `locked` in step with what this person may do with the note.
+#[cfg_attr(feature = "sismo", sismo::function("notes::follow_access"))]
 fn follow_access(store: ContentStore<NoteContent>, mut locked: State<bool>) {
     let changes = store.access_changes();
     spawn(async move {
         while changes.recv_async().await.is_ok() {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("notes::access_changed");
             while changes.try_recv().is_ok() {}
             locked.set_if_modified(store.read_only());
         }
@@ -225,10 +259,13 @@ fn follow_access(store: ContentStore<NoteContent>, mut locked: State<bool>) {
 }
 
 /// Put what other devices typed into the editor as it lands.
+#[cfg_attr(feature = "sismo", sismo::function("notes::follow_remote"))]
 fn follow_remote(body: Arc<dyn TextBody>, mut markdown: State<String>) {
     let changes = body.changes();
     spawn(async move {
         while changes.recv_async().await.is_ok() {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("notes::remote_change");
             let text = body.text();
             if *markdown.peek() != text {
                 markdown.set(text);
@@ -239,6 +276,7 @@ fn follow_remote(body: Arc<dyn TextBody>, mut markdown: State<String>) {
 
 /// Keep `peers` up to date with whoever else has the note open, and
 /// while following one of them keep their caret in view.
+#[cfg_attr(feature = "sismo", sismo::function("notes::follow_peers"))]
 fn follow_peers(
     presence: Arc<dyn Presence>,
     mut peers: State<Vec<Peer>>,
@@ -248,6 +286,8 @@ fn follow_peers(
     let changes = presence.changes();
     spawn(async move {
         while changes.recv_async().await.is_ok() {
+            #[cfg(feature = "sismo")]
+            sismo::scope!("notes::peers_changed");
             peers.set(presence.peers());
             let Some(caret) = presence.followed().as_ref().and_then(remote_caret) else {
                 continue;
@@ -271,6 +311,7 @@ const FOLLOW_MARGIN: f32 = 120.0;
 
 /// This person's caret as the others receive it: field, anchor and head
 /// as little endian `u32`s; empty without a caret.
+#[cfg_attr(feature = "sismo", sismo::function("notes::encode_caret"))]
 fn encode_caret(position: Option<TextPosition>) -> Vec<u8> {
     let Some(position) = position else {
         return Vec::new();
@@ -282,6 +323,7 @@ fn encode_caret(position: Option<TextPosition>) -> Vec<u8> {
 }
 
 /// Someone else's caret, from what [`encode_caret`] made of it.
+#[cfg_attr(feature = "sismo", sismo::function("notes::remote_caret"))]
 fn remote_caret(peer: &Peer) -> Option<RemoteCaret> {
     let mut values = peer
         .state
@@ -316,6 +358,7 @@ fn banner(text: impl Into<String>) -> Rect {
 
 /// Follow the block being typed in, see [`follow`]. Returns where the
 /// viewport and the note content are laid out, for the page to fill.
+#[cfg_attr(feature = "sismo", sismo::function("notes::use_follow_typing"))]
 fn use_follow_typing(
     controller: EditorController,
     scroll: ScrollController,
@@ -339,6 +382,8 @@ fn use_follow_typing(
             if !focused || !(typed || keyboard_opened || !was_focused) {
                 return;
             }
+            #[cfg(feature = "sismo")]
+            sismo::scope!("notes::follow_typing");
             let block = controller
                 .selection()
                 .map(|selection| selection.target.block);
@@ -352,6 +397,7 @@ fn use_follow_typing(
 
 /// Keep the line being typed on screen, above the soft keyboard once it
 /// shrinks the viewport.
+#[cfg_attr(feature = "sismo", sismo::function("notes::follow"))]
 fn follow(
     controller: EditorController,
     mut scroll: ScrollController,
@@ -361,6 +407,8 @@ fn follow(
 ) {
     spawn(async move {
         async_io::Timer::after(FOLLOW_DELAY).await;
+        #[cfg(feature = "sismo")]
+        sismo::scope!("notes::follow_scroll");
         let Some((top, bottom)) = controller
             .caret_bounds()
             .or_else(|| controller.block_bounds(block))
@@ -383,6 +431,7 @@ fn follow(
 
 /// Scroll to the heading the anchor names, or to the top for the whole
 /// note. Waits for the layout when the note was just opened.
+#[cfg_attr(feature = "sismo", sismo::function("notes::jump"))]
 fn jump(controller: EditorController, mut scroll: ScrollController, anchor: NoteAnchor) {
     spawn(async move {
         let Some(slug) = anchor.heading else {
@@ -390,6 +439,8 @@ fn jump(controller: EditorController, mut scroll: ScrollController, anchor: Note
             return;
         };
         for _ in 0..JUMP_ATTEMPTS {
+            #[cfg(feature = "sismo")]
+            sismo::instant!("notes::jump_attempt");
             let offset = controller
                 .document()
                 .heading_by_slug(&slug)
@@ -407,6 +458,7 @@ fn jump(controller: EditorController, mut scroll: ScrollController, anchor: Note
 
 /// The formatting bar over the note, its menus kept inside what the
 /// system bars and the keyboard leave visible.
+#[cfg_attr(feature = "sismo", sismo::function("notes::toolbar"))]
 fn toolbar(theme: EditorTheme, controller: EditorController) -> Rect {
     rect()
         .width(Size::fill())

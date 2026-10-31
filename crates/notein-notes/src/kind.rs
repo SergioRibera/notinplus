@@ -45,6 +45,7 @@ pub struct NoteContent {
 impl NoteContent {
     /// Stored bytes of a note with `markdown`.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("notes::kind_encode"))]
     pub fn encode(markdown: &str) -> Vec<u8> {
         use notein_sdk::payload::Payload;
         Self {
@@ -55,6 +56,7 @@ impl NoteContent {
 
     /// The markdown of stored note bytes; empty when they are not a note.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("notes::kind_markdown_of"))]
     pub fn markdown_of(bytes: &[u8]) -> String {
         use notein_sdk::payload::Payload;
         Self::from_bytes(bytes)
@@ -136,6 +138,7 @@ impl NoteHits<'_> {
 impl Iterator for NoteHits<'_> {
     type Item = Hit<NoteAnchor>;
 
+    #[cfg_attr(feature = "sismo", sismo::function("notes::hits_next"))]
     fn next(&mut self) -> Option<Self::Item> {
         if self.needle.is_empty() {
             return None;
@@ -206,6 +209,7 @@ impl Iterator for NoteHits<'_> {
 
 /// Turn the flat heading list into a tree: a heading owns the deeper
 /// headings that follow it.
+#[cfg_attr(feature = "sismo", sismo::function("notes::kind_nest"))]
 fn nest(headings: &[HeadingRef]) -> Vec<OutlineNode<NoteAnchor>> {
     fn attach(
         stack: &mut [(u8, OutlineNode<NoteAnchor>)],
@@ -263,6 +267,7 @@ impl DocumentKind for NotesKind {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("notes::kind_search"))]
     fn search<'a>(&'a self, query: &'a SearchQuery) -> NoteHits<'a> {
         let notes = self.index.read();
         let mut order: Vec<[u8; 16]> = notes.keys().copied().collect();
@@ -283,6 +288,7 @@ impl DocumentKind for NotesKind {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("notes::kind_index"))]
     fn index(
         &self,
         doc: DocMeta<'_>,
@@ -293,14 +299,17 @@ impl DocumentKind for NotesKind {
         IndexReport::complete(1)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("notes::kind_forget"))]
     fn forget(&self, doc: DocId) {
         self.index.remove(doc.0);
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("notes::kind_outline"))]
     fn outline(&self, content: &NoteContent) -> Vec<OutlineNode<NoteAnchor>> {
         nest(&Document::parse(&content.markdown).outline())
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("notes::kind_chip"))]
     fn chip(&self, doc: DocMeta<'_>, anchor: &NoteAnchor) -> ChipView {
         self.index
             .label(doc.id.0, anchor)
@@ -311,6 +320,7 @@ impl DocumentKind for NotesKind {
         true
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("notes::kind_quote"))]
     fn quote(&self, doc: DocMeta<'_>, anchor: &NoteAnchor) -> Option<Quote> {
         let source = self.index.label(doc.id.0, anchor)?;
         let live = self
@@ -338,6 +348,7 @@ impl DocumentKind for NotesKind {
         ]
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("notes::kind_run_action"))]
     fn run_action(&self, id: &str, doc: DocMeta<'_>, content: &NoteContent) -> ActionEffect {
         match id {
             ACTION_COPY_MARKDOWN => ActionEffect::Copy {
@@ -384,6 +395,7 @@ impl DocumentKind for NotesKind {
         ]
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("notes::kind_create"))]
     fn create(
         &self,
         entry: &str,
@@ -414,6 +426,7 @@ impl DocumentKind for NotesKind {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("notes::kind_inspect"))]
     fn inspect(
         &self,
         _entry: &str,
@@ -438,10 +451,12 @@ impl DocumentKind for NotesKind {
         Some(content.markdown.clone())
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("notes::kind_references"))]
     fn references(&self, content: &NoteContent) -> Option<Vec<SourceRef>> {
         Some(notein_sdk::link::scan_links(&content.markdown).collect())
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("notes::kind_export"))]
     fn export(
         &self,
         _doc: DocMeta<'_>,
@@ -457,6 +472,7 @@ impl DocumentKind for NotesKind {
     /// Fix the anchor of the cited heading, so the link survives the
     /// heading being renamed: in the open editor when the note is on
     /// screen, in its body otherwise.
+    #[cfg_attr(feature = "sismo", sismo::function("notes::kind_cited"))]
     fn cited(&self, doc: DocId, anchor: &NoteAnchor) {
         let Some(slug) = anchor.heading.as_deref() else {
             return;
@@ -486,6 +502,7 @@ impl DocumentKind for NotesKind {
 /// Name a note takes from its first non-empty line when the user left
 /// the name empty.
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("notes::kind_name_from_body"))]
 pub fn name_from_body(markdown: &str) -> Option<String> {
     markdown
         .lines()

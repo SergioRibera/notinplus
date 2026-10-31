@@ -25,6 +25,7 @@ impl NoteAnchor {
 
     /// `None` for bytes that are not a note anchor.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("notes::anchor_decode"))]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         bincode::decode_from_slice(bytes, bincode::config::standard())
             .ok()

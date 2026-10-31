@@ -33,6 +33,7 @@ pub const IMPORT_MIME_TYPES: [&str; 2] = ["text/markdown", "text/plain"];
 /// Name of a note imported from `file_name`: the file stem, else the
 /// first heading of `markdown`, else a generic name.
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("notes::import_name"))]
 pub fn import_name(file_name: Option<&str>, markdown: &str) -> String {
     let stem = file_name
         .map(|name| {
@@ -65,6 +66,7 @@ pub fn import_name(file_name: Option<&str>, markdown: &str) -> String {
 /// Returns the updated markdown, or `None` when the heading is missing or its
 /// anchor is already fixed.
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("notes::pin_heading"))]
 pub fn pin_heading(markdown: &str, slug: &str) -> Option<String> {
     use freya_markdown_editor::document::Document;
     use freya_markdown_editor::markdown::Dialect;
@@ -82,6 +84,7 @@ pub fn pin_heading(markdown: &str, slug: &str) -> Option<String> {
 /// heading of the same or a higher level; the whole note without a slug.
 /// `None` when the heading is missing or nothing sits under it.
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("notes::section"))]
 pub fn section(markdown: &str, slug: Option<&str>) -> Option<String> {
     use freya_markdown_editor::document::{BlockKind, Document};
     use freya_markdown_editor::markdown::Dialect;
