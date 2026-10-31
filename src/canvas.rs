@@ -3761,8 +3761,11 @@ mod tests {
         ghost(&mut b, ana);
         b.expire_hands();
         assert_eq!(b.remote_hands().count(), 1, "still fresh");
+        let long_ago = Instant::now()
+            .checked_sub(REMOTE_TTL * 2)
+            .expect("the clock is past the expiry window");
         if let Some(hand) = b.remote.get_mut(&ana) {
-            hand.seen = Instant::now() - REMOTE_TTL * 2;
+            hand.seen = long_ago;
         }
         b.expire_hands();
         assert_eq!(b.remote_hands().count(), 0);

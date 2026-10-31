@@ -43,7 +43,9 @@ fn with_unresolved<T>(f: impl FnOnce(&mut Vec<SessionEnd>) -> T) -> T {
         locked(&PENDING).extend(earlier.iter().cloned());
         earlier
     });
-    f(ends)
+    let out = f(ends);
+    drop(slot);
+    out
 }
 
 fn path() -> PathBuf {
