@@ -56,7 +56,7 @@ impl VerseRefs {
         let books = db.list_books(&bible_id).unwrap_or_default();
         let book_of = |id: &str| books.iter().find(|b| b.book_id.eq_ignore_ascii_case(id));
         let mut rows: Vec<_> = db
-            .cross_refs_for_chapter(&bible_id, &book, chapter)
+            .cross_refs_for_chapter(&book, chapter)
             .unwrap_or_default()
             .into_iter()
             .filter(|row| row.src_verse == verse)

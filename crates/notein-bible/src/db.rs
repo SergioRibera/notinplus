@@ -225,6 +225,16 @@ impl Db {
         queries::save_setting(self, key, value)
     }
 
+    /// A fact about the database itself (`meta` table), if recorded.
+    pub fn meta(&self, key: &str) -> Result<Option<String>> {
+        queries::meta_get(self, key)
+    }
+
+    /// Record a fact about the database itself.
+    pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
+        queries::meta_set(self, key, value)
+    }
+
     pub fn list_books(&self, bible_id: &str) -> Result<Vec<BookRow>> {
         queries::list_books(self, bible_id)
     }
@@ -251,31 +261,23 @@ impl Db {
     /// query per verse. Includes ALL targets even for the same source
     /// verse — collapsing happens UI-side.
     #[cfg_attr(feature = "sismo", sismo::function("bible::db_cross_refs"))]
-    pub fn cross_refs_for_chapter(
-        &self,
-        bible_id: &str,
-        book_id: &str,
-        chapter: u16,
-    ) -> Result<Vec<CrossRefRow>> {
+    pub fn cross_refs_for_chapter(&self, book_id: &str, chapter: u16) -> Result<Vec<CrossRefRow>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare_cached(
                 "SELECT src_verse, tgt_book, tgt_chap, tgt_verse
                  FROM cross_refs
-                 WHERE bible_id = ?1 AND src_book = ?2 AND src_chap = ?3
+                 WHERE src_book = ?1 COLLATE NOCASE AND src_chap = ?2
                  ORDER BY src_verse, tgt_book, tgt_chap, tgt_verse",
             )?;
             let rows = stmt
-                .query_map(
-                    rusqlite::params![bible_id, book_id, i64::from(chapter)],
-                    |r| {
-                        Ok(CrossRefRow {
-                            src_verse: r.get::<_, u16>(0)?,
-                            tgt_book: r.get(1)?,
-                            tgt_chap: r.get::<_, u16>(2)?,
-                            tgt_verse: r.get::<_, u16>(3)?,
-                        })
-                    },
-                )?
+                .query_map(rusqlite::params![book_id, i64::from(chapter)], |r| {
+                    Ok(CrossRefRow {
+                        src_verse: r.get::<_, u16>(0)?,
+                        tgt_book: r.get(1)?,
+                        tgt_chap: r.get::<_, u16>(2)?,
+                        tgt_verse: r.get::<_, u16>(3)?,
+                    })
+                })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             #[cfg(feature = "sismo")]
             sismo::counter!("bible.rows_returned", rows.len());

@@ -63,22 +63,17 @@ CREATE TABLE IF NOT EXISTS headers (
 CREATE INDEX IF NOT EXISTS idx_headers_loc
     ON headers(bible_id, book_id, chapter, before_verse);
 
-CREATE TABLE IF NOT EXISTS cross_refs (
-    bible_id    TEXT NOT NULL,
-    src_book    TEXT NOT NULL,
-    src_chap    INTEGER NOT NULL,
-    src_verse   INTEGER NOT NULL,
-    tgt_book    TEXT NOT NULL,
-    tgt_chap    INTEGER NOT NULL,
-    tgt_verse   INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_xref_src
-    ON cross_refs(bible_id, src_book, src_chap, src_verse);
-
 -- The plugin's settings, one bincoded `ConfigValue` per key.
 CREATE TABLE IF NOT EXISTS plugin_settings (
     key         TEXT PRIMARY KEY,
     value       BLOB NOT NULL
+);
+
+-- What the database holds that is not a translation: the level of the
+-- cross-reference set, for one.
+CREATE TABLE IF NOT EXISTS meta (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS footnotes (
@@ -130,8 +125,23 @@ END;
 COMMIT;
 ";
 
+/// Cross-references are one set for every translation: fetch.bible keys
+/// them by book, chapter and verse, so a second Bible adds nothing.
+const CROSS_REFS_SQL: &str = r"
+CREATE TABLE IF NOT EXISTS cross_refs (
+    src_book    TEXT NOT NULL,
+    src_chap    INTEGER NOT NULL,
+    src_verse   INTEGER NOT NULL,
+    tgt_book    TEXT NOT NULL,
+    tgt_chap    INTEGER NOT NULL,
+    tgt_verse   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_xref_src
+    ON cross_refs(src_book, src_chap, src_verse);
+";
+
 /// Bumped by each one-off data fix below.
-const VERSION: i64 = 2;
+const VERSION: i64 = 3;
 
 #[cfg_attr(feature = "sismo", sismo::function("bible::db_migrate"))]
 pub(crate) fn migrate(db: &Db) -> Result<()> {
@@ -140,18 +150,22 @@ pub(crate) fn migrate(db: &Db) -> Result<()> {
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version < 1 {
             // Installs from before `installs_pending` could stop after the
-            // verses; one without cross-references or headings never
-            // finished.
+            // verses; one without headings never finished.
             conn.execute_batch(
                 "INSERT OR IGNORE INTO installs_pending (bible_id)
                  SELECT id FROM bibles
-                 WHERE id NOT IN (SELECT DISTINCT bible_id FROM cross_refs)
-                    OR id NOT IN (SELECT DISTINCT bible_id FROM headers);",
+                 WHERE id NOT IN (SELECT DISTINCT bible_id FROM headers);",
             )?;
         }
         if version < 2 {
             repair_book_order(conn)?;
         }
+        if version < 3 {
+            // Cross-references used to be stored once per translation; the
+            // shared set downloads again at the level in the settings.
+            conn.execute_batch("DROP TABLE IF EXISTS cross_refs;")?;
+        }
+        conn.execute_batch(CROSS_REFS_SQL)?;
         conn.pragma_update(None, "user_version", VERSION)?;
         Ok(())
     })

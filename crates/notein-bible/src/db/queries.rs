@@ -255,3 +255,27 @@ pub(crate) fn save_setting(db: &Db, key: &str, value: &ConfigValue) -> Result<()
         Ok(())
     })
 }
+
+/// The value stored under `key` in `meta`, if any.
+pub(crate) fn meta_get(db: &Db, key: &str) -> Result<Option<String>> {
+    db.with_conn(|conn| {
+        let value = conn
+            .query_row("SELECT value FROM meta WHERE key = ?1", params![key], |r| {
+                r.get::<_, String>(0)
+            })
+            .optional()?;
+        Ok(value)
+    })
+}
+
+/// Store `value` under `key` in `meta`, replacing the previous one.
+pub(crate) fn meta_set(db: &Db, key: &str, value: &str) -> Result<()> {
+    db.with_conn_mut(|conn| {
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    })
+}

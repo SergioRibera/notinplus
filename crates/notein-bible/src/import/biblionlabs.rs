@@ -299,8 +299,6 @@ pub struct Install<'a> {
     pub books_url_template: &'a str,
     pub cache_ttl: Duration,
     pub meta: &'a BibleMeta,
-    /// Which cross-reference set to download with the text.
-    pub crossref_level: CrossRefLevel,
 }
 
 impl Install<'_> {
@@ -336,9 +334,6 @@ impl Install<'_> {
                 verses,
             });
         }
-        let book_ids: Vec<String> = book_ids.into_iter().cloned().collect();
-        self.cross_refs().run(&book_ids, &mut on_progress)?;
-
         on_progress(Progress::Finished {
             bible_id: bible_id.into(),
             inserted_verses: inserted,
@@ -442,28 +437,17 @@ impl Install<'_> {
         })?;
         Ok(Some(verses))
     }
-
-    /// The cross-reference download that follows the text.
-    const fn cross_refs(&self) -> CrossRefs<'_> {
-        CrossRefs {
-            db: self.db,
-            client: self.client,
-            bible_id: self.bible_id,
-            cache_dir: self.cache_dir,
-            cache_ttl: self.cache_ttl,
-            level: self.crossref_level,
-        }
-    }
 }
 
-/// The cross-references of one translation at one [`CrossRefLevel`].
-/// Runs after the text on a first install, and on its own when the
-/// user picks another level.
+/// The cross-reference set at one [`CrossRefLevel`].
+///
+/// One set serves every translation: fetch.bible keys it by book, chapter
+/// and verse. Runs after the first translation installs and again when
+/// the user picks another level.
 #[derive(Debug)]
 pub struct CrossRefs<'a> {
     pub db: &'a Db,
     pub client: &'a Client,
-    pub bible_id: &'a str,
     pub cache_dir: &'a Path,
     pub cache_ttl: Duration,
     pub level: CrossRefLevel,
@@ -502,11 +486,11 @@ impl CrossRefs<'_> {
             if let Err(e) = self.db.with_conn_mut(|conn| {
                 let tx = conn.transaction().map_err(crate::db::DbError::from)?;
                 tx.execute(
-                    "DELETE FROM cross_refs WHERE bible_id = ?1 AND src_book = ?2",
-                    rusqlite::params![self.bible_id, book_id],
+                    "DELETE FROM cross_refs WHERE src_book = ?1",
+                    rusqlite::params![book_id],
                 )
                 .map_err(crate::db::DbError::from)?;
-                insert_crossrefs_for_book(&tx, self.bible_id, book_id, &value)
+                insert_crossrefs_for_book(&tx, book_id, &value)
                     .map_err(crate::db::DbError::from)?;
                 tx.commit().map_err(crate::db::DbError::from)?;
                 Ok(())
@@ -526,7 +510,6 @@ impl CrossRefs<'_> {
 #[cfg_attr(feature = "sismo", sismo::function("bible::import_crossrefs_insert"))]
 fn insert_crossrefs_for_book(
     conn: &rusqlite::Connection,
-    bible_id: &str,
     src_book: &str,
     value: &serde_json::Value,
 ) -> rusqlite::Result<()> {
@@ -535,8 +518,8 @@ fn insert_crossrefs_for_book(
     };
     let mut stmt = conn.prepare_cached(
         "INSERT INTO cross_refs
-         (bible_id, src_book, src_chap, src_verse, tgt_book, tgt_chap, tgt_verse)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+         (src_book, src_chap, src_verse, tgt_book, tgt_chap, tgt_verse)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
     )?;
     for (chap_key, verses) in chapters {
         let Ok(src_chap) = chap_key.parse::<i64>() else {
@@ -566,7 +549,7 @@ fn insert_crossrefs_for_book(
                     continue;
                 };
                 stmt.execute(rusqlite::params![
-                    bible_id, src_book, src_chap, src_verse, tgt_book, tgt_chap, tgt_verse,
+                    src_book, src_chap, src_verse, tgt_book, tgt_chap, tgt_verse,
                 ])?;
             }
         }

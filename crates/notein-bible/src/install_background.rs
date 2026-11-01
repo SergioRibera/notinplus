@@ -345,7 +345,6 @@ pub(crate) fn run(
         books_url_template: &books_template,
         cache_ttl: CACHE_TTL,
         meta: &meta,
-        crossref_level: plugin_config::effective_crossref_level(config),
     };
     let on_progress = |event: biblionlabs::Progress| {
         edit(progress, |p| match event {
@@ -361,8 +360,13 @@ pub(crate) fn run(
         });
     };
 
-    match install.run(on_progress) {
+    match install.run(&on_progress) {
         Ok(verses) => {
+            // The shared cross-reference set, when this is the first
+            // translation or the level changed since.
+            if let Err(e) = ensure_cross_refs(db, &client, &cache_dir, config, &on_progress) {
+                log::warn!("bible install: cross-refs: {e}");
+            }
             // The translation shows only after its headings, so the first
             // passage opened already has them.
             prefetch_all_headings(db, &client, &cache_dir, bible_id, progress);
@@ -379,22 +383,55 @@ pub(crate) fn run(
     }
 }
 
-/// Download the cross-references of every installed translation again
-/// at the level `config` now holds, on a background thread.
-///
-/// Each book swaps its references in one transaction, so a reader keeps a
-/// complete set while the download runs. Nothing installed: no thread.
+/// `meta` key holding the level of the cross-reference set in the
+/// database; absent until the first set lands.
+const META_CROSSREF_LEVEL: &str = "crossref_level";
+
+/// Bring the shared cross-reference set to the level in `config`,
+/// downloading it when the database holds none or another level. Each
+/// book swaps its references in one transaction, so a reader keeps a
+/// complete set while the download runs.
+#[cfg_attr(feature = "sismo", sismo::function("bible::install_ensure_crossrefs"))]
+fn ensure_cross_refs(
+    db: &Db,
+    client: &Client,
+    cache_dir: &std::path::Path,
+    config: &SharedConfig,
+    mut on_progress: impl FnMut(biblionlabs::Progress),
+) -> Result<(), biblionlabs::ImportError> {
+    let level = plugin_config::effective_crossref_level(config);
+    let stored = db.meta(META_CROSSREF_LEVEL)?;
+    if stored.as_deref() == Some(level.as_str()) {
+        return Ok(());
+    }
+    let books: Vec<String> = crate::canon::ids().collect();
+    biblionlabs::CrossRefs {
+        db,
+        client,
+        cache_dir,
+        cache_ttl: CACHE_TTL,
+        level,
+    }
+    .run(&books, &mut on_progress)?;
+    db.set_meta(META_CROSSREF_LEVEL, level.as_str())?;
+    log::info!("bible cross-refs: set at {}", level.as_str());
+    Ok(())
+}
+
+/// Download the cross-reference set again at the level `config` now
+/// holds, on a background thread. Nothing installed: no thread, the
+/// first install brings the set.
 #[cfg_attr(feature = "sismo", sismo::function("bible::install_refresh_crossrefs"))]
 pub fn spawn_refresh_cross_refs(db: Db, config: &SharedConfig) {
-    let installed = match db.list_bibles() {
+    match db.list_bibles() {
         Ok(bibles) if bibles.is_empty() => return,
-        Ok(bibles) => bibles,
+        Ok(_) => {}
         Err(e) => {
             log::warn!("bible cross-refs: installed translations: {e}");
             return;
         }
-    };
-    let level = plugin_config::effective_crossref_level(config);
+    }
+    let config = config.clone();
     let spawned = std::thread::Builder::new()
         .name("bible-crossrefs".to_owned())
         .spawn(move || {
@@ -403,25 +440,8 @@ pub fn spawn_refresh_cross_refs(db: Db, config: &SharedConfig) {
                 Err(e) => return log::warn!("bible cross-refs: http client: {e}"),
             };
             let cache_dir = plugin_config::platform_cache_dir();
-            for bible in installed {
-                let books: Vec<String> = db
-                    .list_books(&bible.id)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|b| b.book_id)
-                    .collect();
-                let refs = biblionlabs::CrossRefs {
-                    db: &db,
-                    client: &client,
-                    bible_id: &bible.id,
-                    cache_dir: &cache_dir,
-                    cache_ttl: CACHE_TTL,
-                    level,
-                };
-                match refs.run(&books, &mut |_| {}) {
-                    Ok(()) => log::info!("bible cross-refs: {} at {}", bible.id, level.as_str()),
-                    Err(e) => log::warn!("bible cross-refs: {}: {e}", bible.id),
-                }
+            if let Err(e) = ensure_cross_refs(&db, &client, &cache_dir, &config, |_| {}) {
+                log::warn!("bible cross-refs: {e}");
             }
         });
     if let Err(e) = spawned {

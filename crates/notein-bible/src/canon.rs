@@ -31,6 +31,12 @@ pub(crate) fn protestant_position(book_id: &str) -> Option<u16> {
     position(book_id).and_then(|i| u16::try_from(i).ok())
 }
 
+/// The Protestant canon's ids in the lower case the database keys books
+/// by, Genesis first.
+pub(crate) fn ids() -> impl Iterator<Item = String> {
+    BOOKS.iter().map(|id| id.to_ascii_lowercase())
+}
+
 /// Short name for references ("Jn 3:16") in the interface language;
 /// unknown ids are returned as given.
 #[must_use]

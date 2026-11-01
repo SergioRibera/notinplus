@@ -637,7 +637,7 @@ fn footnotes(db: &Db, data: &ChapterRow) -> Vec<FootnoteView> {
 /// Cross-references of the chapter; the panel reads their text.
 #[cfg_attr(feature = "sismo", sismo::function("bible::cross_refs_load"))]
 fn cross_refs(db: &Db, data: &ChapterRow) -> Vec<CrossRefView> {
-    db.cross_refs_for_chapter(&data.bible_id, &data.book_id, data.chapter)
+    db.cross_refs_for_chapter(&data.book_id, data.chapter)
         .unwrap_or_default()
         .into_iter()
         .map(|row| CrossRefView {
