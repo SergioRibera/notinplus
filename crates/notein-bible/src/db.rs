@@ -29,7 +29,11 @@ pub use search::{SearchHit, snippet_markers};
 pub enum DbError {
     Sqlite(rusqlite::Error),
     Io(std::io::Error),
-    MissingBible { id: String },
+    MissingBible {
+        id: String,
+    },
+    /// A setting could not be bincoded for storage.
+    Encode(String),
 }
 
 impl std::fmt::Display for DbError {
@@ -38,6 +42,7 @@ impl std::fmt::Display for DbError {
             Self::Sqlite(e) => write!(f, "sqlite: {e}"),
             Self::Io(e) => write!(f, "io: {e}"),
             Self::MissingBible { id } => write!(f, "bible not installed: {id}"),
+            Self::Encode(reason) => write!(f, "encode setting: {reason}"),
         }
     }
 }
@@ -47,7 +52,7 @@ impl std::error::Error for DbError {
         match self {
             Self::Sqlite(e) => Some(e),
             Self::Io(e) => Some(e),
-            Self::MissingBible { .. } => None,
+            Self::MissingBible { .. } | Self::Encode(_) => None,
         }
     }
 }
@@ -70,7 +75,7 @@ impl UserMessage for DbError {
                 ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase => tr!("errors-db-damaged"),
                 _ => tr!("errors-db-other"),
             },
-            Self::Sqlite(_) => tr!("errors-db-other"),
+            Self::Sqlite(_) | Self::Encode(_) => tr!("errors-db-other"),
             Self::MissingBible { id } => tr!("errors-db-missing-bible", "id" => id.as_str()),
         }
     }
@@ -208,6 +213,16 @@ impl Db {
     /// The database could not be written.
     pub fn finish_install(&self, bible_id: &str) -> Result<()> {
         queries::finish_install(self, bible_id)
+    }
+
+    /// The plugin settings saved on this device.
+    pub fn load_settings(&self) -> Result<Vec<(String, notein_sdk::ConfigValue)>> {
+        queries::load_settings(self)
+    }
+
+    /// Save one plugin setting.
+    pub fn save_setting(&self, key: &str, value: &notein_sdk::ConfigValue) -> Result<()> {
+        queries::save_setting(self, key, value)
     }
 
     pub fn list_books(&self, bible_id: &str) -> Result<Vec<BookRow>> {

@@ -1,5 +1,6 @@
 //! Row shapes + non-FTS queries (book list, chapter load, etc.).
 
+use notein_sdk::ConfigValue;
 use rusqlite::{OptionalExtension, params};
 
 use super::{Db, DbError, Result};
@@ -207,5 +208,50 @@ pub(crate) fn load_chapter(
             verses,
             headers,
         })
+    })
+}
+
+/// Every persisted plugin setting, bincoded [`ConfigValue`]s by key.
+/// A value that no longer decodes is dropped: the schema's default
+/// takes its place.
+#[cfg_attr(feature = "sismo", sismo::function("bible::db_load_settings"))]
+pub(crate) fn load_settings(db: &Db) -> Result<Vec<(String, ConfigValue)>> {
+    db.with_conn(|conn| {
+        let mut stmt = conn.prepare_cached("SELECT key, value FROM plugin_settings")?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(key, bytes)| {
+                match bincode::decode_from_slice::<ConfigValue, _>(
+                    &bytes,
+                    bincode::config::standard(),
+                ) {
+                    Ok((value, _)) => Some((key, value)),
+                    Err(e) => {
+                        log::warn!("bible: setting {key} unreadable, dropped: {e}");
+                        None
+                    }
+                }
+            })
+            .collect())
+    })
+}
+
+/// Persist `value` under `key`, replacing the previous one.
+#[cfg_attr(feature = "sismo", sismo::function("bible::db_save_setting"))]
+pub(crate) fn save_setting(db: &Db, key: &str, value: &ConfigValue) -> Result<()> {
+    let bytes = bincode::encode_to_vec(value, bincode::config::standard())
+        .map_err(|e| DbError::Encode(e.to_string()))?;
+    db.with_conn_mut(|conn| {
+        conn.execute(
+            "INSERT INTO plugin_settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, bytes],
+        )?;
+        Ok(())
     })
 }

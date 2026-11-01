@@ -1,5 +1,6 @@
-//! Plugin settings: the default Bible and the catalogue URL, shared
-//! behind an `Arc<RwLock<_>>` with every reader.
+//! Plugin settings: the default Bible, the catalogue URL, the typography
+//! and the cross-reference set, shared behind an `Arc<RwLock<_>>` with
+//! every reader and persisted in the translations database.
 //!
 //! Translations are installed through [`crate::installer`]; the cache dir comes
 //! from [`istmo_core::path::data_dir`].
@@ -9,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, PoisonError, RwLock};
 
 use notein_i18n::tr;
+use notein_sdk::plugin::PluginSettings;
 use notein_sdk::{ConfigEnumOption, ConfigError, ConfigField, ConfigSchema, ConfigValue};
 
 use crate::db::Db;
@@ -24,10 +26,55 @@ pub const KEY_LINE_HEIGHT: &str = "line_height";
 /// Default `true` so first-time users see the enriched set; power users who
 /// want a cleaner page turn it off.
 pub const KEY_ENABLE_CROSSREF: &str = "enable_crossref";
+/// Which of the three fetch.bible cross-reference sets to download; see
+/// [`CrossRefLevel`].
+pub const KEY_CROSSREF_LEVEL: &str = "crossref_level";
 
 pub const DEFAULT_FONT_SIZE: f64 = 22.0;
 pub const DEFAULT_LINE_HEIGHT: f64 = 1.65;
 pub const DEFAULT_MANIFEST_URL: &str = "https://v1.fetch.bible/manifest.json";
+
+/// How deep the cross-reference set goes.
+///
+/// fetch.bible ranks the OpenBible.info / Treasury of Scripture Knowledge
+/// references by votes and splits them in three: `small` keeps the top
+/// third, `medium` the top two thirds, `large` every reference.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CrossRefLevel {
+    Small,
+    Medium,
+    #[default]
+    Large,
+}
+
+impl CrossRefLevel {
+    pub const ALL: [Self; 3] = [Self::Small, Self::Medium, Self::Large];
+
+    /// The value stored in the settings and the path segment on
+    /// fetch.bible.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Small => "small",
+            Self::Medium => "medium",
+            Self::Large => "large",
+        }
+    }
+
+    /// The level stored as `value`, if it is one.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|level| level.as_str() == value)
+    }
+
+    fn label(self) -> String {
+        match self {
+            Self::Small => tr!("config-cross-refs-level-small"),
+            Self::Medium => tr!("config-cross-refs-level-medium"),
+            Self::Large => tr!("config-cross-refs-level-large"),
+        }
+    }
+}
 
 /// Shared handle. Cheap to clone, interior-mutable.
 pub type SharedConfig = Arc<RwLock<Inner>>;
@@ -47,6 +94,25 @@ impl Inner {
 #[must_use]
 pub fn new_shared() -> SharedConfig {
     Arc::new(RwLock::new(Inner::new()))
+}
+
+/// The settings saved in `db` on an earlier run, as a shared handle.
+/// Values the schema no longer accepts are left out.
+#[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("bible::config_load"))]
+pub fn load_shared(db: &Db) -> SharedConfig {
+    let config = new_shared();
+    match db.load_settings() {
+        Ok(values) => {
+            for (key, value) in values {
+                if let Err(e) = apply_set(&config, &key, value) {
+                    log::warn!("bible: saved setting {key} ignored: {e}");
+                }
+            }
+        }
+        Err(e) => log::warn!("bible: settings not loaded: {e}"),
+    }
+    config
 }
 
 /// Default platform cache directory, derived from the shared notinplus
@@ -93,6 +159,9 @@ pub fn build_schema(db: &Db) -> ConfigSchema {
             &default_bible,
         )
     };
+    let levels = CrossRefLevel::ALL
+        .into_iter()
+        .map(|level| ConfigEnumOption::new(level.as_str(), level.label()));
 
     ConfigSchema::new(1)
         .field(bible.help(&tr!("config-default-bible-help")))
@@ -129,6 +198,15 @@ pub fn build_schema(db: &Db) -> ConfigSchema {
             ConfigField::boolean(KEY_ENABLE_CROSSREF, &tr!("config-cross-refs"), true)
                 .help(&tr!("config-cross-refs-help")),
         )
+        .field(
+            ConfigField::choice(
+                KEY_CROSSREF_LEVEL,
+                &tr!("config-cross-refs-level"),
+                levels,
+                CrossRefLevel::default().as_str(),
+            )
+            .help(&tr!("config-cross-refs-level-help")),
+        )
 }
 
 pub fn apply_set(config: &SharedConfig, key: &str, value: ConfigValue) -> Result<(), ConfigError> {
@@ -139,12 +217,15 @@ pub fn apply_set(config: &SharedConfig, key: &str, value: ConfigValue) -> Result
         (KEY_LINE_HEIGHT, ConfigValue::Float(v)) if !(1.2..=2.2).contains(v) => {
             return Err(ConfigError::OutOfRange);
         }
+        (KEY_CROSSREF_LEVEL, ConfigValue::String(v)) if CrossRefLevel::parse(v).is_none() => {
+            return Err(ConfigError::OutOfRange);
+        }
         (KEY_FONT_SIZE | KEY_LINE_HEIGHT, ConfigValue::Float(_))
         | (KEY_ENABLE_CROSSREF, ConfigValue::Bool(_))
-        | (KEY_DEFAULT_BIBLE | KEY_MANIFEST_URL, ConfigValue::String(_)) => {}
+        | (KEY_DEFAULT_BIBLE | KEY_MANIFEST_URL | KEY_CROSSREF_LEVEL, ConfigValue::String(_)) => {}
         (
             KEY_FONT_SIZE | KEY_LINE_HEIGHT | KEY_ENABLE_CROSSREF | KEY_DEFAULT_BIBLE
-            | KEY_MANIFEST_URL,
+            | KEY_MANIFEST_URL | KEY_CROSSREF_LEVEL,
             _,
         ) => return Err(ConfigError::TypeMismatch),
         _ => return Err(ConfigError::UnknownKey(key.into())),
@@ -193,6 +274,15 @@ pub fn effective_enable_crossref(config: &SharedConfig) -> bool {
     bool(config, KEY_ENABLE_CROSSREF).unwrap_or(true)
 }
 
+/// The cross-reference set downloads fetch, [`CrossRefLevel::Large`]
+/// unless the user chose a smaller one.
+pub fn effective_crossref_level(config: &SharedConfig) -> CrossRefLevel {
+    string(config, KEY_CROSSREF_LEVEL)
+        .as_deref()
+        .and_then(CrossRefLevel::parse)
+        .unwrap_or_default()
+}
+
 /// Resolve the effective default Bible id — the stored value, or the
 /// first installed Bible, or an empty string when nothing is installed.
 pub fn effective_default_bible(config: &SharedConfig, db: &Db) -> String {
@@ -214,4 +304,98 @@ pub fn effective_manifest_url(config: &SharedConfig) -> String {
     string(config, KEY_MANIFEST_URL)
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| DEFAULT_MANIFEST_URL.into())
+}
+
+/// The settings form the shell draws for the plugin.
+///
+/// Every change lands in the shared config and is saved in the database;
+/// a new cross-reference level also re-downloads the references of every
+/// installed translation.
+#[derive(Clone, Debug)]
+pub struct Settings {
+    db: Db,
+    config: SharedConfig,
+}
+
+impl Settings {
+    #[must_use]
+    pub const fn new(db: Db, config: SharedConfig) -> Self {
+        Self { db, config }
+    }
+}
+
+impl PluginSettings for Settings {
+    #[cfg_attr(feature = "sismo", sismo::function("bible::settings_schema"))]
+    fn schema(&self) -> ConfigSchema {
+        build_schema(&self.db)
+    }
+
+    fn get(&self, key: &str) -> Option<ConfigValue> {
+        get_value(&self.config, key)
+    }
+
+    #[cfg_attr(feature = "sismo", sismo::function("bible::settings_set"))]
+    fn set(&self, key: &str, value: ConfigValue) -> Result<(), ConfigError> {
+        let level_before = effective_crossref_level(&self.config);
+        apply_set(&self.config, key, value.clone())?;
+        if let Err(e) = self.db.save_setting(key, &value) {
+            log::warn!("bible: setting {key} not saved: {e}");
+        }
+        #[cfg(feature = "importer")]
+        if key == KEY_CROSSREF_LEVEL && effective_crossref_level(&self.config) != level_before {
+            crate::install_background::spawn_refresh_cross_refs(self.db.clone(), &self.config);
+        }
+        #[cfg(not(feature = "importer"))]
+        let _ = level_before;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cross_ref_level_round_trips_through_its_name() {
+        for level in CrossRefLevel::ALL {
+            assert_eq!(CrossRefLevel::parse(level.as_str()), Some(level));
+        }
+        assert_eq!(CrossRefLevel::parse("huge"), None);
+    }
+
+    #[test]
+    fn unknown_level_is_refused_and_the_default_is_large() {
+        let config = new_shared();
+        assert_eq!(effective_crossref_level(&config), CrossRefLevel::Large);
+        assert_eq!(
+            apply_set(
+                &config,
+                KEY_CROSSREF_LEVEL,
+                ConfigValue::String("huge".into())
+            ),
+            Err(ConfigError::OutOfRange)
+        );
+        apply_set(
+            &config,
+            KEY_CROSSREF_LEVEL,
+            ConfigValue::String("small".into()),
+        )
+        .unwrap();
+        assert_eq!(effective_crossref_level(&config), CrossRefLevel::Small);
+    }
+
+    #[test]
+    fn settings_survive_a_reload_from_the_database() {
+        let db = Db::in_memory().unwrap();
+        let settings = Settings::new(db.clone(), new_shared());
+        settings
+            .set(KEY_FONT_SIZE, ConfigValue::Float(18.0))
+            .unwrap();
+        settings
+            .set(KEY_CROSSREF_LEVEL, ConfigValue::String("medium".into()))
+            .unwrap();
+        let reloaded = load_shared(&db);
+        assert_eq!(float(&reloaded, KEY_FONT_SIZE), Some(18.0));
+        assert_eq!(effective_crossref_level(&reloaded), CrossRefLevel::Medium);
+    }
 }

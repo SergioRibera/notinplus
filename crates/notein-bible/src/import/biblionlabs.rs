@@ -22,14 +22,16 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
 use crate::db::Db;
+use crate::plugin_config::CrossRefLevel;
 
 /// Default endpoints used by `install_bible` when the caller doesn't
 /// supply a custom source. Mirror the biblionlabs/fetch.bible layout.
 pub const DEFAULT_MANIFEST_URL: &str = "https://v1.fetch.bible/manifest.json";
 
-/// fetch.bible cross-reference bundle, per lowercase book id.
+/// fetch.bible cross-reference bundle, per set ([`CrossRefLevel`]) and
+/// lowercase book id.
 /// Shape: `{ chapter_str: { verse_str: [[tgt_book, chap, verse, …], …] } }`.
-pub const CROSSREF_URL_TEMPLATE: &str = "https://v1.fetch.bible/crossref/large/{book}.json";
+pub const CROSSREF_URL_TEMPLATE: &str = "https://v1.fetch.bible/crossref/{level}/{book}.json";
 
 #[derive(Debug)]
 pub enum ImportError {
@@ -297,6 +299,8 @@ pub struct Install<'a> {
     pub books_url_template: &'a str,
     pub cache_ttl: Duration,
     pub meta: &'a BibleMeta,
+    /// Which cross-reference set to download with the text.
+    pub crossref_level: CrossRefLevel,
 }
 
 impl Install<'_> {
@@ -332,7 +336,8 @@ impl Install<'_> {
                 verses,
             });
         }
-        self.install_cross_refs(&book_ids, &mut on_progress)?;
+        let book_ids: Vec<String> = book_ids.into_iter().cloned().collect();
+        self.cross_refs().run(&book_ids, &mut on_progress)?;
 
         on_progress(Progress::Finished {
             bible_id: bible_id.into(),
@@ -438,15 +443,38 @@ impl Install<'_> {
         Ok(Some(verses))
     }
 
-    /// Cross-references for every book. They are optional: a book
-    /// without them is logged and skipped.
+    /// The cross-reference download that follows the text.
+    const fn cross_refs(&self) -> CrossRefs<'_> {
+        CrossRefs {
+            db: self.db,
+            client: self.client,
+            bible_id: self.bible_id,
+            cache_dir: self.cache_dir,
+            cache_ttl: self.cache_ttl,
+            level: self.crossref_level,
+        }
+    }
+}
+
+/// The cross-references of one translation at one [`CrossRefLevel`].
+/// Runs after the text on a first install, and on its own when the
+/// user picks another level.
+#[derive(Debug)]
+pub struct CrossRefs<'a> {
+    pub db: &'a Db,
+    pub client: &'a Client,
+    pub bible_id: &'a str,
+    pub cache_dir: &'a Path,
+    pub cache_ttl: Duration,
+    pub level: CrossRefLevel,
+}
+
+impl CrossRefs<'_> {
+    /// Cross-references for every book, replacing the set stored so far.
+    /// They are optional: a book without them is logged and skipped.
     #[cfg_attr(feature = "sismo", sismo::function("bible::import_crossrefs"))]
-    fn install_cross_refs(
-        &self,
-        book_ids: &[&String],
-        on_progress: &mut impl FnMut(Progress),
-    ) -> Result<()> {
-        let xref_cache = self.cache_dir.join("crossrefs");
+    pub fn run(&self, book_ids: &[String], on_progress: &mut impl FnMut(Progress)) -> Result<()> {
+        let xref_cache = self.cache_dir.join("crossrefs").join(self.level.as_str());
         std::fs::create_dir_all(&xref_cache)?;
         let total = book_ids.len();
         for (done, book_id) in book_ids.iter().enumerate() {
@@ -454,7 +482,9 @@ impl Install<'_> {
             sismo::scope!("bible::import_crossrefs_book");
             on_progress(Progress::CrossRefs { done, total });
             let xref_path = xref_cache.join(format!("{book_id}.json"));
-            let xref_url = CROSSREF_URL_TEMPLATE.replace("{book}", book_id);
+            let xref_url = CROSSREF_URL_TEMPLATE
+                .replace("{level}", self.level.as_str())
+                .replace("{book}", book_id);
             if let Err(e) = fetch_if_stale(self.client, &xref_url, &xref_path, self.cache_ttl) {
                 log::debug!("biblionlabs: no cross-refs for {book_id}: {e}");
                 continue;

@@ -26,7 +26,9 @@ impl BiblePlugin {
     /// [`DbError`] when the database cannot be opened.
     #[cfg_attr(feature = "sismo", sismo::function("bible::plugin_open"))]
     pub fn open() -> Result<Self, DbError> {
-        let kind = Arc::new(BibleKind::new(Db::open_default()?, crate::new_shared()));
+        let db = Db::open_default()?;
+        let config = crate::plugin_config::load_shared(&db);
+        let kind = Arc::new(BibleKind::new(db, config));
         catalog::register(&kind);
         Ok(Self { kind })
     }
@@ -47,6 +49,10 @@ impl Plugin for BiblePlugin {
     fn register(&self, registrar: &mut Registrar) {
         let kind = registrar.kind(Arc::clone(&self.kind));
         registrar.face(BibleFace, kind);
+        registrar.settings(crate::plugin_config::Settings::new(
+            self.kind.db().clone(),
+            self.kind.config().clone(),
+        ));
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("bible::plugin_install"))]
