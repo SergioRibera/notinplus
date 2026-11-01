@@ -52,3 +52,6 @@ settings-plugins-field-pick-file = Elegir archivo
 # $error: a sentence explaining why.
 settings-plugins-field-save-failed = No se pudo guardar el archivo. { $error }
 settings-plugins-field-confirm = ¿Seguro? Toca de nuevo
+# $section: nombre de la sección de Ajustes con las opciones del plugin.
+settings-plugins-settings-in = Sus ajustes están en { $section }
+settings-plugins-settings-in-hint = Los plugins integrados tienen sus opciones en su propia sección.

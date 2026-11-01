@@ -196,6 +196,40 @@ impl Detail {
             .collect()
     }
 
+    /// For a builtin whose settings live in their own section of Settings,
+    /// a row that goes there; otherwise the plain "no settings" line.
+    #[sismo::function("settings::plugins_settings_elsewhere")]
+    fn settings_elsewhere(&self) -> Element {
+        let section = match &*self.plugin.info.id {
+            notein_notes::KIND_ID => Some(super::Section::Notes),
+            "io.notein.canvas" => Some(super::Section::Pen),
+            _ => None,
+        };
+        section.map_or_else(
+            || {
+                Text::new(tr!("settings-plugins-no-settings"))
+                    .role(TextRole::Hint)
+                    .into_element()
+            },
+            |section| {
+                Group::default()
+                    .child(
+                        ListRow::new(
+                            tr!("settings-plugins-settings-in", "section" => section.label()),
+                        )
+                        .subtitle(tr!("settings-plugins-settings-in-hint"))
+                        .icon(section.icon())
+                        .chevron()
+                        .on_press(move |_| {
+                            ModalController::get().close();
+                            super::open_at(section);
+                        }),
+                    )
+                    .into_element()
+            },
+        )
+    }
+
     /// Id, version, author, file and SDK, folded.
     #[sismo::function("settings::plugins_technical")]
     fn technical(&self, mut open: State<bool>) -> Group {
@@ -254,11 +288,7 @@ impl Component for Detail {
             )
             .child(Section::new(tr!("common-settings")).child(
                 self.plugin.settings.as_ref().map_or_else(
-                    || {
-                        Text::new(tr!("settings-plugins-no-settings"))
-                            .role(TextRole::Hint)
-                            .into_element()
-                    },
+                    || self.settings_elsewhere(),
                     |settings| {
                         SchemaForm {
                             settings: Arc::clone(settings),
