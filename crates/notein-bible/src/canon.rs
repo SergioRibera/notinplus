@@ -14,9 +14,21 @@ const BOOKS: [&str; 66] = [
     "REV",
 ];
 
+/// Books in the Protestant canon.
+pub(crate) const PROTESTANT_LEN: u16 = 66;
+const _: () = assert!(BOOKS.len() == PROTESTANT_LEN as usize);
+
 /// Index of `book_id` (any case) in [`BOOKS`].
 fn position(book_id: &str) -> Option<usize> {
     BOOKS.iter().position(|id| id.eq_ignore_ascii_case(book_id))
+}
+
+/// Position of `book_id` (any case) in the Protestant canon, Genesis
+/// first; `None` outside it. Only for repairing installs made before
+/// the importer kept the manifest order — new installs never need it.
+#[must_use]
+pub(crate) fn protestant_position(book_id: &str) -> Option<u16> {
+    position(book_id).and_then(|i| u16::try_from(i).ok())
 }
 
 /// Short name for references ("Jn 3:16") in the interface language;
@@ -42,5 +54,12 @@ mod tests {
         assert_eq!(short_name("jhn"), "Jn");
         assert_eq!(short_name("1CO"), "1 Co");
         assert_eq!(short_name("TOB"), "TOB");
+    }
+
+    #[test]
+    fn protestant_position_is_case_insensitive_and_bounded() {
+        assert_eq!(protestant_position("gen"), Some(0));
+        assert_eq!(protestant_position("REV"), Some(65));
+        assert_eq!(protestant_position("tob"), None);
     }
 }

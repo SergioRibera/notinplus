@@ -1,6 +1,6 @@
-//! Schema migration — idempotent via `CREATE … IF NOT EXISTS`.
+//! Schema migration — idemotent via `CREATE … IF NOT EXISTS`.
 //!
-//! The FTS5 virtual table uses the `content='verses'` option so verse
+//! The FTS5 virtual table uses the `content='verses'` otion so verse
 //! text is not duplicated between the base table and the index; the
 //! trigger block keeps the two in sync on insert / update / delete.
 //!
@@ -75,6 +75,12 @@ CREATE TABLE IF NOT EXISTS cross_refs (
 CREATE INDEX IF NOT EXISTS idx_xref_src
     ON cross_refs(bible_id, src_book, src_chap, src_verse);
 
+-- The plugin's settings, one bincoded `ConfigValue` per key.
+CREATE TABLE IF NOT EXISTS plugin_settings (
+    key         TEXT PRIMARY KEY,
+    value       BLOB NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS footnotes (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     bible_id    TEXT NOT NULL,
@@ -125,7 +131,7 @@ COMMIT;
 ";
 
 /// Bumped by each one-off data fix below.
-const VERSION: i64 = 1;
+const VERSION: i64 = 2;
 
 #[cfg_attr(feature = "sismo", sismo::function("bible::db_migrate"))]
 pub(crate) fn migrate(db: &Db) -> Result<()> {
@@ -143,7 +149,34 @@ pub(crate) fn migrate(db: &Db) -> Result<()> {
                     OR id NOT IN (SELECT DISTINCT bible_id FROM headers);",
             )?;
         }
+        if version < 2 {
+            repair_book_order(conn)?;
+        }
         conn.pragma_update(None, "user_version", VERSION)?;
         Ok(())
     })
+}
+
+/// Installs made before the importer kept the manifest order stored the
+/// books alphabetically. Put the Protestant canon back in its order;
+/// any other book keeps its place after it.
+fn repair_book_order(conn: &rusqlite::Connection) -> Result<()> {
+    let mut books = conn.prepare("SELECT bible_id, book_id, order_num FROM books")?;
+    let rows = books
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, u16>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut update =
+        conn.prepare("UPDATE books SET order_num = ?1 WHERE bible_id = ?2 AND book_id = ?3")?;
+    for (bible_id, book_id, order_num) in rows {
+        let repaired = crate::canon::protestant_position(&book_id)
+            .unwrap_or_else(|| crate::canon::PROTESTANT_LEN.saturating_add(order_num));
+        update.execute(rusqlite::params![i64::from(repaired), bible_id, book_id])?;
+    }
+    Ok(())
 }
