@@ -16,7 +16,11 @@ pub struct RefChip {
     icon: Bytes,
     color: Color,
     broken: bool,
-    on_paper: bool,
+    /// Label colour; the palette's primary text when unset.
+    ink: Option<Color>,
+    /// Factor applied to every length, so a zoomed host lays the chip out
+    /// at its drawn size.
+    zoom: f32,
     on_press: Option<EventHandler<Event<PressEventData>>>,
 }
 
@@ -37,7 +41,8 @@ impl RefChip {
             icon,
             color,
             broken: false,
-            on_paper: false,
+            ink: None,
+            zoom: 1.0,
             on_press: None,
         }
     }
@@ -49,10 +54,18 @@ impl RefChip {
         self
     }
 
-    /// Drawn on paper (canvas text): dark text, stronger tint.
+    /// Colour of the label, for chips inside text that is not the
+    /// palette's (a canvas box with its own text colour).
     #[must_use]
-    pub const fn on_paper(mut self, on_paper: bool) -> Self {
-        self.on_paper = on_paper;
+    pub const fn ink(mut self, ink: Color) -> Self {
+        self.ink = Some(ink);
+        self
+    }
+
+    /// Lay the chip out at `zoom` times its base size.
+    #[must_use]
+    pub const fn zoom(mut self, zoom: f32) -> Self {
+        self.zoom = zoom;
         self
     }
 
@@ -67,43 +80,38 @@ impl Component for RefChip {
     #[cfg_attr(feature = "sismo", sismo::function("kit::ref_chip"))]
     fn render(&self) -> impl IntoElement {
         let p = palette();
+        let ink = self.ink.unwrap_or(p.t1);
         let (bg, fg, icon, icon_color) = if self.broken {
             (p.s3, p.t2, freya::icons::lucide::triangle_alert(), p.warn)
-        } else if self.on_paper {
-            (
-                self.color.with_a(64),
-                p.paper_ink,
-                self.icon.clone(),
-                self.color,
-            )
         } else {
-            (self.color.with_a(41), p.t1, self.icon.clone(), self.color)
+            (self.color.with_a(41), ink, self.icon.clone(), self.color)
         };
+        let px = |length: f32| length * self.zoom;
         let on_press = self.on_press.clone();
         rect()
-            .height(Size::px(26.0))
-            .padding((0.0, 8.0))
-            .corner_radius(radius::SM)
+            .height(Size::px(px(26.0)))
+            .padding((0.0, px(8.0)))
+            .corner_radius(px(radius::SM))
             .background(bg)
             .maybe(self.broken, |r| {
                 r.border(
                     Border::new()
                         .fill(p.warn)
-                        .width(1.0)
+                        .width(px(1.0))
                         .alignment(BorderAlignment::Inner),
                 )
             })
             .horizontal()
             .cross_align(Alignment::Center)
-            .spacing(6.0)
+            .spacing(px(6.0))
             .a11y_role(AccessibilityRole::Link)
             .a11y_alt(self.label.to_string())
             .map(on_press, |r, handler| r.on_tap(move |e| handler.call(e)))
-            .child(Icon::new(icon).size(14.0).color(icon_color))
+            .child(Icon::new(icon).size(px(14.0)).color(icon_color))
             .child(
                 label()
                     .text(self.label.clone())
-                    .font_size(text::META)
+                    .font_size(px(text::META))
                     .font_weight(FontWeight::MEDIUM)
                     .color(fg)
                     .max_lines(1),

@@ -100,6 +100,7 @@ pub fn configure(editor: MarkdownEditor) -> MarkdownEditor {
             Chip {
                 target: SourceRef::from_link(embed.url),
                 written: embed.label.to_owned(),
+                ink: embed.theme.colors.text,
                 zoom: embed.theme.zoom,
             }
             .into_element()
@@ -229,6 +230,8 @@ struct Chip {
     target: SourceRef,
     /// Label the link was written with.
     written: String,
+    /// Text colour of the editor around it.
+    ink: Color,
     zoom: f32,
 }
 
@@ -249,7 +252,6 @@ impl Component for Chip {
         }
         let target = self.target.clone();
         rect()
-            .scale((self.zoom, self.zoom))
             .on_pointer_down(move |event: Event<PointerEventData>| {
                 sismo::scope!("editor::chip_open");
                 event.stop_propagation();
@@ -260,7 +262,10 @@ impl Component for Chip {
                 }
             })
             .child(
-                RefChip::new(shown.label, shown.icon, shown.color.resolve(&p)).broken(shown.broken),
+                RefChip::new(shown.label, shown.icon, shown.color.resolve(&p))
+                    .broken(shown.broken)
+                    .ink(self.ink)
+                    .zoom(self.zoom),
             )
     }
 }
