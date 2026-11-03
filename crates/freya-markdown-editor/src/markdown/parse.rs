@@ -269,7 +269,9 @@ impl Lowering<'_> {
                     .children()
                     .map(|row| row.children().map(|cell| self.inline(cell)).collect())
                     .collect();
-                self.push(BlockKind::Table(Table::from_rows(columns, rows)));
+                let mut table = Table::from_rows(columns, rows);
+                table.detect_check_column();
+                self.push(BlockKind::Table(table));
             }
             NodeValue::FootnoteDefinition(definition) => {
                 let index = self.blocks.len();
@@ -393,7 +395,16 @@ impl Lowering<'_> {
             .and_then(|rest| rest.strip_suffix("-->"))
             .filter(|note| !note.contains("-->"))
         {
-            self.push(BlockKind::Comment(Inline::from(note.trim())));
+            let note = note.trim();
+            // The spec of the table right before it, see `Table::apply_spec`.
+            if let Some(spec) = note.strip_prefix("notein:table")
+                && let Some(BlockKind::Table(table)) =
+                    self.blocks.last_mut().map(|block| &mut block.kind)
+            {
+                table.apply_spec(spec);
+                return;
+            }
+            self.push(BlockKind::Comment(Inline::from(note)));
             return;
         }
         if lower == "</details>" && self.details.is_some() {

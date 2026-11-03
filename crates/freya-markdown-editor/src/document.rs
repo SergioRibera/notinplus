@@ -4,6 +4,7 @@
 //! `depth`, quotes and callouts hold a single inline run. Every editable run
 //! of text is an [`Inline`] addressed by a [`TextTarget`].
 
+mod calc;
 mod color;
 mod inline;
 mod properties;
@@ -12,13 +13,17 @@ mod table;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+pub use calc::{ColumnRef, Expr, ExprError, Number, TrailingCalculation};
 pub use color::{ParseColorError, Rgba};
 pub use inline::{
     Atom, Inline, Link, Mark, MarkFamily, MarkKind, OBJECT_REPLACEMENT, TextChange, byte_index,
     diff, utf16_len,
 };
 pub use properties::Properties;
-pub use table::{ColumnAlign, Table};
+pub use table::{
+    Aggregate, Column, ColumnAlign, ComputedCell, ComputedColumn, Evaluated, Scope, Summary, Table,
+    Total,
+};
 
 /// Stable identity of a block for the lifetime of the process.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -556,10 +561,12 @@ impl Document {
                     .iter()
                     .enumerate()
                     .flat_map(|(row, cells)| {
-                        (0..cells.len()).map(move |column| TextTarget {
-                            block: block.id,
-                            cell: Some(CellPos { row, column }),
-                        })
+                        (0..cells.len())
+                            .filter(move |column| !table.is_check_cell(row, *column))
+                            .map(move |column| TextTarget {
+                                block: block.id,
+                                cell: Some(CellPos { row, column }),
+                            })
                     })
                     .collect::<Vec<_>>(),
                 kind if kind.content().is_some() => vec![TextTarget::from(block.id)],
@@ -875,7 +882,10 @@ impl Document {
     /// Turn a paragraph starting with a markdown block marker (`# `, `- `,
     /// `1. `, `> `, `[ ] `, `` ``` ``, `---`, `$$`) into that block. Only fires
     /// when `cursor` sits right after the marker, i.e. it was just typed.
-    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_apply_block_shortcut"))]
+    #[cfg_attr(
+        feature = "sismo",
+        sismo::function("markdown::doc_apply_block_shortcut")
+    )]
     pub fn apply_block_shortcut(&mut self, id: BlockId, cursor: usize) -> Option<Caret> {
         let index = self.index_of(id)?;
         let block = &mut self.blocks[index];

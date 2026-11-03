@@ -6,6 +6,7 @@ use crate::document::{
     Align, Atom, Block, BlockKind, ColumnAlign, Document, Inline, ListKind, Mark, MarkFamily,
     MarkKind, OBJECT_REPLACEMENT, Table, Transclusion, byte_index,
 };
+use crate::labels::Labels;
 
 #[cfg_attr(feature = "sismo", sismo::function("markdown::serialize_document"))]
 pub(super) fn serialize(document: &Document, dialect: Dialect) -> String {
@@ -17,7 +18,8 @@ pub(super) fn serialize(document: &Document, dialect: Dialect) -> String {
     let mut out = String::new();
     let mut previous: Option<&BlockKind> = None;
     for (index, block) in document.blocks().iter().enumerate() {
-        let Some(chunk) = crate::profile::kind_span(&block.kind, || writer.block(block, index)) else {
+        let Some(chunk) = crate::profile::kind_span(&block.kind, || writer.block(block, index))
+        else {
             continue;
         };
         if let Some(previous) = previous {
@@ -229,18 +231,55 @@ impl Writer<'_> {
         }
     }
 
+    /// The table with its computed columns and totals written out as
+    /// cells, so it reads right anywhere. The rich dialect adds the
+    /// `notein:table` comment that tells them apart from typed cells.
     #[cfg_attr(feature = "sismo", sismo::function("markdown::serialize_table"))]
     fn table(&self, table: &Table) -> String {
-        let cells: Vec<Vec<String>> = table
+        let evaluated = table.evaluate();
+        let labels = Labels::default();
+        let mut cells: Vec<Vec<String>> = table
             .rows()
             .iter()
-            .map(|row| {
-                row.iter()
-                    .map(|cell| self.inline(cell, InlineContext::TableCell))
-                    .collect()
+            .enumerate()
+            .map(|(row, cells)| {
+                let typed = cells.iter().enumerate().map(|(column, cell)| {
+                    if table.is_check_cell(row, column) {
+                        if table.is_checked(row) { "[x]" } else { "[ ]" }.to_owned()
+                    } else {
+                        self.inline(cell, InlineContext::TableCell)
+                    }
+                });
+                let computed = table.computed().iter().enumerate().map(|(index, column)| {
+                    if row == 0 {
+                        column.header.clone()
+                    } else {
+                        evaluated.computed_text(index, row - 1).unwrap_or_default()
+                    }
+                });
+                typed.chain(computed).collect()
             })
             .collect();
-        let widths: Vec<usize> = (0..table.columns().len())
+        if evaluated.has_totals() {
+            cells.push(
+                evaluated
+                    .totals
+                    .iter()
+                    .map(|total| {
+                        total.as_ref().map_or_else(String::new, |total| {
+                            format!("{} {}", labels.aggregate(total.summary.op), total.text)
+                        })
+                    })
+                    .collect(),
+            );
+        }
+        let aligns: Vec<ColumnAlign> = table
+            .columns()
+            .iter()
+            .copied()
+            .chain(table.computed().iter().map(|_| ColumnAlign::Right))
+            .collect();
+        let widths: Vec<usize> = (0..aligns.len())
             .map(|column| {
                 cells
                     .iter()
@@ -261,8 +300,7 @@ impl Writer<'_> {
                 .collect();
             format!("| {} |", padded.join(" | "))
         };
-        let separator: Vec<String> = table
-            .columns()
+        let separator: Vec<String> = aligns
             .iter()
             .zip(&widths)
             .map(|(align, width)| {
@@ -277,7 +315,15 @@ impl Writer<'_> {
             .collect();
         let mut lines = vec![line(&cells[0]), format!("| {} |", separator.join(" | "))];
         lines.extend(cells[1..].iter().map(|row| line(row)));
-        lines.join("\n")
+        let mut out = lines.join("\n");
+        if self.dialect == Dialect::Rich && table.has_spec() {
+            out.push_str("\n\n");
+            out.push_str(&comment(&format!(
+                "notein:table\n{}",
+                table.spec_lines().join("\n")
+            )));
+        }
+        out
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("markdown::serialize_toc"))]

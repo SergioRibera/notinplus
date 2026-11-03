@@ -293,3 +293,80 @@ fn details_in_one_html_block_keep_their_body() {
         BlockKind::Details { summary, open: true, content } if summary == "S" && content.text() == "body"
     ));
 }
+
+const SHOPPING: &str = "\
+| ✓   | Artículo | Presupuesto | Costo |
+|:---:|----------|------------:|------:|
+| [x] | Pan      | 10          | 12,50 |
+| [ ] | Leche    | 5           |       |
+
+<!--
+notein:table
+check: 1
+column: Diferencia = [Costo] - [Presupuesto]
+calc: Presupuesto = sum
+calc: Costo = sum, checked
+calc: Diferencia = sum
+-->
+";
+
+#[test]
+fn a_table_spec_is_read_back_and_written_out_with_its_values() {
+    use freya_markdown_editor::document::{Aggregate, Column, Scope, Summary, Table};
+
+    let document = Document::parse(SHOPPING);
+    let BlockKind::Table(table) = &document.blocks()[0].kind else {
+        panic!("table expected, got {:?}", document.blocks()[0].kind);
+    };
+    assert!(table.has_check_column());
+    assert_eq!(table.rows().len(), 3, "no totals row in the model");
+    assert_eq!(table.columns().len(), 4, "the computed column is not typed");
+    assert_eq!(table.computed()[0].header, "Diferencia");
+    assert_eq!(
+        table.summary(Column::Data(3)),
+        Some(Summary {
+            op: Aggregate::Sum,
+            scope: Scope::Checked
+        })
+    );
+    assert_eq!(
+        table.summary(Column::Computed(0)),
+        Some(Aggregate::Sum.into())
+    );
+
+    let rich = document.to_markdown(Dialect::Rich);
+    assert!(rich.contains("| Diferencia |"), "{rich}");
+    assert!(rich.contains("| 2,50"), "{rich}");
+    assert!(rich.contains("Sum 15"), "{rich}");
+    assert!(rich.contains("Sum 12,50"), "{rich}");
+    assert!(rich.contains("<!--\nnotein:table\ncheck: 1\n"), "{rich}");
+    let again = Document::parse(&rich);
+    let BlockKind::Table(reparsed) = &again.blocks()[0].kind else {
+        panic!("table expected");
+    };
+    assert_eq!(reparsed, table);
+    assert_eq!(again.to_markdown(Dialect::Rich), rich);
+
+    let portable = document.to_markdown(Dialect::Portable);
+    assert!(!portable.contains("notein:table"), "{portable}");
+    assert!(portable.contains("| Diferencia |"), "{portable}");
+    assert!(portable.contains("Sum 15"), "{portable}");
+    assert!(portable.contains("| [x] |"), "{portable}");
+    let _ = Table::default();
+}
+
+#[test]
+fn a_hand_written_check_column_is_adopted() {
+    let document = Document::parse("| | Item |\n|--|--|\n| [x] | a |\n| [ ] | b |\n");
+    let BlockKind::Table(table) = &document.blocks()[0].kind else {
+        panic!("table expected");
+    };
+    assert!(table.has_check_column());
+    assert!(table.is_checked(1));
+    assert!(!table.is_checked(2));
+    let plain = Document::parse("| n | Item |\n|--|--|\n| 1 | a |\n");
+    let BlockKind::Table(plain) = &plain.blocks()[0].kind else {
+        panic!("table expected");
+    };
+    assert!(!plain.has_check_column());
+}

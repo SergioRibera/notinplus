@@ -18,7 +18,7 @@ use std::rc::Rc;
 
 use notein_i18n::Lang;
 
-use crate::document::{BlockType, CalloutKind, HeadingLevel};
+use crate::document::{Aggregate, BlockType, CalloutKind, HeadingLevel, Scope};
 
 macro_rules! labels {
     ($($name:ident = $id:literal,)*) => {
@@ -162,6 +162,33 @@ labels! {
     TableAddColumn = "md-table-add-column",
     TableRemoveRow = "md-table-remove-row",
     TableRemoveColumn = "md-table-remove-column",
+    TableChecks = "md-table-checks",
+    TableComputedColumn = "md-table-computed-column",
+    Calculate = "md-calculate",
+    NoTotal = "md-no-total",
+    CountAll = "md-count-all",
+    CountEmpty = "md-count-empty",
+    CountFilled = "md-count-filled",
+    TotalSum = "md-total-sum",
+    Average = "md-average",
+    Median = "md-median",
+    Minimum = "md-minimum",
+    Maximum = "md-maximum",
+    Range = "md-range",
+    Checked = "md-checked",
+    Unchecked = "md-unchecked",
+    PercentChecked = "md-percent-checked",
+    ScopeAll = "md-scope-all",
+    ScopeChecked = "md-scope-checked",
+    ScopeUnchecked = "md-scope-unchecked",
+    ColumnName = "md-column-name",
+    FormulaPlaceholder = "md-formula-placeholder",
+    FormulaHint = "md-formula-hint",
+    FormulaInvalid = "md-formula-invalid",
+    RemoveComputedColumn = "md-remove-computed-column",
+    Calculator = "md-calculator",
+    CalcReplace = "md-calc-replace",
+    CalcAppend = "md-calc-append",
     Contents = "md-contents",
 }
 
@@ -223,6 +250,35 @@ impl Labels {
             Some(BlockType::Term) => Label::Term,
             Some(BlockType::Definition) => Label::Definition,
             Some(BlockType::Paragraph) | None => Label::Text,
+        })
+    }
+
+    /// Name of a table total.
+    #[must_use]
+    pub fn aggregate(&self, op: Aggregate) -> &str {
+        self.get(match op {
+            Aggregate::CountAll => Label::CountAll,
+            Aggregate::CountEmpty => Label::CountEmpty,
+            Aggregate::CountFilled => Label::CountFilled,
+            Aggregate::Sum => Label::TotalSum,
+            Aggregate::Average => Label::Average,
+            Aggregate::Median => Label::Median,
+            Aggregate::Min => Label::Minimum,
+            Aggregate::Max => Label::Maximum,
+            Aggregate::Range => Label::Range,
+            Aggregate::Checked => Label::Checked,
+            Aggregate::Unchecked => Label::Unchecked,
+            Aggregate::PercentChecked => Label::PercentChecked,
+        })
+    }
+
+    /// Name of the rows a table total looks at.
+    #[must_use]
+    pub fn scope(&self, scope: Scope) -> &str {
+        self.get(match scope {
+            Scope::All => Label::ScopeAll,
+            Scope::Checked => Label::ScopeChecked,
+            Scope::Unchecked => Label::ScopeUnchecked,
         })
     }
 

@@ -10,8 +10,9 @@ use std::time::{Duration, Instant};
 use freya::prelude::*;
 
 use crate::document::{
-    Align, Atom, Block, BlockId, BlockKind, BlockType, CalloutKind, Caret, CellPos, Document,
-    Inline, Link, MarkFamily, MarkKind, Rgba, Table, TextRole, TextTarget, utf16_len,
+    Align, Atom, Block, BlockId, BlockKind, BlockType, CalloutKind, Caret, CellPos, Column,
+    Document, Inline, Link, MarkFamily, MarkKind, Rgba, Summary, Table, TextRole, TextTarget,
+    utf16_len,
 };
 use crate::editor::SuggestionAction;
 use crate::markdown::{Dialect, ParseOptions};
@@ -1184,7 +1185,10 @@ impl EditorController {
     }
 
     /// Rename the summary of a `<details>` block.
-    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_details_summary"))]
+    #[cfg_attr(
+        feature = "sismo",
+        sismo::function("markdown::ctl_set_details_summary")
+    )]
     pub fn set_details_summary(&self, block: BlockId, summary: &str) {
         let wanted = summary.trim().to_owned();
         self.update(|state| {
@@ -1428,6 +1432,69 @@ impl EditorController {
                 row: cell.row,
                 column: cell.column.min(table.columns().len() - 1),
             })
+        });
+    }
+
+    /// Tick or untick body row `row` of the table `block`.
+    pub fn table_toggle_check(&self, block: BlockId, row: usize) {
+        self.edit_table_block(block, |table| table.toggle_check(row));
+    }
+
+    /// Give the table `block` a check column (or take it away).
+    pub fn table_set_checks(&self, block: BlockId, checks: bool) {
+        self.edit_table_block(block, |table| {
+            let changed = table.has_check_column() != checks;
+            table.set_check_column(checks);
+            changed
+        });
+    }
+
+    /// Show `summary` under `column` of the table `block`, or nothing.
+    pub fn table_set_summary(&self, block: BlockId, column: Column, summary: Option<Summary>) {
+        self.edit_table_block(block, |table| table.set_summary(column, summary));
+    }
+
+    /// Add a column computed by `formula` to the table `block`.
+    pub fn table_add_computed(&self, block: BlockId, header: &str, formula: &str) {
+        self.edit_table_block(block, |table| {
+            table.add_computed(header, formula);
+            true
+        });
+    }
+
+    pub fn table_set_computed(&self, block: BlockId, index: usize, header: &str, formula: &str) {
+        self.edit_table_block(block, |table| table.set_computed(index, header, formula));
+    }
+
+    pub fn table_remove_computed(&self, block: BlockId, index: usize) {
+        self.edit_table_block(block, |table| table.remove_computed(index));
+    }
+
+    /// An undoable edit of the table `block` that leaves the caret alone.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_edit_table_block"))]
+    fn edit_table_block(&self, block: BlockId, edit: impl FnOnce(&mut Table) -> bool) {
+        self.update(|state| {
+            if state.read_only {
+                return;
+            }
+            let mut document = state.document.clone();
+            let Some(BlockKind::Table(table)) =
+                document.block_mut(block).map(|block| &mut block.kind)
+            else {
+                return;
+            };
+            if !edit(table) {
+                return;
+            }
+            state.record(None);
+            state.document = document;
+            state.changed();
+            // The caret may have sat in a cell that is gone.
+            if state.selection.is_some_and(|selection| {
+                selection.target.block == block && state.document.inline(selection.target).is_none()
+            }) {
+                state.selection = None;
+            }
         });
     }
 
@@ -1697,6 +1764,10 @@ impl EditorController {
                 return false;
             }
             let escaped = deleted_up_to_mark_end(current, text, hint);
+            let previous_header = target
+                .cell
+                .filter(|cell| cell.row == 0)
+                .map(|_| current.plain_text());
             state.record(Some(target));
             let role = state.document.role(target);
             let pending = std::mem::take(&mut state.pending);
@@ -1744,6 +1815,16 @@ impl EditorController {
                             .apply_block_shortcut(target.block, selection.head)
                     })
                     .flatten();
+            // Formulas name columns by header: a renamed header keeps them pointing.
+            if let (Some(previous), Some(cell)) = (previous_header, target.cell)
+                && let Some(BlockKind::Table(table)) = state
+                    .document
+                    .block_mut(target.block)
+                    .map(|block| &mut block.kind)
+            {
+                let header = table.header(cell.column);
+                table.rename_in_formulas(cell.column, &previous, &header);
+            }
             state.changed();
             if let Some(caret) = shortcut {
                 state.request_caret(caret.into());
@@ -1912,35 +1993,50 @@ impl EditorController {
         };
         let shape = self.peek(
             |state| match state.document.block(target.block).map(|b| &b.kind) {
-                Some(BlockKind::Table(table)) => Some((table.rows().len(), table.columns().len())),
+                Some(BlockKind::Table(table)) => Some((
+                    table.rows().len(),
+                    table.columns().len(),
+                    table.has_check_column(),
+                )),
                 _ => None,
             },
         );
-        let Some((rows, columns)) = shape else {
+        let Some((rows, columns, checks)) = shape else {
             return;
         };
-        let index = cell.row * columns + cell.column;
-        let next = if backwards {
-            index.checked_sub(1)
-        } else {
-            Some(index + 1)
-        };
-        let Some(next) = next else {
-            return;
-        };
-        if next >= rows * columns {
+        // Check marks are not typed into: the first typed column of a
+        // body row is the one after them.
+        let first_column = usize::from(checks && columns > 1);
+        let is_check =
+            |index: usize| checks && columns > 1 && index % columns == 0 && index >= columns;
+        let mut index = cell.row * columns + cell.column;
+        loop {
+            let next = if backwards {
+                index.checked_sub(1)
+            } else {
+                Some(index + 1)
+            };
+            let Some(next) = next else {
+                return;
+            };
+            index = next;
+            if !is_check(index) {
+                break;
+            }
+        }
+        if index >= rows * columns {
             self.edit_table(|table, _| {
                 table.insert_row(rows);
                 Some(CellPos {
                     row: rows,
-                    column: 0,
+                    column: first_column,
                 })
             });
             return;
         }
         let next = CellPos {
-            row: next / columns,
-            column: next % columns,
+            row: index / columns,
+            column: index % columns,
         };
         self.focus(
             TextTarget {
@@ -2062,7 +2158,10 @@ fn clamp(document: &Document, selection: Selection) -> Selection {
 /// Families whose mark ends where a pure deletion of unmarked text starts.
 /// Typing there afterwards should not grow the mark back over the text that
 /// was just removed.
-#[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_deleted_up_to_mark_end"))]
+#[cfg_attr(
+    feature = "sismo",
+    sismo::function("markdown::ctl_deleted_up_to_mark_end")
+)]
 fn deleted_up_to_mark_end(current: &Inline, text: &str, hint: usize) -> Vec<MarkFamily> {
     let Some(change) = crate::document::diff(current.text(), text, hint) else {
         return Vec::new();
