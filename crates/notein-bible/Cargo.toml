@@ -50,7 +50,7 @@ ui = [
 
 [dependencies]
 # Spans for the sismo profiler; off unless an app turns it on.
-sismo = { path = "../../../../sismo/crates/sismo", default-features = false, optional = true }
+sismo = { version = "0.1.1", default-features = false, optional = true }
 freya-icons = { version = "=0.5.0-rc.13", features = ["lucide"] }
 notein-sdk = { path = "../notein-sdk" }
 notein-i18n = { path = "../notein-i18n" }

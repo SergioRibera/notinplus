@@ -273,6 +273,14 @@
             ]
           );
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+          # Build scripts load that libclang, so they must link against
+          # this shell's glibc: name the compiler and cargo's host linker
+          # explicitly instead of trusting whatever `cc` the PATH offers.
+          CC = "${pkgs.stdenv.cc}/bin/cc";
+          CXX = "${pkgs.stdenv.cc}/bin/c++";
+          "CARGO_TARGET_${
+            pkgs.lib.toUpper (builtins.replaceStrings [ "-" ] [ "_" ] pkgs.stdenv.hostPlatform.rust.rustcTarget)
+          }_LINKER" = "${pkgs.stdenv.cc}/bin/cc";
         };
 
         formatter = pkgs.nixfmt-rfc-style;

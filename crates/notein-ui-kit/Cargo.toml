@@ -25,7 +25,7 @@ sismo = ["dep:sismo"]
 
 [dependencies]
 # Spans for the sismo profiler; off unless an app turns it on.
-sismo = { path = "../../../../sismo/crates/sismo", default-features = false, optional = true }
+sismo = { version = "0.1.1", default-features = false, optional = true }
 freya = { version = "=0.5.0-rc.13", features = [
     "router",
     "icons",
