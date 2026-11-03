@@ -202,6 +202,7 @@ mod real_packs {
 
     #[test]
     #[ignore = "needs the built packs and a translation on disk"]
+    #[allow(clippy::too_many_lines)] // a printed walk through two verses
     fn real_packs_align_with_rv1960() {
         let (Ok(packs), Ok(books)) = (
             std::env::var("NOTEIN_ORIGINALS_TEST_DIR"),
