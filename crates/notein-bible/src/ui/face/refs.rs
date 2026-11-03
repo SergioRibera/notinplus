@@ -26,6 +26,8 @@ pub(super) struct VerseRefs {
     pub(super) verse: u16,
     /// The verse they start from ("Juan 3:16").
     place: String,
+    /// Its text in the open translation.
+    text: String,
     targets: Vec<Target>,
 }
 
@@ -49,9 +51,18 @@ impl VerseRefs {
             st.current_book.clone(),
             st.current_chapter,
         );
-        let book_name = st
-            .current_chapter_data()
-            .map_or_else(|| book.clone(), |c| c.book_name.clone());
+        let (book_name, text) = st.current_chapter_data().map_or_else(
+            || (book.clone(), String::new()),
+            |c| {
+                let text = c
+                    .verses
+                    .iter()
+                    .find(|v| v.verse == verse)
+                    .map(|v| v.text.clone())
+                    .unwrap_or_default();
+                (c.book_name.clone(), text)
+            },
+        );
         drop(st);
         let db = &reader.db;
         let books = db.list_books(&bible_id).unwrap_or_default();
@@ -90,6 +101,7 @@ impl VerseRefs {
             .collect();
         Self {
             place: format!("{book_name} {chapter}:{verse}"),
+            text,
             book,
             chapter,
             verse,
@@ -105,6 +117,39 @@ impl VerseRefs {
 
     fn count(&self) -> String {
         tr!("reader-refs-count", "count" => self.targets.len())
+    }
+
+    /// The verse itself, quoted over the tabs so the panel reads on its
+    /// own; nothing when the chapter has no text for it.
+    fn quote(&self, side_padding: f32) -> Option<Element> {
+        if self.text.is_empty() {
+            return None;
+        }
+        let p = palette();
+        Some(
+            rect()
+                .width(Size::fill())
+                .padding((0.0, side_padding, 10.0, side_padding))
+                .child(
+                    rect()
+                        .width(Size::fill())
+                        .padding((2.0, 0.0, 2.0, 12.0))
+                        .border(Border::new().fill(p.accent).width(BorderWidth {
+                            left: 3.0,
+                            ..BorderWidth::default()
+                        }))
+                        .child(
+                            label()
+                                .width(Size::fill())
+                                .text(self.text.clone())
+                                .font_family(crate::fonts::FAMILY)
+                                .font_size(tokens::text::BODY)
+                                .font_slant(FontSlant::Italic)
+                                .color(p.t2),
+                        ),
+                )
+                .into_element(),
+        )
     }
 }
 
@@ -163,6 +208,7 @@ impl Component for SheetBody {
         rect()
             .width(Size::fill())
             .spacing(8.0)
+            .maybe_child(self.refs.quote(8.0))
             .maybe_child(tabbed.then(|| tabs(tab, 8.0)))
             .child(tab_body(&self.reader, &self.refs, current, true))
     }
@@ -283,6 +329,7 @@ impl Panel {
                             }),
                     ),
             )
+            .maybe_child(refs.quote(16.0))
             .maybe_child(tabbed.then(|| tabs(tab, 12.0)))
             .child(
                 ScrollView::new()

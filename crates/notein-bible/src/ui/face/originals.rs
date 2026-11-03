@@ -86,8 +86,12 @@ pub(super) fn selection_extra(
     }
     let verse = verse?;
     let reader = reader.clone();
+    // Beside the text the verses stay selected, the panel is about
+    // them; a sheet covers the bar, so it goes.
     let action: Rc<dyn Fn()> = Rc::new(move || {
-        reader.ui.close_selection();
+        if !wide {
+            reader.ui.close_selection();
+        }
         open(&reader, verse, wide);
     });
     Some((tr!("originals-tab").into(), lucide::languages(), action))
@@ -125,7 +129,7 @@ impl VerseWords {
             .unwrap_or_default()
             .into_iter()
             .find(|b| b.id == bible_id)
-            .map_or_else(|| bible_id.clone(), |b| b.abbrev);
+            .map_or_else(|| bible_id.clone(), |b| b.display_name().to_owned());
         let links: Vec<LinkRow> = reader
             .kind
             .originals()
@@ -403,7 +407,6 @@ impl WordRow {
             here,
             here_english,
             also,
-            also_tag,
         } = self.meaning(lemma.as_ref(), lang);
         let grammar = grammar_line(word, self.row.language);
         let derivation = lemma
@@ -455,23 +458,18 @@ impl WordRow {
                     })),
             )
             .child(labelled(&tr!("originals-here"), here, here_english))
-            .maybe_child((!function_word && !also.is_empty()).then(|| {
-                rect()
-                    .width(Size::fill())
-                    .spacing(2.0)
-                    .child(labelled(&tr!("originals-also"), also.join(" · "), false))
-                    .maybe_child(
-                        also_tag
-                            .map(|tag| label().text(tag).font_size(tokens::text::META).color(p.t3)),
-                    )
-            }))
+            .maybe_child((!function_word).then(|| also.render()).flatten())
             .maybe_child((!grammar.is_empty()).then(|| {
                 label()
                     .width(Size::fill())
-                    .text(
-                        derivation
-                            .map_or_else(|| grammar.clone(), |d| format!("{grammar}  ·  {d}")),
-                    )
+                    .text(grammar)
+                    .font_size(tokens::text::META)
+                    .color(p.t3)
+            }))
+            .maybe_child(derivation.map(|derivation| {
+                label()
+                    .width(Size::fill())
+                    .text(derivation)
                     .font_size(tokens::text::META)
                     .color(p.t3)
             }))
@@ -530,11 +528,100 @@ struct Meaning {
     here: String,
     /// `here` fell back to the English gloss.
     here_english: bool,
-    /// Its other renderings or senses.
-    also: Vec<String>,
-    /// A note under `also`: whose renderings they are, or that they
-    /// are machine translated or English.
-    also_tag: Option<String>,
+    /// What else it means.
+    also: Also,
+}
+
+/// The word's meaning beyond this verse.
+enum Also {
+    /// How the open translation renders the lemma elsewhere, with how
+    /// many times each.
+    Renderings {
+        bible: String,
+        items: Vec<(String, u32)>,
+    },
+    /// The dictionary senses, with a note when they are English or
+    /// machine translated.
+    Senses {
+        items: Vec<String>,
+        note: Option<String>,
+    },
+}
+
+impl Also {
+    /// The block under «Aquí»; `None` when there is nothing to say.
+    fn render(&self) -> Option<Element> {
+        let p = palette();
+        match self {
+            Self::Renderings { items, .. } if items.is_empty() => None,
+            Self::Senses { items, .. } if items.is_empty() => None,
+            Self::Renderings { bible, items } => Some(
+                rect()
+                    .width(Size::fill())
+                    .spacing(4.0)
+                    .child(
+                        paragraph()
+                            .width(Size::fill())
+                            .font_size(tokens::text::META)
+                            .color(p.t3)
+                            .span(
+                                Span::new(bible.clone())
+                                    .font_weight(FontWeight::BOLD)
+                                    .color(p.t2),
+                            )
+                            .span(Span::new(format!(" {}", tr!("originals-renders")))),
+                    )
+                    .children(items.iter().enumerate().map(|(i, (token, count))| {
+                        rect()
+                            .key(i)
+                            .width(Size::fill())
+                            .horizontal()
+                            .content(Content::Flex)
+                            .cross_align(Alignment::End)
+                            .spacing(8.0)
+                            .child(
+                                label()
+                                    .width(Size::flex(1.0))
+                                    .text(token.clone())
+                                    .font_size(tokens::text::BODY)
+                                    .color(p.t1),
+                            )
+                            .child(
+                                label()
+                                    .text(tr!("originals-times", "count" => *count))
+                                    .font_size(tokens::text::META)
+                                    .color(p.t3),
+                            )
+                            .into_element()
+                    }))
+                    .into_element(),
+            ),
+            Self::Senses { items, note } => Some(
+                rect()
+                    .width(Size::fill())
+                    .spacing(4.0)
+                    .child(
+                        label()
+                            .width(Size::fill())
+                            .text(note.as_ref().map_or_else(
+                                || tr!("originals-senses"),
+                                |note| tr!("originals-senses-noted", "note" => note.clone()),
+                            ))
+                            .font_size(tokens::text::META)
+                            .font_weight(FontWeight::BOLD)
+                            .color(p.t3),
+                    )
+                    .child(
+                        label()
+                            .width(Size::fill())
+                            .text(items.join(", "))
+                            .font_size(tokens::text::BODY)
+                            .color(p.t1),
+                    )
+                    .into_element(),
+            ),
+        }
+    }
 }
 
 impl WordRow {
@@ -561,11 +648,13 @@ impl WordRow {
             return Meaning {
                 here,
                 here_english,
-                also: renderings
-                    .iter()
-                    .map(|r| format!("{} {}", r.token, r.count))
-                    .collect(),
-                also_tag: Some(tr!("originals-renders", "bible" => self.words.bible_name.clone())),
+                also: Also::Renderings {
+                    bible: self.words.bible_name.clone(),
+                    items: renderings
+                        .iter()
+                        .map(|r| (r.token.clone(), r.count))
+                        .collect(),
+                },
             };
         }
         let senses = lemma
@@ -575,8 +664,10 @@ impl WordRow {
             return Meaning {
                 here,
                 here_english,
-                also: lemma.map(|l| l.senses_en.clone()).unwrap_or_default(),
-                also_tag: (lang != Lang::En).then(|| tr!("originals-meaning-english")),
+                also: Also::Senses {
+                    items: lemma.map(|l| l.senses_en.clone()).unwrap_or_default(),
+                    note: (lang != Lang::En).then(|| tr!("originals-meaning-english")),
+                },
             };
         }
         let automatic = senses
@@ -585,8 +676,10 @@ impl WordRow {
         Meaning {
             here,
             here_english,
-            also: senses.into_iter().map(|s| s.text).collect(),
-            also_tag: automatic.then(|| tr!("originals-automatic")),
+            also: Also::Senses {
+                items: senses.into_iter().map(|s| s.text).collect(),
+                note: automatic.then(|| tr!("originals-automatic")),
+            },
         }
     }
 }
@@ -711,7 +804,7 @@ impl Component for Occurrences {
                     occurrence.chapter,
                     occurrence.verse,
                     if here {
-                        format!(" · {}", tr!("originals-occurrences-here"))
+                        format!(" ({})", tr!("originals-occurrences-here"))
                     } else {
                         String::new()
                     }

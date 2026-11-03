@@ -18,7 +18,6 @@ originals-no-verse = This verse is not in the original text.
 originals-base-form = Base form
 originals-pronounced = pronounced { $respelling }
 originals-here = Here
-originals-also = Also
 originals-meaning-english = in English
 originals-automatic = machine translated
 originals-no-meaning = Function word: grammar only.
@@ -34,7 +33,15 @@ originals-copied = Word copied
 originals-occurrences-title = Occurrences of { $lemma }
 originals-occurrences-back = Back to the list
 originals-occurrences-here = here
-originals-renders = { $bible } renders it:
+# Follows the translation's name, in bold: "Reina Valera 1960 also renders it:".
+originals-renders = also renders it:
+originals-times = { $count ->
+    [one] once
+   *[other] { $count } times
+}
+originals-senses = In the dictionary
+# $note is "in English" or "machine translated".
+originals-senses-noted = In the dictionary ({ $note })
 originals-aligning = Pairing the words with { $bible }…
 originals-not-aligned = The words of this translation are not paired yet.
 

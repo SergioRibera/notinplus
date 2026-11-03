@@ -13,6 +13,19 @@ pub struct BibleRow {
     pub language: String,
 }
 
+impl BibleRow {
+    /// The name the interface calls the translation: its local name,
+    /// else its abbreviation (which falls back to the id).
+    #[must_use]
+    pub fn display_name(&self) -> &str {
+        if self.name_local.is_empty() {
+            &self.abbrev
+        } else {
+            &self.name_local
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BookRow {
     pub book_id: String,

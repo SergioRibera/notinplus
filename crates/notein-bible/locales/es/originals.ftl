@@ -18,7 +18,6 @@ originals-no-verse = Este versículo no está en el texto original.
 originals-base-form = Forma base
 originals-pronounced = se pronuncia { $respelling }
 originals-here = Aquí
-originals-also = También
 originals-meaning-english = en inglés
 originals-automatic = traducción automática
 originals-no-meaning = Palabra de función: solo gramática.
@@ -34,7 +33,15 @@ originals-copied = Palabra copiada
 originals-occurrences-title = Apariciones de { $lemma }
 originals-occurrences-back = Volver a la lista
 originals-occurrences-here = acá
-originals-renders = { $bible } la traduce:
+# Va después del nombre de la traducción, en negrita: «Reina Valera 1960 la traduce también:».
+originals-renders = la traduce también:
+originals-times = { $count ->
+    [one] 1 vez
+   *[other] { $count } veces
+}
+originals-senses = En el diccionario
+# $note es «en inglés» o «traducción automática».
+originals-senses-noted = En el diccionario ({ $note })
 originals-aligning = Emparejando las palabras con { $bible }…
 originals-not-aligned = Las palabras de esta traducción aún no están emparejadas.
 

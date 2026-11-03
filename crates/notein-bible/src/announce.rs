@@ -97,12 +97,12 @@ pub(crate) fn cross_refs(job: CrossRefsJob) {
     }
 }
 
-/// Short name of an installed translation, its id otherwise.
+/// Name of an installed translation, its id otherwise.
 pub(crate) fn bible_name(db: &Db, bible_id: &str) -> String {
     db.list_bibles()
         .ok()
         .and_then(|bibles| bibles.into_iter().find(|b| b.id == bible_id))
-        .map_or_else(|| bible_id.to_owned(), |b| b.abbrev)
+        .map_or_else(|| bible_id.to_owned(), |b| b.display_name().to_owned())
 }
 
 /// The bar of the translation downloading now, and a note (with a retry
