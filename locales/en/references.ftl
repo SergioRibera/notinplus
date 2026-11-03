@@ -8,5 +8,6 @@ references-needs-plugin = Needs a plugin
 # $kind: the kind of document, e.g. "PDF document".
 references-suggest-reference = { $kind } · Reference
 references-suggest-insert-text = { $kind } · Insert the text
+references-suggest-insert-image = { $kind } · Insert as image
 references-notebook-failed = Couldn't use the notebook
 references-added-to-notebook = Added to the notebook

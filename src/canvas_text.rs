@@ -14,7 +14,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use freya::icons::lucide::{check, grip, image_plus, rotate_cw, trash_2};
+use freya::icons::lucide::{check, external_link, grip, image_plus, rotate_cw, trash_2};
 use freya::prelude::*;
 use freya_markdown_editor::prelude::*;
 use istmo::plugins::EdgeInsets;
@@ -25,7 +25,7 @@ use crate::canvas::{
     Board, InkCache, PaintPass, SceneText, SurfaceBounds, TextLayerView, TextScene, lock,
 };
 use crate::editor::images::{AssetImage, ItemImages};
-use crate::image_box::{IMAGE_MIN_SIDE, ImageBox};
+use crate::image_box::{IMAGE_MIN_SIDE, ImageBox, ImageBoxId};
 use crate::library::model::ItemId;
 use crate::text_box::{TEXT_BASE_SIZE, TEXT_MIN_WIDTH, TextBoxId, TextFrame};
 use crate::ui_mask::{MaskSlot, use_mask_slot};
@@ -313,6 +313,7 @@ fn text_layer(
             editing,
             outlined: scene.text_mode,
             editor,
+            item,
         }
         .into_element()
     });
@@ -410,6 +411,8 @@ struct CanvasTextBox {
     /// Show the bounds even while idle, so boxes can be found in text mode.
     outlined: bool,
     editor: TextEditorSlot,
+    /// Item the canvas belongs to, where pictures of other documents go.
+    item: Option<ItemId>,
 }
 
 impl PartialEq for CanvasTextBox {
@@ -440,6 +443,7 @@ impl Component for CanvasTextBox {
                 markdown: text.markdown.clone(),
                 theme,
                 editor: self.editor,
+                item: self.item,
             }
             .into_element()
         } else {
@@ -530,6 +534,7 @@ struct TextBoxEditor {
     markdown: String,
     theme: EditorTheme,
     editor: TextEditorSlot,
+    item: Option<ItemId>,
 }
 
 impl PartialEq for TextBoxEditor {
@@ -538,6 +543,7 @@ impl PartialEq for TextBoxEditor {
             && self.id == other.id
             && self.theme == other.theme
             && self.editor == other.editor
+            && self.item == other.item
     }
 }
 
@@ -578,11 +584,16 @@ impl Component for TextBoxEditor {
             .width(Size::fill())
             .on_sized(move |event: Event<SizedEventData>| mask.publish(event.area))
             .child(
-                crate::editor::editor(value, controller)
-                    .theme(self.theme.clone())
-                    .font_family(FONT_FAMILY)
-                    .placeholder(tr!("canvas-text-placeholder"))
-                    .width(Size::fill()),
+                crate::editor::editor_on_board(
+                    value,
+                    controller,
+                    self.item,
+                    Arc::clone(&self.board),
+                )
+                .theme(self.theme.clone())
+                .font_family(FONT_FAMILY)
+                .placeholder(tr!("canvas-text-placeholder"))
+                .width(Size::fill()),
             )
     }
 }
@@ -1049,7 +1060,7 @@ impl Component for ImageBar {
         let board = Arc::clone(&self.board);
         let selected = use_state({
             let board = Arc::clone(&board);
-            move || lock(&board).image_session().is_some()
+            move || selected_image(&board)
         });
         use_hook({
             let board = Arc::clone(&board);
@@ -1061,7 +1072,9 @@ impl Component for ImageBar {
             editor.image_mask.clear();
             return rect().into_element();
         }
-        let has_selection = *selected.read();
+        let selection = selected.read().clone();
+        let has_selection = selection.is_some();
+        let source = selection.and_then(|(_, source)| source);
         let p = notein_ui_kit::palette();
         let add_board = Arc::clone(&board);
         let done_board = Arc::clone(&board);
@@ -1110,18 +1123,39 @@ impl Component for ImageBar {
                     lock(&delete_board).delete_session_image();
                 }))
             })
+            .maybe_child(source.map(|url| {
+                notein_ui_kit::Button::new(tr!("canvas-image-source"))
+                    .icon(external_link())
+                    .on_press(move |_| {
+                        sismo::scope!("canvas_text::open_image_source");
+                        crate::plugins::navigate::open(
+                            &notein_plugin::bookmark::SourceRef::from_link(&url),
+                            notein_plugin::services::Placement::Preferred,
+                        );
+                    })
+            }))
             .into_element()
     }
 }
 
-/// Keep `selected` in step with whether the board has an image selected.
+/// The selected image and where it was taken from, if anywhere.
+fn selected_image(board: &Arc<Mutex<Board>>) -> Option<(ImageBoxId, Option<String>)> {
+    lock(board)
+        .image_session()
+        .map(|image| (image.id, image.source.clone()))
+}
+
+/// Keep `selected` in step with the image the board has selected.
 #[sismo::function("canvas_text::watch_selection")]
-fn watch_selection(board: &Arc<Mutex<Board>>, mut selected: State<bool>) {
+fn watch_selection(
+    board: &Arc<Mutex<Board>>,
+    mut selected: State<Option<(ImageBoxId, Option<String>)>>,
+) {
     let rx = lock(board).watch();
     let board = Arc::clone(board);
     spawn(async move {
         while rx.recv_async().await.is_ok() {
-            let next = lock(&board).image_session().is_some();
+            let next = selected_image(&board);
             selected.set_if_modified(next);
         }
     });

@@ -48,5 +48,9 @@ plugins-pdf-pages = { $count ->
 plugins-pdf-chip-excerpt = PDF p. { $page } · excerpt
 # $name: document name; $page: page number.
 plugins-pdf-chip-page = { $name } p. { $page }
+# $first, $last: first and last page of a range.
+plugins-pdf-chip-pages = { $name } p. { $first }–{ $last }
+# $section: a title of the table of contents; $pages: "Name p. 3–5".
+plugins-pdf-chip-section = { $section } · { $pages }
 plugins-pdf-entry-subtitle = Import and write on it
 plugins-pdf-pick-title = Choose a PDF

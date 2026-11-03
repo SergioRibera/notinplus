@@ -133,9 +133,9 @@ pub(crate) fn show_bar(item: ItemId, mount: CanvasMount, at: (f32, f32)) {
             WorldPoint::new(f32::midpoint(r.min_x, r.max_x), r.min_y)
         });
     let anchor = crate::plugins::builtin::pdf::PdfAnchor {
-        page: sel.start_page,
         text: (!snippet.is_empty()).then(|| snippet.clone()),
         range: (sel.start_page == sel.end_page).then_some((sel.start_char, sel.end_char)),
+        ..crate::plugins::builtin::pdf::PdfAnchor::page(sel.start_page)
     };
     let reference = SourceRef::Plugin {
         plugin_id: crate::plugins::builtin::pdf::KIND.to_owned(),

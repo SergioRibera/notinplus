@@ -35,7 +35,14 @@ pub struct ImageBox {
     pub height: f32,
     /// File name inside the item's `assets/` folder.
     pub asset: String,
+    /// Link to where the picture was taken from (a PDF page), when it
+    /// is a snapshot of another document.
+    pub source: Option<String>,
 }
+
+/// Space between the pictures of one snapshot laid out as a column, in
+/// world units.
+const SNAPSHOT_GAP: f32 = 12.0;
 
 impl ImageBox {
     /// A new box for `asset`, `natural` pixels big, centred on `(cx, cy)`
@@ -56,7 +63,34 @@ impl ImageBox {
             },
             height,
             asset: asset.into(),
+            source: None,
         }
+    }
+
+    /// Boxes for `assets` (each `natural` pixels big), one under the
+    /// other, each scaled like [`Self::centred`], the column centred on
+    /// `(cx, cy)` and every box linking to `source`.
+    #[must_use]
+    pub fn column(
+        assets: &[(String, (u32, u32))],
+        source: Option<&str>,
+        cx: f32,
+        cy: f32,
+    ) -> Vec<Self> {
+        let mut boxes: Vec<Self> = assets
+            .iter()
+            .map(|(asset, natural)| Self::centred(asset.clone(), *natural, cx, cy))
+            .collect();
+        #[allow(clippy::cast_precision_loss, reason = "a handful of boxes")]
+        let gaps = boxes.len().saturating_sub(1) as f32;
+        let total = SNAPSHOT_GAP.mul_add(gaps, boxes.iter().map(|b| b.height).sum::<f32>());
+        let mut y = total.mul_add(-0.5, cy);
+        for image in &mut boxes {
+            image.frame.y = y;
+            image.source = source.map(str::to_owned);
+            y += image.height + SNAPSHOT_GAP;
+        }
+        boxes
     }
 
     /// Width over height, as the box is laid out.
@@ -78,5 +112,26 @@ mod tests {
         let (cx, cy) = image.frame.center(image.height);
         assert!((cx - 100.0).abs() < 1e-3 && (cy - 100.0).abs() < 1e-3);
         assert!((image.aspect() - 2.0).abs() < 1e-3);
+        assert_eq!(image.source, None);
+    }
+
+    #[test]
+    fn a_column_stacks_the_boxes_around_the_centre() {
+        let assets = [
+            ("a.png".to_owned(), (100, 100)),
+            ("b.png".to_owned(), (100, 200)),
+        ];
+        let column = ImageBox::column(&assets, Some("notein://x"), 0.0, 0.0);
+        assert_eq!(column.len(), 2);
+        assert!(
+            column
+                .iter()
+                .all(|b| b.source.as_deref() == Some("notein://x"))
+        );
+        let (top, bottom) = (&column[0], &column[1]);
+        assert!((top.frame.y + top.height + SNAPSHOT_GAP - bottom.frame.y).abs() < 1e-3);
+        let total = top.height + SNAPSHOT_GAP + bottom.height;
+        assert!(total.mul_add(0.5, top.frame.y).abs() < 1e-3);
+        assert!(top.frame.width.mul_add(0.5, top.frame.x).abs() < 1e-3);
     }
 }

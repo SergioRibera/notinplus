@@ -138,6 +138,45 @@ impl Board {
         true
     }
 
+    /// Put the pictures of a snapshot of `source` (`assets`, each with its
+    /// pixel size) on the active layer as a column centred on what the
+    /// pane shows, as one undo step. Nothing gets selected: the text box
+    /// that asked for them may still be under edit. Returns `false` when
+    /// the canvas cannot take them, as [`Self::add_image_at_view_center`].
+    #[sismo::function("canvas_image::add_snapshots")]
+    pub fn add_snapshots_at_view_center(
+        &mut self,
+        assets: &[(String, (u32, u32))],
+        source: Option<&str>,
+    ) -> bool {
+        let (sw, sh) = self.last_surface_size;
+        if assets.is_empty()
+            || self.is_read_only()
+            || sw <= 0.0
+            || sh <= 0.0
+            || self.viewport.scale <= 0.0
+        {
+            return false;
+        }
+        let layer_id = self.doc.active_layer;
+        if !self
+            .doc
+            .layer(layer_id)
+            .is_some_and(|layer| layer.visible && !layer.locked)
+        {
+            return false;
+        }
+        let cx = sw.mul_add(0.5, -self.viewport.tx) / self.viewport.scale;
+        let cy = sh.mul_add(0.5, -self.viewport.ty) / self.viewport.scale;
+        let ops = ImageBox::column(assets, source, cx, cy)
+            .into_iter()
+            .map(|image| DocOp::AddImage { layer_id, image })
+            .collect();
+        sismo::counter!("canvas_image.snapshots_added", assets.len());
+        self.apply_ops_as_one(ops);
+        true
+    }
+
     /// Topmost image under the world point, on a visible and unlocked
     /// layer.
     #[sismo::function("canvas_image::editable_at")]

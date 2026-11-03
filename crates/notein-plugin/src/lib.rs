@@ -96,7 +96,7 @@ pub use info::PluginInfo;
 pub use kind::{
     ActionEffect, Attachment, ChipView, DocumentKind, ExportError, ExportFile, ExportValues, Hit,
     IndexReport, KindAction, KindChoice, KindColor, KindInfo, Mark, OutlineIcon, OutlineNode,
-    Quote, SearchQuery, SelectionSupport,
+    Quote, SearchQuery, SelectionSupport, Snapshot,
 };
 pub use loader::{LoaderError, SDK_ABI_VERSION};
 pub use manifest::{ManifestError, ManifestLibrary, ManifestRequirement, PluginManifest};

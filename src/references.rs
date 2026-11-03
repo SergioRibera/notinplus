@@ -131,14 +131,24 @@ pub fn display(src: &SourceRef, data: Option<&LibraryData>) -> ChipDisplay {
     }
 }
 
+/// What picking a `/ref` suggestion puts in the document.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Insert {
+    /// A chip linking to the target.
+    Reference,
+    /// The target's text, as a quote.
+    Text,
+    /// The target as pictures (a PDF page).
+    Image,
+}
+
 /// One `/ref` suggestion.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Suggestion {
     pub label: String,
     pub subtitle: String,
     pub target: SourceRef,
-    /// Picking it inserts what the target holds instead of a chip.
-    pub quote: bool,
+    pub insert: Insert,
 }
 
 /// What `/ref query` offers: documents by name, then places inside them
@@ -163,7 +173,7 @@ pub fn suggestions(query: &str, data: Option<&LibraryData>) -> Vec<Suggestion> {
                         anchor: Vec::new(),
                         selection: None,
                     },
-                    quote: false,
+                    insert: Insert::Reference,
                 })
                 .collect()
         })
@@ -175,7 +185,9 @@ pub fn suggestions(query: &str, data: Option<&LibraryData>) -> Vec<Suggestion> {
     for found in results {
         let label = crate::plugins::kind_info(&found.kind)
             .map_or_else(String::new, |k| k.label.into_owned());
-        let quotes = crate::plugins::kind(&found.kind).is_some_and(|kind| kind.quotes());
+        let kind = crate::plugins::kind(&found.kind);
+        let quotes = kind.as_ref().is_some_and(|kind| kind.quotes());
+        let snapshots = kind.as_ref().is_some_and(|kind| kind.snapshots());
         for (rank, hit) in found.hits.into_iter().enumerate() {
             let target = SourceRef::Plugin {
                 plugin_id: found.kind.clone(),
@@ -183,25 +195,35 @@ pub fn suggestions(query: &str, data: Option<&LibraryData>) -> Vec<Suggestion> {
                 anchor: hit.anchor,
                 selection: None,
             };
-            if quotes && rank < QUOTED_PER_KIND {
+            if (quotes || snapshots) && rank < QUOTED_PER_KIND {
                 out.push(Suggestion {
                     label: hit.title.clone(),
                     subtitle: tr!("references-suggest-reference", "kind" => label.as_str()),
                     target: target.clone(),
-                    quote: false,
+                    insert: Insert::Reference,
                 });
-                out.push(Suggestion {
-                    label: hit.title,
-                    subtitle: tr!("references-suggest-insert-text", "kind" => label.as_str()),
-                    target,
-                    quote: true,
-                });
+                if quotes {
+                    out.push(Suggestion {
+                        label: hit.title.clone(),
+                        subtitle: tr!("references-suggest-insert-text", "kind" => label.as_str()),
+                        target: target.clone(),
+                        insert: Insert::Text,
+                    });
+                }
+                if snapshots {
+                    out.push(Suggestion {
+                        label: hit.title,
+                        subtitle: tr!("references-suggest-insert-image", "kind" => label.as_str()),
+                        target,
+                        insert: Insert::Image,
+                    });
+                }
             } else {
                 out.push(Suggestion {
                     label: hit.title,
                     subtitle: format!("{label} · {}", hit.snippet),
                     target,
-                    quote: false,
+                    insert: Insert::Reference,
                 });
             }
         }

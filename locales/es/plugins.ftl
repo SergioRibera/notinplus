@@ -42,5 +42,7 @@ plugins-pdf-pages = { $count ->
 }
 plugins-pdf-chip-excerpt = PDF p. { $page } · fragmento
 plugins-pdf-chip-page = { $name } p. { $page }
+plugins-pdf-chip-pages = { $name } p. { $first }–{ $last }
+plugins-pdf-chip-section = { $section } · { $pages }
 plugins-pdf-entry-subtitle = Importar y escribir encima
 plugins-pdf-pick-title = Elige un PDF

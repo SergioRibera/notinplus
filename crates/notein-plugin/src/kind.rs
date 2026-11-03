@@ -236,6 +236,19 @@ pub struct Quote {
     pub source: String,
 }
 
+/// A place inside a document rendered as a picture, to be put in another
+/// document as it looks now (a PDF page).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Snapshot {
+    /// PNG bytes.
+    pub png: Vec<u8>,
+    /// Pixel size of `png`.
+    pub width: u32,
+    pub height: u32,
+    /// Where it comes from, as a reader would cite it.
+    pub source: String,
+}
+
 /// What the selection bar offers inside this kind's documents.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)] // independent capabilities of a kind
@@ -690,6 +703,33 @@ pub trait DocumentKind: Send + Sync + 'static {
     fn quote(&self, doc: DocMeta<'_>, anchor: &Self::Anchor) -> Option<Quote> {
         let _ = (doc, anchor);
         None
+    }
+
+    /// Whether a quote of this kind may keep following its source. Kinds
+    /// whose content never changes once written (a PDF file) answer
+    /// `false`, and their quotes are always copied.
+    fn quotes_live(&self) -> bool {
+        true
+    }
+
+    /// Whether [`Self::snapshot`] can return pictures. Kinds that cannot
+    /// never get asked, and nobody is offered to picture them.
+    fn snapshots(&self) -> bool {
+        false
+    }
+
+    /// `anchor` inside `doc` as pictures, one per page or figure, in
+    /// reading order. Empty when the place is gone or cannot be drawn.
+    /// Rendering may be slow; the host calls this off the UI thread.
+    fn snapshot(
+        &self,
+        doc: DocMeta<'_>,
+        content: &Self::Content,
+        attachment: Option<&[u8]>,
+        anchor: &Self::Anchor,
+    ) -> Vec<Snapshot> {
+        let _ = (doc, content, attachment, anchor);
+        Vec::new()
     }
 
     /// Something is about to link to `anchor` inside `doc`: keep that

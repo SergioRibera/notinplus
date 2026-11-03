@@ -8,11 +8,14 @@
 
 pub(crate) mod images;
 mod live;
+mod snapshot;
 
 pub use live::LIVE_QUOTE;
+pub use snapshot::SnapshotSink;
 
 use std::borrow::Cow;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use freya::prelude::*;
 use freya_markdown_editor::prelude::*;
@@ -23,7 +26,7 @@ use notein_ui_kit::theme::{Palette, palette};
 use notein_ui_kit::{RefChip, tokens};
 
 use crate::deep_link;
-use crate::references;
+use crate::references::{self, Insert};
 use crate::state::LibraryView;
 
 /// Editor theme for the active palette.
@@ -69,9 +72,25 @@ pub fn live_quotes() -> bool {
     crate::settings::SettingsStore::try_get().is_none_or(|s| s.read().notes.live_quotes)
 }
 
-/// A configured [`MarkdownEditor`] over `value`.
+/// A configured [`MarkdownEditor`] over `value`, with nowhere to keep
+/// pictures.
 pub fn editor(value: impl Into<Writable<String>>, controller: EditorController) -> MarkdownEditor {
     configure(MarkdownEditor::new(value).controller(controller))
+}
+
+/// [`editor`] for a text box of `board`, which belongs to `item`: pictures
+/// of other documents land on the canvas beside the box.
+pub fn editor_on_board(
+    value: impl Into<Writable<String>>,
+    controller: EditorController,
+    item: Option<crate::library::model::ItemId>,
+    board: Arc<Mutex<crate::canvas::Board>>,
+) -> MarkdownEditor {
+    let sink = item.map_or(SnapshotSink::Nowhere, |item| SnapshotSink::Board {
+        item,
+        board,
+    });
+    configure_with(MarkdownEditor::new(value).controller(controller), sink)
 }
 
 /// [`configure`] for the body of `item`: its images load from the item's
@@ -83,14 +102,22 @@ pub fn configure_for(
     item: crate::library::model::ItemId,
 ) -> MarkdownEditor {
     let images = images::ItemImages::new(item);
-    configure(editor)
+    configure_with(editor, SnapshotSink::Note(item))
         .image_picker(images.picker())
         .decorator(images)
 }
 
-/// Set `editor` up the way every editor in Notein is.
-#[sismo::function("editor::configure")]
+/// Set `editor` up the way every editor in Notein is, with nowhere to
+/// keep pictures of other documents.
+#[must_use]
 pub fn configure(editor: MarkdownEditor) -> MarkdownEditor {
+    configure_with(editor, SnapshotSink::Nowhere)
+}
+
+/// Set `editor` up the way every editor in Notein is; pictures of other
+/// documents ("Insert as image") go to `sink`.
+#[sismo::function("editor::configure")]
+pub fn configure_with(editor: MarkdownEditor, sink: SnapshotSink) -> MarkdownEditor {
     let editor = editor
         .theme(theme(&palette()))
         // Menus stay in what the system bars and the keyboard leave visible.
@@ -117,7 +144,8 @@ pub fn configure(editor: MarkdownEditor) -> MarkdownEditor {
                 let data = LibraryView::get().data();
                 references::suggestions(query, data.as_deref())
                     .into_iter()
-                    .map(suggestion)
+                    .filter(|found| found.insert != Insert::Image || sink.takes_pictures())
+                    .map(|found| suggestion(found, &sink))
                     .collect()
             })
             .keyword("ref"),
@@ -131,9 +159,11 @@ pub fn configure(editor: MarkdownEditor) -> MarkdownEditor {
 }
 
 #[sismo::function("editor::suggestion")]
-fn suggestion(found: references::Suggestion) -> Suggestion {
-    if found.quote {
-        return quote_suggestion(found);
+fn suggestion(found: references::Suggestion, sink: &SnapshotSink) -> Suggestion {
+    match found.insert {
+        Insert::Reference => {}
+        Insert::Text => return quote_suggestion(found),
+        Insert::Image => return snapshot_suggestion(found, sink.clone()),
     }
     let label = found.label.clone();
     let url = found.target.to_url();
@@ -173,7 +203,13 @@ fn suggestion(found: references::Suggestion) -> Suggestion {
 #[sismo::function("editor::quote_suggestion")]
 fn quote_suggestion(found: references::Suggestion) -> Suggestion {
     let target = found.target;
-    let live = live_quotes();
+    let kind_lives = match &target {
+        SourceRef::Plugin { plugin_id, .. } => {
+            crate::plugins::kind(plugin_id).is_none_or(|kind| kind.quotes_live())
+        }
+        SourceRef::Canvas { .. } | SourceRef::External { .. } => true,
+    };
+    let live = live_quotes() && kind_lives;
     let run = SuggestionRun::new(move |controller| {
         sismo::scope!("editor::insert_quote");
         let data = LibraryView::get().data();
@@ -205,6 +241,18 @@ fn quote_suggestion(found: references::Suggestion) -> Suggestion {
     Suggestion::new(found.label, SuggestionAction::Run(run))
         .detail(detail)
         .icon("❝")
+}
+
+/// Entry that puts what `found` points at in the document as pictures.
+#[sismo::function("editor::snapshot_suggestion")]
+fn snapshot_suggestion(found: references::Suggestion, sink: SnapshotSink) -> Suggestion {
+    let target = found.target;
+    let run = SuggestionRun::new(move |controller| {
+        snapshot::insert(target.clone(), &sink, controller);
+    });
+    Suggestion::new(found.label, SuggestionAction::Run(run))
+        .detail(tr!("editor-snapshot-copy", "source" => found.subtitle))
+        .icon("▣")
 }
 
 /// Close the surface the editor sits in before a chip navigates away

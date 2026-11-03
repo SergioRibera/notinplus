@@ -247,9 +247,16 @@ impl ItemImages {
                 return Ok(None);
             }
         };
+        self.store(picked.bytes).await.map(Some)
+    }
+
+    /// Clean `raw` off the UI thread and store it in the item.
+    #[allow(clippy::future_not_send, reason = "runs on the UI executor")]
+    #[sismo::function("images::store")]
+    pub(crate) async fn store(&self, raw: Vec<u8>) -> Result<StoredImage, ImageError> {
         let root = self.root.clone();
         let stored = off_thread(move || {
-            let clean = CleanImage::from_raw(&picked.bytes)?;
+            let clean = CleanImage::from_raw(&raw)?;
             let name = clean.file_name();
             let dir = root.join(ASSETS_DIR);
             std::fs::create_dir_all(&dir)?;
@@ -267,21 +274,21 @@ impl ItemImages {
         })
         .await?;
         crate::sync::asset_added(self.item, &stored.name);
-        Ok(Some(stored))
+        Ok(stored)
     }
 }
 
 /// An image just stored in an item's `assets/` folder.
-struct StoredImage {
+pub(crate) struct StoredImage {
     /// Link relative to the item, for markdown bodies.
-    url: String,
+    pub(crate) url: String,
     /// File name inside `assets/`.
-    name: String,
+    pub(crate) name: String,
     /// Size in pixels.
-    size: (u32, u32),
+    pub(crate) size: (u32, u32),
 }
 
-fn report_add_failure(err: &ImageError) {
+pub(crate) fn report_add_failure(err: &ImageError) {
     log::warn!("adding an image: {err}");
     let text = tr!("errors-image-add", "reason" => err.user_message());
     Toasts::get().show(Toast::new(text).tone(ToastTone::Error));

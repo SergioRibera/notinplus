@@ -1045,6 +1045,7 @@ mod tests {
                 frame: crate::text_box::TextFrame::at(2.0, 2.0),
                 height: 50.0,
                 asset: "a.png".into(),
+                source: None,
             },
         });
 

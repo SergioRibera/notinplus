@@ -135,6 +135,7 @@ mod tests {
                 },
                 height: 50.0,
                 asset: "a.png".into(),
+                source: None,
             },
         });
         assert_eq!(bounds(&doc), Some((10.0, 20.0, 110.0, 70.0)));

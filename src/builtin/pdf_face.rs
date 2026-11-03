@@ -172,11 +172,9 @@ fn pdf_anchor_source(item: ItemId) -> AnchorSourceRef {
     Arc::new(move |att| {
         use notein_plugin::payload::Payload;
         sismo::scope!("pdf_face::anchor_source");
-        let anchor = crate::plugins::builtin::pdf::PdfAnchor {
-            page: u32::try_from(att.page.0).unwrap_or(u32::MAX),
-            text: None,
-            range: None,
-        }
+        let anchor = crate::plugins::builtin::pdf::PdfAnchor::page(
+            u32::try_from(att.page.0).unwrap_or(u32::MAX),
+        )
         .to_bytes();
         SourceRef::Plugin {
             plugin_id: crate::plugins::builtin::pdf::KIND.to_owned(),
