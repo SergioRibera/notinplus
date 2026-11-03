@@ -292,6 +292,61 @@ impl Component for AnnotationSidebar {
     }
 }
 
+/// The quoted text with a bar in the highlight colour down its left, as
+/// tall as the text.
+#[derive(Clone, PartialEq)]
+struct Quote {
+    text: String,
+    dot: Color,
+    /// In the sidebar: more lines, and inset a step darker.
+    expanded: bool,
+}
+
+impl Component for Quote {
+    #[sismo::function("annotation::quote")]
+    fn render(&self) -> impl IntoElement {
+        let p = palette();
+        // Nothing in the flow gives a sibling the height of a label (a
+        // filled or flex bar grows to the popover), so the bar takes the
+        // height the text turns out to have.
+        let mut height = use_state(|| 0.0_f32);
+        rect()
+            .width(Size::fill())
+            .padding((10.0, 12.0))
+            .corner_radius(tokens::radius::MD)
+            // Inset from what is around it: the popover card, or the
+            // sidebar a step darker.
+            .background(if self.expanded { p.s2 } else { p.s1 })
+            .child(
+                rect()
+                    .width(Size::fill())
+                    .horizontal()
+                    .content(Content::Flex)
+                    .spacing(10.0)
+                    .child(
+                        rect()
+                            .width(Size::px(3.0))
+                            .height(Size::px(*height.read()))
+                            .corner_radius(1.5)
+                            .background(self.dot),
+                    )
+                    .child(
+                        label()
+                            .width(Size::flex(1.0))
+                            .text(self.text.clone())
+                            .font_size(tokens::text::BODY)
+                            .font_slant(FontSlant::Italic)
+                            .color(p.t2)
+                            .max_lines(if self.expanded { 6 } else { 3 })
+                            .text_overflow(TextOverflow::Ellipsis)
+                            .on_sized(move |e: Event<SizedEventData>| {
+                                height.set_if_modified(e.area.height());
+                            }),
+                    ),
+            )
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct AnnotationCard {
     id: AnnotationId,
@@ -373,41 +428,13 @@ impl AnnotationCard {
     }
 
     /// The quoted text, with a bar in the highlight colour.
-    fn quote(self, quote: String, dot: Color) -> Rect {
-        let p = palette();
-        rect()
-            .width(Size::fill())
-            .padding((10.0, 12.0))
-            .corner_radius(tokens::radius::MD)
-            // Inset from what is around it: the popover card, or the
-            // sidebar a step darker.
-            .background(if self.expanded { p.s2 } else { p.s1 })
-            // The bar is positioned absolutely so it takes the height the
-            // text gives the row, instead of the row taking the bar's: a
-            // flex or filled bar in the flow stretches to the whole popover.
-            .child(
-                rect()
-                    .width(Size::fill())
-                    .padding((0.0, 0.0, 0.0, 13.0))
-                    .child(
-                        rect()
-                            .position(Position::new_absolute().top(0.0).left(0.0))
-                            .width(Size::px(3.0))
-                            .height(Size::fill())
-                            .corner_radius(1.5)
-                            .background(dot),
-                    )
-                    .child(
-                        label()
-                            .width(Size::fill())
-                            .text(quote)
-                            .font_size(tokens::text::BODY)
-                            .font_slant(FontSlant::Italic)
-                            .color(p.t2)
-                            .max_lines(if self.expanded { 6 } else { 3 })
-                            .text_overflow(TextOverflow::Ellipsis),
-                    ),
-            )
+    fn quote(self, quote: String, dot: Color) -> Element {
+        Quote {
+            text: quote,
+            dot,
+            expanded: self.expanded,
+        }
+        .into_element()
     }
 
     /// The five inks, another colour and no colour.
