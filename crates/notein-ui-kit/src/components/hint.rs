@@ -52,10 +52,11 @@ impl HintState {
         }
         self.cancel();
         let mut shown = self.shown;
-        self.task.set(Some(spawn(traced!("task::kit::hint_delay", async move {
-            timer(DELAY).await;
-            shown.set_if_modified(true);
-        }))));
+        self.task
+            .set(Some(spawn(traced!("task::kit::hint_delay", async move {
+                timer(DELAY).await;
+                shown.set_if_modified(true);
+            }))));
     }
 
     /// The pointer left or pressed.

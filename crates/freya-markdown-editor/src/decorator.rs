@@ -254,7 +254,10 @@ impl Decorators {
 
     /// Parser hook built from [`Self::claims_link`].
     #[must_use]
-    #[cfg_attr(feature = "sismo", sismo::function("markdown::decorators_embed_filter"))]
+    #[cfg_attr(
+        feature = "sismo",
+        sismo::function("markdown::decorators_embed_filter")
+    )]
     pub fn embed_filter(&self) -> Option<EmbedFilter> {
         if self.0.is_empty() {
             return None;
@@ -264,7 +267,10 @@ impl Decorators {
     }
 
     #[must_use]
-    #[cfg_attr(feature = "sismo", sismo::function("markdown::decorators_render_embed"))]
+    #[cfg_attr(
+        feature = "sismo",
+        sismo::function("markdown::decorators_render_embed")
+    )]
     pub fn render_embed(&self, embed: &EmbedContext<'_>) -> Option<Element> {
         self.0
             .iter()
@@ -291,7 +297,10 @@ impl Decorators {
     }
 
     #[must_use]
-    #[cfg_attr(feature = "sismo", sismo::function("markdown::decorators_render_code_block"))]
+    #[cfg_attr(
+        feature = "sismo",
+        sismo::function("markdown::decorators_render_code_block")
+    )]
     pub fn render_code_block(&self, code: &CodeContext<'_>) -> Option<Element> {
         self.0
             .iter()
@@ -299,7 +308,10 @@ impl Decorators {
     }
 
     #[must_use]
-    #[cfg_attr(feature = "sismo", sismo::function("markdown::decorators_render_image"))]
+    #[cfg_attr(
+        feature = "sismo",
+        sismo::function("markdown::decorators_render_image")
+    )]
     pub fn render_image(&self, image: &ImageContext<'_>) -> Option<Element> {
         self.0
             .iter()
@@ -315,7 +327,10 @@ impl Decorators {
     }
 
     #[must_use]
-    #[cfg_attr(feature = "sismo", sismo::function("markdown::decorators_render_preview"))]
+    #[cfg_attr(
+        feature = "sismo",
+        sismo::function("markdown::decorators_render_preview")
+    )]
     pub fn render_preview(&self, code: &CodeContext<'_>) -> Option<Element> {
         self.0
             .iter()
@@ -323,7 +338,10 @@ impl Decorators {
     }
 
     #[must_use]
-    #[cfg_attr(feature = "sismo", sismo::function("markdown::decorators_render_transclusion"))]
+    #[cfg_attr(
+        feature = "sismo",
+        sismo::function("markdown::decorators_render_transclusion")
+    )]
     pub fn render_transclusion(&self, transclusion: &TransclusionContext<'_>) -> Option<Element> {
         self.0
             .iter()

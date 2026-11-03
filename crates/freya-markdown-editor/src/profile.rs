@@ -1,9 +1,9 @@
 //! Profiler helpers that name work after the block kind it is for. Without
 //! the `sismo` feature they compile to nothing.
 
-use crate::document::{BlockKind, Document};
 #[cfg(feature = "sismo")]
 use crate::document::Atom;
+use crate::document::{BlockKind, Document};
 
 /// Runs `build` inside a span named after `kind`.
 #[cfg(feature = "sismo")]

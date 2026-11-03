@@ -615,7 +615,10 @@ where
 /// is an already-built [`ColorWheel`] element — pass `Some(...)` when
 /// `picker_open` is `true`, `None` otherwise; the strip anchors it
 /// beneath the special slot so it floats instead of pushing content.
-#[cfg_attr(feature = "sismo", sismo::function("kit::color_wheel_color_swatch_strip"))]
+#[cfg_attr(
+    feature = "sismo",
+    sismo::function("kit::color_wheel_color_swatch_strip")
+)]
 pub fn color_swatch_strip<PresetCb, SpecialCb, Picker>(
     selected: Option<Color>,
     special: Option<Color>,
