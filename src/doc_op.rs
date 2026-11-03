@@ -7,6 +7,7 @@
 use crate::bookmark::{Bookmark, Rgba, SourceRef, StrokeAnchor, TimestampMs};
 use crate::brush::{BrushPreset, Stroke};
 use crate::ids::{BookmarkId, StrokeId};
+use crate::image_box::{ImageBox, ImageBoxId};
 use crate::ink_glyph::{InkGlyph, InkGlyphId};
 use crate::text_box::{TextBox, TextBoxId, TextFrame};
 
@@ -94,6 +95,20 @@ pub enum DocOp {
     },
     DeleteText {
         id: TextBoxId,
+    },
+    /// Insert an image on top of `layer_id`'s other images.
+    AddImage {
+        layer_id: u32,
+        image: ImageBox,
+    },
+    /// Move, resize or rotate an image.
+    SetImageFrame {
+        id: ImageBoxId,
+        frame: TextFrame,
+        height: f32,
+    },
+    DeleteImage {
+        id: ImageBoxId,
     },
     /// Insert a recognized handwritten character on `layer_id`.
     AddGlyph {

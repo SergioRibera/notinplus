@@ -14,7 +14,10 @@ impl Board {
             self.previous_preset = Some(current);
         }
         self.set_current_preset(preset);
-        if matches!(self.input_mode(), InputMode::Lasso | InputMode::Text) {
+        if matches!(
+            self.input_mode(),
+            InputMode::Lasso | InputMode::Text | InputMode::Image
+        ) {
             self.clear_selection();
             self.set_input_mode(InputMode::Draw);
         }

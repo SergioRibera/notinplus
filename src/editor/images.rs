@@ -12,16 +12,18 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{self, Cursor, Read};
 use std::path::{Component as PathPart, Path, PathBuf};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use freya::prelude::*;
 use freya_markdown_editor::prelude::{
-    Decorator, EditorColors, EditorController, ImageContext, ImagePicker, ImageRequest,
+    Decorator, EditorColors, ImageContext, ImagePicker, ImageRequest,
 };
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader};
 use notein_i18n::tr;
 use notein_plugin::UserMessage;
 use notein_ui_kit::{Toast, ToastTone, Toasts};
 
+use crate::canvas::Board;
 use crate::failure::NetFailureExt;
 
 use crate::library::model::ItemId;
@@ -101,6 +103,8 @@ impl From<reqwest::Error> for ImageError {
 pub(crate) struct CleanImage {
     pub(crate) bytes: Vec<u8>,
     pub(crate) extension: &'static str,
+    /// Size in pixels after capping.
+    pub(crate) size: (u32, u32),
 }
 
 impl CleanImage {
@@ -135,7 +139,11 @@ impl CleanImage {
             image.write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)?;
             "png"
         };
-        Ok(Self { bytes, extension })
+        Ok(Self {
+            bytes,
+            extension,
+            size: (image.width(), image.height()),
+        })
     }
 
     /// File name derived from the content, so adding the same image twice
@@ -186,64 +194,97 @@ impl ItemImages {
     /// Picker that stores chosen images in this item.
     #[must_use]
     pub(crate) fn picker(&self) -> ImagePicker {
-        let (item, root) = (self.item, self.root.clone());
+        let images = self.clone();
         ImagePicker::new(move |controller, request| {
-            let root = root.clone();
+            let images = images.clone();
             spawn_in_window(async move {
-                if let Err(err) = add_picked(item, &root, controller, request).await {
-                    log::warn!("adding an image: {err}");
-                    let text = tr!("errors-image-add", "reason" => err.user_message());
-                    Toasts::get().show(Toast::new(text).tone(ToastTone::Error));
+                let added = images.pick_and_store(&tr!("editor-image-pick-title")).await;
+                match added {
+                    Ok(Some(stored)) => match request {
+                        ImageRequest::Insert => controller.insert_image(&stored.url, ""),
+                        ImageRequest::Replace(slot) => {
+                            controller.set_image_url(slot, &stored.url);
+                        }
+                    },
+                    Ok(None) => {}
+                    Err(err) => report_add_failure(&err),
                 }
             });
         })
     }
+
+    /// Ask for an image and put it on `board`'s canvas, centred on what
+    /// the pane shows.
+    pub(crate) fn add_to_canvas(&self, board: Arc<Mutex<Board>>) {
+        let images = self.clone();
+        spawn_in_window(async move {
+            match images.pick_and_store(&tr!("canvas-image-pick-title")).await {
+                Ok(Some(stored)) => {
+                    crate::canvas::lock(&board).add_image_at_view_center(&stored.name, stored.size);
+                }
+                Ok(None) => {}
+                Err(err) => report_add_failure(&err),
+            }
+        });
+    }
+
+    /// Ask for a file, clean it off the UI thread and store it in the
+    /// item. `None` when the person picked nothing.
+    #[allow(clippy::future_not_send, reason = "runs on the UI executor")]
+    #[sismo::function("images::pick_and_store")]
+    async fn pick_and_store(&self, title: &str) -> Result<Option<StoredImage>, ImageError> {
+        let picked = crate::files::pick(
+            title,
+            &["png", "jpg", "jpeg", "webp", "gif"],
+            &["image/png", "image/jpeg", "image/webp", "image/gif"],
+        )
+        .await;
+        let picked = match picked {
+            Ok(Some(picked)) => picked,
+            Ok(None) => return Ok(None),
+            Err(err) => {
+                log::warn!("image picker: {err}");
+                return Ok(None);
+            }
+        };
+        let root = self.root.clone();
+        let stored = off_thread(move || {
+            let clean = CleanImage::from_raw(&picked.bytes)?;
+            let name = clean.file_name();
+            let dir = root.join(ASSETS_DIR);
+            std::fs::create_dir_all(&dir)?;
+            let path = dir.join(&name);
+            if !path.exists() {
+                let partial = dir.join(format!("{name}.tmp"));
+                std::fs::write(&partial, &clean.bytes)?;
+                std::fs::rename(&partial, &path)?;
+            }
+            Ok(StoredImage {
+                url: format!("{ASSETS_DIR}/{name}"),
+                name,
+                size: clean.size,
+            })
+        })
+        .await?;
+        crate::sync::asset_added(self.item, &stored.name);
+        Ok(Some(stored))
+    }
 }
 
-/// Ask for a file, clean it off the UI thread, store it and link it.
-#[allow(clippy::future_not_send, reason = "runs on the UI executor")]
-#[sismo::function("images::add_picked")]
-async fn add_picked(
-    item: ItemId,
-    root: &Path,
-    controller: EditorController,
-    request: ImageRequest,
-) -> Result<(), ImageError> {
-    let picked = crate::files::pick(
-        &tr!("editor-image-pick-title"),
-        &["png", "jpg", "jpeg", "webp", "gif"],
-        &["image/png", "image/jpeg", "image/webp", "image/gif"],
-    )
-    .await;
-    let picked = match picked {
-        Ok(Some(picked)) => picked,
-        Ok(None) => return Ok(()),
-        Err(err) => {
-            log::warn!("image picker: {err}");
-            return Ok(());
-        }
-    };
-    let root = root.to_owned();
-    let (url, name) = off_thread(move || {
-        let clean = CleanImage::from_raw(&picked.bytes)?;
-        let name = clean.file_name();
-        let dir = root.join(ASSETS_DIR);
-        std::fs::create_dir_all(&dir)?;
-        let path = dir.join(&name);
-        if !path.exists() {
-            let partial = dir.join(format!("{name}.tmp"));
-            std::fs::write(&partial, &clean.bytes)?;
-            std::fs::rename(&partial, &path)?;
-        }
-        Ok((format!("{ASSETS_DIR}/{name}"), name))
-    })
-    .await?;
-    crate::sync::asset_added(item, &name);
-    match request {
-        ImageRequest::Insert => controller.insert_image(&url, ""),
-        ImageRequest::Replace(slot) => controller.set_image_url(slot, &url),
-    }
-    Ok(())
+/// An image just stored in an item's `assets/` folder.
+struct StoredImage {
+    /// Link relative to the item, for markdown bodies.
+    url: String,
+    /// File name inside `assets/`.
+    name: String,
+    /// Size in pixels.
+    size: (u32, u32),
+}
+
+fn report_add_failure(err: &ImageError) {
+    log::warn!("adding an image: {err}");
+    let text = tr!("errors-image-add", "reason" => err.user_message());
+    Toasts::get().show(Toast::new(text).tone(ToastTone::Error));
 }
 
 /// Run `work` on its own thread and wait for it without blocking the UI.
@@ -431,69 +472,118 @@ impl NoteImage {
     }
 }
 
+/// Load `source` in the background, through the in-memory cache. Keeps
+/// retrying while more of `item`'s files arrive, since an image someone
+/// just added may still be on its way.
+#[sismo::function("images::use_loaded")]
+fn use_loaded(item: ItemId, source: Option<Source>) -> State<Load> {
+    let cached = source
+        .as_ref()
+        .and_then(|source| LOADED.with(|loaded| loaded.borrow().get(source).cloned()));
+    let mut state = use_state(|| match (&source, cached) {
+        (_, Some(loaded)) => {
+            sismo::instant!("images::memory_cache_hit");
+            Load::Ready(loaded)
+        }
+        (Some(_), None) => {
+            sismo::instant!("images::memory_cache_miss");
+            Load::Loading
+        }
+        (None, None) => {
+            sismo::instant!("images::unresolved");
+            Load::Failed
+        }
+    });
+    use_hook(move || {
+        let Some(source) = source else {
+            return;
+        };
+        spawn(async move {
+            let arrivals = crate::plugins::content::watch_assets(item);
+            loop {
+                if matches!(*state.peek(), Load::Ready(_)) {
+                    return;
+                }
+                let wanted = source.clone();
+                sismo::instant!("images::load_attempt");
+                match off_thread(move || load(&wanted)).await {
+                    Ok(loaded) => {
+                        sismo::scope!("images::loaded");
+                        let loaded = Rc::new(loaded);
+                        LOADED.with(|cache| {
+                            let mut cache = cache.borrow_mut();
+                            if cache.len() >= CACHE_LIMIT {
+                                cache.clear();
+                            }
+                            cache.insert(source, loaded.clone());
+                        });
+                        state.set(Load::Ready(loaded));
+                        return;
+                    }
+                    Err(err) => {
+                        sismo::instant!("images::load_failed");
+                        log::warn!("{err}");
+                        state.set(Load::Failed);
+                    }
+                }
+                if arrivals.recv_async().await.is_err() {
+                    return;
+                }
+            }
+        });
+    });
+    state
+}
+
+/// One file of an item's `assets/` folder, filling its parent (canvas
+/// images). Shows a placeholder while loading and a muted icon when the
+/// file cannot be read.
+#[derive(Clone, PartialEq)]
+pub(crate) struct AssetImage {
+    pub(crate) item: ItemId,
+    /// File name inside `assets/`.
+    pub(crate) name: String,
+}
+
+impl Component for AssetImage {
+    #[sismo::function("images::asset_image")]
+    fn render(&self) -> impl IntoElement {
+        let images = ItemImages::new(self.item);
+        let state = use_loaded(
+            self.item,
+            images.resolve(&format!("{ASSETS_DIR}/{}", self.name)),
+        );
+        let p = notein_ui_kit::palette();
+        let placeholder = |icon: Bytes| {
+            rect()
+                .width(Size::fill())
+                .height(Size::fill())
+                .background(p.s2)
+                .center()
+                .child(
+                    SvgViewer::new(icon)
+                        .color(p.t3)
+                        .width(Size::px(22.))
+                        .height(Size::px(22.)),
+                )
+                .into_element()
+        };
+        match &*state.read() {
+            Load::Ready(loaded) => ImageViewer::new((loaded.key, loaded.bytes.clone()))
+                .width(Size::fill())
+                .height(Size::fill())
+                .into_element(),
+            Load::Loading => placeholder(freya::icons::lucide::image()),
+            Load::Failed => placeholder(freya::icons::lucide::image_off()),
+        }
+    }
+}
+
 impl Component for NoteImage {
     #[sismo::function("images::note_image")]
     fn render(&self) -> impl IntoElement {
-        let source = self.source.clone();
-        let cached = source
-            .as_ref()
-            .and_then(|source| LOADED.with(|loaded| loaded.borrow().get(source).cloned()));
         use_drop(|| sismo::instant!("images::note_image_drop"));
-        let mut state = use_state(|| match (&source, cached) {
-            (_, Some(loaded)) => {
-                sismo::instant!("images::memory_cache_hit");
-                Load::Ready(loaded)
-            }
-            (Some(_), None) => {
-                sismo::instant!("images::memory_cache_miss");
-                Load::Loading
-            }
-            (None, None) => {
-                sismo::instant!("images::unresolved");
-                Load::Failed
-            }
-        });
-        let item = self.item;
-        use_hook(move || {
-            let Some(source) = source else {
-                return;
-            };
-            spawn(async move {
-                // An image someone just added may still be on its way: try
-                // again whenever more of the item's files arrive.
-                let arrivals = crate::plugins::content::watch_assets(item);
-                loop {
-                    if matches!(*state.peek(), Load::Ready(_)) {
-                        return;
-                    }
-                    let wanted = source.clone();
-                    sismo::instant!("images::load_attempt");
-                    match off_thread(move || load(&wanted)).await {
-                        Ok(loaded) => {
-                            sismo::scope!("images::loaded");
-                            let loaded = Rc::new(loaded);
-                            LOADED.with(|cache| {
-                                let mut cache = cache.borrow_mut();
-                                if cache.len() >= CACHE_LIMIT {
-                                    cache.clear();
-                                }
-                                cache.insert(source, loaded.clone());
-                            });
-                            state.set(Load::Ready(loaded));
-                            return;
-                        }
-                        Err(err) => {
-                            sismo::instant!("images::load_failed");
-                            log::warn!("{err}");
-                            state.set(Load::Failed);
-                        }
-                    }
-                    if arrivals.recv_async().await.is_err() {
-                        return;
-                    }
-                }
-            });
-        });
+        let state = use_loaded(self.item, self.source.clone());
 
         match &*state.read() {
             Load::Ready(loaded) => {

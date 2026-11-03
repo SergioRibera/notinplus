@@ -53,6 +53,7 @@ pub mod follow;
 pub mod format;
 pub mod hooks;
 pub mod ids;
+pub mod image_box;
 pub mod ink;
 pub mod ink_glyph;
 pub mod library;

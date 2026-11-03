@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use super::{Board, InputMode};
 use crate::doc_op::DocOp;
+use crate::image_box::{ImageBox, ImageBoxId};
 use crate::text_box::{TEXT_FALLBACK_HEIGHT, TextBox, TextBoxId, TextFrame};
 
 /// Longest press that still counts as a tap.
@@ -57,14 +58,15 @@ pub(super) struct TextSession {
     current: TextBox,
 }
 
-/// Text boxes of one layer, as the UI lays them out above the layer's
-/// strokes.
+/// Text boxes and images of one layer, as the UI lays them out above the
+/// layer's strokes (images below the text boxes).
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextLayerView {
     /// Position of the layer in paint order (`0` paints first).
     pub index: usize,
     pub opacity: f32,
     pub texts: Vec<SceneText>,
+    pub images: Vec<ImageBox>,
 }
 
 /// A box to lay out, with its last measured height in world units.
@@ -74,18 +76,22 @@ pub struct SceneText {
     pub height: f32,
 }
 
-/// Everything the UI needs to lay text boxes out.
+/// Everything the UI needs to lay text boxes and images out.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct TextScene {
-    /// Visible layers holding at least one box, bottom to top.
+    /// Visible layers holding at least one box or image, bottom to top.
     pub layers: Vec<TextLayerView>,
     /// Box under edit, if any.
     pub editing: Option<TextBoxId>,
+    /// Image selected for moving, resizing or rotating, if any.
+    pub selected_image: Option<ImageBoxId>,
     /// Total layer count, so paint passes can cover the layers above the
     /// last one with text.
     pub layer_count: usize,
     /// Board is in [`InputMode::Text`]: boxes show their bounds.
     pub text_mode: bool,
+    /// Board is in [`InputMode::Image`]: images show their bounds.
+    pub image_mode: bool,
 }
 
 impl TextScene {
@@ -163,18 +169,26 @@ impl Board {
                 {
                     texts.push(scene_text(&s.current));
                 }
-                (!texts.is_empty()).then(|| TextLayerView {
+                let images: Vec<ImageBox> = layer
+                    .images
+                    .iter()
+                    .map(|image| self.session_image(image).clone())
+                    .collect();
+                (!texts.is_empty() || !images.is_empty()).then(|| TextLayerView {
                     index,
                     opacity: layer.opacity.clamp(0.0, 1.0),
                     texts,
+                    images,
                 })
             })
             .collect();
         TextScene {
             layers,
             editing: session.map(|s| s.current.id),
+            selected_image: self.image_session().map(|image| image.id),
             layer_count: self.doc.layers.len(),
             text_mode: self.input_mode == InputMode::Text,
+            image_mode: self.input_mode == InputMode::Image,
         }
     }
 
@@ -406,16 +420,22 @@ impl Board {
         self.tap = None;
     }
 
-    /// Finish the tracked press. Runs [`Self::text_tap`] when it was a tap
-    /// and the board is still in text mode.
+    /// Finish the tracked press. Runs [`Self::text_tap`] (or
+    /// [`Self::image_tap`]) when it was a tap and the board is still in
+    /// text (or image) mode.
     #[sismo::function("canvas_text::press_up")]
     pub fn text_press_up(&mut self, sx: f32, sy: f32) {
         let Some(mut tap) = self.tap.take() else {
             return;
         };
         tap.update(sx, sy);
-        if tap.is_tap() && self.input_mode == InputMode::Text {
-            self.text_tap(tap.start.0, tap.start.1);
+        if !tap.is_tap() {
+            return;
+        }
+        match self.input_mode {
+            InputMode::Text => self.text_tap(tap.start.0, tap.start.1),
+            InputMode::Image => self.image_tap(tap.start.0, tap.start.1),
+            InputMode::Draw | InputMode::Pan | InputMode::Select | InputMode::Lasso => {}
         }
     }
 

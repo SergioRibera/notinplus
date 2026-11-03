@@ -438,7 +438,7 @@ fn pen_down(sample: &PenSample, dt: &mut DtTracker) {
         InputMode::Pan => guard.pan_begin(lx, ly),
         // The selection overlay takes the pen in select mode.
         InputMode::Select => {}
-        InputMode::Text => guard.text_press_down(lx, ly),
+        InputMode::Text | InputMode::Image => guard.text_press_down(lx, ly),
         InputMode::Lasso => guard.lasso_down(lx, ly),
     }
     drop(guard);
@@ -469,7 +469,7 @@ fn pen_move(m: &istmo_pen::PenMove, dt: &mut DtTracker) {
     dt.advance(m.sample.timestamp_us);
     match guard.input_mode() {
         InputMode::Pan => guard.pan_move(lx, ly),
-        InputMode::Text => guard.text_press_move(lx, ly),
+        InputMode::Text | InputMode::Image => guard.text_press_move(lx, ly),
         InputMode::Lasso => guard.lasso_move(lx, ly),
         InputMode::Draw | InputMode::Select => {}
     }
@@ -497,7 +497,7 @@ fn pen_up(sample: &PenSample, dt: &mut DtTracker) {
                 guard.pan_end();
             }
             InputMode::Select => {}
-            InputMode::Text => guard.text_press_up(lx, ly),
+            InputMode::Text | InputMode::Image => guard.text_press_up(lx, ly),
             InputMode::Lasso => {
                 guard.lasso_move(lx, ly);
                 guard.lasso_up();
@@ -519,7 +519,7 @@ fn pen_cancel(dt: &mut DtTracker) {
             InputMode::Draw => guard.cancel(),
             InputMode::Pan => guard.pan_end(),
             InputMode::Select => {}
-            InputMode::Text => guard.text_press_cancel(),
+            InputMode::Text | InputMode::Image => guard.text_press_cancel(),
             InputMode::Lasso => guard.lasso_cancel(),
         }
     }

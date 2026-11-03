@@ -56,6 +56,7 @@ mod tools;
 mod touch;
 
 pub use lasso::Selection;
+mod image;
 mod text;
 
 pub use handwriting::LETTER_IDLE;
@@ -286,10 +287,13 @@ pub struct Board {
     last_surface_size: (f32, f32),
     /// Text box under edit. See [`text`].
     text_session: Option<text::TextSession>,
+    /// Image selected for moving, resizing or rotating. See [`image`].
+    image_session: Option<image::ImageSession>,
     /// Laid-out height of every text box the UI has measured, in world
     /// units.
     text_heights: HashMap<TextBoxId, f32>,
-    /// Press that may become a tap while in [`InputMode::Text`].
+    /// Press that may become a tap while in [`InputMode::Text`] or
+    /// [`InputMode::Image`].
     tap: Option<text::TapTrack>,
     /// Mode [`Board::toggle_text_mode`] returns to.
     mode_before_text: InputMode,
@@ -415,6 +419,9 @@ pub enum InputMode {
     /// Taps (pen, finger or mouse) create text boxes or open existing
     /// ones for editing; a finger drag still pans.
     Text,
+    /// Taps select images to move, resize or rotate them; a finger drag
+    /// still pans.
+    Image,
     /// The pen circles ink to select it; dragging the selection moves it.
     Lasso,
 }
@@ -470,6 +477,7 @@ impl Default for Board {
             }),
             last_surface_size: (0.0, 0.0),
             text_session: None,
+            image_session: None,
             text_heights: HashMap::new(),
             tap: None,
             mode_before_text: InputMode::Draw,
@@ -632,6 +640,9 @@ impl Board {
         }
         if self.input_mode == InputMode::Text {
             self.end_text_session();
+        }
+        if self.input_mode == InputMode::Image {
+            self.end_image_session();
         }
         if self.input_mode == InputMode::Lasso {
             self.lasso_cancel();
@@ -954,6 +965,7 @@ impl Board {
         self.erase_session = None;
         self.remote.clear();
         self.text_session = None;
+        self.image_session = None;
         self.text_heights.clear();
         self.touch_text_scene();
         self.undo.clear();
@@ -1217,6 +1229,7 @@ impl Board {
             return false;
         }
         self.end_text_session();
+        self.end_image_session();
         self.forget_handwriting("undo");
         let Some(entry) = self.undo.pop_undo() else {
             return false;
@@ -1252,6 +1265,7 @@ impl Board {
             return false;
         }
         self.end_text_session();
+        self.end_image_session();
         self.forget_handwriting("redo");
         let Some(entry) = self.undo.pop_redo() else {
             return false;
@@ -1786,7 +1800,10 @@ impl Board {
             | DocOp::AddText { .. }
             | DocOp::UpdateText { .. }
             | DocOp::SetTextFrame { .. }
-            | DocOp::DeleteText { .. }) => {
+            | DocOp::DeleteText { .. }
+            | DocOp::AddImage { .. }
+            | DocOp::SetImageFrame { .. }
+            | DocOp::DeleteImage { .. }) => {
                 self.doc.emit(op);
             }
         }
@@ -1891,6 +1908,7 @@ impl Board {
         sismo::counter!("canvas.eraser_circles", session.circles.len());
         sismo::counter!("canvas.erase_originals", session.originals.len());
         let mut texts: Vec<TextBoxId> = Vec::new();
+        let mut images: Vec<crate::image_box::ImageBoxId> = Vec::new();
         let mut glyphs: Vec<InkGlyphId> = Vec::new();
         {
             sismo::scope!("canvas::erase_hit_texts_glyphs");
@@ -1898,6 +1916,11 @@ impl Board {
                 for id in self.texts_touching_circle(cx, cy, r) {
                     if !texts.contains(&id) {
                         texts.push(id);
+                    }
+                }
+                for id in self.images_touching_circle(cx, cy, r) {
+                    if !images.contains(&id) {
+                        images.push(id);
                     }
                 }
             }
@@ -1911,6 +1934,7 @@ impl Board {
         }
         self.erase_glyphs(&glyphs);
         self.erase_texts(&texts);
+        self.erase_images(&images);
         if session.originals.is_empty() {
             return;
         }
@@ -2048,6 +2072,8 @@ impl Board {
         let Some((_, id)) = best else {
             if let Some(&text) = self.texts_touching_circle(x, y, radius).last() {
                 self.erase_texts(&[text]);
+            } else if let Some(&image) = self.images_touching_circle(x, y, radius).last() {
+                self.erase_images(&[image]);
             } else if let Some(&glyph) = self.glyphs_touching_circle(x, y, radius).last() {
                 self.erase_glyphs(&[glyph]);
             }
@@ -2087,8 +2113,9 @@ impl Board {
             }
         }
         let texts = self.texts_in_rect(min_x, min_y, max_x, max_y);
+        let images = self.images_in_rect(min_x, min_y, max_x, max_y);
         let glyphs = self.glyphs_in_rect(min_x, min_y, max_x, max_y);
-        if targets.is_empty() && texts.is_empty() && glyphs.is_empty() {
+        if targets.is_empty() && texts.is_empty() && images.is_empty() && glyphs.is_empty() {
             return;
         }
         self.undo.begin();
@@ -2096,6 +2123,7 @@ impl Board {
             self.apply_op(DocOp::RemoveStroke { id });
         }
         self.erase_texts(&texts);
+        self.erase_images(&images);
         self.erase_glyphs(&glyphs);
         self.undo.commit();
     }
@@ -2485,7 +2513,7 @@ impl Board {
         if let Some((px, py)) = self.pointer
             && !self.gesture_active
             && !self.is_panning()
-            && self.input_mode != InputMode::Text
+            && !matches!(self.input_mode, InputMode::Text | InputMode::Image)
         {
             sismo::scope!("canvas::paint_pointer");
             let preset = self.current_preset;
@@ -2838,7 +2866,7 @@ impl Surface {
             let (gx, gy) = point(e.global_location);
             if !crate::pen_pump::is_pen_near(gx, gy, crate::pen_pump::PEN_TOUCH_FILTER_RADIUS) {
                 let mut guard = lock(&self.board);
-                if guard.input_mode() == InputMode::Text {
+                if matches!(guard.input_mode(), InputMode::Text | InputMode::Image) {
                     let (x, y) = point(e.element_location);
                     guard.text_press_down(x, y);
                 }
@@ -2951,6 +2979,7 @@ pub fn drawing_surface(
     selected_bookmark: freya::prelude::State<Option<crate::ids::BookmarkId>>,
     body_buffer: freya::prelude::State<String>,
     text_editor: crate::canvas_text::TextEditorSlot,
+    item: Option<crate::library::model::ItemId>,
     anchor_source: Option<AnchorSourceRef>,
     text_press: Option<TextPressRef>,
 ) -> impl IntoElement {
@@ -3016,6 +3045,7 @@ pub fn drawing_surface(
         .child(crate::canvas_text::CanvasLayers {
             board: Arc::clone(board),
             editor: text_editor,
+            item,
         })
 }
 
@@ -3052,6 +3082,7 @@ impl Board {
         if read_only {
             self.cancel();
             self.end_text_session();
+            self.end_image_session();
         }
         self.notify();
     }

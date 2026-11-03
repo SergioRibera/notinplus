@@ -9,6 +9,7 @@ ink-tool-eraser = Goma
 ink-tool-shapes = Formas
 ink-tool-lasso = Lazo
 ink-tool-text = Texto
+ink-tool-image = Imagen
 ink-tool-select-text = Seleccionar texto
 ink-dock-hold-to-pan = Mover (mantén presionado)
 ink-color = Color

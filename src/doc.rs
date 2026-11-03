@@ -22,6 +22,7 @@ use crate::bookmark::Bookmark;
 use crate::brush::{BrushId, BrushPreset, Stroke};
 use crate::doc_op::DocOp;
 use crate::ids::{BookmarkId, StrokeId};
+use crate::image_box::{ImageBox, ImageBoxId};
 use crate::ink_glyph::{InkGlyph, InkGlyphId};
 use crate::text_box::{TextBox, TextBoxId};
 
@@ -44,6 +45,9 @@ pub struct Layer {
     pub strokes: Vec<Stroke>,
     /// Text boxes painted above this layer's strokes, in insertion order.
     pub texts: Vec<TextBox>,
+    /// Images painted between this layer's strokes and its text boxes, in
+    /// insertion order.
+    pub images: Vec<ImageBox>,
     /// Recognized handwriting redrawn from a font, painted with the strokes.
     pub glyphs: Vec<InkGlyph>,
 }
@@ -59,6 +63,7 @@ impl Layer {
             opacity: 1.0,
             strokes: Vec::new(),
             texts: Vec::new(),
+            images: Vec::new(),
             glyphs: Vec::new(),
         }
     }
@@ -431,6 +436,27 @@ impl Doc {
                     }
                 }
             }
+            DocOp::AddImage { layer_id, image } => {
+                if self.image(image.id).is_none()
+                    && let Some(layer) = self.layers.iter_mut().find(|l| l.id == *layer_id)
+                {
+                    layer.images.push(image.clone());
+                }
+            }
+            DocOp::SetImageFrame { id, frame, height } => {
+                if let Some(image) = self.image_mut(*id) {
+                    image.frame = *frame;
+                    image.height = *height;
+                }
+            }
+            DocOp::DeleteImage { id } => {
+                for layer in &mut self.layers {
+                    if let Some(pos) = layer.images.iter().position(|i| i.id == *id) {
+                        layer.images.remove(pos);
+                        return;
+                    }
+                }
+            }
             DocOp::AddGlyph { layer_id, glyph } => {
                 if self.locate_glyph(glyph.id).is_none()
                     && let Some(layer) = self.layers.iter_mut().find(|l| l.id == *layer_id)
@@ -508,6 +534,12 @@ impl Doc {
                             text: text.clone(),
                         });
                     }
+                    for image in &layer.images {
+                        ops.push(DocOp::AddImage {
+                            layer_id: layer.id,
+                            image: image.clone(),
+                        });
+                    }
                     for glyph in &layer.glyphs {
                         ops.push(DocOp::AddGlyph {
                             layer_id: layer.id,
@@ -563,6 +595,12 @@ impl Doc {
                     ops.push(DocOp::AddText {
                         layer_id: *id,
                         text: text.clone(),
+                    });
+                }
+                for image in &layer.images {
+                    ops.push(DocOp::AddImage {
+                        layer_id: *id,
+                        image: image.clone(),
                     });
                 }
                 for glyph in &layer.glyphs {
@@ -670,6 +708,26 @@ impl Doc {
                     }]
                 })
                 .unwrap_or_default(),
+            DocOp::AddImage { image, .. } => vec![DocOp::DeleteImage { id: image.id }],
+            DocOp::SetImageFrame { id, .. } => self
+                .image(*id)
+                .map(|image| {
+                    vec![DocOp::SetImageFrame {
+                        id: *id,
+                        frame: image.frame,
+                        height: image.height,
+                    }]
+                })
+                .unwrap_or_default(),
+            DocOp::DeleteImage { id } => self
+                .locate_image(*id)
+                .map(|(layer_id, image)| {
+                    vec![DocOp::AddImage {
+                        layer_id,
+                        image: image.clone(),
+                    }]
+                })
+                .unwrap_or_default(),
             DocOp::AddGlyph { glyph, .. } => vec![DocOp::DeleteGlyph { id: glyph.id }],
             DocOp::DeleteGlyph { id } => self
                 .locate_glyph(*id)
@@ -712,6 +770,29 @@ impl Doc {
         self.layers
             .iter_mut()
             .find_map(|layer| layer.texts.iter_mut().find(|t| t.id == id))
+    }
+
+    /// `(layer_id, image)` for the image carrying `id`.
+    #[must_use]
+    pub fn locate_image(&self, id: ImageBoxId) -> Option<(u32, &ImageBox)> {
+        self.layers.iter().find_map(|layer| {
+            layer
+                .images
+                .iter()
+                .find(|i| i.id == id)
+                .map(|image| (layer.id, image))
+        })
+    }
+
+    #[must_use]
+    pub fn image(&self, id: ImageBoxId) -> Option<&ImageBox> {
+        self.locate_image(id).map(|(_, image)| image)
+    }
+
+    fn image_mut(&mut self, id: ImageBoxId) -> Option<&mut ImageBox> {
+        self.layers
+            .iter_mut()
+            .find_map(|layer| layer.images.iter_mut().find(|i| i.id == id))
     }
 
     /// Immutable lookup of a bookmark by id.
@@ -914,10 +995,12 @@ impl Doc {
     #[sismo::function("doc::is_blank")]
     pub fn is_blank(&self) -> bool {
         self.bookmarks.is_empty()
-            && self
-                .layers
-                .iter()
-                .all(|l| l.strokes.is_empty() && l.texts.is_empty() && l.glyphs.is_empty())
+            && self.layers.iter().all(|l| {
+                l.strokes.is_empty()
+                    && l.texts.is_empty()
+                    && l.images.is_empty()
+                    && l.glyphs.is_empty()
+            })
     }
 }
 
@@ -953,6 +1036,15 @@ mod tests {
                 frame: crate::text_box::TextFrame::at(1.0, 1.0),
                 markdown: "hola".into(),
                 color: [0, 0, 0, 255],
+            },
+        });
+        d.emit(DocOp::AddImage {
+            layer_id: 0,
+            image: ImageBox {
+                id: ImageBoxId::new_v4(),
+                frame: crate::text_box::TextFrame::at(2.0, 2.0),
+                height: 50.0,
+                asset: "a.png".into(),
             },
         });
 

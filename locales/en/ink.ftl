@@ -9,6 +9,7 @@ ink-tool-eraser = Eraser
 ink-tool-shapes = Shapes
 ink-tool-lasso = Lasso
 ink-tool-text = Text
+ink-tool-image = Image
 ink-tool-select-text = Select text
 ink-dock-hold-to-pan = Move (press and hold)
 ink-color = Color

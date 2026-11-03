@@ -14,6 +14,7 @@
 //!               id: i64, name: String, visible: Bool, locked: Bool, opacity: Double,
 //!               strokes: MovableList [ Binary(Stroke) … ],
 //!               texts:   MovableList [ Binary(TextBox) … ],
+//!               images:  MovableList [ Binary(ImageBox) … ],
 //!               glyphs:  MovableList [ Binary(InkGlyph) … ],
 //!           } … ]
 //! bookmarks Map  { "<uuid>": Binary(Bookmark) … }
@@ -38,6 +39,7 @@ use crate::bookmark::Bookmark;
 use crate::brush::{BrushPreset, Stroke};
 use crate::doc_op::DocOp;
 use crate::ids::BookmarkId;
+use crate::image_box::ImageBox;
 use crate::ink_glyph::InkGlyph;
 use crate::text_box::TextBox;
 
@@ -61,6 +63,7 @@ const LAYER_LOCKED: &str = "locked";
 const LAYER_OPACITY: &str = "opacity";
 const LAYER_STROKES: &str = "strokes";
 const LAYER_TEXTS: &str = "texts";
+const LAYER_IMAGES: &str = "images";
 const LAYER_GLYPHS: &str = "glyphs";
 
 /// Plain state read back from the containers.
@@ -375,6 +378,29 @@ impl DocStore {
                     child_list(&layer, LAYER_TEXTS)?.delete(idx, 1)?;
                 }
             }
+            DocOp::AddImage { layer_id, image } => {
+                if state.image(image.id).is_some() {
+                    return Ok(());
+                }
+                if let Some(layer) = self.layer_by_id(state, *layer_id) {
+                    child_list(&layer, LAYER_IMAGES)?.push(encode(image)?)?;
+                }
+            }
+            DocOp::SetImageFrame { id, frame, height } => {
+                if let Some((pos, idx, image)) = locate_image(state, *id) {
+                    let mut next = image.clone();
+                    next.frame = *frame;
+                    next.height = *height;
+                    let layer = self.layer_at(pos)?;
+                    child_list(&layer, LAYER_IMAGES)?.set(idx, encode(&next)?)?;
+                }
+            }
+            DocOp::DeleteImage { id } => {
+                if let Some((pos, idx, _)) = locate_image(state, *id) {
+                    let layer = self.layer_at(pos)?;
+                    child_list(&layer, LAYER_IMAGES)?.delete(idx, 1)?;
+                }
+            }
             DocOp::AddGlyph { layer_id, glyph } => {
                 if state.locate_glyph(glyph.id).is_some() {
                     return Ok(());
@@ -424,6 +450,7 @@ impl DocStore {
             layer.opacity = read_f32(&map, LAYER_OPACITY)?;
             layer.strokes = read_blobs::<Stroke>(&map, LAYER_STROKES)?;
             layer.texts = read_blobs::<TextBox>(&map, LAYER_TEXTS)?;
+            layer.images = read_blobs::<ImageBox>(&map, LAYER_IMAGES)?;
             layer.glyphs = read_blobs::<InkGlyph>(&map, LAYER_GLYPHS)?;
             layers.push(layer);
         }
@@ -475,6 +502,7 @@ impl DocStore {
         map.insert(LAYER_OPACITY, 1.0_f64)?;
         map.insert_container(LAYER_STROKES, LoroMovableList::new())?;
         map.insert_container(LAYER_TEXTS, LoroMovableList::new())?;
+        map.insert_container(LAYER_IMAGES, LoroMovableList::new())?;
         map.insert_container(LAYER_GLYPHS, LoroMovableList::new())?;
         Ok(())
     }
@@ -510,6 +538,19 @@ fn locate_text(state: &Doc, id: crate::text_box::TextBoxId) -> Option<(usize, us
             .enumerate()
             .find(|(_, t)| t.id == id)
             .map(|(idx, t)| (pos, idx, t))
+    })
+}
+
+fn locate_image(
+    state: &Doc,
+    id: crate::image_box::ImageBoxId,
+) -> Option<(usize, usize, &ImageBox)> {
+    state.layers.iter().enumerate().find_map(|(pos, l)| {
+        l.images
+            .iter()
+            .enumerate()
+            .find(|(_, i)| i.id == id)
+            .map(|(idx, i)| (pos, idx, i))
     })
 }
 

@@ -58,7 +58,7 @@ impl Board {
         self.touch.writing = Some(id);
         match self.input_mode {
             InputMode::Lasso => self.lasso_down(sx, sy),
-            InputMode::Text => self.text_press_down(sx, sy),
+            InputMode::Text | InputMode::Image => self.text_press_down(sx, sy),
             InputMode::Draw | InputMode::Pan | InputMode::Select => {
                 self.begin_screen(InkPoint::new(sx, sy, FINGER_PRESSURE, 0, 0));
             }
@@ -69,7 +69,7 @@ impl Board {
     fn finger_extend(&mut self, sx: f32, sy: f32) {
         match self.input_mode {
             InputMode::Lasso => self.lasso_move(sx, sy),
-            InputMode::Text => self.text_press_move(sx, sy),
+            InputMode::Text | InputMode::Image => self.text_press_move(sx, sy),
             InputMode::Draw | InputMode::Pan | InputMode::Select => {
                 self.extend_screen(InkPoint::new(sx, sy, FINGER_PRESSURE, 0, 8_000));
             }
@@ -81,7 +81,7 @@ impl Board {
         self.touch.writing = None;
         match self.input_mode {
             InputMode::Lasso => self.lasso_up(),
-            InputMode::Text => self.text_press_up(sx, sy),
+            InputMode::Text | InputMode::Image => self.text_press_up(sx, sy),
             InputMode::Draw | InputMode::Pan | InputMode::Select => self.end(),
         }
     }
@@ -91,7 +91,7 @@ impl Board {
         if self.touch.writing.take().is_some() {
             match self.input_mode {
                 InputMode::Lasso => self.lasso_cancel(),
-                InputMode::Text => self.text_press_cancel(),
+                InputMode::Text | InputMode::Image => self.text_press_cancel(),
                 InputMode::Draw | InputMode::Pan | InputMode::Select => self.cancel(),
             }
         }
@@ -108,7 +108,7 @@ impl Board {
             } else {
                 self.touch_pan_finger = Some(id);
                 self.pan_begin(sx, sy);
-                if self.input_mode == InputMode::Text {
+                if matches!(self.input_mode, InputMode::Text | InputMode::Image) {
                     self.text_press_down(sx, sy);
                 }
             }

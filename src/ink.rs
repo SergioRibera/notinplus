@@ -53,6 +53,8 @@ pub enum Tool {
     Shape,
     Lasso,
     Text,
+    /// Place images and move, resize or rotate them.
+    Image,
     /// Select PDF text with the pen or mouse.
     Select,
 }
@@ -66,6 +68,7 @@ impl Tool {
         match board.input_mode() {
             InputMode::Lasso => Self::Lasso,
             InputMode::Text => Self::Text,
+            InputMode::Image => Self::Image,
             InputMode::Select => Self::Select,
             InputMode::Draw | InputMode::Pan => match board.current_kind() {
                 BrushKind::Pencil => Self::Pencil,
@@ -89,6 +92,7 @@ impl Tool {
             Self::Shape => lucide::shapes(),
             Self::Lasso => lucide::lasso(),
             Self::Text => lucide::icon_type(),
+            Self::Image => lucide::image(),
             Self::Select => lucide::text_cursor_input(),
         }
     }
@@ -103,6 +107,7 @@ impl Tool {
             Self::Shape => tr!("ink-tool-shapes"),
             Self::Lasso => tr!("ink-tool-lasso"),
             Self::Text => tr!("ink-tool-text"),
+            Self::Image => tr!("ink-tool-image"),
             Self::Select => tr!("ink-tool-select-text"),
         }
     }
@@ -115,7 +120,7 @@ impl Tool {
             Self::Highlighter => Some(BrushPreset::highlighter()),
             Self::Eraser => Some(BrushPreset::eraser()),
             Self::Shape => Some(BrushPreset::shape(ShapeMode::Line)),
-            Self::Lasso | Self::Text | Self::Select => None,
+            Self::Lasso | Self::Text | Self::Image | Self::Select => None,
         }
     }
 
@@ -126,6 +131,7 @@ impl Tool {
         match self {
             Self::Lasso => guard.set_input_mode(InputMode::Lasso),
             Self::Text => guard.set_input_mode(InputMode::Text),
+            Self::Image => guard.set_input_mode(InputMode::Image),
             Self::Select => guard.set_input_mode(InputMode::Select),
             _ => {
                 if let Some(preset) = self.preset() {
@@ -143,7 +149,7 @@ impl Tool {
     }
 
     const fn tunable(self) -> bool {
-        !matches!(self, Self::Lasso | Self::Text | Self::Select)
+        !matches!(self, Self::Lasso | Self::Text | Self::Image | Self::Select)
     }
 }
 
@@ -471,6 +477,7 @@ impl Dock {
             items.push(self.tool_button(Tool::Select));
         }
         items.push(self.tool_button(Tool::Text));
+        items.push(self.tool_button(Tool::Image));
         let board = Arc::clone(&self.board);
         items.push(
             dock_button(
@@ -548,7 +555,13 @@ impl Component for Dock {
 #[sismo::function("ink::more_sheet")]
 fn more_sheet(board: &Arc<Mutex<Board>>, state: &InkState) {
     use freya::icons::lucide;
-    let mut tools = vec![Tool::Pencil, Tool::Marker, Tool::Shape, Tool::Text];
+    let mut tools = vec![
+        Tool::Pencil,
+        Tool::Marker,
+        Tool::Shape,
+        Tool::Text,
+        Tool::Image,
+    ];
     if *state.pdf.peek() {
         tools.push(Tool::Select);
     }

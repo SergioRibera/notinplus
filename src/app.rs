@@ -534,6 +534,7 @@ pub(crate) fn canvas_body(mount: CanvasMount, state: &ChromeState) -> impl IntoE
             state.selected_bookmark,
             state.bookmark_body,
             state.text_editor,
+            mount.item(),
             anchor_source,
             text_press,
         ))
@@ -666,8 +667,11 @@ pub(crate) fn canvas_chrome(
     let Some(board) = state.active_board.read().clone() else {
         return rect();
     };
+    // Text and image bars never show together: one per tool.
+    let bar_shown = state.text_editor.editing.read().is_some()
+        || *state.ink.tool.read() == crate::ink::Tool::Image;
     let lift = pad.bottom
-        + if state.text_editor.editing.read().is_some() {
+        + if bar_shown {
             state.text_toolbar_area.read().height()
         } else {
             0.0
@@ -709,4 +713,12 @@ pub(crate) fn canvas_chrome(
             state.text_toolbar_area,
             pad,
         ))
+        .child(crate::canvas_text::ImageBar {
+            board: Arc::clone(&board),
+            item: *state.active_item.read(),
+            tool: state.ink.tool,
+            editor: state.text_editor,
+            area: state.text_toolbar_area,
+            pad,
+        })
 }
