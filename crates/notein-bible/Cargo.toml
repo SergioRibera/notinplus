@@ -57,7 +57,7 @@ notein-i18n = { path = "../notein-i18n" }
 notein-align = { path = "../notein-align" }
 # The pack format lives with its generator; path while the data repo is
 # unpublished, a git dependency pinned to a tag once it is.
-originals-format = { path = "../../../../bible-service/extra_data_source/crates/originals-format" }
+originals-format = { git = "https://github.com/biblionlabs/extra_data_source", rev = "5e6dca64597b5d83c4e5d4187bb6e4f9c9795566" }
 rkyv = { version = "0.8", features = ["bytecheck"] }
 self_cell = "1"
 unicode-normalization = "0.1"
