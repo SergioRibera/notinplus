@@ -7,10 +7,9 @@ use freya::icons::lucide;
 use freya::prelude::*;
 
 use super::Shared;
-use super::header::{ChipMenu, HeaderChip};
 use crate::document::{Aggregate, BlockId, Column, Expr, Scope, Summary, Table};
 use crate::labels::Label;
-use crate::popup::{Anchored, MenuItem, input_colors, popup_frame};
+use crate::popup::{Anchored, MenuItem, input_colors, menu_separator, popup_frame};
 use crate::theme::EditorTheme;
 
 /// Side of a check mark.
@@ -101,7 +100,7 @@ impl TotalCell {
         ops
     }
 
-    fn menu(&self) -> ChipMenu {
+    fn menu(&self) -> Vec<Vec<MenuItem>> {
         let theme = &self.shared.theme;
         let controller = self.shared.controller;
         let block = self.block;
@@ -145,33 +144,99 @@ impl TotalCell {
                 .icon(lucide::x(), theme.colors.caution),
             ]);
         }
-        ChipMenu::Items(groups)
+        groups
     }
 }
 
 impl Component for TotalCell {
     fn render(&self) -> impl IntoElement {
+        let mut open = use_state(|| false);
+        let mut hovered = use_state(|| false);
         let theme = &self.shared.theme;
         let colors = &theme.colors;
-        let text = match (&self.summary, &self.text) {
-            (Some(summary), Some(text)) => {
-                format!("{} {text}", theme.labels.aggregate(summary.op))
-            }
-            _ => theme.labels.get(Label::Calculate).to_owned(),
+        let editable = !self.shared.read_only;
+        // The name of the total sits small above its value, so a narrow
+        // column still shows the number whole.
+        let (caption, value) = match (&self.summary, &self.text) {
+            (Some(summary), Some(text)) => (
+                Some(theme.labels.aggregate(summary.op).to_owned()),
+                text.clone(),
+            ),
+            _ => (None, theme.labels.get(Label::Calculate).to_owned()),
         };
-        HeaderChip {
-            icon: lucide::sigma(),
-            text,
-            color: if self.summary.is_some() {
-                colors.text
+        let has_total = self.summary.is_some();
+        let cell = rect()
+            .width(Size::fill())
+            .padding((theme.px(2.), theme.px(4.)))
+            .corner_radius(theme.px(6.))
+            .background(if editable && (open() || hovered()) {
+                colors.popup_selected
             } else {
-                colors.muted
-            },
-            theme: theme.clone(),
-            editable: !self.shared.read_only,
-            auto_open: false,
-            menu: self.menu(),
-        }
+                Color::TRANSPARENT
+            })
+            .maybe(editable, |cell| {
+                cell.cursor(CursorIcon::Pointer)
+                    .on_pointer_enter(move |event: Event<PointerEventData>| {
+                        hovered.set(matches!(event.data(), PointerEventData::Mouse(_)));
+                    })
+                    .on_pointer_leave(move |_| hovered.set_if_modified(false))
+                    .on_press(move |event: Event<PressEventData>| {
+                        event.stop_propagation();
+                        open.toggle();
+                    })
+            })
+            .maybe_child(caption.map(|caption| {
+                label()
+                    .width(Size::fill())
+                    .font_size(theme.px(10.5))
+                    .color(colors.muted)
+                    .max_lines(1)
+                    .text(caption)
+            }))
+            .child(
+                rect()
+                    .width(Size::fill())
+                    .horizontal()
+                    .content(Content::flex())
+                    .spacing(theme.px(4.))
+                    .cross_align(Alignment::center())
+                    .child(
+                        label()
+                            .width(Size::flex(1.))
+                            .font_size(theme.px(13.))
+                            .color(if has_total { colors.text } else { colors.muted })
+                            .maybe(has_total, |value| value.font_weight(FontWeight::BOLD))
+                            .max_lines(1)
+                            .text(value),
+                    )
+                    .maybe_child(editable.then(|| {
+                        SvgViewer::new(lucide::chevron_down())
+                            .color(colors.muted)
+                            .width(Size::px(theme.px(12.)))
+                            .height(Size::px(theme.px(12.)))
+                    })),
+            )
+            .into_element();
+        let popup = (editable && open()).then(|| {
+            let close = EventHandler::new(move |()| open.set(false));
+            let mut rows = Vec::new();
+            for (index, group) in self.menu().iter().enumerate() {
+                if index > 0 {
+                    rows.push(menu_separator(colors));
+                }
+                for item in group {
+                    rows.push(item.row(rows.len(), colors, Some(close.clone())));
+                }
+            }
+            popup_frame(colors)
+                .padding(4.)
+                .width(Size::px(220.))
+                .children(rows)
+                .into_element()
+        });
+        Anchored::new(cell, popup)
+            .on_dismiss(move || open.set(false))
+            .into_element()
     }
 }
 

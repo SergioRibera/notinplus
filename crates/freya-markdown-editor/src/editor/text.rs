@@ -1397,8 +1397,6 @@ fn commit_rope(
     }
 }
 
-/// Text typed after the trigger symbol, or `None` when the menu must close.
-#[cfg_attr(feature = "sismo", sismo::function("markdown::menu_query"))]
 /// Arithmetic the line of `cursor` ends with, in UTF-16 offsets of `text`.
 struct CalcHit {
     at: usize,
@@ -1459,6 +1457,8 @@ fn pick_range(open: &OpenMenu, index: usize, text: &str, cursor: usize) -> Range
     }
 }
 
+/// Text typed after the trigger symbol, or `None` when the menu must close.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::menu_query"))]
 fn menu_query(text: &str, at: usize, cursor: usize) -> Option<String> {
     if cursor <= at {
         return None;
