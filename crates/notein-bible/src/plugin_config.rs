@@ -29,6 +29,10 @@ pub const KEY_ENABLE_CROSSREF: &str = "enable_crossref";
 /// Which of the three fetch.bible cross-reference sets to download; see
 /// [`CrossRefLevel`].
 pub const KEY_CROSSREF_LEVEL: &str = "crossref_level";
+/// Whether the reader shows the Hebrew and Greek behind each verse
+/// (see [`crate::originals`]). Off by default: turning it on downloads
+/// the packs.
+pub const KEY_ORIGINALS: &str = "originals";
 
 pub const DEFAULT_FONT_SIZE: f64 = 22.0;
 pub const DEFAULT_LINE_HEIGHT: f64 = 1.65;
@@ -207,6 +211,10 @@ pub fn build_schema(db: &Db) -> ConfigSchema {
             )
             .help(&tr!("config-cross-refs-level-help")),
         )
+        .field(
+            ConfigField::boolean(KEY_ORIGINALS, &tr!("config-originals"), false)
+                .help(&tr!("config-originals-help")),
+        )
 }
 
 pub fn apply_set(config: &SharedConfig, key: &str, value: ConfigValue) -> Result<(), ConfigError> {
@@ -221,11 +229,11 @@ pub fn apply_set(config: &SharedConfig, key: &str, value: ConfigValue) -> Result
             return Err(ConfigError::OutOfRange);
         }
         (KEY_FONT_SIZE | KEY_LINE_HEIGHT, ConfigValue::Float(_))
-        | (KEY_ENABLE_CROSSREF, ConfigValue::Bool(_))
+        | (KEY_ENABLE_CROSSREF | KEY_ORIGINALS, ConfigValue::Bool(_))
         | (KEY_DEFAULT_BIBLE | KEY_MANIFEST_URL | KEY_CROSSREF_LEVEL, ConfigValue::String(_)) => {}
         (
             KEY_FONT_SIZE | KEY_LINE_HEIGHT | KEY_ENABLE_CROSSREF | KEY_DEFAULT_BIBLE
-            | KEY_MANIFEST_URL | KEY_CROSSREF_LEVEL,
+            | KEY_MANIFEST_URL | KEY_CROSSREF_LEVEL | KEY_ORIGINALS,
             _,
         ) => return Err(ConfigError::TypeMismatch),
         _ => return Err(ConfigError::UnknownKey(key.into())),
@@ -272,6 +280,13 @@ pub fn bool(config: &SharedConfig, key: &str) -> Option<bool> {
 /// Defaults to `true` so first-run installs see the enriched set.
 pub fn effective_enable_crossref(config: &SharedConfig) -> bool {
     bool(config, KEY_ENABLE_CROSSREF).unwrap_or(true)
+}
+
+/// Whether the reader offers the original languages; off until the
+/// user turns it on.
+#[must_use]
+pub fn effective_originals(config: &SharedConfig) -> bool {
+    bool(config, KEY_ORIGINALS).unwrap_or(false)
 }
 
 /// The cross-reference set downloads fetch, [`CrossRefLevel::Large`]
@@ -344,6 +359,12 @@ impl PluginSettings for Settings {
         #[cfg(feature = "importer")]
         if key == KEY_CROSSREF_LEVEL && effective_crossref_level(&self.config) != level_before {
             crate::install_background::spawn_refresh_cross_refs(self.db.clone(), &self.config);
+        }
+        #[cfg(feature = "importer")]
+        if key == KEY_ORIGINALS && effective_originals(&self.config) {
+            if let Some(originals) = crate::originals::service() {
+                originals.spawn_download();
+            }
         }
         #[cfg(not(feature = "importer"))]
         let _ = level_before;

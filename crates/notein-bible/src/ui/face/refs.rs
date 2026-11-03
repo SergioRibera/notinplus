@@ -6,10 +6,11 @@ use notein_i18n::tr;
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
-    IconButton, ModalController, Sheet, SidePanel, Text, TextRole, is_mouse, tokens,
+    IconButton, ModalController, Segmented, Sheet, SidePanel, Text, TextRole, is_mouse, tokens,
 };
 
 use super::Reader;
+use super::originals::{self, PanelTab};
 
 /// Width of the panel beside the text.
 const PANEL_WIDTH: f32 = 340.0;
@@ -20,8 +21,8 @@ pub(super) const ROOM_FOR_PANEL: f32 = 640.0 + PANEL_WIDTH;
 /// The cross-references of one verse, with the text of each target.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct VerseRefs {
-    book: String,
-    chapter: u16,
+    pub(super) book: String,
+    pub(super) chapter: u16,
     pub(super) verse: u16,
     /// The verse they start from ("Juan 3:16").
     place: String,
@@ -41,7 +42,7 @@ struct Target {
 impl VerseRefs {
     /// The references of `verse` in the chapter `reader` shows.
     #[cfg_attr(feature = "sismo", sismo::function("bible::refs_load"))]
-    fn of(reader: &Reader, verse: u16) -> Self {
+    pub(super) fn of(reader: &Reader, verse: u16) -> Self {
         let st = reader.state.peek();
         let (bible_id, book, chapter) = (
             st.bible_id.clone(),
@@ -113,22 +114,104 @@ impl VerseRefs {
 pub(super) fn open(reader: &Reader, verse: u16, wide: bool) {
     let refs = VerseRefs::of(reader, verse);
     if wide {
+        let mut tab = reader.panel_tab;
         let mut open = reader.refs;
         let same = open
             .peek()
             .as_ref()
-            .is_some_and(|o| o.verse == verse && o.here(reader));
+            .is_some_and(|o| o.verse == verse && o.here(reader))
+            && *tab.peek() == PanelTab::Refs;
+        tab.set(PanelTab::Refs);
         open.set((!same).then_some(refs));
         return;
     }
-    Sheet::titled(tr!("reader-refs-title", "place" => refs.place.clone()))
+    open_sheet(reader, refs, PanelTab::Refs);
+}
+
+/// The verse in a sheet from the bottom, on `tab`; the other tab is a
+/// segment away when the original languages are on.
+#[cfg_attr(feature = "sismo", sismo::function("bible::refs_open_sheet"))]
+pub(super) fn open_sheet(reader: &Reader, refs: VerseRefs, tab: PanelTab) {
+    let title = match tab {
+        PanelTab::Refs => tr!("reader-refs-title", "place" => refs.place.clone()),
+        PanelTab::Original => tr!("originals-title", "place" => refs.place.clone()),
+    };
+    Sheet::titled(title)
         .subtitle(refs.count())
-        .child(List {
+        .child(SheetBody {
             reader: reader.clone(),
             refs,
-            in_sheet: true,
+            tab,
         })
         .open();
+}
+
+/// The tabs and the content of one of them, in the sheet.
+#[derive(Clone, Debug, PartialEq)]
+struct SheetBody {
+    reader: Reader,
+    refs: VerseRefs,
+    tab: PanelTab,
+}
+
+impl Component for SheetBody {
+    #[cfg_attr(feature = "sismo", sismo::function("bible::refs_sheet_body"))]
+    fn render(&self) -> impl IntoElement {
+        let tab = use_state(|| self.tab);
+        let tabbed = originals::enabled(&self.reader);
+        let current = if tabbed { *tab.read() } else { PanelTab::Refs };
+        rect()
+            .width(Size::fill())
+            .spacing(8.0)
+            .maybe_child(tabbed.then(|| tabs(tab, 8.0)))
+            .child(tab_body(&self.reader, &self.refs, current, true))
+    }
+}
+
+/// The Original · Referencias segments, `tab` selected.
+fn tabs(tab: State<PanelTab>, side_padding: f32) -> impl IntoElement {
+    let mut tab = tab;
+    let current = *tab.read();
+    rect()
+        .width(Size::fill())
+        .padding((0.0, side_padding, 8.0, side_padding))
+        .child(
+            Segmented::new(
+                [tr!("originals-tab"), tr!("originals-tab-refs")],
+                match current {
+                    PanelTab::Original => 0,
+                    PanelTab::Refs => 1,
+                },
+            )
+            .full_width()
+            .on_select(move |index: usize| {
+                tab.set(if index == 0 {
+                    PanelTab::Original
+                } else {
+                    PanelTab::Refs
+                });
+            }),
+        )
+}
+
+/// The content of `tab` for the verse `refs` describe.
+fn tab_body(reader: &Reader, refs: &VerseRefs, tab: PanelTab, in_sheet: bool) -> Element {
+    match tab {
+        PanelTab::Refs => List {
+            reader: reader.clone(),
+            refs: refs.clone(),
+            in_sheet,
+        }
+        .into_element(),
+        PanelTab::Original => originals::Body {
+            reader: reader.clone(),
+            book: refs.book.clone(),
+            chapter: refs.chapter,
+            verse: refs.verse,
+            in_sheet,
+        }
+        .into_element(),
+    }
 }
 
 /// The panel beside the text. It slides in from the right edge and back
@@ -151,7 +234,7 @@ impl Component for Panel {
         let body = shown
             .read()
             .clone()
-            .map_or_else(|| rect().into_element(), |refs| self.body(refs));
+            .map_or_else(|| rect().into_element(), |refs| self.body(&refs));
         SidePanel::new(current.is_some(), PANEL_WIDTH, body).into_element()
     }
 }
@@ -159,8 +242,15 @@ impl Component for Panel {
 impl Panel {
     /// The verse and the count over the list.
     #[cfg_attr(feature = "sismo", sismo::function("bible::refs_body"))]
-    fn body(&self, refs: VerseRefs) -> Element {
+    fn body(&self, refs: &VerseRefs) -> Element {
         let open = self.reader.refs;
+        let tab = self.reader.panel_tab;
+        let tabbed = originals::enabled(&self.reader);
+        let current = if tabbed { *tab.read() } else { PanelTab::Refs };
+        let title = match current {
+            PanelTab::Refs => tr!("reader-refs-title", "place" => refs.place.clone()),
+            PanelTab::Original => tr!("originals-title", "place" => refs.place.clone()),
+        };
         let p = palette();
         rect()
             .expanded()
@@ -181,10 +271,7 @@ impl Panel {
                         rect()
                             .width(Size::flex(1.0))
                             .spacing(2.0)
-                            .child(
-                                Text::new(tr!("reader-refs-title", "place" => refs.place.clone()))
-                                    .role(TextRole::Strong),
-                            )
+                            .child(Text::new(title).role(TextRole::Strong))
                             .child(Text::new(refs.count()).role(TextRole::Meta)),
                     )
                     .child(
@@ -196,16 +283,18 @@ impl Panel {
                             }),
                     ),
             )
+            .maybe_child(tabbed.then(|| tabs(tab, 12.0)))
             .child(
                 ScrollView::new()
                     .width(Size::fill())
                     .height(Size::flex(1.0))
                     .child(notein_ui_kit::ScrollContent::new(
-                        rect().padding((0.0, 8.0, 16.0, 8.0)).child(List {
-                            reader: self.reader.clone(),
+                        rect().padding((0.0, 8.0, 16.0, 8.0)).child(tab_body(
+                            &self.reader,
                             refs,
-                            in_sheet: false,
-                        }),
+                            current,
+                            false,
+                        )),
                     )),
             )
             .into_element()

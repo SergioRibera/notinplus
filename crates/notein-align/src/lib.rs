@@ -13,7 +13,7 @@ mod tokenize;
 
 use std::collections::HashMap;
 
-pub use tokenize::tokenize;
+pub use tokenize::{tokenize, tokenize_surface};
 
 /// Book, chapter and verse; the pairing key between both texts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

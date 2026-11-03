@@ -54,6 +54,8 @@ pub struct BibleKind {
     db: Db,
     config: SharedConfig,
     books: RwLock<HashMap<String, Vec<BookRow>>>,
+    /// The original-language packs and the work on them.
+    originals: std::sync::Arc<crate::originals::Originals>,
     #[cfg(feature = "importer")]
     installer: std::sync::OnceLock<crate::installer::Installer>,
 }
@@ -62,10 +64,13 @@ impl BibleKind {
     #[must_use]
     #[cfg_attr(feature = "sismo", sismo::function("bible::kind_new"))]
     pub fn new(db: Db, config: SharedConfig) -> Self {
+        let originals = std::sync::Arc::new(crate::originals::Originals::new(db.clone()));
+        crate::originals::register(&originals);
         Self {
             db,
             config,
             books: RwLock::new(HashMap::new()),
+            originals,
             #[cfg(feature = "importer")]
             installer: std::sync::OnceLock::new(),
         }
@@ -86,6 +91,12 @@ impl BibleKind {
     #[must_use]
     pub const fn config(&self) -> &SharedConfig {
         &self.config
+    }
+
+    /// The original-language packs and the work on them.
+    #[must_use]
+    pub const fn originals(&self) -> &std::sync::Arc<crate::originals::Originals> {
+        &self.originals
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("bible::kind_books"))]

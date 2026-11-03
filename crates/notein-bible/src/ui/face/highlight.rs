@@ -337,7 +337,19 @@ impl Gesture {
             on_note,
             document: reference.as_ref().map(|_| reader.doc),
             reference,
-            extra: self.share(reader, &selection).into_iter().collect(),
+            extra: self
+                .share(reader, &selection)
+                .into_iter()
+                .chain(super::originals::selection_extra(
+                    reader,
+                    &selection.book,
+                    selection
+                        .single()
+                        .filter(|(lo, hi)| lo == hi)
+                        .map(|(lo, _)| lo),
+                    *reader.wide.peek(),
+                ))
+                .collect(),
             caption: Some(selection.caption()),
             sticky: true,
             on_dismiss: Rc::new(move || self.end()),

@@ -5368,6 +5368,7 @@ version = "0.1.0"
 dependencies = [
  "async-io",
  "bincode 2.0.1",
+ "flate2",
  "flume",
  "freya",
  "freya-components",
@@ -5376,16 +5377,22 @@ dependencies = [
  "freya-icons 0.5.0-rc.13",
  "istmo-core",
  "log",
+ "notein-align",
  "notein-i18n",
  "notein-sdk",
  "notein-ui-kit",
+ "originals-format",
  "quick-xml 0.37.5",
  "regex",
  "reqwest",
+ "rkyv 0.8.18",
  "rusqlite",
+ "self_cell",
  "serde",
  "serde_json",
+ "sha2",
  "sismo",
+ "unicode-normalization",
 ]
 
 [[package]]
@@ -6114,6 +6121,13 @@ checksum = "9aa2b01e1d916879f73a53d01d1d6cee68adbb31d6d9177a8cfce093cced1d50"
 dependencies = [
  "futures-core",
  "pin-project-lite",
+]
+
+[[package]]
+name = "originals-format"
+version = "0.1.0"
+dependencies = [
+ "rkyv 0.8.18",
 ]
 
 [[package]]

@@ -18,3 +18,5 @@ config-cross-refs-level-help = fetch.bible ranks its references by relevance and
 config-cross-refs-level-small = Essential
 config-cross-refs-level-medium = Balanced
 config-cross-refs-level-large = Complete
+config-originals = Original languages
+config-originals-help = Shows the Hebrew or Greek behind each verse: every word with its pronunciation, what it means here and in general, and where else it appears. Turning it on downloads about 13 MB (STEPBible, CC BY 4.0) that stay on this device.

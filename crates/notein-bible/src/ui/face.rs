@@ -6,6 +6,7 @@
 
 mod highlight;
 mod nav;
+mod originals;
 mod presence;
 mod refs;
 mod search;
@@ -127,8 +128,14 @@ pub(super) struct Reader {
     flash: State<Option<u16>>,
     scroll_to: State<Option<ScrollTarget>>,
     scroll: ScrollController,
-    /// The cross-references showing in the panel beside the text.
+    /// The verse showing in the panel beside the text, with its
+    /// cross-references.
     refs: State<Option<refs::VerseRefs>>,
+    /// Which tab of that panel is showing.
+    panel_tab: State<originals::PanelTab>,
+    /// Whether the reader is wide enough for the panel beside the text
+    /// (else the verse opens in a sheet).
+    wide: State<bool>,
     /// What the current chapter shows besides its text, read once.
     annotations: Rc<std::cell::RefCell<Option<(AnnotationKey, Annotations)>>>,
     /// Bumped when footnotes of a chapter arrive.
@@ -344,6 +351,8 @@ fn use_reader(ctx: &FaceContext<BibleKind>, db: &Db) -> Reader {
         scroll_to: use_state(|| None),
         scroll: use_scroll_controller(ScrollConfig::default),
         refs: use_state(|| None),
+        panel_tab: use_state(originals::PanelTab::default),
+        wide: use_state(|| false),
         annotations: use_hook(Rc::default),
         footnotes_landed: use_state(|| 0),
     };
@@ -363,37 +372,7 @@ fn use_reader(ctx: &FaceContext<BibleKind>, db: &Db) -> Reader {
         let store: ContentStore<BibleContent> = ctx.store.clone();
         move || save_place(&store, &state.read())
     });
-    // Content written elsewhere: another device, or the translation
-    // picked in the edit sheet.
-    use_hook({
-        let (store, db) = (ctx.store.clone(), db.clone());
-        move || {
-            let changes = store.changes();
-            let mut state = state;
-            spawn(async move {
-                while changes.recv_async().await.is_ok() {
-                    #[cfg(feature = "sismo")]
-                    sismo::scope!("bible::content_changed");
-                    let saved = store.load();
-                    // Highlights merge as records; where someone else reads is
-                    // theirs. Only another translation (the edit sheet) moves
-                    // this reader.
-                    if saved.bible_id == state.peek().bible_id {
-                        continue;
-                    }
-                    let mut st = state.write();
-                    let highlights = std::mem::take(&mut st.highlights);
-                    saved.apply_to(&mut st);
-                    st.highlights = highlights;
-                    let fallback = st.bible_id.clone();
-                    settle_place(&db, &mut st, &fallback);
-                    if let Err(e) = st.ensure_current_loaded(&db) {
-                        log::warn!("bible: reload after a change: {e}");
-                    }
-                }
-            });
-        }
-    });
+    use_follow_content(ctx, db, state);
     // Footnotes arrive lazily per chapter; headings came with the
     // install. The fetch returns at once when the rows exist.
     use_side_effect({
@@ -425,6 +404,40 @@ fn use_reader(ctx: &FaceContext<BibleKind>, db: &Db) -> Reader {
         }
     });
     reader
+}
+
+/// Follow content written elsewhere: another device, or the translation
+/// picked in the edit sheet.
+fn use_follow_content(ctx: &FaceContext<BibleKind>, db: &Db, state: State<BibleViewerState>) {
+    use_hook({
+        let (store, db) = (ctx.store.clone(), db.clone());
+        move || {
+            let changes = store.changes();
+            let mut state = state;
+            spawn(async move {
+                while changes.recv_async().await.is_ok() {
+                    #[cfg(feature = "sismo")]
+                    sismo::scope!("bible::content_changed");
+                    let saved = store.load();
+                    // Highlights merge as records; where someone else reads is
+                    // theirs. Only another translation (the edit sheet) moves
+                    // this reader.
+                    if saved.bible_id == state.peek().bible_id {
+                        continue;
+                    }
+                    let mut st = state.write();
+                    let highlights = std::mem::take(&mut st.highlights);
+                    saved.apply_to(&mut st);
+                    st.highlights = highlights;
+                    let fallback = st.bible_id.clone();
+                    settle_place(&db, &mut st, &fallback);
+                    if let Err(e) = st.ensure_current_loaded(&db) {
+                        log::warn!("bible: reload after a change: {e}");
+                    }
+                }
+            });
+        }
+    });
 }
 
 /// Save where the reader is into the document.
@@ -460,7 +473,7 @@ impl Component for BibleViewer {
         let others = presence::use_others(&reader, gesture);
         let viewport_top = use_state(|| 0.0_f32);
         let mut width = use_state(|| 0.0_f32);
-        let wide = *width.read() >= refs::ROOM_FOR_PANEL;
+        let wide = track_wide(&reader, *width.read());
         self.ctx.use_header_presses({
             let reader = reader.clone();
             move |press| match press.action.as_str() {
@@ -514,14 +527,7 @@ impl Component for BibleViewer {
                 )
             },
         );
-        let on_back = has_back.then(|| {
-            let reader = reader.clone();
-            Box::new(move || reader.history(true)) as bottom_nav::NavHandler
-        });
-        let on_forward = has_forward.then(|| {
-            let reader = reader.clone();
-            Box::new(move || reader.history(false)) as bottom_nav::NavHandler
-        });
+        let (on_back, on_forward) = history_handlers(&reader, has_back, has_forward);
         let column = rect()
             .width(Size::flex(1.))
             .height(Size::fill())
@@ -561,6 +567,35 @@ impl Component for BibleViewer {
             .child(column)
             .child(refs::Panel { reader })
     }
+}
+
+/// Whether `width` leaves room for the panel beside the text, kept on the
+/// reader for the selection bar.
+fn track_wide(reader: &Reader, width: f32) -> bool {
+    let wide = width >= refs::ROOM_FOR_PANEL;
+    let mut known = reader.wide;
+    known.set_if_modified(wide);
+    wide
+}
+
+/// The bottom bar's back and forward handlers, where there is history.
+fn history_handlers(
+    reader: &Reader,
+    has_back: bool,
+    has_forward: bool,
+) -> (
+    Option<bottom_nav::NavHandler>,
+    Option<bottom_nav::NavHandler>,
+) {
+    let on_back = has_back.then(|| {
+        let reader = reader.clone();
+        Box::new(move || reader.history(true)) as bottom_nav::NavHandler
+    });
+    let on_forward = has_forward.then(|| {
+        let reader = reader.clone();
+        Box::new(move || reader.history(false)) as bottom_nav::NavHandler
+    });
+    (on_back, on_forward)
 }
 
 /// The chapter: verses with highlights, footnotes and cross-references.

@@ -122,6 +122,33 @@ AFTER UPDATE ON verses BEGIN
     VALUES (new.rowid, new.text, new.bible_id, new.book_id, new.chapter, new.verse);
 END;
 
+-- Word alignment between the original-language packs and a translation,
+-- computed on this device (see originals::align). Testament 0 = Old, 1 = New;
+-- book is the index in the pack; start/end are token indices in the verse.
+CREATE TABLE IF NOT EXISTS orig_links (
+    bible_id    TEXT NOT NULL,
+    testament   INTEGER NOT NULL,
+    book        INTEGER NOT NULL,
+    chapter     INTEGER NOT NULL,
+    verse       INTEGER NOT NULL,
+    position    INTEGER NOT NULL,
+    start       INTEGER NOT NULL,
+    end         INTEGER NOT NULL,
+    prob        REAL NOT NULL,
+    PRIMARY KEY (bible_id, testament, book, chapter, verse, position, start)
+);
+
+-- How a translation renders each lemma across the whole text.
+CREATE TABLE IF NOT EXISTS orig_renderings (
+    bible_id    TEXT NOT NULL,
+    testament   INTEGER NOT NULL,
+    lemma       INTEGER NOT NULL,
+    token       TEXT NOT NULL,
+    count       INTEGER NOT NULL,
+    prob        REAL NOT NULL,
+    PRIMARY KEY (bible_id, testament, lemma, token)
+);
+
 COMMIT;
 ";
 

@@ -373,6 +373,13 @@ pub(crate) fn run(
             if let Err(e) = db.finish_install(bible_id) {
                 return fail(progress, biblionlabs::ImportError::Db(e));
             }
+            // The original languages, when on: pair their words with the
+            // new translation.
+            if plugin_config::effective_originals(config) {
+                if let Some(originals) = crate::originals::service() {
+                    originals.spawn_align_missing();
+                }
+            }
             edit(progress, |p| {
                 p.stage = InstallStage::Finished;
                 p.error = None;

@@ -30,6 +30,11 @@ impl BiblePlugin {
         let config = crate::plugin_config::load_shared(&db);
         let kind = Arc::new(BibleKind::new(db, config));
         catalog::register(&kind);
+        // The original languages, when on: pair their words with any
+        // translation installed since the last run.
+        if crate::plugin_config::effective_originals(kind.config()) {
+            kind.originals().spawn_align_missing();
+        }
         Ok(Self { kind })
     }
 

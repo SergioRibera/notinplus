@@ -279,3 +279,195 @@ pub(crate) fn meta_set(db: &Db, key: &str, value: &str) -> Result<()> {
         Ok(())
     })
 }
+
+/// One verse of a translation, for the aligner.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerseTextRow {
+    pub book_id: String,
+    pub chapter: u16,
+    pub verse: u16,
+    pub text: String,
+}
+
+/// Which translation tokens render the original word at `position`:
+/// the span `start..end` of the verse's tokens.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LinkRow {
+    pub position: u16,
+    pub start: u16,
+    pub end: u16,
+    pub prob: f32,
+}
+
+/// One way a translation renders a lemma, with how often.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderingRow {
+    pub token: String,
+    pub count: u32,
+    pub prob: f32,
+}
+
+/// A link with its place, as the aligner produces them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlacedLink {
+    pub book: u8,
+    pub chapter: u16,
+    pub verse: u16,
+    pub link: LinkRow,
+}
+
+/// Every verse of `bible_id` in canon order.
+#[cfg_attr(feature = "sismo", sismo::function("bible::db_verses_of_bible"))]
+pub(crate) fn verses_of_bible(db: &Db, bible_id: &str) -> Result<Vec<VerseTextRow>> {
+    db.with_conn(|conn| {
+        let mut stmt = conn.prepare_cached(
+            "SELECT v.book_id, v.chapter, v.verse, v.text
+             FROM verses v
+             JOIN books b ON b.bible_id = v.bible_id AND b.book_id = v.book_id
+             WHERE v.bible_id = ?1
+             ORDER BY b.order_num, v.chapter, v.verse",
+        )?;
+        let rows = stmt
+            .query_map(params![bible_id], |r| {
+                Ok(VerseTextRow {
+                    book_id: r.get(0)?,
+                    chapter: r.get::<_, u16>(1)?,
+                    verse: r.get::<_, u16>(2)?,
+                    text: r.get(3)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    })
+}
+
+/// Replace the alignment of `bible_id` for `testament` (0 Old, 1 New)
+/// in one transaction.
+#[cfg_attr(feature = "sismo", sismo::function("bible::db_replace_alignment"))]
+pub(crate) fn replace_alignment(
+    db: &Db,
+    bible_id: &str,
+    testament: u8,
+    links: &[PlacedLink],
+    renderings: &[(u32, RenderingRow)],
+) -> Result<()> {
+    db.with_conn_mut(|conn| {
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM orig_links WHERE bible_id = ?1 AND testament = ?2",
+            params![bible_id, i64::from(testament)],
+        )?;
+        tx.execute(
+            "DELETE FROM orig_renderings WHERE bible_id = ?1 AND testament = ?2",
+            params![bible_id, i64::from(testament)],
+        )?;
+        {
+            let mut insert = tx.prepare_cached(
+                "INSERT OR REPLACE INTO orig_links
+                 (bible_id, testament, book, chapter, verse, position, start, end, prob)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            )?;
+            for placed in links {
+                insert.execute(params![
+                    bible_id,
+                    i64::from(testament),
+                    i64::from(placed.book),
+                    i64::from(placed.chapter),
+                    i64::from(placed.verse),
+                    i64::from(placed.link.position),
+                    i64::from(placed.link.start),
+                    i64::from(placed.link.end),
+                    f64::from(placed.link.prob),
+                ])?;
+            }
+            let mut insert = tx.prepare_cached(
+                "INSERT OR REPLACE INTO orig_renderings
+                 (bible_id, testament, lemma, token, count, prob)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            )?;
+            for (lemma, rendering) in renderings {
+                insert.execute(params![
+                    bible_id,
+                    i64::from(testament),
+                    i64::from(*lemma),
+                    rendering.token,
+                    i64::from(rendering.count),
+                    f64::from(rendering.prob),
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    })
+}
+
+/// The links of one verse, by position.
+#[cfg_attr(feature = "sismo", sismo::function("bible::db_alignment_links"))]
+pub(crate) fn alignment_links(
+    db: &Db,
+    bible_id: &str,
+    testament: u8,
+    book: u8,
+    chapter: u16,
+    verse: u16,
+) -> Result<Vec<LinkRow>> {
+    db.with_conn(|conn| {
+        let mut stmt = conn.prepare_cached(
+            "SELECT position, start, end, prob FROM orig_links
+             WHERE bible_id = ?1 AND testament = ?2 AND book = ?3 AND chapter = ?4 AND verse = ?5
+             ORDER BY position, start",
+        )?;
+        let rows = stmt
+            .query_map(
+                params![
+                    bible_id,
+                    i64::from(testament),
+                    i64::from(book),
+                    i64::from(chapter),
+                    i64::from(verse)
+                ],
+                |r| {
+                    Ok(LinkRow {
+                        position: r.get::<_, u16>(0)?,
+                        start: r.get::<_, u16>(1)?,
+                        end: r.get::<_, u16>(2)?,
+                        #[allow(clippy::cast_possible_truncation)] // stored from f32
+                        prob: r.get::<_, f64>(3)? as f32,
+                    })
+                },
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    })
+}
+
+/// How `bible_id` renders `lemma`, most frequent first.
+#[cfg_attr(feature = "sismo", sismo::function("bible::db_renderings"))]
+pub(crate) fn renderings(
+    db: &Db,
+    bible_id: &str,
+    testament: u8,
+    lemma: u32,
+) -> Result<Vec<RenderingRow>> {
+    db.with_conn(|conn| {
+        let mut stmt = conn.prepare_cached(
+            "SELECT token, count, prob FROM orig_renderings
+             WHERE bible_id = ?1 AND testament = ?2 AND lemma = ?3
+             ORDER BY count DESC, token",
+        )?;
+        let rows = stmt
+            .query_map(
+                params![bible_id, i64::from(testament), i64::from(lemma)],
+                |r| {
+                    Ok(RenderingRow {
+                        token: r.get(0)?,
+                        count: r.get::<_, u32>(1)?,
+                        #[allow(clippy::cast_possible_truncation)] // stored from f32
+                        prob: r.get::<_, f64>(2)? as f32,
+                    })
+                },
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    })
+}

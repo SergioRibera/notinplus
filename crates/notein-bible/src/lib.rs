@@ -17,6 +17,7 @@ pub mod install_background;
 #[cfg(feature = "importer")]
 pub mod installer;
 pub mod kind;
+pub mod originals;
 #[cfg(feature = "ui")]
 pub mod plugin;
 pub mod plugin_config;

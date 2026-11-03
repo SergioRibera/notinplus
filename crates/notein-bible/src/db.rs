@@ -22,7 +22,10 @@ mod queries;
 mod schema;
 mod search;
 
-pub use queries::{BibleRow, BookRow, ChapterRow, HeaderRow, VerseRow};
+pub use queries::{
+    BibleRow, BookRow, ChapterRow, HeaderRow, LinkRow, PlacedLink, RenderingRow, VerseRow,
+    VerseTextRow,
+};
 pub use search::{SearchHit, snippet_markers};
 
 #[derive(Debug)]
@@ -233,6 +236,44 @@ impl Db {
     /// Record a fact about the database itself.
     pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
         queries::meta_set(self, key, value)
+    }
+
+    /// Every verse of a translation, for the aligner.
+    pub fn verses_of_bible(&self, bible_id: &str) -> Result<Vec<VerseTextRow>> {
+        queries::verses_of_bible(self, bible_id)
+    }
+
+    /// Replace a translation's alignment with one testament (0 Old, 1 New).
+    pub fn replace_alignment(
+        &self,
+        bible_id: &str,
+        testament: u8,
+        links: &[PlacedLink],
+        renderings: &[(u32, RenderingRow)],
+    ) -> Result<()> {
+        queries::replace_alignment(self, bible_id, testament, links, renderings)
+    }
+
+    /// Which translation tokens render each original word of a verse.
+    pub fn alignment_links(
+        &self,
+        bible_id: &str,
+        testament: u8,
+        book: u8,
+        chapter: u16,
+        verse: u16,
+    ) -> Result<Vec<LinkRow>> {
+        queries::alignment_links(self, bible_id, testament, book, chapter, verse)
+    }
+
+    /// How a translation renders a lemma across the text.
+    pub fn renderings(
+        &self,
+        bible_id: &str,
+        testament: u8,
+        lemma: u32,
+    ) -> Result<Vec<RenderingRow>> {
+        queries::renderings(self, bible_id, testament, lemma)
     }
 
     pub fn list_books(&self, bible_id: &str) -> Result<Vec<BookRow>> {
@@ -535,5 +576,46 @@ mod tests {
         db.finish_install("spa_rv1960").unwrap();
         schema::migrate(&db).unwrap();
         assert!(db.pending_installs().unwrap().is_empty());
+    }
+}
+
+/// Helpers for tests that need an installed translation.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use rusqlite::params;
+
+    use super::Db;
+
+    /// Install `bible_id` with the given `(book_id, chapter, verse, text)`
+    /// rows, books in the order they first appear.
+    pub(crate) fn install_sample_bible(db: &Db, bible_id: &str, verses: &[(&str, u16, u16, &str)]) {
+        db.with_conn_mut(|conn| {
+            conn.execute(
+                "INSERT INTO bibles (id, abbrev, name_local, language) VALUES (?1, ?1, ?1, 'spa')",
+                params![bible_id],
+            )?;
+            let mut books: Vec<&str> = Vec::new();
+            for (book, _, _, _) in verses {
+                if !books.contains(book) {
+                    books.push(book);
+                }
+            }
+            for (order, book) in books.iter().enumerate() {
+                conn.execute(
+                    "INSERT INTO books (bible_id, book_id, name, abbrev, order_num, testament)
+                     VALUES (?1, ?2, ?2, ?2, ?3, 'NT')",
+                    params![bible_id, book, order],
+                )?;
+            }
+            for (book, chapter, verse, text) in verses {
+                conn.execute(
+                    "INSERT INTO verses (bible_id, book_id, chapter, verse, text, paragraph_break)
+                     VALUES (?1, ?2, ?3, ?4, ?5, 0)",
+                    params![bible_id, book, chapter, verse, text],
+                )?;
+            }
+            Ok(())
+        })
+        .unwrap();
     }
 }

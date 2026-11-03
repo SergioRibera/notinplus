@@ -72,3 +72,36 @@ mod tests {
         assert!(tokenize("  12 — ").is_empty());
     }
 }
+
+/// Splits `text` exactly like [`tokenize`] but keeps the letters as
+/// written, so a span of token indices from an alignment can be shown
+/// in the translation's own spelling.
+#[must_use]
+pub fn tokenize_surface(text: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    for c in text.chars() {
+        if c.is_alphabetic() || is_combining_mark(c) {
+            current.push(c);
+        } else if !current.is_empty() {
+            tokens.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+#[cfg(test)]
+mod surface_tests {
+    use super::{tokenize, tokenize_surface};
+
+    #[test]
+    fn surface_tokens_line_up_with_lowercase_ones() {
+        let text = "16 Porque el mismo Espíritu; ¡«hijos» de Dios!";
+        let surface = tokenize_surface(text);
+        assert_eq!(surface[3], "Espíritu");
+        assert_eq!(surface.len(), tokenize(text).len());
+    }
+}
