@@ -130,11 +130,19 @@ impl Bar {
         }
         for (label, icon, run) in &menu.extra {
             let run = Rc::clone(run);
-            items.push(BarItem::action(
-                label.clone(),
-                icon.clone(),
-                self.finish(move || run()),
-            ));
+            if menu.sticky {
+                // A sticky selection outlives its bar: the owner decides
+                // whether the action is done with it.
+                items.push(BarItem::action(label.clone(), icon.clone(), move |()| {
+                    run()
+                }));
+            } else {
+                items.push(BarItem::action(
+                    label.clone(),
+                    icon.clone(),
+                    self.finish(move || run()),
+                ));
+            }
         }
         if menu.sticky {
             let closing = menu.clone();

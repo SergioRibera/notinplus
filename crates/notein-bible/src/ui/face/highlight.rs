@@ -340,20 +340,34 @@ impl Gesture {
             extra: self
                 .share(reader, &selection)
                 .into_iter()
-                .chain(super::originals::selection_extra(
-                    reader,
-                    &selection.book,
-                    selection
-                        .single()
-                        .filter(|(lo, hi)| lo == hi)
-                        .map(|(lo, _)| lo),
-                    *reader.wide.peek(),
-                ))
+                .chain(self.original(reader, &selection))
                 .collect(),
             caption: Some(selection.caption()),
             sticky: true,
             on_dismiss: Rc::new(move || self.end()),
         });
+    }
+
+    /// The bar button that shows the original of the selected verse.
+    /// Beside the text the selection stays, the panel is about it; in a
+    /// sheet the original covers the text, so the selection ends.
+    fn original(self, reader: &Reader, selection: &Selection) -> Option<SelectionExtra> {
+        let wide = *reader.wide.peek();
+        let verse = selection
+            .single()
+            .filter(|(lo, hi)| lo == hi)
+            .map(|(lo, _)| lo);
+        let (label, icon, open) =
+            super::originals::selection_extra(reader, &selection.book, verse, wide)?;
+        let reader = reader.clone();
+        let run: Rc<dyn Fn()> = Rc::new(move || {
+            open();
+            if !wide {
+                self.end();
+                reader.ui.close_selection();
+            }
+        });
+        Some((label, icon, run))
     }
 
     /// The bar button that sends the selected verses, with their reference,

@@ -309,6 +309,15 @@ impl Store {
             .and_then(|i| u8::try_from(i).ok())
     }
 
+    /// The dictionary form `strong` names (`H433`, `H0433`, `G3107`,
+    /// `H2617A`), in the pack of its testament.
+    #[must_use]
+    pub fn lemma_by_strong(&self, strong: &str) -> Option<LemmaView> {
+        let (testament, key) = strong_key(strong)?;
+        let index = self.pack(testament)?.lemma_index(&key)?;
+        self.lemma(LemmaRef { testament, index })
+    }
+
     #[must_use]
     pub fn lemma(&self, at: LemmaRef) -> Option<LemmaView> {
         let pack = self.pack(at.testament)?;
@@ -435,6 +444,48 @@ fn read_senses(dir: &Path, language: &str) -> Result<Option<SensesCell>, StoreEr
         });
     }
     Ok(Some(cell))
+}
+
+/// The testament and the key the packs use for `strong`: the number
+/// zero-padded to four digits, the disambiguating letter kept.
+fn strong_key(strong: &str) -> Option<(Testament, String)> {
+    let mut chars = strong.trim().chars();
+    let testament = match chars.next()? {
+        'H' => Testament::Old,
+        'G' => Testament::New,
+        _ => return None,
+    };
+    let rest = chars.as_str();
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    let suffix = &rest[digits.len()..];
+    if digits.is_empty() || !suffix.chars().all(|c| c.is_ascii_uppercase()) {
+        return None;
+    }
+    let prefix = if testament == Testament::Old {
+        'H'
+    } else {
+        'G'
+    };
+    Some((testament, format!("{prefix}{digits:0>4}{suffix}")))
+}
+
+#[cfg(test)]
+mod strong_key_tests {
+    use super::{Testament, strong_key};
+
+    #[test]
+    fn strong_numbers_become_pack_keys() {
+        assert_eq!(strong_key("H433"), Some((Testament::Old, "H0433".into())));
+        assert_eq!(strong_key("H0433"), Some((Testament::Old, "H0433".into())));
+        assert_eq!(
+            strong_key("H2617A"),
+            Some((Testament::Old, "H2617A".into()))
+        );
+        assert_eq!(strong_key("G3107"), Some((Testament::New, "G3107".into())));
+        assert_eq!(strong_key("H"), None);
+        assert_eq!(strong_key("Hx"), None);
+        assert_eq!(strong_key("S123"), None);
+    }
 }
 
 #[cfg(test)]

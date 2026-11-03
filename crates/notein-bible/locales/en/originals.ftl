@@ -42,6 +42,8 @@ originals-times = { $count ->
 originals-senses = In the dictionary
 # $note is "in English" or "machine translated".
 originals-senses-noted = In the dictionary ({ $note })
+originals-origin = Origin
+originals-origin-noted = Origin ({ $note })
 originals-aligning = Pairing the words with { $bible }…
 originals-not-aligned = The words of this translation are not paired yet.
 

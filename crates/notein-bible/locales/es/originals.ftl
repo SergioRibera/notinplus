@@ -42,6 +42,8 @@ originals-times = { $count ->
 originals-senses = En el diccionario
 # $note es «en inglés» o «traducción automática».
 originals-senses-noted = En el diccionario ({ $note })
+originals-origin = Origen
+originals-origin-noted = Origen ({ $note })
 originals-aligning = Emparejando las palabras con { $bible }…
 originals-not-aligned = Las palabras de esta traducción aún no están emparejadas.
 

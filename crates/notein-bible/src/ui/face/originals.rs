@@ -86,14 +86,7 @@ pub(super) fn selection_extra(
     }
     let verse = verse?;
     let reader = reader.clone();
-    // Beside the text the verses stay selected, the panel is about
-    // them; a sheet covers the bar, so it goes.
-    let action: Rc<dyn Fn()> = Rc::new(move || {
-        if !wide {
-            reader.ui.close_selection();
-        }
-        open(&reader, verse, wide);
-    });
+    let action: Rc<dyn Fn()> = Rc::new(move || open(&reader, verse, wide));
     Some((tr!("originals-tab").into(), lucide::languages(), action))
 }
 
@@ -411,7 +404,7 @@ impl WordRow {
         let grammar = grammar_line(word, self.row.language);
         let derivation = lemma
             .as_ref()
-            .map(|l| l.derivation_en.clone())
+            .map(|l| derivation_text(&self.store, &l.derivation_en, lang))
             .filter(|d| !d.is_empty());
         let count = lemma.as_ref().map_or(0, |l| l.count);
         let testament = match self.row.language {
@@ -467,11 +460,28 @@ impl WordRow {
                     .color(p.t3)
             }))
             .maybe_child(derivation.map(|derivation| {
-                label()
+                rect()
                     .width(Size::fill())
-                    .text(derivation)
-                    .font_size(tokens::text::META)
-                    .color(p.t3)
+                    .spacing(4.0)
+                    .child(
+                        label()
+                            .width(Size::fill())
+                            .text(if lang == Lang::En {
+                                tr!("originals-origin")
+                            } else {
+                                tr!("originals-origin-noted", "note" => tr!("originals-meaning-english"))
+                            })
+                            .font_size(tokens::text::META)
+                            .font_weight(FontWeight::BOLD)
+                            .color(p.t3),
+                    )
+                    .child(
+                        label()
+                            .width(Size::fill())
+                            .text(derivation)
+                            .font_size(tokens::text::BODY)
+                            .color(p.t1),
+                    )
             }))
             .maybe_child(function_word.then(|| {
                 label()
@@ -682,6 +692,65 @@ impl WordRow {
             },
         }
     }
+}
+
+/// The dictionary's derivation ("plural of H433;") with every Strong
+/// number replaced by the word it names and its pronunciation, so the
+/// line reads without the numbering.
+fn derivation_text(store: &Store, derivation: &str, lang: Lang) -> String {
+    let mut out = String::with_capacity(derivation.len());
+    let mut rest = derivation.trim().trim_end_matches(';').trim_end();
+    while let Some((before, number, after)) = next_strong_number(rest) {
+        out.push_str(before);
+        match store.lemma_by_strong(number) {
+            Some(lemma) => {
+                let respelling = if number.starts_with('H') {
+                    respell::hebrew(lang, &lemma.translit, &lemma.pronunciation_strong)
+                } else {
+                    respell::greek(lang, &lemma.lemma, &lemma.pronunciation_strong)
+                };
+                out.push_str(&lemma.lemma);
+                out.push_str(" (");
+                out.push_str(if respelling.is_empty() {
+                    &lemma.translit
+                } else {
+                    &respelling
+                });
+                out.push(')');
+            }
+            None => out.push_str(number),
+        }
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The text before the first Strong number in `text`, the number and
+/// the text after it.
+fn next_strong_number(text: &str) -> Option<(&str, &str, &str)> {
+    let bytes = text.as_bytes();
+    let mut start = 0;
+    while start < bytes.len() {
+        let at_word_start = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
+        if at_word_start && matches!(bytes[start], b'H' | b'G') {
+            let mut end = start + 1;
+            while end < bytes.len() && bytes[end].is_ascii_digit() {
+                end += 1;
+            }
+            if end > start + 1 {
+                if end < bytes.len() && bytes[end].is_ascii_uppercase() {
+                    end += 1;
+                }
+                let bounded = end == bytes.len() || !bytes[end].is_ascii_alphanumeric();
+                if bounded {
+                    return Some((&text[..start], &text[start..end], &text[end..]));
+                }
+            }
+        }
+        start += 1;
+    }
+    None
 }
 
 /// The grammar of a word in words, its prefixes and suffixes after it.
@@ -957,5 +1026,24 @@ impl Component for Card {
                 )
                 .child(action),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_strong_number;
+
+    #[test]
+    fn strong_numbers_are_found_whole_words_only() {
+        assert_eq!(
+            next_strong_number("plural of H433;"),
+            Some(("plural of ", "H433", ";"))
+        );
+        assert_eq!(
+            next_strong_number("from H2616A and (G1)"),
+            Some(("from ", "H2616A", " and (G1)"))
+        );
+        assert_eq!(next_strong_number("HAG12 is not one"), None);
+        assert_eq!(next_strong_number("a primitive root"), None);
     }
 }
