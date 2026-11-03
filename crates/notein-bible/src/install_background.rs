@@ -179,14 +179,16 @@ pub fn new_shared_progress() -> SharedInstallProgress {
 /// Blocking HTTP; call from a worker thread. Reuses the install
 /// cache dir so a prior install warms the manifest file.
 #[cfg_attr(feature = "sismo", sismo::function("bible::install_load_catalogue"))]
-pub fn load_catalogue(
-    config: &SharedConfig,
-) -> Result<biblionlabs::CatalogueView, biblionlabs::ImportError> {
+pub fn load_catalogue() -> Result<biblionlabs::CatalogueView, biblionlabs::ImportError> {
     let client = http_client().map_err(biblionlabs::ImportError::from)?;
     let cache_dir = plugin_config::platform_cache_dir();
     std::fs::create_dir_all(&cache_dir)?;
-    let manifest_url = plugin_config::effective_manifest_url(config);
-    biblionlabs::load_catalogue(&client, &cache_dir, &manifest_url, CACHE_TTL)
+    biblionlabs::load_catalogue(
+        &client,
+        &cache_dir,
+        biblionlabs::DEFAULT_MANIFEST_URL,
+        CACHE_TTL,
+    )
 }
 
 /// Spawn a lazy footnote fetch for `(bible, book, chapter)`.
@@ -335,7 +337,7 @@ pub(crate) fn run(
 
     let desc_url = format!("{BIBLIONLABS_BASE}/bibles/{bible_id}/manifest.json");
     let books_template = format!("{BIBLIONLABS_BASE}/bibles/{{bible_id}}/books/{{book}}.json");
-    let meta = catalogue_meta(&client, &cache_dir, config, bible_id);
+    let meta = catalogue_meta(&client, &cache_dir, bible_id);
     let install = biblionlabs::Install {
         db,
         client: &client,
@@ -462,11 +464,14 @@ pub fn spawn_refresh_cross_refs(db: Db, config: &SharedConfig) {
 fn catalogue_meta(
     client: &Client,
     cache_dir: &std::path::Path,
-    config: &SharedConfig,
     bible_id: &str,
 ) -> biblionlabs::BibleMeta {
-    let manifest_url = plugin_config::effective_manifest_url(config);
-    match biblionlabs::load_catalogue(client, cache_dir, &manifest_url, CACHE_TTL) {
+    match biblionlabs::load_catalogue(
+        client,
+        cache_dir,
+        biblionlabs::DEFAULT_MANIFEST_URL,
+        CACHE_TTL,
+    ) {
         Ok(cat) => cat
             .bibles
             .iter()

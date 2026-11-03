@@ -1,5 +1,5 @@
-//! Plugin settings: the default Bible, the catalogue URL, the typography
-//! and the cross-reference set, shared behind an `Arc<RwLock<_>>` with
+//! Plugin settings: the default Bible, the cross-reference set and the
+//! original languages, shared behind an `Arc<RwLock<_>>` with
 //! every reader and persisted in the translations database.
 //!
 //! Translations are installed through [`crate::installer`]; the cache dir comes
@@ -16,9 +16,6 @@ use notein_sdk::{ConfigEnumOption, ConfigError, ConfigField, ConfigSchema, Confi
 use crate::db::Db;
 
 pub const KEY_DEFAULT_BIBLE: &str = "default_bible_id";
-pub const KEY_MANIFEST_URL: &str = "biblionlabs_manifest_url";
-pub const KEY_FONT_SIZE: &str = "font_size";
-pub const KEY_LINE_HEIGHT: &str = "line_height";
 /// Toggle for the fetch.bible / "advanced" cross-reference overlay —
 /// the inline bookmark icon + hover popup with every xref the TSK
 /// doesn't surface.
@@ -34,20 +31,17 @@ pub const KEY_CROSSREF_LEVEL: &str = "crossref_level";
 /// the packs.
 pub const KEY_ORIGINALS: &str = "originals";
 
-pub const DEFAULT_FONT_SIZE: f64 = 22.0;
-pub const DEFAULT_LINE_HEIGHT: f64 = 1.65;
-pub const DEFAULT_MANIFEST_URL: &str = "https://v1.fetch.bible/manifest.json";
-
 /// How deep the cross-reference set goes.
 ///
 /// fetch.bible ranks the OpenBible.info / Treasury of Scripture Knowledge
 /// references by votes and splits them in three: `small` keeps the top
-/// third, `medium` the top two thirds, `large` every reference.
+/// third, `medium` the top two thirds, `large` every reference. `small`
+/// is the default: the page stays readable, the rest is one setting away.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CrossRefLevel {
+    #[default]
     Small,
     Medium,
-    #[default]
     Large,
 }
 
@@ -170,35 +164,6 @@ pub fn build_schema(db: &Db) -> ConfigSchema {
     ConfigSchema::new(1)
         .field(bible.help(&tr!("config-default-bible-help")))
         .field(
-            ConfigField::string(
-                KEY_MANIFEST_URL,
-                &tr!("config-manifest-url"),
-                256,
-                DEFAULT_MANIFEST_URL,
-            )
-            .help(&tr!("config-manifest-url-help")),
-        )
-        .field(
-            ConfigField::float(
-                KEY_FONT_SIZE,
-                &tr!("config-font-size"),
-                14.0..=32.0,
-                1.0,
-                DEFAULT_FONT_SIZE,
-            )
-            .help(&tr!("config-font-size-help")),
-        )
-        .field(
-            ConfigField::float(
-                KEY_LINE_HEIGHT,
-                &tr!("config-line-height"),
-                1.2..=2.2,
-                0.05,
-                DEFAULT_LINE_HEIGHT,
-            )
-            .help(&tr!("config-line-height-help")),
-        )
-        .field(
             ConfigField::boolean(KEY_ENABLE_CROSSREF, &tr!("config-cross-refs"), true)
                 .help(&tr!("config-cross-refs-help")),
         )
@@ -219,23 +184,14 @@ pub fn build_schema(db: &Db) -> ConfigSchema {
 
 pub fn apply_set(config: &SharedConfig, key: &str, value: ConfigValue) -> Result<(), ConfigError> {
     match (key, &value) {
-        (KEY_FONT_SIZE, ConfigValue::Float(v)) if !(14.0..=32.0).contains(v) => {
-            return Err(ConfigError::OutOfRange);
-        }
-        (KEY_LINE_HEIGHT, ConfigValue::Float(v)) if !(1.2..=2.2).contains(v) => {
-            return Err(ConfigError::OutOfRange);
-        }
         (KEY_CROSSREF_LEVEL, ConfigValue::String(v)) if CrossRefLevel::parse(v).is_none() => {
             return Err(ConfigError::OutOfRange);
         }
-        (KEY_FONT_SIZE | KEY_LINE_HEIGHT, ConfigValue::Float(_))
-        | (KEY_ENABLE_CROSSREF | KEY_ORIGINALS, ConfigValue::Bool(_))
-        | (KEY_DEFAULT_BIBLE | KEY_MANIFEST_URL | KEY_CROSSREF_LEVEL, ConfigValue::String(_)) => {}
-        (
-            KEY_FONT_SIZE | KEY_LINE_HEIGHT | KEY_ENABLE_CROSSREF | KEY_DEFAULT_BIBLE
-            | KEY_MANIFEST_URL | KEY_CROSSREF_LEVEL | KEY_ORIGINALS,
-            _,
-        ) => return Err(ConfigError::TypeMismatch),
+        (KEY_ENABLE_CROSSREF | KEY_ORIGINALS, ConfigValue::Bool(_))
+        | (KEY_DEFAULT_BIBLE | KEY_CROSSREF_LEVEL, ConfigValue::String(_)) => {}
+        (KEY_ENABLE_CROSSREF | KEY_DEFAULT_BIBLE | KEY_CROSSREF_LEVEL | KEY_ORIGINALS, _) => {
+            return Err(ConfigError::TypeMismatch);
+        }
         _ => return Err(ConfigError::UnknownKey(key.into())),
     }
     config
@@ -262,13 +218,6 @@ pub fn string(config: &SharedConfig, key: &str) -> Option<String> {
     }
 }
 
-pub fn float(config: &SharedConfig, key: &str) -> Option<f64> {
-    match get_value(config, key)? {
-        ConfigValue::Float(v) => Some(v),
-        _ => None,
-    }
-}
-
 pub fn bool(config: &SharedConfig, key: &str) -> Option<bool> {
     match get_value(config, key)? {
         ConfigValue::Bool(v) => Some(v),
@@ -289,8 +238,8 @@ pub fn effective_originals(config: &SharedConfig) -> bool {
     bool(config, KEY_ORIGINALS).unwrap_or(false)
 }
 
-/// The cross-reference set downloads fetch, [`CrossRefLevel::Large`]
-/// unless the user chose a smaller one.
+/// The cross-reference set downloads fetch, [`CrossRefLevel::Small`]
+/// unless the user chose a bigger one.
 pub fn effective_crossref_level(config: &SharedConfig) -> CrossRefLevel {
     string(config, KEY_CROSSREF_LEVEL)
         .as_deref()
@@ -311,14 +260,6 @@ pub fn effective_default_bible(config: &SharedConfig, db: &Db) -> String {
         .and_then(|v| v.into_iter().next())
         .map(|b| b.id)
         .unwrap_or_default()
-}
-
-/// Resolve the effective manifest URL, falling back to the default
-/// fetch.bible endpoint.
-pub fn effective_manifest_url(config: &SharedConfig) -> String {
-    string(config, KEY_MANIFEST_URL)
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| DEFAULT_MANIFEST_URL.into())
 }
 
 /// The settings form the shell draws for the plugin.
@@ -385,9 +326,9 @@ mod tests {
     }
 
     #[test]
-    fn unknown_level_is_refused_and_the_default_is_large() {
+    fn unknown_level_is_refused_and_the_default_is_small() {
         let config = new_shared();
-        assert_eq!(effective_crossref_level(&config), CrossRefLevel::Large);
+        assert_eq!(effective_crossref_level(&config), CrossRefLevel::Small);
         assert_eq!(
             apply_set(
                 &config,
@@ -399,10 +340,10 @@ mod tests {
         apply_set(
             &config,
             KEY_CROSSREF_LEVEL,
-            ConfigValue::String("small".into()),
+            ConfigValue::String("large".into()),
         )
         .unwrap();
-        assert_eq!(effective_crossref_level(&config), CrossRefLevel::Small);
+        assert_eq!(effective_crossref_level(&config), CrossRefLevel::Large);
     }
 
     #[test]
@@ -410,13 +351,13 @@ mod tests {
         let db = Db::in_memory().unwrap();
         let settings = Settings::new(db.clone(), new_shared());
         settings
-            .set(KEY_FONT_SIZE, ConfigValue::Float(18.0))
+            .set(KEY_ENABLE_CROSSREF, ConfigValue::Bool(false))
             .unwrap();
         settings
             .set(KEY_CROSSREF_LEVEL, ConfigValue::String("medium".into()))
             .unwrap();
         let reloaded = load_shared(&db);
-        assert_eq!(float(&reloaded, KEY_FONT_SIZE), Some(18.0));
+        assert!(!effective_enable_crossref(&reloaded));
         assert_eq!(effective_crossref_level(&reloaded), CrossRefLevel::Medium);
     }
 }

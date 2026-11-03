@@ -248,7 +248,7 @@ impl Installer {
         &self,
     ) -> Result<crate::import::biblionlabs::CatalogueView, crate::import::biblionlabs::ImportError>
     {
-        install_background::load_catalogue(&self.config)
+        install_background::load_catalogue()
     }
 }
 
