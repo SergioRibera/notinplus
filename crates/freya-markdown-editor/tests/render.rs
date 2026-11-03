@@ -479,3 +479,39 @@ fn renders_remote_caret_in_a_table_cell() {
     runner.sync_and_update();
     runner.render_to_file(snapshot_path("remote_caret_table"));
 }
+
+const SHOPPING: &str = "\
+| ✓ | Artículo | Presupuesto | Costo |
+|:-:|---|--:|--:|
+| [x] | Pan | 10 | 12,50 |
+| [ ] | Leche | 5 | |
+| [x] | Queso con un nombre largo que ocupa dos líneas | 20 | 18 |
+
+<!--
+notein:table
+check: 1
+column: Diferencia = [Costo] - [Presupuesto]
+calc: #1 = percent-checked
+calc: Presupuesto = sum
+calc: Costo = sum, checked
+calc: Diferencia = sum
+-->
+";
+
+fn shopping_app() -> impl IntoElement {
+    let value = use_state(|| SHOPPING.to_owned());
+    rect()
+        .expanded()
+        .background(EditorTheme::dark().colors.surface)
+        .padding(20.)
+        .child(MarkdownEditor::new(value).width(Size::fill()))
+}
+
+#[test]
+fn renders_a_table_with_checks_totals_and_a_computed_column() {
+    let (mut runner, ()) = TestingRunner::new(shopping_app, (640., 300.).into(), |_| {}, 1.0);
+    runner.sync_and_update();
+    runner.poll_n(std::time::Duration::from_millis(16), 4);
+    runner.sync_and_update();
+    runner.render_to_file(snapshot_path("table_calculations"));
+}

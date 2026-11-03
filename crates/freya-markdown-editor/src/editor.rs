@@ -8,6 +8,7 @@ mod paint;
 mod properties;
 mod reveal;
 mod suggest;
+mod table;
 mod text;
 
 use std::borrow::Cow;

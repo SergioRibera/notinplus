@@ -17,8 +17,8 @@ use super::text::{TextBlock, TextLook, TextPlace};
 use crate::controller::CaretRequest;
 use crate::decorator::{CodeContext, MathContext, TransclusionContext};
 use crate::document::{
-    Align, Block, BlockId, BlockKind, BlockType, CalloutKind, CellPos, ColumnAlign, HeadingLevel,
-    Inline, ListKind, Properties, Table, TextRole, TextTarget, Transclusion,
+    Align, Block, BlockId, BlockKind, BlockType, CalloutKind, CellPos, Column, ColumnAlign,
+    HeadingLevel, Inline, ListKind, Properties, Table, TextRole, TextTarget, Transclusion,
 };
 use crate::labels::Label;
 use crate::popup::MenuItem;
@@ -958,92 +958,204 @@ impl BlockView {
         })
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "cells, totals and tools of one table"
+    )]
     #[cfg_attr(feature = "sismo", sismo::function("markdown::block_table"))]
     fn table(&self, table: &Table) -> Element {
         let theme = &self.shared.theme;
         let colors = &theme.colors;
         let controller = self.shared.controller;
+        let block = self.block.id;
+        let read_only = self.shared.read_only;
         let in_table = self
             .focused
-            .is_some_and(|target| target.block == self.block.id && target.cell.is_some());
+            .is_some_and(|target| target.block == block && target.cell.is_some());
+        let editing = in_table && !read_only;
+        let evaluated = table.evaluate();
+        let checks = table.has_check_column();
+        let data_columns = table.columns().len();
+        let shown_columns = data_columns + table.computed().len();
         #[allow(clippy::cast_precision_loss, reason = "a handful of columns")]
-        let column_width = Size::percent(100. / table.columns().len().max(1) as f32);
+        let column_width = Size::percent(100. / shown_columns.max(1) as f32);
+        let cell_frame = |column: usize, header: bool| {
+            rect()
+                .key(column)
+                .width(column_width.clone())
+                .height(Size::fill_minimum())
+                .padding((theme.px(6.), theme.px(8.)))
+                .border(
+                    Border::new()
+                        .width(theme.px(0.5))
+                        .alignment(BorderAlignment::Center)
+                        .fill(colors.border),
+                )
+                .maybe(header, |cell| cell.background(colors.code_background))
+        };
+        let computed_cell = |column: usize, text: String| {
+            cell_frame(column, false)
+                .background(colors.code_background.with_a(80))
+                .child(
+                    label()
+                        .width(Size::fill())
+                        .color(colors.muted)
+                        .font_size(theme.body_size)
+                        .text_align(TextAlign::Right)
+                        .text(text),
+                )
+                .into_element()
+        };
         let rows = table.rows().iter().enumerate().map(|(row, cells)| {
             let header = row == 0;
+            let checked = table.is_checked(row);
+            let typed = cells.iter().enumerate().map(|(column, cell)| {
+                if table.is_check_cell(row, column) {
+                    return cell_frame(column, header)
+                        .cross_align(Alignment::center())
+                        .child(super::table::check_mark(&self.shared, block, row, checked))
+                        .into_element();
+                }
+                let target = TextTarget {
+                    block,
+                    cell: Some(CellPos { row, column }),
+                };
+                let align = match table.columns().get(column) {
+                    Some(ColumnAlign::Center) => TextAlign::Center,
+                    Some(ColumnAlign::Right) => TextAlign::Right,
+                    _ => TextAlign::Left,
+                };
+                cell_frame(column, header)
+                    .child(TextBlock {
+                        placeholder: None,
+                        ..self.text(
+                            target,
+                            cell,
+                            TextRole::Rich,
+                            TextPlace::Cell,
+                            TextLook {
+                                weight: header.then_some(FontWeight::BOLD),
+                                color: (checked && !header).then_some(colors.muted),
+                                align,
+                                ..TextLook::default()
+                            },
+                        )
+                    })
+                    .into_element()
+            });
+            let computed = table
+                .computed()
+                .iter()
+                .enumerate()
+                .map(|(index, computed)| {
+                    let column = data_columns + index;
+                    if header {
+                        cell_frame(column, true)
+                            .child(super::table::ComputedHeader {
+                                shared: self.shared.clone(),
+                                block,
+                                index,
+                                header: computed.header.clone(),
+                                formula: computed.formula.clone(),
+                            })
+                            .into_element()
+                    } else {
+                        computed_cell(
+                            column,
+                            evaluated.computed_text(index, row - 1).unwrap_or_default(),
+                        )
+                    }
+                });
             // Fit content so every cell stretches to the tallest one of its row.
             rect()
                 .key(row)
                 .horizontal()
                 .content(Content::fit())
                 .width(Size::fill())
-                .background(if header {
-                    colors.code_background
-                } else {
-                    Color::TRANSPARENT
-                })
-                .children(cells.iter().enumerate().map(|(column, cell)| {
-                    let target = TextTarget {
-                        block: self.block.id,
-                        cell: Some(CellPos { row, column }),
-                    };
-                    let align = match table.columns().get(column) {
-                        Some(ColumnAlign::Center) => TextAlign::Center,
-                        Some(ColumnAlign::Right) => TextAlign::Right,
-                        _ => TextAlign::Left,
-                    };
-                    rect()
-                        .key(column)
-                        .width(column_width.clone())
-                        .height(Size::fill_minimum())
-                        .padding((theme.px(6.), theme.px(8.)))
-                        .border(
-                            Border::new()
-                                .width(theme.px(0.5))
-                                .alignment(BorderAlignment::Center)
-                                .fill(colors.border),
-                        )
-                        .child(TextBlock {
-                            placeholder: None,
-                            ..self.text(
-                                target,
-                                cell,
-                                TextRole::Rich,
-                                TextPlace::Cell,
-                                TextLook {
-                                    weight: header.then_some(FontWeight::BOLD),
-                                    align,
-                                    ..TextLook::default()
-                                },
-                            )
-                        })
+                .children(typed.chain(computed))
+                .into_element()
+        });
+        let totals = (editing || evaluated.has_totals()).then(|| {
+            let columns = (0..data_columns)
+                .map(Column::Data)
+                .chain((0..table.computed().len()).map(Column::Computed));
+            rect()
+                .key(table.rows().len())
+                .horizontal()
+                .content(Content::fit())
+                .width(Size::fill())
+                .children(columns.enumerate().map(|(shown, column)| {
+                    let total = evaluated.totals.get(shown).cloned().flatten();
+                    let summary = total.as_ref().map(|total| total.summary);
+                    let hidden = summary.is_none() && !editing;
+                    cell_frame(shown, false)
+                        .padding((theme.px(3.), theme.px(4.)))
+                        .maybe_child((!hidden).then(|| super::table::TotalCell {
+                            shared: self.shared.clone(),
+                            block,
+                            column,
+                            summary,
+                            text: total.map(|total| total.text),
+                            numeric: super::table::column_is_numeric(table, column),
+                            checks,
+                            is_check_column: checks && column == Column::Data(0),
+                        }))
                         .into_element()
                 }))
                 .into_element()
         });
-        let tools = (in_table && !self.shared.read_only).then(|| {
-            let button = |text: Label, action: fn(crate::EditorController)| {
+        let tools = editing.then(|| {
+            let button = |text: Label, selected: bool, action: Box<dyn Fn()>| {
                 rect()
                     .padding((3., 8.))
                     .corner_radius(6.)
-                    .background(colors.code_background)
+                    .background(if selected {
+                        colors.popup_selected
+                    } else {
+                        colors.code_background
+                    })
                     .cursor(CursorIcon::Pointer)
-                    .on_press(move |_| action(controller))
+                    .on_press(move |_| action())
                     .child(
                         label()
                             .font_size(11.5)
-                            .color(colors.muted)
+                            .color(if selected { colors.text } else { colors.muted })
                             .text(theme.labels.get(text).to_owned()),
                     )
             };
             rect()
                 .horizontal()
                 .spacing(6.)
-                .child(button(Label::TableAddRow, |c| c.table_insert_row()))
-                .child(button(Label::TableAddColumn, |c| c.table_insert_column()))
-                .child(button(Label::TableRemoveRow, |c| c.table_remove_row()))
-                .child(button(Label::TableRemoveColumn, |c| {
-                    c.table_remove_column();
-                }))
+                .child(button(
+                    Label::TableAddRow,
+                    false,
+                    Box::new(move || controller.table_insert_row()),
+                ))
+                .child(button(
+                    Label::TableAddColumn,
+                    false,
+                    Box::new(move || controller.table_insert_column()),
+                ))
+                .child(button(
+                    Label::TableRemoveRow,
+                    false,
+                    Box::new(move || controller.table_remove_row()),
+                ))
+                .child(button(
+                    Label::TableRemoveColumn,
+                    false,
+                    Box::new(move || controller.table_remove_column()),
+                ))
+                .child(button(
+                    Label::TableChecks,
+                    checks,
+                    Box::new(move || controller.table_set_checks(block, !checks)),
+                ))
+                .child(super::table::AddComputedButton {
+                    shared: self.shared.clone(),
+                    block,
+                    suggested_header: String::new(),
+                })
         });
         rect()
             .width(Size::fill())
@@ -1059,7 +1171,8 @@ impl BlockView {
                             .alignment(BorderAlignment::Inner)
                             .fill(colors.border),
                     )
-                    .children(rows),
+                    .children(rows)
+                    .maybe_child(totals),
             )
             .maybe_child(tools)
             .into_element()
