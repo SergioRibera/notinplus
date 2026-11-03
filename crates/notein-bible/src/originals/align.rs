@@ -182,3 +182,131 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// Against the real packs and a real translation, for timing and a
+/// look at the output; needs the files, so it is ignored by default:
+///
+/// ```sh
+/// NOTEIN_ORIGINALS_TEST_DIR=…/packs NOTEIN_RV1960_BOOKS=…/bibles/spa_rv1960/books \
+///   cargo test -p notein-bible --features importer real_packs -- --ignored --nocapture
+/// ```
+#[cfg(all(test, feature = "importer"))]
+mod real_packs {
+    use super::*;
+
+    #[derive(serde::Deserialize)]
+    struct BookFile {
+        book: String,
+        contents: Vec<Vec<Vec<String>>>,
+    }
+
+    #[test]
+    #[ignore = "needs the built packs and a translation on disk"]
+    fn real_packs_align_with_rv1960() {
+        let (Ok(packs), Ok(books)) = (
+            std::env::var("NOTEIN_ORIGINALS_TEST_DIR"),
+            std::env::var("NOTEIN_RV1960_BOOKS"),
+        ) else {
+            return;
+        };
+        let started = std::time::Instant::now();
+        let store = Store::open(std::path::Path::new(&packs)).expect("open packs");
+        println!("packs opened in {:?}", started.elapsed());
+        let mut verses: Vec<(String, u16, u16, String)> = Vec::new();
+        for entry in std::fs::read_dir(&books).expect("books dir") {
+            let path = entry.expect("entry").path();
+            if path.extension().is_none_or(|e| e != "json") {
+                continue;
+            }
+            let file: BookFile =
+                serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
+            for (chapter, chapter_verses) in file.contents.iter().enumerate() {
+                for (verse, parts) in chapter_verses.iter().enumerate() {
+                    if parts.is_empty() {
+                        continue;
+                    }
+                    verses.push((
+                        file.book.clone(),
+                        u16::try_from(chapter).unwrap(),
+                        u16::try_from(verse).unwrap(),
+                        parts.join(" "),
+                    ));
+                }
+            }
+        }
+        println!("{} verses read", verses.len());
+        let db = Db::in_memory().unwrap();
+        let rows: Vec<(&str, u16, u16, &str)> = verses
+            .iter()
+            .map(|(b, c, v, t)| (b.as_str(), *c, *v, t.as_str()))
+            .collect();
+        crate::db::test_support::install_sample_bible(&db, "spa_rv1960", &rows);
+        let started = std::time::Instant::now();
+        run(&db, &store, "spa_rv1960").expect("align");
+        println!("aligned in {:?}", started.elapsed());
+        let words = store.words("mat", 5, 3, "es").expect("mat 5:3");
+        let links = db
+            .alignment_links("spa_rv1960", 1, store.book_index("mat").unwrap(), 5, 3)
+            .unwrap();
+        let text = verses
+            .iter()
+            .find(|(b, c, v, _)| b == "mat" && *c == 5 && *v == 3)
+            .map(|(_, _, _, t)| t.clone())
+            .unwrap();
+        println!("Mat 5:3: {text}");
+        for word in &words {
+            let here: Vec<String> = links
+                .iter()
+                .filter(|l| l.position == word.position)
+                .map(|l| format!("{} ({:.2})", span_text(&text, l), l.prob))
+                .collect();
+            println!(
+                "  {} [{}] → {}",
+                word.surface,
+                word.gloss.as_deref().unwrap_or(""),
+                here.join(" | ")
+            );
+        }
+        let makarios = store.lemma(words[0].lemma).unwrap();
+        println!(
+            "{} renderings: {:?}",
+            makarios.lemma,
+            db.renderings("spa_rv1960", 1, words[0].lemma.index)
+                .unwrap()
+        );
+        let genesis = store.words("gen", 1, 1, "es").expect("gen 1:1");
+        let links = db
+            .alignment_links("spa_rv1960", 0, store.book_index("gen").unwrap(), 1, 1)
+            .unwrap();
+        let text = verses
+            .iter()
+            .find(|(b, c, v, _)| b == "gen" && *c == 1 && *v == 1)
+            .map(|(_, _, _, t)| t.clone())
+            .unwrap();
+        println!("Gen 1:1: {text}");
+        for word in &genesis {
+            let here: Vec<String> = links
+                .iter()
+                .filter(|l| l.position == word.position)
+                .map(|l| format!("{} ({:.2})", span_text(&text, l), l.prob))
+                .collect();
+            let lemma = store.lemma(word.lemma).unwrap();
+            println!(
+                "  {} [{}] {} → {} · {:?}",
+                word.surface,
+                word.gloss_en,
+                crate::originals::respell::hebrew(
+                    notein_i18n::Lang::Es,
+                    &lemma.translit,
+                    &lemma.pronunciation_strong
+                ),
+                here.join(" | "),
+                db.renderings("spa_rv1960", 0, word.lemma.index)
+                    .unwrap()
+                    .iter()
+                    .map(|r| format!("{} {}", r.token, r.count))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+}

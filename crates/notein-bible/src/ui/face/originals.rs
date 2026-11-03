@@ -543,7 +543,11 @@ impl WordRow {
     /// in the interface language, else the English ones.
     fn meaning(&self, lemma: Option<&crate::originals::LemmaView>, lang: Lang) -> Meaning {
         let word = &self.row.word;
-        let (here, here_english) = match (&self.row.here, &word.gloss) {
+        // An article or a particle aligns noisily; its own gloss says more.
+        let span = (!morph::is_function_word(&word.morph, self.row.language))
+            .then_some(self.row.here.as_ref())
+            .flatten();
+        let (here, here_english) = match (span, &word.gloss) {
             (Some(span), _) => (span.clone(), false),
             (None, Some(gloss)) => (gloss.clone(), false),
             (None, None) => (word.gloss_en.clone(), lang != Lang::En),
