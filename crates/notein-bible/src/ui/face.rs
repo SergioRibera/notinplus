@@ -188,7 +188,8 @@ impl Reader {
         flash.set(Some(verse));
         spawn_in_window(async move {
             async_io::Timer::after(FLASH).await;
-            if *flash.peek() == Some(verse) {
+            // The reader may be gone by now (opened from a chip, left at once).
+            if flash.try_peek().is_some_and(|shown| *shown == Some(verse)) {
                 flash.set(None);
             }
         });
