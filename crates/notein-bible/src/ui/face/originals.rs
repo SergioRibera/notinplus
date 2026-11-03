@@ -15,7 +15,7 @@ use notein_sdk::services::{HostToast, ToastTone};
 use notein_sdk::ui::SelectionExtra;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
-    Button, IconButton, ModalController, Notice, NoticeTone, ProgressBar, TapExt, Text, TextRole,
+    Button, ModalController, Notice, NoticeTone, ProgressBar, Sheet, TapExt, Text, TextRole,
     is_mouse, tokens,
 };
 
@@ -66,6 +66,8 @@ pub(super) fn open(reader: &Reader, verse: u16, wide: bool) {
     if wide {
         let mut tab = reader.panel_tab;
         tab.set(PanelTab::Original);
+        let mut occurrences = reader.occurrences;
+        occurrences.set(None);
         let mut open = reader.refs;
         open.set(Some(refs));
         return;
@@ -216,8 +218,7 @@ impl Component for Body {
     }
 }
 
-/// The list of words; one row open at a time; the occurrences of a
-/// lemma replace the list until «back».
+/// The list of words; one row open at a time.
 #[derive(Clone)]
 struct Words {
     reader: Reader,
@@ -241,17 +242,6 @@ impl Component for Words {
     #[cfg_attr(feature = "sismo", sismo::function("bible::originals_words"))]
     fn render(&self) -> impl IntoElement {
         let open: State<Option<u16>> = use_state(|| None);
-        let occurrences: State<Option<LemmaRef>> = use_state(|| None);
-        if let Some(lemma) = *occurrences.read() {
-            return Occurrences {
-                reader: self.reader.clone(),
-                store: Arc::clone(&self.store),
-                lemma,
-                back: occurrences,
-                in_sheet: self.in_sheet,
-            }
-            .into_element();
-        }
         let p = palette();
         let aligning = match &self.progress {
             Progress::Aligning { bible_id } if *bible_id == self.verse.bible_id => {
@@ -284,7 +274,7 @@ impl Component for Words {
                         row: row.clone(),
                         open: is_open,
                         toggle: open,
-                        occurrences,
+                        in_sheet: self.in_sheet,
                     })
                     .into_element()
             }))
@@ -307,7 +297,7 @@ struct WordRow {
     row: Row,
     open: bool,
     toggle: State<Option<u16>>,
-    occurrences: State<Option<LemmaRef>>,
+    in_sheet: bool,
 }
 
 impl PartialEq for WordRow {
@@ -459,30 +449,7 @@ impl WordRow {
                     .font_size(tokens::text::META)
                     .color(p.t3)
             }))
-            .maybe_child(derivation.map(|derivation| {
-                rect()
-                    .width(Size::fill())
-                    .spacing(4.0)
-                    .child(
-                        label()
-                            .width(Size::fill())
-                            .text(if lang == Lang::En {
-                                tr!("originals-origin")
-                            } else {
-                                tr!("originals-origin-noted", "note" => tr!("originals-meaning-english"))
-                            })
-                            .font_size(tokens::text::META)
-                            .font_weight(FontWeight::BOLD)
-                            .color(p.t3),
-                    )
-                    .child(
-                        label()
-                            .width(Size::fill())
-                            .text(derivation)
-                            .font_size(tokens::text::BODY)
-                            .color(p.t1),
-                    )
-            }))
+            .maybe_child(derivation.map(|derivation| origin_block(derivation, lang)))
             .maybe_child(function_word.then(|| {
                 label()
                     .text(tr!("originals-no-meaning"))
@@ -497,7 +464,7 @@ impl WordRow {
     fn actions(&self, count: usize, testament: String, copy_text: String) -> impl IntoElement {
         let p = palette();
         let lemma_ref = self.row.word.lemma;
-        let mut occurrences = self.occurrences;
+        let (reader, in_sheet) = (self.reader.clone(), self.in_sheet);
         let host = Arc::clone(&self.reader.host);
         rect()
             .width(Size::fill())
@@ -517,7 +484,16 @@ impl WordRow {
                 Button::new(tr!("originals-see-all", "count" => count))
                     .small()
                     .tonal()
-                    .on_press(move |_| occurrences.set(Some(lemma_ref)))
+                    .on_press(move |_| {
+                        // In the panel the occurrences take its header; in
+                        // a sheet they come as a sheet of their own.
+                        if in_sheet {
+                            open_occurrences_sheet(&reader, lemma_ref);
+                        } else {
+                            let mut occurrences = reader.occurrences;
+                            occurrences.set(Some(lemma_ref));
+                        }
+                    })
             }))
             .child(
                 Button::new(tr!("originals-copy"))
@@ -694,6 +670,34 @@ impl WordRow {
     }
 }
 
+/// The dictionary's derivation under its caption, which says it is
+/// English when the interface is not.
+fn origin_block(derivation: String, lang: Lang) -> impl IntoElement {
+    let p = palette();
+    rect()
+        .width(Size::fill())
+        .spacing(4.0)
+        .child(
+            label()
+                .width(Size::fill())
+                .text(if lang == Lang::En {
+                    tr!("originals-origin")
+                } else {
+                    tr!("originals-origin-noted", "note" => tr!("originals-meaning-english"))
+                })
+                .font_size(tokens::text::META)
+                .font_weight(FontWeight::BOLD)
+                .color(p.t3),
+        )
+        .child(
+            label()
+                .width(Size::fill())
+                .text(derivation)
+                .font_size(tokens::text::BODY)
+                .color(p.t1),
+        )
+}
+
 /// The dictionary's derivation ("plural of H433;") with every Strong
 /// number replaced by the word it names and its pronunciation, so the
 /// line reads without the numbering.
@@ -801,13 +805,55 @@ fn original_text(text: &str, size: f32, color: Color) -> impl IntoElement {
     label().text(text.to_owned()).font_size(size).color(color)
 }
 
+/// The title and the count line over the occurrences of `lemma`;
+/// `None` without the packs.
+pub(super) fn occurrences_header(lemma: LemmaRef) -> Option<(String, String)> {
+    let store = originals::service()?.store()?;
+    let name = store.lemma(lemma).map(|l| l.lemma).unwrap_or_default();
+    let count = store.occurrences(lemma).len();
+    let testament = match lemma.testament {
+        originals::Testament::Old => tr!("originals-testament-ot"),
+        originals::Testament::New => tr!("originals-testament-nt"),
+    };
+    Some((
+        tr!("originals-occurrences-title", "lemma" => name),
+        tr!("originals-count", "count" => count, "testament" => testament),
+    ))
+}
+
+/// The occurrences of `lemma` as a list; nothing without the packs.
+pub(super) fn occurrences_body(reader: &Reader, lemma: LemmaRef, in_sheet: bool) -> Element {
+    let Some(store) = originals::service().and_then(|service| service.store()) else {
+        return rect().into_element();
+    };
+    Occurrences {
+        reader: reader.clone(),
+        store,
+        lemma,
+        in_sheet,
+    }
+    .into_element()
+}
+
+/// The occurrences of `lemma` in a sheet over the verse's, with its own
+/// title and the way back.
+fn open_occurrences_sheet(reader: &Reader, lemma: LemmaRef) {
+    let Some((title, count)) = occurrences_header(lemma) else {
+        return;
+    };
+    Sheet::titled(title)
+        .subtitle(count)
+        .on_back(|()| ModalController::get().close())
+        .child(occurrences_body(reader, lemma, true))
+        .push();
+}
+
 /// Every place a lemma occurs, in canon order; pressing one goes there.
 #[derive(Clone)]
 struct Occurrences {
     reader: Reader,
     store: Arc<Store>,
     lemma: LemmaRef,
-    back: State<Option<LemmaRef>>,
     in_sheet: bool,
 }
 
@@ -823,8 +869,6 @@ const MAX_OCCURRENCES: usize = 300;
 impl Component for Occurrences {
     #[cfg_attr(feature = "sismo", sismo::function("bible::originals_occurrences"))]
     fn render(&self) -> impl IntoElement {
-        let lemma = self.store.lemma(self.lemma);
-        let title = tr!("originals-occurrences-title", "lemma" => lemma.as_ref().map(|l| l.lemma.clone()).unwrap_or_default());
         let (bible_id, book, chapter) = {
             let st = self.reader.state.peek();
             (
@@ -841,29 +885,9 @@ impl Component for Occurrences {
                 .map_or_else(|| crate::canon::short_name(id), |b| b.name.clone())
         };
         let all = self.store.occurrences(self.lemma);
-        let mut back = self.back;
         rect()
             .width(Size::fill())
             .spacing(2.0)
-            .child(
-                rect()
-                    .width(Size::fill())
-                    .padding((4.0, 8.0, 8.0, 8.0))
-                    .horizontal()
-                    .content(Content::Flex)
-                    .cross_align(Alignment::Center)
-                    .spacing(4.0)
-                    .child(
-                        IconButton::new(lucide::arrow_left(), tr!("originals-occurrences-back"))
-                            .size(32.0)
-                            .on_press(move |_| back.set(None)),
-                    )
-                    .child(
-                        rect()
-                            .width(Size::flex(1.0))
-                            .child(Text::new(title).role(TextRole::Strong).lines(1)),
-                    ),
-            )
             .children(all.iter().take(MAX_OCCURRENCES).enumerate().map(|(i, occurrence)| {
                 let here = occurrence.book_id.eq_ignore_ascii_case(&book)
                     && occurrence.chapter == chapter;
@@ -936,7 +960,10 @@ impl Occurrences {
             .a11y_role(AccessibilityRole::Button)
             .on_tap(move |_| {
                 if in_sheet {
-                    ModalController::get().close();
+                    // This sheet and the verse's under it.
+                    let mut modals = ModalController::get();
+                    modals.close();
+                    modals.close();
                 }
                 reader.go(&book, chapter, verse);
             })

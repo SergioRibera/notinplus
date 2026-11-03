@@ -133,6 +133,8 @@ pub(super) struct Reader {
     refs: State<Option<refs::VerseRefs>>,
     /// Which tab of that panel is showing.
     panel_tab: State<originals::PanelTab>,
+    /// The lemma whose occurrences replace the panel's content.
+    occurrences: State<Option<crate::originals::LemmaRef>>,
     /// Whether the reader is wide enough for the panel beside the text
     /// (else the verse opens in a sheet).
     wide: State<bool>,
@@ -352,6 +354,7 @@ fn use_reader(ctx: &FaceContext<BibleKind>, db: &Db) -> Reader {
         scroll: use_scroll_controller(ScrollConfig::default),
         refs: use_state(|| None),
         panel_tab: use_state(originals::PanelTab::default),
+        occurrences: use_state(|| None),
         wide: use_state(|| false),
         annotations: use_hook(Rc::default),
         footnotes_landed: use_state(|| 0),

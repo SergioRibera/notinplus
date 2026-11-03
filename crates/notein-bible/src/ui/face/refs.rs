@@ -161,6 +161,8 @@ pub(super) fn open(reader: &Reader, verse: u16, wide: bool) {
     if wide {
         let mut tab = reader.panel_tab;
         let mut open = reader.refs;
+        let mut occurrences = reader.occurrences;
+        occurrences.set(None);
         let same = open
             .peek()
             .as_ref()
@@ -291,11 +293,26 @@ impl Panel {
     fn body(&self, refs: &VerseRefs) -> Element {
         let open = self.reader.refs;
         let tab = self.reader.panel_tab;
+        let mut occurrences = self.reader.occurrences;
         let tabbed = originals::enabled(&self.reader);
         let current = if tabbed { *tab.read() } else { PanelTab::Refs };
-        let title = match current {
-            PanelTab::Refs => tr!("reader-refs-title", "place" => refs.place.clone()),
-            PanelTab::Original => tr!("originals-title", "place" => refs.place.clone()),
+        // The occurrences of a word take the whole panel: its header
+        // says so, with the way back to the verse.
+        let nested = (*occurrences.read())
+            .and_then(|lemma| originals::occurrences_header(lemma).map(|head| (lemma, head)));
+        let (title, subtitle) = match &nested {
+            Some((_, (title, count))) => (title.clone(), count.clone()),
+            None => (
+                match current {
+                    PanelTab::Refs => tr!("reader-refs-title", "place" => refs.place.clone()),
+                    PanelTab::Original => tr!("originals-title", "place" => refs.place.clone()),
+                },
+                refs.count(),
+            ),
+        };
+        let content = match &nested {
+            Some((lemma, _)) => originals::occurrences_body(&self.reader, *lemma, false),
+            None => tab_body(&self.reader, refs, current, false),
         };
         let p = palette();
         rect()
@@ -313,12 +330,21 @@ impl Panel {
                     .horizontal()
                     .content(Content::Flex)
                     .cross_align(Alignment::Center)
+                    .spacing(4.0)
+                    .maybe_child(nested.is_some().then(|| {
+                        IconButton::new(
+                            freya::icons::lucide::arrow_left(),
+                            tr!("originals-occurrences-back"),
+                        )
+                        .size(32.0)
+                        .on_press(move |_| occurrences.set(None))
+                    }))
                     .child(
                         rect()
                             .width(Size::flex(1.0))
                             .spacing(2.0)
-                            .child(Text::new(title).role(TextRole::Strong))
-                            .child(Text::new(refs.count()).role(TextRole::Meta)),
+                            .child(Text::new(title).role(TextRole::Strong).lines(1))
+                            .child(Text::new(subtitle).role(TextRole::Meta)),
                     )
                     .child(
                         IconButton::new(freya::icons::lucide::x(), tr!("reader-refs-close"))
@@ -326,22 +352,18 @@ impl Panel {
                             .on_press(move |_| {
                                 let mut open = open;
                                 open.set(None);
+                                occurrences.set(None);
                             }),
                     ),
             )
-            .maybe_child(refs.quote(16.0))
-            .maybe_child(tabbed.then(|| tabs(tab, 12.0)))
+            .maybe_child(refs.quote(16.0).filter(|_| nested.is_none()))
+            .maybe_child((tabbed && nested.is_none()).then(|| tabs(tab, 12.0)))
             .child(
                 ScrollView::new()
                     .width(Size::fill())
                     .height(Size::flex(1.0))
                     .child(notein_ui_kit::ScrollContent::new(
-                        rect().padding((0.0, 8.0, 16.0, 8.0)).child(tab_body(
-                            &self.reader,
-                            refs,
-                            current,
-                            false,
-                        )),
+                        rect().padding((0.0, 8.0, 16.0, 8.0)).child(content),
                     )),
             )
             .into_element()

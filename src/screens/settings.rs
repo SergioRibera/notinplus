@@ -108,6 +108,19 @@ impl Section {
     }
 }
 
+/// A page a section opened inside itself (one plugin's settings): the
+/// header shows its title and the way back to the section.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Subpage {
+    pub(super) key: String,
+    pub(super) title: String,
+}
+
+/// The open subpage, shared by the headers and the sections.
+pub(super) fn use_subpage() -> State<Option<Subpage>> {
+    use_consume::<State<Option<Subpage>>>()
+}
+
 /// Open Settings on its first section.
 #[sismo::function("settings::open")]
 pub fn open() {
@@ -138,7 +151,12 @@ struct Settings {
 
 /// The searchable list of sections.
 #[sismo::function("settings::section_list")]
-fn section_list(mut open: State<Option<Section>>, query: State<String>, compact: bool) -> Rect {
+fn section_list(
+    mut open: State<Option<Section>>,
+    mut sub: State<Option<Subpage>>,
+    query: State<String>,
+    compact: bool,
+) -> Rect {
     let text = query.read().clone();
     let current = *open.read();
     let nav: Vec<Element> = Section::ALL
@@ -149,7 +167,10 @@ fn section_list(mut open: State<Option<Section>>, query: State<String>, compact:
                 .icon(section.icon())
                 .dense(!compact)
                 .selected(!compact && current == Some(section))
-                .on_press(move |_| open.set(Some(section)));
+                .on_press(move |_| {
+                    sub.set(None);
+                    open.set(Some(section));
+                });
             if compact { row.chevron() } else { row }.into_element()
         })
         .collect();
@@ -166,7 +187,11 @@ fn section_list(mut open: State<Option<Section>>, query: State<String>, compact:
 
 /// Phones: the list, or one section with back; the whole screen.
 #[sismo::function("settings::phone_layout")]
-fn phone_layout(mut open: State<Option<Section>>, list: Rect) -> Element {
+fn phone_layout(
+    mut open: State<Option<Section>>,
+    mut sub: State<Option<Subpage>>,
+    list: Rect,
+) -> Element {
     use freya::icons::lucide;
     let size = *Platform::get().current_window().root_size.read();
     let insets = *crate::hooks::use_safe_area_insets().read();
@@ -180,7 +205,13 @@ fn phone_layout(mut open: State<Option<Section>>, list: Rect) -> Element {
             .spacing(4.0)
             .child(if back {
                 IconButton::new(lucide::arrow_left(), tr!("settings-back"))
-                    .on_press(move |_| open.set(None))
+                    .on_press(move |_| {
+                        if sub.peek().is_some() {
+                            sub.set(None);
+                        } else {
+                            open.set(None);
+                        }
+                    })
                     .into_element()
             } else {
                 IconButton::new(lucide::x(), tr!("common-close"))
@@ -189,9 +220,15 @@ fn phone_layout(mut open: State<Option<Section>>, list: Rect) -> Element {
             })
             .child(Text::new(title).role(TextRole::Title).fill())
     };
+    let page = sub.read().clone();
     let (head, content) = open.read().map_or_else(
         || (header(tr!("common-settings"), false), list.into_element()),
-        |section| (header(section.label(), true), section.body()),
+        |section| {
+            let title = page
+                .as_ref()
+                .map_or_else(|| section.label(), |p| p.title.clone());
+            (header(title, true), section.body())
+        },
     );
     rect()
         .position(Position::new_absolute().top(0.0).left(0.0))
@@ -208,7 +245,11 @@ fn phone_layout(mut open: State<Option<Section>>, list: Rect) -> Element {
         .on_global_key_down(move |e: Event<KeyboardEventData>| {
             if e.key == Key::Named(NamedKey::BrowserBack) && open.peek().is_some() {
                 e.stop_propagation();
-                open.set(None);
+                if sub.peek().is_some() {
+                    sub.set(None);
+                } else {
+                    open.set(None);
+                }
             }
         })
         .child(head)
@@ -228,8 +269,12 @@ fn phone_layout(mut open: State<Option<Section>>, list: Rect) -> Element {
 
 /// Wider screens: the list beside the open section.
 #[sismo::function("settings::wide_layout")]
-fn wide_layout(section: Section, list: Rect) -> Element {
+fn wide_layout(section: Section, mut sub: State<Option<Subpage>>, list: Rect) -> Element {
     let p = palette();
+    let page = sub.read().clone();
+    let title = page
+        .as_ref()
+        .map_or_else(|| section.label(), |p| p.title.clone());
     // Tall enough to browse, never past the system bars or the keyboard.
     let window = notein_ui_kit::safe_frame().height();
     let height = (window * 0.82).clamp(420.0, 760.0).min(window - 32.0);
@@ -274,7 +319,15 @@ fn wide_layout(section: Section, list: Rect) -> Element {
                         .horizontal()
                         .cross_align(Alignment::Center)
                         .content(Content::Flex)
-                        .child(Text::new(section.label()).role(TextRole::Title).fill())
+                        .spacing(4.0)
+                        .maybe_child(page.is_some().then(|| {
+                            IconButton::new(
+                                freya::icons::lucide::arrow_left(),
+                                tr!("settings-back"),
+                            )
+                            .on_press(move |_| sub.set(None))
+                        }))
+                        .child(Text::new(title).role(TextRole::Title).fill())
                         .child(
                             IconButton::new(freya::icons::lucide::x(), tr!("common-close"))
                                 .on_press(|_| ModalController::get().close()),
@@ -300,14 +353,16 @@ impl Component for Settings {
     fn render(&self) -> impl IntoElement {
         let start = self.start;
         let open = use_state(move || start);
+        let sub: State<Option<Subpage>> = use_state(|| None);
+        provide_context(sub);
         let query = use_state(String::new);
         let compact = width_class().is_compact();
-        let list = section_list(open, query, compact);
+        let list = section_list(open, sub, query, compact);
         if compact {
-            phone_layout(open, list)
+            phone_layout(open, sub, list)
         } else {
             let section = open.read().unwrap_or_default();
-            wide_layout(section, list)
+            wide_layout(section, sub, list)
         }
     }
 }

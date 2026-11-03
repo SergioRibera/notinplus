@@ -53,33 +53,26 @@ impl Component for Plugins {
         let p = palette();
         // Re-render when a plugin is switched on or off.
         let _disabled = SettingsStore::get().read().plugins;
-        let mut open = use_state(|| None::<String>);
+        // One plugin's page: the settings header carries its name and
+        // the way back.
+        let mut sub = super::use_subpage();
         let catalog = crate::plugins::catalog();
-        if let Some(id) = open.read().clone()
+        if let Some(id) = sub.read().as_ref().map(|page| page.key.clone())
             && let Some(plugin) = catalog.plugin(&id)
         {
             let plugin = plugin.clone();
             drop(catalog);
-            return rect()
-                .width(Size::fill())
-                .spacing(16.0)
-                .child(
-                    Button::new(tr!("settings-plugins-all"))
-                        .ghost()
-                        .small()
-                        .icon(lucide::arrow_left())
-                        .on_press(move |_| open.set(None)),
-                )
-                .child(Detail {
-                    plugin: Arc::new(plugin),
-                })
-                .into_element();
+            return Detail {
+                plugin: Arc::new(plugin),
+            }
+            .into_element();
         }
         let rows: Vec<Element> = catalog
             .plugins()
             .iter()
             .map(|plugin| {
                 let id = plugin.info.id.to_string();
+                let name = plugin.info.name.to_string();
                 let icon = plugin.kinds.first().map(|k| k.info());
                 let toggle_id = id.clone();
                 ListRow::new(plugin.info.name.clone())
@@ -93,7 +86,12 @@ impl Component for Plugins {
                         on: plugin.is_active(),
                         on_toggle: EventHandler::new(move |on| set_enabled(&toggle_id, on)),
                     })
-                    .on_press(move |_| open.set(Some(id.clone())))
+                    .on_press(move |_| {
+                        sub.set(Some(super::Subpage {
+                            key: id.clone(),
+                            title: name.clone(),
+                        }));
+                    })
                     .into_element()
             })
             .collect();
