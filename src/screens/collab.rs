@@ -4,7 +4,7 @@
 use std::time::{Duration, Instant};
 
 use freya::prelude::*;
-use notein_sync::{DeviceId, Removal, ShareId, ShareMode, SharePolicy};
+use notein_sync::{DeviceId, Removal, Role, ShareId, ShareMode};
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
@@ -353,10 +353,10 @@ impl Component for ShareFooter {
         } else {
             ShareMode::Session
         };
-        let policy = if *self.read_only.read() {
-            SharePolicy::read_only()
+        let entry_role = if *self.read_only.read() {
+            Role::Viewer
         } else {
-            SharePolicy::default()
+            Role::Editor
         };
         let enabled = !docs.is_empty();
         SheetFooter::new([
@@ -373,7 +373,10 @@ impl Component for ShareFooter {
                         title: title.clone(),
                         docs: docs.clone(),
                         mode,
-                        policy,
+                        folder: None,
+                        entry_role,
+                        approve_entry: mode == ShareMode::Permanent,
+                        editors_add_docs: false,
                     });
                     let docs = docs.clone();
                     spawn(async move {
@@ -421,21 +424,13 @@ fn person_color(device: DeviceId) -> Color {
     swatches[hash % swatches.len()]
 }
 
-/// What a person may do in a session.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Role {
-    Owner,
-    Editor,
-    Viewer,
-}
-
-impl Role {
-    fn label(self) -> String {
-        match self {
-            Self::Owner => tr!("collab-role-owner"),
-            Self::Editor => tr!("collab-role-editor"),
-            Self::Viewer => tr!("collab-role-viewer"),
-        }
+/// What a role is called on screen.
+fn role_label(role: Role) -> String {
+    match role {
+        Role::Owner => tr!("collab-role-owner"),
+        Role::CoOrganizer => tr!("collab-role-co-organizer"),
+        Role::Editor => tr!("collab-role-editor"),
+        Role::Viewer => tr!("collab-role-viewer"),
     }
 }
 
@@ -451,7 +446,6 @@ struct Participant {
 
 #[sismo::function("collab::participants")]
 fn participants(view: &ShareView, me: Option<DeviceId>) -> Vec<Participant> {
-    let read_only = view.policy.edit_content == notein_sync::Who::Nobody;
     let mut people: Vec<Participant> = std::iter::once(Participant {
         device: view.owner.device,
         name: view.owner.name.clone(),
@@ -459,19 +453,15 @@ fn participants(view: &ShareView, me: Option<DeviceId>) -> Vec<Participant> {
         me: Some(view.owner.device) == me,
         role: Role::Owner,
     })
-    .chain(view.members.iter().map(|(m, online)| Participant {
-        device: m.device,
-        name: m.name.clone(),
-        online: *online || Some(m.device) == me,
-        me: Some(m.device) == me,
-        role: if read_only || view.viewers.contains(&m.device) {
-            Role::Viewer
-        } else {
-            Role::Editor
-        },
+    .chain(view.members.iter().map(|m| Participant {
+        device: m.member.device,
+        name: m.member.name.clone(),
+        online: m.online || Some(m.member.device) == me,
+        me: Some(m.member.device) == me,
+        role: m.member.role,
     }))
     .collect();
-    people.sort_by_key(|p| (!p.me, p.role == Role::Viewer, !p.online));
+    people.sort_by_key(|p| (!p.me, std::cmp::Reverse(p.role), !p.online));
     people
 }
 
@@ -501,7 +491,7 @@ impl Component for Session {
                     } else {
                         person.name.clone().into()
                     },
-                    status: person.role.label().into(),
+                    status: role_label(person.role).into(),
                     color: person_color(person.device),
                     live: person.online,
                 })
@@ -617,83 +607,85 @@ impl Component for People {
         let mut armed = use_state(|| None::<(String, Instant)>);
         let text = query.read().trim().to_lowercase();
         let share = self.share;
-        let rows: Vec<Element> = self
-            .participants
-            .iter()
-            .filter(|person| text.is_empty() || person.name.to_lowercase().contains(&text))
-            .map(|person| {
-                let device = person.device;
-                let key = format!("{device:?}");
-                let removing = armed
-                    .read()
-                    .as_ref()
-                    .is_some_and(|(k, at)| *k == key && at.elapsed() < CONFIRM_WINDOW);
-                let status = match (person.role, person.online) {
-                    (Role::Owner, _) => Role::Owner.label(),
-                    (role, true) => tr!("collab-person-online", "role" => role.label()),
-                    (role, false) => tr!("collab-person-offline", "role" => role.label()),
-                };
-                let name = if person.me {
-                    tr!("collab-person-me", "name" => person.name.as_str())
-                } else {
-                    person.name.clone()
-                };
-                let row =
-                    ListRow::new(name)
-                        .subtitle(status)
-                        .leading(notein_ui_kit::Leading::Element(
+        let rows: Vec<Element> =
+            self.participants
+                .iter()
+                .filter(|person| text.is_empty() || person.name.to_lowercase().contains(&text))
+                .map(|person| {
+                    let device = person.device;
+                    let key = format!("{device:?}");
+                    let removing = armed
+                        .read()
+                        .as_ref()
+                        .is_some_and(|(k, at)| *k == key && at.elapsed() < CONFIRM_WINDOW);
+                    let status = match (person.role, person.online) {
+                        (Role::Owner, _) => role_label(Role::Owner),
+                        (role, true) => tr!("collab-person-online", "role" => role_label(role)),
+                        (role, false) => tr!("collab-person-offline", "role" => role_label(role)),
+                    };
+                    let name = if person.me {
+                        tr!("collab-person-me", "name" => person.name.as_str())
+                    } else {
+                        person.name.clone()
+                    };
+                    let row = ListRow::new(name).subtitle(status).leading(
+                        notein_ui_kit::Leading::Element(
                             notein_ui_kit::Avatar::new(
                                 initials(&person.name),
                                 person_color(device),
                             )
                             .presence(person.online)
                             .into_element(),
-                        ));
-                let row = if self.is_owner && person.role != Role::Owner {
-                    let viewer = person.role == Role::Viewer;
-                    row.trailing(Trailing::Element(
-                        rect()
-                            .horizontal()
-                            .spacing(6.0)
-                            .child(
-                                Button::new(if viewer {
-                                    tr!("collab-person-allow-edit")
-                                } else {
-                                    tr!("collab-person-view-only")
-                                })
-                                .ghost()
-                                .small()
-                                .on_press(move |_| crate::sync::set_viewer(share, device, !viewer)),
-                            )
-                            .child(
-                                Button::new(if removing {
-                                    tr!("collab-person-confirm")
-                                } else {
-                                    tr!("collab-person-remove")
-                                })
-                                .variant(if removing {
-                                    ButtonVariant::DangerFill
-                                } else {
-                                    ButtonVariant::Ghost
-                                })
-                                .small()
-                                .on_press(move |_| {
-                                    if removing {
-                                        armed.set(None);
-                                        crate::sync::expel(share, device);
+                        ),
+                    );
+                    let row = if self.is_owner && person.role != Role::Owner {
+                        let viewer = person.role == Role::Viewer;
+                        row.trailing(Trailing::Element(
+                            rect()
+                                .horizontal()
+                                .spacing(6.0)
+                                .child(
+                                    Button::new(if viewer {
+                                        tr!("collab-person-allow-edit")
                                     } else {
-                                        armed.set(Some((key.clone(), Instant::now())));
-                                    }
-                                }),
-                            )
-                            .into_element(),
-                    ))
-                } else {
-                    row
-                };
-                row.into_element()
-            })
-            .collect();
+                                        tr!("collab-person-view-only")
+                                    })
+                                    .ghost()
+                                    .small()
+                                    .on_press(move |_| {
+                                        let role = if viewer { Role::Editor } else { Role::Viewer };
+                                        crate::sync::set_role(share, device, role);
+                                    }),
+                                )
+                                .child(
+                                    Button::new(if removing {
+                                        tr!("collab-person-confirm")
+                                    } else {
+                                        tr!("collab-person-remove")
+                                    })
+                                    .variant(if removing {
+                                        ButtonVariant::DangerFill
+                                    } else {
+                                        ButtonVariant::Ghost
+                                    })
+                                    .small()
+                                    .on_press(move |_| {
+                                        if removing {
+                                            armed.set(None);
+                                            crate::sync::expel(share, device);
+                                        } else {
+                                            armed.set(Some((key.clone(), Instant::now())));
+                                        }
+                                    }),
+                                )
+                                .into_element(),
+                        ))
+                    } else {
+                        row
+                    };
+                    row.into_element()
+                })
+                .collect();
         let empty = rows.is_empty();
         rect()
             .width(Size::fill())
@@ -762,6 +754,11 @@ pub fn invitation(link: String) {
                         .into_element(),
                 ]))
                 .open();
+        }
+        Some(LinkTarget::AlreadyIn { title, .. }) => {
+            Toasts::get().show(Toast::new(
+                tr!("collab-already-in", "title" => title.as_str()),
+            ));
         }
         Some(LinkTarget::Pair { name }) => {
             Sheet::titled(tr!("collab-pair-title", "name" => name.as_str()))
@@ -833,7 +830,11 @@ fn join_progress(snapshot: &SyncSnapshot, joined: Option<&ShareView>) -> (String
     joined.map_or_else(
         || {
             (
-                snapshot.pending_joins.first().cloned().unwrap_or_default(),
+                snapshot
+                    .pending_joins
+                    .first()
+                    .map(|j| j.title.clone())
+                    .unwrap_or_default(),
                 0,
                 0,
             )

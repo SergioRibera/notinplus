@@ -14,13 +14,13 @@ use std::time::{Duration, Instant};
 use notein_sync::{
     Action, BlobKey, BlobKind, DeviceId, DeviceProfile, DocId, DocStatus, DriverEvent, Invite,
     JoinFailure, LanConfig, LanNode, Member, NetEvent, PairFailure, PairingCode, PairingOffer,
-    PeerInfo, RelayAddr, Removal, Share, ShareBook, ShareId, ShareMode, SharePolicy, SyncDriver,
-    TrustedDevice,
+    Path as ReachPath, PeerInfo, RelayAddr, Removal, Role, Share, ShareBook, ShareEdit, ShareId,
+    ShareMode, SyncDriver, TrustedDevice,
 };
 
 use notein_i18n::tr;
 
-use crate::library::{ItemId, Library, bodies};
+use crate::library::{FolderId, ItemId, Library, bodies};
 use crate::session_end::SessionEnd;
 
 pub mod live;
@@ -39,6 +39,16 @@ const DEBOUNCE: Duration = Duration::from_millis(800);
 const PROFILE_FILE: &str = "device.bin";
 const SHARES_FILE: &str = "shares.bin";
 
+/// One person of a share as the UI shows them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemberView {
+    pub member: Member,
+    /// Connected to this device over the network right now.
+    pub online: bool,
+    /// How they can be reached, if at all.
+    pub path: Option<ReachPath>,
+}
+
 /// One share as the UI shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShareView {
@@ -46,17 +56,26 @@ pub struct ShareView {
     pub title: String,
     pub owner: Member,
     pub is_owner: bool,
+    /// What this device may do here.
+    pub my_role: Role,
     pub mode: ShareMode,
-    pub policy: SharePolicy,
+    /// The folder this share mirrors, when it is a shared folder.
+    pub folder: Option<FolderId>,
+    pub entry_role: Role,
+    pub approve_entry: bool,
+    pub editors_add_docs: bool,
     pub docs: Vec<ItemId>,
-    /// Members other than the owner, with whether they are online.
-    pub members: Vec<(Member, bool)>,
+    /// Members other than the owner.
+    pub members: Vec<MemberView>,
+    /// People waiting for an organizer to let them in.
+    pub pending: Vec<Member>,
     pub owner_online: bool,
+    pub owner_path: Option<ReachPath>,
     pub invite_link: String,
-    /// Whether this device may edit the share's documents.
     pub can_edit: bool,
-    /// Members set to only look.
-    pub viewers: Vec<DeviceId>,
+    pub can_manage: bool,
+    pub can_add_docs: bool,
+    pub can_rename: bool,
 }
 
 impl ShareView {
@@ -68,8 +87,86 @@ impl ShareView {
             || self
                 .members
                 .iter()
-                .any(|(member, online)| *online && Some(member.device) != me)
+                .any(|m| m.online && Some(m.member.device) != me)
     }
+
+    /// A one-off session whose organizer is away: nothing moves until
+    /// they are back, and nothing is lost either.
+    #[must_use]
+    pub fn paused(&self) -> bool {
+        !self.is_owner && self.mode == ShareMode::Session && self.owner_path.is_none()
+    }
+
+    /// Whether `device` outranks nobody here, i.e. may not be touched by
+    /// this device.
+    #[must_use]
+    pub fn outranks(&self, device: DeviceId) -> bool {
+        let theirs = if device == self.owner.device {
+            Role::Owner
+        } else {
+            match self.members.iter().find(|m| m.member.device == device) {
+                Some(m) => m.member.role,
+                None => return false,
+            }
+        };
+        self.my_role.can_manage() && self.my_role > theirs
+    }
+}
+
+/// An invitation accepted and not answered yet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingJoinView {
+    pub share: ShareId,
+    pub title: String,
+    pub owner: String,
+    /// The owner was reached; an organizer has to let us in.
+    pub awaiting_approval: bool,
+}
+
+/// A share this device left or ended, kept for a while.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecentShare {
+    pub id: ShareId,
+    pub title: String,
+    pub owner: String,
+    /// Ended by this device (it can open it again) rather than left
+    /// (it can ask back in).
+    pub is_owner: bool,
+    pub docs: Vec<ItemId>,
+    /// Unix milliseconds of the leave or the end.
+    pub at: u64,
+}
+
+/// Something that happened in a share and deserves a word on screen.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ShareNotice {
+    Joined {
+        share: ShareId,
+        title: String,
+        who: String,
+    },
+    Left {
+        share: ShareId,
+        title: String,
+        who: String,
+    },
+    Renamed {
+        share: ShareId,
+        title: String,
+        who: String,
+    },
+    /// Someone asked into a share this device organizes.
+    EntryRequested {
+        share: ShareId,
+        title: String,
+        who: String,
+    },
+    /// This device got in.
+    Entered { share: ShareId, title: String },
+    /// This device was refused, or the invitation is dead.
+    Refused { share: ShareId, title: String },
+    /// Opening a link for a share this device is already in.
+    AlreadyIn { share: ShareId, title: String },
 }
 
 /// What the UI reads.
@@ -91,8 +188,12 @@ pub struct SyncSnapshot {
     /// its way here.
     pub files_pending: bool,
     pub shares: Vec<ShareView>,
-    /// Titles of shares we asked into and are still waiting for.
-    pub pending_joins: Vec<String>,
+    /// Shares we asked into and are still waiting for.
+    pub pending_joins: Vec<PendingJoinView>,
+    /// Shares left or ended lately, newest first.
+    pub recents: Vec<RecentShare>,
+    /// The name chosen for shares, when one is set.
+    pub user_name: Option<String>,
     pub last_join_failure: Option<JoinFailure>,
     /// Relay in use, as configured.
     pub relay: Option<String>,
@@ -106,7 +207,11 @@ pub struct ShareRequest {
     pub title: String,
     pub docs: Vec<ItemId>,
     pub mode: ShareMode,
-    pub policy: SharePolicy,
+    /// The folder this share mirrors; its documents are `docs`.
+    pub folder: Option<FolderId>,
+    pub entry_role: Role,
+    pub approve_entry: bool,
+    pub editors_add_docs: bool,
 }
 
 enum Cmd {
@@ -127,9 +232,16 @@ enum Cmd {
     Join(Invite),
     Leave(ShareId),
     End(ShareId),
-    Expel(ShareId, DeviceId),
-    SetPolicy(ShareId, SharePolicy),
-    SetViewer(ShareId, DeviceId, bool),
+    Edit(ShareId, ShareEdit),
+    /// Documents to bring into a share, by library id; the records that
+    /// travel with them are worked out on the sync thread.
+    AddDocs(ShareId, Vec<ItemId>),
+    Rejoin(ShareId),
+    Reopen(ShareId),
+    ForgetRecent(ShareId),
+    /// Drop recents older than this many milliseconds.
+    PruneRecents(u64),
+    SetUserName(Option<String>),
     SetRelay(Option<String>),
     /// The app came to the front (`true`) or went to the background.
     Present(bool),
@@ -141,6 +253,28 @@ enum Cmd {
 static CMDS: OnceLock<flume::Sender<Cmd>> = OnceLock::new();
 static SNAPSHOT: Mutex<Option<SyncSnapshot>> = Mutex::new(None);
 static LISTENERS: Mutex<Vec<flume::Sender<()>>> = Mutex::new(Vec::new());
+static NOTICE_LISTENERS: Mutex<Vec<flume::Sender<ShareNotice>>> = Mutex::new(Vec::new());
+
+/// A receiver of share notices (people coming and going, requests to
+/// enter, the result of a join) for the UI to turn into toasts.
+#[must_use]
+pub fn notices() -> flume::Receiver<ShareNotice> {
+    let (tx, rx) = flume::unbounded();
+    NOTICE_LISTENERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(tx);
+    rx
+}
+
+#[sismo::function("sync::notify")]
+fn notify(notice: ShareNotice) {
+    sismo::counter!("sync.notices", 1);
+    NOTICE_LISTENERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .retain(|tx| tx.send(notice.clone()).is_ok());
+}
 
 fn snapshot_slot() -> std::sync::MutexGuard<'static, Option<SyncSnapshot>> {
     SNAPSHOT
@@ -177,12 +311,36 @@ pub fn doc_status(item: ItemId) -> DocStatus {
         .unwrap_or(DocStatus::Unknown)
 }
 
-/// The share `item` belongs to, if any.
+/// The first share `item` belongs to, if any; a document may be in
+/// several, see [`shares_of`].
 #[must_use]
 pub fn share_of(item: ItemId) -> Option<ShareView> {
     snapshot_slot()
         .as_ref()
         .and_then(|s| s.shares.iter().find(|v| v.docs.contains(&item)).cloned())
+}
+
+/// Every share `item` belongs to.
+#[must_use]
+pub fn shares_of(item: ItemId) -> Vec<ShareView> {
+    snapshot_slot()
+        .as_ref()
+        .map(|s| {
+            s.shares
+                .iter()
+                .filter(|v| v.docs.contains(&item))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The share mirroring `folder`, if any.
+#[must_use]
+pub fn share_of_folder(folder: FolderId) -> Option<ShareView> {
+    snapshot_slot()
+        .as_ref()
+        .and_then(|s| s.shares.iter().find(|v| v.folder == Some(folder)).cloned())
 }
 
 /// Whether this device may edit `item`: false while a share holds
@@ -392,6 +550,12 @@ pub enum LinkTarget {
         title: String,
         owner: String,
         mode: ShareMode,
+        role: Role,
+    },
+    /// An invitation to a share this device is already in.
+    AlreadyIn {
+        share: ShareId,
+        title: String,
     },
     Pair {
         name: String,
@@ -403,14 +567,26 @@ pub enum LinkTarget {
 pub fn recognize_link(text: &str) -> Option<LinkTarget> {
     let text = text.trim();
     if let Some(invite) = Invite::parse_link(text) {
-        Some(LinkTarget::Join {
+        Some(link_target(invite))
+    } else {
+        PairingOffer::parse_link(text).map(|offer| LinkTarget::Pair { name: offer.name })
+    }
+}
+
+fn link_target(invite: Invite) -> LinkTarget {
+    let inside = snapshot().shares.into_iter().find(|s| s.id == invite.share);
+    match inside {
+        Some(share) => LinkTarget::AlreadyIn {
+            share: share.id,
+            title: share.title,
+        },
+        None => LinkTarget::Join {
             share: invite.share,
             title: invite.title,
             owner: invite.owner.name,
             mode: invite.mode,
-        })
-    } else {
-        PairingOffer::parse_link(text).map(|offer| LinkTarget::Pair { name: offer.name })
+            role: invite.role,
+        },
     }
 }
 
@@ -419,13 +595,15 @@ pub fn recognize_link(text: &str) -> Option<LinkTarget> {
 pub fn open_link(text: &str) -> Option<LinkTarget> {
     let text = text.trim();
     if let Some(invite) = Invite::parse_link(text) {
-        let target = LinkTarget::Join {
-            share: invite.share,
-            title: invite.title.clone(),
-            owner: invite.owner.name.clone(),
-            mode: invite.mode,
-        };
-        join(invite);
+        let target = link_target(invite.clone());
+        match &target {
+            LinkTarget::Join { .. } => join(invite),
+            LinkTarget::AlreadyIn { share, title } => notify(ShareNotice::AlreadyIn {
+                share: *share,
+                title: title.clone(),
+            }),
+            LinkTarget::Pair { .. } => {}
+        }
         Some(target)
     } else if let Some(offer) = PairingOffer::parse_link(text) {
         let target = LinkTarget::Pair {
@@ -446,17 +624,83 @@ pub fn end_share(id: ShareId) {
     command(Cmd::End(id));
 }
 
+/// Ask for a change in share `id`; applied on the spot when this device
+/// organizes it, else sent to the owner.
+pub fn edit_share(id: ShareId, edit: ShareEdit) {
+    command(Cmd::Edit(id, edit));
+}
+
 pub fn expel(id: ShareId, device: DeviceId) {
-    command(Cmd::Expel(id, device));
+    edit_share(id, ShareEdit::Expel(device));
 }
 
-pub fn set_share_policy(id: ShareId, policy: SharePolicy) {
-    command(Cmd::SetPolicy(id, policy));
+pub fn rename_share(id: ShareId, title: impl Into<String>) {
+    edit_share(id, ShareEdit::Rename(title.into()));
 }
 
-/// Let `device` only look at share `id` (`true`), or edit again.
-pub fn set_viewer(id: ShareId, device: DeviceId, viewer: bool) {
-    command(Cmd::SetViewer(id, device, viewer));
+pub fn set_role(id: ShareId, device: DeviceId, role: Role) {
+    edit_share(id, ShareEdit::SetRole { device, role });
+}
+
+/// Let someone waiting in, with `role`.
+pub fn approve(id: ShareId, device: DeviceId, role: Role) {
+    edit_share(id, ShareEdit::Approve { device, role });
+}
+
+pub fn refuse(id: ShareId, device: DeviceId) {
+    edit_share(id, ShareEdit::Refuse(device));
+}
+
+pub fn set_entry_role(id: ShareId, role: Role) {
+    edit_share(id, ShareEdit::SetEntryRole(role));
+}
+
+pub fn set_approve_entry(id: ShareId, on: bool) {
+    edit_share(id, ShareEdit::SetApproveEntry(on));
+}
+
+pub fn set_editors_add_docs(id: ShareId, on: bool) {
+    edit_share(id, ShareEdit::SetEditorsAddDocs(on));
+}
+
+/// Bring documents into share `id`.
+pub fn add_docs(id: ShareId, docs: Vec<ItemId>) {
+    command(Cmd::AddDocs(id, docs));
+}
+
+/// Take documents out of share `id`; every member keeps what it has.
+pub fn remove_docs(id: ShareId, docs: &[ItemId]) {
+    edit_share(
+        id,
+        ShareEdit::RemoveDocs(docs.iter().map(|d| DocId(d.0)).collect()),
+    );
+}
+
+/// Ask back into a share this device left.
+pub fn rejoin(id: ShareId) {
+    command(Cmd::Rejoin(id));
+}
+
+/// Open a share this device ended again, under a new invitation.
+pub fn reopen(id: ShareId) {
+    command(Cmd::Reopen(id));
+}
+
+pub fn forget_recent(id: ShareId) {
+    command(Cmd::ForgetRecent(id));
+}
+
+/// Drop recents older than `keep`.
+pub fn prune_recents(keep: Duration) {
+    command(Cmd::PruneRecents(
+        u64::try_from(keep.as_millis()).unwrap_or(u64::MAX),
+    ));
+}
+
+/// The name other people see in shares; `None` falls back to the
+/// device's name.
+pub fn set_user_name(name: Option<String>) {
+    command(Cmd::SetUserName(name));
 }
 
 /// Use a relay (`host:port/<key>`), or none.
@@ -517,13 +761,66 @@ fn open_library() -> Option<async_lock::MutexGuardArc<Library>> {
     }
 }
 
-/// What to remember about a share once the driver forgot it.
+/// What to remember about a share once the driver forgot it, and what
+/// to compare against to say who came and went.
 #[derive(Clone, Debug)]
 struct ShareMemo {
     title: String,
     mode: ShareMode,
     is_owner: bool,
     docs: Vec<ItemId>,
+    /// Members other than the owner, by device, with their names.
+    members: Vec<(DeviceId, String)>,
+}
+
+impl ShareMemo {
+    fn of(share: &Share, me: DeviceId) -> Self {
+        Self {
+            title: share.title.clone(),
+            mode: share.mode,
+            is_owner: share.is_owner(me),
+            docs: share.docs.iter().map(|d| ItemId(d.0)).collect(),
+            members: share
+                .members
+                .iter()
+                .map(|m| (m.device, m.name.clone()))
+                .collect(),
+        }
+    }
+
+    /// What changed between `self` and `now`, as notices. `me` is left
+    /// out: nobody needs a toast about themselves.
+    #[sismo::function("sync::memo_diff")]
+    fn diff(&self, now: &Self, id: ShareId, me: DeviceId) -> Vec<ShareNotice> {
+        let mut out = Vec::new();
+        let title = now.title.clone();
+        for (device, who) in &now.members {
+            if *device != me && !self.members.iter().any(|(d, _)| d == device) {
+                out.push(ShareNotice::Joined {
+                    share: id,
+                    title: title.clone(),
+                    who: who.clone(),
+                });
+            }
+        }
+        for (device, who) in &self.members {
+            if *device != me && !now.members.iter().any(|(d, _)| d == device) {
+                out.push(ShareNotice::Left {
+                    share: id,
+                    title: title.clone(),
+                    who: who.clone(),
+                });
+            }
+        }
+        if self.title != now.title {
+            out.push(ShareNotice::Renamed {
+                share: id,
+                title: title.clone(),
+                who: String::new(),
+            });
+        }
+        out
+    }
 }
 
 /// First wait before starting a stopped transport again; it doubles up
@@ -621,24 +918,32 @@ impl Service {
         }
     }
 
+    /// Refresh the memos and say what changed in `changed`, if given.
     #[sismo::function("sync::remember_shares")]
-    fn remember_shares(&mut self) {
+    fn remember_shares(&mut self, changed: Option<ShareId>) {
         let me = self.driver.profile().id();
-        self.memos = self
+        let fresh: HashMap<ShareId, ShareMemo> = self
             .driver
             .shares()
-            .map(|s| {
-                (
-                    s.id,
-                    ShareMemo {
-                        title: s.title.clone(),
-                        mode: s.mode,
-                        is_owner: s.is_owner(me),
-                        docs: s.docs.iter().map(|d| ItemId(d.0)).collect(),
-                    },
-                )
-            })
+            .map(|s| (s.id, ShareMemo::of(s, me)))
             .collect();
+        if let Some(id) = changed
+            && let Some(now) = fresh.get(&id)
+        {
+            match self.memos.get(&id) {
+                Some(before) => {
+                    for notice in before.diff(now, id, me) {
+                        notify(notice);
+                    }
+                }
+                None if !now.is_owner => notify(ShareNotice::Entered {
+                    share: id,
+                    title: now.title.clone(),
+                }),
+                None => {}
+            }
+        }
+        self.memos = fresh;
     }
 
     #[sismo::function("sync::perform")]
@@ -696,12 +1001,30 @@ impl Service {
                 sismo::scope!("sync::event::imported");
                 crate::space::notify_changed();
             }
-            DriverEvent::ShareChanged(_) => {
+            DriverEvent::ShareChanged(id) => {
                 sismo::scope!("sync::event::share_changed");
                 self.last_join_failure = None;
                 self.save_shares();
-                self.remember_shares();
+                self.remember_shares(Some(id));
                 crate::space::notify_changed();
+            }
+            DriverEvent::JoinPending(_) => {
+                sismo::scope!("sync::event::join_pending");
+                self.save_shares();
+            }
+            DriverEvent::EntryRequested { share, member } => {
+                sismo::scope!("sync::event::entry_requested");
+                self.save_shares();
+                let title = self
+                    .driver
+                    .share(share)
+                    .map(|s| s.title.clone())
+                    .unwrap_or_default();
+                notify(ShareNotice::EntryRequested {
+                    share,
+                    title,
+                    who: member.name,
+                });
             }
             DriverEvent::ShareRemoved { share, reason } => {
                 sismo::scope!("sync::event::share_removed");
@@ -724,9 +1047,18 @@ impl Service {
                 }
                 crate::space::notify_changed();
             }
-            DriverEvent::JoinFailed { reason, .. } => {
+            DriverEvent::JoinFailed { share, reason } => {
                 self.last_join_failure = Some(reason);
                 self.save_shares();
+                if reason == JoinFailure::Refused {
+                    let title = self
+                        .driver
+                        .left()
+                        .find(|l| l.invite.share == share)
+                        .map(|l| l.title.clone())
+                        .unwrap_or_default();
+                    notify(ShareNotice::Refused { share, title });
+                }
             }
             DriverEvent::PeerOnline {
                 device,
@@ -774,27 +1106,93 @@ impl Service {
     #[sismo::function("sync::create_share")]
     fn create_share(&mut self, request: ShareRequest) -> Vec<Action> {
         let mut share = Share::new(self.driver.me(), request.title, request.mode, now_ms());
-        share.policy = request.policy;
+        share.entry_role = request.entry_role.for_member();
+        share.approve_entry = request.approve_entry;
+        share.editors_add_docs = request.editors_add_docs;
+        share.folder = request.folder.map(|f| f.0);
         share.docs = request.docs.iter().map(|id| DocId(id.0)).collect();
-        share.blobs = request
-            .docs
-            .iter()
-            .map(|id| BlobKey {
-                kind: BlobKind::Item,
-                id: id.0,
+        share.blobs = blobs_for(&request.docs);
+        self.driver.create_share(share)
+    }
+
+    /// Bring library documents into a share, with their records.
+    #[sismo::function("sync::add_docs")]
+    fn add_docs(&mut self, id: ShareId, docs: &[ItemId]) -> Vec<Action> {
+        let blobs = blobs_for(docs);
+        self.driver.edit_share(
+            id,
+            ShareEdit::AddDocs {
+                docs: docs.iter().map(|d| DocId(d.0)).collect(),
+                blobs,
+            },
+        )
+    }
+
+    /// Keep every shared folder this device may add to in step with the
+    /// library: documents that moved in travel, documents that moved
+    /// out stop travelling.
+    #[sismo::function("sync::reconcile_folders")]
+    fn reconcile_folders(&mut self) -> Vec<Action> {
+        let me = self.driver.profile().id();
+        let folders: Vec<(ShareId, FolderId, Vec<ItemId>)> = self
+            .driver
+            .shares()
+            .filter(|s| s.can_add_docs(me))
+            .filter_map(|s| {
+                s.folder.map(|f| {
+                    (
+                        s.id,
+                        FolderId(f),
+                        s.docs.iter().map(|d| ItemId(d.0)).collect(),
+                    )
+                })
             })
             .collect();
-        if let Some(lib) = open_library() {
-            for link in &lib.links().links {
-                if request.docs.contains(&link.from) && request.docs.contains(&link.to) {
-                    share.blobs.push(BlobKey {
-                        kind: BlobKind::Link,
-                        id: link.id.0,
-                    });
-                }
+        if folders.is_empty() {
+            return Vec::new();
+        }
+        let Some(lib) = open_library() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for (id, folder, shared) in folders {
+            if lib.folder(folder).is_none() {
+                continue;
+            }
+            let inside: Vec<ItemId> = lib
+                .live_items()
+                .filter(|i| folder_contains(&lib, folder, i.folder))
+                .map(|i| i.id)
+                .collect();
+            let added: Vec<ItemId> = inside
+                .iter()
+                .copied()
+                .filter(|i| !shared.contains(i))
+                .collect();
+            let removed: Vec<ItemId> = shared
+                .iter()
+                .copied()
+                .filter(|i| !inside.contains(i) && lib.item(*i).is_some())
+                .collect();
+            if !added.is_empty() {
+                sismo::counter!("sync.folder.docs_added", added.len());
+                out.extend(self.driver.edit_share(
+                    id,
+                    ShareEdit::AddDocs {
+                        docs: added.iter().map(|d| DocId(d.0)).collect(),
+                        blobs: blobs_for_in(&lib, &added),
+                    },
+                ));
+            }
+            if !removed.is_empty() {
+                sismo::counter!("sync.folder.docs_removed", removed.len());
+                out.extend(self.driver.edit_share(
+                    id,
+                    ShareEdit::RemoveDocs(removed.iter().map(|d| DocId(d.0)).collect()),
+                ));
             }
         }
-        self.driver.create_share(share)
+        out
     }
 
     #[sismo::function("sync::on_cmd")]
@@ -876,16 +1274,58 @@ impl Service {
                 self.save_shares();
                 actions
             }
-            Cmd::Leave(id) => self.driver.leave_share(id),
-            Cmd::End(id) => self.driver.end_share(id),
-            Cmd::Expel(id, device) => self.driver.expel(id, device),
-            Cmd::SetPolicy(id, policy) => self.driver.update_share(id, |s| s.policy = policy),
-            Cmd::SetViewer(id, device, viewer) => self.driver.update_share(id, |s| {
-                s.viewers.retain(|d| *d != device);
-                if viewer {
-                    s.viewers.push(device);
+            Cmd::Leave(id) => {
+                let actions = self.driver.leave_share(id);
+                self.save_shares();
+                actions
+            }
+            Cmd::End(id) => {
+                let actions = self.driver.end_share(id);
+                self.save_shares();
+                actions
+            }
+            Cmd::Edit(id, edit) => {
+                sismo::scope!("sync::cmd::edit_share");
+                self.driver.edit_share(id, edit)
+            }
+            Cmd::AddDocs(id, docs) => {
+                sismo::scope!("sync::cmd::add_docs");
+                self.add_docs(id, &docs)
+            }
+            Cmd::Rejoin(id) => {
+                sismo::scope!("sync::cmd::rejoin");
+                self.last_join_failure = None;
+                let actions = self.driver.rejoin(id);
+                self.save_shares();
+                actions
+            }
+            Cmd::Reopen(id) => {
+                sismo::scope!("sync::cmd::reopen");
+                let actions = self
+                    .driver
+                    .reopen(id)
+                    .map(|(_, actions)| actions)
+                    .unwrap_or_default();
+                self.save_shares();
+                actions
+            }
+            Cmd::ForgetRecent(id) => {
+                if self.driver.forget_recent(id) {
+                    self.save_shares();
                 }
-            }),
+                Vec::new()
+            }
+            Cmd::PruneRecents(keep) => {
+                if self.driver.prune_recent(now_ms().saturating_sub(keep)) {
+                    self.save_shares();
+                }
+                Vec::new()
+            }
+            Cmd::SetUserName(name) => {
+                self.driver.profile_mut().set_user_name(name);
+                self.save_profile();
+                Vec::new()
+            }
             Cmd::Present(present) => {
                 sismo::scope!("sync::cmd::present");
                 self.set_present(present)?
@@ -955,23 +1395,62 @@ impl Service {
                 title: share.title.clone(),
                 owner: share.owner.clone(),
                 is_owner: share.is_owner(me),
+                my_role: share.role_of(me).unwrap_or(Role::Viewer),
                 mode: share.mode,
-                policy: share.policy,
+                folder: share.folder.map(FolderId),
+                entry_role: share.entry_role,
+                approve_entry: share.approve_entry,
+                editors_add_docs: share.editors_add_docs,
                 docs: share.docs.iter().map(|d| ItemId(d.0)).collect(),
                 members: share
                     .members
                     .iter()
-                    .map(|m| (m.clone(), online.contains(&m.device)))
+                    .map(|m| MemberView {
+                        member: m.clone(),
+                        online: online.contains(&m.device),
+                        path: self.driver.path_to(m.device),
+                    })
                     .collect(),
+                pending: share.pending.clone(),
                 owner_online: online.contains(&share.owner.device),
+                owner_path: self.driver.path_to(share.owner.device),
                 invite_link: self
                     .driver
                     .invite_for(share.id)
                     .map_or_else(|| share.invite().to_link(), |i| i.to_link()),
                 can_edit: share.can_edit(me),
-                viewers: share.viewers.clone(),
+                can_manage: share.can_manage(me),
+                can_add_docs: share.can_add_docs(me),
+                can_rename: share.can_rename(me),
             })
             .collect()
+    }
+
+    #[sismo::function("sync::recents")]
+    fn recents(&self) -> Vec<RecentShare> {
+        let me = self.driver.profile().display_name().to_owned();
+        let mut out: Vec<RecentShare> = self
+            .driver
+            .ended()
+            .map(|e| RecentShare {
+                id: e.id,
+                title: e.title.clone(),
+                owner: me.clone(),
+                is_owner: true,
+                docs: e.docs.iter().map(|d| ItemId(d.0)).collect(),
+                at: e.ended_at,
+            })
+            .chain(self.driver.left().map(|l| RecentShare {
+                id: l.invite.share,
+                title: l.title.clone(),
+                owner: l.invite.owner.name.clone(),
+                is_owner: false,
+                docs: l.docs.iter().map(|d| ItemId(d.0)).collect(),
+                at: l.left_at,
+            }))
+            .collect();
+        out.sort_by_key(|r| std::cmp::Reverse(r.at));
+        out
     }
 
     #[sismo::function("sync::snapshot")]
@@ -1013,8 +1492,15 @@ impl Service {
             pending_joins: self
                 .driver
                 .pending_joins()
-                .map(|i| i.title.clone())
+                .map(|j| PendingJoinView {
+                    share: j.invite.share,
+                    title: j.invite.title.clone(),
+                    owner: j.invite.owner.name.clone(),
+                    awaiting_approval: j.awaiting_approval,
+                })
                 .collect(),
+            recents: self.recents(),
+            user_name: profile.user_name().map(str::to_owned),
             last_join_failure: self.last_join_failure,
             relay: self.driver.relay().map(ToString::to_string),
             relay_online: self.driver.relay_online(),
@@ -1038,6 +1524,62 @@ fn on_live(item: ItemId, from: DeviceId, name: String, message: LiveMessage) {
             message,
         },
     );
+}
+
+/// The records that travel with `docs`: their item entries and the
+/// links whose both ends are among them.
+#[sismo::function("sync::blobs_for")]
+fn blobs_for(docs: &[ItemId]) -> Vec<BlobKey> {
+    match open_library() {
+        Some(lib) => blobs_for_in(&lib, docs),
+        None => item_blobs(docs),
+    }
+}
+
+/// Whether `inner` is `folder` or sits somewhere below it. The walk is
+/// bounded so a corrupted parent chain cannot spin.
+#[sismo::function("sync::folder_contains")]
+fn folder_contains(lib: &Library, folder: FolderId, inner: FolderId) -> bool {
+    let mut cursor = inner;
+    for _ in 0..=lib
+        .folders_of(crate::library::ROOT_FOLDER)
+        .len()
+        .saturating_add(64)
+    {
+        if cursor == folder {
+            return true;
+        }
+        if cursor == crate::library::ROOT_FOLDER {
+            return false;
+        }
+        match lib.folder(cursor) {
+            Some(f) => cursor = f.parent,
+            None => return false,
+        }
+    }
+    false
+}
+
+fn item_blobs(docs: &[ItemId]) -> Vec<BlobKey> {
+    docs.iter()
+        .map(|id| BlobKey {
+            kind: BlobKind::Item,
+            id: id.0,
+        })
+        .collect()
+}
+
+fn blobs_for_in(lib: &Library, docs: &[ItemId]) -> Vec<BlobKey> {
+    let mut blobs = item_blobs(docs);
+    for link in &lib.links().links {
+        if docs.contains(&link.from) && docs.contains(&link.to) {
+            blobs.push(BlobKey {
+                kind: BlobKind::Link,
+                id: link.id.0,
+            });
+        }
+    }
+    blobs
 }
 
 #[sismo::function("sync::load_shares")]
@@ -1103,7 +1645,7 @@ impl Service {
             error,
             outdated: HashSet::new(),
         };
-        service.remember_shares();
+        service.remember_shares(None);
         let relay = service
             .driver
             .profile()
@@ -1174,6 +1716,8 @@ impl Service {
 
     #[sismo::function("sync::local_changed")]
     fn local_changed(&mut self) {
+        let folder_actions = self.reconcile_folders();
+        self.perform(folder_actions);
         match self.on_cmd(Cmd::LocalChanged) {
             Ok(()) => self.recovered(Recovery::Exchanged),
             Err(err) => {

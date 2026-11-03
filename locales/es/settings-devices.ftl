@@ -58,3 +58,4 @@ settings-devices-clipboard-use = Usar
 settings-devices-paste-label = O pega el enlace
 settings-devices-link-unknown = Ese enlace no es de NotIn Plus o ya venció.
 settings-devices-link-unknown-hint = Pide uno nuevo: las invitaciones y los códigos duran unos minutos.
+settings-devices-link-already-in = Ya estás en esta sesión

@@ -32,10 +32,11 @@ fn people(docs: &[ItemId]) -> Vec<(String, bool)> {
         if !share.is_owner && !out.iter().any(|(n, _)| *n == share.owner.name) {
             out.push((share.owner.name.clone(), share.owner_online));
         }
-        for (member, online) in &share.members {
-            if Some(member.device) != snapshot.device && !out.iter().any(|(n, _)| *n == member.name)
+        for m in &share.members {
+            if Some(m.member.device) != snapshot.device
+                && !out.iter().any(|(n, _)| *n == m.member.name)
             {
-                out.push((member.name.clone(), *online));
+                out.push((m.member.name.clone(), m.online));
             }
         }
     }

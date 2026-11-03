@@ -101,3 +101,7 @@ collab-ended-saved = { $count ->
     [one] { $count } copy saved to your library
    *[other] { $count } copies saved to your library
 }
+
+collab-role-co-organizer = Co-organizer
+# $title: the session title.
+collab-already-in = You are already in “{ $title }”

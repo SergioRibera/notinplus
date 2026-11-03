@@ -660,6 +660,12 @@ fn link_card(target: &Recognized, raw: String) -> Rect {
             tr!("settings-devices-link-join-from", "owner" => owner.as_str()),
             tr!("settings-devices-link-join"),
         ),
+        Recognized::Sync(LinkTarget::AlreadyIn { title, .. }) => (
+            lucide::users(),
+            title.clone(),
+            tr!("settings-devices-link-already-in"),
+            tr!("common-open"),
+        ),
         Recognized::Sync(LinkTarget::Pair { name }) => (
             lucide::link(),
             name.clone(),
