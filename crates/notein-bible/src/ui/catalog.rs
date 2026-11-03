@@ -6,7 +6,6 @@ use std::sync::{Arc, OnceLock};
 use freya::prelude::*;
 use notein_i18n::tr;
 use notein_sdk::UserMessage;
-use notein_sdk::services::{Host, HostToast, ToastTone as HostTone};
 
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
@@ -15,7 +14,7 @@ use notein_ui_kit::{
 };
 
 use crate::import::biblionlabs::{BibleEntryView, CatalogueView};
-use crate::installer::{InstallFailure, InstallState, Installer, Outcome, Phase, Step};
+use crate::installer::{InstallFailure, InstallState, Installer, Phase, Step};
 use crate::kind::BibleKind;
 
 /// The Bible the catalog installs into.
@@ -56,46 +55,6 @@ pub(crate) fn use_installs() -> State<u64> {
     tick
 }
 
-/// Toast every download as it ends, with a retry on failures, and pick up
-/// the ones a closed app cut short. Runs for the life of the app.
-#[cfg_attr(feature = "sismo", sismo::function("bible::catalog_announce"))]
-pub(crate) fn announce(host: Host) {
-    let Some(installer) = installer() else {
-        return;
-    };
-    let rx = installer.outcomes();
-    let spawned = std::thread::Builder::new()
-        .name("bible-installs".to_owned())
-        .spawn(move || {
-            while let Ok(outcome) = rx.recv() {
-                host.toast(outcome_toast(installer, outcome));
-            }
-        });
-    if let Err(err) = spawned {
-        log::error!("bible: install announcer: {err}");
-    }
-    installer.resume();
-}
-
-#[cfg_attr(feature = "sismo", sismo::function("bible::catalog_outcome"))]
-fn outcome_toast(installer: &'static Installer, outcome: Outcome) -> HostToast {
-    match outcome {
-        Outcome::Installed(bible_id) => HostToast::new(
-            tr!("catalog-toast-installed", "name" => bible_name(&bible_id)),
-            HostTone::Download,
-        ),
-        Outcome::Failed { bible_id, reason } => HostToast::new(
-            tr!(
-                "catalog-toast-failed",
-                "name" => bible_name(&bible_id),
-                "reason" => reason.user_message(),
-            ),
-            HostTone::Error,
-        )
-        .action(tr!("catalog-retry"), move || installer.enqueue(&bible_id)),
-    }
-}
-
 /// What a download is doing, for the line under its bar.
 fn step_text(step: Step) -> String {
     let Step { phase, done, total } = step;
@@ -106,14 +65,6 @@ fn step_text(step: Step) -> String {
         Phase::Headings if total == 0 => tr!("catalog-step-headings-preparing"),
         Phase::Headings => tr!("catalog-step-headings", "done" => done, "total" => total),
     }
-}
-
-/// Short name of an installed translation, its id otherwise.
-fn bible_name(bible_id: &str) -> String {
-    kind()
-        .and_then(|kind| kind.db().list_bibles().ok())
-        .and_then(|bibles| bibles.into_iter().find(|b| b.id == bible_id))
-        .map_or_else(|| bible_id.to_owned(), |b| b.abbrev)
 }
 
 fn label(entry: &BibleEntryView) -> String {

@@ -65,7 +65,8 @@ impl CrossRefLevel {
         Self::ALL.into_iter().find(|level| level.as_str() == value)
     }
 
-    fn label(self) -> String {
+    /// The name the settings and the progress toasts show.
+    pub(crate) fn label(self) -> String {
         match self {
             Self::Small => tr!("config-cross-refs-level-small"),
             Self::Medium => tr!("config-cross-refs-level-medium"),

@@ -5,6 +5,14 @@ catalog-toast-installed = «{ $name }» lista para leer
 # $reason is a sentence explaining why.
 catalog-toast-failed = No se pudo descargar «{ $name }». { $reason }
 catalog-retry = Reintentar
+# Avisos de progreso que se ven en toda la app; $name es la traducción.
+catalog-progress-books = Descargando { $name }
+catalog-progress-cross-refs = Referencias cruzadas de { $name }
+catalog-progress-headings = Títulos de { $name }
+# $level es Esenciales, Equilibradas o Completas.
+catalog-progress-cross-refs-level = Referencias cruzadas · { $level }
+catalog-toast-cross-refs-done = Referencias cruzadas listas
+catalog-toast-cross-refs-failed = No se pudieron descargar las referencias cruzadas. { $reason }
 catalog-step-preparing = Preparando la descarga…
 catalog-step-books = Libros: { $done } de { $total }
 catalog-step-cross-refs = Referencias cruzadas: { $done } de { $total } libros

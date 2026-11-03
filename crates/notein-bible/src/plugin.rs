@@ -62,7 +62,7 @@ impl Plugin for BiblePlugin {
 
     #[cfg_attr(feature = "sismo", sismo::function("bible::plugin_install"))]
     fn install(&self, host: &Host) {
-        catalog::announce(Arc::clone(host));
+        crate::announce::start(Arc::clone(host), &self.kind);
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("bible::plugin_fonts"))]

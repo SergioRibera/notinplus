@@ -5,6 +5,14 @@ catalog-toast-installed = “{ $name }” is ready to read
 # $reason is a sentence explaining why.
 catalog-toast-failed = Couldn't download “{ $name }”. { $reason }
 catalog-retry = Retry
+# Progress toasts shown across the app; $name is the translation.
+catalog-progress-books = Downloading { $name }
+catalog-progress-cross-refs = Cross-references of { $name }
+catalog-progress-headings = Headings of { $name }
+# $level is Essential, Balanced or Complete.
+catalog-progress-cross-refs-level = Cross-references · { $level }
+catalog-toast-cross-refs-done = Cross-references ready
+catalog-toast-cross-refs-failed = The cross-references could not be downloaded. { $reason }
 catalog-step-preparing = Preparing the download…
 catalog-step-books = Books: { $done } of { $total }
 catalog-step-cross-refs = Cross-references: { $done } of { $total } books

@@ -43,6 +43,10 @@ originals-card-body = Cada versículo, palabra por palabra: el hebreo o el grieg
 originals-card-sources = Fuentes abiertas: STEPBible (CC BY 4.0), texto de Leningrado y SBLGNT, diccionario de Strong.
 originals-card-download = Descargar
 originals-card-downloading = Descargando idiomas originales…
+# Avisos de progreso que se ven en toda la app.
+originals-progress-download = Descargando idiomas originales
+originals-progress-align = Emparejando palabras con { $name }
+originals-toast-ready = Idiomas originales listos
 originals-card-progress = { $done } de { $total } archivos
 originals-card-retry = Reintentar
 originals-card-off = Los idiomas originales están apagados.

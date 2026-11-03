@@ -239,7 +239,6 @@ impl Originals {
                 match result {
                     Ok(()) => {
                         this.reload();
-                        this.set_progress(Progress::Idle);
                         this.align_missing();
                     }
                     Err(err) => {
@@ -277,15 +276,18 @@ impl Originals {
         }
     }
 
-    /// Blocking: align the translations that need it, one by one.
+    /// Blocking: align the translations that need it, one by one, and
+    /// go idle at the end whatever happened.
     fn align_missing(&self) {
         let Some(store) = self.store() else {
+            self.set_progress(Progress::Idle);
             return;
         };
         let bibles = match self.db.list_bibles() {
             Ok(bibles) => bibles,
             Err(err) => {
                 log::warn!("originals: translations: {err}");
+                self.set_progress(Progress::Idle);
                 return;
             }
         };

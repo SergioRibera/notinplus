@@ -12,6 +12,7 @@ use notein_i18n::tr;
 use notein_sdk::{NetFailure, UserMessage};
 use reqwest::blocking::Client;
 
+use crate::announce;
 use crate::db::{Db, DbError};
 use crate::import::{biblionlabs, helloao};
 use crate::plugin_config::{self, SharedConfig};
@@ -428,7 +429,7 @@ fn ensure_cross_refs(
 }
 
 /// Download the cross-reference set again at the level `config` now
-/// holds, on a background thread. Nothing installed: no thread, the
+/// holds, on a background thread, telling the shell how it goes. Nothing installed: no thread, the
 /// first install brings the set.
 #[cfg_attr(feature = "sismo", sismo::function("bible::install_refresh_crossrefs"))]
 pub fn spawn_refresh_cross_refs(db: Db, config: &SharedConfig) {
@@ -449,8 +450,18 @@ pub fn spawn_refresh_cross_refs(db: Db, config: &SharedConfig) {
                 Err(e) => return log::warn!("bible cross-refs: http client: {e}"),
             };
             let cache_dir = plugin_config::platform_cache_dir();
-            if let Err(e) = ensure_cross_refs(&db, &client, &cache_dir, &config, |_| {}) {
-                log::warn!("bible cross-refs: {e}");
+            let level = plugin_config::effective_crossref_level(&config);
+            let report = |event: biblionlabs::Progress| {
+                if let biblionlabs::Progress::CrossRefs { done, total } = event {
+                    announce::cross_refs(announce::CrossRefsJob::Running { level, done, total });
+                }
+            };
+            match ensure_cross_refs(&db, &client, &cache_dir, &config, report) {
+                Ok(()) => announce::cross_refs(announce::CrossRefsJob::Done),
+                Err(e) => {
+                    log::warn!("bible cross-refs: {e}");
+                    announce::cross_refs(announce::CrossRefsJob::Failed(InstallFailure::from(e)));
+                }
             }
         });
     if let Err(e) = spawned {

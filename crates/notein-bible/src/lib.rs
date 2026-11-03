@@ -8,6 +8,8 @@
 notein_i18n::catalog!();
 
 pub mod anchor;
+#[cfg(feature = "importer")]
+pub mod announce;
 pub mod canon;
 pub mod db;
 pub mod fonts;

@@ -43,6 +43,10 @@ originals-card-body = Every verse, word by word: the Hebrew or Greek, how it is 
 originals-card-sources = Open sources: STEPBible (CC BY 4.0), Leningrad text and SBLGNT, Strong's dictionary.
 originals-card-download = Download
 originals-card-downloading = Downloading original languages…
+# Progress toasts shown across the app.
+originals-progress-download = Downloading the original languages
+originals-progress-align = Pairing words with { $name }
+originals-toast-ready = Original languages ready
 originals-card-progress = { $done } of { $total } files
 originals-card-retry = Retry
 originals-card-off = Original languages are off.
