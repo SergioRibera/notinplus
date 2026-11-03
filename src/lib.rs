@@ -48,6 +48,7 @@ pub mod editor;
 pub mod external;
 pub(crate) mod failure;
 pub mod files;
+pub mod flatten;
 pub mod flows;
 pub mod follow;
 pub mod format;

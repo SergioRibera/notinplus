@@ -431,7 +431,7 @@ pub fn after_save(item: crate::library::ItemId, content: &CanvasContent, snapsho
     let Ok(doc) = crate::doc::Doc::from_snapshot(snapshot) else {
         return;
     };
-    let cover = crate::thumbnail::canvas(&doc, paper);
+    let cover = crate::thumbnail::canvas(&doc, item, paper);
     let mut lib = pollster::block_on(handle.lock());
     if let Err(err) = pollster::block_on(lib.set_item_thumbnail(item, cover)) {
         log::error!("cover {item}: {err}");

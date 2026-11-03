@@ -14,7 +14,6 @@ use notein_plugin::UserMessage;
 
 use crate::doc::Doc;
 use crate::library::{ItemId, LibraryData, bodies};
-use crate::render::BrushRegistry;
 
 /// Pixels per PDF point in flattened pages.
 const PAGE_SCALE: f32 = 2.0;
@@ -82,10 +81,10 @@ fn file_name(name: &str) -> String {
     }
 }
 
-/// Draw `doc`'s ink inside world rectangle `area` onto `rgba` (`w`×`h`
-/// pixels).
+/// Draw `doc`'s ink and images (`item`'s files) inside world rectangle
+/// `area` onto `rgba` (`w`×`h` pixels).
 #[sismo::function("readable::composite")]
-fn composite(doc: &Doc, area: (f32, f32, f32, f32), rgba: &mut [u8], w: u32, h: u32) {
+fn composite(doc: &Doc, item: ItemId, area: (f32, f32, f32, f32), rgba: &mut [u8], w: u32, h: u32) {
     let info = ImageInfo::new(
         (i32::try_from(w).unwrap_or(0), i32::try_from(h).unwrap_or(0)),
         ColorType::RGBA8888,
@@ -109,20 +108,7 @@ fn composite(doc: &Doc, area: (f32, f32, f32, f32), rgba: &mut [u8], w: u32, h: 
     canvas.save();
     canvas.scale((scale, scale));
     canvas.translate((-area.0, -area.1));
-    let registry = BrushRegistry::default();
-    sismo::scope!("readable::draw_strokes");
-    for layer in doc.layers.iter().filter(|l| l.visible) {
-        for stroke in &layer.strokes {
-            let Some(preset) = doc.preset(stroke.brush) else {
-                continue;
-            };
-            let brush = registry.brush(preset.kind);
-            canvas.draw_path(
-                &brush.build_path(preset, stroke, registry.caps()),
-                &brush.paint(preset, stroke.color),
-            );
-        }
-    }
+    crate::flatten::paint(canvas, doc, item);
     canvas.restore();
     let _ = surface.read_pixels(&info, rgba, usize::try_from(w).unwrap_or(0) * 4, (0, 0));
 }
@@ -146,7 +132,7 @@ pub(crate) fn flattened_pdf(item: ItemId, bytes: &[u8]) -> Option<Vec<u8>> {
             pdf.render_page_rgba(index, w.max(1), h.max(1)).ok()?
         };
         if let Some(doc) = &doc {
-            composite(doc, *rect, &mut rgba, w, h);
+            composite(doc, item, *rect, &mut rgba, w, h);
         }
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         pages.push(PageImage {
@@ -161,22 +147,11 @@ pub(crate) fn flattened_pdf(item: ItemId, bytes: &[u8]) -> Option<Vec<u8>> {
     image_pdf(&pages).ok().or(Some(bytes))
 }
 
-/// Canvas `item` as one page of `paper`, cropped to its ink.
+/// Canvas `item` as one page of `paper`, cropped to its ink and images.
 #[sismo::function("readable::canvas_pdf")]
 pub(crate) fn canvas_pdf(item: ItemId, paper: [u8; 4]) -> Option<Vec<u8>> {
     let doc = bodies::read_doc(item).ok()?;
-    let mut bounds: Option<(f32, f32, f32, f32)> = None;
-    for p in doc
-        .layers
-        .iter()
-        .flat_map(|l| l.strokes.iter())
-        .flat_map(|s| s.points.iter())
-    {
-        bounds = Some(bounds.map_or((p.x, p.y, p.x, p.y), |(a, b, c, d)| {
-            (a.min(p.x), b.min(p.y), c.max(p.x), d.max(p.y))
-        }));
-    }
-    let (x0, y0, x1, y1) = bounds?;
+    let (x0, y0, x1, y1) = crate::flatten::bounds(&doc)?;
     let margin = 36.0;
     let area = (
         x0 - margin,
@@ -192,7 +167,7 @@ pub(crate) fn canvas_pdf(item: ItemId, paper: [u8; 4]) -> Option<Vec<u8>> {
     let mut rgba: Vec<u8> = std::iter::repeat_n(paper, (w * h) as usize)
         .flatten()
         .collect();
-    composite(&doc, area, &mut rgba, w, h);
+    composite(&doc, item, area, &mut rgba, w, h);
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     image_pdf(&[PageImage {
         rgba,
