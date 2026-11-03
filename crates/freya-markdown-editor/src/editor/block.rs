@@ -966,12 +966,15 @@ impl BlockView {
         let in_table = self
             .focused
             .is_some_and(|target| target.block == self.block.id && target.cell.is_some());
+        #[allow(clippy::cast_precision_loss, reason = "a handful of columns")]
+        let column_width = Size::percent(100. / table.columns().len().max(1) as f32);
         let rows = table.rows().iter().enumerate().map(|(row, cells)| {
             let header = row == 0;
+            // Fit content so every cell stretches to the tallest one of its row.
             rect()
                 .key(row)
                 .horizontal()
-                .content(Content::flex())
+                .content(Content::fit())
                 .width(Size::fill())
                 .background(if header {
                     colors.code_background
@@ -990,7 +993,8 @@ impl BlockView {
                     };
                     rect()
                         .key(column)
-                        .width(Size::flex(1.))
+                        .width(column_width.clone())
+                        .height(Size::fill_minimum())
                         .padding((theme.px(6.), theme.px(8.)))
                         .border(
                             Border::new()

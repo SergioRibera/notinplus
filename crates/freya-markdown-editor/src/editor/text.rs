@@ -667,7 +667,16 @@ impl Component for TextBlock {
                 // Touches edit the text when the finger lifts, see `on_global_pointer_up`. The
                 // press keeps going up so the note can scroll with it.
                 if content_for_press.is_empty() {
+                    // Nothing to touch-edit in an empty field, so the lift
+                    // never reports a selection: keys would go to whatever
+                    // was selected before (a table cell tapped after another
+                    // block typed into that block).
                     editable.editor_mut().write().move_cursor_to(0);
+                    controller.set_selection(rope_selection(
+                        &editable,
+                        target,
+                        reveal_for_press.borrow().as_ref(),
+                    ));
                 }
                 a11y_id.request_focus();
                 menu.set_if_modified(None);

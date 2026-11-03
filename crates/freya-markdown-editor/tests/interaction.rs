@@ -2,8 +2,10 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use freya::prelude::*;
+use freya_core::elements::paragraph::ParagraphElement;
 use freya_markdown_editor::document::{Atom, BlockKind, CellPos, TextTarget};
 use freya_markdown_editor::prelude::*;
+use freya_testing::TestingNode;
 use freya_testing::prelude::*;
 
 struct Harness {
@@ -725,4 +727,193 @@ fn a_tap_on_a_suggestion_picks_it_and_stays_in_the_menu() {
     tap(&mut harness, (100., 65.));
     assert_eq!(harness.value(), "see [Doc](app://doc)\n");
     assert_eq!(below.map(|touches| *touches.peek()), Some(0));
+}
+
+/// Centre of the paragraph showing `text`, in window coordinates.
+fn text_center(harness: &Harness, text: &str) -> (f64, f64) {
+    harness
+        .runner
+        .find(|node, element| {
+            let paragraph = (element as &dyn std::any::Any).downcast_ref::<ParagraphElement>()?;
+            if !paragraph.to_string().contains(text) {
+                return None;
+            }
+            let area = node.layout().area;
+            Some((
+                f64::from(area.min_x() + area.width() / 2.),
+                f64::from(area.min_y() + area.height() / 2.),
+            ))
+        })
+        .unwrap_or_else(|| panic!("no paragraph shows {text:?}"))
+}
+
+#[test]
+fn a_table_cell_takes_the_focus_back_after_a_click_elsewhere() {
+    let mut harness = Harness::new("| alpha | beta |\n|---|---|\n| gamma | delta |\n\nafter\n");
+    let table = harness.block(0).block;
+    harness.focus(
+        TextTarget {
+            block: table,
+            cell: Some(CellPos { row: 1, column: 0 }),
+        },
+        5,
+    );
+    harness.type_text("1");
+    // Leave the table for the paragraph below it.
+    let after = text_center(&harness, "after");
+    harness.runner.click_cursor(after);
+    harness.settle();
+    harness.type_text("2");
+    // Back into the same cell with the mouse.
+    let cell = text_center(&harness, "gamma");
+    harness.runner.click_cursor(cell);
+    harness.settle();
+    harness.type_text("3");
+    let document = harness.document();
+    let BlockKind::Table(table) = &document.blocks()[0].kind else {
+        panic!("table expected");
+    };
+    assert_eq!(table.rows()[1][0].text(), "gamma13");
+    assert_eq!(
+        document.blocks()[1].kind.content().map(Inline::text),
+        Some("after2")
+    );
+}
+
+#[test]
+fn a_table_cell_takes_the_focus_back_after_a_tap_elsewhere() {
+    let mut harness = Harness::new("| alpha | beta |\n|---|---|\n| gamma | delta |\n\nafter\n");
+    let table = harness.block(0).block;
+    harness.focus(
+        TextTarget {
+            block: table,
+            cell: Some(CellPos { row: 1, column: 0 }),
+        },
+        5,
+    );
+    harness.type_text("1");
+    let after = text_center(&harness, "after");
+    tap(&mut harness, after);
+    harness.type_text("2");
+    let cell = text_center(&harness, "gamma");
+    tap(&mut harness, cell);
+    harness.type_text("3");
+    let document = harness.document();
+    let BlockKind::Table(table) = &document.blocks()[0].kind else {
+        panic!("table expected");
+    };
+    assert_eq!(table.rows()[1][0].text(), "gamma13");
+    assert_eq!(
+        document.blocks()[1].kind.content().map(Inline::text),
+        Some("after2")
+    );
+}
+
+#[test]
+fn empty_table_cells_keep_a_line_of_height() {
+    let mut harness = Harness::new("| a | b |\n|---|---|\n|  |  |\n\nafter\n");
+    harness.settle();
+    let heights: Vec<(String, f32)> = harness.runner.find_many(|node, element| {
+        let paragraph = (element as &dyn std::any::Any).downcast_ref::<ParagraphElement>()?;
+        Some((paragraph.to_string(), node.layout().area.height()))
+    });
+    eprintln!("{heights:?}");
+    let empty: Vec<f32> = heights
+        .iter()
+        .filter(|(text, _)| text.is_empty())
+        .map(|(_, height)| *height)
+        .collect();
+    assert!(
+        empty.iter().all(|h| *h > 10.),
+        "empty cells collapsed: {empty:?}"
+    );
+}
+
+/// Centre of the `index`th paragraph showing nothing, in window coordinates.
+fn empty_paragraph_center(harness: &Harness, index: usize) -> (f64, f64) {
+    let centers = harness.runner.find_many(|node, element| {
+        let paragraph = (element as &dyn std::any::Any).downcast_ref::<ParagraphElement>()?;
+        if !paragraph.to_string().is_empty() {
+            return None;
+        }
+        let area = node.layout().area;
+        Some((
+            f64::from(area.min_x() + area.width() / 2.),
+            f64::from(area.min_y() + area.height() / 2.),
+        ))
+    });
+    centers[index]
+}
+
+#[test]
+fn a_tap_on_an_empty_table_cell_types_into_it() {
+    let mut harness = Harness::new("| a | b |\n|---|---|\n|  |  |\n\nafter\n");
+    let after = text_center(&harness, "after");
+    tap(&mut harness, after);
+    harness.type_text("2");
+    let cell = empty_paragraph_center(&harness, 0);
+    tap(&mut harness, cell);
+    harness.type_text("3");
+    let document = harness.document();
+    let BlockKind::Table(table) = &document.blocks()[0].kind else {
+        panic!("table expected");
+    };
+    assert_eq!(
+        document.blocks()[1].kind.content().map(Inline::text),
+        Some("after2")
+    );
+    assert_eq!(table.rows()[1][0].text(), "3");
+}
+
+#[test]
+fn a_click_on_an_empty_table_cell_types_into_it() {
+    let mut harness = Harness::new("| a | b |\n|---|---|\n|  |  |\n\nafter\n");
+    let after = text_center(&harness, "after");
+    harness.runner.click_cursor(after);
+    harness.settle();
+    harness.type_text("2");
+    let cell = empty_paragraph_center(&harness, 0);
+    harness.runner.click_cursor(cell);
+    harness.settle();
+    harness.type_text("3");
+    let document = harness.document();
+    let BlockKind::Table(table) = &document.blocks()[0].kind else {
+        panic!("table expected");
+    };
+    assert_eq!(
+        document.blocks()[1].kind.content().map(Inline::text),
+        Some("after2")
+    );
+    assert_eq!(table.rows()[1][0].text(), "3");
+}
+
+/// Height of the table cell holding the paragraph showing `text`: the
+/// rect three levels above it (cell, text block, focusable area).
+fn cell_height(harness: &Harness, text: &str) -> f32 {
+    fn holds(node: &TestingNode, text: &str, depth: usize) -> bool {
+        let children = node.children();
+        if depth == 0 {
+            return children.is_empty()
+                && (node.element().as_ref() as &dyn std::any::Any)
+                    .downcast_ref::<ParagraphElement>()
+                    .is_some_and(|paragraph| paragraph.to_string().contains(text));
+        }
+        children.iter().any(|child| holds(child, text, depth - 1))
+    }
+    harness
+        .runner
+        .find(|node, _| holds(&node, text, 3).then(|| node.layout().area.height()))
+        .unwrap_or_else(|| panic!("no cell shows {text:?}"))
+}
+
+#[test]
+fn table_rows_take_the_height_of_their_tallest_cell() {
+    let mut harness = Harness::new(
+        "| a | b |\n|---|---|\n| short | one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen |\n",
+    );
+    harness.settle();
+    let short = cell_height(&harness, "short");
+    let long = cell_height(&harness, "eleven");
+    assert!(long > 30., "the long cell did not wrap: {long}");
+    assert!((short - long).abs() < 0.5, "short {short} vs long {long}");
 }
