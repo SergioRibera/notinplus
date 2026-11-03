@@ -407,6 +407,22 @@ impl Share {
         before != (self.docs.len(), self.blobs.len())
     }
 
+    /// The folders travelling with a shared folder, the root included.
+    pub fn folders(&self) -> impl Iterator<Item = [u8; 16]> + '_ {
+        self.blobs
+            .iter()
+            .filter(|b| b.kind == BlobKind::Folder)
+            .map(|b| b.id)
+    }
+
+    /// Stop carrying folders; returns whether any left.
+    pub fn remove_folders(&mut self, folders: &[[u8; 16]]) -> bool {
+        let before = self.blobs.len();
+        self.blobs
+            .retain(|b| !(b.kind == BlobKind::Folder && folders.contains(&b.id)));
+        before != self.blobs.len()
+    }
+
     /// The invitation for this share.
     #[must_use]
     pub fn invite(&self) -> Invite {
@@ -669,6 +685,8 @@ pub enum ShareEdit {
         blobs: Vec<BlobKey>,
     },
     RemoveDocs(Vec<DocId>),
+    /// Stop carrying subfolders of a shared folder.
+    RemoveFolders(Vec<[u8; 16]>),
     SetRole {
         device: DeviceId,
         role: Role,
@@ -834,6 +852,14 @@ mod tests {
         assert!(share.remove_docs(&[doc]));
         assert!(share.docs.is_empty() && share.blobs.is_empty());
         assert!(!share.remove_docs(&[doc]));
+        let sub = BlobKey {
+            kind: BlobKind::Folder,
+            id: [5; 16],
+        };
+        assert!(share.add_docs(&[], &[sub]));
+        assert_eq!(share.folders().collect::<Vec<_>>(), vec![[5; 16]]);
+        assert!(share.remove_folders(&[[5; 16]]));
+        assert!(share.folders().next().is_none());
     }
 
     #[test]

@@ -14,3 +14,8 @@ errors-library-missing-link = This link no longer exists.
 errors-library-cycle = A folder can't be moved inside itself.
 errors-library-root = The main folder can't be changed.
 errors-library-self-link = A document can't be linked to itself.
+# $count: people still in the share.
+errors-library-shared-folder-in-use = { $count ->
+    [one] This folder is shared and { $count } person is still in. End the share or wait for them to leave.
+   *[other] This folder is shared and { $count } people are still in. End the share or wait for them to leave.
+}

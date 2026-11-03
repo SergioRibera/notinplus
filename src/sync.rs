@@ -61,6 +61,8 @@ pub struct ShareView {
     pub mode: ShareMode,
     /// The folder this share mirrors, when it is a shared folder.
     pub folder: Option<FolderId>,
+    /// The folders travelling with a shared folder, its root included.
+    pub folders: Vec<FolderId>,
     /// Shared as a whole desk.
     pub desk: bool,
     pub entry_role: Role,
@@ -771,6 +773,14 @@ fn open_library() -> Option<async_lock::MutexGuardArc<Library>> {
     }
 }
 
+/// A shared folder this device may add to, as the share last knew it.
+struct SharedFolder {
+    share: ShareId,
+    root: FolderId,
+    docs: Vec<ItemId>,
+    folders: Vec<FolderId>,
+}
+
 /// What to remember about a share once the driver forgot it, and what
 /// to compare against to say who came and went.
 #[derive(Clone, Debug)]
@@ -1123,6 +1133,11 @@ impl Service {
         share.desk = request.desk;
         share.docs = request.docs.iter().map(|id| DocId(id.0)).collect();
         share.blobs = blobs_for(&request.docs);
+        if let Some(folder) = request.folder
+            && let Some(lib) = open_library()
+        {
+            share.blobs.extend(folder_blobs(&lib, folder));
+        }
         self.driver.create_share(share)
     }
 
@@ -1145,17 +1160,16 @@ impl Service {
     #[sismo::function("sync::reconcile_folders")]
     fn reconcile_folders(&mut self) -> Vec<Action> {
         let me = self.driver.profile().id();
-        let folders: Vec<(ShareId, FolderId, Vec<ItemId>)> = self
+        let folders: Vec<SharedFolder> = self
             .driver
             .shares()
             .filter(|s| s.can_add_docs(me))
             .filter_map(|s| {
-                s.folder.map(|f| {
-                    (
-                        s.id,
-                        FolderId(f),
-                        s.docs.iter().map(|d| ItemId(d.0)).collect(),
-                    )
+                s.folder.map(|f| SharedFolder {
+                    share: s.id,
+                    root: FolderId(f),
+                    docs: s.docs.iter().map(|d| ItemId(d.0)).collect(),
+                    folders: s.folders().map(FolderId).collect(),
                 })
             })
             .collect();
@@ -1166,41 +1180,67 @@ impl Service {
             return Vec::new();
         };
         let mut out = Vec::new();
-        for (id, folder, shared) in folders {
-            if lib.folder(folder).is_none() {
+        for shared in folders {
+            if lib.folder(shared.root).is_none() {
                 continue;
             }
             let inside: Vec<ItemId> = lib
                 .live_items()
-                .filter(|i| folder_contains(&lib, folder, i.folder))
+                .filter(|i| folder_contains(&lib, shared.root, i.folder))
                 .map(|i| i.id)
                 .collect();
             let added: Vec<ItemId> = inside
                 .iter()
                 .copied()
-                .filter(|i| !shared.contains(i))
+                .filter(|i| !shared.docs.contains(i))
                 .collect();
             let removed: Vec<ItemId> = shared
+                .docs
                 .iter()
                 .copied()
                 .filter(|i| !inside.contains(i) && lib.item(*i).is_some())
                 .collect();
-            if !added.is_empty() {
+            let below = folders_under(&lib, shared.root);
+            let new_folders: Vec<FolderId> = below
+                .iter()
+                .copied()
+                .filter(|f| !shared.folders.contains(f))
+                .collect();
+            let gone_folders: Vec<[u8; 16]> = shared
+                .folders
+                .iter()
+                .filter(|f| !below.contains(f) && lib.folder(**f).is_some())
+                .map(|f| f.0)
+                .collect();
+            if !added.is_empty() || !new_folders.is_empty() {
                 sismo::counter!("sync.folder.docs_added", added.len());
+                sismo::counter!("sync.folder.folders_added", new_folders.len());
+                let mut blobs = blobs_for_in(&lib, &added);
+                blobs.extend(new_folders.iter().map(|f| BlobKey {
+                    kind: BlobKind::Folder,
+                    id: f.0,
+                }));
                 out.extend(self.driver.edit_share(
-                    id,
+                    shared.share,
                     ShareEdit::AddDocs {
                         docs: added.iter().map(|d| DocId(d.0)).collect(),
-                        blobs: blobs_for_in(&lib, &added),
+                        blobs,
                     },
                 ));
             }
             if !removed.is_empty() {
                 sismo::counter!("sync.folder.docs_removed", removed.len());
                 out.extend(self.driver.edit_share(
-                    id,
+                    shared.share,
                     ShareEdit::RemoveDocs(removed.iter().map(|d| DocId(d.0)).collect()),
                 ));
+            }
+            if !gone_folders.is_empty() {
+                sismo::counter!("sync.folder.folders_removed", gone_folders.len());
+                out.extend(
+                    self.driver
+                        .edit_share(shared.share, ShareEdit::RemoveFolders(gone_folders)),
+                );
             }
         }
         out
@@ -1416,6 +1456,7 @@ impl Service {
                 my_role: share.role_of(me).unwrap_or(Role::Viewer),
                 mode: share.mode,
                 folder: share.folder.map(FolderId),
+                folders: share.folders().map(FolderId).collect(),
                 desk: share.desk,
                 entry_role: share.entry_role,
                 approve_entry: share.approve_entry,
@@ -1599,6 +1640,29 @@ fn blobs_for_in(lib: &Library, docs: &[ItemId]) -> Vec<BlobKey> {
         }
     }
     blobs
+}
+
+/// The records of `folder` and every folder below it.
+#[sismo::function("sync::folder_blobs")]
+fn folder_blobs(lib: &Library, folder: FolderId) -> Vec<BlobKey> {
+    folders_under(lib, folder)
+        .into_iter()
+        .map(|f| BlobKey {
+            kind: BlobKind::Folder,
+            id: f.0,
+        })
+        .collect()
+}
+
+/// `folder` and every live folder below it.
+fn folders_under(lib: &Library, folder: FolderId) -> Vec<FolderId> {
+    let mut out = vec![folder];
+    out.extend(
+        lib.live_folders()
+            .filter(|f| f.id != folder && folder_contains(lib, folder, f.parent))
+            .map(|f| f.id),
+    );
+    out
 }
 
 #[sismo::function("sync::load_shares")]

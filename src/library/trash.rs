@@ -136,6 +136,14 @@ impl Library {
         if self.data.index.folder(id).is_none() {
             return Err(LibraryError::NotFound(NotFoundKind::Folder(id)));
         }
+        // A shared folder's root stays while anyone else is in the share:
+        // trashing it here would pull it from under them.
+        if let Some(share) = crate::sync::share_of_folder(id) {
+            let others = share.members.len() + usize::from(!share.is_owner);
+            if others > 0 {
+                return Err(LibraryError::SharedFolderInUse { others });
+            }
+        }
         let batch = Self::new_batch();
         let at = now_millis();
         let subtree = self.collect_subtree(id);

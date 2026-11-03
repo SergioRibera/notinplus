@@ -125,8 +125,9 @@ impl Library {
                 upsert(&mut self.data.index.items, item, |i| i.id);
                 self.persist()?;
             }
-            SyncRecord::Folder(folder) => {
+            SyncRecord::Folder(mut folder) => {
                 yard.revive(Buried::Folder, folder.id.0);
+                folder.parent = self.data.landing_parent(&folder);
                 upsert(&mut self.data.index.folders, folder, |f| f.id);
                 self.persist()?;
             }
@@ -255,17 +256,19 @@ impl LibraryData {
     #[sismo::function("library::sync::sync_heads")]
     pub fn sync_heads(&self, yard: &Graveyard) -> Vec<BlobHead> {
         let mut heads: Vec<BlobHead> = Vec::new();
-        heads.extend(
-            self.index
-                .items
-                .iter()
-                .map(|i| head(BlobKind::Item, i.id.0, i.updated_at)),
-        );
+        // Folders first: an item that lands before its folder exists
+        // would have nowhere to go.
         heads.extend(
             self.index
                 .folders
                 .iter()
                 .map(|f| head(BlobKind::Folder, f.id.0, f.updated_at)),
+        );
+        heads.extend(
+            self.index
+                .items
+                .iter()
+                .map(|i| head(BlobKind::Item, i.id.0, i.updated_at)),
         );
         heads.extend(
             self.index

@@ -386,8 +386,9 @@ impl Published {
                 BlobKind::Item | BlobKind::Snapshot | BlobKind::Asset | BlobKind::Attachment => {
                     share.can_edit(me)
                 }
+                BlobKind::Folder => share.folder.is_some() && share.can_edit(me),
                 BlobKind::Link => share.can_link(me),
-                BlobKind::Folder | BlobKind::Tag | BlobKind::Workspace => false,
+                BlobKind::Tag | BlobKind::Workspace => false,
             };
             if !allowed
                 || self
@@ -2024,6 +2025,7 @@ impl<R: Replica> SyncDriver<R> {
             }
             ShareEdit::AddDocs { docs, blobs } => share.add_docs(&docs, &blobs),
             ShareEdit::RemoveDocs(docs) => share.remove_docs(&docs),
+            ShareEdit::RemoveFolders(folders) => share.remove_folders(&folders),
             ShareEdit::SetRole { device, role } => share.set_role(device, role),
             ShareEdit::Expel(device) => {
                 if share.expel(device) {
@@ -2475,7 +2477,9 @@ fn edit_allowed(share: &Share, from: DeviceId, edit: &ShareEdit) -> bool {
     };
     match edit {
         ShareEdit::Rename(_) => share.can_rename(from),
-        ShareEdit::AddDocs { .. } | ShareEdit::RemoveDocs(_) => share.can_add_docs(from),
+        ShareEdit::AddDocs { .. } | ShareEdit::RemoveDocs(_) | ShareEdit::RemoveFolders(_) => {
+            share.can_add_docs(from)
+        }
         ShareEdit::SetRole { device, role: to } => share.outranks(from, *device) && *to < role,
         ShareEdit::Expel(device) => share.outranks(from, *device),
         ShareEdit::Approve { role: to, .. } => role.can_manage() && *to < role,
@@ -2498,13 +2502,15 @@ fn permitted(share: &Share, from: DeviceId, message: Message) -> Option<Message>
             let kept: Vec<_> = blobs
                 .into_iter()
                 .filter(|blob| match blob.head.kind {
-                    BlobKind::Item if blob.head.gone => share.can_delete(from),
+                    BlobKind::Item | BlobKind::Folder if blob.head.gone => share.can_delete(from),
                     BlobKind::Item
                     | BlobKind::Snapshot
                     | BlobKind::Asset
                     | BlobKind::Attachment => share.can_edit(from),
+                    // Folders only travel inside a shared folder.
+                    BlobKind::Folder => share.folder.is_some() && share.can_edit(from),
                     BlobKind::Link => share.can_link(from),
-                    BlobKind::Folder | BlobKind::Tag | BlobKind::Workspace => false,
+                    BlobKind::Tag | BlobKind::Workspace => false,
                 })
                 .collect();
             (!kept.is_empty()).then_some(Message::Blobs(kept))

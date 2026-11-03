@@ -42,6 +42,12 @@ pub enum LibraryError {
     RootImmutable,
     /// A link whose two ends are the same item.
     SelfLink,
+    /// The folder is shared and other people are still in the share;
+    /// it goes when they do, or when the share ends.
+    SharedFolderInUse {
+        /// People in the share besides this device.
+        others: usize,
+    },
 }
 
 /// Which id-space produced a [`LibraryError::NotFound`].
@@ -70,6 +76,9 @@ impl fmt::Display for LibraryError {
             },
             Self::Cycle => f.write_str("folder move would form a cycle"),
             Self::RootImmutable => f.write_str("root folder is read-only"),
+            Self::SharedFolderInUse { others } => {
+                write!(f, "shared folder still used by {others} other(s)")
+            }
             Self::SelfLink => f.write_str("a link needs two different items"),
         }
     }
@@ -123,6 +132,9 @@ impl UserMessage for LibraryError {
             Self::Cycle => tr!("errors-library-cycle"),
             Self::RootImmutable => tr!("errors-library-root"),
             Self::SelfLink => tr!("errors-library-self-link"),
+            Self::SharedFolderInUse { others } => {
+                tr!("errors-library-shared-folder-in-use", "count" => *others)
+            }
         }
     }
 }

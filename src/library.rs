@@ -1720,41 +1720,84 @@ impl LibraryData {
             .into_iter()
             .find(|s| !s.is_owner)
         {
-            Some(share) => self.shared_folder_for(share.id.0, &share.title),
+            Some(share) => self.share_root(&share),
             None => ROOT_FOLDER,
         }
+    }
+
+    /// Where a folder arriving from another library hangs: under its
+    /// own parent when that exists here, under "Shared with me" when it
+    /// is the root of a shared folder, under that root when it is one
+    /// of its subfolders, else the root.
+    #[sismo::function("library::landing_parent")]
+    pub(crate) fn landing_parent(&mut self, folder: &Folder) -> FolderId {
+        let guest_shares: Vec<crate::sync::ShareView> = crate::sync::snapshot()
+            .shares
+            .into_iter()
+            .filter(|s| !s.is_owner)
+            .collect();
+        if guest_shares.iter().any(|s| s.folder == Some(folder.id)) {
+            return self.shared_with_me();
+        }
+        if folder.parent == ROOT_FOLDER || self.index.folder(folder.parent).is_some() {
+            return folder.parent;
+        }
+        if let Some(local) = self.index.folder(folder.id) {
+            return local.parent;
+        }
+        match guest_shares.iter().find(|s| s.folders.contains(&folder.id)) {
+            Some(share) => self.share_root(share),
+            None => ROOT_FOLDER,
+        }
+    }
+
+    /// The folder holding what `share` brings: the shared folder itself
+    /// for a shared folder, else one named after the share.
+    #[sismo::function("library::share_root")]
+    pub(crate) fn share_root(&mut self, share: &crate::sync::ShareView) -> FolderId {
+        match share.folder {
+            Some(root) => {
+                let parent = self.shared_with_me();
+                self.folder_or_create(root, parent, &share.title);
+                root
+            }
+            None => self.shared_folder_for(share.id.0, &share.title),
+        }
+    }
+
+    /// "Shared with me", created on demand.
+    fn shared_with_me(&mut self) -> FolderId {
+        self.folder_or_create(SHARED_WITH_ME, ROOT_FOLDER, &tr!("library-shared-with-me"));
+        SHARED_WITH_ME
     }
 
     /// The folder holding what share `share` brings, under "Shared with
     /// me"; both are created on demand. The caller persists.
     #[sismo::function("library::shared_folder_for")]
     pub(crate) fn shared_folder_for(&mut self, share: [u8; 16], title: &str) -> FolderId {
+        let parent = self.shared_with_me();
+        let id = FolderId(share);
+        self.folder_or_create(id, parent, title);
+        id
+    }
+
+    /// Add a folder with `id` under `parent` unless it exists.
+    fn folder_or_create(&mut self, id: FolderId, parent: FolderId, name: &str) {
+        if self.index.folder(id).is_some() {
+            return;
+        }
         let now = now_millis();
-        let fresh = |id: FolderId, parent: FolderId, name: String| Folder {
+        self.index.folders.push(Folder {
             id,
             parent,
-            name,
+            name: name.to_owned(),
             color: None,
             icon: None,
             tags: Vec::new(),
             created_at: now,
             updated_at: now,
             trashed: None,
-        };
-        if self.index.folder(SHARED_WITH_ME).is_none() {
-            self.index.folders.push(fresh(
-                SHARED_WITH_ME,
-                ROOT_FOLDER,
-                tr!("library-shared-with-me"),
-            ));
-        }
-        let id = FolderId(share);
-        if self.index.folder(id).is_none() {
-            self.index
-                .folders
-                .push(fresh(id, SHARED_WITH_ME, title.to_owned()));
-        }
-        id
+        });
     }
 
     fn ensure_folder_target(&self, id: FolderId) -> Result<()> {

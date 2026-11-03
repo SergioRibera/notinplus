@@ -14,3 +14,8 @@ errors-library-missing-link = Este vínculo ya no existe.
 errors-library-cycle = Una carpeta no se puede mover dentro de sí misma.
 errors-library-root = La carpeta principal no se puede cambiar.
 errors-library-self-link = Un documento no se puede vincular consigo mismo.
+# $count: personas que siguen en el compartido.
+errors-library-shared-folder-in-use = { $count ->
+    [one] Esta carpeta está compartida y { $count } persona sigue adentro. Terminá el compartido o esperá a que salga.
+   *[other] Esta carpeta está compartida y { $count } personas siguen adentro. Terminá el compartido o esperá a que salgan.
+}
