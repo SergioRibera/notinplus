@@ -36,8 +36,8 @@ fn packed(color: Color) -> u32 {
 
 /// The settings form of one plugin.
 #[derive(Clone)]
-pub(super) struct SchemaForm {
-    pub(super) settings: Arc<dyn PluginSettings>,
+pub(crate) struct SchemaForm {
+    pub(crate) settings: Arc<dyn PluginSettings>,
 }
 
 impl PartialEq for SchemaForm {
@@ -58,9 +58,11 @@ impl Component for SchemaForm {
         let revision = use_state(|| 0u32);
         let _ = revision.read();
         let schema = self.settings.schema();
+        let settings = Arc::clone(&self.settings);
         let rows: Vec<Element> = schema
             .fields
             .into_iter()
+            .filter(|field| field.shown(|key| settings.get(key)))
             .map(|field| {
                 FieldRow {
                     settings: Arc::clone(&self.settings),

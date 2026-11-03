@@ -115,6 +115,9 @@ pub fn display(src: &SourceRef, data: Option<&LibraryData>) -> ChipDisplay {
                 name: &name,
                 updated_at: doc.map_or(0, |d| d.updated_at),
                 tint: doc.and_then(|d| d.color),
+                paper: doc.map_or_else(notein_plugin::create::Paper::default, |d| {
+                    d.background.into()
+                }),
             };
             let chip = kind.chip(meta, anchor);
             let broken = chip.broken || (doc.is_none() && !info.shared_refs);
@@ -229,6 +232,9 @@ pub fn quote(target: &SourceRef, data: Option<&LibraryData>) -> Option<Quote> {
         name: &name,
         updated_at: doc.map_or(0, |d| d.updated_at),
         tint: doc.and_then(|d| d.color),
+        paper: doc.map_or_else(notein_plugin::create::Paper::default, |d| {
+            d.background.into()
+        }),
     };
     kind.quote(meta, anchor)
 }

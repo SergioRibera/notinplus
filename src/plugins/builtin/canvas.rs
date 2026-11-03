@@ -6,11 +6,12 @@ use std::sync::{PoisonError, RwLock, RwLockReadGuard};
 use bincode::{Decode, Encode};
 use freya::icons::lucide;
 use notein_i18n::tr;
+use notein_plugin::config::{ConfigEnumOption, ConfigField, ConfigValue};
 use notein_plugin::create::{Created, CreationEntry, CreationError, CreationFlow, CreationRequest};
 use notein_plugin::doc::{DocId, DocMeta};
 use notein_plugin::kind::{
-    ChipView, DocumentKind, ExportFile, Hit, IndexReport, KindColor, KindInfo, Mark, OutlineIcon,
-    OutlineNode, SearchQuery, SelectionSupport,
+    ChipView, DocumentKind, ExportError, ExportFile, ExportValues, Hit, IndexReport, KindColor,
+    KindInfo, Mark, OutlineIcon, OutlineNode, SearchQuery, SelectionSupport,
 };
 
 /// Kind id stored with every canvas.
@@ -343,20 +344,115 @@ impl DocumentKind for CanvasKind {
     }
 
     #[sismo::function("canvas_kind::export")]
-    fn export(
+    fn exports(&self) -> bool {
+        true
+    }
+
+    #[sismo::function("canvas_kind::export_fields")]
+    fn export_fields(
+        &self,
+        _doc: DocMeta<'_>,
+        _content: &CanvasContent,
+        _attachment: Option<&[u8]>,
+    ) -> Vec<ConfigField> {
+        let images = || {
+            [
+                ConfigValue::String(export::PNG.into()),
+                ConfigValue::String(export::JPG.into()),
+            ]
+        };
+        vec![
+            ConfigField::choice(
+                export::FORMAT,
+                &tr!("export-format"),
+                [
+                    ConfigEnumOption::new(export::PDF, tr!("export-format-pdf")),
+                    ConfigEnumOption::new(export::PNG, tr!("export-format-png")),
+                    ConfigEnumOption::new(export::JPG, tr!("export-format-jpg")),
+                ],
+                export::PDF,
+            )
+            .help(&tr!("export-canvas-text-hint")),
+            ConfigField::choice(
+                export::BACKGROUND,
+                &tr!("export-background"),
+                [
+                    ConfigEnumOption::new(export::PAPER, tr!("export-background-paper")),
+                    ConfigEnumOption::new(export::NONE, tr!("export-background-none")),
+                ],
+                export::PAPER,
+            )
+            .only_when(export::FORMAT, [ConfigValue::String(export::PNG.into())]),
+            ConfigField::choice(
+                export::SCALE,
+                &tr!("export-scale"),
+                [
+                    ConfigEnumOption::new("1", tr!("export-scale-1")),
+                    ConfigEnumOption::new("2", tr!("export-scale-2")),
+                    ConfigEnumOption::new("3", tr!("export-scale-3")),
+                ],
+                "2",
+            )
+            .only_when(export::FORMAT, images()),
+        ]
+    }
+
+    #[sismo::function("canvas_kind::export_with")]
+    fn export_with(
         &self,
         doc: DocMeta<'_>,
         _content: &CanvasContent,
         _attachment: Option<&[u8]>,
-    ) -> Option<ExportFile> {
+        values: &ExportValues,
+    ) -> Result<Vec<ExportFile>, ExportError> {
+        use crate::readable::{CanvasRender, ImageFormat, canvas_pdf, canvas_pixels, encode_page};
+        let item = crate::library::ItemId(doc.id.0);
         let paper = doc.tint.unwrap_or(UNTINTED_PAPER);
-        crate::readable::canvas_pdf(crate::library::ItemId(doc.id.0), paper).map(|bytes| {
-            ExportFile {
-                extension: "pdf".into(),
-                bytes,
+        let nothing = || ExportError::Failed(tr!("export-nothing"));
+        let format = match values.str_or(export::FORMAT, export::PDF) {
+            export::PNG => ImageFormat::Png,
+            export::JPG => ImageFormat::Jpg,
+            _ => {
+                let bytes = canvas_pdf(item, paper, doc.paper).ok_or_else(nothing)?;
+                return Ok(vec![ExportFile::new("pdf", "application/pdf", bytes)]);
             }
-        })
+        };
+        // JPEG has no transparency: it always gets the paper.
+        let transparent = format == ImageFormat::Png
+            && values.str_or(export::BACKGROUND, export::PAPER) == export::NONE;
+        let scale: f32 =
+            values
+                .str_or(export::SCALE, "2")
+                .parse()
+                .map_err(|_| ExportError::BadOption {
+                    key: export::SCALE.into(),
+                    reason: tr!("export-failed"),
+                })?;
+        let render = CanvasRender {
+            paper: (!transparent).then_some((paper, doc.paper)),
+            scale: crate::readable::PAGE_SCALE * scale,
+        };
+        let page = canvas_pixels(item, render).ok_or_else(nothing)?;
+        let bytes =
+            encode_page(&page, format).ok_or_else(|| ExportError::Failed(tr!("export-failed")))?;
+        Ok(vec![ExportFile::new(
+            format.extension(),
+            format.mime(),
+            bytes,
+        )])
     }
+}
+
+/// Option keys and values of the export sheet.
+mod export {
+    pub(super) const FORMAT: &str = "format";
+    pub(super) const PDF: &str = "pdf";
+    pub(super) const PNG: &str = "png";
+    pub(super) const JPG: &str = "jpg";
+    pub(super) const BACKGROUND: &str = "background";
+    pub(super) const PAPER: &str = "paper";
+    pub(super) const NONE: &str = "none";
+    pub(super) const SCALE: &str = "scale";
 }
 
 impl CanvasContent {
@@ -463,6 +559,7 @@ mod tests {
             name: "Mapa",
             updated_at: 0,
             tint: None,
+            paper: notein_plugin::create::Paper::default(),
         };
         kind.index(meta, &content, None);
         let query = SearchQuery::new("ADOP", 10);

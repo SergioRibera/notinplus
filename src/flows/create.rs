@@ -7,7 +7,7 @@ use freya::prelude::*;
 use notein_i18n::tr;
 use notein_plugin::UserMessage;
 use notein_plugin::catalog::CatalogEntry;
-use notein_plugin::create::{CreationFlow, CreationRequest, ImportedFile, Paper};
+use notein_plugin::create::{CreationFlow, CreationRequest, ImportedFile};
 use notein_ui_kit::TapExt;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
@@ -439,15 +439,6 @@ struct Request {
     file: Option<crate::files::Picked>,
 }
 
-const fn paper_of(style: BackgroundStyle) -> Paper {
-    match style {
-        BackgroundStyle::Blank => Paper::Blank,
-        BackgroundStyle::Line => Paper::Lines,
-        BackgroundStyle::Grid => Paper::Grid,
-        BackgroundStyle::DotGrid => Paper::Dots,
-    }
-}
-
 /// Last paper and colour picked for a new canvas.
 #[istmo::message]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -708,7 +699,7 @@ fn create(entry: CatalogEntry, context: Context, request: Request) {
         let created = {
             let req = CreationRequest {
                 name: &values.name,
-                paper: paper_of(values.paper),
+                paper: values.paper.into(),
                 paper_color: values.color.map(|[r, g, b, _]| [r, g, b]),
                 file: file.as_ref().map(|f| ImportedFile {
                     name: &f.name,

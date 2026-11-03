@@ -7,16 +7,112 @@
 
 use std::io::{Cursor, Write};
 
-use freya_engine::prelude::{AlphaType, ColorType, ImageInfo, raster_n32_premul};
+use freya_engine::prelude::{
+    AlphaType, ColorType, EncodedImageFormat, ImageInfo, SkData, raster_from_data,
+    raster_n32_premul,
+};
 use freya_pdf::write::{PAGE_GAP, PageImage, image_pdf, page_world_rects};
 use notein_i18n::tr;
 use notein_plugin::UserMessage;
+use notein_plugin::create::Paper;
 
 use crate::doc::Doc;
 use crate::library::{ItemId, LibraryData, bodies};
 
 /// Pixels per PDF point in flattened pages.
-const PAGE_SCALE: f32 = 2.0;
+pub(crate) const PAGE_SCALE: f32 = 2.0;
+/// Widest or tallest a rendered page may get, in pixels.
+const MAX_SIDE_PX: f32 = 8000.0;
+/// Margin around a canvas's content in its page, in world units.
+const CANVAS_MARGIN: f32 = 36.0;
+
+/// Pixel formats "Exportar como…" writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ImageFormat {
+    Png,
+    Jpg,
+}
+
+impl ImageFormat {
+    pub(crate) const fn extension(self) -> &'static str {
+        match self {
+            Self::Png => "png",
+            Self::Jpg => "jpg",
+        }
+    }
+
+    pub(crate) const fn mime(self) -> &'static str {
+        match self {
+            Self::Png => "image/png",
+            Self::Jpg => "image/jpeg",
+        }
+    }
+}
+
+/// How a canvas turns into pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct CanvasRender {
+    /// Paper colour and pattern under the ink; `None` leaves the page
+    /// transparent.
+    pub paper: Option<([u8; 4], Paper)>,
+    /// Pixels per world unit.
+    pub scale: f32,
+}
+
+/// `page` encoded as `format`. JPEG drops transparency: what was see
+/// through turns white.
+#[sismo::function("readable::encode_page")]
+pub(crate) fn encode_page(page: &PageImage, format: ImageFormat) -> Option<Vec<u8>> {
+    let (w, h) = (
+        i32::try_from(page.width_px).ok()?,
+        i32::try_from(page.height_px).ok()?,
+    );
+    let info = ImageInfo::new((w, h), ColorType::RGBA8888, AlphaType::Unpremul, None);
+    let row = usize::try_from(page.width_px).ok()? * 4;
+    let image = match format {
+        ImageFormat::Png => raster_from_data(&info, SkData::new_copy(&page.rgba), row)?,
+        ImageFormat::Jpg => {
+            let mut surface = raster_n32_premul((w, h))?;
+            surface.canvas().clear(freya_engine::prelude::Color::WHITE);
+            let source = raster_from_data(&info, SkData::new_copy(&page.rgba), row)?;
+            surface.canvas().draw_image(&source, (0, 0), None);
+            surface.image_snapshot()
+        }
+    };
+    let (kind, quality) = match format {
+        ImageFormat::Png => (EncodedImageFormat::PNG, None),
+        ImageFormat::Jpg => (EncodedImageFormat::JPEG, Some(90)),
+    };
+    image
+        .encode(None, kind, quality)
+        .map(|data| data.as_bytes().to_vec())
+}
+
+/// `pages` stacked top to bottom into one image, left aligned on the
+/// widest, the gaps white.
+#[sismo::function("readable::stack_pages")]
+pub(crate) fn stack_pages(pages: &[PageImage]) -> Option<PageImage> {
+    let width = pages.iter().map(|p| p.width_px).max()?;
+    let height: u32 = pages.iter().map(|p| p.height_px).sum();
+    let row = usize::try_from(width).ok()? * 4;
+    let mut rgba = vec![255u8; row * usize::try_from(height).ok()?];
+    let mut top = 0usize;
+    for page in pages {
+        let page_row = usize::try_from(page.width_px).ok()? * 4;
+        for (y, line) in page.rgba.chunks(page_row).enumerate() {
+            let start = (top + y) * row;
+            rgba[start..start + line.len()].copy_from_slice(line);
+        }
+        top += usize::try_from(page.height_px).ok()?;
+    }
+    Some(PageImage {
+        rgba,
+        width_px: width,
+        height_px: height,
+        width_pt: pages.iter().map(|p| p.width_pt).max().unwrap_or(0),
+        height_pt: pages.iter().map(|p| p.height_pt).sum(),
+    })
+}
 
 /// Why a readable export failed.
 #[derive(Debug)]
@@ -82,9 +178,18 @@ fn file_name(name: &str) -> String {
 }
 
 /// Draw `doc`'s ink and images (`item`'s files) inside world rectangle
-/// `area` onto `rgba` (`w`×`h` pixels).
+/// `area` (`x, y, width, height`) onto `rgba` (`w`×`h` pixels), under the
+/// pattern of `paper` when given.
 #[sismo::function("readable::composite")]
-fn composite(doc: &Doc, item: ItemId, area: (f32, f32, f32, f32), rgba: &mut [u8], w: u32, h: u32) {
+fn composite(
+    doc: &Doc,
+    item: ItemId,
+    area: (f32, f32, f32, f32),
+    rgba: &mut [u8],
+    w: u32,
+    h: u32,
+    paper: Option<Paper>,
+) {
     let info = ImageInfo::new(
         (i32::try_from(w).unwrap_or(0), i32::try_from(h).unwrap_or(0)),
         ColorType::RGBA8888,
@@ -108,34 +213,49 @@ fn composite(doc: &Doc, item: ItemId, area: (f32, f32, f32, f32), rgba: &mut [u8
     canvas.save();
     canvas.scale((scale, scale));
     canvas.translate((-area.0, -area.1));
+    if let Some(paper) = paper {
+        crate::flatten::paint_paper(
+            canvas,
+            paper,
+            (area.0, area.1, area.0 + area.2, area.1 + area.3),
+        );
+    }
     crate::flatten::paint(canvas, doc, item);
     canvas.restore();
     let _ = surface.read_pixels(&info, rgba, usize::try_from(w).unwrap_or(0) * 4, (0, 0));
 }
 
-/// The PDF `bytes` kept by `item` with the ink drawn on its pages.
-#[sismo::function("readable::flattened_pdf")]
-pub(crate) fn flattened_pdf(item: ItemId, bytes: &[u8]) -> Option<Vec<u8>> {
-    let bytes = bytes.to_vec();
-    let pdf = freya_pdf::PdfDocument::open_bytes(bytes.clone()).ok()?;
-    let doc = bodies::read_doc(item).ok();
+/// The pages `pages` (zero based) of the PDF `bytes` kept by `item`
+/// rendered at `scale` pixels per point, with the ink drawn on them when
+/// `annotated`. `None` when the file does not open or a page is missing.
+#[sismo::function("readable::pdf_pages")]
+pub(crate) fn pdf_pages(
+    item: ItemId,
+    bytes: &[u8],
+    pages: &[usize],
+    annotated: bool,
+    scale: f32,
+) -> Option<Vec<PageImage>> {
+    let pdf = freya_pdf::PdfDocument::open_bytes(bytes.to_vec()).ok()?;
+    let doc = annotated.then(|| bodies::read_doc(item).ok()).flatten();
     let rects = page_world_rects(pdf.page_sizes(), PAGE_GAP);
-    let mut pages = Vec::with_capacity(rects.len());
-    for (index, rect) in rects.iter().enumerate() {
+    let mut out = Vec::with_capacity(pages.len());
+    for &index in pages {
+        let rect = rects.get(index)?;
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // page sizes in points
         let (w, h) = (
-            (rect.2 * PAGE_SCALE).round() as u32,
-            (rect.3 * PAGE_SCALE).round() as u32,
+            (rect.2 * scale).round().min(MAX_SIDE_PX) as u32,
+            (rect.3 * scale).round().min(MAX_SIDE_PX) as u32,
         );
         let (mut rgba, w, h) = {
             sismo::scope!("readable::render_page");
             pdf.render_page_rgba(index, w.max(1), h.max(1)).ok()?
         };
         if let Some(doc) = &doc {
-            composite(doc, item, *rect, &mut rgba, w, h);
+            composite(doc, item, *rect, &mut rgba, w, h, None);
         }
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        pages.push(PageImage {
+        out.push(PageImage {
             rgba,
             width_px: w,
             height_px: h,
@@ -143,40 +263,66 @@ pub(crate) fn flattened_pdf(item: ItemId, bytes: &[u8]) -> Option<Vec<u8>> {
             height_pt: rect.3.round() as u32,
         });
     }
-    sismo::scope!("readable::encode_pdf");
-    image_pdf(&pages).ok().or(Some(bytes))
+    Some(out)
 }
 
-/// Canvas `item` as one page of `paper`, cropped to its ink and images.
-#[sismo::function("readable::canvas_pdf")]
-pub(crate) fn canvas_pdf(item: ItemId, paper: [u8; 4]) -> Option<Vec<u8>> {
+/// The PDF `bytes` kept by `item` with the ink drawn on its pages.
+#[sismo::function("readable::flattened_pdf")]
+pub(crate) fn flattened_pdf(item: ItemId, bytes: &[u8]) -> Option<Vec<u8>> {
+    let count = freya_pdf::PdfDocument::open_bytes(bytes.to_vec())
+        .ok()?
+        .page_count();
+    let all: Vec<usize> = (0..count).collect();
+    let pages = pdf_pages(item, bytes, &all, true, PAGE_SCALE)?;
+    sismo::scope!("readable::encode_pdf");
+    image_pdf(&pages).ok().or_else(|| Some(bytes.to_vec()))
+}
+
+/// Canvas `item` as pixels, cropped to its ink and images with a margin.
+/// `None` when it holds nothing drawable.
+#[sismo::function("readable::canvas_pixels")]
+pub(crate) fn canvas_pixels(item: ItemId, render: CanvasRender) -> Option<PageImage> {
     let doc = bodies::read_doc(item).ok()?;
     let (x0, y0, x1, y1) = crate::flatten::bounds(&doc)?;
-    let margin = 36.0;
     let area = (
-        x0 - margin,
-        y0 - margin,
-        (x1 - x0) + margin * 2.0,
-        (y1 - y0) + margin * 2.0,
+        x0 - CANVAS_MARGIN,
+        y0 - CANVAS_MARGIN,
+        CANVAS_MARGIN.mul_add(2.0, x1 - x0),
+        CANVAS_MARGIN.mul_add(2.0, y1 - y0),
     );
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let (w, h) = (
-        (area.2 * PAGE_SCALE).round().min(8000.0) as u32,
-        (area.3 * PAGE_SCALE).round().min(8000.0) as u32,
+        (area.2 * render.scale).round().min(MAX_SIDE_PX) as u32,
+        (area.3 * render.scale).round().min(MAX_SIDE_PX) as u32,
     );
-    let mut rgba: Vec<u8> = std::iter::repeat_n(paper, (w * h) as usize)
+    let fill = render.paper.map_or([0, 0, 0, 0], |(color, _)| color);
+    let mut rgba: Vec<u8> = std::iter::repeat_n(fill, (w * h) as usize)
         .flatten()
         .collect();
-    composite(&doc, item, area, &mut rgba, w, h);
+    let pattern = render.paper.map(|(_, pattern)| pattern);
+    composite(&doc, item, area, &mut rgba, w, h, pattern);
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    image_pdf(&[PageImage {
+    Some(PageImage {
         rgba,
         width_px: w,
         height_px: h,
         width_pt: area.2.round() as u32,
         height_pt: area.3.round() as u32,
-    }])
-    .ok()
+    })
+}
+
+/// Canvas `item` as one page of `paper` with its `pattern`, cropped to
+/// its ink and images.
+#[sismo::function("readable::canvas_pdf")]
+pub(crate) fn canvas_pdf(item: ItemId, paper: [u8; 4], pattern: Paper) -> Option<Vec<u8>> {
+    let page = canvas_pixels(
+        item,
+        CanvasRender {
+            paper: Some((paper, pattern)),
+            scale: PAGE_SCALE,
+        },
+    )?;
+    image_pdf(&[page]).ok()
 }
 
 /// The marks of a document as a markdown list.

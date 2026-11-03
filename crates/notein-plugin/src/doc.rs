@@ -2,6 +2,8 @@
 
 use bincode::{Decode, Encode};
 
+use crate::create::Paper;
+
 /// Library id of a document (16-byte UUID).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default, Encode, Decode)]
 pub struct DocId(pub [u8; 16]);
@@ -28,4 +30,6 @@ pub struct DocMeta<'a> {
     pub updated_at: u64,
     /// The colour the user tinted it with (sRGBA).
     pub tint: Option<[u8; 4]>,
+    /// The paper pattern the user picked for it.
+    pub paper: Paper,
 }

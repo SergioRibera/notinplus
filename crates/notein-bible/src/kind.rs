@@ -645,6 +645,7 @@ mod tests {
             name: "Biblia",
             updated_at: 0,
             tint: None,
+            paper: notein_sdk::create::Paper::default(),
         }
     }
 

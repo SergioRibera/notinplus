@@ -109,6 +109,15 @@ pub fn for_item(data: &LibraryData, item: ItemId, origin: Origin) -> Vec<ActionE
         )
         .icon(lucide::download()),
     ));
+    if kind.as_ref().is_some_and(|kind| kind.exports()) {
+        entries.push(ActionEntry::Item(
+            Action::new(
+                tr!("actions-export-as"),
+                run(move || flows::export_as(item)),
+            )
+            .icon(lucide::file_output()),
+        ));
+    }
     entries.push(ActionEntry::Item(
         Action::new(
             tr!("actions-duplicate"),

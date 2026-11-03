@@ -8,7 +8,7 @@ mod library;
 mod notes;
 mod pen;
 mod plugins;
-mod schema;
+pub(crate) mod schema;
 
 use freya::prelude::*;
 use notein_ui_kit::theme::palette;

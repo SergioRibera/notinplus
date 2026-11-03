@@ -7,13 +7,14 @@
 use std::sync::Arc;
 
 use crate::bookmark::SourceRef;
+use crate::config::ConfigField;
 use crate::create::{
     Created, CreationEntry, CreationError, CreationRequest, ImportPreview, ImportedFile,
 };
 use crate::doc::{DocId, DocMeta};
 use crate::kind::{
-    ActionEffect, ChipView, DocumentKind, ExportFile, Hit, IndexReport, KindAction, KindChoice,
-    KindInfo, Mark, OutlineNode, Quote, SearchQuery, SelectionSupport,
+    ActionEffect, ChipView, DocumentKind, ExportError, ExportFile, ExportValues, Hit, IndexReport,
+    KindAction, KindChoice, KindInfo, Mark, OutlineNode, Quote, SearchQuery, SelectionSupport,
 };
 use crate::payload::Payload;
 
@@ -69,6 +70,23 @@ pub trait ErasedKind: Send + Sync {
         content: &[u8],
         attachment: Option<&[u8]>,
     ) -> Option<ExportFile>;
+    fn exports(&self) -> bool;
+    fn export_fields(
+        &self,
+        doc: DocMeta<'_>,
+        content: &[u8],
+        attachment: Option<&[u8]>,
+    ) -> Vec<ConfigField>;
+    /// # Errors
+    /// [`ExportError`] from the kind, or `Failed` when `content` does not
+    /// decode.
+    fn export_with(
+        &self,
+        doc: DocMeta<'_>,
+        content: &[u8],
+        attachment: Option<&[u8]>,
+        values: &ExportValues,
+    ) -> Result<Vec<ExportFile>, ExportError>;
     fn cited(&self, doc: DocId, anchor: &[u8]);
     fn quotes(&self) -> bool;
     fn quote(&self, doc: DocMeta<'_>, anchor: &[u8]) -> Option<Quote>;
@@ -264,6 +282,33 @@ impl<K: DocumentKind> ErasedKind for KindAdapter<K> {
         attachment: Option<&[u8]>,
     ) -> Option<ExportFile> {
         self.0.export(doc, &Self::content(content), attachment)
+    }
+
+    fn exports(&self) -> bool {
+        self.0.exports()
+    }
+
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_export_fields"))]
+    fn export_fields(
+        &self,
+        doc: DocMeta<'_>,
+        content: &[u8],
+        attachment: Option<&[u8]>,
+    ) -> Vec<ConfigField> {
+        self.0
+            .export_fields(doc, &Self::content(content), attachment)
+    }
+
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_export_with"))]
+    fn export_with(
+        &self,
+        doc: DocMeta<'_>,
+        content: &[u8],
+        attachment: Option<&[u8]>,
+        values: &ExportValues,
+    ) -> Result<Vec<ExportFile>, ExportError> {
+        self.0
+            .export_with(doc, &Self::content(content), attachment, values)
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_cited"))]

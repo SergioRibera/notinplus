@@ -5,7 +5,12 @@
 //! Text boxes are laid out by the note editor and have no painter here
 //! yet, so they neither draw nor count towards the bounds.
 
-use freya_engine::prelude::{Canvas, Paint, Rect, SkData, SkImage};
+use freya_canvas_bg::{
+    BgPaintCtx, CanvasBackground, DotGridBackground, GridBackground, LinedBackground,
+    Rect as WorldRect, RedrawHandle,
+};
+use freya_engine::prelude::{Canvas, Color as SkColor, Paint, Rect, SkData, SkImage};
+use notein_plugin::create::Paper;
 
 use crate::doc::Doc;
 use crate::image_box::ImageBox;
@@ -33,6 +38,26 @@ pub fn bounds(doc: &Doc) -> Option<(f32, f32, f32, f32)> {
         }
     }
     bounds
+}
+
+/// Draw the lines, grid or dots of `paper` over the world rect `area`
+/// (`min_x, min_y, max_x, max_y`), the way the board paints them under the
+/// ink. Blank paper draws nothing.
+#[sismo::function("flatten::paint_paper")]
+pub fn paint_paper(canvas: &Canvas, paper: Paper, area: (f32, f32, f32, f32)) {
+    let background: Box<dyn CanvasBackground> = match paper {
+        Paper::Blank => return,
+        Paper::Lines => Box::new(LinedBackground::new(SkColor::TRANSPARENT)),
+        Paper::Grid => Box::new(GridBackground::new(SkColor::TRANSPARENT)),
+        Paper::Dots => Box::new(DotGridBackground::new(SkColor::TRANSPARENT)),
+    };
+    let mut cx = BgPaintCtx {
+        canvas,
+        visible: WorldRect::from_corners((area.0, area.1), (area.2, area.3)),
+        scale: 1.0,
+        redraw: RedrawHandle::new(|| {}),
+    };
+    background.paint(&mut cx);
 }
 
 /// Draw `doc` in world units under the canvas's current transform. Images

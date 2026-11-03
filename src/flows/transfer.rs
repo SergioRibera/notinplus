@@ -522,7 +522,7 @@ fn save_copy(
 ) {
     spawn_in_window(traced!("task::flows::save_copy", async move {
         match crate::files::save(&tr!("flows-transfer-save-copy"), &name, mime, ext, &bytes).await {
-            Ok(Some(saved)) => done_sheet(saved, bytes, mime),
+            Ok(Some(saved)) => done_sheet(saved, bytes, mime.to_owned()),
             Ok(None) => {}
             Err(crate::files::FileError::Io(err))
                 if err.kind() == std::io::ErrorKind::StorageFull =>
@@ -539,7 +539,7 @@ fn save_copy(
 }
 
 #[sismo::function("flows::done_sheet")]
-fn done_sheet(saved: crate::files::Saved, bytes: Vec<u8>, mime: &'static str) {
+pub(super) fn done_sheet(saved: crate::files::Saved, bytes: Vec<u8>, mime: String) {
     let size = crate::format::size(u64::try_from(bytes.len()).unwrap_or(0));
     let crate::files::Saved { name, path } = saved;
     let subtitle = tr!("flows-transfer-saved-subtitle", "name" => name.clone(), "size" => size);
@@ -567,7 +567,7 @@ fn done_sheet(saved: crate::files::Saved, bytes: Vec<u8>, mime: &'static str) {
             .icon(freya::icons::lucide::share_2())
             .on_press(move |_| {
                 ModalController::get().close();
-                super::share_file(name.clone(), mime.to_owned(), bytes.clone());
+                super::share_file(name.clone(), mime.clone(), bytes.clone());
             })
             .into_element(),
     );

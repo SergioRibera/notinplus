@@ -7,13 +7,14 @@ use bincode::{Decode, Encode};
 use freya::icons::lucide;
 use freya_pdf::{PdfDocument, TocEntry};
 use notein_i18n::tr;
+use notein_plugin::config::{ConfigEnumOption, ConfigField, ConfigValue};
 use notein_plugin::create::{
     Created, CreationEntry, CreationError, CreationRequest, ImportPreview, ImportedFile,
 };
 use notein_plugin::doc::{DocId, DocMeta};
 use notein_plugin::kind::{
-    Attachment, ChipView, DocumentKind, ExportFile, Hit, IndexReport, KindColor, KindInfo, Mark,
-    OutlineIcon, OutlineNode, SearchQuery, SelectionSupport,
+    Attachment, ChipView, DocumentKind, ExportError, ExportFile, ExportValues, Hit, IndexReport,
+    KindColor, KindInfo, Mark, OutlineIcon, OutlineNode, SearchQuery, SelectionSupport,
 };
 use notein_plugin::text::Folded;
 
@@ -464,18 +465,197 @@ impl DocumentKind for PdfKind {
         content.marks.clear();
     }
 
-    #[sismo::function("pdf_kind::export")]
-    fn export(
+    fn exports(&self) -> bool {
+        true
+    }
+
+    #[sismo::function("pdf_kind::export_fields")]
+    fn export_fields(
+        &self,
+        _doc: DocMeta<'_>,
+        _content: &PdfContent,
+        attachment: Option<&[u8]>,
+    ) -> Vec<ConfigField> {
+        let count = attachment
+            .and_then(|bytes| PdfDocument::open_bytes(bytes.to_vec()).ok())
+            .map_or(0, |pdf| pdf.page_count());
+        let images = || {
+            [
+                ConfigValue::String(export::PNG.into()),
+                ConfigValue::String(export::JPG.into()),
+            ]
+        };
+        vec![
+            ConfigField::choice(
+                export::FORMAT,
+                &tr!("export-format"),
+                [
+                    ConfigEnumOption::new(export::PDF, tr!("export-format-pdf")),
+                    ConfigEnumOption::new(export::PNG, tr!("export-format-png")),
+                    ConfigEnumOption::new(export::JPG, tr!("export-format-jpg")),
+                ],
+                export::PDF,
+            ),
+            ConfigField::choice(
+                export::CONTENT,
+                &tr!("export-content"),
+                [
+                    ConfigEnumOption::new(export::ANNOTATED, tr!("export-content-annotated")),
+                    ConfigEnumOption::new(export::ORIGINAL, tr!("export-content-original")),
+                ],
+                export::ANNOTATED,
+            ),
+            ConfigField::string(export::PAGES, &tr!("export-pages"), 200, "")
+                .help(&tr!("export-pages-help", "count" => count))
+                .only_when(export::FORMAT, images()),
+            ConfigField::choice(
+                export::DPI,
+                &tr!("export-dpi"),
+                [
+                    ConfigEnumOption::new("150", tr!("export-dpi-150")),
+                    ConfigEnumOption::new("300", tr!("export-dpi-300")),
+                ],
+                "150",
+            )
+            .only_when(export::FORMAT, images()),
+            ConfigField::choice(
+                export::FILES,
+                &tr!("export-files"),
+                [
+                    ConfigEnumOption::new(export::SEPARATE, tr!("export-files-separate")),
+                    ConfigEnumOption::new(export::SINGLE, tr!("export-files-single")),
+                ],
+                export::SEPARATE,
+            )
+            .only_when(export::FORMAT, images()),
+        ]
+    }
+
+    #[sismo::function("pdf_kind::export_with")]
+    fn export_with(
         &self,
         doc: DocMeta<'_>,
         _content: &PdfContent,
         attachment: Option<&[u8]>,
-    ) -> Option<ExportFile> {
+        values: &ExportValues,
+    ) -> Result<Vec<ExportFile>, ExportError> {
+        use crate::readable::{ImageFormat, encode_page, flattened_pdf, pdf_pages, stack_pages};
         let item = crate::library::ItemId(doc.id.0);
-        crate::readable::flattened_pdf(item, attachment?).map(|bytes| ExportFile {
-            extension: "pdf".into(),
-            bytes,
-        })
+        let bytes = attachment.ok_or_else(|| ExportError::Failed(tr!("export-nothing")))?;
+        let failed = || ExportError::Failed(tr!("export-failed"));
+        let annotated = values.str_or(export::CONTENT, export::ANNOTATED) == export::ANNOTATED;
+        let format = match values.str_or(export::FORMAT, export::PDF) {
+            export::PNG => ImageFormat::Png,
+            export::JPG => ImageFormat::Jpg,
+            _ => {
+                let out = if annotated {
+                    flattened_pdf(item, bytes).ok_or_else(failed)?
+                } else {
+                    bytes.to_vec()
+                };
+                return Ok(vec![ExportFile::new("pdf", "application/pdf", out)]);
+            }
+        };
+        let count = PdfDocument::open_bytes(bytes.to_vec())
+            .map_err(|_| failed())?
+            .page_count();
+        let pages = export::parse_pages(values.str_or(export::PAGES, ""), count)?;
+        let dpi: f32 = values.str_or(export::DPI, "150").parse().unwrap_or(150.0);
+        let rendered = pdf_pages(item, bytes, &pages, annotated, dpi / 72.0).ok_or_else(failed)?;
+        let single = values.str_or(export::FILES, export::SEPARATE) == export::SINGLE;
+        let files = if single || rendered.len() == 1 {
+            let page = stack_pages(&rendered).ok_or_else(failed)?;
+            vec![ExportFile::new(
+                format.extension(),
+                format.mime(),
+                encode_page(&page, format).ok_or_else(failed)?,
+            )]
+        } else {
+            rendered
+                .iter()
+                .zip(&pages)
+                .map(|(page, index)| {
+                    encode_page(page, format)
+                        .map(|bytes| {
+                            ExportFile::new(format.extension(), format.mime(), bytes)
+                                .tagged((index + 1).to_string())
+                        })
+                        .ok_or_else(failed)
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        Ok(files)
+    }
+}
+
+/// Option keys and values of the export sheet, and the page picker.
+mod export {
+    use notein_i18n::tr;
+    use notein_plugin::kind::ExportError;
+
+    pub(super) const FORMAT: &str = "format";
+    pub(super) const PDF: &str = "pdf";
+    pub(super) const PNG: &str = "png";
+    pub(super) const JPG: &str = "jpg";
+    pub(super) const CONTENT: &str = "content";
+    pub(super) const ANNOTATED: &str = "annotated";
+    pub(super) const ORIGINAL: &str = "original";
+    pub(super) const PAGES: &str = "pages";
+    pub(super) const DPI: &str = "dpi";
+    pub(super) const FILES: &str = "files";
+    pub(super) const SINGLE: &str = "single";
+    pub(super) const SEPARATE: &str = "separate";
+
+    /// Zero based pages named by `text` ("1-3, 7"; blank means every
+    /// page), in order, each once.
+    ///
+    /// # Errors
+    /// [`ExportError::BadOption`] for a page past `count` or text that is
+    /// not numbers and ranges.
+    pub(super) fn parse_pages(text: &str, count: usize) -> Result<Vec<usize>, ExportError> {
+        let bad = |reason: String| ExportError::BadOption {
+            key: PAGES.into(),
+            reason,
+        };
+        if text.trim().is_empty() {
+            return Ok((0..count).collect());
+        }
+        let mut pages = Vec::new();
+        for part in text.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+            let (from, to) = match part.split_once('-') {
+                Some((a, b)) => (a.trim(), b.trim()),
+                None => (part, part),
+            };
+            let (from, to): (usize, usize) = match (from.parse(), to.parse()) {
+                (Ok(a), Ok(b)) => (a, b),
+                _ => return Err(bad(tr!("export-pages-unreadable"))),
+            };
+            for page in from.min(to)..=from.max(to) {
+                if page == 0 || page > count {
+                    return Err(bad(
+                        tr!("export-pages-out-of-range", "page" => page, "count" => count),
+                    ));
+                }
+                if !pages.contains(&(page - 1)) {
+                    pages.push(page - 1);
+                }
+            }
+        }
+        Ok(pages)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::parse_pages;
+
+        #[test]
+        fn ranges_and_singles_in_order_without_repeats() {
+            assert_eq!(parse_pages("", 3).unwrap(), vec![0, 1, 2]);
+            assert_eq!(parse_pages("3-1, 2, 5", 5).unwrap(), vec![0, 1, 2, 4]);
+            assert!(parse_pages("7", 5).is_err());
+            assert!(parse_pages("a-b", 5).is_err());
+            assert!(parse_pages("0", 5).is_err());
+        }
     }
 }
 

@@ -155,6 +155,17 @@ pub enum BackgroundStyle {
     DotGrid,
 }
 
+impl From<BackgroundStyle> for notein_plugin::create::Paper {
+    fn from(style: BackgroundStyle) -> Self {
+        match style {
+            BackgroundStyle::Blank => Self::Blank,
+            BackgroundStyle::Line => Self::Lines,
+            BackgroundStyle::Grid => Self::Grid,
+            BackgroundStyle::DotGrid => Self::Dots,
+        }
+    }
+}
+
 /// When and from where something was moved to the trash.
 #[istmo::message]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

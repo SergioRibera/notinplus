@@ -463,10 +463,15 @@ impl DocumentKind for NotesKind {
         content: &NoteContent,
         _attachment: Option<&[u8]>,
     ) -> Option<ExportFile> {
-        Some(ExportFile {
-            extension: "md".into(),
-            bytes: content.markdown.clone().into_bytes(),
-        })
+        Some(ExportFile::new(
+            "md",
+            "text/markdown",
+            content.markdown.clone().into_bytes(),
+        ))
+    }
+
+    fn exports(&self) -> bool {
+        true
     }
 
     /// Fix the anchor of the cited heading, so the link survives the
@@ -523,6 +528,7 @@ mod tests {
             name: "Apuntes del sábado",
             updated_at: 0,
             tint: None,
+            paper: notein_sdk::create::Paper::default(),
         };
         let quote = kind
             .quote(meta, &NoteAnchor::heading("idea-central"))
@@ -539,6 +545,7 @@ mod tests {
             name: "Apuntes del sábado",
             updated_at: 0,
             tint: None,
+            paper: notein_sdk::create::Paper::default(),
         };
         let content = NoteContent {
             markdown: "# Idea central\n\nLa adopción no es sólo legal.\n\n## Preguntas\n"

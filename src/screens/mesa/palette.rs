@@ -195,6 +195,16 @@ fn document_commands(data: &LibraryData, item: ItemId) -> Vec<Command> {
         .item(item)
         .and_then(|i| crate::plugins::kind(&i.kind.plugin_id))
     {
+        if kind.exports() {
+            out.push(Command::new(
+                tr!("actions-export-as"),
+                None,
+                lucide::file_output(),
+                move || {
+                    flows::export_as(item);
+                },
+            ));
+        }
         out.extend(kind.actions().into_iter().map(|action| {
             let id = action.id.to_string();
             Command::new(action.label.clone(), None, action.icon.clone(), move || {

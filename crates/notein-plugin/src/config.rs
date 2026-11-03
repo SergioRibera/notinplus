@@ -62,6 +62,7 @@ impl ConfigField {
             kind,
             default,
             aliases: Vec::new(),
+            shown_when: Vec::new(),
         }
     }
 
@@ -188,6 +189,23 @@ impl ConfigField {
         self.aliases = aliases.iter().map(|s| (*s).into()).collect();
         self
     }
+
+    /// Show the field only while the field `key` holds one of `values`
+    /// (a page picker only for image formats). Several calls all have to
+    /// hold.
+    #[must_use]
+    pub fn only_when(mut self, key: &str, values: impl IntoIterator<Item = ConfigValue>) -> Self {
+        self.shown_when
+            .push((key.into(), values.into_iter().collect()));
+        self
+    }
+
+    /// Whether the field shows given the current values, read by `get`.
+    pub fn shown(&self, get: impl Fn(&str) -> Option<ConfigValue>) -> bool {
+        self.shown_when
+            .iter()
+            .all(|(key, values)| get(key).is_some_and(|current| values.contains(&current)))
+    }
 }
 
 impl ConfigEnumOption {
@@ -215,6 +233,10 @@ pub struct ConfigField {
     /// Previous names of this field. Loader migrates persisted values
     /// found under any alias into the current `key`.
     pub aliases: Vec<String>,
+    /// Conditions on other fields that all have to hold for this one to
+    /// show: the field named holds one of the values. See
+    /// [`Self::only_when`].
+    pub shown_when: Vec<(String, Vec<ConfigValue>)>,
 }
 
 /// The type and constraints of a [`ConfigField`].

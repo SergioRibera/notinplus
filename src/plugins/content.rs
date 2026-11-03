@@ -337,5 +337,6 @@ pub fn meta(item: &Item) -> DocMeta<'_> {
         name: &item.name,
         updated_at: item.updated_at,
         tint: item.color,
+        paper: item.background.into(),
     }
 }

@@ -11,6 +11,7 @@ use std::borrow::Cow;
 use bytes::Bytes;
 
 use crate::bookmark::SourceRef;
+use crate::config::{ConfigField, ConfigValue};
 use crate::create::{
     Created, CreationChoice, CreationEntry, CreationError, CreationRequest, ImportPreview,
     ImportedFile,
@@ -320,7 +321,106 @@ pub enum ActionEffect {
 pub struct ExportFile {
     /// Extension without the dot ("pdf", "md").
     pub extension: Cow<'static, str>,
+    /// Media type ("application/pdf"), for the save dialog and the share
+    /// sheet.
+    pub mime: Cow<'static, str>,
+    /// Tells files of one export apart ("3" for page three); the shell
+    /// appends it to the document name. Empty for a single file.
+    pub tag: String,
     pub bytes: Vec<u8>,
+}
+
+impl ExportFile {
+    #[must_use]
+    pub fn new(
+        extension: impl Into<Cow<'static, str>>,
+        mime: impl Into<Cow<'static, str>>,
+        bytes: Vec<u8>,
+    ) -> Self {
+        Self {
+            extension: extension.into(),
+            mime: mime.into(),
+            tag: String::new(),
+            bytes,
+        }
+    }
+
+    /// The file with `tag` appended to its name.
+    #[must_use]
+    pub fn tagged(mut self, tag: impl Into<String>) -> Self {
+        self.tag = tag.into();
+        self
+    }
+}
+
+/// Why an export with options could not be produced.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExportError {
+    /// The value of the option `key` is not usable ("page 40 of 12").
+    BadOption { key: String, reason: String },
+    /// Rendering failed; `reason` is for the person.
+    Failed(String),
+}
+
+impl std::fmt::Display for ExportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BadOption { key, reason } => write!(f, "export option {key}: {reason}"),
+            Self::Failed(reason) => write!(f, "export failed: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ExportError {}
+
+impl crate::failure::UserMessage for ExportError {
+    fn user_message(&self) -> String {
+        match self {
+            Self::BadOption { reason, .. } | Self::Failed(reason) => reason.clone(),
+        }
+    }
+}
+
+/// What the person picked in the export sheet, by option key. Keys
+/// missing here hold their [`ConfigField::default`].
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ExportValues(pub Vec<(String, ConfigValue)>);
+
+impl ExportValues {
+    #[must_use]
+    pub fn get(&self, key: &str) -> Option<&ConfigValue> {
+        self.0.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+    }
+
+    /// The string value of `key`, or `default` when unset or not text.
+    #[must_use]
+    pub fn str_or<'a>(&'a self, key: &str, default: &'a str) -> &'a str {
+        match self.get(key) {
+            Some(ConfigValue::String(s)) => s,
+            _ => default,
+        }
+    }
+
+    /// The switch `key`, or `default` when unset.
+    #[must_use]
+    pub fn bool_or(&self, key: &str, default: bool) -> bool {
+        match self.get(key) {
+            Some(ConfigValue::Bool(b)) => *b,
+            _ => default,
+        }
+    }
+
+    /// Every field of `fields` at its default: what [`DocumentKind::export`]
+    /// hands to [`DocumentKind::export_with`].
+    #[must_use]
+    pub fn defaults(fields: &[ConfigField]) -> Self {
+        Self(
+            fields
+                .iter()
+                .map(|field| (field.key.clone(), field.default.clone()))
+                .collect(),
+        )
+    }
 }
 
 /// A setting of one document the edit sheet offers as a list (the
@@ -529,16 +629,54 @@ pub trait DocumentKind: Send + Sync + 'static {
         let _ = content;
     }
 
-    /// The document as a file for people without Notein. The shell
-    /// writes the marks next to it on its own.
+    /// The document as a file for people without Notein, the way bulk
+    /// exports want it: every option at its default, first file only. The
+    /// shell writes the marks next to it on its own.
     fn export(
         &self,
         doc: DocMeta<'_>,
         content: &Self::Content,
         attachment: Option<&[u8]>,
     ) -> Option<ExportFile> {
+        let values = ExportValues::defaults(&self.export_fields(doc, content, attachment));
+        self.export_with(doc, content, attachment, &values)
+            .ok()?
+            .into_iter()
+            .next()
+    }
+
+    /// Whether "Exportar como…" is offered on documents of this kind.
+    fn exports(&self) -> bool {
+        false
+    }
+
+    /// Options the export sheet shows, as settings fields (format, pages,
+    /// background…). Declared per document, so a page picker can name the
+    /// page count. Empty means the sheet shows only the file name.
+    fn export_fields(
+        &self,
+        doc: DocMeta<'_>,
+        content: &Self::Content,
+        attachment: Option<&[u8]>,
+    ) -> Vec<ConfigField> {
         let _ = (doc, content, attachment);
-        None
+        Vec::new()
+    }
+
+    /// The document as files under `values`. Several files (one per page)
+    /// are zipped by the shell.
+    ///
+    /// # Errors
+    /// [`ExportError`] when an option is unusable or rendering fails.
+    fn export_with(
+        &self,
+        doc: DocMeta<'_>,
+        content: &Self::Content,
+        attachment: Option<&[u8]>,
+        values: &ExportValues,
+    ) -> Result<Vec<ExportFile>, ExportError> {
+        let _ = (doc, content, attachment, values);
+        Ok(Vec::new())
     }
 
     /// Whether [`Self::quote`] can return content. Kinds that cannot never
