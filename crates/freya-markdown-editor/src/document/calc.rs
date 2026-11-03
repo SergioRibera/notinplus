@@ -455,6 +455,8 @@ impl fmt::Display for Expr {
 pub struct TrailingCalculation {
     /// Byte offset of the expression in the line.
     pub start: usize,
+    /// Byte offset right after the expression, before trailing spaces.
+    pub end: usize,
     pub value: f64,
     /// The result written like the operands.
     pub result: String,
@@ -510,6 +512,7 @@ impl TrailingCalculation {
             let comma = numbers.iter().any(|n| n.comma);
             return Some(Self {
                 start,
+                end: start + source.trim_end().len(),
                 value,
                 result: Number::format(value, decimals, comma),
             });
@@ -593,8 +596,8 @@ mod tests {
 
     #[test]
     fn a_line_ending_in_arithmetic_is_a_calculation() {
-        let calc = TrailingCalculation::at_end_of("Total: 123 + 87").expect("calc");
-        assert_eq!((calc.start, calc.result.as_str()), (7, "210"));
+        let calc = TrailingCalculation::at_end_of("Total: 123 + 87 ").expect("calc");
+        assert_eq!((calc.start, calc.end, calc.result.as_str()), (7, 15, "210"));
         let calc = TrailingCalculation::at_end_of("2,5 * 4").expect("calc");
         assert_eq!(calc.result, "10,0");
         let calc = TrailingCalculation::at_end_of("x = (1 + 2) * 3").expect("calc");

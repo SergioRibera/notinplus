@@ -423,10 +423,23 @@ impl SlashMenu {
     }
 }
 
+/// What a menu inside a text block offers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MenuKind {
+    /// The `/` menu: blocks and the integrator's suggestions.
+    Slash,
+    /// The result of the arithmetic the line ends with.
+    Calc,
+}
+
 /// The menu open inside one text block.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct OpenMenu {
-    /// UTF-16 offset of the `/`.
+    pub(crate) kind: MenuKind,
+    /// Whether Enter and Tab pick the selected entry. A calculation menu
+    /// waits for the arrows first: Enter keeps breaking the line.
+    pub(crate) armed: bool,
+    /// UTF-16 offset of the `/`, or where the calculation starts.
     pub(crate) at: usize,
     /// Index among selectable items (headers excluded).
     pub(crate) selected: usize,
@@ -577,7 +590,10 @@ impl Component for SuggestionMenu {
 }
 
 /// Scroll so `row` is inside a list of the given `height`.
-#[cfg_attr(feature = "sismo", sismo::function("markdown::suggestion_keep_visible"))]
+#[cfg_attr(
+    feature = "sismo",
+    sismo::function("markdown::suggestion_keep_visible")
+)]
 fn keep_visible(scroll: &mut ScrollController, row: usize, height: f32) {
     #[allow(
         clippy::cast_possible_truncation,

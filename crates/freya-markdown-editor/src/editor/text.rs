@@ -1,6 +1,7 @@
 //! The editable paragraph behind every text block and table cell.
 
 use std::cell::{Cell, RefCell};
+use std::ops::Range;
 use std::rc::Rc;
 
 use freya::clipboard::Clipboard;
@@ -18,15 +19,19 @@ use super::image::ImageAtom;
 use super::math::MathAtom;
 use super::paint::{Decor, DecorKind, PaintContext, Piece};
 use super::reveal::{Reveal, RevealEdit};
-use super::suggest::{MENU_WIDTH, MenuRow, OpenMenu, SuggestionMenu, item, item_count};
+use super::suggest::{
+    MENU_WIDTH, MenuKind, MenuRow, OpenMenu, Suggestion, SuggestionAction, SuggestionMenu, item,
+    item_count,
+};
 use super::{InputContext, Shared};
 use crate::controller::AtomSlot;
 use crate::controller::{CaretRequest, Selection};
 use crate::decorator::EmbedContext;
 use crate::document::{
     Atom, BlockType, HeadingLevel, Inline, MarkFamily, MarkKind, OBJECT_REPLACEMENT, TextRole,
-    TextTarget, byte_index, utf16_len,
+    TextTarget, TrailingCalculation, byte_index, utf16_len,
 };
+use crate::labels::{Label, Labels};
 use crate::popup::ReportedPopup;
 
 /// Base look of a text block, before inline marks apply.
@@ -171,8 +176,14 @@ impl Component for TextBlock {
         }
         let open_menu = *menu.read();
         let cursor = editable.editor().read().cursor_pos();
-        let query = open_menu.and_then(|open| menu_query(&rope_text, open.at, cursor));
+        let query = open_menu
+            .filter(|open| open.kind == MenuKind::Slash)
+            .and_then(|open| menu_query(&rope_text, open.at, cursor));
         let entries = match (open_menu, query) {
+            (Some(open), None) if open.kind == MenuKind::Calc => {
+                calc_rows(&rope_text, cursor, open.at, &shared.theme.labels)
+                    .map(|rows| (open, Rc::new(rows)))
+            }
             (Some(open), Some(query)) => {
                 let mut cache = menu_cache.borrow_mut();
                 let rows = match &*cache {
@@ -200,6 +211,44 @@ impl Component for TextBlock {
         let command_for_keys = command_held.clone();
         let reveal_for_keys = reveal.clone();
         let input_for_keys = input_shown.clone();
+        // The calculation whose menu was dismissed, not offered again as is.
+        let mut calc_dismissed = use_state(|| None::<String>);
+        // Offer the result of the arithmetic the line ends with, or stop
+        // offering it once the line reads differently.
+        let mut refresh_calc = move || {
+            if read_only || role != TextRole::Rich {
+                return;
+            }
+            let (text, cursor) = {
+                let editor = editable.editor().peek();
+                (editor.rope().to_string(), editor.cursor_pos())
+            };
+            let current: Option<OpenMenu> = *menu.peek();
+            if current.is_some_and(|open| open.kind == MenuKind::Slash) {
+                return;
+            }
+            match calculation_before(&text, cursor) {
+                Some(hit) if calc_dismissed.peek().as_deref() != Some(hit.source.as_str()) => {
+                    if current.is_none_or(|open| open.at != hit.at) {
+                        let (top, left) = menu_anchor(&holder.read(), &text, hit.at);
+                        let width = area.peek().width();
+                        menu.set(Some(OpenMenu {
+                            kind: MenuKind::Calc,
+                            armed: false,
+                            at: hit.at,
+                            selected: 0,
+                            top,
+                            left: left.min(width - MENU_WIDTH).max(0.),
+                        }));
+                    }
+                }
+                _ => {
+                    if current.is_some() {
+                        menu.set(None);
+                    }
+                }
+            }
+        };
         let on_key_down = move |event: Event<KeyboardEventData>| {
             #[cfg(feature = "sismo")]
             sismo::scope!("markdown::key_down");
@@ -219,12 +268,21 @@ impl Component for TextBlock {
                 let count = item_count(entries);
                 match &key {
                     Key::Named(NamedKey::Escape) => {
+                        if open.kind == MenuKind::Calc {
+                            // Not this expression again until it changes.
+                            let editor = editable.editor().peek();
+                            let source =
+                                calculation_before(&editor.rope().to_string(), editor.cursor_pos())
+                                    .map(|hit| hit.source);
+                            calc_dismissed.set(source);
+                        }
                         menu.set(None);
                         return;
                     }
                     Key::Named(NamedKey::ArrowDown) if count > 0 => {
                         menu.set(Some(OpenMenu {
                             selected: (open.selected + 1) % count,
+                            armed: true,
                             ..*open
                         }));
                         return;
@@ -232,18 +290,28 @@ impl Component for TextBlock {
                     Key::Named(NamedKey::ArrowUp) if count > 0 => {
                         menu.set(Some(OpenMenu {
                             selected: (open.selected + count - 1) % count,
+                            armed: true,
                             ..*open
                         }));
                         return;
                     }
-                    Key::Named(NamedKey::Enter | NamedKey::Tab) if count > 0 => {
-                        if let Some(pick) = item(entries, open.selected.min(count - 1)) {
-                            let end = editable.editor().peek().cursor_pos();
+                    Key::Named(NamedKey::Enter | NamedKey::Tab) if count > 0 && open.armed => {
+                        let index = open.selected.min(count - 1);
+                        if let Some(pick) = item(entries, index) {
+                            let range = {
+                                let editor = editable.editor().peek();
+                                pick_range(
+                                    open,
+                                    index,
+                                    &editor.rope().to_string(),
+                                    editor.cursor_pos(),
+                                )
+                            };
                             let action = pick.action.clone();
                             menu.set(None);
                             controller.commit_suggestion(
                                 target,
-                                model(open.at)..model(end),
+                                model(range.start)..model(range.end),
                                 action,
                             );
                         }
@@ -514,6 +582,8 @@ impl Component for TextBlock {
                         let (top, left) = menu_anchor(&holder.read(), &text, start);
                         let width = area.peek().width();
                         OpenMenu {
+                            kind: MenuKind::Slash,
+                            armed: true,
                             at: start,
                             selected: 0,
                             top,
@@ -548,7 +618,7 @@ impl Component for TextBlock {
 
             if let Some(open) = opening {
                 menu.set(Some(open));
-            } else if menu.peek().is_some() {
+            } else if menu.peek().is_some_and(|open| open.kind == MenuKind::Slash) {
                 let editor = editable.editor().peek();
                 let text = editor.rope().to_string();
                 let still_open = menu
@@ -560,6 +630,7 @@ impl Component for TextBlock {
                     menu.set(None);
                 }
             }
+            refresh_calc();
         };
 
         let command_for_up = command_held.clone();
@@ -610,6 +681,7 @@ impl Component for TextBlock {
                         .write()
                         .delete_surrounding(before_bytes, after_bytes);
                     commit_rope(&editable, controller, target, hint, &reveal_for_ime);
+                    refresh_calc();
                 }
                 ImeEditEventData::Selection {
                     cursor_bytes,
@@ -995,11 +1067,19 @@ impl Component for TextBlock {
                 let Some(entry) = item(&pick_rows, index) else {
                     return;
                 };
-                let end = editable.editor().peek().cursor_pos();
+                let range = {
+                    let editor = editable.editor().peek();
+                    pick_range(
+                        &open,
+                        index,
+                        &editor.rope().to_string(),
+                        editor.cursor_pos(),
+                    )
+                };
                 let action = entry.action.clone();
                 let mut menu = menu;
                 menu.set(None);
-                let range = model_offset(&reveal, open.at)..model_offset(&reveal, end);
+                let range = model_offset(&reveal, range.start)..model_offset(&reveal, range.end);
                 controller.commit_suggestion(target, range, action);
             });
             rect()
@@ -1017,7 +1097,11 @@ impl Component for TextBlock {
                 .child(ReportedPopup {
                     child: SuggestionMenu {
                         rows,
-                        selected: open.selected,
+                        selected: if open.armed {
+                            open.selected
+                        } else {
+                            usize::MAX
+                        },
                         theme: theme.clone(),
                         on_pick,
                     }
@@ -1315,6 +1399,66 @@ fn commit_rope(
 
 /// Text typed after the trigger symbol, or `None` when the menu must close.
 #[cfg_attr(feature = "sismo", sismo::function("markdown::menu_query"))]
+/// Arithmetic the line of `cursor` ends with, in UTF-16 offsets of `text`.
+struct CalcHit {
+    at: usize,
+    end: usize,
+    source: String,
+    result: String,
+}
+
+#[cfg_attr(feature = "sismo", sismo::function("markdown::calculation_before"))]
+fn calculation_before(text: &str, cursor: usize) -> Option<CalcHit> {
+    let before = &text[..byte_index(text, cursor)];
+    let line_start = before.rfind('\n').map_or(0, |at| at + 1);
+    let line = &before[line_start..];
+    let calc = TrailingCalculation::at_end_of(line)?;
+    Some(CalcHit {
+        at: utf16_len(&before[..line_start + calc.start]),
+        end: utf16_len(&before[..line_start + calc.end]),
+        source: line[calc.start..calc.end].to_owned(),
+        result: calc.result,
+    })
+}
+
+/// Rows of the calculation menu opened at `at`, none once the line no
+/// longer ends in that calculation.
+fn calc_rows(text: &str, cursor: usize, at: usize, labels: &Labels) -> Option<Vec<MenuRow>> {
+    let hit = calculation_before(text, cursor).filter(|hit| hit.at == at)?;
+    Some(vec![
+        MenuRow::Header(labels.get(Label::Calculator).to_owned()),
+        MenuRow::Item(
+            Suggestion::new(
+                labels.get(Label::CalcReplace),
+                SuggestionAction::InsertText(hit.result.clone()),
+            )
+            .detail(hit.result.clone())
+            .icon("="),
+        ),
+        MenuRow::Item(
+            Suggestion::new(
+                labels.get(Label::CalcAppend),
+                SuggestionAction::InsertText(format!(" = {}", hit.result)),
+            )
+            .detail(format!("{} = {}", hit.source, hit.result))
+            .icon("+"),
+        ),
+    ])
+}
+
+/// The text a picked menu entry replaces: the `/` and its query, or the
+/// calculation (nothing, for the entry that appends its result).
+fn pick_range(open: &OpenMenu, index: usize, text: &str, cursor: usize) -> Range<usize> {
+    match open.kind {
+        MenuKind::Slash => open.at..cursor,
+        MenuKind::Calc => match calculation_before(text, cursor) {
+            Some(hit) if index == 0 => hit.at..hit.end,
+            Some(hit) => hit.end..hit.end,
+            None => cursor..cursor,
+        },
+    }
+}
+
 fn menu_query(text: &str, at: usize, cursor: usize) -> Option<String> {
     if cursor <= at {
         return None;

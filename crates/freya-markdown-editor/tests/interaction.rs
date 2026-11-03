@@ -917,3 +917,161 @@ fn table_rows_take_the_height_of_their_tallest_cell() {
     assert!(long > 30., "the long cell did not wrap: {long}");
     assert!((short - long).abs() < 0.5, "short {short} vs long {long}");
 }
+
+const SHOPPING: &str = "\
+| ✓ | Artículo | Presupuesto | Costo |
+|:-:|---|--:|--:|
+| [x] | Pan | 10 | 12,50 |
+| [ ] | Leche | 5 | |
+
+<!--
+notein:table
+check: 1
+column: Diferencia = [Costo] - [Presupuesto]
+calc: Costo = sum, checked
+-->
+";
+
+fn shopping_table(harness: &Harness) -> freya_markdown_editor::document::Table {
+    let document = harness.document();
+    let BlockKind::Table(table) = &document.blocks()[0].kind else {
+        panic!("table expected");
+    };
+    table.clone()
+}
+
+#[test]
+fn a_tap_on_a_check_mark_ticks_the_row_and_the_total_follows() {
+    let mut harness = Harness::new(SHOPPING);
+    assert!(!shopping_table(&harness).is_checked(2));
+    let (_, y) = text_center(&harness, "Leche");
+    // The check column is the first of five equal columns across the editor.
+    let x = 12. + (600. - 24.) / 5. / 2.;
+    tap(&mut harness, (x, y));
+    let table = shopping_table(&harness);
+    assert!(table.is_checked(2));
+    let totals = table.evaluate().totals;
+    assert_eq!(totals[3].as_ref().map(|t| t.text.as_str()), Some("12,50"));
+    assert!(
+        harness.value().contains("| [x] | Leche"),
+        "{}",
+        harness.value()
+    );
+    assert!(harness.value().contains("Sum 12,50"), "{}", harness.value());
+}
+
+#[test]
+fn tab_skips_check_marks_and_computed_cells() {
+    let mut harness = Harness::new(SHOPPING);
+    let table = harness.block(0).block;
+    harness.focus(
+        TextTarget {
+            block: table,
+            cell: Some(CellPos { row: 0, column: 3 }),
+        },
+        0,
+    );
+    harness.named(NamedKey::Tab);
+    harness.type_text("x");
+    let table = shopping_table(&harness);
+    assert_eq!(table.rows()[1][1].text(), "xPan");
+    harness.named(NamedKey::Tab);
+    harness.named(NamedKey::Tab);
+    harness.named(NamedKey::Tab);
+    harness.named(NamedKey::Tab);
+    harness.named(NamedKey::Tab);
+    harness.named(NamedKey::Tab);
+    harness.type_text("new");
+    let table = shopping_table(&harness);
+    assert_eq!(table.rows().len(), 4);
+    assert_eq!(table.rows()[3][0].text(), "[ ]");
+    assert_eq!(table.rows()[3][1].text(), "new");
+}
+
+#[test]
+fn renaming_a_header_keeps_the_formula_pointing_at_it() {
+    let mut harness = Harness::new(SHOPPING);
+    let table = harness.block(0).block;
+    harness.focus(
+        TextTarget {
+            block: table,
+            cell: Some(CellPos { row: 0, column: 3 }),
+        },
+        5,
+    );
+    harness.type_text("s");
+    let table = shopping_table(&harness);
+    assert_eq!(table.header(3), "Costos");
+    assert_eq!(table.computed()[0].formula, "[Costos] - [Presupuesto]");
+    assert!(
+        harness.value().contains("calc: Costos = sum, checked"),
+        "{}",
+        harness.value()
+    );
+}
+
+#[test]
+fn arithmetic_at_the_end_of_a_line_offers_its_result() {
+    let mut harness = Harness::new("Total:");
+    let first = harness.block(0);
+    harness.focus(first, 6);
+    harness.type_text(" 123 + 87");
+    // The first entry replaces the expression by its result.
+    harness.named(NamedKey::ArrowDown);
+    harness.named(NamedKey::ArrowUp);
+    harness.named(NamedKey::Enter);
+    assert_eq!(harness.value(), "Total: 210\n");
+}
+
+#[test]
+fn enter_keeps_breaking_the_line_while_a_calculation_is_offered() {
+    let mut harness = Harness::new("Total:");
+    let first = harness.block(0);
+    harness.focus(first, 6);
+    harness.type_text(" 123 + 87");
+    harness.named(NamedKey::Enter);
+    harness.type_text("next");
+    assert_eq!(harness.value(), "Total: 123 + 87\n\nnext\n");
+}
+
+#[test]
+fn the_second_calculator_entry_appends_the_result() {
+    let mut harness = Harness::new("");
+    let first = harness.block(0);
+    harness.focus(first, 0);
+    harness.type_text("(2,5 + 1) * 2");
+    harness.named(NamedKey::ArrowDown);
+    harness.named(NamedKey::Tab);
+    assert_eq!(harness.value(), "(2,5 + 1) \\* 2 = 7,0\n");
+    harness.type_text(" ok");
+    assert_eq!(harness.value(), "(2,5 + 1) \\* 2 = 7,0 ok\n");
+}
+
+#[test]
+fn escape_dismisses_the_calculator_until_the_expression_changes() {
+    let mut harness = Harness::new("");
+    let first = harness.block(0);
+    harness.focus(first, 0);
+    harness.type_text("1 + 2");
+    harness.named(NamedKey::Escape);
+    harness.named(NamedKey::ArrowDown);
+    harness.named(NamedKey::Enter);
+    assert_eq!(harness.value(), "1 + 2\n");
+    harness.named(NamedKey::Backspace);
+    harness.type_text("3");
+    harness.named(NamedKey::ArrowDown);
+    harness.named(NamedKey::ArrowUp);
+    harness.named(NamedKey::Enter);
+    assert_eq!(harness.value(), "24\n");
+}
+
+#[test]
+fn code_blocks_do_not_offer_calculations() {
+    let mut harness = Harness::new("```\nx\n```\n");
+    let code = harness.block(0);
+    harness.focus(code, 1);
+    harness.type_text(" + 1 + 2");
+    harness.named(NamedKey::ArrowDown);
+    harness.named(NamedKey::Enter);
+    assert_eq!(harness.value(), "```\nx + 1 + 2\n```\n");
+}
