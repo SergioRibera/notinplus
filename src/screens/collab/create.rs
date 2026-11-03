@@ -438,6 +438,7 @@ impl Component for ShareFooter {
                         docs: docs.clone(),
                         mode,
                         folder,
+                        desk: scope == Scope::Mesa,
                         entry_role,
                         approve_entry,
                         editors_add_docs: folder.is_some(),

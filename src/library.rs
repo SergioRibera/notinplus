@@ -50,9 +50,9 @@ pub use self::import::{Conflict, ImportPlan, ImportReceipt, Resolution, Review};
 pub use self::links::{Link, LinkIndex, LinkKind};
 pub use self::model::{
     AnnotationId, BackgroundStyle, DocKind, Folder, FolderId, INDEX_VERSION, Item, ItemId,
-    LibraryIndex, LinkId, Pane, PaneId, PaneLayout, PaneTab, ROOT_FOLDER, Rgba, ScratchId,
-    SplitOrientation, SplitSide, TabTarget, Tag, TagId, Trashed, ViewSlot, WORKSPACE_INDEX_VERSION,
-    Workspace, WorkspaceId, WorkspaceIndex,
+    LibraryIndex, LinkId, Pane, PaneId, PaneLayout, PaneTab, ROOT_FOLDER, Rgba, SHARED_WITH_ME,
+    ScratchId, SplitOrientation, SplitSide, TabTarget, Tag, TagId, Trashed, ViewSlot,
+    WORKSPACE_INDEX_VERSION, Workspace, WorkspaceId, WorkspaceIndex,
 };
 pub use self::refs::{RefEntry, RefOrigin};
 pub use self::shared::{LibHandle, changes, shared, shared_blocking};
@@ -1702,6 +1702,59 @@ impl LibraryData {
                 more => tr!("library-desk-title-more", "first" => first, "count" => more),
             },
         )
+    }
+
+    /// Where an item arriving from another library lands: where it
+    /// already sits here, else under the share that brought it, else
+    /// the root. Folders of this user's own devices are kept as they
+    /// are, since they exist here too.
+    #[sismo::function("library::landing_folder")]
+    pub(crate) fn landing_folder(&mut self, item: &Item) -> FolderId {
+        if item.folder == ROOT_FOLDER || self.index.folder(item.folder).is_some() {
+            return item.folder;
+        }
+        if let Some(local) = self.index.item(item.id) {
+            return local.folder;
+        }
+        match crate::sync::shares_of(item.id)
+            .into_iter()
+            .find(|s| !s.is_owner)
+        {
+            Some(share) => self.shared_folder_for(share.id.0, &share.title),
+            None => ROOT_FOLDER,
+        }
+    }
+
+    /// The folder holding what share `share` brings, under "Shared with
+    /// me"; both are created on demand. The caller persists.
+    #[sismo::function("library::shared_folder_for")]
+    pub(crate) fn shared_folder_for(&mut self, share: [u8; 16], title: &str) -> FolderId {
+        let now = now_millis();
+        let fresh = |id: FolderId, parent: FolderId, name: String| Folder {
+            id,
+            parent,
+            name,
+            color: None,
+            icon: None,
+            tags: Vec::new(),
+            created_at: now,
+            updated_at: now,
+            trashed: None,
+        };
+        if self.index.folder(SHARED_WITH_ME).is_none() {
+            self.index.folders.push(fresh(
+                SHARED_WITH_ME,
+                ROOT_FOLDER,
+                tr!("library-shared-with-me"),
+            ));
+        }
+        let id = FolderId(share);
+        if self.index.folder(id).is_none() {
+            self.index
+                .folders
+                .push(fresh(id, SHARED_WITH_ME, title.to_owned()));
+        }
+        id
     }
 
     fn ensure_folder_target(&self, id: FolderId) -> Result<()> {

@@ -61,6 +61,8 @@ pub struct ShareView {
     pub mode: ShareMode,
     /// The folder this share mirrors, when it is a shared folder.
     pub folder: Option<FolderId>,
+    /// Shared as a whole desk.
+    pub desk: bool,
     pub entry_role: Role,
     pub approve_entry: bool,
     pub editors_add_docs: bool,
@@ -209,6 +211,8 @@ pub struct ShareRequest {
     pub mode: ShareMode,
     /// The folder this share mirrors; its documents are `docs`.
     pub folder: Option<FolderId>,
+    /// Whether `docs` are a whole desk.
+    pub desk: bool,
     pub entry_role: Role,
     pub approve_entry: bool,
     pub editors_add_docs: bool,
@@ -1116,6 +1120,7 @@ impl Service {
         share.approve_entry = request.approve_entry;
         share.editors_add_docs = request.editors_add_docs;
         share.folder = request.folder.map(|f| f.0);
+        share.desk = request.desk;
         share.docs = request.docs.iter().map(|id| DocId(id.0)).collect();
         share.blobs = blobs_for(&request.docs);
         self.driver.create_share(share)
@@ -1411,6 +1416,7 @@ impl Service {
                 my_role: share.role_of(me).unwrap_or(Role::Viewer),
                 mode: share.mode,
                 folder: share.folder.map(FolderId),
+                desk: share.desk,
                 entry_role: share.entry_role,
                 approve_entry: share.approve_entry,
                 editors_add_docs: share.editors_add_docs,

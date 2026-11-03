@@ -1943,6 +1943,7 @@ impl<R: Replica> SyncDriver<R> {
         share.docs = ended.docs;
         share.blobs = ended.blobs;
         share.folder = ended.folder;
+        share.desk = ended.desk;
         let fresh = share.id;
         Some((fresh, self.create_share(share)))
     }

@@ -310,9 +310,10 @@ impl Component for Joining {
         if let Some(view) = joined
             && done == total
         {
-            let first = view.docs.first().copied();
             ModalController::get().close();
-            if let Some(item) = first {
+            if view.desk && !view.docs.is_empty() {
+                open_desk(view.title.clone(), view.docs.clone());
+            } else if let Some(item) = view.docs.first().copied() {
                 crate::flows::open(item);
             }
         }
@@ -375,6 +376,44 @@ impl Component for Joining {
             )
             .into_element()
     }
+}
+
+/// A desk shared with this device: a desk of its own with every
+/// document as a tab, then go there.
+#[sismo::function("collab::open_desk")]
+fn open_desk(title: String, docs: Vec<crate::library::ItemId>) {
+    spawn_in_window(async move {
+        let Ok(handle) = crate::library::shared().await else {
+            log::warn!("shared desk: library unavailable");
+            return;
+        };
+        let workspace = {
+            let mut lib = handle.lock().await;
+            let workspace = match lib.create_workspace(&title, None).await {
+                Ok(id) => id,
+                Err(err) => {
+                    log::warn!("shared desk: create: {err}");
+                    return;
+                }
+            };
+            let pane = lib
+                .workspace(workspace)
+                .and_then(|w| w.layout.leaves().first().map(|p| p.id));
+            if let Some(pane) = pane {
+                for doc in docs {
+                    if let Err(err) = lib
+                        .add_tab(workspace, pane, crate::library::TabTarget::Item(doc))
+                        .await
+                    {
+                        log::warn!("shared desk: open {doc}: {err}");
+                    }
+                }
+            }
+            workspace
+        };
+        crate::space::notify_changed();
+        let _ = crate::app::global_router().push(crate::route::Route::Space { id: workspace });
+    });
 }
 
 /// A permanent share is no longer shared with this device; its copy

@@ -59,3 +59,11 @@ home-selection-pin = Pin
 home-selection-export = Export
 home-selection-new-folder = New folder with { $count }
 home-sessions = Sessions
+home-card-shared-nobody = Shared · nobody in yet
+# $name: a person.
+home-card-shared-with = Shared with { $name }
+# $name: a person; $count: how many more.
+home-card-shared-with-more = Shared with { $name } and { $count } more
+# $name: who organizes.
+home-card-shared-by = From { $name }
+home-card-shared-paused = paused

@@ -120,11 +120,7 @@ impl Library {
         match record {
             SyncRecord::Item(mut item) => {
                 yard.revive(Buried::Item, item.id.0);
-                if item.folder != super::ROOT_FOLDER
-                    && self.data.index.folder(item.folder).is_none()
-                {
-                    item.folder = super::ROOT_FOLDER;
-                }
+                item.folder = self.data.landing_folder(&item);
                 super::keep_cover(item.id, item.thumbnail.as_deref());
                 upsert(&mut self.data.index.items, item, |i| i.id);
                 self.persist()?;

@@ -10,3 +10,4 @@ library-desk-title-more = { $count ->
     [one] { $first } y 1 más
    *[other] { $first } y { $count } más
 }
+library-shared-with-me = Compartido conmigo

@@ -148,6 +148,9 @@ pub struct Share {
     /// The library folder this share mirrors, when it is a shared
     /// folder: whatever lands inside travels to everyone.
     pub folder: Option<[u8; 16]>,
+    /// Shared as a whole desk: members get a desk with the documents,
+    /// not loose documents.
+    pub desk: bool,
     pub mode: ShareMode,
     /// The role someone gets by opening the invitation.
     pub entry_role: Role,
@@ -202,6 +205,7 @@ impl Share {
             docs: Vec::new(),
             blobs: Vec::new(),
             folder: None,
+            desk: false,
             mode,
             entry_role: Role::Editor,
             // A link that lasts for good is a link that gets forwarded.
@@ -445,6 +449,7 @@ impl Share {
             docs: self.docs.clone(),
             blobs: self.blobs.clone(),
             folder: self.folder,
+            desk: self.desk,
             ended_at: now,
         }
     }
@@ -585,6 +590,7 @@ pub struct EndedShare {
     pub docs: Vec<DocId>,
     pub blobs: Vec<BlobKey>,
     pub folder: Option<[u8; 16]>,
+    pub desk: bool,
     pub ended_at: u64,
 }
 

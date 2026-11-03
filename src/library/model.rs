@@ -10,6 +10,9 @@ use core::str::FromStr;
 /// Reserved id for the implicit root folder that every fresh index
 /// carries. User-created folders use random UUID v4 bytes.
 pub const ROOT_FOLDER: FolderId = FolderId([0u8; 16]);
+/// The folder standing for everything other people share with this
+/// device; its subfolders are one per share, named after it.
+pub const SHARED_WITH_ME: FolderId = FolderId([0xEE; 16]);
 
 /// Schema version encoded into the index blob. Bump on any breaking
 /// change to the surrounding types.

@@ -62,3 +62,11 @@ home-selection-pin = Fijar
 home-selection-export = Exportar
 home-selection-new-folder = Nueva carpeta con { $count }
 home-sessions = Sesiones
+home-card-shared-nobody = Compartido · nadie entró todavía
+# $name: una persona.
+home-card-shared-with = Compartís con { $name }
+# $name: una persona; $count: cuántas más.
+home-card-shared-with-more = Compartís con { $name } y { $count } más
+# $name: quien organiza.
+home-card-shared-by = De { $name }
+home-card-shared-paused = en pausa

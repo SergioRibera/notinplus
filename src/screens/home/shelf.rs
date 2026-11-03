@@ -210,10 +210,13 @@ pub fn card(data: &LibraryData, item: &Item, shared: bool, now: u64) -> DocCardD
     let when = crate::format::ago(item.updated_at, now);
     let label = crate::plugins::kind_info(&item.kind.plugin_id)
         .map_or_else(|| tr!("home-card-document"), |k| k.label.into_owned());
-    let meta = glance.summary.map_or_else(
+    let mut meta = glance.summary.map_or_else(
         || format!("{label} · {when}"),
         |summary| format!("{summary} · {when}"),
     );
+    if shared && let Some(mark) = shared_mark(item.id) {
+        meta = format!("{meta} · {mark}");
+    }
     DocCardData {
         name: item.name.clone(),
         kind: item.kind.plugin_id.clone(),
@@ -226,6 +229,35 @@ pub fn card(data: &LibraryData, item: &Item, shared: bool, now: u64) -> DocCardD
         shared,
         preview: glance.preview,
     }
+}
+
+/// Who a shared document is shared with, for the card line: who
+/// organizes, or who it is shared with, and whether it is read only.
+#[sismo::function("home::shared_mark")]
+fn shared_mark(item: ItemId) -> Option<String> {
+    let shares = crate::sync::shares_of(item);
+    let first = shares.first()?;
+    let mut mark = if first.is_owner {
+        match first.members.len() {
+            0 => tr!("home-card-shared-nobody"),
+            1 => tr!("home-card-shared-with", "name" => first.members[0].member.name.as_str()),
+            n => tr!(
+                "home-card-shared-with-more",
+                "name" => first.members[0].member.name.as_str(),
+                "count" => n - 1
+            ),
+        }
+    } else {
+        tr!("home-card-shared-by", "name" => first.owner.name.as_str())
+    };
+    if first.paused() {
+        mark.push_str(" · ");
+        mark.push_str(&tr!("home-card-shared-paused"));
+    } else if !first.can_edit {
+        mark.push_str(" · ");
+        mark.push_str(&tr!("collab-share-read-only"));
+    }
+    Some(mark)
 }
 
 /// Running total of covers handed to cards, for the profiler.
