@@ -9,7 +9,7 @@ use blake2::{Blake2s256, Digest};
 
 use crate::error::IdentityError;
 
-const PROFILE_VERSION: u32 = 2;
+const PROFILE_VERSION: u32 = 3;
 
 /// Stable identifier of a device: the hash of its public key.
 #[derive(bincode::Encode, bincode::Decode, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -164,12 +164,27 @@ impl fmt::Debug for PairingCode {
 pub struct DeviceProfile {
     key: DeviceKey,
     name: String,
+    /// How the person wants to be called in a share, when it is not
+    /// the device's name.
+    user_name: Option<String>,
     trusted: Vec<TrustedDevice>,
     relay: Option<String>,
 }
 
 #[derive(bincode::Encode, bincode::Decode)]
 struct ProfileFile {
+    version: u32,
+    public: [u8; 32],
+    private: [u8; 32],
+    name: String,
+    user_name: Option<String>,
+    trusted: Vec<TrustedDevice>,
+    relay: Option<String>,
+}
+
+/// The second layout, without a user name.
+#[derive(bincode::Decode)]
+struct ProfileFileV2 {
     version: u32,
     public: [u8; 32],
     private: [u8; 32],
@@ -195,6 +210,7 @@ impl DeviceProfile {
         Self {
             key: DeviceKey::generate(),
             name: name.into(),
+            user_name: None,
             trusted: Vec::new(),
             relay: None,
         }
@@ -233,6 +249,7 @@ impl DeviceProfile {
             public: self.key.keypair.public,
             private: self.key.keypair.private,
             name: self.name.clone(),
+            user_name: self.user_name.clone(),
             trusted: self.trusted.clone(),
             relay: self.relay.clone(),
         };
@@ -250,25 +267,48 @@ impl DeviceProfile {
         let file = if let Some(file) = current {
             file
         } else {
-            let (old, _): (ProfileFileV1, usize) = bincode::decode_from_slice(bytes, config)
-                .map_err(|err| IdentityError::Codec(err.to_string()))?;
-            if old.version != 1 {
-                return Err(IdentityError::Version(old.version));
-            }
-            ProfileFile {
-                version: PROFILE_VERSION,
-                public: old.public,
-                private: old.private,
-                name: old.name,
-                trusted: old.trusted,
-                relay: None,
-            }
+            Self::decode_older(bytes)?
         };
         Ok(Self {
             key: DeviceKey::from_parts(file.public, file.private),
             name: file.name,
+            user_name: file.user_name,
             trusted: file.trusted,
             relay: file.relay,
+        })
+    }
+
+    /// Earlier layouts, read into the current one.
+    fn decode_older(bytes: &[u8]) -> Result<ProfileFile, IdentityError> {
+        let config = bincode::config::standard();
+        let v2: Option<ProfileFileV2> = bincode::decode_from_slice(bytes, config)
+            .ok()
+            .map(|(file, _): (ProfileFileV2, usize)| file)
+            .filter(|file| file.version == 2);
+        if let Some(old) = v2 {
+            return Ok(ProfileFile {
+                version: PROFILE_VERSION,
+                public: old.public,
+                private: old.private,
+                name: old.name,
+                user_name: None,
+                trusted: old.trusted,
+                relay: old.relay,
+            });
+        }
+        let (old, _): (ProfileFileV1, usize) = bincode::decode_from_slice(bytes, config)
+            .map_err(|err| IdentityError::Codec(err.to_string()))?;
+        if old.version != 1 {
+            return Err(IdentityError::Version(old.version));
+        }
+        Ok(ProfileFile {
+            version: PROFILE_VERSION,
+            public: old.public,
+            private: old.private,
+            name: old.name,
+            user_name: None,
+            trusted: old.trusted,
+            relay: None,
         })
     }
 
@@ -299,6 +339,22 @@ impl DeviceProfile {
 
     pub fn set_name(&mut self, name: impl Into<String>) {
         self.name = name.into();
+    }
+
+    /// The name chosen for shares, if any.
+    #[must_use]
+    pub fn user_name(&self) -> Option<&str> {
+        self.user_name.as_deref()
+    }
+
+    /// What other people see: the chosen name, else the device's.
+    #[must_use]
+    pub fn display_name(&self) -> &str {
+        self.user_name.as_deref().unwrap_or(&self.name)
+    }
+
+    pub fn set_user_name(&mut self, name: Option<String>) {
+        self.user_name = name.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty());
     }
 
     #[must_use]
@@ -395,6 +451,7 @@ mod tests {
             public: [0; 32],
             private: [0; 32],
             name: String::new(),
+            user_name: None,
             trusted: Vec::new(),
             relay: None,
         };
@@ -403,5 +460,18 @@ mod tests {
             DeviceProfile::decode(&bytes),
             Err(IdentityError::Version(99))
         ));
+    }
+
+    #[test]
+    fn user_name_round_trips_and_falls_back_to_the_device() {
+        let mut profile = DeviceProfile::generate("Tablet");
+        assert_eq!(profile.display_name(), "Tablet");
+        profile.set_user_name(Some("  ".into()));
+        assert_eq!(profile.user_name(), None);
+        profile.set_user_name(Some(" Sergio ".into()));
+        assert_eq!(profile.display_name(), "Sergio");
+        let back = DeviceProfile::decode(&profile.encode().unwrap()).unwrap();
+        assert_eq!(back.user_name(), Some("Sergio"));
+        assert_eq!(back.name(), "Tablet");
     }
 }

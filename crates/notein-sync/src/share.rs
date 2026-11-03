@@ -3,14 +3,14 @@
 //! A share names a set of documents, who may touch them and how, and
 //! the key that keeps its traffic private. The owner hands out an
 //! invitation (link or QR) carrying the key; anyone holding it can
-//! join.
+//! join, at once or once the owner lets them in.
 
 use std::collections::HashSet;
 use std::fmt;
 
 use crate::cipher::ShareKey;
 use crate::identity::DeviceId;
-use crate::replica::{BlobKey, DocId, Scope};
+use crate::replica::{BlobKey, BlobKind, DocId, Scope};
 
 const LINK_SCHEME: &str = "notein://join?";
 
@@ -41,47 +41,71 @@ pub enum ShareMode {
     Permanent,
 }
 
-/// Who may do something inside a share.
-#[derive(bincode::Encode, bincode::Decode, Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Who {
+/// What someone may do inside a share, lowest first. The owner
+/// outranks everyone; a member is never `Owner`.
+#[derive(
+    bincode::Encode,
+    bincode::Decode,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Debug,
+    Default,
+)]
+pub enum Role {
+    /// Reads and follows the others.
+    Viewer,
+    /// Writes, draws, annotates, renames the share.
+    #[default]
+    Editor,
+    /// Also invites, lets people in, adds and removes documents, and
+    /// changes the roles below its own.
+    CoOrganizer,
+    /// Created the share and is the only one who can end it.
     Owner,
-    Everyone,
-    Nobody,
 }
 
-/// What members may do. The owner always may.
-#[derive(bincode::Encode, bincode::Decode, Clone, Copy, PartialEq, Eq, Debug)]
-pub struct SharePolicy {
-    pub edit_content: Who,
-    pub link_docs: Who,
-    pub create_docs: Who,
-    pub delete_docs: Who,
-    pub invite: Who,
-}
+impl Role {
+    /// The highest role a member can hold.
+    pub const MEMBER_MAX: Self = Self::CoOrganizer;
 
-impl Default for SharePolicy {
-    fn default() -> Self {
-        Self {
-            edit_content: Who::Everyone,
-            link_docs: Who::Owner,
-            create_docs: Who::Owner,
-            delete_docs: Who::Owner,
-            invite: Who::Owner,
+    /// Clamp to what a member may be.
+    #[must_use]
+    pub fn for_member(self) -> Self {
+        self.min(Self::MEMBER_MAX)
+    }
+
+    #[must_use]
+    pub fn can_edit(self) -> bool {
+        self >= Self::Editor
+    }
+
+    #[must_use]
+    pub fn can_manage(self) -> bool {
+        self >= Self::CoOrganizer
+    }
+
+    fn tag(self) -> &'static str {
+        match self {
+            Self::Viewer => "viewer",
+            Self::Editor => "editor",
+            Self::CoOrganizer => "co-organizer",
+            Self::Owner => "owner",
         }
     }
-}
 
-impl SharePolicy {
-    /// Members only look.
-    #[must_use]
-    pub const fn read_only() -> Self {
-        Self {
-            edit_content: Who::Nobody,
-            link_docs: Who::Owner,
-            create_docs: Who::Owner,
-            delete_docs: Who::Owner,
-            invite: Who::Owner,
-        }
+    fn parse(tag: &str) -> Option<Self> {
+        Some(match tag {
+            "viewer" => Self::Viewer,
+            "editor" => Self::Editor,
+            "co-organizer" => Self::CoOrganizer,
+            "owner" => Self::Owner,
+            _ => return None,
+        })
     }
 }
 
@@ -90,8 +114,24 @@ impl SharePolicy {
 pub struct Member {
     pub device: DeviceId,
     pub public: [u8; 32],
+    /// How the person wants to be called.
     pub name: String,
+    /// The device they are on, to tell two of theirs apart.
+    pub device_name: String,
+    pub role: Role,
     pub joined_at: u64,
+}
+
+impl Member {
+    /// "Name · Device" when the device adds something, else the name.
+    #[must_use]
+    pub fn full_name(&self) -> String {
+        if self.device_name.is_empty() || self.device_name == self.name {
+            self.name.clone()
+        } else {
+            format!("{} · {}", self.name, self.device_name)
+        }
+    }
 }
 
 /// A share as every member holds it. The key never leaves the device
@@ -105,11 +145,20 @@ pub struct Share {
     /// Records that travel with the documents: their item entries and
     /// the links whose both ends are inside.
     pub blobs: Vec<BlobKey>,
+    /// The library folder this share mirrors, when it is a shared
+    /// folder: whatever lands inside travels to everyone.
+    pub folder: Option<[u8; 16]>,
     pub mode: ShareMode,
-    pub policy: SharePolicy,
+    /// The role someone gets by opening the invitation.
+    pub entry_role: Role,
+    /// Whether an organizer has to let each newcomer in.
+    pub approve_entry: bool,
+    /// Whether editors may add and remove documents, not only organizers.
+    pub editors_add_docs: bool,
     pub members: Vec<Member>,
-    /// Members the owner set to only look, whatever the policy says.
-    pub viewers: Vec<DeviceId>,
+    /// People who asked in and wait for an organizer. Kept by the owner
+    /// only.
+    pub pending: Vec<Member>,
     /// Members the owner threw out, so one that was away hears it when
     /// it comes back. Kept by the owner only.
     pub expelled: Vec<DeviceId>,
@@ -145,14 +194,21 @@ impl Share {
     pub fn new(owner: Member, title: impl Into<String>, mode: ShareMode, now: u64) -> Self {
         Self {
             id: ShareId::random(),
-            owner,
+            owner: Member {
+                role: Role::Owner,
+                ..owner
+            },
             title: title.into(),
             docs: Vec::new(),
             blobs: Vec::new(),
+            folder: None,
             mode,
-            policy: SharePolicy::default(),
+            entry_role: Role::Editor,
+            // A link that lasts for good is a link that gets forwarded.
+            approve_entry: mode == ShareMode::Permanent,
+            editors_add_docs: false,
             members: Vec::new(),
-            viewers: Vec::new(),
+            pending: Vec::new(),
             expelled: Vec::new(),
             key: ShareKey::generate(),
             created_at: now,
@@ -176,26 +232,58 @@ impl Share {
         std::iter::once(&self.owner).chain(self.members.iter())
     }
 
-    fn allows(&self, who: Who, device: DeviceId) -> bool {
-        match who {
-            Who::Owner | Who::Nobody => self.is_owner(device),
-            Who::Everyone => self.is_member(device),
-        }
+    #[must_use]
+    pub fn member(&self, device: DeviceId) -> Option<&Member> {
+        self.participants().find(|m| m.device == device)
+    }
+
+    /// What `device` may do here; `None` for someone outside.
+    #[must_use]
+    pub fn role_of(&self, device: DeviceId) -> Option<Role> {
+        self.member(device).map(|m| m.role)
     }
 
     #[must_use]
     pub fn can_edit(&self, device: DeviceId) -> bool {
-        self.allows(self.policy.edit_content, device) && !self.viewers.contains(&device)
+        self.role_of(device).is_some_and(Role::can_edit)
     }
 
+    /// Linking documents to one another needs the same as editing them.
     #[must_use]
     pub fn can_link(&self, device: DeviceId) -> bool {
-        self.allows(self.policy.link_docs, device)
+        self.can_edit(device)
+    }
+
+    /// Deleting a document for everyone is an organizer's call.
+    #[must_use]
+    pub fn can_delete(&self, device: DeviceId) -> bool {
+        self.can_manage(device)
     }
 
     #[must_use]
-    pub fn can_delete(&self, device: DeviceId) -> bool {
-        self.allows(self.policy.delete_docs, device)
+    pub fn can_rename(&self, device: DeviceId) -> bool {
+        self.can_edit(device)
+    }
+
+    /// Invite, let people in, expel, change roles below one's own.
+    #[must_use]
+    pub fn can_manage(&self, device: DeviceId) -> bool {
+        self.role_of(device).is_some_and(Role::can_manage)
+    }
+
+    #[must_use]
+    pub fn can_add_docs(&self, device: DeviceId) -> bool {
+        self.can_manage(device) || (self.editors_add_docs && self.can_edit(device))
+    }
+
+    /// Whether `actor` may change or throw out `target`: organizers act
+    /// on roles strictly below their own, never on the owner.
+    #[must_use]
+    pub fn outranks(&self, actor: DeviceId, target: DeviceId) -> bool {
+        match (self.role_of(actor), self.role_of(target)) {
+            (Some(a), Some(t)) => a.can_manage() && a > t,
+            _ => false,
+        }
     }
 
     /// Whether a member only looks.
@@ -212,18 +300,57 @@ impl Share {
         }
     }
 
-    /// Add or refresh a member; returns whether it was new.
+    /// Add or refresh a member; returns whether it was new. A member
+    /// never outranks [`Role::MEMBER_MAX`].
     pub fn admit(&mut self, member: Member) -> bool {
         if member.device == self.owner.device {
             return false;
         }
+        let member = Member {
+            role: member.role.for_member(),
+            ..member
+        };
         self.expelled.retain(|d| *d != member.device);
+        self.pending.retain(|p| p.device != member.device);
         if let Some(existing) = self.members.iter_mut().find(|m| m.device == member.device) {
             *existing = member;
             false
         } else {
             self.members.push(member);
             true
+        }
+    }
+
+    /// Someone asked in and waits for an organizer; returns whether
+    /// they were not already waiting.
+    pub fn knock(&mut self, member: Member) -> bool {
+        if self.is_member(member.device) {
+            return false;
+        }
+        if let Some(waiting) = self.pending.iter_mut().find(|p| p.device == member.device) {
+            *waiting = member;
+            false
+        } else {
+            self.pending.push(member);
+            true
+        }
+    }
+
+    /// Take someone off the waiting list.
+    pub fn answer(&mut self, device: DeviceId) -> Option<Member> {
+        let at = self.pending.iter().position(|p| p.device == device)?;
+        Some(self.pending.remove(at))
+    }
+
+    /// Give a member another role; returns whether it changed.
+    pub fn set_role(&mut self, device: DeviceId, role: Role) -> bool {
+        let role = role.for_member();
+        match self.members.iter_mut().find(|m| m.device == device) {
+            Some(member) if member.role != role => {
+                member.role = role;
+                true
+            }
+            _ => false,
         }
     }
 
@@ -248,6 +375,34 @@ impl Share {
         self.expelled.contains(&device)
     }
 
+    /// Bring documents in; returns whether anything was new.
+    pub fn add_docs(&mut self, docs: &[DocId], blobs: &[BlobKey]) -> bool {
+        let mut changed = false;
+        for doc in docs {
+            if !self.docs.contains(doc) {
+                self.docs.push(*doc);
+                changed = true;
+            }
+        }
+        for blob in blobs {
+            if !self.blobs.contains(blob) {
+                self.blobs.push(*blob);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Take documents out, with their own records; returns whether
+    /// anything left.
+    pub fn remove_docs(&mut self, docs: &[DocId]) -> bool {
+        let before = (self.docs.len(), self.blobs.len());
+        self.docs.retain(|d| !docs.contains(d));
+        self.blobs
+            .retain(|b| !(b.kind == BlobKind::Item && docs.iter().any(|d| d.0 == b.id)));
+        before != (self.docs.len(), self.blobs.len())
+    }
+
     /// The invitation for this share.
     #[must_use]
     pub fn invite(&self) -> Invite {
@@ -259,6 +414,7 @@ impl Share {
             },
             title: self.title.clone(),
             mode: self.mode,
+            role: self.entry_role,
             key: self.key.clone(),
             server: None,
         }
@@ -272,17 +428,38 @@ impl Share {
         Self {
             relay_cursor: 0,
             expelled: Vec::new(),
+            pending: Vec::new(),
             ..self.clone()
         }
     }
 
     /// What the owner keeps of this share once it is closed.
     #[must_use]
-    pub fn ended(&self) -> EndedShare {
+    pub fn ended(&self, now: u64) -> EndedShare {
         EndedShare {
             id: self.id,
             key: self.key.clone(),
             members: self.members.iter().map(|m| m.device).collect(),
+            title: self.title.clone(),
+            mode: self.mode,
+            docs: self.docs.clone(),
+            blobs: self.blobs.clone(),
+            folder: self.folder,
+            ended_at: now,
+        }
+    }
+
+    /// What a member keeps after walking away, so it can come back.
+    #[must_use]
+    pub fn left(&self, server: Option<String>, now: u64) -> LeftShare {
+        LeftShare {
+            invite: Invite {
+                server,
+                ..self.invite()
+            },
+            title: self.title.clone(),
+            docs: self.docs.clone(),
+            left_at: now,
         }
     }
 }
@@ -294,13 +471,15 @@ pub struct Invite {
     pub owner: Member,
     pub title: String,
     pub mode: ShareMode,
+    /// The role the link grants on entry.
+    pub role: Role,
     pub key: ShareKey,
     /// Relay to meet at when no direct path exists.
     pub server: Option<String>,
 }
 
 impl Invite {
-    /// `notein://join?share=…&owner=…&name=…&title=…&mode=…[&server=…]#<key>`.
+    /// `notein://join?share=…&owner=…&name=…&title=…&mode=…&role=…[&server=…]#<key>`.
     #[must_use]
     #[cfg_attr(feature = "sismo", sismo::function("sync::share::to_link"))]
     pub fn to_link(&self) -> String {
@@ -309,11 +488,12 @@ impl Invite {
             ShareMode::Permanent => "permanent",
         };
         let mut link = format!(
-            "{LINK_SCHEME}share={}&owner={}&name={}&title={}&mode={mode}",
+            "{LINK_SCHEME}share={}&owner={}&name={}&title={}&mode={mode}&role={}",
             hex::encode(self.share.0),
             hex::encode(self.owner.public),
             hex::encode(self.owner.name.as_bytes()),
             hex::encode(self.title.as_bytes()),
+            self.role.tag(),
         );
         if let Some(server) = &self.server {
             link.push_str("&server=");
@@ -336,6 +516,7 @@ impl Invite {
         let mut name = None;
         let mut title = None;
         let mut mode = None;
+        let mut role = Role::Editor;
         let mut server = None;
         for pair in query.split('&') {
             let (k, v) = pair.split_once('=')?;
@@ -351,6 +532,7 @@ impl Invite {
                         _ => return None,
                     });
                 }
+                "role" => role = Role::parse(v)?.for_member(),
                 "server" => server = Some(String::from_utf8(hex::decode(v).ok()?).ok()?),
                 _ => {}
             }
@@ -362,10 +544,13 @@ impl Invite {
                 device: DeviceId::of_public_key(&public),
                 public,
                 name: name?,
+                device_name: String::new(),
+                role: Role::Owner,
                 joined_at: 0,
             },
             title: title?,
             mode: mode?,
+            role,
             key,
             server,
         })
@@ -387,13 +572,30 @@ pub fn proof_is_valid(share: &Share, proof: &[u8]) -> bool {
 }
 
 /// A share its owner closed, kept so a member that was away is told
-/// when it comes back instead of editing into the void.
+/// when it comes back instead of editing into the void, and so the
+/// owner can open it again.
 #[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
 pub struct EndedShare {
     pub id: ShareId,
     pub key: ShareKey,
     /// Who was inside when it closed.
     pub members: Vec<DeviceId>,
+    pub title: String,
+    pub mode: ShareMode,
+    pub docs: Vec<DocId>,
+    pub blobs: Vec<BlobKey>,
+    pub folder: Option<[u8; 16]>,
+    pub ended_at: u64,
+}
+
+/// A share this device walked away from, kept so it can ask back in
+/// with the same invitation while the owner keeps the share open.
+#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+pub struct LeftShare {
+    pub invite: Invite,
+    pub title: String,
+    pub docs: Vec<DocId>,
+    pub left_at: u64,
 }
 
 /// Every share a device takes part in, as persisted.
@@ -402,6 +604,8 @@ pub struct ShareBook {
     pub shares: Vec<Share>,
     /// Shares this device owned and closed.
     pub ended: Vec<EndedShare>,
+    /// Shares this device walked away from.
+    pub left: Vec<LeftShare>,
     /// Invitations accepted whose owner has not let us in yet.
     pub joins: Vec<Invite>,
 }
@@ -449,12 +653,39 @@ impl ShareBook {
     }
 }
 
+/// A change to a share that someone other than the owner asks for, or
+/// the owner applies. The owner checks the asker's role before applying.
+#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+pub enum ShareEdit {
+    Rename(String),
+    AddDocs {
+        docs: Vec<DocId>,
+        blobs: Vec<BlobKey>,
+    },
+    RemoveDocs(Vec<DocId>),
+    SetRole {
+        device: DeviceId,
+        role: Role,
+    },
+    Expel(DeviceId),
+    /// Let someone waiting in, with this role.
+    Approve {
+        device: DeviceId,
+        role: Role,
+    },
+    /// Turn someone waiting away.
+    Refuse(DeviceId),
+    SetEntryRole(Role),
+    SetApproveEntry(bool),
+    SetEditorsAddDocs(bool),
+}
+
 /// What members exchange inside a share, always sealed with its key.
 #[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
 pub enum ShareMessage {
     /// An exchange message for the share's documents.
     Sync(Vec<u8>),
-    /// The owner's current view of the share (policy, members, scope).
+    /// The owner's current view of the share (roles, members, scope).
     Meta(Box<Share>),
     /// The owner closed the share.
     Ended,
@@ -465,6 +696,8 @@ pub enum ShareMessage {
     Live { doc: DocId, bytes: Vec<u8> },
     /// The owner threw this member out.
     Expelled,
+    /// A member asks the owner for a change.
+    Edit(ShareEdit),
 }
 
 impl ShareMessage {
@@ -492,23 +725,40 @@ mod tests {
     use super::*;
     use crate::identity::DeviceKey;
 
-    fn owner() -> Member {
+    fn person(name: &str, role: Role) -> Member {
         let key = DeviceKey::generate();
         Member {
             device: key.id(),
             public: *key.public(),
-            name: "Sergio · Tablet".into(),
+            name: name.into(),
+            device_name: "Tablet".into(),
+            role,
             joined_at: 1,
         }
+    }
+
+    fn owner() -> Member {
+        person("Sergio", Role::Owner)
     }
 
     #[test]
     fn invite_link_round_trips() {
         let mut share = Share::new(owner(), "Apuntes de física", ShareMode::Permanent, 7);
         share.docs.push(DocId([3; 16]));
+        share.entry_role = Role::Viewer;
         let invite = share.invite();
         let parsed = Invite::parse_link(&invite.to_link()).unwrap();
-        assert_eq!(parsed, invite);
+        assert_eq!(parsed.role, Role::Viewer);
+        assert_eq!(
+            parsed,
+            Invite {
+                owner: Member {
+                    device_name: String::new(),
+                    ..invite.owner.clone()
+                },
+                ..invite.clone()
+            }
+        );
         assert!(proof_is_valid(&share, &parsed.proof()));
         assert!(!proof_is_valid(
             &Share::new(owner(), "otro", ShareMode::Session, 1),
@@ -517,26 +767,67 @@ mod tests {
     }
 
     #[test]
-    fn policy_defaults_follow_the_owner() {
+    fn roles_decide_what_members_may_do() {
         let mut share = Share::new(owner(), "x", ShareMode::Session, 1);
-        let guest = DeviceKey::generate();
-        let member = Member {
-            device: guest.id(),
-            public: *guest.public(),
-            name: "Ana".into(),
-            joined_at: 2,
+        let me = share.owner.device;
+        let guest = person("Ana", Role::Editor);
+        let viewer = person("Juan", Role::Viewer);
+        let co = person("Lucía", Role::Owner);
+        assert!(!share.can_edit(guest.device));
+        assert!(share.admit(guest.clone()));
+        assert!(!share.admit(guest.clone()));
+        assert!(share.admit(viewer.clone()));
+        assert!(share.admit(co.clone()));
+        assert_eq!(share.role_of(co.device), Some(Role::CoOrganizer), "clamped");
+        assert!(share.can_edit(guest.device));
+        assert!(share.can_rename(guest.device));
+        assert!(!share.can_add_docs(guest.device));
+        share.editors_add_docs = true;
+        assert!(share.can_add_docs(guest.device));
+        assert!(!share.can_delete(guest.device));
+        assert!(share.is_read_only_for(viewer.device));
+        assert!(share.can_manage(co.device));
+        assert!(share.outranks(co.device, guest.device));
+        assert!(!share.outranks(guest.device, viewer.device));
+        assert!(!share.outranks(co.device, me));
+        assert!(share.outranks(me, co.device));
+        assert!(share.set_role(viewer.device, Role::Editor));
+        assert!(!share.set_role(viewer.device, Role::Editor));
+        assert!(share.can_edit(viewer.device));
+        assert!(share.expel(guest.device));
+        assert!(!share.is_member(guest.device));
+        assert!(share.was_expelled(guest.device));
+    }
+
+    #[test]
+    fn knocking_waits_until_answered() {
+        let mut share = Share::new(owner(), "x", ShareMode::Permanent, 1);
+        assert!(share.approve_entry, "permanent shares ask first");
+        let ana = person("Ana", Role::Editor);
+        assert!(share.knock(ana.clone()));
+        assert!(!share.knock(ana.clone()));
+        assert!(!share.is_member(ana.device));
+        let waiting = share.answer(ana.device).unwrap();
+        assert_eq!(waiting.device, ana.device);
+        assert!(share.answer(ana.device).is_none());
+        assert!(share.admit(ana.clone()));
+        assert!(!share.knock(ana), "members never wait");
+        assert!(share.for_member().pending.is_empty());
+    }
+
+    #[test]
+    fn documents_come_and_go_with_their_records() {
+        let mut share = Share::new(owner(), "x", ShareMode::Session, 1);
+        let doc = DocId([4; 16]);
+        let item = BlobKey {
+            kind: BlobKind::Item,
+            id: [4; 16],
         };
-        assert!(!share.can_edit(guest.id()));
-        assert!(share.admit(member.clone()));
-        assert!(!share.admit(member));
-        assert!(share.can_edit(guest.id()));
-        assert!(!share.can_link(guest.id()));
-        assert!(share.can_link(share.owner.device));
-        share.policy = SharePolicy::read_only();
-        assert!(share.is_read_only_for(guest.id()));
-        assert!(share.can_edit(share.owner.device));
-        assert!(share.expel(guest.id()));
-        assert!(!share.is_member(guest.id()));
+        assert!(share.add_docs(&[doc], &[item]));
+        assert!(!share.add_docs(&[doc], &[item]));
+        assert!(share.remove_docs(&[doc]));
+        assert!(share.docs.is_empty() && share.blobs.is_empty());
+        assert!(!share.remove_docs(&[doc]));
     }
 
     #[test]
@@ -557,10 +848,14 @@ mod tests {
         share.docs.push(DocId([9; 16]));
         book.put(share.clone());
         book.put(share.clone());
+        book.left.push(share.left(Some("relay:1/k".into()), 5));
+        book.ended.push(share.ended(6));
         assert_eq!(book.shares.len(), 1);
         let back = ShareBook::decode(&book.encode()).unwrap();
         assert_eq!(back, book);
         assert_eq!(back.holding(DocId([9; 16])).count(), 1);
         assert_eq!(back.holding(DocId([8; 16])).count(), 0);
+        assert_eq!(back.left[0].invite.server.as_deref(), Some("relay:1/k"));
+        assert_eq!(back.ended[0].title, "x");
     }
 }

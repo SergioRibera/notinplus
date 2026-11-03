@@ -26,7 +26,8 @@ mod testing;
 
 pub use cipher::ShareKey;
 pub use driver::{
-    Action, DriverEvent, JoinFailure, PairFailure, PairingOffer, Removal, SyncDriver,
+    Action, DriverEvent, JoinFailure, PairFailure, PairingOffer, Path, PendingJoin, Removal,
+    SyncDriver,
 };
 pub use engine::{DocStatus, Handled, Message, PROTOCOL_VERSION, SyncEngine};
 pub use error::{CipherError, IdentityError, SyncError};
@@ -36,6 +37,6 @@ pub use net::{Beacon, LanConfig, Lane, NetError, NetEvent, PeerInfo};
 pub use relay::{RelayAddr, RelayConfig, RelayMessage, RelayServer, Store as RelayStore};
 pub use replica::{Blob, BlobHead, BlobKey, BlobKind, DocId, Replica, Scope, Version};
 pub use share::{
-    EndedShare, Invite, Member, Share, ShareBook, ShareId, ShareMessage, ShareMode, SharePolicy,
-    Who,
+    EndedShare, Invite, LeftShare, Member, Role, Share, ShareBook, ShareEdit, ShareId,
+    ShareMessage, ShareMode,
 };

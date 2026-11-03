@@ -120,6 +120,7 @@ fn guest_joins_and_syncs_through_the_relay_only() {
     owner.perform(actions);
     owner.mark(D1, 1, 1);
     let mut share = Share::new(owner.driver.me(), "Física", ShareMode::Permanent, 1);
+    share.approve_entry = false;
     share.docs.push(D1);
     let id = share.id;
     let actions = owner.driver.create_share(share);

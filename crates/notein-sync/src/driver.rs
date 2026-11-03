@@ -19,7 +19,8 @@ use crate::net::{Lane, NetEvent, PeerInfo};
 use crate::relay::{RecordKind, RelayAddr, RelayMessage};
 use crate::replica::{BlobKey, BlobKind, DocId, Replica, Scope, Version};
 use crate::share::{
-    EndedShare, Invite, Member, Share, ShareBook, ShareId, ShareMessage, ShareMode, proof_is_valid,
+    EndedShare, Invite, LeftShare, Member, Role, Share, ShareBook, ShareEdit, ShareId,
+    ShareMessage, ShareMode, proof_is_valid,
 };
 
 /// How long a pairing offer stays valid.
@@ -78,6 +79,7 @@ pub enum Payload {
     Join {
         share: ShareId,
         name: String,
+        device_name: String,
         proof: Vec<u8>,
     },
     /// The owner's answer, sealed with the share key.
@@ -114,6 +116,8 @@ impl Payload {
 #[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
 enum JoinAnswer {
     Welcome(Box<Share>),
+    /// An organizer has to let the joiner in first.
+    Pending,
     Refused,
 }
 
@@ -240,6 +244,13 @@ pub enum DriverEvent {
         share: ShareId,
         reason: JoinFailure,
     },
+    /// The owner heard us; an organizer has to let us in.
+    JoinPending(ShareId),
+    /// Someone asked into a share we organize and waits for an answer.
+    EntryRequested {
+        share: ShareId,
+        member: Member,
+    },
     /// The relay came within reach or went away.
     RelayOnline(bool),
     /// Ephemeral state of a document from another device, see
@@ -285,6 +296,26 @@ struct PairIntent {
 struct JoinIntent {
     invite: Invite,
     since: Instant,
+    /// The owner heard us and an organizer has to say yes.
+    awaiting_approval: bool,
+}
+
+/// An invitation accepted and not answered yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PendingJoin<'a> {
+    pub invite: &'a Invite,
+    /// Whether the owner was reached and someone has to let us in,
+    /// rather than the owner being nowhere yet.
+    pub awaiting_approval: bool,
+}
+
+/// How a device is reached right now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Path {
+    /// An open channel on the same network.
+    Direct,
+    /// Through the relay's mailbox.
+    Relay,
 }
 
 /// What was last handed to the relay for one share, so only new
@@ -410,6 +441,8 @@ pub struct SyncDriver<R> {
     redials: HashMap<DeviceId, Redial>,
     /// Shares this device owned and closed.
     ended: HashMap<ShareId, EndedShare>,
+    /// Shares this device walked away from.
+    left: HashMap<ShareId, LeftShare>,
 }
 
 impl<R> std::fmt::Debug for SyncDriver<R> {
@@ -452,6 +485,7 @@ impl<R: Replica> SyncDriver<R> {
                     let intent = JoinIntent {
                         invite,
                         since: Instant::now(),
+                        awaiting_approval: false,
                     };
                     (intent.invite.share, intent)
                 })
@@ -460,6 +494,7 @@ impl<R: Replica> SyncDriver<R> {
             known_keys: HashMap::new(),
             redials: HashMap::new(),
             ended: book.ended.into_iter().map(|e| (e.id, e)).collect(),
+            left: book.left.into_iter().map(|l| (l.invite.share, l)).collect(),
         }
     }
 
@@ -469,7 +504,8 @@ impl<R: Replica> SyncDriver<R> {
         ShareBook {
             shares: self.shares().cloned().collect(),
             ended: self.ended.values().cloned().collect(),
-            joins: self.pending_joins().cloned().collect(),
+            left: self.left.values().cloned().collect(),
+            joins: self.joins.values().map(|j| j.invite.clone()).collect(),
         }
     }
 
@@ -544,8 +580,23 @@ impl<R: Replica> SyncDriver<R> {
         Member {
             device: self.profile.id(),
             public: *self.profile.key().public(),
-            name: self.profile.name().to_owned(),
+            name: self.profile.display_name().to_owned(),
+            device_name: self.profile.name().to_owned(),
+            role: Role::Owner,
             joined_at: now_ms(),
+        }
+    }
+
+    /// How `device` can be reached right now, if at all.
+    #[must_use]
+    pub fn path_to(&self, device: DeviceId) -> Option<Path> {
+        let is_relay = self.relay.as_ref().is_some_and(|r| r.device == device);
+        if !is_relay && self.connected.contains_key(&device) {
+            Some(Path::Direct)
+        } else if self.relay_online() && self.known_keys.contains_key(&device) {
+            Some(Path::Relay)
+        } else {
+            None
         }
     }
 
@@ -688,7 +739,7 @@ impl<R: Replica> SyncDriver<R> {
             return Vec::new();
         };
         if link.share.is_owner(self.profile.id()) {
-            self.ended.insert(id, link.share.ended());
+            self.ended.insert(id, link.share.ended(now_ms()));
         }
         let mut out = Vec::new();
         out.extend(self.relay_send(&RelayMessage::Unregister { share: id }));
@@ -716,6 +767,8 @@ impl<R: Replica> SyncDriver<R> {
         let Some(link) = self.shares.remove(&id) else {
             return Vec::new();
         };
+        let server = self.relay.as_ref().map(|r| r.addr.to_string());
+        self.left.insert(id, link.share.left(server, now_ms()));
         let mut out = Vec::new();
         out.extend(self.route(
             link.share.owner.device,
@@ -758,6 +811,7 @@ impl<R: Replica> SyncDriver<R> {
             JoinIntent {
                 invite,
                 since: Instant::now(),
+                awaiting_approval: false,
             },
         );
         if let Some(request) = self.join_request(share) {
@@ -773,7 +827,8 @@ impl<R: Replica> SyncDriver<R> {
             intent.invite.owner.device,
             &Payload::Join {
                 share,
-                name: self.profile.name().to_owned(),
+                name: self.profile.display_name().to_owned(),
+                device_name: self.profile.name().to_owned(),
                 proof: intent.invite.proof(),
             },
         )
@@ -1029,8 +1084,13 @@ impl<R: Replica> SyncDriver<R> {
                 sismo::counter!("sync.in.share_bytes", sealed.len());
                 self.on_share(from, share, &sealed, out)?;
             }
-            Payload::Join { share, name, proof } => {
-                self.on_join(from, share, name, &proof, out)?;
+            Payload::Join {
+                share,
+                name,
+                device_name,
+                proof,
+            } => {
+                self.on_join(from, share, name, device_name, &proof, out)?;
             }
             Payload::JoinReply { share, sealed } => {
                 self.on_join_reply(from, share, &sealed, out)?;
@@ -1221,8 +1281,37 @@ impl<R: Replica> SyncDriver<R> {
                     out.push(Action::Event(DriverEvent::ShareChanged(id)));
                 }
             }
+            ShareMessage::Edit(edit) => {
+                self.apply_edit(from, id, edit, out);
+            }
         }
         Ok(())
+    }
+
+    /// Tell someone who knocked whether they are in. The newcomer's own
+    /// first round brings the content over, as after any welcome.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::answer_join"))]
+    fn answer_join(&self, id: ShareId, device: DeviceId, admitted: bool) -> Vec<Action> {
+        let Some(link) = self.shares.get(&id) else {
+            return Vec::new();
+        };
+        let answer = if admitted {
+            JoinAnswer::Welcome(Box::new(link.share.for_member()))
+        } else {
+            JoinAnswer::Refused
+        };
+        let sealed = seal_answer(&link.share, &answer);
+        let mut out: Vec<Action> = self
+            .route(device, &Payload::JoinReply { share: id, sealed })
+            .into_iter()
+            .collect();
+        if admitted {
+            out.push(Action::Event(DriverEvent::PeerOnline {
+                device,
+                online: true,
+            }));
+        }
+        out
     }
 
     /// The explicit answer for a member that still writes into a share
@@ -1287,6 +1376,7 @@ impl<R: Replica> SyncDriver<R> {
         from: DeviceId,
         id: ShareId,
         name: String,
+        device_name: String,
         proof: &[u8],
         out: &mut Vec<Action>,
     ) -> Result<(), SyncError<R::Error>> {
@@ -1296,12 +1386,29 @@ impl<R: Replica> SyncDriver<R> {
         let me = self.profile.id();
         let answer = match self.shares.get_mut(&id) {
             Some(link) if link.share.is_owner(me) && proof_is_valid(&link.share, proof) => {
-                link.share.admit(Member {
+                let member = Member {
                     device: from,
                     public,
                     name,
+                    device_name,
+                    role: link.share.entry_role,
                     joined_at: now_ms(),
-                });
+                };
+                // Someone already in (back after a restart) never waits.
+                if link.share.approve_entry && !link.share.is_member(from) {
+                    let fresh = link.share.knock(member.clone());
+                    let sealed = seal_answer(&link.share, &JoinAnswer::Pending);
+                    out.extend(self.route(from, &Payload::JoinReply { share: id, sealed }));
+                    if fresh {
+                        out.push(Action::Event(DriverEvent::EntryRequested {
+                            share: id,
+                            member,
+                        }));
+                        out.push(Action::Event(DriverEvent::ShareChanged(id)));
+                    }
+                    return Ok(());
+                }
+                link.share.admit(member);
                 link.share.updated_at = now_ms();
                 let welcome = JoinAnswer::Welcome(Box::new(link.share.for_member()));
                 let sealed = seal_answer(&link.share, &welcome);
@@ -1355,6 +1462,15 @@ impl<R: Replica> SyncDriver<R> {
                 .ok()
                 .map(|(answer, _): (JoinAnswer, usize)| answer)
         });
+        if matches!(answer, Some(JoinAnswer::Pending)) {
+            if let Some(intent) = self.joins.get_mut(&id)
+                && !intent.awaiting_approval
+            {
+                intent.awaiting_approval = true;
+                out.push(Action::Event(DriverEvent::JoinPending(id)));
+            }
+            return Ok(());
+        }
         let intent = self.joins.remove(&id).map(|j| j.invite);
         match (answer, intent) {
             (Some(JoinAnswer::Welcome(share)), Some(invite)) if share.id == id => {
@@ -1781,8 +1897,189 @@ impl<R: Replica> SyncDriver<R> {
     }
 
     /// Shares we are still waiting to be let into.
-    pub fn pending_joins(&self) -> impl Iterator<Item = &Invite> {
-        self.joins.values().map(|j| &j.invite)
+    pub fn pending_joins(&self) -> impl Iterator<Item = PendingJoin<'_>> {
+        self.joins.values().map(|j| PendingJoin {
+            invite: &j.invite,
+            awaiting_approval: j.awaiting_approval,
+        })
+    }
+
+    /// Shares this device owned and closed, newest first.
+    pub fn ended(&self) -> impl Iterator<Item = &EndedShare> {
+        let mut all: Vec<&EndedShare> = self.ended.values().collect();
+        all.sort_by_key(|e| std::cmp::Reverse(e.ended_at));
+        all.into_iter()
+    }
+
+    /// Shares this device walked away from, newest first.
+    pub fn left(&self) -> impl Iterator<Item = &LeftShare> {
+        let mut all: Vec<&LeftShare> = self.left.values().collect();
+        all.sort_by_key(|l| std::cmp::Reverse(l.left_at));
+        all.into_iter()
+    }
+
+    /// Ask back into a share this device walked away from, with the
+    /// invitation it kept.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::rejoin"))]
+    pub fn rejoin(&mut self, id: ShareId) -> Vec<Action> {
+        let Some(left) = self.left.remove(&id) else {
+            return Vec::new();
+        };
+        self.join(left.invite)
+    }
+
+    /// Open a share this device ended again: same title and documents,
+    /// a new id and key, so the old invitation stays dead.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::reopen"))]
+    pub fn reopen(&mut self, id: ShareId) -> Option<(ShareId, Vec<Action>)> {
+        let ended = self.ended.remove(&id)?;
+        let mut share = Share::new(self.me(), ended.title, ended.mode, now_ms());
+        share.docs = ended.docs;
+        share.blobs = ended.blobs;
+        share.folder = ended.folder;
+        let fresh = share.id;
+        Some((fresh, self.create_share(share)))
+    }
+
+    /// Drop a share from the recent lists.
+    pub fn forget_recent(&mut self, id: ShareId) -> bool {
+        self.ended.remove(&id).is_some() | self.left.remove(&id).is_some()
+    }
+
+    /// Drop what left or ended before `before` (Unix milliseconds).
+    /// Returns whether anything went.
+    pub fn prune_recent(&mut self, before: u64) -> bool {
+        let ended = self.ended.len();
+        let left = self.left.len();
+        self.ended.retain(|_, e| e.ended_at >= before);
+        self.left.retain(|_, l| l.left_at >= before);
+        ended != self.ended.len() || left != self.left.len()
+    }
+
+    /// Change a share. The owner applies it on the spot; a member asks
+    /// the owner, who applies it if the member's role allows and tells
+    /// everyone. Nothing happens when this device may not.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::edit_share"))]
+    pub fn edit_share(&mut self, id: ShareId, edit: ShareEdit) -> Vec<Action> {
+        let me = self.profile.id();
+        let Some(link) = self.shares.get(&id) else {
+            return Vec::new();
+        };
+        if link.share.is_owner(me) {
+            let mut out = Vec::new();
+            self.apply_edit(me, id, edit, &mut out);
+            return out;
+        }
+        if !edit_allowed(&link.share, me, &edit) {
+            return Vec::new();
+        }
+        let owner = link.share.owner.device;
+        let sealed = ShareMessage::Edit(edit).seal(&link.share.key);
+        self.route(owner, &Payload::Share { share: id, sealed })
+            .into_iter()
+            .collect()
+    }
+
+    /// Owner side: apply `edit` asked by `from` when its role allows,
+    /// and tell everyone. Returns whether the share changed.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::apply_edit"))]
+    fn apply_edit(
+        &mut self,
+        from: DeviceId,
+        id: ShareId,
+        edit: ShareEdit,
+        out: &mut Vec<Action>,
+    ) -> bool {
+        let me = self.profile.id();
+        let Some(link) = self.shares.get_mut(&id) else {
+            return false;
+        };
+        if !link.share.is_owner(me) || !edit_allowed(&link.share, from, &edit) {
+            return false;
+        }
+        let share = &mut link.share;
+        let mut told = Vec::new();
+        let mut learned = None;
+        let answered = match &edit {
+            ShareEdit::Approve { device, .. } => Some((*device, true)),
+            ShareEdit::Refuse(device) => Some((*device, false)),
+            _ => None,
+        };
+        let changed = match edit {
+            ShareEdit::Rename(title) => {
+                let title = title.trim().to_owned();
+                if title.is_empty() || title == share.title {
+                    false
+                } else {
+                    share.title = title;
+                    true
+                }
+            }
+            ShareEdit::AddDocs { docs, blobs } => share.add_docs(&docs, &blobs),
+            ShareEdit::RemoveDocs(docs) => share.remove_docs(&docs),
+            ShareEdit::SetRole { device, role } => share.set_role(device, role),
+            ShareEdit::Expel(device) => {
+                if share.expel(device) {
+                    link.engine.forget_peer(device);
+                    told.push((device, ShareMessage::Expelled));
+                    true
+                } else {
+                    false
+                }
+            }
+            ShareEdit::Approve { device, role } => match share.answer(device) {
+                Some(waiting) => {
+                    learned = Some((device, waiting.public));
+                    share.admit(Member { role, ..waiting });
+                    true
+                }
+                None => false,
+            },
+            ShareEdit::Refuse(device) => share.answer(device).is_some(),
+            ShareEdit::SetEntryRole(role) => {
+                let role = role.for_member();
+                let changed = share.entry_role != role;
+                share.entry_role = role;
+                changed
+            }
+            ShareEdit::SetApproveEntry(on) => {
+                let changed = share.approve_entry != on;
+                share.approve_entry = on;
+                changed
+            }
+            ShareEdit::SetEditorsAddDocs(on) => {
+                let changed = share.editors_add_docs != on;
+                share.editors_add_docs = on;
+                changed
+            }
+        };
+        if !changed {
+            return false;
+        }
+        share.updated_at = now_ms();
+        link.engine.set_scope(share.scope());
+        let key = share.key.clone();
+        if let Some((device, public)) = learned {
+            self.known_keys.insert(device, public);
+        }
+        for (device, message) in told {
+            out.extend(self.route(
+                device,
+                &Payload::Share {
+                    share: id,
+                    sealed: message.seal(&key),
+                },
+            ));
+        }
+        // The relay learns the new member before the welcome goes out,
+        // so the member's first subscription is accepted.
+        out.extend(self.relay_register(id));
+        if let Some((device, admitted)) = answered {
+            out.extend(self.answer_join(id, device, admitted));
+        }
+        out.extend(self.broadcast_meta(id));
+        out.push(Action::Event(DriverEvent::ShareChanged(id)));
+        true
     }
 
     /// Ask again into every share [`Self::new`] restored as pending:
@@ -2036,8 +2333,13 @@ impl<R: Replica> SyncDriver<R> {
                 let device = DeviceId::of_public_key(&public);
                 self.known_keys.insert(device, public);
                 match Payload::from_bytes(&bytes) {
-                    Some(Payload::Join { share, name, proof }) => {
-                        self.on_join(device, share, name, &proof, out)?;
+                    Some(Payload::Join {
+                        share,
+                        name,
+                        device_name,
+                        proof,
+                    }) => {
+                        self.on_join(device, share, name, device_name, &proof, out)?;
                     }
                     Some(Payload::JoinReply { share, sealed }) => {
                         self.on_join_reply(device, share, &sealed, out)?;
@@ -2146,8 +2448,34 @@ impl<R: Replica> SyncDriver<R> {
                     out.extend(self.relay_register(id));
                 }
             }
+            ShareMessage::Edit(edit) => {
+                let from = record.from;
+                self.apply_edit(from, id, edit, out);
+            }
         }
         Ok(true)
+    }
+}
+
+/// Whether `from`'s role lets it ask for `edit`.
+#[cfg_attr(feature = "sismo", sismo::function("sync::driver::edit_allowed"))]
+fn edit_allowed(share: &Share, from: DeviceId, edit: &ShareEdit) -> bool {
+    if share.is_owner(from) {
+        return true;
+    }
+    let Some(role) = share.role_of(from) else {
+        return false;
+    };
+    match edit {
+        ShareEdit::Rename(_) => share.can_rename(from),
+        ShareEdit::AddDocs { .. } | ShareEdit::RemoveDocs(_) => share.can_add_docs(from),
+        ShareEdit::SetRole { device, role: to } => share.outranks(from, *device) && *to < role,
+        ShareEdit::Expel(device) => share.outranks(from, *device),
+        ShareEdit::Approve { role: to, .. } => role.can_manage() && *to < role,
+        ShareEdit::Refuse(_) => role.can_manage(),
+        ShareEdit::SetEntryRole(_)
+        | ShareEdit::SetApproveEntry(_)
+        | ShareEdit::SetEditorsAddDocs(_) => false,
     }
 }
 
@@ -2220,7 +2548,7 @@ mod tests {
     use super::*;
     use crate::DocStatus;
     use crate::replica::BlobKind;
-    use crate::share::{ShareMode, SharePolicy, Who};
+    use crate::share::ShareMode;
     use crate::testing::MemReplica;
 
     const D1: DocId = DocId([1; 16]);
@@ -2601,6 +2929,9 @@ mod tests {
         mark(owner, D2, 1, 1);
         owner.with_replica(|r| r.put_blob(BlobKind::Item, 1, 5, "doc-1"));
         let mut share = Share::new(owner.me(), "Física", ShareMode::Permanent, 1);
+        // Permanent shares ask first by default; these tests let people
+        // straight in and cover approval on their own.
+        share.approve_entry = false;
         share.docs.push(D1);
         share.blobs.push(BlobKey {
             kind: BlobKind::Item,
@@ -2681,7 +3012,7 @@ mod tests {
         let mut owner = driver("Sergio");
         let mut guest = driver("Ana");
         let mut share = shared_doc(&owner);
-        share.policy = SharePolicy::read_only();
+        share.entry_role = Role::Viewer;
         let id = share.id;
         let invite = share.invite();
         owner.create_share(share);
@@ -2850,7 +3181,14 @@ mod tests {
     #[test]
     fn permissions_changed_while_away_arrive_on_return() {
         let (mut owner, mut guest, id) = joined_then_apart();
-        owner.update_share(id, |s| s.policy = SharePolicy::read_only());
+        let device = guest.profile.id();
+        owner.edit_share(
+            id,
+            ShareEdit::SetRole {
+                device,
+                role: Role::Viewer,
+            },
+        );
         assert!(guest.share(id).unwrap().can_edit(guest.profile.id()));
         connect_both(&mut guest, &mut owner);
         assert!(!guest.share(id).unwrap().can_edit(guest.profile.id()));
@@ -2963,7 +3301,7 @@ mod tests {
     }
 
     #[test]
-    fn policy_updates_reach_members() {
+    fn role_changes_reach_members() {
         let mut owner = driver("Sergio");
         let mut guest = driver("Ana");
         let share = shared_doc(&owner);
@@ -2974,22 +3312,171 @@ mod tests {
         deliver(guest.join(invite), &mut guest, &mut owner);
         assert!(guest.share(id).unwrap().can_edit(guest.profile.id()));
 
-        let actions = owner.update_share(id, |s| s.policy = SharePolicy::read_only());
+        let device = guest.profile.id();
+        let actions = owner.edit_share(
+            id,
+            ShareEdit::SetRole {
+                device,
+                role: Role::Viewer,
+            },
+        );
         deliver(actions, &mut owner, &mut guest);
         assert!(!guest.share(id).unwrap().can_edit(guest.profile.id()));
         assert_eq!(guest.share(id).unwrap().key, owner.share(id).unwrap().key);
     }
 
-    /// A guest that dropped its copy announces a tombstone. Relaxing
-    /// "read only" lets its edits through but must not let that
-    /// tombstone delete the owner's document: deletions follow
-    /// `delete_docs`, which stays owner-only by default.
+    /// Members ask the owner for changes; the owner applies what their
+    /// role allows and everyone hears the result.
     #[test]
-    fn guest_tombstones_follow_the_delete_policy_not_the_edit_policy() {
+    fn members_edit_through_the_owner_within_their_role() {
+        let mut owner = driver("Sergio");
+        let mut guest = driver("Ana");
+        let share = shared_doc(&owner);
+        let id = share.id;
+        let invite = share.invite();
+        owner.create_share(share);
+        connect_both(&mut owner, &mut guest);
+        deliver(guest.join(invite), &mut guest, &mut owner);
+
+        // An editor may rename…
+        let actions = guest.edit_share(id, ShareEdit::Rename("Física II".into()));
+        assert!(!actions.is_empty());
+        let events = deliver(actions, &mut guest, &mut owner);
+        assert!(events.contains(&DriverEvent::ShareChanged(id)));
+        assert_eq!(owner.share(id).unwrap().title, "Física II");
+        assert_eq!(guest.share(id).unwrap().title, "Física II");
+
+        // …but not add documents until the owner says editors may.
+        let add = ShareEdit::AddDocs {
+            docs: vec![D2],
+            blobs: Vec::new(),
+        };
+        assert!(guest.edit_share(id, add.clone()).is_empty());
+        let actions = owner.edit_share(id, ShareEdit::SetEditorsAddDocs(true));
+        deliver(actions, &mut owner, &mut guest);
+        let actions = guest.edit_share(id, add);
+        deliver(actions, &mut guest, &mut owner);
+        assert!(owner.share(id).unwrap().docs.contains(&D2));
+        assert!(guest.share(id).unwrap().docs.contains(&D2));
+
+        // Promoting oneself is not on the menu.
+        let me = guest.profile.id();
+        assert!(
+            guest
+                .edit_share(
+                    id,
+                    ShareEdit::SetRole {
+                        device: me,
+                        role: Role::CoOrganizer
+                    }
+                )
+                .is_empty()
+        );
+    }
+
+    /// With approval on, a joiner waits until an organizer lets them in
+    /// and gets the role chosen then.
+    #[test]
+    fn approval_holds_a_joiner_until_an_organizer_answers() {
         let mut owner = driver("Sergio");
         let mut guest = driver("Ana");
         let mut share = shared_doc(&owner);
-        share.policy = SharePolicy::read_only();
+        share.approve_entry = true;
+        let id = share.id;
+        let invite = share.invite();
+        owner.create_share(share);
+        connect_both(&mut owner, &mut guest);
+        let events = deliver(guest.join(invite), &mut guest, &mut owner);
+        assert!(events.contains(&DriverEvent::JoinPending(id)));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            DriverEvent::EntryRequested { share, member } if *share == id && member.name == "Ana"
+        )));
+        assert!(guest.share(id).is_none());
+        assert!(guest.pending_joins().any(|j| j.awaiting_approval));
+        assert_eq!(owner.share(id).unwrap().pending.len(), 1);
+
+        let device = guest.profile.id();
+        let actions = owner.edit_share(
+            id,
+            ShareEdit::Approve {
+                device,
+                role: Role::Viewer,
+            },
+        );
+        let events = deliver(actions, &mut owner, &mut guest);
+        assert!(events.contains(&DriverEvent::ShareChanged(id)));
+        assert_eq!(guest.pending_joins().count(), 0);
+        assert_eq!(guest.share(id).unwrap().role_of(device), Some(Role::Viewer));
+        assert!(owner.share(id).unwrap().pending.is_empty());
+        assert_eq!(marks(&guest, D1), vec![(1, 1)]);
+    }
+
+    #[test]
+    fn a_refused_joiner_is_told() {
+        let mut owner = driver("Sergio");
+        let mut guest = driver("Ana");
+        let mut share = shared_doc(&owner);
+        share.approve_entry = true;
+        let id = share.id;
+        let invite = share.invite();
+        owner.create_share(share);
+        connect_both(&mut owner, &mut guest);
+        deliver(guest.join(invite), &mut guest, &mut owner);
+        let device = guest.profile.id();
+        let actions = owner.edit_share(id, ShareEdit::Refuse(device));
+        let events = deliver(actions, &mut owner, &mut guest);
+        assert!(events.contains(&DriverEvent::JoinFailed {
+            share: id,
+            reason: JoinFailure::Refused
+        }));
+        assert_eq!(guest.pending_joins().count(), 0);
+    }
+
+    /// Leaving keeps the invitation, so the member can ask back in; the
+    /// owner keeps what it ended, so it can open it again under a new key.
+    #[test]
+    fn recent_shares_can_be_rejoined_or_reopened() {
+        let mut owner = driver("Sergio");
+        let mut guest = driver("Ana");
+        let share = shared_doc(&owner);
+        let id = share.id;
+        let invite = share.invite();
+        owner.create_share(share);
+        connect_both(&mut owner, &mut guest);
+        deliver(guest.join(invite), &mut guest, &mut owner);
+
+        let events = deliver(guest.leave_share(id), &mut guest, &mut owner);
+        assert!(events.contains(&DriverEvent::ShareRemoved {
+            share: id,
+            reason: Removal::Left
+        }));
+        assert_eq!(guest.left().count(), 1);
+        let book = ShareBook::decode(&guest.book().encode()).unwrap();
+        assert_eq!(book.left.len(), 1);
+        let events = deliver(guest.rejoin(id), &mut guest, &mut owner);
+        assert!(events.contains(&DriverEvent::ShareChanged(id)));
+        assert!(guest.share(id).is_some());
+        assert_eq!(guest.left().count(), 0);
+
+        owner.end_share(id);
+        let ended = owner.ended().next().unwrap().clone();
+        assert_eq!(ended.title, "Física");
+        let (fresh, _) = owner.reopen(id).unwrap();
+        assert_ne!(fresh, id);
+        assert_eq!(owner.share(fresh).unwrap().docs, vec![D1]);
+        assert!(owner.ended().next().is_none());
+    }
+
+    /// A guest that dropped its copy announces a tombstone. Letting it
+    /// edit must not let that tombstone delete the owner's document:
+    /// deletions are an organizer's call.
+    #[test]
+    fn guest_tombstones_need_an_organizer_not_an_editor() {
+        let mut owner = driver("Sergio");
+        let mut guest = driver("Ana");
+        let mut share = shared_doc(&owner);
+        share.entry_role = Role::Viewer;
         let id = share.id;
         let invite = share.invite();
         owner.create_share(share);
@@ -3007,17 +3494,30 @@ mod tests {
             Some("doc-1".to_owned())
         );
 
-        let actions = owner.update_share(id, |s| s.policy = SharePolicy::default());
+        let device = guest.profile.id();
+        let actions = owner.edit_share(
+            id,
+            ShareEdit::SetRole {
+                device,
+                role: Role::Editor,
+            },
+        );
         deliver(actions, &mut owner, &mut guest);
         deliver(guest.announce().unwrap(), &mut guest, &mut owner);
         deliver(owner.announce().unwrap(), &mut owner, &mut guest);
         assert_eq!(
             owner.with_replica(|r| r.blob_text(BlobKind::Item, 1)),
             Some("doc-1".to_owned()),
-            "an editable share still keeps deletions owner-only"
+            "an editor still cannot delete for everyone"
         );
 
-        let actions = owner.update_share(id, |s| s.policy.delete_docs = Who::Everyone);
+        let actions = owner.edit_share(
+            id,
+            ShareEdit::SetRole {
+                device,
+                role: Role::CoOrganizer,
+            },
+        );
         deliver(actions, &mut owner, &mut guest);
         deliver(guest.announce().unwrap(), &mut guest, &mut owner);
         assert!(
@@ -3029,7 +3529,7 @@ mod tests {
                 })
                 .map(|b| b.head.gone))
                 == Some(true),
-            "once members may delete, the tombstone lands"
+            "once an organizer, the tombstone lands"
         );
     }
     /// After one round each side knows what the other holds, so a local
