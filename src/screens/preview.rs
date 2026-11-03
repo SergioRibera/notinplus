@@ -609,8 +609,8 @@ fn bible_john_3() -> Element {
             for (book, chapter, verse) in [("Rom", 5, 8), ("1John", 4, 9), ("John", 3, 14)] {
                 conn.execute(
                     "INSERT INTO cross_refs
-                     (bible_id, src_book, src_chap, src_verse, tgt_book, tgt_chap, tgt_verse)
-                     VALUES ('spa_rv1960', ?1, 3, 16, ?2, ?3, ?4)",
+                     (src_book, src_chap, src_verse, tgt_book, tgt_chap, tgt_verse)
+                     VALUES (?1, 3, 16, ?2, ?3, ?4)",
                     rusqlite::params![id("John"), id(book), chapter, verse],
                 )
                 .expect("seed cross-reference");
