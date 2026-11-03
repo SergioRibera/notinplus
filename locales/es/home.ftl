@@ -61,3 +61,4 @@ home-selection-count = { $count ->
 home-selection-pin = Fijar
 home-selection-export = Exportar
 home-selection-new-folder = Nueva carpeta con { $count }
+home-sessions = Sesiones

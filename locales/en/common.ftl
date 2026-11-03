@@ -22,3 +22,6 @@ common-automatic = Automatic
 common-yes = Yes
 common-no = No
 common-never = Never
+common-change = Change
+common-see = See
+common-remove = Remove

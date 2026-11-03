@@ -26,6 +26,13 @@ enum Notice {
     },
     ReadOnly {
         owner: String,
+        share: notein_sync::ShareId,
+    },
+    /// A one-off session whose organizer closed the app without ending
+    /// it: nothing moves until they are back.
+    Paused {
+        owner: String,
+        share: notein_sync::ShareId,
     },
 }
 
@@ -49,9 +56,16 @@ impl Notice {
             });
         }
         let share = crate::sync::share_of(id)?;
+        if share.paused() {
+            return Some(Self::Paused {
+                owner: share.owner.name,
+                share: share.id,
+            });
+        }
         if !share.can_edit {
             return Some(Self::ReadOnly {
                 owner: share.owner.name,
+                share: share.id,
             });
         }
         // A shared document travels with the session: it is offline when
@@ -91,11 +105,29 @@ impl Component for TabNotice {
                 tr!("mesa-notice-offline"),
                 Vec::new(),
             ),
-            Notice::ReadOnly { owner } => (
+            Notice::ReadOnly { owner, share } => (
                 lucide::eye(),
                 p.accent,
                 tr!("mesa-notice-read-only", "owner" => owner),
-                Vec::new(),
+                vec![
+                    Button::new(tr!("mesa-notice-see-session"))
+                        .ghost()
+                        .small()
+                        .on_press(move |_| crate::screens::collab::session(share))
+                        .into_element(),
+                ],
+            ),
+            Notice::Paused { owner, share } => (
+                lucide::pause(),
+                p.warn,
+                tr!("mesa-notice-paused", "owner" => owner),
+                vec![
+                    Button::new(tr!("common-see"))
+                        .ghost()
+                        .small()
+                        .on_press(move |_| crate::screens::collab::session(share))
+                        .into_element(),
+                ],
             ),
             Notice::Trashed { name, days, batch } => (
                 lucide::trash_2(),

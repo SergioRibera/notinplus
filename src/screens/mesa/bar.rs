@@ -155,13 +155,14 @@ impl MesaBar {
             .unwrap_or_default();
         let present = people(&docs);
         let more = present.len().saturating_sub(AVATARS);
+        let _ = mesa;
         (!present.is_empty()).then(|| {
             rect()
                 .horizontal()
                 .cross_align(Alignment::Center)
-                .spacing(-6.0)
+                .spacing(-8.0)
                 .a11y_alt(tr!("mesa-bar-people", "count" => present.len()))
-                .on_tap(move |_| crate::flows::share_mesa(mesa))
+                .on_tap(move |_| crate::screens::collab::session_for(&docs))
                 .children(
                     present
                         .iter()

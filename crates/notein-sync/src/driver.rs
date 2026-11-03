@@ -1928,6 +1928,12 @@ impl<R: Replica> SyncDriver<R> {
         self.join(left.invite)
     }
 
+    /// Stop waiting on an invitation. Returns whether one was pending.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::cancel_join"))]
+    pub fn cancel_join(&mut self, id: ShareId) -> bool {
+        self.joins.remove(&id).is_some()
+    }
+
     /// Open a share this device ended again: same title and documents,
     /// a new id and key, so the old invitation stays dead.
     #[cfg_attr(feature = "sismo", sismo::function("sync::driver::reopen"))]

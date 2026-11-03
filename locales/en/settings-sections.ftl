@@ -21,3 +21,5 @@ settings-search-placeholder = Search settings
 # $query: what the person typed.
 settings-search-empty = No settings match “{ $query }”
 settings-back = Back
+settings-section-sessions = Sessions
+settings-keywords-sessions = session, share, invitation, shared folder, role, approve, name, people, collaborate

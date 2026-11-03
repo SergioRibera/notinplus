@@ -195,6 +195,17 @@ pub fn for_folder(folder: FolderId) -> Vec<ActionEntry> {
         ),
         ActionEntry::Item(
             Action::new(
+                if crate::sync::share_of_folder(folder).is_some() {
+                    tr!("actions-shared-folder")
+                } else {
+                    tr!("actions-share-folder")
+                },
+                run(move || flows::share_folder(folder)),
+            )
+            .icon(lucide::users()),
+        ),
+        ActionEntry::Item(
+            Action::new(
                 tr!("actions-export"),
                 run(move || flows::export_folder(folder)),
             )

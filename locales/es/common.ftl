@@ -22,3 +22,6 @@ common-automatic = Automático
 common-yes = Sí
 common-no = No
 common-never = Nunca
+common-change = Cambiar
+common-see = Ver
+common-remove = Quitar

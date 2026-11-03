@@ -78,6 +78,27 @@ impl SyncState {
     }
 }
 
+/// The sessions button, in a slot that keeps its width whether or not
+/// there is anything to show, so the bar never shifts.
+#[sismo::function("home::sessions_slot")]
+fn sessions_slot(compact: bool) -> Rect {
+    let snapshot = crate::sync::use_sync().read().clone();
+    let count = snapshot.shares.len() + snapshot.pending_joins.len();
+    let slot = rect()
+        .width(Size::px(tokens::size::BUTTON))
+        .height(Size::px(tokens::size::BUTTON))
+        .center();
+    if count == 0 {
+        return slot;
+    }
+    let _ = compact;
+    slot.child(
+        IconButton::new(freya::icons::lucide::users(), tr!("home-sessions"))
+            .badge(u32::try_from(count).unwrap_or(u32::MAX))
+            .on_press(|_| crate::screens::collab::sessions()),
+    )
+}
+
 /// The field look-alike that opens search.
 #[sismo::function("home::search_field")]
 fn search_field(compact: bool) -> Rect {
@@ -151,6 +172,7 @@ impl Component for AppBar {
                     .child(search_field(compact)),
             )
             .maybe_child(crate::update::ui::chip(compact))
+            .child(sessions_slot(compact))
             .maybe_child(state.map(|s| s.indicator(compact)))
             .child(
                 IconButton::new(lucide::trash_2(), tr!("common-trash"))

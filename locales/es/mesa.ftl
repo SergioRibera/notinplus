@@ -94,3 +94,6 @@ mesa-outline-collapse = Contraer
 mesa-outline-expand = Expandir
 mesa-outline-empty = Este documento no tiene índice.
 mesa-outline-no-match = Nada con ese nombre.
+# $owner: quien organiza.
+mesa-notice-paused = { $owner } no está. La sesión sigue cuando vuelva.
+mesa-notice-see-session = Ver sesión

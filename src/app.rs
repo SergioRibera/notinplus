@@ -307,6 +307,11 @@ impl Component for AppShell {
             crate::session_end::listen();
         });
         use_hook(|| {
+            sismo::scope!("app::collab_listen");
+            crate::screens::collab::listen();
+            crate::screens::collab::prune_recents();
+        });
+        use_hook(|| {
             sismo::scope!("app::announce_crash");
             crate::diagnostics::ui::announce_crash();
         });

@@ -21,3 +21,5 @@ settings-search-placeholder = Buscar un ajuste
 # $query: lo que escribió la persona.
 settings-search-empty = Ningún ajuste coincide con «{ $query }»
 settings-back = Volver
+settings-section-sessions = Sesiones
+settings-keywords-sessions = sesión, compartir, invitación, carpeta compartida, rol, aprobar, nombre, personas, colaborar

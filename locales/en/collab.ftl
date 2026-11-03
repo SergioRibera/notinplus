@@ -105,3 +105,120 @@ collab-ended-saved = { $count ->
 collab-role-co-organizer = Co-organizer
 # $title: the session title.
 collab-already-in = You are already in “{ $title }”
+
+## Session sheet, sessions list and shared folders.
+
+collab-sessions-title = Sessions
+collab-sessions-live = In progress · { $count }
+collab-sessions-folders = Shared folders · { $count }
+collab-sessions-waiting = Waiting · { $count }
+collab-sessions-recent = Recent
+collab-sessions-empty-title = You are not in any session
+collab-sessions-empty-body = Share a document, a desk or a folder, or open the invitation you were sent.
+collab-you-organize = You organize
+# $name: who organizes.
+collab-organized-by = { $name } invited you
+# $count: people connected now.
+collab-people-now = { $count ->
+    [one] { $count } person now
+   *[other] { $count } people now
+}
+collab-kind-folder = Shared folder
+# $owner: who organizes.
+collab-state-paused = Paused · { $owner } is away
+collab-state-live-lan = Live · same network
+collab-state-live-relay = Live · via server
+collab-state-up-to-date = Up to date
+collab-state-up-to-date-relay = Up to date · via server
+collab-state-waiting-people = Nobody yet
+collab-state-offline = Offline
+# $owner: who organizes.
+collab-waiting-owner = Waiting for { $owner }… you both have to be connected at once
+# $owner: who organizes.
+collab-waiting-approval = Waiting for { $owner } to let you in
+# $title: the session title.
+collab-waiting-approval-hint = “{ $title }” stays under Sessions › Waiting; we'll tell you when you're in.
+# $when: when; $count: documents.
+collab-recent-ended = You ended it { $when } · { $count ->
+    [one] { $count } document
+   *[other] { $count } documents
+}
+# $when: when; $owner: who organizes.
+collab-recent-left = You left { $when } · { $owner } invited you
+collab-recent-rejoin = Go back in
+collab-recent-reopen = Reopen
+collab-path-lan = same network
+collab-path-relay = via server
+# $path: same network or via server.
+collab-person-reachable = reachable { $path }
+collab-person-offline-short = offline
+collab-invitation = Invitation
+collab-invitation-hint = Whoever has the link gets in while the session exists. Ending it kills the link.
+collab-entry-role = Enter as
+collab-entry-role-hint = The role of whoever opens the link. Changed per person later.
+# $role: the role.
+collab-invite-as = You enter as: { $role }
+collab-approve-entry = Approve who enters
+collab-approve-entry-hint = Tells you “wants in” and you pick their role. One-off sessions let people straight in; permanent shares and folders ask.
+collab-who-adds-docs = Who adds documents
+collab-who-adds-docs-hint = Who brings documents in and takes them out.
+collab-adds-organizers = Organizers only
+collab-adds-editors = Anyone who edits
+# $count: people waiting.
+collab-pending-people = { $count ->
+    [one] { $count } person wants in
+   *[other] { $count } people want in
+}
+# $who: who.
+collab-wants-in = { $who } wants in
+# $device: the device they ask from.
+collab-wants-in-from = from { $device }
+collab-let-in = Let in
+# $role: the role.
+collab-let-in-as = Let in as { $role }
+collab-refuse = No
+# $count: documents.
+collab-session-docs = Documents · { $count }
+collab-doc-add = Add documents
+collab-doc-add-hint = Pick from your library; everyone gets them at once.
+collab-doc-remove = Remove
+collab-doc-on-its-way = On its way…
+# $kind: kind; $titles: other sessions.
+collab-doc-also-in = { $kind } · also in { $titles }
+collab-doc-search = Search for a document
+collab-doc-none = Nothing to add
+collab-leave = Leave the session
+collab-leave-keep-copy = Keep my copy and leave
+collab-leave-confirm = Sure? · Leave
+# $owner: who organizes.
+collab-paused-notice = { $owner } is away
+collab-paused-notice-hint = What you see stays as it is until they're back. You can wait with the document open, keep a copy, or leave.
+# $owner: who organizes.
+collab-status-paused = { $owner } closed the app without ending the session.
+collab-status-nobody = Nobody else is connected right now.
+# $name: who.
+collab-status-one = { $name } is here now.
+# $names: who.
+collab-status-many = { $names } are here now.
+collab-status-owner-pause-hint = If you close the app, the session pauses and goes on when you're back.
+collab-share-scope-folder = This folder
+# $name: the folder; $count: documents.
+collab-share-folder-count = { $name } · { $count ->
+    [one] { $count } document
+   *[other] { $count } documents
+}
+collab-share-folder-hint = A shared folder is permanent: anyone who edits adds, removes and creates documents inside, and everyone gets them.
+# $titles: other sessions.
+collab-share-also-in = Some of this is already in { $titles }. It can be in several sessions at once.
+# $who: who; $title: the session.
+collab-toast-joined = { $who } joined “{ $title }”
+# $who: who; $title: the session.
+collab-toast-left = { $who } left “{ $title }”
+# $title: the new title.
+collab-toast-renamed = The session is now called “{ $title }”
+# $who: who; $title: the session.
+collab-toast-wants-in = { $who } wants into “{ $title }”
+# $title: the session.
+collab-toast-entered = You joined “{ $title }”
+# $title: the session.
+collab-toast-refused = You weren't let into “{ $title }”

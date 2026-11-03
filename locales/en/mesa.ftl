@@ -94,3 +94,6 @@ mesa-outline-collapse = Collapse
 mesa-outline-expand = Expand
 mesa-outline-empty = This document has no outline.
 mesa-outline-no-match = Nothing with that name.
+# $owner: who organizes.
+mesa-notice-paused = { $owner } is away. The session goes on when they are back.
+mesa-notice-see-session = See session

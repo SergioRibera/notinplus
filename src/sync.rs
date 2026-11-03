@@ -237,6 +237,7 @@ enum Cmd {
     /// travel with them are worked out on the sync thread.
     AddDocs(ShareId, Vec<ItemId>),
     Rejoin(ShareId),
+    CancelJoin(ShareId),
     Reopen(ShareId),
     ForgetRecent(ShareId),
     /// Drop recents older than this many milliseconds.
@@ -679,6 +680,11 @@ pub fn remove_docs(id: ShareId, docs: &[ItemId]) {
 /// Ask back into a share this device left.
 pub fn rejoin(id: ShareId) {
     command(Cmd::Rejoin(id));
+}
+
+/// Stop waiting on an invitation accepted earlier.
+pub fn cancel_join(id: ShareId) {
+    command(Cmd::CancelJoin(id));
 }
 
 /// Open a share this device ended again, under a new invitation.
@@ -1298,6 +1304,13 @@ impl Service {
                 let actions = self.driver.rejoin(id);
                 self.save_shares();
                 actions
+            }
+            Cmd::CancelJoin(id) => {
+                if self.driver.cancel_join(id) {
+                    self.last_join_failure = None;
+                    self.save_shares();
+                }
+                Vec::new()
             }
             Cmd::Reopen(id) => {
                 sismo::scope!("sync::cmd::reopen");

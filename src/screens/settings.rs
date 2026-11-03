@@ -9,6 +9,7 @@ mod notes;
 mod pen;
 mod plugins;
 pub(crate) mod schema;
+mod sessions;
 
 use freya::prelude::*;
 use notein_ui_kit::theme::palette;
@@ -29,17 +30,19 @@ pub enum Section {
     Notes,
     Library,
     Devices,
+    Sessions,
     Plugins,
     About,
 }
 
 impl Section {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Appearance,
         Self::Pen,
         Self::Notes,
         Self::Library,
         Self::Devices,
+        Self::Sessions,
         Self::Plugins,
         Self::About,
     ];
@@ -52,6 +55,7 @@ impl Section {
             Self::Notes => tr!("settings-section-notes"),
             Self::Library => tr!("settings-section-library"),
             Self::Devices => tr!("settings-section-devices"),
+            Self::Sessions => tr!("settings-section-sessions"),
             Self::Plugins => tr!("settings-section-plugins"),
             Self::About => tr!("settings-section-about"),
         }
@@ -65,6 +69,7 @@ impl Section {
             Self::Notes => lucide::notebook_text(),
             Self::Library => lucide::library(),
             Self::Devices => lucide::monitor_smartphone(),
+            Self::Sessions => lucide::users(),
             Self::Plugins => lucide::puzzle(),
             Self::About => lucide::info(),
         }
@@ -79,6 +84,7 @@ impl Section {
             Self::Notes => tr!("settings-keywords-notes"),
             Self::Library => tr!("settings-keywords-library"),
             Self::Devices => tr!("settings-keywords-devices"),
+            Self::Sessions => tr!("settings-keywords-sessions"),
             Self::Plugins => tr!("settings-keywords-plugins"),
             Self::About => tr!("settings-keywords-about"),
         }
@@ -102,6 +108,7 @@ impl Section {
             Self::Notes => notes::Notes.into_element(),
             Self::Library => library::Library.into_element(),
             Self::Devices => devices::Devices.into_element(),
+            Self::Sessions => sessions::Sessions.into_element(),
             Self::Plugins => plugins::Plugins.into_element(),
             Self::About => about::About.into_element(),
         }

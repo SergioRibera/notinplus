@@ -348,6 +348,94 @@ pub struct LibrarySettings {
     pub layout: ShelfLayout,
 }
 
+/// The role a new invitation grants by default.
+#[istmo::message]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum EntryRolePref {
+    Viewer,
+    #[default]
+    Editor,
+    CoOrganizer,
+}
+
+impl EntryRolePref {
+    pub const ALL: [Self; 3] = [Self::Viewer, Self::Editor, Self::CoOrganizer];
+
+    #[must_use]
+    pub const fn role(self) -> notein_sync::Role {
+        match self {
+            Self::Viewer => notein_sync::Role::Viewer,
+            Self::Editor => notein_sync::Role::Editor,
+            Self::CoOrganizer => notein_sync::Role::CoOrganizer,
+        }
+    }
+
+    #[must_use]
+    pub const fn of(role: notein_sync::Role) -> Self {
+        match role {
+            notein_sync::Role::Viewer => Self::Viewer,
+            notein_sync::Role::Editor => Self::Editor,
+            notein_sync::Role::CoOrganizer | notein_sync::Role::Owner => Self::CoOrganizer,
+        }
+    }
+
+    #[must_use]
+    pub fn label(self) -> String {
+        match self {
+            Self::Viewer => tr!("collab-role-viewer"),
+            Self::Editor => tr!("collab-role-editor"),
+            Self::CoOrganizer => tr!("collab-role-co-organizer"),
+        }
+    }
+}
+
+/// Whether a new share asks an organizer before letting people in.
+#[istmo::message]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ApprovePref {
+    /// One-off sessions let people straight in; permanent shares and
+    /// folders ask first.
+    #[default]
+    ByKind,
+    Always,
+    Never,
+}
+
+impl ApprovePref {
+    pub const ALL: [Self; 3] = [Self::ByKind, Self::Always, Self::Never];
+
+    /// Whether a share of `mode` (a folder counts as permanent) asks.
+    #[must_use]
+    pub const fn for_mode(self, mode: notein_sync::ShareMode) -> bool {
+        match self {
+            Self::ByKind => matches!(mode, notein_sync::ShareMode::Permanent),
+            Self::Always => true,
+            Self::Never => false,
+        }
+    }
+
+    #[must_use]
+    pub fn label(self) -> String {
+        match self {
+            Self::ByKind => tr!("settings-sessions-approve-by-kind"),
+            Self::Always => tr!("settings-sessions-approve-always"),
+            Self::Never => tr!("settings-sessions-approve-never"),
+        }
+    }
+}
+
+/// Settings › Sesiones: how this person shows up and what a new
+/// invitation does.
+#[istmo::message]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct SessionSettings {
+    pub entry_role: EntryRolePref,
+    pub approve: ApprovePref,
+    /// How long invitations of sessions left or ended are kept, for
+    /// going back in or opening them again.
+    pub recent_retention: TrashRetention,
+}
+
 /// Every user setting.
 #[istmo::message]
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -357,6 +445,7 @@ pub struct Settings {
     pub notes: NotesSettings,
     pub library: LibrarySettings,
     pub plugins: PluginPrefs,
+    pub sessions: SessionSettings,
 }
 
 impl Persisted for Settings {

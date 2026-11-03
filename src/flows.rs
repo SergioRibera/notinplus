@@ -82,21 +82,30 @@ pub fn pin_items(items: Vec<ItemId>) {
     toast(tr!("flows-pinned-documents", "count" => n));
 }
 
-/// The share sheet for `item`.
+/// The share sheet for `item`, or its session if it is in one.
 #[sismo::function("flows::share_item")]
 pub fn share_item(item: ItemId) {
     crate::screens::collab::share(crate::screens::collab::ShareTarget {
         item: Some(item),
-        mesa: None,
+        ..Default::default()
     });
 }
 
-/// The share sheet for a whole mesa.
+/// The share sheet for a whole mesa, or its session if it is in one.
 #[sismo::function("flows::share_mesa")]
 pub fn share_mesa(workspace: WorkspaceId) {
     crate::screens::collab::share(crate::screens::collab::ShareTarget {
-        item: None,
         mesa: Some(workspace),
+        ..Default::default()
+    });
+}
+
+/// The share sheet for a folder: everything inside travels with it.
+#[sismo::function("flows::share_folder")]
+pub fn share_folder(folder: FolderId) {
+    crate::screens::collab::share(crate::screens::collab::ShareTarget {
+        folder: Some(folder),
+        ..Default::default()
     });
 }
 
