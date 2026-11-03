@@ -382,16 +382,21 @@ impl AnnotationCard {
             // Inset from what is around it: the popover card, or the
             // sidebar a step darker.
             .background(if self.expanded { p.s2 } else { p.s1 })
-            // The bar is a border: a filled child would stretch to the
-            // height of the whole popover.
+            // The bar is positioned absolutely so it takes the height the
+            // text gives the row, instead of the row taking the bar's: a
+            // flex or filled bar in the flow stretches to the whole popover.
             .child(
                 rect()
                     .width(Size::fill())
-                    .padding((0.0, 0.0, 0.0, 10.0))
-                    .border(Border::new().fill(dot).width(BorderWidth {
-                        left: 3.0,
-                        ..BorderWidth::default()
-                    }))
+                    .padding((0.0, 0.0, 0.0, 13.0))
+                    .child(
+                        rect()
+                            .position(Position::new_absolute().top(0.0).left(0.0))
+                            .width(Size::px(3.0))
+                            .height(Size::fill())
+                            .corner_radius(1.5)
+                            .background(dot),
+                    )
                     .child(
                         label()
                             .width(Size::fill())
