@@ -64,7 +64,7 @@ pub(crate) struct CaretRequest {
 }
 
 pub(crate) struct EditorView {
-    pub(crate) document: Document,
+    pub(crate) document: Rc<Document>,
     pub(crate) selection: Option<Selection>,
     pub(crate) caret: Option<CaretRequest>,
     pub(crate) read_only: bool,
@@ -156,7 +156,7 @@ enum Pending {
 
 #[derive(Clone)]
 struct Snapshot {
-    document: Document,
+    document: Rc<Document>,
     selection: Option<Selection>,
 }
 
@@ -168,7 +168,10 @@ struct History {
 }
 
 pub(crate) struct EditorState {
-    document: Document,
+    /// Shared with the render that reads it, so a render never copies
+    /// the document and an edit only copies it while a render still
+    /// holds the previous one.
+    document: Rc<Document>,
     revision: u64,
     selection: Option<Selection>,
     caret: Option<CaretRequest>,
@@ -219,9 +222,14 @@ struct BlockLayout {
 pub(crate) type CaretProbe = Rc<dyn Fn() -> Option<(f32, f32)>>;
 
 impl EditorState {
+    /// The document to edit, copied first if a render still reads it.
+    fn document_mut(&mut self) -> &mut Document {
+        Rc::make_mut(&mut self.document)
+    }
+
     fn new(document: Document) -> Self {
         Self {
-            document,
+            document: Rc::new(document),
             revision: 0,
             selection: None,
             caret: None,
@@ -277,7 +285,7 @@ impl EditorState {
 
     #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_changed"))]
     fn changed(&mut self) {
-        self.document.ensure_editable();
+        self.document_mut().ensure_editable();
         self.revision += 1;
     }
 
@@ -327,7 +335,7 @@ impl EditorState {
             return;
         }
         self.record(None);
-        if let Some(inline) = self.document.inline_mut(selection.target) {
+        if let Some(inline) = self.document_mut().inline_mut(selection.target) {
             apply(inline, selection.range());
         }
         self.changed();
@@ -522,7 +530,7 @@ impl EditorController {
     /// Clone of the current document.
     #[must_use]
     pub fn document(&self) -> Document {
-        self.read(|state| state.document.clone())
+        self.read(|state| Document::clone(&state.document))
     }
 
     /// Run `read` against the current document without cloning it.
@@ -593,7 +601,7 @@ impl EditorController {
     #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_load_markdown"))]
     pub fn load_markdown(&self, markdown: &str) {
         self.update(|state| {
-            state.document = Document::parse_with(markdown, &state.parse);
+            state.document = Rc::new(Document::parse_with(markdown, &state.parse));
             state.history = History::default();
             state.selection = None;
             state.pending.clear();
@@ -616,7 +624,7 @@ impl EditorController {
                     .position(|target| *target == selection.target);
                 (index, selection.head)
             });
-            state.document = Document::parse_with(markdown, &state.parse);
+            state.document = Rc::new(Document::parse_with(markdown, &state.parse));
             state.history = History::default();
             state.pending.clear();
             state.selection = None;
@@ -635,7 +643,7 @@ impl EditorController {
     pub fn set_document(&self, document: Document) {
         self.update(|state| {
             state.record(None);
-            state.document = document;
+            state.document = Rc::new(document);
             state.selection = None;
             state.changed();
         });
@@ -700,7 +708,7 @@ impl EditorController {
                 return;
             }
             state.record(None);
-            if let Some(inline) = state.document.inline_mut(selection.target) {
+            if let Some(inline) = state.document_mut().inline_mut(selection.target) {
                 let families: Vec<MarkFamily> = inline
                     .marks()
                     .iter()
@@ -770,7 +778,7 @@ impl EditorController {
                 return;
             };
             state.record(None);
-            if let Some(inline) = state.document.inline_mut(selection.target) {
+            if let Some(inline) = state.document_mut().inline_mut(selection.target) {
                 match url {
                     Some(url) => inline.add_mark(range, MarkKind::Link(Link::new(url))),
                     None => inline.remove_family(range, MarkFamily::Link),
@@ -798,7 +806,7 @@ impl EditorController {
                 .filter(|selection| selection.target == target)
                 .map_or(len..len, |selection| selection.range());
             state.record(None);
-            let Some(inline) = state.document.inline_mut(target) else {
+            let Some(inline) = state.document_mut().inline_mut(target) else {
                 return;
             };
             let inserted = inline.replace(range, text);
@@ -914,7 +922,7 @@ impl EditorController {
             }
             state.record(None);
             if let Some(Atom::Image { url, alt, .. }) = state
-                .document
+                .document_mut()
                 .inline_mut(slot.target)
                 .and_then(|inline| inline.atom_mut(slot.atom))
             {
@@ -941,7 +949,7 @@ impl EditorController {
             }
             state.record(None);
             if let Some(Atom::Math { tex: current }) = state
-                .document
+                .document_mut()
                 .inline_mut(slot.target)
                 .and_then(|inline| inline.atom_mut(slot.atom))
             {
@@ -963,7 +971,7 @@ impl EditorController {
                 return;
             };
             state.record(None);
-            if let Some(inline) = state.document.inline_mut(slot.target) {
+            if let Some(inline) = state.document_mut().inline_mut(slot.target) {
                 inline.replace(at..at + 1, "");
             }
             state.changed();
@@ -994,7 +1002,7 @@ impl EditorController {
                 });
             let plain = state.document.role(target) == Some(TextRole::Plain);
             state.record(None);
-            let Some(inline) = state.document.inline_mut(target) else {
+            let Some(inline) = state.document_mut().inline_mut(target) else {
                 return;
             };
             let range = selection.range();
@@ -1041,7 +1049,7 @@ impl EditorController {
             let rich = state.document.role(target) == Some(TextRole::Rich);
             if let Some(content) = single.filter(|_| rich) {
                 state.record(None);
-                if let Some(inline) = state.document.inline_mut(target) {
+                if let Some(inline) = state.document_mut().inline_mut(target) {
                     let range = selection.range();
                     inline.replace(range.clone(), "");
                     let end = range.start + content.len();
@@ -1059,7 +1067,7 @@ impl EditorController {
             };
             state.record(None);
             let range = selection.range();
-            let length = state.document.inline_mut(target).map_or(0, |inline| {
+            let length = state.document_mut().inline_mut(target).map_or(0, |inline| {
                 inline.replace(range.clone(), "");
                 inline.len()
             });
@@ -1070,14 +1078,14 @@ impl EditorController {
                 (!at_end).then_some(target.block)
             } else {
                 state
-                    .document
+                    .document_mut()
                     .split(target, range.start)
                     .map(|caret| caret.target.block)
             };
             let first = if at_start { index } else { index + 1 };
             let mut last = None;
             for (at, block) in (first..).zip(blocks) {
-                last = Some(state.document.insert(
+                last = Some(state.document_mut().insert(
                     at,
                     Block {
                         id: BlockId::fresh(),
@@ -1093,7 +1101,7 @@ impl EditorController {
                     Some(BlockKind::Paragraph(_))
                 );
             if replaced {
-                state.document.remove(target.block);
+                state.document_mut().remove(target.block);
             }
             let end_of_last = last.and_then(|id| {
                 let target = state
@@ -1108,7 +1116,7 @@ impl EditorController {
                 .map(|rest| Selection::caret(TextTarget::from(rest), 0))
                 .or(end_of_last)
                 .unwrap_or_else(|| Selection::caret(TextTarget::from(last.unwrap_or(target.block)), 0));
-            state.document.ensure_editable();
+            state.document_mut().ensure_editable();
             state.changed();
             state.request_caret(caret);
         });
@@ -1134,10 +1142,10 @@ impl EditorController {
     #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_type_of"))]
     pub fn set_type_of(&self, block: BlockId, block_type: BlockType) {
         self.update(|state| {
-            let mut document = state.document.clone();
+            let mut document = Document::clone(&state.document);
             if document.set_type(block, block_type) {
                 state.record(None);
-                state.document = document;
+                state.document = Rc::new(document);
                 state.changed();
                 state.refresh_caret();
             }
@@ -1153,8 +1161,10 @@ impl EditorController {
                 && current.text() != yaml
             {
                 state.record(None);
-                if let Some(BlockKind::FrontMatter(current)) =
-                    state.document.block_mut(block).map(|block| &mut block.kind)
+                if let Some(BlockKind::FrontMatter(current)) = state
+                    .document_mut()
+                    .block_mut(block)
+                    .map(|block| &mut block.kind)
                 {
                     *current = Inline::from(yaml);
                 }
@@ -1174,8 +1184,10 @@ impl EditorController {
                 && *current != wanted
             {
                 state.record(None);
-                if let Some(BlockKind::Callout { title, .. }) =
-                    state.document.block_mut(block).map(|block| &mut block.kind)
+                if let Some(BlockKind::Callout { title, .. }) = state
+                    .document_mut()
+                    .block_mut(block)
+                    .map(|block| &mut block.kind)
                 {
                     *title = wanted;
                 }
@@ -1198,8 +1210,10 @@ impl EditorController {
                 && *current != wanted
             {
                 state.record(None);
-                if let Some(BlockKind::Details { summary, .. }) =
-                    state.document.block_mut(block).map(|block| &mut block.kind)
+                if let Some(BlockKind::Details { summary, .. }) = state
+                    .document_mut()
+                    .block_mut(block)
+                    .map(|block| &mut block.kind)
                 {
                     *summary = wanted;
                 }
@@ -1219,8 +1233,10 @@ impl EditorController {
                 && *current != kind
             {
                 state.record(None);
-                if let Some(BlockKind::Callout { kind: current, .. }) =
-                    state.document.block_mut(block).map(|block| &mut block.kind)
+                if let Some(BlockKind::Callout { kind: current, .. }) = state
+                    .document_mut()
+                    .block_mut(block)
+                    .map(|block| &mut block.kind)
                 {
                     *current = kind;
                 }
@@ -1236,7 +1252,7 @@ impl EditorController {
                 return;
             };
             state.record(None);
-            if let Some(block) = state.document.block_mut(selection.target.block) {
+            if let Some(block) = state.document_mut().block_mut(selection.target.block) {
                 block.align = align;
             }
             state.changed();
@@ -1258,10 +1274,10 @@ impl EditorController {
             let Some(selection) = state.selection else {
                 return;
             };
-            let mut document = state.document.clone();
+            let mut document = Document::clone(&state.document);
             if document.indent(selection.target.block, delta) {
                 state.record(None);
-                state.document = document;
+                state.document = Rc::new(document);
                 state.changed();
                 state.refresh_caret();
             }
@@ -1275,7 +1291,7 @@ impl EditorController {
                 return;
             }
             state.record(None);
-            if state.document.toggle_task(block) {
+            if state.document_mut().toggle_task(block) {
                 state.changed();
             }
         });
@@ -1287,7 +1303,10 @@ impl EditorController {
             state.record(None);
             if let Some(BlockKind::Code {
                 language: current, ..
-            }) = state.document.block_mut(block).map(|block| &mut block.kind)
+            }) = state
+                .document_mut()
+                .block_mut(block)
+                .map(|block| &mut block.kind)
             {
                 language.clone_into(current);
                 state.changed();
@@ -1314,18 +1333,18 @@ impl EditorController {
             let block = Block::from(kind);
             let id = match (replace, current) {
                 (Some(id), _) => {
-                    if let Some(slot) = state.document.block_mut(id) {
+                    if let Some(slot) = state.document_mut().block_mut(id) {
                         slot.kind = block.kind;
                     }
                     id
                 }
-                (None, Some(anchor)) => state.document.insert_after(anchor, block),
+                (None, Some(anchor)) => state.document_mut().insert_after(anchor, block),
                 (None, None) => {
                     let end = state.document.blocks().len();
-                    state.document.insert(end, block)
+                    state.document_mut().insert(end, block)
                 }
             };
-            state.document.ensure_editable();
+            state.document_mut().ensure_editable();
             let caret = first_target_from(&state.document, id);
             state.changed();
             if let Some(target) = caret {
@@ -1351,7 +1370,7 @@ impl EditorController {
                 .index_of(block)
                 .and_then(|index| state.document.blocks().get(index + 1))
                 .map(|next| next.id);
-            state.document.remove(block);
+            state.document_mut().remove(block);
             state.changed();
             let target = next
                 .and_then(|next| first_target_from(&state.document, next))
@@ -1387,10 +1406,10 @@ impl EditorController {
     #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_reorder"))]
     fn reorder(&self, edit: impl FnOnce(&mut Document) -> bool) {
         self.update(|state| {
-            let mut document = state.document.clone();
+            let mut document = Document::clone(&state.document);
             if edit(&mut document) {
                 state.record(None);
-                state.document = document;
+                state.document = Rc::new(document);
                 state.changed();
                 state.refresh_caret();
             }
@@ -1477,7 +1496,7 @@ impl EditorController {
             if state.read_only {
                 return;
             }
-            let mut document = state.document.clone();
+            let mut document = Document::clone(&state.document);
             let Some(BlockKind::Table(table)) =
                 document.block_mut(block).map(|block| &mut block.kind)
             else {
@@ -1487,7 +1506,7 @@ impl EditorController {
                 return;
             }
             state.record(None);
-            state.document = document;
+            state.document = Rc::new(document);
             state.changed();
             // The caret may have sat in a cell that is gone.
             if state.selection.is_some_and(|selection| {
@@ -1507,7 +1526,7 @@ impl EditorController {
             let Some(cell) = selection.target.cell else {
                 return;
             };
-            let mut document = state.document.clone();
+            let mut document = Document::clone(&state.document);
             let Some(BlockKind::Table(table)) = document
                 .block_mut(selection.target.block)
                 .map(|block| &mut block.kind)
@@ -1518,7 +1537,7 @@ impl EditorController {
                 return;
             };
             state.record(None);
-            state.document = document;
+            state.document = Rc::new(document);
             state.changed();
             state.request_caret(Selection::caret(
                 TextTarget {
@@ -1667,7 +1686,7 @@ impl EditorController {
     #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_heading_anchor"))]
     pub fn set_heading_anchor(&self, id: BlockId, anchor: Option<String>) {
         self.update(|state| {
-            if state.document.set_heading_anchor(id, anchor) {
+            if state.document_mut().set_heading_anchor(id, anchor) {
                 state.changed();
             }
         });
@@ -1713,7 +1732,7 @@ impl EditorController {
     #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_view"))]
     pub(crate) fn view(&self) -> EditorView {
         self.read(|state| EditorView {
-            document: state.document.clone(),
+            document: Rc::clone(&state.document),
             selection: state.selection,
             caret: state.caret,
             read_only: state.read_only,
@@ -1771,7 +1790,7 @@ impl EditorController {
             state.record(Some(target));
             let role = state.document.role(target);
             let pending = std::mem::take(&mut state.pending);
-            let Some(inline) = state.document.inline_mut(target) else {
+            let Some(inline) = Rc::make_mut(&mut state.document).inline_mut(target) else {
                 return false;
             };
             let Some(change) = inline.apply_text(text, hint) else {
@@ -1811,14 +1830,14 @@ impl EditorController {
                 (role == Some(TextRole::Rich) && target.cell.is_none() && inserted_len > 0)
                     .then(|| {
                         state
-                            .document
+                            .document_mut()
                             .apply_block_shortcut(target.block, selection.head)
                     })
                     .flatten();
             // Formulas name columns by header: a renamed header keeps them pointing.
             if let (Some(previous), Some(cell)) = (previous_header, target.cell)
                 && let Some(BlockKind::Table(table)) = state
-                    .document
+                    .document_mut()
                     .block_mut(target.block)
                     .map(|block| &mut block.kind)
             {
@@ -1886,7 +1905,7 @@ impl EditorController {
             }
             state.record(Some(target));
             state.pending.clear();
-            if let Some(current) = state.document.inline_mut(target) {
+            if let Some(current) = state.document_mut().inline_mut(target) {
                 *current = inline;
             }
             state.changed();
@@ -1907,7 +1926,7 @@ impl EditorController {
     pub(crate) fn split(&self, target: TextTarget, selection: Range<usize>) {
         self.update(|state| {
             state.record(None);
-            if let Some(inline) = state.document.inline_mut(target) {
+            if let Some(inline) = state.document_mut().inline_mut(target) {
                 inline.replace(selection.clone(), "");
             }
             let fence = state
@@ -1922,7 +1941,7 @@ impl EditorController {
                     _ => None,
                 });
             if let Some(language) = fence {
-                if let Some(block) = state.document.block_mut(target.block) {
+                if let Some(block) = state.document_mut().block_mut(target.block) {
                     block.kind = BlockKind::Code {
                         language,
                         code: Inline::default(),
@@ -1932,7 +1951,7 @@ impl EditorController {
                 state.request_caret(Selection::caret(target, 0));
                 return;
             }
-            let caret = state.document.split(target, selection.start);
+            let caret = state.document_mut().split(target, selection.start);
             state.changed();
             if let Some(caret) = caret {
                 state.request_caret(caret.into());
@@ -1951,12 +1970,12 @@ impl EditorController {
     #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_structural"))]
     fn structural(&self, edit: impl FnOnce(&mut Document) -> Option<Caret>) -> bool {
         self.update(|state| {
-            let mut document = state.document.clone();
+            let mut document = Document::clone(&state.document);
             let Some(caret) = edit(&mut document) else {
                 return false;
             };
             state.record(None);
-            state.document = document;
+            state.document = Rc::new(document);
             state.changed();
             state.request_caret(caret.into());
             true
@@ -2057,7 +2076,7 @@ impl EditorController {
     ) {
         self.update(|state| {
             state.record(None);
-            if let Some(inline) = state.document.inline_mut(target) {
+            if let Some(inline) = state.document_mut().inline_mut(target) {
                 inline.replace(range.clone(), "");
             }
             state.changed();
@@ -2083,7 +2102,7 @@ impl EditorController {
         self.update(|state| {
             state.record(None);
             if trim_newline
-                && let Some(inline) = state.document.inline_mut(target)
+                && let Some(inline) = state.document_mut().inline_mut(target)
                 && inline.text().ends_with('\n')
             {
                 let end = inline.len();
@@ -2099,7 +2118,7 @@ impl EditorController {
                 .map(|block| block.id);
             let id = next.unwrap_or_else(|| {
                 state
-                    .document
+                    .document_mut()
                     .insert_after(target.block, Block::paragraph(""))
             });
             state.changed();

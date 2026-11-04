@@ -464,6 +464,10 @@ struct Sync {
 }
 
 impl Component for MarkdownEditor {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one pass over the document, block by block"
+    )]
     #[cfg_attr(feature = "sismo", sismo::function("markdown::editor"))]
     fn render(&self) -> impl IntoElement {
         let context_theme = use_try_consume::<EditorTheme>();
