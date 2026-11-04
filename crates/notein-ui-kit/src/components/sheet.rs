@@ -13,6 +13,7 @@ use super::divider::Divider;
 use super::icon::Icon;
 use super::icon_button::IconButton;
 use super::kind_badge::KindBadge;
+use super::lazy::Lazy;
 use super::list_row::strut;
 use super::scroll_content::ScrollContent;
 use super::sheet_drag::{SheetContent, SheetDrag};
@@ -35,6 +36,7 @@ pub struct Sheet {
     children: Vec<Element>,
     footer: Option<Element>,
     dismissable: bool,
+    lazy: bool,
 }
 
 impl std::fmt::Debug for Sheet {
@@ -63,6 +65,7 @@ impl Default for Sheet {
             children: Vec::new(),
             footer: None,
             dismissable: true,
+            lazy: false,
         }
     }
 }
@@ -113,6 +116,15 @@ impl Sheet {
     #[must_use]
     pub const fn width(mut self, width: f32) -> Self {
         self.width = width;
+        self
+    }
+
+    /// Build each child only as it scrolls into the body: for long
+    /// content, most of which stays under the fold until the sheet is
+    /// expanded or scrolled.
+    #[must_use]
+    pub const fn lazy(mut self) -> Self {
+        self.lazy = true;
         self
     }
 
@@ -293,7 +305,13 @@ impl Component for SheetCard {
                                     .on_sized(move |e: Event<SizedEventData>| {
                                         content_height.set_if_modified(e.area.height());
                                     })
-                                    .children(sheet.children.clone())
+                                    .children(sheet.children.iter().cloned().map(|child| {
+                                        if sheet.lazy {
+                                            Lazy::new(child).height_hint(size::ROW).into_element()
+                                        } else {
+                                            child
+                                        }
+                                    }))
                                     .into_element(),
                             })),
                     ),

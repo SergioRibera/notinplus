@@ -5500,6 +5500,7 @@ dependencies = [
  "freya-animation",
  "freya-components",
  "freya-core",
+ "freya-testing",
  "notein-i18n",
  "sismo",
 ]
