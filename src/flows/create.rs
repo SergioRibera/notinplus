@@ -1233,6 +1233,16 @@ pub fn paper_swatch(style: BackgroundStyle) -> Element {
     }
 }
 
+/// The entry this device creates most, for the launcher shortcut.
+#[must_use]
+#[sismo::function("flows::favorite_entry")]
+pub fn favorite_entry() -> Option<CatalogEntry> {
+    let entries = ranked_entries();
+    let available: Vec<EntryKey> = entries.iter().map(key).collect();
+    let favorite = UsageLog::load().favorite(&available, crate::format::now())?;
+    entries.into_iter().find(|e| key(e) == favorite)
+}
+
 /// Every creation entry by key, for the FAB shortcut bubbles.
 #[must_use]
 #[sismo::function("flows::entry_for")]

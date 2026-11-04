@@ -119,6 +119,23 @@ istmo-build = "0.1.1-alpha.5"
 notein-i18n = { path = "crates/notein-i18n", features = ["build"] }
 
 [patch.crates-io]
+# Share targets that open a deep link from the launcher, until istmo
+# publishes it.
+istmo = { git = "https://github.com/SergioRibera/istmo", rev = "fdb5532" }
+istmo-android = { git = "https://github.com/SergioRibera/istmo", rev = "fdb5532" }
+istmo-build = { git = "https://github.com/SergioRibera/istmo", rev = "fdb5532" }
+istmo-camera = { git = "https://github.com/SergioRibera/istmo", rev = "fdb5532" }
+istmo-core = { git = "https://github.com/SergioRibera/istmo", rev = "fdb5532" }
+istmo-data-store = { git = "https://github.com/SergioRibera/istmo", rev = "fdb5532" }
+istmo-file-picker = { git = "https://github.com/SergioRibera/istmo", rev = "fdb5532" }
+istmo-ios = { git = "https://github.com/SergioRibera/istmo", rev = "fdb5532" }
+istmo-macros = { git = "https://github.com/SergioRibera/istmo", rev = "fdb5532" }
+istmo-opener = { git = "https://github.com/SergioRibera/istmo", rev = "fdb5532" }
+istmo-pen = { git = "https://github.com/SergioRibera/istmo", rev = "fdb5532" }
+istmo-plugins = { git = "https://github.com/SergioRibera/istmo", rev = "fdb5532" }
+istmo-plugins-schema = { git = "https://github.com/SergioRibera/istmo", rev = "fdb5532" }
+istmo-share = { git = "https://github.com/SergioRibera/istmo", rev = "fdb5532" }
+istmo-window = { git = "https://github.com/SergioRibera/istmo", rev = "fdb5532" }
 winit ={ git = "https://github.com/SergioRibera/winit", branch = "notein-native-input" }
 # Touch editing and soft keyboard work, on top of freya 0.5.0-rc.13 (main).
 freya = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }

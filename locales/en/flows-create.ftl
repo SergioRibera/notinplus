@@ -4,6 +4,8 @@ flows-create-title = Create
 flows-create-starters = To get started
 flows-create-frequent = What you create most
 flows-create-self-sorting = Sorts itself
+# Launcher shortcut (long press on the app icon) for the entry created most.
+flows-create-shortcut = Create { $label }
 flows-create-folder = Folder
 # $count: documents and folders selected in Home.
 flows-create-folder-with = { $count ->

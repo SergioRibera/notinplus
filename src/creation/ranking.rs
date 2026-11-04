@@ -6,6 +6,8 @@
 //! takes the weakest tile's place when it scores 25 % more, and the
 //! other tiles stay where they are.
 
+use std::cmp::Ordering;
+
 use crate::persist::Persisted;
 use crate::settings::EntryKey;
 
@@ -100,20 +102,37 @@ impl UsageLog {
         tiles
     }
 
-    #[sismo::function("creation::rank")]
-    fn rank(&self, available: &[EntryKey], now: u64) -> Vec<EntryKey> {
+    /// The entry created most, or the first starter while the log is
+    /// still cold.
+    #[must_use]
+    #[sismo::function("creation::favorite")]
+    pub fn favorite(&self, available: &[EntryKey], now: u64) -> Option<EntryKey> {
+        if self.is_cold() {
+            return available.first().cloned();
+        }
+        available
+            .iter()
+            .min_by(|a, b| self.compare(available, now, a, b))
+            .cloned()
+    }
+
+    /// `a` before `b` when it scores more, was used later, or comes first
+    /// in `available`.
+    fn compare(&self, available: &[EntryKey], now: u64, a: &EntryKey, b: &EntryKey) -> Ordering {
         let order = |key: &EntryKey| {
             available
                 .iter()
                 .position(|k| k == key)
                 .unwrap_or(usize::MAX)
         };
-        let better = |a: &EntryKey, b: &EntryKey| {
-            self.score(b, now)
-                .total_cmp(&self.score(a, now))
-                .then_with(|| self.last_use(b).cmp(&self.last_use(a)))
-                .then_with(|| order(a).cmp(&order(b)))
-        };
+        self.score(b, now)
+            .total_cmp(&self.score(a, now))
+            .then_with(|| self.last_use(b).cmp(&self.last_use(a)))
+            .then_with(|| order(a).cmp(&order(b)))
+    }
+
+    #[sismo::function("creation::rank")]
+    fn rank(&self, available: &[EntryKey], now: u64) -> Vec<EntryKey> {
         let mut tiles: Vec<EntryKey> = self
             .tiles
             .iter()
@@ -126,7 +145,7 @@ impl UsageLog {
             .filter(|k| !tiles.contains(k))
             .cloned()
             .collect();
-        challengers.sort_by(better);
+        challengers.sort_by(|a, b| self.compare(available, now, a, b));
         let mut challengers = challengers.into_iter();
         while tiles.len() < TILES {
             match challengers.next() {
@@ -212,6 +231,17 @@ mod tests {
         let before = log.tiles.clone();
         let tiles = log.choose_tiles(&defaults(), now);
         assert_eq!(tiles, before, "1.05 does not beat 1.0 by a quarter");
+    }
+
+    #[test]
+    fn favorite_is_the_most_created_once_warm() {
+        let mut log = UsageLog::default();
+        assert_eq!(log.favorite(&defaults(), 0), defaults().first().cloned());
+        for at in 0..6 {
+            log.record(key("pdf"), at);
+        }
+        log.record(key("note"), 7);
+        assert_eq!(log.favorite(&defaults(), DAY_MS), Some(key("pdf")));
     }
 
     #[test]

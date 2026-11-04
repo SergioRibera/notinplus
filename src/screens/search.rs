@@ -108,9 +108,10 @@ fn create_lines(query: &str) -> Vec<Line> {
 /// Recently changed documents, for the empty field.
 #[sismo::function("search::recent_docs")]
 fn recent_docs(data: &LibraryData) -> Vec<ItemId> {
-    let mut items: Vec<_> = data.live_items().collect();
-    items.sort_by_key(|i| std::cmp::Reverse(i.updated_at));
-    items.into_iter().take(RECENT_DOCS).map(|i| i.id).collect()
+    data.recent_items(RECENT_DOCS)
+        .into_iter()
+        .map(|i| i.id)
+        .collect()
 }
 
 #[sismo::function("search::lines")]

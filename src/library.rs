@@ -1597,6 +1597,15 @@ impl LibraryData {
         self.index.items.iter().filter(|i| i.trashed.is_none())
     }
 
+    /// The `count` items outside the trash changed last, newest first.
+    #[must_use]
+    pub fn recent_items(&self, count: usize) -> Vec<&Item> {
+        let mut items: Vec<&Item> = self.live_items().collect();
+        items.sort_by_key(|i| std::cmp::Reverse(i.updated_at));
+        items.truncate(count);
+        items
+    }
+
     /// Every folder outside the trash.
     pub fn live_folders(&self) -> impl Iterator<Item = &Folder> {
         self.index.folders.iter().filter(|f| f.trashed.is_none())
