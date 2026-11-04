@@ -123,11 +123,15 @@ pub fn configure_with(editor: MarkdownEditor, sink: SnapshotSink) -> MarkdownEdi
         // Menus stay in what the system bars and the keyboard leave visible.
         .popup_area(notein_ui_kit::safe_frame())
         .syntax_reveal(show_marks())
-        // Long notes build their blocks as they scroll into view.
+        // Long notes build their blocks as they scroll into view and drop
+        // them again once they scroll away: every mounted text block
+        // listens to global pointer events, so a note read end to end
+        // must not keep hundreds of them alive.
         .block_shell(|block| {
             Lazy::new(block.content)
                 .height_hint(block.height_hint)
                 .pinned(block.pinned)
+                .recycle(true)
                 .into_element()
         })
         .decorator(SchemeEmbed::new(deep_link::SCHEME, |embed| {
