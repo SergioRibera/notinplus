@@ -17,9 +17,11 @@ android_package = "dev.istmo.runtime"
 
 # Launcher icon: the iOS app icon and the legacy Android mipmaps come from
 # `image`; Android 8+ uses the adaptive layers (paper + margin rule behind,
-# the handwritten n in front).
+# the handwritten n in front); desktops (window, Windows .exe) take the
+# rounded tile, since nothing masks icons there.
 [app.icon]
-image = "assets/brand/ios/AppIcon-1024.png"
+image   = "assets/brand/ios/AppIcon-1024.png"
+desktop = "assets/brand/png/notinplus-tile-1024.png"
 
 [app.icon.android]
 foreground = "assets/brand/android/ic_launcher_foreground.xml"

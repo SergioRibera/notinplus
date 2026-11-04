@@ -121,21 +121,21 @@ notein-i18n = { path = "crates/notein-i18n", features = ["build"] }
 [patch.crates-io]
 # Share targets that open a deep link from the launcher, until istmo
 # publishes it.
-istmo = { git = "https://github.com/SergioRibera/istmo", rev = "048a179" }
-istmo-android = { git = "https://github.com/SergioRibera/istmo", rev = "048a179" }
-istmo-build = { git = "https://github.com/SergioRibera/istmo", rev = "048a179" }
-istmo-camera = { git = "https://github.com/SergioRibera/istmo", rev = "048a179" }
-istmo-core = { git = "https://github.com/SergioRibera/istmo", rev = "048a179" }
-istmo-data-store = { git = "https://github.com/SergioRibera/istmo", rev = "048a179" }
-istmo-file-picker = { git = "https://github.com/SergioRibera/istmo", rev = "048a179" }
-istmo-ios = { git = "https://github.com/SergioRibera/istmo", rev = "048a179" }
-istmo-macros = { git = "https://github.com/SergioRibera/istmo", rev = "048a179" }
-istmo-opener = { git = "https://github.com/SergioRibera/istmo", rev = "048a179" }
-istmo-pen = { git = "https://github.com/SergioRibera/istmo", rev = "048a179" }
-istmo-plugins = { git = "https://github.com/SergioRibera/istmo", rev = "048a179" }
-istmo-plugins-schema = { git = "https://github.com/SergioRibera/istmo", rev = "048a179" }
-istmo-share = { git = "https://github.com/SergioRibera/istmo", rev = "048a179" }
-istmo-window = { git = "https://github.com/SergioRibera/istmo", rev = "048a179" }
+istmo = { git = "https://github.com/SergioRibera/istmo", rev = "9357462" }
+istmo-android = { git = "https://github.com/SergioRibera/istmo", rev = "9357462" }
+istmo-build = { git = "https://github.com/SergioRibera/istmo", rev = "9357462" }
+istmo-camera = { git = "https://github.com/SergioRibera/istmo", rev = "9357462" }
+istmo-core = { git = "https://github.com/SergioRibera/istmo", rev = "9357462" }
+istmo-data-store = { git = "https://github.com/SergioRibera/istmo", rev = "9357462" }
+istmo-file-picker = { git = "https://github.com/SergioRibera/istmo", rev = "9357462" }
+istmo-ios = { git = "https://github.com/SergioRibera/istmo", rev = "9357462" }
+istmo-macros = { git = "https://github.com/SergioRibera/istmo", rev = "9357462" }
+istmo-opener = { git = "https://github.com/SergioRibera/istmo", rev = "9357462" }
+istmo-pen = { git = "https://github.com/SergioRibera/istmo", rev = "9357462" }
+istmo-plugins = { git = "https://github.com/SergioRibera/istmo", rev = "9357462" }
+istmo-plugins-schema = { git = "https://github.com/SergioRibera/istmo", rev = "9357462" }
+istmo-share = { git = "https://github.com/SergioRibera/istmo", rev = "9357462" }
+istmo-window = { git = "https://github.com/SergioRibera/istmo", rev = "9357462" }
 winit ={ git = "https://github.com/SergioRibera/winit", branch = "notein-native-input" }
 # Touch editing and soft keyboard work, on top of freya 0.5.0-rc.13 (main).
 freya = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
