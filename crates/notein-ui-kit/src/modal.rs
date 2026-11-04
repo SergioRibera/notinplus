@@ -82,13 +82,15 @@ pub enum ModalPlacement {
 }
 
 impl ModalPlacement {
-    /// How far below its rest the card sits at entrance progress `settle`
-    /// (0 just opened, 1 at rest). Only a sheet comes up from the edge it
-    /// is anchored to; a floating card shows at rest.
-    fn rise(self, settle: f32) -> f32 {
+    /// Card scale and vertical offset at entrance progress `settle`
+    /// (0 just opened, 1 at rest). A sheet comes up from the edge it is
+    /// anchored to; a floating card grows in place.
+    fn entrance(self, settle: f32) -> (f32, f32) {
+        let rest = 1.0 - settle;
         match self {
-            Self::BottomSheet => 48.0 * (1.0 - settle),
-            Self::Center | Self::Manual => 0.0,
+            Self::Center => (0.04f32.mul_add(-rest, 1.0), 0.0),
+            Self::BottomSheet => (1.0, 48.0 * rest),
+            Self::Manual => (0.05f32.mul_add(-rest, 1.0), 0.0),
         }
     }
 }
@@ -529,8 +531,9 @@ impl std::fmt::Debug for ModalOverlay {
 /// The card is never faded: freya applies opacity to every node on its
 /// own, so a half-transparent card shows its own panels and the veil
 /// through each other. The veil fades in behind it, and back out, a
-/// little faster, when `leaving`; only sheets move with the card's
-/// progress (see [`ModalPlacement::rise`]). `instant` modals skip both.
+/// little faster, when `leaving`, while the card grows (floating) or
+/// rises (sheets) with its progress (see [`ModalPlacement::entrance`]).
+/// `instant` modals skip both.
 /// While `waiting` the entrance holds still and starts once it clears; a
 /// modal that waited found the veil already up and never fades it in.
 #[cfg_attr(feature = "sismo", sismo::function("kit::modal_use_progress"))]
@@ -610,6 +613,7 @@ impl Component for ModalOverlay {
         let ModalDrag(dragged) = use_provide_context(|| ModalDrag(State::create(0.0)));
         let cleared = 1.0 - dragged.read().clamp(0.0, 1.0);
         let (scrim, blur) = self.veil.paint(model.backdrop_alpha, fade * cleared);
+        let (scale, rise) = placement.entrance(settle);
         let opened_at = model.opened_at;
         // A pinned width never runs past the side gutters.
         let body_width = model.width.map(|w| w.min((frame.width() - 32.0).max(0.0)));
@@ -636,7 +640,8 @@ impl Component for ModalOverlay {
             .maybe(body_width.is_some(), |r| {
                 r.width(Size::px(body_width.unwrap_or_default()))
             })
-            .offset_y(placement.rise(settle))
+            .offset_y(rise)
+            .scale((scale, scale))
             .child(body);
 
         let card_layer = match placement {
