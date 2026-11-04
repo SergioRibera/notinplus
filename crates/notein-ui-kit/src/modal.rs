@@ -84,13 +84,13 @@ pub enum ModalPlacement {
 impl ModalPlacement {
     /// Card scale and vertical offset at entrance progress `settle`
     /// (0 just opened, 1 at rest). A sheet comes up from the edge it is
-    /// anchored to; a floating card grows in place.
+    /// anchored to, a dialog grows in place and a popover shows at rest.
     fn entrance(self, settle: f32) -> (f32, f32) {
         let rest = 1.0 - settle;
         match self {
             Self::Center => (0.04f32.mul_add(-rest, 1.0), 0.0),
             Self::BottomSheet => (1.0, 48.0 * rest),
-            Self::Manual => (0.05f32.mul_add(-rest, 1.0), 0.0),
+            Self::Manual => (1.0, 0.0),
         }
     }
 }
