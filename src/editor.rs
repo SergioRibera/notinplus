@@ -23,7 +23,7 @@ use notein_i18n::tr;
 use notein_plugin::bookmark::SourceRef;
 use notein_plugin::services::Placement;
 use notein_ui_kit::theme::{Palette, palette};
-use notein_ui_kit::{RefChip, tokens};
+use notein_ui_kit::{Lazy, RefChip, tokens};
 
 use crate::deep_link;
 use crate::references::{self, Insert};
@@ -123,6 +123,13 @@ pub fn configure_with(editor: MarkdownEditor, sink: SnapshotSink) -> MarkdownEdi
         // Menus stay in what the system bars and the keyboard leave visible.
         .popup_area(notein_ui_kit::safe_frame())
         .syntax_reveal(show_marks())
+        // Long notes build their blocks as they scroll into view.
+        .block_shell(|block| {
+            Lazy::new(block.content)
+                .height_hint(block.height_hint)
+                .pinned(block.pinned)
+                .into_element()
+        })
         .decorator(SchemeEmbed::new(deep_link::SCHEME, |embed| {
             Chip {
                 target: SourceRef::from_link(embed.url),

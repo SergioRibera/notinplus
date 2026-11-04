@@ -2,6 +2,7 @@
 
 mod block;
 pub(crate) mod header;
+mod hint;
 mod image;
 mod math;
 mod paint;
@@ -27,7 +28,7 @@ use self::block::{BlockView, TocEntry};
 use self::suggest::{MenuSource, SlashMenu};
 use crate::controller::{EditorController, EditorState, ImagePicker, RemoteCaret};
 use crate::decorator::{Decorator, Decorators};
-use crate::document::{Abbreviation, BlockKind, Document, Inline, TextTarget};
+use crate::document::{Abbreviation, BlockId, BlockKind, Document, Inline, TextTarget};
 use crate::markdown::{Dialect, Extensions, ParseOptions};
 use crate::popup::PopupArea;
 use crate::theme::EditorTheme;
@@ -118,6 +119,54 @@ impl KeyboardRequest {
     }
 }
 
+/// A block as handed to [`MarkdownEditor::block_shell`], to be wrapped in
+/// whatever the host puts around every block.
+#[derive(Clone, PartialEq)]
+pub struct BlockShell {
+    pub block: BlockId,
+    /// Height the block will most likely take, from its kind and text,
+    /// for shells that hold its place before building it.
+    pub height_hint: f32,
+    /// Whether the block must be built even while off screen: the caret
+    /// or someone else's caret is in it.
+    pub pinned: bool,
+    /// The block itself.
+    pub content: Element,
+}
+
+impl fmt::Debug for BlockShell {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BlockShell")
+            .field("block", &self.block)
+            .field("height_hint", &self.height_hint)
+            .field("pinned", &self.pinned)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Wraps every block, see [`MarkdownEditor::block_shell`].
+#[derive(Clone, Default)]
+struct BlockShellHandler(Option<Rc<dyn Fn(BlockShell) -> Element>>);
+
+impl PartialEq for BlockShellHandler {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+}
+
+impl BlockShellHandler {
+    fn wrap(&self, shell: BlockShell) -> Element {
+        match &self.0 {
+            Some(handler) => handler(shell),
+            None => shell.content,
+        }
+    }
+}
+
 /// Values every block needs, compared cheaply between renders.
 #[derive(Clone, PartialEq)]
 pub(crate) struct Shared {
@@ -176,6 +225,7 @@ pub struct MarkdownEditor {
     on_link: LinkHandler,
     request_keyboard: KeyboardRequest,
     on_input_context: InputContextHandler,
+    block_shell: BlockShellHandler,
     image_picker: Option<ImagePicker>,
     popup_area: Option<Area>,
     remote_carets: Vec<RemoteCaret>,
@@ -212,6 +262,7 @@ impl Default for MarkdownEditor {
             on_link: LinkHandler::default(),
             request_keyboard: KeyboardRequest::default(),
             on_input_context: InputContextHandler::default(),
+            block_shell: BlockShellHandler::default(),
             image_picker: None,
             popup_area: None,
             remote_carets: Vec::new(),
@@ -375,6 +426,15 @@ impl MarkdownEditor {
         self.on_input_context = InputContextHandler(Some(Rc::new(on_input_context)));
         self
     }
+
+    /// Put `shell` around every block. Hosts use it to build blocks only
+    /// as they scroll into view: the [`BlockShell`] carries a height to
+    /// hold meanwhile and whether the block is needed off screen anyway.
+    #[must_use]
+    pub fn block_shell(mut self, shell: impl Fn(BlockShell) -> Element + 'static) -> Self {
+        self.block_shell = BlockShellHandler(Some(Rc::new(shell)));
+        self
+    }
 }
 
 impl KeyExt for MarkdownEditor {
@@ -461,33 +521,53 @@ impl Component for MarkdownEditor {
             .flatten();
         let toc = toc_entries(document);
         let focused = view.selection.map(|selection| selection.target);
+        // Only the width: scrolling moves the area and must not re-render.
+        let mut width = use_state(|| 0f32);
+        let measured_width = *width.read();
 
         #[cfg(feature = "sismo")]
         sismo::scope!("markdown::editor_blocks");
         let blocks = document.blocks().iter().map(|block| {
+            let toc_len = toc.len();
             let toc = if matches!(block.kind, BlockKind::TableOfContents) {
                 toc.clone()
             } else {
                 Vec::new()
             };
             let id = block.id;
+            let caret = view
+                .caret
+                .filter(|request| request.selection.target.block == id);
+            let focused = focused.filter(|target| target.block == id);
+            let pinned = caret.is_some()
+                || focused.is_some()
+                || shared
+                    .remote_carets
+                    .iter()
+                    .any(|(target, _)| target.block == id);
+            let height_hint = hint::height_hint(block, &theme, measured_width, toc_len);
+            let content = BlockView {
+                block: block.clone(),
+                ordinal: document.ordinal(id),
+                caret,
+                focused,
+                toc,
+                placeholder: placeholder.clone(),
+                shared: shared.clone(),
+            }
+            .into_element();
             rect()
-                .key(block.id)
+                .key(id)
                 .width(Size::fill())
                 .on_sized(move |event: Event<SizedEventData>| {
                     controller.record_block_area(id, event.area.min_y(), event.area.max_y());
                 })
-                .child(BlockView {
-                    block: block.clone(),
-                    ordinal: document.ordinal(block.id),
-                    caret: view
-                        .caret
-                        .filter(|request| request.selection.target.block == block.id),
-                    focused: focused.filter(|target| target.block == block.id),
-                    toc,
-                    placeholder: placeholder.clone(),
-                    shared: shared.clone(),
-                })
+                .child(self.block_shell.wrap(BlockShell {
+                    block: id,
+                    height_hint,
+                    pinned,
+                    content,
+                }))
                 .into_element()
         });
 
@@ -503,6 +583,7 @@ impl Component for MarkdownEditor {
             .text_style(text_style)
             .on_sized(move |event: Event<SizedEventData>| {
                 controller.record_root_top(event.area.min_y());
+                width.set_if_modified(event.area.width());
             })
             .on_press(move |_| {
                 if !read_only && controller.peek(super::controller::EditorState::selection_is_none)

@@ -33,8 +33,8 @@ pub use decorator::{
     SchemeEmbed, SpanStyle, TextMatch, TransclusionContext,
 };
 pub use editor::{
-    BlockSuggestions, InputContext, MarkdownEditor, Suggestion, SuggestionAction, SuggestionGroup,
-    SuggestionRun, SuggestionSource,
+    BlockShell, BlockSuggestions, InputContext, MarkdownEditor, Suggestion, SuggestionAction,
+    SuggestionGroup, SuggestionRun, SuggestionSource,
 };
 pub use labels::{Label, Labels};
 pub use popup::PopupReporter;
@@ -52,10 +52,10 @@ pub mod prelude {
     #[cfg(feature = "toolbar")]
     pub use crate::toolbar::MarkdownToolbar;
     pub use crate::{
-        ActiveFormat, AtomSlot, BlockSuggestions, CodeContext, Decorator, Decorators, EditorColors,
-        EditorController, EditorTheme, EmbedContext, ImageContext, ImagePicker, ImageRequest,
-        InputContext, Label, Labels, MarkdownEditor, MathContext, PopupReporter, PrefixTokens,
-        RemoteCaret, SchemeEmbed, Selection, SpanStyle, Suggestion, SuggestionAction,
+        ActiveFormat, AtomSlot, BlockShell, BlockSuggestions, CodeContext, Decorator, Decorators,
+        EditorColors, EditorController, EditorTheme, EmbedContext, ImageContext, ImagePicker,
+        ImageRequest, InputContext, Label, Labels, MarkdownEditor, MathContext, PopupReporter,
+        PrefixTokens, RemoteCaret, SchemeEmbed, Selection, SpanStyle, Suggestion, SuggestionAction,
         SuggestionGroup, SuggestionRun, SuggestionSource, TextMatch, TextPosition,
         TransclusionContext, use_editor_controller, use_editor_controller_with,
     };
