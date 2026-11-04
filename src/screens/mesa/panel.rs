@@ -9,7 +9,7 @@ use notein_plugin::bookmark::SourceRef;
 use notein_plugin::services::Placement;
 use notein_ui_kit::theme::palette;
 use notein_ui_kit::{
-    Button, EmptyState, Group, ListRow, SearchField, Section, Segmented, Sheet, Tag, Text,
+    Button, EmptyState, Group, Lazy, ListRow, SearchField, Section, Segmented, Sheet, Tag, Text,
     TextRole, tokens,
 };
 
@@ -156,15 +156,17 @@ fn bookmarks(
         })
         .collect();
     marks.sort_by_key(|m| std::cmp::Reverse(m.updated_at));
+    // Dense rows with a subtitle: built as they scroll into view.
     let rows: Vec<Element> = marks
         .into_iter()
-        .map(|mark| {
+        .enumerate()
+        .map(|(at, mark)| {
             let anchor = mark.anchor.clone();
             let kind_id = kind_id.to_owned();
             let dot = mark
                 .color
                 .map_or(p.t3, |[r, g, b]| Color::from_rgb(r, g, b));
-            ListRow::new(mark.title.clone())
+            let row = ListRow::new(mark.title.clone())
                 .subtitle(mark.snippet)
                 .leading(notein_ui_kit::Leading::Element(
                     rect()
@@ -175,7 +177,10 @@ fn bookmarks(
                         .into_element(),
                 ))
                 .dense(true)
-                .on_press(move |_| jump(&kind_id, id, anchor.clone()))
+                .on_press(move |_| jump(&kind_id, id, anchor.clone()));
+            Lazy::new(row)
+                .key(at)
+                .height_hint(tokens::size::ROW)
                 .into_element()
         })
         .collect();
@@ -238,8 +243,11 @@ impl Component for PanelBody {
         let id = item.id;
         let kind_id = item.kind.plugin_id.clone();
         let kind = crate::plugins::kind(&kind_id);
-        let content = crate::plugins::content::read(id, &kind_id)
-            .unwrap_or_else(|| kind.as_ref().map(|k| k.empty_content()).unwrap_or_default());
+        // Cached: the panel renders with every change of the desk, and
+        // a note's content is read and parsed again only once it changed.
+        let content = crate::plugins::content::read_cached(id, &kind_id).unwrap_or_else(|| {
+            Arc::from(kind.as_ref().map(|k| k.empty_content()).unwrap_or_default())
+        });
         let page = rect()
             .width(Size::fill())
             .height(Size::fill())

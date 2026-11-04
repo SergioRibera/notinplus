@@ -75,7 +75,7 @@ impl Glance {
 /// Tell open faces of `item` that its content changed elsewhere.
 #[sismo::function("plugins::content_notify_remote")]
 pub fn notify_remote(item: ItemId) {
-    Glance::forget(item);
+    changed(item);
     crate::sync::open_docs::notify_snapshot(item);
 }
 
@@ -86,6 +86,39 @@ pub fn read(item: ItemId, kind: &str) -> Option<Vec<u8>> {
     bodies::read_plugin_snapshot(item, kind).ok().flatten()
 }
 
+type CachedContent = (String, Arc<[u8]>);
+
+/// Snapshots read lately, by item, with the kind they were read for.
+static CONTENTS: std::sync::LazyLock<Mutex<HashMap<ItemId, CachedContent>>> =
+    std::sync::LazyLock::new(Mutex::default);
+
+/// [`read`] for views that render often, like the panel beside the
+/// document: the bytes are read once and kept until the snapshot
+/// changes through [`write`], a face's save or sync.
+#[must_use]
+#[sismo::function("plugins::content_read_cached")]
+pub fn read_cached(item: ItemId, kind: &str) -> Option<Arc<[u8]>> {
+    let mut cache = CONTENTS.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((for_kind, bytes)) = cache.get(&item)
+        && for_kind == kind
+    {
+        return Some(Arc::clone(bytes));
+    }
+    let bytes: Arc<[u8]> = Arc::from(read(item, kind)?);
+    cache.insert(item, (kind.to_owned(), Arc::clone(&bytes)));
+    Some(bytes)
+}
+
+/// The snapshot of `item` changed: glances and cached reads are stale.
+#[sismo::function("plugins::content_changed")]
+fn changed(item: ItemId) {
+    Glance::forget(item);
+    CONTENTS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(&item);
+}
+
 /// Replace the content bytes of `item` and let sync and search know.
 #[sismo::function("plugins::content_write")]
 pub fn write(item: ItemId, kind: &str, bytes: &[u8]) {
@@ -93,7 +126,7 @@ pub fn write(item: ItemId, kind: &str, bytes: &[u8]) {
         log::error!("content write {item}: {err}");
         return;
     }
-    Glance::forget(item);
+    changed(item);
     crate::sync::local_changed();
 }
 
@@ -180,7 +213,7 @@ fn store_unsaved(item: ItemId, kind: &str) {
         log::error!("content save {item}: {err}");
         return;
     }
-    Glance::forget(item);
+    changed(item);
     crate::sync::snapshot_changed(item);
     record_references(item, kind, &bytes);
     reindex(item);
