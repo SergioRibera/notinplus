@@ -75,7 +75,7 @@ corrido; como elemento gráfico supera 3:1 en todos los fondos aprobados.
 
 Otros:
 - `web/`: favicon.ico (16/32/48), favicon.svg, PNG, apple-touch-icon, maskable, `site.webmanifest`, `head-snippet.html`.
-- `android/`: capas del ícono adaptativo `ic_launcher_bg/fg.svg` (lienzo de 108 dp, contenido dentro de la zona segura de 66 dp), `ic_launcher_mono.svg` para íconos temáticos y PNG heredados.
+- `android/`: capas del ícono adaptativo como vectores de Android (`ic_launcher_background/foreground/monochrome.xml`, las que usa la app vía `[app.icon.android]` en `istmo.toml`), sus SVG de referencia (lienzo de 108 dp, contenido dentro de la zona segura de 66 dp) y PNG heredados.
 - `ios/`: AppIcon 1024.
 - `png/`: rasters de los logotipos.
 
@@ -108,5 +108,4 @@ archivos y fija los viewBox. `source/presentation-spec.json` construye
 ## Pendiente
 
 - Búsqueda profesional de marca registrada y búsqueda inversa de imágenes.
-- Conectar `android/` y `ios/` a los recursos reales de launcher de la app.
 - Prueba en dispositivo de los íconos adaptativos y temáticos.

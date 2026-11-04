@@ -4114,7 +4114,7 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 [[package]]
 name = "istmo"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=fdb5532#fdb5532496b6c7cbc691c16fa6e4d1320a607e4c"
+source = "git+https://github.com/SergioRibera/istmo?rev=048a179#048a179918e0faadc1694bf489516b35c2bb1ba6"
 dependencies = [
  "bincode 2.0.1",
  "istmo-android",
@@ -4127,7 +4127,7 @@ dependencies = [
 [[package]]
 name = "istmo-android"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=fdb5532#fdb5532496b6c7cbc691c16fa6e4d1320a607e4c"
+source = "git+https://github.com/SergioRibera/istmo?rev=048a179#048a179918e0faadc1694bf489516b35c2bb1ba6"
 dependencies = [
  "android-activity",
  "bincode 2.0.1",
@@ -4142,7 +4142,7 @@ dependencies = [
 [[package]]
 name = "istmo-build"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=fdb5532#fdb5532496b6c7cbc691c16fa6e4d1320a607e4c"
+source = "git+https://github.com/SergioRibera/istmo?rev=048a179#048a179918e0faadc1694bf489516b35c2bb1ba6"
 dependencies = [
  "bincode 2.0.1",
  "globset",
@@ -4159,7 +4159,7 @@ dependencies = [
 [[package]]
 name = "istmo-camera"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=fdb5532#fdb5532496b6c7cbc691c16fa6e4d1320a607e4c"
+source = "git+https://github.com/SergioRibera/istmo?rev=048a179#048a179918e0faadc1694bf489516b35c2bb1ba6"
 dependencies = [
  "bincode 2.0.1",
  "flume",
@@ -4174,7 +4174,7 @@ dependencies = [
 [[package]]
 name = "istmo-core"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=fdb5532#fdb5532496b6c7cbc691c16fa6e4d1320a607e4c"
+source = "git+https://github.com/SergioRibera/istmo?rev=048a179#048a179918e0faadc1694bf489516b35c2bb1ba6"
 dependencies = [
  "bincode 2.0.1",
  "flume",
@@ -4186,7 +4186,7 @@ dependencies = [
 [[package]]
 name = "istmo-data-store"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=fdb5532#fdb5532496b6c7cbc691c16fa6e4d1320a607e4c"
+source = "git+https://github.com/SergioRibera/istmo?rev=048a179#048a179918e0faadc1694bf489516b35c2bb1ba6"
 dependencies = [
  "bincode 2.0.1",
  "istmo-build",
@@ -4198,7 +4198,7 @@ dependencies = [
 [[package]]
 name = "istmo-file-picker"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=fdb5532#fdb5532496b6c7cbc691c16fa6e4d1320a607e4c"
+source = "git+https://github.com/SergioRibera/istmo?rev=048a179#048a179918e0faadc1694bf489516b35c2bb1ba6"
 dependencies = [
  "bincode 2.0.1",
  "istmo-build",
@@ -4220,7 +4220,7 @@ dependencies = [
 [[package]]
 name = "istmo-ios"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=fdb5532#fdb5532496b6c7cbc691c16fa6e4d1320a607e4c"
+source = "git+https://github.com/SergioRibera/istmo?rev=048a179#048a179918e0faadc1694bf489516b35c2bb1ba6"
 dependencies = [
  "bincode 2.0.1",
  "flume",
@@ -4233,7 +4233,7 @@ dependencies = [
 [[package]]
 name = "istmo-macros"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=fdb5532#fdb5532496b6c7cbc691c16fa6e4d1320a607e4c"
+source = "git+https://github.com/SergioRibera/istmo?rev=048a179#048a179918e0faadc1694bf489516b35c2bb1ba6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4243,7 +4243,7 @@ dependencies = [
 [[package]]
 name = "istmo-opener"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=fdb5532#fdb5532496b6c7cbc691c16fa6e4d1320a607e4c"
+source = "git+https://github.com/SergioRibera/istmo?rev=048a179#048a179918e0faadc1694bf489516b35c2bb1ba6"
 dependencies = [
  "bincode 2.0.1",
  "istmo-build",
@@ -4254,7 +4254,7 @@ dependencies = [
 [[package]]
 name = "istmo-pen"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=fdb5532#fdb5532496b6c7cbc691c16fa6e4d1320a607e4c"
+source = "git+https://github.com/SergioRibera/istmo?rev=048a179#048a179918e0faadc1694bf489516b35c2bb1ba6"
 dependencies = [
  "bincode 2.0.1",
  "block2 0.6.2",
@@ -4276,7 +4276,7 @@ dependencies = [
 [[package]]
 name = "istmo-plugins"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=fdb5532#fdb5532496b6c7cbc691c16fa6e4d1320a607e4c"
+source = "git+https://github.com/SergioRibera/istmo?rev=048a179#048a179918e0faadc1694bf489516b35c2bb1ba6"
 dependencies = [
  "bincode 2.0.1",
  "flume",
@@ -4293,7 +4293,7 @@ dependencies = [
 [[package]]
 name = "istmo-plugins-schema"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=fdb5532#fdb5532496b6c7cbc691c16fa6e4d1320a607e4c"
+source = "git+https://github.com/SergioRibera/istmo?rev=048a179#048a179918e0faadc1694bf489516b35c2bb1ba6"
 dependencies = [
  "istmo-build",
 ]
@@ -4301,7 +4301,7 @@ dependencies = [
 [[package]]
 name = "istmo-share"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=fdb5532#fdb5532496b6c7cbc691c16fa6e4d1320a607e4c"
+source = "git+https://github.com/SergioRibera/istmo?rev=048a179#048a179918e0faadc1694bf489516b35c2bb1ba6"
 dependencies = [
  "bincode 2.0.1",
  "dispatch2",
@@ -4324,7 +4324,7 @@ dependencies = [
 [[package]]
 name = "istmo-window"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=fdb5532#fdb5532496b6c7cbc691c16fa6e4d1320a607e4c"
+source = "git+https://github.com/SergioRibera/istmo?rev=048a179#048a179918e0faadc1694bf489516b35c2bb1ba6"
 dependencies = [
  "raw-window-handle",
 ]

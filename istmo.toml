@@ -12,12 +12,19 @@
 # that same package. Override the default `<namespace>.gen` accordingly.
 [app]
 id              = "rs.sergioribera.notinplus"
-name            = "notinplus"
+name            = "NotIn Plus"
 android_package = "dev.istmo.runtime"
-# Launcher icon source. istmo-build derives the iOS asset catalog and the
-# legacy Android mipmaps from it; the adaptive icon (API 26+) lives in
-# android/app/src/main/res/mipmap-anydpi-v26/istmo_launcher.xml.
-icon            = "assets/brand/ios/AppIcon-1024.png"
+
+# Launcher icon: the iOS app icon and the legacy Android mipmaps come from
+# `image`; Android 8+ uses the adaptive layers (paper + margin rule behind,
+# the handwritten n in front).
+[app.icon]
+image = "assets/brand/ios/AppIcon-1024.png"
+
+[app.icon.android]
+foreground = "assets/brand/android/ic_launcher_foreground.xml"
+background = "assets/brand/android/ic_launcher_background.xml"
+monochrome = "assets/brand/android/ic_launcher_monochrome.xml"
 
 # Oldest OS releases we ship to. Android 26 = Oreo (first ART-only + first
 # storage-scoped SDK); iOS 14 matches the rest of the workspace examples.
