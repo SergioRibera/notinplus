@@ -58,6 +58,8 @@
 
         info = {
           name = pname;
+          displayName = "NotIn Plus";
+          icon = ./assets/brand/png/notinplus-tile-1024.png;
           inherit version;
           license = "MIT OR Apache-2.0";
           maintainer = "Sergio Ribera <contact@sergioribera.rs>";
@@ -72,6 +74,9 @@
           desktopEntries = [
             {
               name = "NotIn Plus";
+              # Named after the bundle id: Wayland matches the window's app id
+              # against it, and flatpak requires it.
+              fileName = "rs.sergioribera.notinplus";
               exec = "/opt/${pname}/bin/${pname} %F";
               categories = [
                 "Office"

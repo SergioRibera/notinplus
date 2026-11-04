@@ -66,7 +66,7 @@ corrido; como elemento gráfico supera 3:1 en todos los fondos aprobados.
 | `notinplus-horizontal.svg` | Logotipo principal (tile + nombre) |
 | `notinplus-stacked.svg` | Espacios cuadrados: splash, portada, avatar grande |
 | `notinplus-wordmark.svg` | Solo el nombre, cuando el ícono ya está presente |
-| `notinplus-tile.svg` | Ícono con tile redondeado (web, documentación) |
+| `notinplus-tile.svg` | Ícono con tile redondeado (web, documentación, escritorio: `png/notinplus-tile-1024.png` es la fuente de `[app.icon] desktop` y de `info.icon` en `flake.nix`) |
 | `notinplus-tile-small.svg` | Corte para tamaños chicos, ≤ 32 px (favicon): trazos más gruesos, n más grande |
 | `notinplus-app-icon.svg` | Ícono de app a sangre (iOS/Android aplican la máscara) |
 | `notinplus-symbol.svg` | Símbolo sin tile: regla + n |
