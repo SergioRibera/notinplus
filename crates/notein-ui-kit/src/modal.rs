@@ -82,40 +82,19 @@ pub enum ModalPlacement {
 }
 
 impl ModalPlacement {
-    /// Card scale and vertical offset at entrance progress `settle`
-    /// (0 just opened, 1 at rest).
-    fn entrance(self, settle: f32) -> (f32, f32) {
-        let rest = 1.0 - settle;
+    /// How far below its rest the card sits at entrance progress `settle`
+    /// (0 just opened, 1 at rest). Only a sheet comes up from the edge it
+    /// is anchored to; a floating card shows at rest.
+    fn rise(self, settle: f32) -> f32 {
         match self {
-            Self::Center => (0.04f32.mul_add(-rest, 1.0), 0.0),
-            Self::BottomSheet => (1.0, 48.0 * rest),
-            Self::Manual => (0.05f32.mul_add(-rest, 1.0), 0.0),
+            Self::BottomSheet => 48.0 * (1.0 - settle),
+            Self::Center | Self::Manual => 0.0,
         }
     }
 }
 
 /// How long a closing modal takes to leave.
 const EXIT_MS: u64 = 170;
-
-/// How far the card of the modal around it has come in, 0 to 1 (and back
-/// to 0 while it leaves). Bodies of [`ModalPlacement::Manual`] modals move
-/// themselves with it.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct ModalMotion(pub State<f32>);
-
-impl std::fmt::Debug for ModalMotion {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("ModalMotion").field(&*self.0.peek()).finish()
-    }
-}
-
-impl ModalMotion {
-    /// The progress now, 1 outside any modal.
-    #[must_use]
-    pub fn settle() -> f32 {
-        try_consume_context::<Self>().map_or(1.0, |motion| *motion.0.read())
-    }
-}
 
 /// How far the card of the modal around it was dragged away, 0 to 1. The
 /// veil clears as much, so the window shows through as a sheet goes down.
@@ -549,9 +528,9 @@ impl std::fmt::Debug for ModalOverlay {
 ///
 /// The card is never faded: freya applies opacity to every node on its
 /// own, so a half-transparent card shows its own panels and the veil
-/// through each other. It grows (centred), rises (sheets) or drops in
-/// (popovers) while the veil fades in behind it, and walks the same path
-/// back, a little faster, when `leaving`. `instant` modals skip both.
+/// through each other. The veil fades in behind it, and back out, a
+/// little faster, when `leaving`; only sheets move with the card's
+/// progress (see [`ModalPlacement::rise`]). `instant` modals skip both.
 /// While `waiting` the entrance holds still and starts once it clears; a
 /// modal that waited found the veil already up and never fades it in.
 #[cfg_attr(feature = "sismo", sismo::function("kit::modal_use_progress"))]
@@ -631,11 +610,6 @@ impl Component for ModalOverlay {
         let ModalDrag(dragged) = use_provide_context(|| ModalDrag(State::create(0.0)));
         let cleared = 1.0 - dragged.read().clamp(0.0, 1.0);
         let (scrim, blur) = self.veil.paint(model.backdrop_alpha, fade * cleared);
-        let (scale, rise) = placement.entrance(settle);
-        // A manual body moves itself (a popover knows which side of its
-        // trigger it took); it reads how far the card has settled.
-        let ModalMotion(mut motion) = use_provide_context(|| ModalMotion(State::create(1.0)));
-        motion.set_if_modified(settle);
         let opened_at = model.opened_at;
         // A pinned width never runs past the side gutters.
         let body_width = model.width.map(|w| w.min((frame.width() - 32.0).max(0.0)));
@@ -662,8 +636,7 @@ impl Component for ModalOverlay {
             .maybe(body_width.is_some(), |r| {
                 r.width(Size::px(body_width.unwrap_or_default()))
             })
-            .offset_y(rise)
-            .scale((scale, scale))
+            .offset_y(placement.rise(settle))
             .child(body);
 
         let card_layer = match placement {
