@@ -30,7 +30,7 @@ use notein_ui_kit::theme::palette;
 use super::bottom_nav;
 use super::chapter::plan_chapter;
 use super::reader::{
-    self, CrossRefView, FootnoteView, ScrollTarget, VerseScrollCtx, cross_refs_by_verse,
+    self, CrossRefView, FootnoteView, ScrollTarget, VerseScrollCtx, VerseTops, cross_refs_by_verse,
     footnotes_by_verse,
 };
 use crate::BibleAnchor;
@@ -128,6 +128,7 @@ pub(super) struct Reader {
     flash: State<Option<u16>>,
     scroll_to: State<Option<ScrollTarget>>,
     scroll: ScrollController,
+    verse_tops: VerseTops,
     /// The verse showing in the panel beside the text, with its
     /// cross-references.
     refs: State<Option<refs::VerseRefs>>,
@@ -167,9 +168,16 @@ impl Reader {
     #[cfg_attr(feature = "sismo", sismo::function("bible::go"))]
     pub(super) fn go(&self, book: &str, chapter: u16, verse: u16) {
         let mut state = self.state;
+        let here = {
+            let st = state.peek();
+            st.current_book == book && st.current_chapter == chapter
+        };
         if let Err(e) = state.write().jump_to(&self.db, book, chapter) {
             log::warn!("bible: go to {book} {chapter}: {e}");
             return;
+        }
+        if !here {
+            self.verse_tops.clear();
         }
         self.show(verse);
     }
@@ -177,9 +185,11 @@ impl Reader {
     /// Scroll to `verse` (the top for 0) and wash it for a moment.
     #[cfg_attr(feature = "sismo", sismo::function("bible::scroll_to_verse"))]
     fn show(&self, verse: u16) {
+        let mut scroll = self.scroll;
         if verse == 0 {
-            let mut scroll = self.scroll;
             scroll.scroll_to_y(0);
+        } else if let Some(offset) = self.verse_tops.offset_of(verse) {
+            scroll.scroll_to_y(offset);
         } else {
             let mut scroll_to = self.scroll_to;
             scroll_to.set(Some(ScrollTarget::new(verse)));
@@ -211,6 +221,16 @@ impl Reader {
         if let Err(e) = state.write().switch_bible(&self.db, bible_id) {
             log::warn!("bible: switch to {bible_id}: {e}");
         }
+        self.verse_tops.clear();
+    }
+
+    /// Open the chapter the state moved to at its top.
+    fn to_top(&self) {
+        self.verse_tops.clear();
+        let mut scroll_to = self.scroll_to;
+        scroll_to.set(None);
+        let mut scroll = self.scroll;
+        scroll.scroll_to_y(0);
     }
 
     /// The chapter after (or before) the current one, across books.
@@ -223,8 +243,10 @@ impl Reader {
         } else {
             state.write().go_prev_chapter(&self.db, &books)
         };
-        if let Err(e) = moved {
-            log::warn!("bible: chapter step: {e}");
+        match moved {
+            Ok(true) => self.to_top(),
+            Ok(false) => {}
+            Err(e) => log::warn!("bible: chapter step: {e}"),
         }
     }
 
@@ -237,10 +259,12 @@ impl Reader {
         } else {
             state.write().pop_nav_forward()
         };
-        if let Some(entry) = entry
-            && let Err(e) = state.write().jump_to_entry(&self.db, &entry)
-        {
-            log::warn!("bible: history: {e}");
+        let Some(entry) = entry else {
+            return;
+        };
+        match state.write().jump_to_entry(&self.db, &entry) {
+            Ok(()) => self.to_top(),
+            Err(e) => log::warn!("bible: history: {e}"),
         }
     }
 }
@@ -353,6 +377,7 @@ fn use_reader(ctx: &FaceContext<BibleKind>, db: &Db) -> Reader {
         flash: use_state(|| None),
         scroll_to: use_state(|| None),
         scroll: use_scroll_controller(ScrollConfig::default),
+        verse_tops: use_hook(VerseTops::default),
         refs: use_state(|| None),
         panel_tab: use_state(originals::PanelTab::default),
         occurrences: use_state(|| None),
@@ -506,6 +531,7 @@ impl Component for BibleViewer {
             flash_verse: reader.flash,
             scroll_to: reader.scroll_to,
             viewport_top,
+            verse_tops: reader.verse_tops.clone(),
         };
         let body = chapter.as_ref().map_or_else(
             || {

@@ -5,7 +5,7 @@
 //! own state; chapter navigation and selection live on
 //! [`crate::state::BibleViewerState`].
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -56,12 +56,41 @@ impl ScrollTarget {
     }
 }
 
+/// Where each verse marker of the chapter showing sits, measured from the
+/// top of the scrolled content, so a jump within the chapter scrolls at
+/// once instead of waiting for a layout that will not come.
+#[derive(Clone, Debug, Default)]
+pub struct VerseTops(Rc<RefCell<HashMap<u16, f32>>>);
+
+impl VerseTops {
+    fn record(&self, verse: u16, top: f32) {
+        self.0.borrow_mut().insert(verse, top);
+    }
+
+    /// Forget the chapter that was showing.
+    pub fn clear(&self) {
+        self.0.borrow_mut().clear();
+    }
+
+    /// The scroll offset that brings `verse` [`VERSE_SCROLL_MARGIN`] below
+    /// the top of the viewport, once its marker was laid out.
+    #[must_use]
+    pub fn offset_of(&self, verse: u16) -> Option<i32> {
+        #[allow(clippy::cast_possible_truncation)]
+        self.0
+            .borrow()
+            .get(&verse)
+            .map(|top| ((VERSE_SCROLL_MARGIN - top).round() as i32).min(0))
+    }
+}
+
 #[derive(Clone)]
 pub struct VerseScrollCtx {
     pub controller: ScrollController,
     pub flash_verse: State<Option<u16>>,
     pub scroll_to: State<Option<ScrollTarget>>,
     pub viewport_top: State<f32>,
+    pub verse_tops: VerseTops,
 }
 
 impl PartialEq for VerseScrollCtx {
@@ -1122,14 +1151,18 @@ impl Component for VerseMarker {
                 let Some(ctx) = scroll_ctx.as_ref() else {
                     return;
                 };
+                let viewport_top = *ctx.viewport_top.peek();
+                if viewport_top == 0.0 && e.area.min_y() == 0.0 {
+                    return;
+                }
+                let (_, cur_y): (i32, i32) = ctx.controller.into();
+                #[allow(clippy::cast_precision_loss)]
+                ctx.verse_tops
+                    .record(verse, e.area.min_y() - viewport_top - cur_y as f32);
                 let Some(target) = *ctx.scroll_to.peek() else {
                     return;
                 };
                 if target.verse != verse {
-                    return;
-                }
-                let viewport_top = *ctx.viewport_top.peek();
-                if viewport_top == 0.0 && e.area.min_y() == 0.0 {
                     return;
                 }
                 let mut scroll_to = ctx.scroll_to;
@@ -1145,11 +1178,11 @@ impl Component for VerseMarker {
                         ..target
                     }));
                 }
-                let (_, cur_y): (i32, i32) = ctx.controller.into();
+                // Offsets grow negative as the content moves up.
                 #[allow(clippy::cast_possible_truncation)]
-                let desired = cur_y + delta.round() as i32;
+                let desired = cur_y - delta.round() as i32;
                 let mut controller = ctx.controller;
-                controller.scroll_to_y(desired.max(0));
+                controller.scroll_to_y(desired.min(0));
             })
             .child(inner)
     }
