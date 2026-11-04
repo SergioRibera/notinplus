@@ -551,7 +551,7 @@ impl Component for MarkdownEditor {
                     .any(|(target, _)| target.block == id);
             let height_hint = hint::height_hint(block, &theme, measured_width, toc_len);
             let content = BlockView {
-                block: block.clone(),
+                block: Rc::clone(block),
                 ordinal: document.ordinal(id),
                 caret,
                 focused,

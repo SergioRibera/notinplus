@@ -1089,7 +1089,7 @@ impl EditorController {
                     at,
                     Block {
                         id: BlockId::fresh(),
-                        ..block.clone()
+                        ..Block::clone(block)
                     },
                 ));
             }

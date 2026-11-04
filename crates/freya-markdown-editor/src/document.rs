@@ -11,6 +11,7 @@ mod properties;
 mod table;
 
 use std::collections::HashSet;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use calc::{ColumnRef, Expr, ExprError, Number, TrailingCalculation};
@@ -463,7 +464,10 @@ pub struct Abbreviation {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Document {
-    blocks: Vec<Block>,
+    /// Shared with whoever rendered them last: a block is copied only
+    /// when it is edited while a view still holds it, and the view of
+    /// every other block compares by pointer.
+    blocks: Vec<Rc<Block>>,
     pub abbreviations: Vec<Abbreviation>,
 }
 
@@ -475,6 +479,12 @@ impl Default for Document {
 
 impl From<Vec<Block>> for Document {
     fn from(blocks: Vec<Block>) -> Self {
+        Self::from(blocks.into_iter().map(Rc::new).collect::<Vec<_>>())
+    }
+}
+
+impl From<Vec<Rc<Block>>> for Document {
+    fn from(blocks: Vec<Rc<Block>>) -> Self {
         let mut document = Self {
             blocks,
             abbreviations: Vec::new(),
@@ -484,9 +494,14 @@ impl From<Vec<Block>> for Document {
     }
 }
 
+/// `block` on its own, copied if a view still shares it.
+fn take(block: Rc<Block>) -> Block {
+    Rc::try_unwrap(block).unwrap_or_else(|shared| (*shared).clone())
+}
+
 impl Document {
     #[must_use]
-    pub fn blocks(&self) -> &[Block] {
+    pub fn blocks(&self) -> &[Rc<Block>] {
         &self.blocks
     }
 
@@ -497,11 +512,17 @@ impl Document {
 
     #[must_use]
     pub fn block(&self, id: BlockId) -> Option<&Block> {
-        self.blocks.iter().find(|block| block.id == id)
+        self.blocks
+            .iter()
+            .find(|block| block.id == id)
+            .map(|block| &**block)
     }
 
     pub fn block_mut(&mut self, id: BlockId) -> Option<&mut Block> {
-        self.blocks.iter_mut().find(|block| block.id == id)
+        self.blocks
+            .iter_mut()
+            .find(|block| block.id == id)
+            .map(Rc::make_mut)
     }
 
     #[must_use]
@@ -545,7 +566,7 @@ impl Document {
             kind => kind.content().is_none_or(|content| !content.is_empty()),
         });
         if needs_tail {
-            self.blocks.push(Block::paragraph(""));
+            self.blocks.push(Rc::new(Block::paragraph("")));
         }
     }
 
@@ -592,7 +613,8 @@ impl Document {
     #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_insert"))]
     pub fn insert(&mut self, index: usize, block: Block) -> BlockId {
         let id = block.id;
-        self.blocks.insert(index.min(self.blocks.len()), block);
+        self.blocks
+            .insert(index.min(self.blocks.len()), Rc::new(block));
         id
     }
 
@@ -605,7 +627,7 @@ impl Document {
     #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_remove"))]
     pub fn remove(&mut self, id: BlockId) -> Option<Block> {
         let index = self.index_of(id)?;
-        let block = self.blocks.remove(index);
+        let block = take(self.blocks.remove(index));
         self.ensure_editable();
         Some(block)
     }
@@ -652,15 +674,20 @@ impl Document {
     #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_normalize_depths"))]
     fn normalize_depths(&mut self) {
         let mut previous: Option<u8> = None;
-        for block in &mut self.blocks {
-            match &mut block.kind {
-                BlockKind::ListItem { depth, .. } => {
-                    let limit = previous.map_or(0, |depth| depth.saturating_add(1));
-                    *depth = (*depth).min(limit);
-                    previous = Some(*depth);
-                }
-                _ => previous = None,
+        for index in 0..self.blocks.len() {
+            let BlockKind::ListItem { depth, .. } = self.blocks[index].kind else {
+                previous = None;
+                continue;
+            };
+            let limit = previous.map_or(0, |depth| depth.saturating_add(1));
+            let clamped = depth.min(limit);
+            if clamped != depth
+                && let BlockKind::ListItem { depth, .. } =
+                    &mut Rc::make_mut(&mut self.blocks[index]).kind
+            {
+                *depth = clamped;
             }
+            previous = Some(clamped);
         }
     }
 
@@ -695,7 +722,7 @@ impl Document {
             return None;
         }
         let index = self.index_of(target.block)?;
-        let block = &mut self.blocks[index];
+        let block = Rc::make_mut(&mut self.blocks[index]);
         let content = block.kind.content()?;
         let is_empty = content.is_empty();
 
@@ -719,7 +746,7 @@ impl Document {
             if !matches!(block.kind, BlockKind::ListItem { .. }) {
                 fresh.kind = BlockKind::Paragraph(Inline::default());
             }
-            self.blocks.insert(index, fresh);
+            self.blocks.insert(index, Rc::new(fresh));
             return Some(Caret::new(target.block, 0));
         }
 
@@ -733,7 +760,7 @@ impl Document {
             next.align = align;
         }
         let id = next.id;
-        self.blocks.insert(index + 1, next);
+        self.blocks.insert(index + 1, Rc::new(next));
         Some(Caret::new(id, 0))
     }
 
@@ -744,7 +771,7 @@ impl Document {
             return None;
         }
         let index = self.index_of(target.block)?;
-        let block = &mut self.blocks[index];
+        let block = Rc::make_mut(&mut self.blocks[index]);
         match &mut block.kind {
             BlockKind::Paragraph(_) => {}
             BlockKind::ListItem { depth, .. } if *depth > 0 => {
@@ -795,7 +822,7 @@ impl Document {
             _ => {
                 let current = self.blocks.remove(index);
                 let content = current.kind.content().cloned().unwrap_or_default();
-                let previous = &mut self.blocks[previous_index].kind;
+                let previous = &mut Rc::make_mut(&mut self.blocks[previous_index]).kind;
                 let plain = previous.role() == Some(TextRole::Plain);
                 let destination = previous.content_mut()?;
                 let offset = destination.len();
@@ -828,7 +855,7 @@ impl Document {
             kind => {
                 let content = kind.content().cloned().unwrap_or_default();
                 self.blocks.remove(next_index);
-                let current = &mut self.blocks[index].kind;
+                let current = &mut Rc::make_mut(&mut self.blocks[index]).kind;
                 let plain = current.role() == Some(TextRole::Plain);
                 let destination = current.content_mut()?;
                 if plain {
@@ -857,7 +884,8 @@ impl Document {
             Some(BlockKind::ListItem { depth, .. }) => depth.saturating_add(1),
             _ => 0,
         };
-        let BlockKind::ListItem { depth, .. } = &mut self.blocks[index].kind else {
+        let BlockKind::ListItem { depth, .. } = &mut Rc::make_mut(&mut self.blocks[index]).kind
+        else {
             return false;
         };
         let wanted = depth.saturating_add_signed(delta).min(max_depth);
@@ -888,7 +916,7 @@ impl Document {
     )]
     pub fn apply_block_shortcut(&mut self, id: BlockId, cursor: usize) -> Option<Caret> {
         let index = self.index_of(id)?;
-        let block = &mut self.blocks[index];
+        let block = Rc::make_mut(&mut self.blocks[index]);
         let BlockKind::Paragraph(content) = &block.kind else {
             if let BlockKind::Quote(content) = &block.kind {
                 let (marker_len, kind) = callout_marker(content.text())?;
@@ -1071,7 +1099,7 @@ impl Document {
         let Some(index) = self.index_of(id) else {
             return false;
         };
-        match &mut self.blocks[index].kind {
+        match &mut Rc::make_mut(&mut self.blocks[index]).kind {
             BlockKind::Heading { anchor, .. } => {
                 *anchor = new_anchor;
                 true

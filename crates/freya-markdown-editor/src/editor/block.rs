@@ -6,6 +6,8 @@
 //! the [`TextBlock`] (and its focus and caret) survive conversions like
 //! paragraph to heading or list item.
 
+use std::rc::Rc;
+
 use freya::prelude::*;
 
 use freya::icons::lucide;
@@ -36,7 +38,7 @@ pub(crate) struct TocEntry {
 
 #[derive(Clone, PartialEq)]
 pub(crate) struct BlockView {
-    pub(crate) block: Block,
+    pub(crate) block: Rc<Block>,
     pub(crate) ordinal: Option<u32>,
     pub(crate) caret: Option<CaretRequest>,
     pub(crate) focused: Option<TextTarget>,
