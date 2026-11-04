@@ -1,4 +1,4 @@
-//! Biblia as a Notein plugin: the kind, the reader and the Lora faces.
+//! Biblia as a NotIn Plus plugin: the kind, the reader and the Lora faces.
 
 use std::sync::Arc;
 

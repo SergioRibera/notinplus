@@ -328,7 +328,7 @@ pub enum ActionEffect {
     Edit,
 }
 
-/// A document as a file people can open without Notein, for the
+/// A document as a file people can open without NotIn Plus, for the
 /// readable export.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExportFile {
@@ -642,7 +642,7 @@ pub trait DocumentKind: Send + Sync + 'static {
         let _ = content;
     }
 
-    /// The document as a file for people without Notein, the way bulk
+    /// The document as a file for people without NotIn Plus, the way bulk
     /// exports want it: every option at its default, first file only. The
     /// shell writes the marks next to it on its own.
     fn export(

@@ -1,4 +1,4 @@
-//! The markdown editor as Notein uses it everywhere: notes, canvas text
+//! The markdown editor as NotIn Plus uses it everywhere: notes, canvas text
 //! boxes, annotations.
 //!
 //! On top of [`freya_markdown_editor`] it adds reference chips for
@@ -107,14 +107,14 @@ pub fn configure_for(
         .decorator(images)
 }
 
-/// Set `editor` up the way every editor in Notein is, with nowhere to
+/// Set `editor` up the way every editor in NotIn Plus is, with nowhere to
 /// keep pictures of other documents.
 #[must_use]
 pub fn configure(editor: MarkdownEditor) -> MarkdownEditor {
     configure_with(editor, SnapshotSink::Nowhere)
 }
 
-/// Set `editor` up the way every editor in Notein is; pictures of other
+/// Set `editor` up the way every editor in NotIn Plus is; pictures of other
 /// documents ("Insert as image") go to `sink`.
 #[sismo::function("editor::configure")]
 pub fn configure_with(editor: MarkdownEditor, sink: SnapshotSink) -> MarkdownEditor {

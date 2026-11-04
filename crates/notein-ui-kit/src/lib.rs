@@ -1,4 +1,4 @@
-//! Notein design system: themes, tokens and the components every
+//! NotIn Plus design system: themes, tokens and the components every
 //! screen and plugin is built from.
 //!
 //! Plugins depend on this crate so their UI matches the shell. All

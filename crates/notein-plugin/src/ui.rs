@@ -1,5 +1,5 @@
 //! Pieces of the shell's own interface a face can use, so a plugin's
-//! text reads and edits like every other text in Notein.
+//! text reads and edits like every other text in NotIn Plus.
 //!
 //! They live on the UI thread: [`HostUi`] is handed to faces in their
 //! [`FaceContext`](crate::face::FaceContext) and is not `Send`.
@@ -64,7 +64,7 @@ impl std::fmt::Debug for SelectionMenu {
 
 /// The shell's interface, as faces use it.
 pub trait HostUi {
-    /// Set `editor` up as every editor in Notein: the theme, reference
+    /// Set `editor` up as every editor in NotIn Plus: the theme, reference
     /// chips for `notein://` links, the `/ref` suggestions, links that
     /// open through the shell and the user's markdown-marks setting.
     fn editor(&self, editor: MarkdownEditor) -> MarkdownEditor;

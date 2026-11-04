@@ -1,6 +1,6 @@
 //! `notein://` links for [`SourceRef`]s.
 //!
-//! Markdown written in Notein references other content with regular
+//! Markdown written in NotIn Plus references other content with regular
 //! markdown links whose URL uses this scheme, e.g.
 //! `[Romans 8](notein://plugin/io.notein.bible/<item>/<anchor>)`. Editors
 //! render those links as chips, and the same URLs open the app on a
@@ -15,7 +15,7 @@ use crate::bookmark::SourceRef;
 #[cfg(test)]
 use crate::ids::BookmarkId;
 
-/// The URL scheme of Notein links.
+/// The URL scheme of NotIn Plus links.
 pub const SCHEME: &str = "notein";
 const PREFIX: &str = "notein://";
 

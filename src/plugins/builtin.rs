@@ -1,4 +1,4 @@
-//! The plugins that ship with Notein and live in the shell: Lienzo and
+//! The plugins that ship with NotIn Plus and live in the shell: Lienzo and
 //! PDF. Nota and Biblia ship from their own crates.
 
 pub mod canvas;

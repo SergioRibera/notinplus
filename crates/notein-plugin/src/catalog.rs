@@ -19,7 +19,7 @@ use crate::services::Host;
 /// Where a plugin came from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Origin {
-    /// Ships with Notein.
+    /// Ships with NotIn Plus.
     Builtin,
     /// Installed by the user from a file.
     ThirdParty {

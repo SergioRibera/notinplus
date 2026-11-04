@@ -1,4 +1,4 @@
-//! Notas as a Notein plugin: the kind and the note page.
+//! Notas as a NotIn Plus plugin: the kind and the note page.
 
 use std::sync::Arc;
 

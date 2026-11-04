@@ -156,7 +156,7 @@ pub fn run() {
         launch(
             launch_config()
                 .with_event_loop(event_loop)
-                .with_window(WindowConfig::new(router_root).with_title("notinplus")),
+                .with_window(WindowConfig::new(router_root).with_title("NotIn Plus")),
         );
     }
 
@@ -165,7 +165,7 @@ pub fn run() {
         install_global_router();
         let cfg = launch_config().with_window(
             WindowConfig::new(router_root)
-                .with_title("notinplus")
+                .with_title("NotIn Plus")
                 .with_window_handle(|window| {
                     // Freya hands us the live winit `Window` exactly once at
                     // creation. Upgrade the symbolic pen registration to a
