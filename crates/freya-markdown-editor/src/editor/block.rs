@@ -674,7 +674,12 @@ impl BlockView {
                         Color::TRANSPARENT
                     })
                     .cursor(CursorIcon::Pointer)
-                    .on_press(move |_| controller.toggle_task(id))
+                    // Kept from the editor root, which would otherwise take
+                    // the press as a tap on empty space and focus the end.
+                    .on_press(move |event: Event<PressEventData>| {
+                        event.stop_propagation();
+                        controller.toggle_task(id);
+                    })
                     .maybe_child(checked.then(|| {
                         label()
                             .font_size(theme.px(11.))
@@ -1117,7 +1122,10 @@ impl BlockView {
                         colors.code_background
                     })
                     .cursor(CursorIcon::Pointer)
-                    .on_press(move |_| action())
+                    .on_press(move |event: Event<PressEventData>| {
+                        event.stop_propagation();
+                        action();
+                    })
                     .child(
                         label()
                             .font_size(11.5)
@@ -1231,7 +1239,10 @@ impl BlockView {
                     .alignment(BorderAlignment::Inner)
                     .fill(colors.quote_bar),
             )
-            .on_press(move |_| on_link.call(&url))
+            .on_press(move |event: Event<PressEventData>| {
+                event.stop_propagation();
+                on_link.call(&url);
+            })
             .children(lines)
             .child(
                 label()
@@ -1275,7 +1286,10 @@ impl BlockView {
                             theme.px(f32::from(entry.level.get() - min_level) * 16.),
                         ))
                         .cursor(CursorIcon::Pointer)
-                        .on_press(move |_| controller.focus(block, 0))
+                        .on_press(move |event: Event<PressEventData>| {
+                            event.stop_propagation();
+                            controller.focus(block, 0);
+                        })
                         .child(
                             label()
                                 .color(colors.accent)
