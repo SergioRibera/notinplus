@@ -93,6 +93,12 @@ impl ModalPlacement {
             Self::Manual => (1.0, 0.0),
         }
     }
+
+    /// Whether closing plays an exit. A popover has no motion of its own
+    /// to play, so it would only linger; it goes at once.
+    const fn plays_exit(self) -> bool {
+        !matches!(self, Self::Manual)
+    }
 }
 
 /// How long a closing modal takes to leave.
@@ -324,6 +330,7 @@ impl ModalController {
     fn retire(&mut self, modal: Option<Modal>) {
         if let Some(modal) = &modal
             && !modal.instant
+            && modal.placement.plays_exit()
             && !crate::theme::reduce_motion()
         {
             self.leave(modal.clone());
