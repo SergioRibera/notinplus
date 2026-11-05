@@ -402,13 +402,22 @@ jobs:
 
       # This release's section only (feat / fix / perf since the previous
       # tag): release body, and the notes the app shows in its update notice.
+      # A hand-written `release-notes/<tag>.md` replaces it — the first
+      # release would otherwise list every commit since the repo started.
       - name: Changelog for this release
+        if: hashFiles(format('release-notes/{0}.md', needs.plan.outputs.tag)) == ''
         uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
           args: --current --strip header
         env:
           OUTPUT: CHANGES.md
+
+      - name: Curated notes for this release
+        if: hashFiles(format('release-notes/{0}.md', needs.plan.outputs.tag)) != ''
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: cp "release-notes/$TAG.md" CHANGES.md
 
       - name: Full changelog
         uses: orhun/git-cliff-action@v4

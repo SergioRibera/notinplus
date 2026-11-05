@@ -13,6 +13,9 @@
 [app]
 id              = "rs.sergioribera.notinplus"
 name            = "NotIn Plus"
+# Android versionCode; set from the version by scripts/set-version-code.sh
+# on every `cargo release`.
+build           = 1000
 android_package = "dev.istmo.runtime"
 
 # Launcher icon: the iOS app icon and the legacy Android mipmaps come from

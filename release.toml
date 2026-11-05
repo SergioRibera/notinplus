@@ -1,0 +1,20 @@
+# cargo-release — version bumps and tags only; nothing goes to crates.io.
+#
+# `cargo release <level> --execute` (or no level to release the current
+# version) bumps the shared workspace version, refreshes Cargo.lock, sets
+# the Android versionCode from it (pre-release-hook in Cargo.toml), commits
+# `chore(release): <version>`, tags `v<version>` and pushes both. The tag
+# triggers `.github/workflows/release.yml`, which builds every artifact
+# and publishes the GitHub release.
+publish = false
+verify = false
+shared-version = true
+consolidate-commits = true
+allow-branch = ["main"]
+push = true
+tag = true
+sign-tag = true
+pre-release-commit-message = "chore(release): {{version}}"
+tag-name = "v{{version}}"
+tag-message = "NotIn Plus v{{version}}"
+dependent-version = "upgrade"

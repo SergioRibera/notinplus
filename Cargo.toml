@@ -12,6 +12,10 @@ description = "Crossplatform Note App"
 repository = "https://github.com/SergioRibera/notinplus"
 publish = false
 
+[package.metadata.release]
+# Android versionCode follows the released version (see release.toml).
+pre-release-hook = ["scripts/set-version-code.sh"]
+
 [features]
 default = ["math", "diagrams"]
 # Mermaid diagrams drawn in pure Rust.

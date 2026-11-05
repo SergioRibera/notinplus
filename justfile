@@ -10,6 +10,10 @@ build:
 test:
     cargo test --all-targets
 
+# Tag a release (release.toml); dry run unless `--execute`: `just release "" --execute`, `just release minor --execute`.
+release level="" *flags="":
+    cargo release {{level}} --workspace {{flags}}
+
 fmt:
     cargo fmt --all
     cargo clippy --all-targets -- -D warnings
