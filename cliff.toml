@@ -3,7 +3,8 @@
 #
 # The notes are what the in-app "new version" notice shows, so only
 # changes a user notices are listed (feat / fix / perf). Everything else
-# stays in the commit history.
+# stays in the commit history. Releases are in English: commit subjects
+# already are, and hand-written `release-notes/<tag>.md` must be too.
 
 [changelog]
 header = ""

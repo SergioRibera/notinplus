@@ -404,6 +404,7 @@ jobs:
       # tag): release body, and the notes the app shows in its update notice.
       # A hand-written `release-notes/<tag>.md` replaces it — the first
       # release would otherwise list every commit since the repo started.
+      # Release notes are written in English, curated or generated.
       - name: Changelog for this release
         if: hashFiles(format('release-notes/{0}.md', needs.plan.outputs.tag)) == ''
         uses: orhun/git-cliff-action@v4
