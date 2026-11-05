@@ -2646,7 +2646,7 @@ dependencies = [
 
 [[package]]
 name = "freya-canvas-bg"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "freya-engine",
  "sismo",
@@ -2770,7 +2770,7 @@ dependencies = [
 
 [[package]]
 name = "freya-markdown-diagrams"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "freya",
  "freya-markdown-editor",
@@ -2782,7 +2782,7 @@ dependencies = [
 
 [[package]]
 name = "freya-markdown-editor"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "comrak",
  "freya",
@@ -2796,7 +2796,7 @@ dependencies = [
 
 [[package]]
 name = "freya-markdown-math"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "freya",
  "freya-markdown-editor",
@@ -2821,7 +2821,7 @@ dependencies = [
 
 [[package]]
 name = "freya-pdf"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "flume",
  "freya-canvas-bg",
@@ -3347,7 +3347,7 @@ dependencies = [
 
 [[package]]
 name = "glyph-bake"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "notein-handwriting",
  "ttf-parser",
@@ -4224,7 +4224,7 @@ dependencies = [
 
 [[package]]
 name = "istmo-installer"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "bincode 2.0.1",
  "istmo-build",
@@ -5381,11 +5381,11 @@ checksum = "0676bb32a98c1a483ce53e500a81ad9c3d5b3f7c920c28c24e9cb0980d0b5bc8"
 
 [[package]]
 name = "notein-align"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 
 [[package]]
 name = "notein-bible"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-io",
  "bincode 2.0.1",
@@ -5418,7 +5418,7 @@ dependencies = [
 
 [[package]]
 name = "notein-handwriting"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "rkyv 0.8.18",
  "sismo",
@@ -5426,7 +5426,7 @@ dependencies = [
 
 [[package]]
 name = "notein-i18n"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "bincode 2.0.1",
  "fluent",
@@ -5436,7 +5436,7 @@ dependencies = [
 
 [[package]]
 name = "notein-notes"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-io",
  "bincode 2.0.1",
@@ -5453,7 +5453,7 @@ dependencies = [
 
 [[package]]
 name = "notein-plugin"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "bincode 2.0.1",
  "bytes",
@@ -5470,7 +5470,7 @@ dependencies = [
 
 [[package]]
 name = "notein-relay"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "notein-sync",
  "tracing",
@@ -5479,14 +5479,14 @@ dependencies = [
 
 [[package]]
 name = "notein-sdk"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "notein-plugin",
 ]
 
 [[package]]
 name = "notein-sync"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "bincode 2.0.1",
  "blake2",
@@ -5502,7 +5502,7 @@ dependencies = [
 
 [[package]]
 name = "notein-ui-kit"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-io",
  "freya",
@@ -5516,7 +5516,7 @@ dependencies = [
 
 [[package]]
 name = "notinplus"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "android_logger",
  "async-io",
