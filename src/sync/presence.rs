@@ -181,6 +181,12 @@ pub fn color(device: DeviceId) -> [u8; 3] {
 /// `from` sent something about `item`: it is there. `state` replaces
 /// what it last published, when given. Returns whether that changed
 /// anything.
+/// Show `from` in `item` with `state`, as if it had just announced it.
+#[cfg(test)]
+pub(crate) fn pretend(item: ItemId, from: DeviceId, name: &str, state: Vec<u8>) {
+    seen(item, from, name, Some(state));
+}
+
 #[sismo::function("sync::presence::seen")]
 pub(super) fn seen(item: ItemId, from: DeviceId, name: &str, state: Option<Vec<u8>>) -> bool {
     let mut guard = peers();

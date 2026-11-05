@@ -16,6 +16,8 @@ use crate::library::{
 };
 use crate::plugins::builtin::{canvas, pdf};
 
+mod readme;
+
 const DAY: u64 = 24 * 60 * 60 * 1000;
 
 fn item(name: &str, kind: &str, folder: FolderId, age_days: u64) -> Item {
@@ -182,6 +184,16 @@ fn shell(
     size: (f32, f32),
     gutters: notein_ui_kit::Gutters,
 ) -> impl Fn() -> Element {
+    shell_with(demo, body, size, gutters)
+}
+
+/// [`shell`] over `library` instead of the demo one.
+fn shell_with(
+    library: fn() -> LibraryData,
+    body: fn() -> Element,
+    size: (f32, f32),
+    gutters: notein_ui_kit::Gutters,
+) -> impl Fn() -> Element {
     move || {
         let area = use_state(move || Area::new((0.0, 0.0).into(), size.into()));
         let covered = use_memo(move || gutters);
@@ -200,7 +212,7 @@ fn shell(
             }
         });
         crate::update::use_preview_updates(PREVIEW_RELEASE.with(|r| r.borrow().clone()));
-        crate::state::use_fixed_library(Arc::new(demo()));
+        crate::state::use_fixed_library(Arc::new(library()));
         crate::screens::home::use_browse_root();
         rect()
             .expanded()
