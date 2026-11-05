@@ -22,13 +22,13 @@
 > and the sync protocol may still change between versions.
 
 <p align="center">
-  <img src="screenshots/home.png" alt="Home: desks, pinned documents and the library" width="820">
+  <img src="screenshots/desk.png" alt="A desk split in two: study notes with Ana and Marco editing live, and a handwritten sketch" width="820">
 </p>
 
 <p align="center">
-  <img src="screenshots/bible.png" alt="Bible reader with cross-references beside the text" width="540">
-  <img src="screenshots/home-phone.png" alt="Home on a phone" height="303">
-  <img src="screenshots/bible-phone.png" alt="Cross-references in a sheet on a phone" height="303">
+  <img src="screenshots/phone-note.png" alt="The study note on a phone, with Ana's selection" width="200">
+  <img src="screenshots/phone-sketch.png" alt="The handwritten sketch on a phone" width="200">
+  <img src="screenshots/phone-bible-original.png" alt="The Greek behind Romans 8:1 on a phone" width="200">
 </p>
 
 ## Features
@@ -76,8 +76,12 @@
 - In-app notice when a new version is out.
 
 <p align="center">
-  <img src="screenshots/search.png" alt="Search across documents, verses and notes" width="400">
-  <img src="screenshots/settings.png" alt="Appearance settings" width="400">
+  <img src="screenshots/bible-original.png" alt="Romans 8 with the Greek of verse 1 beside it; every α marks a verse with cross-references" width="820">
+</p>
+
+<p align="center">
+  <img src="screenshots/home.png" alt="Home: desks, folders and documents" width="540">
+  <img src="screenshots/phone-home.png" alt="Home on a phone" height="303">
 </p>
 
 ## Install
