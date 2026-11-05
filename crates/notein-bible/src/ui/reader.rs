@@ -1389,6 +1389,11 @@ impl Component for FootnoteLetter {
     }
 }
 
+/// Lowercase alpha marking a verse with cross-references. Drawn as a
+/// stroke icon rather than set as text: Lora has no Greek, so a glyph
+/// would fall back to whatever font each platform picks.
+const CROSS_REFS_ICON: &[u8] = include_bytes!("../../assets/icons/alpha.svg");
+
 /// The icon closing a verse that has cross-references; pressing it
 /// opens them in the host's panel. Accented while that panel shows this
 /// verse.
@@ -1417,7 +1422,7 @@ impl Component for RefButton {
             .on_pointer_down(|e: Event<PointerEventData>| e.stop_propagation())
             .on_tap(move |_| on_press.call(verse))
             .child(
-                SvgViewer::new(freya::icons::lucide::trending_up_down())
+                SvgViewer::new(CROSS_REFS_ICON)
                     .color(p.accent_text)
                     .width(Size::px(icon_size))
                     .height(Size::px(icon_size)),
