@@ -28,6 +28,8 @@ use crate::width::{WidthClass, width_class};
 #[derive(Clone, PartialEq)]
 pub struct Sheet {
     title: Option<Cow<'static, str>>,
+    /// A title that follows the sheet's content, read on every render.
+    title_state: Option<State<String>>,
     subtitle: Option<Cow<'static, str>>,
     kind: Option<(Bytes, Color)>,
     on_back: Option<EventHandler<()>>,
@@ -57,6 +59,7 @@ impl Default for Sheet {
     fn default() -> Self {
         Self {
             title: None,
+            title_state: None,
             subtitle: None,
             kind: None,
             on_back: None,
@@ -77,6 +80,14 @@ impl Sheet {
             title: Some(title.into()),
             ..Self::default()
         }
+    }
+
+    /// Title read from `title` on every render, for sheets whose content
+    /// changes what they are about (a tab switch). Wins over [`Self::titled`].
+    #[must_use]
+    pub const fn title_state(mut self, title: State<String>) -> Self {
+        self.title_state = Some(title);
+        self
     }
 
     #[must_use]
@@ -184,7 +195,14 @@ impl SheetCard {
     fn header(&self, p: &crate::theme::Palette) -> Option<Rect> {
         let sheet = &self.sheet;
         let on_back = sheet.on_back.clone();
-        let has_header = sheet.title.is_some() || sheet.closable || on_back.is_some();
+        let has_header = sheet.title.is_some()
+            || sheet.title_state.is_some()
+            || sheet.closable
+            || on_back.is_some();
+        let title = sheet.title_state.map_or_else(
+            || sheet.title.clone().unwrap_or_default(),
+            |title| Cow::Owned(title.read().clone()),
+        );
         has_header.then(|| {
             rect()
                 .width(Size::fill())
@@ -206,7 +224,7 @@ impl SheetCard {
                 )
                 .child(
                     label()
-                        .text(sheet.title.clone().unwrap_or_default())
+                        .text(title)
                         .font_size(text::TITLE)
                         .font_weight(FontWeight::BOLD)
                         .color(p.t1)

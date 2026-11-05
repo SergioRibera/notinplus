@@ -179,11 +179,10 @@ pub(super) fn open(reader: &Reader, verse: u16, wide: bool) {
 /// segment away when the original languages are on.
 #[cfg_attr(feature = "sismo", sismo::function("bible::refs_open_sheet"))]
 pub(super) fn open_sheet(reader: &Reader, refs: VerseRefs, tab: PanelTab) {
-    let title = match tab {
-        PanelTab::Refs => tr!("reader-refs-title", "place" => refs.place.clone()),
-        PanelTab::Original => tr!("originals-title", "place" => refs.place.clone()),
-    };
-    Sheet::titled(title)
+    let mut title = reader.sheet_title;
+    title.set(tab_title(tab, &refs));
+    Sheet::default()
+        .title_state(title)
         .subtitle(refs.count())
         .child(SheetBody {
             reader: reader.clone(),
@@ -207,12 +206,29 @@ impl Component for SheetBody {
         let tab = use_state(|| self.tab);
         let tabbed = originals::enabled(&self.reader);
         let current = if tabbed { *tab.read() } else { PanelTab::Refs };
+        use_side_effect({
+            let (mut title, refs) = (self.reader.sheet_title, self.refs.clone());
+            move || {
+                let next = tab_title(*tab.read(), &refs);
+                if *title.peek() != next {
+                    title.set(next);
+                }
+            }
+        });
         rect()
             .width(Size::fill())
             .spacing(8.0)
             .maybe_child(self.refs.quote(8.0))
             .maybe_child(tabbed.then(|| tabs(tab, 8.0)))
             .child(tab_body(&self.reader, &self.refs, current, true))
+    }
+}
+
+/// What the verse panel or sheet is called while it shows `tab`.
+fn tab_title(tab: PanelTab, refs: &VerseRefs) -> String {
+    match tab {
+        PanelTab::Refs => tr!("reader-refs-title", "place" => refs.place.clone()),
+        PanelTab::Original => tr!("originals-title", "place" => refs.place.clone()),
     }
 }
 
@@ -302,13 +318,7 @@ impl Panel {
             .and_then(|lemma| originals::occurrences_header(lemma).map(|head| (lemma, head)));
         let (title, subtitle) = match &nested {
             Some((_, (title, count))) => (title.clone(), count.clone()),
-            None => (
-                match current {
-                    PanelTab::Refs => tr!("reader-refs-title", "place" => refs.place.clone()),
-                    PanelTab::Original => tr!("originals-title", "place" => refs.place.clone()),
-                },
-                refs.count(),
-            ),
+            None => (tab_title(current, refs), refs.count()),
         };
         let content = match &nested {
             Some((lemma, _)) => originals::occurrences_body(&self.reader, *lemma, false),
