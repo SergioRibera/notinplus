@@ -20,6 +20,7 @@ let
       ../build.rs
       ../istmo.toml
       ../assets
+      ../locales
       ../crates
       ../src
       ../tools

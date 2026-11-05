@@ -18,9 +18,10 @@ const OUTPUT: &str = "notein_i18n_locales.rs";
 ///
 /// # Panics
 ///
-/// Panics (failing the build) when a file does not parse, a folder is
-/// not a supported [`Lang`], a message is defined twice, or a language
-/// misses or adds messages compared to [`Lang::FALLBACK`].
+/// Panics (failing the build) when `locales/` is missing, a file does
+/// not parse, a folder is not a supported [`Lang`], a message is
+/// defined twice, or a language misses or adds messages compared to
+/// [`Lang::FALLBACK`].
 pub fn emit() {
     let manifest =
         std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by cargo");
@@ -53,20 +54,25 @@ struct Locale {
 impl Locale {
     /// Every supported language, with no files when its folder is
     /// missing so parity reports it.
+    ///
+    /// A missing `locales/` folder fails the build: every caller ships
+    /// one, so its absence means the packaging (a Nix fileset, a vendored
+    /// copy) dropped it and the binary would show raw message ids.
     fn discover(root: &Path) -> Vec<Self> {
-        if let Ok(entries) = std::fs::read_dir(root) {
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                assert!(
-                    !entry.path().is_dir() || Lang::ALL.iter().any(|l| l.tag() == name),
-                    "{}: `{name}` is not a supported language; add it to notein_i18n::Lang",
-                    root.display()
-                );
-            }
-        }
-        if !root.is_dir() {
-            return Vec::new();
+        let entries = std::fs::read_dir(root).unwrap_or_else(|err| {
+            panic!(
+                "{}: {err}; the crate's Fluent files are missing from the build sources",
+                root.display()
+            )
+        });
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            assert!(
+                !entry.path().is_dir() || Lang::ALL.iter().any(|l| l.tag() == name),
+                "{}: `{name}` is not a supported language; add it to notein_i18n::Lang",
+                root.display()
+            );
         }
         Lang::ALL
             .into_iter()
