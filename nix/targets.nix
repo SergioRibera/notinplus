@@ -7,8 +7,7 @@
   # The notinplus desktop app.
   #
   # kind = "nix"       → built and bundled natively on `runner` by Nix.
-  # kind = "prebuilt"  → binary built by cargo on `runner` (no Nix there),
-  #                      then bundled by Nix on `bundleRunner`.
+  # kind = "cross"     → cross-built and bundled by Nix on `runner`.
   desktop = {
     x86_64-linux = {
       kind = "nix";
@@ -41,13 +40,11 @@
         "tar.gz"
       ];
     };
-    # rust-skia publishes no `*-windows-gnu` binaries, so a mingw cross
-    # build from Nix would compile Skia from source. MSVC on a Windows
-    # runner downloads the prebuilt ones; Nix only does the packaging.
+    # MSVC target linked with LLVM against the xwin SDK (nix/windows.nix);
+    # no Windows runner involved.
     x86_64-windows = {
-      kind = "prebuilt";
-      runner = "windows-latest";
-      bundleRunner = "ubuntu-latest";
+      kind = "cross";
+      runner = "ubuntu-latest";
       formats = [
         "nsis"
         "msi"

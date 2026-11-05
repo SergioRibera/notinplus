@@ -152,60 +152,17 @@ jobs:
           push-enabled: ${{ steps.nix.outputs.push-enabled }}
           paths: result-deps result-app result-bundles result-flatpak-kit
 
-  # rust-skia ships no windows-gnu binaries, so the exe is built with MSVC
-  # here and only packaged by Nix (windows-bundle).
-  windows-build:
-    name: Windows build (${{ matrix.system }})
+  # Cross-built from Linux: LLVM links the MSVC target against the xwin SDK
+  # (nix/windows.nix), then nix-bundle-app packages it. No Windows runner.
+  windows:
+    name: Windows (${{ matrix.system }})
     needs: plan
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJson(needs.plan.outputs.matrix).prebuilt }}
-    env:
-      # rust-toolchain.toml lists the mobile targets; skip installing them here.
-      RUSTUP_TOOLCHAIN: stable
-    steps:
-      - run: git config --global core.longpaths true
-
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.plan.outputs.ref }}
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: cargo build
-        run: cargo build --release --locked --bin notinplus
-
-      - name: Stage exe + pdfium
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p win-dist pdfium
-          cp target/release/notinplus.exe win-dist/
-          curl -fsSL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7881/pdfium-win-x64.tgz" \
-            | tar -xz -C pdfium
-          cp pdfium/bin/pdfium.dll win-dist/
-          ls -la win-dist
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: prebuilt-${{ matrix.system }}
-          path: win-dist/
-          if-no-files-found: error
-          retention-days: 1
-
-  windows-bundle:
-    name: Windows bundles (${{ matrix.system }})
-    needs: [plan, windows-build]
-    runs-on: ${{ matrix.bundleRunner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJson(needs.plan.outputs.matrix).prebuilt }}
+        include: ${{ fromJson(needs.plan.outputs.matrix).cross }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -216,13 +173,18 @@ jobs:
         with:
           attic-token: ${{ secrets.ATTIC_TOKEN }}
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: prebuilt-${{ matrix.system }}
-          path: win-dist
+      - name: Build dependencies
+        run: nix build -L .#windows-cargoArtifacts -o result-deps
 
-      - name: Bundle NSIS / MSI / zip
-        run: NOTINPLUS_WINDOWS_DIST="$PWD/win-dist" nix build -L --impure .#windows-bundles -o result-bundles
+      - name: Push dependencies to attic
+        if: always()
+        uses: ./.github/actions/attic-push
+        with:
+          push-enabled: ${{ steps.nix.outputs.push-enabled }}
+          paths: result-deps
+
+      - name: Build NSIS / MSI / zip
+        run: nix build -L .#windows-bundles -o result-bundles
 
       - name: Stage artifacts
         run: bash .github/scripts/stage-bundles.sh result-bundles dist ${{ matrix.system }}
@@ -233,6 +195,13 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 7
+
+      - name: Push closures to attic
+        if: always()
+        uses: ./.github/actions/attic-push
+        with:
+          push-enabled: ${{ steps.nix.outputs.push-enabled }}
+          paths: result-deps result-bundles
 
   # nix-bundle-app emits a flatpak source kit; finishing it needs
   # flatpak-builder with network access to the Flathub runtime.
@@ -415,7 +384,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [plan, desktop, windows-bundle, flatpak, android, server, server-image]
+    needs: [plan, desktop, windows, flatpak, android, server, server-image]
     if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:

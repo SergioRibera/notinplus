@@ -142,26 +142,22 @@
           inherit (nativeTarget) formats;
         });
 
-        # Windows: `cargo build` runs on a Windows runner (MSVC + prebuilt
-        # Skia), the job uploads `notinplus.exe` + `pdfium.dll`, and this
-        # wraps that directory into a derivation for nix-bundle-app. Impure
-        # by necessity: `NOTINPLUS_WINDOWS_DIST=<dir> nix build --impure …`.
+        # Windows: cross-built from Linux with LLVM against the MSVC SDK
+        # (nix/windows.nix), then packaged by nix-bundle-app like any other
+        # target. Only x86_64-linux hosts it.
+        windows = import ./nix/windows.nix {
+          inherit
+            pkgs
+            lib
+            crane
+            pname
+            version
+            ;
+          inherit (notinplus) src;
+        };
         windowsBundles =
           let
-            dist = builtins.getEnv "NOTINPLUS_WINDOWS_DIST";
-            drv =
-              if dist == "" then
-                throw "notinplus: set NOTINPLUS_WINDOWS_DIST to the Windows build dir and pass --impure"
-              else
-                pkgs.runCommand "${pname}-${version}-x86_64-windows" { } ''
-                  mkdir -p $out/bin
-                  cp -r ${
-                    builtins.path {
-                      path = dist;
-                      name = "${pname}-windows-dist";
-                    }
-                  }/. $out/bin/
-                '';
+            drv = windows.package;
           in
           lib.mapAttrs' (name: value: lib.nameValuePair "windows-${name}" value) (mkBundles {
             inherit drv info;
@@ -202,9 +198,7 @@
               inherit (t) runner dockerArch;
             }) targets.server;
             nix = map (t: { inherit (t) system runner; }) (builtins.filter (t: t.kind == "nix") entries);
-            prebuilt = map (t: {
-              inherit (t) system runner bundleRunner;
-            }) (builtins.filter (t: t.kind == "prebuilt") entries);
+            cross = map (t: { inherit (t) system runner; }) (builtins.filter (t: t.kind == "cross") entries);
           };
       in
       {
@@ -215,7 +209,14 @@
           inherit (notinplus) cargoArtifacts;
         }
         // nativeBundles
-        // lib.optionalAttrs (system == "x86_64-linux") windowsBundles
+        // lib.optionalAttrs (system == "x86_64-linux") (
+          windowsBundles
+          // {
+            "${pname}-windows" = windows.package;
+            windows-cargoArtifacts = windows.cargoArtifacts;
+            windows-sdk = windows.xwinSdk;
+          }
+        )
         // relayPackages;
 
         apps.matrix = {
@@ -285,7 +286,8 @@
           CXX = "${pkgs.stdenv.cc}/bin/c++";
           "CARGO_TARGET_${
             pkgs.lib.toUpper (builtins.replaceStrings [ "-" ] [ "_" ] pkgs.stdenv.hostPlatform.rust.rustcTarget)
-          }_LINKER" = "${pkgs.stdenv.cc}/bin/cc";
+          }_LINKER" =
+            "${pkgs.stdenv.cc}/bin/cc";
         };
 
         formatter = pkgs.nixfmt-rfc-style;
