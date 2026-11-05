@@ -3,13 +3,16 @@
 //! words and cross-references, and two other people working along.
 //!
 //! Ignored by default: they need an installed Bible with the original
-//! packs. Run on their own, so nothing else in the process changes the
-//! language or the sandbox:
+//! packs. Run each test in a process of its own, so nothing else changes
+//! the language or the sandbox, and the canvas shot stays the first
+//! render of its process: ghost ink from other people only reaches the
+//! image of the first runner a process starts.
 //!
 //! ```sh
-//! NOTEIN_PREVIEW_DIR=screenshots \
-//! NOTEIN_README_BIBLE=~/.local/share/rs.sergioribera.notinplus/notinplus/bible \
-//!   cargo test --lib readme -- --ignored --test-threads=1
+//! export NOTEIN_PREVIEW_DIR=screenshots \
+//!   NOTEIN_README_BIBLE=~/.local/share/rs.sergioribera.notinplus/notinplus/bible
+//! cargo test --lib readme_desktop -- --ignored
+//! cargo test --lib readme_phone -- --ignored
 //! ```
 //!
 //! `NOTEIN_README_BIBLE` is an app Bible folder with the Reina-Valera
@@ -519,6 +522,46 @@ fn people_here() {
     crate::sync::presence::pretend(BIBLE, ANA.0, ANA.1, Vec::new());
 }
 
+/// Marco halfway through a ring on the sketch, his pointer beside it.
+fn marco_drawing() {
+    for (_, board) in crate::active_boards::for_item(SKETCH) {
+        let mut board = crate::canvas::lock(&board);
+        let points = ring((215.0, 690.0), (125.0, 26.0))
+            .into_iter()
+            .take(30)
+            .map(|(x, y)| crate::brush::InkPoint::from_normalized(x, y, 0.6, 0.0, 8_000))
+            .collect();
+        board.apply_live(
+            MARCO.0,
+            MARCO.1,
+            crate::sync::live::LiveMessage::Ink {
+                stroke: crate::ids::StrokeId::new_v4(),
+                preset: crate::brush::BrushPreset::pen(),
+                color: BLUE,
+                opacity: 1.0,
+                points,
+                done: false,
+            },
+        );
+        board.apply_live(
+            MARCO.0,
+            MARCO.1,
+            crate::sync::live::LiveMessage::Pointer {
+                x: 345.0,
+                y: 684.0,
+                shown: true,
+            },
+        );
+        // Ghost ink does not move the layout, and a headless frame only
+        // repaints what moved: nudge the zoom so the overlays paint again.
+        board.set_viewport(crate::canvas::Viewport {
+            tx: 0.0,
+            ty: 0.0,
+            scale: 0.821,
+        });
+    }
+}
+
 /// Load the sketch into its board: canvases read their document through
 /// the app runtime, which previews do not start.
 fn sketch_loaded() {
@@ -552,16 +595,13 @@ fn shoot(name: &str, size: (f32, f32), body: fn() -> Element, presses: &[(f64, f
     }
     runner.poll_n(Duration::from_millis(40), 6);
     runner.sync_and_update();
+    // The sketch's own load lands at no fixed frame and drops other
+    // people's ghost ink: draw Marco again on every one of the last frames.
     people_here();
     for _ in 0..4 {
+        marco_drawing();
         runner.poll_n(Duration::from_millis(40), 3);
         runner.sync_and_update();
-    }
-    for (mount, board) in crate::active_boards::for_item(SKETCH) {
-        eprintln!(
-            "DEBUG {mount:?} remote hands: {}",
-            crate::canvas::lock(&board).remote_hands().count()
-        );
     }
     runner.render_to_file(out(name));
 }
@@ -606,8 +646,9 @@ const PHONE: (f32, f32) = (390.0, 844.0);
 #[test]
 #[ignore = "needs an installed Bible with the originals; see the module docs"]
 fn readme_desktop() {
-    shoot("readme-home", DESKTOP, readme_home, &[]);
+    // First: Marco's ghost ink only shows in a process's first render.
     shoot("readme-desk", DESKTOP, study_desk, &[]);
+    shoot("readme-home", DESKTOP, readme_home, &[]);
     // The alpha after verse 1, then the Original tab of its panel.
     shoot("readme-bible", DESKTOP, bible, &[(503.0, 238.0)]);
     shoot(
@@ -621,9 +662,10 @@ fn readme_desktop() {
 #[test]
 #[ignore = "needs an installed Bible with the originals; see the module docs"]
 fn readme_phone() {
+    // First, like the desk of `readme_desktop`: see the module docs.
+    shoot("readme-phone-sketch", PHONE, sketch_desk, &[]);
     shoot("readme-phone-home", PHONE, readme_home, &[]);
     shoot("readme-phone-note", PHONE, note_desk, &[]);
-    shoot("readme-phone-sketch", PHONE, sketch_desk, &[]);
     shoot("readme-phone-bible", PHONE, bible, &[(148.0, 345.0)]);
     shoot(
         "readme-phone-bible-original",
