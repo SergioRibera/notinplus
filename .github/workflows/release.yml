@@ -435,7 +435,7 @@ jobs:
       - name: SHA256SUMS
         working-directory: dist
         run: |
-          find . -type f ! -name SHA256SUMS -printf '%P\n' | LC_ALL=C sort | xargs sha256sum -- > SHA256SUMS
+          find . -type f ! -name SHA256SUMS -printf '%P\0' | LC_ALL=C sort -z | xargs -0 sha256sum -- > SHA256SUMS
           cat SHA256SUMS
 
       - name: Release notes

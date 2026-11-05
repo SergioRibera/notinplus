@@ -8,6 +8,8 @@
 #   keeps symlinks/xattrs the bundle needs, tar.gz elsewhere.
 # - Names lacking an arch get the system prepended, so the per-system
 #   uploads can be merged into one release without overwriting each other.
+# - Spaces (the `NotIn Plus.app` bundle) become dashes: release hosts
+#   rename such assets, which would break the URLs in latest.json.
 set -euo pipefail
 shopt -s nullglob
 
@@ -26,6 +28,7 @@ with_arch() {
 for entry in "$src"/*/*; do
   name=$(basename "$entry")
   case "$name" in sign.sh) continue ;; esac
+  name=${name// /-}
   real=$(readlink -f "$entry")
   if [ -d "$real" ]; then
     if command -v ditto >/dev/null 2>&1; then
