@@ -170,9 +170,10 @@ opt-level = 1
 [profile.dev.package."*"]
 opt-level = 3
 
+# Thin LTO keeps most of fat LTO's gains while the link stays parallel;
+# fat LTO with one codegen unit made the final link the longest CI step.
 [profile.release]
-lto = "fat"
-codegen-units = 1
+lto = "thin"
 
 [lints.rust]
 missing_debug_implementations = "warn"
