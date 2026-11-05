@@ -79,9 +79,14 @@ runs:
           --entrypoint bash
         )
 
+        # Secrets pasted with a trailing newline would never match.
+        KEY_ALIAS=$(printf '%s' "$KEY_ALIAS" | tr -d '\r\n')
+        KEYSTORE_PASSWORD=$(printf '%s' "$KEYSTORE_PASSWORD" | tr -d '\r\n')
+        KEY_PASSWORD=$(printf '%s' "$KEY_PASSWORD" | tr -d '\r\n')
+
         if [ -n "$KEYSTORE_B64" ]; then
           mkdir -p "$RUNNER_TEMP/keystore"
-          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/keystore/release.jks"
+          printf '%s' "$KEYSTORE_B64" | tr -d '\r\n ' | base64 -d > "$RUNNER_TEMP/keystore/release.jks"
           args+=(
             -v "$RUNNER_TEMP/keystore:/keystore:ro"
             -e ANDROID_KEYSTORE_FILE=/keystore/release.jks
@@ -104,7 +109,17 @@ runs:
           -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
           -dname "CN=Android Debug,O=Android,C=US"'
 
-        docker run "${args[@]}" "$IMAGE" -c "$keystore && gradle ${gradle_args[*]}"
+        # Fail with the aliases the store does hold, instead of Gradle's
+        # "No key with alias" deep in packageRelease.
+        release_key='if [ -n "${ANDROID_KEYSTORE_FILE:-}" ] && ! keytool -list -keystore "$ANDROID_KEYSTORE_FILE" \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" >/dev/null 2>&1; then
+          echo "::error::The release keystore has no key named by ANDROID_KEY_ALIAS, or ANDROID_KEYSTORE_PASSWORD does not open it. Keys in the store:"
+          keytool -list -keystore "$ANDROID_KEYSTORE_FILE" -storepass "$ANDROID_KEYSTORE_PASSWORD" 2>&1 | grep -iE "entry|error" || true
+          exit 1
+        fi'
+
+        docker run "${args[@]}" "$IMAGE" -c "$keystore && $release_key
+        gradle ${gradle_args[*]}"
 
     # The container writes as root; hand everything back so the cache
     # save and later steps can read it.
