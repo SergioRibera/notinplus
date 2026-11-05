@@ -34,6 +34,10 @@ struct Queue {
     running: bool,
     listeners: Vec<flume::Sender<()>>,
     outcomes: Vec<flume::Sender<Outcome>>,
+    /// The install whose progress the watcher copies in. Cleared by
+    /// [`Self::finish`] under the same lock, so a copy taken just before
+    /// an install ended cannot bring it back as still downloading.
+    tracking: Option<String>,
 }
 
 impl Queue {
@@ -42,6 +46,9 @@ impl Queue {
     }
 
     fn finish(&mut self, bible_id: String, outcome: Option<Outcome>) {
+        if self.tracking.as_deref() == Some(bible_id.as_str()) {
+            self.tracking = None;
+        }
         match &outcome {
             Some(Outcome::Failed { reason, .. }) => {
                 self.states
@@ -65,8 +72,21 @@ impl Queue {
         };
         self.states
             .insert(id.clone(), InstallState::Downloading(Step::default()));
+        self.tracking = Some(id.clone());
         self.announce();
         Some(id)
+    }
+
+    /// Show `step` for `bible_id`, while it is still the tracked install.
+    fn track(&mut self, bible_id: &str, step: Step) {
+        if self.tracking.as_deref() != Some(bible_id) {
+            return;
+        }
+        let next = InstallState::Downloading(step);
+        if self.states.get(bible_id) != Some(&next) {
+            self.states.insert(bible_id.to_owned(), next);
+            self.announce();
+        }
     }
 }
 
@@ -173,14 +193,8 @@ impl Installer {
                         .read()
                         .unwrap_or_else(PoisonError::into_inner)
                         .clone();
-                    if p.bible_id != id {
-                        continue;
-                    }
-                    let mut queue = this.lock();
-                    let next = InstallState::Downloading(p.step);
-                    if queue.states.get(&id) != Some(&next) {
-                        queue.states.insert(id.clone(), next);
-                        queue.announce();
+                    if p.bible_id == id {
+                        this.lock().track(&id, p.step);
                     }
                 }
             });
@@ -296,6 +310,19 @@ mod tests {
         let fractions = steps.map(Step::fraction);
         assert!(fractions.windows(2).all(|w| w[0] <= w[1]), "{fractions:?}");
         assert!((fractions[5] - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn progress_copied_after_the_end_is_dropped() {
+        let mut queue = Queue::default();
+        queue.waiting.push_back("rvr".to_owned());
+        assert_eq!(queue.start_next().as_deref(), Some("rvr"));
+        queue.track("rvr", Step::new(Phase::Headings, 33, 66));
+        queue.finish("rvr".to_owned(), Some(Outcome::Installed("rvr".to_owned())));
+        // The watcher read the last step before the install ended and
+        // writes it afterwards.
+        queue.track("rvr", Step::new(Phase::Headings, 66, 66));
+        assert_eq!(queue.states.get("rvr"), None);
     }
 
     #[test]
