@@ -250,6 +250,7 @@ jobs:
 
       - uses: ./.github/actions/android-build
         with:
+          attic-token: ${{ secrets.ATTIC_TOKEN }}
           task: ":app:assembleRelease"
           abis: ${{ env.ABIS }}
           keystore-base64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}

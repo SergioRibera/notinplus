@@ -38,7 +38,10 @@
             (import rust-overlay)
             nix-bundle-app.overlays.default
           ];
-          config.allowUnfree = true;
+          config = {
+            allowUnfree = true;
+            android_sdk.accept_license = true;
+          };
         };
         lib = pkgs.lib;
 
@@ -168,6 +171,19 @@
             };
           });
 
+        # Android: Rust per ABI in Nix, Gradle packages it (nix/android.nix).
+        # The NDK ships linux-x86_64 binaries only.
+        android = import ./nix/android.nix {
+          inherit
+            pkgs
+            lib
+            crane
+            pname
+            version
+            ;
+          inherit (notinplus) src;
+        };
+
         # notein-relay: `.#relay`, `.#relay-bundles` (deb/rpm/tar.gz with a
         # systemd unit) and `.#relay-image` (OCI tarball for `docker load`).
         relay = import ./nix/relay.nix {
@@ -215,9 +231,14 @@
             "${pname}-windows" = windows.package;
             windows-cargoArtifacts = windows.cargoArtifacts;
             windows-sdk = windows.xwinSdk;
+            android-jniLibs = android.jniLibs;
+            android-cargoArtifacts = android.cargoArtifacts;
+            android-gradle = android.gradle;
           }
         )
         // relayPackages;
+
+        devShells.android = android.devShell;
 
         apps.matrix = {
           type = "app";

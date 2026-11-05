@@ -38,8 +38,13 @@ clean:
         --entrypoint bash {{image}} \
         -c 'gradle clean --no-daemon'
 
-# Android — assemble debug APK via Gradle, which drives cargo for every ABI.
+# Android — Rust built by Nix (release profile, cached in attic), Gradle
+# packages it. Debug APKs install as `rs.sergioribera.notinplus.dev`.
 build-android:
+    nix run .#android-gradle -- :app:assembleDebug
+
+# Same, but cargo compiles incrementally inside the rust-android image.
+build-android-docker:
     docker run --rm -it {{mount}} \
         -w /src/notinplus/android \
         --entrypoint bash {{image}} \

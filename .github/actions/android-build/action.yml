@@ -1,20 +1,21 @@
-name: Android build (rust-android image)
+name: Android build (Nix)
 description: >-
-  Runs a Gradle task inside the same `sergioribera/rust-android` image the
-  justfile uses, with the repo mounted at `/src`.
+  Builds the Rust side for every ABI with Nix (nix/android.nix), pushing
+  both layers to attic, then runs a Gradle task through
+  `nix run .#android-gradle`, which only packages the prebuilt `.so`s.
 
 inputs:
-  image:
-    description: rust-android image tag.
+  attic-token:
+    description: Attic push token; empty → read-only cache.
     required: false
-    default: sergioribera/rust-android:1.98-sdk-36
+    default: ""
   task:
     description: Gradle task to run.
     required: true
   abis:
     description: >-
       Comma-separated ABIs. Non-empty → `-Pnotinplus.abis`, which turns on
-      per-ABI split APKs plus a universal one. Empty → single-ABI dev build.
+      per-ABI split APKs plus a universal one. Empty → single-ABI build.
     required: false
     default: ""
   keystore-base64:
@@ -34,25 +35,38 @@ inputs:
 runs:
   using: composite
   steps:
-    # The SDK/NDK image plus two Rust targets outgrow the ~14 GB the
-    # hosted runner leaves free.
-    - name: Free disk space
-      shell: bash
-      run: |
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-        df -h /
-
-    - name: Restore cargo + gradle caches
-      uses: actions/cache@v4
+    - id: nix
+      uses: ./.github/actions/setup-nix
       with:
-        path: ${{ runner.temp }}/android-cache
-        key: android-${{ inputs.image }}-${{ hashFiles('Cargo.lock', 'android/**/*.kts') }}
-        restore-keys: android-${{ inputs.image }}-
+        attic-token: ${{ inputs.attic-token }}
+
+    # Pushed on its own first: a failure further down still leaves the
+    # dependency layer in attic, so the retry starts from the app crate.
+    - name: Build Rust dependencies (every ABI)
+      shell: bash
+      run: nix build -L .#android-cargoArtifacts -o result-android-deps
+
+    - name: Push dependencies to attic
+      if: always()
+      uses: ./.github/actions/attic-push
+      with:
+        push-enabled: ${{ steps.nix.outputs.push-enabled }}
+        paths: result-android-deps
+
+    - name: Build Rust libraries (every ABI)
+      shell: bash
+      run: nix build -L .#android-jniLibs -o result-android-jnilibs
+
+    - name: Push libraries to attic
+      if: always()
+      uses: ./.github/actions/attic-push
+      with:
+        push-enabled: ${{ steps.nix.outputs.push-enabled }}
+        paths: result-android-jnilibs
 
     - name: Gradle ${{ inputs.task }}
       shell: bash
       env:
-        IMAGE: ${{ inputs.image }}
         TASK: ${{ inputs.task }}
         ABIS: ${{ inputs.abis }}
         KEYSTORE_B64: ${{ inputs.keystore-base64 }}
@@ -61,69 +75,43 @@ runs:
         KEY_PASSWORD: ${{ inputs.key-password }}
       run: |
         set -euo pipefail
-        cache="$RUNNER_TEMP/android-cache"
-        mkdir -p "$cache"/{cargo-registry,cargo-git,gradle,android-home}
-
-        # Only the registry/git dirs are mounted: the image keeps its
-        # toolchain under /root/.cargo/bin, which a full mount would hide.
-        args=(
-          --rm
-          -v "$GITHUB_WORKSPACE:/src"
-          -v "$cache/cargo-registry:/root/.cargo/registry"
-          -v "$cache/cargo-git:/root/.cargo/git"
-          -v "$cache/gradle:/root/.gradle"
-          # Holds the debug keystore; cached so debug-signed APKs keep one
-          # signature across runs and install over each other.
-          -v "$cache/android-home:/root/.android"
-          -w /src/android
-          --entrypoint bash
-        )
 
         # Secrets pasted with a trailing newline would never match.
         KEY_ALIAS=$(printf '%s' "$KEY_ALIAS" | tr -d '\r\n')
         KEYSTORE_PASSWORD=$(printf '%s' "$KEYSTORE_PASSWORD" | tr -d '\r\n')
         KEY_PASSWORD=$(printf '%s' "$KEY_PASSWORD" | tr -d '\r\n')
 
+        # The debug signing config points at ~/.android/debug.keystore,
+        # which a fresh runner lacks and Gradle won't create for a custom
+        # signing config.
+        mkdir -p "$HOME/.android"
+        if [ ! -f "$HOME/.android/debug.keystore" ]; then
+          nix develop .#android -c keytool -genkeypair -noprompt \
+            -keystore "$HOME/.android/debug.keystore" -storepass android -keypass android \
+            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+        fi
+
         if [ -n "$KEYSTORE_B64" ]; then
           mkdir -p "$RUNNER_TEMP/keystore"
           printf '%s' "$KEYSTORE_B64" | tr -d '\r\n ' | base64 -d > "$RUNNER_TEMP/keystore/release.jks"
-          args+=(
-            -v "$RUNNER_TEMP/keystore:/keystore:ro"
-            -e ANDROID_KEYSTORE_FILE=/keystore/release.jks
-            -e ANDROID_KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD"
-            -e ANDROID_KEY_ALIAS="$KEY_ALIAS"
-            -e ANDROID_KEY_PASSWORD="$KEY_PASSWORD"
-          )
+          export ANDROID_KEYSTORE_FILE="$RUNNER_TEMP/keystore/release.jks"
+          export ANDROID_KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD"
+          export ANDROID_KEY_ALIAS="$KEY_ALIAS"
+          export ANDROID_KEY_PASSWORD="$KEY_PASSWORD"
+          # Fail with the aliases the store does hold, instead of Gradle's
+          # "No key with alias" deep in packageRelease.
+          if ! nix develop .#android -c keytool -list -keystore "$ANDROID_KEYSTORE_FILE" \
+              -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" >/dev/null 2>&1; then
+            echo "::error::The release keystore has no key named by ANDROID_KEY_ALIAS, or ANDROID_KEYSTORE_PASSWORD does not open it. Keys in the store:"
+            nix develop .#android -c keytool -list -keystore "$ANDROID_KEYSTORE_FILE" \
+              -storepass "$ANDROID_KEYSTORE_PASSWORD" 2>&1 | grep -iE "entry|error" || true
+            exit 1
+          fi
         else
           echo "::warning::No release keystore configured; APKs are signed with an ephemeral debug key (updates between releases will not install over each other)."
         fi
 
-        gradle_args=("$TASK" --no-daemon --stacktrace)
+        gradle_args=("$TASK" --stacktrace)
         [ -n "$ABIS" ] && gradle_args+=("-Pnotinplus.abis=$ABIS")
-
-        # The debug signing config points at ~/.android/debug.keystore,
-        # which a fresh container lacks and Gradle won't create for a
-        # custom signing config.
-        keystore='[ -f /root/.android/debug.keystore ] || keytool -genkeypair -noprompt \
-          -keystore /root/.android/debug.keystore -storepass android -keypass android \
-          -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
-          -dname "CN=Android Debug,O=Android,C=US"'
-
-        # Fail with the aliases the store does hold, instead of Gradle's
-        # "No key with alias" deep in packageRelease.
-        release_key='if [ -n "${ANDROID_KEYSTORE_FILE:-}" ] && ! keytool -list -keystore "$ANDROID_KEYSTORE_FILE" \
-            -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" >/dev/null 2>&1; then
-          echo "::error::The release keystore has no key named by ANDROID_KEY_ALIAS, or ANDROID_KEYSTORE_PASSWORD does not open it. Keys in the store:"
-          keytool -list -keystore "$ANDROID_KEYSTORE_FILE" -storepass "$ANDROID_KEYSTORE_PASSWORD" 2>&1 | grep -iE "entry|error" || true
-          exit 1
-        fi'
-
-        docker run "${args[@]}" "$IMAGE" -c "$keystore && $release_key
-        gradle ${gradle_args[*]}"
-
-    # The container writes as root; hand everything back so the cache
-    # save and later steps can read it.
-    - name: Fix ownership
-      if: always()
-      shell: bash
-      run: sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/android-cache"
+        nix run .#android-gradle -- "${gradle_args[@]}"
