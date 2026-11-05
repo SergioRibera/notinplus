@@ -2,18 +2,30 @@
 # The `publish` job of release.yml, run by hand over a release run whose
 # artifacts all built.
 #
-#   publish-local.sh <run-id> <tag>        # e.g. publish-local.sh 1234567890 v0.1.0-alpha.1
+#   publish-local.sh <run-id> <tag> [work-dir]
 #
-# Run from the notinplus checkout, with `gh` logged in.
+# Run from the notinplus checkout, with `gh` logged in. Assets go up one
+# at a time with retries, and the ones the release already has are
+# skipped, so running it again finishes an interrupted upload. Pass the
+# work dir a previous run printed to skip the download.
 set -euo pipefail
 
 run=$1
 tag=$2
 repo=SergioRibera/notinplus
-work=$(mktemp -d)
-dist="$work/dist"
-mkdir -p "$dist"
+work=${3:-}
+if [ -n "$work" ] && [ -d "$work/dist" ]; then
+  dist="$work/dist"
+  echo "→ reusing $dist"
+else
+  work=$(mktemp -d)
+  dist="$work/dist"
+  mkdir -p "$dist"
+  fetch=1
+fi
+echo "work dir: $work"
 
+if [ -n "${fetch:-}" ]; then
 echo "→ downloading the artifacts of run $run"
 gh run download "$run" -R "$repo" -D "$work/raw" -p 'desktop-*' -p 'server-*' -p 'android'
 # Merge every artifact folder into one flat dist/, like merge-multiple.
@@ -38,6 +50,7 @@ GITHUB_REPOSITORY=$repo bash .github/scripts/latest-manifest.sh "$dist" "$tag" "
 
 echo "→ SHA256SUMS"
 (cd "$dist" && find . -type f ! -name SHA256SUMS -printf '%P\0' | LC_ALL=C sort -z | xargs -0 sha256sum -- > SHA256SUMS)
+fi
 
 {
   cat "$work/CHANGES.md"
@@ -71,6 +84,29 @@ esac
 read -r -p "Publish $tag with these assets? [y/N] " answer
 [ "$answer" = y ] || { echo "Left everything in $work"; exit 0; }
 
-gh release create "$tag" -R "$repo" --verify-tag --title "notinplus $tag" \
-  --notes-file "$work/NOTES.md" "${flags[@]}" "$dist"/*
+if ! gh release view "$tag" -R "$repo" >/dev/null 2>&1; then
+  gh release create "$tag" -R "$repo" --verify-tag --title "notinplus $tag" \
+    --notes-file "$work/NOTES.md" "${flags[@]}"
+fi
+
+uploaded=$(gh release view "$tag" -R "$repo" --json assets -q '.assets[] | select(.state == "uploaded") | .name')
+for file in "$dist"/*; do
+  name=$(basename "$file")
+  if grep -qxF "$name" <<<"$uploaded"; then
+    echo "✓ $name (already there)"
+    continue
+  fi
+  for attempt in 1 2 3 4 5; do
+    if gh release upload "$tag" -R "$repo" --clobber "$file"; then
+      echo "✓ $name"
+      break
+    fi
+    if [ "$attempt" = 5 ]; then
+      echo "✗ $name: giving up; run again with: $0 $run $tag $work" >&2
+      exit 1
+    fi
+    echo "  retrying $name ($attempt/5)…"
+    sleep $((attempt * 5))
+  done
+done
 echo "Published. Scratch files: $work"
