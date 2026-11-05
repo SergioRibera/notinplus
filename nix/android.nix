@@ -94,6 +94,8 @@ let
       commonArgs = {
         inherit src version;
         pname = "${pname}-android-${abi}";
+        # Same `-frandom-seed` in every layer (see nix/package.nix).
+        NIX_OUTPATH_USED_AS_RANDOM_SEED = pname;
         strictDeps = true;
         cargoLock = ../Cargo.lock;
         cargoToml = ../Cargo.toml;
@@ -119,7 +121,13 @@ let
         SKIA_BINARIES_URL = "file://${skia}/skia-binaries-{key}.tar.gz";
       };
 
-      cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+      # Third-party dependencies, then the workspace crates in layers
+      # (nix/layers.nix); `lib'` only compiles the app crate.
+      cargoArtifacts = (import ./layers.nix { inherit lib; }).build {
+        inherit craneLib src;
+        args = commonArgs;
+        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+      };
 
       lib' = craneLib.buildPackage (
         commonArgs

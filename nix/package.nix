@@ -43,6 +43,10 @@ let
 
   commonArgs = {
     inherit src pname version;
+    # Same `-frandom-seed` in every layer: bindgen reruns (and with it
+    # skia and everything above) whenever BINDGEN_EXTRA_CLANG_ARGS, which
+    # carries NIX_CFLAGS_COMPILE, changes. The default seed is $out.
+    NIX_OUTPATH_USED_AS_RANDOM_SEED = pname;
     strictDeps = true;
     cargoLock = ../Cargo.lock;
     cargoToml = ../Cargo.toml;
@@ -69,7 +73,13 @@ let
     SKIA_BINARIES_URL = "file://${prebuilt.skia}/skia-binaries-{key}.tar.gz";
   };
 
-  cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+  # Third-party dependencies, then the workspace crates in layers
+  # (nix/layers.nix); the package build only compiles the app crate.
+  cargoArtifacts = (import ./layers.nix { inherit lib; }).build {
+    inherit craneLib src;
+    args = commonArgs;
+    cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+  };
 
   unwrapped = craneLib.buildPackage (
     commonArgs
