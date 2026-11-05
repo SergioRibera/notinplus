@@ -30,6 +30,10 @@ pub(super) struct Gesture {
     /// Window point of the press that opened the selection.
     at: State<(f32, f32)>,
     preview: State<Option<Color>>,
+    /// The reader's scope. Tasks the gesture starts live in it, so they
+    /// end with the reader instead of writing these states after it
+    /// unmounts (closing its tab while the note popover is open).
+    scope: ScopeId,
 }
 
 impl std::fmt::Debug for Gesture {
@@ -172,6 +176,7 @@ impl Gesture {
             place: use_state(|| None),
             at: use_state(|| (0.0, 0.0)),
             preview: use_state(|| None),
+            scope: current_scope_id(),
         }
     }
 
@@ -406,30 +411,41 @@ impl Gesture {
         let (done_tx, done_rx) = flume::bounded::<AnnotationOutcome>(1);
         let (preview_tx, preview_rx) = flume::unbounded::<Option<[u8; 3]>>();
         let mut preview = self.preview;
-        spawn_in_window(async move {
-            while let Ok(rgb) = preview_rx.recv_async().await {
-                preview.set(rgb.map(|c| Color::from_rgb(c[0], c[1], c[2])));
-            }
-        });
+        spawn_in_scope(
+            async move {
+                while let Ok(rgb) = preview_rx.recv_async().await {
+                    preview.set(rgb.map(|c| Color::from_rgb(c[0], c[1], c[2])));
+                }
+            },
+            self.scope,
+        );
         let mut state = reader.state;
         let (book, chapter) = (selection.book.clone(), selection.chapter);
         let existing_id = existing.as_ref().map(|h| h.id);
-        spawn_in_window(async move {
-            match done_rx.recv_async().await {
-                Ok(AnnotationOutcome::Saved { color, body }) => {
-                    state
-                        .write()
-                        .upsert_highlight(&book, chapter, lo, hi, color.map(packed), body);
-                }
-                Ok(AnnotationOutcome::Deleted) => {
-                    if let Some(id) = existing_id {
-                        state.write().remove_highlight(id);
+        spawn_in_scope(
+            async move {
+                match done_rx.recv_async().await {
+                    Ok(AnnotationOutcome::Saved { color, body }) => {
+                        state.write().upsert_highlight(
+                            &book,
+                            chapter,
+                            lo,
+                            hi,
+                            color.map(packed),
+                            body,
+                        );
                     }
+                    Ok(AnnotationOutcome::Deleted) => {
+                        if let Some(id) = existing_id {
+                            state.write().remove_highlight(id);
+                        }
+                    }
+                    Ok(AnnotationOutcome::Cancelled) | Err(_) => {}
                 }
-                Ok(AnnotationOutcome::Cancelled) | Err(_) => {}
-            }
-            self.end();
-        });
+                self.end();
+            },
+            self.scope,
+        );
         reader.host.annotate(
             AnnotationRequest {
                 doc: reader.doc,
