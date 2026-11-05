@@ -142,6 +142,8 @@ fn place(
 ) {
     match sink {
         SnapshotSink::Nowhere => {}
+        // Rendering takes a while; the note may have closed meanwhile.
+        SnapshotSink::Note(_) if !controller.is_mounted() => {}
         SnapshotSink::Note(_) => {
             let data = LibraryView::get().data();
             let label = references::display(target, data.as_deref()).label;

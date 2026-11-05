@@ -511,6 +511,15 @@ impl EditorController {
         }
     }
 
+    /// Whether the component owning this controller is still mounted.
+    /// Work that finishes after an `.await` (a file picker, a render off
+    /// the UI thread) checks it before editing: every edit panics once
+    /// the owner is gone.
+    #[must_use]
+    pub fn is_mounted(&self) -> bool {
+        self.state.try_peek().is_some()
+    }
+
     fn update<R>(&self, update: impl FnOnce(&mut EditorState) -> R) -> R {
         let mut state = self.state;
         let mut guard = state.write();

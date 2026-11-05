@@ -1274,7 +1274,10 @@ impl PinNotes {
                     AnnotationOutcome::Cancelled => {}
                 }
             }
-            selected.set(None);
+            // The popover outlives the pane; its tab may be closed by now.
+            if let Some(mut selected) = selected.try_write() {
+                *selected = None;
+            }
         });
         crate::annotation::AnnotationPopover::open(
             AnnotationRequest {

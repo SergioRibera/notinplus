@@ -308,7 +308,9 @@ impl Component for DownloadSheet {
                     }
                 }
                 let watched = Arc::clone(&progress);
-                spawn_in_window(async move {
+                // Bound to the sheet: closing it cancels the download, and
+                // the poll must not write its states afterwards.
+                spawn(async move {
                     let result = loop {
                         if let Ok(result) = rx.try_recv() {
                             break Some(result);
@@ -450,16 +452,24 @@ fn install(path: PathBuf, mut phase: State<Phase>) {
             return;
         }
     };
+    // Outlives the sheet so closing it does not drop the installer call;
+    // the sheet may be gone by the time the installer answers.
     spawn_in_window(async move {
         let shown = path.display().to_string();
-        match client.install(shown).await.map_err(InstallError::from) {
-            Ok(()) => phase.set(Phase::Handed),
-            Err(InstallError::NeedsPermission) => phase.set(Phase::NeedsPermission(path)),
-            Err(InstallError::Unsupported) => reveal(&path),
+        let next = match client.install(shown).await.map_err(InstallError::from) {
+            Ok(()) => Phase::Handed,
+            Err(InstallError::NeedsPermission) => Phase::NeedsPermission(path),
+            Err(InstallError::Unsupported) => {
+                reveal(&path);
+                return;
+            }
             Err(err) => {
                 log::warn!("install {}: {err}", path.display());
-                phase.set(Phase::Failed(UpdateFailure::Installer));
+                Phase::Failed(UpdateFailure::Installer)
             }
+        };
+        if let Some(mut current) = phase.try_write() {
+            *current = next;
         }
     });
 }

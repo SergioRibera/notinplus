@@ -200,6 +200,9 @@ impl ItemImages {
             spawn_in_window(async move {
                 let added = images.pick_and_store(&tr!("editor-image-pick-title")).await;
                 match added {
+                    // The note closed while the picker was open: the image
+                    // stays in the item, there is no editor to put it in.
+                    Ok(Some(_)) if !controller.is_mounted() => {}
                     Ok(Some(stored)) => match request {
                         ImageRequest::Insert => controller.insert_image(&stored.url, ""),
                         ImageRequest::Replace(slot) => {
