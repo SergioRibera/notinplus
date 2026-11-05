@@ -107,6 +107,7 @@ impl PageProvider for SolidPageProvider {
         self.size
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("bg::solid_page_paint"))]
     fn paint(&self, canvas: &Canvas, rect: Rect, _scale: f32) {
         let sk_rect = SkRect::from_ltrb(rect.min_x, rect.min_y, rect.max_x, rect.max_y);
 
@@ -136,6 +137,7 @@ impl PageProvider for SolidPageProvider {
 }
 
 #[allow(clippy::cast_precision_loss)] // grid indices never approach f32 mantissa limit
+#[cfg_attr(feature = "sismo", sismo::function("bg::page_grid"))]
 fn paint_grid(canvas: &Canvas, rect: Rect, grid: Grid) {
     match grid {
         Grid::Lines {
@@ -178,6 +180,8 @@ fn paint_grid(canvas: &Canvas, rect: Rect, grid: Grid) {
                 .set_anti_alias(true);
             let (start_x, count_x) = grid_axis(rect.min_x, rect.max_x, spacing);
             let (start_y, count_y) = grid_axis(rect.min_y, rect.max_y, spacing);
+            #[cfg(feature = "sismo")]
+            sismo::counter!("bg.page_dots", count_x * count_y);
             for j in 0..count_y {
                 let y = (j as f32).mul_add(spacing, start_y);
                 for i in 0..count_x {

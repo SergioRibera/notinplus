@@ -1,4 +1,4 @@
-# notinplus
+# NotIn Plus
 
 Crossplatform Note App
 

@@ -1,34 +1,32 @@
-//! Palette constants shared across the notinplus UI + plugin crates.
+//! Colour themes: the five shipped palettes, the user's accent and the
+//! reactive context every component reads its colours from.
 //!
-//! Dark-first. Brush asset constants (`BALL_PEN`, `HIGHLIGHTER`, …) stay
-//! in the host-side `components::theme` module because they ship with
-//! the stroke canvas, not with the generic UI kit.
+//! Components call [`palette()`] while rendering; it subscribes them,
+//! so switching the theme in Settings repaints the whole app.
 
-use freya::prelude::Color;
+mod context;
+mod kind;
+mod palette;
 
-pub const SURFACE_PRIMARY: Color = Color::from_rgb(15, 15, 18);
-pub const SURFACE_SECONDARY: Color = Color::from_rgb(30, 30, 36);
-pub const SURFACE_TERTIARY: Color = Color::from_rgb(45, 45, 52);
+pub use context::{
+    Appearance, ResolvedTheme, TextSize, ThemeHandle, palette, reduce_motion, try_theme,
+    use_theme_root,
+};
+pub use kind::{ThemeChoice, ThemeKind};
+pub use palette::{
+    ACCENT_MIN_CONTRAST, Highlighters, KindColors, Palette, contrast_ratio, on_color,
+    relative_luminance,
+};
 
-pub const BORDER: Color = Color::from_rgb(60, 60, 70);
-pub const BORDER_FOCUS: Color = Color::from_rgb(70, 140, 250);
-
-pub const TEXT_PRIMARY: Color = Color::from_rgb(230, 230, 240);
-pub const TEXT_SECONDARY: Color = Color::from_rgb(150, 150, 165);
-pub const TEXT_PLACEHOLDER: Color = Color::from_rgb(110, 110, 125);
-pub const TEXT_INVERSE: Color = Color::from_rgb(15, 15, 18);
-
-pub const PRIMARY: Color = Color::from_rgb(70, 140, 250);
-pub const SECONDARY: Color = Color::from_rgb(100, 130, 200);
-
-pub const SUCCESS: Color = Color::from_rgb(76, 175, 120);
-pub const WARNING: Color = Color::from_rgb(230, 190, 105);
-pub const ERROR: Color = Color::from_rgb(220, 70, 70);
-
-pub const PANEL_BG: Color = Color::from_rgb(30, 30, 34);
-pub const SIDEBAR_BG: Color = Color::from_rgb(22, 22, 26);
-pub const CARD_BG: Color = Color::from_rgb(38, 38, 44);
-pub const TEXT_MUTED: Color = Color::from_rgb(160, 160, 175);
-pub const ACCENT: Color = Color::from_rgb(120, 170, 255);
-
-pub const SIDEBAR_WIDTH: f32 = 320.0;
+/// Accent swatches offered in Settings › Apariencia, before the free
+/// colour picker.
+pub const ACCENT_SWATCHES: [freya::prelude::Color; 8] = [
+    freya::prelude::Color::new(0xFF7B_8CFF),
+    freya::prelude::Color::new(0xFF5F_B38A),
+    freya::prelude::Color::new(0xFFE0_A845),
+    freya::prelude::Color::new(0xFFE8_735E),
+    freya::prelude::Color::new(0xFFA8_8BF0),
+    freya::prelude::Color::new(0xFF4F_B6C9),
+    freya::prelude::Color::new(0xFFE0_7BB5),
+    freya::prelude::Color::new(0xFF9A_958C),
+];

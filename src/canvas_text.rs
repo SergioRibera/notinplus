@@ -14,14 +14,19 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use freya::icons::lucide::{check, grip, rotate_cw, trash_2};
+use freya::icons::lucide::{check, external_link, grip, image_plus, rotate_cw, trash_2};
 use freya::prelude::*;
 use freya_markdown_editor::prelude::*;
 use istmo::plugins::EdgeInsets;
+use notein_i18n::tr;
+use notein_ui_kit::TapExt;
 
-use crate::canvas::{Board, PaintPass, SceneText, SurfaceBounds, TextLayerView, TextScene, lock};
-use crate::components::note_editor::{note_theme, notein_editor, use_note_keyboard};
-use crate::components::theme::{BORDER, PRIMARY, SURFACE_PRIMARY, TEXT_PRIMARY, TEXT_SECONDARY};
+use crate::canvas::{
+    Board, InkCache, PaintPass, SceneText, SurfaceBounds, TextLayerView, TextScene, lock,
+};
+use crate::editor::images::{AssetImage, ItemImages};
+use crate::image_box::{IMAGE_MIN_SIDE, ImageBox, ImageBoxId};
+use crate::library::model::ItemId;
 use crate::text_box::{TEXT_BASE_SIZE, TEXT_MIN_WIDTH, TextBoxId, TextFrame};
 use crate::ui_mask::{MaskSlot, use_mask_slot};
 
@@ -36,7 +41,6 @@ const HANDLE: f32 = 26.0;
 const ROTATE_OFFSET: f32 = 34.0;
 /// Rotations this close (degrees) to a multiple of 45° snap onto it.
 const ROTATE_SNAP: f32 = 4.0;
-const ACCENT: Color = PRIMARY;
 /// Inner space between a box's bounds and its text, in screen pixels.
 const BOX_PADDING: (f32, f32) = (4.0, 6.0);
 
@@ -55,6 +59,8 @@ pub struct TextEditorSlot {
     edit_mask: MaskSlot,
     /// Pen mask of the formatting bar.
     toolbar_mask: MaskSlot,
+    /// Pen mask of the image bar.
+    image_mask: MaskSlot,
     /// Pen mask of the open editor or toolbar popup (menus, pickers).
     popup_mask: MaskSlot,
 }
@@ -76,6 +82,7 @@ impl TextEditorSlot {
             editing: use_state(|| None),
             edit_mask: use_mask_slot(),
             toolbar_mask: use_mask_slot(),
+            image_mask: use_mask_slot(),
             popup_mask: use_mask_slot(),
         }
     }
@@ -93,8 +100,9 @@ impl TextEditorSlot {
 }
 
 /// Theme for a box whose body colour is `color` (RGBA) at viewport `scale`.
+#[sismo::function("canvas_text::theme")]
 fn canvas_theme(color: [u8; 4], scale: f32) -> EditorTheme {
-    let base = note_theme();
+    let base = crate::editor::theme(&notein_ui_kit::palette());
     let mut theme = base.clone().zoomed(TEXT_BASE_SIZE / base.body_size * scale);
     let [r, g, b, a] = color;
     let text = Color::from_argb(a, r, g, b);
@@ -113,11 +121,16 @@ pub struct CanvasLayers {
     pub board: Arc<Mutex<Board>>,
     /// Editor of the box under edit, shared with [`text_toolbar`].
     pub editor: TextEditorSlot,
+    /// Library item whose `assets/` folder holds the canvas images;
+    /// `None` on scratch surfaces, which show no images.
+    pub item: Option<ItemId>,
 }
 
 impl PartialEq for CanvasLayers {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.board, &other.board) && self.editor == other.editor
+        Arc::ptr_eq(&self.board, &other.board)
+            && self.editor == other.editor
+            && self.item == other.item
     }
 }
 
@@ -147,8 +160,11 @@ impl View {
 }
 
 impl Component for CanvasLayers {
+    #[sismo::function("canvas_text::layers_render")]
     fn render(&self) -> impl IntoElement {
         let board = Arc::clone(&self.board);
+        let accent = notein_ui_kit::palette().accent;
+        lock(&board).set_lasso_accent([accent.r(), accent.g(), accent.b()]);
         let scene = use_state({
             let board = Arc::clone(&board);
             move || lock(&board).text_scene()
@@ -177,7 +193,7 @@ impl Component for CanvasLayers {
             let texts = scene
                 .layers
                 .get(index)
-                .map(|layer| text_layer(&board, layer, &scene, view, self.editor));
+                .map(|layer| text_layer(&board, layer, &scene, view, self.editor, self.item));
             std::iter::once(canvas).chain(texts)
         });
 
@@ -198,6 +214,7 @@ impl Component for CanvasLayers {
 
 /// Follow board redraws: refresh the scene when its revision moves, and the
 /// viewport while there is text to place.
+#[sismo::function("canvas_text::watch_board")]
 fn watch_board(
     board: &Arc<Mutex<Board>>,
     mut scene: State<TextScene>,
@@ -228,6 +245,7 @@ fn watch_board(
     });
 }
 
+#[sismo::function("canvas_text::pass_canvas")]
 fn pass_canvas(board: &Arc<Mutex<Board>>, pass: PaintPass, index: usize) -> Element {
     // Render callbacks never compare unequal, so a pass that changes shape
     // must remount: the key carries the whole pass.
@@ -236,34 +254,56 @@ fn pass_canvas(board: &Arc<Mutex<Board>>, pass: PaintPass, index: usize) -> Elem
         pass.layers.start, pass.layers.end, pass.base, pass.overlays
     );
     let board = Arc::clone(board);
+    let mut cache = InkCache::default();
     rect()
         .key(key)
         .position(Position::new_absolute().top(0.).left(0.))
         .width(Size::fill())
         .height(Size::fill())
         .child(
-            canvas(RenderCallback::new(move |ctx| {
-                let bounds = SurfaceBounds {
-                    min_x: 0.0,
-                    min_y: 0.0,
-                    max_x: ctx.size.width,
-                    max_y: ctx.size.height,
-                };
-                lock(&board).paint(ctx.canvas, bounds, &pass);
-            }))
-            .width(Size::fill())
-            .height(Size::fill()),
+            rect()
+                .background(RenderCallback::new(move |ctx| {
+                    sismo::scope!("canvas::pass_render");
+                    let RenderTarget::Background { canvas, .. } = &ctx.target else {
+                        return;
+                    };
+                    let bounds = SurfaceBounds {
+                        min_x: 0.0,
+                        min_y: 0.0,
+                        max_x: ctx.size.width,
+                        max_y: ctx.size.height,
+                    };
+                    lock(&board).paint(canvas, bounds, &pass, &mut cache);
+                }))
+                .width(Size::fill())
+                .height(Size::fill()),
         )
         .into_element()
 }
 
+/// The images and text boxes of one layer, images below. The handles of
+/// the box under edit or the selected image sit on top.
+#[sismo::function("canvas_text::text_layer")]
 fn text_layer(
     board: &Arc<Mutex<Board>>,
     layer: &TextLayerView,
     scene: &TextScene,
     view: View,
     editor: TextEditorSlot,
+    item: Option<ItemId>,
 ) -> Element {
+    let images = layer.images.iter().filter_map(|image| {
+        Some(
+            CanvasImageBox {
+                item: item?,
+                image: image.clone(),
+                view,
+                selected: scene.selected_image == Some(image.id),
+                outlined: scene.image_mode,
+            }
+            .into_element(),
+        )
+    });
     let boxes = layer.texts.iter().map(|text| {
         let editing = scene.editing == Some(text.text.id);
         CanvasTextBox {
@@ -273,17 +313,30 @@ fn text_layer(
             editing,
             outlined: scene.text_mode,
             editor,
+            item,
         }
         .into_element()
     });
-    let handles = layer
+    let text_handles = layer
         .texts
         .iter()
         .find(|text| scene.editing == Some(text.text.id))
-        .map(|text| TextHandles {
+        .map(|text| BoxHandles {
             board: Arc::clone(board),
+            target: HandleTarget::Text,
             frame: text.text.frame,
             height: text.height,
+            view,
+        });
+    let image_handles = layer
+        .images
+        .iter()
+        .find(|image| scene.selected_image == Some(image.id))
+        .map(|image| BoxHandles {
+            board: Arc::clone(board),
+            target: HandleTarget::Image,
+            frame: image.frame,
+            height: image.height,
             view,
         });
     rect()
@@ -292,9 +345,60 @@ fn text_layer(
         .width(Size::fill())
         .height(Size::fill())
         .maybe(layer.opacity < 0.999, |r| r.opacity(layer.opacity))
+        .children(images)
         .children(boxes)
-        .maybe_child(handles)
+        .maybe_child(text_handles)
+        .maybe_child(image_handles)
         .into_element()
+}
+
+/// One image on the canvas. Never takes pointer input: taps reach the
+/// surface, which selects it through the board.
+#[derive(Clone, PartialEq)]
+struct CanvasImageBox {
+    item: ItemId,
+    image: ImageBox,
+    view: View,
+    selected: bool,
+    /// Show the bounds even while idle, so images can be found in image
+    /// mode.
+    outlined: bool,
+}
+
+impl Component for CanvasImageBox {
+    #[sismo::function("canvas_text::image_box_render")]
+    fn render(&self) -> impl IntoElement {
+        let view = self.view;
+        let frame = self.image.frame;
+        let (left, top) = view.to_screen(frame.x, frame.y);
+        rect()
+            .key(self.image.id.0)
+            .position(Position::new_absolute().left(left).top(top))
+            .width(Size::px(frame.width * view.scale))
+            .height(Size::px(self.image.height * view.scale))
+            .rotate(frame.rotation)
+            .interactive(false)
+            .overflow(Overflow::Clip)
+            .map(
+                outline(self.selected, self.outlined),
+                |r, (width, color)| {
+                    r.border(
+                        Border::new()
+                            .width(width)
+                            .alignment(BorderAlignment::Inner)
+                            .fill(color),
+                    )
+                },
+            )
+            .child(AssetImage {
+                item: self.item,
+                name: self.image.asset.clone(),
+            })
+    }
+
+    fn render_key(&self) -> DiffKey {
+        DiffKey::from(&self.image.id.0)
+    }
 }
 
 /// One text box: read only while idle, a live editor while edited.
@@ -307,6 +411,8 @@ struct CanvasTextBox {
     /// Show the bounds even while idle, so boxes can be found in text mode.
     outlined: bool,
     editor: TextEditorSlot,
+    /// Item the canvas belongs to, where pictures of other documents go.
+    item: Option<ItemId>,
 }
 
 impl PartialEq for CanvasTextBox {
@@ -321,6 +427,7 @@ impl PartialEq for CanvasTextBox {
 }
 
 impl Component for CanvasTextBox {
+    #[sismo::function("canvas_text::text_box_render")]
     fn render(&self) -> impl IntoElement {
         let text = &self.text.text;
         let view = self.view;
@@ -336,6 +443,7 @@ impl Component for CanvasTextBox {
                 markdown: text.markdown.clone(),
                 theme,
                 editor: self.editor,
+                item: self.item,
             }
             .into_element()
         } else {
@@ -385,9 +493,9 @@ impl Component for CanvasTextBox {
 /// text mode is on, none otherwise.
 fn outline(editing: bool, outlined: bool) -> Option<(f32, Color)> {
     if editing {
-        Some((2.0, ACCENT))
+        Some((2.0, notein_ui_kit::palette().accent))
     } else if outlined {
-        Some((1.0, ACCENT.with_a(90)))
+        Some((1.0, notein_ui_kit::palette().accent.with_a(90)))
     } else {
         None
     }
@@ -401,13 +509,14 @@ struct VisualText {
 }
 
 impl Component for VisualText {
+    #[sismo::function("canvas_text::visual_text_render")]
     fn render(&self) -> impl IntoElement {
         let controller = use_editor_controller();
         let mut value = use_state(|| self.markdown.clone());
         if *value.peek() != self.markdown {
             value.set(self.markdown.clone());
         }
-        notein_editor(value, controller, None)
+        crate::editor::editor(value, controller)
             .read_only(true)
             .theme(self.theme.clone())
             .font_family(FONT_FAMILY)
@@ -425,6 +534,7 @@ struct TextBoxEditor {
     markdown: String,
     theme: EditorTheme,
     editor: TextEditorSlot,
+    item: Option<ItemId>,
 }
 
 impl PartialEq for TextBoxEditor {
@@ -433,13 +543,14 @@ impl PartialEq for TextBoxEditor {
             && self.id == other.id
             && self.theme == other.theme
             && self.editor == other.editor
+            && self.item == other.item
     }
 }
 
 impl Component for TextBoxEditor {
+    #[sismo::function("canvas_text::editor_render")]
     fn render(&self) -> impl IntoElement {
         let controller = self.editor.controller;
-        use_note_keyboard(controller);
         let value = use_state(|| self.markdown.clone());
         use_side_effect({
             let board = Arc::clone(&self.board);
@@ -461,6 +572,7 @@ impl Component for TextBoxEditor {
             });
         });
         use_drop(move || {
+            sismo::scope!("canvas_text::editor_drop");
             // Switching boxes mounts the next editor before this one drops.
             if *editing.peek() == Some(id) {
                 editing.set(None);
@@ -472,16 +584,55 @@ impl Component for TextBoxEditor {
             .width(Size::fill())
             .on_sized(move |event: Event<SizedEventData>| mask.publish(event.area))
             .child(
-                notein_editor(
+                crate::editor::editor_on_board(
                     value,
                     controller,
-                    Some(crate::bookmark_ui::plugin_completions_provider().into()),
+                    self.item,
+                    Arc::clone(&self.board),
                 )
                 .theme(self.theme.clone())
                 .font_family(FONT_FAMILY)
-                .placeholder("Escribí… (/ para insertar)")
+                .placeholder(tr!("canvas-text-placeholder"))
                 .width(Size::fill()),
             )
+    }
+}
+
+/// A corner of a box, named by its unrotated position.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Corner {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+impl Corner {
+    const ALL: [Self; 4] = [
+        Self::TopLeft,
+        Self::TopRight,
+        Self::BottomLeft,
+        Self::BottomRight,
+    ];
+
+    /// Unrotated local position of the corner of a `width` × `height`
+    /// box.
+    const fn local(self, width: f32, height: f32) -> (f32, f32) {
+        match self {
+            Self::TopLeft => (0.0, 0.0),
+            Self::TopRight => (width, 0.0),
+            Self::BottomLeft => (0.0, height),
+            Self::BottomRight => (width, height),
+        }
+    }
+
+    const fn opposite(self) -> Self {
+        match self {
+            Self::TopLeft => Self::BottomRight,
+            Self::TopRight => Self::BottomLeft,
+            Self::BottomLeft => Self::TopRight,
+            Self::BottomRight => Self::TopLeft,
+        }
     }
 }
 
@@ -489,8 +640,12 @@ impl Component for TextBoxEditor {
 enum Handle {
     Move,
     Rotate,
+    /// Text boxes: drag the wrap width from the left edge.
     Left,
+    /// Text boxes: drag the wrap width from the right edge.
     Right,
+    /// Images: scale around the opposite corner, keeping the aspect.
+    Corner(Corner),
 }
 
 /// Drag in progress on one of the handles.
@@ -504,20 +659,54 @@ struct HandleDrag {
 }
 
 impl HandleDrag {
-    /// Frame after dragging the pointer to `(px, py)` (window
+    /// Frame and height after dragging the pointer to `(px, py)` (window
     /// coordinates).
-    fn frame_at(&self, view: View, px: f32, py: f32) -> TextFrame {
+    #[sismo::function("canvas_text::handle_frame_at")]
+    fn frame_at(&self, view: View, px: f32, py: f32) -> (TextFrame, f32) {
         let start = self.frame;
         let (dx, dy) = (
             (px - self.start.0) / view.scale,
             (py - self.start.1) / view.scale,
         );
         match self.handle {
-            Handle::Move => TextFrame {
-                x: start.x + dx,
-                y: start.y + dy,
-                ..start
-            },
+            Handle::Move => (
+                TextFrame {
+                    x: start.x + dx,
+                    y: start.y + dy,
+                    ..start
+                },
+                self.height,
+            ),
+            Handle::Corner(corner) => {
+                // Pointer in the box's own unrotated space; the opposite
+                // corner stays put and the box scales towards the pointer.
+                let wx = (px - view.origin.0 - view.tx) / view.scale;
+                let wy = (py - view.origin.1 - view.ty) / view.scale;
+                let (lx, ly) = start.to_local(self.height, wx, wy);
+                let anchor = corner.opposite();
+                let (ax, ay) = anchor.local(start.width, self.height);
+                let aspect = start.width / self.height.max(f32::EPSILON);
+                let min_width = IMAGE_MIN_SIDE.max(IMAGE_MIN_SIDE * aspect);
+                let width = (lx - ax).abs().max((ly - ay).abs() * aspect).max(min_width);
+                let height = width / aspect;
+                let anchor_world = start.to_world(self.height, ax, ay);
+                let (nax, nay) = anchor.local(width, height);
+                let (sin, cos) = start.rotation.to_radians().sin_cos();
+                let (ox, oy) = (width.mul_add(0.5, -nax), height.mul_add(0.5, -nay));
+                let center = (
+                    ox.mul_add(cos, -oy * sin) + anchor_world.0,
+                    ox.mul_add(sin, oy * cos) + anchor_world.1,
+                );
+                (
+                    TextFrame {
+                        x: width.mul_add(-0.5, center.0),
+                        y: height.mul_add(-0.5, center.1),
+                        width,
+                        ..start
+                    },
+                    height,
+                )
+            }
             Handle::Left | Handle::Right => {
                 let (sin, cos) = start.rotation.to_radians().sin_cos();
                 let along = dx.mul_add(cos, dy * sin);
@@ -537,12 +726,15 @@ impl HandleDrag {
                     (-anchor_side * width * 0.5).mul_add(cos, anchor.0),
                     (-anchor_side * width * 0.5).mul_add(sin, anchor.1),
                 );
-                TextFrame {
-                    x: width.mul_add(-0.5, center.0),
-                    y: self.height.mul_add(-0.5, center.1),
-                    width,
-                    ..start
-                }
+                (
+                    TextFrame {
+                        x: width.mul_add(-0.5, center.0),
+                        y: self.height.mul_add(-0.5, center.1),
+                        width,
+                        ..start
+                    },
+                    self.height,
+                )
             }
             Handle::Rotate => {
                 let (cx, cy) = start.center(self.height);
@@ -551,10 +743,13 @@ impl HandleDrag {
                 let from = (self.start.1 - cy).atan2(self.start.0 - cx);
                 let to = (py - cy).atan2(px - cx);
                 let raw = start.rotation + (to - from).to_degrees();
-                TextFrame {
-                    rotation: snap_rotation(raw),
-                    ..start
-                }
+                (
+                    TextFrame {
+                        rotation: snap_rotation(raw),
+                        ..start
+                    },
+                    self.height,
+                )
             }
         }
     }
@@ -574,45 +769,65 @@ fn snap_rotation(degrees: f32) -> f32 {
     }
 }
 
-/// Handles of the box under edit. Drawn unrotated at the rotated
-/// positions, so hit testing matches what the user sees.
+/// What a set of handles edits: the box under edit (wrap width from the
+/// sides) or the selected image (scaled from the corners).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HandleTarget {
+    Text,
+    Image,
+}
+
+/// Handles of the box under edit or the selected image. Drawn unrotated
+/// at the rotated positions, so hit testing matches what the user sees.
 #[derive(Clone)]
-struct TextHandles {
+struct BoxHandles {
     board: Arc<Mutex<Board>>,
+    target: HandleTarget,
     frame: TextFrame,
     height: f32,
     view: View,
 }
 
-impl PartialEq for TextHandles {
+impl PartialEq for BoxHandles {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.board, &other.board)
+            && self.target == other.target
             && self.frame == other.frame
             && self.height == other.height
             && self.view == other.view
     }
 }
 
-impl Component for TextHandles {
+impl Component for BoxHandles {
+    #[sismo::function("canvas_text::handles_render")]
     fn render(&self) -> impl IntoElement {
         let mut drag = use_state(|| Option::<HandleDrag>::None);
         let view = self.view;
         let frame = self.frame;
         let height = self.height;
+        let target = self.target;
         let scale = view.scale;
         let place = |lx: f32, ly: f32| {
             let (wx, wy) = frame.to_world(height, lx, ly);
             view.to_screen(wx, wy)
         };
-        let handles = [
+        let mut handles = vec![
             (Handle::Move, place(-HANDLE / scale, -HANDLE / scale)),
             (
                 Handle::Rotate,
                 place(frame.width * 0.5, -ROTATE_OFFSET / scale),
             ),
-            (Handle::Left, place(0.0, height * 0.5)),
-            (Handle::Right, place(frame.width, height * 0.5)),
         ];
+        match target {
+            HandleTarget::Text => handles.extend([
+                (Handle::Left, place(0.0, height * 0.5)),
+                (Handle::Right, place(frame.width, height * 0.5)),
+            ]),
+            HandleTarget::Image => handles.extend(Corner::ALL.into_iter().map(|corner| {
+                let (lx, ly) = corner.local(frame.width, height);
+                (Handle::Corner(corner), place(lx, ly))
+            })),
+        }
         let move_board = Arc::clone(&self.board);
         rect()
             .position(Position::new_absolute().top(0.).left(0.))
@@ -624,8 +839,12 @@ impl Component for TextHandles {
                 };
                 let at = event.global_location();
                 #[allow(clippy::cast_possible_truncation, reason = "screen coordinates")]
-                let next = active.frame_at(view, at.x as f32, at.y as f32);
-                lock(&move_board).set_session_frame(next);
+                let (next, next_height) = active.frame_at(view, at.x as f32, at.y as f32);
+                let mut board = lock(&move_board);
+                match target {
+                    HandleTarget::Text => board.set_session_frame(next),
+                    HandleTarget::Image => board.set_session_image_frame(next, next_height),
+                }
             })
             .on_global_pointer_up(move |_| {
                 if drag.peek().is_some() {
@@ -648,6 +867,7 @@ impl Component for TextHandles {
 /// One handle centred on `(x, y)`. Resize pills turn with the box
 /// (`rotation`, degrees) so they stay parallel to its edges; round handles
 /// look the same at any angle.
+#[sismo::function("canvas_text::handle_dot")]
 fn handle_dot(
     handle: Handle,
     x: f32,
@@ -658,10 +878,11 @@ fn handle_dot(
     let icon = match handle {
         Handle::Move => Some(grip()),
         Handle::Rotate => Some(rotate_cw()),
-        Handle::Left | Handle::Right => None,
+        Handle::Left | Handle::Right | Handle::Corner(_) => None,
     };
     let (width, height) = match handle {
         Handle::Left | Handle::Right => (HANDLE * 0.5, HANDLE),
+        Handle::Corner(_) => (HANDLE * 0.7, HANDLE * 0.7),
         Handle::Move | Handle::Rotate => (HANDLE, HANDLE),
     };
     rect()
@@ -678,17 +899,19 @@ fn handle_dot(
         })
         .center()
         .corner_radius(HANDLE * 0.5)
-        .background(SURFACE_PRIMARY)
+        .background(notein_ui_kit::palette().s2)
         .border(
             Border::new()
                 .width(1.5)
                 .alignment(BorderAlignment::Inner)
-                .fill(ACCENT),
+                .fill(notein_ui_kit::palette().accent),
         )
         .cursor(match handle {
             Handle::Move => CursorIcon::Move,
             Handle::Rotate => CursorIcon::Grab,
             Handle::Left | Handle::Right => CursorIcon::EwResize,
+            Handle::Corner(Corner::TopLeft | Corner::BottomRight) => CursorIcon::NwseResize,
+            Handle::Corner(Corner::TopRight | Corner::BottomLeft) => CursorIcon::NeswResize,
         })
         .on_touch_start(|event: Event<TouchEventData>| event.stop_propagation())
         .on_touch_move(|event: Event<TouchEventData>| event.stop_propagation())
@@ -702,7 +925,7 @@ fn handle_dot(
         })
         .maybe_child(icon.map(|icon| {
             SvgViewer::new(icon)
-                .color(ACCENT)
+                .color(notein_ui_kit::palette().accent)
                 .width(Size::px(HANDLE * 0.55))
                 .height(Size::px(HANDLE * 0.55))
         }))
@@ -716,6 +939,7 @@ fn handle_dot(
 /// window area in `area` (stale while hidden, so read it only while a box
 /// is edited) for other bottom overlays to sit above it. Renders nothing
 /// while no box is edited.
+#[sismo::function("canvas_text::toolbar")]
 pub fn text_toolbar(
     board: &Arc<Mutex<Board>>,
     editor: TextEditorSlot,
@@ -727,14 +951,15 @@ pub fn text_toolbar(
         editor.toolbar_mask.clear();
         return rect().into_element();
     }
-    let mut theme = note_theme();
+    let mut theme = crate::editor::theme(&notein_ui_kit::palette());
     theme.fonts.insert(0, FONT_FAMILY.into());
     // Menus must stay above the bar: below it there is only the soft
-    // keyboard, which covers the window instead of shrinking it.
+    // keyboard. Around it, what the system bars leave of the window.
     let bar = *area.read();
+    let frame = notein_ui_kit::safe_frame();
     let popup_area = Area::new(
-        (0., 0.).into(),
-        (Platform::get().root_size.read().width, bar.max_y()).into(),
+        frame.origin,
+        (frame.width(), (bar.max_y() - frame.min_y()).max(0.)).into(),
     );
     let delete_board = Arc::clone(board);
     let done_board = Arc::clone(board);
@@ -753,7 +978,7 @@ pub fn text_toolbar(
                 .width(Size::px(1.))
                 .height(Size::px(18.))
                 .margin((0., 4.))
-                .background(BORDER),
+                .background(notein_ui_kit::palette().line),
         )
         .child(
             MarkdownToolbar::new(controller)
@@ -773,7 +998,7 @@ pub fn text_toolbar(
         .width(Size::fill())
         .layer(Layer::Overlay)
         .padding((6., 8.))
-        .background(SURFACE_PRIMARY)
+        .background(notein_ui_kit::palette().s2)
         .border(
             Border::new()
                 .width(BorderWidth {
@@ -783,7 +1008,7 @@ pub fn text_toolbar(
                     left: 0.,
                 })
                 .alignment(BorderAlignment::Inner)
-                .fill(BORDER),
+                .fill(notein_ui_kit::palette().line),
         )
         .on_sized(move |event: Event<SizedEventData>| {
             editor.toolbar_mask.publish(event.area);
@@ -793,6 +1018,147 @@ pub fn text_toolbar(
             content: bar_content,
         })
         .into_element()
+}
+
+/// Bar of image mode, docked at the bottom of the pane.
+///
+/// Like [`text_toolbar`]: add an image, drop the selection, delete the
+/// selected image. Publishes its window area in `area` and renders nothing
+/// outside image mode.
+#[derive(Clone)]
+pub struct ImageBar {
+    pub board: Arc<Mutex<Board>>,
+    /// Item the images are stored in; scratch surfaces (`None`) cannot
+    /// add any.
+    pub item: Option<ItemId>,
+    pub tool: State<crate::ink::Tool>,
+    pub editor: TextEditorSlot,
+    pub area: State<Area>,
+    pub pad: EdgeInsets,
+}
+
+impl PartialEq for ImageBar {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.board, &other.board)
+            && self.item == other.item
+            && self.tool == other.tool
+            && self.editor == other.editor
+            && self.area == other.area
+            && self.pad == other.pad
+    }
+}
+
+impl std::fmt::Debug for ImageBar {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImageBar").finish_non_exhaustive()
+    }
+}
+
+impl Component for ImageBar {
+    #[sismo::function("canvas_text::image_bar_render")]
+    fn render(&self) -> impl IntoElement {
+        let board = Arc::clone(&self.board);
+        let selected = use_state({
+            let board = Arc::clone(&board);
+            move || selected_image(&board)
+        });
+        use_hook({
+            let board = Arc::clone(&board);
+            move || watch_selection(&board, selected)
+        });
+        let editor = self.editor;
+        let mut area = self.area;
+        if *self.tool.read() != crate::ink::Tool::Image {
+            editor.image_mask.clear();
+            return rect().into_element();
+        }
+        let selection = selected.read().clone();
+        let has_selection = selection.is_some();
+        let source = selection.and_then(|(_, source)| source);
+        let p = notein_ui_kit::palette();
+        let add_board = Arc::clone(&board);
+        let done_board = Arc::clone(&board);
+        let delete_board = Arc::clone(&board);
+        let item = self.item;
+        let pad = self.pad;
+        rect()
+            .position(
+                Position::new_absolute()
+                    .left(pad.left)
+                    .right(pad.right)
+                    .bottom(pad.bottom),
+            )
+            .width(Size::fill())
+            .layer(Layer::Overlay)
+            .padding((6., 8.))
+            .background(p.s2)
+            .border(
+                Border::new()
+                    .width(BorderWidth {
+                        top: 1.,
+                        right: 0.,
+                        bottom: 0.,
+                        left: 0.,
+                    })
+                    .alignment(BorderAlignment::Inner)
+                    .fill(p.line),
+            )
+            .on_sized(move |event: Event<SizedEventData>| {
+                editor.image_mask.publish(event.area);
+                area.set_if_modified(event.area);
+            })
+            .horizontal()
+            .cross_align(Alignment::center())
+            .spacing(6.)
+            .maybe_child(item.map(|item| {
+                notein_ui_kit::Button::new(tr!("canvas-image-add"))
+                    .icon(image_plus())
+                    .on_press(move |_| ItemImages::new(item).add_to_canvas(Arc::clone(&add_board)))
+            }))
+            .maybe(has_selection, |bar| {
+                bar.child(toolbar_action(check(), move || {
+                    lock(&done_board).end_image_session();
+                }))
+                .child(toolbar_action(trash_2(), move || {
+                    lock(&delete_board).delete_session_image();
+                }))
+            })
+            .maybe_child(source.map(|url| {
+                notein_ui_kit::Button::new(tr!("canvas-image-source"))
+                    .icon(external_link())
+                    .on_press(move |_| {
+                        sismo::scope!("canvas_text::open_image_source");
+                        crate::plugins::navigate::open(
+                            &notein_plugin::bookmark::SourceRef::from_link(&url),
+                            notein_plugin::services::Placement::Preferred,
+                        );
+                    })
+            }))
+            .into_element()
+    }
+}
+
+/// The selected image and where it was taken from, if anywhere.
+fn selected_image(board: &Arc<Mutex<Board>>) -> Option<(ImageBoxId, Option<String>)> {
+    lock(board)
+        .image_session()
+        .map(|image| (image.id, image.source.clone()))
+}
+
+/// Keep `selected` in step with the image the board has selected.
+#[sismo::function("canvas_text::watch_selection")]
+fn watch_selection(
+    board: &Arc<Mutex<Board>>,
+    mut selected: State<Option<(ImageBoxId, Option<String>)>>,
+) {
+    let rx = lock(board).watch();
+    let board = Arc::clone(board);
+    spawn(async move {
+        while rx.recv_async().await.is_ok() {
+            let next = selected_image(&board);
+            selected.set_if_modified(next);
+        }
+    });
 }
 
 /// One row that scrolls sideways: wheel on desktop, drag on touch screens,
@@ -806,6 +1172,7 @@ struct SideScroll {
 }
 
 impl Component for SideScroll {
+    #[sismo::function("canvas_text::side_scroll_render")]
     fn render(&self) -> impl IntoElement {
         let mut offset = use_state(|| 0.0_f32);
         let mut viewport = use_state(|| 0.0_f32);
@@ -827,7 +1194,7 @@ impl Component for SideScroll {
                 .height(Size::px(3.))
                 .margin((0., 0., 0., current / max * (track - width)))
                 .corner_radius(2.)
-                .background(TEXT_SECONDARY)
+                .background(notein_ui_kit::palette().t2)
         });
         rect()
             .width(Size::fill())
@@ -886,10 +1253,10 @@ fn toolbar_action(icon: Bytes, on_press: impl Fn() + 'static) -> Element {
         .center()
         .corner_radius(8.)
         .cursor(CursorIcon::Pointer)
-        .on_press(move |_| on_press())
+        .on_tap(move |_| on_press())
         .child(
             SvgViewer::new(icon)
-                .color(TEXT_PRIMARY)
+                .color(notein_ui_kit::palette().t1)
                 .width(Size::px(16.))
                 .height(Size::px(16.)),
         )
@@ -927,9 +1294,42 @@ mod tests {
             height: 40.0,
         };
         let before = drag.frame.to_world(40.0, 0.0, 20.0);
-        let next = drag.frame_at(view, 50.0, 0.0);
+        let (next, height) = drag.frame_at(view, 50.0, 0.0);
         let after = next.to_world(40.0, 0.0, 20.0);
         assert!(next.width > 100.0);
+        assert!((height - 40.0).abs() < f32::EPSILON);
         assert!((before.0 - after.0).abs() < 1e-3 && (before.1 - after.1).abs() < 1e-3);
+    }
+
+    #[test]
+    fn corner_keeps_the_aspect_and_the_opposite_corner() {
+        let view = View {
+            tx: 0.0,
+            ty: 0.0,
+            scale: 1.0,
+            origin: (0.0, 0.0),
+        };
+        let frame = TextFrame {
+            x: 0.0,
+            y: 0.0,
+            width: 200.0,
+            rotation: 20.0,
+        };
+        let drag = HandleDrag {
+            handle: Handle::Corner(Corner::BottomRight),
+            start: (0.0, 0.0),
+            frame,
+            height: 100.0,
+        };
+        let anchor_before = frame.to_world(100.0, 0.0, 0.0);
+        // The pointer lands where the bottom-right corner would be at
+        // double size.
+        let (px, py) = frame.to_world(100.0, 400.0, 200.0);
+        let (next, height) = drag.frame_at(view, px, py);
+        assert!((next.width - 400.0).abs() < 1e-2);
+        assert!((height - 200.0).abs() < 1e-2);
+        let anchor_after = next.to_world(height, 0.0, 0.0);
+        assert!((anchor_before.0 - anchor_after.0).abs() < 1e-2);
+        assert!((anchor_before.1 - anchor_after.1).abs() < 1e-2);
     }
 }

@@ -20,12 +20,12 @@ impl NoteAnchor {
 
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
-        bincode::encode_to_vec(self, bincode::config::standard())
-            .expect("NoteAnchor encode: standard bincode config cannot fail")
+        notein_sdk::Payload::to_bytes(self)
     }
 
     /// `None` for bytes that are not a note anchor.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("notes::anchor_decode"))]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         bincode::decode_from_slice(bytes, bincode::config::standard())
             .ok()

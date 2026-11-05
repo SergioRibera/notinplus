@@ -178,7 +178,11 @@ fn sample_lowers_to_expected_blocks() {
             .any(|kind| matches!(kind, BlockKind::Definition(_)))
     );
     assert!(kinds.iter().any(|kind| matches!(kind, BlockKind::Divider)));
-    assert!(kinds.iter().any(|kind| matches!(kind, BlockKind::Html(_))));
+    assert!(
+        kinds
+            .iter()
+            .any(|kind| matches!(kind, BlockKind::Details { .. }))
+    );
     assert!(
         kinds
             .iter()
@@ -251,4 +255,118 @@ fn plain_text_strips_markup() {
     let document =
         Document::parse("# Hi\n\nsome **bold** [link](x)\n\n| a | b |\n|---|---|\n| 1 | 2 |");
     assert_eq!(document.plain_text(), "Hi\nsome bold link\na | b\n1 | 2");
+}
+
+#[test]
+fn loose_html_becomes_comment_details_and_abbr() {
+    let source = "<details>\n<summary>Detalles plegables</summary>\n\nContenido dentro.\n\n</details>\n\nUn <abbr title=\"ejemplo &quot;x&quot;\">abbr</abbr>.\n\n<!-- Un comentario -->\n";
+    let document = Document::parse(source);
+    let kinds: Vec<&BlockKind> = document.blocks().iter().map(|block| &block.kind).collect();
+    assert!(matches!(
+        kinds[0],
+        BlockKind::Details { summary, open: false, content }
+            if summary == "Detalles plegables" && content.text() == "Contenido dentro."
+    ));
+    assert!(matches!(kinds[2], BlockKind::Comment(note) if note.text() == "Un comentario"));
+    assert!(kinds[1].content().is_some_and(|content| {
+        content
+            .marks()
+            .iter()
+            .any(|mark| mark.kind == MarkKind::Abbreviation("ejemplo \"x\"".to_owned()))
+    }));
+    let written = document.to_markdown(Dialect::Rich);
+    assert_eq!(
+        written,
+        "<details>\n<summary>Detalles plegables</summary>\n\nContenido dentro.\n\n</details>\n\nUn <abbr title=\"ejemplo &quot;x&quot;\">abbr</abbr>.\n\n<!-- Un comentario -->\n"
+    );
+    assert_eq!(
+        Document::parse(&written).to_markdown(Dialect::Rich),
+        written
+    );
+}
+
+#[test]
+fn details_in_one_html_block_keep_their_body() {
+    let document = Document::parse("<details open><summary>S</summary>body</details>\n");
+    assert!(matches!(
+        &document.blocks()[0].kind,
+        BlockKind::Details { summary, open: true, content } if summary == "S" && content.text() == "body"
+    ));
+}
+
+const SHOPPING: &str = "\
+| ✓   | Artículo | Presupuesto | Costo |
+|:---:|----------|------------:|------:|
+| [x] | Pan      | 10          | 12,50 |
+| [ ] | Leche    | 5           |       |
+
+<!--
+notein:table
+check: 1
+column: Diferencia = [Costo] - [Presupuesto]
+calc: Presupuesto = sum
+calc: Costo = sum, checked
+calc: Diferencia = sum
+-->
+";
+
+#[test]
+fn a_table_spec_is_read_back_and_written_out_with_its_values() {
+    use freya_markdown_editor::document::{Aggregate, Column, Scope, Summary, Table};
+
+    let document = Document::parse(SHOPPING);
+    let BlockKind::Table(table) = &document.blocks()[0].kind else {
+        panic!("table expected, got {:?}", document.blocks()[0].kind);
+    };
+    assert!(table.has_check_column());
+    assert_eq!(table.rows().len(), 3, "no totals row in the model");
+    assert_eq!(table.columns().len(), 4, "the computed column is not typed");
+    assert_eq!(table.computed()[0].header, "Diferencia");
+    assert_eq!(
+        table.summary(Column::Data(3)),
+        Some(Summary {
+            op: Aggregate::Sum,
+            scope: Scope::Checked
+        })
+    );
+    assert_eq!(
+        table.summary(Column::Computed(0)),
+        Some(Aggregate::Sum.into())
+    );
+
+    let rich = document.to_markdown(Dialect::Rich);
+    assert!(rich.contains("| Diferencia |"), "{rich}");
+    assert!(rich.contains("| 2,50"), "{rich}");
+    assert!(rich.contains("Sum 15"), "{rich}");
+    assert!(rich.contains("Sum 12,50"), "{rich}");
+    assert!(rich.contains("<!--\nnotein:table\ncheck: 1\n"), "{rich}");
+    let again = Document::parse(&rich);
+    let BlockKind::Table(reparsed) = &again.blocks()[0].kind else {
+        panic!("table expected");
+    };
+    assert_eq!(reparsed, table);
+    assert_eq!(again.to_markdown(Dialect::Rich), rich);
+
+    let portable = document.to_markdown(Dialect::Portable);
+    assert!(!portable.contains("notein:table"), "{portable}");
+    assert!(portable.contains("| Diferencia |"), "{portable}");
+    assert!(portable.contains("Sum 15"), "{portable}");
+    assert!(portable.contains("| [x] |"), "{portable}");
+    let _ = Table::default();
+}
+
+#[test]
+fn a_hand_written_check_column_is_adopted() {
+    let document = Document::parse("| | Item |\n|--|--|\n| [x] | a |\n| [ ] | b |\n");
+    let BlockKind::Table(table) = &document.blocks()[0].kind else {
+        panic!("table expected");
+    };
+    assert!(table.has_check_column());
+    assert!(table.is_checked(1));
+    assert!(!table.is_checked(2));
+    let plain = Document::parse("| n | Item |\n|--|--|\n| 1 | a |\n");
+    let BlockKind::Table(plain) = &plain.blocks()[0].kind else {
+        panic!("table expected");
+    };
+    assert!(!plain.has_check_column());
 }

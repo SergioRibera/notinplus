@@ -18,10 +18,11 @@
 
 use crate::doc_op::DocOp;
 
-/// Hard cap on the retained user actions. Oldest entry evicted when
-/// a new transaction overflows the cap — tracked in `SOURCES_PLAN`
-/// §10 as the undo-stack blow-up mitigation. 100 user actions covers
-/// any realistic ink session.
+/// Hard cap on the retained user actions.
+///
+/// Oldest entry evicted when a new transaction overflows the cap — tracked in
+/// `SOURCES_PLAN` §10 as the undo-stack blow-up mitigation. 100 user actions
+/// covers any realistic ink session.
 pub const MAX_DEPTH: usize = 100;
 
 /// One undoable user action.
@@ -60,7 +61,8 @@ impl UndoStack {
     /// Open a transaction. Nested calls increase the depth without
     /// restarting the pending entry so inner groupings fold into the
     /// outer action — a stroke gesture that triggers an auto-layer
-    /// AddLayer stays one undo entry.
+    /// `AddLayer` stays one undo entry.
+    #[sismo::function("undo::begin")]
     pub fn begin(&mut self) {
         if self.depth == 0 {
             self.pending = Some(UndoEntry::default());
@@ -80,6 +82,7 @@ impl UndoStack {
     /// Without an open transaction the op is sealed into a one-op
     /// entry directly — e.g. toolbar toggles that aren't part of a
     /// larger gesture.
+    #[sismo::function("undo::record")]
     pub fn record(&mut self, forward: DocOp, inverse: Vec<DocOp>) {
         if let Some(pending) = self.pending.as_mut() {
             pending.forward.push(forward);
@@ -105,6 +108,7 @@ impl UndoStack {
     /// Close one `begin`. Only the outermost close publishes the
     /// pending entry; empty transactions (begin → commit with no
     /// recorded ops) are dropped silently.
+    #[sismo::function("undo::commit")]
     pub fn commit(&mut self) {
         if self.depth == 0 {
             return;
@@ -124,6 +128,7 @@ impl UndoStack {
 
     /// Discard any in-flight transaction without publishing it. Used
     /// by cancel paths where the gesture never produced ops.
+    #[sismo::function("undo::abort")]
     pub fn abort(&mut self) {
         self.pending = None;
         self.depth = 0;
@@ -137,12 +142,14 @@ impl UndoStack {
     /// Pop the top undo entry. Caller is expected to apply each op
     /// in `entry.inverse` (in order) via `Doc::emit`, then hand the
     /// entry to [`Self::push_redo`] so the user can redo it.
+    #[sismo::function("undo::pop_undo")]
     pub fn pop_undo(&mut self) -> Option<UndoEntry> {
         self.undo.pop()
     }
 
     /// Pop the top redo entry. Caller applies `entry.forward` in
     /// order, then hands the entry back via [`Self::push_undo_raw`].
+    #[sismo::function("undo::pop_redo")]
     pub fn pop_redo(&mut self) -> Option<UndoEntry> {
         self.redo.pop()
     }
@@ -150,6 +157,7 @@ impl UndoStack {
     /// Push an already-formed entry back onto the undo stack without
     /// clearing redo. Used by [`Self::pop_redo`] callers after they
     /// finish re-applying the forward ops.
+    #[sismo::function("undo::push_undo_raw")]
     pub fn push_undo_raw(&mut self, entry: UndoEntry) {
         if entry.is_empty() {
             return;
@@ -162,6 +170,7 @@ impl UndoStack {
 
     /// Push an entry onto the redo stack. Used by undo-apply callers
     /// to let the user retrace.
+    #[sismo::function("undo::push_redo")]
     pub fn push_redo(&mut self, entry: UndoEntry) {
         if entry.is_empty() {
             return;
@@ -172,6 +181,7 @@ impl UndoStack {
         self.redo.push(entry);
     }
 
+    #[sismo::function("undo::clear")]
     pub fn clear(&mut self) {
         self.undo.clear();
         self.redo.clear();
@@ -189,6 +199,7 @@ impl UndoStack {
         self.redo.len()
     }
 
+    #[sismo::function("undo::push_undo_entry")]
     fn push_undo_entry(&mut self, entry: UndoEntry) {
         if self.undo.len() >= MAX_DEPTH {
             self.undo.remove(0);

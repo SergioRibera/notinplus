@@ -21,6 +21,7 @@ pub(crate) trait Versioned {
 }
 
 /// Decodes `bytes` and rejects archives baked for another layout.
+#[cfg_attr(feature = "sismo", sismo::function("handwriting::archive_decode"))]
 pub(crate) fn decode<T>(bytes: &[u8]) -> Result<T, HandwritingError>
 where
     T: Archive + Versioned,

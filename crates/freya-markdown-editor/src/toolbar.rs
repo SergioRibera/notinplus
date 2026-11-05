@@ -4,38 +4,23 @@ use std::time::Duration;
 
 use freya::icons::lucide;
 use freya::prelude::*;
+use notein_i18n::tr;
 
-use crate::controller::{ActiveFormat, EditorController};
+use crate::controller::{EditorController, ImageRequest};
 use crate::document::{
     Align, BlockKind, BlockType, CalloutKind, HeadingLevel, Inline, MarkFamily, MarkKind, Rgba,
 };
-use crate::popup::ReportedPopup;
+use crate::editor::header::callout_icon;
+use crate::labels::Label;
+use crate::popup::{
+    Anchored, MenuItem, POPUP_MARGIN, PopupArea, input_colors, popup_bounds, popup_frame,
+};
 use crate::theme::EditorTheme;
 
 const BUTTON: f32 = 30.0;
 const ICON: f32 = 16.0;
-/// Space between a button and its popup.
-const POPUP_GAP: f32 = 4.0;
-/// Space kept between a popup and the window edges.
-const POPUP_MARGIN: f32 = 8.0;
 /// Room a tooltip needs under its button before it flips above.
 const TOOLTIP_ROOM: f32 = 44.0;
-
-/// Region menus, pickers and tooltips must stay inside, provided by
-/// [`MarkdownToolbar`] to its buttons. `None` means the whole window.
-#[derive(Clone, Copy, PartialEq)]
-struct PopupArea(Option<Area>);
-
-/// Area popups may use: the toolbar's [`PopupArea`], else the window.
-fn popup_bounds() -> Area {
-    try_consume_context::<PopupArea>()
-        .and_then(|area| area.0)
-        .unwrap_or_else(|| {
-            let window = *Platform::get().root_size.read();
-            Area::new((0., 0.).into(), (window.width, window.height).into())
-        })
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Menu {
     Block,
@@ -116,13 +101,13 @@ impl MarkdownToolbar {
 }
 
 impl KeyExt for MarkdownToolbar {
-    fn write_key(&mut self) -> &mut DiffKey {
+    fn key_mut(&mut self) -> &mut DiffKey {
         &mut self.key
     }
 }
 
 impl LayoutExt for MarkdownToolbar {
-    fn get_layout(&mut self) -> &mut LayoutData {
+    fn layout_mut(&mut self) -> &mut LayoutData {
         &mut self.layout
     }
 }
@@ -130,6 +115,7 @@ impl LayoutExt for MarkdownToolbar {
 impl ContainerExt for MarkdownToolbar {}
 
 impl Component for MarkdownToolbar {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::toolbar"))]
     #[allow(clippy::too_many_lines, reason = "declarative layout of every group")]
     fn render(&self) -> impl IntoElement {
         let context_theme = use_try_consume::<EditorTheme>();
@@ -141,9 +127,10 @@ impl Component for MarkdownToolbar {
         let link_draft = use_state(String::new);
 
         let colors = theme.colors.clone();
+        let text = theme.labels.clone();
         let editing = !format.read_only;
         let rich = format.can_format();
-        let toggle = |family: MarkFamily, kind: MarkKind, icon: Bytes, tip: &'static str| {
+        let toggle = |family: MarkFamily, kind: MarkKind, icon: Bytes, tip: &str| {
             ToolButton::new(icon, tip)
                 .active(format.has(family))
                 .enabled(rich)
@@ -155,42 +142,49 @@ impl Component for MarkdownToolbar {
             let next = (*menu.peek() != Some(which)).then_some(which);
             menu.set(next);
         };
+        let mut close_menu = move |which: Menu| {
+            if *menu.peek() == Some(which) {
+                menu.set(None);
+            }
+        };
 
-        let history = group([
-            ToolButton::new(lucide::undo_2(), "Undo (Ctrl+Z)")
+        let history = [
+            ToolButton::new(lucide::undo_2(), text.get(Label::Undo))
                 .enabled(editing && format.can_undo)
                 .on_press(move || controller.undo())
                 .colors(&theme)
                 .into_element(),
-            ToolButton::new(lucide::redo_2(), "Redo (Ctrl+Y)")
+            ToolButton::new(lucide::redo_2(), text.get(Label::Redo))
                 .enabled(editing && format.can_redo)
                 .on_press(move || controller.redo())
                 .colors(&theme)
                 .into_element(),
-        ]);
+        ];
 
-        let block_label = block_label(format.block_type);
         let block_picker = Dropdown {
-            text: block_label.to_owned(),
+            text: text.block(format.block_type).to_owned(),
             width: 132.,
             enabled: editing && format.target.is_some_and(|t| t.cell.is_none()),
             open: *menu.read() == Some(Menu::Block),
             on_toggle: EventHandler::new(move |()| toggle_menu(Menu::Block)),
+            on_close: EventHandler::new(move |()| close_menu(Menu::Block)),
             colors: colors.clone(),
-            items: block_items(controller, menu, format.block_type),
+            items: block_items(controller, menu, format.block_type, &theme),
         };
 
-        let font_label = format
-            .font_family()
-            .map_or_else(|| "Default font".to_owned(), ToOwned::to_owned);
+        let font_label = format.font_family().map_or_else(
+            || text.get(Label::DefaultFont).to_owned(),
+            ToOwned::to_owned,
+        );
         let font_picker = Dropdown {
             text: font_label,
-            width: 128.,
+            width: 144.,
             enabled: rich,
             open: *menu.read() == Some(Menu::Font),
             on_toggle: EventHandler::new(move |()| toggle_menu(Menu::Font)),
+            on_close: EventHandler::new(move |()| close_menu(Menu::Font)),
             colors: colors.clone(),
-            items: std::iter::once(MenuItem::new("Default font", move || {
+            items: std::iter::once(MenuItem::new(text.get(Label::DefaultFont), move || {
                 controller.set_font_family(None);
                 let mut menu = menu;
                 menu.set(None);
@@ -209,17 +203,19 @@ impl Component for MarkdownToolbar {
             .collect(),
         };
 
-        let size_label = format
-            .font_size()
-            .map_or_else(|| "Size".to_owned(), |size| size.to_string());
+        let size_label = format.font_size().map_or_else(
+            || text.get(Label::FontSize).to_owned(),
+            |size| size.to_string(),
+        );
         let size_picker = Dropdown {
             text: size_label,
-            width: 64.,
+            width: 76.,
             enabled: rich,
             open: *menu.read() == Some(Menu::Size),
             on_toggle: EventHandler::new(move |()| toggle_menu(Menu::Size)),
+            on_close: EventHandler::new(move |()| close_menu(Menu::Size)),
             colors: colors.clone(),
-            items: std::iter::once(MenuItem::new("Default", move || {
+            items: std::iter::once(MenuItem::new(text.get(Label::DefaultSize), move || {
                 controller.set_font_size(None);
                 let mut menu = menu;
                 menu.set(None);
@@ -236,64 +232,64 @@ impl Component for MarkdownToolbar {
             .collect(),
         };
 
-        let marks = group([
+        let marks = [
             toggle(
                 MarkFamily::Strong,
                 MarkKind::Strong,
                 lucide::bold(),
-                "Bold (Ctrl+B)",
+                text.get(Label::Bold),
             )
             .into_element(),
             toggle(
                 MarkFamily::Emphasis,
                 MarkKind::Emphasis,
                 lucide::italic(),
-                "Italic (Ctrl+I)",
+                text.get(Label::Italic),
             )
             .into_element(),
             toggle(
                 MarkFamily::Underline,
                 MarkKind::Underline,
                 lucide::underline(),
-                "Underline (Ctrl+U)",
+                text.get(Label::Underline),
             )
             .into_element(),
             toggle(
                 MarkFamily::Strikethrough,
                 MarkKind::Strikethrough,
                 lucide::strikethrough(),
-                "Strikethrough (Ctrl+Shift+X)",
+                text.get(Label::Strikethrough),
             )
             .into_element(),
             toggle(
                 MarkFamily::Code,
                 MarkKind::Code,
                 lucide::code(),
-                "Inline code (Ctrl+E)",
+                text.get(Label::InlineCode),
             )
             .into_element(),
             toggle(
                 MarkFamily::Highlight,
                 MarkKind::Highlight,
                 lucide::highlighter(),
-                "Highlight (Ctrl+Shift+H)",
+                text.get(Label::Highlight),
             )
             .into_element(),
             toggle(
                 MarkFamily::Superscript,
                 MarkKind::Superscript,
                 lucide::superscript(),
-                "Superscript (Ctrl+.)",
+                text.get(Label::Superscript),
             )
             .into_element(),
             toggle(
                 MarkFamily::Subscript,
                 MarkKind::Subscript,
                 lucide::subscript(),
-                "Subscript (Ctrl+,)",
+                text.get(Label::Subscript),
             )
             .into_element(),
-        ]);
+        ];
 
         let color_menu = (*menu.read() == Some(Menu::Color)).then(|| {
             palette_popup(&theme, format.color(), move |color| {
@@ -309,9 +305,9 @@ impl Component for MarkdownToolbar {
                 menu.set(None);
             })
         });
-        let paint = group([
+        let paint = [
             anchored(
-                ToolButton::new(lucide::baseline(), "Text color")
+                ToolButton::new(lucide::baseline(), text.get(Label::TextColor))
                     .enabled(rich)
                     .swatch(format.color().map(Color::from))
                     .on_press(move || toggle_menu(Menu::Color))
@@ -320,7 +316,7 @@ impl Component for MarkdownToolbar {
                 color_menu,
             ),
             anchored(
-                ToolButton::new(lucide::paint_bucket(), "Background color")
+                ToolButton::new(lucide::paint_bucket(), text.get(Label::BackgroundColor))
                     .enabled(rich)
                     .swatch(format.background().map(Color::from))
                     .on_press(move || toggle_menu(Menu::Background))
@@ -328,20 +324,23 @@ impl Component for MarkdownToolbar {
                     .into_element(),
                 background_menu,
             ),
-            ToolButton::new(lucide::remove_formatting(), "Clear formatting (Ctrl+\\)")
-                .enabled(rich && format.has_selection)
-                .on_press(move || controller.clear_formatting())
-                .colors(&theme)
-                .into_element(),
-        ]);
+            ToolButton::new(
+                lucide::remove_formatting(),
+                text.get(Label::ClearFormatting),
+            )
+            .enabled(rich && format.has_selection)
+            .on_press(move || controller.clear_formatting())
+            .colors(&theme)
+            .into_element(),
+        ];
 
         let current_link = format.link().map(|link| link.url.clone());
         let link_menu = (*menu.read() == Some(Menu::Link))
             .then(|| link_popup(&theme, controller, menu, link_draft, current_link.clone()));
         let mut draft_seed = link_draft;
         let seed = current_link.clone().unwrap_or_default();
-        let link = group([anchored(
-            ToolButton::new(lucide::link(), "Link (Ctrl+K)")
+        let link = [anchored(
+            ToolButton::new(lucide::link(), text.get(Label::Link))
                 .active(current_link.is_some())
                 .enabled(rich && (format.has_selection || current_link.is_some()))
                 .on_press(move || {
@@ -351,9 +350,9 @@ impl Component for MarkdownToolbar {
                 .colors(&theme)
                 .into_element(),
             link_menu,
-        )]);
+        )];
 
-        let align = |value: Align, icon: Bytes, tip: &'static str| {
+        let align = |value: Align, icon: Bytes, tip: &str| {
             ToolButton::new(icon, tip)
                 .active(format.target.is_some() && format.align == value)
                 .enabled(editing && format.target.is_some_and(|t| t.cell.is_none()))
@@ -361,14 +360,30 @@ impl Component for MarkdownToolbar {
                 .colors(&theme)
                 .into_element()
         };
-        let alignment = group([
-            align(Align::Left, lucide::text_align_start(), "Align left"),
-            align(Align::Center, lucide::text_align_center(), "Center"),
-            align(Align::Right, lucide::text_align_end(), "Align right"),
-            align(Align::Justify, lucide::text_align_justify(), "Justify"),
-        ]);
+        let alignment = [
+            align(
+                Align::Left,
+                lucide::text_align_start(),
+                text.get(Label::AlignLeft),
+            ),
+            align(
+                Align::Center,
+                lucide::text_align_center(),
+                text.get(Label::AlignCenter),
+            ),
+            align(
+                Align::Right,
+                lucide::text_align_end(),
+                text.get(Label::AlignRight),
+            ),
+            align(
+                Align::Justify,
+                lucide::text_align_justify(),
+                text.get(Label::Justify),
+            ),
+        ];
 
-        let list = |block_type: BlockType, icon: Bytes, tip: &'static str| {
+        let list = |block_type: BlockType, icon: Bytes, tip: &str| {
             let active = format.block_type == Some(block_type);
             ToolButton::new(icon, tip)
                 .active(active)
@@ -387,34 +402,43 @@ impl Component for MarkdownToolbar {
             format.block_type,
             Some(BlockType::BulletList | BlockType::OrderedList | BlockType::TaskList)
         );
-        let lists = group([
-            list(BlockType::BulletList, lucide::list(), "Bulleted list"),
+        let lists = [
+            list(
+                BlockType::BulletList,
+                lucide::list(),
+                text.get(Label::BulletedList),
+            ),
             list(
                 BlockType::OrderedList,
                 lucide::list_ordered(),
-                "Numbered list",
+                text.get(Label::NumberedList),
             ),
-            list(BlockType::TaskList, lucide::list_todo(), "To-do list"),
-            ToolButton::new(lucide::list_indent_decrease(), "Outdent (Shift+Tab)")
+            list(
+                BlockType::TaskList,
+                lucide::list_todo(),
+                text.get(Label::TodoList),
+            ),
+            ToolButton::new(lucide::list_indent_decrease(), text.get(Label::Outdent))
                 .enabled(editing && in_list)
                 .on_press(move || controller.outdent())
                 .colors(&theme)
                 .into_element(),
-            ToolButton::new(lucide::list_indent_increase(), "Indent (Tab)")
+            ToolButton::new(lucide::list_indent_increase(), text.get(Label::Indent))
                 .enabled(editing && in_list)
                 .on_press(move || controller.indent())
                 .colors(&theme)
                 .into_element(),
-        ]);
+        ];
 
         let insert_picker = Dropdown {
-            text: "Insert".to_owned(),
+            text: text.get(Label::Insert).to_owned(),
             width: 84.,
             enabled: editing,
             open: *menu.read() == Some(Menu::Insert),
             on_toggle: EventHandler::new(move |()| toggle_menu(Menu::Insert)),
+            on_close: EventHandler::new(move |()| close_menu(Menu::Insert)),
             colors: colors.clone(),
-            items: insert_items(controller, menu),
+            items: insert_items(controller, menu, &theme),
         };
 
         let mode = self.show_mode_toggle.then(|| {
@@ -425,9 +449,9 @@ impl Component for MarkdownToolbar {
                     lucide::pencil()
                 },
                 if editing {
-                    "Switch to reading mode"
+                    text.get(Label::ReadingMode)
                 } else {
-                    "Switch to editing mode"
+                    text.get(Label::EditingMode)
                 },
             )
             .active(!editing)
@@ -441,21 +465,21 @@ impl Component for MarkdownToolbar {
             .horizontal()
             .maybe(self.wrap, |bar| bar.content(Content::wrap_spacing(4.)))
             .cross_align(Alignment::center())
-            .spacing(4.)
-            .child(history)
+            .spacing(2.)
+            .children(history)
             .child(separator(&colors))
             .child(block_picker)
             .child(font_picker)
             .child(size_picker)
             .child(separator(&colors))
-            .child(marks)
+            .children(marks)
             .child(separator(&colors))
-            .child(paint)
-            .child(link)
+            .children(paint)
+            .children(link)
             .child(separator(&colors))
-            .child(alignment)
+            .children(alignment)
             .child(separator(&colors))
-            .child(lists)
+            .children(lists)
             .child(separator(&colors))
             .child(insert_picker)
             .maybe_child(mode.map(|mode| rect().margin((0., 0., 0., 6.)).child(mode)))
@@ -466,30 +490,14 @@ impl Component for MarkdownToolbar {
     }
 }
 
-const fn block_label(block_type: Option<BlockType>) -> &'static str {
-    match block_type {
-        Some(BlockType::Heading(HeadingLevel::H1)) => "Heading 1",
-        Some(BlockType::Heading(HeadingLevel::H2)) => "Heading 2",
-        Some(BlockType::Heading(HeadingLevel::H3)) => "Heading 3",
-        Some(BlockType::Heading(_)) => "Heading",
-        Some(BlockType::Quote) => "Quote",
-        Some(BlockType::Callout(_)) => "Callout",
-        Some(BlockType::BulletList) => "Bulleted list",
-        Some(BlockType::OrderedList) => "Numbered list",
-        Some(BlockType::TaskList) => "To-do list",
-        Some(BlockType::Code) => "Code",
-        Some(BlockType::Math) => "Math",
-        Some(BlockType::Term) => "Term",
-        Some(BlockType::Definition) => "Definition",
-        Some(BlockType::Paragraph) | None => "Text",
-    }
-}
-
+#[cfg_attr(feature = "sismo", sismo::function("markdown::toolbar_block_items"))]
 fn block_items(
     controller: EditorController,
     menu: State<Option<Menu>>,
     current: Option<BlockType>,
+    theme: &EditorTheme,
 ) -> Vec<MenuItem> {
+    let text = &theme.labels;
     let entries = [
         BlockType::Paragraph,
         BlockType::Heading(HeadingLevel::H1),
@@ -498,66 +506,99 @@ fn block_items(
         BlockType::Quote,
         BlockType::Callout(CalloutKind::Note),
         BlockType::Callout(CalloutKind::Tip),
+        BlockType::Callout(CalloutKind::Important),
         BlockType::Callout(CalloutKind::Warning),
+        BlockType::Callout(CalloutKind::Caution),
         BlockType::Code,
         BlockType::Math,
     ];
     entries
         .into_iter()
         .map(|block_type| {
-            let text = match block_type {
-                BlockType::Callout(kind) => format!("Callout · {}", kind.title()),
-                other => block_label(Some(other)).to_owned(),
+            let caption = match block_type {
+                BlockType::Callout(kind) => {
+                    tr!("md-insert-callout", "kind" => text.callout(kind))
+                }
+                other => text.block(Some(other)).to_owned(),
             };
-            MenuItem::new(text, move || {
+            MenuItem::new(caption, move || {
                 controller.set_block_type(block_type);
                 let mut menu = menu;
                 menu.set(None);
             })
+            .icon(
+                block_icon(block_type),
+                match block_type {
+                    BlockType::Callout(kind) => theme.colors.callout(kind),
+                    _ => theme.colors.muted,
+                },
+            )
             .selected(current == Some(block_type))
         })
         .collect()
 }
 
-fn insert_items(controller: EditorController, menu: State<Option<Menu>>) -> Vec<MenuItem> {
+#[cfg_attr(feature = "sismo", sismo::function("markdown::toolbar_insert_items"))]
+fn insert_items(
+    controller: EditorController,
+    menu: State<Option<Menu>>,
+    theme: &EditorTheme,
+) -> Vec<MenuItem> {
+    let text = &theme.labels;
+    let icon = theme.colors.muted;
+    let text_diagram = text.get(Label::DiagramTemplate).to_owned();
     let close = move || {
         let mut menu = menu;
         menu.set(None);
     };
-    vec![
-        MenuItem::new("Table", move || {
-            controller.insert_table(3, 3);
+    let image = controller.can_pick_image().then(|| {
+        MenuItem::new(text.get(Label::Image), move || {
             close();
-        }),
-        MenuItem::new("Divider", move || {
-            controller.insert_divider();
-            close();
-        }),
-        MenuItem::new("Code block", move || {
-            controller.insert_block(BlockKind::Code {
-                language: String::new(),
-                code: Inline::default(),
-            });
-            close();
-        }),
-        MenuItem::new("Math block", move || {
-            controller.insert_block(BlockKind::Math(Inline::default()));
-            close();
-        }),
-        MenuItem::new("Table of contents", move || {
-            controller.insert_block(BlockKind::TableOfContents);
-            close();
-        }),
-    ]
-}
-
-fn group<const N: usize>(children: [Element; N]) -> Element {
-    rect()
-        .horizontal()
-        .cross_align(Alignment::center())
-        .spacing(2.)
-        .children(children)
-        .into_element()
+            controller.request_image(ImageRequest::Insert);
+        })
+        .icon(lucide::image_plus(), icon)
+    });
+    image
+        .into_iter()
+        .chain([
+            MenuItem::new(text.get(Label::Table), move || {
+                controller.insert_table(3, 3);
+                close();
+            })
+            .icon(lucide::table(), icon),
+            MenuItem::new(text.get(Label::Divider), move || {
+                controller.insert_divider();
+                close();
+            })
+            .icon(lucide::minus(), icon),
+            MenuItem::new(text.get(Label::CodeBlock), move || {
+                controller.insert_block(BlockKind::Code {
+                    language: String::new(),
+                    code: Inline::default(),
+                });
+                close();
+            })
+            .icon(lucide::code_xml(), icon),
+            MenuItem::new(text.get(Label::Diagram), move || {
+                controller.insert_block(BlockKind::Code {
+                    language: "mermaid".to_owned(),
+                    code: Inline::from(text_diagram.as_str()),
+                });
+                close();
+            })
+            .icon(lucide::workflow(), icon),
+            MenuItem::new(text.get(Label::MathBlock), move || {
+                controller.insert_block(BlockKind::Math(Inline::default()));
+                close();
+            })
+            .icon(lucide::sigma(), icon),
+            MenuItem::new(text.get(Label::TableOfContents), move || {
+                controller.insert_block(BlockKind::TableOfContents);
+                close();
+            })
+            .icon(lucide::list_tree(), icon),
+        ])
+        .collect()
 }
 
 fn separator(colors: &crate::EditorColors) -> Element {
@@ -569,91 +610,7 @@ fn separator(colors: &crate::EditorColors) -> Element {
         .into_element()
 }
 
-/// Child with an optional popup. See [`Anchored`].
-fn anchored(child: Element, popup: Option<Element>) -> Element {
-    Anchored { child, popup }.into_element()
-}
-
-/// Child with an optional popup that opens right under it, or right above
-/// it when there is no room below, and never leaves the window: the bar can
-/// sit anywhere (top of a page, docked above a soft keyboard, scrolled
-/// sideways).
-#[derive(Clone, PartialEq)]
-struct Anchored {
-    child: Element,
-    popup: Option<Element>,
-}
-
-impl Component for Anchored {
-    fn render(&self) -> impl IntoElement {
-        let mut anchor = use_state(Area::default);
-        let mut measured = use_state(Area::default);
-        let bounds = popup_bounds();
-        let popup = self.popup.clone().map(|popup| {
-            let size = *measured.read();
-            let (top, left) = popup_origin(*anchor.read(), (size.width(), size.height()), bounds);
-            rect()
-                .layer(Layer::Overlay)
-                .position(Position::new_global().top(top).left(left))
-                // Hidden until measured, so it never flashes off screen.
-                .opacity(if size.height() > 0. { 1. } else { 0. })
-                .on_sized(move |event: Event<SizedEventData>| {
-                    measured.set_if_modified(event.area);
-                })
-                .child(ReportedPopup { child: popup })
-        });
-        rect()
-            .on_sized(move |event: Event<SizedEventData>| anchor.set_if_modified(event.area))
-            .child(self.child.clone())
-            .maybe_child(popup)
-    }
-}
-
-/// Window position `(top, left)` of a `popup` sized `(width, height)` for a
-/// button at `anchor`, kept inside `bounds`.
-fn popup_origin(anchor: Area, popup: (f32, f32), bounds: Area) -> (f32, f32) {
-    let (width, height) = popup;
-    let below = anchor.max_y() + POPUP_GAP;
-    let above = anchor.min_y() - POPUP_GAP - height;
-    let (min_top, max_bottom) = (bounds.min_y() + POPUP_MARGIN, bounds.max_y() - POPUP_MARGIN);
-    let top = if bounds.height() <= 0. || below + height <= max_bottom {
-        below
-    } else if above >= min_top {
-        above
-    } else {
-        (max_bottom - height).max(min_top)
-    };
-    let (min_left, max_left) = (
-        bounds.min_x() + POPUP_MARGIN,
-        (bounds.max_x() - width - POPUP_MARGIN).max(bounds.min_x() + POPUP_MARGIN),
-    );
-    let left = if bounds.width() <= 0. {
-        anchor.min_x()
-    } else {
-        anchor.min_x().clamp(min_left, max_left)
-    };
-    (top, left)
-}
-
-fn popup_frame(colors: &crate::EditorColors) -> Rect {
-    rect()
-        .padding(8.)
-        .background(colors.popup_background)
-        .corner_radius(10.)
-        .border(
-            Border::new()
-                .width(1.)
-                .alignment(BorderAlignment::Inner)
-                .fill(colors.border),
-        )
-        .shadow(
-            Shadow::new()
-                .y(6.)
-                .blur(18.)
-                .color(Color::from_argb(70, 0, 0, 0)),
-        )
-}
-
+#[cfg_attr(feature = "sismo", sismo::function("markdown::toolbar_palette"))]
 fn palette_popup(
     theme: &EditorTheme,
     current: Option<Rgba>,
@@ -696,11 +653,17 @@ fn palette_popup(
                 .corner_radius(6.)
                 .cursor(CursorIcon::Pointer)
                 .on_press(move |_| reset(None))
-                .child(label().color(colors.muted).font_size(12.).text("Default")),
+                .child(
+                    label()
+                        .color(colors.muted)
+                        .font_size(12.)
+                        .text(theme.labels.get(Label::DefaultColor).to_owned()),
+                ),
         )
         .into_element()
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("markdown::toolbar_link_popup"))]
 fn link_popup(
     theme: &EditorTheme,
     controller: EditorController,
@@ -718,14 +681,14 @@ fn link_popup(
         controller.set_link((!url.is_empty()).then_some(url));
         close();
     };
-    let action = |text: &'static str, color: Color, on_press: Box<dyn Fn()>| {
+    let action = |text: &str, color: Color, on_press: Box<dyn Fn()>| {
         rect()
             .padding((5., 10.))
             .corner_radius(6.)
             .background(colors.popup_selected)
             .cursor(CursorIcon::Pointer)
             .on_press(move |_| on_press())
-            .child(label().font_size(12.).color(color).text(text))
+            .child(label().font_size(12.).color(color).text(text.to_owned()))
     };
     popup_frame(colors)
         .width(Size::px(280.))
@@ -733,6 +696,7 @@ fn link_popup(
         .child(
             Input::new(draft)
                 .placeholder("https://")
+                .theme_colors(input_colors(colors))
                 .auto_focus(true)
                 .width(Size::fill())
                 .on_submit(move |_| apply()),
@@ -741,10 +705,14 @@ fn link_popup(
             rect()
                 .horizontal()
                 .spacing(6.)
-                .child(action("Apply", colors.accent, Box::new(apply)))
+                .child(action(
+                    theme.labels.get(Label::ApplyLink),
+                    colors.accent,
+                    Box::new(apply),
+                ))
                 .maybe_child(current.map(|_| {
                     action(
-                        "Remove",
+                        theme.labels.get(Label::RemoveLink),
                         colors.caution,
                         Box::new(move || {
                             controller.set_link(None);
@@ -763,13 +731,121 @@ struct ToolButtonColors {
     hover: Color,
     active: Color,
     accent: Color,
+    tip: Color,
+    tip_text: Color,
+    tip_border: Color,
+}
+
+/// Tooltips paint on the top overlay level: above every menu, popup and
+/// dialog, since they never take input.
+const TOOLTIP_LAYER: Layer = Layer::OverlayLevel(16);
+/// How long the mouse rests on a button before its tooltip shows.
+const TOOLTIP_DELAY: Duration = Duration::from_millis(450);
+/// Gap between a button and its tooltip.
+const TOOLTIP_GAP: f32 = 6.;
+
+/// The tooltip of one [`ToolButton`]: shown after the mouse rests on it,
+/// under it or over it near the bottom of the popup bounds, and slid
+/// sideways to stay inside them.
+#[derive(Clone, Copy, PartialEq)]
+struct Tip {
+    shown: State<bool>,
+    task: State<Option<TaskHandle>>,
+    anchor: State<Area>,
+    size: State<Area>,
+}
+
+impl Tip {
+    fn use_tip() -> Self {
+        Self {
+            shown: use_state(|| false),
+            task: use_state(|| None),
+            anchor: use_state(Area::default),
+            size: use_state(Area::default),
+        }
+    }
+
+    /// Touch never shows a tooltip: a finger does not rest, and the press
+    /// already does what the button says.
+    fn enter(mut self, event: &Event<PointerEventData>) {
+        if !matches!(event.data(), PointerEventData::Mouse(_)) {
+            return;
+        }
+        self.cancel();
+        let mut shown = self.shown;
+        self.task.set(Some(spawn(async move {
+            timer(TOOLTIP_DELAY).await;
+            shown.set_if_modified(true);
+        })));
+    }
+
+    fn leave(mut self) {
+        self.cancel();
+        self.shown.set_if_modified(false);
+    }
+
+    fn cancel(&mut self) {
+        if let Some(task) = self.task.write().take() {
+            task.cancel();
+        }
+    }
+
+    fn track(mut self, event: &Event<SizedEventData>) {
+        self.anchor.set_if_modified(event.area);
+    }
+
+    fn render(self, text: String, colors: &ToolButtonColors) -> Option<Element> {
+        if !*self.shown.read() {
+            return None;
+        }
+        let mut size = self.size;
+        let anchor = *self.anchor.peek();
+        let measured = *size.read();
+        let bounds = popup_bounds();
+        let over = anchor.max_y() + TOOLTIP_ROOM > bounds.max_y();
+        let centred = anchor.center().x - measured.width() / 2.;
+        let (min_left, max_left) = (
+            bounds.min_x() + POPUP_MARGIN,
+            (bounds.max_x() - measured.width() - POPUP_MARGIN).max(bounds.min_x() + POPUP_MARGIN),
+        );
+        let left = centred.clamp(min_left, max_left) - anchor.min_x();
+        let position = if over {
+            Position::new_absolute().bottom(anchor.height() + TOOLTIP_GAP)
+        } else {
+            Position::new_absolute().top(anchor.height() + TOOLTIP_GAP)
+        };
+        Some(
+            rect()
+                .position(position.left(left))
+                .layer(TOOLTIP_LAYER)
+                .interactive(Interactive::No)
+                .on_sized(move |event: Event<SizedEventData>| size.set_if_modified(event.area))
+                .padding((5., 9.))
+                .corner_radius(6.)
+                .background(colors.tip)
+                .border(
+                    Border::new()
+                        .width(1.)
+                        .alignment(BorderAlignment::Inner)
+                        .fill(colors.tip_border),
+                )
+                .child(
+                    label()
+                        .text(text)
+                        .font_size(12.)
+                        .color(colors.tip_text)
+                        .max_lines(1),
+                )
+                .into_element(),
+        )
+    }
 }
 
 /// Square icon button with hover, active and disabled states.
 #[derive(Clone, PartialEq)]
 struct ToolButton {
     icon: Bytes,
-    tip: &'static str,
+    tip: String,
     active: bool,
     enabled: bool,
     swatch: Option<Color>,
@@ -778,10 +854,10 @@ struct ToolButton {
 }
 
 impl ToolButton {
-    const fn new(icon: Bytes, tip: &'static str) -> Self {
+    fn new(icon: Bytes, tip: impl Into<String>) -> Self {
         Self {
             icon,
-            tip,
+            tip: tip.into(),
             active: false,
             enabled: true,
             swatch: None,
@@ -819,20 +895,28 @@ impl ToolButton {
             hover: colors.popup_selected,
             active: colors.accent.with_a(46),
             accent: colors.accent,
+            tip: colors.popup_background,
+            tip_text: colors.text,
+            tip_border: colors.border,
         });
         self
     }
 }
 
 impl Component for ToolButton {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::tool_button"))]
     fn render(&self) -> impl IntoElement {
         let mut hovered = use_state(|| false);
+        let tip = Tip::use_tip();
         let colors = self.colors.clone().unwrap_or(ToolButtonColors {
             text: Color::WHITE,
             muted: Color::GRAY,
             hover: Color::from_argb(40, 255, 255, 255),
             active: Color::from_argb(60, 110, 168, 254),
             accent: Color::from_rgb(110, 168, 254),
+            tip: Color::from_rgb(32, 32, 36),
+            tip_text: Color::WHITE,
+            tip_border: Color::from_argb(40, 255, 255, 255),
         });
         let enabled = self.enabled;
         let background = if self.active {
@@ -861,10 +945,17 @@ impl Component for ToolButton {
             } else {
                 CursorIcon::NotAllowed
             })
-            .on_pointer_enter(move |_| hovered.set(true))
-            .on_pointer_leave(move |_| hovered.set_if_modified(false))
+            .on_pointer_enter(move |event: Event<PointerEventData>| {
+                hovered.set(matches!(event.data(), PointerEventData::Mouse(_)));
+                tip.enter(&event);
+            })
+            .on_pointer_leave(move |_| {
+                hovered.set_if_modified(false);
+                tip.leave();
+            })
             .on_press(move |event: Event<PressEventData>| {
                 event.stop_propagation();
+                tip.leave();
                 if enabled && let Some(handler) = &on_press {
                     handler.call(());
                 }
@@ -883,43 +974,10 @@ impl Component for ToolButton {
                     .corner_radius(2.)
                     .background(swatch)
             }));
-        let mut area = use_state(Area::default);
-        let position = if area.read().max_y() + TOOLTIP_ROOM > popup_bounds().max_y() {
-            AttachedPosition::Top
-        } else {
-            AttachedPosition::Bottom
-        };
-        TooltipContainer::new(Tooltip::new_text(self.tip))
-            .delay(Duration::from_millis(450))
-            .position(position)
-            .child(
-                rect()
-                    .on_sized(move |event: Event<SizedEventData>| area.set_if_modified(event.area))
-                    .child(button),
-            )
-    }
-}
-
-#[derive(Clone, PartialEq)]
-struct MenuItem {
-    text: String,
-    selected: bool,
-    on_press: EventHandler<()>,
-}
-
-impl MenuItem {
-    fn new(text: impl Into<String>, on_press: impl FnMut() + 'static) -> Self {
-        let mut on_press = on_press;
-        Self {
-            text: text.into(),
-            selected: false,
-            on_press: EventHandler::new(move |()| on_press()),
-        }
-    }
-
-    const fn selected(mut self, selected: bool) -> Self {
-        self.selected = selected;
-        self
+        rect()
+            .on_sized(move |event: Event<SizedEventData>| tip.track(&event))
+            .child(button)
+            .maybe_child(tip.render(self.tip.clone(), &colors))
     }
 }
 
@@ -931,11 +989,13 @@ struct Dropdown {
     enabled: bool,
     open: bool,
     on_toggle: EventHandler<()>,
+    on_close: EventHandler<()>,
     colors: crate::EditorColors,
     items: Vec<MenuItem>,
 }
 
 impl Component for Dropdown {
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::toolbar_dropdown"))]
     fn render(&self) -> impl IntoElement {
         let mut hovered = use_state(|| false);
         let colors = &self.colors;
@@ -971,7 +1031,9 @@ impl Component for Dropdown {
             } else {
                 CursorIcon::NotAllowed
             })
-            .on_pointer_enter(move |_| hovered.set(true))
+            .on_pointer_enter(move |event: Event<PointerEventData>| {
+                hovered.set(matches!(event.data(), PointerEventData::Mouse(_)));
+            })
             .on_pointer_leave(move |_| hovered.set_if_modified(false))
             .on_press(move |event: Event<PressEventData>| {
                 event.stop_propagation();
@@ -982,9 +1044,11 @@ impl Component for Dropdown {
             .child(
                 rect().width(Size::flex(1.)).child(
                     label()
+                        .width(Size::fill())
                         .font_size(12.5)
                         .color(foreground)
                         .max_lines(1)
+                        .text_overflow(TextOverflow::Ellipsis)
                         .text(self.text.clone()),
                 ),
             )
@@ -1000,83 +1064,39 @@ impl Component for Dropdown {
             popup_frame(colors)
                 .padding(4.)
                 .width(Size::px(self.width.max(150.)))
-                .children(self.items.iter().enumerate().map(|(index, item)| {
-                    let on_press = item.on_press.clone();
-                    rect()
-                        .key(index)
-                        .width(Size::fill())
-                        .padding((6., 10.))
-                        .corner_radius(6.)
-                        .background(if item.selected {
-                            colors.popup_selected
-                        } else {
-                            Color::TRANSPARENT
-                        })
-                        .cursor(CursorIcon::Pointer)
-                        .on_press(move |event: Event<PressEventData>| {
-                            event.stop_propagation();
-                            on_press.call(());
-                        })
-                        .child(
-                            label()
-                                .font_size(13.)
-                                .color(colors.text)
-                                .text(item.text.clone()),
-                        )
-                        .into_element()
-                }))
+                .children(
+                    self.items
+                        .iter()
+                        .enumerate()
+                        .map(|(index, item)| item.row(index, colors, None)),
+                )
                 .into_element()
         });
-        anchored(button, popup)
+        let on_close = self.on_close.clone();
+        Anchored::new(button, popup)
+            .on_dismiss(move || on_close.call(()))
+            .into_element()
     }
 }
 
-impl ActiveFormat {
-    /// Convenience used by the toolbar labels.
-    #[must_use]
-    pub const fn block_label(&self) -> &'static str {
-        block_label(self.block_type)
-    }
+/// Child with an optional popup. See [`Anchored`].
+fn anchored(child: Element, popup: Option<Element>) -> Element {
+    Anchored::new(child, popup).into_element()
 }
 
-#[cfg(test)]
-mod tests {
-    use freya::prelude::Area;
-
-    use super::popup_origin;
-
-    fn button(top: f32) -> Area {
-        Area::new((100., top).into(), (30., 30.).into())
-    }
-
-    fn window(width: f32, height: f32) -> Area {
-        Area::new((0., 0.).into(), (width, height).into())
-    }
-
-    #[test]
-    fn opens_below_when_it_fits() {
-        let (top, left) = popup_origin(button(10.), (150., 200.), window(800., 600.));
-        assert!((top - 44.).abs() < f32::EPSILON);
-        assert!((left - 100.).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn flips_above_near_the_bottom() {
-        let (top, _) = popup_origin(button(550.), (150., 200.), window(800., 600.));
-        assert!((top - 346.).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn flips_above_a_covered_bottom() {
-        // Window 600 tall, but only the top 400 visible above a keyboard.
-        let (top, _) = popup_origin(button(330.), (150., 200.), window(800., 400.));
-        assert!((top - 126.).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn stays_inside_the_window() {
-        let (top, left) = popup_origin(button(100.), (300., 580.), window(320., 600.));
-        assert!((top - 12.).abs() < f32::EPSILON);
-        assert!((left - 12.).abs() < f32::EPSILON);
+fn block_icon(block_type: BlockType) -> Bytes {
+    match block_type {
+        BlockType::Paragraph => lucide::pilcrow(),
+        BlockType::Heading(HeadingLevel::H1) => lucide::heading_1(),
+        BlockType::Heading(HeadingLevel::H2) => lucide::heading_2(),
+        BlockType::Heading(_) => lucide::heading_3(),
+        BlockType::Quote => lucide::quote(),
+        BlockType::Callout(kind) => callout_icon(kind),
+        BlockType::BulletList => lucide::list(),
+        BlockType::OrderedList => lucide::list_ordered(),
+        BlockType::TaskList => lucide::list_checks(),
+        BlockType::Code => lucide::code_xml(),
+        BlockType::Math => lucide::sigma(),
+        BlockType::Term | BlockType::Definition => lucide::text_quote(),
     }
 }

@@ -4,7 +4,7 @@
 //! permissive on whitespace + optional dots after abbreviations
 //! (`"1 Co."` → `"1Co"`), case-insensitive on the book, and tolerates
 //! both `":"` and `"."` between chapter and verse (`"Juan 3.16"` works
-//! too — common in some LatAm typographic traditions).
+//! too — common in some `LatAm` typographic traditions).
 //!
 //! Returns a `ParsedRef` that the resolver can hand off to the DB layer
 //! for anchor materialisation. The parser does not touch the DB; book
@@ -26,8 +26,9 @@ pub struct ParsedRef {
 }
 
 /// `(\d+\s+)?([a-záéíóúñ.]+)\s+(\d+)(?:[:.](\d+)(?:\s*[-–]\s*(\d+))?)?`
-fn re() -> &'static Regex {
-    static R: OnceLock<Regex> = OnceLock::new();
+/// `None` only if the pattern failed to build, which tests rule out.
+fn re() -> Option<&'static Regex> {
+    static R: OnceLock<Option<Regex>> = OnceLock::new();
     R.get_or_init(|| {
         Regex::new(
             r"(?xi)
@@ -46,27 +47,31 @@ fn re() -> &'static Regex {
              \s*$
             ",
         )
-        .expect("ref parser regex must compile")
+        .ok()
     })
+    .as_ref()
 }
 
 #[must_use]
 pub fn parse(input: &str) -> Option<ParsedRef> {
-    let caps = re().captures(input)?;
+    let caps = re()?.captures(input)?;
     let prefix = caps.name("prefix").map(|m| m.as_str().trim());
     let book_raw = caps.name("book")?.as_str().trim_end_matches('.');
-    let book_token = match prefix {
-        Some(p) => format!("{}{}", p, book_raw.to_lowercase()),
-        None => book_raw.to_lowercase(),
-    };
+    let book_token = prefix.map_or_else(
+        || book_raw.to_lowercase(),
+        |p| format!("{p}{}", book_raw.to_lowercase()),
+    );
     let chapter: u16 = caps.name("chapter")?.as_str().parse().ok()?;
     let start_verse = caps
         .name("verse_start")
         .and_then(|m| m.as_str().parse().ok());
-    let end_verse = caps
-        .name("verse_end")
-        .and_then(|m| m.as_str().parse().ok());
-    Some(ParsedRef { book_token, chapter, start_verse, end_verse })
+    let end_verse = caps.name("verse_end").and_then(|m| m.as_str().parse().ok());
+    Some(ParsedRef {
+        book_token,
+        chapter,
+        start_verse,
+        end_verse,
+    })
 }
 
 #[cfg(test)]

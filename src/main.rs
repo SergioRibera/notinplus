@@ -1,6 +1,9 @@
 // Desktop entry point. Mobile targets get a stub `main` so the same
 // `Cargo.toml` produces `cdylib` + `staticlib` + a `bin` without extra cfgs.
 
+// Release builds on Windows must not open a console window next to the app.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 #[cfg(not(any(
     target_os = "android",
     target_os = "ios",
@@ -11,13 +14,16 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use notinplus::{WINDOW_ID, app, pen_pump};
 
-    env_logger::Builder::from_env(
+    let logger = env_logger::Builder::from_env(
         env_logger::Env::default()
             .default_filter_or("info,freya_winit=off,freya_core=off,torin=off,ragnarok=off,"),
     )
-    .init();
+    .build();
+    let max = logger.filter();
+    notinplus::diagnostics::init_logging(Some(Box::new(logger)), max);
 
     notinplus::desktop::install()?;
+    notinplus::diagnostics::start_if_enabled();
 
     pen_pump::spawn(WINDOW_ID);
     app::run();

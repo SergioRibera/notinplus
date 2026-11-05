@@ -23,6 +23,7 @@ fn registry() -> &'static Registry {
     R.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+#[sismo::function("active_boards::lock")]
 fn lock() -> std::sync::MutexGuard<'static, HashMap<CanvasMount, Arc<Mutex<Board>>>> {
     match registry().lock() {
         Ok(g) => g,
@@ -33,14 +34,16 @@ fn lock() -> std::sync::MutexGuard<'static, HashMap<CanvasMount, Arc<Mutex<Board
 /// Publish `board` as the active mount for `mount`. A second mount for
 /// the same key wins — matches Freya's "latest render keeps the
 /// handle" semantics.
-pub fn set(mount: CanvasMount, board: Arc<Mutex<Board>>) {
+#[sismo::function("active_boards::set")]
+pub(crate) fn set(mount: CanvasMount, board: Arc<Mutex<Board>>) {
     lock().insert(mount, board);
 }
 
 /// Drop the registration if `board` still matches what was stored.
 /// Pointer-equality guard so a stale `use_drop` cannot evict a newer
 /// mount's handle during a route transition that remounts.
-pub fn clear_if(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
+#[sismo::function("active_boards::clear_if")]
+pub(crate) fn clear_if(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
     let mut g = lock();
     if let Some(current) = g.get(&mount) {
         if Arc::ptr_eq(current, board) {
@@ -51,7 +54,8 @@ pub fn clear_if(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
 
 /// Look up the currently mounted board for `mount`.
 #[must_use]
-pub fn get(mount: CanvasMount) -> Option<Arc<Mutex<Board>>> {
+#[sismo::function("active_boards::get")]
+pub(crate) fn get(mount: CanvasMount) -> Option<Arc<Mutex<Board>>> {
     lock().get(&mount).map(Arc::clone)
 }
 
@@ -59,6 +63,7 @@ pub fn get(mount: CanvasMount) -> Option<Arc<Mutex<Board>>> {
 /// happy with "any" face currently mounted (first match wins). Prefer
 /// [`get`] when the exact mount flavour is known.
 #[must_use]
+#[sismo::function("active_boards::get_item")]
 pub fn get_item(item: ItemId) -> Option<Arc<Mutex<Board>>> {
     lock()
         .iter()
@@ -66,25 +71,21 @@ pub fn get_item(item: ItemId) -> Option<Arc<Mutex<Board>>> {
         .map(|(_, b)| Arc::clone(b))
 }
 
-/// Snapshot of every mounted board — used by cross-canvas navigation
-/// to find the pane that owns a given bookmark id. Clones the Arcs so
-/// the registry lock is dropped before the caller does any Board
-/// work; no deadlock risk.
-#[must_use]
-pub fn snapshot() -> Vec<(CanvasMount, Arc<Mutex<Board>>)> {
-    lock()
-        .iter()
-        .map(|(k, v)| (*k, Arc::clone(v)))
-        .collect()
-}
-
 /// Every board currently showing `item`, in no particular order. Two
 /// panes of the same document each have one.
 #[must_use]
+#[sismo::function("active_boards::for_item")]
 pub(crate) fn for_item(item: ItemId) -> Vec<(CanvasMount, Arc<Mutex<Board>>)> {
     lock()
         .iter()
         .filter(|(k, _)| k.item() == Some(item))
         .map(|(k, v)| (*k, Arc::clone(v)))
         .collect()
+}
+
+/// Every board currently mounted.
+#[must_use]
+#[sismo::function("active_boards::all")]
+pub(crate) fn all() -> Vec<Arc<Mutex<Board>>> {
+    lock().values().map(Arc::clone).collect()
 }

@@ -1,0 +1,626 @@
+//! Home: what to continue, the mesas, the pinned documents and the
+//! library.
+
+pub mod app_bar;
+pub mod card;
+pub mod fab;
+pub mod library;
+pub mod mesas;
+pub mod selection;
+pub mod shelf;
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use freya::prelude::*;
+use freya::router::RouterContext;
+use notein_i18n::tr;
+use notein_plugin::UserMessage;
+use notein_ui_kit::theme::palette;
+use notein_ui_kit::{Button, EmptyState, Skeleton, WidthClass, tokens, width_class};
+
+use self::app_bar::AppBar;
+use self::fab::Fab;
+use self::library::{Columns, EmptyShelf, GridRow, LibraryBar, PinnedRow, ShelfRow};
+use self::mesas::MesaStrip;
+use self::selection::{Selection, SelectionActions};
+use self::shelf::{Filter, Shelf};
+use crate::library::{FolderId, LibraryData, LibraryError, ROOT_FOLDER};
+use crate::route::Route;
+use crate::settings::{SettingsStore, ShelfLayout};
+use crate::state::{LibraryState, LibraryView};
+
+/// Bump a running total the profiler graphs and return it.
+pub(crate) fn tally(total: &AtomicU64, by: u64) -> u64 {
+    total.fetch_add(by, Ordering::Relaxed) + by
+}
+
+/// The folder Home is browsing, shared by every surface that opens one.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Browse {
+    folder: State<FolderId>,
+}
+
+impl std::fmt::Debug for Browse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Browse").finish_non_exhaustive()
+    }
+}
+
+impl Browse {
+    /// The browse state installed by [`use_browse_root`].
+    #[must_use]
+    pub fn get() -> Self {
+        consume_root_context::<Self>()
+    }
+
+    /// The folder on screen; subscribes the caller.
+    #[must_use]
+    pub fn folder(&self) -> FolderId {
+        *self.folder.read()
+    }
+
+    /// Show `folder`.
+    pub fn enter(mut self, folder: FolderId) {
+        self.folder.set(folder);
+    }
+}
+
+/// Install the browse state at the app root.
+#[sismo::function("home::use_browse_root")]
+pub fn use_browse_root() {
+    let folder = use_state(|| ROOT_FOLDER);
+    use_hook(|| provide_context_for_scope_id(Browse { folder }, ScopeId::ROOT));
+}
+
+/// Go Home and show `folder`.
+pub fn open_folder(folder: FolderId) {
+    Browse::get().enter(folder);
+    let _ = RouterContext::get().replace(Route::Home);
+}
+
+/// Horizontal padding of Home for a width class.
+const fn gutter(class: WidthClass) -> f32 {
+    match class {
+        WidthClass::Compact => tokens::space::GUTTER_COMPACT,
+        WidthClass::Medium | WidthClass::Expanded => tokens::space::GUTTER,
+    }
+}
+
+/// The Home route.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Home;
+
+impl Component for Home {
+    #[sismo::function("home::home")]
+    fn render(&self) -> impl IntoElement {
+        use_hook(|| sismo::marker("screen: home"));
+        let p = palette();
+        let view = LibraryView::get();
+        let insets = *crate::hooks::use_safe_area_insets().read();
+        let body = match view.state() {
+            LibraryState::Loading => Loading.into_element(),
+            LibraryState::Failed(error) => Failed { error }.into_element(),
+            LibraryState::Ready(data) => Loaded { data }.into_element(),
+        };
+        rect()
+            .expanded()
+            .background(p.bg)
+            .padding((insets.top, insets.right, 0.0, insets.left))
+            .child(body)
+    }
+}
+
+/// The library could not be read: a plain explanation, a retry, and the
+/// technical cause on the clipboard for a bug report.
+#[derive(Clone, Debug)]
+pub(super) struct Failed {
+    pub(super) error: Arc<LibraryError>,
+}
+
+impl PartialEq for Failed {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.error, &other.error)
+    }
+}
+
+impl Component for Failed {
+    #[sismo::function("home::failed")]
+    fn render(&self) -> impl IntoElement {
+        let details = self.error.to_string();
+        let actions = rect()
+            .horizontal()
+            .spacing(8.0)
+            .child(
+                Button::new(tr!("home-failed-copy-details"))
+                    .ghost()
+                    .icon(freya::icons::lucide::copy())
+                    .on_press(move |_| {
+                        if freya::clipboard::Clipboard::set(details.clone()).is_ok() {
+                            notein_ui_kit::Toasts::get()
+                                .show(notein_ui_kit::Toast::new(tr!("home-failed-details-copied")));
+                        }
+                    }),
+            )
+            .child(
+                Button::new(tr!("home-failed-retry"))
+                    .primary()
+                    .icon(freya::icons::lucide::rotate_ccw())
+                    .on_press(|_| LibraryView::get().retry()),
+            );
+        rect()
+            .expanded()
+            .main_align(Alignment::Center)
+            .cross_align(Alignment::Center)
+            .padding(gutter(width_class()))
+            .child(
+                rect()
+                    .width(Size::fill())
+                    .max_width(Size::px(480.0))
+                    .cross_align(Alignment::Center)
+                    .spacing(4.0)
+                    .child(
+                        EmptyState::new(
+                            freya::icons::lucide::triangle_alert(),
+                            tr!("home-failed-title"),
+                        )
+                        .body(self.error.user_message())
+                        .action(actions),
+                    )
+                    .child(
+                        label()
+                            .width(Size::fill())
+                            .text(tr!(
+                                "home-failed-data-folder",
+                                "path" => crate::library::bodies::root_dir().display().to_string(),
+                            ))
+                            .font_size(tokens::text::META)
+                            .color(palette().t3)
+                            .text_align(TextAlign::Center),
+                    ),
+            )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Loading;
+
+impl Component for Loading {
+    #[sismo::function("home::loading")]
+    fn render(&self) -> impl IntoElement {
+        let pad = gutter(width_class());
+        rect()
+            .expanded()
+            .padding(pad)
+            .spacing(16.0)
+            .child(Skeleton::new(44.0))
+            .child(Skeleton::new(180.0))
+            .child(rect().horizontal().spacing(16.0).children((0..4).map(|i| {
+                rect()
+                    .key(i)
+                    .child(Skeleton::new(220.0).width(160.0))
+                    .into_element()
+            })))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Loaded {
+    data: Arc<LibraryData>,
+}
+
+/// One stretch of Home's scrolling body. Each has a known height, so
+/// only the ones on screen are built.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Block {
+    Top,
+    Mesas,
+    Pinned,
+    Bar,
+    /// A row of cards.
+    Row(usize),
+    /// A row of the list layout.
+    Item(usize),
+    Empty,
+    /// Room for the + button and the system bar.
+    End,
+}
+
+/// Everything the body's blocks are built from.
+#[derive(Clone, PartialEq)]
+struct Body {
+    data: Arc<LibraryData>,
+    shelf: Arc<Shelf>,
+    blocks: Vec<Block>,
+    columns: Columns,
+    selection: State<Selection>,
+    filter: State<Filter>,
+    mesas_open: State<bool>,
+    folder: FolderId,
+    filtered: bool,
+    pad: f32,
+    width: f32,
+    compact: bool,
+    pinned_card: f32,
+    bottom: f32,
+}
+
+impl Body {
+    /// Space between the sections.
+    const GAP: f32 = 24.0;
+    const EMPTY: f32 = 320.0;
+
+    fn height(&self, block: Block) -> f32 {
+        match block {
+            Block::Top => 8.0,
+            Block::Mesas => {
+                MesaStrip::height(&self.data, self.compact, *self.mesas_open.read()) + Self::GAP
+            }
+            Block::Pinned => PinnedRow::height(self.pinned_card) + Self::GAP,
+            Block::Bar => LibraryBar::height(self.compact) + 16.0,
+            Block::Row(_) => GridRow::height(self.columns),
+            Block::Item(_) => ShelfRow::HEIGHT,
+            Block::Empty => Self::EMPTY,
+            Block::End => 120.0 + self.bottom,
+        }
+    }
+
+    #[sismo::function("home::block")]
+    fn build(&self, block: Block, height: f32) -> Element {
+        let content = match block {
+            Block::Top | Block::End => None,
+            Block::Mesas => Some(
+                MesaStrip {
+                    data: Arc::clone(&self.data),
+                    width: self.width,
+                    compact: self.compact,
+                    expanded: self.mesas_open,
+                }
+                .into_element(),
+            ),
+            Block::Pinned => Some(
+                PinnedRow {
+                    data: Arc::clone(&self.data),
+                    card: self.pinned_card,
+                    selection: self.selection,
+                }
+                .into_element(),
+            ),
+            Block::Bar => Some(
+                LibraryBar {
+                    data: Arc::clone(&self.data),
+                    filter: self.filter,
+                    selection: self.selection,
+                }
+                .into_element(),
+            ),
+            Block::Row(row) => Some(
+                GridRow {
+                    data: Arc::clone(&self.data),
+                    shelf: Arc::clone(&self.shelf),
+                    columns: self.columns,
+                    selection: self.selection,
+                    row,
+                }
+                .into_element(),
+            ),
+            Block::Item(index) => Some(
+                ShelfRow {
+                    data: Arc::clone(&self.data),
+                    shelf: Arc::clone(&self.shelf),
+                    selection: self.selection,
+                    index,
+                }
+                .into_element(),
+            ),
+            Block::Empty => Some(
+                EmptyShelf {
+                    folder: self.folder,
+                    filtered: self.filtered,
+                }
+                .into_element(),
+            ),
+        };
+        rect()
+            .width(Size::fill())
+            .height(Size::px(height))
+            .padding((0.0, self.pad))
+            .maybe_child(content)
+            .into_element()
+    }
+}
+
+/// What floats at the bottom: the selection's actions, or the + button.
+/// Switching between them, the newcomer rises into place: the bar when
+/// selecting starts, the + button when it ends.
+#[derive(Clone, PartialEq)]
+struct BottomActions {
+    selection: State<Selection>,
+    folder: FolderId,
+    inset: f32,
+}
+
+impl Component for BottomActions {
+    #[sismo::function("home::bottom_actions")]
+    fn render(&self) -> impl IntoElement {
+        use freya::animation::{
+            AnimNum, Ease, Function, OnChange, OnCreation, use_animation_with_dependencies,
+        };
+        let (selection, folder, inset) = (self.selection, self.folder, self.inset);
+        let active = selection.read().active;
+        // Finished on creation: Home opening shows the + button at rest.
+        let motion = use_animation_with_dependencies(&active, |conf, _| {
+            conf.on_creation(OnCreation::Finish);
+            conf.on_change(OnChange::Rerun);
+            AnimNum::new(0.0, 1.0)
+                .time(notein_ui_kit::tokens::motion::BASE)
+                .ease(Ease::Out)
+                .function(Function::Cubic)
+        });
+        let rest = if notein_ui_kit::reduce_motion() {
+            0.0
+        } else {
+            1.0 - motion.get().value()
+        };
+        if !active {
+            return Fab {
+                folder,
+                bottom: 24.0f32.mul_add(-rest, inset),
+            }
+            .into_element();
+        }
+        rect()
+            .position(
+                Position::new_absolute()
+                    .left(0.0)
+                    .bottom(12.0f32.mul_add(-rest, inset + 16.0)),
+            )
+            .width(Size::fill())
+            .layer(Layer::Relative(10))
+            .horizontal()
+            .main_align(Alignment::Center)
+            .child(SelectionActions { selection, folder })
+            .into_element()
+    }
+}
+
+impl Loaded {
+    /// The blocks of the body, top to bottom.
+    #[sismo::function("home::blocks")]
+    fn blocks(shelf: &Shelf, columns: Columns, (at_root, pinned): (bool, bool)) -> Vec<Block> {
+        let mut blocks = vec![Block::Top];
+        if at_root {
+            blocks.push(Block::Mesas);
+        }
+        if pinned {
+            blocks.push(Block::Pinned);
+        }
+        blocks.push(Block::Bar);
+        if shelf.is_empty() {
+            blocks.push(Block::Empty);
+        } else if SettingsStore::get().read().library.layout == ShelfLayout::List {
+            blocks.extend((0..ShelfRow::count(shelf)).map(Block::Item));
+        } else {
+            blocks.extend((0..GridRow::count(shelf, columns)).map(Block::Row));
+        }
+        blocks.push(Block::End);
+        blocks
+    }
+}
+
+impl Component for Loaded {
+    #[sismo::function("home::loaded")]
+    fn render(&self) -> impl IntoElement {
+        let class = width_class();
+        let pad = gutter(class);
+        let insets = *crate::hooks::use_safe_area_insets().read();
+        let root_width = Platform::get().current_window().root_size.read().width;
+        let content_width = pad
+            .mul_add(-2.0, root_width - insets.left - insets.right)
+            .max(200.0);
+        let folder = Browse::get().folder();
+        let sort = SettingsStore::get().read().library.sort;
+        let filter = use_state(Filter::default);
+        let mesas_open = use_state(|| false);
+        let mut selection = use_state(Selection::default);
+        let data = &self.data;
+
+        // A folder that went away (trashed, deleted elsewhere) sends Home
+        // back to the root rather than showing nothing.
+        if folder != ROOT_FOLDER && data.folder(folder).is_none() {
+            Browse::get().enter(ROOT_FOLDER);
+        }
+        // Entering another folder ends the selection made in this one.
+        use_side_effect(move || {
+            sismo::scope!("home::selection_reset");
+            let _entered = Browse::get().folder();
+            selection.write().clear();
+        });
+
+        let current_filter = filter.read().clone();
+        let shelves = use_hook(ShelfMemo::default);
+        let (listed, trash) = shelves.get(data, folder, &current_filter, sort);
+        let at_root = folder == ROOT_FOLDER;
+        let columns = Columns::fit(content_width);
+        let body = Body {
+            blocks: Self::blocks(
+                &listed,
+                columns,
+                (at_root, at_root && !data.pinned().is_empty()),
+            ),
+            data: Arc::clone(data),
+            shelf: listed,
+            columns,
+            selection,
+            filter,
+            mesas_open,
+            folder,
+            filtered: current_filter != Filter::All,
+            pad,
+            width: content_width,
+            compact: class.is_compact(),
+            pinned_card: if class.is_compact() { 132.0 } else { 148.0 },
+            bottom: insets.bottom,
+        };
+        let heights: Vec<f32> = body.blocks.iter().map(|b| body.height(*b)).collect();
+        let length = heights.len();
+        sismo::counter!("home.blocks", length);
+        // Only the body scrolls: the bar with search, sync state and the
+        // trash stays in reach.
+        let scroll = VirtualScrollView::new_with_data(body, |item, body: &Body| {
+            body.blocks.get(item.index).map_or_else(
+                || rect().into_element(),
+                |block| body.build(*block, item.size),
+            )
+        })
+        .length(length)
+        .item_size(move |index: usize| heights.get(index).copied().unwrap_or_default())
+        .width(Size::fill())
+        .height(Size::fill());
+        rect()
+            .expanded()
+            .content(Content::Flex)
+            .a11y_role(AccessibilityRole::Main)
+            .on_global_key_down(move |e: Event<KeyboardEventData>| on_key(&e, selection, folder))
+            .child(
+                rect()
+                    .width(Size::fill())
+                    .padding((8.0, pad, 0.0, pad))
+                    .child(AppBar { trash }),
+            )
+            .child(notein_ui_kit::ScrollContent::new(scroll).height(Size::flex(1.0)))
+            .child(BottomActions {
+                selection,
+                folder,
+                inset: insets.bottom,
+            })
+    }
+}
+
+/// Esc leaves the selection, Alt+Backspace goes up a folder, and Ctrl+K
+/// (search), Ctrl+N (create), Ctrl+Shift+N (new mesa) and Ctrl+,
+/// (settings) work as in a mesa.
+#[sismo::function("home::on_key")]
+fn on_key(e: &Event<KeyboardEventData>, mut selection: State<Selection>, folder: FolderId) {
+    if notein_ui_kit::ModalController::get().is_open() {
+        return;
+    }
+    let command = e.modifiers.ctrl() || e.modifiers.meta();
+    let handled = match &e.key {
+        Key::Named(NamedKey::Escape) if selection.peek().active => {
+            selection.write().clear();
+            true
+        }
+        Key::Named(NamedKey::Backspace) if e.modifiers.alt() => {
+            up_one(folder);
+            true
+        }
+        Key::Character(c) if command => match (c.to_lowercase().as_str(), e.modifiers.shift()) {
+            ("k", _) => {
+                crate::screens::search::open(String::new());
+                true
+            }
+            ("n", false) => {
+                crate::flows::create::open_menu_from_keyboard(crate::flows::create::Context {
+                    folder,
+                    selection: selection.peek().items.clone(),
+                    folders: selection.peek().folders.clone(),
+                });
+                true
+            }
+            ("n", true) => {
+                crate::flows::create::new_mesa();
+                true
+            }
+            (",", _) => {
+                crate::screens::settings::open();
+                true
+            }
+            _ => false,
+        },
+        _ => false,
+    };
+    if handled {
+        e.stop_propagation();
+        e.prevent_default();
+    }
+}
+
+/// Go to the parent of `folder`.
+fn up_one(folder: FolderId) {
+    if folder == ROOT_FOLDER {
+        return;
+    }
+    let parent = LibraryView::get()
+        .data()
+        .and_then(|d| d.folder(folder).map(|f| f.parent))
+        .unwrap_or(ROOT_FOLDER);
+    Browse::get().enter(parent);
+}
+
+/// What the shelf was built from.
+#[derive(Clone)]
+struct ShelfKey {
+    data: Arc<LibraryData>,
+    folder: FolderId,
+    filter: Filter,
+    sort: crate::settings::SortOrder,
+    shared: std::collections::HashSet<crate::library::ItemId>,
+    /// Cards say how long ago a document changed.
+    minute: u64,
+}
+
+impl PartialEq for ShelfKey {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.data, &other.data)
+            && self.folder == other.folder
+            && self.filter == other.filter
+            && self.sort == other.sort
+            && self.shared == other.shared
+            && self.minute == other.minute
+    }
+}
+
+/// The last shelf Home built and the trash count beside it, kept until
+/// the library, the folder, the filter or the order change: Home renders
+/// again on every resize and selection.
+/// A built shelf, what it was built from and the trash count.
+type Built = (ShelfKey, Arc<Shelf>, usize);
+
+#[derive(Clone, Default)]
+struct ShelfMemo(std::rc::Rc<std::cell::RefCell<Option<Built>>>);
+
+impl ShelfMemo {
+    #[sismo::function("home::shelf_memo")]
+    fn get(
+        &self,
+        data: &Arc<LibraryData>,
+        folder: FolderId,
+        filter: &Filter,
+        sort: crate::settings::SortOrder,
+    ) -> (Arc<Shelf>, usize) {
+        let key = ShelfKey {
+            data: Arc::clone(data),
+            folder,
+            filter: filter.clone(),
+            sort,
+            shared: {
+                sismo::scope!("home::shared_docs");
+                crate::sync::shared_docs()
+            },
+            minute: crate::format::now() / 60_000,
+        };
+        if let Some((held, built, count)) = self.0.borrow().as_ref()
+            && *held == key
+        {
+            return (Arc::clone(built), *count);
+        }
+        let listed = Arc::new(Shelf::build(data, folder, filter, sort, &key.shared));
+        let trash = {
+            sismo::scope!("home::trash_count");
+            crate::screens::trash::groups(data).len()
+        };
+        *self.0.borrow_mut() = Some((key, Arc::clone(&listed), trash));
+        (listed, trash)
+    }
+}

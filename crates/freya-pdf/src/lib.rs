@@ -22,11 +22,12 @@ pub mod error;
 pub mod render;
 pub mod search;
 pub mod tiles;
+pub mod write;
 
 pub use backend::PdfBackground;
 pub use cache::{Cache, CachedTile};
 pub use cancel::CancelToken;
-pub use doc::PdfDocument;
+pub use doc::{PdfDocument, TocEntry};
 pub use error::PdfError;
 pub use render::RenderPool;
 pub use search::{PdfSearchIndex, SearchHit, SearchOptions};

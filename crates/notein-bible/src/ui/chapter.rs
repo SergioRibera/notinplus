@@ -8,9 +8,10 @@
 use crate::db::ChapterRow;
 
 /// Logical sections of the chapter view, assembled from a loaded
-/// `ChapterRow`. The rsx assembly consumes this on the UI thread;
-/// keeping the plan a plain data value lets the rendering layer stay
-/// thin + testable.
+/// `ChapterRow`.
+///
+/// The rsx assembly consumes this on the UI thread; keeping the plan a plain
+/// data value lets the rendering layer stay thin + testable.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChapterPlan {
     pub chapter: u16,
@@ -31,6 +32,7 @@ pub struct ParagraphSpan {
 }
 
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("bible::plan_chapter"))]
 pub fn plan_chapter(data: &ChapterRow) -> ChapterPlan {
     let mut blocks: Vec<Block> = Vec::new();
     let mut header_cursor = 0usize;
@@ -51,7 +53,10 @@ pub fn plan_chapter(data: &ChapterRow) -> ChapterPlan {
         if v.paragraph_break && !current.is_empty() {
             blocks.push(Block::Paragraph(std::mem::take(&mut current)));
         }
-        current.push(ParagraphSpan { verse: v.verse, text: v.text.clone() });
+        current.push(ParagraphSpan {
+            verse: v.verse,
+            text: v.text.clone(),
+        });
     }
 
     if !current.is_empty() {

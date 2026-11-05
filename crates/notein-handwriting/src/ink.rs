@@ -97,6 +97,7 @@ impl Trace {
     /// Resamples, scales and centres raw strokes. `None` when they
     /// hold no points at all.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("handwriting::trace_from_strokes"))]
     pub fn from_strokes<S: AsRef<[Point]>>(strokes: &[S]) -> Option<Self> {
         let strokes: Vec<&[Point]> = strokes
             .iter()
@@ -195,6 +196,7 @@ fn stroke_length(stroke: &[Point]) -> f32 {
 /// Spreads [`TRACE_POINTS`] across strokes proportionally to their
 /// length. Every stroke keeps at least one point so dots (tittles,
 /// accents, periods) survive resampling.
+#[cfg_attr(feature = "sismo", sismo::function("handwriting::resample"))]
 fn resample(strokes: &[&[Point]]) -> ([Point; TRACE_POINTS], u32) {
     let mut points = Vec::with_capacity(TRACE_POINTS);
     let mut starts = 0;
@@ -303,6 +305,7 @@ fn centroid(points: &[Point]) -> Point {
 
 /// Uniform scale to unit size (aspect ratio preserved), then centroid
 /// to the origin.
+#[cfg_attr(feature = "sismo", sismo::function("handwriting::normalize"))]
 fn normalize(points: &mut [Point; TRACE_POINTS]) {
     let Some(bounds) = Bounds::of(points.iter()) else {
         return;

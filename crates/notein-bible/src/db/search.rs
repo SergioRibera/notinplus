@@ -1,8 +1,8 @@
 //! FTS5-backed full-text search over `verses`.
 //!
-//! Query syntax matches FTS5's grammar (`word`, `"exact phrase"`, `word
-//! NEAR word`, `col:word`). The UI sanitises raw user input before
-//! handing it off — bare punctuation causes FTS5 to error.
+//! What the user types is turned into FTS5 syntax by [`sanitise`]: words
+//! match as prefixes, `"…"` is a phrase, `OR` an alternative and `-word`
+//! an exclusion. Accents are ignored by the `unicode61` tokenizer.
 //!
 //! The `snippet()` wrapper produces inline markers around matches so
 //! the result list can bold the hit without re-tokenising on the UI
@@ -37,13 +37,18 @@ pub struct SearchHit {
     pub score: f64,
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("bible::db_search"))]
 pub(crate) fn search(
     db: &Db,
     bible_id: Option<&str>,
     query: &str,
     limit: usize,
 ) -> Result<Vec<SearchHit>> {
-    let query = sanitise(query);
+    let query = {
+        #[cfg(feature = "sismo")]
+        sismo::scope!("bible::db_search_sanitise");
+        sanitise(query)
+    };
     if query.is_empty() {
         return Ok(Vec::new());
     }
@@ -51,16 +56,17 @@ pub(crate) fn search(
     db.with_conn(|conn| {
         // snippet(table, col_index, open, close, ellipsis, max_tokens)
         // bm25(table) ascends — ORDER BY bm25 ASC puts best matches first.
-        let sql_all = r#"
+        let sql_all = r"
             SELECT bible_id, book_id, chapter, verse,
                    snippet(verses_fts, 0, ?1, ?2, '…', 32) AS snip,
                    bm25(verses_fts) AS score
             FROM verses_fts
             WHERE verses_fts MATCH ?3
+              AND bible_id NOT IN (SELECT bible_id FROM installs_pending)
             ORDER BY score ASC
             LIMIT ?4
-        "#;
-        let sql_scoped = r#"
+        ";
+        let sql_scoped = r"
             SELECT bible_id, book_id, chapter, verse,
                    snippet(verses_fts, 0, ?1, ?2, '…', 32) AS snip,
                    bm25(verses_fts) AS score
@@ -68,24 +74,26 @@ pub(crate) fn search(
             WHERE verses_fts MATCH ?3 AND bible_id = ?5
             ORDER BY score ASC
             LIMIT ?4
-        "#;
+        ";
 
-        let limit_i = limit as i64;
+        let limit_i = i64::try_from(limit).unwrap_or(i64::MAX);
         let rows: Vec<SearchHit> = if let Some(bid) = bible_id {
-            let mut stmt = conn.prepare(sql_scoped)?;
+            let mut stmt = conn.prepare_cached(sql_scoped)?;
             stmt.query_map(
                 params![SNIPPET_OPEN, SNIPPET_CLOSE, &query, limit_i, bid],
                 map_hit,
             )?
             .collect::<rusqlite::Result<_>>()?
         } else {
-            let mut stmt = conn.prepare(sql_all)?;
+            let mut stmt = conn.prepare_cached(sql_all)?;
             stmt.query_map(
                 params![SNIPPET_OPEN, SNIPPET_CLOSE, &query, limit_i],
                 map_hit,
             )?
             .collect::<rusqlite::Result<_>>()?
         };
+        #[cfg(feature = "sismo")]
+        sismo::counter!("bible.search_hits", rows.len());
         Ok(rows)
     })
 }
@@ -94,24 +102,138 @@ fn map_hit(r: &rusqlite::Row<'_>) -> rusqlite::Result<SearchHit> {
     Ok(SearchHit {
         bible_id: r.get(0)?,
         book_id: r.get(1)?,
-        chapter: r.get::<_, i64>(2)? as u16,
-        verse: r.get::<_, i64>(3)? as u16,
+        chapter: r.get::<_, u16>(2)?,
+        verse: r.get::<_, u16>(3)?,
         snippet: r.get(4)?,
         score: r.get(5)?,
     })
 }
 
-/// Strip FTS5-breaking punctuation + collapse whitespace. Keeps word
-/// chars, spaces, quotes and the explicit operators (`AND`, `OR`,
-/// `NOT`, `NEAR`) the UI exposes.
+/// One piece of what the user typed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Term {
+    /// A word, matched as the start of any word (`amor` finds `amorosa`).
+    Word(String),
+    /// Words in quotes, matched together and in order.
+    Phrase(String),
+    /// `OR` between two terms: either one.
+    Or,
+    /// A term after `-`: verses without it.
+    Not(String),
+}
+
+/// The FTS5 query for what the user typed. Words match as prefixes and
+/// all must appear; `"…"` is an exact phrase, `OR` (or `|`) offers an
+/// alternative and `-word` leaves verses with it out. Every word is
+/// quoted, so punctuation never reaches FTS5 as syntax.
 fn sanitise(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len());
-    for ch in raw.chars() {
-        if ch.is_alphanumeric() || ch == ' ' || ch == '"' || ch == '-' || ch == '\'' {
-            out.push(ch);
-        } else {
-            out.push(' ');
+    let mut terms = Vec::new();
+    let mut rest = raw;
+    while let Some(start) = rest.find('"') {
+        words(&rest[..start], &mut terms);
+        let after = &rest[start + 1..];
+        let (inside, next) = after.split_once('"').unwrap_or((after, ""));
+        let phrase = clean(inside);
+        if !phrase.is_empty() {
+            terms.push(Term::Phrase(phrase));
+        }
+        rest = next;
+    }
+    words(rest, &mut terms);
+    render(&terms)
+}
+
+/// Split loose text into [`Term`]s.
+fn words(text: &str, terms: &mut Vec<Term>) {
+    for raw in text.split_whitespace() {
+        if raw == "OR" || raw == "|" {
+            terms.push(Term::Or);
+            continue;
+        }
+        let (negated, raw) = raw.strip_prefix('-').map_or((false, raw), |w| (true, w));
+        for word in clean(raw).split_whitespace() {
+            terms.push(if negated {
+                Term::Not(word.to_owned())
+            } else {
+                Term::Word(word.to_owned())
+            });
         }
     }
-    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// `text` with only letters, digits and single spaces.
+fn clean(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Join `terms` into FTS5 syntax. An `OR` with nothing on one side and
+/// exclusions with nothing to exclude from are dropped.
+fn render(terms: &[Term]) -> String {
+    let mut positive: Vec<String> = Vec::new();
+    let mut excluded: Vec<String> = Vec::new();
+    let mut pending_or = false;
+    for term in terms {
+        let piece = match term {
+            Term::Or => {
+                pending_or = !positive.is_empty();
+                continue;
+            }
+            Term::Not(word) => {
+                excluded.push(format!("\"{word}\"*"));
+                continue;
+            }
+            Term::Word(word) => format!("\"{word}\"*"),
+            Term::Phrase(phrase) => format!("\"{phrase}\""),
+        };
+        match (pending_or, positive.last_mut()) {
+            (true, Some(last)) => *last = format!("({last} OR {piece})"),
+            _ => positive.push(piece),
+        }
+        pending_or = false;
+    }
+    if positive.is_empty() {
+        return String::new();
+    }
+    let mut query = positive.join(" AND ");
+    for word in excluded {
+        query = format!("{query} NOT {word}");
+    }
+    query
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitise;
+
+    #[test]
+    fn words_match_as_prefixes_and_all_must_appear() {
+        assert_eq!(sanitise("amor  Dios"), r#""amor"* AND "Dios"*"#);
+    }
+
+    #[test]
+    fn quotes_keep_a_phrase_together() {
+        assert_eq!(
+            sanitise(r#"el "buen pastor""#),
+            r#""el"* AND "buen pastor""#
+        );
+    }
+
+    #[test]
+    fn or_and_minus_become_operators() {
+        assert_eq!(
+            sanitise("fe OR esperanza -muerte"),
+            r#"("fe"* OR "esperanza"*) NOT "muerte"*"#
+        );
+    }
+
+    #[test]
+    fn punctuation_never_reaches_fts() {
+        assert_eq!(sanitise("¿quién? don't"), r#""quién"* AND "don"* AND "t"*"#);
+        assert_eq!(sanitise(r#"OR -x " ""#), "");
+    }
 }

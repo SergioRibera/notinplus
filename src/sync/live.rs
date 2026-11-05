@@ -1,6 +1,7 @@
 //! What a document looks like *while* someone is working on it: ink
-//! still under the pen, a pointer moving over the page. Sent as it
-//! happens, never stored; the committed change follows through the
+//! still under the pen, a pointer moving over the page.
+//!
+//! Sent as it happens, never stored; the committed change follows through the
 //! document itself.
 
 use std::sync::Mutex;
@@ -26,18 +27,22 @@ pub enum LiveMessage {
     },
     /// Where the pen hovers, in world units. `shown: false` hides it.
     Pointer { x: f32, y: f32, shown: bool },
-    /// Where the caret sits in a text body, as a character offset, and
-    /// whether the author is typing right now.
-    Caret { offset: u64, typing: bool },
+    /// Where this person is in the document, in the format of its face.
+    /// Repeated now and then, so silence means they left.
+    Presence { state: Vec<u8> },
+    /// They closed the document.
+    Left,
 }
 
 impl LiveMessage {
     #[must_use]
+    #[sismo::function("sync::live::encode")]
     pub fn to_bytes(&self) -> Vec<u8> {
         bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default()
     }
 
     #[must_use]
+    #[sismo::function("sync::live::decode")]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         bincode::decode_from_slice(bytes, bincode::config::standard())
             .ok()
@@ -65,6 +70,7 @@ pub fn watch(item: ItemId) -> flume::Receiver<LiveEvent> {
 }
 
 /// Hand `event` to every face watching `item`.
+#[sismo::function("sync::live::dispatch")]
 pub(super) fn dispatch(item: ItemId, event: &LiveEvent) {
     listeners().retain(|(watched, tx)| *watched != item || tx.send(event.clone()).is_ok());
 }

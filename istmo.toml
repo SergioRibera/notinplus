@@ -12,11 +12,29 @@
 # that same package. Override the default `<namespace>.gen` accordingly.
 [app]
 id              = "rs.sergioribera.notinplus"
-name            = "notinplus"
+name            = "NotIn Plus"
 android_package = "dev.istmo.runtime"
+
+# Launcher icon: the iOS app icon and the legacy Android mipmaps come from
+# `image`; Android 8+ uses the adaptive layers (paper + margin rule behind,
+# the handwritten n in front); desktops (window, Windows .exe) take the
+# rounded tile, since nothing masks icons there.
+[app.icon]
+image   = "assets/brand/ios/AppIcon-1024.png"
+desktop = "assets/brand/png/notinplus-tile-1024.png"
+
+[app.icon.android]
+foreground = "assets/brand/android/ic_launcher_foreground.xml"
+background = "assets/brand/android/ic_launcher_background.xml"
+monochrome = "assets/brand/android/ic_launcher_monochrome.xml"
 
 # Oldest OS releases we ship to. Android 26 = Oreo (first ART-only + first
 # storage-scoped SDK); iOS 14 matches the rest of the workspace examples.
+# Usage strings shown by iOS, in the app's language.
+[app.info_plist]
+NSCameraUsageDescription = "Para escanear el código QR de otro dispositivo o de una invitación."
+NSPhotoLibraryAddUsageDescription = "Para guardar en Fotos las imágenes que compartís."
+
 [min_versions]
 android = 26
 ios     = "14.0"

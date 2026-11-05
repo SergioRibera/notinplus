@@ -55,6 +55,7 @@ impl ShareKey {
     }
 
     /// Encrypt and authenticate `plain`. Output is `nonce || ciphertext || tag`.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::cipher::seal"))]
     pub fn seal(&self, plain: &[u8]) -> Result<Vec<u8>, CipherError> {
         let cipher = XChaCha20Poly1305::new((&self.0).into());
         let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
@@ -68,6 +69,7 @@ impl ShareKey {
     }
 
     /// Reverse of [`Self::seal`].
+    #[cfg_attr(feature = "sismo", sismo::function("sync::cipher::open"))]
     pub fn open(&self, sealed: &[u8]) -> Result<Vec<u8>, CipherError> {
         if sealed.len() < NONCE_LEN + TAG_LEN {
             return Err(CipherError::TooShort(sealed.len()));

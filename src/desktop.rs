@@ -30,6 +30,7 @@ pub(crate) static PEN_PUBLISHER: OnceLock<Arc<PenPublisher>> = OnceLock::new();
 ///
 /// Propagates any [`istmo::core::IstmoError`] surfaced during runtime
 /// init.
+#[sismo::function("desktop::install")]
 pub fn install() -> Result<(), Box<dyn std::error::Error>> {
     let RuntimeInit { runtime, outbound } = Runtime::init(RuntimeConfig::inline())?;
 
@@ -50,9 +51,24 @@ pub fn install() -> Result<(), Box<dyn std::error::Error>> {
     picker.install_release_hook(&runtime);
     runtime.register_host(FilePickerHost::new(picker));
 
+    runtime.register_host(istmo_camera::CameraHost::new(
+        istmo_camera::DesktopCameraFactory,
+    ));
+    runtime.register_host(istmo_opener::OpenerHost::new(istmo_opener::DesktopOpener));
+    runtime.register_host(istmo_installer::InstallerHost::new(
+        istmo_installer::DesktopInstaller,
+    ));
+
     match istmo_share::DesktopShare::with_global_registry() {
         Ok(share) => runtime.register_host(istmo_share::ShareHost::new(share)),
         Err(err) => log::warn!("share backend unavailable: {err}"),
+    }
+
+    // One sample before the settings load, so the interface language
+    // can follow the desktop locale on the first frame.
+    match istmo_plugins::system_info::SystemInfoPublisher::install(&runtime) {
+        Ok(mut system_info) => system_info.tick(),
+        Err(err) => log::warn!("system info unavailable: {err}"),
     }
 
     log_storage_paths();
@@ -74,6 +90,7 @@ pub fn install() -> Result<(), Box<dyn std::error::Error>> {
 /// when the env var is not visible during path-crate compilation —
 /// which is why the folder may currently read `istmo-core` instead
 /// of `notinplus`. Logging the effective path avoids the mystery.
+#[sismo::function("desktop::log_storage_paths")]
 fn log_storage_paths() {
     let data_root = istmo::path::data_dir();
     let library_root = crate::library::bodies::root_dir();

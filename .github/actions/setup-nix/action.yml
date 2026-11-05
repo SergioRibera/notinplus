@@ -1,0 +1,48 @@
+name: Setup Nix with shared attic cache
+description: >-
+  Provisions a `nix` + `attic` toolchain backed by the personal attic cache
+  at cache.sergioribera.rs (`main:main`). Public key is hardcoded so even
+  PRs from forks (no ATTIC_TOKEN) benefit from cache reads.
+
+inputs:
+  attic-token:
+    description: >-
+      JWT with `--pull main --push main`. Empty → pushes skipped (fork PRs).
+      Reads still work because the public key is baked into nix config.
+    required: false
+    default: ""
+
+outputs:
+  push-enabled:
+    description: "`true` when attic-token was set and login succeeded — downstream `attic push` steps should gate on this."
+    value: ${{ steps.login.outputs.enabled }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Nix
+      uses: cachix/install-nix-action@v30
+      with:
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+          accept-flake-config = true
+          extra-substituters = https://cache.sergioribera.rs/main
+          extra-trusted-public-keys = main:vFI3N1JP9edRFwBwdk9ebUKTIPWK9R1ECbkdA7Q593M=
+          access-tokens = github.com=${{ github.token }}
+
+    - name: Install attic-client
+      if: inputs.attic-token != ''
+      shell: bash
+      run: nix profile install nixpkgs#attic-client
+
+    - name: Log in to attic
+      id: login
+      if: inputs.attic-token != ''
+      shell: bash
+      env:
+        ATTIC_TOKEN: ${{ inputs.attic-token }}
+      run: |
+        set -euo pipefail
+        attic login main https://cache.sergioribera.rs "$ATTIC_TOKEN"
+        attic use main:main
+        echo "enabled=true" >> "$GITHUB_OUTPUT"

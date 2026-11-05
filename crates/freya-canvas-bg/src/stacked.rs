@@ -43,6 +43,7 @@ impl StackedPagesBackground {
 
     /// Build directly from a provider list.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("bg::stacked_from_providers"))]
     pub fn from_providers(
         providers: Vec<Arc<dyn PageProvider>>,
         gap: f32,
@@ -98,6 +99,7 @@ impl StackedPagesBackground {
         self.providers.is_empty()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("bg::stacked_recompute"))]
     fn recompute(&mut self) {
         self.layout.clear();
         if self.providers.is_empty() {
@@ -176,11 +178,14 @@ impl CanvasBackground for StackedPagesBackground {
         })
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("bg::stacked_paint"))]
     fn paint(&self, cx: &mut BgPaintCtx<'_>) {
         for (i, pl) in self.layout.iter().enumerate() {
             if !pl.rect.intersects(&cx.visible) {
                 continue;
             }
+            #[cfg(feature = "sismo")]
+            sismo::scope!("bg::page_tile");
             self.providers[i].paint(cx.canvas, pl.rect, cx.scale);
         }
     }

@@ -34,8 +34,8 @@ use bincode::config::{self, Configuration};
 
 use crate::brush::{BrushKind, BrushPreset};
 use crate::canvas::{InputMode, Viewport};
-use crate::library::{ItemId, ViewSlot};
 use crate::library::bodies;
+use crate::library::{ItemId, ViewSlot};
 
 const CODEC: Configuration = config::standard();
 const PREFS_FILE: &str = "prefs.bin";
@@ -59,7 +59,7 @@ pub struct Prefs {
 
 impl Prefs {
     #[must_use]
-    pub fn input_mode(&self) -> InputMode {
+    pub const fn input_mode(&self) -> InputMode {
         if self.input_mode_pan {
             InputMode::Pan
         } else {
@@ -137,17 +137,20 @@ pub struct ViewKey {
 #[must_use]
 fn view_path(key: ViewKey) -> PathBuf {
     let views = bodies::root_dir().join(VIEWS_SUBDIR);
-    match key.slot {
-        None => views.join(format!("{}.{VIEW_EXT}", key.item)),
-        Some(slot) => views
-            .join(key.item.to_string())
-            .join(format!("{}-{}.{VIEW_EXT}", slot.workspace, slot.pane)),
-    }
+    key.slot.map_or_else(
+        || views.join(format!("{}.{VIEW_EXT}", key.item)),
+        |slot| {
+            views
+                .join(key.item.to_string())
+                .join(format!("{}-{}.{VIEW_EXT}", slot.workspace, slot.pane))
+        },
+    )
 }
 
 /// Read [`Prefs`] from disk. Missing / corrupt payload → `Prefs::default`
 /// so a first-run or schema-bump never surfaces to the user as an error.
 #[must_use]
+#[sismo::function("prefs::load_prefs")]
 pub fn load_prefs() -> Prefs {
     let Ok(bytes) = fs::read(prefs_path()) else {
         return Prefs::default();
@@ -161,6 +164,7 @@ pub fn load_prefs() -> Prefs {
 ///
 /// # Errors
 /// Encode / fs failures.
+#[sismo::function("prefs::save_prefs")]
 pub fn save_prefs(prefs: &Prefs) -> io::Result<()> {
     let bytes = bincode::encode_to_vec(prefs, CODEC)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
@@ -169,6 +173,7 @@ pub fn save_prefs(prefs: &Prefs) -> io::Result<()> {
 
 /// Read [`EditorPrefs`]. Missing / corrupt payload → defaults.
 #[must_use]
+#[sismo::function("prefs::load_editor_prefs")]
 pub fn load_editor_prefs() -> EditorPrefs {
     let Ok(bytes) = fs::read(bodies::root_dir().join(EDITOR_PREFS_FILE)) else {
         return EditorPrefs::default();
@@ -182,6 +187,7 @@ pub fn load_editor_prefs() -> EditorPrefs {
 ///
 /// # Errors
 /// Encode / fs failures.
+#[sismo::function("prefs::save_editor_prefs")]
 pub fn save_editor_prefs(prefs: EditorPrefs) -> io::Result<()> {
     let bytes = bincode::encode_to_vec(prefs, CODEC)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
@@ -190,6 +196,7 @@ pub fn save_editor_prefs(prefs: EditorPrefs) -> io::Result<()> {
 
 /// Read [`HandwritingPrefs`]. Missing / corrupt payload → defaults.
 #[must_use]
+#[sismo::function("prefs::load_handwriting_prefs")]
 pub fn load_handwriting_prefs() -> HandwritingPrefs {
     let Ok(bytes) = fs::read(bodies::root_dir().join(HANDWRITING_PREFS_FILE)) else {
         return HandwritingPrefs::default();
@@ -203,6 +210,7 @@ pub fn load_handwriting_prefs() -> HandwritingPrefs {
 ///
 /// # Errors
 /// Encode / fs failures.
+#[sismo::function("prefs::save_handwriting_prefs")]
 pub fn save_handwriting_prefs(prefs: HandwritingPrefs) -> io::Result<()> {
     let bytes = bincode::encode_to_vec(prefs, CODEC)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
@@ -211,6 +219,7 @@ pub fn save_handwriting_prefs(prefs: HandwritingPrefs) -> io::Result<()> {
 
 /// Read the view sidecar for `key`. `None` when missing / corrupt.
 #[must_use]
+#[sismo::function("prefs::load_view")]
 pub fn load_view(key: ViewKey) -> Option<DocView> {
     let bytes = fs::read(view_path(key)).ok()?;
     bincode::decode_from_slice::<DocView, _>(&bytes, CODEC)
@@ -222,12 +231,14 @@ pub fn load_view(key: ViewKey) -> Option<DocView> {
 ///
 /// # Errors
 /// Encode / fs failures.
+#[sismo::function("prefs::save_view")]
 pub fn save_view(key: ViewKey, view: DocView) -> io::Result<()> {
     let bytes = bincode::encode_to_vec(view, CODEC)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     write_atomic(&view_path(key), &bytes)
 }
 
+#[sismo::function("prefs::write_atomic")]
 fn write_atomic(dest: &std::path::Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;

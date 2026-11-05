@@ -10,8 +10,9 @@ use std::time::{Duration, Instant};
 use freya::prelude::*;
 
 use crate::document::{
-    Align, Atom, Block, BlockId, BlockKind, BlockType, Caret, CellPos, Document, Inline, Link,
-    MarkFamily, MarkKind, Rgba, Table, TextRole, TextTarget, utf16_len,
+    Align, Atom, Block, BlockId, BlockKind, BlockType, CalloutKind, Caret, CellPos, Column,
+    Document, Inline, Link, MarkFamily, MarkKind, Rgba, Summary, Table, TextRole, TextTarget,
+    utf16_len,
 };
 use crate::editor::SuggestionAction;
 use crate::markdown::{Dialect, ParseOptions};
@@ -63,7 +64,7 @@ pub(crate) struct CaretRequest {
 }
 
 pub(crate) struct EditorView {
-    pub(crate) document: Document,
+    pub(crate) document: Rc<Document>,
     pub(crate) selection: Option<Selection>,
     pub(crate) caret: Option<CaretRequest>,
     pub(crate) read_only: bool,
@@ -155,7 +156,7 @@ enum Pending {
 
 #[derive(Clone)]
 struct Snapshot {
-    document: Document,
+    document: Rc<Document>,
     selection: Option<Selection>,
 }
 
@@ -167,7 +168,10 @@ struct History {
 }
 
 pub(crate) struct EditorState {
-    document: Document,
+    /// Shared with the render that reads it, so a render never copies
+    /// the document and an edit only copies it while a render still
+    /// holds the previous one.
+    document: Rc<Document>,
     revision: u64,
     selection: Option<Selection>,
     caret: Option<CaretRequest>,
@@ -184,6 +188,24 @@ pub(crate) struct EditorState {
     layout: Rc<RefCell<BlockLayout>>,
     /// Text field holding the keyboard focus.
     focused: Option<TextTarget>,
+    /// How the host lets people choose an image, if it does. Hosts may
+    /// hand a fresh one every render, so swapping it never notifies.
+    image_picker: Rc<RefCell<Option<ImagePicker>>>,
+    /// Atom whose menu is open.
+    atom_menu: Option<AtomSlot>,
+}
+
+/// Names the teardown of an editor's undo history in profiles.
+#[cfg(feature = "sismo")]
+impl Drop for EditorState {
+    fn drop(&mut self) {
+        sismo::scope!("markdown::state_drop");
+        sismo::counter!(
+            "markdown.history_len",
+            self.history.undo.len() + self.history.redo.len()
+        );
+        drop(std::mem::take(&mut self.history));
+    }
 }
 
 /// Where the editor, its blocks and its caret are, in window coordinates.
@@ -200,9 +222,14 @@ struct BlockLayout {
 pub(crate) type CaretProbe = Rc<dyn Fn() -> Option<(f32, f32)>>;
 
 impl EditorState {
+    /// The document to edit, copied first if a render still reads it.
+    fn document_mut(&mut self) -> &mut Document {
+        Rc::make_mut(&mut self.document)
+    }
+
     fn new(document: Document) -> Self {
         Self {
-            document,
+            document: Rc::new(document),
             revision: 0,
             selection: None,
             caret: None,
@@ -214,6 +241,8 @@ impl EditorState {
             clipboard: None,
             layout: Rc::default(),
             focused: None,
+            image_picker: Rc::default(),
+            atom_menu: None,
         }
     }
 
@@ -221,6 +250,7 @@ impl EditorState {
         self.revision
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::state_markdown"))]
     pub(crate) fn markdown(&self, dialect: Dialect) -> String {
         self.document.to_markdown(dialect)
     }
@@ -233,6 +263,7 @@ impl EditorState {
         self.selection.is_none()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_record"))]
     fn record(&mut self, group: Option<TextTarget>) {
         let now = Instant::now();
         let grouped = matches!(
@@ -252,8 +283,9 @@ impl EditorState {
         self.history.redo.clear();
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_changed"))]
     fn changed(&mut self) {
-        self.document.ensure_editable();
+        self.document_mut().ensure_editable();
         self.revision += 1;
     }
 
@@ -273,6 +305,7 @@ impl EditorState {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_rich_selection"))]
     fn rich_selection(&self) -> Option<Selection> {
         self.selection
             .filter(|selection| self.document.role(selection.target) == Some(TextRole::Rich))
@@ -285,6 +318,7 @@ impl EditorState {
             .or_else(|| self.document.targets().last().copied())
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_apply_mark"))]
     fn apply_mark(&mut self, apply: impl FnOnce(&mut Inline, Range<usize>), pending: Pending) {
         let Some(selection) = self.rich_selection() else {
             return;
@@ -301,13 +335,14 @@ impl EditorState {
             return;
         }
         self.record(None);
-        if let Some(inline) = self.document.inline_mut(selection.target) {
+        if let Some(inline) = self.document_mut().inline_mut(selection.target) {
             apply(inline, selection.range());
         }
         self.changed();
         self.refresh_caret();
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::state_active_format"))]
     fn active_format(&self) -> ActiveFormat {
         let mut format = ActiveFormat {
             can_undo: !self.history.undo.is_empty(),
@@ -376,6 +411,69 @@ impl EditorState {
     }
 }
 
+/// A caret or selection in a document, by where its text field falls in
+/// reading order (see [`Document::targets`]) and UTF-16 offsets in it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct TextPosition {
+    pub target: usize,
+    pub anchor: usize,
+    pub head: usize,
+}
+
+/// Someone else's caret, drawn in their color with their name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteCaret {
+    pub position: TextPosition,
+    pub name: String,
+    pub color: Color,
+}
+
+/// Where an atom (an image, an inline formula) sits: the text field holding
+/// it and which of its atoms it is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AtomSlot {
+    pub target: TextTarget,
+    /// Index into [`Inline::atoms`].
+    pub atom: usize,
+}
+
+/// What an [`ImagePicker`] is asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageRequest {
+    /// A new image at the caret: finish with
+    /// [`EditorController::insert_image`].
+    Insert,
+    /// Another file for an image already there: finish with
+    /// [`EditorController::set_image_url`].
+    Replace(AtomSlot),
+}
+
+/// Lets people choose an image file.
+///
+/// The host opens its picker, stores the file wherever images live for the
+/// document and answers through the controller it is handed. Without one, the editor offers no way to add
+/// or replace images besides typing markdown.
+#[derive(Clone)]
+pub struct ImagePicker(Rc<dyn Fn(EditorController, ImageRequest)>);
+
+impl ImagePicker {
+    pub fn new(pick: impl Fn(EditorController, ImageRequest) + 'static) -> Self {
+        Self(Rc::new(pick))
+    }
+}
+
+impl PartialEq for ImagePicker {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl std::fmt::Debug for ImagePicker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImagePicker").finish_non_exhaustive()
+    }
+}
+
 /// Handle to the shared state of a [`MarkdownEditor`](crate::MarkdownEditor).
 ///
 /// It is `Copy`: create it with [`use_editor_controller`], hand it to the
@@ -406,6 +504,7 @@ pub fn use_editor_controller_with(markdown: impl FnOnce() -> String) -> EditorCo
 impl EditorController {
     /// Create a controller outside of a hook, e.g. in a root context.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_create"))]
     pub fn create(document: Document) -> Self {
         Self {
             state: State::create(EditorState::new(document)),
@@ -431,7 +530,7 @@ impl EditorController {
     /// Clone of the current document.
     #[must_use]
     pub fn document(&self) -> Document {
-        self.read(|state| state.document.clone())
+        self.read(|state| Document::clone(&state.document))
     }
 
     /// Run `read` against the current document without cloning it.
@@ -440,6 +539,7 @@ impl EditorController {
     }
 
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_markdown"))]
     pub fn markdown(&self, dialect: Dialect) -> String {
         self.read(|state| state.document.to_markdown(dialect))
     }
@@ -455,7 +555,27 @@ impl EditorController {
         self.read(|state| state.selection)
     }
 
+    /// Where the caret is in a form another device can find in the same
+    /// document, unlike block ids, which are this process's own.
     #[must_use]
+    pub fn text_position(&self) -> Option<TextPosition> {
+        self.read(|state| {
+            let selection = state.selection?;
+            let target = state
+                .document
+                .targets()
+                .iter()
+                .position(|target| *target == selection.target)?;
+            Some(TextPosition {
+                target,
+                anchor: selection.anchor,
+                head: selection.head,
+            })
+        })
+    }
+
+    #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_active_format"))]
     pub fn active_format(&self) -> ActiveFormat {
         self.read(EditorState::active_format)
     }
@@ -478,9 +598,10 @@ impl EditorController {
     // Content.
 
     /// Replace the document with parsed markdown, dropping history.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_load_markdown"))]
     pub fn load_markdown(&self, markdown: &str) {
         self.update(|state| {
-            state.document = Document::parse_with(markdown, &state.parse);
+            state.document = Rc::new(Document::parse_with(markdown, &state.parse));
             state.history = History::default();
             state.selection = None;
             state.pending.clear();
@@ -492,6 +613,7 @@ impl EditorController {
     /// elsewhere while this editor may be in use: history goes, the
     /// caret stays on the same text in reading order, clamped to what
     /// is there now.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_merge_markdown"))]
     pub fn merge_markdown(&self, markdown: &str) {
         self.update(|state| {
             let kept = state.selection.map(|selection| {
@@ -502,13 +624,13 @@ impl EditorController {
                     .position(|target| *target == selection.target);
                 (index, selection.head)
             });
-            state.document = Document::parse_with(markdown, &state.parse);
+            state.document = Rc::new(Document::parse_with(markdown, &state.parse));
             state.history = History::default();
             state.pending.clear();
             state.selection = None;
             if let Some((Some(index), offset)) = kept {
                 let targets = state.document.targets();
-                if let Some(target) = targets.get(index).or(targets.last()).copied() {
+                if let Some(target) = targets.get(index).or_else(|| targets.last()).copied() {
                     state.request_caret(clamp(&state.document, Selection::caret(target, offset)));
                 }
             }
@@ -517,16 +639,18 @@ impl EditorController {
     }
 
     /// Replace the document, keeping it undoable.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_document"))]
     pub fn set_document(&self, document: Document) {
         self.update(|state| {
             state.record(None);
-            state.document = document;
+            state.document = Rc::new(document);
             state.selection = None;
             state.changed();
         });
     }
 
     /// Options used by [`Self::load_markdown`] and markdown paste.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_parse_options"))]
     pub fn set_parse_options(&self, options: ParseOptions) {
         self.update(|state| state.parse = options);
     }
@@ -544,6 +668,7 @@ impl EditorController {
     // Inline formatting.
 
     /// Toggle a mark over the selection (or for the next typed text).
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_toggle_mark"))]
     pub fn toggle_mark(&self, kind: MarkKind) {
         let active = self.peek(|state| state.active_format().has(kind.family()));
         if active {
@@ -553,6 +678,7 @@ impl EditorController {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_mark"))]
     pub fn set_mark(&self, kind: MarkKind) {
         self.update(|state| {
             let pending = Pending::Add(kind.clone());
@@ -560,6 +686,7 @@ impl EditorController {
         });
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_clear_mark"))]
     pub fn clear_mark(&self, family: MarkFamily) {
         self.update(|state| {
             state.apply_mark(
@@ -570,6 +697,7 @@ impl EditorController {
     }
 
     /// Remove every mark from the selection.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_clear_formatting"))]
     pub fn clear_formatting(&self) {
         self.update(|state| {
             let Some(selection) = state.rich_selection() else {
@@ -580,7 +708,7 @@ impl EditorController {
                 return;
             }
             state.record(None);
-            if let Some(inline) = state.document.inline_mut(selection.target) {
+            if let Some(inline) = state.document_mut().inline_mut(selection.target) {
                 let families: Vec<MarkFamily> = inline
                     .marks()
                     .iter()
@@ -595,6 +723,7 @@ impl EditorController {
         });
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_color"))]
     pub fn set_color(&self, color: Option<Rgba>) {
         match color {
             Some(color) => self.set_mark(MarkKind::Color(color)),
@@ -602,6 +731,7 @@ impl EditorController {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_background"))]
     pub fn set_background(&self, color: Option<Rgba>) {
         match color {
             Some(color) => self.set_mark(MarkKind::Background(color)),
@@ -609,6 +739,7 @@ impl EditorController {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_font_family"))]
     pub fn set_font_family(&self, family: Option<String>) {
         match family {
             Some(family) => self.set_mark(MarkKind::FontFamily(family)),
@@ -616,6 +747,7 @@ impl EditorController {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_font_size"))]
     pub fn set_font_size(&self, size: Option<u16>) {
         match size {
             Some(size) => self.set_mark(MarkKind::FontSize(size)),
@@ -625,6 +757,7 @@ impl EditorController {
 
     /// Link the selection to `url`, or unlink it with `None`. With a
     /// collapsed caret inside a link the whole link is updated.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_link"))]
     pub fn set_link(&self, url: Option<String>) {
         self.update(|state| {
             let Some(selection) = state.rich_selection() else {
@@ -645,7 +778,7 @@ impl EditorController {
                 return;
             };
             state.record(None);
-            if let Some(inline) = state.document.inline_mut(selection.target) {
+            if let Some(inline) = state.document_mut().inline_mut(selection.target) {
                 match url {
                     Some(url) => inline.add_mark(range, MarkKind::Link(Link::new(url))),
                     None => inline.remove_family(range, MarkFamily::Link),
@@ -659,11 +792,36 @@ impl EditorController {
     // Insertion.
 
     /// Insert plain text at the caret, replacing the selection.
+    /// Insert `text` into `block`: at its caret when it has one, else at
+    /// its end, leaving the caret after it.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_insert_text_in"))]
+    pub fn insert_text_in(&self, block: BlockId, text: &str) {
+        self.update(|state| {
+            let target = TextTarget::from(block);
+            let Some(len) = state.document.inline(target).map(Inline::len) else {
+                return;
+            };
+            let range = state
+                .selection
+                .filter(|selection| selection.target == target)
+                .map_or(len..len, |selection| selection.range());
+            state.record(None);
+            let Some(inline) = state.document_mut().inline_mut(target) else {
+                return;
+            };
+            let inserted = inline.replace(range, text);
+            state.changed();
+            state.request_caret(Selection::caret(target, inserted.end));
+        });
+    }
+
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_insert_text"))]
     pub fn insert_text(&self, text: &str) {
         self.insert_inline(Inline::from(text));
     }
 
     /// Insert `label` linked to `url`.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_insert_link"))]
     pub fn insert_link(&self, label: &str, url: &str) {
         let mut inline = Inline::from(label);
         inline.add_mark(0..inline.len(), MarkKind::Link(Link::new(url)));
@@ -671,6 +829,7 @@ impl EditorController {
     }
 
     /// Insert an atomic embed (a link claimed by a decorator).
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_insert_embed"))]
     pub fn insert_embed(&self, label: &str, url: &str) {
         self.insert_atom(Atom::Embed {
             url: url.to_owned(),
@@ -679,6 +838,148 @@ impl EditorController {
         });
     }
 
+    // Images.
+
+    /// Use `picker` to choose images; `None` hides the image actions.
+    pub fn set_image_picker(&self, picker: Option<ImagePicker>) {
+        let slot = self.peek(|state| state.image_picker.clone());
+        let toggled = slot.borrow().is_some() != picker.is_some();
+        *slot.borrow_mut() = picker;
+        if toggled {
+            // Only whether there is one shows in the interface.
+            self.update(|_| ());
+        }
+    }
+
+    /// Whether the host can choose image files.
+    #[must_use]
+    pub fn can_pick_image(&self) -> bool {
+        self.read(|state| state.image_picker.borrow().is_some())
+    }
+
+    /// Open the menu of the atom at `slot`, or close it with `None`.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_open_atom_menu"))]
+    pub(crate) fn open_atom_menu(&self, slot: Option<AtomSlot>) {
+        if self.peek(|state| state.atom_menu != slot) {
+            self.update(|state| state.atom_menu = slot);
+        }
+    }
+
+    /// Atom whose menu is open.
+    pub(crate) fn atom_menu(&self) -> Option<AtomSlot> {
+        self.read(|state| state.atom_menu)
+    }
+
+    /// Ask the host for an image, see [`ImagePicker`].
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_request_image"))]
+    pub fn request_image(&self, request: ImageRequest) {
+        let picker = self.peek(|state| state.image_picker.borrow().clone());
+        if let Some(picker) = picker {
+            (picker.0)(*self, request);
+        }
+    }
+
+    /// Add an image after the caret's block, or in place of an empty one.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_insert_image"))]
+    pub fn insert_image(&self, url: &str, alt: &str) {
+        let mut content = Inline::default();
+        content.insert_atom(
+            0,
+            Atom::Image {
+                url: url.to_owned(),
+                alt: alt.to_owned(),
+                title: None,
+            },
+        );
+        self.insert_block(BlockKind::Paragraph(content));
+    }
+
+    /// Point the image at `slot` to another file.
+    pub fn set_image_url(&self, slot: AtomSlot, url: &str) {
+        self.edit_image(slot, |current, _| url.clone_into(current));
+    }
+
+    /// Describe the image at `slot` for people who cannot see it.
+    pub fn set_image_alt(&self, slot: AtomSlot, alt: &str) {
+        let alt = alt.trim();
+        self.edit_image(slot, |_, current| alt.clone_into(current));
+    }
+
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_edit_image"))]
+    fn edit_image(&self, slot: AtomSlot, edit: impl FnOnce(&mut String, &mut String)) {
+        self.update(|state| {
+            let Some(Atom::Image { url, alt, .. }) = state
+                .document
+                .inline(slot.target)
+                .and_then(|inline| inline.atoms().get(slot.atom))
+            else {
+                return;
+            };
+            let (mut new_url, mut new_alt) = (url.clone(), alt.clone());
+            edit(&mut new_url, &mut new_alt);
+            if (&new_url, &new_alt) == (url, alt) {
+                return;
+            }
+            state.record(None);
+            if let Some(Atom::Image { url, alt, .. }) = state
+                .document_mut()
+                .inline_mut(slot.target)
+                .and_then(|inline| inline.atom_mut(slot.atom))
+            {
+                *url = new_url;
+                *alt = new_alt;
+            }
+            state.changed();
+        });
+    }
+
+    /// Change the TeX of the inline formula at `slot`.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_math"))]
+    pub fn set_math(&self, slot: AtomSlot, tex: &str) {
+        self.update(|state| {
+            let Some(Atom::Math { tex: current }) = state
+                .document
+                .inline(slot.target)
+                .and_then(|inline| inline.atoms().get(slot.atom))
+            else {
+                return;
+            };
+            if current == tex {
+                return;
+            }
+            state.record(None);
+            if let Some(Atom::Math { tex: current }) = state
+                .document_mut()
+                .inline_mut(slot.target)
+                .and_then(|inline| inline.atom_mut(slot.atom))
+            {
+                tex.clone_into(current);
+            }
+            state.changed();
+        });
+    }
+
+    /// Take the image at `slot` out of the document.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_remove_image"))]
+    pub fn remove_image(&self, slot: AtomSlot) {
+        self.update(|state| {
+            let Some(at) = state
+                .document
+                .inline(slot.target)
+                .and_then(|inline| inline.atom_position(slot.atom))
+            else {
+                return;
+            };
+            state.record(None);
+            if let Some(inline) = state.document_mut().inline_mut(slot.target) {
+                inline.replace(at..at + 1, "");
+            }
+            state.changed();
+            state.request_caret(Selection::caret(slot.target, at));
+        });
+    }
+
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_insert_atom"))]
     pub fn insert_atom(&self, atom: Atom) {
         let mut inline = Inline::default();
         inline.insert_atom(0, atom);
@@ -686,6 +987,7 @@ impl EditorController {
     }
 
     /// Insert rich inline content at the caret.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_insert_inline"))]
     pub fn insert_inline(&self, content: Inline) {
         self.update(|state| {
             let Some(target) = state.target_or_last() else {
@@ -700,7 +1002,7 @@ impl EditorController {
                 });
             let plain = state.document.role(target) == Some(TextRole::Plain);
             state.record(None);
-            let Some(inline) = state.document.inline_mut(target) else {
+            let Some(inline) = state.document_mut().inline_mut(target) else {
                 return;
             };
             let range = selection.range();
@@ -718,6 +1020,7 @@ impl EditorController {
 
     /// Paste markdown at the caret: one paragraph is inserted inline, more
     /// blocks split the current one around them.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_insert_markdown"))]
     pub fn insert_markdown(&self, markdown: &str) {
         self.update(|state| {
             let parsed = Document::parse_with(markdown, &state.parse);
@@ -746,7 +1049,7 @@ impl EditorController {
             let rich = state.document.role(target) == Some(TextRole::Rich);
             if let Some(content) = single.filter(|_| rich) {
                 state.record(None);
-                if let Some(inline) = state.document.inline_mut(target) {
+                if let Some(inline) = state.document_mut().inline_mut(target) {
                     let range = selection.range();
                     inline.replace(range.clone(), "");
                     let end = range.start + content.len();
@@ -764,7 +1067,7 @@ impl EditorController {
             };
             state.record(None);
             let range = selection.range();
-            let length = state.document.inline_mut(target).map_or(0, |inline| {
+            let length = state.document_mut().inline_mut(target).map_or(0, |inline| {
                 inline.replace(range.clone(), "");
                 inline.len()
             });
@@ -775,18 +1078,18 @@ impl EditorController {
                 (!at_end).then_some(target.block)
             } else {
                 state
-                    .document
+                    .document_mut()
                     .split(target, range.start)
                     .map(|caret| caret.target.block)
             };
             let first = if at_start { index } else { index + 1 };
             let mut last = None;
             for (at, block) in (first..).zip(blocks) {
-                last = Some(state.document.insert(
+                last = Some(state.document_mut().insert(
                     at,
                     Block {
                         id: BlockId::fresh(),
-                        ..block.clone()
+                        ..Block::clone(block)
                     },
                 ));
             }
@@ -798,7 +1101,7 @@ impl EditorController {
                     Some(BlockKind::Paragraph(_))
                 );
             if replaced {
-                state.document.remove(target.block);
+                state.document_mut().remove(target.block);
             }
             let end_of_last = last.and_then(|id| {
                 let target = state
@@ -813,7 +1116,7 @@ impl EditorController {
                 .map(|rest| Selection::caret(TextTarget::from(rest), 0))
                 .or(end_of_last)
                 .unwrap_or_else(|| Selection::caret(TextTarget::from(last.unwrap_or(target.block)), 0));
-            state.document.ensure_editable();
+            state.document_mut().ensure_editable();
             state.changed();
             state.request_caret(caret);
         });
@@ -821,28 +1124,135 @@ impl EditorController {
 
     // Blocks.
 
+    /// Convert the block holding the caret.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_block_type"))]
     pub fn set_block_type(&self, block_type: BlockType) {
+        let block = self.peek(|state| {
+            state
+                .selection
+                .filter(|s| s.target.cell.is_none())
+                .map(|s| s.target.block)
+        });
+        if let Some(block) = block {
+            self.set_type_of(block, block_type);
+        }
+    }
+
+    /// Convert `block`, wherever the caret is.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_type_of"))]
+    pub fn set_type_of(&self, block: BlockId, block_type: BlockType) {
         self.update(|state| {
-            let Some(selection) = state.selection.filter(|s| s.target.cell.is_none()) else {
-                return;
-            };
-            let mut document = state.document.clone();
-            if document.set_type(selection.target.block, block_type) {
+            let mut document = Document::clone(&state.document);
+            if document.set_type(block, block_type) {
                 state.record(None);
-                state.document = document;
+                state.document = Rc::new(document);
                 state.changed();
                 state.refresh_caret();
             }
         });
     }
 
+    /// Replace the YAML of a front matter block.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_front_matter"))]
+    pub fn set_front_matter(&self, block: BlockId, yaml: &str) {
+        self.update(|state| {
+            if let Some(BlockKind::FrontMatter(current)) =
+                state.document.block(block).map(|block| &block.kind)
+                && current.text() != yaml
+            {
+                state.record(None);
+                if let Some(BlockKind::FrontMatter(current)) = state
+                    .document_mut()
+                    .block_mut(block)
+                    .map(|block| &mut block.kind)
+                {
+                    *current = Inline::from(yaml);
+                }
+                state.changed();
+            }
+        });
+    }
+
+    /// Rename a callout; an empty title falls back to the kind's name.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_callout_title"))]
+    pub fn set_callout_title(&self, block: BlockId, title: &str) {
+        let title = title.trim();
+        let wanted = (!title.is_empty()).then(|| title.to_owned());
+        self.update(|state| {
+            if let Some(BlockKind::Callout { title: current, .. }) =
+                state.document.block(block).map(|block| &block.kind)
+                && *current != wanted
+            {
+                state.record(None);
+                if let Some(BlockKind::Callout { title, .. }) = state
+                    .document_mut()
+                    .block_mut(block)
+                    .map(|block| &mut block.kind)
+                {
+                    *title = wanted;
+                }
+                state.changed();
+            }
+        });
+    }
+
+    /// Rename the summary of a `<details>` block.
+    #[cfg_attr(
+        feature = "sismo",
+        sismo::function("markdown::ctl_set_details_summary")
+    )]
+    pub fn set_details_summary(&self, block: BlockId, summary: &str) {
+        let wanted = summary.trim().to_owned();
+        self.update(|state| {
+            if let Some(BlockKind::Details {
+                summary: current, ..
+            }) = state.document.block(block).map(|block| &block.kind)
+                && *current != wanted
+            {
+                state.record(None);
+                if let Some(BlockKind::Details { summary, .. }) = state
+                    .document_mut()
+                    .block_mut(block)
+                    .map(|block| &mut block.kind)
+                {
+                    *summary = wanted;
+                }
+                state.changed();
+            }
+        });
+    }
+
+    /// Change the kind of a callout, keeping its title and content.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_callout_kind"))]
+    pub fn set_callout_kind(&self, block: BlockId, kind: CalloutKind) {
+        self.update(|state| {
+            if let Some(Block {
+                kind: BlockKind::Callout { kind: current, .. },
+                ..
+            }) = state.document.block(block)
+                && *current != kind
+            {
+                state.record(None);
+                if let Some(BlockKind::Callout { kind: current, .. }) = state
+                    .document_mut()
+                    .block_mut(block)
+                    .map(|block| &mut block.kind)
+                {
+                    *current = kind;
+                }
+                state.changed();
+            }
+        });
+    }
+
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_align"))]
     pub fn set_align(&self, align: Align) {
         self.update(|state| {
             let Some(selection) = state.selection else {
                 return;
             };
             state.record(None);
-            if let Some(block) = state.document.block_mut(selection.target.block) {
+            if let Some(block) = state.document_mut().block_mut(selection.target.block) {
                 block.align = align;
             }
             state.changed();
@@ -858,39 +1268,45 @@ impl EditorController {
         self.shift_depth(-1);
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_shift_depth"))]
     fn shift_depth(&self, delta: i8) {
         self.update(|state| {
             let Some(selection) = state.selection else {
                 return;
             };
-            let mut document = state.document.clone();
+            let mut document = Document::clone(&state.document);
             if document.indent(selection.target.block, delta) {
                 state.record(None);
-                state.document = document;
+                state.document = Rc::new(document);
                 state.changed();
                 state.refresh_caret();
             }
         });
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_toggle_task"))]
     pub fn toggle_task(&self, block: BlockId) {
         self.update(|state| {
             if state.read_only {
                 return;
             }
             state.record(None);
-            if state.document.toggle_task(block) {
+            if state.document_mut().toggle_task(block) {
                 state.changed();
             }
         });
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_code_language"))]
     pub fn set_code_language(&self, block: BlockId, language: &str) {
         self.update(|state| {
             state.record(None);
             if let Some(BlockKind::Code {
                 language: current, ..
-            }) = state.document.block_mut(block).map(|block| &mut block.kind)
+            }) = state
+                .document_mut()
+                .block_mut(block)
+                .map(|block| &mut block.kind)
             {
                 language.clone_into(current);
                 state.changed();
@@ -900,6 +1316,7 @@ impl EditorController {
 
     /// Insert a block after the current one (replacing it when it is an
     /// empty paragraph) and move the caret into it.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_insert_block"))]
     pub fn insert_block(&self, kind: BlockKind) {
         self.update(|state| {
             state.record(None);
@@ -916,18 +1333,18 @@ impl EditorController {
             let block = Block::from(kind);
             let id = match (replace, current) {
                 (Some(id), _) => {
-                    if let Some(slot) = state.document.block_mut(id) {
+                    if let Some(slot) = state.document_mut().block_mut(id) {
                         slot.kind = block.kind;
                     }
                     id
                 }
-                (None, Some(anchor)) => state.document.insert_after(anchor, block),
+                (None, Some(anchor)) => state.document_mut().insert_after(anchor, block),
                 (None, None) => {
                     let end = state.document.blocks().len();
-                    state.document.insert(end, block)
+                    state.document_mut().insert(end, block)
                 }
             };
-            state.document.ensure_editable();
+            state.document_mut().ensure_editable();
             let caret = first_target_from(&state.document, id);
             state.changed();
             if let Some(target) = caret {
@@ -944,6 +1361,7 @@ impl EditorController {
         self.insert_block(BlockKind::Divider);
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_remove_block"))]
     pub fn remove_block(&self, block: BlockId) {
         self.update(|state| {
             state.record(None);
@@ -952,7 +1370,7 @@ impl EditorController {
                 .index_of(block)
                 .and_then(|index| state.document.blocks().get(index + 1))
                 .map(|next| next.id);
-            state.document.remove(block);
+            state.document_mut().remove(block);
             state.changed();
             let target = next
                 .and_then(|next| first_target_from(&state.document, next))
@@ -985,12 +1403,13 @@ impl EditorController {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_reorder"))]
     fn reorder(&self, edit: impl FnOnce(&mut Document) -> bool) {
         self.update(|state| {
-            let mut document = state.document.clone();
+            let mut document = Document::clone(&state.document);
             if edit(&mut document) {
                 state.record(None);
-                state.document = document;
+                state.document = Rc::new(document);
                 state.changed();
                 state.refresh_caret();
             }
@@ -1035,6 +1454,70 @@ impl EditorController {
         });
     }
 
+    /// Tick or untick body row `row` of the table `block`.
+    pub fn table_toggle_check(&self, block: BlockId, row: usize) {
+        self.edit_table_block(block, |table| table.toggle_check(row));
+    }
+
+    /// Give the table `block` a check column (or take it away).
+    pub fn table_set_checks(&self, block: BlockId, checks: bool) {
+        self.edit_table_block(block, |table| {
+            let changed = table.has_check_column() != checks;
+            table.set_check_column(checks);
+            changed
+        });
+    }
+
+    /// Show `summary` under `column` of the table `block`, or nothing.
+    pub fn table_set_summary(&self, block: BlockId, column: Column, summary: Option<Summary>) {
+        self.edit_table_block(block, |table| table.set_summary(column, summary));
+    }
+
+    /// Add a column computed by `formula` to the table `block`.
+    pub fn table_add_computed(&self, block: BlockId, header: &str, formula: &str) {
+        self.edit_table_block(block, |table| {
+            table.add_computed(header, formula);
+            true
+        });
+    }
+
+    pub fn table_set_computed(&self, block: BlockId, index: usize, header: &str, formula: &str) {
+        self.edit_table_block(block, |table| table.set_computed(index, header, formula));
+    }
+
+    pub fn table_remove_computed(&self, block: BlockId, index: usize) {
+        self.edit_table_block(block, |table| table.remove_computed(index));
+    }
+
+    /// An undoable edit of the table `block` that leaves the caret alone.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_edit_table_block"))]
+    fn edit_table_block(&self, block: BlockId, edit: impl FnOnce(&mut Table) -> bool) {
+        self.update(|state| {
+            if state.read_only {
+                return;
+            }
+            let mut document = Document::clone(&state.document);
+            let Some(BlockKind::Table(table)) =
+                document.block_mut(block).map(|block| &mut block.kind)
+            else {
+                return;
+            };
+            if !edit(table) {
+                return;
+            }
+            state.record(None);
+            state.document = Rc::new(document);
+            state.changed();
+            // The caret may have sat in a cell that is gone.
+            if state.selection.is_some_and(|selection| {
+                selection.target.block == block && state.document.inline(selection.target).is_none()
+            }) {
+                state.selection = None;
+            }
+        });
+    }
+
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_edit_table"))]
     fn edit_table(&self, edit: impl FnOnce(&mut Table, CellPos) -> Option<CellPos>) {
         self.update(|state| {
             let Some(selection) = state.selection else {
@@ -1043,7 +1526,7 @@ impl EditorController {
             let Some(cell) = selection.target.cell else {
                 return;
             };
-            let mut document = state.document.clone();
+            let mut document = Document::clone(&state.document);
             let Some(BlockKind::Table(table)) = document
                 .block_mut(selection.target.block)
                 .map(|block| &mut block.kind)
@@ -1054,7 +1537,7 @@ impl EditorController {
                 return;
             };
             state.record(None);
-            state.document = document;
+            state.document = Rc::new(document);
             state.changed();
             state.request_caret(Selection::caret(
                 TextTarget {
@@ -1068,6 +1551,7 @@ impl EditorController {
 
     // History.
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_undo"))]
     pub fn undo(&self) {
         self.update(|state| {
             let Some(snapshot) = state.history.undo.pop() else {
@@ -1087,6 +1571,7 @@ impl EditorController {
         });
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_redo"))]
     pub fn redo(&self) {
         self.update(|state| {
             let Some(snapshot) = state.history.redo.pop() else {
@@ -1108,6 +1593,7 @@ impl EditorController {
     // Focus.
 
     /// Move the caret to `offset` inside `target` and focus it.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_focus"))]
     pub fn focus(&self, target: impl Into<TextTarget>, offset: usize) {
         let target = target.into();
         self.update(|state| {
@@ -1121,12 +1607,32 @@ impl EditorController {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_focus_end"))]
     pub fn focus_end(&self) {
         let end = self.peek(|state| {
             let target = state.document.targets().last().copied()?;
             Some((target, state.document.inline(target).map_or(0, Inline::len)))
         });
         if let Some((target, offset)) = end {
+            self.focus(target, offset);
+        }
+    }
+
+    /// Move the caret out of block `id`: to the end of the text before it,
+    /// else to the start of the one after it.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_focus_beside"))]
+    pub(crate) fn focus_beside(&self, id: BlockId) {
+        let beside = self.peek(|state| {
+            let document = &state.document;
+            let targets = document.targets();
+            let first = targets.iter().position(|target| target.block == id)?;
+            let last = targets.iter().rposition(|target| target.block == id)?;
+            match first.checked_sub(1).and_then(|before| targets.get(before)) {
+                Some(&before) => Some((before, document.inline(before).map_or(0, Inline::len))),
+                None => targets.get(last + 1).map(|&after| (after, 0)),
+            }
+        });
+        if let Some((target, offset)) = beside {
             self.focus(target, offset);
         }
     }
@@ -1177,9 +1683,10 @@ impl EditorController {
     /// Fix (or release with `None`) the anchor of heading `id`, see
     /// [`Document::set_heading_anchor`]. Not an undoable edit: it only
     /// keeps links stable.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_heading_anchor"))]
     pub fn set_heading_anchor(&self, id: BlockId, anchor: Option<String>) {
         self.update(|state| {
-            if state.document.set_heading_anchor(id, anchor) {
+            if state.document_mut().set_heading_anchor(id, anchor) {
                 state.changed();
             }
         });
@@ -1189,12 +1696,14 @@ impl EditorController {
         self.peek(|state| state.layout.borrow_mut().root = Some(top));
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_record_block_area"))]
     pub(crate) fn record_block_area(&self, id: BlockId, top: f32, bottom: f32) {
         self.peek(|state| {
             state.layout.borrow_mut().blocks.insert(id, (top, bottom));
         });
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_track_focus"))]
     pub(crate) fn track_focus(&self, target: TextTarget, focused: bool, probe: CaretProbe) {
         self.peek(|state| {
             let mut layout = state.layout.borrow_mut();
@@ -1220,15 +1729,17 @@ impl EditorController {
     // Internal hooks used by the text editors.
 
     /// Everything the editor root needs for one render, subscribing to it.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_view"))]
     pub(crate) fn view(&self) -> EditorView {
         self.read(|state| EditorView {
-            document: state.document.clone(),
+            document: Rc::clone(&state.document),
             selection: state.selection,
             caret: state.caret,
             read_only: state.read_only,
         })
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_selection"))]
     pub(crate) fn set_selection(&self, selection: Selection) {
         let current = self.peek(|state| state.selection);
         if current == Some(selection) {
@@ -1249,6 +1760,7 @@ impl EditorController {
     /// Apply the new rope text of `target`. Returns whether the model text
     /// now differs from what the caller typed (autoformat or shortcuts), so
     /// the caller must resync from the model.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_edit_text"))]
     pub(crate) fn edit_text(
         &self,
         target: TextTarget,
@@ -1271,10 +1783,14 @@ impl EditorController {
                 return false;
             }
             let escaped = deleted_up_to_mark_end(current, text, hint);
+            let previous_header = target
+                .cell
+                .filter(|cell| cell.row == 0)
+                .map(|_| current.plain_text());
             state.record(Some(target));
             let role = state.document.role(target);
             let pending = std::mem::take(&mut state.pending);
-            let Some(inline) = state.document.inline_mut(target) else {
+            let Some(inline) = Rc::make_mut(&mut state.document).inline_mut(target) else {
                 return false;
             };
             let Some(change) = inline.apply_text(text, hint) else {
@@ -1314,10 +1830,20 @@ impl EditorController {
                 (role == Some(TextRole::Rich) && target.cell.is_none() && inserted_len > 0)
                     .then(|| {
                         state
-                            .document
+                            .document_mut()
                             .apply_block_shortcut(target.block, selection.head)
                     })
                     .flatten();
+            // Formulas name columns by header: a renamed header keeps them pointing.
+            if let (Some(previous), Some(cell)) = (previous_header, target.cell)
+                && let Some(BlockKind::Table(table)) = state
+                    .document_mut()
+                    .block_mut(target.block)
+                    .map(|block| &mut block.kind)
+            {
+                let header = table.header(cell.column);
+                table.rename_in_formulas(cell.column, &previous, &header);
+            }
             state.changed();
             if let Some(caret) = shortcut {
                 state.request_caret(caret.into());
@@ -1334,6 +1860,7 @@ impl EditorController {
 
     /// Stop the marks that end at a collapsed caret at `pos` from applying
     /// to the next typed text. Returns whether any mark was escaped.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_escape_marks"))]
     pub(crate) fn escape_marks(&self, target: TextTarget, pos: usize) -> bool {
         let families: Vec<MarkFamily> = self.peek(|state| {
             let Some(inline) = state.document.inline(target) else {
@@ -1369,6 +1896,7 @@ impl EditorController {
 
     /// Replace the whole content of `target` after an edit made on its
     /// markdown source.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_replace_inline"))]
     pub(crate) fn replace_inline(&self, target: TextTarget, inline: Inline, selection: Selection) {
         self.update(|state| {
             if state.document.inline(target) == Some(&inline) {
@@ -1377,7 +1905,7 @@ impl EditorController {
             }
             state.record(Some(target));
             state.pending.clear();
-            if let Some(current) = state.document.inline_mut(target) {
+            if let Some(current) = state.document_mut().inline_mut(target) {
                 *current = inline;
             }
             state.changed();
@@ -1394,10 +1922,11 @@ impl EditorController {
     }
 
     /// Enter: split the block, or open a code block on `` ```lang ``.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_split"))]
     pub(crate) fn split(&self, target: TextTarget, selection: Range<usize>) {
         self.update(|state| {
             state.record(None);
-            if let Some(inline) = state.document.inline_mut(target) {
+            if let Some(inline) = state.document_mut().inline_mut(target) {
                 inline.replace(selection.clone(), "");
             }
             let fence = state
@@ -1412,7 +1941,7 @@ impl EditorController {
                     _ => None,
                 });
             if let Some(language) = fence {
-                if let Some(block) = state.document.block_mut(target.block) {
+                if let Some(block) = state.document_mut().block_mut(target.block) {
                     block.kind = BlockKind::Code {
                         language,
                         code: Inline::default(),
@@ -1422,7 +1951,7 @@ impl EditorController {
                 state.request_caret(Selection::caret(target, 0));
                 return;
             }
-            let caret = state.document.split(target, selection.start);
+            let caret = state.document_mut().split(target, selection.start);
             state.changed();
             if let Some(caret) = caret {
                 state.request_caret(caret.into());
@@ -1438,14 +1967,15 @@ impl EditorController {
         self.structural(|document| document.join_forward(target))
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_structural"))]
     fn structural(&self, edit: impl FnOnce(&mut Document) -> Option<Caret>) -> bool {
         self.update(|state| {
-            let mut document = state.document.clone();
+            let mut document = Document::clone(&state.document);
             let Some(caret) = edit(&mut document) else {
                 return false;
             };
             state.record(None);
-            state.document = document;
+            state.document = Rc::new(document);
             state.changed();
             state.request_caret(caret.into());
             true
@@ -1453,6 +1983,7 @@ impl EditorController {
     }
 
     /// Move the caret to the previous (`forward == false`) or next target.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_step"))]
     pub(crate) fn step(&self, target: TextTarget, forward: bool) -> bool {
         let destination = self.peek(|state| {
             let next = if forward {
@@ -1474,41 +2005,57 @@ impl EditorController {
     }
 
     /// Tab inside a table: next cell, appending a row past the last one.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_next_cell"))]
     pub(crate) fn next_cell(&self, target: TextTarget, backwards: bool) {
         let Some(cell) = target.cell else {
             return;
         };
         let shape = self.peek(
             |state| match state.document.block(target.block).map(|b| &b.kind) {
-                Some(BlockKind::Table(table)) => Some((table.rows().len(), table.columns().len())),
+                Some(BlockKind::Table(table)) => Some((
+                    table.rows().len(),
+                    table.columns().len(),
+                    table.has_check_column(),
+                )),
                 _ => None,
             },
         );
-        let Some((rows, columns)) = shape else {
+        let Some((rows, columns, checks)) = shape else {
             return;
         };
-        let index = cell.row * columns + cell.column;
-        let next = if backwards {
-            index.checked_sub(1)
-        } else {
-            Some(index + 1)
-        };
-        let Some(next) = next else {
-            return;
-        };
-        if next >= rows * columns {
+        // Check marks are not typed into: the first typed column of a
+        // body row is the one after them.
+        let first_column = usize::from(checks && columns > 1);
+        let is_check =
+            |index: usize| checks && columns > 1 && index % columns == 0 && index >= columns;
+        let mut index = cell.row * columns + cell.column;
+        loop {
+            let next = if backwards {
+                index.checked_sub(1)
+            } else {
+                Some(index + 1)
+            };
+            let Some(next) = next else {
+                return;
+            };
+            index = next;
+            if !is_check(index) {
+                break;
+            }
+        }
+        if index >= rows * columns {
             self.edit_table(|table, _| {
                 table.insert_row(rows);
                 Some(CellPos {
                     row: rows,
-                    column: 0,
+                    column: first_column,
                 })
             });
             return;
         }
         let next = CellPos {
-            row: next / columns,
-            column: next % columns,
+            row: index / columns,
+            column: index % columns,
         };
         self.focus(
             TextTarget {
@@ -1520,6 +2067,7 @@ impl EditorController {
     }
 
     /// Remove the trigger text in `range` and run the picked action.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_commit_suggestion"))]
     pub(crate) fn commit_suggestion(
         &self,
         target: TextTarget,
@@ -1528,7 +2076,7 @@ impl EditorController {
     ) {
         self.update(|state| {
             state.record(None);
-            if let Some(inline) = state.document.inline_mut(target) {
+            if let Some(inline) = state.document_mut().inline_mut(target) {
                 inline.replace(range.clone(), "");
             }
             state.changed();
@@ -1549,11 +2097,12 @@ impl EditorController {
     /// Leave the block of `target` for the paragraph after it, creating
     /// one unless an empty paragraph already follows. With
     /// `trim_newline` a trailing line break typed to get out is removed.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_exit_block"))]
     pub(crate) fn exit_block(&self, target: TextTarget, trim_newline: bool) {
         self.update(|state| {
             state.record(None);
             if trim_newline
-                && let Some(inline) = state.document.inline_mut(target)
+                && let Some(inline) = state.document_mut().inline_mut(target)
                 && inline.text().ends_with('\n')
             {
                 let end = inline.len();
@@ -1569,7 +2118,7 @@ impl EditorController {
                 .map(|block| block.id);
             let id = next.unwrap_or_else(|| {
                 state
-                    .document
+                    .document_mut()
                     .insert_after(target.block, Block::paragraph(""))
             });
             state.changed();
@@ -1577,6 +2126,7 @@ impl EditorController {
         });
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_remember_copy"))]
     pub(crate) fn remember_copy(&self, target: TextTarget, range: Range<usize>) {
         self.update(|state| {
             state.clipboard = state.document.inline(target).map(|inline| {
@@ -1587,6 +2137,7 @@ impl EditorController {
     }
 
     /// Rich content for `plain` if it was copied from this editor.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_recall_copy"))]
     pub(crate) fn recall_copy(&self, plain: &str) -> Option<Inline> {
         self.peek(|state| {
             state
@@ -1598,6 +2149,7 @@ impl EditorController {
     }
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_first_target_from"))]
 fn first_target_from(document: &Document, id: BlockId) -> Option<TextTarget> {
     let index = document.index_of(id)?;
     document.blocks()[index..]
@@ -1612,6 +2164,7 @@ fn first_target_from(document: &Document, id: BlockId) -> Option<TextTarget> {
         })
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_clamp"))]
 fn clamp(document: &Document, selection: Selection) -> Selection {
     let len = document.inline(selection.target).map_or(0, Inline::len);
     Selection {
@@ -1624,6 +2177,10 @@ fn clamp(document: &Document, selection: Selection) -> Selection {
 /// Families whose mark ends where a pure deletion of unmarked text starts.
 /// Typing there afterwards should not grow the mark back over the text that
 /// was just removed.
+#[cfg_attr(
+    feature = "sismo",
+    sismo::function("markdown::ctl_deleted_up_to_mark_end")
+)]
 fn deleted_up_to_mark_end(current: &Inline, text: &str, hint: usize) -> Vec<MarkFamily> {
     let Some(change) = crate::document::diff(current.text(), text, hint) else {
         return Vec::new();

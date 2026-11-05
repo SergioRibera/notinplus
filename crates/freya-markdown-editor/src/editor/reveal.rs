@@ -64,6 +64,7 @@ pub(crate) struct Reveal {
 
 impl Reveal {
     /// Reveal the formatting touching `cursor`, if any.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::reveal_open"))]
     pub(crate) fn open(content: &Inline, cursor: usize) -> Option<Self> {
         let range = region(content, cursor)?;
         let model = content.slice(range.clone());
@@ -148,6 +149,7 @@ impl Reveal {
     }
 
     /// The text shown on screen for `content`.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::reveal_display_text"))]
     pub(crate) fn display_text(&self, content: &Inline) -> String {
         let text = content.text();
         let range = self.model_range();
@@ -158,6 +160,7 @@ impl Reveal {
 
     /// `content` with the run replaced by its source: content chars keep
     /// their formatting and syntax is drawn in `syntax_color`.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::reveal_display_inline"))]
     pub(crate) fn display_inline(&self, content: &Inline, syntax_color: Rgba) -> Inline {
         let mut shown = Inline::from(self.source.as_str());
         for mark in self.model.marks() {
@@ -205,6 +208,7 @@ pub(crate) enum RevealEdit {
 impl Reveal {
     /// Map an edit of the shown text back to the model. `shown` is the new
     /// text on screen, `hint` the selection start before the edit.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::reveal_edit"))]
     pub(crate) fn edit(
         &self,
         content: &Inline,
@@ -251,6 +255,7 @@ impl Reveal {
 
 /// The run of syntax formatted text touching `cursor`: every mark with
 /// syntax containing it, grown over the marks overlapping or touching them.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::reveal_region"))]
 fn region(content: &Inline, cursor: usize) -> Option<Range<usize>> {
     let marks: Vec<Range<usize>> = content
         .marks()
@@ -286,6 +291,7 @@ fn region(content: &Inline, cursor: usize) -> Option<Range<usize>> {
 /// Match the chars of `plain` inside `source` in order. Everything left over
 /// is syntax. Link destinations and HTML tags are skipped as a whole so
 /// their letters never stand for content.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::reveal_align"))]
 fn align(source: &str, plain: &str) -> (Vec<usize>, Vec<Option<usize>>) {
     let plain: Vec<char> = plain.chars().collect();
     let chars: Vec<char> = source.chars().collect();
@@ -340,6 +346,7 @@ fn starts_tag(rest: &[char]) -> bool {
 
 /// New content for an edited source. Styling without syntax that `old` had
 /// is kept on the text that survived the edit.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::reveal_reparse"))]
 fn reparse(source: &str, old: &Inline, options: &ParseOptions) -> Inline {
     let core_start = source.trim_start();
     let lead = &source[..source.len() - core_start.len()];

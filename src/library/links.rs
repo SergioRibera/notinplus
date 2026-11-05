@@ -121,6 +121,7 @@ impl LinkIndex {
 
     /// Add an edge, or return the id of the live edge that already
     /// says the same thing. Returns `None` when `from == to`.
+    #[sismo::function("library::links::insert")]
     pub fn insert(&mut self, from: ItemId, to: ItemId, kind: LinkKind, now: u64) -> Option<LinkId> {
         if from == to {
             return None;
@@ -142,6 +143,7 @@ impl LinkIndex {
     }
 
     /// Tombstone the edge. Returns whether a live edge was found.
+    #[sismo::function("library::links::remove")]
     pub fn remove(&mut self, id: LinkId, now: u64) -> bool {
         let Some(link) = self.links.iter_mut().find(|l| l.id == id && !l.deleted) else {
             return false;
@@ -153,6 +155,7 @@ impl LinkIndex {
 
     /// Tombstone every live edge touching `item`. Returns how many
     /// edges were affected.
+    #[sismo::function("library::links::retire_item")]
     pub fn retire_item(&mut self, item: ItemId, now: u64) -> usize {
         let mut count = 0;
         for link in self.links.iter_mut().filter(|l| l.touches(item)) {
@@ -166,6 +169,7 @@ impl LinkIndex {
     /// Forget tombstones older than `max_age` milliseconds. Returns how
     /// many went. A device away longer than that may bring a deleted
     /// link back, which is the accepted price of a bounded index.
+    #[sismo::function("library::links::compact")]
     pub fn compact(&mut self, now: u64, max_age: u64) -> usize {
         let before = self.links.len();
         self.links

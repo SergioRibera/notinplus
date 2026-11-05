@@ -7,6 +7,7 @@
 
 use std::fmt;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::identity::{DeviceId, DeviceKey};
@@ -21,6 +22,14 @@ pub const DEFAULT_PORT: u16 = 7710;
 /// Bumped whenever the frames exchanged on a channel change shape.
 pub const WIRE_VERSION: u16 = 1;
 
+/// Random for each run of the process: a device that comes back with
+/// another one was restarted, whatever its channels looked like.
+#[must_use]
+pub fn session_id() -> u64 {
+    static SESSION: OnceLock<u64> = OnceLock::new();
+    *SESSION.get_or_init(rand::random)
+}
+
 /// What a device says about itself, both in LAN beacons and as the
 /// first frame on every channel.
 #[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
@@ -29,6 +38,8 @@ pub struct Beacon {
     pub public: [u8; 32],
     pub name: String,
     pub wire: u16,
+    /// See [`session_id`].
+    pub session: u64,
 }
 
 impl Beacon {
@@ -39,6 +50,7 @@ impl Beacon {
             public: *key.public(),
             name: name.into(),
             wire: WIRE_VERSION,
+            session: session_id(),
         }
     }
 
@@ -57,6 +69,8 @@ pub struct PeerInfo {
     pub public: [u8; 32],
     pub name: String,
     pub addr: SocketAddr,
+    /// The run of the process it is in, see [`session_id`].
+    pub session: u64,
 }
 
 impl PeerInfo {
@@ -67,6 +81,7 @@ impl PeerInfo {
             public: beacon.public,
             name: beacon.name.clone(),
             addr,
+            session: beacon.session,
         }
     }
 }
@@ -78,6 +93,8 @@ pub enum NetEvent {
     Discovered(PeerInfo),
     /// An authenticated channel is open and both sides said hello.
     Connected(PeerInfo),
+    /// A device with an open channel announced a new name.
+    Renamed(PeerInfo),
     /// The channel closed, by request or by silence.
     Disconnected(DeviceId),
     /// An application payload arrived.
@@ -208,6 +225,17 @@ impl std::error::Error for NetError {
     }
 }
 
+/// Which channel a message rides. Each has its own ordered stream, so a
+/// big transfer never holds back a cursor.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Lane {
+    /// Documents, records and everything that must arrive.
+    #[default]
+    Data,
+    /// Small, urgent and soon stale: cursors, ink in progress.
+    Live,
+}
+
 /// One unit on a channel.
 #[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
 enum Frame {
@@ -215,15 +243,24 @@ enum Frame {
     Ping,
     Pong,
     App(Vec<u8>),
+    /// Piece `index` of `total` of an app payload too big for one frame.
+    Part {
+        id: u32,
+        index: u32,
+        total: u32,
+        bytes: Vec<u8>,
+    },
     Bye,
 }
 
 impl Frame {
+    #[cfg_attr(feature = "sismo", sismo::function("sync::net::frame_encode"))]
     fn to_bytes(&self) -> Vec<u8> {
         // Every variant is plain data; the standard config cannot fail on it.
         bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::net::frame_decode"))]
     fn from_bytes(bytes: &[u8]) -> Option<Self> {
         bincode::decode_from_slice(bytes, bincode::config::standard())
             .ok()

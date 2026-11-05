@@ -42,6 +42,8 @@ pub enum MarkKind {
     FontFamily(String),
     /// Font size in logical pixels.
     FontSize(u16),
+    /// `<abbr title="...">`: the text abbreviates the title.
+    Abbreviation(String),
 }
 
 /// Value-less identity of a [`MarkKind`]. Two marks of the same family never
@@ -62,6 +64,7 @@ pub enum MarkFamily {
     Background,
     FontFamily,
     FontSize,
+    Abbreviation,
 }
 
 impl MarkKind {
@@ -82,12 +85,13 @@ impl MarkKind {
             Self::Background(_) => MarkFamily::Background,
             Self::FontFamily(_) => MarkFamily::FontFamily,
             Self::FontSize(_) => MarkFamily::FontSize,
+            Self::Abbreviation(_) => MarkFamily::Abbreviation,
         }
     }
 
     /// Whether text typed right after the end of the mark joins it.
     pub(crate) const fn is_inclusive(&self) -> bool {
-        !matches!(self, Self::Code | Self::Link(_))
+        !matches!(self, Self::Code | Self::Link(_) | Self::Abbreviation(_))
     }
 }
 
@@ -352,6 +356,7 @@ impl Inline {
 
     /// Replace `range` with plain `text`, keeping marks and atoms consistent.
     /// Returns the range the inserted text now occupies.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::inline_replace"))]
     pub fn replace(&mut self, range: Range<usize>, text: &str) -> Range<usize> {
         let len = self.len();
         let start = range.start.min(len);
@@ -407,12 +412,36 @@ impl Inline {
     /// Apply the difference between the current text and `new_text`.
     /// `edit_start_hint` bounds where the change may begin (the selection
     /// start before the edit) so repeated characters resolve correctly.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::inline_apply_text"))]
     pub fn apply_text(&mut self, new_text: &str, edit_start_hint: usize) -> Option<TextChange> {
         let change = diff(&self.text, new_text, edit_start_hint)?;
         self.replace(change.range.clone(), &change.inserted);
         Some(change)
     }
 
+    /// The `index`th atom, to change it in place.
+    pub fn atom_mut(&mut self, index: usize) -> Option<&mut Atom> {
+        self.atoms.get_mut(index)
+    }
+
+    /// UTF-16 position of the placeholder of the `index`th atom.
+    #[must_use]
+    pub fn atom_position(&self, index: usize) -> Option<usize> {
+        let mut units = 0;
+        let mut seen = 0;
+        for ch in self.text.chars() {
+            if ch == OBJECT_REPLACEMENT {
+                if seen == index {
+                    return Some(units);
+                }
+                seen += 1;
+            }
+            units += ch.len_utf16();
+        }
+        None
+    }
+
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::inline_insert_atom"))]
     pub fn insert_atom(&mut self, at: usize, atom: Atom) {
         let at = at.min(self.len());
         let byte = byte_index(&self.text, at);
@@ -428,6 +457,7 @@ impl Inline {
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::inline_insert_inline"))]
     pub fn insert_inline(&mut self, at: usize, other: Self) {
         let tail = self.split_off(at);
         self.append(other);
@@ -435,6 +465,7 @@ impl Inline {
     }
 
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::inline_slice"))]
     pub fn slice(&self, range: Range<usize>) -> Self {
         let len = self.len();
         let start = range.start.min(len);
@@ -465,6 +496,7 @@ impl Inline {
 
     /// Split at `at`, keeping the head and returning the tail.
     #[must_use = "the tail is removed from `self`"]
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::inline_split_off"))]
     pub fn split_off(&mut self, at: usize) -> Self {
         let len = self.len();
         let tail = self.slice(at..len);
@@ -472,6 +504,7 @@ impl Inline {
         tail
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::inline_append"))]
     pub fn append(&mut self, other: Self) {
         let offset = self.len();
         self.text.push_str(&other.text);
@@ -484,6 +517,7 @@ impl Inline {
     }
 
     /// Apply `kind` to `range`, replacing any mark of the same family there.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::inline_add_mark"))]
     pub fn add_mark(&mut self, range: Range<usize>, kind: MarkKind) {
         let range = range.start..range.end.min(self.len());
         if range.is_empty() {
@@ -494,6 +528,7 @@ impl Inline {
         self.normalize();
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::inline_remove_family"))]
     pub fn remove_family(&mut self, range: Range<usize>, family: MarkFamily) {
         let mut kept = Vec::with_capacity(self.marks.len());
         for mark in self.marks.drain(..) {
@@ -520,6 +555,7 @@ impl Inline {
     }
 
     /// Toggle `kind` over `range`. Returns whether the mark is now applied.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::inline_toggle_mark"))]
     pub fn toggle_mark(&mut self, range: Range<usize>, kind: MarkKind) -> bool {
         if self.covers(range.clone(), kind.family()) {
             self.remove_family(range, kind.family());
@@ -532,6 +568,7 @@ impl Inline {
 
     /// Turn a just typed `**text**` style sequence ending at `cursor` into
     /// the matching mark. Returns the new cursor and the applied family.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::inline_autoformat"))]
     pub fn autoformat(&mut self, cursor: usize) -> Option<(usize, MarkFamily)> {
         let cursor_byte = byte_index(&self.text, cursor);
         let before = &self.text[..cursor_byte];
@@ -572,6 +609,7 @@ impl Inline {
             .count()
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::inline_normalize"))]
     fn normalize(&mut self) {
         self.marks.retain(|mark| !mark.range.is_empty());
         self.marks.sort_by(|a, b| {
@@ -623,6 +661,7 @@ pub fn byte_index(text: &str, pos: usize) -> usize {
 /// Smallest single replacement turning `old` into `new`. The change never
 /// starts after `start_hint` (UTF-16).
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("markdown::inline_diff"))]
 pub fn diff(old: &str, new: &str, start_hint: usize) -> Option<TextChange> {
     if old == new {
         return None;

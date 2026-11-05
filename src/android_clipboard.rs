@@ -12,6 +12,7 @@ type Error = Box<dyn std::error::Error + Send + Sync>;
 
 /// Replace Freya's clipboard with the system one. Call from inside the
 /// app, once the launch has installed its own.
+#[sismo::function("clipboard::install")]
 pub fn install() {
     GlobalContexts::get().insert_context(Clipboard::create(Some(Box::new(AndroidClipboard))));
 }
@@ -19,6 +20,7 @@ pub fn install() {
 struct AndroidClipboard;
 
 impl ClipboardProvider for AndroidClipboard {
+    #[sismo::function("clipboard::get_contents")]
     fn get_contents(&mut self) -> Result<String, Error> {
         with_manager(|env, manager| {
             let clip = env
@@ -53,6 +55,7 @@ impl ClipboardProvider for AndroidClipboard {
         })
     }
 
+    #[sismo::function("clipboard::set_contents")]
     fn set_contents(&mut self, contents: String) -> Result<(), Error> {
         with_manager(|env, manager| {
             let label = env.new_string("notein")?;

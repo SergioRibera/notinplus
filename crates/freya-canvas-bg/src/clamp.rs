@@ -28,6 +28,7 @@ use crate::Rect;
 /// A zero or negative surface dimension short-circuits to the input
 /// translation on that axis — nothing sensible to clamp against.
 #[must_use]
+#[cfg_attr(feature = "sismo", sismo::function("bg::clamp_translation"))]
 pub fn clamp_translation(
     tx: f32,
     ty: f32,

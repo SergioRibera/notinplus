@@ -1,0 +1,19 @@
+[plugin]
+id = "istmo.installer"
+client_type = "::istmo_installer::InstallerClient"
+default_deployment = "local"
+# Starting the package installer needs a Context.
+android_backend = "dev.istmo.plugins.installer.InstallerBackendImpl"
+android_backend_arg = "context"
+
+# FileProvider (`androidx.core.content.FileProvider`) hands the APK to
+# the installer as a `content://` URI.
+[[gradle]]
+group = "androidx.core"
+artifact = "core-ktx"
+version = "1.13.1"
+
+[min_versions]
+# `PackageManager.canRequestPackageInstalls` and the per-app
+# "install unknown apps" permission.
+android = 26

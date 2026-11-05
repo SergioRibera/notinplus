@@ -202,10 +202,6 @@ pub struct BgPaintCtx<'a> {
     pub redraw: RedrawHandle,
 }
 
-/// Outline types live in the plugin SDK so plugin canvases can publish
-/// the same table of contents backgrounds do.
-pub use notein_plugin::{IconType, Outline, OutlineIcon, OutlineNode, OutlineNodeId};
-
 /// A pluggable background layer for a Freya canvas.
 ///
 /// Implementations must be cheap to clone (`Arc<dyn Self>` is the
@@ -240,22 +236,6 @@ pub trait CanvasBackground: Send + Sync + std::fmt::Debug {
     /// [`AttributionMode::PerPage`]; the default implementation returns
     /// `None` unconditionally.
     fn locate(&self, _world_x: f32, _world_y: f32) -> Option<PageAttachment> {
-        None
-    }
-
-    /// Hierarchical outline of the content. Empty [`Outline`] means
-    /// "no structural info" and the host should fall back to the
-    /// page list for its contents UI.
-    fn outline(&self) -> Outline {
-        Outline::default()
-    }
-
-    /// Resolve an [`OutlineNode`] id to a world point the host can
-    /// centre the viewport on. `None` when the id is unknown or the
-    /// target cannot be expressed as a world coordinate — in that
-    /// case the host leaves the viewport alone and the backend is
-    /// expected to react via its own mechanism (future).
-    fn navigate_to_outline(&self, _id: OutlineNodeId) -> Option<(f32, f32)> {
         None
     }
 

@@ -25,9 +25,9 @@
 
 use std::io::BufRead;
 
+use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::QName;
-use quick_xml::Reader;
 use rusqlite::params;
 
 use crate::db::Db;
@@ -80,19 +80,23 @@ impl From<crate::db::DbError> for OsisError {
 pub type Result<T> = std::result::Result<T, OsisError>;
 
 /// Parse a complete OSIS XML blob + populate `db` with every verse,
-/// header and paragraph break discovered. Returns the number of verses
-/// inserted. All rows land under `bible_id` — the caller controls that
-/// id (OSIS files don't always carry a stable translation code).
+/// header and paragraph break discovered.
+///
+/// Returns the number of verses inserted. All rows land under `bible_id` —
+/// the caller controls that id (OSIS files don't always carry a stable
+/// translation code).
+#[cfg_attr(feature = "sismo", sismo::function("bible::osis_import"))]
 pub fn import_osis_xml(db: &Db, bible_id: &str, xml_bytes: &[u8]) -> Result<usize> {
     let parsed = parse(xml_bytes)?;
-    materialise(db, bible_id, parsed)
+    materialise(db, bible_id, &parsed)
 }
 
 /// Same as [`import_osis_xml`] but reads from any `BufRead`. Good for
 /// large files you want to stream from disk without a full `Vec<u8>`.
+#[cfg_attr(feature = "sismo", sismo::function("bible::osis_import_reader"))]
 pub fn import_osis_reader<R: BufRead>(db: &Db, bible_id: &str, reader: R) -> Result<usize> {
     let parsed = parse_from_reader(reader)?;
-    materialise(db, bible_id, parsed)
+    materialise(db, bible_id, &parsed)
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -133,224 +137,232 @@ fn parse_from_reader<R: BufRead>(reader: R) -> Result<Parsed> {
     walk(&mut reader)
 }
 
-/// Core XML walk. State machine over the subset of OSIS we support.
+/// Core XML walk over the subset of OSIS we support.
+#[cfg_attr(feature = "sismo", sismo::function("bible::osis_parse"))]
 fn walk<R: BufRead>(reader: &mut Reader<R>) -> Result<Parsed> {
     reader.config_mut().trim_text(false);
-
-    let mut out = Parsed::default();
-    let mut current_book: Option<ParsedBook> = None;
-    let mut current_chapter: u16 = 0;
-    let mut active_verse: Option<ActiveVerse> = None;
-    let mut pending_headers: Vec<ParsedHeader> = Vec::new();
-    let mut collecting_title: Option<String> = None;
-    let mut collecting_name: bool = false;
-    let mut skip_depth: u32 = 0;
-    let mut pending_paragraph: bool = false;
-
+    let mut walker = Walker::default();
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf)? {
-            Event::Start(ref e) => {
-                if skip_depth > 0 {
-                    skip_depth += 1;
-                    continue;
-                }
-                let name = e.name();
-                match name_bytes(name) {
-                    b"div" => {
-                        if attr(e, b"type")?.as_deref() == Some("book") {
-                            if let Some(book) = current_book.take() {
-                                out.books.push(book);
-                            }
-                            let id = attr(e, b"osisID")?.unwrap_or_default();
-                            current_book = Some(ParsedBook { id, ..Default::default() });
-                            current_chapter = 0;
-                            active_verse = None;
-                            pending_headers.clear();
-                            pending_paragraph = false;
-                        }
-                    }
-                    b"chapter" => {
-                        // Container form; osisID like `Gen.1`.
-                        if let Some(id) = attr(e, b"osisID")? {
-                            current_chapter = parse_chapter_num(&id).unwrap_or(current_chapter);
-                        } else if let Some(n) = attr(e, b"n")? {
-                            current_chapter = n.parse().unwrap_or(current_chapter);
-                        }
-                        active_verse = None;
-                    }
-                    b"verse" => {
-                        if let Some(id) = attr(e, b"osisID")? {
-                            if let Some((chap, verse)) = parse_verse_num(&id) {
-                                current_chapter = chap;
-                                active_verse = Some(ActiveVerse {
-                                    chapter: chap,
-                                    verse,
-                                    buf: String::new(),
-                                    paragraph_break: pending_paragraph,
-                                });
-                                pending_paragraph = false;
-                            }
-                        }
-                    }
-                    b"title" if active_verse.is_some() => {
-                        // Inline title inside a verse container — rare but
-                        // valid. Capture into pending_headers but still mark
-                        // active to flush when the next verse opens.
-                        collecting_title = Some(String::new());
-                    }
-                    b"title" => {
-                        let kind = attr(e, b"type")?;
-                        if kind.as_deref() == Some("section")
-                            || kind.as_deref() == Some("chapter")
-                            || kind.is_none()
-                        {
-                            collecting_title = Some(String::new());
-                        }
-                    }
-                    b"p" => {
-                        pending_paragraph = true;
-                    }
-                    b"note" => {
-                        // Footnote apparatus — skip entire subtree.
-                        skip_depth = 1;
-                    }
-                    b"name" if current_book.is_some() && current_book.as_ref().unwrap().name.is_none() => {
-                        collecting_name = true;
-                    }
-                    _ => {}
-                }
-            }
-            Event::Empty(ref e) => {
-                if skip_depth > 0 {
-                    continue;
-                }
-                match name_bytes(e.name()) {
-                    b"chapter" => {
-                        // Milestone shape — sID starts a chapter, eID ends it.
-                        if let Some(id) = attr(e, b"sID")?.or(attr(e, b"osisID")?) {
-                            current_chapter =
-                                parse_chapter_num(&id).unwrap_or(current_chapter);
-                        }
-                    }
-                    b"verse" => {
-                        if let Some(sid) = attr(e, b"sID")? {
-                            if let Some((chap, verse)) = parse_verse_num(&sid) {
-                                current_chapter = chap;
-                                active_verse = Some(ActiveVerse {
-                                    chapter: chap,
-                                    verse,
-                                    buf: String::new(),
-                                    paragraph_break: pending_paragraph,
-                                });
-                                pending_paragraph = false;
-                            }
-                        } else if let Some(eid) = attr(e, b"eID")? {
-                            close_verse(&mut current_book, &mut active_verse, &mut pending_headers, eid.as_str());
-                        } else if let Some(oid) = attr(e, b"osisID")? {
-                            // Pure milestone-less self-close is rare but
-                            // valid when a verse carries no body.
-                            if let Some((chap, verse)) = parse_verse_num(&oid) {
-                                if let Some(book) = current_book.as_mut() {
-                                    book.verses.push(ParsedVerse {
-                                        chapter: chap,
-                                        verse,
-                                        text: String::new(),
-                                        paragraph_break: pending_paragraph,
-                                    });
-                                }
-                                pending_paragraph = false;
-                            }
-                        }
-                    }
-                    b"lb" => {
-                        let kind = attr(e, b"type")?;
-                        if kind.as_deref() == Some("x-begin-paragraph") {
-                            pending_paragraph = true;
-                        }
-                    }
-                    b"p" => {
-                        pending_paragraph = true;
-                    }
-                    _ => {}
-                }
-            }
-            Event::End(ref e) => {
-                if skip_depth > 0 {
-                    skip_depth -= 1;
-                    continue;
-                }
-                match name_bytes(e.name()) {
-                    b"verse" => {
-                        close_verse(&mut current_book, &mut active_verse, &mut pending_headers, "");
-                    }
-                    b"title" => {
-                        if let Some(text) = collecting_title.take() {
-                            let trimmed = text.trim().to_string();
-                            if !trimmed.is_empty() {
-                                pending_headers.push(ParsedHeader {
-                                    chapter: current_chapter,
-                                    before_verse: 0,
-                                    text: trimmed,
-                                });
-                            }
-                        }
-                    }
-                    b"name" => {
-                        collecting_name = false;
-                    }
-                    b"div" => {
-                        if let Some(book) = current_book.take() {
-                            out.books.push(book);
-                        }
-                        current_chapter = 0;
-                        active_verse = None;
-                        pending_headers.clear();
-                        pending_paragraph = false;
-                    }
-                    _ => {}
-                }
-            }
-            Event::Text(e) => {
-                if skip_depth > 0 {
-                    continue;
-                }
-                let text = e.unescape()?.into_owned();
-                if collecting_name {
-                    if let Some(book) = current_book.as_mut() {
-                        let name = book.name.get_or_insert_with(String::new);
-                        name.push_str(text.trim());
-                    }
-                    continue;
-                }
-                if let Some(buf) = collecting_title.as_mut() {
-                    buf.push_str(&text);
-                    continue;
-                }
-                if let Some(active) = active_verse.as_mut() {
-                    append_text(&mut active.buf, &text);
-                }
-            }
-            Event::CData(e) => {
-                if skip_depth > 0 {
-                    continue;
-                }
-                let text = String::from_utf8_lossy(e.as_ref()).into_owned();
-                if let Some(active) = active_verse.as_mut() {
-                    append_text(&mut active.buf, &text);
-                }
+            Event::Start(ref e) => walker.start(e)?,
+            Event::Empty(ref e) => walker.empty(e)?,
+            Event::End(ref e) => walker.end(name_bytes(e.name())),
+            Event::Text(e) if walker.skip_depth == 0 => walker.text(&e.unescape()?),
+            Event::CData(e) if walker.skip_depth == 0 => {
+                walker.cdata(&String::from_utf8_lossy(e.as_ref()));
             }
             Event::Eof => break,
             _ => {}
         }
         buf.clear();
     }
+    Ok(walker.finish())
+}
 
-    if let Some(book) = current_book.take() {
-        out.books.push(book);
+/// State of the walk between XML events.
+#[derive(Debug, Default)]
+struct Walker {
+    out: Parsed,
+    book: Option<ParsedBook>,
+    chapter: u16,
+    verse: Option<ActiveVerse>,
+    /// Headings seen since the last verse; they attach to the next one.
+    pending_headers: Vec<ParsedHeader>,
+    /// Text of the `<title>` being read.
+    title: Option<String>,
+    /// Reading the book's `<name>`.
+    in_name: bool,
+    /// Depth inside a skipped subtree (footnotes).
+    skip_depth: u32,
+    /// The next verse starts a paragraph.
+    pending_paragraph: bool,
+}
+
+impl Walker {
+    fn start(&mut self, e: &BytesStart<'_>) -> Result<()> {
+        if self.skip_depth > 0 {
+            self.skip_depth += 1;
+            return Ok(());
+        }
+        match name_bytes(e.name()) {
+            b"div" if attr(e, b"type")?.as_deref() == Some("book") => {
+                self.finish_book();
+                let id = attr(e, b"osisID")?.unwrap_or_default();
+                self.book = Some(ParsedBook {
+                    id,
+                    ..Default::default()
+                });
+            }
+            b"chapter" => {
+                // Container form; osisID like `Gen.1`.
+                if let Some(id) = attr(e, b"osisID")? {
+                    self.chapter = parse_chapter_num(&id).unwrap_or(self.chapter);
+                } else if let Some(n) = attr(e, b"n")? {
+                    self.chapter = n.parse().unwrap_or(self.chapter);
+                }
+                self.verse = None;
+            }
+            b"verse" => {
+                if let Some((chapter, verse)) =
+                    attr(e, b"osisID")?.and_then(|id| parse_verse_num(&id))
+                {
+                    self.open_verse(chapter, verse);
+                }
+            }
+            // A title inside a verse is rare but valid; it is kept as a
+            // heading of the next verse.
+            b"title" if self.verse.is_some() => self.title = Some(String::new()),
+            b"title" => {
+                let kind = attr(e, b"type")?;
+                if matches!(kind.as_deref(), None | Some("section" | "chapter")) {
+                    self.title = Some(String::new());
+                }
+            }
+            b"p" => self.pending_paragraph = true,
+            // Footnote apparatus: skip the whole subtree.
+            b"note" => self.skip_depth = 1,
+            b"name" if self.book.as_ref().is_some_and(|b| b.name.is_none()) => self.in_name = true,
+            _ => {}
+        }
+        Ok(())
     }
 
-    Ok(out)
+    /// Self-closing elements: milestone chapters and verses, line breaks.
+    fn empty(&mut self, e: &BytesStart<'_>) -> Result<()> {
+        if self.skip_depth > 0 {
+            return Ok(());
+        }
+        match name_bytes(e.name()) {
+            b"chapter" => {
+                if let Some(id) = attr(e, b"sID")?.or(attr(e, b"osisID")?) {
+                    self.chapter = parse_chapter_num(&id).unwrap_or(self.chapter);
+                }
+            }
+            b"verse" => {
+                if let Some(sid) = attr(e, b"sID")? {
+                    if let Some((chapter, verse)) = parse_verse_num(&sid) {
+                        self.open_verse(chapter, verse);
+                    }
+                } else if attr(e, b"eID")?.is_some() {
+                    self.close_verse();
+                } else if let Some((chapter, verse)) =
+                    attr(e, b"osisID")?.and_then(|id| parse_verse_num(&id))
+                {
+                    // A verse with no body.
+                    if let Some(book) = self.book.as_mut() {
+                        book.verses.push(ParsedVerse {
+                            chapter,
+                            verse,
+                            text: String::new(),
+                            paragraph_break: self.pending_paragraph,
+                        });
+                    }
+                    self.pending_paragraph = false;
+                }
+            }
+            b"lb" if attr(e, b"type")?.as_deref() == Some("x-begin-paragraph") => {
+                self.pending_paragraph = true;
+            }
+            b"p" => self.pending_paragraph = true,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn end(&mut self, name: &[u8]) {
+        if self.skip_depth > 0 {
+            self.skip_depth -= 1;
+            return;
+        }
+        match name {
+            b"verse" => self.close_verse(),
+            b"title" => {
+                if let Some(text) = self.title.take() {
+                    let text = text.trim();
+                    if !text.is_empty() {
+                        self.pending_headers.push(ParsedHeader {
+                            chapter: self.chapter,
+                            before_verse: 0,
+                            text: text.to_owned(),
+                        });
+                    }
+                }
+            }
+            b"name" => self.in_name = false,
+            b"div" => self.finish_book(),
+            _ => {}
+        }
+    }
+
+    fn text(&mut self, text: &str) {
+        if self.in_name {
+            if let Some(book) = self.book.as_mut() {
+                book.name
+                    .get_or_insert_with(String::new)
+                    .push_str(text.trim());
+            }
+        } else if let Some(title) = self.title.as_mut() {
+            title.push_str(text);
+        } else {
+            self.cdata(text);
+        }
+    }
+
+    fn cdata(&mut self, text: &str) {
+        if let Some(active) = self.verse.as_mut() {
+            append_text(&mut active.buf, text);
+        }
+    }
+
+    fn open_verse(&mut self, chapter: u16, verse: u16) {
+        self.chapter = chapter;
+        self.verse = Some(ActiveVerse {
+            chapter,
+            verse,
+            buf: String::new(),
+            paragraph_break: self.pending_paragraph,
+        });
+        self.pending_paragraph = false;
+    }
+
+    /// Store the open verse, with the headings that precede it.
+    fn close_verse(&mut self) {
+        let Some(active) = self.verse.take() else {
+            return;
+        };
+        let Some(book) = self.book.as_mut() else {
+            return;
+        };
+        for mut header in self.pending_headers.drain(..) {
+            header.before_verse = active.verse;
+            header.chapter = active.chapter;
+            book.headers.push(header);
+        }
+        book.verses.push(ParsedVerse {
+            chapter: active.chapter,
+            verse: active.verse,
+            text: active.buf.trim().to_owned(),
+            paragraph_break: active.paragraph_break,
+        });
+    }
+
+    fn finish_book(&mut self) {
+        if let Some(book) = self.book.take() {
+            self.out.books.push(book);
+        }
+        self.chapter = 0;
+        self.verse = None;
+        self.pending_headers.clear();
+        self.pending_paragraph = false;
+    }
+
+    fn finish(mut self) -> Parsed {
+        if let Some(book) = self.book.take() {
+            self.out.books.push(book);
+        }
+        self.out
+    }
 }
 
 #[derive(Debug)]
@@ -359,27 +371,6 @@ struct ActiveVerse {
     verse: u16,
     buf: String,
     paragraph_break: bool,
-}
-
-fn close_verse(
-    current_book: &mut Option<ParsedBook>,
-    active_verse: &mut Option<ActiveVerse>,
-    pending_headers: &mut Vec<ParsedHeader>,
-    _eid: &str,
-) {
-    let Some(av) = active_verse.take() else { return };
-    let Some(book) = current_book.as_mut() else { return };
-    for mut hdr in pending_headers.drain(..) {
-        hdr.before_verse = av.verse;
-        hdr.chapter = av.chapter;
-        book.headers.push(hdr);
-    }
-    book.verses.push(ParsedVerse {
-        chapter: av.chapter,
-        verse: av.verse,
-        text: av.buf.trim().to_string(),
-        paragraph_break: av.paragraph_break,
-    });
 }
 
 fn append_text(buf: &mut String, text: &str) {
@@ -424,15 +415,12 @@ fn parse_verse_num(osis_id: &str) -> Option<(u16, u16)> {
     let chap = parts.next()?.parse().ok()?;
     let verse_token = parts.next()?;
     // Handle verse ranges like `Gen.1.1-Gen.1.3` → use the first number.
-    let verse = verse_token
-        .split('-')
-        .next()?
-        .parse()
-        .ok()?;
+    let verse = verse_token.split('-').next()?.parse().ok()?;
     Some((chap, verse))
 }
 
-fn materialise(db: &Db, bible_id: &str, parsed: Parsed) -> Result<usize> {
+#[cfg_attr(feature = "sismo", sismo::function("bible::osis_insert"))]
+fn materialise(db: &Db, bible_id: &str, parsed: &Parsed) -> Result<usize> {
     let mut inserted = 0usize;
 
     db.with_conn_mut(|conn| {
@@ -465,7 +453,7 @@ fn materialise(db: &Db, bible_id: &str, parsed: Parsed) -> Result<usize> {
                     &book.id,
                     &name,
                     &book.id,
-                    order_num as i64,
+                    i64::try_from(order_num).unwrap_or(i64::MAX),
                     testament_for(&book.id),
                 ],
             )
@@ -481,10 +469,10 @@ fn materialise(db: &Db, bible_id: &str, parsed: Parsed) -> Result<usize> {
                     params![
                         bible_id,
                         &book.id,
-                        v.chapter as i64,
-                        v.verse as i64,
+                        i64::from(v.chapter),
+                        i64::from(v.verse),
                         &v.text,
-                        v.paragraph_break as i64,
+                        i64::from(v.paragraph_break),
                     ],
                 )
                 .map_err(crate::db::DbError::from)?;
@@ -497,8 +485,8 @@ fn materialise(db: &Db, bible_id: &str, parsed: Parsed) -> Result<usize> {
                     params![
                         bible_id,
                         &book.id,
-                        h.chapter as i64,
-                        h.before_verse as i64,
+                        i64::from(h.chapter),
+                        i64::from(h.before_verse),
                         &h.text,
                     ],
                 )
@@ -517,15 +505,11 @@ fn materialise(db: &Db, bible_id: &str, parsed: Parsed) -> Result<usize> {
 /// always-on path.
 fn testament_for(book_id: &str) -> &'static str {
     const NT: &[&str] = &[
-        "Matt", "Mark", "Luke", "John", "Acts", "Rom", "1Cor", "2Cor", "Gal", "Eph", "Phil",
-        "Col", "1Thess", "2Thess", "1Tim", "2Tim", "Titus", "Phlm", "Heb", "Jas", "1Pet",
-        "2Pet", "1John", "2John", "3John", "Jude", "Rev",
+        "Matt", "Mark", "Luke", "John", "Acts", "Rom", "1Cor", "2Cor", "Gal", "Eph", "Phil", "Col",
+        "1Thess", "2Thess", "1Tim", "2Tim", "Titus", "Phlm", "Heb", "Jas", "1Pet", "2Pet", "1John",
+        "2John", "3John", "Jude", "Rev",
     ];
-    if NT.contains(&book_id) {
-        "NT"
-    } else {
-        "OT"
-    }
+    if NT.contains(&book_id) { "NT" } else { "OT" }
 }
 
 #[cfg(test)]
@@ -576,7 +560,11 @@ mod tests {
         );
         assert!(chap.verses[3].paragraph_break);
         assert!(chap.headers.iter().any(|h| h.text == "La armadura de Dios"));
-        assert!(chap.headers.iter().any(|h| h.text == "Instrucciones a hijos y padres"));
+        assert!(
+            chap.headers
+                .iter()
+                .any(|h| h.text == "Instrucciones a hijos y padres")
+        );
     }
 
     #[test]

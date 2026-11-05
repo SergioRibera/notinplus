@@ -16,7 +16,7 @@ use std::str::FromStr;
 
 use crate::identity::{DeviceId, DeviceKey};
 use crate::net::lan::LanNode;
-use crate::net::{LanConfig, NetError, NetEvent};
+use crate::net::{LanConfig, Lane, NetError, NetEvent};
 use crate::replica::{BlobKey, DocId};
 use crate::share::ShareId;
 
@@ -131,11 +131,13 @@ pub enum RelayMessage {
 
 impl RelayMessage {
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay::encode"))]
     pub fn to_bytes(&self) -> Vec<u8> {
         bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default()
     }
 
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay::decode"))]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         bincode::decode_from_slice(bytes, bincode::config::standard())
             .ok()
@@ -210,6 +212,7 @@ impl Store {
     }
 
     /// Mirrored under `dir`, one file per share, loaded now.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay_server::load"))]
     pub fn on_disk(dir: PathBuf) -> std::io::Result<Self> {
         std::fs::create_dir_all(&dir)?;
         let mut boxes = HashMap::new();
@@ -243,6 +246,7 @@ impl Store {
             .map(|dir| dir.join(format!("{}.bin", hex::encode(share.0))))
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay_server::flush"))]
     fn flush(&self, share: ShareId) {
         let Some(path) = self.path(share) else {
             return;
@@ -303,13 +307,13 @@ impl RelayServer {
         let sender = node.sender();
         std::thread::Builder::new()
             .name("notein-relay".into())
-            .spawn(move || serve(events, sender, store))
+            .spawn(move || serve(&events, sender, store))
             .map_err(NetError::Thread)?;
         Ok(Self { node })
     }
 
     #[must_use]
-    pub fn local_addr(&self) -> std::net::SocketAddr {
+    pub const fn local_addr(&self) -> std::net::SocketAddr {
         self.node.local_addr()
     }
 }
@@ -325,11 +329,12 @@ struct Serving {
 impl Serving {
     fn reply(&self, to: DeviceId, message: &RelayMessage) {
         let bytes = crate::driver::relay_payload(message);
-        if let Err(err) = self.sender.send(to, bytes) {
+        if let Err(err) = self.sender.send(to, Lane::Data, bytes) {
             tracing::warn!(target: "notein-relay", "reply: {err}");
         }
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay_server::on_message"))]
     fn on_message(&mut self, from: DeviceId, message: RelayMessage) {
         let Some(public) = self.keys.get(&from).copied() else {
             return;
@@ -339,53 +344,8 @@ impl Serving {
                 share,
                 members,
                 retain,
-            } => {
-                let accepted = match self.store.boxes.get_mut(&share) {
-                    Some(mailbox) if mailbox.owner != public => false,
-                    Some(mailbox) => {
-                        mailbox.members = members;
-                        mailbox.retain = retain;
-                        true
-                    }
-                    None => {
-                        self.store.boxes.insert(
-                            share,
-                            Mailbox {
-                                owner: public,
-                                members,
-                                retain,
-                                next_seq: 1,
-                                records: Vec::new(),
-                            },
-                        );
-                        true
-                    }
-                };
-                if accepted {
-                    self.store.flush(share);
-                    self.reply(from, &RelayMessage::Registered { share });
-                } else {
-                    self.reply(from, &RelayMessage::Refused { share });
-                }
-            }
-            RelayMessage::Unregister { share } => {
-                if self
-                    .store
-                    .boxes
-                    .get(&share)
-                    .is_some_and(|m| m.owner == public)
-                {
-                    self.store.boxes.remove(&share);
-                    self.store.flush(share);
-                    if let Some(subs) = self.subs.remove(&share) {
-                        for device in subs {
-                            if device != from {
-                                self.reply(device, &RelayMessage::Gone { share });
-                            }
-                        }
-                    }
-                }
-            }
+            } => self.register(from, public, share, members, retain),
+            RelayMessage::Unregister { share } => self.unregister(from, public, share),
             RelayMessage::Subscribe { share, after } => {
                 let Some(mailbox) = self.store.boxes.get(&share) else {
                     self.reply(from, &RelayMessage::Gone { share });
@@ -403,32 +363,7 @@ impl Serving {
                 share,
                 kind,
                 sealed,
-            } => {
-                let Some(mailbox) = self.store.boxes.get_mut(&share) else {
-                    self.reply(from, &RelayMessage::Gone { share });
-                    return;
-                };
-                if !mailbox.allows(public) {
-                    self.reply(from, &RelayMessage::Refused { share });
-                    return;
-                }
-                let record = mailbox.push(from, kind, sealed);
-                self.store.flush(share);
-                let listeners: Vec<DeviceId> = self
-                    .subs
-                    .get(&share)
-                    .map(|s| s.iter().copied().filter(|d| *d != from).collect())
-                    .unwrap_or_default();
-                for device in listeners {
-                    self.reply(
-                        device,
-                        &RelayMessage::Records {
-                            share,
-                            records: vec![record.clone()],
-                        },
-                    );
-                }
-            }
+            } => self.publish(from, public, share, kind, sealed),
             RelayMessage::Forward { to, bytes } => {
                 let target = self
                     .keys
@@ -452,9 +387,104 @@ impl Serving {
             | RelayMessage::Forwarded { .. } => {}
         }
     }
+
+    /// Open the mailbox of `share`, or update it when `public` owns it.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay_server::register"))]
+    fn register(
+        &mut self,
+        from: DeviceId,
+        public: [u8; 32],
+        share: ShareId,
+        members: Vec<[u8; 32]>,
+        retain: bool,
+    ) {
+        let accepted = match self.store.boxes.get_mut(&share) {
+            Some(mailbox) if mailbox.owner != public => false,
+            Some(mailbox) => {
+                mailbox.members = members;
+                mailbox.retain = retain;
+                true
+            }
+            None => {
+                self.store.boxes.insert(
+                    share,
+                    Mailbox {
+                        owner: public,
+                        members,
+                        retain,
+                        next_seq: 1,
+                        records: Vec::new(),
+                    },
+                );
+                true
+            }
+        };
+        if accepted {
+            self.store.flush(share);
+            self.reply(from, &RelayMessage::Registered { share });
+        } else {
+            self.reply(from, &RelayMessage::Refused { share });
+        }
+    }
+
+    /// The owner closed `share`: drop its mailbox and tell the others.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay_server::unregister"))]
+    fn unregister(&mut self, from: DeviceId, public: [u8; 32], share: ShareId) {
+        if self
+            .store
+            .boxes
+            .get(&share)
+            .is_none_or(|m| m.owner != public)
+        {
+            return;
+        }
+        self.store.boxes.remove(&share);
+        self.store.flush(share);
+        for device in self.subs.remove(&share).into_iter().flatten() {
+            if device != from {
+                self.reply(device, &RelayMessage::Gone { share });
+            }
+        }
+    }
+
+    /// Store a record and hand it to every other subscriber.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay_server::publish"))]
+    fn publish(
+        &mut self,
+        from: DeviceId,
+        public: [u8; 32],
+        share: ShareId,
+        kind: RecordKind,
+        sealed: Vec<u8>,
+    ) {
+        let Some(mailbox) = self.store.boxes.get_mut(&share) else {
+            self.reply(from, &RelayMessage::Gone { share });
+            return;
+        };
+        if !mailbox.allows(public) {
+            self.reply(from, &RelayMessage::Refused { share });
+            return;
+        }
+        let record = mailbox.push(from, kind, sealed);
+        self.store.flush(share);
+        let listeners: Vec<DeviceId> = self
+            .subs
+            .get(&share)
+            .map(|s| s.iter().copied().filter(|d| *d != from).collect())
+            .unwrap_or_default();
+        for device in listeners {
+            self.reply(
+                device,
+                &RelayMessage::Records {
+                    share,
+                    records: vec![record.clone()],
+                },
+            );
+        }
+    }
 }
 
-fn serve(events: flume::Receiver<NetEvent>, sender: crate::net::lan::LanSender, store: Store) {
+fn serve(events: &flume::Receiver<NetEvent>, sender: crate::net::lan::LanSender, store: Store) {
     let mut serving = Serving {
         sender,
         store,
@@ -477,7 +507,7 @@ fn serve(events: flume::Receiver<NetEvent>, sender: crate::net::lan::LanSender, 
                     serving.on_message(from, message);
                 }
             }
-            NetEvent::Discovered(_) | NetEvent::ConnectFailed { .. } => {}
+            NetEvent::Discovered(_) | NetEvent::Renamed(_) | NetEvent::ConnectFailed { .. } => {}
             NetEvent::Stopped(reason) => {
                 tracing::error!(target: "notein-relay", "transport stopped: {reason}");
                 return;

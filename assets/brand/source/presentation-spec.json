@@ -1,0 +1,36 @@
+{
+  "brand": "NotIn Plus",
+  "tagline": "Escribe, estudia y conecta tus notas",
+  "brief": "App de notas multiplataforma con escritura a mano, markdown, lienzo, PDF y estudio bíblico. Debe sentirse manuscrita, calma y serena — distinta del azul/amarillo de las apps de notas y sin los clichés religiosos de las apps bíblicas.",
+  "adjectives": ["manuscrita", "calma", "serena", "humana"],
+  "criteria": "Legible a 16 px, sin confusión con LinkedIn, funciona a una tinta, papel claro en vez de tile oscuro.",
+  "industry": "consumer-app",
+  "mockups": ["app-icon", "favicon-tab", "website", "social", "sticker", "readme"],
+  "nav": ["Funciones", "Descargar", "Sincronizar"],
+  "brand_color": "#C0482F",
+  "tile_color": "#EFE6D4",
+  "greyscale": false,
+  "final": true,
+  "designer": "NotIn Plus",
+  "round": 3,
+  "concepts": [
+    {
+      "name": "Margen",
+      "symbol": "../svg/notinplus-symbol.svg",
+      "symbol_on_tile": "../svg/notinplus-symbol.svg",
+      "symbol_on_dark": "../svg/notinplus-symbol-reversed.svg",
+      "lockup": "../svg/notinplus-horizontal.svg",
+      "lockup_on_dark": "../svg/notinplus-horizontal-reversed.svg",
+      "stacked": "../svg/notinplus-stacked.svg",
+      "stacked_on_dark": "../svg/notinplus-stacked-reversed.svg",
+      "avatar": "../svg/notinplus-tile.svg",
+      "idea": "Una n escrita a mano junto a la línea roja del margen: la hoja donde se anota.",
+      "rationale": [
+        "La línea del margen es rúbrica: la tinta roja de los manuscritos y las Biblias anotadas, sin cruces ni libros",
+        "Papel claro y tinta oscura: lo opuesto al tile azul con letras blancas de LinkedIn",
+        "La I roja del logotipo repite el margen, así símbolo y nombre son un solo sistema"
+      ]
+    }
+  ],
+  "recommendation": "Margen: tranquila, propia y legible a 16 px; el papel crema la separa del azul y amarillo de la categoría."
+}

@@ -30,6 +30,7 @@ pub fn lock(doc: &Arc<Mutex<Doc>>) -> std::sync::MutexGuard<'_, Doc> {
 
 /// Publish `doc` as the live copy of `item`. A later registration for
 /// the same item replaces an earlier one.
+#[sismo::function("sync::open_docs::register")]
 pub fn register(item: ItemId, doc: Arc<Mutex<Doc>>) {
     let mut list = docs();
     match list.iter_mut().find(|(i, _)| *i == item) {
@@ -39,6 +40,7 @@ pub fn register(item: ItemId, doc: Arc<Mutex<Doc>>) {
 }
 
 /// Drop the registration if `doc` is still the live copy of `item`.
+#[sismo::function("sync::open_docs::unregister")]
 pub fn unregister(item: ItemId, doc: &Arc<Mutex<Doc>>) {
     docs().retain(|(i, held)| *i != item || !Arc::ptr_eq(held, doc));
 }
@@ -61,6 +63,7 @@ pub fn watch(item: ItemId) -> flume::Receiver<()> {
 }
 
 /// Remote changes landed in the live copy of `item`.
+#[sismo::function("sync::open_docs::notify")]
 pub(crate) fn notify(item: ItemId) {
     watchers().retain(|(i, tx)| *i != item || tx.send(()).is_ok());
 }
@@ -80,6 +83,7 @@ pub fn watch_snapshot(item: ItemId) -> flume::Receiver<()> {
 }
 
 /// Another device's plugin snapshot of `item` is now on disk.
+#[sismo::function("sync::open_docs::notify_snapshot")]
 pub(crate) fn notify_snapshot(item: ItemId) {
     snapshot_watchers().retain(|(i, tx)| *i != item || tx.send(()).is_ok());
     crate::space::notify_changed();

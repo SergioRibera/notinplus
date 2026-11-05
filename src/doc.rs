@@ -22,6 +22,7 @@ use crate::bookmark::Bookmark;
 use crate::brush::{BrushId, BrushPreset, Stroke};
 use crate::doc_op::DocOp;
 use crate::ids::{BookmarkId, StrokeId};
+use crate::image_box::{ImageBox, ImageBoxId};
 use crate::ink_glyph::{InkGlyph, InkGlyphId};
 use crate::text_box::{TextBox, TextBoxId};
 
@@ -44,6 +45,9 @@ pub struct Layer {
     pub strokes: Vec<Stroke>,
     /// Text boxes painted above this layer's strokes, in insertion order.
     pub texts: Vec<TextBox>,
+    /// Images painted between this layer's strokes and its text boxes, in
+    /// insertion order.
+    pub images: Vec<ImageBox>,
     /// Recognized handwriting redrawn from a font, painted with the strokes.
     pub glyphs: Vec<InkGlyph>,
 }
@@ -59,6 +63,7 @@ impl Layer {
             opacity: 1.0,
             strokes: Vec::new(),
             texts: Vec::new(),
+            images: Vec::new(),
             glyphs: Vec::new(),
         }
     }
@@ -87,6 +92,16 @@ impl fmt::Display for DocError {
 
 impl std::error::Error for DocError {}
 
+impl notein_plugin::UserMessage for DocError {
+    fn user_message(&self) -> String {
+        match self {
+            Self::Store(_) | Self::Codec(_) | Self::Shape(_) => {
+                notein_i18n::tr!("errors-doc-damaged")
+            }
+        }
+    }
+}
+
 /// A drawing. Brush presets are interned into `brushes`; strokes carry
 /// only a [`BrushId`] into that table and their own colour override.
 #[derive(Debug)]
@@ -113,7 +128,7 @@ impl Default for Doc {
                 // The seed only touches containers this build created;
                 // failure would mean the store itself is broken.
                 log::error!("seed doc store: {err}");
-                DocStore::seeded().unwrap_or_else(|_| unreachable!("fresh store cannot fail twice"))
+                DocStore::unseeded()
             }
         };
         Self {
@@ -129,6 +144,7 @@ impl Default for Doc {
 
 impl Clone for Doc {
     /// Deep copy: the clone owns an independent history.
+    #[sismo::function("doc::clone")]
     fn clone(&self) -> Self {
         Self {
             brushes: self.brushes.clone(),
@@ -144,6 +160,7 @@ impl Clone for Doc {
 impl PartialEq for Doc {
     /// Compares the materialised state only; two docs with the same
     /// content but different histories are equal.
+    #[sismo::function("doc::eq")]
     fn eq(&self, other: &Self) -> bool {
         self.brushes == other.brushes
             && self.layers == other.layers
@@ -158,6 +175,7 @@ impl Doc {
     ///
     /// # Errors
     /// Corrupt bytes or a container shape this build does not read.
+    #[sismo::function("doc::from_snapshot")]
     pub fn from_snapshot(bytes: &[u8]) -> Result<Self, DocError> {
         let store = DocStore::from_snapshot(bytes)?;
         let mut doc = Self {
@@ -176,6 +194,14 @@ impl Doc {
     ///
     /// # Errors
     /// Store export failure.
+    /// The snapshot to store, with the references it holds for the index.
+    #[sismo::function("doc::saved_state")]
+    pub fn saved_state(&self) -> Result<(Vec<u8>, crate::library::refs::Captured), DocError> {
+        self.snapshot_bytes()
+            .map(|bytes| (bytes, crate::library::refs::capture(self)))
+    }
+
+    #[sismo::function("doc::snapshot_bytes")]
     pub fn snapshot_bytes(&self) -> Result<Vec<u8>, DocError> {
         self.store.snapshot()
     }
@@ -184,6 +210,7 @@ impl Doc {
     /// another replica's [`Self::updates_since`] to get what is
     /// missing here.
     #[must_use]
+    #[sismo::function("doc::version")]
     pub fn version(&self) -> Vec<u8> {
         self.store.version()
     }
@@ -192,6 +219,7 @@ impl Doc {
     ///
     /// # Errors
     /// Malformed `version` or store export failure.
+    #[sismo::function("doc::updates_since")]
     pub fn updates_since(&self, version: &[u8]) -> Result<Vec<u8>, DocError> {
         self.store.updates_since(version)
     }
@@ -201,11 +229,13 @@ impl Doc {
     ///
     /// # Errors
     /// Corrupt bytes or a container shape this build does not read.
+    #[sismo::function("doc::import_updates")]
     pub fn import_updates(&mut self, bytes: &[u8]) -> Result<(), DocError> {
         self.store.import(bytes)?;
         self.refresh()
     }
 
+    #[sismo::function("doc::refresh")]
     fn refresh(&mut self) -> Result<(), DocError> {
         let state = self.store.materialize()?;
         self.brushes = state.brushes;
@@ -219,6 +249,7 @@ impl Doc {
     /// The markdown body, for documents that are text. Empty for a
     /// drawing.
     #[must_use]
+    #[sismo::function("doc::body")]
     pub fn body(&self) -> String {
         self.store.body()
     }
@@ -226,6 +257,7 @@ impl Doc {
     /// Replace the markdown body; returns whether it changed. The store
     /// records the smallest edit, so two people typing merge per
     /// character.
+    #[sismo::function("doc::set_body")]
     pub fn set_body(&mut self, text: &str) -> bool {
         match self.store.set_body(text) {
             Ok(changed) => changed,
@@ -236,10 +268,36 @@ impl Doc {
         }
     }
 
+    /// Records a plugin keeps here, merged per key with other devices.
+    #[must_use]
+    #[sismo::function("doc::records")]
+    pub fn records(&self) -> Vec<(String, Vec<u8>)> {
+        self.store.records()
+    }
+
+    /// Set the record `key`; returns whether it changed.
+    #[sismo::function("doc::set_record")]
+    pub fn set_record(&mut self, key: &str, bytes: &[u8]) -> bool {
+        self.store.set_record(key, bytes).unwrap_or_else(|err| {
+            log::error!("doc record update: {err}");
+            false
+        })
+    }
+
+    /// Remove the record `key`; returns whether it was there.
+    #[sismo::function("doc::remove_record")]
+    pub fn remove_record(&mut self, key: &str) -> bool {
+        self.store.remove_record(key).unwrap_or_else(|err| {
+            log::error!("doc record removal: {err}");
+            false
+        })
+    }
+
     /// Record `op` in the store and mirror it into the materialised
     /// state. A store failure is logged and the materialised state
     /// still moves, so the user never loses the edit on screen.
     #[allow(clippy::needless_pass_by_value)] // callers hand the op over; it has landed once this returns
+    #[sismo::function("doc::emit")]
     pub fn emit(&mut self, op: DocOp) {
         if let Err(err) = self.store.apply(&op, self) {
             log::error!("doc store apply: {err}");
@@ -251,6 +309,7 @@ impl Doc {
     /// shapes that matter (duplicate `PushStroke`, duplicate
     /// `RegisterBrush`, repeated `SetActiveLayer` on the same id).
     #[allow(clippy::too_many_lines)]
+    #[sismo::function("doc::apply")]
     fn apply(&mut self, op: &DocOp) {
         match op {
             DocOp::RegisterBrush { preset } => {
@@ -377,6 +436,27 @@ impl Doc {
                     }
                 }
             }
+            DocOp::AddImage { layer_id, image } => {
+                if self.image(image.id).is_none()
+                    && let Some(layer) = self.layers.iter_mut().find(|l| l.id == *layer_id)
+                {
+                    layer.images.push(image.clone());
+                }
+            }
+            DocOp::SetImageFrame { id, frame, height } => {
+                if let Some(image) = self.image_mut(*id) {
+                    image.frame = *frame;
+                    image.height = *height;
+                }
+            }
+            DocOp::DeleteImage { id } => {
+                for layer in &mut self.layers {
+                    if let Some(pos) = layer.images.iter().position(|i| i.id == *id) {
+                        layer.images.remove(pos);
+                        return;
+                    }
+                }
+            }
             DocOp::AddGlyph { layer_id, glyph } => {
                 if self.locate_glyph(glyph.id).is_none()
                     && let Some(layer) = self.layers.iter_mut().find(|l| l.id == *layer_id)
@@ -405,6 +485,7 @@ impl Doc {
     /// registrations are additive forever.
     #[must_use]
     #[allow(clippy::too_many_lines)]
+    #[sismo::function("doc::inverse_before_apply")]
     pub fn inverse_before_apply(&self, op: &DocOp) -> Vec<DocOp> {
         match op {
             DocOp::RegisterBrush { .. } => Vec::new(),
@@ -451,6 +532,12 @@ impl Doc {
                         ops.push(DocOp::AddText {
                             layer_id: layer.id,
                             text: text.clone(),
+                        });
+                    }
+                    for image in &layer.images {
+                        ops.push(DocOp::AddImage {
+                            layer_id: layer.id,
+                            image: image.clone(),
                         });
                     }
                     for glyph in &layer.glyphs {
@@ -508,6 +595,12 @@ impl Doc {
                     ops.push(DocOp::AddText {
                         layer_id: *id,
                         text: text.clone(),
+                    });
+                }
+                for image in &layer.images {
+                    ops.push(DocOp::AddImage {
+                        layer_id: *id,
+                        image: image.clone(),
                     });
                 }
                 for glyph in &layer.glyphs {
@@ -615,6 +708,26 @@ impl Doc {
                     }]
                 })
                 .unwrap_or_default(),
+            DocOp::AddImage { image, .. } => vec![DocOp::DeleteImage { id: image.id }],
+            DocOp::SetImageFrame { id, .. } => self
+                .image(*id)
+                .map(|image| {
+                    vec![DocOp::SetImageFrame {
+                        id: *id,
+                        frame: image.frame,
+                        height: image.height,
+                    }]
+                })
+                .unwrap_or_default(),
+            DocOp::DeleteImage { id } => self
+                .locate_image(*id)
+                .map(|(layer_id, image)| {
+                    vec![DocOp::AddImage {
+                        layer_id,
+                        image: image.clone(),
+                    }]
+                })
+                .unwrap_or_default(),
             DocOp::AddGlyph { glyph, .. } => vec![DocOp::DeleteGlyph { id: glyph.id }],
             DocOp::DeleteGlyph { id } => self
                 .locate_glyph(*id)
@@ -625,6 +738,7 @@ impl Doc {
 
     /// `(layer_id, glyph)` for the ink glyph carrying `id`.
     #[must_use]
+    #[sismo::function("doc::locate_glyph")]
     pub fn locate_glyph(&self, id: InkGlyphId) -> Option<(u32, InkGlyph)> {
         self.layers.iter().find_map(|layer| {
             layer
@@ -658,6 +772,29 @@ impl Doc {
             .find_map(|layer| layer.texts.iter_mut().find(|t| t.id == id))
     }
 
+    /// `(layer_id, image)` for the image carrying `id`.
+    #[must_use]
+    pub fn locate_image(&self, id: ImageBoxId) -> Option<(u32, &ImageBox)> {
+        self.layers.iter().find_map(|layer| {
+            layer
+                .images
+                .iter()
+                .find(|i| i.id == id)
+                .map(|image| (layer.id, image))
+        })
+    }
+
+    #[must_use]
+    pub fn image(&self, id: ImageBoxId) -> Option<&ImageBox> {
+        self.locate_image(id).map(|(_, image)| image)
+    }
+
+    fn image_mut(&mut self, id: ImageBoxId) -> Option<&mut ImageBox> {
+        self.layers
+            .iter_mut()
+            .find_map(|layer| layer.images.iter_mut().find(|i| i.id == id))
+    }
+
     /// Immutable lookup of a bookmark by id.
     #[must_use]
     pub fn bookmark(&self, id: BookmarkId) -> Option<&Bookmark> {
@@ -672,6 +809,7 @@ impl Doc {
 
     /// `(layer_id, cloned_stroke)` for the stroke carrying `id`.
     #[must_use]
+    #[sismo::function("doc::locate_stroke")]
     pub fn locate_stroke(&self, id: StrokeId) -> Option<(u32, Stroke)> {
         for layer in &self.layers {
             if let Some(stroke) = layer.strokes.iter().find(|s| s.id == id) {
@@ -685,17 +823,16 @@ impl Doc {
     /// [`BrushId`]. Deduping by structural equality keeps identical
     /// palette entries from bloating the registry when a doc is loaded
     /// and edited across sessions.
-    /// # Panics
-    /// If the registry already holds `u16::MAX` presets and the new
-    /// entry would overflow. In practice a document never approaches
-    /// this ceiling.
-    pub fn register_brush(&mut self, preset: BrushPreset) -> BrushId {
+    /// `None` once the registry holds `u16::MAX` presets, which no real
+    /// document reaches.
+    #[sismo::function("doc::register_brush")]
+    pub fn register_brush(&mut self, preset: BrushPreset) -> Option<BrushId> {
         if let Some(idx) = self.brushes.iter().position(|b| *b == preset) {
-            return BrushId(u16::try_from(idx).expect("brush registry overflow"));
+            return u16::try_from(idx).ok().map(BrushId);
         }
-        let id = BrushId(u16::try_from(self.brushes.len()).expect("brush registry overflow"));
+        let id = BrushId(u16::try_from(self.brushes.len()).ok()?);
         self.emit(DocOp::RegisterBrush { preset });
-        id
+        Some(id)
     }
 
     #[must_use]
@@ -852,6 +989,19 @@ impl Doc {
     pub fn stroke_count(&self) -> usize {
         self.layers.iter().map(|l| l.strokes.len()).sum()
     }
+
+    /// Nothing written on it: no strokes, text, glyphs or bookmarks.
+    #[must_use]
+    #[sismo::function("doc::is_blank")]
+    pub fn is_blank(&self) -> bool {
+        self.bookmarks.is_empty()
+            && self.layers.iter().all(|l| {
+                l.strokes.is_empty()
+                    && l.texts.is_empty()
+                    && l.images.is_empty()
+                    && l.glyphs.is_empty()
+            })
+    }
 }
 
 #[cfg(test)]
@@ -867,7 +1017,7 @@ mod tests {
     #[test]
     fn snapshot_round_trips_every_kind_of_content() {
         let mut d = Doc::default();
-        let bid = d.register_brush(BrushPreset::pen());
+        let bid = d.register_brush(BrushPreset::pen()).expect("brush slot");
         let sid = d.push_stroke(bid, [1, 2, 3, 4], vec![point(0.0, 0.0)]);
         let l2 = d.add_layer("L2");
         d.set_active_layer(l2);
@@ -888,6 +1038,16 @@ mod tests {
                 color: [0, 0, 0, 255],
             },
         });
+        d.emit(DocOp::AddImage {
+            layer_id: 0,
+            image: ImageBox {
+                id: ImageBoxId::new_v4(),
+                frame: crate::text_box::TextFrame::at(2.0, 2.0),
+                height: 50.0,
+                asset: "a.png".into(),
+                source: None,
+            },
+        });
 
         let bytes = d.snapshot_bytes().unwrap();
         let back = Doc::from_snapshot(&bytes).unwrap();
@@ -906,9 +1066,9 @@ mod tests {
         let va = a.version();
         let vb = b.version();
 
-        let brush_a = a.register_brush(BrushPreset::pen());
+        let brush_a = a.register_brush(BrushPreset::pen()).expect("brush slot");
         let sa = a.push_stroke(brush_a, [1; 4], vec![point(0.0, 0.0)]);
-        let brush_b = b.register_brush(BrushPreset::marker());
+        let brush_b = b.register_brush(BrushPreset::marker()).expect("brush slot");
         let sb = b.push_stroke(brush_b, [2; 4], vec![point(5.0, 5.0)]);
         let lb = b.add_layer("from b");
 
@@ -927,7 +1087,7 @@ mod tests {
     #[test]
     fn remote_removal_drops_the_stroke_here() {
         let mut a = Doc::default();
-        let bid = a.register_brush(BrushPreset::pen());
+        let bid = a.register_brush(BrushPreset::pen()).expect("brush slot");
         let sid = a.push_stroke(bid, [1; 4], vec![point(0.0, 0.0)]);
         let mut b = Doc::from_snapshot(&a.snapshot_bytes().unwrap()).unwrap();
         let before = a.version();
@@ -941,7 +1101,7 @@ mod tests {
     #[test]
     fn clone_is_an_independent_replica() {
         let mut a = Doc::default();
-        let bid = a.register_brush(BrushPreset::pen());
+        let bid = a.register_brush(BrushPreset::pen()).expect("brush slot");
         let mut c = a.clone();
         let only_in_clone = c.push_stroke(bid, [1; 4], vec![point(0.0, 0.0)]);
         assert!(a.find_stroke(only_in_clone).is_none());
@@ -954,8 +1114,8 @@ mod tests {
     #[test]
     fn register_dedupes() {
         let mut d = Doc::default();
-        let a = d.register_brush(BrushPreset::pen());
-        let b = d.register_brush(BrushPreset::pen());
+        let a = d.register_brush(BrushPreset::pen()).expect("brush slot");
+        let b = d.register_brush(BrushPreset::pen()).expect("brush slot");
         assert_eq!(a, b);
         assert_eq!(d.brushes.len(), 1);
     }
@@ -963,7 +1123,7 @@ mod tests {
     #[test]
     fn strokes_iterator_flattens_layers() {
         let mut d = Doc::default();
-        let bid = d.register_brush(BrushPreset::pen());
+        let bid = d.register_brush(BrushPreset::pen()).expect("brush slot");
         d.push_stroke(bid, [0; 4], vec![point(0.0, 0.0)]);
         let l2 = d.add_layer("Layer 2");
         d.set_active_layer(l2);
@@ -978,7 +1138,7 @@ mod tests {
         let l2 = d.add_layer("Layer 2");
         assert!(d.set_active_layer(l2));
         assert_eq!(d.active_layer, l2);
-        let bid = d.register_brush(BrushPreset::pen());
+        let bid = d.register_brush(BrushPreset::pen()).expect("brush slot");
         let sid = d.push_stroke(bid, [0, 0, 0, 255], vec![point(0.0, 0.0)]);
         assert!(d.layer(l2).unwrap().strokes.iter().any(|s| s.id == sid));
         assert!(d.layer(0).unwrap().strokes.is_empty());
@@ -998,7 +1158,7 @@ mod tests {
     #[test]
     fn clear_resets_store_and_state_alike() {
         let mut d = Doc::default();
-        let bid = d.register_brush(BrushPreset::pen());
+        let bid = d.register_brush(BrushPreset::pen()).expect("brush slot");
         d.push_stroke(bid, [0; 4], vec![point(0.0, 0.0)]);
         d.add_layer("Layer 2");
         d.clear();

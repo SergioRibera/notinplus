@@ -33,15 +33,14 @@ enum DragPhase {
 }
 
 /// Access the global drag state for payloads of type `T`.
+#[must_use]
+#[sismo::function("ui::drag_use_drag")]
 pub fn use_drag<T: 'static>() -> State<Option<T>> {
-    match try_consume_root_context() {
-        Some(s) => s,
-        None => {
-            let state = State::<Option<T>>::create_in_scope(None, ScopeId::ROOT);
-            provide_context_for_scope_id(state, ScopeId::ROOT);
-            state
-        }
-    }
+    try_consume_root_context().unwrap_or_else(|| {
+        let state = State::<Option<T>>::create_in_scope(None, ScopeId::ROOT);
+        provide_context_for_scope_id(state, ScopeId::ROOT);
+        state
+    })
 }
 
 /// Draggable card. Mirrors freya's `DragZone` but accepts touch input.
@@ -68,7 +67,7 @@ impl<T: Clone + PartialEq + 'static> std::fmt::Debug for DragZone<T> {
 }
 
 impl<T: Clone + PartialEq + 'static> KeyExt for DragZone<T> {
-    fn write_key(&mut self) -> &mut DiffKey {
+    fn key_mut(&mut self) -> &mut DiffKey {
         &mut self.key
     }
 }
@@ -86,28 +85,33 @@ impl<T: Clone + PartialEq + 'static> DragZone<T> {
         }
     }
 
-    pub fn show_while_dragging(mut self, show_while_dragging: bool) -> Self {
+    #[must_use]
+    pub const fn show_while_dragging(mut self, show_while_dragging: bool) -> Self {
         self.show_while_dragging = show_while_dragging;
         self
     }
 
+    #[must_use]
     pub fn drag_element(mut self, drag_element: impl Into<Element>) -> Self {
         self.drag_element = Some(drag_element.into());
         self
     }
 
-    pub fn drag_threshold(mut self, drag_threshold: f64) -> Self {
+    #[must_use]
+    pub const fn drag_threshold(mut self, drag_threshold: f64) -> Self {
         self.drag_threshold = drag_threshold;
         self
     }
 
-    pub fn enabled(mut self, enabled: bool) -> Self {
+    #[must_use]
+    pub const fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
     }
 }
 
 impl<T: Clone + PartialEq> Component for DragZone<T> {
+    #[sismo::function("ui::drag_zone")]
     fn render(&self) -> impl IntoElement {
         let mut drags = use_drag::<T>();
         let mut phase = use_state(|| DragPhase::Idle);
@@ -130,7 +134,7 @@ impl<T: Clone + PartialEq> Component for DragZone<T> {
                 let dx = current.x - press_point.x;
                 let dy = current.y - press_point.y;
 
-                if (dx * dx + dy * dy).sqrt() >= drag_threshold {
+                if dx.hypot(dy) >= drag_threshold {
                     phase.set(DragPhase::Dragging {
                         position: current,
                         offset,
@@ -174,7 +178,10 @@ impl<T: Clone + PartialEq> Component for DragZone<T> {
                 |((position, offset), drag_element)| {
                     let size = *drag_element_size.read();
                     let anchor = size.map_or(offset, |size| {
-                        offset.min(CursorPoint::new(size.width as f64, size.height as f64))
+                        offset.min(CursorPoint::new(
+                            f64::from(size.width),
+                            f64::from(size.height),
+                        ))
                     });
                     let (x, y) = (position - anchor).to_f32().to_tuple();
                     rect()
@@ -185,7 +192,7 @@ impl<T: Clone + PartialEq> Component for DragZone<T> {
                         .offset_x(x + 1.)
                         .offset_y(y + 1.)
                         .on_sized(move |e: Event<SizedEventData>| {
-                            drag_element_size.set_if_modified(Some(e.area.size))
+                            drag_element_size.set_if_modified(Some(e.area.size));
                         })
                         .child(drag_element)
                 },
@@ -223,7 +230,7 @@ impl<T: Clone + PartialEq + 'static> std::fmt::Debug for DropZone<T> {
 }
 
 impl<T: Clone + PartialEq + 'static> KeyExt for DropZone<T> {
-    fn write_key(&mut self) -> &mut DiffKey {
+    fn key_mut(&mut self) -> &mut DiffKey {
         &mut self.key
     }
 }
@@ -240,16 +247,20 @@ impl<T: PartialEq + Clone + 'static> DropZone<T> {
         }
     }
 
+    #[must_use]
+    #[sismo::function("ui::drag_on_drag_over")]
     pub fn on_drag_over(mut self, on_drag_over: impl Into<EventHandler<bool>>) -> Self {
         self.on_drag_over = Some(on_drag_over.into());
         self
     }
 
+    #[must_use]
     pub fn width(mut self, width: Size) -> Self {
         self.width = width;
         self
     }
 
+    #[must_use]
     pub fn height(mut self, height: Size) -> Self {
         self.height = height;
         self
@@ -257,6 +268,7 @@ impl<T: PartialEq + Clone + 'static> DropZone<T> {
 }
 
 impl<T: Clone + PartialEq + 'static> Component for DropZone<T> {
+    #[sismo::function("ui::drop_zone")]
     fn render(&self) -> impl IntoElement {
         let mut drags = use_drag::<T>();
         let on_drop = self.on_drop.clone();
@@ -266,7 +278,6 @@ impl<T: Clone + PartialEq + 'static> Component for DropZone<T> {
         // a drop was dispatched so the caller can `stop_propagation`
         // uniformly across both event families.
         let commit = {
-            let on_drop = on_drop.clone();
             let on_drag_over = on_drag_over.clone();
             move || {
                 if let Some(payload) = &*drags.read() {

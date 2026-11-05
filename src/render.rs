@@ -100,11 +100,12 @@ pub trait BrushRenderer: Send + Sync + Debug {
     }
 }
 
-/// How the live pointer indicator paints. Variants expose enough knob
-/// surface for the renderer to style the overlay without the paint
-/// pass hard-coding each brush family. Position + viewport-scaled
-/// radius come from the caller; the style only picks colour / stroke
-/// treatment.
+/// How the live pointer indicator paints.
+///
+/// Variants expose enough knob surface for the renderer to style the overlay
+/// without the paint pass hard-coding each brush family. Position +
+/// viewport-scaled radius come from the caller; the style only picks colour /
+/// stroke treatment.
 #[derive(Clone, Copy, Debug)]
 pub enum PointerStyle {
     /// Suppress the overlay entirely for this brush.
@@ -201,6 +202,7 @@ impl CapRenderer for FlatCap {
 pub struct RibbonBrush;
 
 impl BrushRenderer for RibbonBrush {
+    #[sismo::function("render::ribbon_build_path")]
     fn build_path(&self, preset: &BrushPreset, stroke: &Stroke, caps: &CapRegistry) -> Path {
         build_ribbon_path(
             preset,
@@ -290,6 +292,7 @@ impl HighlighterBrush {
 }
 
 impl BrushRenderer for HighlighterBrush {
+    #[sismo::function("render::highlighter_build_path")]
     fn build_path(&self, preset: &BrushPreset, stroke: &Stroke, caps: &CapRegistry) -> Path {
         match self.state.get() {
             HighlighterTip::Round => self.round.build_path(preset, stroke, caps),
@@ -307,6 +310,7 @@ impl BrushRenderer for HighlighterBrush {
 /// Constant-width stripe swept along the polyline, offset perpendicular
 /// to the fixed bevel-tip axis (not the local tangent). Zero caps —
 /// bevel tips terminate flat by construction.
+#[sismo::function("render::bevel_path")]
 fn build_bevel_path(preset: &BrushPreset, stroke: &Stroke, angle_deg: f32) -> Path {
     let mut builder = PathBuilder::new();
     let points = &stroke.points;
@@ -349,6 +353,7 @@ fn build_bevel_path(preset: &BrushPreset, stroke: &Stroke, angle_deg: f32) -> Pa
 pub struct ShapeBrush;
 
 impl BrushRenderer for ShapeBrush {
+    #[sismo::function("render::shape_build_path")]
     fn build_path(&self, preset: &BrushPreset, stroke: &Stroke, _caps: &CapRegistry) -> Path {
         let mut b = PathBuilder::new();
         let BrushKind::Shape(mode) = preset.kind else {
@@ -559,6 +564,7 @@ impl Default for BrushRegistry {
     }
 }
 
+#[sismo::function("render::ribbon_path")]
 fn build_ribbon_path(
     preset: &BrushPreset,
     points: &[InkPoint],
@@ -611,6 +617,7 @@ fn build_ribbon_path(
 /// width, and the neighbour behind it to `TAPER_SHOULDER`, so the
 /// ribbon narrows smoothly into the cut and the flat closing line is
 /// a small stub rather than a full-width perpendicular slab.
+#[sismo::function("render::flat_cap_taper")]
 fn apply_flat_cap_taper(halves: &mut [f32], cap_start: CapStyle, cap_end: CapStyle) {
     const TAPER_TIP: f32 = 0.3;
     const TAPER_SHOULDER: f32 = 0.7;
@@ -642,6 +649,7 @@ fn apply_flat_cap_taper(halves: &mut [f32], cap_start: CapStyle, cap_end: CapSty
 /// tapered via [`apply_flat_cap_taper`] so the caller can share the
 /// same values with sample-knot reinforcement circles (raw pressure
 /// used to spike a lump through the tapered ribbon polygon).
+#[sismo::function("render::ribbon_vertices")]
 fn build_ribbon_vertices(points: &[InkPoint], halves: &[f32]) -> Vec<RibbonVert> {
     let n = points.len();
     let mut positions: Vec<(f32, f32, f32)> = Vec::with_capacity(n * 6);
@@ -714,6 +722,7 @@ fn build_ribbon_vertices(points: &[InkPoint], halves: &[f32]) -> Vec<RibbonVert>
     verts
 }
 
+#[sismo::function("render::ribbon_polygon")]
 fn emit_ribbon_polygon(
     builder: &mut PathBuilder,
     verts: &[RibbonVert],
@@ -799,6 +808,7 @@ fn catmull_rom_1d(h0: f32, h1: f32, h2: f32, h3: f32, t: f32) -> f32 {
 /// (a 5-sample transition is still ~40ms at typical digitiser rates).
 /// Endpoints reflect neighbours so the last visible width does not get
 /// pulled toward 0 by an implicit zero-padded tap.
+#[sismo::function("render::smoothed_halves")]
 fn smoothed_halves(preset: &BrushPreset, points: &[InkPoint]) -> Vec<f32> {
     let n = points.len();
     let raw: Vec<f32> = points

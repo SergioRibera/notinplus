@@ -1,211 +1,94 @@
-//! `notein://` deep links for [`SourceRef`]s.
+//! `notein://` links the operating system hands to the app.
 //!
-//! Note bodies are markdown; references to other content are regular
-//! markdown links whose URL uses this scheme, e.g.
-//! `[Romans 8](notein://plugin/io.notein.bible/<item>/<anchor>)`. The note
-//! editor renders those links as chips, and the same URLs can be handed to
-//! the OS later to open the app on a given reference.
-//!
-//! - `notein://canvas/<bookmark uuid>`
-//! - `notein://plugin/<plugin id>/<item uuid>/<anchor hex>`
-//!
-//! External references stay plain URLs.
+//! The link format itself lives with [`SourceRef`] in the plugin
+//! contract, since plugins write these links into their content. The
+//! shell's own actions ([`AppLink`]) only arrive from the system, such
+//! as the launcher shortcuts.
 
-use notein_plugin::{BookmarkId, SourceRef};
+use notein_plugin::SourceRef;
+pub use notein_plugin::link::{SCHEME, scan_links};
 
-use crate::components::{JoinSheet, SettingsModal};
-use crate::sync::LinkTarget;
+use crate::library::ItemId;
+use crate::settings::EntryKey;
 
-pub const SCHEME: &str = "notein";
-const PREFIX: &str = "notein://";
+/// Documents offered in the launcher after the creation used most.
+const RECENT_SHORTCUTS: usize = 3;
 
-/// Conversion between a [`SourceRef`] and its link URL.
-pub trait DeepLink: Sized {
-    fn to_url(&self) -> String;
-
-    /// `None` when `url` is not a well formed `notein://` link. Plain web
-    /// URLs are not deep links; see [`SourceRef::from_link`].
-    fn from_url(url: &str) -> Option<Self>;
-
-    /// Any link URL as a reference: `notein://` links decode, everything
-    /// else becomes [`SourceRef::External`].
-    fn from_link(url: &str) -> Self;
+/// A shell action behind a link.
+///
+/// - `notein://create/<plugin id>/<entry id>`
+/// - `notein://open/<item uuid>`
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AppLink {
+    /// Run a creation entry, as its tile in the create menu does.
+    Create(EntryKey),
+    /// Open a document where the user is.
+    Open(ItemId),
 }
 
-impl DeepLink for SourceRef {
-    fn to_url(&self) -> String {
+impl AppLink {
+    /// The link URL of this action.
+    #[must_use]
+    pub fn to_url(&self) -> String {
         match self {
-            Self::Canvas { bookmark } => {
-                format!(
-                    "{PREFIX}canvas/{}",
-                    uuid::Uuid::from_bytes(*bookmark.as_bytes())
-                )
-            }
-            Self::Plugin {
-                plugin_id,
-                item,
-                anchor,
-                ..
-            } => format!(
-                "{PREFIX}plugin/{plugin_id}/{}/{}",
-                uuid::Uuid::from_bytes(*item),
-                hex(anchor)
-            ),
-            Self::External { url } => url.clone(),
+            Self::Create(key) => format!("{SCHEME}://create/{}/{}", key.plugin, key.entry),
+            Self::Open(item) => format!("{SCHEME}://open/{item}"),
         }
     }
 
-    fn from_url(url: &str) -> Option<Self> {
-        let rest = url.strip_prefix(PREFIX)?;
-        let (kind, value) = rest.split_once('/')?;
-        match kind {
-            "canvas" => {
-                let id = uuid::Uuid::parse_str(value).ok()?;
-                Some(Self::Canvas {
-                    bookmark: BookmarkId::from_bytes(*id.as_bytes()),
-                })
+    /// `None` when `url` is not an action link.
+    #[must_use]
+    pub fn from_url(url: &str) -> Option<Self> {
+        let rest = url.strip_prefix(SCHEME)?.strip_prefix("://")?;
+        let (action, value) = rest.split_once('/')?;
+        match action {
+            "create" => {
+                let (plugin, entry) = value.split_once('/')?;
+                (!plugin.is_empty() && !entry.is_empty())
+                    .then(|| Self::Create(EntryKey::new(plugin, entry)))
             }
-            "plugin" => {
-                let mut parts = value.rsplitn(3, '/');
-                let anchor = unhex(parts.next()?)?;
-                let item = uuid::Uuid::parse_str(parts.next()?).ok()?;
-                let plugin_id = parts.next().filter(|id| !id.is_empty())?;
-                Some(Self::Plugin {
-                    plugin_id: plugin_id.to_owned(),
-                    item: *item.as_bytes(),
-                    anchor,
-                    selection: None,
-                })
-            }
+            "open" => value.parse().ok().map(Self::Open),
             _ => None,
         }
     }
 
-    fn from_link(url: &str) -> Self {
-        Self::from_url(url).unwrap_or_else(|| Self::External {
-            url: url.to_owned(),
-        })
-    }
-}
-
-/// Every `notein://` link found anywhere in `text`, in order. Links end at
-/// whitespace or at the characters markdown and HTML use to close a
-/// link; anything that fails to parse is skipped.
-pub fn scan_links(text: &str) -> impl Iterator<Item = SourceRef> + '_ {
-    text.match_indices(PREFIX).filter_map(move |(start, _)| {
-        let rest = &text[start..];
-        let end = rest
-            .find(|c: char| c.is_whitespace() || matches!(c, ')' | ']' | '>' | '"' | '\''))
-            .unwrap_or(rest.len());
-        SourceRef::from_url(&rest[..end])
-    })
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-fn unhex(text: &str) -> Option<Vec<u8>> {
-    if text.len() % 2 != 0 {
-        return None;
-    }
-    (0..text.len())
-        .step_by(2)
-        .map(|index| u8::from_str_radix(text.get(index..index + 2)?, 16).ok())
-        .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn canvas_round_trips() {
-        let source = SourceRef::Canvas {
-            bookmark: BookmarkId::from_bytes([7; 16]),
-        };
-        let url = source.to_url();
-        assert!(url.starts_with("notein://canvas/"));
-        assert_eq!(SourceRef::from_url(&url), Some(source));
-    }
-
-    #[test]
-    fn plugin_round_trips_with_dotted_id() {
-        let source = SourceRef::Plugin {
-            plugin_id: "io.notein.bible".into(),
-            item: [1; 16],
-            anchor: vec![0xde, 0xad, 0xbe, 0xef],
-            selection: None,
-        };
-        let url = source.to_url();
-        assert!(url.ends_with("/deadbeef"));
-        assert_eq!(SourceRef::from_url(&url), Some(source));
-    }
-
-    #[test]
-    fn web_links_are_external() {
-        assert_eq!(SourceRef::from_url("https://x.dev"), None);
-        assert_eq!(
-            SourceRef::from_link("https://x.dev"),
-            SourceRef::External {
-                url: "https://x.dev".into()
-            }
-        );
-    }
-
-    #[test]
-    fn malformed_links_are_rejected() {
-        assert_eq!(SourceRef::from_url("notein://canvas/nope"), None);
-        assert_eq!(SourceRef::from_url("notein://plugin/x/abc"), None);
-        assert_eq!(SourceRef::from_url("notein://other/1"), None);
-    }
-}
-
-#[cfg(test)]
-mod scan_tests {
-    use super::*;
-
-    #[test]
-    fn scan_finds_every_link_in_markdown() {
-        let canvas = SourceRef::Canvas {
-            bookmark: BookmarkId::from_bytes([3; 16]),
-        };
-        let plugin = SourceRef::Plugin {
-            plugin_id: "io.notein.notes".into(),
-            item: [4; 16],
-            anchor: vec![1, 2],
-            selection: None,
-        };
-        let text = format!(
-            "see [pin]({}) and <{}> plus https://x.dev and notein://bogus",
-            canvas.to_url(),
-            plugin.to_url()
-        );
-        let found: Vec<SourceRef> = scan_links(&text).collect();
-        assert_eq!(found, vec![canvas, plugin]);
+    #[sismo::function("deep_link::run_action")]
+    fn run(self) {
+        match self {
+            Self::Create(key) => match crate::flows::create::entry_for(&key) {
+                Some(entry) => {
+                    crate::flows::create::run(entry, crate::flows::create::Context::default());
+                }
+                None => log::warn!("deep link: no creation entry {}/{}", key.plugin, key.entry),
+            },
+            Self::Open(item) => crate::flows::open(item),
+        }
     }
 }
 
 /// Route a URL the operating system handed to the app.
+#[sismo::function("deep_link::open")]
 pub fn open(url: &str) {
     log::info!("deep link: {url}");
-    match crate::sync::open_link(url) {
-        Some(LinkTarget::Join {
-            share,
-            title,
-            owner,
-        }) => return JoinSheet::open(share, title, owner),
-        Some(LinkTarget::Pair { .. }) => return SettingsModal::open(),
-        None => {}
+    if crate::sync::recognize_link(url).is_some() {
+        crate::screens::collab::invitation(url.to_owned());
+        return;
+    }
+    if let Some(action) = AppLink::from_url(url) {
+        action.run();
+        return;
     }
     match SourceRef::from_url(url) {
-        Some(src) => crate::source_ref_nav::navigate(&src),
+        Some(src) => {
+            crate::plugins::navigate::open(&src, notein_plugin::services::Placement::Preferred);
+        }
         None => log::warn!("deep link ignored: {url}"),
     }
 }
 
 /// Listen for URLs delivered through the platform, cold-start intents
 /// included, for as long as the app runs.
+#[sismo::function("deep_link::listen")]
 pub fn listen() {
     let stream = match istmo::plugins::DeepLinks::acquire() {
         Ok(plugin) => plugin.stream(),
@@ -214,7 +97,7 @@ pub fn listen() {
             return;
         }
     };
-    freya::prelude::spawn_forever(async move {
+    freya::prelude::spawn_in_window(traced!("task::deep_link::listen", async move {
         loop {
             match stream.recv_async().await {
                 Ok(link) => open(&link.uri),
@@ -222,5 +105,103 @@ pub fn listen() {
                 Err(err) => log::warn!("deep link: {err}"),
             }
         }
+    }));
+}
+
+/// Keep the launcher shortcuts (Android's long press on the app icon) on
+/// the creation used most and the documents changed last, each opening
+/// its [`AppLink`]. They follow the library and are pushed only when
+/// they change.
+#[sismo::function("deep_link::use_launcher_shortcuts")]
+pub fn use_launcher_shortcuts() {
+    use freya::prelude::{use_hook, use_side_effect};
+
+    let published = use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(None)));
+    use_side_effect(move || {
+        // Only Android lists app shortcuts in its launcher.
+        if !cfg!(target_os = "android") {
+            return;
+        }
+        let Some(data) = crate::state::LibraryView::try_get().and_then(|view| view.data()) else {
+            return;
+        };
+        let targets = launcher_shortcuts(&data);
+        if published.borrow().as_ref() == Some(&targets) {
+            return;
+        }
+        published.replace(Some(targets.clone()));
+        publish_launcher_shortcuts(targets);
     });
+}
+
+#[sismo::function("deep_link::launcher_shortcuts")]
+fn launcher_shortcuts(data: &crate::library::LibraryData) -> Vec<istmo_share::ShareTarget> {
+    use istmo_share::ShareTarget;
+    use notein_i18n::tr;
+
+    let create = crate::flows::create::favorite_entry().map(|entry| {
+        let link = AppLink::Create(EntryKey::new(entry.plugin, entry.entry.id.to_string()));
+        let label = tr!("flows-create-shortcut", "label" => entry.entry.label.to_string());
+        (link, label)
+    });
+    let recent = data.recent_items(RECENT_SHORTCUTS).into_iter().map(|item| {
+        let name = if item.name.trim().is_empty() {
+            tr!("common-untitled")
+        } else {
+            item.name.clone()
+        };
+        (AppLink::Open(item.id), name)
+    });
+    create
+        .into_iter()
+        .chain(recent)
+        .map(|(link, label)| {
+            let url = link.to_url();
+            ShareTarget::new(url.clone(), label)
+                .with_uri(url)
+                .launcher_only()
+        })
+        .collect()
+}
+
+fn publish_launcher_shortcuts(targets: Vec<istmo_share::ShareTarget>) {
+    freya::prelude::spawn_in_window(traced!("task::deep_link::launcher_shortcuts", async move {
+        let result = match istmo_share::ShareClient::acquire() {
+            Ok(client) => client
+                .set_share_targets(targets)
+                .await
+                .map_err(istmo_share::ShareError::from),
+            Err(err) => Err(istmo_share::ShareError::from(err)),
+        };
+        if let Err(err) = result {
+            log::warn!("launcher shortcuts: {err}");
+        }
+    }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppLink;
+    use crate::library::ItemId;
+    use crate::settings::EntryKey;
+
+    #[test]
+    fn actions_survive_their_url() {
+        let links = [
+            AppLink::Create(EntryKey::new("io.notein.notes", "note")),
+            AppLink::Open(ItemId::from_bytes([7; 16])),
+        ];
+        for link in links {
+            assert_eq!(AppLink::from_url(&link.to_url()), Some(link));
+        }
+    }
+
+    #[test]
+    fn references_are_not_actions() {
+        assert_eq!(
+            AppLink::from_url("notein://canvas/00000000-0000-0000-0000-000000000000"),
+            None
+        );
+        assert_eq!(AppLink::from_url("notein://create/only-plugin"), None);
+    }
 }

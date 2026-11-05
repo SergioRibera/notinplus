@@ -1,0 +1,153 @@
+## Idiomas originales: la pestaña «Original» del versículo, la tarjeta de descarga y la gramática en palabras (src/originals/, src/ui/face/originals.rs).
+
+originals-tab = Original
+originals-tab-refs = Referencias
+originals-close = Cerrar
+# $place es el versículo, p. ej. «Romanos 8:16».
+originals-title = Original de { $place }
+originals-words = { $count ->
+    [one] 1 palabra
+   *[other] { $count } palabras
+}
+originals-hebrew = Hebreo
+originals-aramaic = Arameo
+originals-greek = Griego
+originals-source-ot = Texto de Leningrado · STEPBible (CC BY 4.0)
+originals-source-nt = Texto SBLGNT · STEPBible (CC BY 4.0)
+originals-no-verse = Este versículo no está en el texto original.
+originals-base-form = Forma base
+originals-pronounced = se pronuncia { $respelling }
+originals-here = Aquí
+originals-meaning-english = en inglés
+originals-automatic = traducción automática
+originals-no-meaning = Palabra de función: solo gramática.
+originals-count = { $count ->
+    [one] 1 vez en el { $testament }
+   *[other] { $count } veces en el { $testament }
+}
+originals-testament-ot = Antiguo Testamento
+originals-testament-nt = Nuevo Testamento
+originals-see-all = Ver las { $count }
+originals-copy = Copiar
+originals-copied = Palabra copiada
+originals-occurrences-title = Apariciones de { $lemma }
+originals-occurrences-back = Volver a la lista
+originals-occurrences-here = acá
+# Va después del nombre de la traducción, en negrita: «Reina Valera 1960 la traduce también:».
+originals-renders = la traduce también:
+originals-times = { $count ->
+    [one] 1 vez
+   *[other] { $count } veces
+}
+originals-senses = En el diccionario
+# $note es «en inglés» o «traducción automática».
+originals-senses-noted = En el diccionario ({ $note })
+originals-origin = Origen
+originals-origin-noted = Origen ({ $note })
+originals-aligning = Emparejando las palabras con { $bible }…
+originals-not-aligned = Las palabras de esta traducción aún no están emparejadas.
+
+originals-card-title = Idiomas originales
+originals-card-body = Cada versículo, palabra por palabra: el hebreo o el griego, cómo se pronuncia, qué significa y dónde más aparece. Unos 13 MB que quedan en este dispositivo.
+originals-card-sources = Fuentes abiertas: STEPBible (CC BY 4.0), texto de Leningrado y SBLGNT, diccionario de Strong.
+originals-card-download = Descargar
+originals-card-downloading = Descargando idiomas originales…
+# Avisos de progreso que se ven en toda la app.
+originals-progress-download = Descargando idiomas originales
+originals-progress-align = Emparejando palabras con { $name }
+originals-toast-ready = Idiomas originales listos
+originals-card-progress = { $done } de { $total } archivos
+originals-card-retry = Reintentar
+originals-card-off = Los idiomas originales están apagados.
+originals-card-turn-on = Activar en Ajustes
+
+morph-noun = sustantivo
+morph-adjective = adjetivo
+morph-article = artículo
+morph-verb = verbo
+morph-pronoun-personal = pronombre personal
+morph-pronoun-relative = pronombre relativo
+morph-pronoun-reciprocal = pronombre recíproco
+morph-pronoun-demonstrative = demostrativo
+morph-pronoun-correlative = pronombre correlativo
+morph-pronoun-interrogative = interrogativo
+morph-pronoun-indefinite = indefinido
+morph-pronoun-reflexive = pronombre reflexivo
+morph-pronoun-possessive = posesivo
+morph-adverb = adverbio
+morph-conjunction = conjunción
+morph-conditional = condicional
+morph-particle = partícula
+morph-preposition = preposición
+morph-interjection = interjección
+morph-aramaic = palabra aramea
+morph-hebrew-word = palabra hebrea
+morph-comparative = comparativo
+morph-superlative = superlativo
+morph-person-name = nombre de persona
+morph-place-name = nombre de lugar
+morph-title = título
+morph-gentilic = gentilicio
+morph-indeclinable = indeclinable
+morph-tense-present = presente
+morph-tense-imperfect = imperfecto
+morph-tense-future = futuro
+morph-tense-aorist = aoristo
+morph-tense-perfect = perfecto
+morph-tense-pluperfect = pluscuamperfecto
+morph-tense-sequential-perfect = perfecto consecutivo
+morph-tense-sequential-imperfect = imperfecto consecutivo
+morph-voice-active = voz activa
+morph-voice-middle = voz media
+morph-voice-passive = voz pasiva
+morph-voice-middle-or-passive = voz media o pasiva
+morph-voice-deponent = deponente
+morph-mood-indicative = indicativo
+morph-mood-subjunctive = subjuntivo
+morph-mood-optative = optativo
+morph-mood-imperative = imperativo
+morph-mood-infinitive = infinitivo
+morph-mood-participle = participio
+morph-mood-cohortative = cohortativo
+morph-mood-jussive = yusivo
+morph-participle-active = participio activo
+morph-participle-passive = participio pasivo
+morph-infinitive-absolute = infinitivo absoluto
+morph-infinitive-construct = infinitivo constructo
+morph-person-1 = 1.ª persona
+morph-person-2 = 2.ª persona
+morph-person-3 = 3.ª persona
+morph-singular = singular
+morph-plural = plural
+morph-dual = dual
+morph-masculine = masculino
+morph-feminine = femenino
+morph-neuter = neutro
+morph-both-genders = masculino o femenino
+morph-case-nominative = nominativo
+morph-case-genitive = genitivo
+morph-case-dative = dativo
+morph-case-accusative = acusativo
+morph-case-vocative = vocativo
+morph-proper-name = nombre propio
+morph-state-construct = estado constructo
+morph-state-determined = determinado
+morph-stem-qal = qal
+morph-stem-niphal = nifal
+morph-stem-piel = piel
+morph-stem-pual = pual
+morph-stem-hiphil = hifil
+morph-stem-hophal = hofal
+morph-stem-hithpael = hitpael
+morph-stem-other = conjugación poco común
+morph-number-cardinal = numeral
+morph-number-ordinal = ordinal
+morph-object-marker = marca de objeto directo
+morph-negative = negación
+morph-interrogative = interrogativo
+morph-relative = relativo
+morph-affirmation = afirmación
+morph-exhortation = exhortación
+morph-suffix-directional = sufijo direccional
+morph-suffix-paragogic = sufijo paragógico
+morph-suffix-pronominal = sufijo pronominal

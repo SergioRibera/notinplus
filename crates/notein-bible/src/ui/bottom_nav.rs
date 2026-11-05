@@ -1,16 +1,21 @@
-//! Bottom chapter nav — a pill with `<` + `BOOK N` + `>`.
-//!
-//! The host passes current book name + chapter + two callbacks. All
-//! state (which book, which chapter) lives on the viewer state.
+//! Bottom chapter bar: a pill with `‹ BOOK N ›` whose caption opens the
+//! book picker, and back / forward through the passages visited at the
+//! ends.
 
+use freya::icons::lucide;
 use freya::prelude::*;
-
-use super::theme;
+use notein_i18n::tr;
+use notein_ui_kit::TapExt;
+use notein_ui_kit::theme::palette;
+use notein_ui_kit::{IconButton, tokens};
 
 const BAR_HEIGHT: f32 = 72.0;
 const PILL_HEIGHT: f32 = 48.0;
 
-#[allow(missing_debug_implementations)]
+/// A press handler of the bar.
+pub type NavHandler = Box<dyn FnMut() + 'static>;
+
+#[allow(missing_debug_implementations)] // closures
 pub struct BottomNavCallbacks<FP, FN, FC>
 where
     FP: FnMut() + 'static,
@@ -19,11 +24,15 @@ where
 {
     pub on_prev: FP,
     pub on_next: FN,
-    /// Fired when the user taps the central caption. The host opens the
-    /// book + chapter picker sheet.
+    /// The caption was pressed: open the book and chapter picker.
     pub on_open_picker: FC,
+    /// Back to the passage before; `None` hides the button.
+    pub on_back: Option<NavHandler>,
+    /// Forward again; `None` hides the button.
+    pub on_forward: Option<NavHandler>,
 }
 
+#[cfg_attr(feature = "sismo", sismo::function("bible::bottom_nav"))]
 pub fn bottom_nav<FP, FN, FC>(
     book_name: &str,
     chapter: u16,
@@ -35,97 +44,88 @@ where
     FC: FnMut() + 'static,
 {
     let BottomNavCallbacks {
-        on_prev,
-        on_next,
-        on_open_picker,
+        mut on_prev,
+        mut on_next,
+        mut on_open_picker,
+        on_back,
+        on_forward,
     } = callbacks;
     let caption = format!("{} {}", book_name.to_uppercase(), chapter);
-
-    rect()
-        .width(Size::fill())
-        .height(Size::px(BAR_HEIGHT))
-        .background(parse_rgb(theme::BG))
-        .padding((0., 16.))
-        .direction(Direction::Horizontal)
-        .cross_align(Alignment::Center)
-        .main_align(Alignment::Center)
-        .child(chapter_pill(caption, on_prev, on_next, on_open_picker))
-}
-
-fn chapter_pill<FP, FN, FC>(
-    caption: String,
-    mut on_prev: FP,
-    mut on_next: FN,
-    mut on_open_picker: FC,
-) -> impl IntoElement
-where
-    FP: FnMut() + 'static,
-    FN: FnMut() + 'static,
-    FC: FnMut() + 'static,
-{
-    rect()
+    let pill = rect()
         .height(Size::px(PILL_HEIGHT))
         .width(Size::percent(100.))
+        .max_width(Size::px(240.0))
+        .horizontal()
         .content(Content::Flex)
-        .max_width(Size::px(220.0))
-        .direction(Direction::Horizontal)
         .cross_align(Alignment::Center)
-        .main_align(Alignment::SpaceBetween)
-        .padding((0., 10.))
-        .with_corner_radius(PILL_HEIGHT / 2.0)
-        .background(parse_rgb(theme::CHIP_BG))
+        .padding((0., 6.))
+        .corner_radius(PILL_HEIGHT / 2.0)
+        .background(palette().s2)
         .child(
-            rect()
-                .width(Size::px(36.0))
-                .height(Size::px(36.0))
-                .center()
-                .on_press(move |_: Event<PressEventData>| on_prev())
-                .child(
-                    SvgViewer::new(freya::icons::lucide::chevron_left())
-                        .color(parse_rgb(theme::TEXT_PRIMARY))
-                        .width(Size::px(18.0))
-                        .height(Size::px(18.0)),
-                ),
+            IconButton::new(lucide::chevron_left(), tr!("reader-nav-previous-chapter"))
+                .on_press(move |_| on_prev()),
         )
         .child(
             rect()
                 .width(Size::flex(1.))
-                .padding((4., 10.))
-                .on_press(move |_: Event<PressEventData>| on_open_picker())
+                .padding((4., 6.))
+                .on_tap(move |_: Event<PressEventData>| on_open_picker())
                 .child(
                     label()
                         .width(Size::fill())
                         .font_size(14.0)
                         .text_align(TextAlign::Center)
                         .text_overflow(TextOverflow::Ellipsis)
-                        .color(parse_rgb(theme::TEXT_PRIMARY))
+                        .max_lines(1)
+                        .color(palette().t1)
                         .text(caption),
                 ),
         )
         .child(
+            IconButton::new(lucide::chevron_right(), tr!("reader-nav-next-chapter"))
+                .on_press(move |_| on_next()),
+        );
+    rect()
+        .width(Size::fill())
+        .height(Size::px(BAR_HEIGHT))
+        .background(palette().bg)
+        .padding((0., 12.))
+        .horizontal()
+        .content(Content::Flex)
+        .cross_align(Alignment::Center)
+        .child(history_button(
+            lucide::undo_2(),
+            tr!("reader-nav-previous-passage"),
+            on_back,
+        ))
+        .child(
             rect()
-                .width(Size::px(36.0))
-                .height(Size::px(36.0))
-                .center()
-                .on_press(move |_: Event<PressEventData>| on_next())
-                .child(
-                    SvgViewer::new(freya::icons::lucide::chevron_right())
-                        .color(parse_rgb(theme::TEXT_PRIMARY))
-                        .width(Size::px(18.0))
-                        .height(Size::px(18.0)),
-                ),
+                .width(Size::flex(1.))
+                .main_align(Alignment::Center)
+                .horizontal()
+                .child(pill),
         )
+        .child(history_button(
+            lucide::redo_2(),
+            tr!("reader-nav-next-passage"),
+            on_forward,
+        ))
 }
 
-fn parse_rgb(s: &str) -> Color {
-    let trimmed = s.trim_start_matches("rgb(").trim_end_matches(')');
-    let parts: Vec<u8> = trimmed
-        .split(',')
-        .filter_map(|t| t.trim().parse::<u8>().ok())
-        .collect();
-    if parts.len() == 3 {
-        Color::from_rgb(parts[0], parts[1], parts[2])
-    } else {
-        Color::WHITE
-    }
+/// A history button, or an empty slot of its size so the pill stays
+/// centred.
+fn history_button(icon: Bytes, label: String, handler: Option<NavHandler>) -> Element {
+    handler.map_or_else(
+        || {
+            rect()
+                .width(Size::px(tokens::size::BUTTON))
+                .height(Size::px(tokens::size::BUTTON))
+                .into_element()
+        },
+        |mut handler| {
+            IconButton::new(icon, label)
+                .on_press(move |_| handler())
+                .into_element()
+        },
+    )
 }

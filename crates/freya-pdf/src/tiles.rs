@@ -24,11 +24,12 @@ pub const TILE_THRESHOLD: u32 = 1_024;
 /// glorified page thumbnail and the cache would waste entries on
 /// per-tile granularity that no one can read.
 pub const MIN_BUCKET: i32 = -4;
-/// Upper bucket bound. `1.5^5 ≈ 7.6` — capping here keeps a US-Letter
-/// page (612×792pt) under `4650×6000` px = ~110 MB when rasterised
-/// tile-by-tile. Higher zoom levels reuse this bucket's tiles via
-/// Skia's linear upscale, which trades a hint of blur for stable
-/// memory and no pdfium bitmap-alloc explosion.
+/// Upper bucket bound.
+///
+/// `1.5^5 ≈ 7.6` — capping here keeps a US-Letter page (612×792pt) under
+/// `4650×6000` px = ~110 MB when rasterised tile-by-tile. Higher zoom levels
+/// reuse this bucket's tiles via Skia's linear upscale, which trades a hint of
+/// blur for stable memory and no pdfium bitmap-alloc explosion.
 pub const MAX_BUCKET: i32 = 5;
 
 /// Quantize a raw viewport scale into a discrete bucket index. Bucket

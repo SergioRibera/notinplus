@@ -6,7 +6,7 @@
 //! the plugin struct.
 //!
 //! State is intentionally small: the heavy data (verses, headers) lives
-//! in SQLite, loaded on demand per chapter. We only cache the currently
+//! in `SQLite`, loaded on demand per chapter. We only cache the currently
 //! visible chapter plus a small ring of recent ones so navigation feels
 //! instant without pinning the whole Bible in memory.
 
@@ -15,6 +15,9 @@ use std::collections::VecDeque;
 use notein_sdk::{BookmarkId, Rgba};
 
 use crate::db::{BookRow, ChapterRow, Db, DbError};
+
+/// Back-navigation entries kept; older ones are dropped.
+const MAX_HISTORY: usize = 64;
 
 /// Everything a single open Bible tab needs to render + navigate.
 #[derive(Debug)]
@@ -36,7 +39,7 @@ pub struct BibleViewerState {
     pub highlights: Vec<BibleBookmark>,
     /// In-memory back stack of visited positions. NOT persisted — users
     /// expect browser-style "back" to clear across sessions. Pushed on
-    /// every explicit navigation (jump_to / switch_bible / cross-ref
+    /// every explicit navigation (`jump_to` / `switch_bible` / cross-ref
     /// click) so the toolbar's back arrow can rewind the trail.
     pub nav_history: Vec<NavEntry>,
     /// Forward stack — populated when the user hits "back"; cleared on
@@ -68,6 +71,7 @@ pub struct BibleBookmark {
 }
 
 /// Snapshot payload the shell persists via `CanvasKind::serialize_snapshot`.
+///
 /// Carries the full viewer state (highlights + last position) so a
 /// subsequent `restore` lands the user exactly where they left off.
 ///
@@ -80,6 +84,18 @@ pub struct BibleSnapshot {
     pub current_book: String,
     pub current_chapter: u16,
     pub highlights: Vec<BibleBookmark>,
+}
+
+impl Default for BibleSnapshot {
+    fn default() -> Self {
+        Self {
+            version: Self::VERSION,
+            bible_id: String::new(),
+            current_book: String::new(),
+            current_chapter: 1,
+            highlights: Vec::new(),
+        }
+    }
 }
 
 impl BibleSnapshot {
@@ -108,12 +124,13 @@ impl BibleSnapshot {
     }
 
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("bible::snapshot_encode"))]
     pub fn encode(&self) -> Vec<u8> {
-        bincode::encode_to_vec(self, bincode::config::standard())
-            .expect("BibleSnapshot encode: standard config cannot fail")
+        notein_sdk::Payload::to_bytes(self)
     }
 
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("bible::snapshot_decode"))]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         bincode::decode_from_slice(bytes, bincode::config::standard())
             .ok()
@@ -130,7 +147,7 @@ pub fn rgba_to_u32(rgba: Rgba) -> u32 {
 }
 
 #[must_use]
-pub fn u32_to_rgba(packed: u32) -> Rgba {
+pub const fn u32_to_rgba(packed: u32) -> Rgba {
     [
         ((packed >> 24) & 0xff) as u8,
         ((packed >> 16) & 0xff) as u8,
@@ -189,9 +206,9 @@ impl BibleViewerState {
         // sees stale forward entries after a side-step.
         self.nav_future.clear();
         // Cap depth so unbounded navigation doesn't balloon memory.
-        const MAX_HISTORY: usize = 64;
         if self.nav_history.len() > MAX_HISTORY {
-            self.nav_history.drain(..self.nav_history.len() - MAX_HISTORY);
+            self.nav_history
+                .drain(..self.nav_history.len() - MAX_HISTORY);
         }
     }
 
@@ -231,10 +248,13 @@ impl BibleViewerState {
     /// evicting the oldest entry when capacity is exceeded. If an entry
     /// for the same (book, chapter) already exists it is replaced in
     /// place rather than duplicated.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::push_chapter"))]
     pub fn push_chapter(&mut self, chapter: ChapterRow) {
-        if let Some(pos) = self.chapter_cache.iter().position(|c| {
-            c.book_id == chapter.book_id && c.chapter == chapter.chapter
-        }) {
+        if let Some(pos) = self
+            .chapter_cache
+            .iter()
+            .position(|c| c.book_id == chapter.book_id && c.chapter == chapter.chapter)
+        {
             self.chapter_cache[pos] = chapter;
             return;
         }
@@ -246,15 +266,16 @@ impl BibleViewerState {
 
     #[must_use]
     pub fn current_chapter_data(&self) -> Option<&ChapterRow> {
-        self.chapter_cache.iter().find(|c| {
-            c.book_id == self.current_book && c.chapter == self.current_chapter
-        })
+        self.chapter_cache
+            .iter()
+            .find(|c| c.book_id == self.current_book && c.chapter == self.current_chapter)
     }
 
     /// Ensure the current chapter is loaded in the cache. No-op when
     /// already present. Scroll resets on an actual load (i.e. after a
     /// navigation step) but is preserved when the chapter was already
     /// cached.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::ensure_loaded"))]
     pub fn ensure_current_loaded(&mut self, db: &Db) -> Result<(), DbError> {
         if self.current_chapter_data().is_some() {
             return Ok(());
@@ -268,6 +289,7 @@ impl BibleViewerState {
     /// Move to the previous chapter. Crosses book boundaries by walking
     /// `books` backwards; the first chapter of the first book is a
     /// no-op (returns `false`).
+    #[cfg_attr(feature = "sismo", sismo::function("bible::prev_chapter"))]
     pub fn go_prev_chapter(&mut self, db: &Db, books: &[BookRow]) -> Result<bool, DbError> {
         if self.current_chapter > 1 {
             self.current_chapter -= 1;
@@ -283,7 +305,7 @@ impl BibleViewerState {
         }
         let prev = &books[idx - 1];
         let last_chapter = db.chapter_count(&self.bible_id, &prev.book_id)?.max(1);
-        self.current_book = prev.book_id.clone();
+        self.current_book.clone_from(&prev.book_id);
         self.current_chapter = last_chapter;
         self.ensure_current_loaded(db)?;
         self.scroll_y = 0.0;
@@ -293,6 +315,7 @@ impl BibleViewerState {
     /// Move to the next chapter. Crosses book boundaries by walking
     /// `books` forward; the last chapter of the last book is a no-op
     /// (returns `false`).
+    #[cfg_attr(feature = "sismo", sismo::function("bible::next_chapter"))]
     pub fn go_next_chapter(&mut self, db: &Db, books: &[BookRow]) -> Result<bool, DbError> {
         let max_in_current = db.chapter_count(&self.bible_id, &self.current_book)?;
         if self.current_chapter < max_in_current {
@@ -308,7 +331,7 @@ impl BibleViewerState {
             return Ok(false);
         }
         let next = &books[idx + 1];
-        self.current_book = next.book_id.clone();
+        self.current_book.clone_from(&next.book_id);
         self.current_chapter = 1;
         self.ensure_current_loaded(db)?;
         self.scroll_y = 0.0;
@@ -317,6 +340,7 @@ impl BibleViewerState {
 
     /// Swap the active translation while staying on the same book +
     /// chapter. Clears the chapter cache so the new text loads fresh.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::state_switch_bible"))]
     pub fn switch_bible(&mut self, db: &Db, new_bible_id: &str) -> Result<(), DbError> {
         let from = self.current_as_nav();
         self.bible_id = new_bible_id.into();
@@ -336,6 +360,7 @@ impl BibleViewerState {
     /// Jump directly to `(book, chapter)`. Pushes the current position
     /// onto the back stack so the user can rewind via the toolbar.
     /// Fails if the chapter does not exist in the installed Bible.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::jump_to"))]
     pub fn jump_to(&mut self, db: &Db, book: &str, chapter: u16) -> Result<(), DbError> {
         let from = self.current_as_nav();
         self.current_book = book.into();
@@ -350,26 +375,20 @@ impl BibleViewerState {
     /// Jump directly to a stored history entry WITHOUT re-pushing the
     /// current position — used by the back arrow so a repeated back
     /// click walks the stack monotonically.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::jump_to_entry"))]
     pub fn jump_to_entry(&mut self, db: &Db, entry: &NavEntry) -> Result<(), DbError> {
-        self.bible_id = entry.bible_id.clone();
-        self.current_book = entry.book_id.clone();
+        self.bible_id.clone_from(&entry.bible_id);
+        self.current_book.clone_from(&entry.book_id);
         self.current_chapter = entry.chapter;
-        self.chapter_cache.retain(|c| {
-            c.bible_id == self.bible_id
-                && c.book_id == self.current_book
-                && c.chapter == self.current_chapter
-        });
+        let current = (&self.bible_id, &self.current_book, self.current_chapter);
+        self.chapter_cache
+            .retain(|c| (&c.bible_id, &c.book_id, c.chapter) == current);
         self.selection = None;
         self.scroll_y = 0.0;
         self.ensure_current_loaded(db)
     }
 
-    pub fn begin_selection(
-        &mut self,
-        book: impl Into<String>,
-        chapter: u16,
-        verse: u16,
-    ) {
+    pub fn begin_selection(&mut self, book: impl Into<String>, chapter: u16, verse: u16) {
         self.selection = Some(VerseSelection {
             book_id: book.into(),
             chapter,
@@ -380,7 +399,7 @@ impl BibleViewerState {
         });
     }
 
-    pub fn extend_selection(&mut self, verse: u16) {
+    pub const fn extend_selection(&mut self, verse: u16) {
         if let Some(sel) = self.selection.as_mut() {
             if verse >= sel.start_verse {
                 sel.end_verse = verse;
@@ -398,6 +417,7 @@ impl BibleViewerState {
     /// Convert the current selection into a persistent highlight.
     /// Returns the created bookmark id, or `None` when there is no
     /// selection to promote.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::highlight_commit"))]
     pub fn commit_selection_as_highlight(
         &mut self,
         color: Option<u32>,
@@ -417,6 +437,7 @@ impl BibleViewerState {
         Some(id)
     }
 
+    #[cfg_attr(feature = "sismo", sismo::function("bible::highlight_remove"))]
     pub fn remove_highlight(&mut self, id: BookmarkId) -> bool {
         let before = self.highlights.len();
         self.highlights.retain(|h| h.id != id);
@@ -429,6 +450,7 @@ impl BibleViewerState {
     /// unioned with the new span and its colour / note replaced.
     ///
     /// Returns the `BookmarkId` of the mutated / inserted bookmark.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::highlight_upsert"))]
     pub fn upsert_highlight(
         &mut self,
         book_id: &str,
@@ -438,13 +460,14 @@ impl BibleViewerState {
         color: Option<u32>,
         note: impl Into<String>,
     ) -> BookmarkId {
-        let (lo, hi) = if start <= end { (start, end) } else { (end, start) };
+        let (lo, hi) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
         let note = note.into();
         if let Some(existing) = self.highlights.iter_mut().find(|h| {
-            h.book_id == book_id
-                && h.chapter == chapter
-                && h.start_verse <= hi
-                && h.end_verse >= lo
+            h.book_id == book_id && h.chapter == chapter && h.start_verse <= hi && h.end_verse >= lo
         }) {
             existing.start_verse = existing.start_verse.min(lo);
             existing.end_verse = existing.end_verse.max(hi);
@@ -469,13 +492,13 @@ impl BibleViewerState {
     /// per chapter render to decide which verses need a background
     /// wash + gutter note icon.
     #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("bible::highlights_on"))]
     pub fn highlights_on(&self, book_id: &str, chapter: u16) -> Vec<&BibleBookmark> {
         self.highlights
             .iter()
             .filter(|h| h.book_id == book_id && h.chapter == chapter)
             .collect()
     }
-
 }
 
 #[cfg(test)]
@@ -491,28 +514,25 @@ mod tests {
                  VALUES ('spa_rv1960', 'RVR1960', 'Reina Valera 1960', 'spa')",
                 [],
             )?;
-            for (bid, name, order) in [
-                ("GEN", "Génesis", 1),
-                ("EPH", "Efesios", 49),
-            ] {
+            for (bid, name, order) in [("GEN", "Génesis", 1), ("EPH", "Efesios", 49)] {
                 conn.execute(
                     "INSERT INTO books (bible_id, book_id, name, abbrev, order_num, testament)
                      VALUES ('spa_rv1960', ?1, ?2, ?2, ?3, 'OT')",
-                    params![bid, name, order as i64],
+                    params![bid, name, i64::from(order)],
                 )?;
             }
             for chap in 1..=3 {
                 conn.execute(
                     "INSERT INTO verses (bible_id, book_id, chapter, verse, text, paragraph_break)
                      VALUES ('spa_rv1960', 'GEN', ?1, 1, 'gen chap text', 0)",
-                    params![chap as i64],
+                    params![i64::from(chap)],
                 )?;
             }
             for chap in 1..=6 {
                 conn.execute(
                     "INSERT INTO verses (bible_id, book_id, chapter, verse, text, paragraph_break)
                      VALUES ('spa_rv1960', 'EPH', ?1, 1, 'eph chap text', 0)",
-                    params![chap as i64],
+                    params![i64::from(chap)],
                 )?;
             }
             Ok(())
@@ -598,7 +618,7 @@ mod tests {
 
         st.switch_bible(&db, "spa_lbla").unwrap();
         assert_eq!(st.bible_id, "spa_lbla");
-        assert_eq!(st.scroll_y, 0.0);
+        assert!(st.scroll_y.abs() < f32::EPSILON);
         assert_eq!(st.chapter_cache.len(), 1);
         let chap = st.current_chapter_data().unwrap();
         assert!(chap.verses[0].text.contains("alt"));
@@ -610,7 +630,7 @@ mod tests {
         st.begin_selection("EPH", 6, 3);
         st.extend_selection(5);
         let id = st
-            .commit_selection_as_highlight(Some(0xffcc3399), "mi nota")
+            .commit_selection_as_highlight(Some(0xffcc_3399), "mi nota")
             .unwrap();
         assert!(st.selection.is_none());
         assert_eq!(st.highlights.len(), 1);

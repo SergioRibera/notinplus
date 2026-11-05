@@ -106,6 +106,7 @@ impl<'a> Split<'a> {
     const MIN_GAP: f32 = 0.04;
 
     /// `None` when no stroke qualifies as a mark.
+    #[cfg_attr(feature = "sismo", sismo::function("handwriting::split_strokes"))]
     pub(crate) fn of<S: AsRef<[Point]>>(strokes: &'a [S]) -> Option<Self> {
         let strokes: Vec<&[Point]> = strokes
             .iter()
