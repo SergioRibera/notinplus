@@ -62,7 +62,7 @@ runs:
       run: |
         set -euo pipefail
         cache="$RUNNER_TEMP/android-cache"
-        mkdir -p "$cache"/{cargo-registry,cargo-git,gradle}
+        mkdir -p "$cache"/{cargo-registry,cargo-git,gradle,android-home}
 
         # Only the registry/git dirs are mounted: the image keeps its
         # toolchain under /root/.cargo/bin, which a full mount would hide.
@@ -72,6 +72,9 @@ runs:
           -v "$cache/cargo-registry:/root/.cargo/registry"
           -v "$cache/cargo-git:/root/.cargo/git"
           -v "$cache/gradle:/root/.gradle"
+          # Holds the debug keystore; cached so debug-signed APKs keep one
+          # signature across runs and install over each other.
+          -v "$cache/android-home:/root/.android"
           -w /src/android
           --entrypoint bash
         )
@@ -93,7 +96,15 @@ runs:
         gradle_args=("$TASK" --no-daemon --stacktrace)
         [ -n "$ABIS" ] && gradle_args+=("-Pnotinplus.abis=$ABIS")
 
-        docker run "${args[@]}" "$IMAGE" -c "gradle ${gradle_args[*]}"
+        # The debug signing config points at ~/.android/debug.keystore,
+        # which a fresh container lacks and Gradle won't create for a
+        # custom signing config.
+        keystore='[ -f /root/.android/debug.keystore ] || keytool -genkeypair -noprompt \
+          -keystore /root/.android/debug.keystore -storepass android -keypass android \
+          -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+          -dname "CN=Android Debug,O=Android,C=US"'
+
+        docker run "${args[@]}" "$IMAGE" -c "$keystore && gradle ${gradle_args[*]}"
 
     # The container writes as root; hand everything back so the cache
     # save and later steps can read it.
