@@ -21,7 +21,12 @@ val releaseKeystore: String? = System.getenv("ANDROID_KEYSTORE_FILE")
 
 // With splits on, ndk.abiFilters stays empty and the istmo plugin
 // falls back to `defaultAbis` for the cargo builds.
-istmo { defaultAbis.set(appAbis) }
+istmo {
+    defaultAbis.set(appAbis)
+    // `nix run .#android-gradle` packages the `.so` files Nix built through
+    // a stand-in cargo (nix/android-cargo-shim.sh).
+    System.getenv("ISTMO_CARGO")?.let { cargo.set(it) }
+}
 
 android {
     namespace  = "rs.sergioribera.notinplus"
@@ -68,7 +73,14 @@ android {
     }
 
     buildTypes {
-        getByName("debug")   { signingConfig = signingConfigs.getByName("debug") }
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("debug")
+            // Local builds are signed with each machine's debug key; a
+            // separate id lets them sit next to a release install instead
+            // of blocking it with a signature mismatch.
+            applicationIdSuffix = ".dev"
+            versionNameSuffix   = "-dev"
+        }
         getByName("release") {
             isMinifyEnabled = false
             // Falls back to the debug key so CI artifacts stay installable
