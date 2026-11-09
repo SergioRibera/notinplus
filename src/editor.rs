@@ -46,13 +46,15 @@ pub fn theme(p: &Palette) -> EditorTheme {
     colors.placeholder = p.t3;
     colors.accent = p.accent;
     colors.caret = p.accent;
-    colors.selection = p.accent_soft;
+    // The selection paints over highlights and backgrounds: an opaque one
+    // hides the color just applied to the text it still covers.
+    colors.selection = p.accent.with_a(if p.dark { 90 } else { 70 });
     colors.surface = p.s2;
     colors.border = p.line;
     colors.code_background = p.s3;
     colors.code_text = p.t1;
     colors.quote_bar = p.line_strong;
-    colors.highlight = p.highlighters[0].with_a(110);
+    colors.highlight = p.highlighters[0].with_a(180);
     colors.popup_background = p.s2;
     colors.popup_selected = p.s4;
     theme
