@@ -1205,6 +1205,7 @@ impl<R: Replica> SyncDriver<R> {
             return Ok(());
         };
         let me = self.profile.id();
+        let mut round = false;
         match message {
             ShareMessage::Live { doc, bytes } => {
                 #[cfg(feature = "sismo")]
@@ -1259,7 +1260,11 @@ impl<R: Replica> SyncDriver<R> {
                     link.share = fresh;
                     link.engine.set_scope(link.share.scope());
                     out.push(Action::Event(DriverEvent::ShareChanged(id)));
-                    if !link.share.is_member(me) {
+                    if link.share.is_member(me) {
+                        // Documents just brought in (often by this very
+                        // member) travel now, not on the next tick.
+                        round = true;
+                    } else {
                         self.shares.remove(&id);
                         out.push(Action::Event(DriverEvent::ShareRemoved {
                             share: id,
@@ -1285,6 +1290,9 @@ impl<R: Replica> SyncDriver<R> {
             ShareMessage::Edit(edit) => {
                 self.apply_edit(from, id, edit, out);
             }
+        }
+        if round {
+            out.extend(self.share_round_for(id, from)?);
         }
         Ok(())
     }
@@ -3385,6 +3393,39 @@ mod tests {
                 )
                 .is_empty()
         );
+    }
+
+    /// A document a member brings in reaches the owner as soon as the
+    /// owner agrees, without waiting for the next tick.
+    #[test]
+    fn documents_a_member_brings_in_travel_right_away() {
+        let mut owner = driver("Sergio");
+        let mut guest = driver("Ana");
+        let mut share = shared_doc(&owner);
+        share.editors_add_docs = true;
+        let id = share.id;
+        let invite = share.invite();
+        owner.create_share(share);
+        connect_both(&mut owner, &mut guest);
+        deliver(guest.join(invite), &mut guest, &mut owner);
+
+        let d3 = DocId([3; 16]);
+        mark(&guest, d3, 2, 1);
+        guest.with_replica(|r| r.put_blob(BlobKind::Item, 3, 7, "doc-3"));
+        let item = BlobKey {
+            kind: BlobKind::Item,
+            id: [3; 16],
+        };
+        let actions = guest.edit_share(
+            id,
+            ShareEdit::AddDocs {
+                docs: vec![d3],
+                blobs: vec![item],
+            },
+        );
+        deliver(actions, &mut guest, &mut owner);
+        assert_eq!(owner.with_replica(|r| r.marks(d3)), vec![(2, 1)]);
+        assert!(owner.with_replica(|r| r.blobs.contains_key(&item)));
     }
 
     /// With approval on, a joiner waits until an organizer lets them in

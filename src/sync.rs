@@ -1877,6 +1877,11 @@ fn run(cmds: &flume::Receiver<Cmd>) {
         if next_tick <= now {
             sismo::scope!("sync::tick");
             next_tick = now + notein_sync::driver::TICK;
+            // A member's request to bring documents in is lost when the
+            // owner is out of reach; asking again each tick gets them in
+            // once it is back.
+            let folder_actions = service.reconcile_folders();
+            service.perform(folder_actions);
             match service.driver.tick() {
                 Ok(actions) => {
                     service.recovered(Recovery::Exchanged);

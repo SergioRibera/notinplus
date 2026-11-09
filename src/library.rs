@@ -1725,10 +1725,19 @@ impl LibraryData {
         if let Some(local) = self.index.item(item.id) {
             return local.folder;
         }
-        match crate::sync::shares_of(item.id)
-            .into_iter()
-            .find(|s| !s.is_owner)
+        let shares = crate::sync::shares_of(item.id);
+        // A member's document in a subfolder whose record is not here
+        // yet stays inside the shared folder, or the next reconcile
+        // would take it out of the share.
+        if let Some(root) = shares
+            .iter()
+            .filter(|s| s.is_owner)
+            .find_map(|s| s.folder)
+            .filter(|root| self.index.folder(*root).is_some())
         {
+            return root;
+        }
+        match shares.into_iter().find(|s| !s.is_owner) {
             Some(share) => self.share_root(&share),
             None => ROOT_FOLDER,
         }
