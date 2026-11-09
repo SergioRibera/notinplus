@@ -1075,3 +1075,45 @@ fn code_blocks_do_not_offer_calculations() {
     harness.named(NamedKey::Enter);
     assert_eq!(harness.value(), "```\nx + 1 + 2\n```\n");
 }
+
+/// Another device writing the document while this one has text selected
+/// must not lose the selection the next toolbar press acts on.
+#[test]
+fn a_remote_write_keeps_the_selection_a_mark_applies_to() {
+    let mut harness = Harness::new("hello world\n\nsecond\n");
+    let first = harness.block(0);
+    harness.focus(first, 11);
+    harness.key(Key::Named(NamedKey::Home), Modifiers::SHIFT);
+    let mut value = harness.value;
+    harness
+        .runner
+        .run_in(|| *value.write() = "hello world\n\nsecond line\n".to_owned());
+    harness.settle();
+    let controller = harness.controller;
+    harness
+        .runner
+        .run_in(|| controller.toggle_mark(MarkKind::Highlight));
+    harness.settle();
+    assert_eq!(harness.value(), "==hello world==\n\nsecond line\n");
+}
+
+/// A block the other device adds above the selection does not move it to
+/// another paragraph.
+#[test]
+fn a_remote_block_above_keeps_the_selection_on_its_text() {
+    let mut harness = Harness::new("hello world\n\nsecond\n");
+    let first = harness.block(0);
+    harness.focus(first, 11);
+    harness.key(Key::Named(NamedKey::Home), Modifiers::SHIFT);
+    let mut value = harness.value;
+    harness
+        .runner
+        .run_in(|| *value.write() = "intro\n\nhello world\n\nsecond\n".to_owned());
+    harness.settle();
+    let controller = harness.controller;
+    harness
+        .runner
+        .run_in(|| controller.toggle_mark(MarkKind::Highlight));
+    harness.settle();
+    assert_eq!(harness.value(), "intro\n\n==hello world==\n\nsecond\n");
+}

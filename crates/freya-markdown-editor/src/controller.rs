@@ -620,28 +620,54 @@ impl EditorController {
 
     /// Replace the document with parsed markdown that arrived from
     /// elsewhere while this editor may be in use: history goes, the
-    /// caret stays on the same text in reading order, clamped to what
-    /// is there now.
+    /// selection stays on the same text (found by content, so blocks
+    /// added or removed around it do not move it), clamped to what is
+    /// there now. Marks waiting for the next typed text survive, since
+    /// the caret they belong to does.
     #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_merge_markdown"))]
     pub fn merge_markdown(&self, markdown: &str) {
         self.update(|state| {
-            let kept = state.selection.map(|selection| {
+            let kept = state.selection.and_then(|selection| {
                 let index = state
                     .document
                     .targets()
                     .iter()
-                    .position(|target| *target == selection.target);
-                (index, selection.head)
+                    .position(|target| *target == selection.target)?;
+                let text = state
+                    .document
+                    .inline(selection.target)
+                    .map(|inline| inline.text().to_owned())?;
+                Some((index, text, selection))
             });
             state.document = Rc::new(Document::parse_with(markdown, &state.parse));
             state.history = History::default();
-            state.pending.clear();
             state.selection = None;
-            if let Some((Some(index), offset)) = kept {
-                let targets = state.document.targets();
-                if let Some(target) = targets.get(index).or_else(|| targets.last()).copied() {
-                    state.request_caret(clamp(&state.document, Selection::caret(target, offset)));
+            let Some((index, text, selection)) = kept else {
+                state.pending.clear();
+                state.changed();
+                return;
+            };
+            let targets = state.document.targets();
+            let same_text = targets
+                .iter()
+                .enumerate()
+                .filter(|(_, target)| {
+                    state
+                        .document
+                        .inline(**target)
+                        .is_some_and(|inline| inline.text() == text)
+                })
+                .min_by_key(|(at, _)| at.abs_diff(index))
+                .map(|(_, target)| *target);
+            match same_text.or_else(|| targets.get(index).or_else(|| targets.last()).copied()) {
+                Some(target) => {
+                    let moved = Selection {
+                        target,
+                        ..selection
+                    };
+                    state.request_caret(clamp(&state.document, moved));
                 }
+                None => state.pending.clear(),
             }
             state.changed();
         });
