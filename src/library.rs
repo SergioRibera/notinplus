@@ -1387,7 +1387,7 @@ impl Library {
 
     // ---------- Bundle import ------------------------------------------
 
-    /// Merge a parsed `.notein` bundle into the library. Caller must
+    /// Merge a parsed `.notin` bundle into the library. Caller must
     /// have confirmed `preflight.has_collisions() == false` upstream;
     /// this method does not re-check — a UUID clash here would silently
     /// overwrite the live entry.

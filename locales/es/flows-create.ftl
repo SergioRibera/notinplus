@@ -13,7 +13,7 @@ flows-create-folder-with = { $count ->
    *[other] Carpeta con { $count } seleccionados
 }
 flows-create-new-desk = Mesa nueva
-flows-create-bundle = Paquete .notein
+flows-create-bundle = Paquete .notin
 flows-create-bundle-hint = Restaurar o recibir una copia
 flows-create-import-menu = Importar…
 flows-create-import = Importar

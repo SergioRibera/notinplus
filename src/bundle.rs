@@ -1,4 +1,4 @@
-//! `.notein` bundle format — export + import.
+//! `.notin` bundle format — export + import.
 //!
 //! A bundle is a `tar` archive compressed with `zstd`. It groups a
 //! selection of library items (optionally scoped by their folders and
@@ -44,6 +44,36 @@ const ASSETS_PREFIX: &str = "assets/";
 const DOC_EXT: &str = "bin";
 const PDF_EXT: &str = "pdf";
 const ZSTD_LEVEL: i32 = 3;
+
+/// File extension of a bundle, without the dot.
+pub const BUNDLE_EXT: &str = "notin";
+/// MIME type of a bundle (declared in `istmo.toml`).
+pub const BUNDLE_MIME: &str = "application/x-notin";
+
+/// What a bundle carries. Decides how opening the file from the system
+/// shows it: a document opens on its own, a library opens as a list to
+/// pick from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, bincode::Encode, bincode::Decode)]
+pub enum BundleKind {
+    /// One document (with its notebooks and attachments).
+    Document,
+    /// Folders, several documents or mesas.
+    #[default]
+    Library,
+}
+
+impl From<&ExportSelection> for BundleKind {
+    fn from(selection: &ExportSelection) -> Self {
+        if selection.items.len() == 1
+            && selection.folders.is_empty()
+            && selection.workspaces.is_empty()
+        {
+            Self::Document
+        } else {
+            Self::Library
+        }
+    }
+}
 
 /// Caller-facing selection of what to export. Any union of the three
 /// axes is valid — the writer deduplicates when a folder and a
@@ -105,11 +135,12 @@ pub struct ExportPreview {
     pub referenced: Vec<Item>,
 }
 
-/// Bundle manifest. One per `.notein` file, serialised via `bincode` at
+/// Bundle manifest. One per `.notin` file, serialised via `bincode` at
 /// [`MANIFEST_ENTRY`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct BundleManifest {
     pub version: u32,
+    pub kind: BundleKind,
     pub exported_at_ms: u64,
     /// Device that made the copy.
     pub exported_by: String,
@@ -134,6 +165,7 @@ impl bincode::Encode for BundleManifest {
         encoder: &mut E,
     ) -> core::result::Result<(), bincode::error::EncodeError> {
         self.version.encode(encoder)?;
+        self.kind.encode(encoder)?;
         self.exported_at_ms.encode(encoder)?;
         self.exported_by.encode(encoder)?;
         self.requires_plugins.encode(encoder)?;
@@ -154,6 +186,7 @@ impl<Ctx> bincode::Decode<Ctx> for BundleManifest {
     ) -> core::result::Result<Self, bincode::error::DecodeError> {
         Ok(Self {
             version: bincode::Decode::decode(decoder)?,
+            kind: bincode::Decode::decode(decoder)?,
             exported_at_ms: bincode::Decode::decode(decoder)?,
             exported_by: bincode::Decode::decode(decoder)?,
             requires_plugins: bincode::Decode::decode(decoder)?,
@@ -235,7 +268,7 @@ impl From<LibraryError> for BundleError {
 
 type Result<T> = core::result::Result<T, BundleError>;
 
-/// Build a `.notein` bundle streamed into `sink`.
+/// Build a `.notin` bundle streamed into `sink`.
 ///
 /// `selection` axes are unioned; subfolders of a listed folder are
 /// walked recursively; workspace exports pull in every item referenced
@@ -259,6 +292,7 @@ pub fn write_bundle<W: Write>(
 ) -> Result<()> {
     let plan = plan_export(lib, selection, false)?;
     let mut manifest = build_manifest(lib, &plan, options.include_external_links);
+    manifest.kind = BundleKind::from(selection);
     exported_by.clone_into(&mut manifest.exported_by);
     if !options.include_workspaces {
         manifest.workspaces.clear();
@@ -329,7 +363,7 @@ pub fn write_bundle_to_path(
 }
 
 /// Decoded bundle payload. Lives entirely in memory — the on-disk
-/// `.notein` file can go away after this returns.
+/// `.notin` file can go away after this returns.
 #[derive(Debug)]
 pub struct ParsedBundle {
     pub manifest: BundleManifest,
@@ -657,6 +691,7 @@ fn build_manifest(
 
     BundleManifest {
         version: BUNDLE_VERSION,
+        kind: BundleKind::Library,
         exported_at_ms: now_ms(),
         exported_by: String::new(),
         requires_plugins,
@@ -742,6 +777,7 @@ mod tests {
     fn manifest_round_trips_bincode() {
         let manifest = BundleManifest {
             version: BUNDLE_VERSION,
+            kind: BundleKind::Library,
             exported_at_ms: 42,
             exported_by: String::new(),
             requires_plugins: vec!["io.notein.pdf".into(), "org.user.quran".into()],
@@ -763,6 +799,7 @@ mod tests {
     fn bundle_tar_zst_round_trips_manifest_through_stream() {
         let manifest = BundleManifest {
             version: BUNDLE_VERSION,
+            kind: BundleKind::Library,
             exported_at_ms: 7,
             exported_by: String::new(),
             requires_plugins: vec!["io.notein.pdf".into()],
@@ -824,6 +861,7 @@ mod closure_tests {
         links.insert(item(1), item(2), LinkKind::Companion, 7);
         let manifest = BundleManifest {
             version: BUNDLE_VERSION,
+            kind: BundleKind::Library,
             exported_at_ms: 1,
             exported_by: String::new(),
             requires_plugins: Vec::new(),

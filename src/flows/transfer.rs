@@ -297,11 +297,11 @@ impl Component for ExportFooter {
         };
         let (name, label_text) = match choices.purpose {
             Purpose::Backup => (
-                format!("notein-{}.notein", file_stamp()),
+                format!("notinplus-{}.{}", file_stamp(), crate::bundle::BUNDLE_EXT),
                 tr!("flows-transfer-export-size", "size" => crate::format::size(size)),
             ),
             Purpose::Readable => (
-                format!("notein-{}.zip", file_stamp()),
+                format!("notinplus-{}.zip", file_stamp()),
                 tr!("flows-transfer-export"),
             ),
         };
@@ -405,7 +405,7 @@ enum Progress {
 impl Purpose {
     const fn file(self) -> (&'static str, &'static str) {
         match self {
-            Self::Backup => ("application/octet-stream", "notein"),
+            Self::Backup => (crate::bundle::BUNDLE_MIME, crate::bundle::BUNDLE_EXT),
             Self::Readable => ("application/zip", "zip"),
         }
     }
@@ -501,7 +501,7 @@ fn run_export(scope: ExportScope, choices: Choices) {
         };
         let (mime, ext) = choices.purpose.file();
         save_copy(
-            format!("notein-{}.{ext}", file_stamp()),
+            format!("notinplus-{}.{ext}", file_stamp()),
             mime,
             ext,
             bytes,
@@ -643,14 +643,14 @@ pub fn undo_import(receipt: ImportReceipt) {
     });
 }
 
-/// Pick a `.notein` file and review it.
+/// Pick a `.notin` file and review it.
 #[sismo::function("flows::import")]
 pub fn import() {
     spawn_in_window(traced!("task::flows::import", async move {
         let picked = match crate::files::pick(
             &tr!("flows-transfer-import-picker"),
-            &["notein"],
-            &["application/octet-stream"],
+            &[crate::bundle::BUNDLE_EXT],
+            &[crate::bundle::BUNDLE_MIME, "application/octet-stream"],
         )
         .await
         {

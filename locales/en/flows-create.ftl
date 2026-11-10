@@ -13,7 +13,7 @@ flows-create-folder-with = { $count ->
    *[other] Folder with { $count } selected
 }
 flows-create-new-desk = New desk
-flows-create-bundle = .notein bundle
+flows-create-bundle = .notin bundle
 flows-create-bundle-hint = Restore or receive a copy
 flows-create-import-menu = Import…
 flows-create-import = Import
