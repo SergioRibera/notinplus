@@ -94,7 +94,7 @@ async fn open(document: OpenedDocument) {
         }
     };
     match ExternalKind::from(name.as_str()) {
-        ExternalKind::Plugin => crate::screens::settings::review_package(&picked),
+        ExternalKind::Plugin => crate::screens::settings::confirm_package(picked),
         ExternalKind::Bundle => crate::flows::transfer::review_bundle(picked).await,
         ExternalKind::Document => {
             let context = crate::flows::create::Context {
@@ -113,7 +113,10 @@ async fn open(document: OpenedDocument) {
 async fn read(path: std::path::PathBuf) -> std::io::Result<Vec<u8>> {
     let (tx, rx) = flume::bounded(1);
     std::thread::spawn(move || {
-        let _ = tx.send(std::fs::read(path));
+        let _ = tx.send(crate::files::read_opened(
+            &path,
+            crate::files::OPENED_MAX_BYTES,
+        ));
     });
     rx.recv_async()
         .await

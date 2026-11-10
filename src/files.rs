@@ -181,3 +181,72 @@ mod tests {
         assert_eq!(named, Some(path));
     }
 }
+
+/// Largest file the system may hand to the app to open.
+pub const OPENED_MAX_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Read a file the system asked the app to open (a double-click, a
+/// forwarded launch, a share). Its path is not something the user picked
+/// in the app, so only regular files are read — a FIFO would block and a
+/// device or `/proc` entry may never end — and at most `cap` bytes.
+///
+/// # Errors
+/// The file cannot be opened, is not a regular file or is larger than
+/// `cap`.
+pub fn read_opened(path: &std::path::Path, cap: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::{Error, ErrorKind};
+
+    #[cfg(windows)]
+    if let Some(std::path::Component::Prefix(prefix)) = path.components().next() {
+        use std::path::Prefix;
+        // `\\.\` device paths and `\\?\` paths that are not plain disk
+        // paths name devices and pipes, not documents.
+        if matches!(
+            prefix.kind(),
+            Prefix::DeviceNS(_) | Prefix::Verbatim(_) | Prefix::VerbatimUNC(..)
+        ) {
+            return Err(Error::new(ErrorKind::InvalidInput, "not a document path"));
+        }
+    }
+    // Checked before opening: opening a FIFO for reading blocks until a
+    // writer shows up.
+    if !std::fs::metadata(path)?.is_file() {
+        return Err(Error::new(ErrorKind::InvalidInput, "not a regular file"));
+    }
+    let file = std::fs::File::open(path)?;
+    let meta = file.metadata()?;
+    if !meta.is_file() {
+        return Err(Error::new(ErrorKind::InvalidInput, "not a regular file"));
+    }
+    if meta.len() > cap {
+        return Err(Error::new(ErrorKind::InvalidData, "file too large"));
+    }
+    let mut bytes = Vec::with_capacity(usize::try_from(meta.len()).unwrap_or(0));
+    file.take(cap + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > cap {
+        return Err(Error::new(ErrorKind::InvalidData, "file too large"));
+    }
+    Ok(bytes)
+}
+
+#[cfg(test)]
+mod opened_tests {
+    use super::*;
+
+    #[test]
+    fn opened_files_must_be_small_regular_files() {
+        let dir = std::env::temp_dir().join(format!("notinplus-opened-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.md");
+        std::fs::write(&file, b"hello").unwrap();
+        assert_eq!(read_opened(&file, 5).unwrap(), b"hello");
+        assert!(read_opened(&file, 4).is_err(), "over the cap");
+        assert!(read_opened(&dir, 1024).is_err(), "a directory");
+        #[cfg(unix)]
+        assert!(
+            read_opened(std::path::Path::new("/dev/zero"), 1024).is_err(),
+            "a device"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}

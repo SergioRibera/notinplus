@@ -344,6 +344,37 @@ pub fn review_package(picked: &crate::files::Picked) {
     }
 }
 
+/// A `.ntp` the system opened with the app. Reviewing a package loads its
+/// library, which runs the plugin's code, so a file nobody picked in
+/// Settings asks first.
+#[sismo::function("settings::plugins_confirm_package")]
+pub fn confirm_package(picked: crate::files::Picked) {
+    let name = picked.name.clone();
+    let picked = Arc::new(picked);
+    Sheet::titled(tr!("settings-plugins-open-file", "name" => name))
+        .child(
+            Notice::new(
+                NoticeTone::Warning,
+                tr!("settings-plugins-open-file-warning"),
+            )
+            .detail(tr!("settings-plugins-open-file-detail")),
+        )
+        .footer(SheetFooter::new([
+            Button::new(tr!("common-cancel"))
+                .ghost()
+                .on_press(|_| ModalController::get().close())
+                .into_element(),
+            Button::new(tr!("settings-plugins-open-file-review"))
+                .primary()
+                .on_press(move |_| {
+                    ModalController::get().close();
+                    review_package(&picked);
+                })
+                .into_element(),
+        ]))
+        .push();
+}
+
 #[sismo::function("settings::plugins_incompatible")]
 fn incompatible(name: &str, why: String) {
     Sheet::titled(tr!("settings-plugins-incompatible", "name" => name))

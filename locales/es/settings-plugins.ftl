@@ -55,3 +55,7 @@ settings-plugins-field-confirm = ¿Seguro? Toca de nuevo
 # $section: nombre de la sección de Ajustes con las opciones del plugin.
 settings-plugins-settings-in = Sus ajustes están en { $section }
 settings-plugins-settings-in-hint = Los plugins integrados tienen sus opciones en su propia sección.
+settings-plugins-open-file = ¿Instalar el plugin «{ $name }»?
+settings-plugins-open-file-warning = Los plugins ejecutan código en este dispositivo
+settings-plugins-open-file-detail = Revisarlo carga el plugin. Continúa solo si confías en quien te dio el archivo.
+settings-plugins-open-file-review = Revisar plugin

@@ -55,3 +55,7 @@ settings-plugins-field-confirm = Sure? Tap again
 # $section: name of the Settings section holding the plugin's options.
 settings-plugins-settings-in = Its settings are in { $section }
 settings-plugins-settings-in-hint = Built-in plugins keep their options in their own section.
+settings-plugins-open-file = Install the plugin “{ $name }”?
+settings-plugins-open-file-warning = Plugins run code on this device
+settings-plugins-open-file-detail = Reviewing it loads the plugin. Continue only if you trust whoever gave you the file.
+settings-plugins-open-file-review = Review plugin
