@@ -74,6 +74,18 @@
           # Pinned so every future MSI upgrades the previous install.
           msiUpgradeCode = "19BFE419-C3D3-4DB6-BE04-BD4324279A4A";
           downloadUrl = "https://github.com/SergioRibera/notinplus/releases/download/v${version}";
+          # Same table istmo-build turns into Android intent filters and iOS
+          # document types, so the platforms never disagree.
+          fileAssociations = map (t: {
+            inherit (t) name;
+            id = t.id or null;
+            extensions = t.extensions or [ ];
+            mimeTypes = t.mime_types or [ ];
+            role = t.role or "viewer";
+            rank = t.rank or "alternate";
+            exported = t.exported or false;
+            conformsTo = t.conforms_to or [ "public.data" ];
+          }) ((builtins.fromTOML (builtins.readFile ./istmo.toml)).app.document_type or [ ]);
           desktopEntries = [
             {
               name = "NotIn Plus";
