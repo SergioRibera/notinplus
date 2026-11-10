@@ -214,7 +214,50 @@ fn launch_config() -> LaunchConfig {
 }
 
 fn router_root() -> impl IntoElement {
-    AppShell
+    LibraryGate
+}
+
+/// What the stored library allows the app to do.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Gate {
+    Checking,
+    Open,
+    Stop(crate::library::formats::Incompatible),
+}
+
+/// Look at the stored library before anything opens it: the app runs
+/// on a library this build reads, and the person decides first what
+/// happens to one it does not.
+#[derive(Debug, PartialEq)]
+struct LibraryGate;
+
+impl Component for LibraryGate {
+    #[sismo::function("app::library_gate")]
+    fn render(&self) -> impl IntoElement {
+        let mut gate = use_state(|| Gate::Checking);
+        use_hook(move || {
+            spawn(traced!("task::app::library_gate", async move {
+                gate.set(match crate::library::formats::on_this_device().await {
+                    Ok(Some(found)) => Gate::Stop(found),
+                    // A store that cannot be read at all is reported by
+                    // the library itself once the app opens it.
+                    Ok(None) | Err(_) => Gate::Open,
+                });
+            }));
+        });
+        match *gate.read() {
+            Gate::Checking => rect()
+                .expanded()
+                .background(notein_ui_kit::palette().bg)
+                .into_element(),
+            Gate::Open => AppShell.into_element(),
+            Gate::Stop(found) => crate::screens::incompatible::IncompatibleScreen {
+                found,
+                done: EventHandler::new(move |()| gate.set(Gate::Open)),
+            }
+            .into_element(),
+        }
+    }
 }
 
 // `RouterContext` is `!Send + !Sync` (it holds an `Rc`-backed

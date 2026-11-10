@@ -2,6 +2,7 @@
 
 pub mod collab;
 pub mod home;
+pub mod incompatible;
 pub mod map;
 pub mod mesa;
 // Hot reload wants hot-patchable fn components, not the closures the

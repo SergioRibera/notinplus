@@ -909,3 +909,23 @@ fn update_renders() {
     render("update-card-phone", (390.0, 844.0), release_card);
     render("update-settings", (1280.0, 860.0), settings_about);
 }
+
+fn incompatible() -> Element {
+    crate::screens::incompatible::IncompatibleScreen {
+        found: crate::library::formats::Incompatible {
+            format: &crate::library::formats::FORMATS[0],
+        },
+        done: EventHandler::new(|()| {}),
+    }
+    .into_element()
+}
+
+#[test]
+fn incompatible_phone() {
+    render("incompatible-phone", (390.0, 844.0), incompatible);
+}
+
+#[test]
+fn incompatible_desktop() {
+    render("incompatible-desktop", (1440.0, 900.0), incompatible);
+}

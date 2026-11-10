@@ -48,6 +48,9 @@ pub enum LibraryError {
         /// People in the share besides this device.
         others: usize,
     },
+    /// The library on this device is in a shape this build does not
+    /// read; the person decides what happens to it.
+    Incompatible(super::formats::Incompatible),
 }
 
 /// Which id-space produced a [`LibraryError::NotFound`].
@@ -80,6 +83,9 @@ impl fmt::Display for LibraryError {
                 write!(f, "shared folder still used by {others} other(s)")
             }
             Self::SelfLink => f.write_str("a link needs two different items"),
+            Self::Incompatible(found) => {
+                write!(f, "library stored as {} is not readable", found.format.key)
+            }
         }
     }
 }
@@ -135,6 +141,7 @@ impl UserMessage for LibraryError {
             Self::SharedFolderInUse { others } => {
                 tr!("errors-library-shared-folder-in-use", "count" => *others)
             }
+            Self::Incompatible(_) => tr!("errors-library-incompatible"),
         }
     }
 }

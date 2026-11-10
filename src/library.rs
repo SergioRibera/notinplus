@@ -23,6 +23,7 @@
 
 pub mod bodies;
 pub mod error;
+pub mod formats;
 pub mod graveyard;
 mod import;
 pub mod index;
@@ -101,18 +102,16 @@ impl Library {
     /// [`index::NAMESPACE`] and hydrate the index from disk.
     ///
     /// # Errors
-    /// Any runtime / backend / codec failure surfacing through
-    /// [`LibraryError`].
+    /// [`LibraryError::Incompatible`] when the library on this device
+    /// is in a shape this build does not read, which it leaves
+    /// untouched; any runtime / backend / codec failure otherwise.
     #[sismo::function]
     pub async fn open(runtime: &Arc<Runtime>) -> Result<Self> {
-        let client = DataStoreClient::from_runtime_with(
-            runtime,
-            DataStoreConfig::new(index::NAMESPACE.to_owned()),
-        )
-        .await?;
+        let client = store_client(runtime).await?;
         sismo::instant!("library::store_client_ready");
-        // Nothing readable under the current key starts an empty index;
-        // what an older schema left on disk stays untouched.
+        if let Some(found) = formats::detect(&client).await? {
+            return Err(LibraryError::Incompatible(found));
+        }
         let mut index = index::load(&client).await?.unwrap_or_default();
         read_covers(&mut index);
         let mut workspaces = index::load_workspaces(&client).await?;
@@ -1553,6 +1552,15 @@ fn keep_cover(id: ItemId, cover: Option<&[u8]>) {
     if let Err(err) = bodies::write_cover(id, cover) {
         log::error!("cover {id}: {err}");
     }
+}
+
+/// The data-store the library lives in.
+async fn store_client(runtime: &Arc<Runtime>) -> Result<DataStoreClient> {
+    Ok(DataStoreClient::from_runtime_with(
+        runtime,
+        DataStoreConfig::new(index::NAMESPACE.to_owned()),
+    )
+    .await?)
 }
 
 fn now_millis() -> u64 {
