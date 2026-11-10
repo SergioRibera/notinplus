@@ -46,6 +46,7 @@ pub mod doc;
 pub mod doc_op;
 pub mod editor;
 pub mod external;
+pub mod external_files;
 pub(crate) mod failure;
 pub mod files;
 pub mod flatten;

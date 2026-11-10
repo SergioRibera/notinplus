@@ -929,3 +929,75 @@ fn incompatible_phone() {
 fn incompatible_desktop() {
     render("incompatible-desktop", (1440.0, 900.0), incompatible);
 }
+
+const EXTERNAL_MARKDOWN: &str = "# Notas de Romanos\n\nLectura del capítulo 8 con el grupo del martes.\n\n## Preguntas\n\n- ¿Qué significa **ninguna condenación**?\n- ¿Cómo se relaciona con el capítulo 7?\n\n> Y sabemos que a los que aman a Dios, todas las cosas les ayudan a bien.\n\nPendiente: comparar con *Gálatas 5*.\n";
+
+/// A file in a `Descargas` folder of the temp dir, opened from outside
+/// the library.
+fn external(name: &str, contents: &[u8]) -> crate::external_files::Session {
+    sandbox();
+    let dir = std::env::temp_dir()
+        .join(format!("notein-preview-external-{}", std::process::id()))
+        .join("Descargas");
+    std::fs::create_dir_all(&dir).expect("folder");
+    let path = dir.join(name);
+    std::fs::write(&path, contents).expect("file");
+    let picked = crate::files::Picked {
+        name: name.to_owned(),
+        bytes: contents.to_vec(),
+    };
+    crate::external_files::ExternalFile::new(path, picked)
+        .expect("shown kind")
+        .into()
+}
+
+fn external_markdown() -> Element {
+    let session = use_hook(|| external("Notas de Romanos.md", EXTERNAL_MARKDOWN.as_bytes()));
+    crate::external_files::ExternalView { session }.into_element()
+}
+
+#[test]
+fn external_file_renders() {
+    render("external-md-desktop", (1280.0, 800.0), external_markdown);
+    render("external-md-phone", (390.0, 844.0), external_markdown);
+}
+
+/// A PDF of `count` pages with grey lines for text.
+fn sample_pdf(count: u32) -> Vec<u8> {
+    let (w, h) = (612u32, 792u32);
+    let pages: Vec<freya_pdf::write::PageImage> = (0..count)
+        .map(|n| {
+            let mut rgba = vec![255u8; (w * h * 4) as usize];
+            for line in 0..(18 + n % 5) {
+                let top = 90 + line * 32;
+                let end = if line % 6 == 5 { 320 } else { 540 };
+                for y in top..top + 10 {
+                    for x in 72..end {
+                        let i = ((y * w + x) * 4) as usize;
+                        rgba[i..i + 3].copy_from_slice(&[150, 150, 160]);
+                    }
+                }
+            }
+            freya_pdf::write::PageImage {
+                rgba,
+                width_px: w,
+                height_px: h,
+                width_pt: w,
+                height_pt: h,
+            }
+        })
+        .collect();
+    freya_pdf::write::image_pdf(&pages).expect("pdfium")
+}
+
+fn external_pdf() -> Element {
+    let session = use_hook(|| external("Comentario de Romanos.pdf", &sample_pdf(4)));
+    crate::external_files::ExternalView { session }.into_element()
+}
+
+#[test]
+#[ignore = "needs PDFium (PDFIUM_LIB_PATH)"]
+fn external_pdf_renders() {
+    render("external-pdf-desktop", (1280.0, 800.0), external_pdf);
+    render("external-pdf-phone", (390.0, 844.0), external_pdf);
+}

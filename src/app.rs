@@ -312,6 +312,7 @@ impl Component for AppShell {
         }
         crate::state::use_library_root();
         crate::screens::home::use_browse_root();
+        crate::external_files::use_external_root();
         crate::plugins::host::use_host_pump();
         use_hook(move || {
             sismo::scope!("app::startup_jobs");
@@ -349,6 +350,7 @@ impl Component for AppShell {
             crate::sync::use_presence();
         }
         use_hook(crate::deep_link::listen);
+        use_hook(crate::external_files::listen);
         use_hook(crate::opened_files::listen);
         crate::deep_link::use_launcher_shortcuts();
         use_hook(|| {
@@ -385,6 +387,7 @@ impl Component for AppShell {
                     .child(Outlet::<Route>::new()),
             )
             .child(crate::selection::StickySelection)
+            .child(crate::external_files::ExternalOverlay)
             .child({
                 // Install the host-side ModalChrome context before the
                 // portal materialises its children, so every modal

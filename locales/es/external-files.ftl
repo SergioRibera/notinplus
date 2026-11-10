@@ -1,0 +1,30 @@
+## Un archivo abierto desde fuera de la biblioteca, en su propia vista (src/external_files.rs).
+
+external-files-pill = Archivo externo
+external-files-window-title = { $name } — Archivo externo
+external-files-details = { $folder } · { $size }
+external-files-read = Leer
+external-files-edit = Editar
+external-files-save-to-library = Guardar en la biblioteca
+external-files-in-library = En la biblioteca
+external-files-saved-to-library = Guardado en la biblioteca
+external-files-open-in-library = Abrir en la biblioteca
+external-files-more = Más
+external-files-show-in-folder = Mostrar en la carpeta
+external-files-open-with = Abrir con otra aplicación
+external-files-saved-file = Guardado en el archivo
+external-files-saved-copy = Guardado en la copia
+external-files-saving = Guardando…
+external-files-save-failed = No se pudo guardar el archivo
+external-files-read-only = Solo lectura
+external-files-read-only-detail = Este archivo no se puede cambiar aquí. Guárdalo en la biblioteca para editar una copia.
+external-files-not-utf8 = Este archivo no es texto UTF-8, así que se abre solo para leer.
+external-files-copy-detail = Es una copia que compartió otra app. Para conservar tus cambios, guárdala en la biblioteca.
+external-files-txt-notice = Este archivo es .txt: negritas y títulos se guardan como símbolos
+external-files-save-as-md = Guardar como .md
+external-files-got-it = Entendido
+external-files-save-as-md-failed = No se pudo crear { $name }
+external-files-page = p. { $page } de { $total }
+external-files-contents = Contenido
+external-files-pdf-failed = No se pudo abrir este PDF
+external-files-gone = Ya no está en { $folder }

@@ -4,9 +4,10 @@
 //!
 //! They arrive on the istmo `Documents` queue (cold-start files
 //! included) and are sent by type: a `.ntp` to the plugin review, a
-//! library `.notin` to the bundle review, and documents to the import
-//! sheet of the plugin that reads them. Nothing reaches the library
-//! without the user confirming it.
+//! `.notin` to the bundle review, PDFs, Markdown and text files to a view
+//! of their own ([`crate::external_files`]), and other documents to the
+//! import sheet of the plugin that reads them. Nothing reaches the
+//! library without the user confirming it.
 
 use std::path::Path;
 
@@ -82,7 +83,7 @@ async fn open(document: OpenedDocument) {
         log::warn!("opened file {name} is not a local path");
         return;
     };
-    let picked = match read(path).await {
+    let picked = match read(path.clone()).await {
         Ok(bytes) => Picked {
             name: name.clone(),
             bytes,
@@ -97,6 +98,12 @@ async fn open(document: OpenedDocument) {
         ExternalKind::Plugin => crate::screens::settings::confirm_package(picked),
         ExternalKind::Bundle => crate::flows::transfer::review_bundle(picked).await,
         ExternalKind::Document => {
+            if crate::external_files::FileKind::of(&name).is_some() {
+                if let Some(file) = crate::external_files::ExternalFile::new(path, picked) {
+                    crate::external_files::show(file);
+                }
+                return;
+            }
             let context = crate::flows::create::Context {
                 folder: crate::screens::home::Browse::get().folder(),
                 selection: Vec::new(),
@@ -110,7 +117,7 @@ async fn open(document: OpenedDocument) {
 }
 
 /// Read a file off the UI thread.
-async fn read(path: std::path::PathBuf) -> std::io::Result<Vec<u8>> {
+pub(crate) async fn read(path: std::path::PathBuf) -> std::io::Result<Vec<u8>> {
     let (tx, rx) = flume::bounded(1);
     std::thread::spawn(move || {
         let _ = tx.send(crate::files::read_opened(

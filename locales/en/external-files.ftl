@@ -1,0 +1,30 @@
+## A file opened from outside the library, in its own view (src/external_files.rs).
+
+external-files-pill = External file
+external-files-window-title = { $name } — External file
+external-files-details = { $folder } · { $size }
+external-files-read = Read
+external-files-edit = Edit
+external-files-save-to-library = Save to library
+external-files-in-library = In the library
+external-files-saved-to-library = Saved to the library
+external-files-open-in-library = Open in the library
+external-files-more = More
+external-files-show-in-folder = Show in folder
+external-files-open-with = Open with another app
+external-files-saved-file = Saved to the file
+external-files-saved-copy = Saved to the copy
+external-files-saving = Saving…
+external-files-save-failed = Could not save the file
+external-files-read-only = Read only
+external-files-read-only-detail = This file can't be changed here. Save it to the library to edit a copy.
+external-files-not-utf8 = This file isn't UTF-8 text, so it opens read only.
+external-files-copy-detail = This is a copy another app shared. To keep your changes, save it to the library.
+external-files-txt-notice = This file is .txt: bold and headings are saved as symbols
+external-files-save-as-md = Save as .md
+external-files-got-it = Got it
+external-files-save-as-md-failed = Could not create { $name }
+external-files-page = p. { $page } of { $total }
+external-files-contents = Contents
+external-files-pdf-failed = Could not open this PDF
+external-files-gone = No longer in { $folder }
