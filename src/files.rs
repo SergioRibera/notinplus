@@ -200,12 +200,16 @@ pub fn read_opened(path: &std::path::Path, cap: u64) -> std::io::Result<Vec<u8>>
     #[cfg(windows)]
     if let Some(std::path::Component::Prefix(prefix)) = path.components().next() {
         use std::path::Prefix;
-        // `\\.\` device paths and `\\?\` paths that are not plain disk
-        // paths name devices and pipes, not documents.
-        if matches!(
-            prefix.kind(),
-            Prefix::DeviceNS(_) | Prefix::Verbatim(_) | Prefix::VerbatimUNC(..)
-        ) {
+        // `\\.\` device paths, `\\?\` paths that are not plain disk paths
+        // and `\\host\pipe\…` name devices and pipes, not documents.
+        let pipe_share =
+            matches!(prefix.kind(), Prefix::UNC(_, share) if share.eq_ignore_ascii_case("pipe"));
+        if pipe_share
+            || matches!(
+                prefix.kind(),
+                Prefix::DeviceNS(_) | Prefix::Verbatim(_) | Prefix::VerbatimUNC(..)
+            )
+        {
             return Err(Error::new(ErrorKind::InvalidInput, "not a document path"));
         }
     }
