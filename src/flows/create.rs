@@ -418,7 +418,7 @@ pub fn run(entry: CatalogEntry, context: Context) {
                 let extensions: Vec<&str> = extensions.iter().map(AsRef::as_ref).collect();
                 let mimes: Vec<&str> = mime_types.iter().map(AsRef::as_ref).collect();
                 match crate::files::pick(&title, &extensions, &mimes).await {
-                    Ok(Some(picked)) => import_sheet(entry, context, picked),
+                    Ok(Some(picked)) => import_sheet(entry, context, picked, Landing::Open),
                     Ok(None) => {}
                     Err(err) => {
                         log::error!("pick: {err}");
@@ -437,6 +437,16 @@ pub fn run(entry: CatalogEntry, context: Context) {
 /// imports its extension. `false` when no plugin does.
 #[sismo::function("flows::import_file")]
 pub fn import_file(picked: crate::files::Picked, context: Context) -> bool {
+    import_file_landing(picked, context, Landing::Open)
+}
+
+/// [`import_file`], with `landing` deciding what follows the import.
+#[sismo::function("flows::import_file_landing")]
+pub fn import_file_landing(
+    picked: crate::files::Picked,
+    context: Context,
+    landing: Landing,
+) -> bool {
     let Some(ext) = std::path::Path::new(&picked.name)
         .extension()
         .and_then(|ext| ext.to_str())
@@ -454,7 +464,7 @@ pub fn import_file(picked: crate::files::Picked, context: Context) -> bool {
     let Some(entry) = entry else {
         return false;
     };
-    import_sheet(entry, context, picked);
+    import_sheet(entry, context, picked, landing);
     true
 }
 
@@ -463,6 +473,37 @@ pub fn import_file(picked: crate::files::Picked, context: Context) -> bool {
 struct Request {
     values: FormValues,
     file: Option<crate::files::Picked>,
+    landing: Landing,
+}
+
+/// What follows once a new document is in the library.
+#[derive(Clone, Default)]
+pub enum Landing {
+    /// Open it.
+    #[default]
+    Open,
+    /// Hand it to whoever asked for the import, which shows it its own
+    /// way (a file opened from outside the library stays in its view).
+    Report(std::rc::Rc<dyn Fn(ItemId)>),
+}
+
+impl PartialEq for Landing {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Open, Self::Open) => true,
+            (Self::Report(a), Self::Report(b)) => std::rc::Rc::ptr_eq(a, b),
+            (Self::Open, Self::Report(_)) | (Self::Report(_), Self::Open) => false,
+        }
+    }
+}
+
+impl std::fmt::Debug for Landing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Open => f.write_str("Open"),
+            Self::Report(_) => f.write_str("Report"),
+        }
+    }
 }
 
 /// Last paper and colour picked for a new canvas.
@@ -529,7 +570,10 @@ fn form(entry: CatalogEntry, context: Context, choice: Option<String>) {
         create(
             entry.clone(),
             context.clone(),
-            Request { values, file: None },
+            Request {
+                values,
+                ..Request::default()
+            },
         );
     });
 }
@@ -571,7 +615,7 @@ fn choose(
                                 folder: context.folder,
                                 ..FormValues::default()
                             },
-                            file: None,
+                            ..Request::default()
                         },
                     );
                 })
@@ -602,7 +646,12 @@ fn choose(
 }
 
 #[sismo::function("flows::import_sheet")]
-fn import_sheet(entry: CatalogEntry, context: Context, picked: crate::files::Picked) {
+fn import_sheet(
+    entry: CatalogEntry,
+    context: Context,
+    picked: crate::files::Picked,
+    landing: Landing,
+) {
     let p = palette();
     let Some(kind) = crate::plugins::kind(&entry.kind) else {
         return;
@@ -647,6 +696,7 @@ fn import_sheet(entry: CatalogEntry, context: Context, picked: crate::files::Pic
             Request {
                 values,
                 file: Some(picked.clone()),
+                landing: landing.clone(),
             },
         );
     });
@@ -722,6 +772,7 @@ fn create(entry: CatalogEntry, context: Context, request: Request) {
         };
         let values = request.values;
         let file = request.file;
+        let landing = request.landing;
         let created = {
             let req = CreationRequest {
                 name: &values.name,
@@ -796,12 +847,19 @@ fn create(entry: CatalogEntry, context: Context, request: Request) {
                 let mut lib = handle.lock().await;
                 crate::notebooks::create_notebook(&mut lib, item).await
             };
+            if let Landing::Report(report) = &landing {
+                report(item);
+                return;
+            }
             super::open(item);
             if let Ok(notebook) = notebook {
                 crate::space::open(TabTarget::Item(notebook), OpenHint::Beside);
             }
         } else {
-            super::open(item);
+            match &landing {
+                Landing::Open => super::open(item),
+                Landing::Report(report) => report(item),
+            }
         }
     }));
 }
