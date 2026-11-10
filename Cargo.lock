@@ -4128,6 +4128,7 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 [[package]]
 name = "istmo"
 version = "0.1.1-alpha.5"
+source = "git+https://github.com/SergioRibera/istmo?rev=c902ab0#c902ab0ec0364668246b43b1c44718d4d2a10ef2"
 dependencies = [
  "bincode 2.0.1",
  "istmo-android",
@@ -4140,6 +4141,7 @@ dependencies = [
 [[package]]
 name = "istmo-android"
 version = "0.1.1-alpha.5"
+source = "git+https://github.com/SergioRibera/istmo?rev=c902ab0#c902ab0ec0364668246b43b1c44718d4d2a10ef2"
 dependencies = [
  "android-activity",
  "bincode 2.0.1",
@@ -4154,6 +4156,7 @@ dependencies = [
 [[package]]
 name = "istmo-build"
 version = "0.1.1-alpha.5"
+source = "git+https://github.com/SergioRibera/istmo?rev=c902ab0#c902ab0ec0364668246b43b1c44718d4d2a10ef2"
 dependencies = [
  "bincode 2.0.1",
  "embed-resource",
@@ -4171,6 +4174,7 @@ dependencies = [
 [[package]]
 name = "istmo-camera"
 version = "0.1.1-alpha.5"
+source = "git+https://github.com/SergioRibera/istmo?rev=c902ab0#c902ab0ec0364668246b43b1c44718d4d2a10ef2"
 dependencies = [
  "bincode 2.0.1",
  "flume",
@@ -4185,6 +4189,7 @@ dependencies = [
 [[package]]
 name = "istmo-core"
 version = "0.1.1-alpha.5"
+source = "git+https://github.com/SergioRibera/istmo?rev=c902ab0#c902ab0ec0364668246b43b1c44718d4d2a10ef2"
 dependencies = [
  "bincode 2.0.1",
  "flume",
@@ -4196,6 +4201,7 @@ dependencies = [
 [[package]]
 name = "istmo-data-store"
 version = "0.1.1-alpha.5"
+source = "git+https://github.com/SergioRibera/istmo?rev=c902ab0#c902ab0ec0364668246b43b1c44718d4d2a10ef2"
 dependencies = [
  "bincode 2.0.1",
  "istmo-build",
@@ -4207,6 +4213,7 @@ dependencies = [
 [[package]]
 name = "istmo-file-picker"
 version = "0.1.1-alpha.5"
+source = "git+https://github.com/SergioRibera/istmo?rev=c902ab0#c902ab0ec0364668246b43b1c44718d4d2a10ef2"
 dependencies = [
  "bincode 2.0.1",
  "istmo-build",
@@ -4228,6 +4235,7 @@ dependencies = [
 [[package]]
 name = "istmo-ios"
 version = "0.1.1-alpha.5"
+source = "git+https://github.com/SergioRibera/istmo?rev=c902ab0#c902ab0ec0364668246b43b1c44718d4d2a10ef2"
 dependencies = [
  "bincode 2.0.1",
  "flume",
@@ -4240,6 +4248,7 @@ dependencies = [
 [[package]]
 name = "istmo-macros"
 version = "0.1.1-alpha.5"
+source = "git+https://github.com/SergioRibera/istmo?rev=c902ab0#c902ab0ec0364668246b43b1c44718d4d2a10ef2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4249,6 +4258,7 @@ dependencies = [
 [[package]]
 name = "istmo-opener"
 version = "0.1.1-alpha.5"
+source = "git+https://github.com/SergioRibera/istmo?rev=c902ab0#c902ab0ec0364668246b43b1c44718d4d2a10ef2"
 dependencies = [
  "bincode 2.0.1",
  "istmo-build",
@@ -4259,6 +4269,7 @@ dependencies = [
 [[package]]
 name = "istmo-pen"
 version = "0.1.1-alpha.5"
+source = "git+https://github.com/SergioRibera/istmo?rev=c902ab0#c902ab0ec0364668246b43b1c44718d4d2a10ef2"
 dependencies = [
  "bincode 2.0.1",
  "block2 0.6.2",
@@ -4280,6 +4291,7 @@ dependencies = [
 [[package]]
 name = "istmo-plugins"
 version = "0.1.1-alpha.5"
+source = "git+https://github.com/SergioRibera/istmo?rev=c902ab0#c902ab0ec0364668246b43b1c44718d4d2a10ef2"
 dependencies = [
  "bincode 2.0.1",
  "flume",
@@ -4297,6 +4309,7 @@ dependencies = [
 [[package]]
 name = "istmo-plugins-schema"
 version = "0.1.1-alpha.5"
+source = "git+https://github.com/SergioRibera/istmo?rev=c902ab0#c902ab0ec0364668246b43b1c44718d4d2a10ef2"
 dependencies = [
  "istmo-build",
 ]
@@ -4304,6 +4317,7 @@ dependencies = [
 [[package]]
 name = "istmo-share"
 version = "0.1.1-alpha.5"
+source = "git+https://github.com/SergioRibera/istmo?rev=c902ab0#c902ab0ec0364668246b43b1c44718d4d2a10ef2"
 dependencies = [
  "bincode 2.0.1",
  "dispatch2",
@@ -4326,6 +4340,7 @@ dependencies = [
 [[package]]
 name = "istmo-window"
 version = "0.1.1-alpha.5"
+source = "git+https://github.com/SergioRibera/istmo?rev=c902ab0#c902ab0ec0364668246b43b1c44718d4d2a10ef2"
 dependencies = [
  "raw-window-handle",
 ]
@@ -10417,7 +10432,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d6f32a0ff4a9f6f01231eb2059cc85479330739333e0e58cadf03b6af2cca10"
 dependencies = [
  "cfg-if 1.0.5",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
