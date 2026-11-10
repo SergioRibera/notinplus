@@ -266,6 +266,10 @@ fn follow_remote(body: Arc<dyn TextBody>, mut markdown: State<String>) {
         while changes.recv_async().await.is_ok() {
             #[cfg(feature = "sismo")]
             sismo::scope!("notes::remote_change");
+            // Typing not written yet goes in first, merged with what
+            // arrived, so taking the merged text does not drop it.
+            let local = markdown.peek().clone();
+            body.set(&local);
             let text = body.text();
             if *markdown.peek() != text {
                 markdown.set(text);

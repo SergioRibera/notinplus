@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use notein_plugin::services::TextBody;
 
-use crate::doc::Doc;
+use crate::doc::{BodyView, Doc};
 use crate::library::{ItemId, bodies};
 use crate::sync::open_docs;
 
@@ -15,6 +15,9 @@ pub struct SharedBody {
     doc: Arc<Mutex<Doc>>,
     /// This handle published the live copy and withdraws it on drop.
     published: bool,
+    /// The body as this handle's reader last saw it: its next edit is
+    /// recorded against this, so text other devices typed meanwhile stays.
+    seen: Mutex<Option<BodyView>>,
 }
 
 impl std::fmt::Debug for SharedBody {
@@ -37,6 +40,7 @@ impl SharedBody {
                 item,
                 doc,
                 published: false,
+                seen: Mutex::new(None),
             });
         }
         let bytes = {
@@ -55,7 +59,14 @@ impl SharedBody {
             item,
             doc,
             published: true,
+            seen: Mutex::new(None),
         })
+    }
+
+    fn seen(&self) -> std::sync::MutexGuard<'_, Option<BodyView>> {
+        self.seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Something changed on this device: the others see it now, the disk
@@ -115,17 +126,26 @@ impl Drop for SharedBody {
 impl TextBody for SharedBody {
     #[sismo::function("body::text")]
     fn text(&self) -> String {
-        open_docs::lock(&self.doc).body()
+        let view = open_docs::lock(&self.doc).body_view();
+        let text = view.text.clone();
+        *self.seen() = Some(view);
+        text
     }
 
     #[sismo::function("body::set")]
     fn set(&self, text: &str) -> bool {
         let mut doc = open_docs::lock(&self.doc);
-        if !doc.set_body(text) {
+        let mut seen = self.seen();
+        let view = match seen.as_ref() {
+            Some(base) => doc.edit_body(base, text),
+            None => doc.set_body(text).then(|| doc.body_view()),
+        };
+        let Some(view) = view else {
             sismo::instant!("body::set_unchanged");
             return false;
-        }
-        drop(doc);
+        };
+        *seen = Some(view);
+        drop((seen, doc));
         self.changed_here();
         true
     }

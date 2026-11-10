@@ -30,11 +30,11 @@ use std::fmt;
 
 use bincode::config::{self, Configuration};
 use loro::{
-    Container, ExportMode, LoroDoc, LoroEncodeError, LoroError, LoroMap, LoroMovableList,
-    LoroValue, UpdateOptions, ValueOrContainer, VersionVector,
+    Container, ExportMode, Frontiers, LoroDoc, LoroEncodeError, LoroError, LoroMap,
+    LoroMovableList, LoroValue, UpdateOptions, ValueOrContainer, VersionVector,
 };
 
-use super::{Doc, DocError, Layer};
+use super::{BodyView, Doc, DocError, Layer};
 use crate::bookmark::Bookmark;
 use crate::brush::{BrushPreset, Stroke};
 use crate::doc_op::DocOp;
@@ -183,6 +183,50 @@ impl DocStore {
             .map_err(|err| DocError::Store(err.to_string()))?;
         self.doc.commit();
         Ok(true)
+    }
+
+    /// The text body together with the version it was read at.
+    #[sismo::function("doc_store::body_view")]
+    pub(super) fn body_view(&self) -> BodyView {
+        BodyView {
+            text: self.body(),
+            version: self.doc.state_frontiers().encode(),
+        }
+    }
+
+    /// Turn the body seen as `base` into `text`, keeping what arrived
+    /// from other devices since `base` was read: the edit is recorded
+    /// on a fork at `base` and merged back like a concurrent one.
+    /// Returns the view the editor now holds, `None` when `text` is no
+    /// edit of `base`.
+    #[sismo::function("doc_store::edit_body")]
+    pub(super) fn edit_body(
+        &self,
+        base: &BodyView,
+        text: &str,
+    ) -> Result<Option<BodyView>, DocError> {
+        if base.text == text {
+            return Ok(None);
+        }
+        let at = Frontiers::decode(&base.version)?;
+        if at == self.doc.state_frontiers() {
+            self.set_body(text)?;
+            return Ok(Some(self.body_view()));
+        }
+        sismo::instant!("doc_store::edit_body_merge");
+        let fork = self.doc.fork_at(&at)?;
+        fork.get_text(BODY)
+            .update(text, UpdateOptions::default())
+            .map_err(|err| DocError::Store(err.to_string()))?;
+        fork.commit();
+        let edit = fork.export(ExportMode::Updates {
+            from: Cow::Owned(self.doc.oplog_vv()),
+        })?;
+        self.doc.import(&edit)?;
+        Ok(Some(BodyView {
+            text: text.to_owned(),
+            version: fork.state_frontiers().encode(),
+        }))
     }
 
     /// Every record, by key.

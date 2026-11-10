@@ -69,6 +69,14 @@ impl Layer {
     }
 }
 
+/// The text body as one reader saw it, with the version it was read at:
+/// the base [`Doc::edit_body`] records that reader's next edit against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BodyView {
+    pub text: String,
+    version: Vec<u8>,
+}
+
 /// Failure inside the document store.
 #[derive(Debug)]
 pub enum DocError {
@@ -264,6 +272,27 @@ impl Doc {
             Err(err) => {
                 log::error!("doc body update: {err}");
                 false
+            }
+        }
+    }
+
+    /// The markdown body and the version it was read at.
+    #[must_use]
+    #[sismo::function("doc::body_view")]
+    pub fn body_view(&self) -> BodyView {
+        self.store.body_view()
+    }
+
+    /// Turn the body a reader saw as `base` into `text`, keeping what
+    /// other devices typed since then. Returns the reader's new base,
+    /// `None` when nothing changed.
+    #[sismo::function("doc::edit_body")]
+    pub fn edit_body(&mut self, base: &BodyView, text: &str) -> Option<BodyView> {
+        match self.store.edit_body(base, text) {
+            Ok(view) => view,
+            Err(err) => {
+                log::error!("doc body edit, replacing it whole: {err}");
+                self.set_body(text).then(|| self.body_view())
             }
         }
     }
@@ -1267,5 +1296,52 @@ mod tests {
         assert_eq!(a.body(), "hola querido mundo cruel");
         assert_eq!(b.body(), a.body());
         assert!(!a.set_body(&a.body()), "same text is not an edit");
+    }
+
+    /// `a` with `b`'s edit of the same start imported.
+    fn with_remote(start: &str, remote: &str) -> (Doc, BodyView) {
+        let mut a = Doc::default();
+        assert!(a.set_body(start));
+        let mut b = Doc::from_snapshot(&a.snapshot_bytes().unwrap()).unwrap();
+        let seen = a.body_view();
+        assert!(b.set_body(remote));
+        a.import_updates(&b.updates_since(&a.version()).unwrap())
+            .unwrap();
+        (a, seen)
+    }
+
+    /// Typing against a body another device changed since it was read
+    /// keeps both edits instead of reverting the other one.
+    #[test]
+    fn an_edit_of_a_stale_body_keeps_what_arrived_meanwhile() {
+        let (mut a, seen) = with_remote("hola mundo", "hola querido mundo");
+        let view = a.edit_body(&seen, "hola mundo cruel").unwrap();
+        assert_eq!(a.body(), "hola querido mundo cruel");
+        assert_eq!(
+            view.text, "hola mundo cruel",
+            "the editor still holds its own text"
+        );
+
+        let view = a.edit_body(&view, "hola mundo cruel!").unwrap();
+        assert_eq!(a.body(), "hola querido mundo cruel!");
+        assert!(a.edit_body(&view, "hola mundo cruel!").is_none());
+    }
+
+    #[test]
+    fn a_remote_deletion_and_a_local_insertion_both_stay() {
+        let (mut a, seen) = with_remote("uno dos tres", "uno tres");
+        a.edit_body(&seen, "cero uno dos tres").unwrap();
+        assert_eq!(a.body(), "cero uno tres");
+    }
+
+    #[test]
+    fn an_edit_of_the_current_body_is_a_plain_update() {
+        let mut a = Doc::default();
+        assert!(a.set_body("hola"));
+        let seen = a.body_view();
+        let view = a.edit_body(&seen, "hola mundo").unwrap();
+        assert_eq!(a.body(), "hola mundo");
+        assert_eq!(view, a.body_view());
+        assert!(a.edit_body(&view, "hola mundo").is_none());
     }
 }

@@ -307,9 +307,12 @@ pub enum Share {
 /// A text body the shell keeps merged with every device and person the
 /// document is shared with.
 pub trait TextBody: Send + Sync {
+    /// The current text, which this handle's next [`Self::set`] is an
+    /// edit of.
     fn text(&self) -> String;
-    /// Replace the text, telling the others this person types; `false`
-    /// when nothing changed.
+    /// Turn the text last read into `text`, telling the others this
+    /// person types; what arrived from elsewhere since that read stays.
+    /// `false` when nothing changed.
     fn set(&self, text: &str) -> bool;
     /// Fires when text arrives from elsewhere.
     fn changes(&self) -> flume::Receiver<()>;
