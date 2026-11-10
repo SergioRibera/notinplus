@@ -44,6 +44,48 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="notein" />
             </intent-filter>
+            <!-- Documents the system opens with the app ([[app.document_type]]
+                 in istmo.toml), managed by istmo-build. -->
+            <!-- istmo:documents:start -->
+<intent-filter>
+    <action android:name="android.intent.action.VIEW"/>
+    <category android:name="android.intent.category.DEFAULT"/>
+    <data android:scheme="content"/>
+    <data android:scheme="file"/>
+    <data android:mimeType="application/pdf"/>
+    <data android:mimeType="application/x-notin"/>
+    <data android:mimeType="application/x-notinplus-plugin"/>
+    <data android:mimeType="text/markdown"/>
+    <data android:mimeType="text/plain"/>
+    <data android:mimeType="text/x-markdown"/>
+</intent-filter>
+<intent-filter>
+    <action android:name="android.intent.action.SEND"/>
+    <category android:name="android.intent.category.DEFAULT"/>
+    <data android:mimeType="application/pdf"/>
+    <data android:mimeType="application/x-notin"/>
+    <data android:mimeType="application/x-notinplus-plugin"/>
+    <data android:mimeType="text/markdown"/>
+    <data android:mimeType="text/plain"/>
+    <data android:mimeType="text/x-markdown"/>
+</intent-filter>
+<intent-filter>
+    <action android:name="android.intent.action.VIEW"/>
+    <category android:name="android.intent.category.DEFAULT"/>
+    <data android:scheme="content"/>
+    <data android:scheme="file"/>
+    <data android:host="*"/>
+    <data android:mimeType="*/*"/>
+    <data android:pathPattern=".*\\.notin"/>
+    <data android:pathPattern=".*\\..*\\.notin"/>
+    <data android:pathPattern=".*\\..*\\..*\\.notin"/>
+    <data android:pathPattern=".*\\..*\\..*\\..*\\.notin"/>
+    <data android:pathPattern=".*\\.ntp"/>
+    <data android:pathPattern=".*\\..*\\.ntp"/>
+    <data android:pathPattern=".*\\..*\\..*\\.ntp"/>
+    <data android:pathPattern=".*\\..*\\..*\\..*\\.ntp"/>
+</intent-filter>
+<!-- istmo:documents:end -->
         </activity>
     </application>
 </manifest>

@@ -31,6 +31,47 @@ foreground = "assets/brand/android/ic_launcher_foreground.xml"
 background = "assets/brand/android/ic_launcher_background.xml"
 monochrome = "assets/brand/android/ic_launcher_monochrome.xml"
 
+# Files the system can open with the app. Packaging (nix-bundle-app
+# `fileAssociations`, via `builtins.fromTOML` in flake.nix) reads the same
+# table for desktop entries, the macOS .app and Windows ProgIDs.
+[[app.document_type]]
+name       = "PDF document"
+id         = "com.adobe.pdf"
+extensions = ["pdf"]
+mime_types = ["application/pdf"]
+role       = "editor"
+
+[[app.document_type]]
+name       = "Markdown document"
+id         = "net.daringfireball.markdown"
+extensions = ["md", "markdown"]
+mime_types = ["text/markdown", "text/x-markdown"]
+role       = "editor"
+
+[[app.document_type]]
+name        = "Plain text"
+id          = "public.plain-text"
+extensions  = ["txt"]
+mime_types  = ["text/plain"]
+role        = "editor"
+
+[[app.document_type]]
+name       = "NotIn Plus document"
+id         = "rs.sergioribera.notinplus.notin"
+extensions = ["notin"]
+mime_types = ["application/x-notin"]
+role       = "editor"
+rank       = "owner"
+exported   = true
+
+[[app.document_type]]
+name       = "NotIn Plus plugin"
+id         = "rs.sergioribera.notinplus.plugin"
+extensions = ["ntp"]
+mime_types = ["application/x-notinplus-plugin"]
+rank       = "owner"
+exported   = true
+
 # Oldest OS releases we ship to. Android 26 = Oreo (first ART-only + first
 # storage-scoped SDK); iOS 14 matches the rest of the workspace examples.
 # Usage strings shown by iOS, in the app's language.
