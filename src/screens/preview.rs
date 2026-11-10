@@ -28,7 +28,6 @@ fn item(name: &str, kind: &str, folder: FolderId, age_days: u64) -> Item {
         kind: DocKind::plugin(kind),
         name: name.to_owned(),
         color: None,
-        tags: Vec::new(),
         background: crate::library::BackgroundStyle::default(),
         created_at: now - (age_days + 3) * DAY,
         updated_at: now - age_days * DAY,
@@ -45,7 +44,6 @@ fn folder(name: &str, color: [u8; 4]) -> Folder {
         name: name.to_owned(),
         color: Some(color),
         icon: None,
-        tags: Vec::new(),
         created_at: now - 20 * DAY,
         updated_at: now - 2 * DAY,
         trashed: None,
@@ -158,8 +156,11 @@ pub(crate) fn demo() -> LibraryData {
         items: vec![
             romanos, cuaderno, biblia, plan, sermon, mapa, manual, inside, efesios, griego,
         ],
-        tags: Vec::new(),
-        pins,
+        pins: crate::library::model::Pins {
+            order: pins,
+            updated_at: 0,
+        },
+        ..LibraryIndex::default()
     };
     let workspaces = WorkspaceIndex {
         version: crate::library::WORKSPACE_INDEX_VERSION,

@@ -52,6 +52,9 @@ pub enum BlobKind {
     /// The tags a person put on a folder, keyed by the folder id; as
     /// personal as [`Self::ItemTags`].
     FolderTags,
+    /// The documents a person pinned, in order; one per library, keyed
+    /// by zeros. As personal as [`Self::ItemTags`].
+    Pins,
 }
 
 /// Identity plus freshness of a blob; enough to decide who is newer.
@@ -281,7 +284,7 @@ mod tests {
                 id: doc.0,
             }]),
         };
-        for kind in [BlobKind::ItemTags, BlobKind::FolderTags] {
+        for kind in [BlobKind::ItemTags, BlobKind::FolderTags, BlobKind::Pins] {
             assert!(!scope.covers_blob(BlobKey { kind, id: doc.0 }));
             assert!(Scope::All.covers_blob(BlobKey { kind, id: doc.0 }));
         }

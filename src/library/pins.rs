@@ -11,12 +11,14 @@ impl Library {
     /// [`LibraryError::NotFound`]; persistence errors.
     #[sismo::function]
     pub async fn pin_items(&mut self, ids: &[ItemId]) -> Result<()> {
+        let index = &mut self.data.index;
         for id in ids {
-            if self.item(*id).is_none() {
+            if !index.items.iter().any(|i| i.id == *id) {
                 return Err(LibraryError::NotFound(NotFoundKind::Item(*id)));
             }
-            if !self.data.index.pins.contains(id) {
-                self.data.index.pins.push(*id);
+            if !index.pins.order.contains(id) {
+                index.pins.order.push(*id);
+                index.pins.updated_at = super::now_millis();
             }
         }
         self.persist()
@@ -26,7 +28,7 @@ impl Library {
     /// Persistence errors.
     #[sismo::function]
     pub async fn unpin_items(&mut self, ids: &[ItemId]) -> Result<()> {
-        self.data.index.pins.retain(|p| !ids.contains(p));
+        self.data.index.pins.unpin(ids, super::now_millis());
         self.persist()
     }
 
@@ -36,12 +38,13 @@ impl Library {
     /// Persistence errors.
     #[sismo::function]
     pub async fn move_pin(&mut self, from: usize, to: usize) -> Result<()> {
-        if from >= self.data.index.pins.len() {
+        if from >= self.data.index.pins.order.len() {
             return Ok(());
         }
-        let id = self.data.index.pins.remove(from);
-        let to = to.min(self.data.index.pins.len());
-        self.data.index.pins.insert(to, id);
+        let id = self.data.index.pins.order.remove(from);
+        let to = to.min(self.data.index.pins.order.len());
+        self.data.index.pins.order.insert(to, id);
+        self.data.index.pins.updated_at = super::now_millis();
         self.persist()
     }
 }
@@ -52,6 +55,7 @@ impl LibraryData {
     pub fn pinned(&self) -> Vec<ItemId> {
         self.index
             .pins
+            .order
             .iter()
             .copied()
             .filter(|id| self.item(*id).is_some_and(|i| i.trashed.is_none()))
@@ -60,6 +64,6 @@ impl LibraryData {
 
     #[must_use]
     pub fn is_pinned(&self, id: ItemId) -> bool {
-        self.index.pins.contains(&id)
+        self.index.pins.order.contains(&id)
     }
 }

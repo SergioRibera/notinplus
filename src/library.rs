@@ -32,7 +32,6 @@ mod pins;
 pub mod refs;
 pub mod shared;
 pub mod sync;
-pub mod tagging;
 mod trash;
 
 use std::sync::Arc;
@@ -52,7 +51,7 @@ pub use self::links::{Link, LinkIndex, LinkKind};
 pub use self::model::{
     AnnotationId, BackgroundStyle, DocKind, Folder, FolderId, INDEX_VERSION, Item, ItemId,
     LibraryIndex, LinkId, Pane, PaneId, PaneLayout, PaneTab, ROOT_FOLDER, Rgba, SHARED_WITH_ME,
-    ScratchId, SplitOrientation, SplitSide, TabTarget, Tag, TagId, Trashed, ViewSlot,
+    ScratchId, SplitOrientation, SplitSide, TabTarget, Tag, TagId, Tagging, Trashed, ViewSlot,
     WORKSPACE_INDEX_VERSION, Workspace, WorkspaceId, WorkspaceIndex,
 };
 pub use self::refs::{RefEntry, RefOrigin};
@@ -85,7 +84,6 @@ pub struct LibraryData {
     index: LibraryIndex,
     workspaces: WorkspaceIndex,
     links: LinkIndex,
-    tag_stamps: tagging::TagStamps,
 }
 
 impl std::ops::Deref for Library {
@@ -128,7 +126,6 @@ impl Library {
             }
         }
         let links = index::load_links(&client).await?;
-        let tag_stamps = index::load_tag_stamps(&client).await?;
         sismo::counter!("library.items", index.items.len());
         sismo::counter!("library.folders", index.folders.len());
         sismo::counter!("library.links", links.links.len());
@@ -138,12 +135,10 @@ impl Library {
                 index,
                 workspaces,
                 links,
-                tag_stamps,
             },
         };
         lib.ensure_default_workspace().await?;
         lib.compact_tombstones().await?;
-        lib.stamp_unstamped_tags()?;
         Ok(lib)
     }
 
@@ -207,7 +202,6 @@ impl Library {
         }
         tags.sort_unstable_by_key(|t| t.0);
         tags.dedup();
-        let tagged = !tags.is_empty();
         let now = now_millis();
         let id = FolderId::new_v4();
         self.data.index.folders.push(Folder {
@@ -216,13 +210,18 @@ impl Library {
             name: name.to_owned(),
             color,
             icon: None,
-            tags,
             created_at: now,
             updated_at: now,
             trashed: None,
         });
-        if tagged {
-            self.tags_changed(id.0, now)?;
+        if !tags.is_empty() {
+            self.data.index.folder_tags.insert(
+                id,
+                Tagging {
+                    tags,
+                    updated_at: now,
+                },
+            );
         }
         self.persist()?;
         Ok(id)
@@ -317,13 +316,16 @@ impl Library {
         tags.sort_unstable_by_key(|t| t.0);
         tags.dedup();
         let now = now_millis();
-        let folder = self
-            .data
-            .index
-            .folder_mut(id)
-            .ok_or(LibraryError::NotFound(NotFoundKind::Folder(id)))?;
-        folder.tags = tags;
-        self.tags_changed(id.0, now)?;
+        if self.data.index.folder(id).is_none() {
+            return Err(LibraryError::NotFound(NotFoundKind::Folder(id)));
+        }
+        self.data.index.folder_tags.insert(
+            id,
+            Tagging {
+                tags,
+                updated_at: now,
+            },
+        );
         self.persist()
     }
 
@@ -395,7 +397,6 @@ impl Library {
         }
         tags.sort_unstable_by_key(|t| t.0);
         tags.dedup();
-        let tagged = !tags.is_empty();
         let now = now_millis();
         let id = ItemId::new_v4();
         self.data.index.items.push(Item {
@@ -404,15 +405,20 @@ impl Library {
             kind,
             name: name.to_owned(),
             color,
-            tags,
             background,
             created_at: now,
             updated_at: now,
             thumbnail: None,
             trashed: None,
         });
-        if tagged {
-            self.tags_changed(id.0, now)?;
+        if !tags.is_empty() {
+            self.data.index.item_tags.insert(
+                id,
+                Tagging {
+                    tags,
+                    updated_at: now,
+                },
+            );
         }
         self.persist()?;
         Ok(id)
@@ -481,13 +487,16 @@ impl Library {
         tags.sort_unstable_by_key(|t| t.0);
         tags.dedup();
         let now = now_millis();
-        let item = self
-            .data
-            .index
-            .item_mut(id)
-            .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
-        item.tags = tags;
-        self.tags_changed(id.0, now)?;
+        if self.data.index.item(id).is_none() {
+            return Err(LibraryError::NotFound(NotFoundKind::Item(id)));
+        }
+        self.data.index.item_tags.insert(
+            id,
+            Tagging {
+                tags,
+                updated_at: now,
+            },
+        );
         self.persist()
     }
 
@@ -658,12 +667,7 @@ impl Library {
         if self.data.index.tags.len() == before {
             return Err(LibraryError::NotFound(NotFoundKind::Tag(id)));
         }
-        for item in &mut self.data.index.items {
-            item.tags.retain(|t| *t != id);
-        }
-        for folder in &mut self.data.index.folders {
-            folder.tags.retain(|t| *t != id);
-        }
+        self.data.index.untag_all(id);
         graveyard::bury(graveyard::Buried::Tag, id.0, now_millis());
         self.persist()
     }
@@ -1453,6 +1457,28 @@ impl Library {
             }
         }
 
+        let now = now_millis();
+        for (id, tags) in &bundle.manifest.item_tags {
+            let tags = tags.clone();
+            self.data.index.item_tags.insert(
+                *id,
+                Tagging {
+                    tags,
+                    updated_at: now,
+                },
+            );
+        }
+        for (id, tags) in &bundle.manifest.folder_tags {
+            let tags = tags.clone();
+            self.data.index.folder_tags.insert(
+                *id,
+                Tagging {
+                    tags,
+                    updated_at: now,
+                },
+            );
+        }
+
         for (id, bytes) in &bundle.docs {
             bodies::write_doc_bytes(*id, bytes)?;
             if let Ok(doc) = bodies::read_doc(*id) {
@@ -1463,7 +1489,6 @@ impl Library {
             bodies::write_pdf(*id, bytes)?;
         }
 
-        self.stamp_unstamped_tags()?;
         self.persist()?;
         self.persist_workspaces()?;
         self.persist_links()?;
@@ -1475,6 +1500,7 @@ impl Library {
     /// Store the index. Covers stay out of it: each lives in its own file.
     #[sismo::function("library::persist")]
     fn persist(&mut self) -> Result<()> {
+        self.data.index.prune_personal();
         let covers: Vec<_> = self
             .data
             .index
@@ -1503,54 +1529,6 @@ impl Library {
         );
         crate::sync::local_changed();
         shared::notify();
-        Ok(())
-    }
-
-    #[sismo::function("library::persist_tag_stamps")]
-    fn persist_tag_stamps(&self) -> Result<()> {
-        index::store(
-            &self.client,
-            index::TAG_STAMPS_KEY,
-            index::encode(&self.data.tag_stamps)?,
-        );
-        Ok(())
-    }
-
-    /// The tags on `id` changed now: stamp them for this person's
-    /// other devices. Persisting the index is the caller's.
-    fn tags_changed(&mut self, id: [u8; 16], at: u64) -> Result<()> {
-        self.data.tag_stamps.set(id, at);
-        self.persist_tag_stamps()
-    }
-
-    /// Stamp tags that carry none (put before they had stamps, or
-    /// brought by a bundle) with the time of their record, the same on
-    /// every device holding it.
-    fn stamp_unstamped_tags(&mut self) -> Result<()> {
-        let data = &mut self.data;
-        let tagged = data
-            .index
-            .items
-            .iter()
-            .filter(|i| !i.tags.is_empty())
-            .map(|i| (i.id.0, i.updated_at))
-            .chain(
-                data.index
-                    .folders
-                    .iter()
-                    .filter(|f| !f.tags.is_empty())
-                    .map(|f| (f.id.0, f.updated_at)),
-            );
-        let mut stamped = false;
-        for (id, at) in tagged {
-            if data.tag_stamps.get(id).is_none() {
-                data.tag_stamps.set(id, at);
-                stamped = true;
-            }
-        }
-        if stamped {
-            self.persist_tag_stamps()?;
-        }
         Ok(())
     }
 
@@ -1589,7 +1567,7 @@ fn now_millis() -> u64 {
 impl LibraryData {
     /// Data assembled in memory, for screen previews.
     #[cfg(all(test, not(feature = "hotreload")))]
-    pub(crate) fn from_parts(
+    pub(crate) const fn from_parts(
         index: LibraryIndex,
         workspaces: WorkspaceIndex,
         links: LinkIndex,
@@ -1598,7 +1576,6 @@ impl LibraryData {
             index,
             workspaces,
             links,
-            tag_stamps: tagging::TagStamps::default(),
         }
     }
 
@@ -1638,13 +1615,25 @@ impl LibraryData {
             .collect()
     }
 
+    /// The tags on item `id`.
+    #[must_use]
+    pub fn item_tags(&self, id: ItemId) -> &[TagId] {
+        self.index.item_tags(id)
+    }
+
+    /// The tags on folder `id`.
+    #[must_use]
+    pub fn folder_tags(&self, id: FolderId) -> &[TagId] {
+        self.index.folder_tags(id)
+    }
+
     /// Items carrying `tag` in their tag list.
     #[must_use]
     pub fn items_with_tag(&self, tag: TagId) -> Vec<&Item> {
         self.index
             .items
             .iter()
-            .filter(|i| i.tags.contains(&tag) && i.trashed.is_none())
+            .filter(|i| self.index.item_tags(i.id).contains(&tag) && i.trashed.is_none())
             .collect()
     }
 
@@ -1654,7 +1643,7 @@ impl LibraryData {
         self.index
             .folders
             .iter()
-            .filter(|f| f.tags.contains(&tag) && f.trashed.is_none())
+            .filter(|f| self.index.folder_tags(f.id).contains(&tag) && f.trashed.is_none())
             .collect()
     }
 
@@ -1877,7 +1866,6 @@ impl LibraryData {
             name: name.to_owned(),
             color: None,
             icon: None,
-            tags: Vec::new(),
             created_at: now,
             updated_at: now,
             trashed: None,
@@ -1932,7 +1920,6 @@ mod tests {
             name: "A".into(),
             color: None,
             icon: None,
-            tags: Vec::new(),
             created_at: 0,
             updated_at: 0,
             trashed: None,
@@ -1944,7 +1931,6 @@ mod tests {
             name: "B".into(),
             color: None,
             icon: None,
-            tags: Vec::new(),
             created_at: 0,
             updated_at: 0,
             trashed: None,
@@ -1972,7 +1958,6 @@ mod tests {
             name: "Sketches".into(),
             color: Some([12, 34, 56, 255]),
             icon: None,
-            tags: Vec::new(),
             created_at: 1,
             updated_at: 2,
             trashed: None,
@@ -1984,7 +1969,6 @@ mod tests {
             kind: DocKind::plugin(crate::plugins::builtin::canvas::KIND),
             name: "Untitled".into(),
             color: None,
-            tags: vec![tag],
             background: BackgroundStyle::default(),
             created_at: 3,
             updated_at: 4,
@@ -2391,8 +2375,8 @@ mod tests {
         assert_eq!(items(&layout)[2], Some(mk_item(11)));
     }
 
-    /// A library holding one tagged item, its tags stamped at `stamp`.
-    fn tagged(stamp: Option<u64>) -> (LibraryData, ItemId, TagId) {
+    /// A library holding one item with `tag` on it, set at 5.
+    fn tagged() -> (LibraryData, ItemId, TagId) {
         let tag = TagId::new_v4();
         let item = ItemId::new_v4();
         let mut data = LibraryData::default();
@@ -2402,37 +2386,25 @@ mod tests {
             kind: DocKind::plugin(crate::plugins::builtin::canvas::KIND),
             name: "Mine".into(),
             color: None,
-            tags: vec![tag],
             background: BackgroundStyle::default(),
             created_at: 1,
             updated_at: 2,
             thumbnail: None,
             trashed: None,
         });
-        if let Some(at) = stamp {
-            data.tag_stamps.set(item.0, at);
-        }
+        data.index.item_tags.insert(
+            item,
+            Tagging {
+                tags: vec![tag],
+                updated_at: 5,
+            },
+        );
         (data, item, tag)
     }
 
     #[test]
-    fn an_item_travels_without_the_tags_on_it() {
-        let (data, item, _) = tagged(Some(5));
-        let key = BlobKey {
-            kind: BlobKind::Item,
-            id: item.0,
-        };
-        let Some(sync::SyncRecord::Item(sent)) = data.sync_record(key, &Graveyard::default())
-        else {
-            panic!("the item travels");
-        };
-        assert!(sent.tags.is_empty());
-        assert_eq!(sent.name, "Mine");
-    }
-
-    #[test]
     fn the_tags_on_an_item_travel_on_their_own_record() {
-        let (data, item, tag) = tagged(Some(5));
+        let (data, item, tag) = tagged();
         let yard = Graveyard::default();
         let key = BlobKey {
             kind: BlobKind::ItemTags,
@@ -2444,21 +2416,60 @@ mod tests {
             data.sync_record(key, &yard),
             Some(sync::SyncRecord::ItemTags {
                 item,
-                updated_at: 5,
-                tags: vec![tag],
+                tagging: Tagging {
+                    tags: vec![tag],
+                    updated_at: 5,
+                },
             })
         );
     }
 
     #[test]
-    fn unstamped_tags_have_no_record_to_travel_on() {
-        let (data, item, _) = tagged(None);
+    fn pins_travel_once_pinned_and_never_before() {
+        let (mut data, item, _) = tagged();
         let yard = Graveyard::default();
-        assert!(
-            !data
-                .sync_heads(&yard)
-                .iter()
-                .any(|h| h.kind == BlobKind::ItemTags && h.id == item.0)
+        let pins = |data: &LibraryData| {
+            data.sync_heads(&yard)
+                .into_iter()
+                .any(|h| h.kind == BlobKind::Pins)
+        };
+        assert!(!pins(&data));
+        data.index.pins = model::Pins {
+            order: vec![item],
+            updated_at: 7,
+        };
+        assert!(pins(&data));
+    }
+
+    #[test]
+    fn unpinning_what_is_not_pinned_changes_nothing() {
+        let (_, item, _) = tagged();
+        let mut pins = model::Pins::default();
+        pins.unpin(&[item], 9);
+        assert_eq!(pins, model::Pins::default());
+    }
+
+    #[test]
+    fn a_deleted_tag_leaves_every_item_and_folder() {
+        let (mut data, item, tag) = tagged();
+        let folder = FolderId::new_v4();
+        data.index.folder_tags.insert(
+            folder,
+            Tagging {
+                tags: vec![tag],
+                updated_at: 5,
+            },
         );
+        data.index.untag_all(tag);
+        assert!(data.item_tags(item).is_empty());
+        assert!(data.folder_tags(folder).is_empty());
+    }
+
+    #[test]
+    fn the_tags_of_a_removed_item_are_forgotten() {
+        let (mut data, item, _) = tagged();
+        data.index.items.clear();
+        data.index.prune_personal();
+        assert!(!data.index.item_tags.contains_key(&item));
     }
 }

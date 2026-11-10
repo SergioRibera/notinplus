@@ -4,8 +4,8 @@
 use std::collections::{HashMap, HashSet};
 
 use super::{
-    Folder, FolderId, Item, ItemId, Library, LibraryData, LinkId, ROOT_FOLDER, Result, WorkspaceId,
-    bodies, now_millis, refs,
+    Folder, FolderId, Item, ItemId, Library, LibraryData, LinkId, ROOT_FOLDER, Result, Tagging,
+    WorkspaceId, bodies, now_millis, refs,
 };
 use crate::bundle::{BundleManifest, ParsedBundle};
 
@@ -207,7 +207,25 @@ impl Library {
             receipt.workspaces.push(copy.id);
             self.data.workspaces.workspaces.push(copy);
         }
-        self.stamp_unstamped_tags()?;
+        for (bundled, tags) in &manifest.item_tags {
+            if let Some(id) = item_ids.get(bundled) {
+                let tagging = Tagging {
+                    tags: tags.clone(),
+                    updated_at: now,
+                };
+                self.data.index.item_tags.insert(*id, tagging);
+            }
+        }
+        for (bundled, tags) in &manifest.folder_tags {
+            let id = folders.ids.get(bundled).copied().unwrap_or(*bundled);
+            if self.data.index.folder(id).is_some() {
+                let tagging = Tagging {
+                    tags: tags.clone(),
+                    updated_at: now,
+                };
+                self.data.index.folder_tags.insert(id, tagging);
+            }
+        }
         self.persist()?;
         self.persist_workspaces()?;
         self.persist_links()?;
@@ -239,7 +257,6 @@ impl Library {
         let map = FolderMap { ids, destination };
         for folder in &manifest.folders {
             let id = map.ids.get(&folder.id).copied().unwrap_or(folder.id);
-            self.data.tag_stamps.forget(id.0);
             self.data.index.folders.push(Folder {
                 id,
                 parent: map.resolve(folder.parent),
@@ -293,7 +310,6 @@ impl Library {
                 Resolution::KeepBoth => item.id,
             };
             item_ids.insert(item.id, id);
-            self.data.tag_stamps.forget(id.0);
             self.data.index.items.push(Item {
                 id,
                 folder: folders.resolve(item.folder),

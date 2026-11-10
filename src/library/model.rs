@@ -6,6 +6,7 @@
 //! attachments (see [`super::bodies`]).
 
 use core::str::FromStr;
+use std::collections::{HashMap, HashSet};
 
 /// Reserved id for the implicit root folder that every fresh index
 /// carries. User-created folders use random UUID v4 bytes.
@@ -16,7 +17,7 @@ pub const SHARED_WITH_ME: FolderId = FolderId([0xEE; 16]);
 
 /// Schema version encoded into the index blob. Bump on any breaking
 /// change to the surrounding types.
-pub const INDEX_VERSION: u32 = 4;
+pub const INDEX_VERSION: u32 = 5;
 
 macro_rules! uuid_newtype {
     ($(#[$meta:meta])* $name:ident) => {
@@ -183,6 +184,38 @@ pub struct Trashed {
     pub batch: u64,
 }
 
+/// The tags a person put on an item or folder. They are that person's
+/// own way to sort things: they travel between their own devices and
+/// never inside a share, so they live beside the record, not in it.
+#[istmo::message]
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct Tagging {
+    pub tags: Vec<TagId>,
+    /// When `tags` last changed; an emptied list keeps its time so the
+    /// removal reaches the other devices.
+    pub updated_at: u64,
+}
+
+/// The items a person pinned, in the order Home shows them. As
+/// personal as [`Tagging`].
+#[istmo::message]
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct Pins {
+    pub order: Vec<ItemId>,
+    pub updated_at: u64,
+}
+
+impl Pins {
+    /// Unpin `ids` at `at`; the time only moves when one was pinned.
+    pub fn unpin(&mut self, ids: &[ItemId], at: u64) {
+        let before = self.order.len();
+        self.order.retain(|id| !ids.contains(id));
+        if self.order.len() != before {
+            self.updated_at = at;
+        }
+    }
+}
+
 /// User-defined tag. Colour is chosen at creation time and can be
 /// updated independently of the name.
 #[istmo::message]
@@ -203,7 +236,6 @@ pub struct Folder {
     pub name: String,
     pub color: Option<Rgba>,
     pub icon: Option<String>,
-    pub tags: Vec<TagId>,
     pub created_at: u64,
     pub updated_at: u64,
     /// `Some` while the folder sits in the trash.
@@ -221,7 +253,6 @@ pub struct Item {
     pub kind: DocKind,
     pub name: String,
     pub color: Option<Rgba>,
-    pub tags: Vec<TagId>,
     pub background: BackgroundStyle,
     pub created_at: u64,
     pub updated_at: u64,
@@ -855,7 +886,7 @@ impl WorkspaceIndex {
 /// to the surrounding types.
 pub const WORKSPACE_INDEX_VERSION: u32 = 4;
 
-/// The single blob persisted under `library.index.v2` in data-store.
+/// The single blob persisted under [`super::index::INDEX_KEY`] in data-store.
 ///
 /// Every id is a random UUID v4 so creating + deleting items never
 /// re-uses the same byte sequence. Simplifies undo / redo and keeps
@@ -868,8 +899,11 @@ pub struct LibraryIndex {
     pub folders: Vec<Folder>,
     pub items: Vec<Item>,
     pub tags: Vec<Tag>,
-    /// Pinned items, in the order Home shows them.
-    pub pins: Vec<ItemId>,
+    /// The tags this person put on each item.
+    pub item_tags: HashMap<ItemId, Tagging>,
+    /// The tags this person put on each folder.
+    pub folder_tags: HashMap<FolderId, Tagging>,
+    pub pins: Pins,
 }
 
 impl Default for LibraryIndex {
@@ -879,7 +913,9 @@ impl Default for LibraryIndex {
             folders: Vec::new(),
             items: Vec::new(),
             tags: Vec::new(),
-            pins: Vec::new(),
+            item_tags: HashMap::new(),
+            folder_tags: HashMap::new(),
+            pins: Pins::default(),
         }
     }
 }
@@ -910,6 +946,40 @@ impl LibraryIndex {
 
     pub fn tag_mut(&mut self, id: TagId) -> Option<&mut Tag> {
         self.tags.iter_mut().find(|t| t.id == id)
+    }
+
+    /// The tags on item `id`.
+    #[must_use]
+    pub fn item_tags(&self, id: ItemId) -> &[TagId] {
+        self.item_tags.get(&id).map_or(&[], |t| &t.tags)
+    }
+
+    /// The tags on folder `id`.
+    #[must_use]
+    pub fn folder_tags(&self, id: FolderId) -> &[TagId] {
+        self.folder_tags.get(&id).map_or(&[], |t| &t.tags)
+    }
+
+    /// Forget the tags on items and folders that left the library.
+    /// Pins stay: they may name documents still on their way, and
+    /// Home skips the ones it does not hold.
+    pub fn prune_personal(&mut self) {
+        let items: HashSet<ItemId> = self.items.iter().map(|i| i.id).collect();
+        let folders: HashSet<FolderId> = self.folders.iter().map(|f| f.id).collect();
+        self.item_tags.retain(|id, _| items.contains(id));
+        self.folder_tags.retain(|id, _| folders.contains(id));
+    }
+
+    /// Take `tag` off every item and folder; the deletion of the tag
+    /// itself is what travels.
+    pub fn untag_all(&mut self, tag: TagId) {
+        for tagging in self
+            .item_tags
+            .values_mut()
+            .chain(self.folder_tags.values_mut())
+        {
+            tagging.tags.retain(|t| *t != tag);
+        }
     }
 
     /// Walk `id`'s parent chain to detect whether `ancestor` sits

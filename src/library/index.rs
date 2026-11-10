@@ -16,14 +16,13 @@ use istmo_data_store::DataStoreClient;
 use super::error::{LibraryError, Result};
 use super::links::LinkIndex;
 use super::model::{INDEX_VERSION, LibraryIndex, WorkspaceIndex};
-use super::tagging::TagStamps;
 
 const CODEC: Configuration = config::standard();
 
 /// data-store key the whole blob lives under. The suffix tracks the
 /// on-disk schema: a blob written under an older key is never read, so
 /// a schema break simply starts the library over.
-pub const INDEX_KEY: &str = "library.index.v3";
+pub const INDEX_KEY: &str = "library.index.v4";
 
 /// data-store key for the [`WorkspaceIndex`] blob. Kept on its own key
 /// so introducing workspaces does not force a bump of [`INDEX_KEY`].
@@ -89,25 +88,6 @@ pub async fn load_links(client: &DataStoreClient) -> Result<LinkIndex> {
     let (index, _) = bincode::decode_from_slice::<LinkIndex, _>(&bytes, CODEC)
         .map_err(|e| LibraryError::Codec(e.to_string()))?;
     Ok(index)
-}
-
-/// data-store key for the [`TagStamps`] blob.
-pub const TAG_STAMPS_KEY: &str = "library.tag_stamps.v1";
-
-/// Fetch when tags last changed, or nothing for a library that never
-/// recorded it.
-///
-/// # Errors
-/// Runtime / data-store / codec failures.
-#[sismo::function]
-pub async fn load_tag_stamps(client: &DataStoreClient) -> Result<TagStamps> {
-    let raw = client.get_bytes(TAG_STAMPS_KEY.to_owned()).await?;
-    let Some(bytes) = raw else {
-        return Ok(TagStamps::default());
-    };
-    let (stamps, _) = bincode::decode_from_slice::<TagStamps, _>(&bytes, CODEC)
-        .map_err(|e| LibraryError::Codec(e.to_string()))?;
-    Ok(stamps)
 }
 
 /// Encode `snapshot` for [`store`].

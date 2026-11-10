@@ -680,7 +680,7 @@ pub fn edit_item(item: ItemId) {
         name: found.name.clone(),
         paper: found.background,
         color: found.color,
-        tags: tag_names(&data, &found.tags),
+        tags: tag_names(&data, data.item_tags(found.id)),
         folder: found.folder,
         choice: initial_choice.clone(),
         ..FormValues::default()
@@ -738,7 +738,7 @@ pub fn edit_folder(folder: FolderId) {
     let initial = FormValues {
         name: found.name.clone(),
         color: found.color,
-        tags: tag_names(&data, &found.tags),
+        tags: tag_names(&data, data.folder_tags(found.id)),
         ..FormValues::default()
     };
     open(spec, initial, move |values| {

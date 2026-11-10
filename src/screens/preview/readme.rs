@@ -222,8 +222,7 @@ fn library() -> LibraryData {
         version: crate::library::INDEX_VERSION,
         folders: vec![study, sermons],
         items,
-        tags: Vec::new(),
-        pins: Vec::new(),
+        ..LibraryIndex::default()
     };
     let workspaces = WorkspaceIndex {
         version: crate::library::WORKSPACE_INDEX_VERSION,

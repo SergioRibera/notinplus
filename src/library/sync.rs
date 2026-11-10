@@ -6,7 +6,7 @@ use notein_sync::{BlobHead, BlobKey, BlobKind};
 use super::error::Result;
 use super::graveyard::{Buried, Graveyard, Tombstone};
 use super::links::Link;
-use super::model::{Folder, Item, Tag, Workspace};
+use super::model::{Folder, Item, Pins, Tag, Tagging, Workspace};
 use super::{Library, LibraryData, bodies, now_millis, refs};
 
 /// One record as it travels between devices.
@@ -43,16 +43,19 @@ pub enum SyncRecord {
     /// between their own devices; a share never carries it.
     ItemTags {
         item: super::ItemId,
-        updated_at: u64,
-        tags: Vec<super::TagId>,
+        tagging: Tagging,
     },
     /// The tags this person put on a folder, like [`Self::ItemTags`].
     FolderTags {
         folder: super::FolderId,
-        updated_at: u64,
-        tags: Vec<super::TagId>,
+        tagging: Tagging,
     },
+    /// What this person pinned, like [`Self::ItemTags`].
+    Pins(Pins),
 }
+
+/// Key of the one [`SyncRecord::Pins`] a library holds.
+const PINS_ID: [u8; 16] = [0; 16];
 
 /// Freshness of every asset: they never change, so having one is enough.
 const ASSET_STAMP: u64 = 1;
@@ -93,7 +96,8 @@ const fn buried_of(kind: BlobKind) -> Option<Buried> {
         | BlobKind::Asset
         | BlobKind::Attachment
         | BlobKind::ItemTags
-        | BlobKind::FolderTags => None,
+        | BlobKind::FolderTags
+        | BlobKind::Pins => None,
     }
 }
 
@@ -138,13 +142,6 @@ impl Library {
         match record {
             SyncRecord::Item(mut item) => {
                 yard.revive(Buried::Item, item.id.0);
-                // Tags stay this person's: they arrive on their own record.
-                item.tags = self
-                    .data
-                    .index
-                    .item(item.id)
-                    .map(|held| held.tags.clone())
-                    .unwrap_or_default();
                 item.folder = self.data.landing_folder(&item);
                 super::keep_cover(item.id, item.thumbnail.as_deref());
                 upsert(&mut self.data.index.items, item, |i| i.id);
@@ -152,12 +149,6 @@ impl Library {
             }
             SyncRecord::Folder(mut folder) => {
                 yard.revive(Buried::Folder, folder.id.0);
-                folder.tags = self
-                    .data
-                    .index
-                    .folder(folder.id)
-                    .map(|held| held.tags.clone())
-                    .unwrap_or_default();
                 folder.parent = self.data.landing_parent(&folder);
                 upsert(&mut self.data.index.folders, folder, |f| f.id);
                 self.persist()?;
@@ -217,28 +208,22 @@ impl Library {
                 crate::plugins::content::attachment_replaced(item);
                 crate::plugins::content::notify_remote(item);
             }
-            SyncRecord::ItemTags {
-                item,
-                updated_at,
-                tags,
-            } => {
-                let Some(entry) = self.data.index.item_mut(item) else {
+            SyncRecord::ItemTags { item, tagging } => {
+                if self.data.index.item(item).is_none() {
                     return Ok(false);
-                };
-                entry.tags = tags;
-                self.tags_changed(item.0, updated_at)?;
+                }
+                self.data.index.item_tags.insert(item, tagging);
                 self.persist()?;
             }
-            SyncRecord::FolderTags {
-                folder,
-                updated_at,
-                tags,
-            } => {
-                let Some(entry) = self.data.index.folder_mut(folder) else {
+            SyncRecord::FolderTags { folder, tagging } => {
+                if self.data.index.folder(folder).is_none() {
                     return Ok(false);
-                };
-                entry.tags = tags;
-                self.tags_changed(folder.0, updated_at)?;
+                }
+                self.data.index.folder_tags.insert(folder, tagging);
+                self.persist()?;
+            }
+            SyncRecord::Pins(pins) => {
+                self.data.index.pins = pins;
                 self.persist()?;
             }
             SyncRecord::Gone(stone) => self.apply_gone(&stone, yard).await?,
@@ -274,12 +259,7 @@ impl Library {
             Buried::Tag => {
                 let id = super::TagId(stone.id);
                 self.data.index.tags.retain(|t| t.id != id);
-                for item in &mut self.data.index.items {
-                    item.tags.retain(|t| *t != id);
-                }
-                for folder in &mut self.data.index.folders {
-                    folder.tags.retain(|t| *t != id);
-                }
+                self.data.index.untag_all(id);
                 self.persist()?;
             }
             Buried::Workspace => {
@@ -361,20 +341,21 @@ impl LibraryData {
                 .into_iter()
                 .map(|name| head(BlobKind::Asset, bodies::asset_key(i.id, &name), ASSET_STAMP))
         }));
-        heads.extend(self.index.items.iter().filter_map(|i| {
-            Some(head(
-                BlobKind::ItemTags,
-                i.id.0,
-                self.tag_stamps.get(i.id.0)?,
-            ))
-        }));
-        heads.extend(self.index.folders.iter().filter_map(|f| {
-            Some(head(
-                BlobKind::FolderTags,
-                f.id.0,
-                self.tag_stamps.get(f.id.0)?,
-            ))
-        }));
+        heads.extend(
+            self.index
+                .item_tags
+                .iter()
+                .map(|(id, t)| head(BlobKind::ItemTags, id.0, t.updated_at)),
+        );
+        heads.extend(
+            self.index
+                .folder_tags
+                .iter()
+                .map(|(id, t)| head(BlobKind::FolderTags, id.0, t.updated_at)),
+        );
+        if self.index.pins.updated_at > 0 {
+            heads.push(head(BlobKind::Pins, PINS_ID, self.index.pins.updated_at));
+        }
         let mut at: std::collections::HashMap<(BlobKind, [u8; 16]), usize> = heads
             .iter()
             .enumerate()
@@ -401,25 +382,18 @@ impl LibraryData {
     pub fn sync_record(&self, key: BlobKey, yard: &Graveyard) -> Option<SyncRecord> {
         let stone = buried_of(key.kind).and_then(|b| yard.get(b, key.id).copied());
         let live = match key.kind {
-            BlobKind::Item => self.index.items.iter().find(|i| i.id.0 == key.id).map(|i| {
-                let item = Item {
-                    tags: Vec::new(),
-                    ..i.clone()
-                };
-                (i.updated_at, SyncRecord::Item(item))
-            }),
+            BlobKind::Item => self
+                .index
+                .items
+                .iter()
+                .find(|i| i.id.0 == key.id)
+                .map(|i| (i.updated_at, SyncRecord::Item(i.clone()))),
             BlobKind::Folder => self
                 .index
                 .folders
                 .iter()
                 .find(|f| f.id.0 == key.id)
-                .map(|f| {
-                    let folder = Folder {
-                        tags: Vec::new(),
-                        ..f.clone()
-                    };
-                    (f.updated_at, SyncRecord::Folder(folder))
-                }),
+                .map(|f| (f.updated_at, SyncRecord::Folder(f.clone()))),
             BlobKind::Tag => self
                 .index
                 .tags
@@ -443,6 +417,7 @@ impl LibraryData {
             BlobKind::Attachment => self.attachment_record(super::ItemId(key.id)),
             BlobKind::ItemTags => self.item_tags_record(super::ItemId(key.id)),
             BlobKind::FolderTags => self.folder_tags_record(super::FolderId(key.id)),
+            BlobKind::Pins => self.pins_record(key.id),
         };
         match (live, stone) {
             (Some((at, record)), Some(stone)) if at >= stone.at => Some(record),
@@ -499,29 +474,22 @@ impl LibraryData {
     }
 
     fn item_tags_record(&self, item: super::ItemId) -> Option<(u64, SyncRecord)> {
-        let entry = self.index.item(item)?;
-        let updated_at = self.tag_stamps.get(item.0)?;
-        Some((
-            updated_at,
-            SyncRecord::ItemTags {
-                item,
-                updated_at,
-                tags: entry.tags.clone(),
-            },
-        ))
+        let tagging = self.index.item_tags.get(&item)?.clone();
+        Some((tagging.updated_at, SyncRecord::ItemTags { item, tagging }))
     }
 
     fn folder_tags_record(&self, folder: super::FolderId) -> Option<(u64, SyncRecord)> {
-        let entry = self.index.folder(folder)?;
-        let updated_at = self.tag_stamps.get(folder.0)?;
+        let tagging = self.index.folder_tags.get(&folder)?.clone();
         Some((
-            updated_at,
-            SyncRecord::FolderTags {
-                folder,
-                updated_at,
-                tags: entry.tags.clone(),
-            },
+            tagging.updated_at,
+            SyncRecord::FolderTags { folder, tagging },
         ))
+    }
+
+    fn pins_record(&self, id: [u8; 16]) -> Option<(u64, SyncRecord)> {
+        let pins = &self.index.pins;
+        (id == PINS_ID && pins.updated_at > 0)
+            .then(|| (pins.updated_at, SyncRecord::Pins(pins.clone())))
     }
 
     #[sismo::function("library::sync::asset_record")]
@@ -577,12 +545,15 @@ impl LibraryData {
                 .and_then(|i| bodies::pdf_stamp(i.id)),
             BlobKind::ItemTags => self
                 .index
-                .item(super::ItemId(key.id))
-                .and_then(|i| self.tag_stamps.get(i.id.0)),
+                .item_tags
+                .get(&super::ItemId(key.id))
+                .map(|t| t.updated_at),
             BlobKind::FolderTags => self
                 .index
-                .folder(super::FolderId(key.id))
-                .and_then(|f| self.tag_stamps.get(f.id.0)),
+                .folder_tags
+                .get(&super::FolderId(key.id))
+                .map(|t| t.updated_at),
+            BlobKind::Pins => self.pins_record(key.id).map(|(at, _)| at),
         };
         match (live, stone) {
             (Some(a), Some(b)) => Some(a.max(b)),

@@ -119,6 +119,9 @@ pub struct BundleManifest {
     pub folders: Vec<Folder>,
     pub items: Vec<Item>,
     pub tags: Vec<Tag>,
+    /// The tags on bundled items and folders, by id.
+    pub item_tags: Vec<(ItemId, Vec<TagId>)>,
+    pub folder_tags: Vec<(FolderId, Vec<TagId>)>,
     pub workspaces: Vec<Workspace>,
     /// Live links between bundled items (plus dangling ones when the
     /// exporter asked for them).
@@ -137,6 +140,8 @@ impl bincode::Encode for BundleManifest {
         self.folders.encode(encoder)?;
         self.items.encode(encoder)?;
         self.tags.encode(encoder)?;
+        self.item_tags.encode(encoder)?;
+        self.folder_tags.encode(encoder)?;
         self.workspaces.encode(encoder)?;
         self.links.encode(encoder)?;
         Ok(())
@@ -155,6 +160,8 @@ impl<Ctx> bincode::Decode<Ctx> for BundleManifest {
             folders: bincode::Decode::decode(decoder)?,
             items: bincode::Decode::decode(decoder)?,
             tags: bincode::Decode::decode(decoder)?,
+            item_tags: bincode::Decode::decode(decoder)?,
+            folder_tags: bincode::Decode::decode(decoder)?,
             workspaces: bincode::Decode::decode(decoder)?,
             links: bincode::Decode::decode(decoder)?,
         })
@@ -595,17 +602,22 @@ fn build_manifest(
         .filter_map(|id| lib.workspace(*id).cloned())
         .collect();
 
-    let mut tag_ids: HashSet<TagId> = HashSet::new();
-    for item in &items {
-        for tag in &item.tags {
-            tag_ids.insert(*tag);
-        }
-    }
-    for folder in &folders {
-        for tag in &folder.tags {
-            tag_ids.insert(*tag);
-        }
-    }
+    let item_tags: Vec<(ItemId, Vec<TagId>)> = items
+        .iter()
+        .map(|i| (i.id, lib.item_tags(i.id).to_vec()))
+        .filter(|(_, tags)| !tags.is_empty())
+        .collect();
+    let folder_tags: Vec<(FolderId, Vec<TagId>)> = folders
+        .iter()
+        .map(|f| (f.id, lib.folder_tags(f.id).to_vec()))
+        .filter(|(_, tags)| !tags.is_empty())
+        .collect();
+    let tag_ids: HashSet<TagId> = item_tags
+        .iter()
+        .flat_map(|(_, tags)| tags)
+        .chain(folder_tags.iter().flat_map(|(_, tags)| tags))
+        .copied()
+        .collect();
     let mut tags: Vec<Tag> = tag_ids
         .iter()
         .filter_map(|id| lib.tag(*id).cloned())
@@ -651,6 +663,8 @@ fn build_manifest(
         folders,
         items,
         tags,
+        item_tags,
+        folder_tags,
         workspaces,
         links,
     }
@@ -734,6 +748,8 @@ mod tests {
             folders: Vec::new(),
             items: Vec::new(),
             tags: Vec::new(),
+            item_tags: Vec::new(),
+            folder_tags: Vec::new(),
             workspaces: Vec::new(),
             links: Vec::new(),
         };
@@ -753,6 +769,8 @@ mod tests {
             folders: Vec::new(),
             items: Vec::new(),
             tags: Vec::new(),
+            item_tags: Vec::new(),
+            folder_tags: Vec::new(),
             workspaces: Vec::new(),
             links: Vec::new(),
         };
@@ -812,6 +830,8 @@ mod closure_tests {
             folders: Vec::new(),
             items: Vec::new(),
             tags: Vec::new(),
+            item_tags: Vec::new(),
+            folder_tags: Vec::new(),
             workspaces: Vec::new(),
             links: links.links.clone(),
         };

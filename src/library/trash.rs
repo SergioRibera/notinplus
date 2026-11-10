@@ -116,7 +116,7 @@ impl Library {
             });
             item.updated_at = at;
         }
-        self.data.index.pins.retain(|p| !moved.contains(p));
+        self.data.index.pins.unpin(&moved, at);
         self.persist()?;
         Ok(TrashReceipt {
             batch,
@@ -183,7 +183,7 @@ impl Library {
                 items += 1;
             }
         }
-        self.data.index.pins.retain(|p| !trashed_ids.contains(p));
+        self.data.index.pins.unpin(&trashed_ids, at);
         self.persist()?;
         Ok(TrashReceipt { batch, items })
     }

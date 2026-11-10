@@ -111,7 +111,7 @@ pub fn run(query: &str, data: &LibraryData) -> Results {
         data.live_items()
             .filter(|item| {
                 item.name.to_lowercase().contains(&needle)
-                    || item.tags.iter().any(|t| tag_hits.contains(t))
+                    || data.item_tags(item.id).iter().any(|t| tag_hits.contains(t))
             })
             .take(DOCS)
             .map(|item| {
