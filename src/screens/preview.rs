@@ -1001,3 +1001,41 @@ fn external_pdf_renders() {
     render("external-pdf-desktop", (1280.0, 800.0), external_pdf);
     render("external-pdf-phone", (390.0, 844.0), external_pdf);
 }
+
+fn mesas_with_external() -> Element {
+    let expanded = use_state(|| false);
+    let now = crate::format::now();
+    let external = Arc::new(vec![
+        crate::external_files::Recent {
+            path: "/home/ana/Descargas/Comentario de Romanos.pdf".to_owned(),
+            name: "Comentario de Romanos.pdf".to_owned(),
+            opened_at: now - 5 * 60 * 1000,
+        },
+        crate::external_files::Recent {
+            path: "/home/ana/Documentos/Notas del martes.md".to_owned(),
+            name: "Notas del martes.md".to_owned(),
+            opened_at: now - 3 * 60 * 60 * 1000,
+        },
+    ]);
+    let width = Platform::get().current_window().root_size.read().width - 64.0;
+    rect()
+        .padding(32.0)
+        .child(crate::screens::home::mesas::MesaStrip {
+            data: Arc::new(demo()),
+            width,
+            compact: width < 600.0,
+            expanded,
+            external,
+        })
+        .into_element()
+}
+
+#[test]
+fn home_continue_with_external_files() {
+    render(
+        "home-external-desktop",
+        (1280.0, 400.0),
+        mesas_with_external,
+    );
+    render("home-external-phone", (390.0, 700.0), mesas_with_external);
+}

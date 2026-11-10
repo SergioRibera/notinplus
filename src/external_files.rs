@@ -13,6 +13,7 @@
 //! other app shared, and the edits stay in that copy).
 
 mod pdf;
+mod recents;
 mod text;
 mod view;
 
@@ -23,6 +24,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use freya::prelude::*;
 use notein_i18n::tr;
 
+pub use recents::{Recent, reopen, use_recents};
 pub use view::ExternalView;
 
 use crate::files::Picked;
@@ -247,6 +249,7 @@ impl Autosave {
 /// Show `file` in its own view.
 #[sismo::function("external_files::show")]
 pub fn show(file: ExternalFile) {
+    recents::remember(&file);
     let session = Session::from(file);
     if OWN_WINDOWS {
         launch_window(session);

@@ -396,6 +396,79 @@ impl Component for MesaRow {
     }
 }
 
+/// A file opened from outside the library, offered to continue with.
+#[derive(Clone, Debug, PartialEq)]
+struct ExternalRow {
+    recent: crate::external_files::Recent,
+    height: f32,
+}
+
+impl Component for ExternalRow {
+    #[sismo::function("home::external_row")]
+    fn render(&self) -> impl IntoElement {
+        let p = palette();
+        let mut hovering = use_state(|| false);
+        let recent = self.recent.clone();
+        let tint = match self.recent.kind() {
+            Some(crate::external_files::FileKind::Pdf) => p.kinds.pdf,
+            _ => p.kinds.note,
+        };
+        let badge = self
+            .recent
+            .kind()
+            .map_or("", crate::external_files::FileKind::badge);
+        rect()
+            .width(Size::fill())
+            .height(Size::px(self.height))
+            .padding((0.0, 10.0))
+            .corner_radius(tokens::radius::MD)
+            .background(if hovering() { p.s2 } else { Color::TRANSPARENT })
+            .horizontal()
+            .cross_align(Alignment::Center)
+            .content(Content::Flex)
+            .spacing(10.0)
+            .a11y_role(AccessibilityRole::Button)
+            .a11y_alt(self.recent.name.clone())
+            .a11y_focusable(true)
+            .on_pointer_enter(move |e: Event<PointerEventData>| {
+                hovering.set(notein_ui_kit::is_mouse(&e));
+            })
+            .on_pointer_leave(move |_| hovering.set(false))
+            .on_tap(move |_| crate::external_files::reopen(&recent))
+            .child(
+                rect()
+                    .width(Size::px(30.0))
+                    .height(Size::px(18.0))
+                    .corner_radius(tokens::radius::XS)
+                    .background(tint.with_a(46))
+                    .center()
+                    .child(
+                        label()
+                            .text(badge)
+                            .font_size(9.5)
+                            .font_weight(FontWeight::BOLD)
+                            .color(tint),
+                    ),
+            )
+            .child(
+                Text::new(self.recent.name.clone())
+                    .role(TextRole::Strong)
+                    .lines(1)
+                    .fill(),
+            )
+            .child(notein_ui_kit::Tag::new(tr!("external-files-pill")))
+            .child(
+                Text::new(crate::format::ago(
+                    self.recent.opened_at,
+                    crate::format::now(),
+                ))
+                .role(TextRole::Meta)
+                .lines(1),
+            )
+            .into_element()
+    }
+}
+
 /// The row that starts a mesa when there is no other to list.
 fn new_mesa_row(height: f32) -> Element {
     let p = palette();
@@ -429,6 +502,8 @@ pub struct MesaStrip {
     pub compact: bool,
     /// Whether every mesa is listed, not only the first few.
     pub expanded: State<bool>,
+    /// Files opened from outside the library lately, newest first.
+    pub external: std::sync::Arc<Vec<crate::external_files::Recent>>,
 }
 
 impl std::fmt::Debug for MesaStrip {
@@ -443,6 +518,8 @@ impl std::fmt::Debug for MesaStrip {
 impl MesaStrip {
     /// Rows listed while folded.
     const SHOWN: usize = 3;
+    /// Files opened from outside the library listed first.
+    const EXTERNAL_SHOWN: usize = 3;
     /// The section label and the space under it.
     const HEADER: f32 = 36.0;
     /// The "Ver todas" button.
@@ -468,9 +545,9 @@ impl MesaStrip {
         }
     }
 
-    fn list_height(listed: &Listed, compact: bool, expanded: bool) -> f32 {
+    fn list_height(listed: &Listed, external: usize, compact: bool, expanded: bool) -> f32 {
         #[allow(clippy::cast_precision_loss)] // a handful of rows
-        let rows = Self::rows(listed, expanded) as f32;
+        let rows = (Self::rows(listed, expanded) + external.min(Self::EXTERNAL_SHOWN)) as f32;
         let more = if listed.rest.len() > Self::SHOWN {
             Self::MORE
         } else {
@@ -479,12 +556,13 @@ impl MesaStrip {
         rows.mul_add(Self::row_height(compact), more)
     }
 
-    /// Height of the whole block for `data`, as laid out by `render`.
+    /// Height of the whole block for `data` and `external` files opened
+    /// from outside the library, as laid out by `render`.
     #[must_use]
     #[sismo::function("home::mesa_strip_height")]
-    pub fn height(data: &LibraryData, compact: bool, expanded: bool) -> f32 {
+    pub fn height(data: &LibraryData, external: usize, compact: bool, expanded: bool) -> f32 {
         let listed = Listed::from(data);
-        let list = Self::list_height(&listed, compact, expanded);
+        let list = Self::list_height(&listed, external, compact, expanded);
         let body = if !compact {
             MESA_CARD.max(list)
         } else if list > 0.0 {
@@ -529,6 +607,18 @@ impl MesaStrip {
                 Size::flex(1.0)
             })
             .max_width(Size::px(640.0))
+            .children(
+                self.external
+                    .iter()
+                    .take(Self::EXTERNAL_SHOWN)
+                    .map(|recent| {
+                        ExternalRow {
+                            recent: recent.clone(),
+                            height: row,
+                        }
+                        .into_element()
+                    }),
+            )
             .children(rows)
             .maybe_child(
                 (listed.current.is_some() && listed.rest.is_empty()).then(|| new_mesa_row(row)),
@@ -575,6 +665,7 @@ impl Component for MesaStrip {
             .width(Size::fill())
             .height(Size::px(Self::height(
                 &self.data,
+                self.external.len(),
                 self.compact,
                 *self.expanded.read(),
             )))

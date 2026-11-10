@@ -130,7 +130,7 @@ pub(crate) async fn read(path: std::path::PathBuf) -> std::io::Result<Vec<u8>> {
         .unwrap_or_else(|_| Err(std::io::Error::other("reader thread stopped")))
 }
 
-fn failed(name: &str, why: &str) {
+pub(crate) fn failed(name: &str, why: &str) {
     Toasts::get().show(
         Toast::new(tr!(
             "errors-headline-detail",

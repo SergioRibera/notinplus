@@ -236,6 +236,8 @@ struct Body {
     selection: State<Selection>,
     filter: State<Filter>,
     mesas_open: State<bool>,
+    /// Files opened from outside the library lately.
+    external: Arc<Vec<crate::external_files::Recent>>,
     folder: FolderId,
     filtered: bool,
     pad: f32,
@@ -254,7 +256,12 @@ impl Body {
         match block {
             Block::Top => 8.0,
             Block::Mesas => {
-                MesaStrip::height(&self.data, self.compact, *self.mesas_open.read()) + Self::GAP
+                MesaStrip::height(
+                    &self.data,
+                    self.external.len(),
+                    self.compact,
+                    *self.mesas_open.read(),
+                ) + Self::GAP
             }
             Block::Pinned => PinnedRow::height(self.pinned_card) + Self::GAP,
             Block::Bar => LibraryBar::height(self.compact) + 16.0,
@@ -275,6 +282,7 @@ impl Body {
                     width: self.width,
                     compact: self.compact,
                     expanded: self.mesas_open,
+                    external: Arc::clone(&self.external),
                 }
                 .into_element(),
             ),
@@ -422,6 +430,7 @@ impl Component for Loaded {
         let sort = SettingsStore::get().read().library.sort;
         let filter = use_state(Filter::default);
         let mesas_open = use_state(|| false);
+        let external = crate::external_files::use_recents();
         let mut selection = use_state(Selection::default);
         let data = &self.data;
 
@@ -454,6 +463,7 @@ impl Component for Loaded {
             selection,
             filter,
             mesas_open,
+            external: external.read().clone(),
             folder,
             filtered: current_filter != Filter::All,
             pad,

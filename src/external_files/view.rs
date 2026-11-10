@@ -140,9 +140,11 @@ impl ViewState {
             bytes: self.current(session),
         };
         let in_library = self.in_library;
+        let path = session.file.path.clone();
         let landing = Landing::Report(Rc::new(move |item| {
             let mut in_library = in_library;
             in_library.set(Some(item));
+            super::recents::forget(&path);
             Toasts::get().show(Toast::new(tr!("external-files-saved-to-library")));
         }));
         let context = Context {
