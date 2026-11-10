@@ -66,13 +66,25 @@ class NotinplusActivity : GameActivity() {
             isAppearanceLightStatusBars = true
         }
         installSafeAreaListener()
-        publishDeepLink(intent)
+        // A recreated activity (rotation, process restore) keeps its
+        // intent: open its document only on the first creation.
+        if (OpenedDocuments.handles(intent)) {
+            if (savedInstanceState == null) {
+                OpenedDocuments.publish(this, intent, OpenedDocuments.ORIGIN_LAUNCH)
+            }
+        } else {
+            publishDeepLink(intent)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        publishDeepLink(intent)
+        if (OpenedDocuments.handles(intent)) {
+            OpenedDocuments.publish(this, intent, OpenedDocuments.ORIGIN_RUNNING)
+        } else {
+            publishDeepLink(intent)
+        }
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
@@ -108,7 +120,7 @@ class NotinplusActivity : GameActivity() {
      * arrives before the router listens is kept until it does.
      */
     private fun publishDeepLink(intent: Intent?) {
-        if (intent?.action != Intent.ACTION_VIEW) return
+        if (intent?.action != Intent.ACTION_VIEW || intent.data?.scheme != "notein") return
         val uri = intent.dataString ?: return
         val out = ByteArrayOutputStream()
         Bincode.writeString(out, uri)

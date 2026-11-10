@@ -20,7 +20,11 @@ enum DeepLinks {
             queue: .main
         ) { note in
             if let url = note.userInfo?[UIApplication.LaunchOptionsKey.url] as? URL {
-                publish(url, source: "launch")
+                if url.isFileURL {
+                    OpenedDocuments.publish(url, origin: OpenedDocuments.originLaunch)
+                } else {
+                    publish(url, source: "launch")
+                }
             }
         }
     }
@@ -45,7 +49,11 @@ enum DeepLinks {
         guard class_getInstanceMethod(cls, selector) == nil else { return }
         let handler: @convention(block) (AnyObject, UIApplication, URL, NSDictionary) -> Bool = {
             _, _, url, _ in
-            publish(url, source: "open-url")
+            if url.isFileURL {
+                OpenedDocuments.publish(url, origin: OpenedDocuments.originRunning)
+            } else {
+                publish(url, source: "open-url")
+            }
             return true
         }
         class_addMethod(cls, selector, imp_implementationWithBlock(handler), "B@:@@@")
@@ -57,6 +65,46 @@ enum DeepLinks {
         Bincode.writeOption(&out, source) { o, s in Bincode.writeString(&o, s) }
         let now = UInt64(Date().timeIntervalSince1970 * 1000)
         Bincode.writeOption(&out, now) { o, ms in Bincode.writeVarintU64(&o, ms) }
+        IstmoRuntime.shared.publishEarlyQueue(channel: channel, capacity: capacity, payload: out)
+    }
+}
+
+/// Files opened with the app (Files › "Open in", the share sheet) go to
+/// the Rust side on the `istmo.documents` queue as a plain path: each
+/// one is copied into the temporary directory while its security scope
+/// is open. The copy is what the app opens; changes are not written back
+/// to the original.
+enum OpenedDocuments {
+    private static let channel = "istmo.documents"
+    private static let capacity: UInt32 = 32
+    // Wire discriminants of `istmo_plugins::DocumentOrigin`.
+    static let originLaunch: UInt32 = 0
+    static let originRunning: UInt32 = 1
+    // `istmo_plugins::DocumentLocation::Path`.
+    private static let locationPath: UInt32 = 0
+
+    static func publish(_ url: URL, origin: UInt32) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let name = url.lastPathComponent.isEmpty ? "document" : url.lastPathComponent
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("opened", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let copy = dir.appendingPathComponent(name)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: url, to: copy)
+        } catch {
+            NSLog("OpenedDocuments: could not copy % %@", url.path, error.localizedDescription)
+            return
+        }
+        var out = Data()
+        Bincode.writeVarintU32(&out, locationPath)
+        Bincode.writeString(&out, copy.path)
+        Bincode.writeOption(&out, name) { o, s in Bincode.writeString(&o, s) }
+        Bincode.writeOption(&out, nil as String?) { o, s in Bincode.writeString(&o, s) }
+        Bincode.writeVarintU32(&out, origin)
+        Bincode.writeOption(&out, nil as String?) { o, s in Bincode.writeString(&o, s) }
         IstmoRuntime.shared.publishEarlyQueue(channel: channel, capacity: capacity, payload: out)
     }
 }
