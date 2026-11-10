@@ -79,32 +79,33 @@ pub(crate) fn init_canvas_mount(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
     // default off-white paper. A face that paints its own pages keeps
     // them: the paper would land on top once the library answered.
     let face_paints = try_consume_context::<crate::app::FacePaintsBackground>().is_some();
-    if !had_pending && !face_paints {
-        if let Some(id) = mount.item() {
-            let board = Arc::clone(board);
-            spawn(traced!("task::route::init_mount", async move {
-                let handle = match crate::library::shared().await {
-                    Ok(h) => h,
-                    Err(err) => {
-                        log::warn!("init_canvas_mount: open_library: {err}");
-                        return;
-                    }
-                };
-                let found = handle
-                    .lock()
-                    .await
-                    .index()
-                    .item(id)
-                    .map(|item| (item.color, item.background));
-                let Some((color, bg)) = found else {
+    if !had_pending
+        && !face_paints
+        && let Some(id) = mount.item()
+    {
+        let board = Arc::clone(board);
+        spawn(traced!("task::route::init_mount", async move {
+            let handle = match crate::library::shared().await {
+                Ok(h) => h,
+                Err(err) => {
+                    log::warn!("init_canvas_mount: open_library: {err}");
                     return;
-                };
-                let surface: SkColor = color.map_or(DEFAULT_PAPER, |c| {
-                    SkColor::from_argb(c[3], c[0], c[1], c[2])
-                });
-                apply_canvas_background(&board, bg, surface);
-            }));
-        }
+                }
+            };
+            let found = handle
+                .lock()
+                .await
+                .index()
+                .item(id)
+                .map(|item| (item.color, item.background));
+            let Some((color, bg)) = found else {
+                return;
+            };
+            let surface: SkColor = color.map_or(DEFAULT_PAPER, |c| {
+                SkColor::from_argb(c[3], c[0], c[1], c[2])
+            });
+            apply_canvas_background(&board, bg, surface);
+        }));
     }
     load_doc_into_board(mount, Arc::clone(board));
 }

@@ -109,15 +109,10 @@ impl Deferred {
                     }
                 }
                 let now = Instant::now();
-                let due: Vec<String> = queue
+                let jobs: Vec<(String, Job)> = queue
                     .waiting
-                    .iter()
-                    .filter(|(_, w)| w.due() <= now)
-                    .map(|(key, _)| key.clone())
-                    .collect();
-                let jobs: Vec<(String, Job)> = due
-                    .into_iter()
-                    .filter_map(|key| queue.waiting.remove(&key).map(|w| (key, w.job)))
+                    .extract_if(|_, w| w.due() <= now)
+                    .map(|(key, w)| (key, w.job))
                     .collect();
                 queue.running += jobs.len();
                 sismo::counter!("deferred.waiting", queue.waiting.len());

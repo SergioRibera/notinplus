@@ -45,10 +45,10 @@ pub(crate) fn set(mount: CanvasMount, board: Arc<Mutex<Board>>) {
 #[sismo::function("active_boards::clear_if")]
 pub(crate) fn clear_if(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
     let mut g = lock();
-    if let Some(current) = g.get(&mount) {
-        if Arc::ptr_eq(current, board) {
-            g.remove(&mount);
-        }
+    if let Some(current) = g.get(&mount)
+        && Arc::ptr_eq(current, board)
+    {
+        g.remove(&mount);
     }
 }
 

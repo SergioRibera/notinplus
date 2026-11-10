@@ -1245,13 +1245,13 @@ impl Board {
     /// Count of pending undo entries. For UI gates ("Undo" button
     /// enabled / disabled) and for tests.
     #[must_use]
-    pub fn undo_depth(&self) -> usize {
+    pub const fn undo_depth(&self) -> usize {
         self.undo.undo_len()
     }
 
     /// Count of pending redo entries. Mirror of [`Self::undo_depth`].
     #[must_use]
-    pub fn redo_depth(&self) -> usize {
+    pub const fn redo_depth(&self) -> usize {
         self.undo.redo_len()
     }
 

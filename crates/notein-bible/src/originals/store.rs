@@ -156,6 +156,11 @@ impl Store {
     /// fine (the reader shows the other); no pack at all is
     /// [`StoreError::Missing`]. A corrupt or outdated file is an error so
     /// the caller downloads again.
+    ///
+    /// # Errors
+    /// [`StoreError::Missing`] without any pack; otherwise a file that
+    /// cannot be read, is not a valid archive or has another format
+    /// version.
     pub fn open(dir: &Path) -> Result<Self, StoreError> {
         let old = read_pack(dir, Testament::Old)?;
         let new = read_pack(dir, Testament::New)?;

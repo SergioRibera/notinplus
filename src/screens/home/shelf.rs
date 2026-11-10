@@ -160,7 +160,7 @@ impl Shelf {
     }
 
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.folders.is_empty() && self.docs.is_empty()
     }
 }

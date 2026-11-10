@@ -38,7 +38,7 @@ pub struct Context {
 impl Context {
     /// Everything selected, documents and folders.
     #[must_use]
-    pub fn selected(&self) -> usize {
+    pub const fn selected(&self) -> usize {
         self.selection.len() + self.folders.len()
     }
 }

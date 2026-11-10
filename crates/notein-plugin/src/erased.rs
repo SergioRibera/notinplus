@@ -35,6 +35,8 @@ pub trait ErasedKind: Send + Sync {
     fn actions(&self) -> Vec<KindAction>;
     fn run_action(&self, id: &str, doc: DocMeta<'_>, content: &[u8]) -> ActionEffect;
     fn creation_entries(&self) -> Vec<CreationEntry>;
+    /// # Errors
+    /// The entry is unknown, or its input is missing or unreadable.
     fn create(
         &self,
         entry: &str,

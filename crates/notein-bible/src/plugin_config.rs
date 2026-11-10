@@ -183,6 +183,11 @@ pub fn build_schema(db: &Db) -> ConfigSchema {
         )
 }
 
+/// Store `value` under `key` once it fits that key.
+///
+/// # Errors
+/// The key is unknown, the value has the wrong type, or the
+/// cross-reference level is not a known one.
 pub fn apply_set(config: &SharedConfig, key: &str, value: ConfigValue) -> Result<(), ConfigError> {
     match (key, &value) {
         (KEY_CROSSREF_LEVEL, ConfigValue::String(v)) if CrossRefLevel::parse(v).is_none() => {

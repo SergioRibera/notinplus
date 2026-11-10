@@ -89,7 +89,7 @@ impl Role {
         self >= Self::CoOrganizer
     }
 
-    fn tag(self) -> &'static str {
+    const fn tag(self) -> &'static str {
         match self {
             Self::Viewer => "viewer",
             Self::Editor => "editor",
@@ -780,7 +780,7 @@ mod tests {
                     device_name: String::new(),
                     ..invite.owner.clone()
                 },
-                ..invite.clone()
+                ..invite
             }
         );
         assert!(proof_is_valid(&share, &parsed.proof()));

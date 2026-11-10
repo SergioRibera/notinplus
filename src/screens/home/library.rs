@@ -382,7 +382,7 @@ impl std::fmt::Debug for GridRow {
 impl GridRow {
     /// Rows the shelf takes with `columns` cards across.
     #[must_use]
-    pub fn count(shelf: &Shelf, columns: Columns) -> usize {
+    pub const fn count(shelf: &Shelf, columns: Columns) -> usize {
         (shelf.folders.len() + shelf.docs.len()).div_ceil(columns.count)
     }
 
@@ -481,7 +481,7 @@ impl ShelfRow {
 
     /// Rows the shelf takes.
     #[must_use]
-    pub fn count(shelf: &Shelf) -> usize {
+    pub const fn count(shelf: &Shelf) -> usize {
         shelf.folders.len() + shelf.docs.len()
     }
 

@@ -75,6 +75,10 @@ pub struct LanNode {
 impl LanNode {
     /// Bind the data socket, start advertising / scanning as
     /// configured, and return once the socket is listening.
+    ///
+    /// # Errors
+    /// The socket could not be bound or the transport thread could not
+    /// be spawned or exited first.
     pub fn start(config: LanConfig) -> Result<Self, NetError> {
         let (cmd_tx, cmd_rx) = flume::unbounded();
         let (event_tx, event_rx) = flume::unbounded();
@@ -118,12 +122,18 @@ impl LanNode {
 
     /// Open a channel to `addr`, accepting only the device whose key
     /// is `public`.
+    ///
+    /// # Errors
+    /// [`NetError::Stopped`] when the transport thread has exited.
     pub fn connect(&self, addr: SocketAddr, public: [u8; 32]) -> Result<(), NetError> {
         self.command(Cmd::Connect { addr, public })
     }
 
     /// Like [`Self::connect`] for a `host:port` that still needs
     /// resolving.
+    ///
+    /// # Errors
+    /// [`NetError::Stopped`] when the transport thread has exited.
     pub fn connect_host(&self, host: impl Into<String>, public: [u8; 32]) -> Result<(), NetError> {
         self.command(Cmd::ConnectHost {
             host: host.into(),
@@ -140,6 +150,9 @@ impl LanNode {
     }
 
     /// Deliver an application payload to a connected device.
+    ///
+    /// # Errors
+    /// [`NetError::Stopped`] when the transport thread has exited.
     pub fn send(&self, device: DeviceId, lane: Lane, bytes: Vec<u8>) -> Result<(), NetError> {
         self.command(Cmd::Send {
             device,
@@ -149,10 +162,17 @@ impl LanNode {
     }
 
     /// Change the name carried by beacons and hellos from now on.
+    ///
+    /// # Errors
+    /// [`NetError::Stopped`] when the transport thread has exited.
     pub fn set_name(&self, name: impl Into<String>) -> Result<(), NetError> {
         self.command(Cmd::SetName(name.into()))
     }
 
+    /// Close the channel to `device`.
+    ///
+    /// # Errors
+    /// [`NetError::Stopped`] when the transport thread has exited.
     pub fn disconnect(&self, device: DeviceId) -> Result<(), NetError> {
         self.command(Cmd::Disconnect(device))
     }
@@ -160,11 +180,17 @@ impl LanNode {
     /// Leave the network for now: say goodbye on every channel, stop
     /// advertising and refuse new channels until [`Self::resume`]. For
     /// an app sent to the background, which must not look present.
+    ///
+    /// # Errors
+    /// [`NetError::Stopped`] when the transport thread has exited.
     pub fn pause(&self) -> Result<(), NetError> {
         self.command(Cmd::Pause)
     }
 
     /// Advertise and accept channels again after [`Self::pause`].
+    ///
+    /// # Errors
+    /// [`NetError::Stopped`] when the transport thread has exited.
     pub fn resume(&self) -> Result<(), NetError> {
         self.command(Cmd::Resume)
     }
@@ -190,6 +216,10 @@ pub struct LanSender {
 }
 
 impl LanSender {
+    /// Like [`LanNode::send`].
+    ///
+    /// # Errors
+    /// [`NetError::Stopped`] when the transport thread has exited.
     pub fn send(&self, device: DeviceId, lane: Lane, bytes: Vec<u8>) -> Result<(), NetError> {
         self.cmds
             .send(Cmd::Send {

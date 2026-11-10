@@ -44,20 +44,20 @@ pub(crate) fn height_hint(
         | BlockKind::ListItem { content, .. } => body(content.text()),
         BlockKind::Heading { level, content, .. } => {
             let size = theme.heading_size(*level);
-            lines(content.text(), size) * size * theme.line_height + 2.0 * spacing
+            (lines(content.text(), size) * size).mul_add(theme.line_height, 2.0 * spacing)
         }
         BlockKind::Callout { content, .. } => body(content.text()) + line + theme.px(24.0),
         BlockKind::Code { code, .. } => {
-            code.text().lines().count().max(1) as f32 * line + theme.px(24.0)
+            (code.text().lines().count().max(1) as f32).mul_add(line, theme.px(24.0))
         }
         BlockKind::Math(_) => 3.0 * line,
         BlockKind::Divider => theme.px(21.0),
         BlockKind::Table(table) => (table.rows().len() + 1) as f32 * (line + theme.px(16.0)),
-        BlockKind::TableOfContents => (toc_entries + 1) as f32 * line + theme.px(16.0),
+        BlockKind::TableOfContents => ((toc_entries + 1) as f32).mul_add(line, theme.px(16.0)),
         BlockKind::Details { content, open, .. } => {
             line + spacing + if *open { body(content.text()) } else { 0.0 }
         }
-        BlockKind::Transclusion(transclusion) => body(&transclusion.fallback) + 2.0 * line,
+        BlockKind::Transclusion(transclusion) => 2.0f32.mul_add(line, body(&transclusion.fallback)),
     }
 }
 

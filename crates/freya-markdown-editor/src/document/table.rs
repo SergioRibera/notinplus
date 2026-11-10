@@ -155,7 +155,7 @@ pub enum Column {
 pub type ComputedCell = Option<Number>;
 
 /// A total as shown under a column.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Total {
     pub summary: Summary,
     /// The number, count or percentage as text.
@@ -470,8 +470,8 @@ impl Table {
             return false;
         };
         let changed = column.header != header || column.formula != formula;
-        column.header = header.to_owned();
-        column.formula = formula.to_owned();
+        header.clone_into(&mut column.header);
+        formula.clone_into(&mut column.formula);
         changed
     }
 
@@ -508,7 +508,7 @@ impl Table {
             if let Ok(mut expr) = Expr::parse(&computed.formula)
                 && expr.columns().contains(&&old)
             {
-                expr.rename_column(&old, new.clone());
+                expr.rename_column(&old, &new);
                 computed.formula = expr.to_string();
             }
         }
@@ -582,13 +582,14 @@ impl Table {
                         .columns()
                         .into_iter()
                         .map(|reference| {
-                            let number = if let Some(data) = self.data_column(reference) {
-                                self.cell_number(row, data)
-                            } else {
-                                self.computed_column(reference)
-                                    .filter(|other| *other < index)
-                                    .and_then(|other| computed[other][body_row])
-                            };
+                            let number = self.data_column(reference).map_or_else(
+                                || {
+                                    self.computed_column(reference)
+                                        .filter(|other| *other < index)
+                                        .and_then(|other| computed[other][body_row])
+                                },
+                                |data| self.cell_number(row, data),
+                            );
                             number.map(|number| (reference, number))
                         })
                         .collect::<Option<Vec<_>>>()?;
@@ -668,11 +669,10 @@ impl Table {
             Aggregate::CountFilled => count(rows.iter().filter(|row| filled(**row)).count()),
             Aggregate::CountEmpty => count(rows.iter().filter(|row| !filled(**row)).count()),
             Aggregate::Sum => fixed(values.iter().sum()),
-            Aggregate::Average if values.is_empty() => String::new(),
+            Aggregate::Average | Aggregate::Median if values.is_empty() => String::new(),
             Aggregate::Average => loose(values.iter().sum::<f64>() / values.len() as f64),
-            Aggregate::Median if values.is_empty() => String::new(),
             Aggregate::Median => {
-                let mut sorted = values.clone();
+                let mut sorted = values;
                 sorted.sort_by(f64::total_cmp);
                 let middle = sorted.len() / 2;
                 loose(if sorted.len() % 2 == 0 {

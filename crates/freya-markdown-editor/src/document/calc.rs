@@ -42,7 +42,6 @@ impl Number {
         let dots = digits.matches('.').count();
         let commas = digits.matches(',').count();
         let decimal = match (dots, commas) {
-            (0, 0) => None,
             (1, 0) | (0, 1) => {
                 let separator = if dots == 1 { '.' } else { ',' };
                 let (whole, fraction) = digits.split_once(separator)?;
@@ -88,7 +87,7 @@ impl Number {
 }
 
 /// Signs people put around an amount that say nothing about its value.
-fn is_unit(ch: char) -> bool {
+const fn is_unit(ch: char) -> bool {
     matches!(ch, '$' | '€' | '£' | '¥' | '%' | '¢')
 }
 
@@ -155,8 +154,8 @@ impl Op {
 enum Node {
     Number(f64),
     Column(ColumnRef),
-    Negate(Box<Node>),
-    Binary(Box<Node>, Op, Box<Node>),
+    Negate(Box<Self>),
+    Binary(Box<Self>, Op, Box<Self>),
 }
 
 /// Arithmetic over numbers and columns: `+ - * /`, parentheses and a
@@ -394,7 +393,7 @@ impl Expr {
     }
 
     /// Point every use of column `from` at `to`.
-    pub fn rename_column(&mut self, from: &ColumnRef, to: ColumnRef) {
+    pub fn rename_column(&mut self, from: &ColumnRef, to: &ColumnRef) {
         fn walk(node: &mut Node, from: &ColumnRef, to: &ColumnRef) {
             match node {
                 Node::Number(_) => {}
@@ -410,12 +409,12 @@ impl Expr {
                 }
             }
         }
-        walk(&mut self.0, from, &to);
+        walk(&mut self.0, from, to);
     }
 
     /// Whether the expression combines at least two values.
     #[must_use]
-    pub fn is_compound(&self) -> bool {
+    pub const fn is_compound(&self) -> bool {
         matches!(self.0, Node::Binary(..))
     }
 }
@@ -588,7 +587,7 @@ mod tests {
         let mut expr = Expr::parse("[A] * 2 + [A]").expect("parse");
         expr.rename_column(
             &ColumnRef::Header("A".into()),
-            ColumnRef::Header("B".into()),
+            &ColumnRef::Header("B".into()),
         );
         assert_eq!(expr.to_string(), "[B] * 2 + [B]");
         assert_eq!(expr.columns(), vec![&ColumnRef::Header("B".into())]);

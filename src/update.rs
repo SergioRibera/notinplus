@@ -289,7 +289,7 @@ pub fn use_updates_root() {
 
 /// [`use_updates_root`] for headless renders: announces `newer`
 /// without touching the network.
-#[cfg(test)]
+#[cfg(all(test, not(feature = "hotreload")))]
 pub(crate) fn use_preview_updates(newer: Option<Release>) {
     let state = use_state(move || Snapshot {
         newer: newer.map(Arc::new),

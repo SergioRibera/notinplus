@@ -592,8 +592,8 @@ impl Component for SessionFooter {
         let mut buttons = vec![leave];
         if view.paused() {
             let end = SessionEnd {
-                title: view.title.clone(),
-                docs: view.docs.clone(),
+                title: view.title,
+                docs: view.docs,
                 reason: notein_sync::Removal::Left,
             };
             buttons.push(

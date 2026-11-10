@@ -138,13 +138,22 @@ pub trait Replica {
     fn doc_version(&self, doc: DocId) -> Option<Version>;
 
     /// Changes a replica at `since` is missing. Empty when none.
+    ///
+    /// # Errors
+    /// The document could not be read or encoded.
     fn doc_updates_since(&self, doc: DocId, since: &Version) -> Result<Vec<u8>, Self::Error>;
 
     /// The whole document, for a replica that lacks it.
+    ///
+    /// # Errors
+    /// The document could not be read or encoded.
     fn doc_snapshot(&self, doc: DocId) -> Result<Vec<u8>, Self::Error>;
 
     /// Merge `bytes` (updates or a snapshot) into `doc`, creating it
     /// when absent.
+    ///
+    /// # Errors
+    /// `bytes` could not be decoded or the result could not be stored.
     fn doc_import(&mut self, doc: DocId, bytes: &[u8]) -> Result<(), Self::Error>;
 
     /// Freshness of every blob this replica holds.
@@ -155,6 +164,9 @@ pub trait Replica {
 
     /// Keep `blob` if it is newer than what is held. Returns whether
     /// it was applied.
+    ///
+    /// # Errors
+    /// The blob could not be stored.
     fn blob_merge(&mut self, blob: Blob) -> Result<bool, Self::Error>;
 }
 

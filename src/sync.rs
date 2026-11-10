@@ -50,6 +50,8 @@ pub struct MemberView {
 }
 
 /// One share as the UI shows it.
+// Independent facts the UI reads one by one; no two of them form a state.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShareView {
     pub id: ShareId,
@@ -573,11 +575,9 @@ pub enum LinkTarget {
 #[must_use]
 pub fn recognize_link(text: &str) -> Option<LinkTarget> {
     let text = text.trim();
-    if let Some(invite) = Invite::parse_link(text) {
-        Some(link_target(invite))
-    } else {
+    Invite::parse_link(text).map(link_target).or_else(|| {
         PairingOffer::parse_link(text).map(|offer| LinkTarget::Pair { name: offer.name })
-    }
+    })
 }
 
 fn link_target(invite: Invite) -> LinkTarget {
@@ -611,16 +611,14 @@ pub fn open_link(text: &str) -> Option<LinkTarget> {
             }),
             LinkTarget::Pair { .. } => {}
         }
-        Some(target)
-    } else if let Some(offer) = PairingOffer::parse_link(text) {
-        let target = LinkTarget::Pair {
-            name: offer.name.clone(),
-        };
-        pair_with(offer);
-        Some(target)
-    } else {
-        None
+        return Some(target);
     }
+    let offer = PairingOffer::parse_link(text)?;
+    let target = LinkTarget::Pair {
+        name: offer.name.clone(),
+    };
+    pair_with(offer);
+    Some(target)
 }
 
 pub fn leave_share(id: ShareId) {
@@ -835,7 +833,7 @@ impl ShareMemo {
         if self.title != now.title {
             out.push(ShareNotice::Renamed {
                 share: id,
-                title: title.clone(),
+                title,
                 who: String::new(),
             });
         }
@@ -1590,10 +1588,7 @@ fn on_live(item: ItemId, from: DeviceId, name: String, message: LiveMessage) {
 /// links whose both ends are among them.
 #[sismo::function("sync::blobs_for")]
 fn blobs_for(docs: &[ItemId]) -> Vec<BlobKey> {
-    match open_library() {
-        Some(lib) => blobs_for_in(&lib, docs),
-        None => item_blobs(docs),
-    }
+    open_library().map_or_else(|| item_blobs(docs), |lib| blobs_for_in(&lib, docs))
 }
 
 /// Whether `inner` is `folder` or sits somewhere below it. The walk is

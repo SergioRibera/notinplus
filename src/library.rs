@@ -1737,10 +1737,10 @@ impl LibraryData {
         {
             return root;
         }
-        match shares.into_iter().find(|s| !s.is_owner) {
-            Some(share) => self.share_root(&share),
-            None => ROOT_FOLDER,
-        }
+        shares
+            .into_iter()
+            .find(|s| !s.is_owner)
+            .map_or(ROOT_FOLDER, |share| self.share_root(&share))
     }
 
     /// Where a folder arriving from another library hangs: under its
@@ -1763,10 +1763,10 @@ impl LibraryData {
         if let Some(local) = self.index.folder(folder.id) {
             return local.parent;
         }
-        match guest_shares.iter().find(|s| s.folders.contains(&folder.id)) {
-            Some(share) => self.share_root(share),
-            None => ROOT_FOLDER,
-        }
+        guest_shares
+            .iter()
+            .find(|s| s.folders.contains(&folder.id))
+            .map_or(ROOT_FOLDER, |share| self.share_root(share))
     }
 
     /// The folder holding what `share` brings: the shared folder itself

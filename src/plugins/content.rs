@@ -106,6 +106,7 @@ pub fn read_cached(item: ItemId, kind: &str) -> Option<Arc<[u8]>> {
     }
     let bytes: Arc<[u8]> = Arc::from(read(item, kind)?);
     cache.insert(item, (kind.to_owned(), Arc::clone(&bytes)));
+    drop(cache);
     Some(bytes)
 }
 

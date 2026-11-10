@@ -150,6 +150,10 @@ impl Db {
 
     /// Open the DB at [`Self::default_path`]. Creates the enclosing
     /// directory tree on first run.
+    ///
+    /// # Errors
+    /// The directory could not be created or the database could not be
+    /// opened or migrated.
     pub fn open_default() -> Result<Self> {
         Self::open(Self::default_path())
     }
@@ -197,6 +201,10 @@ impl Db {
 
     // ─── Public API delegates (see queries.rs / search.rs) ─────────
 
+    /// Every installed translation.
+    ///
+    /// # Errors
+    /// The database could not be read.
     pub fn list_bibles(&self) -> Result<Vec<queries::BibleRow>> {
         queries::list_bibles(self)
     }
@@ -219,31 +227,50 @@ impl Db {
     }
 
     /// The plugin settings saved on this device.
+    ///
+    /// # Errors
+    /// The database could not be read.
     pub fn load_settings(&self) -> Result<Vec<(String, notein_sdk::ConfigValue)>> {
         queries::load_settings(self)
     }
 
     /// Save one plugin setting.
+    ///
+    /// # Errors
+    /// The value could not be encoded or the database could not be
+    /// written.
     pub fn save_setting(&self, key: &str, value: &notein_sdk::ConfigValue) -> Result<()> {
         queries::save_setting(self, key, value)
     }
 
     /// A fact about the database itself (`meta` table), if recorded.
+    ///
+    /// # Errors
+    /// The database could not be read.
     pub fn meta(&self, key: &str) -> Result<Option<String>> {
         queries::meta_get(self, key)
     }
 
     /// Record a fact about the database itself.
+    ///
+    /// # Errors
+    /// The database could not be written.
     pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
         queries::meta_set(self, key, value)
     }
 
     /// Every verse of a translation, for the aligner.
+    ///
+    /// # Errors
+    /// The database could not be read.
     pub fn verses_of_bible(&self, bible_id: &str) -> Result<Vec<VerseTextRow>> {
         queries::verses_of_bible(self, bible_id)
     }
 
     /// Replace a translation's alignment with one testament (0 Old, 1 New).
+    ///
+    /// # Errors
+    /// The database could not be written.
     pub fn replace_alignment(
         &self,
         bible_id: &str,
@@ -255,6 +282,9 @@ impl Db {
     }
 
     /// Which translation tokens render each original word of a verse.
+    ///
+    /// # Errors
+    /// The database could not be read.
     pub fn alignment_links(
         &self,
         bible_id: &str,
@@ -267,6 +297,9 @@ impl Db {
     }
 
     /// How a translation renders a lemma across the text.
+    ///
+    /// # Errors
+    /// The database could not be read.
     pub fn renderings(
         &self,
         bible_id: &str,
@@ -276,18 +309,36 @@ impl Db {
         queries::renderings(self, bible_id, testament, lemma)
     }
 
+    /// Books of a translation.
+    ///
+    /// # Errors
+    /// The database could not be read.
     pub fn list_books(&self, bible_id: &str) -> Result<Vec<BookRow>> {
         queries::list_books(self, bible_id)
     }
 
+    /// Number of chapters in one book.
+    ///
+    /// # Errors
+    /// The database could not be read.
     pub fn chapter_count(&self, bible_id: &str, book_id: &str) -> Result<u16> {
         queries::chapter_count(self, bible_id, book_id)
     }
 
+    /// Every verse of one chapter.
+    ///
+    /// # Errors
+    /// The database could not be read, or [`DbError::MissingBible`] when
+    /// the translation is not installed.
     pub fn load_chapter(&self, bible_id: &str, book_id: &str, chapter: u16) -> Result<ChapterRow> {
         queries::load_chapter(self, bible_id, book_id, chapter)
     }
 
+    /// Full-text search in one translation, or in all of them when
+    /// `bible_id` is `None`.
+    ///
+    /// # Errors
+    /// The database could not be read.
     pub fn search(
         &self,
         bible_id: Option<&str>,

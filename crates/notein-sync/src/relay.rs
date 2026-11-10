@@ -297,6 +297,9 @@ pub struct RelayServer {
 
 impl RelayServer {
     /// Bind and serve on a background thread.
+    ///
+    /// # Errors
+    /// The socket could not be bound or a thread could not be spawned.
     pub fn start(config: RelayConfig, store: Store) -> Result<Self, NetError> {
         let lan = LanConfig::new(config.key, config.name)
             .port(config.port)

@@ -39,7 +39,7 @@ pub struct UndoEntry {
 
 impl UndoEntry {
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.forward.is_empty()
     }
 }
@@ -190,12 +190,12 @@ impl UndoStack {
     }
 
     #[must_use]
-    pub fn undo_len(&self) -> usize {
+    pub const fn undo_len(&self) -> usize {
         self.undo.len()
     }
 
     #[must_use]
-    pub fn redo_len(&self) -> usize {
+    pub const fn redo_len(&self) -> usize {
         self.redo.len()
     }
 

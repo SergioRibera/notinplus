@@ -48,6 +48,9 @@ impl ShareKey {
     }
 
     /// Parse the form produced by [`Self::to_hex`].
+    ///
+    /// # Errors
+    /// [`CipherError::BadKey`] when `text` is not hex or not a key long.
     pub fn from_hex(text: &str) -> Result<Self, CipherError> {
         let bytes = hex::decode(text.trim()).map_err(|_| CipherError::BadKey)?;
         let key: [u8; KEY_LEN] = bytes.try_into().map_err(|_| CipherError::BadKey)?;

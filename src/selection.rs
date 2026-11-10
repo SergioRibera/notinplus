@@ -134,7 +134,7 @@ impl Bar {
                 // A sticky selection outlives its bar: the owner decides
                 // whether the action is done with it.
                 items.push(BarItem::action(label.clone(), icon.clone(), move |()| {
-                    run()
+                    run();
                 }));
             } else {
                 items.push(BarItem::action(

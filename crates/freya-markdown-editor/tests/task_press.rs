@@ -46,15 +46,16 @@ fn settle(runner: &mut TestingRunner) {
 
 /// Window position of the check box of block `index`: the drag handle
 /// column, the indent, then the middle of the gutter.
-fn marker_at(runner: &mut TestingRunner, controller: EditorController, index: usize) -> (f64, f64) {
+fn marker_at(runner: &TestingRunner, controller: EditorController, index: usize) -> (f64, f64) {
     let top = runner.run_in(|| {
         let block = controller.document().blocks()[index].id;
         f64::from(controller.block_offset(block).expect("laid out"))
     });
-    (20. + 24. * index as f64 + 12., top + 14.)
+    let depth = f64::from(u32::try_from(index).expect("small index"));
+    (24f64.mul_add(depth, 20. + 12.), top + 14.)
 }
 
-fn expected(index: usize) -> &'static str {
+const fn expected(index: usize) -> &'static str {
     if index == 0 {
         "- [x] one\n  - [ ] two\n\nafter\n"
     } else {
@@ -64,7 +65,7 @@ fn expected(index: usize) -> &'static str {
 
 fn check(index: usize, touch: bool) {
     let (mut runner, value, controller) = run();
-    let at = marker_at(&mut runner, controller, index);
+    let at = marker_at(&runner, controller, index);
     if touch {
         runner.press_touch(at);
         runner.release_touch(at);

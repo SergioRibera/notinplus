@@ -33,7 +33,7 @@ pub struct Selection {
 
 impl Selection {
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.strokes.is_empty() && self.glyphs.is_empty()
     }
 

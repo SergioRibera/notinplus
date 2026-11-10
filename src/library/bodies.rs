@@ -175,10 +175,10 @@ pub fn discard_store() {
     let root = root_dir();
     for sub in ITEM_STATE_SUBDIRS {
         let path = root.join(sub);
-        if path.exists() {
-            if let Err(err) = fs::remove_dir_all(&path) {
-                log::warn!("discard {}: {err}", path.display());
-            }
+        if path.exists()
+            && let Err(err) = fs::remove_dir_all(&path)
+        {
+            log::warn!("discard {}: {err}", path.display());
         }
     }
 }

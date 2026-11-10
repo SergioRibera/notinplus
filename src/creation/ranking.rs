@@ -59,7 +59,7 @@ impl UsageLog {
 
     /// Whether the menu still shows the starting tiles.
     #[must_use]
-    pub fn is_cold(&self) -> bool {
+    pub const fn is_cold(&self) -> bool {
         self.uses.len() < COLD_START_USES
     }
 

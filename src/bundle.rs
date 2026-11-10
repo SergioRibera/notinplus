@@ -291,11 +291,12 @@ pub fn write_bundle<W: Write>(
             let path = format!("{ASSETS_PREFIX}{}/{name}", item.id);
             append_file(&mut tar, &path, &bytes)?;
         }
-        if options.include_attachments && item_carries_pdf(&item.kind) {
-            if let Ok(pdf_bytes) = bodies::read_pdf(item.id) {
-                let path = format!("{PDFS_PREFIX}{}.{PDF_EXT}", item.id);
-                append_file(&mut tar, &path, &pdf_bytes)?;
-            }
+        if options.include_attachments
+            && item_carries_pdf(&item.kind)
+            && let Ok(pdf_bytes) = bodies::read_pdf(item.id)
+        {
+            let path = format!("{PDFS_PREFIX}{}.{PDF_EXT}", item.id);
+            append_file(&mut tar, &path, &pdf_bytes)?;
         }
     }
 

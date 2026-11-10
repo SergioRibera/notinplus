@@ -73,7 +73,7 @@ impl ShareTarget {
     }
 
     /// The scope the sheet opens on.
-    fn first_scope(self) -> Scope {
+    const fn first_scope(self) -> Scope {
         if self.folder.is_some() {
             Scope::Folder
         } else if self.item.is_some() {

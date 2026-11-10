@@ -177,10 +177,10 @@ pub fn run() {
             // real handle attach so the Linux Wayland / XInput2
             // backends can bind to the compositor; macOS / Windows
             // find their native view through the same call.
-            if let Some(publisher) = crate::desktop::PEN_PUBLISHER.get() {
-                if let Err(err) = publisher.register_window(crate::WINDOW_ID, &*window) {
-                    log::warn!("pen register_window failed: {err}");
-                }
+            if let Some(publisher) = crate::desktop::PEN_PUBLISHER.get()
+                && let Err(err) = publisher.register_window(crate::WINDOW_ID, &*window)
+            {
+                log::warn!("pen register_window failed: {err}");
             }
             // The share sheet anchors on the window on macOS / Windows.
             if let Err(err) = istmo_window::WindowRegistry::global()
