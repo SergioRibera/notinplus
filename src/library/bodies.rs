@@ -47,10 +47,6 @@ const PLUGIN_SNAPSHOTS_SUBDIR: &str = "plugin_snapshots";
 /// to by relative path.
 pub const ASSETS_SUBDIR: &str = "assets";
 
-/// Subdirectories under [`root_dir`] that hold per-item state and are
-/// wiped when the library starts over.
-const ITEM_STATE_SUBDIRS: [&str; 4] = [ITEMS_SUBDIR, "views", "doc_linked", "pane_layouts"];
-
 /// Absolute path to the library root. Created on demand — call sites
 /// that go on to write also call [`ensure_dir`].
 #[must_use]
@@ -166,21 +162,6 @@ fn ensure_dir(path: &Path) -> io::Result<()> {
         fs::create_dir_all(parent)?;
     }
     Ok(())
-}
-
-/// Remove every per-item directory and sidecar under [`root_dir`].
-/// Global preferences survive. Missing directories are not an error.
-#[sismo::function("library::bodies::discard_store")]
-pub fn discard_store() {
-    let root = root_dir();
-    for sub in ITEM_STATE_SUBDIRS {
-        let path = root.join(sub);
-        if path.exists()
-            && let Err(err) = fs::remove_dir_all(&path)
-        {
-            log::warn!("discard {}: {err}", path.display());
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

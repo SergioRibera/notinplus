@@ -111,12 +111,9 @@ impl Library {
         )
         .await?;
         sismo::instant!("library::store_client_ready");
-        let mut index = index::load(&client).await?.unwrap_or_else(|| {
-            // Nothing readable under the current key: whatever the
-            // item store holds belongs to an older schema.
-            bodies::discard_store();
-            LibraryIndex::default()
-        });
+        // Nothing readable under the current key starts an empty index;
+        // what an older schema left on disk stays untouched.
+        let mut index = index::load(&client).await?.unwrap_or_default();
         read_covers(&mut index);
         let mut workspaces = index::load_workspaces(&client).await?;
         for workspace in &mut workspaces.workspaces {
