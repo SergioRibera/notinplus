@@ -185,10 +185,11 @@ mod tests {
 /// Largest file the system may hand to the app to open.
 pub const OPENED_MAX_BYTES: u64 = 512 * 1024 * 1024;
 
-/// Read a file the system asked the app to open (a double-click, a
-/// forwarded launch, a share). Its path is not something the user picked
-/// in the app, so only regular files are read — a FIFO would block and a
-/// device or `/proc` entry may never end — and at most `cap` bytes.
+/// Read a file the system asked the app to open, at most `cap` bytes.
+///
+/// Its path comes from a double-click, a forwarded launch or a share, not
+/// from a picker, so only regular files are read: a FIFO would block and
+/// a device or `/proc` entry may never end.
 ///
 /// # Errors
 /// The file cannot be opened, is not a regular file or is larger than

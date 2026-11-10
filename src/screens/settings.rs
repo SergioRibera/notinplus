@@ -8,7 +8,7 @@ mod library;
 mod notes;
 mod pen;
 mod plugins;
-pub(crate) use plugins::{confirm_package, review_package};
+pub(crate) use plugins::confirm_package;
 pub(crate) mod schema;
 mod sessions;
 
