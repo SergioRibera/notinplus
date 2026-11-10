@@ -388,7 +388,10 @@ impl Published {
                 }
                 BlobKind::Folder => share.folder.is_some() && share.can_edit(me),
                 BlobKind::Link => share.can_link(me),
-                BlobKind::Tag | BlobKind::Workspace => false,
+                // Personal records: never part of a share.
+                BlobKind::Tag | BlobKind::Workspace | BlobKind::ItemTags | BlobKind::FolderTags => {
+                    false
+                }
             };
             if !allowed
                 || self
@@ -2518,7 +2521,10 @@ fn permitted(share: &Share, from: DeviceId, message: Message) -> Option<Message>
                     // Folders only travel inside a shared folder.
                     BlobKind::Folder => share.folder.is_some() && share.can_edit(from),
                     BlobKind::Link => share.can_link(from),
-                    BlobKind::Tag | BlobKind::Workspace => false,
+                    BlobKind::Tag
+                    | BlobKind::Workspace
+                    | BlobKind::ItemTags
+                    | BlobKind::FolderTags => false,
                 })
                 .collect();
             (!kept.is_empty()).then_some(Message::Blobs(kept))

@@ -45,6 +45,13 @@ pub enum BlobKind {
     Asset,
     /// The file a document shows (a PDF), keyed by the document id.
     Attachment,
+    /// The tags a person put on a document, keyed by the document id.
+    /// Personal: only travels between devices that hold everything,
+    /// never in a share.
+    ItemTags,
+    /// The tags a person put on a folder, keyed by the folder id; as
+    /// personal as [`Self::ItemTags`].
+    FolderTags,
 }
 
 /// Identity plus freshness of a blob; enough to decide who is newer.
@@ -262,5 +269,21 @@ mod tests {
             kind: BlobKind::Asset,
             id: other
         }));
+    }
+
+    #[test]
+    fn a_share_never_covers_the_tags_on_its_documents() {
+        let doc = DocId([7; 16]);
+        let scope = Scope::Subset {
+            docs: HashSet::from([doc]),
+            blobs: HashSet::from([BlobKey {
+                kind: BlobKind::Item,
+                id: doc.0,
+            }]),
+        };
+        for kind in [BlobKind::ItemTags, BlobKind::FolderTags] {
+            assert!(!scope.covers_blob(BlobKey { kind, id: doc.0 }));
+            assert!(Scope::All.covers_blob(BlobKey { kind, id: doc.0 }));
+        }
     }
 }

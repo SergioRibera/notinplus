@@ -39,6 +39,19 @@ pub enum SyncRecord {
         updated_at: u64,
         bytes: Vec<u8>,
     },
+    /// The tags this person put on an item: last writer wins. Only
+    /// between their own devices; a share never carries it.
+    ItemTags {
+        item: super::ItemId,
+        updated_at: u64,
+        tags: Vec<super::TagId>,
+    },
+    /// The tags this person put on a folder, like [`Self::ItemTags`].
+    FolderTags {
+        folder: super::FolderId,
+        updated_at: u64,
+        tags: Vec<super::TagId>,
+    },
 }
 
 /// Freshness of every asset: they never change, so having one is enough.
@@ -75,7 +88,12 @@ const fn buried_of(kind: BlobKind) -> Option<Buried> {
         BlobKind::Folder => Some(Buried::Folder),
         BlobKind::Tag => Some(Buried::Tag),
         BlobKind::Workspace => Some(Buried::Workspace),
-        BlobKind::Link | BlobKind::Snapshot | BlobKind::Asset | BlobKind::Attachment => None,
+        BlobKind::Link
+        | BlobKind::Snapshot
+        | BlobKind::Asset
+        | BlobKind::Attachment
+        | BlobKind::ItemTags
+        | BlobKind::FolderTags => None,
     }
 }
 
@@ -120,6 +138,13 @@ impl Library {
         match record {
             SyncRecord::Item(mut item) => {
                 yard.revive(Buried::Item, item.id.0);
+                // Tags stay this person's: they arrive on their own record.
+                item.tags = self
+                    .data
+                    .index
+                    .item(item.id)
+                    .map(|held| held.tags.clone())
+                    .unwrap_or_default();
                 item.folder = self.data.landing_folder(&item);
                 super::keep_cover(item.id, item.thumbnail.as_deref());
                 upsert(&mut self.data.index.items, item, |i| i.id);
@@ -127,6 +152,12 @@ impl Library {
             }
             SyncRecord::Folder(mut folder) => {
                 yard.revive(Buried::Folder, folder.id.0);
+                folder.tags = self
+                    .data
+                    .index
+                    .folder(folder.id)
+                    .map(|held| held.tags.clone())
+                    .unwrap_or_default();
                 folder.parent = self.data.landing_parent(&folder);
                 upsert(&mut self.data.index.folders, folder, |f| f.id);
                 self.persist()?;
@@ -186,6 +217,30 @@ impl Library {
                 crate::plugins::content::attachment_replaced(item);
                 crate::plugins::content::notify_remote(item);
             }
+            SyncRecord::ItemTags {
+                item,
+                updated_at,
+                tags,
+            } => {
+                let Some(entry) = self.data.index.item_mut(item) else {
+                    return Ok(false);
+                };
+                entry.tags = tags;
+                self.tags_changed(item.0, updated_at)?;
+                self.persist()?;
+            }
+            SyncRecord::FolderTags {
+                folder,
+                updated_at,
+                tags,
+            } => {
+                let Some(entry) = self.data.index.folder_mut(folder) else {
+                    return Ok(false);
+                };
+                entry.tags = tags;
+                self.tags_changed(folder.0, updated_at)?;
+                self.persist()?;
+            }
             SyncRecord::Gone(stone) => self.apply_gone(&stone, yard).await?,
         }
         Ok(true)
@@ -221,6 +276,9 @@ impl Library {
                 self.data.index.tags.retain(|t| t.id != id);
                 for item in &mut self.data.index.items {
                     item.tags.retain(|t| *t != id);
+                }
+                for folder in &mut self.data.index.folders {
+                    folder.tags.retain(|t| *t != id);
                 }
                 self.persist()?;
             }
@@ -303,6 +361,20 @@ impl LibraryData {
                 .into_iter()
                 .map(|name| head(BlobKind::Asset, bodies::asset_key(i.id, &name), ASSET_STAMP))
         }));
+        heads.extend(self.index.items.iter().filter_map(|i| {
+            Some(head(
+                BlobKind::ItemTags,
+                i.id.0,
+                self.tag_stamps.get(i.id.0)?,
+            ))
+        }));
+        heads.extend(self.index.folders.iter().filter_map(|f| {
+            Some(head(
+                BlobKind::FolderTags,
+                f.id.0,
+                self.tag_stamps.get(f.id.0)?,
+            ))
+        }));
         let mut at: std::collections::HashMap<(BlobKind, [u8; 16]), usize> = heads
             .iter()
             .enumerate()
@@ -329,18 +401,25 @@ impl LibraryData {
     pub fn sync_record(&self, key: BlobKey, yard: &Graveyard) -> Option<SyncRecord> {
         let stone = buried_of(key.kind).and_then(|b| yard.get(b, key.id).copied());
         let live = match key.kind {
-            BlobKind::Item => self
-                .index
-                .items
-                .iter()
-                .find(|i| i.id.0 == key.id)
-                .map(|i| (i.updated_at, SyncRecord::Item(i.clone()))),
+            BlobKind::Item => self.index.items.iter().find(|i| i.id.0 == key.id).map(|i| {
+                let item = Item {
+                    tags: Vec::new(),
+                    ..i.clone()
+                };
+                (i.updated_at, SyncRecord::Item(item))
+            }),
             BlobKind::Folder => self
                 .index
                 .folders
                 .iter()
                 .find(|f| f.id.0 == key.id)
-                .map(|f| (f.updated_at, SyncRecord::Folder(f.clone()))),
+                .map(|f| {
+                    let folder = Folder {
+                        tags: Vec::new(),
+                        ..f.clone()
+                    };
+                    (f.updated_at, SyncRecord::Folder(folder))
+                }),
             BlobKind::Tag => self
                 .index
                 .tags
@@ -362,6 +441,8 @@ impl LibraryData {
             BlobKind::Snapshot => self.snapshot_record(super::ItemId(key.id)),
             BlobKind::Asset => self.asset_record(key.id),
             BlobKind::Attachment => self.attachment_record(super::ItemId(key.id)),
+            BlobKind::ItemTags => self.item_tags_record(super::ItemId(key.id)),
+            BlobKind::FolderTags => self.folder_tags_record(super::FolderId(key.id)),
         };
         match (live, stone) {
             (Some((at, record)), Some(stone)) if at >= stone.at => Some(record),
@@ -417,6 +498,32 @@ impl LibraryData {
         ))
     }
 
+    fn item_tags_record(&self, item: super::ItemId) -> Option<(u64, SyncRecord)> {
+        let entry = self.index.item(item)?;
+        let updated_at = self.tag_stamps.get(item.0)?;
+        Some((
+            updated_at,
+            SyncRecord::ItemTags {
+                item,
+                updated_at,
+                tags: entry.tags.clone(),
+            },
+        ))
+    }
+
+    fn folder_tags_record(&self, folder: super::FolderId) -> Option<(u64, SyncRecord)> {
+        let entry = self.index.folder(folder)?;
+        let updated_at = self.tag_stamps.get(folder.0)?;
+        Some((
+            updated_at,
+            SyncRecord::FolderTags {
+                folder,
+                updated_at,
+                tags: entry.tags.clone(),
+            },
+        ))
+    }
+
     #[sismo::function("library::sync::asset_record")]
     fn asset_record(&self, key: [u8; 16]) -> Option<(u64, SyncRecord)> {
         let (item, name) = self.asset_of(key)?;
@@ -468,6 +575,14 @@ impl LibraryData {
                 .index
                 .item(super::ItemId(key.id))
                 .and_then(|i| bodies::pdf_stamp(i.id)),
+            BlobKind::ItemTags => self
+                .index
+                .item(super::ItemId(key.id))
+                .and_then(|i| self.tag_stamps.get(i.id.0)),
+            BlobKind::FolderTags => self
+                .index
+                .folder(super::FolderId(key.id))
+                .and_then(|f| self.tag_stamps.get(f.id.0)),
         };
         match (live, stone) {
             (Some(a), Some(b)) => Some(a.max(b)),

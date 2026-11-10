@@ -207,6 +207,7 @@ impl Library {
             receipt.workspaces.push(copy.id);
             self.data.workspaces.workspaces.push(copy);
         }
+        self.stamp_unstamped_tags()?;
         self.persist()?;
         self.persist_workspaces()?;
         self.persist_links()?;
@@ -238,6 +239,7 @@ impl Library {
         let map = FolderMap { ids, destination };
         for folder in &manifest.folders {
             let id = map.ids.get(&folder.id).copied().unwrap_or(folder.id);
+            self.data.tag_stamps.forget(id.0);
             self.data.index.folders.push(Folder {
                 id,
                 parent: map.resolve(folder.parent),
@@ -291,6 +293,7 @@ impl Library {
                 Resolution::KeepBoth => item.id,
             };
             item_ids.insert(item.id, id);
+            self.data.tag_stamps.forget(id.0);
             self.data.index.items.push(Item {
                 id,
                 folder: folders.resolve(item.folder),

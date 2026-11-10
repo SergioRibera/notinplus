@@ -32,6 +32,7 @@ mod pins;
 pub mod refs;
 pub mod shared;
 pub mod sync;
+pub mod tagging;
 mod trash;
 
 use std::sync::Arc;
@@ -84,6 +85,7 @@ pub struct LibraryData {
     index: LibraryIndex,
     workspaces: WorkspaceIndex,
     links: LinkIndex,
+    tag_stamps: tagging::TagStamps,
 }
 
 impl std::ops::Deref for Library {
@@ -126,6 +128,7 @@ impl Library {
             }
         }
         let links = index::load_links(&client).await?;
+        let tag_stamps = index::load_tag_stamps(&client).await?;
         sismo::counter!("library.items", index.items.len());
         sismo::counter!("library.folders", index.folders.len());
         sismo::counter!("library.links", links.links.len());
@@ -135,10 +138,12 @@ impl Library {
                 index,
                 workspaces,
                 links,
+                tag_stamps,
             },
         };
         lib.ensure_default_workspace().await?;
         lib.compact_tombstones().await?;
+        lib.stamp_unstamped_tags()?;
         Ok(lib)
     }
 
@@ -202,6 +207,7 @@ impl Library {
         }
         tags.sort_unstable_by_key(|t| t.0);
         tags.dedup();
+        let tagged = !tags.is_empty();
         let now = now_millis();
         let id = FolderId::new_v4();
         self.data.index.folders.push(Folder {
@@ -215,6 +221,9 @@ impl Library {
             updated_at: now,
             trashed: None,
         });
+        if tagged {
+            self.tags_changed(id.0, now)?;
+        }
         self.persist()?;
         Ok(id)
     }
@@ -314,7 +323,7 @@ impl Library {
             .folder_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Folder(id)))?;
         folder.tags = tags;
-        folder.updated_at = now;
+        self.tags_changed(id.0, now)?;
         self.persist()
     }
 
@@ -386,6 +395,7 @@ impl Library {
         }
         tags.sort_unstable_by_key(|t| t.0);
         tags.dedup();
+        let tagged = !tags.is_empty();
         let now = now_millis();
         let id = ItemId::new_v4();
         self.data.index.items.push(Item {
@@ -401,6 +411,9 @@ impl Library {
             thumbnail: None,
             trashed: None,
         });
+        if tagged {
+            self.tags_changed(id.0, now)?;
+        }
         self.persist()?;
         Ok(id)
     }
@@ -474,7 +487,7 @@ impl Library {
             .item_mut(id)
             .ok_or(LibraryError::NotFound(NotFoundKind::Item(id)))?;
         item.tags = tags;
-        item.updated_at = now;
+        self.tags_changed(id.0, now)?;
         self.persist()
     }
 
@@ -647,6 +660,9 @@ impl Library {
         }
         for item in &mut self.data.index.items {
             item.tags.retain(|t| *t != id);
+        }
+        for folder in &mut self.data.index.folders {
+            folder.tags.retain(|t| *t != id);
         }
         graveyard::bury(graveyard::Buried::Tag, id.0, now_millis());
         self.persist()
@@ -1447,6 +1463,7 @@ impl Library {
             bodies::write_pdf(*id, bytes)?;
         }
 
+        self.stamp_unstamped_tags()?;
         self.persist()?;
         self.persist_workspaces()?;
         self.persist_links()?;
@@ -1489,6 +1506,54 @@ impl Library {
         Ok(())
     }
 
+    #[sismo::function("library::persist_tag_stamps")]
+    fn persist_tag_stamps(&self) -> Result<()> {
+        index::store(
+            &self.client,
+            index::TAG_STAMPS_KEY,
+            index::encode(&self.data.tag_stamps)?,
+        );
+        Ok(())
+    }
+
+    /// The tags on `id` changed now: stamp them for this person's
+    /// other devices. Persisting the index is the caller's.
+    fn tags_changed(&mut self, id: [u8; 16], at: u64) -> Result<()> {
+        self.data.tag_stamps.set(id, at);
+        self.persist_tag_stamps()
+    }
+
+    /// Stamp tags that carry none (put before they had stamps, or
+    /// brought by a bundle) with the time of their record, the same on
+    /// every device holding it.
+    fn stamp_unstamped_tags(&mut self) -> Result<()> {
+        let data = &mut self.data;
+        let tagged = data
+            .index
+            .items
+            .iter()
+            .filter(|i| !i.tags.is_empty())
+            .map(|i| (i.id.0, i.updated_at))
+            .chain(
+                data.index
+                    .folders
+                    .iter()
+                    .filter(|f| !f.tags.is_empty())
+                    .map(|f| (f.id.0, f.updated_at)),
+            );
+        let mut stamped = false;
+        for (id, at) in tagged {
+            if data.tag_stamps.get(id).is_none() {
+                data.tag_stamps.set(id, at);
+                stamped = true;
+            }
+        }
+        if stamped {
+            self.persist_tag_stamps()?;
+        }
+        Ok(())
+    }
+
     #[inline]
     fn reject_root(id: FolderId) -> Result<()> {
         if id == ROOT_FOLDER {
@@ -1524,7 +1589,7 @@ fn now_millis() -> u64 {
 impl LibraryData {
     /// Data assembled in memory, for screen previews.
     #[cfg(all(test, not(feature = "hotreload")))]
-    pub(crate) const fn from_parts(
+    pub(crate) fn from_parts(
         index: LibraryIndex,
         workspaces: WorkspaceIndex,
         links: LinkIndex,
@@ -1533,6 +1598,7 @@ impl LibraryData {
             index,
             workspaces,
             links,
+            tag_stamps: tagging::TagStamps::default(),
         }
     }
 
@@ -1850,6 +1916,8 @@ impl LibraryData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use graveyard::Graveyard;
+    use notein_sync::{BlobKey, BlobKind};
 
     // Direct index tests — sidesteps the DataStoreClient dep so the
     // core invariants can be exercised without a live runtime.
@@ -2321,5 +2389,76 @@ mod tests {
         // Out-of-range destination clamps to the last slot.
         assert!(layout.reorder_tab(pane, 0, 99));
         assert_eq!(items(&layout)[2], Some(mk_item(11)));
+    }
+
+    /// A library holding one tagged item, its tags stamped at `stamp`.
+    fn tagged(stamp: Option<u64>) -> (LibraryData, ItemId, TagId) {
+        let tag = TagId::new_v4();
+        let item = ItemId::new_v4();
+        let mut data = LibraryData::default();
+        data.index.items.push(Item {
+            id: item,
+            folder: ROOT_FOLDER,
+            kind: DocKind::plugin(crate::plugins::builtin::canvas::KIND),
+            name: "Mine".into(),
+            color: None,
+            tags: vec![tag],
+            background: BackgroundStyle::default(),
+            created_at: 1,
+            updated_at: 2,
+            thumbnail: None,
+            trashed: None,
+        });
+        if let Some(at) = stamp {
+            data.tag_stamps.set(item.0, at);
+        }
+        (data, item, tag)
+    }
+
+    #[test]
+    fn an_item_travels_without_the_tags_on_it() {
+        let (data, item, _) = tagged(Some(5));
+        let key = BlobKey {
+            kind: BlobKind::Item,
+            id: item.0,
+        };
+        let Some(sync::SyncRecord::Item(sent)) = data.sync_record(key, &Graveyard::default())
+        else {
+            panic!("the item travels");
+        };
+        assert!(sent.tags.is_empty());
+        assert_eq!(sent.name, "Mine");
+    }
+
+    #[test]
+    fn the_tags_on_an_item_travel_on_their_own_record() {
+        let (data, item, tag) = tagged(Some(5));
+        let yard = Graveyard::default();
+        let key = BlobKey {
+            kind: BlobKind::ItemTags,
+            id: item.0,
+        };
+        let head = data.sync_heads(&yard).into_iter().find(|h| h.key() == key);
+        assert_eq!(head.map(|h| h.updated_at), Some(5));
+        assert_eq!(
+            data.sync_record(key, &yard),
+            Some(sync::SyncRecord::ItemTags {
+                item,
+                updated_at: 5,
+                tags: vec![tag],
+            })
+        );
+    }
+
+    #[test]
+    fn unstamped_tags_have_no_record_to_travel_on() {
+        let (data, item, _) = tagged(None);
+        let yard = Graveyard::default();
+        assert!(
+            !data
+                .sync_heads(&yard)
+                .iter()
+                .any(|h| h.kind == BlobKind::ItemTags && h.id == item.0)
+        );
     }
 }
