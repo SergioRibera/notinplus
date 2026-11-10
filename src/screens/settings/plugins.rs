@@ -317,6 +317,15 @@ fn install() {
                 return;
             }
         };
+        review_package(&picked);
+    }));
+}
+
+/// Review a `.ntp` package that was already read (picked, or opened
+/// from the system).
+#[sismo::function("settings::plugins_review_package")]
+pub fn review_package(picked: &crate::files::Picked) {
+    {
         let staged = match Staged::unpack(&picked.bytes) {
             Ok(staged) => staged,
             Err(err) => {
@@ -332,7 +341,7 @@ fn install() {
             }
             Err(err) => incompatible(&picked.name, err.user_message()),
         }
-    }));
+    }
 }
 
 #[sismo::function("settings::plugins_incompatible")]

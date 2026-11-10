@@ -349,6 +349,7 @@ impl Component for AppShell {
             crate::sync::use_presence();
         }
         use_hook(crate::deep_link::listen);
+        use_hook(crate::opened_files::listen);
         crate::deep_link::use_launcher_shortcuts();
         use_hook(|| {
             sismo::scope!("app::session_end_listen");

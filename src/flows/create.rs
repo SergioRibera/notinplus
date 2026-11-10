@@ -432,6 +432,32 @@ pub fn run(entry: CatalogEntry, context: Context) {
     }
 }
 
+/// Offer to add a file that came from outside (the system, a share) to
+/// the library, through the import sheet of the first plugin that
+/// imports its extension. `false` when no plugin does.
+#[sismo::function("flows::import_file")]
+pub fn import_file(picked: crate::files::Picked, context: Context) -> bool {
+    let Some(ext) = std::path::Path::new(&picked.name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase)
+    else {
+        return false;
+    };
+    let entry = crate::plugins::catalog().entries().into_iter().find(|e| {
+        matches!(
+            &e.entry.flow,
+            CreationFlow::Import { extensions, .. }
+                if extensions.iter().any(|known| known.eq_ignore_ascii_case(&ext))
+        )
+    });
+    let Some(entry) = entry else {
+        return false;
+    };
+    import_sheet(entry, context, picked);
+    true
+}
+
 /// What the create flow collected.
 #[derive(Clone, Debug, PartialEq, Default)]
 struct Request {

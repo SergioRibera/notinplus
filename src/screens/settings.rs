@@ -8,6 +8,7 @@ mod library;
 mod notes;
 mod pen;
 mod plugins;
+pub(crate) use plugins::review_package;
 pub(crate) mod schema;
 mod sessions;
 

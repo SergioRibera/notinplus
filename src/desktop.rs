@@ -8,6 +8,7 @@
 
 use std::sync::{Arc, OnceLock};
 
+use istmo::plugins::{DocumentsPublisher, Startup};
 use istmo::{Runtime, RuntimeConfig, RuntimeInit};
 use istmo_file_picker::{DesktopFilePicker, FilePickerHost};
 use istmo_pen::PenHost;
@@ -26,13 +27,29 @@ pub(crate) static PEN_PUBLISHER: OnceLock<Arc<PenPublisher>> = OnceLock::new();
 /// callers should still invoke this exactly once — a second call fails
 /// with `RuntimeAlreadyStarted`.
 ///
+/// `None` when another instance of the app already runs and took the
+/// files of this launch: the caller should exit. Otherwise keep the
+/// returned publisher alive while the app runs; it hands later launches
+/// over to this one.
+///
 /// # Errors
 ///
 /// Propagates any [`istmo::core::IstmoError`] surfaced during runtime
 /// init.
 #[sismo::function("desktop::install")]
-pub fn install() -> Result<(), Box<dyn std::error::Error>> {
+pub fn install() -> Result<Option<DocumentsPublisher>, Box<dyn std::error::Error>> {
     let RuntimeInit { runtime, outbound } = Runtime::init(RuntimeConfig::inline())?;
+
+    // Before anything heavy: a launch that only opens files in the
+    // instance that already runs hands them over and quits.
+    let documents = match DocumentsPublisher::start(
+        &runtime,
+        std::env::args_os().skip(1),
+        istmo::single_instance!().as_ref(),
+    )? {
+        Startup::Primary(publisher) => publisher,
+        Startup::Forwarded => return Ok(None),
+    };
 
     let publisher = PenPublisher::install(&runtime);
     // Symbolic fallback — the real `register_window` upgrade happens
@@ -78,7 +95,7 @@ pub fn install() -> Result<(), Box<dyn std::error::Error>> {
     // today. Drain defensively so a full channel never stalls dispatch.
     std::thread::spawn(move || while outbound.recv().is_ok() {});
 
-    Ok(())
+    Ok(Some(documents))
 }
 
 /// Dump the resolved on-disk locations to stdout + tracing so we can

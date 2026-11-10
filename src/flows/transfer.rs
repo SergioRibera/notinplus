@@ -661,6 +661,15 @@ pub fn import() {
                 return;
             }
         };
+        review_bundle(picked).await;
+    }));
+}
+
+/// Review a `.notin` file that was already read (picked, or opened from
+/// the system).
+#[sismo::function("flows::review_bundle")]
+pub async fn review_bundle(picked: crate::files::Picked) {
+    {
         let reading = Sheet::default().without_close().child(
             ListRow::new(tr!("flows-transfer-reviewing", "name" => picked.name.clone())).leading(
                 notein_ui_kit::Leading::Element(notein_ui_kit::Spinner::default().into_element()),
@@ -691,7 +700,7 @@ pub fn import() {
             }
             Err(_) => damaged(&name),
         }
-    }));
+    }
 }
 
 #[sismo::function("flows::newer_version")]

@@ -22,11 +22,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let max = logger.filter();
     notinplus::diagnostics::init_logging(Some(Box::new(logger)), max);
 
-    notinplus::desktop::install()?;
+    let Some(documents) = notinplus::desktop::install()? else {
+        return Ok(());
+    };
     notinplus::diagnostics::start_if_enabled();
 
     pen_pump::spawn(WINDOW_ID);
     app::run();
+    drop(documents);
     Ok(())
 }
 
