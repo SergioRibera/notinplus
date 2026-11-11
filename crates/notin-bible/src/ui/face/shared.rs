@@ -11,8 +11,6 @@ use notin_sdk::services::Records;
 
 use crate::state::{BibleBookmark, BibleViewerState};
 
-const CODEC: notin_sdk::Wire = notin_sdk::WIRE;
-
 fn key(highlight: &BibleBookmark) -> String {
     use std::fmt::Write as _;
     highlight.id.0.iter().fold(String::new(), |mut key, byte| {
@@ -53,7 +51,7 @@ impl Synced {
         let mut now = HashSet::new();
         for highlight in highlights {
             let key = key(highlight);
-            let Ok(bytes) = bincode::encode_to_vec(highlight, CODEC) else {
+            let Ok(bytes) = notin_sdk::encode(highlight) else {
                 continue;
             };
             if held.get(&key) != Some(&bytes) {

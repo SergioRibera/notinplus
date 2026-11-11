@@ -16,7 +16,7 @@ use crate::library::ItemId;
 const FILE: &str = "session_ends.bin";
 
 /// One session that ended for a guest.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
 pub struct SessionEnd {
     pub title: String,
     pub docs: Vec<ItemId>,
@@ -58,11 +58,7 @@ fn path() -> PathBuf {
 fn load() -> Vec<SessionEnd> {
     std::fs::read(path())
         .ok()
-        .and_then(|bytes| {
-            bincode::decode_from_slice(&bytes, notin_plugin::WIRE)
-                .ok()
-                .map(|(ends, _)| ends)
-        })
+        .and_then(|bytes| notin_plugin::decode(&bytes).ok())
         .unwrap_or_default()
 }
 
@@ -75,7 +71,7 @@ fn store(ends: &[SessionEnd]) {
             other => other,
         }
     } else {
-        match bincode::encode_to_vec(ends, bincode::config::standard()) {
+        match notin_plugin::encode(ends) {
             Ok(bytes) => std::fs::write(&path, bytes),
             Err(err) => {
                 log::warn!("session end: encode: {err}");

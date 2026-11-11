@@ -1,4 +1,4 @@
-//! Small device-local records stored as one bincode file each under
+//! Small device-local records stored as one encoded file each under
 //! the data directory (settings, toolbar state, creation usage).
 //!
 //! A record that is missing or no longer decodes reads as its
@@ -7,15 +7,12 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use bincode::{Decode, Encode};
+use istmo::codec::{Decode, Encode};
 
 use crate::library::bodies;
 
-// Bounded, so a forged length in what is read back is an error.
-const CODEC: notin_plugin::Wire = notin_plugin::WIRE;
-
 /// A record persisted as `<data dir>/<FILE>`.
-pub trait Persisted: Encode + Decode<()> + Default {
+pub trait Persisted: Encode + Decode + Default {
     /// File name inside the data directory.
     const FILE: &'static str;
 
@@ -31,8 +28,7 @@ pub trait Persisted: Encode + Decode<()> + Default {
     fn load() -> Self {
         std::fs::read(Self::path())
             .ok()
-            .and_then(|bytes| bincode::decode_from_slice::<Self, _>(&bytes, CODEC).ok())
-            .map(|(value, _)| value)
+            .and_then(|bytes| notin_plugin::decode::<Self>(&bytes).ok())
             .unwrap_or_default()
     }
 
@@ -42,7 +38,7 @@ pub trait Persisted: Encode + Decode<()> + Default {
     /// Encoding or filesystem failures.
     #[sismo::function("persist::save")]
     fn save(&self) -> io::Result<()> {
-        let bytes = bincode::encode_to_vec(self, CODEC)
+        let bytes = notin_plugin::encode(self)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         write_atomic(&Self::path(), &bytes)
     }

@@ -82,7 +82,7 @@ impl Redial {
 const LINK_SCHEME: &str = "notein://pair?";
 
 /// What travels inside a transport payload.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
 pub enum Payload {
     /// Exchange between trusted devices of one user.
     Sync(Vec<u8>),
@@ -129,7 +129,7 @@ pub enum Payload {
 impl Payload {
     #[cfg_attr(feature = "sismo", sismo::function("sync::payload::encode"))]
     fn to_bytes(&self) -> Vec<u8> {
-        bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default()
+        istmo_core::codec::encode(self).unwrap_or_default()
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("sync::payload::decode"))]
@@ -139,7 +139,7 @@ impl Payload {
 }
 
 /// Who asks into a share, and the proof it holds the invitation.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
 pub struct JoinAsk {
     pub name: String,
     pub device_name: String,
@@ -152,8 +152,8 @@ pub struct JoinAsk {
 }
 
 /// What the owner says to a joiner.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
-enum JoinAnswer {
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum JoinAnswer {
     Welcome(Box<Share>),
     /// An organizer has to let the joiner in first.
     Pending,
@@ -162,7 +162,7 @@ enum JoinAnswer {
 
 /// The pairing handshake, carried over an already authenticated
 /// channel so both sides know exactly which key they are trusting.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
 pub enum PairMessage {
     /// `proof` is the link's secret bound to the requester's key
     /// ([`PairingSecret::proof`]); without it only a device on the same
@@ -275,7 +275,7 @@ pub enum JoinFailure {
 }
 
 /// Why a share is no longer held here.
-#[derive(bincode::Encode, bincode::Decode, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Removal {
     /// The owner closed it for everyone.
     Ended,
@@ -2997,7 +2997,7 @@ impl<R: Replica> SyncDriver<R> {
             return Vec::new();
         }
         let owner = link.share.owner.device;
-        let asked = bincode::encode_to_vec(&edit, bincode::config::standard()).unwrap_or_default();
+        let asked = istmo_core::codec::encode(&edit).unwrap_or_default();
         let sealed = ShareMessage::Edit(edit).seal(&link.share.key);
         self.hold(
             owner,
@@ -4044,7 +4044,7 @@ fn permitted(share: &Share, from: DeviceId, message: Message) -> Option<Message>
 
 #[cfg_attr(feature = "sismo", sismo::function("sync::driver::seal_answer"))]
 fn seal_answer(key: &ShareKey, answer: &JoinAnswer) -> Vec<u8> {
-    let plain = bincode::encode_to_vec(answer, bincode::config::standard()).unwrap_or_default();
+    let plain = istmo_core::codec::encode(answer).unwrap_or_default();
     key.seal(&plain).unwrap_or_default()
 }
 

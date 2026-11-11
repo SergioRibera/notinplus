@@ -8,7 +8,7 @@
 //!
 //! All wire types (`BrushId`, `BrushKind`, `BrushPreset`, `InkPoint`,
 //! `Stroke`) are `#[istmo::message]` so a document round-trips through
-//! `bincode` without an intermediate DTO layer.
+//! the wire codec without an intermediate DTO layer.
 
 use freya::prelude::Color;
 

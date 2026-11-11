@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLockReadGuard};
 
-use bincode::{Decode, Encode};
 use freya::icons::lucide;
 use freya_markdown_editor::document::{Document, HeadingRef};
 use notin_sdk::bookmark::SourceRef;
@@ -18,6 +17,7 @@ use notin_sdk::kind::{
 use notin_sdk::services::Host;
 use notin_sdk::text::Folded;
 use notin_sdk::tr;
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::anchor::NoteAnchor;
 use crate::index::{IndexedNote, NotesIndex};
@@ -37,7 +37,7 @@ pub const ACTION_SHARE_FILE: &str = "share-md";
 const SNIPPET_CONTEXT: usize = 40;
 
 /// What the shell stores for a note: its markdown.
-#[derive(Clone, Debug, PartialEq, Eq, Default, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, SchemaWrite, SchemaRead)]
 pub struct NoteContent {
     pub markdown: String,
 }

@@ -11,8 +11,8 @@
 //! trait signatures reference them without the host having to lower
 //! them to opaque bytes at the FFI boundary.
 
-use bincode::{Decode, Encode};
 use rkyv::{Archive, Deserialize, Serialize};
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Globally unique stroke identifier.
 #[derive(
@@ -25,8 +25,8 @@ use rkyv::{Archive, Deserialize, Serialize};
     Hash,
     Default,
     Debug,
-    Encode,
-    Decode,
+    SchemaWrite,
+    SchemaRead,
     Archive,
     Serialize,
     Deserialize,
@@ -68,8 +68,8 @@ impl std::fmt::Display for StrokeId {
     Hash,
     Default,
     Debug,
-    Encode,
-    Decode,
+    SchemaWrite,
+    SchemaRead,
     Archive,
     Serialize,
     Deserialize,
@@ -112,8 +112,8 @@ impl std::fmt::Display for BookmarkId {
     Hash,
     Default,
     Debug,
-    Encode,
-    Decode,
+    SchemaWrite,
+    SchemaRead,
     Archive,
     Serialize,
     Deserialize,
@@ -156,8 +156,8 @@ impl std::fmt::Display for DeviceId {
     Hash,
     Default,
     Debug,
-    Encode,
-    Decode,
+    SchemaWrite,
+    SchemaRead,
     Archive,
     Serialize,
     Deserialize,
@@ -201,8 +201,8 @@ impl std::fmt::Display for UserId {
     Hash,
     Default,
     Debug,
-    Encode,
-    Decode,
+    SchemaWrite,
+    SchemaRead,
     Archive,
     Serialize,
     Deserialize,
@@ -224,8 +224,8 @@ pub struct ActorId {
     Hash,
     Default,
     Debug,
-    Encode,
-    Decode,
+    SchemaWrite,
+    SchemaRead,
     Archive,
     Serialize,
     Deserialize,

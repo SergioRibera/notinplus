@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS headers (
 CREATE INDEX IF NOT EXISTS idx_headers_loc
     ON headers(bible_id, book_id, chapter, before_verse);
 
--- The plugin's settings, one bincoded `ConfigValue` per key.
+-- The plugin's settings, one encoded `ConfigValue` per key.
 CREATE TABLE IF NOT EXISTS plugin_settings (
     key         TEXT PRIMARY KEY,
     value       BLOB NOT NULL

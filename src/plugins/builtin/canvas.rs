@@ -3,7 +3,6 @@
 
 use std::sync::{PoisonError, RwLock, RwLockReadGuard};
 
-use bincode::{Decode, Encode};
 use freya::icons::lucide;
 use notin_i18n::tr;
 use notin_plugin::config::{ConfigEnumOption, ConfigField, ConfigValue};
@@ -13,6 +12,7 @@ use notin_plugin::kind::{
     ChipView, DocumentKind, ExportError, ExportFile, ExportValues, Hit, IndexReport, KindColor,
     KindInfo, Mark, OutlineIcon, OutlineNode, SearchQuery, SelectionSupport,
 };
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Kind id stored with every canvas.
 pub const KIND: &str = "io.notein.canvas";
@@ -26,14 +26,14 @@ pub const ENTRY_NOTEBOOK: &str = "notebook";
 const UNTINTED_PAPER: [u8; 4] = [247, 245, 240, 255];
 
 /// One layer, as the panel lists it.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub struct LayerSummary {
     pub name: String,
     pub visible: bool,
 }
 
 /// A bookmark pinned on the canvas.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub struct CanvasMark {
     pub bookmark: [u8; 16],
     pub body: String,
@@ -55,14 +55,14 @@ impl CanvasMark {
 
 /// What the shell stores for a canvas: a summary of its ink document,
 /// refreshed on every save.
-#[derive(Clone, Debug, PartialEq, Eq, Default, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, SchemaWrite, SchemaRead)]
 pub struct CanvasContent {
     pub layers: Vec<LayerSummary>,
     pub marks: Vec<CanvasMark>,
 }
 
 /// A place on a canvas.
-#[derive(Clone, Debug, PartialEq, Eq, Default, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, SchemaWrite, SchemaRead)]
 pub struct CanvasAnchor {
     pub bookmark: Option<[u8; 16]>,
     pub layer: Option<u32>,

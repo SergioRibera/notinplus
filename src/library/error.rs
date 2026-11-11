@@ -27,7 +27,7 @@ pub enum LibraryError {
     Store(DataStoreError),
     /// Filesystem I/O against the on-disk body / PDF blob failed.
     Io(io::Error),
-    /// bincode encode / decode failure. Almost always means an older
+    /// Wire codec encode / decode failure. Almost always means an older
     /// version of the app wrote a shape we no longer understand.
     Codec(String),
     /// Referenced id does not exist in the index. Carries the id so

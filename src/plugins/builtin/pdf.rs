@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 use std::sync::{PoisonError, RwLock, RwLockReadGuard};
 
-use bincode::{Decode, Encode};
 use freya::icons::lucide;
 use freya_pdf::{PdfDocument, TocEntry};
 use notin_i18n::tr;
@@ -18,6 +17,7 @@ use notin_plugin::kind::{
     Snapshot,
 };
 use notin_plugin::text::Folded;
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Kind id stored with every PDF.
 pub const KIND: &str = "io.notein.pdf";
@@ -26,7 +26,7 @@ pub const ENTRY_IMPORT: &str = "import-pdf";
 
 /// One row of the PDF's own table of contents. Decoded by hand, nesting
 /// held to [`MAX_CONTENTS_DEPTH`]: the rows come with files from elsewhere.
-#[derive(Clone, Debug, PartialEq, Encode)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Contents {
     pub title: String,
     /// Zero-based page.
@@ -40,34 +40,66 @@ pub struct Contents {
 /// Deepest a table of contents is taken.
 pub const MAX_CONTENTS_DEPTH: usize = freya_pdf::doc::MAX_TOC_DEPTH;
 
-impl<C> Decode<C> for Contents {
-    fn decode<D: bincode::de::Decoder<Context = C>>(
-        decoder: &mut D,
-    ) -> Result<Self, bincode::error::DecodeError> {
-        Self::decode_within(decoder, MAX_CONTENTS_DEPTH)
+// SAFETY: `TYPE_META` stays `Dynamic`, and `size_of` walks the same rows
+// `write` writes, so it returns exactly the bytes written.
+unsafe impl<C: wincode::config::Config> SchemaWrite<C> for Contents {
+    type Src = Self;
+
+    fn size_of(src: &Self) -> wincode::WriteResult<usize> {
+        let mut size = <String as SchemaWrite<C>>::size_of(&src.title)?
+            + <Option<u32> as SchemaWrite<C>>::size_of(&src.page)?
+            + <Option<u32> as SchemaWrite<C>>::size_of(&src.top)?
+            + <u64 as SchemaWrite<C>>::size_of(&(src.children.len() as u64))?;
+        for child in &src.children {
+            size += <Self as SchemaWrite<C>>::size_of(child)?;
+        }
+        Ok(size)
+    }
+
+    fn write(mut writer: impl wincode::io::Writer, src: &Self) -> wincode::WriteResult<()> {
+        <String as SchemaWrite<C>>::write(writer.by_ref(), &src.title)?;
+        <Option<u32> as SchemaWrite<C>>::write(writer.by_ref(), &src.page)?;
+        <Option<u32> as SchemaWrite<C>>::write(writer.by_ref(), &src.top)?;
+        <u64 as SchemaWrite<C>>::write(writer.by_ref(), &(src.children.len() as u64))?;
+        for child in &src.children {
+            <Self as SchemaWrite<C>>::write(writer.by_ref(), child)?;
+        }
+        Ok(())
     }
 }
 
-bincode::impl_borrow_decode!(Contents);
+// SAFETY: `TYPE_META` stays `Dynamic`, and `dst` is written only once the
+// whole table decoded, right before returning `Ok`.
+unsafe impl<'de, C: wincode::config::Config> SchemaRead<'de, C> for Contents {
+    type Dst = Self;
+
+    fn read(
+        reader: impl wincode::io::Reader<'de>,
+        dst: &mut core::mem::MaybeUninit<Self>,
+    ) -> wincode::ReadResult<()> {
+        dst.write(Self::read_within::<C>(reader, MAX_CONTENTS_DEPTH)?);
+        Ok(())
+    }
+}
 
 impl Contents {
-    fn decode_within<C, D: bincode::de::Decoder<Context = C>>(
-        decoder: &mut D,
+    fn read_within<'de, C: wincode::config::Config>(
+        mut reader: impl wincode::io::Reader<'de>,
         depth: usize,
-    ) -> Result<Self, bincode::error::DecodeError> {
-        let title = String::decode(decoder)?;
-        let page = Option::<u32>::decode(decoder)?;
-        let top = Option::<u32>::decode(decoder)?;
-        let len = u64::decode(decoder)?;
+    ) -> wincode::ReadResult<Self> {
+        let title = <String as SchemaRead<'de, C>>::get(reader.by_ref())?;
+        let page = <Option<u32> as SchemaRead<'de, C>>::get(reader.by_ref())?;
+        let top = <Option<u32> as SchemaRead<'de, C>>::get(reader.by_ref())?;
+        let len = <u64 as SchemaRead<'de, C>>::get(reader.by_ref())?;
         if len > 0 && depth == 0 {
-            return Err(bincode::error::DecodeError::Other(
+            return Err(wincode::ReadError::Custom(
                 "table of contents nested too deep",
             ));
         }
         // Grown as rows arrive: the count claims nothing it does not hold.
         let mut children = Vec::new();
         for _ in 0..len {
-            children.push(Self::decode_within(decoder, depth - 1)?);
+            children.push(Self::read_within::<C>(reader.by_ref(), depth - 1)?);
         }
         Ok(Self {
             title,
@@ -99,7 +131,7 @@ const SNAPSHOT_SCALE: f32 = 2.0;
 const MIN_CROP_ROWS: u32 = 8;
 
 /// A bookmark or highlight on a page.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub struct PdfMark {
     pub id: [u8; 16],
     pub anchor: PdfAnchor,
@@ -109,7 +141,7 @@ pub struct PdfMark {
 }
 
 /// What the shell stores for a PDF besides the file itself.
-#[derive(Clone, Debug, PartialEq, Default, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Default, SchemaWrite, SchemaRead)]
 pub struct PdfContent {
     pub file_name: String,
     pub size_bytes: u64,
@@ -120,7 +152,7 @@ pub struct PdfContent {
 
 /// A place in a PDF: a page, a range of pages (a section of the table of
 /// contents), optionally a fragment of a page's text.
-#[derive(Clone, Debug, PartialEq, Eq, Default, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, SchemaWrite, SchemaRead)]
 pub struct PdfAnchor {
     /// Zero-based first page.
     pub page: u32,
@@ -1110,8 +1142,7 @@ mod tests {
         let nested = |levels: usize| {
             let mut bytes = [0, 0, 0, 1].repeat(levels);
             bytes.extend_from_slice(&[0, 0, 0, 0]);
-            bincode::decode_from_slice::<Contents, _>(&bytes, bincode::config::standard())
-                .map(|(contents, _)| contents)
+            notin_plugin::decode::<Contents>(&bytes)
         };
         assert!(nested(100_000).is_err());
         assert!(nested(MAX_CONTENTS_DEPTH + 1).is_err());

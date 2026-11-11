@@ -13,9 +13,9 @@
 
 use std::ops::RangeInclusive;
 
-use bincode::{Decode, Encode};
 use notin_i18n::tr;
 use rkyv::{Archive, Deserialize, Serialize};
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::failure::UserMessage;
 
@@ -289,7 +289,7 @@ pub struct ConfigEnumOption {
 
 /// A concrete setting value — union of every variant declared in
 /// [`ConfigFieldKind`].
-#[derive(Clone, Debug, PartialEq, Encode, Decode, Archive, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, SchemaWrite, SchemaRead, Archive, Serialize, Deserialize)]
 #[rkyv(compare(PartialEq), derive(Debug))]
 pub enum ConfigValue {
     Bool(bool),

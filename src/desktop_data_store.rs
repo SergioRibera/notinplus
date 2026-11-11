@@ -6,7 +6,7 @@
 //! filesystem-backed implementation so [`crate::library::Library`] can
 //! open the same way on every platform.
 //!
-//! Layout: one bincoded file per namespace under
+//! Layout: one encoded file per namespace under
 //! `<data dir>/data_store/<namespace>.bin` (see [`istmo::path::data_dir`]). Each file
 //! carries a `HashMap<String, Value>` — the `Value` tag disambiguates
 //! the typed getters (`get_string`, `get_i64`, …). A wrong-type read
@@ -16,11 +16,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use bincode::config::standard;
-use bincode::{Decode, Encode};
 use istmo_data_store::{
     DataStore, DataStoreConfig, DataStoreError, DataStoreFactory, DataStoreHost,
 };
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Register the desktop backend on `runtime`. Returns the host so
 /// the caller can hand it to `runtime.register_host(...)`.
@@ -43,7 +42,7 @@ impl DataStoreFactory for DesktopFactory {
     }
 }
 
-#[derive(Debug, Encode, Decode, Clone)]
+#[derive(Debug, SchemaWrite, SchemaRead, Clone)]
 enum Value {
     Str(String),
     I64(i64),
@@ -108,7 +107,7 @@ impl DesktopStore {
 
     #[sismo::function("data_store::write_map")]
     fn write_map(path: &Path, map: &HashMap<String, Value>) -> Result<(), DataStoreError> {
-        let bytes = bincode::encode_to_vec(map, standard())
+        let bytes = notin_plugin::encode(map)
             .map_err(|e| DataStoreError::Backend(format!("encode: {e}")))?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -125,9 +124,7 @@ impl DesktopStore {
 #[sismo::function("data_store::load")]
 fn load(path: &std::path::Path) -> Option<HashMap<String, Value>> {
     let bytes = std::fs::read(path).ok()?;
-    let (map, _) =
-        bincode::decode_from_slice::<HashMap<String, Value>, _>(&bytes, notin_plugin::WIRE).ok()?;
-    Some(map)
+    notin_plugin::decode::<HashMap<String, Value>>(&bytes).ok()
 }
 
 fn wrong_type(kind: &str, key: &str) -> DataStoreError {

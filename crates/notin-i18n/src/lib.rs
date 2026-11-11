@@ -34,7 +34,9 @@ pub use fluent::{FluentArgs, FluentResource, FluentValue};
 
 /// A language the interface is translated to. Adding one means adding
 /// a variant here and a `locales/<tag>/` folder to every crate.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, bincode::Encode, bincode::Decode)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, wincode::SchemaWrite, wincode::SchemaRead,
+)]
 pub enum Lang {
     #[default]
     En,
@@ -209,10 +211,7 @@ macro_rules! catalog {
         /// This crate's interface strings in every language.
         pub(crate) static LOCALES: ::std::sync::LazyLock<$crate::Catalog> =
             ::std::sync::LazyLock::new(|| {
-                $crate::Catalog::new(include!(concat!(
-                    env!("OUT_DIR"),
-                    "/notin_i18n_locales.rs"
-                )))
+                $crate::Catalog::new(include!(concat!(env!("OUT_DIR"), "/notin_i18n_locales.rs")))
             });
     };
 }

@@ -35,7 +35,7 @@ pub enum DbError {
     MissingBible {
         id: String,
     },
-    /// A setting could not be bincoded for storage.
+    /// A setting could not be encoded for storage.
     Encode(String),
 }
 

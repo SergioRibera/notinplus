@@ -3,84 +3,50 @@
 //! A plugin's anchors and document content are ordinary Rust types.
 //! The shell never looks inside them: it keeps their bytes, and the
 //! adapters in [`crate::erased`] encode and decode them with one codec
-//! on both sides.
+//! on both sides: istmo's wire codec ([`istmo_core::codec`]).
 
-use bincode::config::{self, Configuration, Limit, LittleEndian, Varint};
-use bincode::{Decode, Encode};
+pub use istmo_core::CodecError;
+pub use istmo_core::codec::{Decode, Encode};
 
-/// The bincode configuration for bytes that come from elsewhere.
-///
-/// Other devices, imported files, plugins: a length past [`WIRE_LIMIT`] is
-/// refused before anything is allocated, so a forged one can neither
-/// exhaust memory nor abort the process.
-pub type Wire = Configuration<LittleEndian, Varint, Limit<WIRE_LIMIT>>;
 /// Bytes one decoded value may claim.
 pub const WIRE_LIMIT: usize = 1 << 28;
-/// See [`Wire`]. Encodes the same as `bincode::config::standard()`.
-pub const WIRE: Wire = config::standard().with_limit::<WIRE_LIMIT>();
 
-const CODEC: Wire = WIRE;
+/// Encode `value` with the wire codec.
+///
+/// # Errors
+/// The value does not encode (a length past what the layout holds).
+pub fn encode<T: Encode + ?Sized>(value: &T) -> Result<Vec<u8>, CodecError> {
+    istmo_core::codec::encode(value)
+}
 
 /// Decode `bytes` that came from elsewhere, claiming at most `cap` bytes.
 ///
-/// bincode allocates a length a value claims before reading it, up to
-/// the configured limit, so with one large limit a few forged bytes
-/// would make it allocate all of it. Here the limit follows the input:
-/// 64 times its size (at least 64 KiB), and never more than `cap`, what
-/// a value of this kind may ever take.
+/// A length a value claims is allocated before its elements are read,
+/// so the limit follows the input (64 times its size, at least 64 KiB)
+/// and never passes `cap`, what a value of this kind may ever take
+/// (rounded up to the codec's next rung). Input longer than `cap` is
+/// refused before decoding.
 ///
 /// # Errors
 /// The bytes are not a valid encoding, or claim more than that.
-pub fn decode_bounded<T: Decode<()>>(
-    bytes: &[u8],
-    cap: usize,
-) -> Result<T, bincode::error::DecodeError> {
-    // Every cap is a power of two, and so is every limit below: none is
-    // rounded past the cap it stands for.
-    debug_assert!(cap.is_power_of_two());
-    if bytes.len() > cap {
-        return Err(bincode::error::DecodeError::LimitExceeded);
-    }
-    let need = bytes.len().saturating_mul(64).max(1 << 16).min(cap);
-    macro_rules! within {
-        ($($limit:expr),*) => {
-            $(
-                if need <= $limit {
-                    let config = config::standard().with_limit::<{ $limit }>();
-                    return bincode::decode_from_slice(bytes, config).map(|(value, _)| value);
-                }
-            )*
-        };
-    }
-    within!(
-        1 << 12,
-        1 << 13,
-        1 << 14,
-        1 << 15,
-        1 << 16,
-        1 << 17,
-        1 << 18,
-        1 << 19,
-        1 << 20,
-        1 << 21,
-        1 << 22,
-        1 << 23,
-        1 << 24,
-        1 << 25,
-        1 << 26,
-        1 << 27,
-        1 << 28,
-        1 << 29
-    );
-    bincode::decode_from_slice(bytes, WIRE).map(|(value, _)| value)
+pub fn decode_bounded<T: Decode>(bytes: &[u8], cap: usize) -> Result<T, CodecError> {
+    istmo_core::codec::decode_capped(bytes, cap).map(|(value, _)| value)
+}
+
+/// [`decode_bounded`] up to [`WIRE_LIMIT`].
+///
+/// # Errors
+/// As [`decode_bounded`].
+pub fn decode<T: Decode>(bytes: &[u8]) -> Result<T, CodecError> {
+    decode_bounded(bytes, WIRE_LIMIT)
 }
 
 /// A value that crosses the shell as bytes.
-pub trait Payload: Encode + Decode<()> + Clone + Send + Sync + 'static {
+pub trait Payload: Encode + Decode + Clone + Send + Sync + 'static {
     /// Encode with the plugin codec.
     #[must_use]
     fn to_bytes(&self) -> Vec<u8> {
-        bincode::encode_to_vec(self, CODEC).unwrap_or_default()
+        encode(self).unwrap_or_default()
     }
 
     /// Decode bytes written by [`Payload::to_bytes`].
@@ -88,11 +54,11 @@ pub trait Payload: Encode + Decode<()> + Clone + Send + Sync + 'static {
     /// # Errors
     /// [`PayloadError`] when the bytes are not a valid encoding.
     fn from_bytes(bytes: &[u8]) -> Result<Self, PayloadError> {
-        decode_bounded(bytes, WIRE_LIMIT).map_err(|e| PayloadError(e.to_string()))
+        decode(bytes).map_err(|e| PayloadError(e.to_string()))
     }
 }
 
-impl<T> Payload for T where T: Encode + Decode<()> + Clone + Send + Sync + 'static {}
+impl<T> Payload for T where T: Encode + Decode + Clone + Send + Sync + 'static {}
 
 /// Bytes that do not decode as the expected payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -110,7 +76,7 @@ impl std::error::Error for PayloadError {}
 mod tests {
     use super::Payload;
 
-    #[derive(bincode::Encode, bincode::Decode, Clone, Debug, PartialEq)]
+    #[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, Debug, PartialEq)]
     struct Verse {
         book: u8,
         chapter: u16,

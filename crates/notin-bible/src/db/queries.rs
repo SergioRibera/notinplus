@@ -224,7 +224,7 @@ pub(crate) fn load_chapter(
     })
 }
 
-/// Every persisted plugin setting, bincoded [`ConfigValue`]s by key.
+/// Every persisted plugin setting, encoded [`ConfigValue`]s by key.
 /// A value that no longer decodes is dropped: the schema's default
 /// takes its place.
 #[cfg_attr(feature = "sismo", sismo::function("bible::db_load_settings"))]
@@ -238,15 +238,15 @@ pub(crate) fn load_settings(db: &Db) -> Result<Vec<(String, ConfigValue)>> {
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows
             .into_iter()
-            .filter_map(|(key, bytes)| {
-                match bincode::decode_from_slice::<ConfigValue, _>(&bytes, notin_sdk::WIRE) {
-                    Ok((value, _)) => Some((key, value)),
+            .filter_map(
+                |(key, bytes)| match notin_sdk::decode::<ConfigValue>(&bytes) {
+                    Ok(value) => Some((key, value)),
                     Err(e) => {
                         log::warn!("bible: setting {key} unreadable, dropped: {e}");
                         None
                     }
-                }
-            })
+                },
+            )
             .collect())
     })
 }
@@ -254,8 +254,7 @@ pub(crate) fn load_settings(db: &Db) -> Result<Vec<(String, ConfigValue)>> {
 /// Persist `value` under `key`, replacing the previous one.
 #[cfg_attr(feature = "sismo", sismo::function("bible::db_save_setting"))]
 pub(crate) fn save_setting(db: &Db, key: &str, value: &ConfigValue) -> Result<()> {
-    let bytes = bincode::encode_to_vec(value, bincode::config::standard())
-        .map_err(|e| DbError::Encode(e.to_string()))?;
+    let bytes = notin_sdk::encode(value).map_err(|e| DbError::Encode(e.to_string()))?;
     db.with_conn_mut(|conn| {
         conn.execute(
             "INSERT INTO plugin_settings (key, value) VALUES (?1, ?2)

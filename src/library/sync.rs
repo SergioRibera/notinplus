@@ -67,7 +67,7 @@ impl SyncRecord {
     #[must_use]
     #[sismo::function("library::sync::record_encode")]
     pub fn encode(&self) -> Vec<u8> {
-        bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default()
+        notin_plugin::encode(self).unwrap_or_default()
     }
 
     #[must_use]

@@ -9,7 +9,7 @@
 //!
 //! State is process-wide because writers (autosave workers, the note
 //! page) do not all hold the library lock. The file lives at
-//! `<library root>/refs.bincode`.
+//! `<library root>/refs.bin`.
 
 use std::collections::HashMap;
 use std::fs;
@@ -25,8 +25,7 @@ use crate::deep_link::scan_links;
 use crate::doc::Doc;
 
 // Bounded, so a forged length in what is read back is an error.
-const CODEC: notin_plugin::Wire = notin_plugin::WIRE;
-const FILE: &str = "refs.bincode";
+const FILE: &str = "refs.bin";
 /// Schema version encoded into the cache file; a mismatch drops it.
 const VERSION: u32 = 1;
 
@@ -87,9 +86,8 @@ impl RefsIndex {
         let Ok(bytes) = fs::read(path()) else {
             return Self::default();
         };
-        let file = bincode::decode_from_slice::<RefsFile, _>(&bytes, CODEC)
+        let file = notin_plugin::decode::<RefsFile>(&bytes)
             .ok()
-            .map(|(f, _)| f)
             .filter(|f| f.version == VERSION)
             .unwrap_or_default();
         Self {
@@ -106,14 +104,14 @@ impl RefsIndex {
             entries: self.entries.clone(),
             pins: self.pins.iter().map(|(k, v)| (*k, *v)).collect(),
         };
-        let bytes = bincode::encode_to_vec(&file, CODEC)
+        let bytes = notin_plugin::encode(&file)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         let dest = path();
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
         }
         let mut tmp = dest.clone();
-        tmp.set_extension("bincode.tmp");
+        tmp.set_extension("bin.tmp");
         fs::write(&tmp, bytes)?;
         fs::rename(&tmp, dest)
     }

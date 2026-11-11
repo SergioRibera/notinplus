@@ -11,19 +11,19 @@
 //! later without a wire break.
 //!
 //! Opaque payloads crossing the plugin trait boundary (e.g.
-//! `list_bookmarks`, `update_bookmark`) are bincoded `Bookmark` / `Vec<
+//! `list_bookmarks`, `update_bookmark`) are encoded `Bookmark` / `Vec<
 //! Bookmark>` values; sdk helpers in `notin-sdk` wrap the codec on the
 //! author's side.
 
-use bincode::{Decode, Encode};
 use rkyv::{Archive, Deserialize, Serialize};
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::ids::{BookmarkId, StrokeId};
 
 /// Point in a canvas's world coordinate system (origin top-left,
 /// Y increases downward). World-space, not surface-pixel.
 #[derive(
-    Clone, Copy, PartialEq, Debug, Default, Encode, Decode, Archive, Serialize, Deserialize,
+    Clone, Copy, PartialEq, Debug, Default, SchemaWrite, SchemaRead, Archive, Serialize, Deserialize,
 )]
 #[rkyv(compare(PartialEq), derive(Debug))]
 pub struct WorldPoint {
@@ -51,7 +51,9 @@ pub type TimestampMs = u64;
 /// The pin re-derives its world position from the stroke's current
 /// AABB plus a stored offset, so moving / re-scaling the stroke drags
 /// the pin along.
-#[derive(Clone, Copy, PartialEq, Debug, Encode, Decode, Archive, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, PartialEq, Debug, SchemaWrite, SchemaRead, Archive, Serialize, Deserialize,
+)]
 #[rkyv(compare(PartialEq), derive(Debug))]
 pub struct StrokeAnchor {
     pub stroke: StrokeId,
@@ -66,10 +68,10 @@ pub struct StrokeAnchor {
 /// Three variants cover every target that Phase 1-plus bookmarks can
 /// name: another bookmark in the library, an anchor inside a source
 /// plugin, or an arbitrary URL. The `Plugin` variant carries an opaque
-/// bincode blob the owning plugin alone can decode — core never peeks
+/// encoded blob the owning plugin alone can decode — core never peeks
 /// inside, which keeps third-party source plugins additive without a
 /// wire break.
-#[derive(Clone, PartialEq, Eq, Debug, Encode, Decode, Archive, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead, Archive, Serialize, Deserialize)]
 #[rkyv(compare(PartialEq), derive(Debug))]
 pub enum SourceRef {
     /// Another bookmark in the library.
@@ -96,7 +98,7 @@ pub enum SourceRef {
 /// `stuck_to` is `Some`, the live position is recomputed from the
 /// stroke's current AABB; `anchor` is only the fallback snapshot used
 /// when the sticky target disappears (chip ⚠ "ancla rota").
-#[derive(Clone, PartialEq, Debug, Encode, Decode, Archive, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Debug, SchemaWrite, SchemaRead, Archive, Serialize, Deserialize)]
 #[rkyv(compare(PartialEq), derive(Debug))]
 pub struct Bookmark {
     pub id: BookmarkId,

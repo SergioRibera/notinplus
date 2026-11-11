@@ -13,7 +13,9 @@ use crate::error::IdentityError;
 const PROFILE_VERSION: u32 = 3;
 
 /// Stable identifier of a device: the hash of its public key.
-#[derive(bincode::Encode, bincode::Decode, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    wincode::SchemaWrite, wincode::SchemaRead, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
 pub struct DeviceId(pub [u8; 32]);
 
 impl DeviceId {
@@ -129,7 +131,7 @@ impl DeviceKey {
 }
 
 /// Another device this one treats as the same user.
-#[derive(bincode::Encode, bincode::Decode, Clone, Debug, PartialEq, Eq)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, Debug, PartialEq, Eq)]
 pub struct TrustedDevice {
     pub id: DeviceId,
     pub public: [u8; 32],
@@ -259,7 +261,7 @@ pub struct DeviceProfile {
     relay: Option<String>,
 }
 
-#[derive(bincode::Encode, bincode::Decode)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead)]
 struct ProfileFile {
     version: u32,
     public: [u8; 32],
@@ -271,7 +273,7 @@ struct ProfileFile {
 }
 
 /// The second layout, without a user name.
-#[derive(bincode::Decode)]
+#[derive(wincode::SchemaRead)]
 struct ProfileFileV2 {
     version: u32,
     public: [u8; 32],
@@ -282,7 +284,7 @@ struct ProfileFileV2 {
 }
 
 /// The first layout, without a relay.
-#[derive(bincode::Decode)]
+#[derive(wincode::SchemaRead)]
 struct ProfileFileV1 {
     version: u32,
     public: [u8; 32],
@@ -341,16 +343,14 @@ impl DeviceProfile {
             trusted: self.trusted.clone(),
             relay: self.relay.clone(),
         };
-        bincode::encode_to_vec(file, bincode::config::standard())
-            .map_err(|err| IdentityError::Codec(err.to_string()))
+        istmo_core::codec::encode(&file).map_err(|err| IdentityError::Codec(err.to_string()))
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("sync::profile::decode"))]
     pub fn decode(bytes: &[u8]) -> Result<Self, IdentityError> {
-        let config = bincode::config::standard();
-        let current: Option<ProfileFile> = bincode::decode_from_slice(bytes, config)
+        let current: Option<ProfileFile> = istmo_core::codec::decode::<ProfileFile>(bytes)
             .ok()
-            .map(|(file, _): (ProfileFile, usize)| file)
+            .map(|(file, _)| file)
             .filter(|file| file.version == PROFILE_VERSION);
         let file = if let Some(file) = current {
             file
@@ -368,10 +368,9 @@ impl DeviceProfile {
 
     /// Earlier layouts, read into the current one.
     fn decode_older(bytes: &[u8]) -> Result<ProfileFile, IdentityError> {
-        let config = bincode::config::standard();
-        let v2: Option<ProfileFileV2> = bincode::decode_from_slice(bytes, config)
+        let v2: Option<ProfileFileV2> = istmo_core::codec::decode::<ProfileFileV2>(bytes)
             .ok()
-            .map(|(file, _): (ProfileFileV2, usize)| file)
+            .map(|(file, _)| file)
             .filter(|file| file.version == 2);
         if let Some(old) = v2 {
             return Ok(ProfileFile {
@@ -384,7 +383,7 @@ impl DeviceProfile {
                 relay: old.relay,
             });
         }
-        let (old, _): (ProfileFileV1, usize) = bincode::decode_from_slice(bytes, config)
+        let (old, _): (ProfileFileV1, usize) = istmo_core::codec::decode(bytes)
             .map_err(|err| IdentityError::Codec(err.to_string()))?;
         if old.version != 1 {
             return Err(IdentityError::Version(old.version));
@@ -569,7 +568,7 @@ mod tests {
             trusted: Vec::new(),
             relay: None,
         };
-        let bytes = bincode::encode_to_vec(file, bincode::config::standard()).unwrap();
+        let bytes = istmo_core::codec::encode(&file).unwrap();
         assert!(matches!(
             DeviceProfile::decode(&bytes),
             Err(IdentityError::Version(99))

@@ -20,7 +20,9 @@ const PREVIOUS_KEYS: usize = 32;
 const DEPARTED_MAX: usize = 64;
 
 /// Identifies a share everywhere it travels.
-#[derive(bincode::Encode, bincode::Decode, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    wincode::SchemaWrite, wincode::SchemaRead, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
 pub struct ShareId(pub [u8; 16]);
 
 impl ShareId {
@@ -37,7 +39,7 @@ impl fmt::Debug for ShareId {
 }
 
 /// How long a share lives.
-#[derive(bincode::Encode, bincode::Decode, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ShareMode {
     /// Live while the owner is around; nothing is kept afterwards.
     Session,
@@ -49,8 +51,8 @@ pub enum ShareMode {
 /// What someone may do inside a share, lowest first. The owner
 /// outranks everyone; a member is never `Owner`.
 #[derive(
-    bincode::Encode,
-    bincode::Decode,
+    wincode::SchemaWrite,
+    wincode::SchemaRead,
     Clone,
     Copy,
     PartialEq,
@@ -115,7 +117,7 @@ impl Role {
 }
 
 /// Someone inside a share.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
 pub struct Member {
     pub device: DeviceId,
     pub public: [u8; 32],
@@ -144,7 +146,7 @@ impl Member {
 
 /// A share as every member holds it. The key never leaves the device
 /// except inside an invitation.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
 pub struct Share {
     pub id: ShareId,
     pub owner: Member,
@@ -207,25 +209,6 @@ pub struct Share {
     pub lease_held_ms: u64,
     pub lease_held_seq: u64,
 }
-
-impl bincode::Encode for ShareKey {
-    fn encode<E: bincode::enc::Encoder>(
-        &self,
-        encoder: &mut E,
-    ) -> Result<(), bincode::error::EncodeError> {
-        self.as_bytes().encode(encoder)
-    }
-}
-
-impl<C> bincode::Decode<C> for ShareKey {
-    fn decode<D: bincode::de::Decoder<Context = C>>(
-        decoder: &mut D,
-    ) -> Result<Self, bincode::error::DecodeError> {
-        <[u8; 32]>::decode(decoder).map(Self::from)
-    }
-}
-
-bincode::impl_borrow_decode!(ShareKey);
 
 impl Share {
     #[must_use]
@@ -747,7 +730,7 @@ impl Share {
 }
 
 /// A member that walked away on its own.
-#[derive(bincode::Encode, bincode::Decode, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Departed {
     pub device: DeviceId,
 }
@@ -768,7 +751,7 @@ const LEASE_SKEW_MS: u64 = 24 * 60 * 60 * 1000;
 
 /// What the owner vouches for: the share's key epoch and members, as of
 /// `issued_at` (Unix milliseconds).
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
 pub struct Lease {
     pub share: ShareId,
     pub epoch: u32,
@@ -780,7 +763,7 @@ pub struct Lease {
 }
 
 /// A [`Lease`] with the owner's signature.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
 pub struct SignedLease {
     pub lease: Lease,
     pub signature: [u8; 64],
@@ -788,7 +771,7 @@ pub struct SignedLease {
 
 impl Lease {
     fn signed_bytes(&self) -> Vec<u8> {
-        let body = bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default();
+        let body = istmo_core::codec::encode(self).unwrap_or_default();
         [b"notin-lease".as_slice(), &body].concat()
     }
 
@@ -826,7 +809,7 @@ impl SignedLease {
 }
 
 /// What travels in an invitation link or QR.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
 pub struct Invite {
     pub share: ShareId,
     pub owner: Member,
@@ -968,7 +951,7 @@ pub fn proof_key<'a>(share: &'a Share, proof: &[u8], joiner: &[u8; 32]) -> Optio
 /// A share its owner closed, kept so a member that was away is told
 /// when it comes back instead of editing into the void, and so the
 /// owner can open it again.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
 pub struct EndedShare {
     pub id: ShareId,
     pub key: ShareKey,
@@ -985,7 +968,7 @@ pub struct EndedShare {
 
 /// A share this device walked away from, kept so it can ask back in
 /// with the same invitation while the owner keeps the share open.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
 pub struct LeftShare {
     pub invite: Invite,
     pub title: String,
@@ -997,7 +980,7 @@ pub struct LeftShare {
 }
 
 /// Every share a device takes part in, as persisted.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug, Default)]
 pub struct ShareBook {
     pub shares: Vec<Share>,
     /// Shares this device owned and closed.
@@ -1012,7 +995,7 @@ impl ShareBook {
     #[must_use]
     #[cfg_attr(feature = "sismo", sismo::function("sync::share_book::encode"))]
     pub fn encode(&self) -> Vec<u8> {
-        bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default()
+        istmo_core::codec::encode(self).unwrap_or_default()
     }
 
     #[must_use]
@@ -1051,7 +1034,7 @@ impl ShareBook {
 
 /// A change to a share that someone other than the owner asks for, or
 /// the owner applies. The owner checks the asker's role before applying.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
 pub enum ShareEdit {
     Rename(String),
     AddDocs {
@@ -1079,7 +1062,7 @@ pub enum ShareEdit {
 }
 
 /// What members exchange inside a share, always sealed with its key.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
 pub enum ShareMessage {
     /// An exchange message for the share's documents.
     Sync(Vec<u8>),
@@ -1106,7 +1089,7 @@ impl ShareMessage {
     #[must_use]
     #[cfg_attr(feature = "sismo", sismo::function("sync::share::seal"))]
     pub fn seal(&self, key: &ShareKey) -> Vec<u8> {
-        let plain = bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default();
+        let plain = istmo_core::codec::encode(self).unwrap_or_default();
         key.seal(&plain).unwrap_or_default()
     }
 
@@ -1131,15 +1114,14 @@ impl ShareMessage {
     #[cfg_attr(feature = "sismo", sismo::function("sync::share::seal_signed"))]
     pub fn seal_signed(&self, share: &Share, kind: RecordKind, author: &DeviceKey) -> Vec<u8> {
         use ed25519_dalek::Signer;
-        let message = bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default();
+        let message = istmo_core::codec::encode(self).unwrap_or_default();
         let signed = signed_bytes(share.id, kind, author.public(), &message);
         let record = SignedRecord {
             author: *author.public(),
             signature: author.signing().sign(&signed).to_bytes(),
             message,
         };
-        let plain =
-            bincode::encode_to_vec(&record, bincode::config::standard()).unwrap_or_default();
+        let plain = istmo_core::codec::encode(&record).unwrap_or_default();
         share.key.seal(&plain).unwrap_or_default()
     }
 
@@ -1199,7 +1181,7 @@ pub fn seal_keys(
     epoch: u32,
     keys: &[ShareKey],
 ) -> Option<Vec<u8>> {
-    let plain = bincode::encode_to_vec(keys, bincode::config::standard()).ok()?;
+    let plain = istmo_core::codec::encode(keys).ok()?;
     let boxed = key_box(&owner.agree(member)?, share, epoch)
         .seal(&plain)
         .ok()?;
@@ -1234,8 +1216,8 @@ fn key_box(shared: &[u8; 32], share: ShareId, epoch: u32) -> ShareKey {
 }
 
 /// A [`ShareMessage`] with the signature of the member that wrote it.
-#[derive(bincode::Encode, bincode::Decode)]
-struct SignedRecord {
+#[derive(wincode::SchemaWrite, wincode::SchemaRead)]
+pub(crate) struct SignedRecord {
     author: [u8; 32],
     signature: [u8; 64],
     message: Vec<u8>,
@@ -1245,7 +1227,7 @@ struct SignedRecord {
 /// so a relay can neither move a record to another share nor pass it
 /// off as another kind.
 fn signed_bytes(share: ShareId, kind: RecordKind, author: &[u8; 32], message: &[u8]) -> Vec<u8> {
-    let kind = bincode::encode_to_vec(kind, bincode::config::standard()).unwrap_or_default();
+    let kind = istmo_core::codec::encode(&kind).unwrap_or_default();
     [
         b"notin-record".as_slice(),
         share.0.as_slice(),

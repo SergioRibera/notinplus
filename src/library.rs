@@ -66,7 +66,7 @@ use crate::doc::Doc;
 /// Cross-platform library of persisted docs.
 ///
 /// Cheap to hold across UI renders — reads hit an in-memory
-/// [`LibraryIndex`], writes issue a single bincode round-trip through
+/// [`LibraryIndex`], writes issue a single codec round-trip through
 /// [`DataStoreClient`] plus (for body ops) one filesystem write.
 ///
 /// Construct with [`Library::open`]; do not clone. If you need the
@@ -1960,8 +1960,7 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_bincode() {
-        use bincode::config;
+    fn round_trips_through_the_codec() {
         let mut idx = LibraryIndex::default();
         let tag = TagId::new_v4();
         idx.tags.push(Tag {
@@ -1994,9 +1993,8 @@ mod tests {
             thumbnail: None,
             trashed: None,
         });
-        let bytes = bincode::encode_to_vec(&idx, config::standard()).unwrap();
-        let (decoded, _) =
-            bincode::decode_from_slice::<LibraryIndex, _>(&bytes, config::standard()).unwrap();
+        let bytes = notin_plugin::encode(&idx).unwrap();
+        let decoded = notin_plugin::decode::<LibraryIndex>(&bytes).unwrap();
         assert_eq!(idx, decoded);
     }
 
@@ -2029,7 +2027,6 @@ mod tests {
 
     #[test]
     fn workspace_index_round_trip() {
-        use bincode::config;
         let mut idx = WorkspaceIndex::default();
         let a = WorkspaceId::new_v4();
         let left = mk_pane(1);
@@ -2061,9 +2058,8 @@ mod tests {
             device: Some(notin_sync::DeviceId([7; 32])),
         });
         idx.active = Some(a);
-        let bytes = bincode::encode_to_vec(&idx, config::standard()).unwrap();
-        let (decoded, _) =
-            bincode::decode_from_slice::<WorkspaceIndex, _>(&bytes, config::standard()).unwrap();
+        let bytes = notin_plugin::encode(&idx).unwrap();
+        let decoded = notin_plugin::decode::<WorkspaceIndex>(&bytes).unwrap();
         assert_eq!(idx, decoded);
         assert_eq!(decoded.workspaces[0].layout.leaves().len(), 2);
     }

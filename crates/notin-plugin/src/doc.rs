@@ -1,11 +1,13 @@
 //! Documents as plugins see them: an id and the shell's metadata.
 
-use bincode::{Decode, Encode};
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::create::Paper;
 
 /// Library id of a document (16-byte UUID).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default, Encode, Decode)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default, SchemaWrite, SchemaRead,
+)]
 pub struct DocId(pub [u8; 16]);
 
 impl DocId {

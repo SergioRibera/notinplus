@@ -15,7 +15,7 @@ use crate::replica::{Blob, BlobHead, BlobKey, BlobKind, DocId, Replica, Scope, V
 pub const PROTOCOL_VERSION: u16 = 5;
 
 /// One unit of the exchange.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
 pub enum Message {
     /// "This is what I have." Sent at the start of every round.
     Inventory {
@@ -30,8 +30,8 @@ pub enum Message {
     Blobs(Vec<Blob>),
 }
 
-#[derive(bincode::Encode, bincode::Decode)]
-struct Framed {
+#[derive(wincode::SchemaWrite, wincode::SchemaRead)]
+pub(crate) struct Framed {
     version: u16,
     message: Message,
 }
@@ -40,13 +40,10 @@ impl Message {
     /// Wire bytes, prefixed with [`PROTOCOL_VERSION`].
     #[cfg_attr(feature = "sismo", sismo::function("sync::message::encode"))]
     pub fn to_bytes<E>(&self) -> Result<Vec<u8>, SyncError<E>> {
-        bincode::encode_to_vec(
-            Framed {
-                version: PROTOCOL_VERSION,
-                message: self.clone(),
-            },
-            bincode::config::standard(),
-        )
+        istmo_core::codec::encode(&Framed {
+            version: PROTOCOL_VERSION,
+            message: self.clone(),
+        })
         .map_err(|err| SyncError::Codec(err.to_string()))
     }
 

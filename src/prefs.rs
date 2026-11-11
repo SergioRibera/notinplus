@@ -36,14 +36,13 @@ use crate::library::bodies;
 use crate::library::{ItemId, ViewSlot};
 
 // Bounded, so a forged length in what is read back is an error.
-const CODEC: notin_plugin::Wire = notin_plugin::WIRE;
 const PREFS_FILE: &str = "prefs.bin";
 const EDITOR_PREFS_FILE: &str = "editor.bin";
 const HANDWRITING_PREFS_FILE: &str = "handwriting.bin";
 const VIEWS_SUBDIR: &str = "views";
 const VIEW_EXT: &str = "bin";
 /// Global toolbar prefs. `HashMap`-shaped state is serialised as
-/// `Vec<(K, V)>` to keep bincode's derive requirements narrow.
+/// `Vec<(K, V)>` to keep the derive requirements narrow.
 #[istmo::message]
 #[derive(Clone, Debug, Default)]
 pub struct Prefs {
@@ -154,9 +153,7 @@ pub fn load_prefs() -> Prefs {
     let Ok(bytes) = fs::read(prefs_path()) else {
         return Prefs::default();
     };
-    bincode::decode_from_slice::<Prefs, _>(&bytes, CODEC)
-        .map(|(p, _)| p)
-        .unwrap_or_default()
+    notin_plugin::decode::<Prefs>(&bytes).unwrap_or_default()
 }
 
 /// Atomically overwrite the prefs file.
@@ -165,8 +162,8 @@ pub fn load_prefs() -> Prefs {
 /// Encode / fs failures.
 #[sismo::function("prefs::save_prefs")]
 pub fn save_prefs(prefs: &Prefs) -> io::Result<()> {
-    let bytes = bincode::encode_to_vec(prefs, CODEC)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let bytes =
+        notin_plugin::encode(prefs).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     write_atomic(&prefs_path(), &bytes)
 }
 
@@ -177,9 +174,7 @@ pub fn load_editor_prefs() -> EditorPrefs {
     let Ok(bytes) = fs::read(bodies::root_dir().join(EDITOR_PREFS_FILE)) else {
         return EditorPrefs::default();
     };
-    bincode::decode_from_slice::<EditorPrefs, _>(&bytes, CODEC)
-        .map(|(p, _)| p)
-        .unwrap_or_default()
+    notin_plugin::decode::<EditorPrefs>(&bytes).unwrap_or_default()
 }
 
 /// Atomically overwrite the editor prefs file.
@@ -188,8 +183,8 @@ pub fn load_editor_prefs() -> EditorPrefs {
 /// Encode / fs failures.
 #[sismo::function("prefs::save_editor_prefs")]
 pub fn save_editor_prefs(prefs: EditorPrefs) -> io::Result<()> {
-    let bytes = bincode::encode_to_vec(prefs, CODEC)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let bytes =
+        notin_plugin::encode(&prefs).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     write_atomic(&bodies::root_dir().join(EDITOR_PREFS_FILE), &bytes)
 }
 
@@ -200,9 +195,7 @@ pub fn load_handwriting_prefs() -> HandwritingPrefs {
     let Ok(bytes) = fs::read(bodies::root_dir().join(HANDWRITING_PREFS_FILE)) else {
         return HandwritingPrefs::default();
     };
-    bincode::decode_from_slice::<HandwritingPrefs, _>(&bytes, CODEC)
-        .map(|(p, _)| p)
-        .unwrap_or_default()
+    notin_plugin::decode::<HandwritingPrefs>(&bytes).unwrap_or_default()
 }
 
 /// Atomically overwrite the handwriting prefs file.
@@ -211,8 +204,8 @@ pub fn load_handwriting_prefs() -> HandwritingPrefs {
 /// Encode / fs failures.
 #[sismo::function("prefs::save_handwriting_prefs")]
 pub fn save_handwriting_prefs(prefs: HandwritingPrefs) -> io::Result<()> {
-    let bytes = bincode::encode_to_vec(prefs, CODEC)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let bytes =
+        notin_plugin::encode(&prefs).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     write_atomic(&bodies::root_dir().join(HANDWRITING_PREFS_FILE), &bytes)
 }
 
@@ -221,9 +214,7 @@ pub fn save_handwriting_prefs(prefs: HandwritingPrefs) -> io::Result<()> {
 #[sismo::function("prefs::load_view")]
 pub fn load_view(key: ViewKey) -> Option<DocView> {
     let bytes = fs::read(view_path(key)).ok()?;
-    bincode::decode_from_slice::<DocView, _>(&bytes, CODEC)
-        .ok()
-        .map(|(v, _)| v)
+    notin_plugin::decode::<DocView>(&bytes).ok()
 }
 
 /// Atomically overwrite the view sidecar for `key`.
@@ -232,8 +223,8 @@ pub fn load_view(key: ViewKey) -> Option<DocView> {
 /// Encode / fs failures.
 #[sismo::function("prefs::save_view")]
 pub fn save_view(key: ViewKey, view: DocView) -> io::Result<()> {
-    let bytes = bincode::encode_to_vec(view, CODEC)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let bytes =
+        notin_plugin::encode(&view).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     write_atomic(&view_path(key), &bytes)
 }
 

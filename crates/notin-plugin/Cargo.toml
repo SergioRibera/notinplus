@@ -33,7 +33,9 @@ notin-i18n = { version = "0.1.0-alpha.2", path = "../notin-i18n" }
 uuid = { version = "1", features = ["v4"] }
 libloading = "0.8"
 flume = { version = "0.11", features = ["async"] }
-bincode = { version = "2", features = ["derive", "std"] }
+wincode = { version = "0.6", default-features = false, features = ["derive", "std"] }
+# The wire codec and its bounded decoding.
+istmo-core = "0.1.1-alpha.5"
 rkyv = { version = "0.8", default-features = false, features = [
     "std",
     "bytecheck",

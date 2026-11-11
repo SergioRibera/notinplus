@@ -13,7 +13,7 @@
 //!     ├── attachment.pdf                // raw PDF blob
 //!     ├── cover.png                     // cover thumbnail
 //!     ├── assets/<name>                 // images linked from the body
-//!     └── plugin_snapshots/<plugin>.bincode
+//!     └── plugin_snapshots/<plugin>.bin
 //! ```
 //!
 //! Writes are atomic within a directory: bytes land in a sibling
@@ -76,7 +76,7 @@ pub fn pdf_path(id: ItemId) -> PathBuf {
 
 /// Absolute path of a plugin snapshot blob.
 ///
-/// Opaque bincode produced by `CanvasKind::serialize_snapshot`; the
+/// Opaque bytes produced by `CanvasKind::serialize_snapshot`; the
 /// shell is pure transport.
 /// Plugin id is sanitised to be filesystem-safe (dots preserved,
 /// everything else lowercased + non-alnum to `_`).
@@ -84,7 +84,7 @@ pub fn pdf_path(id: ItemId) -> PathBuf {
 pub fn plugin_snapshot_path(id: ItemId, plugin_id: &str) -> PathBuf {
     item_root(id)
         .join(PLUGIN_SNAPSHOTS_SUBDIR)
-        .join(format!("{}.bincode", sanitise_plugin_id(plugin_id)))
+        .join(format!("{}.bin", sanitise_plugin_id(plugin_id)))
 }
 
 /// Write a plugin snapshot blob. Creates the subdir on first call.

@@ -594,9 +594,9 @@ impl Node {
             Frame::Part {
                 id,
                 index,
-                total,
+                of,
                 bytes,
-            } => self.on_part(device, id, index, total, bytes),
+            } => self.on_part(device, id, index, of, bytes),
             Frame::Bye => self.drop_link(device),
         }
     }
@@ -741,7 +741,7 @@ impl Node {
             let part = Frame::Part {
                 id,
                 index,
-                total,
+                of: total,
                 bytes: chunk.to_vec(),
             };
             let _ = link.lanes.bulk.send(part.to_bytes());
@@ -1317,7 +1317,7 @@ fn spawn_listener(mut socket: ZudpSocket<Vec<u8>>, internal: tmpsc::UnboundedSen
 
 #[cfg_attr(feature = "sismo", sismo::function("sync::lan::beacon_bytes"))]
 fn beacon_bytes(beacon: &Beacon) -> Vec<u8> {
-    bincode::encode_to_vec(beacon, bincode::config::standard()).unwrap_or_default()
+    istmo_core::codec::encode(beacon).unwrap_or_default()
 }
 
 #[cfg_attr(feature = "sismo", sismo::function("sync::lan::decode_beacon"))]

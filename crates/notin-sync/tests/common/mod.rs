@@ -12,14 +12,12 @@ pub(crate) struct MemReplica {
     pub(crate) blobs: BTreeMap<BlobKey, Blob>,
 }
 
-fn encode<T: bincode::Encode>(value: T) -> Vec<u8> {
-    bincode::encode_to_vec(value, bincode::config::standard()).unwrap()
+fn encode<T: istmo_core::codec::Encode>(value: T) -> Vec<u8> {
+    istmo_core::codec::encode(&value).unwrap()
 }
 
-fn decode<T: bincode::Decode<()>>(bytes: &[u8]) -> T {
-    bincode::decode_from_slice(bytes, bincode::config::standard())
-        .unwrap()
-        .0
+fn decode<T: istmo_core::codec::Decode>(bytes: &[u8]) -> T {
+    istmo_core::codec::decode(bytes).unwrap().0
 }
 
 impl Replica for MemReplica {

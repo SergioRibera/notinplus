@@ -32,7 +32,7 @@ fn third_party() -> [(Cow<'static, str>, Cow<'static, str>); 20] {
         ),
         fixed("zstd", "BSD-3-Clause"),
         fixed("qrcode", "MIT / Apache-2.0"),
-        fixed("bincode", "MIT"),
+        fixed("wincode", "Apache-2.0"),
         fixed("Typst", "Apache-2.0"),
         fixed("MiTeX", "Apache-2.0"),
         fixed("mermaid-svg", "MIT"),

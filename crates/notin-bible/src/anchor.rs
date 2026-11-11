@@ -2,13 +2,13 @@
 //!
 //! `BibleAnchor` is the shape every `SourceRef::Plugin { plugin_id =
 //! "io.notein.bible", anchor }` carries. Only this crate decodes it.
-//! The on-wire form is bincoded; the shell is pure transport.
+//! The on-wire form is the wire codec's; the shell is pure transport.
 //!
 //! Keep the layout additive: downstream chips, deeplinks and shared
 //! bundles may embed older encodings. Future variants should go in
 //! `BibleAnchor::V*` enums rather than mutating `V1` fields.
 
-use bincode::{Decode, Encode};
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Reference to a single verse or a verse range inside a specific
 /// translation.
@@ -17,7 +17,7 @@ use bincode::{Decode, Encode};
 /// single-verse pin. Cross-chapter ranges are allowed but conventionally
 /// avoided — the UI collapses "Juan 3:16" and "Juan 3:16-17" the same
 /// way, but a range spanning chapters pays a layout cost on scroll.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub struct BibleAnchor {
     /// Translation id, e.g. `"spa_rv1960"`. Resolver falls back to the
     /// user's default Bible when the exact id is missing (chip shows a

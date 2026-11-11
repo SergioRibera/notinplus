@@ -17,7 +17,7 @@ use crate::library::ItemId;
 const LIVE_CAP: usize = 1 << 20;
 
 /// One ephemeral update of a document.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Debug)]
 pub enum LiveMessage {
     /// Points added to a stroke since the last message. `done` closes
     /// it: the committed stroke arrives through the document.
@@ -42,7 +42,7 @@ impl LiveMessage {
     #[must_use]
     #[sismo::function("sync::live::encode")]
     pub fn to_bytes(&self) -> Vec<u8> {
-        bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default()
+        notin_plugin::encode(self).unwrap_or_default()
     }
 
     #[must_use]

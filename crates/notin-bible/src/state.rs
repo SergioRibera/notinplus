@@ -57,7 +57,7 @@ pub struct NavEntry {
 /// Internal highlight / bookmark representation. The host's `Bookmark`
 /// model is pixel-coord based; this one is verse-coord based so it
 /// survives chapter reflow + font-size changes.
-#[derive(Clone, Debug, PartialEq, Eq, bincode::Encode, bincode::Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, wincode::SchemaWrite, wincode::SchemaRead)]
 pub struct BibleBookmark {
     pub id: BookmarkId,
     pub book_id: String,
@@ -75,9 +75,9 @@ pub struct BibleBookmark {
 /// Carries the full viewer state (highlights + last position) so a
 /// subsequent `restore` lands the user exactly where they left off.
 ///
-/// Keep the layout additive: `#[bincode(skip)]` on new fields OR add
-/// `Option<T>` variants so older snapshots keep decoding.
-#[derive(Clone, Debug, PartialEq, Eq, bincode::Encode, bincode::Decode)]
+/// The layout is positional: a new or reordered field stops older
+/// snapshots decoding, so bump `version` with it.
+#[derive(Clone, Debug, PartialEq, Eq, wincode::SchemaWrite, wincode::SchemaRead)]
 pub struct BibleSnapshot {
     pub version: u16,
     pub bible_id: String,

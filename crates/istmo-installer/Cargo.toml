@@ -24,7 +24,7 @@ redundant_pub_crate = "allow"
 [dependencies]
 istmo-core = "0.1.1-alpha.4"
 istmo-macros = "0.1.1-alpha.4"
-bincode = { version = "2", features = ["derive", "std"] }
+wincode = { version = "0.6", default-features = false, features = ["derive", "std"] }
 
 [build-dependencies]
 istmo-build = "0.1.1-alpha.4"

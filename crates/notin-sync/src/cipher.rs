@@ -14,7 +14,7 @@ const TAG_LEN: usize = 16;
 
 /// 256-bit key shared by every member of a share. Travels in the
 /// fragment of the invitation link, never through the relay.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, wincode::SchemaWrite, wincode::SchemaRead)]
 pub struct ShareKey([u8; KEY_LEN]);
 
 impl fmt::Debug for ShareKey {

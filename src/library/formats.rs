@@ -53,7 +53,7 @@ const LIBRARY_DIRS: [&str; 5] = [
     "doc_linked",
     "pane_layouts",
 ];
-const LIBRARY_FILES: [&str; 2] = ["graveyard.bin", "refs.bincode"];
+const LIBRARY_FILES: [&str; 2] = ["graveyard.bin", "refs.bin"];
 
 /// A library on this device in a shape this build cannot read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

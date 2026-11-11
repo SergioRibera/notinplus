@@ -13,7 +13,7 @@ use crate::text_box::{TextBox, TextBoxId, TextFrame};
 
 /// Mutation the stroke canvas plugin understands.
 ///
-/// Every variant round-trips through bincode and carries enough state
+/// Every variant round-trips through the wire codec and carries enough state
 /// for a receiving replica to apply it deterministically. Layer ids
 /// stay `u32` (library-scoped monotonic) until workspaces land in
 /// Phase 4; stroke ids are UUIDs so cross-device merges never collide.

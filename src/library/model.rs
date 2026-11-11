@@ -418,7 +418,7 @@ pub enum SplitSide {
 /// Not `Eq` / `Hash` because the `ratio` field is `f32`; the layout is
 /// compared structurally only via `PartialEq`. Decoded by hand: a box
 /// claims no bytes, so nesting from elsewhere is held to [`MAX_PANE_DEPTH`].
-#[derive(Clone, PartialEq, Debug, bincode::Encode)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum PaneLayout {
     Leaf(Pane),
     Split {
@@ -436,41 +436,90 @@ pub enum PaneLayout {
 /// short of what the stack holds.
 pub const MAX_PANE_DEPTH: usize = 64;
 
-impl<C> bincode::Decode<C> for PaneLayout {
-    fn decode<D: bincode::de::Decoder<Context = C>>(
-        decoder: &mut D,
-    ) -> Result<Self, bincode::error::DecodeError> {
-        Self::decode_within(decoder, MAX_PANE_DEPTH)
+// SAFETY: `TYPE_META` stays `Dynamic`, and `size_of` walks the same tree
+// `write` writes, so it returns exactly the bytes written.
+unsafe impl<C: wincode::config::Config> wincode::SchemaWrite<C> for PaneLayout {
+    type Src = Self;
+
+    fn size_of(src: &Self) -> wincode::WriteResult<usize> {
+        let tag = <u32 as wincode::SchemaWrite<C>>::size_of(&src.tag())?;
+        Ok(tag
+            + match src {
+                Self::Leaf(pane) => <Pane as wincode::SchemaWrite<C>>::size_of(pane)?,
+                Self::Split {
+                    orientation,
+                    ratio,
+                    first,
+                    second,
+                } => {
+                    <SplitOrientation as wincode::SchemaWrite<C>>::size_of(orientation)?
+                        + <f32 as wincode::SchemaWrite<C>>::size_of(ratio)?
+                        + <Self as wincode::SchemaWrite<C>>::size_of(first)?
+                        + <Self as wincode::SchemaWrite<C>>::size_of(second)?
+                }
+            })
+    }
+
+    fn write(mut writer: impl wincode::io::Writer, src: &Self) -> wincode::WriteResult<()> {
+        <u32 as wincode::SchemaWrite<C>>::write(writer.by_ref(), &src.tag())?;
+        match src {
+            Self::Leaf(pane) => <Pane as wincode::SchemaWrite<C>>::write(writer, pane),
+            Self::Split {
+                orientation,
+                ratio,
+                first,
+                second,
+            } => {
+                <SplitOrientation as wincode::SchemaWrite<C>>::write(writer.by_ref(), orientation)?;
+                <f32 as wincode::SchemaWrite<C>>::write(writer.by_ref(), ratio)?;
+                <Self as wincode::SchemaWrite<C>>::write(writer.by_ref(), first)?;
+                <Self as wincode::SchemaWrite<C>>::write(writer, second)
+            }
+        }
     }
 }
 
-bincode::impl_borrow_decode!(PaneLayout);
+// SAFETY: `TYPE_META` stays `Dynamic`, and `dst` is written only once the
+// whole tree decoded, right before returning `Ok`.
+unsafe impl<'de, C: wincode::config::Config> wincode::SchemaRead<'de, C> for PaneLayout {
+    type Dst = Self;
+
+    fn read(
+        reader: impl wincode::io::Reader<'de>,
+        dst: &mut core::mem::MaybeUninit<Self>,
+    ) -> wincode::ReadResult<()> {
+        dst.write(Self::read_within::<C>(reader, MAX_PANE_DEPTH)?);
+        Ok(())
+    }
+}
 
 impl PaneLayout {
-    fn decode_within<C, D: bincode::de::Decoder<Context = C>>(
-        decoder: &mut D,
+    const fn tag(&self) -> u32 {
+        match self {
+            Self::Leaf(_) => 0,
+            Self::Split { .. } => 1,
+        }
+    }
+
+    fn read_within<'de, C: wincode::config::Config>(
+        mut reader: impl wincode::io::Reader<'de>,
         depth: usize,
-    ) -> Result<Self, bincode::error::DecodeError> {
-        use bincode::Decode;
-        use bincode::error::{AllowedEnumVariants, DecodeError};
-        match u32::decode(decoder)? {
-            0 => Ok(Self::Leaf(Pane::decode(decoder)?)),
+    ) -> wincode::ReadResult<Self> {
+        use wincode::{ReadError, SchemaRead};
+        match <u32 as SchemaRead<'de, C>>::get(reader.by_ref())? {
+            0 => Ok(Self::Leaf(<Pane as SchemaRead<'de, C>>::get(reader)?)),
             1 => {
                 let Some(depth) = depth.checked_sub(1) else {
-                    return Err(DecodeError::Other("pane layout nested too deep"));
+                    return Err(ReadError::Custom("pane layout nested too deep"));
                 };
                 Ok(Self::Split {
-                    orientation: SplitOrientation::decode(decoder)?,
-                    ratio: f32::decode(decoder)?,
-                    first: Box::new(Self::decode_within(decoder, depth)?),
-                    second: Box::new(Self::decode_within(decoder, depth)?),
+                    orientation: <SplitOrientation as SchemaRead<'de, C>>::get(reader.by_ref())?,
+                    ratio: <f32 as SchemaRead<'de, C>>::get(reader.by_ref())?,
+                    first: Box::new(Self::read_within::<C>(reader.by_ref(), depth)?),
+                    second: Box::new(Self::read_within::<C>(reader, depth)?),
                 })
             }
-            found => Err(DecodeError::UnexpectedVariant {
-                type_name: "PaneLayout",
-                allowed: &AllowedEnumVariants::Range { min: 0, max: 1 },
-                found,
-            }),
+            found => Err(ReadError::InvalidTagEncoding(found as usize)),
         }
     }
 }
@@ -1059,8 +1108,7 @@ mod pane_tests {
     /// `splits` splits each nested in the first half of the one before,
     /// written out by hand: encoding that deep would itself recurse.
     fn nested(splits: usize) -> Vec<u8> {
-        let config = bincode::config::standard();
-        let leaf = bincode::encode_to_vec(PaneLayout::leaf(PaneId::default()), config).unwrap();
+        let leaf = notin_plugin::encode(&PaneLayout::leaf(PaneId::default())).unwrap();
         let mut bytes = Vec::new();
         for _ in 0..splits {
             bytes.extend_from_slice(&[1, 0]);
@@ -1073,9 +1121,7 @@ mod pane_tests {
     }
 
     fn decode(bytes: &[u8]) -> Option<PaneLayout> {
-        bincode::decode_from_slice(bytes, bincode::config::standard())
-            .ok()
-            .map(|(layout, _)| layout)
+        notin_plugin::decode(bytes).ok()
     }
 
     #[test]
@@ -1083,10 +1129,6 @@ mod pane_tests {
         assert!(decode(&nested(100_000)).is_none());
         assert!(decode(&nested(MAX_PANE_DEPTH + 1)).is_none());
         let fine = decode(&nested(MAX_PANE_DEPTH)).unwrap();
-        let config = bincode::config::standard();
-        assert_eq!(
-            bincode::encode_to_vec(&fine, config).unwrap(),
-            nested(MAX_PANE_DEPTH)
-        );
+        assert_eq!(notin_plugin::encode(&fine).unwrap(), nested(MAX_PANE_DEPTH));
     }
 }

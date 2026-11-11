@@ -24,7 +24,7 @@ use istmo_macros::{message, plugin};
 pub const INSTALLER_PLUGIN_ID: &str = "istmo.installer";
 
 /// Why an installer did not start.
-#[message(bincode = "::bincode", crate = "::istmo_core")]
+#[message(crate = "::istmo_core")]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum InstallError {
     /// The app may not install packages yet; the system page that
@@ -53,17 +53,13 @@ impl std::error::Error for InstallError {}
 
 /// Recover the typed error from a failed [`InstallerClient::install`].
 /// Bounded, so a forged length in the error bytes is an error itself.
-const PLUGIN_ERROR: bincode::config::Configuration<
-    bincode::config::LittleEndian,
-    bincode::config::Varint,
-    bincode::config::Limit<{ 1 << 20 }>,
-> = bincode::config::standard().with_limit::<{ 1 << 20 }>();
+const PLUGIN_ERROR_CAP: usize = 1 << 20;
 
 impl From<istmo_core::IstmoError> for InstallError {
     fn from(err: istmo_core::IstmoError) -> Self {
         match err {
             istmo_core::IstmoError::PluginError { bytes } => {
-                bincode::decode_from_slice::<Self, _>(&bytes, PLUGIN_ERROR).map_or_else(
+                istmo_core::codec::decode_capped::<Self>(&bytes, PLUGIN_ERROR_CAP).map_or_else(
                     |e| Self::Backend(format!("decode plugin error payload: {e}")),
                     |(err, _)| err,
                 )

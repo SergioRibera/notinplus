@@ -179,7 +179,7 @@ pub struct ImportPreview {
 }
 
 /// The paper pattern picked in the create sheet.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, bincode::Encode, bincode::Decode)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, wincode::SchemaWrite, wincode::SchemaRead)]
 pub enum Paper {
     #[default]
     Blank,

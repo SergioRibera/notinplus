@@ -6,7 +6,9 @@ use std::collections::HashSet;
 use std::fmt;
 
 /// A document, named by the same bytes the library uses for its item.
-#[derive(bincode::Encode, bincode::Decode, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    wincode::SchemaWrite, wincode::SchemaRead, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
 pub struct DocId(pub [u8; 16]);
 
 impl fmt::Debug for DocId {
@@ -17,7 +19,7 @@ impl fmt::Debug for DocId {
 
 /// Opaque marker of everything a replica has seen of one document.
 /// Only the document store knows how to read it.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Hash, Default)]
 pub struct Version(pub Vec<u8>);
 
 impl fmt::Debug for Version {
@@ -28,7 +30,16 @@ impl fmt::Debug for Version {
 
 /// What a blob describes.
 #[derive(
-    bincode::Encode, bincode::Decode, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug,
+    wincode::SchemaWrite,
+    wincode::SchemaRead,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Debug,
 )]
 pub enum BlobKind {
     Item,
@@ -58,7 +69,7 @@ pub enum BlobKind {
 }
 
 /// Identity plus freshness of a blob; enough to decide who is newer.
-#[derive(bincode::Encode, bincode::Decode, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct BlobHead {
     pub kind: BlobKind,
     pub id: [u8; 16],
@@ -82,7 +93,16 @@ impl BlobHead {
 
 /// A blob without its freshness.
 #[derive(
-    bincode::Encode, bincode::Decode, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug,
+    wincode::SchemaWrite,
+    wincode::SchemaRead,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Debug,
 )]
 pub struct BlobKey {
     pub kind: BlobKind,
@@ -91,7 +111,7 @@ pub struct BlobKey {
 
 /// A blob with its encoded body. Tombstones are the body's business:
 /// a deleted record still travels, flagged inside its bytes.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
 pub struct Blob {
     pub head: BlobHead,
     pub bytes: Vec<u8>,

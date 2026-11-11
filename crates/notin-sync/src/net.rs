@@ -32,7 +32,7 @@ pub fn session_id() -> u64 {
 
 /// What a device says about itself, both in LAN beacons and as the
 /// first frame on every channel.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
 pub struct Beacon {
     pub device: DeviceId,
     pub public: [u8; 32],
@@ -290,17 +290,18 @@ pub enum Lane {
 }
 
 /// One unit on a channel.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
-enum Frame {
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum Frame {
     Hello(Beacon),
     Ping,
     Pong,
     App(Vec<u8>),
-    /// Piece `index` of `total` of an app payload too big for one frame.
+    /// Piece `index` of `of` of an app payload too big for one frame.
+    // Not `total`: wincode-derive 0.5 names its size accumulator that.
     Part {
         id: u32,
         index: u32,
-        total: u32,
+        of: u32,
         bytes: Vec<u8>,
     },
     Bye,
@@ -310,7 +311,7 @@ impl Frame {
     #[cfg_attr(feature = "sismo", sismo::function("sync::net::frame_encode"))]
     fn to_bytes(&self) -> Vec<u8> {
         // Every variant is plain data; the standard config cannot fail on it.
-        bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default()
+        istmo_core::codec::encode(self).unwrap_or_default()
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("sync::net::frame_decode"))]

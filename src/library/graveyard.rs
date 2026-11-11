@@ -3,8 +3,6 @@
 
 use std::path::PathBuf;
 
-use bincode::config;
-
 use super::bodies;
 
 /// Which kind of record a tombstone refers to.
@@ -54,11 +52,7 @@ impl Graveyard {
         }
         let yard: Self = std::fs::read(&path)
             .ok()
-            .and_then(|bytes| {
-                bincode::decode_from_slice(&bytes, notin_plugin::WIRE)
-                    .ok()
-                    .map(|(yard, _): (Self, usize)| yard)
-            })
+            .and_then(|bytes| notin_plugin::decode::<Self>(&bytes).ok())
             .unwrap_or_default();
         *cache = Some((stamp, yard.clone()));
         yard
@@ -66,7 +60,7 @@ impl Graveyard {
 
     #[sismo::function("library::graveyard::save")]
     pub fn save(&self) -> std::io::Result<()> {
-        let bytes = bincode::encode_to_vec(self, config::standard())
+        let bytes = notin_plugin::encode(self)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
         let path = Self::path();
         if let Some(dir) = path.parent() {

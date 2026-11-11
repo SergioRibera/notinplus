@@ -44,56 +44,32 @@ pub use share::{
     ShareMessage, ShareMode,
 };
 
-/// Decode `bytes` that came from elsewhere.
-///
-/// bincode allocates a length a value claims before reading it, up to
-/// the configured limit, so a few forged bytes could make it allocate
-/// the whole limit. Here the limit follows the input: 64 times its size
-/// (at least 64 KiB), and never more than `cap`, what a value of this
-/// kind may ever take. A longer claim is an error, never an allocation.
-pub(crate) fn decode<T: bincode::Decode<()>>(
+/// Decode `bytes` that came from elsewhere, as a value that may never
+/// take more than `cap` bytes (see [`istmo_core::codec::decode_capped`]):
+/// a claimed length follows the input, never the cap alone.
+pub(crate) fn decode<T: istmo_core::codec::Decode>(
     bytes: &[u8],
     cap: usize,
-) -> Result<T, bincode::error::DecodeError> {
-    // Every cap is a power of two, and so is every limit below: none is
-    // rounded past the cap it stands for.
-    debug_assert!(cap.is_power_of_two());
-    if bytes.len() > cap {
-        return Err(bincode::error::DecodeError::LimitExceeded);
-    }
-    let need = bytes.len().saturating_mul(64).max(1 << 16).min(cap);
-    macro_rules! within {
-        ($($limit:expr),*) => {
-            $(
-                if need <= $limit {
-                    let config = bincode::config::standard().with_limit::<{ $limit }>();
-                    return bincode::decode_from_slice(bytes, config).map(|(value, _)| value);
-                }
-            )*
-        };
-    }
-    within!(
-        1 << 12,
-        1 << 13,
-        1 << 14,
-        1 << 15,
-        1 << 16,
-        1 << 17,
-        1 << 18,
-        1 << 19,
-        1 << 20,
-        1 << 21,
-        1 << 22,
-        1 << 23,
-        1 << 24,
-        1 << 25,
-        1 << 26,
-        1 << 27,
-        1 << 28,
-        1 << 29
-    );
-    let config = bincode::config::standard().with_limit::<{ 1 << 30 }>();
-    bincode::decode_from_slice(bytes, config).map(|(value, _)| value)
+) -> Result<T, istmo_core::CodecError> {
+    istmo_core::codec::decode_capped(bytes, cap).map(|(value, _)| value)
+}
+
+/// Feeds `bytes` to every decoder that reads bytes from elsewhere, as
+/// plain text (what is left once a seal opened), for `fuzz/`.
+#[cfg(fuzzing)]
+#[doc(hidden)]
+pub fn fuzz_decode(bytes: &[u8]) {
+    let _ = decode::<net::Frame>(bytes, cap::FRAME);
+    let _ = decode::<net::Beacon>(bytes, cap::BEACON);
+    let _ = relay::RelayMessage::from_bytes(bytes);
+    let _ = decode::<driver::Payload>(bytes, cap::PAYLOAD);
+    let _ = decode::<driver::JoinAnswer>(bytes, cap::ANSWER);
+    let _ = engine::Message::from_bytes::<()>(bytes);
+    let _ = share::ShareBook::decode(bytes);
+    let _ = decode::<share::ShareMessage>(bytes, cap::RECORD);
+    let _ = decode::<share::SignedRecord>(bytes, cap::RECORD);
+    let _ = decode::<Vec<cipher::ShareKey>>(bytes, cap::KEYS);
+    let _ = identity::DeviceProfile::decode(bytes);
 }
 
 /// What a value of each kind may take once decoded, for [`decode`].
@@ -124,21 +100,17 @@ mod tests {
         assert!(super::decode::<Vec<u8>>(&forged, super::cap::PAYLOAD).is_err());
         // What was really sent decodes, big or small.
         for len in [0, 10, 1 << 20, 3 << 20] {
-            let bytes =
-                bincode::encode_to_vec(vec![7u8; len], bincode::config::standard()).unwrap();
+            let bytes = istmo_core::codec::encode(&vec![7u8; len]).unwrap();
             let back: Vec<u8> = super::decode(&bytes, super::cap::PAYLOAD).unwrap();
             assert_eq!(back.len(), len);
         }
         // Past what the kind may take: refused however much was sent.
-        let name =
-            bincode::encode_to_vec("x".repeat(8 << 10), bincode::config::standard()).unwrap();
+        let name = istmo_core::codec::encode(&"x".repeat(8 << 10)).unwrap();
         assert!(super::decode::<String>(&name, super::cap::BEACON).is_err());
         // Nor a little past it, where the limits used to round up.
-        let frame =
-            bincode::encode_to_vec(vec![7u8; 3 << 20], bincode::config::standard()).unwrap();
+        let frame = istmo_core::codec::encode(&vec![7u8; 3 << 20]).unwrap();
         assert!(super::decode::<Vec<u8>>(&frame, super::cap::FRAME).is_err());
-        let within =
-            bincode::encode_to_vec(vec![7u8; 1 << 20], bincode::config::standard()).unwrap();
+        let within = istmo_core::codec::encode(&vec![7u8; 1 << 20]).unwrap();
         assert!(super::decode::<Vec<u8>>(&within, super::cap::FRAME).is_ok());
     }
 }

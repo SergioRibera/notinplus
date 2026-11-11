@@ -1,6 +1,6 @@
 //! Load / save the [`LibraryIndex`] blob to `data-store`.
 //!
-//! The whole index is one bincoded blob under a single key — small
+//! The whole index is one encoded blob under a single key — small
 //! enough (folders + items + tags without body bytes or covers) that a
 //! full rewrite on every mutation stays cheap, and atomic by virtue of
 //! the native backend's replace-in-place semantics
@@ -17,7 +17,6 @@ use super::links::LinkIndex;
 use super::model::{INDEX_VERSION, LibraryIndex, WorkspaceIndex};
 
 // Bounded, so a forged length in what is read back is an error.
-const CODEC: notin_plugin::Wire = notin_plugin::WIRE;
 
 /// data-store key the whole blob lives under. The suffix tracks the
 /// on-disk schema: a blob written under an older key is never read, so
@@ -45,7 +44,7 @@ pub async fn load(client: &DataStoreClient) -> Result<Option<LibraryIndex>> {
     let Some(bytes) = raw else {
         return Ok(None);
     };
-    let (index, _) = bincode::decode_from_slice::<LibraryIndex, _>(&bytes, CODEC)
+    let index = notin_plugin::decode::<LibraryIndex>(&bytes)
         .map_err(|e| LibraryError::Codec(e.to_string()))?;
     if index.version != INDEX_VERSION {
         log::warn!(
@@ -67,7 +66,7 @@ pub async fn load_workspaces(client: &DataStoreClient) -> Result<WorkspaceIndex>
     let Some(bytes) = raw else {
         return Ok(WorkspaceIndex::default());
     };
-    let (index, _) = bincode::decode_from_slice::<WorkspaceIndex, _>(&bytes, CODEC)
+    let index = notin_plugin::decode::<WorkspaceIndex>(&bytes)
         .map_err(|e| LibraryError::Codec(e.to_string()))?;
     Ok(index)
 }
@@ -85,7 +84,7 @@ pub async fn load_links(client: &DataStoreClient) -> Result<LinkIndex> {
     let Some(bytes) = raw else {
         return Ok(LinkIndex::default());
     };
-    let (index, _) = bincode::decode_from_slice::<LinkIndex, _>(&bytes, CODEC)
+    let index = notin_plugin::decode::<LinkIndex>(&bytes)
         .map_err(|e| LibraryError::Codec(e.to_string()))?;
     Ok(index)
 }
@@ -95,8 +94,8 @@ pub async fn load_links(client: &DataStoreClient) -> Result<LinkIndex> {
 /// # Errors
 /// Codec failure.
 #[sismo::function("library::index::encode")]
-pub fn encode<T: bincode::Encode>(snapshot: &T) -> Result<Vec<u8>> {
-    bincode::encode_to_vec(snapshot, CODEC).map_err(|e| LibraryError::Codec(e.to_string()))
+pub fn encode<T: istmo::codec::Encode>(snapshot: &T) -> Result<Vec<u8>> {
+    notin_plugin::encode(snapshot).map_err(|e| LibraryError::Codec(e.to_string()))
 }
 
 /// Blobs on their way to the store: the newest bytes per key, and

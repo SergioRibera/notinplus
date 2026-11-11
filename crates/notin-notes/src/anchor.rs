@@ -1,11 +1,11 @@
 //! Payload of a reference into a note.
 
-use bincode::{Decode, Encode};
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Where a reference into a note points: the note itself, or one of its
 /// headings by its [`freya_markdown_editor::document::Document::outline`]
 /// slug.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub struct NoteAnchor {
     pub heading: Option<String>,
 }

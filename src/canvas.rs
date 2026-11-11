@@ -207,7 +207,7 @@ pub struct Board {
     /// touch disk.
     commit_tx: Option<flume::Sender<()>>,
     /// Fires on every toolbar-pref mutation (preset / size / colour /
-    /// input mode). Drained by a global worker that bincode-encodes
+    /// input mode). Drained by a global worker that encodes
     /// [`crate::prefs::Prefs`] to disk. Independent of `commit_tx` so a
     /// pen-up never also triggers a doc save when only the preset
     /// changed.

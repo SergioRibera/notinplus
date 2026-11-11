@@ -28,7 +28,6 @@ use crate::library::{
 };
 
 // Bounded, so a forged length in what is read back is an error.
-const CODEC: notin_plugin::Wire = notin_plugin::WIRE;
 
 /// Schema version carried in [`BundleManifest::version`]. Bumped on any
 /// breaking payload change — the reader rejects unknown versions so a
@@ -53,7 +52,7 @@ pub const BUNDLE_MIME: &str = "application/x-notin";
 /// What a bundle carries. Decides how opening the file from the system
 /// shows it: a document opens on its own, a library opens as a list to
 /// pick from.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, bincode::Encode, bincode::Decode)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, wincode::SchemaWrite, wincode::SchemaRead)]
 pub enum BundleKind {
     /// One document (with its notebooks and attachments).
     Document,
@@ -135,9 +134,9 @@ pub struct ExportPreview {
     pub referenced: Vec<Item>,
 }
 
-/// Bundle manifest. One per `.notin` file, serialised via `bincode` at
+/// Bundle manifest. One per `.notin` file, encoded with the wire codec at
 /// [`MANIFEST_ENTRY`].
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, wincode::SchemaWrite, wincode::SchemaRead)]
 pub struct BundleManifest {
     pub version: u32,
     pub kind: BundleKind,
@@ -157,48 +156,6 @@ pub struct BundleManifest {
     /// Live links between bundled items (plus dangling ones when the
     /// exporter asked for them).
     pub links: Vec<Link>,
-}
-
-impl bincode::Encode for BundleManifest {
-    fn encode<E: bincode::enc::Encoder>(
-        &self,
-        encoder: &mut E,
-    ) -> core::result::Result<(), bincode::error::EncodeError> {
-        self.version.encode(encoder)?;
-        self.kind.encode(encoder)?;
-        self.exported_at_ms.encode(encoder)?;
-        self.exported_by.encode(encoder)?;
-        self.requires_plugins.encode(encoder)?;
-        self.folders.encode(encoder)?;
-        self.items.encode(encoder)?;
-        self.tags.encode(encoder)?;
-        self.item_tags.encode(encoder)?;
-        self.folder_tags.encode(encoder)?;
-        self.workspaces.encode(encoder)?;
-        self.links.encode(encoder)?;
-        Ok(())
-    }
-}
-
-impl<Ctx> bincode::Decode<Ctx> for BundleManifest {
-    fn decode<D: bincode::de::Decoder<Context = Ctx>>(
-        decoder: &mut D,
-    ) -> core::result::Result<Self, bincode::error::DecodeError> {
-        Ok(Self {
-            version: bincode::Decode::decode(decoder)?,
-            kind: bincode::Decode::decode(decoder)?,
-            exported_at_ms: bincode::Decode::decode(decoder)?,
-            exported_by: bincode::Decode::decode(decoder)?,
-            requires_plugins: bincode::Decode::decode(decoder)?,
-            folders: bincode::Decode::decode(decoder)?,
-            items: bincode::Decode::decode(decoder)?,
-            tags: bincode::Decode::decode(decoder)?,
-            item_tags: bincode::Decode::decode(decoder)?,
-            folder_tags: bincode::Decode::decode(decoder)?,
-            workspaces: bincode::Decode::decode(decoder)?,
-            links: bincode::Decode::decode(decoder)?,
-        })
-    }
 }
 
 /// Any failure during export / import.
@@ -308,7 +265,7 @@ pub fn write_bundle<W: Write>(
     tar.mode(tar::HeaderMode::Deterministic);
 
     let manifest_bytes =
-        bincode::encode_to_vec(&manifest, CODEC).map_err(|e| BundleError::Codec(e.to_string()))?;
+        notin_plugin::encode(&manifest).map_err(|e| BundleError::Codec(e.to_string()))?;
     append_file(&mut tar, MANIFEST_ENTRY, &manifest_bytes)?;
 
     sismo::counter!("bundle.export_items", manifest.items.len());
@@ -924,9 +881,9 @@ mod tests {
     #[test]
     fn a_forged_length_in_an_imported_manifest_is_an_error() {
         // A manifest whose exporting device name claims 2^64 - 1 bytes.
-        let mut forged = bincode::encode_to_vec(BUNDLE_VERSION, CODEC).unwrap();
+        let mut forged = notin_plugin::encode(&BUNDLE_VERSION).unwrap();
         forged.extend_from_slice(&[0, 0, 253, 255, 255, 255, 255, 255, 255, 255, 255]);
-        assert!(bincode::decode_from_slice::<BundleManifest, _>(&forged, CODEC).is_err());
+        assert!(notin_plugin::decode::<BundleManifest>(&forged).is_err());
     }
 
     #[test]
@@ -938,7 +895,7 @@ mod tests {
     }
 
     #[test]
-    fn manifest_round_trips_bincode() {
+    fn manifest_round_trips() {
         let manifest = BundleManifest {
             version: BUNDLE_VERSION,
             kind: BundleKind::Library,
@@ -953,9 +910,8 @@ mod tests {
             workspaces: Vec::new(),
             links: Vec::new(),
         };
-        let bytes = bincode::encode_to_vec(&manifest, CODEC).expect("encode");
-        let (back, _) =
-            bincode::decode_from_slice::<BundleManifest, _>(&bytes, CODEC).expect("decode");
+        let bytes = notin_plugin::encode(&manifest).expect("encode");
+        let back = notin_plugin::decode::<BundleManifest>(&bytes).expect("decode");
         assert_eq!(manifest, back);
     }
 
@@ -982,7 +938,7 @@ mod tests {
                 .auto_finish();
             let mut tar = tar::Builder::new(encoder);
             tar.mode(tar::HeaderMode::Deterministic);
-            let bytes = bincode::encode_to_vec(&manifest, CODEC).expect("encode");
+            let bytes = notin_plugin::encode(&manifest).expect("encode");
             super::append_file(&mut tar, MANIFEST_ENTRY, &bytes).expect("append");
             tar.into_inner()
                 .expect("tar finish")
@@ -1057,7 +1013,7 @@ mod tests {
                 .expect("zstd encoder")
                 .auto_finish();
             let mut tar = tar::Builder::new(encoder);
-            let bytes = bincode::encode_to_vec(&manifest, CODEC).expect("encode");
+            let bytes = notin_plugin::encode(&manifest).expect("encode");
             super::append_file(&mut tar, MANIFEST_ENTRY, &bytes).expect("append");
             let name = |id| format!("{DOCS_PREFIX}{id}.{DOC_EXT}");
             super::append_file(&mut tar, &name(small), b"ink").expect("append");
@@ -1124,9 +1080,8 @@ mod closure_tests {
             workspaces: Vec::new(),
             links: links.links.clone(),
         };
-        let bytes = bincode::encode_to_vec(&manifest, CODEC).expect("encode");
-        let (back, _) =
-            bincode::decode_from_slice::<BundleManifest, _>(&bytes, CODEC).expect("decode");
+        let bytes = notin_plugin::encode(&manifest).expect("encode");
+        let back = notin_plugin::decode::<BundleManifest>(&bytes).expect("decode");
         assert_eq!(back.links.len(), 1);
         assert_eq!(back.links[0].from, item(1));
     }

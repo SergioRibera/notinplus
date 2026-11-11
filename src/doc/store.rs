@@ -21,7 +21,7 @@
 //! body      Text                                   // markdown of a note, merged per character
 //! ```
 //!
-//! Domain payloads stay bincode blobs: Loro only needs identity and
+//! Domain payloads stay encoded blobs: Loro only needs identity and
 //! order to merge them, and the renderer decodes them once at
 //! materialisation.
 
@@ -43,7 +43,6 @@ use crate::ink_glyph::InkGlyph;
 use crate::text_box::TextBox;
 
 // Bounded, so a forged length in what is read back is an error.
-const CODEC: notin_plugin::Wire = notin_plugin::WIRE;
 
 const META: &str = "meta";
 const BRUSHES: &str = "brushes";
@@ -605,17 +604,17 @@ fn child_list(map: &LoroMap, key: &str) -> Result<LoroMovableList, DocError> {
     }
 }
 
-fn encode<T: bincode::Encode>(value: &T) -> Result<Vec<u8>, DocError> {
-    bincode::encode_to_vec(value, CODEC).map_err(|e| DocError::Codec(e.to_string()))
+fn encode<T: istmo::codec::Encode>(value: &T) -> Result<Vec<u8>, DocError> {
+    notin_plugin::encode(value).map_err(|e| DocError::Codec(e.to_string()))
 }
 
-fn decode<T: bincode::Decode<()>>(value: &LoroValue) -> Result<T, DocError> {
+fn decode<T: istmo::codec::Decode>(value: &LoroValue) -> Result<T, DocError> {
     let bytes = value.as_binary().ok_or(DocError::Shape("binary payload"))?;
     notin_plugin::decode_bounded::<T>(bytes, notin_plugin::WIRE_LIMIT)
         .map_err(|e| DocError::Codec(e.to_string()))
 }
 
-fn read_blobs<T: bincode::Decode<()>>(map: &LoroMap, key: &str) -> Result<Vec<T>, DocError> {
+fn read_blobs<T: istmo::codec::Decode>(map: &LoroMap, key: &str) -> Result<Vec<T>, DocError> {
     child_list(map, key)?
         .to_vec()
         .iter()

@@ -88,7 +88,7 @@ impl FromStr for RelayAddr {
 
 /// Lets a device reach another one at the relay. Derived from a secret
 /// the relay never sees, so it can compare tokens but not make one.
-#[derive(bincode::Encode, bincode::Decode, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct KnockToken(pub [u8; 32]);
 
 impl KnockToken {
@@ -121,7 +121,7 @@ impl KnockToken {
 }
 
 /// What a stored record concerns, in the clear.
-#[derive(bincode::Encode, bincode::Decode, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RecordKind {
     /// Changes to one document since the sender's previous record.
     Update { doc: DocId },
@@ -142,7 +142,7 @@ pub enum RecordKind {
 }
 
 /// One mailbox entry.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
 pub struct Record {
     pub seq: u64,
     pub from: DeviceId,
@@ -154,7 +154,7 @@ pub struct Record {
 }
 
 /// What an owner tells the relay about its share.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
 pub struct Registration {
     /// Who may use the mailbox besides the owner.
     pub members: Vec<[u8; 32]>,
@@ -168,7 +168,7 @@ pub struct Registration {
 }
 
 /// What clients and the relay say to each other.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
 pub enum RelayMessage {
     /// Owner declares (or refreshes) a share: who may use the
     /// mailbox, whether it is kept, and what joiners knock with.
@@ -231,7 +231,7 @@ impl RelayMessage {
     #[must_use]
     #[cfg_attr(feature = "sismo", sismo::function("sync::relay::encode"))]
     pub fn to_bytes(&self) -> Vec<u8> {
-        bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default()
+        istmo_core::codec::encode(self).unwrap_or_default()
     }
 
     #[must_use]
@@ -242,7 +242,7 @@ impl RelayMessage {
 }
 
 /// One share's mailbox.
-#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+#[derive(wincode::SchemaWrite, wincode::SchemaRead, Clone, PartialEq, Eq, Debug)]
 pub struct Mailbox {
     pub owner: [u8; 32],
     pub members: Vec<[u8; 32]>,
@@ -504,7 +504,7 @@ impl Store {
         };
         match self.boxes.get(&share) {
             Some(mailbox) if mailbox.retain => {
-                if let Ok(bytes) = bincode::encode_to_vec(mailbox, bincode::config::standard())
+                if let Ok(bytes) = istmo_core::codec::encode(mailbox)
                     && let Err(err) = std::fs::write(&path, bytes)
                 {
                     tracing::error!(target: "notin-relay", "write {}: {err}", path.display());
