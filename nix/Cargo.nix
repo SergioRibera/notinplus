@@ -2106,7 +2106,7 @@ rec {
           }
           {
             name = "pastey";
-            packageId = "pastey";
+            packageId = "pastey 0.1.1";
           }
           {
             name = "rayon";
@@ -2315,7 +2315,7 @@ rec {
         };
         resolvedDefaultFeatures = [ "unic-langid" ];
       };
-      "bincode 1.3.3" = rec {
+      "bincode" = rec {
         crateName = "bincode";
         version = "1.3.3";
         edition = "2015";
@@ -2334,68 +2334,6 @@ rec {
         ];
         features = {
         };
-      };
-      "bincode 2.0.1" = rec {
-        crateName = "bincode";
-        version = "2.0.1";
-        edition = "2021";
-        sha256 = "0h5pxp3dqkigjwy926a03sl69n9wv7aq4142a20kw9lhn3bzbsin";
-        authors = [
-          "Ty Overby <ty@pre-alpha.com>"
-          "Zoey Riordan <zoey@dos.cafe>"
-          "Victor Koenders <bincode@trangar.com>"
-        ];
-        dependencies = [
-          {
-            name = "bincode_derive";
-            packageId = "bincode_derive";
-            optional = true;
-          }
-          {
-            name = "serde";
-            packageId = "serde";
-            optional = true;
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "unty";
-            packageId = "unty";
-          }
-        ];
-        devDependencies = [
-          {
-            name = "serde";
-            packageId = "serde";
-            features = [ "derive" ];
-          }
-        ];
-        features = {
-          "alloc" = [ "serde?/alloc" ];
-          "bincode_derive" = [ "dep:bincode_derive" ];
-          "default" = [ "std" "derive" ];
-          "derive" = [ "bincode_derive" ];
-          "serde" = [ "dep:serde" ];
-          "std" = [ "alloc" "serde?/std" ];
-        };
-        resolvedDefaultFeatures = [ "alloc" "bincode_derive" "default" "derive" "std" ];
-      };
-      "bincode_derive" = rec {
-        crateName = "bincode_derive";
-        version = "2.0.1";
-        edition = "2021";
-        sha256 = "029wmh26hq3hhs1gq629y0frn2pkl7ld061rk23fji8g8jd715dz";
-        procMacro = true;
-        authors = [
-          "Zoey Riordan <zoey@dos.cafe>"
-          "Victor Koenders <bincode@trangar.com>"
-        ];
-        dependencies = [
-          {
-            name = "virtue";
-            packageId = "virtue";
-          }
-        ];
-
       };
       "bindgen 0.65.1" = rec {
         crateName = "bindgen";
@@ -5460,7 +5398,7 @@ rec {
         ];
 
       };
-      "darling" = rec {
+      "darling 0.20.11" = rec {
         crateName = "darling";
         version = "0.20.11";
         edition = "2021";
@@ -5471,11 +5409,11 @@ rec {
         dependencies = [
           {
             name = "darling_core";
-            packageId = "darling_core";
+            packageId = "darling_core 0.20.11";
           }
           {
             name = "darling_macro";
-            packageId = "darling_macro";
+            packageId = "darling_macro 0.20.11";
           }
         ];
         features = {
@@ -5485,7 +5423,33 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" "suggestions" ];
       };
-      "darling_core" = rec {
+      "darling 0.23.0" = rec {
+        crateName = "darling";
+        version = "0.23.0";
+        edition = "2021";
+        sha256 = "179fj6p6ajw4dnkrik51wjhifxwy02x5zhligyymcb905zd17bi5";
+        authors = [
+          "Ted Driggs <ted.driggs@outlook.com>"
+        ];
+        dependencies = [
+          {
+            name = "darling_core";
+            packageId = "darling_core 0.23.0";
+          }
+          {
+            name = "darling_macro";
+            packageId = "darling_macro 0.23.0";
+          }
+        ];
+        features = {
+          "default" = [ "suggestions" ];
+          "diagnostics" = [ "darling_core/diagnostics" ];
+          "serde" = [ "darling_core/serde" ];
+          "suggestions" = [ "darling_core/suggestions" ];
+        };
+        resolvedDefaultFeatures = [ "default" "suggestions" ];
+      };
+      "darling_core 0.20.11" = rec {
         crateName = "darling_core";
         version = "0.20.11";
         edition = "2021";
@@ -5527,7 +5491,46 @@ rec {
         };
         resolvedDefaultFeatures = [ "strsim" "suggestions" ];
       };
-      "darling_macro" = rec {
+      "darling_core 0.23.0" = rec {
+        crateName = "darling_core";
+        version = "0.23.0";
+        edition = "2021";
+        sha256 = "1c033vrks38vpw8kwgd5w088dsr511kfz55n9db56prkgh7sarcq";
+        authors = [
+          "Ted Driggs <ted.driggs@outlook.com>"
+        ];
+        dependencies = [
+          {
+            name = "ident_case";
+            packageId = "ident_case";
+          }
+          {
+            name = "proc-macro2";
+            packageId = "proc-macro2";
+          }
+          {
+            name = "quote";
+            packageId = "quote";
+          }
+          {
+            name = "strsim";
+            packageId = "strsim";
+            optional = true;
+          }
+          {
+            name = "syn";
+            packageId = "syn 2.0.119";
+            features = [ "full" "extra-traits" ];
+          }
+        ];
+        features = {
+          "serde" = [ "dep:serde" ];
+          "strsim" = [ "dep:strsim" ];
+          "suggestions" = [ "strsim" ];
+        };
+        resolvedDefaultFeatures = [ "strsim" "suggestions" ];
+      };
+      "darling_macro 0.20.11" = rec {
         crateName = "darling_macro";
         version = "0.20.11";
         edition = "2021";
@@ -5539,7 +5542,32 @@ rec {
         dependencies = [
           {
             name = "darling_core";
-            packageId = "darling_core";
+            packageId = "darling_core 0.20.11";
+          }
+          {
+            name = "quote";
+            packageId = "quote";
+          }
+          {
+            name = "syn";
+            packageId = "syn 2.0.119";
+          }
+        ];
+
+      };
+      "darling_macro 0.23.0" = rec {
+        crateName = "darling_macro";
+        version = "0.23.0";
+        edition = "2021";
+        sha256 = "13fvzji9xyp304mgq720z5l0xgm54qj68jibwscagkynggn88fdc";
+        procMacro = true;
+        authors = [
+          "Ted Driggs <ted.driggs@outlook.com>"
+        ];
+        dependencies = [
+          {
+            name = "darling_core";
+            packageId = "darling_core 0.23.0";
           }
           {
             name = "quote";
@@ -13271,7 +13299,7 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "c902ab0ec0364668246b43b1c44718d4d2a10ef2";
+          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
           sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
         };
         authors = [
@@ -13279,12 +13307,6 @@ rec {
           "istmo contributors"
         ];
         dependencies = [
-          {
-            name = "bincode";
-            packageId = "bincode 2.0.1";
-            usesDefaultFeatures = false;
-            features = [ "derive" "std" ];
-          }
           {
             name = "istmo-android";
             packageId = "istmo-android";
@@ -13323,7 +13345,7 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "c902ab0ec0364668246b43b1c44718d4d2a10ef2";
+          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
           sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
         };
         libName = "istmo_android";
@@ -13337,12 +13359,6 @@ rec {
             packageId = "android-activity";
             usesDefaultFeatures = false;
             target = { target, features }: ("android" == target."os" or null);
-          }
-          {
-            name = "bincode";
-            packageId = "bincode 2.0.1";
-            usesDefaultFeatures = false;
-            features = [ "derive" "std" ];
           }
           {
             name = "flume";
@@ -13392,7 +13408,7 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "c902ab0ec0364668246b43b1c44718d4d2a10ef2";
+          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
           sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
         };
         libName = "istmo_build";
@@ -13401,12 +13417,6 @@ rec {
           "istmo contributors"
         ];
         dependencies = [
-          {
-            name = "bincode";
-            packageId = "bincode 2.0.1";
-            usesDefaultFeatures = false;
-            features = [ "derive" "std" ];
-          }
           {
             name = "embed-resource";
             packageId = "embed-resource";
@@ -13461,6 +13471,12 @@ rec {
             usesDefaultFeatures = false;
             features = [ "parse" ];
           }
+          {
+            name = "wincode";
+            packageId = "wincode";
+            usesDefaultFeatures = false;
+            features = [ "derive" "std" ];
+          }
         ];
 
       };
@@ -13472,7 +13488,7 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "c902ab0ec0364668246b43b1c44718d4d2a10ef2";
+          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
           sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
         };
         libName = "istmo_camera";
@@ -13481,12 +13497,6 @@ rec {
           "istmo contributors"
         ];
         dependencies = [
-          {
-            name = "bincode";
-            packageId = "bincode 2.0.1";
-            usesDefaultFeatures = false;
-            features = [ "derive" "std" ];
-          }
           {
             name = "flume";
             packageId = "flume";
@@ -13547,7 +13557,7 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "c902ab0ec0364668246b43b1c44718d4d2a10ef2";
+          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
           sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
         };
         libName = "istmo_core";
@@ -13556,12 +13566,6 @@ rec {
           "istmo contributors"
         ];
         dependencies = [
-          {
-            name = "bincode";
-            packageId = "bincode 2.0.1";
-            usesDefaultFeatures = false;
-            features = [ "derive" "std" ];
-          }
           {
             name = "flume";
             packageId = "flume";
@@ -13584,6 +13588,12 @@ rec {
             usesDefaultFeatures = false;
             features = [ "std" ];
           }
+          {
+            name = "wincode";
+            packageId = "wincode";
+            usesDefaultFeatures = false;
+            features = [ "derive" "std" ];
+          }
         ];
 
       };
@@ -13595,7 +13605,7 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "c902ab0ec0364668246b43b1c44718d4d2a10ef2";
+          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
           sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
         };
         libName = "istmo_data_store";
@@ -13604,12 +13614,6 @@ rec {
           "istmo contributors"
         ];
         dependencies = [
-          {
-            name = "bincode";
-            packageId = "bincode 2.0.1";
-            usesDefaultFeatures = false;
-            features = [ "derive" "std" ];
-          }
           {
             name = "istmo-build";
             packageId = "istmo-build";
@@ -13626,6 +13630,12 @@ rec {
           {
             name = "pollster";
             packageId = "pollster";
+          }
+          {
+            name = "wincode";
+            packageId = "wincode";
+            usesDefaultFeatures = false;
+            features = [ "derive" "std" ];
           }
         ];
         buildDependencies = [
@@ -13653,7 +13663,7 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "c902ab0ec0364668246b43b1c44718d4d2a10ef2";
+          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
           sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
         };
         libName = "istmo_file_picker";
@@ -13662,12 +13672,6 @@ rec {
           "istmo contributors"
         ];
         dependencies = [
-          {
-            name = "bincode";
-            packageId = "bincode 2.0.1";
-            usesDefaultFeatures = false;
-            features = [ "derive" "std" ];
-          }
           {
             name = "istmo-build";
             packageId = "istmo-build";
@@ -13718,17 +13722,18 @@ rec {
         ];
         dependencies = [
           {
-            name = "bincode";
-            packageId = "bincode 2.0.1";
-            features = [ "derive" "std" ];
-          }
-          {
             name = "istmo-core";
             packageId = "istmo-core";
           }
           {
             name = "istmo-macros";
             packageId = "istmo-macros";
+          }
+          {
+            name = "wincode";
+            packageId = "wincode";
+            usesDefaultFeatures = false;
+            features = [ "derive" "std" ];
           }
         ];
         buildDependencies = [
@@ -13746,7 +13751,7 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "c902ab0ec0364668246b43b1c44718d4d2a10ef2";
+          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
           sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
         };
         libName = "istmo_ios";
@@ -13755,12 +13760,6 @@ rec {
           "istmo contributors"
         ];
         dependencies = [
-          {
-            name = "bincode";
-            packageId = "bincode 2.0.1";
-            usesDefaultFeatures = false;
-            features = [ "derive" "std" ];
-          }
           {
             name = "flume";
             packageId = "flume";
@@ -13799,7 +13798,7 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "c902ab0ec0364668246b43b1c44718d4d2a10ef2";
+          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
           sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
         };
         procMacro = true;
@@ -13836,7 +13835,7 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "c902ab0ec0364668246b43b1c44718d4d2a10ef2";
+          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
           sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
         };
         libName = "istmo_opener";
@@ -13845,12 +13844,6 @@ rec {
           "istmo contributors"
         ];
         dependencies = [
-          {
-            name = "bincode";
-            packageId = "bincode 2.0.1";
-            usesDefaultFeatures = false;
-            features = [ "derive" "std" ];
-          }
           {
             name = "istmo-build";
             packageId = "istmo-build";
@@ -13890,7 +13883,7 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "c902ab0ec0364668246b43b1c44718d4d2a10ef2";
+          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
           sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
         };
         libName = "istmo_pen";
@@ -13899,12 +13892,6 @@ rec {
           "istmo contributors"
         ];
         dependencies = [
-          {
-            name = "bincode";
-            packageId = "bincode 2.0.1";
-            usesDefaultFeatures = false;
-            features = [ "derive" "std" ];
-          }
           {
             name = "block2";
             packageId = "block2 0.6.2";
@@ -14010,7 +13997,7 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "c902ab0ec0364668246b43b1c44718d4d2a10ef2";
+          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
           sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
         };
         libName = "istmo_plugins";
@@ -14019,12 +14006,6 @@ rec {
           "istmo contributors"
         ];
         dependencies = [
-          {
-            name = "bincode";
-            packageId = "bincode 2.0.1";
-            usesDefaultFeatures = false;
-            features = [ "derive" "std" ];
-          }
           {
             name = "flume";
             packageId = "flume";
@@ -14060,11 +14041,17 @@ rec {
             features = [ "std" ];
           }
           {
+            name = "wincode";
+            packageId = "wincode";
+            usesDefaultFeatures = false;
+            features = [ "derive" "std" ];
+          }
+          {
             name = "windows-sys";
             packageId = "windows-sys 0.60.2";
             usesDefaultFeatures = false;
             target = { target, features }: ("windows" == target."os" or null);
-            features = [ "Win32_Foundation" "Win32_Globalization" "Win32_NetworkManagement_IpHelper" "Win32_NetworkManagement_Ndis" "Win32_Networking_WinSock" "Win32_Security" "Win32_Security_Authorization" "Win32_Storage_FileSystem" "Win32_System_IO" "Win32_System_Pipes" "Win32_System_Power" "Win32_System_Registry" "Win32_System_RemoteDesktop" "Win32_System_Time" "Win32_System_SystemInformation" "Win32_System_SystemServices" "Win32_System_Threading" ];
+            features = [ "Wdk_System_SystemServices" "Win32_Foundation" "Win32_Globalization" "Win32_NetworkManagement_IpHelper" "Win32_NetworkManagement_Ndis" "Win32_Networking_WinSock" "Win32_Security" "Win32_Security_Authorization" "Win32_Storage_FileSystem" "Win32_System_IO" "Win32_System_Pipes" "Win32_System_Power" "Win32_System_Registry" "Win32_System_RemoteDesktop" "Win32_System_Time" "Win32_System_SystemInformation" "Win32_System_SystemServices" "Win32_System_Threading" ];
           }
         ];
         buildDependencies = [
@@ -14088,7 +14075,7 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "c902ab0ec0364668246b43b1c44718d4d2a10ef2";
+          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
           sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
         };
         libName = "istmo_plugins_schema";
@@ -14112,7 +14099,7 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "c902ab0ec0364668246b43b1c44718d4d2a10ef2";
+          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
           sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
         };
         libName = "istmo_share";
@@ -14121,12 +14108,6 @@ rec {
           "istmo contributors"
         ];
         dependencies = [
-          {
-            name = "bincode";
-            packageId = "bincode 2.0.1";
-            usesDefaultFeatures = false;
-            features = [ "derive" "std" ];
-          }
           {
             name = "dispatch2";
             packageId = "dispatch2";
@@ -14263,7 +14244,7 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "c902ab0ec0364668246b43b1c44718d4d2a10ef2";
+          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
           sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
         };
         libName = "istmo_window";
@@ -17366,11 +17347,6 @@ rec {
             optional = true;
           }
           {
-            name = "bincode";
-            packageId = "bincode 2.0.1";
-            features = [ "derive" "std" ];
-          }
-          {
             name = "flate2";
             packageId = "flate2";
             optional = true;
@@ -17490,6 +17466,12 @@ rec {
             name = "unicode-normalization";
             packageId = "unicode-normalization";
           }
+          {
+            name = "wincode";
+            packageId = "wincode";
+            usesDefaultFeatures = false;
+            features = [ "derive" "std" ];
+          }
         ];
         buildDependencies = [
           {
@@ -17544,11 +17526,6 @@ rec {
         ];
         dependencies = [
           {
-            name = "bincode";
-            packageId = "bincode 2.0.1";
-            features = [ "derive" "std" ];
-          }
-          {
             name = "fluent";
             packageId = "fluent";
           }
@@ -17560,6 +17537,12 @@ rec {
           {
             name = "log";
             packageId = "log";
+          }
+          {
+            name = "wincode";
+            packageId = "wincode";
+            usesDefaultFeatures = false;
+            features = [ "derive" "std" ];
           }
         ];
         features = {
@@ -17580,11 +17563,6 @@ rec {
           {
             name = "async-io";
             packageId = "async-io";
-          }
-          {
-            name = "bincode";
-            packageId = "bincode 2.0.1";
-            features = [ "derive" "std" ];
           }
           {
             name = "freya";
@@ -17620,6 +17598,12 @@ rec {
             optional = true;
             usesDefaultFeatures = false;
           }
+          {
+            name = "wincode";
+            packageId = "wincode";
+            usesDefaultFeatures = false;
+            features = [ "derive" "std" ];
+          }
         ];
         buildDependencies = [
           {
@@ -17654,11 +17638,6 @@ rec {
         ];
         dependencies = [
           {
-            name = "bincode";
-            packageId = "bincode 2.0.1";
-            features = [ "derive" "std" ];
-          }
-          {
             name = "bytes";
             packageId = "bytes";
           }
@@ -17675,6 +17654,10 @@ rec {
             name = "freya-markdown-editor";
             packageId = "freya-markdown-editor";
             usesDefaultFeatures = false;
+          }
+          {
+            name = "istmo-core";
+            packageId = "istmo-core";
           }
           {
             name = "libloading";
@@ -17704,6 +17687,12 @@ rec {
             name = "uuid";
             packageId = "uuid";
             features = [ "v4" ];
+          }
+          {
+            name = "wincode";
+            packageId = "wincode";
+            usesDefaultFeatures = false;
+            features = [ "derive" "std" ];
           }
         ];
         buildDependencies = [
@@ -17778,11 +17767,6 @@ rec {
         ];
         dependencies = [
           {
-            name = "bincode";
-            packageId = "bincode 2.0.1";
-            features = [ "derive" "std" ];
-          }
-          {
             name = "blake2";
             packageId = "blake2";
           }
@@ -17808,6 +17792,10 @@ rec {
             packageId = "hex";
           }
           {
+            name = "istmo-core";
+            packageId = "istmo-core";
+          }
+          {
             name = "rand";
             packageId = "rand 0.8.8";
           }
@@ -17829,6 +17817,12 @@ rec {
           {
             name = "tracing";
             packageId = "tracing";
+          }
+          {
+            name = "wincode";
+            packageId = "wincode";
+            usesDefaultFeatures = false;
+            features = [ "derive" "std" ];
           }
           {
             name = "zudp";
@@ -17936,11 +17930,6 @@ rec {
           {
             name = "async-lock";
             packageId = "async-lock";
-          }
-          {
-            name = "bincode";
-            packageId = "bincode 2.0.1";
-            features = [ "derive" "std" ];
           }
           {
             name = "chrono";
@@ -18180,6 +18169,12 @@ rec {
             name = "uuid";
             packageId = "uuid";
             features = [ "v4" ];
+          }
+          {
+            name = "wincode";
+            packageId = "wincode";
+            usesDefaultFeatures = false;
+            features = [ "derive" "std" ];
           }
           {
             name = "winit";
@@ -22079,11 +22074,23 @@ rec {
         ];
 
       };
-      "pastey" = rec {
+      "pastey 0.1.1" = rec {
         crateName = "pastey";
         version = "0.1.1";
         edition = "2018";
         sha256 = "1v389jkifv757903flrrps67dvc6q6giwlyx3xi33hcfjmgjxyrm";
+        procMacro = true;
+        authors = [
+          "Aditya Kumar <git@adityais.dev>"
+          "David Tolnay <dtolnay@gmail.com>"
+        ];
+
+      };
+      "pastey 0.2.3" = rec {
+        crateName = "pastey";
+        version = "0.2.3";
+        edition = "2018";
+        sha256 = "1d1mk45ma9w54ppws8x096q96qhqirxmj9j3hchj7fmi1087zrif";
         procMacro = true;
         authors = [
           "Aditya Kumar <git@adityais.dev>"
@@ -26988,7 +26995,7 @@ rec {
         dependencies = [
           {
             name = "darling";
-            packageId = "darling";
+            packageId = "darling 0.20.11";
           }
           {
             name = "proc-macro2";
@@ -28954,7 +28961,7 @@ rec {
         dependencies = [
           {
             name = "bincode";
-            packageId = "bincode 1.3.3";
+            packageId = "bincode";
             optional = true;
           }
           {
@@ -32351,16 +32358,6 @@ rec {
         ];
 
       };
-      "unty" = rec {
-        crateName = "unty";
-        version = "0.0.4";
-        edition = "2021";
-        sha256 = "1blhyv01qiv5sb72sal3xa1l8nzck3answawxkkiw3fd2x1phjbd";
-        authors = [
-          "Victor Koenders <bincode@trang.ar>"
-        ];
-
-      };
       "url" = rec {
         crateName = "url";
         version = "2.5.8";
@@ -32993,15 +32990,6 @@ rec {
           "Sergio Benitez <sb@sergio.bz>"
         ];
 
-      };
-      "virtue" = rec {
-        crateName = "virtue";
-        version = "0.0.18";
-        edition = "2021";
-        sha256 = "1cgp79pzzs117kjlc3jnnkixbyaqri12j40mx2an41qhrymv27h5";
-        features = {
-          "proc-macro2" = [ "dep:proc-macro2" ];
-        };
       };
       "vswhom" = rec {
         crateName = "vswhom";
@@ -34514,6 +34502,89 @@ rec {
             packageId = "windows-sys 0.61.2";
             target = { target, features }: (target."windows" or false);
             features = [ "Win32_Foundation" "Win32_Storage_FileSystem" "Win32_System_Console" "Win32_System_SystemInformation" ];
+          }
+        ];
+
+      };
+      "wincode" = rec {
+        crateName = "wincode";
+        version = "0.6.3";
+        edition = "2024";
+        sha256 = "1sdrznh66wpj7cibcgak9y5k9wh1iy0dh09ilf2fbd1zwvzmlfq6";
+        authors = [
+          "Anza Maintainers <maintainers@anza.xyz>"
+        ];
+        dependencies = [
+          {
+            name = "pastey";
+            packageId = "pastey 0.2.3";
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.21";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "wincode-derive";
+            packageId = "wincode-derive";
+            optional = true;
+          }
+        ];
+        buildDependencies = [
+          {
+            name = "proc-macro2";
+            packageId = "proc-macro2";
+          }
+          {
+            name = "quote";
+            packageId = "quote";
+          }
+        ];
+        features = {
+          "bumpalo" = [ "alloc" "dep:bumpalo" ];
+          "bv" = [ "std" "dep:bv" ];
+          "bv-strict" = [ "bv" ];
+          "bytes" = [ "alloc" "dep:bytes" ];
+          "bytes-extra-platforms" = [ "bytes" "bytes/extra-platforms" ];
+          "default" = [ "std" ];
+          "derive" = [ "dep:wincode-derive" ];
+          "ecow" = [ "alloc" "dep:ecow" ];
+          "indexmap" = [ "alloc" "dep:indexmap" ];
+          "smallvec" = [ "alloc" "dep:smallvec" ];
+          "std" = [ "alloc" "thiserror/std" ];
+          "uuid" = [ "dep:uuid" ];
+          "uuid-serde-compat" = [ "uuid" ];
+          "zerocopy" = [ "dep:zerocopy" ];
+        };
+        resolvedDefaultFeatures = [ "alloc" "derive" "std" ];
+      };
+      "wincode-derive" = rec {
+        crateName = "wincode-derive";
+        version = "0.5.1";
+        edition = "2024";
+        sha256 = "0m82q2yl21vhrnxzjcphbvqwqik8l6zid7ks81j350cxzkcq5m8i";
+        procMacro = true;
+        libName = "wincode_derive";
+        authors = [
+          "Anza Maintainers <maintainers@anza.xyz>"
+        ];
+        dependencies = [
+          {
+            name = "darling";
+            packageId = "darling 0.23.0";
+          }
+          {
+            name = "proc-macro2";
+            packageId = "proc-macro2";
+          }
+          {
+            name = "quote";
+            packageId = "quote";
+          }
+          {
+            name = "syn";
+            packageId = "syn 2.0.119";
+            features = [ "extra-traits" "visit-mut" "visit" ];
           }
         ];
 
@@ -36781,7 +36852,7 @@ rec {
           "Win32_Web" = [ "Win32" ];
           "Win32_Web_InternetExplorer" = [ "Win32_Web" ];
         };
-        resolvedDefaultFeatures = [ "Win32" "Win32_Foundation" "Win32_Globalization" "Win32_Graphics" "Win32_Graphics_Dwm" "Win32_NetworkManagement" "Win32_NetworkManagement_IpHelper" "Win32_NetworkManagement_Ndis" "Win32_Networking" "Win32_Networking_WinSock" "Win32_Security" "Win32_Security_Authorization" "Win32_Storage" "Win32_Storage_FileSystem" "Win32_System" "Win32_System_IO" "Win32_System_Pipes" "Win32_System_Power" "Win32_System_Registry" "Win32_System_RemoteDesktop" "Win32_System_SystemInformation" "Win32_System_SystemServices" "Win32_System_Threading" "Win32_System_Time" "default" ];
+        resolvedDefaultFeatures = [ "Wdk" "Wdk_System" "Wdk_System_SystemServices" "Win32" "Win32_Foundation" "Win32_Globalization" "Win32_Graphics" "Win32_Graphics_Dwm" "Win32_NetworkManagement" "Win32_NetworkManagement_IpHelper" "Win32_NetworkManagement_Ndis" "Win32_Networking" "Win32_Networking_WinSock" "Win32_Security" "Win32_Security_Authorization" "Win32_Storage" "Win32_Storage_FileSystem" "Win32_System" "Win32_System_IO" "Win32_System_Pipes" "Win32_System_Power" "Win32_System_Registry" "Win32_System_RemoteDesktop" "Win32_System_SystemInformation" "Win32_System_SystemServices" "Win32_System_Threading" "Win32_System_Time" "default" ];
       };
       "windows-sys 0.61.2" = rec {
         crateName = "windows-sys";
