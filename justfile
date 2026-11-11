@@ -10,6 +10,10 @@ build:
 test:
     cargo test --all-targets
 
+# Regenerate nix/Cargo.nix (one derivation per crate) after Cargo.lock changes.
+cargo-nix:
+    nix run nixpkgs#crate2nix -- generate -f Cargo.toml -o nix/Cargo.nix -h nix/crate-hashes.json
+
 # Tag a release (release.toml); dry run unless `--execute`: `just release "" --execute`, `just release minor --execute`.
 release level="" *flags="":
     cargo release {{level}} --workspace {{flags}}

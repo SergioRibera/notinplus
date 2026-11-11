@@ -102,7 +102,19 @@ let
     }
   );
 
-  wrapped =
+  # Same desktop binary, one derivation per crate (nix/per-crate.nix).
+  perCrate = import ./per-crate.nix {
+    inherit
+      pkgs
+      lib
+      src
+      prebuilt
+      ;
+    inherit (commonArgs) buildInputs;
+  };
+
+  wrap =
+    unwrapped:
     if pkgs.stdenv.hostPlatform.isLinux then
       pkgs.runCommand "${pname}-${version}"
         {
@@ -118,6 +130,9 @@ let
         ''
     else
       unwrapped;
+
+  wrapped = wrap unwrapped;
+  perCrateWrapped = wrap perCrate.package;
 in
 {
   inherit
@@ -129,5 +144,7 @@ in
     dlopenLibs
     prebuilt
     src
+    perCrate
+    perCrateWrapped
     ;
 }

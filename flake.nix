@@ -235,6 +235,8 @@
           ${pname} = notinplus.wrapped;
           "${pname}-unwrapped" = notinplus.unwrapped;
           inherit (notinplus) cargoArtifacts;
+          "${pname}-per-crate" = notinplus.perCrateWrapped;
+          "${pname}-per-crate-unwrapped" = notinplus.perCrate.package;
         }
         // nativeBundles
         // lib.optionalAttrs (system == "x86_64-linux") (
