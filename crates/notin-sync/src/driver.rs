@@ -129,7 +129,7 @@ impl Payload {
 
     #[cfg_attr(feature = "sismo", sismo::function("sync::payload::decode"))]
     fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        bincode::decode_from_slice(bytes, bincode::config::standard())
+        bincode::decode_from_slice(bytes, crate::WIRE)
             .ok()
             .map(|(payload, _)| payload)
     }
@@ -2152,7 +2152,7 @@ impl<R: Replica> SyncDriver<R> {
             return Ok(());
         }
         let answer = intent.invite.key.open(sealed).ok().and_then(|plain| {
-            bincode::decode_from_slice(&plain, bincode::config::standard())
+            bincode::decode_from_slice(&plain, crate::WIRE)
                 .ok()
                 .map(|(answer, _): (JoinAnswer, usize)| answer)
         });

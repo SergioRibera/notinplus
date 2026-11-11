@@ -43,3 +43,13 @@ pub use share::{
     EndedShare, Invite, LeftShare, Member, Role, Share, ShareBook, ShareEdit, ShareId,
     ShareMessage, ShareMode,
 };
+
+/// How bytes from elsewhere are decoded: a length past this limit is
+/// refused before anything is allocated, so a forged one can neither
+/// exhaust memory nor abort the process. Room for the largest payload a
+/// channel carries in parts.
+pub(crate) const WIRE: bincode::config::Configuration<
+    bincode::config::LittleEndian,
+    bincode::config::Varint,
+    bincode::config::Limit<{ 1 << 28 }>,
+> = bincode::config::standard().with_limit::<{ 1 << 28 }>();

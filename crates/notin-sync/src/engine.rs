@@ -53,9 +53,8 @@ impl Message {
     /// Reverse of [`Self::to_bytes`].
     #[cfg_attr(feature = "sismo", sismo::function("sync::message::decode"))]
     pub fn from_bytes<E>(bytes: &[u8]) -> Result<Self, SyncError<E>> {
-        let (framed, _): (Framed, usize) =
-            bincode::decode_from_slice(bytes, bincode::config::standard())
-                .map_err(|err| SyncError::Codec(err.to_string()))?;
+        let (framed, _): (Framed, usize) = bincode::decode_from_slice(bytes, crate::WIRE)
+            .map_err(|err| SyncError::Codec(err.to_string()))?;
         if framed.version != PROTOCOL_VERSION {
             return Err(SyncError::Version(framed.version));
         }

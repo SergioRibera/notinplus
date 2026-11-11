@@ -969,7 +969,7 @@ impl ShareBook {
     #[must_use]
     #[cfg_attr(feature = "sismo", sismo::function("sync::share_book::decode"))]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        bincode::decode_from_slice(bytes, bincode::config::standard())
+        bincode::decode_from_slice(bytes, crate::WIRE)
             .ok()
             .map(|(book, _): (Self, usize)| book)
     }
@@ -1068,7 +1068,7 @@ impl ShareMessage {
     #[cfg_attr(feature = "sismo", sismo::function("sync::share::open"))]
     pub fn open(key: &ShareKey, sealed: &[u8]) -> Option<Self> {
         let plain = key.open(sealed).ok()?;
-        bincode::decode_from_slice(&plain, bincode::config::standard())
+        bincode::decode_from_slice(&plain, crate::WIRE)
             .ok()
             .map(|(message, _)| message)
     }
@@ -1109,8 +1109,7 @@ impl ShareMessage {
     ) -> Result<(DeviceId, Self), Unopened> {
         let plain = share.open_any(sealed).ok_or(Unopened::NoKey)?;
         let (record, _): (SignedRecord, usize) =
-            bincode::decode_from_slice(&plain, bincode::config::standard())
-                .map_err(|_| Unopened::Invalid)?;
+            bincode::decode_from_slice(&plain, crate::WIRE).map_err(|_| Unopened::Invalid)?;
         let author = share
             .participants()
             .find(|m| m.public == record.author)
@@ -1122,7 +1121,7 @@ impl ShareMessage {
         verifying
             .verify_strict(&signed, &signature)
             .map_err(|_| Unopened::Invalid)?;
-        let (message, _) = bincode::decode_from_slice(&record.message, bincode::config::standard())
+        let (message, _) = bincode::decode_from_slice(&record.message, crate::WIRE)
             .map_err(|_| Unopened::Invalid)?;
         Ok((author.device, message))
     }
@@ -1173,8 +1172,7 @@ pub fn open_keys(
     let (epoch, boxed) = sealed.split_first_chunk::<4>()?;
     let epoch = u32::from_be_bytes(*epoch);
     let plain = key_box(&me.agree(owner)?, share, epoch).open(boxed).ok()?;
-    let (keys, _): (Vec<ShareKey>, usize) =
-        bincode::decode_from_slice(&plain, bincode::config::standard()).ok()?;
+    let (keys, _): (Vec<ShareKey>, usize) = bincode::decode_from_slice(&plain, crate::WIRE).ok()?;
     Some((epoch, keys))
 }
 
@@ -1519,5 +1517,27 @@ mod tests {
         share.issue_lease(&owner, now);
         assert!(share.lease.as_ref().unwrap().lease.issued_at > held.lease.issued_at);
         assert!(!share.offer_lease(held));
+    }
+
+    #[test]
+    fn a_forged_length_is_refused_not_allocated() {
+        let owner = DeviceKey::generate();
+        let share = Share::new(member_of(&owner, Role::Owner), "x", ShareMode::Permanent, 1);
+        // A record claiming a message of 2^64 - 1 bytes.
+        let mut plain = vec![0; 32 + 64];
+        plain.push(253);
+        plain.extend_from_slice(&u64::MAX.to_le_bytes());
+        let sealed = share.key.seal(&plain).unwrap();
+        assert!(ShareMessage::open_signed(&share, &sealed, RecordKind::Meta).is_err());
+        assert!(
+            ShareMessage::open(
+                &share.key,
+                &share
+                    .key
+                    .seal(&[0, 253, 255, 255, 255, 255, 255, 255, 255, 255])
+                    .unwrap()
+            )
+            .is_none()
+        );
     }
 }

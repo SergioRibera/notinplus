@@ -230,7 +230,7 @@ impl RelayMessage {
     #[must_use]
     #[cfg_attr(feature = "sismo", sismo::function("sync::relay::decode"))]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        bincode::decode_from_slice(bytes, bincode::config::standard())
+        bincode::decode_from_slice(bytes, crate::WIRE)
             .ok()
             .map(|(message, _)| message)
     }
@@ -414,8 +414,7 @@ impl Store {
                 continue;
             };
             let bytes = std::fs::read(&path)?;
-            if let Ok((mailbox, _)) =
-                bincode::decode_from_slice::<Mailbox, _>(&bytes, bincode::config::standard())
+            if let Ok((mailbox, _)) = bincode::decode_from_slice::<Mailbox, _>(&bytes, crate::WIRE)
             {
                 store.insert(ShareId(id), mailbox);
             }
