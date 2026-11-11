@@ -1816,11 +1816,11 @@ impl<R: Replica> SyncDriver<R> {
                     offer.is_some_and(|o| proof.is_some_and(|p| o.secret.proves(&peer.public, &p)));
                 // Through a relay only the link pairs; on the network the
                 // typed code may, when no proof is claimed.
-                let shown = held || (!peer.relayed && proof.is_none());
+                let shown = held || (!peer.through_relay && proof.is_none());
                 let accepted = shown && offer.is_some_and(|o| o.code.matches(code));
                 // A guess from afar must not burn the offer for the device
                 // in front of the user.
-                if accepted || !peer.relayed {
+                if accepted || !peer.through_relay {
                     self.offer = None;
                 }
                 if accepted {
@@ -3191,6 +3191,7 @@ mod tests {
             name: driver.profile.name().to_owned(),
             addr: addr(port),
             relayed: false,
+            through_relay: false,
             session: 7,
         }
     }
@@ -3300,8 +3301,15 @@ mod tests {
         let code = offer.code.value();
         a.on_event(NetEvent::Connected(PeerInfo {
             relayed: true,
+            through_relay: true,
             ..info(&b, 2)
         }))
+        .unwrap();
+        // Punched through since: still a channel the relay opened.
+        a.on_event(NetEvent::PathChanged {
+            device: b.profile.id(),
+            relayed: false,
+        })
         .unwrap();
         let b_public = *b.profile.key().public();
         // The right code alone, a proof made for another key, a proof
@@ -3770,6 +3778,7 @@ mod tests {
                 name: "relay".into(),
                 addr: addr(9),
                 relayed: false,
+                through_relay: false,
                 session: 1,
             }))
             .unwrap();
@@ -4039,6 +4048,7 @@ mod tests {
             name: "theirs".into(),
             addr: addr(10),
             relayed: false,
+            through_relay: false,
             session: 1,
         };
         a.on_event(NetEvent::Connected(at_theirs.clone())).unwrap();
@@ -4117,6 +4127,7 @@ mod tests {
                 name: "theirs".into(),
                 addr: addr(10),
                 relayed: false,
+                through_relay: false,
                 session: 1,
             }))
             .unwrap();
@@ -4147,6 +4158,7 @@ mod tests {
                 name: "theirs".into(),
                 addr: addr(11),
                 relayed: false,
+                through_relay: false,
                 session: 1,
             }))
             .unwrap();
@@ -4248,6 +4260,7 @@ mod tests {
                 name: "theirs".into(),
                 addr: addr(10),
                 relayed: false,
+                through_relay: false,
                 session: 1,
             }))
             .unwrap();

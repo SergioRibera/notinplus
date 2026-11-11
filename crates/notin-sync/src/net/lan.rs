@@ -360,6 +360,7 @@ impl Link {
     fn info(&self, beacon: &Beacon) -> PeerInfo {
         PeerInfo {
             relayed: self.relayed.load(Ordering::Relaxed),
+            through_relay: self.addr.is_relayed(),
             ..PeerInfo::from_beacon(beacon, socket_addr(self.addr))
         }
     }

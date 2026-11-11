@@ -74,6 +74,8 @@ pub struct PeerInfo {
     /// The channel runs through a relay rather than straight to the
     /// device. A punched channel goes direct and reports `false`.
     pub relayed: bool,
+    /// The channel was opened through a relay, punched or not since.
+    pub through_relay: bool,
     /// The run of the process it is in, see [`session_id`].
     pub session: u64,
 }
@@ -87,6 +89,7 @@ impl PeerInfo {
             name: beacon.name.clone(),
             addr,
             relayed: false,
+            through_relay: false,
             session: beacon.session,
         }
     }
