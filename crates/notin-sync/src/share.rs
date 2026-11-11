@@ -229,6 +229,13 @@ impl Share {
         }
     }
 
+    /// Mark a change by the owner. `updated_at` only ever grows, so a
+    /// member takes a view of the share only when it is newer than the
+    /// one it holds and a replayed one is moot.
+    pub fn touch(&mut self, now: u64) {
+        self.updated_at = now.max(self.updated_at.saturating_add(1));
+    }
+
     #[must_use]
     pub fn is_owner(&self, device: DeviceId) -> bool {
         self.owner.device == device

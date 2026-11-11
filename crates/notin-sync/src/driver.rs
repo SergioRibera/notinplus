@@ -883,7 +883,7 @@ impl<R: Replica> SyncDriver<R> {
             return Vec::new();
         };
         change(&mut link.share);
-        link.share.updated_at = now_ms();
+        link.share.touch(now_ms());
         link.engine.set_scope(link.share.scope());
         let mut out = self.broadcast_meta(id);
         out.extend(self.relay_register(id));
@@ -900,7 +900,7 @@ impl<R: Replica> SyncDriver<R> {
         if !link.share.is_owner(self.profile.id()) || !link.share.expel(device) {
             return Vec::new();
         }
-        link.share.updated_at = now_ms();
+        link.share.touch(now_ms());
         link.engine.forget_peer(device);
         let payload = Payload::Share {
             share: id,
@@ -1552,7 +1552,7 @@ impl<R: Replica> SyncDriver<R> {
             }
             ShareMessage::Left => {
                 if link.share.is_owner(me) && link.share.remove_member(from) {
-                    link.share.updated_at = now_ms();
+                    link.share.touch(now_ms());
                     link.engine.forget_peer(from);
                     out.extend(self.broadcast_meta(id));
                     out.push(Action::Event(DriverEvent::ShareChanged(id)));
@@ -1703,7 +1703,7 @@ impl<R: Replica> SyncDriver<R> {
                     return Ok(());
                 }
                 link.share.admit(member);
-                link.share.updated_at = now_ms();
+                link.share.touch(now_ms());
                 let welcome = JoinAnswer::Welcome(Box::new(link.share.for_member()));
                 let sealed = seal_answer(&link.share, &welcome);
                 // The relay learns the new member before the welcome goes
@@ -2445,7 +2445,7 @@ impl<R: Replica> SyncDriver<R> {
         if !changed {
             return false;
         }
-        share.updated_at = now_ms();
+        share.touch(now_ms());
         link.engine.set_scope(share.scope());
         let key = share.key.clone();
         if let Some((device, public)) = learned {
@@ -2528,7 +2528,7 @@ impl<R: Replica> SyncDriver<R> {
                 link.share.server.clone_from(&server);
                 // Another relay numbers its mailbox from scratch.
                 link.share.relay_cursor = 0;
-                link.share.updated_at = now;
+                link.share.touch(now);
             }
         }
         self.sync_relays()
@@ -3062,14 +3062,14 @@ impl<R: Replica> SyncDriver<R> {
 }
 
 /// The owner's view `incoming` as this device adopts it, or `None` when
-/// it does not come from the owner or is older than what is held. The
+/// it does not come from the owner or is not newer than what is held. The
 /// key and the owner stay as the invitation had them, and a share that
 /// moved to another relay is read there from the start.
 fn fresh_meta(current: &Share, from: DeviceId, me: DeviceId, incoming: Share) -> Option<Share> {
     if !current.is_owner(from)
         || current.is_owner(me)
         || incoming.id != current.id
-        || incoming.updated_at < current.updated_at
+        || incoming.updated_at <= current.updated_at
     {
         return None;
     }
@@ -4266,6 +4266,38 @@ mod tests {
         assert!(owner.share(id).unwrap().is_member(device));
         assert!(!owner.share(id).unwrap().was_expelled(device));
         assert!(guest.share(id).is_some());
+    }
+
+    #[test]
+    fn an_older_view_replayed_after_a_newer_one_changes_nothing() {
+        let (mut owner, mut guest, id) = joined_then_apart();
+        let relay = on_relay(&mut guest);
+        let sealed_view = |owner: &SyncDriver<MemReplica>| {
+            ShareMessage::Meta(Box::new(owner.share(id).unwrap().for_member())).seal_signed(
+                owner.share(id).unwrap(),
+                RecordKind::Meta,
+                owner.profile.key(),
+            )
+        };
+        // Two changes within one millisecond still order: the clock here
+        // stays behind the share's.
+        owner.shares.get_mut(&id).unwrap().share.updated_at = u64::MAX / 2;
+        owner.edit_share(id, ShareEdit::Rename("Primera".into()));
+        let first = sealed_view(&owner);
+        owner.edit_share(id, ShareEdit::Rename("Segunda".into()));
+        let second = sealed_view(&owner);
+        let o = owner.profile.id();
+        let records = vec![
+            record(1, o, RecordKind::Meta, second),
+            record(2, o, RecordKind::Meta, first),
+        ];
+        guest
+            .on_event(from_relay(
+                relay,
+                &RelayMessage::Records { share: id, records },
+            ))
+            .unwrap();
+        assert_eq!(guest.share(id).unwrap().title, "Segunda");
     }
 
     #[test]
