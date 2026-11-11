@@ -1587,8 +1587,11 @@ impl<R: Replica> SyncDriver<R> {
                     role: link.share.entry_role,
                     joined_at: now_ms(),
                 };
-                // Someone already in (back after a restart) never waits.
-                if link.share.approve_entry && !link.share.is_member(from) {
+                // Someone already in (back after a restart) never waits; one
+                // thrown out always does, whatever the invitation says, until
+                // an organizer lets it back in.
+                let waits = link.share.approve_entry || link.share.was_expelled(from);
+                if waits && !link.share.is_member(from) {
                     let fresh = link.share.knock(member.clone());
                     let sealed = seal_answer(&link.share, &JoinAnswer::Pending);
                     out.extend(self.route(from, &Payload::JoinReply { share: id, sealed }));
@@ -3800,6 +3803,34 @@ mod tests {
         connect_both(&mut guest, &mut owner);
         assert!(guest.share(id).unwrap().is_member(eve.profile.id()));
         (owner, guest, eve, id)
+    }
+
+    #[test]
+    fn an_expelled_member_waits_for_an_organizer_to_come_back() {
+        let (mut owner, mut guest, id) = joined_then_apart();
+        let invite = owner.share(id).unwrap().invite();
+        let device = guest.profile.id();
+        owner.expel(id, device);
+        // Told it is out once it is back, then it tries the old link.
+        connect_both(&mut owner, &mut guest);
+        assert!(guest.share(id).is_none());
+        let events = deliver(guest.join(invite), &mut guest, &mut owner);
+        assert!(events.contains(&DriverEvent::JoinPending(id)), "{events:?}");
+        let share = owner.share(id).unwrap();
+        assert!(!share.is_member(device));
+        assert!(share.pending.iter().any(|p| p.device == device));
+        // Only an explicit yes lets it back in.
+        let out = owner.edit_share(
+            id,
+            ShareEdit::Approve {
+                device,
+                role: Role::Editor,
+            },
+        );
+        deliver(out, &mut owner, &mut guest);
+        assert!(owner.share(id).unwrap().is_member(device));
+        assert!(!owner.share(id).unwrap().was_expelled(device));
+        assert!(guest.share(id).is_some());
     }
 
     #[test]
