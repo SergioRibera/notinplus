@@ -1,8 +1,7 @@
-# Desktop build of notinplus (crane).
+# Desktop build of notinplus, one derivation per crate (nix/per-crate.nix).
 {
   pkgs,
   lib,
-  craneLib,
   system,
 }:
 let
@@ -41,80 +40,30 @@ let
     libXi
   ];
 
-  commonArgs = {
-    inherit src pname version;
-    # Same `-frandom-seed` in every layer: bindgen reruns (and with it
-    # skia and everything above) whenever BINDGEN_EXTRA_CLANG_ARGS, which
-    # carries NIX_CFLAGS_COMPILE, changes. The default seed is $out.
-    NIX_OUTPATH_USED_AS_RANDOM_SEED = pname;
-    strictDeps = true;
-    cargoLock = ../Cargo.lock;
-    cargoToml = ../Cargo.toml;
-    cargoExtraArgs = "--locked --bin ${pname}";
-    doCheck = false;
+  buildInputs =
+    lib.optionals pkgs.stdenv.hostPlatform.isLinux (
+      with pkgs;
+      [
+        fontconfig
+        freetype
+        libxcb
+      ]
+      ++ dlopenLibs
+    )
+    ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ pkgs.libiconv ];
 
-    nativeBuildInputs = [
-      pkgs.pkg-config
-    ]
-    # The camera plugin binds V4L2 headers with bindgen.
-    ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.rustPlatform.bindgenHook ];
-    buildInputs =
-      lib.optionals pkgs.stdenv.hostPlatform.isLinux (
-        with pkgs;
-        [
-          fontconfig
-          freetype
-          libxcb
-        ]
-        ++ dlopenLibs
-      )
-      ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ pkgs.libiconv ];
-
-    SKIA_BINARIES_URL = "file://${prebuilt.skia}/skia-binaries-{key}.tar.gz";
-  };
-
-  # Third-party dependencies, then the workspace crates in layers
-  # (nix/layers.nix); the package build only compiles the app crate.
-  cargoArtifacts = (import ./layers.nix { inherit lib; }).build {
-    inherit craneLib src;
-    args = commonArgs;
-    cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-  };
-
-  unwrapped = craneLib.buildPackage (
-    commonArgs
-    // {
-      inherit cargoArtifacts;
-      # The lib target is also a cdylib + staticlib (mobile entry); only
-      # the desktop binary ships.
-      installPhaseCommand = ''
-        install -Dm755 target/release/${pname} $out/bin/${pname}
-      '';
-      # `freya-pdf` probes `<exe>/../lib` for pdfium, and the store
-      # reference pulls it into the closure nix-bundle-app copies from.
-      postInstall = ''
-        mkdir -p $out/lib
-        for lib in ${prebuilt.pdfium}/lib/*pdfium*; do
-          ln -s "$lib" $out/lib/
-        done
-      '';
-      meta.mainProgram = pname;
-    }
-  );
-
-  # Same desktop binary, one derivation per crate (nix/per-crate.nix).
   perCrate = import ./per-crate.nix {
     inherit
       pkgs
       lib
       src
       prebuilt
+      buildInputs
       ;
-    inherit (commonArgs) buildInputs;
   };
+  unwrapped = perCrate.package;
 
-  wrap =
-    unwrapped:
+  wrapped =
     if pkgs.stdenv.hostPlatform.isLinux then
       pkgs.runCommand "${pname}-${version}"
         {
@@ -130,21 +79,16 @@ let
         ''
     else
       unwrapped;
-
-  wrapped = wrap unwrapped;
-  perCrateWrapped = wrap perCrate.package;
 in
 {
   inherit
     pname
     version
-    cargoArtifacts
     unwrapped
     wrapped
     dlopenLibs
     prebuilt
     src
     perCrate
-    perCrateWrapped
     ;
 }

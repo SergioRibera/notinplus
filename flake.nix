@@ -9,7 +9,6 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    crane.url = "github:ipetkov/crane";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -24,7 +23,6 @@
     {
       nixpkgs,
       flake-utils,
-      crane,
       rust-overlay,
       nix-bundle-app,
       ...
@@ -45,12 +43,10 @@
         };
         lib = pkgs.lib;
 
-        craneLib = (crane.mkLib pkgs).overrideToolchain (p: p.rust-bin.stable.latest.minimal);
         notinplus = import ./nix/package.nix {
           inherit
             pkgs
             lib
-            craneLib
             system
             ;
         };
@@ -164,11 +160,9 @@
           inherit
             pkgs
             lib
-            crane
             pname
             version
             ;
-          inherit (notinplus) src;
           inherit (notinplus) perCrate;
         };
         windowsBundles =
@@ -190,18 +184,17 @@
           inherit
             pkgs
             lib
-            crane
             pname
             version
             ;
-          inherit (notinplus) src perCrate;
+          inherit (notinplus) perCrate;
         };
 
         # notin-relay: `.#relay`, `.#relay-bundles` (deb/rpm/tar.gz with a
         # systemd unit) and `.#relay-image` (OCI tarball for `docker load`).
         relay = import ./nix/relay.nix {
-          inherit pkgs lib craneLib;
-          inherit (notinplus) src;
+          inherit pkgs lib;
+          inherit (notinplus) perCrate;
         };
         serverTarget = targets.server.${system} or null;
         relayPackages = lib.optionalAttrs (serverTarget != null) (
@@ -212,7 +205,6 @@
           })
           // {
             relay = relay.drv;
-            relay-cargoArtifacts = relay.cargoArtifacts;
             relay-image = relay.image;
           }
         );
@@ -235,23 +227,15 @@
           default = notinplus.wrapped;
           ${pname} = notinplus.wrapped;
           "${pname}-unwrapped" = notinplus.unwrapped;
-          inherit (notinplus) cargoArtifacts;
-          "${pname}-per-crate" = notinplus.perCrateWrapped;
-          "${pname}-per-crate-unwrapped" = notinplus.perCrate.package;
         }
         // nativeBundles
         // lib.optionalAttrs (system == "x86_64-linux") (
           windowsBundles
           // {
             "${pname}-windows" = windows.package;
-            "${pname}-windows-per-crate" = windows.perCrate;
-            windows-cargoArtifacts = windows.cargoArtifacts;
             windows-sdk = windows.xwinSdk;
             android-jniLibs = android.jniLibs;
-            android-cargoArtifacts = android.cargoArtifacts;
             android-gradle = android.gradle;
-            android-jniLibs-per-crate = android.jniLibsPerCrate;
-            android-gradle-per-crate = android.gradlePerCrate;
           }
         )
         // relayPackages;

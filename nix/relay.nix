@@ -1,13 +1,13 @@
 # notin-relay — the always-on share relay, Linux server only.
 #
-# Separate crane build from the desktop app: `-p notin-relay` resolves a
-# much smaller feature set (no freya / skia / pdfium), so it neither needs
-# the prebuilt Skia nor reuses the app's dependency artifacts.
+# One derivation per crate, from the same `Cargo.nix` as the app
+# (nix/per-crate.nix): as its own workspace member it resolves a much
+# smaller feature set (no freya / skia / pdfium), and shares whatever
+# crates both builds have in common.
 {
   pkgs,
   lib,
-  craneLib,
-  src,
+  perCrate,
 }:
 let
   manifest = lib.importTOML ../tools/notin-relay/Cargo.toml;
@@ -17,24 +17,7 @@ let
   # UDP (zudp); clients reach it through the invite address it prints.
   port = 7720;
 
-  commonArgs = {
-    inherit src pname version;
-    strictDeps = true;
-    cargoLock = ../Cargo.lock;
-    cargoToml = ../Cargo.toml;
-    cargoExtraArgs = "--locked -p ${pname}";
-    doCheck = false;
-  };
-
-  cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-
-  drv = craneLib.buildPackage (
-    commonArgs
-    // {
-      inherit cargoArtifacts;
-      meta.mainProgram = pname;
-    }
-  );
+  drv = perCrate.cargoNix.workspaceMembers.${pname}.build.overrideAttrs { meta.mainProgram = pname; };
 
   # Packaged installs run as a systemd service; the keypair and the
   # sealed shares live in the StateDirectory.
@@ -91,7 +74,6 @@ in
   inherit
     pname
     version
-    cargoArtifacts
     drv
     info
     image

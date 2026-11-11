@@ -9,18 +9,13 @@
 {
   pkgs,
   lib,
-  crane,
-  src,
   pname,
   version,
   perCrate,
 }:
 let
   target = "x86_64-pc-windows-msvc";
-  targetEnv = "X86_64_PC_WINDOWS_MSVC";
 
-  toolchain = pkgs.rust-bin.stable.latest.minimal.override { targets = [ target ]; };
-  craneLib = (crane.mkLib pkgs).overrideToolchain (_: toolchain);
   llvm = pkgs.llvmPackages;
 
   # Windows SDK + Visual C++ CRT headers and import libraries. Pinned so the
@@ -92,41 +87,7 @@ let
     "${xwinSdk}/sdk/lib/ucrt/x86_64"
   ];
 
-  commonArgs = {
-    inherit src pname version;
-    # Same `-frandom-seed` in every layer: bindgen reruns (and with it
-    # skia and everything above) whenever BINDGEN_EXTRA_CLANG_ARGS, which
-    # carries NIX_CFLAGS_COMPILE, changes. The default seed is $out.
-    NIX_OUTPATH_USED_AS_RANDOM_SEED = pname;
-    strictDeps = true;
-    cargoLock = ../Cargo.lock;
-    cargoToml = ../Cargo.toml;
-    cargoExtraArgs = "--locked --bin ${pname}";
-    doCheck = false;
-
-    CARGO_BUILD_TARGET = target;
-    "CARGO_TARGET_${targetEnv}_LINKER" = "${llvm.lld}/bin/lld-link";
-    "CARGO_TARGET_${targetEnv}_RUSTFLAGS" = lib.concatStringsSep " " (
-      [ "-Ctarget-feature=+crt-static" ] ++ map (d: "-Lnative=${d}") libDirs
-    );
-    "CC_${target}" = "${clangCl}/bin/clang-cl";
-    "CXX_${target}" = "${clangCl}/bin/clang-cl";
-    "AR_${target}" = "${llvm.llvm}/bin/llvm-lib";
-    # istmo-build compiles the `.exe` icon resource with embed-resource.
-    "RC_${target}" = "${llvm.llvm}/bin/llvm-rc";
-
-    SKIA_BINARIES_URL = "file://${skia}/skia-binaries-{key}.tar.gz";
-  };
-
-  # Third-party dependencies, then the workspace crates in layers
-  # (nix/layers.nix); the package build only compiles the app crate.
-  cargoArtifacts = (import ./layers.nix { inherit lib; }).build {
-    inherit craneLib src;
-    args = commonArgs;
-    cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-  };
-
-  # One derivation per crate (nix/cross-crates.nix), same toolchain setup.
+  # One derivation per crate (nix/cross-crates.nix).
   cargoNixWindows = import ./cross-crates.nix {
     inherit pkgs lib;
     platform = lib.systems.elaborate lib.systems.examples.x86_64-windows;
@@ -176,36 +137,25 @@ let
     desktopCrate = perCrate.crate;
   };
 
-  perCrateWindows =
-    let
-      crate = cargoNixWindows.workspaceMembers.notinplus.build;
-    in
-    pkgs.runCommand "${pname}-windows-${version}" { } ''
-      install -Dm755 ${crate}/bin/${pname}.exe $out/bin/${pname}.exe
-      install -Dm644 ${pdfium}/bin/pdfium.dll $out/bin/pdfium.dll
-    '';
+  crate = cargoNixWindows.workspaceMembers.notinplus.build;
 in
 {
-  inherit xwinSdk cargoArtifacts;
-  perCrate = perCrateWindows;
-  package = craneLib.buildPackage (
-    commonArgs
-    // {
-      inherit cargoArtifacts;
-      # The lib target is also a cdylib + staticlib (mobile entry); only
-      # the exe ships, next to the pdfium it loads.
-      installPhaseCommand = ''
-        install -Dm755 target/${target}/release/${pname}.exe $out/bin/${pname}.exe
+  inherit xwinSdk;
+  # The exe, next to the pdfium it loads.
+  package =
+    pkgs.runCommand "${pname}-windows-${version}"
+      {
+        meta = {
+          description = "Crossplatform note-taking app with handwriting and PDF annotation";
+          homepage = "https://github.com/SergioRibera/notinplus";
+          license = with lib.licenses; [
+            mit
+            asl20
+          ];
+        };
+      }
+      ''
+        install -Dm755 ${crate}/bin/${pname}.exe $out/bin/${pname}.exe
         install -Dm644 ${pdfium}/bin/pdfium.dll $out/bin/pdfium.dll
       '';
-      meta = {
-        description = "Crossplatform note-taking app with handwriting and PDF annotation";
-        homepage = "https://github.com/SergioRibera/notinplus";
-        license = with lib.licenses; [
-          mit
-          asl20
-        ];
-      };
-    }
-  );
 }
