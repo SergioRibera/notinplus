@@ -42,6 +42,8 @@ const OUTBOX_MAX: usize = 64;
 const PARK_TRIES: u8 = 5;
 /// Such records kept per share.
 const PARKED_MAX: usize = 256;
+/// Bytes of such records kept per share.
+const PARKED_BYTES: usize = 8 << 20;
 /// How long a held message is worth delivering.
 const OUTBOX_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
@@ -3259,13 +3261,22 @@ impl<R: Replica> SyncDriver<R> {
         let Some(link) = self.shares.get_mut(&id) else {
             return Ok(false);
         };
-        // A share that moved is read from the start there.
+        // A share that moved is read from the start there. The cursor never
+        // passes a waiting record, kept or not: one let go for room is
+        // fetched again.
         if link.share.server == server {
             let before = parked.iter().map(|(r, _)| r.seq - 1).min();
             link.share.relay_cursor = before.map_or(top, |b| top.min(b)).max(start);
             touched |= link.share.relay_cursor != start;
         }
         if !parked.is_empty() {
+            // The oldest are the ones holding the cursor back: keep them.
+            parked.sort_by_key(|(r, _)| r.seq);
+            let mut bytes = 0;
+            parked.retain(|(r, _)| {
+                bytes += r.sealed.len();
+                bytes <= PARKED_BYTES
+            });
             parked.truncate(PARKED_MAX);
             self.parked.insert(
                 id,
@@ -3313,11 +3324,20 @@ impl<R: Replica> SyncDriver<R> {
         }
         // Only what a member signed counts, and only as that member: the
         // relay names the sender but anyone holding the key can seal.
+        // The owner's roster and keys are the share's own: what does not
+        // open there never will. A member waits only for a newer view, or
+        // for a key newer than its own that the owner has yet to hand over.
+        let owner = link.share.is_owner(me);
         let (author, message) =
             match ShareMessage::open_signed(&link.share, &record.sealed, record.kind) {
                 Ok(opened) => opened,
-                Err(Unopened::Stranger) => return Ok(Taken::Parked),
-                Err(Unopened::Invalid) => return Ok(Taken::Dropped),
+                Err(Unopened::Stranger) if !owner => return Ok(Taken::Parked),
+                Err(Unopened::NoKey) if !owner && record.epoch > link.share.epoch => {
+                    return Ok(Taken::Parked);
+                }
+                Err(Unopened::Stranger | Unopened::NoKey | Unopened::Invalid) => {
+                    return Ok(Taken::Dropped);
+                }
             };
         if author != record.from {
             return Ok(Taken::Dropped);
@@ -4754,6 +4774,83 @@ mod tests {
         connect_both(&mut guest, &mut owner);
         assert_eq!(guest.share(id).unwrap().epoch, 1);
         assert_eq!(guest.share(id).unwrap().key, owner.share(id).unwrap().key);
+    }
+
+    #[test]
+    fn only_records_that_may_still_open_wait() {
+        let (mut owner, mut guest, id) = joined_then_apart();
+        let at_owner = on_relay(&mut owner);
+        let at_guest = on_relay(&mut guest);
+        let stranger = driver("Eve");
+        let view = owner.share(id).unwrap().clone();
+        let owner_id = owner.profile.id();
+        let by_stranger = |seq| {
+            let sealed =
+                ShareMessage::Ended.seal_signed(&view, RecordKind::Meta, stranger.profile.key());
+            record(seq, stranger.profile.id(), RecordKind::Meta, sealed)
+        };
+        let unknown_key = |seq, epoch| crate::relay::Record {
+            epoch,
+            ..record(
+                seq,
+                owner_id,
+                RecordKind::Meta,
+                ShareMessage::Ended.seal(&ShareKey::generate()),
+            )
+        };
+        let feed = |d: &mut SyncDriver<MemReplica>, relay, records| {
+            let answer = RelayMessage::Records {
+                share: id,
+                records,
+                epoch: 0,
+            };
+            d.on_event(from_relay(relay, &answer)).unwrap();
+        };
+        // The owner knows its members and keys: nothing waits there.
+        feed(
+            &mut owner,
+            at_owner,
+            vec![by_stranger(1), unknown_key(2, 5)],
+        );
+        assert!(!owner.parked.contains_key(&id));
+        // A member waits only for what a newer view or key may open.
+        feed(
+            &mut guest,
+            at_guest,
+            vec![by_stranger(1), unknown_key(2, 0), unknown_key(3, 1)],
+        );
+        let waiting: Vec<u64> = guest.parked[&id]
+            .records
+            .iter()
+            .map(|(r, _)| r.seq)
+            .collect();
+        assert_eq!(waiting, vec![1, 3]);
+
+        // Past the room kept, the oldest stay and the cursor never passes
+        // any of them, kept or let go.
+        let (owner, mut guest, id) = joined_then_apart();
+        let at_guest = on_relay(&mut guest);
+        let view = owner.share(id).unwrap().clone();
+        let records: Vec<crate::relay::Record> = (10..10 + PARKED_MAX as u64 + 20)
+            .map(|seq| {
+                let sealed = ShareMessage::Ended.seal_signed(
+                    &view,
+                    RecordKind::Meta,
+                    stranger.profile.key(),
+                );
+                record(seq, stranger.profile.id(), RecordKind::Meta, sealed)
+            })
+            .collect();
+        let answer = RelayMessage::Records {
+            share: id,
+            records,
+            epoch: 0,
+        };
+        guest.on_event(from_relay(at_guest, &answer)).unwrap();
+        let kept = &guest.parked[&id].records;
+        assert_eq!(kept.len(), PARKED_MAX);
+        assert_eq!(kept[0].0.seq, 10);
+        assert!(guest.share(id).unwrap().relay_cursor < 10);
     }
 
     #[test]

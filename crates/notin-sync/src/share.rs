@@ -953,8 +953,7 @@ impl ShareMessage {
         sealed: &[u8],
         kind: RecordKind,
     ) -> Result<(DeviceId, Self), Unopened> {
-        // A key not held here yet may be one the owner has still to hand over.
-        let plain = share.open_any(sealed).ok_or(Unopened::Stranger)?;
+        let plain = share.open_any(sealed).ok_or(Unopened::NoKey)?;
         let (record, _): (SignedRecord, usize) =
             bincode::decode_from_slice(&plain, bincode::config::standard())
                 .map_err(|_| Unopened::Invalid)?;
@@ -981,6 +980,9 @@ pub enum Unopened {
     /// Sealed for the share but by someone this view of it does not list
     /// yet: a newer view may.
     Stranger,
+    /// None of the keys held here opens it: sealed with one the owner has
+    /// still to hand over, or not for this share at all.
+    NoKey,
     /// Not sealed for the share, not signed, or signed for something else.
     Invalid,
 }
