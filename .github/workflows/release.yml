@@ -97,18 +97,7 @@ jobs:
         uses: ./.github/actions/setup-nix
         with:
           attic-token: ${{ secrets.ATTIC_TOKEN }}
-
-      # Pushed on its own first: a failure further down still leaves the
-      # dependency build in attic, so the retry starts from the app crate.
-      - name: Build dependencies
-        run: nix build -L .#cargoArtifacts -o result-deps
-
-      - name: Push dependencies to attic
-        if: always()
-        uses: ./.github/actions/attic-push
-        with:
-          push-enabled: ${{ steps.nix.outputs.push-enabled }}
-          paths: result-deps
+          watch-store: "true"
 
       # The wrapped package doubles as the "Nix" release format: once in
       # attic, `nix run github:SergioRibera/notinplus/<tag>` is a download.
@@ -150,7 +139,8 @@ jobs:
         uses: ./.github/actions/attic-push
         with:
           push-enabled: ${{ steps.nix.outputs.push-enabled }}
-          paths: result-deps result-app result-bundles result-flatpak-kit
+          paths: result-app result-bundles result-flatpak-kit
+          closure-of: .#notinplus
 
   # Cross-built from Linux: LLVM links the MSVC target against the xwin SDK
   # (nix/windows.nix), then nix-bundle-app packages it. No Windows runner.
@@ -172,16 +162,7 @@ jobs:
         uses: ./.github/actions/setup-nix
         with:
           attic-token: ${{ secrets.ATTIC_TOKEN }}
-
-      - name: Build dependencies
-        run: nix build -L .#windows-cargoArtifacts -o result-deps
-
-      - name: Push dependencies to attic
-        if: always()
-        uses: ./.github/actions/attic-push
-        with:
-          push-enabled: ${{ steps.nix.outputs.push-enabled }}
-          paths: result-deps
+          watch-store: "true"
 
       - name: Build NSIS / MSI / zip
         run: nix build -L .#windows-bundles -o result-bundles
@@ -201,7 +182,8 @@ jobs:
         uses: ./.github/actions/attic-push
         with:
           push-enabled: ${{ steps.nix.outputs.push-enabled }}
-          paths: result-deps result-bundles
+          paths: result-bundles
+          closure-of: .#notinplus-windows
 
   # nix-bundle-app emits a flatpak source kit; finishing it needs
   # flatpak-builder with network access to the Flathub runtime.
@@ -301,16 +283,7 @@ jobs:
         uses: ./.github/actions/setup-nix
         with:
           attic-token: ${{ secrets.ATTIC_TOKEN }}
-
-      - name: Build dependencies
-        run: nix build -L .#relay-cargoArtifacts -o result-deps
-
-      - name: Push dependencies to attic
-        if: always()
-        uses: ./.github/actions/attic-push
-        with:
-          push-enabled: ${{ steps.nix.outputs.push-enabled }}
-          paths: result-deps
+          watch-store: "true"
 
       - name: Build packages
         run: nix build -L .#relay-bundles -o result-bundles
@@ -347,7 +320,8 @@ jobs:
         uses: ./.github/actions/attic-push
         with:
           push-enabled: ${{ steps.nix.outputs.push-enabled }}
-          paths: result-deps result-bundles result-image
+          paths: result-bundles result-image
+          closure-of: .#relay
 
   server-image:
     name: Server image manifest

@@ -12,46 +12,12 @@ concurrency:
 
 jobs:
   # Same derivations the release builds, so a green CI run also warms
-  # attic for the next tag.
+  # attic for the next tag. Every crate is its own derivation (nix/per-crate.nix):
+  # `watch-store` uploads each one as it lands, so a job that fails halfway
+  # still caches what it finished, and the final push covers the build
+  # closure, which the runtime closure of the result leaves out.
   desktop:
     name: Desktop + relay (x86_64-linux, Nix)
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-
-      - id: nix
-        uses: ./.github/actions/setup-nix
-        with:
-          attic-token: ${{ secrets.ATTIC_TOKEN }}
-
-      - name: Build dependencies
-        run: nix build -L .#cargoArtifacts -o result-deps
-
-      - name: Push dependencies to attic
-        if: always()
-        uses: ./.github/actions/attic-push
-        with:
-          push-enabled: ${{ steps.nix.outputs.push-enabled }}
-          paths: result-deps
-
-      - name: Build app
-        run: nix build -L .#notinplus -o result-app
-
-      - name: Build relay
-        run: nix build -L .#relay -o result-relay
-
-      - name: Push app to attic
-        if: always()
-        uses: ./.github/actions/attic-push
-        with:
-          push-enabled: ${{ steps.nix.outputs.push-enabled }}
-          paths: result-app result-relay
-
-  # One derivation per crate (nix/per-crate.nix): attic keeps every crate
-  # on its own, so a change rebuilds that crate and its dependents only.
-  desktop-per-crate:
-    name: Desktop per crate (x86_64-linux, Nix)
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -67,25 +33,28 @@ jobs:
         run: |
           nix run nixpkgs#crate2nix -- generate -f Cargo.toml -o nix/Cargo.nix -h nix/crate-hashes.json
           git diff --exit-code -- nix/Cargo.nix nix/crate-hashes.json \
-            || { echo "::error::nix/Cargo.nix is stale: run `just cargo-nix`"; exit 1; }
+            || { echo "::error::nix/Cargo.nix is stale: run \`just cargo-nix\`"; exit 1; }
 
       - name: Build app
-        run: nix build -L .#notinplus-per-crate -o result-app
+        run: nix build -L .#notinplus -o result-app
 
-      - name: Push crates and app to attic
+      - name: Build relay
+        run: nix build -L .#relay -o result-relay
+
+      - name: Push crates and results to attic
         if: always()
         uses: ./.github/actions/attic-push
         with:
           push-enabled: ${{ steps.nix.outputs.push-enabled }}
-          paths: result-app
-          closure-of: .#notinplus-per-crate
+          paths: result-app result-relay
+          closure-of: .#notinplus .#relay
 
   # Same cross build the release ships; catches Windows-only compile errors
   # without a Windows runner.
   windows:
     name: Desktop (x86_64-windows, Nix cross)
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
 
@@ -93,31 +62,23 @@ jobs:
         uses: ./.github/actions/setup-nix
         with:
           attic-token: ${{ secrets.ATTIC_TOKEN }}
-
-      - name: Build dependencies
-        run: nix build -L .#windows-cargoArtifacts -o result-deps
-
-      - name: Push dependencies to attic
-        if: always()
-        uses: ./.github/actions/attic-push
-        with:
-          push-enabled: ${{ steps.nix.outputs.push-enabled }}
-          paths: result-deps
+          watch-store: "true"
 
       - name: Build app
         run: nix build -L .#notinplus-windows -o result-app
 
-      - name: Push app to attic
+      - name: Push crates and app to attic
         if: always()
         uses: ./.github/actions/attic-push
         with:
           push-enabled: ${{ steps.nix.outputs.push-enabled }}
           paths: result-app
+          closure-of: .#notinplus-windows
 
   android:
     name: Android (debug, arm64-v8a)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
 
@@ -132,40 +93,3 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
-
-  windows-per-crate:
-    name: Desktop per crate (x86_64-windows, Nix cross)
-    runs-on: ubuntu-latest
-    timeout-minutes: 150
-    steps:
-      - uses: actions/checkout@v4
-
-      - id: nix
-        uses: ./.github/actions/setup-nix
-        with:
-          attic-token: ${{ secrets.ATTIC_TOKEN }}
-          watch-store: "true"
-
-      - name: Build app
-        run: nix build -L .#notinplus-windows-per-crate -o result-app
-
-      - name: Push crates and app to attic
-        if: always()
-        uses: ./.github/actions/attic-push
-        with:
-          push-enabled: ${{ steps.nix.outputs.push-enabled }}
-          paths: result-app
-          closure-of: .#notinplus-windows-per-crate
-
-  android-per-crate:
-    name: Android per crate (debug, arm64-v8a)
-    runs-on: ubuntu-latest
-    timeout-minutes: 150
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: ./.github/actions/android-build
-        with:
-          attic-token: ${{ secrets.ATTIC_TOKEN }}
-          task: ":app:assembleDebug"
-          per-crate: "true"
