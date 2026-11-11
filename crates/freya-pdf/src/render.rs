@@ -228,8 +228,14 @@ fn render_entry(doc: &PdfDocument, key: CacheKey) -> Option<CachedTile> {
 
     match key.tile {
         TileCoord::Full => {
-            let target_w = pixel_dim(width_points * scale)? as Pixels;
-            let target_h = pixel_dim(height_points * scale)? as Pixels;
+            let (target_w, target_h) = (
+                pixel_dim(width_points * scale)?,
+                pixel_dim(height_points * scale)?,
+            );
+            if !crate::doc::renderable(target_w, target_h) {
+                return None;
+            }
+            let (target_w, target_h) = (target_w as Pixels, target_h as Pixels);
             let config = PdfRenderConfig::new().set_target_size(target_w, target_h);
             let bitmap = {
                 #[cfg(feature = "sismo")]

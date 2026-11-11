@@ -426,6 +426,11 @@ impl PdfDocument {
         target_height_px: u32,
     ) -> Result<(Vec<u8>, u32, u32), PdfError> {
         use pdfium_render::prelude::{PdfRenderConfig, Pixels};
+        if !renderable(target_width_px, target_height_px) {
+            return Err(PdfError::Backend(format!(
+                "page at {target_width_px}x{target_height_px} is too big to render"
+            )));
+        }
         let pdf_page = self.pdf_page(page)?;
         #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
         let config = PdfRenderConfig::new()
@@ -439,6 +444,15 @@ impl PdfDocument {
         let h = bitmap.height() as u32;
         Ok((bitmap.as_rgba_bytes(), w, h))
     }
+}
+
+/// Most pixels one render may hold: a page can claim any size, and the
+/// whole bitmap is allocated at once.
+const MAX_RENDER_PIXELS: u64 = 8192 * 8192;
+
+/// Whether a render of `width` x `height` pixels stays within bounds.
+pub(crate) fn renderable(width: u32, height: u32) -> bool {
+    u64::from(width) * u64::from(height) <= MAX_RENDER_PIXELS
 }
 
 #[cfg_attr(feature = "sismo", sismo::function("pdf::page_sizes"))]
@@ -467,6 +481,13 @@ fn same_line(a: &Rect, b: &Rect) -> bool {
 mod tests {
     use super::same_line;
     use freya_canvas_bg::Rect;
+
+    #[test]
+    fn a_page_claiming_a_huge_raster_is_not_rendered() {
+        assert!(super::renderable(2480, 3508));
+        assert!(!super::renderable(200_000, 200_000));
+        assert!(!super::renderable(u32::MAX, 2));
+    }
 
     fn line(y: f32, h: f32) -> Rect {
         Rect {

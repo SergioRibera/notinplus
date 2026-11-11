@@ -33,6 +33,9 @@ use crate::library::bodies::ASSETS_SUBDIR as ASSETS_DIR;
 const MAX_SIDE: u32 = 4096;
 /// Largest file read or downloaded, before decoding.
 const MAX_BYTES: u64 = 40 * 1024 * 1024;
+/// Most pixels an image may have to be decoded at all: a few bytes can
+/// claim a raster of gigabytes, and the drawing side decodes it whole.
+pub(crate) const MAX_PIXELS: u64 = 8192 * 8192;
 /// Images kept decoded in memory, so remounting a note does not flash.
 const CACHE_LIMIT: usize = 48;
 
@@ -99,6 +102,20 @@ impl From<reqwest::Error> for ImageError {
     }
 }
 
+/// Whether `bytes` are an image small enough to decode, judged from the
+/// size its header claims.
+pub(crate) fn decodable(bytes: &[u8]) -> bool {
+    ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()
+        .and_then(|reader| reader.into_dimensions().ok())
+        .is_some_and(|(width, height)| within_pixels(width, height))
+}
+
+fn within_pixels(width: u32, height: u32) -> bool {
+    width > 0 && height > 0 && u64::from(width) * u64::from(height) <= MAX_PIXELS
+}
+
 /// An image with nothing but its pixels, ready to store.
 pub(crate) struct CleanImage {
     pub(crate) bytes: Vec<u8>,
@@ -118,6 +135,10 @@ impl CleanImage {
         let mut image = {
             sismo::scope!("images::decode");
             let mut decoder = reader.into_decoder()?;
+            let (width, height) = decoder.dimensions();
+            if !within_pixels(width, height) {
+                return Err(ImageError::TooLarge);
+            }
             let orientation = decoder.orientation()?;
             let mut image = DynamicImage::from_decoder(decoder)?;
             image.apply_orientation(orientation);
@@ -413,6 +434,9 @@ fn load(source: &Source) -> Result<Loaded, ImageError> {
             .with_guessed_format()?
             .into_dimensions()?
     };
+    if !within_pixels(width, height) {
+        return Err(ImageError::TooLarge);
+    }
     let mut hasher = DefaultHasher::new();
     source.hash(&mut hasher);
     bytes.len().hash(&mut hasher);
@@ -667,6 +691,41 @@ mod tests {
             }
         }
         !crc
+    }
+
+    /// A real PNG whose header claims `width` × `height`.
+    fn claiming(width: u32, height: u32) -> Vec<u8> {
+        let mut raw = Vec::new();
+        DynamicImage::new_rgba8(1, 1)
+            .write_to(&mut Cursor::new(&mut raw), ImageFormat::Png)
+            .expect("encode");
+        raw[16..20].copy_from_slice(&width.to_be_bytes());
+        raw[20..24].copy_from_slice(&height.to_be_bytes());
+        let crc = crc32(&raw[12..29]);
+        raw[29..33].copy_from_slice(&crc.to_be_bytes());
+        raw
+    }
+
+    #[test]
+    fn an_image_claiming_too_many_pixels_is_never_decoded() {
+        let bomb = claiming(60_000, 60_000);
+        assert!(bomb.len() < 200);
+        assert!(!decodable(&bomb));
+        assert!(matches!(
+            CleanImage::from_raw(&bomb),
+            Err(ImageError::TooLarge)
+        ));
+        let dir = std::env::temp_dir().join(format!("notin-bomb-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("bomb.png");
+        std::fs::write(&path, &bomb).expect("write");
+        assert!(matches!(
+            load(&Source::File(path)),
+            Err(ImageError::TooLarge)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(decodable(&claiming(1, 1)));
+        assert!(!decodable(b"not an image"));
     }
 
     #[test]

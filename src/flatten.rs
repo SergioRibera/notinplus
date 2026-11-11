@@ -89,6 +89,10 @@ fn load_image(item: ItemId, image: &ImageBox) -> Option<SkImage> {
     let bytes = bodies::read_asset(item, &image.asset)
         .inspect_err(|err| log::warn!("flatten: image {}: {err}", image.asset))
         .ok()?;
+    if !crate::editor::images::decodable(&bytes) {
+        log::warn!("flatten: image {} is too big to draw", image.asset);
+        return None;
+    }
     SkImage::from_encoded(SkData::new_copy(&bytes))
 }
 

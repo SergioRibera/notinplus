@@ -120,6 +120,17 @@ const fn gone(kind: BlobKind, id: [u8; 16], at: u64) -> BlobHead {
     }
 }
 
+/// A cover from elsewhere is drawn on every card: never one too big to
+/// decode.
+fn drop_undrawable(cover: &mut Option<std::sync::Arc<[u8]>>) {
+    if cover
+        .as_deref()
+        .is_some_and(|bytes| !crate::editor::images::decodable(bytes))
+    {
+        *cover = None;
+    }
+}
+
 impl Library {
     /// Keep `record` if it is newer than what is held. Returns whether
     /// anything changed. Persists what it touched.
@@ -144,6 +155,7 @@ impl Library {
             SyncRecord::Item(mut item) => {
                 yard.revive(Buried::Item, item.id.0);
                 item.folder = self.data.landing_folder(&item);
+                drop_undrawable(&mut item.thumbnail);
                 super::keep_cover(item.id, item.thumbnail.as_deref());
                 upsert(&mut self.data.index.items, item, |i| i.id);
                 self.persist()?;
@@ -567,6 +579,35 @@ impl LibraryData {
 #[cfg(test)]
 mod tests {
     use super::SyncRecord;
+
+    #[test]
+    fn a_cover_too_big_to_decode_is_dropped() {
+        // A PNG header claiming 60000 x 60000 pixels.
+        let mut bomb = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+        bomb.extend_from_slice(&60_000u32.to_be_bytes());
+        bomb.extend_from_slice(&60_000u32.to_be_bytes());
+        bomb.extend_from_slice(&[8, 6, 0, 0, 0]);
+        let crc = crc32(&bomb[12..29]);
+        bomb.extend_from_slice(&crc.to_be_bytes());
+        let mut cover = Some(bomb.into());
+        super::drop_undrawable(&mut cover);
+        assert!(cover.is_none());
+    }
+
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = !0u32;
+        for byte in bytes {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = if crc & 1 == 1 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
 
     #[test]
     fn a_forged_length_from_another_device_is_dropped() {
