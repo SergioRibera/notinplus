@@ -1105,6 +1105,10 @@ impl Service {
                     crate::canvas::lock(&board).forget_hand(device);
                 }
             }
+            DriverEvent::RelayAdopted(relay) => {
+                self.driver.profile_mut().set_relay(Some(relay.to_string()));
+                self.save_profile();
+            }
             // The next snapshot shows the new path.
             DriverEvent::PeerOnline { online: true, .. }
             | DriverEvent::RelayOnline(_)

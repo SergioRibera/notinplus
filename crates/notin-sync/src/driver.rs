@@ -299,6 +299,9 @@ pub enum DriverEvent {
     },
     /// The relay came within reach or went away.
     RelayOnline(bool),
+    /// This device took the relay of the device it pairs with as its
+    /// own, having none; the profile should keep it.
+    RelayAdopted(RelayAddr),
     /// Ephemeral state of a document from another device, see
     /// [`SyncDriver::live`]. Opaque to the driver.
     Live {
@@ -751,7 +754,11 @@ impl<R: Replica> SyncDriver<R> {
         self.known_keys.insert(offer.device, offer.public);
         let mut out = match &offer.relay {
             // Without a relay of our own, the paired device's serves us both.
-            Some(relay) if self.own_relay.is_none() => self.set_relay(Some(relay.clone())),
+            Some(relay) if self.own_relay.is_none() => {
+                let mut out = self.set_relay(Some(relay.clone()));
+                out.push(Action::Event(DriverEvent::RelayAdopted(relay.clone())));
+                out
+            }
             _ => self.sync_relays(),
         };
         if let Some(peer) = self.discovered.get(&offer.device) {
@@ -920,16 +927,11 @@ impl<R: Replica> SyncDriver<R> {
 
     /// Accept an invitation: connect to the owner and ask in.
     #[cfg_attr(feature = "sismo", sismo::function("sync::driver::join"))]
+    ///
+    /// The invitation's relay serves that share only; it never becomes
+    /// this device's own.
     pub fn join(&mut self, invite: Invite) -> Vec<Action> {
-        let mut out = Vec::new();
-        if self.own_relay.is_none()
-            && let Some(server) = invite.server.as_deref()
-            && let Ok(addr) = server.parse::<RelayAddr>()
-        {
-            out.extend(self.set_relay(Some(addr)));
-        }
-        out.extend(self.join_inner(invite));
-        out
+        self.join_inner(invite)
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("sync::driver::join_inner"))]
@@ -2349,7 +2351,7 @@ impl<R: Replica> SyncDriver<R> {
     }
 
     /// Ask again into every share [`Self::new`] restored as pending:
-    /// reach the invitation's relay when none is set, then the owner.
+    /// reach each invitation's relay, then the owner.
     #[cfg_attr(feature = "sismo", sismo::function("sync::driver::resume_joins"))]
     pub fn resume_joins(&mut self) -> Vec<Action> {
         let invites: Vec<Invite> = self.joins.drain().map(|(_, j)| j.invite).collect();
@@ -2564,11 +2566,25 @@ impl<R: Replica> SyncDriver<R> {
             .collect()
     }
 
-    /// [`Self::consent_at`] every relay.
+    /// Relays that hear whom we trust and what we expect: ours, and the
+    /// one of the device we are pairing with. Never one a share or an
+    /// invitation chose, which could map our devices.
+    fn consent_relays(&self) -> Vec<DeviceId> {
+        let pairing = self
+            .intent
+            .as_ref()
+            .and_then(|i| i.relay.as_ref())
+            .map(RelayAddr::device);
+        let mut relays: Vec<DeviceId> = self.own_relay.into_iter().chain(pairing).collect();
+        relays.dedup();
+        relays
+    }
+
+    /// [`Self::consent_at`] every relay of [`Self::consent_relays`].
     fn relay_consent(&self) -> Vec<Action> {
-        self.relays
-            .keys()
-            .flat_map(|relay| self.consent_at(*relay))
+        self.consent_relays()
+            .into_iter()
+            .flat_map(|relay| self.consent_at(relay))
             .collect()
     }
 
@@ -2637,7 +2653,9 @@ impl<R: Replica> SyncDriver<R> {
         if self.own_relay == Some(relay) {
             out.push(Action::Event(DriverEvent::RelayOnline(true)));
         }
-        out.extend(self.consent_at(relay));
+        if self.consent_relays().contains(&relay) {
+            out.extend(self.consent_at(relay));
+        }
         let ids: Vec<ShareId> = self
             .shares
             .keys()
@@ -3803,6 +3821,84 @@ mod tests {
         connect_both(&mut guest, &mut owner);
         assert!(guest.share(id).unwrap().is_member(eve.profile.id()));
         (owner, guest, eve, id)
+    }
+
+    fn consent_sent(out: &[Action], relay: DeviceId) -> bool {
+        out.iter().any(|a| match a {
+            Action::Send { device, bytes, .. } if *device == relay => matches!(
+                relay_message(bytes),
+                Some(RelayMessage::Trust { .. } | RelayMessage::Expect { .. })
+            ),
+            _ => false,
+        })
+    }
+
+    #[test]
+    fn an_invitations_relay_serves_the_share_and_never_hears_whom_we_trust() {
+        let owner = driver("Sergio");
+        let mut guest = driver("Ana");
+        let own = on_relay(&mut guest);
+        guest
+            .profile_mut()
+            .trust(TrustedDevice::new([3; 32], "PC", 1));
+        let key = crate::identity::DeviceKey::generate();
+        let theirs = RelayAddr {
+            host: "theirs:7710".into(),
+            public: *key.public(),
+        };
+        let mut invite = shared_doc(&owner).invite();
+        invite.server = Some(theirs.to_string());
+        let out = guest.join(invite);
+        assert_eq!(
+            guest.relay(),
+            Some(&RelayAddr {
+                host: "relay:7710".into(),
+                public: guest.relays[&own].addr.public,
+            })
+        );
+        assert!(
+            out.iter().any(
+                |a| matches!(a, Action::ConnectHost { public, .. } if *public == theirs.public)
+            )
+        );
+        let out = guest
+            .on_event(NetEvent::Connected(PeerInfo {
+                device: key.id(),
+                public: *key.public(),
+                name: "theirs".into(),
+                addr: addr(10),
+                relayed: false,
+                session: 1,
+            }))
+            .unwrap();
+        assert!(!consent_sent(&out, key.id()), "{out:?}");
+        // The owner is knocked on there all the same.
+        assert!(out.iter().any(|a| matches!(a, Action::Send { device, bytes, .. }
+            if *device == key.id() && matches!(relay_message(bytes), Some(RelayMessage::Knock { .. })))));
+        let out = guest.tick().unwrap();
+        assert!(!consent_sent(&out, key.id()));
+        assert!(consent_sent(&out, own));
+    }
+
+    #[test]
+    fn a_device_without_a_relay_takes_the_paired_ones_and_says_so() {
+        let mut a = driver("Tablet");
+        let mut b = driver("PC");
+        on_relay(&mut a);
+        let (offer, _) = a.begin_pairing();
+        let relay = offer.relay.clone().unwrap();
+        let out = b.pair_with(&offer);
+        assert!(out.contains(&Action::Event(DriverEvent::RelayAdopted(relay.clone()))));
+        assert_eq!(b.relay(), Some(&relay));
+        // A device with a relay keeps its own.
+        let mut c = driver("Phone");
+        let mine = on_relay(&mut c);
+        let out = c.pair_with(&offer);
+        assert!(
+            !out.iter()
+                .any(|a| matches!(a, Action::Event(DriverEvent::RelayAdopted(_))))
+        );
+        assert_eq!(c.own_relay, Some(mine));
     }
 
     #[test]
