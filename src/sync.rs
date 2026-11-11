@@ -995,6 +995,17 @@ impl Service {
                         log::warn!("sync connect: {err}");
                     }
                 }
+                Action::ConnectVia { relay, public } => {
+                    sismo::scope!("sync::perform::connect_via");
+                    if let Some(Err(err)) = node.map(|n| n.connect_via(relay, public)) {
+                        log::warn!("sync connect: {err}");
+                    }
+                }
+                Action::Punch { device } => {
+                    if let Some(Err(err)) = node.map(|n| n.punch(device)) {
+                        log::warn!("sync punch: {err}");
+                    }
+                }
                 Action::Event(event) => self.on_driver_event(event),
             }
         }
@@ -1094,7 +1105,10 @@ impl Service {
                     crate::canvas::lock(&board).forget_hand(device);
                 }
             }
-            DriverEvent::PeerOnline { online: true, .. } | DriverEvent::RelayOnline(_) => {}
+            // The next snapshot shows the new path.
+            DriverEvent::PeerOnline { online: true, .. }
+            | DriverEvent::RelayOnline(_)
+            | DriverEvent::PathChanged { .. } => {}
             DriverEvent::Live {
                 from,
                 name,
@@ -1266,8 +1280,7 @@ impl Service {
             }
             Cmd::BeginPairing => {
                 self.last_failure = None;
-                self.driver.begin_pairing();
-                Vec::new()
+                self.driver.begin_pairing().1
             }
             Cmd::CancelPairing => {
                 self.driver.cancel_pairing();
@@ -1294,6 +1307,7 @@ impl Service {
                     code,
                     // Typed codes only pair on the same network.
                     secret: None,
+                    relay: None,
                 })
             }
             Cmd::SetName(name) => {
