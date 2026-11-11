@@ -219,13 +219,20 @@ impl Mailbox {
         self.owner == public || self.members.contains(&public)
     }
 
+    /// Whether `public` may hand in a record of `kind`: any member, but
+    /// only the owner speaks for the share as a whole.
+    fn accepts(&self, public: [u8; 32], kind: RecordKind) -> bool {
+        self.allows(public) && (kind != RecordKind::Meta || self.owner == public)
+    }
+
     /// Bytes of sealed records kept.
     fn bytes(&self) -> u64 {
         self.records.iter().map(|r| r.sealed.len() as u64).sum()
     }
 
-    /// Append a record, dropping whatever it makes moot; kept only when
-    /// `keep` (the mailbox retains and there is room).
+    /// Append a record, dropping what it makes moot among the sender's
+    /// own records, never anyone else's; kept only when `keep` (the
+    /// mailbox retains and there is room).
     fn push(&mut self, from: DeviceId, kind: RecordKind, sealed: Vec<u8>, keep: bool) -> Record {
         let record = Record {
             seq: self.next_seq,
@@ -237,15 +244,18 @@ impl Mailbox {
         if keep {
             match kind {
                 RecordKind::Snapshot { doc } => self.records.retain(|r| {
-                    !matches!(
-                        r.kind,
-                        RecordKind::Update { doc: d } | RecordKind::Snapshot { doc: d } if d == doc
-                    )
+                    r.from != from
+                        || !matches!(
+                            r.kind,
+                            RecordKind::Update { doc: d } | RecordKind::Snapshot { doc: d } if d == doc
+                        )
                 }),
-                RecordKind::Blob { key } => self
+                RecordKind::Blob { key } => self.records.retain(|r| {
+                    r.from != from || !matches!(r.kind, RecordKind::Blob { key: k } if k == key)
+                }),
+                RecordKind::Meta => self
                     .records
-                    .retain(|r| !matches!(r.kind, RecordKind::Blob { key: k } if k == key)),
-                RecordKind::Meta => self.records.retain(|r| !matches!(r.kind, RecordKind::Meta)),
+                    .retain(|r| r.from != from || !matches!(r.kind, RecordKind::Meta)),
                 RecordKind::Update { .. } => {}
             }
             self.records.push(record.clone());
@@ -898,7 +908,7 @@ impl Serving {
             self.reply(from, &RelayMessage::Gone { share });
             return;
         };
-        if !mailbox.allows(public) {
+        if !mailbox.accepts(public, kind) {
             self.reply(from, &RelayMessage::Refused { share });
             return;
         }
@@ -992,6 +1002,10 @@ mod tests {
     const A: DeviceId = DeviceId([1; 32]);
     const D: DocId = DocId([2; 16]);
     const KNOCK: KnockToken = KnockToken([3; 32]);
+    const K: BlobKey = BlobKey {
+        kind: crate::replica::BlobKind::Item,
+        id: [4; 16],
+    };
 
     fn mailbox(owner: [u8; 32], members: Vec<[u8; 32]>, retain: bool) -> Mailbox {
         Mailbox {
@@ -1027,6 +1041,25 @@ mod tests {
         assert_eq!(seqs, vec![4, 5]);
         assert_eq!(mailbox.since(4).len(), 1);
         assert_eq!(mailbox.next_seq, 6);
+    }
+
+    #[test]
+    fn a_member_cannot_wipe_what_others_left() {
+        const B: DeviceId = DeviceId([9; 32]);
+        let mut mailbox = mailbox([0; 32], vec![[1; 32]], true);
+        mailbox.push(A, RecordKind::Update { doc: D }, vec![1], true);
+        mailbox.push(A, RecordKind::Blob { key: K }, vec![2], true);
+        mailbox.push(A, RecordKind::Meta, vec![3], true);
+        mailbox.push(B, RecordKind::Snapshot { doc: D }, vec![4], true);
+        mailbox.push(B, RecordKind::Blob { key: K }, vec![5], true);
+        mailbox.push(B, RecordKind::Meta, vec![6], true);
+        let seqs: Vec<u64> = mailbox.records.iter().map(|r| r.seq).collect();
+        assert_eq!(seqs, vec![1, 2, 3, 4, 5, 6]);
+        // And only the owner may hand in a view of the share.
+        assert!(mailbox.accepts([0; 32], RecordKind::Meta));
+        assert!(!mailbox.accepts([1; 32], RecordKind::Meta));
+        assert!(mailbox.accepts([1; 32], RecordKind::Update { doc: D }));
+        assert!(!mailbox.accepts([7; 32], RecordKind::Update { doc: D }));
     }
 
     #[test]
