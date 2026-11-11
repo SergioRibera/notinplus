@@ -9,7 +9,8 @@ use std::collections::HashSet;
 use std::fmt;
 
 use crate::cipher::ShareKey;
-use crate::identity::DeviceId;
+use crate::identity::{DeviceId, DeviceKey};
+use crate::relay::RecordKind;
 use crate::replica::{BlobKey, BlobKind, DocId, Scope};
 
 const LINK_SCHEME: &str = "notein://join?";
@@ -114,6 +115,9 @@ impl Role {
 pub struct Member {
     pub device: DeviceId,
     pub public: [u8; 32],
+    /// What its mailbox records are signed with, see
+    /// [`crate::identity::DeviceKey::signing`].
+    pub sign: [u8; 32],
     /// How the person wants to be called.
     pub name: String,
     /// The device they are on, to tell two of theirs apart.
@@ -504,7 +508,7 @@ pub struct Invite {
 }
 
 impl Invite {
-    /// `notein://join?share=…&owner=…&name=…&title=…&mode=…&role=…[&server=…]#<key>`.
+    /// `notein://join?share=…&owner=…&name=…&sign=…&title=…&mode=…&role=…[&server=…]#<key>`.
     #[must_use]
     #[cfg_attr(feature = "sismo", sismo::function("sync::share::to_link"))]
     pub fn to_link(&self) -> String {
@@ -513,10 +517,11 @@ impl Invite {
             ShareMode::Permanent => "permanent",
         };
         let mut link = format!(
-            "{LINK_SCHEME}share={}&owner={}&name={}&title={}&mode={mode}&role={}",
+            "{LINK_SCHEME}share={}&owner={}&name={}&sign={}&title={}&mode={mode}&role={}",
             hex::encode(self.share.0),
             hex::encode(self.owner.public),
             hex::encode(self.owner.name.as_bytes()),
+            hex::encode(self.owner.sign),
             hex::encode(self.title.as_bytes()),
             self.role.tag(),
         );
@@ -539,6 +544,7 @@ impl Invite {
         let mut share = None;
         let mut public = None;
         let mut name = None;
+        let mut sign = None;
         let mut title = None;
         let mut mode = None;
         let mut role = Role::Editor;
@@ -549,6 +555,7 @@ impl Invite {
                 "share" => share = Some(ShareId(<[u8; 16]>::try_from(hex::decode(v).ok()?).ok()?)),
                 "owner" => public = Some(<[u8; 32]>::try_from(hex::decode(v).ok()?).ok()?),
                 "name" => name = Some(String::from_utf8(hex::decode(v).ok()?).ok()?),
+                "sign" => sign = Some(<[u8; 32]>::try_from(hex::decode(v).ok()?).ok()?),
                 "title" => title = Some(String::from_utf8(hex::decode(v).ok()?).ok()?),
                 "mode" => {
                     mode = Some(match v {
@@ -568,6 +575,7 @@ impl Invite {
             owner: Member {
                 device: DeviceId::of_public_key(&public),
                 public,
+                sign: sign?,
                 name: name?,
                 device_name: String::new(),
                 role: Role::Owner,
@@ -760,6 +768,67 @@ impl ShareMessage {
             .ok()
             .map(|(message, _)| message)
     }
+
+    /// Seal for a relay mailbox of `share`, signed by `author`. Anyone
+    /// holding the share key can seal, and the relay says who sent a
+    /// record; only the signature tells who wrote it.
+    #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::share::seal_signed"))]
+    pub fn seal_signed(&self, share: &Share, kind: RecordKind, author: &DeviceKey) -> Vec<u8> {
+        use ed25519_dalek::Signer;
+        let message = bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default();
+        let signed = signed_bytes(share.id, kind, author.public(), &message);
+        let record = SignedRecord {
+            author: *author.public(),
+            signature: author.signing().sign(&signed).to_bytes(),
+            message,
+        };
+        let plain =
+            bincode::encode_to_vec(&record, bincode::config::standard()).unwrap_or_default();
+        share.key.seal(&plain).unwrap_or_default()
+    }
+
+    /// Reverse of [`Self::seal_signed`]: the message and the device that
+    /// wrote it, when the author takes part in `share` and the signature
+    /// holds for this share and `kind`.
+    #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("sync::share::open_signed"))]
+    pub fn open_signed(share: &Share, sealed: &[u8], kind: RecordKind) -> Option<(DeviceId, Self)> {
+        let plain = share.key.open(sealed).ok()?;
+        let (record, _): (SignedRecord, usize) =
+            bincode::decode_from_slice(&plain, bincode::config::standard()).ok()?;
+        let author = share.participants().find(|m| m.public == record.author)?;
+        let verifying = ed25519_dalek::VerifyingKey::from_bytes(&author.sign).ok()?;
+        let signature = ed25519_dalek::Signature::from_bytes(&record.signature);
+        let signed = signed_bytes(share.id, kind, &record.author, &record.message);
+        verifying.verify_strict(&signed, &signature).ok()?;
+        let (message, _) =
+            bincode::decode_from_slice(&record.message, bincode::config::standard()).ok()?;
+        Some((author.device, message))
+    }
+}
+
+/// A [`ShareMessage`] with the signature of the member that wrote it.
+#[derive(bincode::Encode, bincode::Decode)]
+struct SignedRecord {
+    author: [u8; 32],
+    signature: [u8; 64],
+    message: Vec<u8>,
+}
+
+/// What a mailbox signature covers: the share and the record kind too,
+/// so a relay can neither move a record to another share nor pass it
+/// off as another kind.
+fn signed_bytes(share: ShareId, kind: RecordKind, author: &[u8; 32], message: &[u8]) -> Vec<u8> {
+    let kind = bincode::encode_to_vec(kind, bincode::config::standard()).unwrap_or_default();
+    [
+        b"notin-record".as_slice(),
+        share.0.as_slice(),
+        &kind,
+        author.as_slice(),
+        message,
+    ]
+    .concat()
 }
 
 #[cfg(test)]
@@ -772,6 +841,7 @@ mod tests {
         Member {
             device: key.id(),
             public: *key.public(),
+            sign: key.sign_public(),
             name: name.into(),
             device_name: "Tablet".into(),
             role,
@@ -911,5 +981,59 @@ mod tests {
         assert_eq!(back.holding(DocId([8; 16])).count(), 0);
         assert_eq!(back.left[0].invite.server.as_deref(), Some("relay:1/k"));
         assert_eq!(back.ended[0].title, "x");
+    }
+
+    fn member_of(key: &DeviceKey, role: Role) -> Member {
+        Member {
+            device: key.id(),
+            public: *key.public(),
+            sign: key.sign_public(),
+            name: "x".into(),
+            device_name: String::new(),
+            role,
+            joined_at: 1,
+        }
+    }
+
+    #[test]
+    fn mailbox_records_name_their_real_author() {
+        let owner_key = DeviceKey::generate();
+        let member_key = DeviceKey::generate();
+        let mut share = Share::new(
+            member_of(&owner_key, Role::Owner),
+            "x",
+            ShareMode::Permanent,
+            1,
+        );
+        share.admit(member_of(&member_key, Role::Editor));
+        let kind = RecordKind::Meta;
+        let sealed = ShareMessage::Ended.seal_signed(&share, kind, &member_key);
+        let (author, message) = ShareMessage::open_signed(&share, &sealed, kind).unwrap();
+        assert_eq!(author, member_key.id());
+        assert_eq!(message, ShareMessage::Ended);
+        // Not passed off as another kind, nor moved to another share.
+        assert!(
+            ShareMessage::open_signed(
+                &share,
+                &sealed,
+                RecordKind::Update {
+                    doc: DocId([1; 16])
+                }
+            )
+            .is_none()
+        );
+        let other = Share {
+            id: ShareId([9; 16]),
+            ..share.clone()
+        };
+        assert!(ShareMessage::open_signed(&other, &sealed, kind).is_none());
+        // Sealing with the key alone, unsigned, or by an outsider, counts for nothing.
+        assert!(
+            ShareMessage::open_signed(&share, &ShareMessage::Ended.seal(&share.key), kind)
+                .is_none()
+        );
+        let outsider = DeviceKey::generate();
+        let sealed = ShareMessage::Ended.seal_signed(&share, kind, &outsider);
+        assert!(ShareMessage::open_signed(&share, &sealed, kind).is_none());
     }
 }

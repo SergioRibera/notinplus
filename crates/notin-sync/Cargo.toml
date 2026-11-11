@@ -37,6 +37,9 @@ rand = "0.8"
 tracing = "0.1"
 flume = { version = "0.11", features = ["async"] }
 tokio = { version = "1", features = ["rt", "time", "sync", "macros", "net"] }
+# Signs what members leave in a relay mailbox, which a share key alone
+# cannot attribute.
+ed25519-dalek = "3.0"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net"] }

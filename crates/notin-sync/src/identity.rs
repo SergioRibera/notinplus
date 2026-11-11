@@ -88,6 +88,26 @@ impl DeviceKey {
         &self.keypair
     }
 
+    /// Signs what this device leaves where readers have no channel to
+    /// tell who wrote it, such as a relay mailbox. The transport key
+    /// only does Diffie-Hellman, so this one is derived from it under
+    /// its own domain and needs no storage.
+    #[must_use]
+    pub fn signing(&self) -> ed25519_dalek::SigningKey {
+        let seed: [u8; 32] = Blake2s256::new()
+            .chain_update(b"notin-sign")
+            .chain_update(self.keypair.private)
+            .finalize()
+            .into();
+        ed25519_dalek::SigningKey::from_bytes(&seed)
+    }
+
+    /// Public half of [`Self::signing`].
+    #[must_use]
+    pub fn sign_public(&self) -> [u8; 32] {
+        self.signing().verifying_key().to_bytes()
+    }
+
     const fn from_parts(public: [u8; 32], private: [u8; 32]) -> Self {
         Self {
             keypair: zudp::Keypair { public, private },

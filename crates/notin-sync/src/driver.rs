@@ -80,9 +80,7 @@ pub enum Payload {
     /// Ask the owner to let us into a share.
     Join {
         share: ShareId,
-        name: String,
-        device_name: String,
-        proof: Vec<u8>,
+        ask: JoinAsk,
     },
     /// The owner's answer, sealed with the share key.
     JoinReply {
@@ -112,6 +110,16 @@ impl Payload {
             .ok()
             .map(|(payload, _)| payload)
     }
+}
+
+/// Who asks into a share, and the proof it holds the invitation.
+#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+pub struct JoinAsk {
+    pub name: String,
+    pub device_name: String,
+    pub proof: Vec<u8>,
+    /// What the joiner signs its mailbox records with.
+    pub sign: [u8; 32],
 }
 
 /// What the owner says to a joiner.
@@ -654,6 +662,7 @@ impl<R: Replica> SyncDriver<R> {
         Member {
             device: self.profile.id(),
             public: *self.profile.key().public(),
+            sign: self.profile.key().sign_public(),
             name: self.profile.display_name().to_owned(),
             device_name: self.profile.name().to_owned(),
             role: Role::Owner,
@@ -943,9 +952,12 @@ impl<R: Replica> SyncDriver<R> {
                 owner,
                 &Payload::Join {
                     share,
-                    name: self.profile.display_name().to_owned(),
-                    device_name: self.profile.name().to_owned(),
-                    proof: intent.invite.proof(self.profile.key().public()),
+                    ask: JoinAsk {
+                        name: self.profile.display_name().to_owned(),
+                        device_name: self.profile.name().to_owned(),
+                        proof: intent.invite.proof(self.profile.key().public()),
+                        sign: self.profile.key().sign_public(),
+                    },
                 },
             )];
         }
@@ -1250,14 +1262,7 @@ impl<R: Replica> SyncDriver<R> {
                 sismo::counter!("sync.in.share_bytes", sealed.len());
                 self.on_share(from, share, &sealed, out)?;
             }
-            Payload::Join {
-                share,
-                name,
-                device_name,
-                proof,
-            } => {
-                self.on_join(from, share, name, device_name, &proof, out)?;
-            }
+            Payload::Join { share, ask } => self.on_join(from, share, ask, out)?,
             Payload::JoinReply { share, sealed } => {
                 self.on_join_reply(from, share, &sealed, out)?;
             }
@@ -1371,6 +1376,7 @@ impl<R: Replica> SyncDriver<R> {
         };
         let me = self.profile.id();
         let mut round = false;
+        let mut moved = false;
         match message {
             ShareMessage::Live { doc, bytes } => {
                 #[cfg(feature = "sismo")]
@@ -1409,19 +1415,11 @@ impl<R: Replica> SyncDriver<R> {
                 }
             }
             ShareMessage::Meta(share) => {
-                if link.share.is_owner(from)
-                    && !link.share.is_owner(me)
-                    && share.id == id
-                    && share.updated_at >= link.share.updated_at
-                {
-                    let fresh = Share {
-                        key: link.share.key.clone(),
-                        relay_cursor: link.share.relay_cursor,
-                        ..*share
-                    };
+                if let Some(fresh) = fresh_meta(&link.share, from, me, *share) {
                     if fresh == link.share {
                         return Ok(());
                     }
+                    moved = fresh.server != link.share.server;
                     link.share = fresh;
                     link.engine.set_scope(link.share.scope());
                     out.push(Action::Event(DriverEvent::ShareChanged(id)));
@@ -1455,6 +1453,10 @@ impl<R: Replica> SyncDriver<R> {
             ShareMessage::Edit(edit) => {
                 self.apply_edit(from, id, edit, out);
             }
+        }
+        if moved {
+            out.extend(self.sync_relays());
+            out.extend(self.relay_subscribe(id));
         }
         if round {
             out.extend(self.share_round_for(id, from)?);
@@ -1550,9 +1552,7 @@ impl<R: Replica> SyncDriver<R> {
         &mut self,
         from: DeviceId,
         id: ShareId,
-        name: String,
-        device_name: String,
-        proof: &[u8],
+        ask: JoinAsk,
         out: &mut Vec<Action>,
     ) -> Result<(), SyncError<R::Error>> {
         let Some(public) = self.known_keys.get(&from).copied() else {
@@ -1561,13 +1561,14 @@ impl<R: Replica> SyncDriver<R> {
         let me = self.profile.id();
         let answer = match self.shares.get_mut(&id) {
             Some(link)
-                if link.share.is_owner(me) && proof_is_valid(&link.share, proof, &public) =>
+                if link.share.is_owner(me) && proof_is_valid(&link.share, &ask.proof, &public) =>
             {
                 let member = Member {
                     device: from,
                     public,
-                    name,
-                    device_name,
+                    sign: ask.sign,
+                    name: ask.name,
+                    device_name: ask.device_name,
                     role: link.share.entry_role,
                     joined_at: now_ms(),
                 };
@@ -1651,7 +1652,12 @@ impl<R: Replica> SyncDriver<R> {
         }
         let intent = self.joins.remove(&id).map(|j| j.invite);
         match (answer, intent) {
-            (Some(JoinAnswer::Welcome(share)), Some(invite)) if share.id == id => {
+            // The owner signs mailbox records with the key the invitation named.
+            (Some(JoinAnswer::Welcome(share)), Some(invite))
+                if share.id == id
+                    && share.owner.public == invite.owner.public
+                    && share.owner.sign == invite.owner.sign =>
+            {
                 let server = share.server.clone().or(invite.server);
                 let share = Share {
                     key: invite.key,
@@ -2658,7 +2664,11 @@ impl<R: Replica> SyncDriver<R> {
             #[cfg(feature = "sismo")]
             sismo::counter!("sync.relay.records_out", records.len());
             for (kind, message) in records {
-                let sealed = ShareMessage::Sync(message.to_bytes()?).seal(&share.key);
+                let sealed = ShareMessage::Sync(message.to_bytes()?).seal_signed(
+                    &share,
+                    kind,
+                    self.profile.key(),
+                );
                 out.push(Action::Send {
                     device: relay.device,
                     lane: Lane::Data,
@@ -2677,7 +2687,11 @@ impl<R: Replica> SyncDriver<R> {
                     bytes: relay_payload(&RelayMessage::Publish {
                         share: id,
                         kind: RecordKind::Meta,
-                        sealed: ShareMessage::Meta(Box::new(share.for_member())).seal(&share.key),
+                        sealed: ShareMessage::Meta(Box::new(share.for_member())).seal_signed(
+                            &share,
+                            RecordKind::Meta,
+                            self.profile.key(),
+                        ),
                     }),
                 });
             }
@@ -2777,20 +2791,28 @@ impl<R: Replica> SyncDriver<R> {
         if record.seq <= link.share.relay_cursor {
             return Ok(false);
         }
+        // Only what a member signed counts, and only as that member: the
+        // relay names the sender but anyone holding the key can seal.
+        let Some((author, message)) =
+            ShareMessage::open_signed(&link.share, &record.sealed, record.kind)
+        else {
+            return Ok(false);
+        };
+        if author != record.from {
+            return Ok(false);
+        }
         link.share.relay_cursor = record.seq;
-        if record.from == me || !link.share.is_member(record.from) {
+        if author == me {
             return Ok(true);
         }
-        let Some(message) = ShareMessage::open(&link.share.key, &record.sealed) else {
-            return Ok(true);
-        };
-        match message {
-            // Mailboxes never hold ephemera; nothing to apply.
-            ShareMessage::Live { .. } => {}
-            ShareMessage::Sync(bytes) => {
+        match (message, record.kind) {
+            (
+                ShareMessage::Sync(bytes),
+                RecordKind::Update { .. } | RecordKind::Snapshot { .. } | RecordKind::Blob { .. },
+            ) => {
                 let message = Message::from_bytes(&bytes)?;
-                if let Some(message) = permitted(&link.share, record.from, message) {
-                    let handled = link.engine.handle(record.from, message)?;
+                if let Some(message) = permitted(&link.share, author, message) {
+                    let handled = link.engine.handle(author, message)?;
                     if !handled.imported.is_empty() {
                         out.push(Action::Event(DriverEvent::Imported(handled.imported)));
                     }
@@ -2799,54 +2821,57 @@ impl<R: Replica> SyncDriver<R> {
                     }
                 }
             }
-            ShareMessage::Meta(share) => {
-                if link.share.is_owner(record.from)
-                    && !link.share.is_owner(me)
-                    && share.id == id
-                    && share.updated_at >= link.share.updated_at
-                {
-                    let key = link.share.key.clone();
-                    let cursor = link.share.relay_cursor;
-                    link.share = Share {
-                        key,
-                        relay_cursor: cursor,
-                        ..*share
-                    };
-                    link.engine.set_scope(link.share.scope());
-                    if !link.share.is_member(me) {
-                        self.shares.remove(&id);
-                        out.push(Action::Event(DriverEvent::ShareRemoved {
-                            share: id,
-                            reason: Removal::Expelled,
-                        }));
-                        return Ok(false);
-                    }
-                }
-            }
-            ShareMessage::Ended => {
-                if self.removed_by_owner(record.from, id, Removal::Ended, out) {
+            (ShareMessage::Meta(share), RecordKind::Meta) => {
+                let Some(fresh) = fresh_meta(&link.share, author, me, *share) else {
+                    return Ok(true);
+                };
+                let moved = fresh.server != link.share.server;
+                link.share = fresh;
+                link.engine.set_scope(link.share.scope());
+                if !link.share.is_member(me) {
+                    self.shares.remove(&id);
+                    out.push(Action::Event(DriverEvent::ShareRemoved {
+                        share: id,
+                        reason: Removal::Expelled,
+                    }));
                     return Ok(false);
                 }
-            }
-            ShareMessage::Expelled => {
-                if self.removed_by_owner(record.from, id, Removal::Expelled, out) {
-                    return Ok(false);
+                if moved {
+                    out.extend(self.sync_relays());
+                    out.extend(self.relay_subscribe(id));
                 }
             }
-            ShareMessage::Left => {
-                if link.share.is_owner(me) && link.share.remove_member(record.from) {
-                    link.share.updated_at = now_ms();
-                    out.extend(self.broadcast_meta(id));
-                    out.extend(self.relay_register(id));
-                }
-            }
-            ShareMessage::Edit(edit) => {
-                let from = record.from;
-                self.apply_edit(from, id, edit, out);
-            }
+            // Members only ever leave exchange records and the owner's view
+            // there; anything else came from somewhere it should not.
+            _ => {}
         }
         Ok(true)
     }
+}
+
+/// The owner's view `incoming` as this device adopts it, or `None` when
+/// it does not come from the owner or is older than what is held. The
+/// key and the owner stay as the invitation had them, and a share that
+/// moved to another relay is read there from the start.
+fn fresh_meta(current: &Share, from: DeviceId, me: DeviceId, incoming: Share) -> Option<Share> {
+    if !current.is_owner(from)
+        || current.is_owner(me)
+        || incoming.id != current.id
+        || incoming.updated_at < current.updated_at
+    {
+        return None;
+    }
+    let relay_cursor = if incoming.server == current.server {
+        current.relay_cursor
+    } else {
+        0
+    };
+    Some(Share {
+        key: current.key.clone(),
+        owner: current.owner.clone(),
+        relay_cursor,
+        ..incoming
+    })
 }
 
 /// Whether `from`'s role lets it ask for `edit`.
@@ -3645,6 +3670,111 @@ mod tests {
             "{events:?}"
         );
         assert_eq!(guest.path_to(owner.profile.id()), Some(Path::Relay));
+    }
+
+    fn record(seq: u64, from: DeviceId, kind: RecordKind, sealed: Vec<u8>) -> crate::relay::Record {
+        crate::relay::Record {
+            seq,
+            from,
+            kind,
+            sealed,
+        }
+    }
+
+    /// Owner, `guest` and `eve` in one share, everyone knowing everyone.
+    fn three_members() -> (
+        SyncDriver<MemReplica>,
+        SyncDriver<MemReplica>,
+        SyncDriver<MemReplica>,
+        ShareId,
+    ) {
+        let mut owner = driver("Sergio");
+        let mut guest = driver("Ana");
+        let mut eve = driver("Eve");
+        let share = shared_doc(&owner);
+        let id = share.id;
+        let invite = share.invite();
+        owner.create_share(share);
+        connect_both(&mut owner, &mut guest);
+        deliver(guest.join(invite.clone()), &mut guest, &mut owner);
+        connect_both(&mut owner, &mut eve);
+        deliver(eve.join(invite), &mut eve, &mut owner);
+        connect_both(&mut guest, &mut owner);
+        assert!(guest.share(id).unwrap().is_member(eve.profile.id()));
+        (owner, guest, eve, id)
+    }
+
+    #[test]
+    fn mailbox_records_only_count_as_their_signed_author() {
+        let (owner, mut guest, eve, id) = three_members();
+        guest
+            .on_event(NetEvent::Disconnected(owner.profile.id()))
+            .unwrap();
+        let relay = on_relay(&mut guest);
+        let held = guest.share(id).unwrap().clone();
+        // Eve, with the key and the relay on her side, writes a view of
+        // the share as if she were the owner.
+        let mut forged = owner.share(id).unwrap().for_member();
+        forged.members.retain(|m| m.device == eve.profile.id());
+        forged.server = Some("evil:1/00".into());
+        forged.updated_at += 10;
+        let meta = ShareMessage::Meta(Box::new(forged));
+        let as_owner = meta.seal_signed(&held, RecordKind::Meta, eve.profile.key());
+        let unsigned = meta.seal(&held.key);
+        let records = vec![
+            record(5, owner.profile.id(), RecordKind::Meta, as_owner.clone()),
+            record(6, eve.profile.id(), RecordKind::Meta, as_owner),
+            record(7, owner.profile.id(), RecordKind::Meta, unsigned),
+            record(
+                8,
+                eve.profile.id(),
+                RecordKind::Meta,
+                ShareMessage::Expelled.seal_signed(&held, RecordKind::Meta, eve.profile.key()),
+            ),
+            record(
+                u64::MAX,
+                owner.profile.id(),
+                RecordKind::Meta,
+                b"garbage".to_vec(),
+            ),
+        ];
+        let out = guest
+            .on_event(from_relay(
+                relay,
+                &RelayMessage::Records { share: id, records },
+            ))
+            .unwrap();
+        assert!(
+            !out.iter()
+                .any(|a| matches!(a, Action::Event(DriverEvent::ShareRemoved { .. }))),
+            "{out:?}"
+        );
+        let now = guest.share(id).unwrap();
+        assert_eq!(now.members, held.members);
+        assert_eq!(now.server, held.server);
+        // Eve's own record was hers and moved the cursor; nothing else did.
+        assert_eq!(now.relay_cursor, 8);
+
+        // The owner's own signed view does land.
+        let mut real = owner.share(id).unwrap().for_member();
+        real.title = "Química".into();
+        real.updated_at += 20;
+        let sealed = ShareMessage::Meta(Box::new(real)).seal_signed(
+            owner.share(id).unwrap(),
+            RecordKind::Meta,
+            owner.profile.key(),
+        );
+        guest
+            .on_event(from_relay(
+                relay,
+                &RelayMessage::Records {
+                    share: id,
+                    records: vec![record(9, owner.profile.id(), RecordKind::Meta, sealed)],
+                },
+            ))
+            .unwrap();
+        assert_eq!(guest.share(id).unwrap().title, "Química");
+        assert_eq!(guest.share(id).unwrap().relay_cursor, 9);
     }
 
     #[test]
