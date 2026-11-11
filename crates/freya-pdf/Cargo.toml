@@ -1,6 +1,6 @@
 [package]
 name        = "freya-pdf"
-version     = "0.1.0-alpha.1"
+version     = "0.1.0-alpha.2"
 edition     = "2024"
 rust-version = "1.85"
 license     = "MIT OR Apache-2.0"
@@ -17,7 +17,7 @@ sismo = ["dep:sismo"]
 [dependencies]
 # Spans for the sismo profiler; off unless an app turns it on.
 sismo = { version = "0.1.1", default-features = false, optional = true }
-freya-canvas-bg = { version = "0.1.0-alpha.1", path = "../freya-canvas-bg" }
+freya-canvas-bg = { version = "0.1.0-alpha.2", path = "../freya-canvas-bg" }
 freya-engine    = "0.5.0-rc.13"
 # Direct dep for `skia_safe::canvas::SrcRectConstraint`, which
 # `freya-engine` doesn't re-export. Version matches the one

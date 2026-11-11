@@ -1,6 +1,6 @@
 [package]
 name         = "notin-sdk"
-version      = "0.1.0-alpha.1"
+version      = "0.1.0-alpha.2"
 edition      = "2024"
 rust-version = "1.85"
 license      = "MIT OR Apache-2.0"
@@ -24,4 +24,4 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 
 [dependencies]
-notin-plugin = { version = "0.1.0-alpha.1", path = "../notin-plugin" }
+notin-plugin = { version = "0.1.0-alpha.2", path = "../notin-plugin" }
