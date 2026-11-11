@@ -764,6 +764,8 @@ impl Node {
         if let Some(link) = self.links.remove(&device) {
             self.by_addr.remove(&link.addr);
             self.assemblies.retain(|(from, _), _| *from != device);
+            // A device back later is let in again by the driver.
+            self.bulk_from.remove(&device);
             self.emit(NetEvent::Disconnected(device));
         }
     }
@@ -953,7 +955,9 @@ impl Node {
             Cmd::Connect { addr, public } => self.dial(addr, public, internal),
             Cmd::ConnectVia { relay, public } => self.dial_via(relay, public, internal),
             Cmd::AllowBulk { device, allowed } => {
-                if allowed {
+                // Only for the link open now: one sent for a link already
+                // gone would outlive it.
+                if allowed && self.links.contains_key(&device) {
                     self.bulk_from.insert(device);
                 } else {
                     self.bulk_from.remove(&device);
@@ -1550,6 +1554,43 @@ mod tests {
             assert!(
                 !matches!(event, NetEvent::Message { .. }),
                 "assembled for a stranger"
+            );
+        }
+    }
+
+    #[test]
+    fn a_link_dropped_forgets_it_could_send_payloads_in_parts() {
+        let key_a = DeviceKey::generate();
+        let key_b = DeviceKey::generate();
+        let a_id = key_a.id();
+        let a = LanNode::start(quiet(key_a, "A")).unwrap();
+        let b = LanNode::start(quiet(key_b.clone(), "B")).unwrap();
+        a.connect(loopback(&b), *key_b.public()).unwrap();
+        wait_for(&b, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
+        wait_for(&a, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
+        b.allow_bulk(a_id, true).unwrap();
+        b.disconnect(a_id).unwrap();
+        wait_for(&b, |e| matches!(e, NetEvent::Disconnected(_)).then_some(()));
+        wait_for(&a, |e| matches!(e, NetEvent::Disconnected(_)).then_some(()));
+        // Back again, it is a stranger until the driver says otherwise.
+        a.connect(loopback(&b), *key_b.public()).unwrap();
+        wait_for(&b, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
+        wait_for(&a, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
+        a.send(key_b.id(), Lane::Data, vec![3u8; 1 << 20]).unwrap();
+        a.send(key_b.id(), Lane::Data, b"hola".to_vec()).unwrap();
+        let first = wait_for(&b, |e| match e {
+            NetEvent::Message { bytes, .. } => Some(bytes),
+            _ => None,
+        });
+        assert_eq!(first, b"hola");
+        let until = Instant::now() + Duration::from_millis(800);
+        while let Ok(event) = b
+            .events()
+            .recv_timeout(until.saturating_duration_since(Instant::now()))
+        {
+            assert!(
+                !matches!(event, NetEvent::Message { .. }),
+                "assembled for a link let in before"
             );
         }
     }

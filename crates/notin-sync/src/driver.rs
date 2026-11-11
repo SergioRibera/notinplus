@@ -837,7 +837,9 @@ impl<R: Replica> SyncDriver<R> {
     pub fn cancel_pairing(&mut self) -> Vec<Action> {
         self.offer = None;
         self.intent = None;
-        self.relay_consent()
+        let mut out = self.relay_consent();
+        out.extend(self.bulk_changes());
+        out
     }
 
     /// Stop trusting `device`: the relay stops letting it through and
@@ -848,7 +850,10 @@ impl<R: Replica> SyncDriver<R> {
             return None;
         }
         self.outbox.remove(&device);
-        Some(self.relay_consent())
+        let mut out = self.relay_consent();
+        // Nor does it send big payloads here any more.
+        out.extend(self.bulk_changes());
+        Some(out)
     }
 
     /// Pair with the device described by `offer` (scanned, pasted or
@@ -1105,6 +1110,7 @@ impl<R: Replica> SyncDriver<R> {
             share: id,
             reason: Removal::Ended,
         }));
+        out.extend(self.bulk_changes());
         out
     }
 
@@ -1159,6 +1165,7 @@ impl<R: Replica> SyncDriver<R> {
             share: id,
             reason: Removal::Left,
         }));
+        out.extend(self.bulk_changes());
         out
     }
 
@@ -2761,6 +2768,7 @@ impl<R: Replica> SyncDriver<R> {
         for share in self.shares.keys() {
             out.extend(self.relay_subscribe(*share));
         }
+        out.extend(self.bulk_changes());
         out.extend(self.announce()?);
         out.extend(self.flush_dirty());
         Ok(out)
@@ -5658,6 +5666,27 @@ mod tests {
         // Thrown out, it is out of this too.
         let out = owner.expel(id, guest.profile.id());
         assert_eq!(bulk(&out, guest.profile.id()), Some(false));
+    }
+
+    #[test]
+    fn a_device_revoked_or_left_behind_stops_sending_payloads_in_parts() {
+        let bulk = |out: &[Action], device: DeviceId| {
+            out.iter()
+                .any(|a| matches!(a, Action::Bulk { device: d, allowed: false } if *d == device))
+        };
+        let (mut a, b) = trusted_pair();
+        let out = a.on_event(NetEvent::Connected(info(&b, 5))).unwrap();
+        assert!(out.contains(&Action::Bulk {
+            device: b.profile.id(),
+            allowed: true
+        }));
+        let out = a.revoke(b.profile.id()).expect("it was trusted");
+        assert!(bulk(&out, b.profile.id()));
+        // A member walking away no longer takes them from the owner.
+        let (mut owner, mut guest, id) = joined_then_apart();
+        connect_both(&mut guest, &mut owner);
+        let out = guest.leave_share(id);
+        assert!(bulk(&out, owner.profile.id()));
     }
 
     #[test]
