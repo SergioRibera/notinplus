@@ -382,6 +382,12 @@ pub enum Action {
     Disconnect {
         device: DeviceId,
     },
+    /// Put together (or stop) payloads `device` sends in parts; see
+    /// [`crate::LanNode::allow_bulk`].
+    Bulk {
+        device: DeviceId,
+        allowed: bool,
+    },
     Event(DriverEvent),
 }
 
@@ -601,6 +607,9 @@ pub struct SyncDriver<R> {
     /// The lease each share holds and since when on this device's
     /// monotonic clock.
     lease_seen: HashMap<ShareId, (u64, Instant)>,
+    /// Whether each connected device's payloads in parts are taken, as
+    /// last told to the transport.
+    bulk: HashMap<DeviceId, bool>,
     /// Mailbox records by someone a share does not list yet, waiting
     /// for a newer view of it, with how often they were tried.
     parked: HashMap<ShareId, Parked>,
@@ -667,6 +676,7 @@ impl<R: Replica> SyncDriver<R> {
             parked: HashMap::new(),
             leases: HashMap::new(),
             lease_seen: HashMap::new(),
+            bulk: HashMap::new(),
             redials: HashMap::new(),
             ended: book.ended.into_iter().map(|e| (e.id, e)).collect(),
             left: book.left.into_iter().map(|l| (l.invite.share, l)).collect(),
@@ -1021,6 +1031,8 @@ impl<R: Replica> SyncDriver<R> {
         }
         out.extend(self.relay_register(id));
         out.extend(self.broadcast_meta(id));
+        // Whoever is out no longer sends big payloads here either.
+        out.extend(self.bulk_changes());
         out.extend(self.spread_lease(id));
         out.push(Action::Event(DriverEvent::InviteRenewed(id)));
         out.push(Action::Event(DriverEvent::ShareChanged(id)));
@@ -1570,7 +1582,31 @@ impl<R: Replica> SyncDriver<R> {
             NetEvent::ConnectFailed { addr, .. } => self.on_connect_failed(addr, &mut out),
             NetEvent::Stopped(_) => self.on_stopped(&mut out),
         }
+        out.extend(self.bulk_changes());
         Ok(out)
+    }
+
+    /// Which connected devices the transport puts payloads in parts
+    /// together for, as it changed: those this device deals with — its
+    /// relays, trusted devices, fellow members, the owner it asks into a
+    /// share, the device it pairs with. A stranger only gets small ones
+    /// through, so it can make this device hold nothing big.
+    fn bulk_changes(&mut self) -> Vec<Action> {
+        self.bulk
+            .retain(|device, _| self.connected.contains_key(device));
+        let devices: Vec<DeviceId> = self.connected.keys().copied().collect();
+        let mut out = Vec::new();
+        for device in devices {
+            let allowed = self.relays.contains_key(&device)
+                || self.is_related(device)
+                || self.joins.values().any(|j| j.invite.owner.device == device)
+                || self.intent.as_ref().is_some_and(|i| i.device == device);
+            // The transport starts with nobody allowed.
+            if self.bulk.insert(device, allowed).unwrap_or(false) != allowed {
+                out.push(Action::Bulk { device, allowed });
+            }
+        }
+        out
     }
 
     /// Trusted, or a member of a share with this device.
@@ -3971,7 +4007,8 @@ mod tests {
                 | Action::ConnectHost { .. }
                 | Action::ConnectVia { .. }
                 | Action::Punch { .. }
-                | Action::Disconnect { .. } => {}
+                | Action::Disconnect { .. }
+                | Action::Bulk { .. } => {}
                 Action::Event(event) => events.push(event),
             }
         }
@@ -4003,7 +4040,11 @@ mod tests {
                 .is_empty()
         );
         let request = b.on_event(NetEvent::Connected(info(&a, 1))).unwrap();
-        assert!(matches!(request[..], [Action::Send { .. }]));
+        // The request, and the device it pairs with may now send it big ones.
+        assert!(matches!(
+            request[..],
+            [Action::Send { .. }, Action::Bulk { allowed: true, .. }]
+        ));
 
         let events = deliver(request, &mut b, &mut a);
         assert!(a.profile.is_trusted(b.profile.id()));
@@ -5501,6 +5542,33 @@ mod tests {
             }),
             "{out:?}"
         );
+    }
+
+    #[test]
+    fn only_devices_dealt_with_may_send_payloads_in_parts() {
+        let (mut owner, guest, id) = joined_then_apart();
+        let stranger = driver("Eve");
+        let bulk = |out: &[Action], device: DeviceId| {
+            out.iter().find_map(|a| match a {
+                Action::Bulk { device: d, allowed } if *d == device => Some(*allowed),
+                _ => None,
+            })
+        };
+        let out = owner
+            .on_event(NetEvent::Connected(info(&stranger, 5)))
+            .unwrap();
+        assert_eq!(
+            bulk(&out, stranger.profile.id()),
+            None,
+            "a stranger stays out"
+        );
+        let out = owner
+            .on_event(NetEvent::Connected(info(&guest, 6)))
+            .unwrap();
+        assert_eq!(bulk(&out, guest.profile.id()), Some(true));
+        // Thrown out, it is out of this too.
+        let out = owner.expel(id, guest.profile.id());
+        assert_eq!(bulk(&out, guest.profile.id()), Some(false));
     }
 
     #[test]

@@ -1014,6 +1014,11 @@ impl Service {
                         log::warn!("sync disconnect: {err}");
                     }
                 }
+                Action::Bulk { device, allowed } => {
+                    if let Some(Err(err)) = node.map(|n| n.allow_bulk(device, allowed)) {
+                        log::warn!("sync bulk: {err}");
+                    }
+                }
                 Action::Event(event) => self.on_driver_event(event),
             }
         }

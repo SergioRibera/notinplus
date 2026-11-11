@@ -85,6 +85,7 @@ impl Device {
                 }
                 Action::Punch { device } => self.node.punch(device).unwrap(),
                 Action::Disconnect { device } => self.node.disconnect(device).unwrap(),
+                Action::Bulk { device, allowed } => self.node.allow_bulk(device, allowed).unwrap(),
                 Action::Event(_) => {}
             }
         }

@@ -9,7 +9,7 @@
 //! on a dedicated thread with its own async runtime; the rest of the
 //! app talks to it through channels and never blocks on the network.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
@@ -41,6 +41,11 @@ const PART_PAUSE: Duration = Duration::from_millis(20);
 /// The same through a relay, which caps every client at 2000 frames
 /// and 4 MB a second (about 1.7 MB/s).
 const RELAYED_PART_PAUSE: Duration = Duration::from_millis(150);
+/// Payloads one device may have in parts at once.
+const ASSEMBLIES_PER_DEVICE: usize = 4;
+/// Bytes of parts held, from every device together: one whole payload of
+/// the largest kind and some.
+const ASSEMBLING_MAX: usize = 320 << 20;
 /// A payload whose parts stop coming is dropped after this.
 const ASSEMBLY_TIMEOUT: Duration = Duration::from_secs(60);
 /// Packets per second a peer may send before zudp drops them; parts
@@ -68,6 +73,11 @@ enum Cmd {
     },
     /// Let the channel to `device` through a relay go direct.
     Punch(DeviceId),
+    /// Put payloads in parts from `device` together, or stop.
+    AllowBulk {
+        device: DeviceId,
+        allowed: bool,
+    },
     Send {
         device: DeviceId,
         lane: Lane,
@@ -180,6 +190,16 @@ impl LanNode {
     /// [`NetError::Stopped`] when the transport thread has exited.
     pub fn punch(&self, device: DeviceId) -> Result<(), NetError> {
         self.command(Cmd::Punch(device))
+    }
+
+    /// Put together payloads `device` sends in parts, or stop doing so.
+    /// Until allowed, a device's parts are dropped: only small payloads
+    /// get through from it. A relay node takes them from anyone.
+    ///
+    /// # Errors
+    /// [`NetError::Stopped`] when the transport thread has exited.
+    pub fn allow_bulk(&self, device: DeviceId, allowed: bool) -> Result<(), NetError> {
+        self.command(Cmd::AllowBulk { device, allowed })
     }
 
     /// A handle that only sends, for threads that do not own the node.
@@ -427,6 +447,8 @@ struct Assembly {
     parts: Vec<Option<Vec<u8>>>,
     missing: usize,
     started: Instant,
+    /// Bytes held so far.
+    bytes: usize,
 }
 
 struct Node {
@@ -446,6 +468,9 @@ struct Node {
     /// Id of the next payload sent in parts.
     next_part: u32,
     assemblies: HashMap<(DeviceId, u32), Assembly>,
+    /// Devices whose payloads in parts are put together: those the app
+    /// deals with. A stranger can make this node hold nothing big.
+    bulk_from: HashSet<DeviceId>,
 }
 
 impl Node {
@@ -681,21 +706,42 @@ impl Node {
     /// Keep a part; once a payload has them all, it is a message.
     #[cfg_attr(feature = "sismo", sismo::function("sync::lan::on_part"))]
     fn on_part(&mut self, device: DeviceId, id: u32, index: u32, total: u32, bytes: Vec<u8>) {
-        if total == 0 || total > MAX_PARTS || index >= total {
+        let wanted = self.config.relay.is_some() || self.bulk_from.contains(&device);
+        if !wanted || total == 0 || total > MAX_PARTS || index >= total || bytes.len() > PART_SIZE {
             return;
         }
-        let assembly = self
-            .assemblies
-            .entry((device, id))
-            .or_insert_with(|| Assembly {
-                parts: vec![None; total as usize],
-                missing: total as usize,
-                started: Instant::now(),
-            });
+        // Room for so many payloads at once, from one device and in all.
+        let held: usize = self.assemblies.values().map(|a| a.bytes).sum();
+        if held + bytes.len() > ASSEMBLING_MAX {
+            return;
+        }
+        if !self.assemblies.contains_key(&(device, id)) {
+            let open = self
+                .assemblies
+                .keys()
+                .filter(|(from, _)| *from == device)
+                .count();
+            if open >= ASSEMBLIES_PER_DEVICE {
+                return;
+            }
+            self.assemblies.insert(
+                (device, id),
+                Assembly {
+                    parts: vec![None; total as usize],
+                    missing: total as usize,
+                    started: Instant::now(),
+                    bytes: 0,
+                },
+            );
+        }
+        let Some(assembly) = self.assemblies.get_mut(&(device, id)) else {
+            return;
+        };
         let Some(slot) = assembly.parts.get_mut(index as usize) else {
             return;
         };
         if slot.is_none() {
+            assembly.bytes += bytes.len();
             *slot = Some(bytes);
             assembly.missing -= 1;
         }
@@ -906,6 +952,14 @@ impl Node {
             }
             Cmd::Connect { addr, public } => self.dial(addr, public, internal),
             Cmd::ConnectVia { relay, public } => self.dial_via(relay, public, internal),
+            Cmd::AllowBulk { device, allowed } => {
+                if allowed {
+                    self.bulk_from.insert(device);
+                } else {
+                    self.bulk_from.remove(&device);
+                    self.assemblies.retain(|(from, _), _| *from != device);
+                }
+            }
             Cmd::Punch(device) => {
                 if let Some(link) = self.links.get(&device)
                     && link.addr.is_relayed()
@@ -1286,6 +1340,7 @@ async fn run(
         // being assembled on the other side.
         next_part: rand::random(),
         assemblies: HashMap::new(),
+        bulk_from: HashSet::new(),
     };
     spawn_listener(socket, internal_tx.clone());
 
@@ -1469,7 +1524,7 @@ mod tests {
     }
 
     #[test]
-    fn big_payloads_arrive_whole_in_parts() {
+    fn a_stranger_cannot_make_a_node_hold_payloads_in_parts() {
         let key_a = DeviceKey::generate();
         let key_b = DeviceKey::generate();
         let a = LanNode::start(quiet(key_a, "A")).unwrap();
@@ -1477,6 +1532,39 @@ mod tests {
         a.connect(loopback(&b), *key_b.public()).unwrap();
         wait_for(&b, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
         wait_for(&a, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
+        // Nobody told B it deals with A: the big one never comes together,
+        // the small one after it still does.
+        let big = vec![3u8; 1 << 20];
+        a.send(key_b.id(), Lane::Data, big).unwrap();
+        a.send(key_b.id(), Lane::Data, b"hola".to_vec()).unwrap();
+        let first = wait_for(&b, |e| match e {
+            NetEvent::Message { bytes, .. } => Some(bytes),
+            _ => None,
+        });
+        assert_eq!(first, b"hola");
+        let until = Instant::now() + Duration::from_millis(800);
+        while let Ok(event) = b
+            .events()
+            .recv_timeout(until.saturating_duration_since(Instant::now()))
+        {
+            assert!(
+                !matches!(event, NetEvent::Message { .. }),
+                "assembled for a stranger"
+            );
+        }
+    }
+
+    #[test]
+    fn big_payloads_arrive_whole_in_parts() {
+        let key_a = DeviceKey::generate();
+        let key_b = DeviceKey::generate();
+        let a_id = key_a.id();
+        let a = LanNode::start(quiet(key_a, "A")).unwrap();
+        let b = LanNode::start(quiet(key_b.clone(), "B")).unwrap();
+        a.connect(loopback(&b), *key_b.public()).unwrap();
+        wait_for(&b, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
+        wait_for(&a, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
+        b.allow_bulk(a_id, true).unwrap();
 
         // Over zudp's 1.4 MB message limit, and not a multiple of a part.
         let big: Vec<u8> = (0..3_000_123u32).map(|i| (i % 251) as u8).collect();
@@ -1510,6 +1598,7 @@ mod tests {
         .unwrap();
         let key_a = DeviceKey::generate();
         let key_b = DeviceKey::generate();
+        let a_id = key_a.id();
         let a = LanNode::start(quiet(key_a, "A").punching(false)).unwrap();
         let b = LanNode::start(quiet(key_b.clone(), "B").punching(false)).unwrap();
         for node in [&a, &b] {
@@ -1524,6 +1613,7 @@ mod tests {
         });
         assert!(peer.relayed);
         wait_for(&b, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
+        b.allow_bulk(a_id, true).unwrap();
 
         let big: Vec<u8> = (0..1_000_123u32).map(|i| (i % 251) as u8).collect();
         a.send(key_b.id(), Lane::Data, big.clone()).unwrap();
