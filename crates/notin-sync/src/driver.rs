@@ -45,6 +45,8 @@ const PARK_FOR_MS: u64 = 10 * 60 * 1000;
 const PARKED_MAX: usize = 256;
 /// Bytes of such records kept per share.
 const PARKED_BYTES: usize = 8 << 20;
+/// How long an owner waits before counting past a lease of its own again.
+const LEASE_RAISE_PAUSE: Duration = Duration::from_secs(10 * 60);
 /// How often the lease clocks of a share are saved: a restart loses no
 /// more than this of the time a lease was held.
 const LEASE_SAVE_MS: u64 = 5 * 60 * 1000;
@@ -620,6 +622,8 @@ pub struct SyncDriver<R> {
     dirty: HashSet<ShareId>,
     /// The clock mark of each share when last asked to be saved.
     lease_saved: HashMap<ShareId, u64>,
+    /// When this owner last counted past a lease of its own seen elsewhere.
+    lease_raised: HashMap<ShareId, Instant>,
     /// Mailbox records by someone a share does not list yet, waiting
     /// for a newer view of it, with how often they were tried.
     parked: HashMap<ShareId, Parked>,
@@ -689,6 +693,7 @@ impl<R: Replica> SyncDriver<R> {
             bulk: HashMap::new(),
             dirty: HashSet::new(),
             lease_saved: HashMap::new(),
+            lease_raised: HashMap::new(),
             redials: HashMap::new(),
             ended: book.ended.into_iter().map(|e| (e.id, e)).collect(),
             left: book.left.into_iter().map(|l| (l.invite.share, l)).collect(),
@@ -1497,10 +1502,19 @@ impl<R: Replica> SyncDriver<R> {
         if link.share.is_owner(me) {
             // A lease of its own numbered past what it holds: this copy was
             // restored from before, and the next one must count past it.
+            // Not again for a while: two copies running would outbid each
+            // other without end.
+            let issue = self
+                .lease_raised
+                .get(&id)
+                .is_none_or(|at| at.elapsed() >= LEASE_RAISE_PAUSE);
             if link
                 .share
-                .raise_lease_past(&signed, self.profile.key(), now)
+                .raise_lease_past(&signed, self.profile.key(), now, issue)
             {
+                if issue {
+                    self.lease_raised.insert(id, Instant::now());
+                }
                 self.dirty.insert(id);
                 self.mark_lease_clock(id);
                 out.extend(self.spread_lease(id));
@@ -5830,6 +5844,37 @@ mod tests {
         assert!(out.contains(&Action::Event(DriverEvent::LeaseKept(id))));
         let out = guest.keep_lease_clocks();
         assert_eq!(out, vec![Action::Event(DriverEvent::LeaseKept(id))]);
+    }
+
+    #[test]
+    fn two_copies_of_an_owner_do_not_outbid_each_other_without_end() {
+        let (mut owner, mut guest, id) = joined_then_apart();
+        let book = ShareBook::decode(&owner.book().encode()).unwrap();
+        let mut copy = SyncDriver::new(owner.profile.clone(), MemReplica::default(), book);
+        connect_both(&mut guest, &mut owner);
+        let key = owner.profile.key().clone();
+        let mut ahead = |times: usize| {
+            let share = &mut copy.shares.get_mut(&id).unwrap().share;
+            for _ in 0..times {
+                share.issue_lease(&key, now_ms());
+            }
+            share.lease.clone().unwrap()
+        };
+        let hand = |owner: &mut SyncDriver<MemReplica>, lease: SignedLease| {
+            owner
+                .on_event(NetEvent::Message {
+                    from: guest.profile.id(),
+                    bytes: Payload::Lease { share: id, lease }.to_bytes(),
+                })
+                .unwrap();
+            owner.share(id).unwrap().lease.clone().unwrap()
+        };
+        // The first lease of the other copy is counted past.
+        let first = ahead(1);
+        assert!(hand(&mut owner, first.clone()).lease.seq > first.lease.seq);
+        // The next ones soon after are only taken.
+        let second = ahead(5);
+        assert_eq!(hand(&mut owner, second.clone()), second);
     }
 
     #[test]

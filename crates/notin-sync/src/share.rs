@@ -319,18 +319,30 @@ impl Share {
         !current
     }
 
-    /// Owner side: a lease of its own seen elsewhere, numbered past the one
-    /// held or as high but not it (a copy restored from before): the next
-    /// one counts past it. Its own lease handed back changes nothing. Returns whether a lease was issued.
-    pub fn raise_lease_past(&mut self, seen: &SignedLease, owner: &DeviceKey, now: u64) -> bool {
-        let ahead = self.lease.as_ref().is_none_or(|held| {
-            seen.lease.seq > held.lease.seq || (seen.lease.seq == held.lease.seq && seen != held)
-        });
+    /// Owner side: a lease of its own seen elsewhere, ahead of the one held
+    /// (a copy restored from before, or another one still running): it is
+    /// taken, and with `issue` the next one counts past it. Two leases of
+    /// one count are ordered by signature, so two copies settle on one.
+    /// Its own lease handed back changes nothing. Returns whether the
+    /// lease held changed.
+    pub fn raise_lease_past(
+        &mut self,
+        seen: &SignedLease,
+        owner: &DeviceKey,
+        now: u64,
+        issue: bool,
+    ) -> bool {
+        let ahead = self
+            .lease
+            .as_ref()
+            .is_none_or(|held| (seen.lease.seq, seen.signature) > (held.lease.seq, held.signature));
         if !ahead || !seen.verifies(self.id, &owner.sign_public()) {
             return false;
         }
         self.lease = Some(seen.clone());
-        self.issue_lease(owner, now);
+        if issue {
+            self.issue_lease(owner, now);
+        }
         true
     }
 
