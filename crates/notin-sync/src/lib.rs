@@ -35,7 +35,8 @@ pub use identity::{DeviceId, DeviceKey, DeviceProfile, PairingCode, PairingSecre
 pub use net::lan::LanNode;
 pub use net::{Beacon, LanConfig, Lane, NetError, NetEvent, PeerInfo};
 pub use relay::{
-    KnockToken, RelayAddr, RelayConfig, RelayLimits, RelayMessage, RelayServer, Store as RelayStore,
+    KnockToken, RelayAddr, RelayConfig, RelayLimits, RelayMessage, RelayObserver, RelayServer,
+    Store as RelayStore,
 };
 pub use replica::{Blob, BlobHead, BlobKey, BlobKind, DocId, Replica, Scope, Version};
 pub use share::{

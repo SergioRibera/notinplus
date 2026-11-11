@@ -1497,6 +1497,50 @@ mod tests {
     }
 
     #[test]
+    fn big_payloads_arrive_whole_through_a_relay() {
+        let relay_key = DeviceKey::generate();
+        let open: Arc<dyn zudp::RelayPolicy> = Arc::new(|_: &[u8; 32], _: &[u8; 32]| true);
+        let relay = LanNode::start(quiet(relay_key.clone(), "relay").relay(
+            super::super::RelayRole {
+                limits: zudp::RelayLimits::default(),
+                max_peers: 64,
+                policy: open,
+                tap: None,
+            },
+        ))
+        .unwrap();
+        let key_a = DeviceKey::generate();
+        let key_b = DeviceKey::generate();
+        let a = LanNode::start(quiet(key_a, "A").punching(false)).unwrap();
+        let b = LanNode::start(quiet(key_b.clone(), "B").punching(false)).unwrap();
+        for node in [&a, &b] {
+            node.connect_host(loopback(&relay).to_string(), *relay_key.public())
+                .unwrap();
+            wait_for(node, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
+        }
+        a.connect_via(relay_key.id(), *key_b.public()).unwrap();
+        let peer = wait_for(&a, |e| match e {
+            NetEvent::Connected(p) => Some(p),
+            _ => None,
+        });
+        assert!(peer.relayed);
+        wait_for(&b, |e| matches!(e, NetEvent::Connected(_)).then_some(()));
+
+        let big: Vec<u8> = (0..1_000_123u32).map(|i| (i % 251) as u8).collect();
+        a.send(key_b.id(), Lane::Data, big.clone()).unwrap();
+        a.send(key_b.id(), Lane::Live, b"cursor".to_vec()).unwrap();
+        let mut got = Vec::new();
+        while got.len() < 2 {
+            got.push(wait_for(&b, |e| match e {
+                NetEvent::Message { bytes, .. } => Some(bytes),
+                _ => None,
+            }));
+        }
+        assert_eq!(got[0], b"cursor");
+        assert!(got[1] == big);
+    }
+
+    #[test]
     fn wrong_pinned_key_never_connects() {
         let key_a = DeviceKey::generate();
         let key_b = DeviceKey::generate();
