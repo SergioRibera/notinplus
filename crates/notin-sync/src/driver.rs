@@ -2712,18 +2712,11 @@ impl<R: Replica> SyncDriver<R> {
             .collect()
     }
 
-    /// Relays that hear whom we trust and what we expect: ours, and the
-    /// one of the device we are pairing with. Never one a share or an
-    /// invitation chose, which could map our devices.
+    /// Relays that hear whom we trust and what we expect: ours only.
+    /// One a share, an invitation or a pairing link chose could map our
+    /// devices; pairing through it needs no more than our knock.
     fn consent_relays(&self) -> Vec<DeviceId> {
-        let pairing = self
-            .intent
-            .as_ref()
-            .and_then(|i| i.relay.as_ref())
-            .map(RelayAddr::device);
-        let mut relays: Vec<DeviceId> = self.own_relay.into_iter().chain(pairing).collect();
-        relays.dedup();
-        relays
+        self.own_relay.into_iter().collect()
     }
 
     /// [`Self::consent_at`] every relay of [`Self::consent_relays`].
@@ -4133,6 +4126,35 @@ mod tests {
             if *device == key.id() && matches!(relay_message(bytes), Some(RelayMessage::Knock { .. })))));
         let out = guest.tick().unwrap();
         assert!(!consent_sent(&out, key.id()));
+        assert!(consent_sent(&out, own));
+    }
+
+    #[test]
+    fn a_pairing_links_relay_hears_our_knock_and_nothing_else() {
+        let mut offering = driver("Tablet");
+        on_relay(&mut offering);
+        let (offer, _) = offering.begin_pairing();
+        let theirs = offer.relay.clone().unwrap();
+        let mut b = driver("PC");
+        let own = on_relay(&mut b);
+        b.profile_mut()
+            .trust(TrustedDevice::new([3; 32], "Phone", 1));
+        b.pair_with(&offer);
+        let out = b
+            .on_event(NetEvent::Connected(PeerInfo {
+                device: theirs.device(),
+                public: theirs.public,
+                name: "theirs".into(),
+                addr: addr(11),
+                relayed: false,
+                session: 1,
+            }))
+            .unwrap();
+        assert!(!consent_sent(&out, theirs.device()), "{out:?}");
+        assert!(out.iter().any(|a| matches!(a, Action::Send { device, bytes, .. }
+            if *device == theirs.device() && matches!(relay_message(bytes), Some(RelayMessage::Knock { .. })))));
+        let out = b.tick().unwrap();
+        assert!(!consent_sent(&out, theirs.device()));
         assert!(consent_sent(&out, own));
     }
 
