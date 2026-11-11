@@ -14,7 +14,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, Cursor, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use notin_i18n::tr;
@@ -367,46 +367,148 @@ pub fn write_bundle_to_path(
     write_bundle(file, lib, selection, options, "", |_| {})
 }
 
-/// Decoded bundle payload. Lives entirely in memory — the on-disk
-/// `.notin` file can go away after this returns.
+/// Decoded bundle payload. Small entries are held in memory, the rest wait
+/// in a staging folder that goes away with the bundle; the `.notin` file
+/// itself can go away after this returns.
 #[derive(Debug)]
 pub struct ParsedBundle {
     pub manifest: BundleManifest,
-    pub docs: HashMap<ItemId, Vec<u8>>,
-    pub pdfs: HashMap<ItemId, Vec<u8>>,
+    pub docs: HashMap<ItemId, Unpacked>,
+    pub pdfs: HashMap<ItemId, Unpacked>,
     /// Plugin content of each item (its kind's snapshot).
-    pub snapshots: HashMap<ItemId, Vec<u8>>,
+    pub snapshots: HashMap<ItemId, Unpacked>,
     /// Files each body links to, by name.
-    pub assets: HashMap<ItemId, Vec<(String, Vec<u8>)>>,
+    pub assets: HashMap<ItemId, Vec<(String, Unpacked)>>,
+    /// Where the staged entries are, removed on drop.
+    _staging: Option<Staging>,
 }
 
-/// Decode a bundle from any [`Read`] source into memory. Callers with
-/// a filesystem path should use [`parse_bundle_from_path`].
+/// One entry of a parsed bundle.
+#[derive(Debug)]
+pub enum Unpacked {
+    Held(Vec<u8>),
+    /// Written to a staging file while the bundle is read.
+    Staged {
+        path: PathBuf,
+        len: u64,
+    },
+}
+
+impl Unpacked {
+    /// Size of the entry in bytes.
+    #[must_use]
+    pub const fn len(&self) -> u64 {
+        match self {
+            Self::Held(bytes) => bytes.len() as u64,
+            Self::Staged { len, .. } => *len,
+        }
+    }
+
+    /// Whether the entry is empty.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The entry's bytes, read back from staging when they were staged.
+    ///
+    /// # Errors
+    /// The staging file could not be read.
+    pub fn read(&self) -> io::Result<Vec<u8>> {
+        match self {
+            Self::Held(bytes) => Ok(bytes.clone()),
+            Self::Staged { path, .. } => std::fs::read(path),
+        }
+    }
+}
+
+/// A folder of staged entries, removed when dropped.
+#[derive(Debug)]
+struct Staging {
+    dir: PathBuf,
+    next: usize,
+}
+
+impl Staging {
+    fn open(root: &Path) -> io::Result<Self> {
+        let dir = root.join(uuid::Uuid::new_v4().simple().to_string());
+        std::fs::create_dir_all(&dir)?;
+        Ok(Self { dir, next: 0 })
+    }
+
+    fn next_path(&mut self) -> PathBuf {
+        self.next += 1;
+        self.dir.join(self.next.to_string())
+    }
+}
+
+impl Drop for Staging {
+    fn drop(&mut self) {
+        if let Err(err) = std::fs::remove_dir_all(&self.dir) {
+            log::warn!("bundle staging {}: {err}", self.dir.display());
+        }
+    }
+}
+
+/// Decode a bundle from any [`Read`] source. Callers with a filesystem
+/// path should use [`parse_bundle_from_path`].
 ///
 /// # Errors
 /// Filesystem / codec / unknown-version failures.
 #[sismo::function("bundle::parse_bundle")]
 pub fn parse_bundle<R: Read>(src: R) -> Result<ParsedBundle> {
-    parse_bundle_within(src, ENTRY_MAX, BUNDLE_MAX)
+    parse_bundle_within(
+        src,
+        &Caps::DEFAULT,
+        &istmo::path::cache_dir().join(STAGING_DIR),
+    )
 }
 
-/// What one entry of a bundle may unpack to: a large PDF fits.
-const ENTRY_MAX: u64 = 1 << 30;
-/// What a whole bundle may unpack to. Bundles come from other people, and
-/// a few compressed bytes can claim gigabytes.
-const BUNDLE_MAX: u64 = 4 << 30;
+/// Folder of the cache that bundles being read stage their entries in.
+const STAGING_DIR: &str = "bundle-staging";
 
-/// [`parse_bundle`] with the given caps on one entry and on the whole.
-fn parse_bundle_within<R: Read>(src: R, entry_max: u64, bundle_max: u64) -> Result<ParsedBundle> {
+/// What a bundle may unpack to, and how much of it is held in memory.
+struct Caps {
+    /// One entry: a large PDF fits.
+    entry: u64,
+    /// The whole bundle. Bundles come from other people, and a few
+    /// compressed bytes can claim gigabytes.
+    bundle: u64,
+    /// The entries held in memory together; the rest is staged on disk.
+    held: u64,
+    /// The largest entry held in memory.
+    held_entry: u64,
+}
+
+impl Caps {
+    const DEFAULT: Self = Self {
+        entry: 1 << 30,
+        bundle: 4 << 30,
+        held: if cfg!(any(target_os = "android", target_os = "ios")) {
+            64 << 20
+        } else {
+            256 << 20
+        },
+        held_entry: 1 << 20,
+    };
+}
+
+/// Largest manifest taken.
+const MANIFEST_MAX: u64 = 64 << 20;
+
+/// [`parse_bundle`] with the given caps, staging under `staging_root`.
+fn parse_bundle_within<R: Read>(src: R, caps: &Caps, staging_root: &Path) -> Result<ParsedBundle> {
     let decoder = zstd::stream::read::Decoder::new(src)?;
     let mut archive = tar::Archive::new(decoder);
 
     let mut manifest: Option<BundleManifest> = None;
-    let mut docs: HashMap<ItemId, Vec<u8>> = HashMap::new();
-    let mut pdfs: HashMap<ItemId, Vec<u8>> = HashMap::new();
-    let mut snapshots: HashMap<ItemId, Vec<u8>> = HashMap::new();
-    let mut assets: HashMap<ItemId, Vec<(String, Vec<u8>)>> = HashMap::new();
+    let mut docs = HashMap::new();
+    let mut pdfs = HashMap::new();
+    let mut snapshots = HashMap::new();
+    let mut assets: HashMap<ItemId, Vec<(String, Unpacked)>> = HashMap::new();
+    let mut staging: Option<Staging> = None;
     let mut unpacked: u64 = 0;
+    let mut held: u64 = 0;
 
     for entry in archive.entries()? {
         sismo::scope!("bundle::read_entry");
@@ -419,42 +521,66 @@ fn parse_bundle_within<R: Read>(src: R, entry_max: u64, bundle_max: u64) -> Resu
         // What the header says is checked first, what really unpacks after:
         // neither may pass the caps.
         let declared = entry.header().size()?;
-        if declared > entry_max || unpacked.saturating_add(declared) > bundle_max {
+        let entry_max = if name == MANIFEST_ENTRY {
+            MANIFEST_MAX
+        } else {
+            caps.entry
+        };
+        if declared > entry_max || unpacked.saturating_add(declared) > caps.bundle {
             return Err(BundleError::TooBig(name));
         }
-        let mut buf = Vec::new();
-        (&mut entry)
-            .take(entry_max.saturating_add(1))
-            .read_to_end(&mut buf)?;
-        unpacked = unpacked.saturating_add(buf.len() as u64);
-        if buf.len() as u64 > entry_max || unpacked > bundle_max {
+        let mut limited = (&mut entry).take(entry_max.saturating_add(1));
+        let keep = name == MANIFEST_ENTRY
+            || (declared <= caps.held_entry && held.saturating_add(declared) <= caps.held);
+        let body = if keep {
+            let mut buf = Vec::new();
+            limited.read_to_end(&mut buf)?;
+            held = held.saturating_add(buf.len() as u64);
+            Unpacked::Held(buf)
+        } else {
+            let staging = match &mut staging {
+                Some(staging) => staging,
+                none => none.insert(Staging::open(staging_root)?),
+            };
+            let path = staging.next_path();
+            let len = io::copy(&mut limited, &mut File::create(&path)?)?;
+            Unpacked::Staged { path, len }
+        };
+        unpacked = unpacked.saturating_add(body.len());
+        if body.len() > entry_max || unpacked > caps.bundle {
             return Err(BundleError::TooBig(name));
         }
-        sismo::counter!("bundle.entry_bytes", buf.len());
+        sismo::counter!("bundle.entry_bytes", body.len());
         if name == MANIFEST_ENTRY {
-            let m: BundleManifest = notin_plugin::decode_bounded(&buf, 64 << 20)
-                .map_err(|e| BundleError::Codec(e.to_string()))?;
+            let Unpacked::Held(buf) = &body else {
+                return Err(BundleError::TooBig(name));
+            };
+            let m: BundleManifest = notin_plugin::decode_bounded(
+                buf,
+                usize::try_from(MANIFEST_MAX).unwrap_or(usize::MAX),
+            )
+            .map_err(|e| BundleError::Codec(e.to_string()))?;
             if m.version != BUNDLE_VERSION {
                 return Err(BundleError::UnknownVersion(m.version));
             }
             manifest = Some(m);
         } else if let Some(rest) = name.strip_prefix(DOCS_PREFIX) {
             if let Some(id) = parse_id::<ItemId>(rest, DOC_EXT) {
-                docs.insert(id, buf);
+                docs.insert(id, body);
             }
         } else if let Some(rest) = name.strip_prefix(PDFS_PREFIX) {
             if let Some(id) = parse_id::<ItemId>(rest, PDF_EXT) {
-                pdfs.insert(id, buf);
+                pdfs.insert(id, body);
             }
         } else if let Some(rest) = name.strip_prefix(SNAPSHOTS_PREFIX)
             && let Some(id) = parse_id::<ItemId>(rest, DOC_EXT)
         {
-            snapshots.insert(id, buf);
+            snapshots.insert(id, body);
         } else if let Some(rest) = name.strip_prefix(ASSETS_PREFIX)
             && let Some((id, file)) = rest.split_once('/')
             && let Ok(id) = id.parse::<ItemId>()
         {
-            assets.entry(id).or_default().push((file.to_owned(), buf));
+            assets.entry(id).or_default().push((file.to_owned(), body));
         }
     }
 
@@ -465,6 +591,7 @@ fn parse_bundle_within<R: Read>(src: R, entry_max: u64, bundle_max: u64) -> Resu
         pdfs,
         snapshots,
         assets,
+        _staging: staging,
     })
 }
 
@@ -887,10 +1014,72 @@ mod tests {
                 .expect("flush");
         }
         assert!(buf.len() < 64 << 10);
-        let one = parse_bundle_within(Cursor::new(&buf), 1 << 10, 1 << 30);
+        let root = staging_root("caps");
+        let caps = |entry, bundle| Caps {
+            entry,
+            bundle,
+            ..Caps::DEFAULT
+        };
+        let one = parse_bundle_within(Cursor::new(&buf), &caps(1 << 10, 1 << 30), &root);
         assert!(matches!(one, Err(BundleError::TooBig(_))));
-        let all = parse_bundle_within(Cursor::new(&buf), 1 << 30, 3 << 19);
+        let all = parse_bundle_within(Cursor::new(&buf), &caps(1 << 30, 3 << 19), &root);
         assert!(matches!(all, Err(BundleError::TooBig(_))));
+        // Nothing staged is left behind by a refused bundle.
+        assert!(std::fs::read_dir(&root).map_or(true, |mut dir| dir.next().is_none()));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn staging_root(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("notin-staging-{name}-{}", std::process::id()))
+    }
+
+    #[test]
+    fn large_entries_wait_on_disk_and_go_with_the_bundle() {
+        let manifest = BundleManifest {
+            version: BUNDLE_VERSION,
+            kind: BundleKind::Library,
+            exported_at_ms: 7,
+            exported_by: String::new(),
+            requires_plugins: Vec::new(),
+            folders: Vec::new(),
+            items: Vec::new(),
+            tags: Vec::new(),
+            item_tags: Vec::new(),
+            folder_tags: Vec::new(),
+            workspaces: Vec::new(),
+            links: Vec::new(),
+        };
+        let (small, large) = (ItemId::new_v4(), ItemId::new_v4());
+        let big: Vec<u8> = (0..3 << 20).map(|i: u32| i.to_le_bytes()[1]).collect();
+        let mut buf = Vec::<u8>::new();
+        {
+            let encoder = zstd::stream::write::Encoder::new(&mut buf, ZSTD_LEVEL)
+                .expect("zstd encoder")
+                .auto_finish();
+            let mut tar = tar::Builder::new(encoder);
+            let bytes = bincode::encode_to_vec(&manifest, CODEC).expect("encode");
+            super::append_file(&mut tar, MANIFEST_ENTRY, &bytes).expect("append");
+            let name = |id| format!("{DOCS_PREFIX}{id}.{DOC_EXT}");
+            super::append_file(&mut tar, &name(small), b"ink").expect("append");
+            super::append_file(&mut tar, &name(large), &big).expect("append");
+            tar.into_inner()
+                .expect("tar finish")
+                .flush()
+                .expect("flush");
+        }
+        let root = staging_root("large");
+        let parsed = parse_bundle_within(Cursor::new(&buf), &Caps::DEFAULT, &root).expect("parse");
+        assert!(matches!(parsed.docs[&small], Unpacked::Held(_)));
+        let Unpacked::Staged { path, len } = &parsed.docs[&large] else {
+            panic!("a large entry is staged");
+        };
+        assert_eq!(*len, big.len() as u64);
+        assert!(path.exists());
+        assert_eq!(parsed.docs[&large].read().expect("read"), big);
+        let path = path.clone();
+        drop(parsed);
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 

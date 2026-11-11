@@ -1477,13 +1477,13 @@ impl Library {
         }
 
         for (id, bytes) in &bundle.docs {
-            bodies::write_doc_bytes(*id, bytes)?;
+            bodies::write_doc_bytes(*id, &bytes.read()?)?;
             if let Ok(doc) = bodies::read_doc(*id) {
                 refs::record_doc(*id, &doc);
             }
         }
         for (id, bytes) in &bundle.pdfs {
-            bodies::write_pdf(*id, bytes)?;
+            bodies::write_pdf(*id, &bytes.read()?)?;
         }
 
         self.persist()?;

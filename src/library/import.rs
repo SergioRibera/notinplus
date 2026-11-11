@@ -7,7 +7,7 @@ use super::{
     Folder, FolderId, Item, ItemId, Library, LibraryData, LinkId, ROOT_FOLDER, Result, Tagging,
     WorkspaceId, bodies, now_millis, refs,
 };
-use crate::bundle::{BundleManifest, ParsedBundle};
+use crate::bundle::{BundleManifest, ParsedBundle, Unpacked};
 
 /// What to do with a document the library already has.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -99,9 +99,12 @@ impl LibraryData {
             .iter()
             .filter_map(|incoming| {
                 let existing = self.item(incoming.id)?.clone();
-                let same_body = bundle.docs.get(&incoming.id).map(Vec::as_slice)
-                    == bodies::read_doc_bytes(incoming.id).as_deref();
-                let same_content = bundle.snapshots.get(&incoming.id).cloned()
+                let same_body = bundle.docs.get(&incoming.id).and_then(|b| b.read().ok())
+                    == bodies::read_doc_bytes(incoming.id);
+                let same_content = bundle
+                    .snapshots
+                    .get(&incoming.id)
+                    .and_then(|b| b.read().ok())
                     == bodies::read_plugin_snapshot(incoming.id, &incoming.kind.plugin_id)
                         .ok()
                         .flatten();
@@ -127,12 +130,13 @@ impl LibraryData {
             .chain(bundle.pdfs.values())
             .chain(bundle.snapshots.values())
             .chain(bundle.assets.values().flatten().map(|(_, bytes)| bytes))
-            .map(|b| u64::try_from(b.len()).unwrap_or(0))
+            .map(Unpacked::len)
             .sum();
         let marks = bundle
             .docs
             .values()
-            .filter_map(|b| crate::doc::Doc::from_snapshot(b).ok())
+            .filter_map(|b| b.read().ok())
+            .filter_map(|b| crate::doc::Doc::from_snapshot(&b).ok())
             .map(|d| d.bookmarks().len())
             .sum();
         Review {
@@ -328,19 +332,19 @@ impl Library {
 #[sismo::function("library::import::write_bodies")]
 fn write_bodies(bundle: &ParsedBundle, item: &Item, id: ItemId) -> Result<()> {
     if let Some(bytes) = bundle.docs.get(&item.id) {
-        bodies::write_doc_bytes(id, bytes)?;
+        bodies::write_doc_bytes(id, &bytes.read()?)?;
         if let Ok(doc) = bodies::read_doc(id) {
             refs::record_doc(id, &doc);
         }
     }
     if let Some(bytes) = bundle.pdfs.get(&item.id) {
-        bodies::write_pdf(id, bytes)?;
+        bodies::write_pdf(id, &bytes.read()?)?;
     }
     if let Some(bytes) = bundle.snapshots.get(&item.id) {
-        bodies::write_plugin_snapshot(id, &item.kind.plugin_id, bytes)?;
+        bodies::write_plugin_snapshot(id, &item.kind.plugin_id, &bytes.read()?)?;
     }
     for (name, bytes) in bundle.assets.get(&item.id).into_iter().flatten() {
-        bodies::write_asset(id, name, bytes)?;
+        bodies::write_asset(id, name, &bytes.read()?)?;
     }
     Ok(())
 }
