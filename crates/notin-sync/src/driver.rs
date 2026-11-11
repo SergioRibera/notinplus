@@ -2734,6 +2734,16 @@ impl<R: Replica> SyncDriver<R> {
             return Ok(());
         };
         match message {
+            RelayMessage::Records { share, .. }
+            | RelayMessage::Gone { share }
+            | RelayMessage::Refused { share }
+            | RelayMessage::Registered { share }
+            | RelayMessage::Full { share }
+                if self.share_relay(share) != Some(from) =>
+            {
+                // What a relay says about a share counts only from the relay
+                // the share meets at.
+            }
             RelayMessage::Records { share, records } => {
                 #[cfg(feature = "sismo")]
                 sismo::counter!("sync.relay.records_in", records.len());
@@ -3788,6 +3798,53 @@ mod tests {
         connect_both(&mut guest, &mut owner);
         assert!(guest.share(id).unwrap().is_member(eve.profile.id()));
         (owner, guest, eve, id)
+    }
+
+    #[test]
+    fn records_count_only_from_the_relay_the_share_meets_at() {
+        let (owner, mut guest, id) = joined_then_apart();
+        let own = on_relay(&mut guest);
+        // The share meets at another relay than the guest's own.
+        let key = crate::identity::DeviceKey::generate();
+        let theirs = RelayAddr {
+            host: "theirs:7710".into(),
+            public: *key.public(),
+        };
+        guest.shares.get_mut(&id).unwrap().share.server = Some(theirs.to_string());
+        guest.sync_relays();
+        guest
+            .on_event(NetEvent::Connected(PeerInfo {
+                device: key.id(),
+                public: *key.public(),
+                name: "theirs".into(),
+                addr: addr(10),
+                relayed: false,
+                session: 1,
+            }))
+            .unwrap();
+        let held = guest.share(id).unwrap().clone();
+        let mut view = owner.share(id).unwrap().for_member();
+        view.title = "Química".into();
+        view.server = Some(theirs.to_string());
+        view.updated_at += 5;
+        let sealed = ShareMessage::Meta(Box::new(view)).seal_signed(
+            owner.share(id).unwrap(),
+            RecordKind::Meta,
+            owner.profile.key(),
+        );
+        let records = RelayMessage::Records {
+            share: id,
+            records: vec![record(3, owner.profile.id(), RecordKind::Meta, sealed)],
+        };
+        let out = guest.on_event(from_relay(own, &records)).unwrap();
+        assert_eq!(guest.share(id).unwrap(), &held, "{out:?}");
+        let out = guest
+            .on_event(from_relay(own, &RelayMessage::Gone { share: id }))
+            .unwrap();
+        assert!(out.is_empty(), "{out:?}");
+        guest.on_event(from_relay(key.id(), &records)).unwrap();
+        assert_eq!(guest.share(id).unwrap().title, "Química");
+        assert_eq!(guest.share(id).unwrap().relay_cursor, 3);
     }
 
     #[test]
