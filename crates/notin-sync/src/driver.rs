@@ -3621,7 +3621,12 @@ impl<R: Replica> SyncDriver<R> {
             match self.apply_record(id, &record, out)? {
                 Taken::Applied(changed) => {
                     touched |= changed;
-                    top = top.max(record.seq);
+                    // Keys may come ahead of their place, before records
+                    // they follow: they never move the cursor, and come
+                    // again in order.
+                    if !matches!(record.kind, RecordKind::Keys { .. }) {
+                        top = top.max(record.seq);
+                    }
                 }
                 Taken::Parked if now.saturating_sub(since) < PARK_FOR_MS => {
                     parked.push((record, since));
@@ -5569,6 +5574,65 @@ mod tests {
         // Thrown out, it is out of this too.
         let out = owner.expel(id, guest.profile.id());
         assert_eq!(bulk(&out, guest.profile.id()), Some(false));
+    }
+
+    #[test]
+    fn keys_ahead_of_their_place_open_what_comes_after_and_keep_the_cursor() {
+        let (mut owner, mut guest, eve, id) = three_members();
+        for d in [guest.profile.id(), eve.profile.id()] {
+            owner.on_event(NetEvent::Disconnected(d)).unwrap();
+        }
+        guest
+            .on_event(NetEvent::Disconnected(owner.profile.id()))
+            .unwrap();
+        let relay_key = crate::identity::DeviceKey::generate();
+        let at_owner = on_relay_at(&mut owner, &relay_key);
+        let at_guest = on_relay_at(&mut guest, &relay_key);
+        // Both know the share meets at that relay.
+        let server = owner.share(id).unwrap().server.clone();
+        guest.shares.get_mut(&id).unwrap().share.server = server;
+        // Two key changes while Ana is away, then a new edit.
+        owner.expel(id, eve.profile.id());
+        let mut handed = published(&owner.rekey(id), at_owner);
+        assert_eq!(owner.share(id).unwrap().epoch, 2);
+        mark(&owner, D1, 1, 77);
+        handed.extend(published(&owner.announce().unwrap(), at_owner));
+        // The keys land in the mailbox after what they open.
+        handed.sort_by_key(|(kind, _)| matches!(kind, RecordKind::Keys { .. }));
+        let records: Vec<crate::relay::Record> = handed
+            .into_iter()
+            .zip(1..)
+            .map(|((kind, sealed), seq)| crate::relay::Record {
+                epoch: 2,
+                ..record(seq, owner.profile.id(), kind, sealed)
+            })
+            .collect();
+        let mine = RecordKind::Keys {
+            to: *guest.profile.key().public(),
+        };
+        let keys: Vec<crate::relay::Record> =
+            records.iter().filter(|r| r.kind == mine).cloned().collect();
+        let page = |records| RelayMessage::Records {
+            share: id,
+            records,
+            epoch: 2,
+        };
+        // Its keys first: the cursor stays where it was.
+        guest.on_event(from_relay(at_guest, &page(keys))).unwrap();
+        assert_eq!(guest.share(id).unwrap().epoch, 2);
+        assert_eq!(guest.share(id).unwrap().relay_cursor, 0);
+        // Then everything in order, sealed with keys it now holds.
+        let last = records
+            .iter()
+            .filter(|r| !matches!(r.kind, RecordKind::Keys { .. }))
+            .map(|r| r.seq)
+            .max()
+            .unwrap();
+        guest
+            .on_event(from_relay(at_guest, &page(records)))
+            .unwrap();
+        assert!(marks(&guest, D1).contains(&(1, 77)));
+        assert_eq!(guest.share(id).unwrap().relay_cursor, last);
     }
 
     #[test]

@@ -383,6 +383,24 @@ const RECORDS_PAGE: usize = 4 << 20;
 /// none is dropped on loading, while a corrupt length cannot abort.
 const STORE_CAP: usize = 512 << 20;
 
+/// What a subscriber with key `public` is handed, in pages: first the
+/// share's keys for it, so records sealed with any key since open
+/// whichever page they come in; then every record in order, those keys
+/// again among them.
+fn subscription_pages(records: Vec<Record>, public: [u8; 32]) -> Vec<Vec<Record>> {
+    let keys: Vec<Record> = records
+        .iter()
+        .filter(|r| r.kind == RecordKind::Keys { to: public })
+        .cloned()
+        .collect();
+    let mut out = Vec::new();
+    if !keys.is_empty() {
+        out.extend(pages(keys, RECORDS_PAGE));
+    }
+    out.extend(pages(records, RECORDS_PAGE));
+    out
+}
+
 /// `records` split in runs of at most `budget` sealed bytes, one record
 /// at least in each.
 fn pages(records: Vec<Record>, budget: usize) -> Vec<Vec<Record>> {
@@ -885,7 +903,7 @@ impl Serving {
                 let epoch = mailbox.epoch;
                 self.subs.entry(share).or_default().insert(from);
                 // In pages, each well under what a device decodes at once.
-                for records in pages(records, RECORDS_PAGE) {
+                for records in subscription_pages(records, public) {
                     self.reply(
                         from,
                         &RelayMessage::Records {
@@ -1313,6 +1331,30 @@ mod tests {
         // what the relay reads back.
         assert!(RelayLimits::default().max_mailbox_bytes < STORE_CAP as u64);
         assert!(RECORDS_PAGE + RelayLimits::default().max_record < crate::cap::RELAY);
+    }
+
+    #[test]
+    fn a_subscriber_gets_its_keys_ahead_of_everything() {
+        let record = |seq, kind| Record {
+            seq,
+            from: A,
+            kind,
+            sealed: vec![0; 4],
+            epoch: 0,
+        };
+        let mine = RecordKind::Keys { to: [1; 32] };
+        let theirs = RecordKind::Keys { to: [2; 32] };
+        let records = vec![
+            record(1, RecordKind::Update { doc: D }),
+            record(2, theirs),
+            record(3, mine),
+        ];
+        let pages = subscription_pages(records, [1; 32]);
+        let seqs: Vec<Vec<u64>> = pages
+            .iter()
+            .map(|p| p.iter().map(|r| r.seq).collect())
+            .collect();
+        assert_eq!(seqs, vec![vec![3], vec![1, 2, 3]]);
     }
 
     #[test]
