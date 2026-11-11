@@ -521,6 +521,11 @@ mod tests {
     }
 }
 
+/// Deepest a table of contents is read.
+pub const MAX_TOC_DEPTH: usize = 64;
+/// Most entries a table of contents is read with.
+pub const MAX_TOC_ENTRIES: usize = 10_000;
+
 /// One entry of a document's table of contents (its PDF bookmarks).
 #[derive(Clone, Debug, PartialEq)]
 pub struct TocEntry {
@@ -541,7 +546,12 @@ impl PdfDocument {
     pub fn table_of_contents(&self) -> Vec<TocEntry> {
         use pdfium_render::prelude::PdfBookmark;
 
-        fn walk(node: &PdfBookmark<'_>, heights: &[f32]) -> TocEntry {
+        fn walk(
+            node: &PdfBookmark<'_>,
+            heights: &[f32],
+            depth: usize,
+            left: &mut usize,
+        ) -> TocEntry {
             let destination = node.destination();
             let page = destination
                 .as_ref()
@@ -552,9 +562,10 @@ impl PdfDocument {
                 .and_then(extract_dest_y_bottom)
                 .and_then(|y| page.and_then(|p| heights.get(p)).map(|h| (h - y).max(0.0)));
             let mut children = Vec::new();
-            let mut child = node.first_child();
-            while let Some(c) = child {
-                children.push(walk(&c, heights));
+            let mut child = node.first_child().filter(|_| depth > 0);
+            while let Some(c) = child.filter(|_| *left > 0) {
+                *left -= 1;
+                children.push(walk(&c, heights, depth - 1, left));
                 child = c.next_sibling();
             }
             TocEntry {
@@ -569,8 +580,11 @@ impl PdfDocument {
         let bookmarks = self.pdfium_doc().bookmarks();
         let mut entries = Vec::new();
         let mut sibling = bookmarks.root();
-        while let Some(node) = sibling {
-            entries.push(walk(&node, &heights));
+        // A file may nest its bookmarks without end, or loop them.
+        let mut left = MAX_TOC_ENTRIES;
+        while let Some(node) = sibling.filter(|_| left > 0) {
+            left -= 1;
+            entries.push(walk(&node, &heights, MAX_TOC_DEPTH, &mut left));
             sibling = node.next_sibling();
         }
         entries

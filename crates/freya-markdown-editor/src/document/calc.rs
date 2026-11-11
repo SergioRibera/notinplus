@@ -173,6 +173,8 @@ pub enum ExprError {
     Incomplete(usize),
     UnclosedBracket,
     UnclosedParenthesis,
+    /// Parentheses or signs nested past any formula anyone writes.
+    TooDeep,
 }
 
 impl fmt::Display for ExprError {
@@ -183,6 +185,7 @@ impl fmt::Display for ExprError {
             Self::Incomplete(at) => write!(f, "something is missing at {at}"),
             Self::UnclosedBracket => f.write_str("a column name is missing its closing ]"),
             Self::UnclosedParenthesis => f.write_str("a parenthesis is never closed"),
+            Self::TooDeep => f.write_str("the expression is nested too deep"),
         }
     }
 }
@@ -273,7 +276,12 @@ struct Parser {
     tokens: Vec<(Token, usize)>,
     at: usize,
     end: usize,
+    /// Operands open around the one being read.
+    depth: usize,
 }
+
+/// Deepest operands are read inside one another.
+const MAX_DEPTH: usize = 64;
 
 impl Parser {
     fn peek(&self) -> Option<&Token> {
@@ -298,6 +306,16 @@ impl Parser {
     }
 
     fn operand(&mut self) -> Result<Node, ExprError> {
+        if self.depth >= MAX_DEPTH {
+            return Err(ExprError::TooDeep);
+        }
+        self.depth += 1;
+        let node = self.read_operand();
+        self.depth -= 1;
+        node
+    }
+
+    fn read_operand(&mut self) -> Result<Node, ExprError> {
         let offset = self.offset();
         let Some(token) = self.peek().cloned() else {
             return Err(ExprError::Incomplete(offset));
@@ -343,6 +361,7 @@ impl Expr {
             tokens,
             at: 0,
             end: source.chars().count(),
+            depth: 0,
         };
         let node = parser.expression(1)?;
         match parser.peek() {
@@ -557,6 +576,16 @@ mod tests {
         assert_eq!(Number::format(2.5, 2, true), "2,50");
         assert_eq!(Number::format(-0.0, 0, false), "0");
         assert_eq!(Number::format(1234.5, 1, false), "1234.5");
+    }
+
+    #[test]
+    fn an_expression_nested_without_end_is_refused() {
+        let deep = 100_000;
+        let parens = format!("{}1{}", "(".repeat(deep), ")".repeat(deep));
+        assert_eq!(Expr::parse(&parens), Err(ExprError::TooDeep));
+        assert_eq!(Expr::parse(&"-".repeat(deep)), Err(ExprError::TooDeep));
+        let fine = format!("{}1{}", "(".repeat(30), ")".repeat(30));
+        assert!(Expr::parse(&fine).is_ok());
     }
 
     #[test]

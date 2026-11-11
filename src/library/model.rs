@@ -416,9 +416,9 @@ pub enum SplitSide {
 /// allocated to the first child, clamped to `0.05..=0.95` by the shell).
 ///
 /// Not `Eq` / `Hash` because the `ratio` field is `f32`; the layout is
-/// compared structurally only via `PartialEq`.
-#[istmo::message]
-#[derive(Clone, PartialEq, Debug)]
+/// compared structurally only via `PartialEq`. Decoded by hand: a box
+/// claims no bytes, so nesting from elsewhere is held to [`MAX_PANE_DEPTH`].
+#[derive(Clone, PartialEq, Debug, bincode::Encode)]
 pub enum PaneLayout {
     Leaf(Pane),
     Split {
@@ -430,6 +430,49 @@ pub enum PaneLayout {
         first: Box<Self>,
         second: Box<Self>,
     },
+}
+
+/// Deepest a pane layout is taken: far past any split anyone makes, well
+/// short of what the stack holds.
+pub const MAX_PANE_DEPTH: usize = 64;
+
+impl<C> bincode::Decode<C> for PaneLayout {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        Self::decode_within(decoder, MAX_PANE_DEPTH)
+    }
+}
+
+bincode::impl_borrow_decode!(PaneLayout);
+
+impl PaneLayout {
+    fn decode_within<C, D: bincode::de::Decoder<Context = C>>(
+        decoder: &mut D,
+        depth: usize,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        use bincode::Decode;
+        use bincode::error::{AllowedEnumVariants, DecodeError};
+        match u32::decode(decoder)? {
+            0 => Ok(Self::Leaf(Pane::decode(decoder)?)),
+            1 => {
+                let Some(depth) = depth.checked_sub(1) else {
+                    return Err(DecodeError::Other("pane layout nested too deep"));
+                };
+                Ok(Self::Split {
+                    orientation: SplitOrientation::decode(decoder)?,
+                    ratio: f32::decode(decoder)?,
+                    first: Box::new(Self::decode_within(decoder, depth)?),
+                    second: Box::new(Self::decode_within(decoder, depth)?),
+                })
+            }
+            found => Err(DecodeError::UnexpectedVariant {
+                type_name: "PaneLayout",
+                allowed: &AllowedEnumVariants::Range { min: 0, max: 1 },
+                found,
+            }),
+        }
+    }
 }
 
 impl PaneLayout {
@@ -1006,5 +1049,44 @@ impl LibraryIndex {
             cursor = f.parent;
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod pane_tests {
+    use super::{MAX_PANE_DEPTH, PaneId, PaneLayout};
+
+    /// `splits` splits each nested in the first half of the one before,
+    /// written out by hand: encoding that deep would itself recurse.
+    fn nested(splits: usize) -> Vec<u8> {
+        let config = bincode::config::standard();
+        let leaf = bincode::encode_to_vec(PaneLayout::leaf(PaneId::default()), config).unwrap();
+        let mut bytes = Vec::new();
+        for _ in 0..splits {
+            bytes.extend_from_slice(&[1, 0]);
+            bytes.extend_from_slice(&0.5f32.to_le_bytes());
+        }
+        for _ in 0..=splits {
+            bytes.extend_from_slice(&leaf);
+        }
+        bytes
+    }
+
+    fn decode(bytes: &[u8]) -> Option<PaneLayout> {
+        bincode::decode_from_slice(bytes, bincode::config::standard())
+            .ok()
+            .map(|(layout, _)| layout)
+    }
+
+    #[test]
+    fn a_layout_nested_past_reason_is_refused_without_overflowing() {
+        assert!(decode(&nested(100_000)).is_none());
+        assert!(decode(&nested(MAX_PANE_DEPTH + 1)).is_none());
+        let fine = decode(&nested(MAX_PANE_DEPTH)).unwrap();
+        let config = bincode::config::standard();
+        assert_eq!(
+            bincode::encode_to_vec(&fine, config).unwrap(),
+            nested(MAX_PANE_DEPTH)
+        );
     }
 }

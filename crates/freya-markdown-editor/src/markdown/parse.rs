@@ -30,6 +30,7 @@ pub(super) fn parse(markdown: &str, options: &ParseOptions) -> Document {
         blocks: Vec::new(),
         align: Vec::new(),
         details: None,
+        nesting: 0,
     };
     {
         #[cfg(feature = "sismo")]
@@ -114,7 +115,12 @@ struct Lowering<'o> {
     /// Index of the `<details>` block still waiting for its `</details>`;
     /// the paragraphs met meanwhile become its content.
     details: Option<usize>,
+    /// Blocks open around the one being lowered.
+    nesting: usize,
 }
+
+/// Deepest blocks are lowered inside one another.
+const MAX_NESTING: usize = 64;
 
 impl Lowering<'_> {
     fn push(&mut self, kind: BlockKind) {
@@ -193,9 +199,20 @@ impl Lowering<'_> {
         content
     }
 
+    /// Lower `node`, unless it sits deeper in other blocks than anyone
+    /// writes: what lies past that is dropped rather than overflow.
+    fn block<'a>(&mut self, node: &'a AstNode<'a>, depth: u8) {
+        if self.nesting >= MAX_NESTING {
+            return;
+        }
+        self.nesting += 1;
+        self.lower_block(node, depth);
+        self.nesting -= 1;
+    }
+
     #[allow(clippy::too_many_lines, reason = "one arm per comrak block node")]
     #[cfg_attr(feature = "sismo", sismo::function("markdown::parse_block"))]
-    fn block<'a>(&mut self, node: &'a AstNode<'a>, depth: u8) {
+    fn lower_block<'a>(&mut self, node: &'a AstNode<'a>, depth: u8) {
         let value = node.data().value.clone();
         match value {
             NodeValue::Paragraph => self.paragraph(node),
@@ -347,6 +364,9 @@ impl Lowering<'_> {
 
     #[cfg_attr(feature = "sismo", sismo::function("markdown::parse_list_item"))]
     fn list_item<'a>(&mut self, item: &'a AstNode<'a>, list: &NodeList, depth: u8) {
+        if usize::from(depth) >= MAX_NESTING {
+            return;
+        }
         let kind = match &item.data().value {
             NodeValue::TaskItem(task) => ListKind::Task {
                 checked: task.symbol.is_some_and(|symbol| symbol != ' '),
@@ -679,4 +699,31 @@ fn plain_text<'a>(node: &'a AstNode<'a>) -> String {
             _ => None,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::document::Document;
+
+    #[test]
+    fn markdown_nested_without_end_parses_on_a_small_stack() {
+        let deep = 50_000;
+        let quotes = format!("{}text", "> ".repeat(deep));
+        let lists: String = (0..deep)
+            .map(|i| format!("{}- a\n", "  ".repeat(i)))
+            .take(2_000)
+            .collect();
+        let links = format!("{}x{}", "[".repeat(deep), "](u)".repeat(deep));
+        let marks = format!("{}x{}", "*_".repeat(deep), "_*".repeat(deep));
+        for source in [quotes, lists, links, marks] {
+            let parsed = std::thread::Builder::new()
+                .stack_size(1 << 21)
+                .spawn(move || {
+                    Document::parse(&source).to_markdown(crate::markdown::Dialect::default())
+                })
+                .unwrap()
+                .join();
+            assert!(parsed.is_ok());
+        }
+    }
 }

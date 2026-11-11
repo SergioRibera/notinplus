@@ -24,8 +24,9 @@ pub const KIND: &str = "io.notein.pdf";
 /// Create entry of a PDF import.
 pub const ENTRY_IMPORT: &str = "import-pdf";
 
-/// One row of the PDF's own table of contents.
-#[derive(Clone, Debug, PartialEq, Encode, Decode)]
+/// One row of the PDF's own table of contents. Decoded by hand, nesting
+/// held to [`MAX_CONTENTS_DEPTH`]: the rows come with files from elsewhere.
+#[derive(Clone, Debug, PartialEq, Encode)]
 pub struct Contents {
     pub title: String,
     /// Zero-based page.
@@ -34,6 +35,47 @@ pub struct Contents {
     /// when the file pins the whole page.
     pub top: Option<u32>,
     pub children: Vec<Self>,
+}
+
+/// Deepest a table of contents is taken.
+pub const MAX_CONTENTS_DEPTH: usize = freya_pdf::doc::MAX_TOC_DEPTH;
+
+impl<C> Decode<C> for Contents {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        Self::decode_within(decoder, MAX_CONTENTS_DEPTH)
+    }
+}
+
+bincode::impl_borrow_decode!(Contents);
+
+impl Contents {
+    fn decode_within<C, D: bincode::de::Decoder<Context = C>>(
+        decoder: &mut D,
+        depth: usize,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        let title = String::decode(decoder)?;
+        let page = Option::<u32>::decode(decoder)?;
+        let top = Option::<u32>::decode(decoder)?;
+        let len = u64::decode(decoder)?;
+        if len > 0 && depth == 0 {
+            return Err(bincode::error::DecodeError::Other(
+                "table of contents nested too deep",
+            ));
+        }
+        // Grown as rows arrive: the count claims nothing it does not hold.
+        let mut children = Vec::new();
+        for _ in 0..len {
+            children.push(Self::decode_within(decoder, depth - 1)?);
+        }
+        Ok(Self {
+            title,
+            page,
+            top,
+            children,
+        })
+    }
 }
 
 impl From<TocEntry> for Contents {
@@ -1061,6 +1103,19 @@ mod tests {
         let s = snippet(text, &notin_plugin::fold("metáfora")).expect("found");
         assert!(s.contains("metáfora"));
         assert!(snippet(text, "tribunal").is_none());
+    }
+
+    #[test]
+    fn contents_nested_past_reason_are_refused_without_overflowing() {
+        let nested = |levels: usize| {
+            let mut bytes = [0, 0, 0, 1].repeat(levels);
+            bytes.extend_from_slice(&[0, 0, 0, 0]);
+            bincode::decode_from_slice::<Contents, _>(&bytes, bincode::config::standard())
+                .map(|(contents, _)| contents)
+        };
+        assert!(nested(100_000).is_err());
+        assert!(nested(MAX_CONTENTS_DEPTH + 1).is_err());
+        assert!(nested(MAX_CONTENTS_DEPTH).is_ok());
     }
 
     fn entry(
