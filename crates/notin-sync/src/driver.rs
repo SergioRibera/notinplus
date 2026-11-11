@@ -914,10 +914,16 @@ impl<R: Replica> SyncDriver<R> {
         let Some(link) = self.shares.get_mut(&id) else {
             return Vec::new();
         };
+        let inside = link.share.is_member(device);
         if !link.share.is_owner(self.profile.id()) || !link.share.expel(device) {
             return Vec::new();
         }
         link.share.touch(now_ms());
+        if !inside {
+            // Gone already, with the key changed then: only its way back
+            // closes.
+            return vec![Action::Event(DriverEvent::ShareChanged(id))];
+        }
         link.engine.forget_peer(device);
         let payload = Payload::Share {
             share: id,
@@ -999,6 +1005,19 @@ impl<R: Replica> SyncDriver<R> {
         let owner = link.share.owner.public;
         open_keys(self.profile.key(), &owner, id, sealed)
             .is_some_and(|(epoch, keys)| link.share.adopt_keys(epoch, keys))
+    }
+
+    /// Owner stops letting a device that walked away back in with its
+    /// old invitation.
+    pub fn forget_departed(&mut self, id: ShareId, device: DeviceId) -> Vec<Action> {
+        let me = self.profile.id();
+        let Some(link) = self.shares.get_mut(&id).filter(|l| l.share.is_owner(me)) else {
+            return Vec::new();
+        };
+        if !link.share.forget_departed(device) {
+            return Vec::new();
+        }
+        vec![Action::Event(DriverEvent::ShareChanged(id))]
     }
 
     /// Owner closes the share for everyone.
@@ -1798,10 +1817,15 @@ impl<R: Replica> SyncDriver<R> {
                     role: link.share.entry_role,
                     joined_at: now_ms(),
                 };
-                // Someone already in (back after a restart) or back after
-                // leaving never waits; one thrown out always does, whatever
-                // the invitation says, until an organizer lets it back in.
-                let returning = link.share.departed.contains(&from);
+                // Someone already in (back after a restart) never waits, nor
+                // one back after leaving when nobody had to let it in then;
+                // one thrown out always does, whatever the invitation says,
+                // until an organizer lets it back in.
+                let returning = link
+                    .share
+                    .departed
+                    .iter()
+                    .any(|d| d.device == from && d.straight_in);
                 let waits =
                     (link.share.approve_entry && !returning) || link.share.was_expelled(from);
                 if waits && !link.share.is_member(from) {
@@ -5231,6 +5255,41 @@ mod tests {
 
     /// Leaving keeps the invitation, so the member can ask back in; the
     /// owner keeps what it ended, so it can open it again under a new key.
+    #[test]
+    fn coming_back_waits_as_entry_did_when_it_left_and_can_be_closed() {
+        // Left while newcomers had to be let in: it waits too.
+        let (mut owner, mut guest, id) = joined_then_apart();
+        owner.shares.get_mut(&id).unwrap().share.approve_entry = true;
+        connect_both(&mut owner, &mut guest);
+        deliver(guest.leave_share(id), &mut guest, &mut owner);
+        let events = deliver(guest.rejoin(id), &mut guest, &mut owner);
+        assert!(events.contains(&DriverEvent::JoinPending(id)), "{events:?}");
+        assert!(guest.share(id).is_none());
+
+        // Left while entry was open: straight back, unless the owner
+        // closed that way.
+        for closed in [false, true] {
+            let (mut owner, mut guest, id) = joined_then_apart();
+            connect_both(&mut owner, &mut guest);
+            deliver(guest.leave_share(id), &mut guest, &mut owner);
+            owner.shares.get_mut(&id).unwrap().share.approve_entry = true;
+            if closed {
+                assert!(!owner.forget_departed(id, guest.profile.id()).is_empty());
+            }
+            let events = deliver(guest.rejoin(id), &mut guest, &mut owner);
+            assert_eq!(guest.share(id).is_some(), !closed, "{events:?}");
+        }
+
+        // Thrown out after leaving: its way back closes too.
+        let (mut owner, mut guest, id) = joined_then_apart();
+        connect_both(&mut owner, &mut guest);
+        deliver(guest.leave_share(id), &mut guest, &mut owner);
+        owner.expel(id, guest.profile.id());
+        assert!(owner.share(id).unwrap().was_expelled(guest.profile.id()));
+        deliver(guest.rejoin(id), &mut guest, &mut owner);
+        assert!(guest.share(id).is_none());
+    }
+
     #[test]
     fn recent_shares_can_be_rejoined_or_reopened() {
         let mut owner = driver("Sergio");

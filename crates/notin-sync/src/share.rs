@@ -16,6 +16,8 @@ use crate::replica::{BlobKey, BlobKind, DocId, Scope};
 const LINK_SCHEME: &str = "notein://join?";
 /// Earlier keys a share keeps for what was sealed with them.
 const PREVIOUS_KEYS: usize = 32;
+/// Devices that walked away a share remembers.
+const DEPARTED_MAX: usize = 64;
 
 /// Identifies a share everywhere it travels.
 #[derive(bincode::Encode, bincode::Decode, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -171,10 +173,10 @@ pub struct Share {
     /// Members the owner threw out, so one that was away hears it when
     /// it comes back. Kept by the owner only.
     pub expelled: Vec<DeviceId>,
-    /// Members that walked away themselves: their old invitation still
-    /// lets them back, though the key changed when they left. Kept by
-    /// the owner only.
-    pub departed: Vec<DeviceId>,
+    /// Members that walked away themselves, most recent last: their old
+    /// invitation still lets them back, though the key changed when they
+    /// left. Kept by the owner only.
+    pub departed: Vec<Departed>,
     /// The key each device waiting in proved it holds, to seal its
     /// answer with. Kept by the owner only.
     pub knocked_with: Vec<(DeviceId, ShareKey)>,
@@ -396,7 +398,7 @@ impl Share {
             ..member
         };
         self.expelled.retain(|d| *d != member.device);
-        self.departed.retain(|d| *d != member.device);
+        self.departed.retain(|d| d.device != member.device);
         self.pending.retain(|p| p.device != member.device);
         if let Some(existing) = self.members.iter_mut().find(|m| m.device == member.device) {
             *existing = member;
@@ -462,11 +464,25 @@ impl Share {
 
     /// Throw a member out, remembering it; returns whether it was in.
     pub fn expel(&mut self, device: DeviceId) -> bool {
-        let removed = self.remove_member(device);
+        let removed = self.remove_member(device) | self.forget_departed(device);
         if removed && !self.expelled.contains(&device) {
             self.expelled.push(device);
         }
         removed
+    }
+
+    /// Stop letting a device that walked away back in with its old
+    /// invitation; returns whether it could.
+    pub fn forget_departed(&mut self, device: DeviceId) -> bool {
+        let before = self.departed.len();
+        self.departed.retain(|d| d.device != device);
+        self.departed.len() != before
+    }
+
+    /// The device walked away on its own and may come back.
+    #[must_use]
+    pub fn has_departed(&self, device: DeviceId) -> bool {
+        self.departed.iter().any(|d| d.device == device)
     }
 
     /// A member walks away on its own from the membership that began at
@@ -476,8 +492,15 @@ impl Share {
             return false;
         }
         let removed = self.remove_member(device);
-        if removed && !self.departed.contains(&device) {
-            self.departed.push(device);
+        if removed {
+            self.forget_departed(device);
+            self.departed.push(Departed {
+                device,
+                straight_in: !self.approve_entry,
+            });
+            if self.departed.len() > DEPARTED_MAX {
+                self.departed.remove(0);
+            }
         }
         removed
     }
@@ -593,6 +616,15 @@ impl Share {
             left_at: now,
         }
     }
+}
+
+/// A member that walked away on its own.
+#[derive(bincode::Encode, bincode::Decode, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Departed {
+    pub device: DeviceId,
+    /// Nobody had to let newcomers in when it left, so coming back it
+    /// does not wait either.
+    pub straight_in: bool,
 }
 
 /// What travels in an invitation link or QR.
@@ -724,7 +756,7 @@ pub fn proof_is_valid(share: &Share, proof: &[u8], joiner: &[u8; 32]) -> bool {
 pub fn proof_key<'a>(share: &'a Share, proof: &[u8], joiner: &[u8; 32]) -> Option<&'a ShareKey> {
     // Earlier keys only for who was let in already, or left on its own.
     let device = DeviceId::of_public_key(joiner);
-    let known = share.departed.contains(&device) || share.is_member(device);
+    let known = share.has_departed(device) || share.is_member(device);
     let expected = share.id.proof_plain(joiner);
     std::iter::once(&share.key)
         .chain(share.previous.iter().filter(|_| known))
@@ -1285,5 +1317,17 @@ mod tests {
             ShareMessage::open_in(&old, &before),
             Some(ShareMessage::Ended)
         );
+    }
+
+    #[test]
+    fn a_share_remembers_only_so_many_departures() {
+        let key = DeviceKey::generate();
+        let mut share = Share::new(member_of(&key, Role::Owner), "x", ShareMode::Session, 1);
+        for i in 0..70u8 {
+            let device = DeviceKey::generate();
+            share.admit(member_of(&device, Role::Editor));
+            assert!(share.depart(device.id(), 1), "{i}");
+        }
+        assert_eq!(share.departed.len(), DEPARTED_MAX);
     }
 }
