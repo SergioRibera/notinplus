@@ -42,6 +42,8 @@ tokio = { version = "1", features = ["rt", "time", "sync", "macros", "net"] }
 ed25519-dalek = "3.0"
 # Compares secrets without telling how much of a guess was right.
 subtle = "2.6"
+# X25519 between two devices, to hand a new share key to each member alone.
+curve25519-dalek = "5.0"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net"] }

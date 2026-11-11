@@ -1114,8 +1114,10 @@ impl Service {
                 self.driver.profile_mut().set_relay(Some(relay.to_string()));
                 self.save_profile();
             }
-            // The next snapshot shows the new path.
-            DriverEvent::PeerOnline { online: true, .. }
+            // The next snapshot shows the new path, and the invitation
+            // made again with the share's new key.
+            DriverEvent::InviteRenewed(_)
+            | DriverEvent::PeerOnline { online: true, .. }
             | DriverEvent::RelayOnline(_)
             | DriverEvent::PathChanged { .. } => {}
             DriverEvent::Live {

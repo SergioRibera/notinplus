@@ -14,6 +14,8 @@ use crate::relay::RecordKind;
 use crate::replica::{BlobKey, BlobKind, DocId, Scope};
 
 const LINK_SCHEME: &str = "notein://join?";
+/// Earlier keys a share keeps for what was sealed with them.
+const PREVIOUS_KEYS: usize = 32;
 
 /// Identifies a share everywhere it travels.
 #[derive(bincode::Encode, bincode::Decode, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -169,6 +171,10 @@ pub struct Share {
     /// Members the owner threw out, so one that was away hears it when
     /// it comes back. Kept by the owner only.
     pub expelled: Vec<DeviceId>,
+    /// Members that walked away themselves: their old invitation still
+    /// lets them back, though the key changed when they left. Kept by
+    /// the owner only.
+    pub departed: Vec<DeviceId>,
     pub key: ShareKey,
     pub created_at: u64,
     pub updated_at: u64,
@@ -178,6 +184,11 @@ pub struct Share {
     /// The owner's relay, where members meet when no direct path
     /// exists: a [`crate::relay::RelayAddr`] as text.
     pub server: Option<String>,
+    /// How many times the owner changed the key; grows with each.
+    pub epoch: u32,
+    /// Keys the share had before, newest first, to open what was sealed
+    /// with them.
+    pub previous: Vec<ShareKey>,
 }
 
 impl bincode::Encode for ShareKey {
@@ -221,12 +232,63 @@ impl Share {
             members: Vec::new(),
             pending: Vec::new(),
             expelled: Vec::new(),
+            departed: Vec::new(),
             key: ShareKey::generate(),
             created_at: now,
             updated_at: now,
             relay_cursor: 0,
             server: None,
+            epoch: 0,
+            previous: Vec::new(),
         }
+    }
+
+    /// Open `sealed` with whichever of the share's keys sealed it.
+    #[must_use]
+    pub fn open_any(&self, sealed: &[u8]) -> Option<Vec<u8>> {
+        self.key_opening(sealed)?.open(sealed).ok()
+    }
+
+    /// The key of this share that sealed `sealed`.
+    #[must_use]
+    pub fn key_opening(&self, sealed: &[u8]) -> Option<&ShareKey> {
+        std::iter::once(&self.key)
+            .chain(&self.previous)
+            .find(|key| key.open(sealed).is_ok())
+    }
+
+    /// The owner's new key: the current one joins the earlier ones.
+    pub fn rotate(&mut self, key: ShareKey) {
+        let old = std::mem::replace(&mut self.key, key);
+        self.previous.insert(0, old);
+        self.previous.truncate(PREVIOUS_KEYS);
+        self.epoch = self.epoch.saturating_add(1);
+    }
+
+    /// Take the keys the owner handed over for `epoch`, newest first.
+    /// Returns whether they were new here.
+    pub fn adopt_keys(&mut self, epoch: u32, keys: Vec<ShareKey>) -> bool {
+        if epoch <= self.epoch {
+            return false;
+        }
+        let mut keys = keys.into_iter();
+        let Some(newest) = keys.next() else {
+            return false;
+        };
+        let mut known: Vec<ShareKey> = std::iter::once(std::mem::replace(&mut self.key, newest))
+            .chain(std::mem::take(&mut self.previous))
+            .chain(keys)
+            .collect();
+        let mut seen = Vec::new();
+        known.retain(|k| {
+            let fresh = *k != self.key && !seen.contains(k);
+            seen.push(k.clone());
+            fresh
+        });
+        known.truncate(PREVIOUS_KEYS);
+        self.previous = known;
+        self.epoch = epoch;
+        true
     }
 
     /// Mark a change by the owner. `updated_at` only ever grows, so a
@@ -330,6 +392,7 @@ impl Share {
             ..member
         };
         self.expelled.retain(|d| *d != member.device);
+        self.departed.retain(|d| *d != member.device);
         self.pending.retain(|p| p.device != member.device);
         if let Some(existing) = self.members.iter_mut().find(|m| m.device == member.device) {
             *existing = member;
@@ -385,6 +448,15 @@ impl Share {
         let removed = self.remove_member(device);
         if removed && !self.expelled.contains(&device) {
             self.expelled.push(device);
+        }
+        removed
+    }
+
+    /// A member walks away on its own; returns whether it was inside.
+    pub fn depart(&mut self, device: DeviceId) -> bool {
+        let removed = self.remove_member(device);
+        if removed && !self.departed.contains(&device) {
+            self.departed.push(device);
         }
         removed
     }
@@ -463,6 +535,7 @@ impl Share {
         Self {
             relay_cursor: 0,
             expelled: Vec::new(),
+            departed: Vec::new(),
             pending: Vec::new(),
             ..self.clone()
         }
@@ -615,14 +688,27 @@ impl ShareId {
 }
 
 /// Check a joiner's proof against the share's key and the public key of
-/// the device that sent it.
+/// the device that sent it. One that left on its own may prove it with
+/// the key of its old invitation.
 #[must_use]
 #[cfg_attr(feature = "sismo", sismo::function("sync::share::proof_is_valid"))]
 pub fn proof_is_valid(share: &Share, proof: &[u8], joiner: &[u8; 32]) -> bool {
-    share.key.open(proof).is_ok_and(|plain| {
-        subtle::ConstantTimeEq::ct_eq(plain.as_slice(), share.id.proof_plain(joiner).as_slice())
-            .into()
-    })
+    proof_key(share, proof, joiner).is_some()
+}
+
+/// The key a valid proof was made with, which the answer is sealed with
+/// so the joiner can read it.
+#[must_use]
+pub fn proof_key<'a>(share: &'a Share, proof: &[u8], joiner: &[u8; 32]) -> Option<&'a ShareKey> {
+    let departed = share.departed.contains(&DeviceId::of_public_key(joiner));
+    let expected = share.id.proof_plain(joiner);
+    std::iter::once(&share.key)
+        .chain(share.previous.iter().filter(|_| departed))
+        .find(|key| {
+            key.open(proof).is_ok_and(|plain| {
+                subtle::ConstantTimeEq::ct_eq(plain.as_slice(), expected.as_slice()).into()
+            })
+        })
 }
 
 /// A share its owner closed, kept so a member that was away is told
@@ -776,6 +862,12 @@ impl ShareMessage {
             .map(|(message, _)| message)
     }
 
+    /// [`Self::open`] with whichever of the share's keys sealed it.
+    #[must_use]
+    pub fn open_in(share: &Share, sealed: &[u8]) -> Option<Self> {
+        Self::open(share.key_opening(sealed)?, sealed)
+    }
+
     /// Seal for a relay mailbox of `share`, signed by `author`. Anyone
     /// holding the share key can seal, and the relay says who sent a
     /// record; only the signature tells who wrote it.
@@ -804,7 +896,8 @@ impl ShareMessage {
         sealed: &[u8],
         kind: RecordKind,
     ) -> Result<(DeviceId, Self), Unopened> {
-        let plain = share.key.open(sealed).map_err(|_| Unopened::Invalid)?;
+        // A key not held here yet may be one the owner has still to hand over.
+        let plain = share.open_any(sealed).ok_or(Unopened::Stranger)?;
         let (record, _): (SignedRecord, usize) =
             bincode::decode_from_slice(&plain, bincode::config::standard())
                 .map_err(|_| Unopened::Invalid)?;
@@ -833,6 +926,54 @@ pub enum Unopened {
     Stranger,
     /// Not sealed for the share, not signed, or signed for something else.
     Invalid,
+}
+
+/// The share's keys from `epoch`, newest first, for one member alone.
+///
+/// Sealed for the member whose transport key is `member` under what only
+/// the owner and that member can work out, so the relay and everyone
+/// else, an expelled member included, see nothing.
+#[must_use]
+pub fn seal_keys(
+    owner: &DeviceKey,
+    member: &[u8; 32],
+    share: ShareId,
+    epoch: u32,
+    keys: &[ShareKey],
+) -> Vec<u8> {
+    let plain = bincode::encode_to_vec(keys, bincode::config::standard()).unwrap_or_default();
+    let boxed = key_box(&owner.agree(member), share, epoch)
+        .seal(&plain)
+        .unwrap_or_default();
+    [epoch.to_be_bytes().as_slice(), &boxed].concat()
+}
+
+/// Reverse of [`seal_keys`] on the member's side: the epoch and keys.
+#[must_use]
+pub fn open_keys(
+    me: &DeviceKey,
+    owner: &[u8; 32],
+    share: ShareId,
+    sealed: &[u8],
+) -> Option<(u32, Vec<ShareKey>)> {
+    let (epoch, boxed) = sealed.split_first_chunk::<4>()?;
+    let epoch = u32::from_be_bytes(*epoch);
+    let plain = key_box(&me.agree(owner), share, epoch).open(boxed).ok()?;
+    let (keys, _): (Vec<ShareKey>, usize) =
+        bincode::decode_from_slice(&plain, bincode::config::standard()).ok()?;
+    Some((epoch, keys))
+}
+
+fn key_box(shared: &[u8; 32], share: ShareId, epoch: u32) -> ShareKey {
+    use blake2::{Blake2s256, Digest};
+    let key: [u8; 32] = Blake2s256::new()
+        .chain_update(b"notin-share-keys")
+        .chain_update(shared)
+        .chain_update(share.0)
+        .chain_update(epoch.to_be_bytes())
+        .finalize()
+        .into();
+    ShareKey::from(key)
 }
 
 /// A [`ShareMessage`] with the signature of the member that wrote it.
@@ -1064,5 +1205,59 @@ mod tests {
             ShareMessage::open_signed(&share, &sealed, kind),
             Err(Unopened::Stranger)
         ));
+    }
+
+    #[test]
+    fn new_keys_open_for_their_member_alone() {
+        let owner = DeviceKey::generate();
+        let member = DeviceKey::generate();
+        let other = DeviceKey::generate();
+        let share = ShareId([1; 16]);
+        let keys = vec![ShareKey::generate(), ShareKey::generate()];
+        let sealed = seal_keys(&owner, member.public(), share, 3, &keys);
+        assert_eq!(
+            open_keys(&member, owner.public(), share, &sealed),
+            Some((3, keys))
+        );
+        assert!(open_keys(&other, owner.public(), share, &sealed).is_none());
+        assert!(open_keys(&member, other.public(), share, &sealed).is_none());
+        assert!(open_keys(&member, owner.public(), ShareId([2; 16]), &sealed).is_none());
+    }
+
+    #[test]
+    fn a_share_opens_what_any_of_its_keys_sealed() {
+        let key = DeviceKey::generate();
+        let mut share = Share::new(member_of(&key, Role::Owner), "x", ShareMode::Permanent, 1);
+        let before = ShareMessage::Ended.seal(&share.key);
+        share.rotate(ShareKey::generate());
+        let after = ShareMessage::Ended.seal(&share.key);
+        assert_eq!(share.epoch, 1);
+        assert_eq!(
+            ShareMessage::open_in(&share, &before),
+            Some(ShareMessage::Ended)
+        );
+        assert_eq!(
+            ShareMessage::open_in(&share, &after),
+            Some(ShareMessage::Ended)
+        );
+        // A member holding only the old key opens the old, never the new.
+        let mut old = share.clone();
+        old.key = share.previous[0].clone();
+        old.previous.clear();
+        old.epoch = 0;
+        assert!(ShareMessage::open_in(&old, &after).is_none());
+        assert!(
+            !old.adopt_keys(0, vec![share.key.clone()]),
+            "an older epoch is ignored"
+        );
+        assert!(old.adopt_keys(1, vec![share.key.clone()]));
+        assert_eq!(
+            ShareMessage::open_in(&old, &after),
+            Some(ShareMessage::Ended)
+        );
+        assert_eq!(
+            ShareMessage::open_in(&old, &before),
+            Some(ShareMessage::Ended)
+        );
     }
 }

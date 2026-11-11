@@ -12,6 +12,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::cipher::ShareKey;
 use crate::engine::{Message, SyncEngine};
 use crate::error::SyncError;
 use crate::identity::{DeviceId, DeviceProfile, PairingCode, PairingSecret, TrustedDevice};
@@ -20,7 +21,7 @@ use crate::relay::{KnockToken, RecordKind, RelayAddr, RelayMessage};
 use crate::replica::{BlobKey, BlobKind, DocId, Replica, Scope, Version};
 use crate::share::{
     EndedShare, Invite, LeftShare, Member, Role, Share, ShareBook, ShareEdit, ShareId,
-    ShareMessage, ShareMode, Unopened, proof_is_valid,
+    ShareMessage, ShareMode, Unopened, open_keys, proof_key, seal_keys,
 };
 
 /// How long a pairing offer stays valid.
@@ -90,6 +91,12 @@ pub enum Payload {
     },
     /// The owner's answer, sealed with the share key.
     JoinReply {
+        share: ShareId,
+        sealed: Vec<u8>,
+    },
+    /// The share's new keys from its owner, sealed for the receiver
+    /// alone (see [`seal_keys`]).
+    Keys {
         share: ShareId,
         sealed: Vec<u8>,
     },
@@ -316,6 +323,10 @@ pub enum DriverEvent {
         doc: DocId,
         bytes: Vec<u8>,
     },
+    /// The share changed its key: earlier invitations no longer let
+    /// anyone in, so the one shown should be made again with
+    /// [`SyncDriver::invite_for`].
+    InviteRenewed(ShareId),
     /// The channel to a device moved onto a direct path or back to the
     /// relay; see [`SyncDriver::path_to`].
     PathChanged {
@@ -919,10 +930,73 @@ impl<R: Replica> SyncDriver<R> {
             .hold(device, id, Held::Removal, payload)
             .into_iter()
             .collect();
-        out.extend(self.broadcast_meta(id));
+        out.extend(self.rekey(id));
+        out
+    }
+
+    /// Owner side, once someone is out: a new key for everyone still in,
+    /// so nothing sealed from now on opens with the one the departed
+    /// device keeps. Each member gets it over its open channel and, for
+    /// when it is away, in the mailbox sealed for it alone. The relay
+    /// learns the new knock token, so the old invitation stops working.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::driver::rekey"))]
+    fn rekey(&mut self, id: ShareId) -> Vec<Action> {
+        let me = self.profile.id();
+        let Some(link) = self.shares.get_mut(&id) else {
+            return Vec::new();
+        };
+        if !link.share.is_owner(me) {
+            return Vec::new();
+        }
+        link.share.rotate(ShareKey::generate());
+        link.share.touch(now_ms());
+        let share = link.share.clone();
+        let keys: Vec<ShareKey> = std::iter::once(share.key.clone())
+            .chain(share.previous.iter().cloned())
+            .collect();
+        let relay = self.share_relay(id);
+        let mut out = Vec::new();
+        for member in &share.members {
+            let sealed = seal_keys(self.profile.key(), &member.public, id, share.epoch, &keys);
+            if self.connected.contains_key(&member.device) {
+                out.push(send(
+                    member.device,
+                    &Payload::Keys {
+                        share: id,
+                        sealed: sealed.clone(),
+                    },
+                ));
+            }
+            out.extend(relay.and_then(|relay| {
+                self.relay_send(
+                    relay,
+                    &RelayMessage::Publish {
+                        share: id,
+                        kind: RecordKind::Keys { to: member.public },
+                        sealed,
+                    },
+                )
+            }));
+        }
         out.extend(self.relay_register(id));
+        out.extend(self.broadcast_meta(id));
+        out.push(Action::Event(DriverEvent::InviteRenewed(id)));
         out.push(Action::Event(DriverEvent::ShareChanged(id)));
         out
+    }
+
+    /// Member side: keys the owner of `id` handed over. Returns whether
+    /// they were new.
+    fn take_keys(&mut self, id: ShareId, from: DeviceId, sealed: &[u8]) -> bool {
+        let Some(link) = self.shares.get_mut(&id) else {
+            return false;
+        };
+        if !link.share.is_owner(from) {
+            return false;
+        }
+        let owner = link.share.owner.public;
+        open_keys(self.profile.key(), &owner, id, sealed)
+            .is_some_and(|(epoch, keys)| link.share.adopt_keys(epoch, keys))
     }
 
     /// Owner closes the share for everyone.
@@ -1394,6 +1468,14 @@ impl<R: Replica> SyncDriver<R> {
             Payload::JoinReply { share, sealed } => {
                 self.on_join_reply(from, share, &sealed, out)?;
             }
+            Payload::Keys { share, sealed } => {
+                if self.take_keys(share, from, &sealed) {
+                    // What waited for this key opens now.
+                    if self.take_records(share, Vec::new(), out)? {
+                        out.push(Action::Event(DriverEvent::ShareChanged(share)));
+                    }
+                }
+            }
             Payload::Relay(bytes) => {
                 #[cfg(feature = "sismo")]
                 sismo::counter!("sync.in.relay_bytes", bytes.len());
@@ -1499,7 +1581,7 @@ impl<R: Replica> SyncDriver<R> {
         if !link.share.is_member(from) {
             return Ok(());
         }
-        let Some(message) = ShareMessage::open(&link.share.key, sealed) else {
+        let Some(message) = ShareMessage::open_in(&link.share, sealed) else {
             return Ok(());
         };
         let me = self.profile.id();
@@ -1571,11 +1653,9 @@ impl<R: Replica> SyncDriver<R> {
                 self.removed_by_owner(from, id, Removal::Expelled, out);
             }
             ShareMessage::Left => {
-                if link.share.is_owner(me) && link.share.remove_member(from) {
-                    link.share.touch(now_ms());
+                if link.share.is_owner(me) && link.share.depart(from) {
                     link.engine.forget_peer(from);
-                    out.extend(self.broadcast_meta(id));
-                    out.push(Action::Event(DriverEvent::ShareChanged(id)));
+                    out.extend(self.rekey(id));
                 }
             }
             ShareMessage::Edit(edit) => {
@@ -1604,7 +1684,7 @@ impl<R: Replica> SyncDriver<R> {
         } else {
             JoinAnswer::Refused
         };
-        let sealed = seal_answer(&link.share, &answer);
+        let sealed = seal_answer(&link.share.key, &answer);
         let mut out: Vec<Action> = self
             .hold(
                 device,
@@ -1636,7 +1716,8 @@ impl<R: Replica> SyncDriver<R> {
             if !share.is_owner(me) || !share.was_expelled(from) {
                 return None;
             }
-            (&share.key, ShareMessage::Expelled)
+            // Told with the key it still holds, from before it was out.
+            (share.key_opening(sealed)?, ShareMessage::Expelled)
         } else {
             let ended = self.ended.get(&id)?;
             if !ended.members.contains(&from) {
@@ -1692,10 +1773,14 @@ impl<R: Replica> SyncDriver<R> {
             return Ok(());
         };
         let me = self.profile.id();
-        let answer = match self.shares.get_mut(&id) {
-            Some(link)
-                if link.share.is_owner(me) && proof_is_valid(&link.share, &ask.proof, &public) =>
-            {
+        // Answers go sealed with the key the joiner proved it holds.
+        let key = self
+            .shares
+            .get(&id)
+            .filter(|link| link.share.is_owner(me))
+            .and_then(|link| proof_key(&link.share, &ask.proof, &public).cloned());
+        let answer = match (self.shares.get_mut(&id), key) {
+            (Some(link), Some(key)) => {
                 let member = Member {
                     device: from,
                     public,
@@ -1705,13 +1790,15 @@ impl<R: Replica> SyncDriver<R> {
                     role: link.share.entry_role,
                     joined_at: now_ms(),
                 };
-                // Someone already in (back after a restart) never waits; one
-                // thrown out always does, whatever the invitation says, until
-                // an organizer lets it back in.
-                let waits = link.share.approve_entry || link.share.was_expelled(from);
+                // Someone already in (back after a restart) or back after
+                // leaving never waits; one thrown out always does, whatever
+                // the invitation says, until an organizer lets it back in.
+                let returning = link.share.departed.contains(&from);
+                let waits =
+                    (link.share.approve_entry && !returning) || link.share.was_expelled(from);
                 if waits && !link.share.is_member(from) {
                     let fresh = link.share.knock(member.clone());
-                    let sealed = seal_answer(&link.share, &JoinAnswer::Pending);
+                    let sealed = seal_answer(&key, &JoinAnswer::Pending);
                     out.extend(self.route(from, &Payload::JoinReply { share: id, sealed }));
                     if fresh {
                         out.push(Action::Event(DriverEvent::EntryRequested {
@@ -1725,7 +1812,7 @@ impl<R: Replica> SyncDriver<R> {
                 link.share.admit(member);
                 link.share.touch(now_ms());
                 let welcome = JoinAnswer::Welcome(Box::new(link.share.for_member()));
-                let sealed = seal_answer(&link.share, &welcome);
+                let sealed = seal_answer(&key, &welcome);
                 // The relay learns the new member before the welcome goes
                 // out, so the member's first subscription is accepted.
                 out.extend(self.relay_register(id));
@@ -1795,8 +1882,9 @@ impl<R: Replica> SyncDriver<R> {
                     && share.owner.sign == invite.owner.sign =>
             {
                 let server = share.server.clone().or(invite.server);
+                // The key is the owner's current one, which differs from the
+                // invitation's for a member coming back after it changed.
                 let share = Share {
-                    key: invite.key,
                     server,
                     relay_cursor: 0,
                     ..*share
@@ -2471,6 +2559,7 @@ impl<R: Replica> SyncDriver<R> {
         if let Some((device, public)) = learned {
             self.known_keys.insert(device, public);
         }
+        let someone_out = !told.is_empty();
         for (device, message) in told {
             self.forget_held(id, Some(device));
             let payload = Payload::Share {
@@ -2478,6 +2567,9 @@ impl<R: Replica> SyncDriver<R> {
                 sealed: message.seal(&key),
             };
             out.extend(self.hold(device, id, Held::Removal, payload));
+        }
+        if someone_out {
+            out.extend(self.rekey(id));
         }
         // The relay learns the new member before the welcome goes out,
         // so the member's first subscription is accepted.
@@ -2526,6 +2618,7 @@ pub fn relay_message(bytes: &[u8]) -> Option<RelayMessage> {
         | Payload::Share { .. }
         | Payload::Join { .. }
         | Payload::JoinReply { .. }
+        | Payload::Keys { .. }
         | Payload::Live { .. } => None,
     }
 }
@@ -3028,7 +3121,15 @@ impl<R: Replica> SyncDriver<R> {
                 batch.push((record, 0));
             }
         }
-        batch.sort_by_key(|(r, _)| (r.kind != RecordKind::Meta, r.seq));
+        // Keys open the rest; a view says who may write.
+        batch.sort_by_key(|(r, _)| {
+            let rank = match r.kind {
+                RecordKind::Keys { .. } => 0,
+                RecordKind::Meta => 1,
+                _ => 2,
+            };
+            (rank, r.seq)
+        });
         let mut touched = false;
         // What counted while the cursor waited on parked records.
         let mut top = start.max(held.top);
@@ -3077,6 +3178,27 @@ impl<R: Replica> SyncDriver<R> {
         let Some(link) = self.shares.get_mut(&id) else {
             return Ok(Taken::Dropped);
         };
+        if let RecordKind::Keys { to } = record.kind {
+            if to != *self.profile.key().public() {
+                return Ok(Taken::Applied(false));
+            }
+            let owner = link.share.owner.device;
+            return Ok(
+                if record.from == owner
+                    && open_keys(
+                        self.profile.key(),
+                        &link.share.owner.public,
+                        id,
+                        &record.sealed,
+                    )
+                    .is_some()
+                {
+                    Taken::Applied(self.take_keys(id, record.from, &record.sealed))
+                } else {
+                    Taken::Dropped
+                },
+            );
+        }
         // Only what a member signed counts, and only as that member: the
         // relay names the sender but anyone holding the key can seal.
         let (author, message) =
@@ -3131,12 +3253,10 @@ impl<R: Replica> SyncDriver<R> {
             }
             // Only for itself: the signature says who walked away.
             (ShareMessage::Left, RecordKind::Left)
-                if link.share.is_owner(me) && link.share.remove_member(author) =>
+                if link.share.is_owner(me) && link.share.depart(author) =>
             {
-                link.share.touch(now_ms());
                 link.engine.forget_peer(author);
-                out.extend(self.broadcast_meta(id));
-                out.extend(self.relay_register(id));
+                out.extend(self.rekey(id));
                 return Ok(Taken::Applied(true));
             }
             // Members only ever leave exchange records, their departure and
@@ -3169,7 +3289,8 @@ enum Taken {
 
 /// The owner's view `incoming` as this device adopts it, or `None` when
 /// it does not come from the owner or is not newer than what is held. The
-/// key and the owner stay as the invitation had them, and a share that
+/// keys and the owner stay as held here (keys come only sealed for this
+/// device), and a share that
 /// moved to another relay is read there from the start.
 fn fresh_meta(current: &Share, from: DeviceId, me: DeviceId, incoming: Share) -> Option<Share> {
     if !current.is_owner(from)
@@ -3186,6 +3307,8 @@ fn fresh_meta(current: &Share, from: DeviceId, me: DeviceId, incoming: Share) ->
     };
     Some(Share {
         key: current.key.clone(),
+        epoch: current.epoch,
+        previous: current.previous.clone(),
         owner: current.owner.clone(),
         relay_cursor,
         ..incoming
@@ -3249,9 +3372,9 @@ fn permitted(share: &Share, from: DeviceId, message: Message) -> Option<Message>
 }
 
 #[cfg_attr(feature = "sismo", sismo::function("sync::driver::seal_answer"))]
-fn seal_answer(share: &Share, answer: &JoinAnswer) -> Vec<u8> {
+fn seal_answer(key: &ShareKey, answer: &JoinAnswer) -> Vec<u8> {
     let plain = bincode::encode_to_vec(answer, bincode::config::standard()).unwrap_or_default();
-    share.key.seal(&plain).unwrap_or_default()
+    key.seal(&plain).unwrap_or_default()
 }
 
 fn send(device: DeviceId, payload: &Payload) -> Action {
@@ -4346,15 +4469,122 @@ mod tests {
         assert_eq!(c.own_relay, Some(mine));
     }
 
+    /// What `out` hands the relay `relay` to keep.
+    fn published(out: &[Action], relay: DeviceId) -> Vec<(RecordKind, Vec<u8>)> {
+        out.iter()
+            .filter_map(|a| match a {
+                Action::Send { device, bytes, .. } if *device == relay => {
+                    match relay_message(bytes) {
+                        Some(RelayMessage::Publish { kind, sealed, .. }) => Some((kind, sealed)),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_expelled_member_reads_nothing_sealed_after_it_is_out() {
+        let mut owner = driver("Sergio");
+        let mut guest = driver("Ana");
+        let mut carl = driver("Carl");
+        let mut eve = driver("Eve");
+        let share = shared_doc(&owner);
+        let id = share.id;
+        let invite = share.invite();
+        owner.create_share(share);
+        for member in [&mut guest, &mut carl, &mut eve] {
+            connect_both(&mut owner, member);
+            deliver(member.join(invite.clone()), member, &mut owner);
+            assert!(member.share(id).is_some());
+        }
+        // Carl and Eve go away; Ana stays connected.
+        for member in [&mut carl, &mut eve] {
+            owner
+                .on_event(NetEvent::Disconnected(member.profile.id()))
+                .unwrap();
+            member
+                .on_event(NetEvent::Disconnected(owner.profile.id()))
+                .unwrap();
+        }
+        let at_owner = on_relay(&mut owner);
+        let at_carl = on_relay(&mut carl);
+        let at_eve = on_relay(&mut eve);
+        let o = owner.profile.id();
+
+        let out = owner.expel(id, eve.profile.id());
+        assert!(out.contains(&Action::Event(DriverEvent::InviteRenewed(id))));
+        assert_eq!(owner.share(id).unwrap().epoch, 1);
+        let mut kept = published(&out, at_owner);
+        assert_eq!(
+            kept.iter()
+                .filter(|(k, _)| matches!(k, RecordKind::Keys { .. }))
+                .count(),
+            2,
+            "one for Ana, one for Carl, none for Eve"
+        );
+        deliver(out, &mut owner, &mut guest);
+        assert_eq!(guest.share(id).unwrap().epoch, 1, "Ana got it live");
+
+        // The owner writes after Eve is out.
+        mark(&owner, D1, 1, 50);
+        let out = owner.push_doc(D1).unwrap();
+        kept.extend(published(&out, at_owner));
+        deliver(out, &mut owner, &mut guest);
+        assert!(marks(&guest, D1).contains(&(1, 50)));
+
+        // A relay on Eve's side hands her everything it got.
+        let records: Vec<crate::relay::Record> = kept
+            .into_iter()
+            .zip(1..)
+            .map(|((kind, sealed), seq)| record(seq, o, kind, sealed))
+            .collect();
+        for (member, relay) in [(&mut carl, at_carl), (&mut eve, at_eve)] {
+            member
+                .on_event(from_relay(
+                    relay,
+                    &RelayMessage::Records {
+                        share: id,
+                        records: records.clone(),
+                    },
+                ))
+                .unwrap();
+        }
+        assert!(
+            marks(&carl, D1).contains(&(1, 50)),
+            "Carl, away, still syncs"
+        );
+        assert_eq!(carl.share(id).unwrap().epoch, 1);
+        assert!(
+            !marks(&eve, D1).contains(&(1, 50)),
+            "Eve read past her expulsion"
+        );
+        assert_eq!(eve.share(id).unwrap().epoch, 0);
+        let new_key = owner.share(id).unwrap().key.clone();
+        assert_ne!(eve.share(id).unwrap().key, new_key);
+        assert!(!eve.share(id).unwrap().previous.contains(&new_key));
+    }
+
     #[test]
     fn an_expelled_member_waits_for_an_organizer_to_come_back() {
         let (mut owner, mut guest, id) = joined_then_apart();
-        let invite = owner.share(id).unwrap().invite();
+        let old = owner.share(id).unwrap().invite();
         let device = guest.profile.id();
         owner.expel(id, device);
-        // Told it is out once it is back, then it tries the old link.
+        // Told it is out once it is back; the old link no longer works.
         connect_both(&mut owner, &mut guest);
         assert!(guest.share(id).is_none());
+        let events = deliver(guest.join(old), &mut guest, &mut owner);
+        assert!(
+            events.contains(&DriverEvent::JoinFailed {
+                share: id,
+                reason: JoinFailure::Refused,
+            }),
+            "{events:?}"
+        );
+        // Even with a new one it waits for someone to let it in.
+        let invite = owner.invite_for(id).unwrap();
         let events = deliver(guest.join(invite), &mut guest, &mut owner);
         assert!(events.contains(&DriverEvent::JoinPending(id)), "{events:?}");
         let share = owner.share(id).unwrap();
@@ -4415,6 +4645,11 @@ mod tests {
             ))
             .unwrap();
         assert!(!owner.share(id).unwrap().is_member(guest_id));
+        assert_eq!(
+            owner.share(id).unwrap().epoch,
+            1,
+            "a departure changes the key"
+        );
     }
 
     #[test]

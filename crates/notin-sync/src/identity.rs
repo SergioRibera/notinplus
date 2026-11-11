@@ -103,6 +103,15 @@ impl DeviceKey {
         ed25519_dalek::SigningKey::from_bytes(&seed)
     }
 
+    /// X25519 with the device whose transport key is `public`: the same
+    /// secret on both ends, known to nobody else.
+    #[must_use]
+    pub fn agree(&self, public: &[u8; 32]) -> [u8; 32] {
+        curve25519_dalek::montgomery::MontgomeryPoint(*public)
+            .mul_clamped(self.keypair.private)
+            .to_bytes()
+    }
+
     /// Public half of [`Self::signing`].
     #[must_use]
     pub fn sign_public(&self) -> [u8; 32] {
