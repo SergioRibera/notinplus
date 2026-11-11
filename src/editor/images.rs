@@ -35,7 +35,18 @@ const MAX_SIDE: u32 = 4096;
 const MAX_BYTES: u64 = 40 * 1024 * 1024;
 /// Most pixels an image may have to be decoded at all: a few bytes can
 /// claim a raster of gigabytes, and the drawing side decodes it whole.
-pub(crate) const MAX_PIXELS: u64 = 8192 * 8192;
+pub(crate) const MAX_PIXELS: u64 = if cfg!(any(target_os = "android", target_os = "ios")) {
+    4096 * 4096
+} else {
+    8192 * 8192
+};
+/// Longest side an image is handed to the screen at; bigger ones are
+/// scaled down first, so each one drawn holds a bounded raster.
+const SHOWN_SIDE: u32 = if cfg!(any(target_os = "android", target_os = "ios")) {
+    2048
+} else {
+    MAX_SIDE
+};
 /// Images kept decoded in memory, so remounting a note does not flash.
 const CACHE_LIMIT: usize = 48;
 
@@ -129,6 +140,11 @@ impl CleanImage {
     /// upright, cap its size and encode it again.
     #[sismo::function("images::clean")]
     pub(crate) fn from_raw(raw: &[u8]) -> Result<Self, ImageError> {
+        Self::fit(raw, MAX_SIDE)
+    }
+
+    /// [`Self::from_raw`], scaled to `side` at most.
+    fn fit(raw: &[u8], side: u32) -> Result<Self, ImageError> {
         sismo::counter!("images.raw_bytes", raw.len());
         let reader = ImageReader::new(Cursor::new(raw)).with_guessed_format()?;
         let format = reader.format();
@@ -144,9 +160,9 @@ impl CleanImage {
             image.apply_orientation(orientation);
             image
         };
-        if image.width().max(image.height()) > MAX_SIDE {
+        if image.width().max(image.height()) > side {
             sismo::scope!("images::resize");
-            image = image.resize(MAX_SIDE, MAX_SIDE, image::imageops::FilterType::Lanczos3);
+            image = image.resize(side, side, image::imageops::FilterType::Lanczos3);
         }
         sismo::scope!("images::encode");
         let mut bytes = Vec::new();
@@ -437,6 +453,12 @@ fn load(source: &Source) -> Result<Loaded, ImageError> {
     if !within_pixels(width, height) {
         return Err(ImageError::TooLarge);
     }
+    let (bytes, width, height) = if width.max(height) > SHOWN_SIDE {
+        let shown = CleanImage::fit(&bytes, SHOWN_SIDE)?;
+        (shown.bytes, shown.size.0, shown.size.1)
+    } else {
+        (bytes, width, height)
+    };
     let mut hasher = DefaultHasher::new();
     source.hash(&mut hasher);
     bytes.len().hash(&mut hasher);
@@ -726,6 +748,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert!(decodable(&claiming(1, 1)));
         assert!(!decodable(b"not an image"));
+    }
+
+    #[test]
+    fn an_image_wider_than_the_screen_takes_is_scaled_before_drawing() {
+        let mut raw = Vec::new();
+        DynamicImage::new_rgba8(SHOWN_SIDE * 2, 3)
+            .write_to(&mut Cursor::new(&mut raw), ImageFormat::Png)
+            .expect("encode");
+        let dir = std::env::temp_dir().join(format!("notin-wide-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("wide.png");
+        std::fs::write(&path, &raw).expect("write");
+        let loaded = load(&Source::File(path)).expect("load");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(loaded.width, SHOWN_SIDE);
+        let (width, _) = ImageReader::new(Cursor::new(&loaded.bytes[..]))
+            .with_guessed_format()
+            .expect("format")
+            .into_dimensions()
+            .expect("dimensions");
+        assert_eq!(width, SHOWN_SIDE);
     }
 
     #[test]
