@@ -525,8 +525,6 @@ enum Held {
     /// A change asked of the owner, as encoded: the same change asked
     /// again waits once.
     Edit(Vec<u8>),
-    /// An organizer's answer to the device's knock.
-    JoinReply,
 }
 
 /// A message held until a channel to its device opens.
@@ -1685,22 +1683,23 @@ impl<R: Replica> SyncDriver<R> {
     /// first round brings the content over, as after any welcome.
     #[cfg_attr(feature = "sismo", sismo::function("sync::driver::answer_join"))]
     fn answer_join(&mut self, id: ShareId, device: DeviceId, admitted: bool) -> Vec<Action> {
-        let Some(link) = self.shares.get(&id) else {
+        let Some(link) = self.shares.get_mut(&id) else {
             return Vec::new();
         };
+        // Sealed with the key the joiner proved it holds, which may be one
+        // the share had before. Such a key may be known to devices that are
+        // out since, so the answer only goes down the joiner's own channel,
+        // never to the mailbox; one away asks again on its return and, let
+        // in by then, is welcomed at once.
+        let key = link.share.take_knock_key(device);
         let answer = if admitted {
             JoinAnswer::Welcome(Box::new(link.share.for_member()))
         } else {
             JoinAnswer::Refused
         };
-        let sealed = seal_answer(&link.share.key, &answer);
+        let sealed = seal_answer(&key, &answer);
         let mut out: Vec<Action> = self
-            .hold(
-                device,
-                id,
-                Held::JoinReply,
-                Payload::JoinReply { share: id, sealed },
-            )
+            .route(device, &Payload::JoinReply { share: id, sealed })
             .into_iter()
             .collect();
         if admitted {
@@ -1806,6 +1805,7 @@ impl<R: Replica> SyncDriver<R> {
                 let waits =
                     (link.share.approve_entry && !returning) || link.share.was_expelled(from);
                 if waits && !link.share.is_member(from) {
+                    link.share.remember_knock_key(from, key.clone());
                     let fresh = link.share.knock(member.clone());
                     let sealed = seal_answer(&key, &JoinAnswer::Pending);
                     out.extend(self.route(from, &Payload::JoinReply { share: id, sealed }));
@@ -4491,6 +4491,56 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn a_knock_let_in_after_the_key_changed_still_opens_its_welcome() {
+        let (mut owner, _guest, eve, id) = three_members();
+        owner.shares.get_mut(&id).unwrap().share.approve_entry = true;
+        let invite = owner.share(id).unwrap().invite();
+        let mut carl = driver("Carl");
+        connect_both(&mut owner, &mut carl);
+        let events = deliver(carl.join(invite), &mut carl, &mut owner);
+        assert!(events.contains(&DriverEvent::JoinPending(id)));
+        owner.expel(id, eve.profile.id());
+        assert_eq!(owner.share(id).unwrap().epoch, 1);
+        let carl_id = carl.profile.id();
+        let approve = ShareEdit::Approve {
+            device: carl_id,
+            role: Role::Editor,
+        };
+        // Away when let in: nothing waits for it in the outbox.
+        owner.on_event(NetEvent::Disconnected(carl_id)).unwrap();
+        carl.on_event(NetEvent::Disconnected(owner.profile.id()))
+            .unwrap();
+        owner.edit_share(id, approve);
+        assert!(owner.share(id).unwrap().is_member(carl_id));
+        assert!(!owner.outbox.contains_key(&carl_id));
+        // Back, it asks again and is welcomed with what it can open.
+        connect_both(&mut owner, &mut carl);
+        let share = carl.share(id).expect("welcomed");
+        assert_eq!(share.epoch, 1);
+        assert_eq!(share.key, owner.share(id).unwrap().key);
+    }
+
+    #[test]
+    fn an_answer_for_a_knock_goes_sealed_with_the_key_it_knocked_with() {
+        let (mut owner, _guest, eve, id) = three_members();
+        owner.shares.get_mut(&id).unwrap().share.approve_entry = true;
+        let invite = owner.share(id).unwrap().invite();
+        let mut carl = driver("Carl");
+        connect_both(&mut owner, &mut carl);
+        deliver(carl.join(invite), &mut carl, &mut owner);
+        owner.expel(id, eve.profile.id());
+        let out = owner.edit_share(
+            id,
+            ShareEdit::Approve {
+                device: carl.profile.id(),
+                role: Role::Editor,
+            },
+        );
+        deliver(out, &mut owner, &mut carl);
+        assert_eq!(carl.share(id).map(|s| s.epoch), Some(1));
     }
 
     #[test]

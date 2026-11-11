@@ -175,6 +175,9 @@ pub struct Share {
     /// lets them back, though the key changed when they left. Kept by
     /// the owner only.
     pub departed: Vec<DeviceId>,
+    /// The key each device waiting in proved it holds, to seal its
+    /// answer with. Kept by the owner only.
+    pub knocked_with: Vec<(DeviceId, ShareKey)>,
     pub key: ShareKey,
     pub created_at: u64,
     pub updated_at: u64,
@@ -233,6 +236,7 @@ impl Share {
             pending: Vec::new(),
             expelled: Vec::new(),
             departed: Vec::new(),
+            knocked_with: Vec::new(),
             key: ShareKey::generate(),
             created_at: now,
             updated_at: now,
@@ -418,6 +422,19 @@ impl Share {
         }
     }
 
+    /// Keep the key `device` proved it holds while it waits.
+    pub fn remember_knock_key(&mut self, device: DeviceId, key: ShareKey) {
+        self.knocked_with.retain(|(d, _)| *d != device);
+        self.knocked_with.push((device, key));
+    }
+
+    /// The key to seal `device`'s answer with: the one it knocked with,
+    /// else the current one.
+    pub fn take_knock_key(&mut self, device: DeviceId) -> ShareKey {
+        let at = self.knocked_with.iter().position(|(d, _)| *d == device);
+        at.map_or_else(|| self.key.clone(), |at| self.knocked_with.remove(at).1)
+    }
+
     /// Take someone off the waiting list.
     pub fn answer(&mut self, device: DeviceId) -> Option<Member> {
         let at = self.pending.iter().position(|p| p.device == device)?;
@@ -540,6 +557,7 @@ impl Share {
             relay_cursor: 0,
             expelled: Vec::new(),
             departed: Vec::new(),
+            knocked_with: Vec::new(),
             pending: Vec::new(),
             ..self.clone()
         }
@@ -692,8 +710,8 @@ impl ShareId {
 }
 
 /// Check a joiner's proof against the share's key and the public key of
-/// the device that sent it. One that left on its own may prove it with
-/// the key of its old invitation.
+/// the device that sent it. A member already in, or one that left on its
+/// own, may prove it with the key of its old invitation.
 #[must_use]
 #[cfg_attr(feature = "sismo", sismo::function("sync::share::proof_is_valid"))]
 pub fn proof_is_valid(share: &Share, proof: &[u8], joiner: &[u8; 32]) -> bool {
@@ -704,10 +722,12 @@ pub fn proof_is_valid(share: &Share, proof: &[u8], joiner: &[u8; 32]) -> bool {
 /// so the joiner can read it.
 #[must_use]
 pub fn proof_key<'a>(share: &'a Share, proof: &[u8], joiner: &[u8; 32]) -> Option<&'a ShareKey> {
-    let departed = share.departed.contains(&DeviceId::of_public_key(joiner));
+    // Earlier keys only for who was let in already, or left on its own.
+    let device = DeviceId::of_public_key(joiner);
+    let known = share.departed.contains(&device) || share.is_member(device);
     let expected = share.id.proof_plain(joiner);
     std::iter::once(&share.key)
-        .chain(share.previous.iter().filter(|_| departed))
+        .chain(share.previous.iter().filter(|_| known))
         .find(|key| {
             key.open(proof).is_ok_and(|plain| {
                 subtle::ConstantTimeEq::ct_eq(plain.as_slice(), expected.as_slice()).into()
