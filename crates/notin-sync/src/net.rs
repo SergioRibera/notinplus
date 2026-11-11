@@ -7,7 +7,7 @@
 
 use std::fmt;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use crate::identity::{DeviceId, DeviceKey};
@@ -68,7 +68,12 @@ pub struct PeerInfo {
     pub device: DeviceId,
     pub public: [u8; 32],
     pub name: String,
+    /// Where frames go: the device itself, or the relay carrying its
+    /// session when [`Self::relayed`].
     pub addr: SocketAddr,
+    /// The channel runs through a relay rather than straight to the
+    /// device. A punched channel goes direct and reports `false`.
+    pub relayed: bool,
     /// The run of the process it is in, see [`session_id`].
     pub session: u64,
 }
@@ -81,6 +86,7 @@ impl PeerInfo {
             public: beacon.public,
             name: beacon.name.clone(),
             addr,
+            relayed: false,
             session: beacon.session,
         }
     }
@@ -99,7 +105,11 @@ pub enum NetEvent {
     Disconnected(DeviceId),
     /// An application payload arrived.
     Message { from: DeviceId, bytes: Vec<u8> },
-    /// A requested connection could not be opened.
+    /// A channel through a relay moved onto a direct path (`relayed`
+    /// false) or fell back to the relay.
+    PathChanged { device: DeviceId, relayed: bool },
+    /// A requested connection could not be opened. For a dial through a
+    /// relay `addr` is the relay's.
     ConnectFailed { addr: SocketAddr, reason: String },
     /// The transport thread is gone.
     Stopped(String),
@@ -124,6 +134,32 @@ pub struct LanConfig {
     pub peer_timeout: Duration,
     /// How long an outbound handshake may take.
     pub connect_timeout: Duration,
+    /// Whether channels through a relay may move onto a direct path
+    /// once both ends approve it.
+    pub punching: bool,
+    /// Set on the relay itself: forward sessions between its clients.
+    pub(crate) relay: Option<RelayRole>,
+}
+
+/// What a node acting as a relay forwards, and for whom.
+#[derive(Clone)]
+pub(crate) struct RelayRole {
+    pub(crate) limits: zudp::RelayLimits,
+    /// Sessions held at once, the relay's own clients included.
+    pub(crate) max_peers: usize,
+    pub(crate) policy: Arc<dyn zudp::RelayPolicy>,
+    /// Sees every forwarded frame; tests use it to look at what the
+    /// relay could read.
+    pub(crate) tap: Option<zudp::RelayTap>,
+}
+
+impl fmt::Debug for RelayRole {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RelayRole")
+            .field("limits", &self.limits)
+            .field("tap", &self.tap.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl LanConfig {
@@ -141,6 +177,8 @@ impl LanConfig {
             ping_interval: Duration::from_secs(5),
             peer_timeout: Duration::from_secs(20),
             connect_timeout: Duration::from_secs(10),
+            punching: true,
+            relay: None,
         }
     }
 
@@ -190,6 +228,18 @@ impl LanConfig {
     #[must_use]
     pub const fn connect_timeout(mut self, timeout: Duration) -> Self {
         self.connect_timeout = timeout;
+        self
+    }
+
+    #[must_use]
+    pub const fn punching(mut self, on: bool) -> Self {
+        self.punching = on;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn relay(mut self, role: RelayRole) -> Self {
+        self.relay = Some(role);
         self
     }
 }

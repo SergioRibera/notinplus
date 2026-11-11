@@ -171,6 +171,9 @@ pub struct Share {
     /// Last relay record applied here; the mailbox is read from the
     /// next one.
     pub relay_cursor: u64,
+    /// The owner's relay, where members meet when no direct path
+    /// exists: a [`crate::relay::RelayAddr`] as text.
+    pub server: Option<String>,
 }
 
 impl bincode::Encode for ShareKey {
@@ -218,6 +221,7 @@ impl Share {
             created_at: now,
             updated_at: now,
             relay_cursor: 0,
+            server: None,
         }
     }
 
@@ -436,7 +440,7 @@ impl Share {
             mode: self.mode,
             role: self.entry_role,
             key: self.key.clone(),
-            server: None,
+            server: self.server.clone(),
         }
     }
 

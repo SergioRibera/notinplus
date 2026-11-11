@@ -2,25 +2,30 @@
 //! not on the same network, and members of a share meet even when they
 //! are never online at the same time.
 //!
-//! It keeps a mailbox per share. Members publish sealed records and
-//! fetch what arrived since the last sequence number they saw. The
-//! relay never holds a share key, so it stores and forwards bytes it
-//! cannot read; the only things in the clear are the share id, the
-//! document or record a payload concerns, who sent it and when.
+//! Devices connected to the relay open end-to-end encrypted sessions
+//! with each other through it, which work like any other channel: the
+//! relay forwards bytes it cannot read and keeps nothing of them.
 //!
-//! Session shares are forwarded but never written down, and a relay
-//! started without retention ([`RelayLimits::retain`]) writes nothing
-//! down at all.
+//! For members never online at the same time it keeps a mailbox per
+//! permanent share. Members publish sealed records and fetch what
+//! arrived since the last sequence number they saw. The relay never
+//! holds a share key, so it stores bytes it cannot read; the only
+//! things in the clear are the share id, the document or record a
+//! payload concerns, who sent it and when. Session shares never go
+//! there, and a relay started without retention
+//! ([`RelayLimits::retain`]) writes nothing down at all.
 //!
 //! Anyone may run a relay in public, so a device only reaches another
 //! one through it when the target agreed: a device the target trusts,
 //! a fellow member of one of its shares, or one that knocked with a
-//! [`KnockToken`] derived from a secret the relay never sees.
+//! [`KnockToken`] derived from a secret the relay never sees. A refusal
+//! looks the same as an absent target.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
 use blake2::{Blake2s256, Digest};
@@ -28,7 +33,7 @@ use blake2::{Blake2s256, Digest};
 use crate::cipher::ShareKey;
 use crate::identity::{DeviceId, DeviceKey, PairingSecret};
 use crate::net::lan::LanNode;
-use crate::net::{LanConfig, Lane, NetError, NetEvent};
+use crate::net::{LanConfig, Lane, NetError, NetEvent, RelayRole};
 use crate::replica::{BlobKey, DocId};
 use crate::share::ShareId;
 
@@ -152,9 +157,12 @@ pub enum RelayMessage {
     /// knocks with `token` may reach it for a while.
     Expect { token: Option<KnockToken> },
     /// Ask to reach `to`. Let through for a while when `token` is what
-    /// `to` expects or opens one of the shares it owns; never answered,
-    /// so nobody learns whether `to` is here.
+    /// `to` expects or opens one of the shares it owns.
     Knock { to: [u8; 32], token: KnockToken },
+    /// The knock on `to` is in place: a session to it may be opened
+    /// now. Sent whether or not the token matched, so nobody learns
+    /// whether `to` is here or what it expects.
+    Knocked { to: [u8; 32] },
     /// Member asks for everything after `after` and for live records.
     Subscribe { share: ShareId, after: u64 },
     /// Member hands in a record.
@@ -177,10 +185,6 @@ pub enum RelayMessage {
     },
     /// The share no longer exists on this relay.
     Gone { share: ShareId },
-    /// Hand `bytes` to the connected device holding key `to`.
-    Forward { to: [u8; 32], bytes: Vec<u8> },
-    /// Bytes another device handed in for the receiver.
-    Forwarded { from: [u8; 32], bytes: Vec<u8> },
 }
 
 impl RelayMessage {
@@ -213,11 +217,6 @@ pub struct Mailbox {
 impl Mailbox {
     fn allows(&self, public: [u8; 32]) -> bool {
         self.owner == public || self.members.contains(&public)
-    }
-
-    /// Owner and members.
-    fn keys(&self) -> impl Iterator<Item = [u8; 32]> + '_ {
-        std::iter::once(self.owner).chain(self.members.iter().copied())
     }
 
     /// Bytes of sealed records kept.
@@ -277,7 +276,7 @@ pub struct RelayLimits {
     pub max_members: usize,
     /// Keys one device may declare it trusts.
     pub max_trusted: usize,
-    /// Bytes of one sealed record or forwarded payload.
+    /// Bytes of one sealed record.
     pub max_record: usize,
     /// Bytes kept for one share.
     pub max_mailbox_bytes: u64,
@@ -287,6 +286,9 @@ pub struct RelayLimits {
     pub max_grants: usize,
     /// How long a knock lets a device through.
     pub grant_ttl: Duration,
+    /// Devices connected at once; past it the one heard from least
+    /// recently is dropped.
+    pub max_devices: usize,
 }
 
 impl Default for RelayLimits {
@@ -302,6 +304,7 @@ impl Default for RelayLimits {
             max_retained_bytes: 8 << 30,
             max_grants: 100_000,
             grant_ttl: Duration::from_secs(10 * 60),
+            max_devices: 4096,
         }
     }
 }
@@ -311,8 +314,6 @@ impl Default for RelayLimits {
 pub struct Store {
     dir: Option<PathBuf>,
     boxes: HashMap<ShareId, Mailbox>,
-    /// Shares each key owns or is a member of.
-    by_key: HashMap<[u8; 32], HashSet<ShareId>>,
     /// Bytes kept across every mailbox.
     retained: u64,
 }
@@ -356,52 +357,14 @@ impl Store {
 
     fn insert(&mut self, id: ShareId, mailbox: Mailbox) {
         self.remove(id);
-        for key in mailbox.keys() {
-            self.by_key.entry(key).or_default().insert(id);
-        }
         self.retained += mailbox.bytes();
         self.boxes.insert(id, mailbox);
     }
 
     fn remove(&mut self, id: ShareId) -> Option<Mailbox> {
         let mailbox = self.boxes.remove(&id)?;
-        for key in mailbox.keys() {
-            if let Some(ids) = self.by_key.get_mut(&key) {
-                ids.remove(&id);
-                if ids.is_empty() {
-                    self.by_key.remove(&key);
-                }
-            }
-        }
         self.retained = self.retained.saturating_sub(mailbox.bytes());
         Some(mailbox)
-    }
-
-    /// Whether `a` and `b` take part in one share.
-    fn together(&self, a: [u8; 32], b: [u8; 32]) -> bool {
-        self.by_key.get(&a).is_some_and(|ids| {
-            ids.iter()
-                .any(|id| self.boxes.get(id).is_some_and(|m| m.allows(b)))
-        })
-    }
-
-    /// Whether `token` opens one of the shares `owner` owns.
-    fn opens(&self, owner: [u8; 32], token: KnockToken) -> bool {
-        self.by_key.get(&owner).is_some_and(|ids| {
-            ids.iter().any(|id| {
-                self.boxes
-                    .get(id)
-                    .is_some_and(|m| m.owner == owner && m.knock == token)
-            })
-        })
-    }
-
-    fn owned_by(&self, owner: [u8; 32]) -> usize {
-        self.by_key.get(&owner).map_or(0, |ids| {
-            ids.iter()
-                .filter(|id| self.boxes.get(id).is_some_and(|m| m.owner == owner))
-                .count()
-        })
     }
 
     fn path(&self, share: ShareId) -> Option<PathBuf> {
@@ -454,6 +417,11 @@ pub struct RelayConfig {
     pub limits: RelayLimits,
 }
 
+/// What the relay forwards between two devices, as the test hook in
+/// [`RelayServer::start_observed`] sees it: sender key, target key and
+/// the opaque inner bytes.
+pub type RelayObserver = Arc<dyn Fn(&[u8; 32], &[u8; 32], &[u8]) + Send + Sync>;
+
 /// The running relay. Dropping it stops it.
 #[derive(Debug)]
 pub struct RelayServer {
@@ -466,17 +434,61 @@ impl RelayServer {
     /// # Errors
     /// The socket could not be bound or a thread could not be spawned.
     pub fn start(config: RelayConfig, store: Store) -> Result<Self, NetError> {
+        Self::start_inner(config, store, None)
+    }
+
+    /// [`Self::start`] that also hands every forwarded frame to
+    /// `observer`. For tests that check what a relay gets to see.
+    ///
+    /// # Errors
+    /// As [`Self::start`].
+    #[doc(hidden)]
+    pub fn start_observed(
+        config: RelayConfig,
+        store: Store,
+        observer: RelayObserver,
+    ) -> Result<Self, NetError> {
+        let tap: zudp::RelayTap = Arc::new(move |from, to, inner| {
+            observer(from, to, inner);
+            vec![(*from, inner.clone())]
+        });
+        Self::start_inner(config, store, Some(tap))
+    }
+
+    fn start_inner(
+        config: RelayConfig,
+        store: Store,
+        tap: Option<zudp::RelayTap>,
+    ) -> Result<Self, NetError> {
+        let gate = Arc::new(RwLock::new(Gate::default()));
+        {
+            let mut gate = write(&gate);
+            for (id, mailbox) in &store.boxes {
+                gate.index(*id, mailbox);
+            }
+        }
+        let policy = Arc::clone(&gate);
+        let role = RelayRole {
+            // zudp's rate and session budgets already suit a public relay.
+            limits: zudp::RelayLimits::default(),
+            max_peers: config.limits.max_devices,
+            policy: Arc::new(move |from: &[u8; 32], to: &[u8; 32]| {
+                read(&policy).allows(*from, *to)
+            }),
+            tap,
+        };
         let lan = LanConfig::new(config.key, config.name)
             .port(config.port)
             .advertise(false)
-            .scan(false);
+            .scan(false)
+            .relay(role);
         let node = LanNode::start(lan)?;
         let events = node.events().clone();
         let sender = node.sender();
         let limits = config.limits;
         std::thread::Builder::new()
             .name("notin-relay".into())
-            .spawn(move || serve(&events, sender, store, limits))
+            .spawn(move || serve(&events, sender, store, gate, limits))
             .map_err(NetError::Thread)?;
         Ok(Self { node })
     }
@@ -485,6 +497,14 @@ impl RelayServer {
     pub const fn local_addr(&self) -> std::net::SocketAddr {
         self.node.local_addr()
     }
+}
+
+fn read(gate: &RwLock<Gate>) -> RwLockReadGuard<'_, Gate> {
+    gate.read().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn write(gate: &RwLock<Gate>) -> RwLockWriteGuard<'_, Gate> {
+    gate.write().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Who agreed to be reached by whom, besides sharing a mailbox.
@@ -529,11 +549,108 @@ impl Reach {
     }
 }
 
+/// Who may use one share: its owner and members, and what a joiner
+/// knocks with.
+struct Roster {
+    owner: [u8; 32],
+    members: Vec<[u8; 32]>,
+    knock: KnockToken,
+}
+
+impl Roster {
+    fn allows(&self, public: [u8; 32]) -> bool {
+        self.owner == public || self.members.contains(&public)
+    }
+
+    fn keys(&self) -> impl Iterator<Item = [u8; 32]> + '_ {
+        std::iter::once(self.owner).chain(self.members.iter().copied())
+    }
+}
+
+/// Who may reach whom here. The thread answering relay messages keeps
+/// it current; zudp asks it from its own threads before forwarding a
+/// session between two devices.
+#[derive(Default)]
+struct Gate {
+    reach: Reach,
+    rosters: HashMap<ShareId, Roster>,
+    /// Shares each key owns or is a member of.
+    by_key: HashMap<[u8; 32], HashSet<ShareId>>,
+}
+
+impl Gate {
+    /// Whether `to` agreed to be reached by `from`: a knock let them
+    /// through, `to` trusts `from`, or both take part in one share.
+    fn allows(&self, from: [u8; 32], to: [u8; 32]) -> bool {
+        self.reach.granted(from, to)
+            || self
+                .reach
+                .trusts
+                .get(&to)
+                .is_some_and(|t| t.contains(&from))
+            || self.together(from, to)
+    }
+
+    fn index(&mut self, id: ShareId, mailbox: &Mailbox) {
+        self.unindex(id);
+        let roster = Roster {
+            owner: mailbox.owner,
+            members: mailbox.members.clone(),
+            knock: mailbox.knock,
+        };
+        for key in roster.keys() {
+            self.by_key.entry(key).or_default().insert(id);
+        }
+        self.rosters.insert(id, roster);
+    }
+
+    fn unindex(&mut self, id: ShareId) {
+        let Some(roster) = self.rosters.remove(&id) else {
+            return;
+        };
+        for key in roster.keys() {
+            if let Some(ids) = self.by_key.get_mut(&key) {
+                ids.remove(&id);
+                if ids.is_empty() {
+                    self.by_key.remove(&key);
+                }
+            }
+        }
+    }
+
+    /// Whether `a` and `b` take part in one share.
+    fn together(&self, a: [u8; 32], b: [u8; 32]) -> bool {
+        self.by_key.get(&a).is_some_and(|ids| {
+            ids.iter()
+                .any(|id| self.rosters.get(id).is_some_and(|r| r.allows(b)))
+        })
+    }
+
+    /// Whether `token` opens one of the shares `owner` owns.
+    fn opens(&self, owner: [u8; 32], token: KnockToken) -> bool {
+        self.by_key.get(&owner).is_some_and(|ids| {
+            ids.iter().any(|id| {
+                self.rosters
+                    .get(id)
+                    .is_some_and(|r| r.owner == owner && r.knock == token)
+            })
+        })
+    }
+
+    fn owned_by(&self, owner: [u8; 32]) -> usize {
+        self.by_key.get(&owner).map_or(0, |ids| {
+            ids.iter()
+                .filter(|id| self.rosters.get(id).is_some_and(|r| r.owner == owner))
+                .count()
+        })
+    }
+}
+
 struct Serving {
     sender: crate::net::lan::LanSender,
     store: Store,
+    gate: Arc<RwLock<Gate>>,
     limits: RelayLimits,
-    reach: Reach,
     /// Public key of every connected device.
     keys: HashMap<DeviceId, [u8; 32]>,
     subs: HashMap<ShareId, HashSet<DeviceId>>,
@@ -547,15 +664,15 @@ impl Serving {
         }
     }
 
-    /// Whether `to` agreed to be reached by `from`.
-    fn allows(&self, from: [u8; 32], to: [u8; 32]) -> bool {
-        self.reach.granted(from, to)
-            || self
-                .reach
-                .trusts
-                .get(&to)
-                .is_some_and(|t| t.contains(&from))
-            || self.store.together(from, to)
+    /// Keep a mailbox, and who may use it.
+    fn insert(&mut self, id: ShareId, mailbox: Mailbox) {
+        write(&self.gate).index(id, &mailbox);
+        self.store.insert(id, mailbox);
+    }
+
+    fn remove(&mut self, id: ShareId) -> Option<Mailbox> {
+        write(&self.gate).unindex(id);
+        self.store.remove(id)
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("sync::relay_server::on_message"))]
@@ -573,20 +690,30 @@ impl Serving {
             RelayMessage::Unregister { share } => self.unregister(from, public, share),
             RelayMessage::Trust { mut keys } => {
                 keys.truncate(self.limits.max_trusted);
-                self.reach.trusts.insert(public, keys.into_iter().collect());
+                write(&self.gate)
+                    .reach
+                    .trusts
+                    .insert(public, keys.into_iter().collect());
             }
-            RelayMessage::Expect { token } => match token {
-                Some(token) => {
-                    self.reach.expects.insert(public, token);
+            RelayMessage::Expect { token } => {
+                let mut gate = write(&self.gate);
+                match token {
+                    Some(token) => {
+                        gate.reach.expects.insert(public, token);
+                    }
+                    None => {
+                        gate.reach.expects.remove(&public);
+                    }
                 }
-                None => {
-                    self.reach.expects.remove(&public);
-                }
-            },
+            }
             RelayMessage::Knock { to, token } => {
-                if self.reach.expects.get(&to) == Some(&token) || self.store.opens(to, token) {
-                    self.reach.grant(public, to, &self.limits);
+                {
+                    let mut gate = write(&self.gate);
+                    if gate.reach.expects.get(&to) == Some(&token) || gate.opens(to, token) {
+                        gate.reach.grant(public, to, &self.limits);
+                    }
                 }
+                self.reply(from, &RelayMessage::Knocked { to });
             }
             RelayMessage::Subscribe { share, after } => {
                 let Some(mailbox) = self.store.boxes.get(&share) else {
@@ -606,36 +733,12 @@ impl Serving {
                 kind,
                 sealed,
             } => self.publish(from, public, share, kind, sealed),
-            RelayMessage::Forward { to, bytes } => self.forward(public, to, bytes),
             RelayMessage::Registered { .. }
             | RelayMessage::Refused { .. }
             | RelayMessage::Full { .. }
             | RelayMessage::Records { .. }
             | RelayMessage::Gone { .. }
-            | RelayMessage::Forwarded { .. } => {}
-        }
-    }
-
-    /// Hand `bytes` to `to` when it agreed to hear from `public`.
-    /// Dropped silently otherwise, the same as when `to` is away, so
-    /// nobody learns who is here.
-    fn forward(&self, public: [u8; 32], to: [u8; 32], bytes: Vec<u8>) {
-        if bytes.len() > self.limits.max_record || !self.allows(public, to) {
-            return;
-        }
-        let target = self
-            .keys
-            .iter()
-            .find(|(_, key)| **key == to)
-            .map(|(device, _)| *device);
-        if let Some(device) = target {
-            self.reply(
-                device,
-                &RelayMessage::Forwarded {
-                    from: public,
-                    bytes,
-                },
-            );
+            | RelayMessage::Knocked { .. } => {}
         }
     }
 
@@ -657,14 +760,14 @@ impl Serving {
                 Some(_) => true,
                 None => {
                     self.store.len() < self.limits.max_shares
-                        && self.store.owned_by(public) < self.limits.max_shares_per_owner
+                        && read(&self.gate).owned_by(public) < self.limits.max_shares_per_owner
                 }
             };
         if !accepted {
             self.reply(from, &RelayMessage::Refused { share });
             return;
         }
-        let mut mailbox = self.store.remove(share).unwrap_or(Mailbox {
+        let mut mailbox = self.remove(share).unwrap_or(Mailbox {
             owner: public,
             members: Vec::new(),
             retain,
@@ -678,7 +781,7 @@ impl Serving {
         if !retain {
             mailbox.records.clear();
         }
-        self.store.insert(share, mailbox);
+        self.insert(share, mailbox);
         self.store.flush(share);
         self.reply(from, &RelayMessage::Registered { share });
     }
@@ -694,7 +797,7 @@ impl Serving {
         {
             return;
         }
-        self.store.remove(share);
+        self.remove(share);
         self.store.flush(share);
         for device in self.subs.remove(&share).into_iter().flatten() {
             if device != from {
@@ -730,14 +833,16 @@ impl Serving {
         let room = mailbox.bytes() + size <= self.limits.max_mailbox_bytes
             && self.store.retained + size <= self.limits.max_retained_bytes;
         let keep = mailbox.retain && room;
+        // Out and back in, so the bytes kept are counted again.
         let Some(mut mailbox) = self.store.remove(share) else {
             return;
         };
         let record = mailbox.push(from, kind, sealed, keep);
+        let retains = mailbox.retain;
         self.store.insert(share, mailbox);
         if keep {
             self.store.flush(share);
-        } else if self.store.boxes.get(&share).is_some_and(|m| m.retain) {
+        } else if retains {
             self.reply(from, &RelayMessage::Full { share });
         }
         let listeners: Vec<DeviceId> = self
@@ -761,13 +866,14 @@ fn serve(
     events: &flume::Receiver<NetEvent>,
     sender: crate::net::lan::LanSender,
     store: Store,
+    gate: Arc<RwLock<Gate>>,
     limits: RelayLimits,
 ) {
     let mut serving = Serving {
         sender,
         store,
+        gate,
         limits,
-        reach: Reach::default(),
         keys: HashMap::new(),
         subs: HashMap::new(),
     };
@@ -778,7 +884,7 @@ fn serve(
             }
             NetEvent::Disconnected(device) => {
                 if let Some(public) = serving.keys.remove(&device) {
-                    serving.reach.forget(public);
+                    write(&serving.gate).reach.forget(public);
                 }
                 for subs in serving.subs.values_mut() {
                     subs.remove(&device);
@@ -789,7 +895,10 @@ fn serve(
                     serving.on_message(from, message);
                 }
             }
-            NetEvent::Discovered(_) | NetEvent::Renamed(_) | NetEvent::ConnectFailed { .. } => {}
+            NetEvent::Discovered(_)
+            | NetEvent::Renamed(_)
+            | NetEvent::PathChanged { .. }
+            | NetEvent::ConnectFailed { .. } => {}
             NetEvent::Stopped(reason) => {
                 tracing::error!(target: "notin-relay", "transport stopped: {reason}");
                 return;
@@ -868,23 +977,37 @@ mod tests {
         let again = Store::on_disk(dir.clone()).unwrap();
         assert_eq!(again.mailbox(S), store.mailbox(S));
         assert_eq!(again.retained, 1);
-        assert!(again.together([1; 32], [2; 32]));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn the_store_knows_who_shares_what() {
-        let mut store = Store::memory();
-        store.insert(S, mailbox([1; 32], vec![[2; 32]], false));
-        assert!(store.together([2; 32], [1; 32]));
-        assert!(!store.together([2; 32], [3; 32]));
-        assert!(store.opens([1; 32], KNOCK));
+    fn the_gate_knows_who_shares_what() {
+        let mut gate = Gate::default();
+        gate.index(S, &mailbox([1; 32], vec![[2; 32]], false));
+        assert!(gate.together([2; 32], [1; 32]));
+        assert!(gate.allows([2; 32], [1; 32]));
+        assert!(!gate.together([2; 32], [3; 32]));
+        assert!(gate.opens([1; 32], KNOCK));
         // Only the owner's shares open to a knock on it.
-        assert!(!store.opens([2; 32], KNOCK));
-        assert_eq!(store.owned_by([1; 32]), 1);
-        store.remove(S);
-        assert!(!store.together([2; 32], [1; 32]));
-        assert!(store.by_key.is_empty());
+        assert!(!gate.opens([2; 32], KNOCK));
+        assert_eq!(gate.owned_by([1; 32]), 1);
+        gate.unindex(S);
+        assert!(!gate.allows([2; 32], [1; 32]));
+        assert!(gate.by_key.is_empty());
+    }
+
+    #[test]
+    fn the_gate_lets_trusted_and_knocking_devices_through() {
+        let mut gate = Gate::default();
+        assert!(!gate.allows([1; 32], [2; 32]));
+        gate.reach.trusts.insert([2; 32], HashSet::from([[1; 32]]));
+        assert!(gate.allows([1; 32], [2; 32]));
+        // Trust is one way: the trusted device has to trust back.
+        assert!(!gate.allows([2; 32], [1; 32]));
+        gate.reach.grant([3; 32], [2; 32], &RelayLimits::default());
+        assert!(gate.allows([2; 32], [3; 32]));
+        gate.reach.forget([2; 32]);
+        assert!(!gate.allows([1; 32], [2; 32]));
     }
 
     #[test]

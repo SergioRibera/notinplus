@@ -1,18 +1,23 @@
 //! LAN transport on top of zudp.
 //!
-//! One listening socket takes inbound channels; every outbound
-//! channel is its own socket pinned to the peer's key. All of it runs
+//! One listening socket takes inbound channels; every outbound LAN
+//! channel is its own socket pinned to the peer's key. The listening
+//! socket also holds the session with the relay, and through it the
+//! end-to-end sessions with devices that are only reachable there:
+//! those take the same frames, lanes and parts as LAN channels. All of
+//! it runs
 //! on a dedicated thread with its own async runtime; the rest of the
 //! app talks to it through channels and never blocks on the network.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc as tmpsc;
-use zudp::{Discovery, DiscoveryConfig, ZudpSender, ZudpSocket};
+use zudp::{Discovery, DiscoveryConfig, PeerAddr, PeerEvent, ZudpSender, ZudpSocket};
 
 use super::{APP_ID, Beacon, Frame, LanConfig, Lane, NetError, NetEvent, PeerInfo};
 use crate::identity::DeviceId;
@@ -33,6 +38,9 @@ const MAX_PARTS: u32 = 1024;
 /// Pause between parts: zudp sends without flow control, so bulk
 /// transfers are paced here (about 12 MB/s).
 const PART_PAUSE: Duration = Duration::from_millis(20);
+/// The same through a relay, which caps every client at 2000 frames
+/// and 4 MB a second (about 1.7 MB/s).
+const RELAYED_PART_PAUSE: Duration = Duration::from_millis(150);
 /// A payload whose parts stop coming is dropped after this.
 const ASSEMBLY_TIMEOUT: Duration = Duration::from_secs(60);
 /// Packets per second a peer may send before zudp drops them; parts
@@ -46,10 +54,20 @@ enum Cmd {
         addr: SocketAddr,
         public: [u8; 32],
     },
+    /// Reach a relay: the session lives on the listening socket, which
+    /// then takes the sessions the relay delivers.
     ConnectHost {
         host: String,
         public: [u8; 32],
     },
+    /// Open an end-to-end channel to `public` through the connected
+    /// relay `relay`.
+    ConnectVia {
+        relay: DeviceId,
+        public: [u8; 32],
+    },
+    /// Let the channel to `device` through a relay go direct.
+    Punch(DeviceId),
     Send {
         device: DeviceId,
         lane: Lane,
@@ -129,8 +147,9 @@ impl LanNode {
         self.command(Cmd::Connect { addr, public })
     }
 
-    /// Like [`Self::connect`] for a `host:port` that still needs
-    /// resolving.
+    /// Reach the relay at `host:port` (resolved first), accepting only
+    /// the key `public`. Once connected, the relay may bring in channels
+    /// from devices it lets through.
     ///
     /// # Errors
     /// [`NetError::Stopped`] when the transport thread has exited.
@@ -139,6 +158,28 @@ impl LanNode {
             host: host.into(),
             public,
         })
+    }
+
+    /// Open an end-to-end channel to the device whose key is `public`,
+    /// through `relay`, which must be connected already. The relay
+    /// only carries it when the target agreed, and reports a refusal
+    /// exactly like an absent target.
+    ///
+    /// # Errors
+    /// [`NetError::Stopped`] when the transport thread has exited.
+    pub fn connect_via(&self, relay: DeviceId, public: [u8; 32]) -> Result<(), NetError> {
+        self.command(Cmd::ConnectVia { relay, public })
+    }
+
+    /// Approve a direct path for the channel to `device` through a
+    /// relay; it moves there once the other end approves too. Punching
+    /// tells each end the other's public address, so only for devices
+    /// the app trusts.
+    ///
+    /// # Errors
+    /// [`NetError::Stopped`] when the transport thread has exited.
+    pub fn punch(&self, device: DeviceId) -> Result<(), NetError> {
+        self.command(Cmd::Punch(device))
     }
 
     /// A handle that only sends, for threads that do not own the node.
@@ -235,28 +276,32 @@ impl LanSender {
 enum Internal {
     /// `host:port` of a [`Cmd::ConnectHost`] resolved to `addr`.
     Resolved { addr: SocketAddr, public: [u8; 32] },
-    /// Outbound channel `dial` finished its handshake.
+    /// Outbound channel `dial` finished its handshake; `peer` is what
+    /// its socket calls the far end from now on.
     Outbound {
-        addr: SocketAddr,
+        addr: PeerAddr,
+        peer: PeerAddr,
         dial: u64,
         sender: ZudpSender,
     },
     /// An outbound connection attempt failed; `dial` is `None` when it
     /// never got as far as dialing.
     OutboundFailed {
-        addr: SocketAddr,
+        addr: PeerAddr,
         dial: Option<u64>,
         reason: String,
     },
     /// The socket of outbound channel `dial` stopped.
-    OutboundClosed { addr: SocketAddr, dial: u64 },
+    OutboundClosed { addr: PeerAddr, dial: u64 },
     /// A frame arrived; `key` is the authenticated remote key when
     /// the socket can tell.
     Frame {
-        addr: SocketAddr,
+        addr: PeerAddr,
         bytes: Vec<u8>,
         key: Option<[u8; 32]>,
     },
+    /// Something happened to a session of the listening socket.
+    Peer(PeerEvent),
     /// The listening socket died.
     ListenStopped(String),
 }
@@ -286,7 +331,7 @@ struct Dial {
 }
 
 struct Link {
-    addr: SocketAddr,
+    addr: PeerAddr,
     sender: ZudpSender,
     lanes: Lanes,
     last_seen: Instant,
@@ -297,6 +342,8 @@ struct Link {
     since: Instant,
     /// The run of the process at the far end; another one is a restart.
     session: u64,
+    /// Whether the traffic goes through a relay right now.
+    relayed: Arc<AtomicBool>,
 }
 
 impl Link {
@@ -309,6 +356,21 @@ impl Link {
     fn outranks(&self, dialer: DeviceId, race: Duration) -> bool {
         self.dialer < dialer && self.since.elapsed() < race
     }
+
+    fn info(&self, beacon: &Beacon) -> PeerInfo {
+        PeerInfo {
+            relayed: self.relayed.load(Ordering::Relaxed),
+            ..PeerInfo::from_beacon(beacon, socket_addr(self.addr))
+        }
+    }
+}
+
+/// The UDP address frames to `addr` leave for: the peer's own, or its
+/// relay's.
+const fn socket_addr(addr: PeerAddr) -> SocketAddr {
+    match addr {
+        PeerAddr::Direct(addr) | PeerAddr::Relayed { relay: addr, .. } => addr,
+    }
 }
 
 /// One writer task per stream of a link, so the node never waits on a
@@ -320,21 +382,23 @@ struct Lanes {
 }
 
 impl Lanes {
-    fn spawn(sender: &ZudpSender, addr: SocketAddr) -> Self {
+    fn spawn(sender: &ZudpSender, addr: PeerAddr, relayed: &Arc<AtomicBool>) -> Self {
         Self {
             data: writer(sender.clone(), addr, APP_STREAM, None),
             live: writer(sender.clone(), addr, LIVE_STREAM, None),
-            bulk: writer(sender.clone(), addr, BULK_STREAM, Some(PART_PAUSE)),
+            bulk: writer(sender.clone(), addr, BULK_STREAM, Some(Arc::clone(relayed))),
         }
     }
 }
 
-/// Task sending encoded frames on `stream` in order, `pause` apart.
+/// Task sending encoded frames on `stream` in order. With `paced`,
+/// frames leave [`PART_PAUSE`] apart, or [`RELAYED_PART_PAUSE`] while
+/// the flag says the path runs through a relay.
 fn writer(
     sender: ZudpSender,
-    addr: SocketAddr,
+    addr: PeerAddr,
     stream: u16,
-    pause: Option<Duration>,
+    paced: Option<Arc<AtomicBool>>,
 ) -> flume::Sender<Vec<u8>> {
     let (queue, frames) = flume::unbounded::<Vec<u8>>();
     tokio::spawn(async move {
@@ -344,7 +408,12 @@ fn writer(
             if let Err(err) = sender.send_stream(frame, addr, stream).await {
                 tracing::warn!(target: "notin-sync", peer = %addr, stream, "send failed: {err}");
             }
-            if let Some(pause) = pause {
+            if let Some(relayed) = &paced {
+                let pause = if relayed.load(Ordering::Relaxed) {
+                    RELAYED_PART_PAUSE
+                } else {
+                    PART_PAUSE
+                };
                 tokio::time::sleep(pause).await;
             }
         }
@@ -363,11 +432,13 @@ struct Node {
     config: LanConfig,
     beacon: Beacon,
     links: HashMap<DeviceId, Link>,
-    by_addr: HashMap<SocketAddr, DeviceId>,
+    by_addr: HashMap<PeerAddr, DeviceId>,
     /// Outbound channels dialing or waiting for the hello back.
-    dials: HashMap<SocketAddr, Dial>,
+    dials: HashMap<PeerAddr, Dial>,
     next_dial: u64,
     listen_sender: ZudpSender,
+    /// Sessions through a relay that zudp moved onto a direct path.
+    punched: HashMap<PeerAddr, bool>,
     events: flume::Sender<NetEvent>,
     /// Away: no channels, no hellos answered, nothing discovered.
     paused: bool,
@@ -402,14 +473,14 @@ impl Node {
         }
     }
 
-    async fn send_frame(sender: &ZudpSender, addr: SocketAddr, frame: &Frame, stream: u16) {
+    async fn send_frame(sender: &ZudpSender, addr: PeerAddr, frame: &Frame, stream: u16) {
         if let Err(err) = sender.send_stream(frame.to_bytes(), addr, stream).await {
             tracing::warn!(target: "notin-sync", peer = %addr, "send failed: {err}");
         }
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("sync::lan::on_frame"))]
-    async fn on_frame(&mut self, addr: SocketAddr, bytes: Vec<u8>, key: Option<[u8; 32]>) {
+    async fn on_frame(&mut self, addr: PeerAddr, bytes: Vec<u8>, key: Option<[u8; 32]>) {
         #[cfg(feature = "sismo")]
         sismo::counter!("sync.lan.in_bytes", bytes.len());
         let Some(frame) = Frame::from_bytes(&bytes) else {
@@ -424,7 +495,7 @@ impl Node {
             // A device away from the network turns our dial down.
             if frame == Frame::Bye && self.dials.remove(&addr).is_some() {
                 self.emit(NetEvent::ConnectFailed {
-                    addr,
+                    addr: socket_addr(addr),
                     reason: "refused".into(),
                 });
             }
@@ -455,20 +526,18 @@ impl Node {
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("sync::lan::on_hello"))]
-    async fn on_hello(&mut self, addr: SocketAddr, beacon: Beacon, key: Option<[u8; 32]>) {
+    async fn on_hello(&mut self, addr: PeerAddr, beacon: Beacon, key: Option<[u8; 32]>) {
         if !beacon.is_valid() {
             tracing::warn!(target: "notin-sync", peer = %addr, "hello with inconsistent identity");
             return;
         }
         if self.by_addr.get(&addr) == Some(&beacon.device)
             && key == Some(beacon.public)
-            && self
-                .links
-                .get(&beacon.device)
-                .is_some_and(|link| link.session == beacon.session)
+            && let Some(link) = self.links.get(&beacon.device)
+            && link.session == beacon.session
         {
             // A hello on a channel already open: the device renamed itself.
-            self.emit(NetEvent::Renamed(PeerInfo::from_beacon(&beacon, addr)));
+            self.emit(NetEvent::Renamed(link.info(&beacon)));
             return;
         }
         let (sender, conn, reply) = match self.dials.remove(&addr) {
@@ -478,11 +547,17 @@ impl Node {
                 task,
                 ..
             }) => {
-                if public != beacon.public {
+                // Dials on the listening socket are not pinned: check here.
+                if public != beacon.public || key.is_some_and(|k| k != public) {
                     tracing::warn!(target: "notin-sync", peer = %addr, "hello key differs from pinned key");
                     return;
                 }
                 (sender, Some(task), false)
+            }
+            // Through a relay both ends share one session: the far end
+            // opened it first and said hello, so ours is moot.
+            Some(_) if addr.is_relayed() && key == Some(beacon.public) => {
+                (self.listen_sender.clone(), None, true)
             }
             Some(dial) => {
                 // The handshake is reported before any frame of the same
@@ -526,20 +601,22 @@ impl Node {
             self.assemblies
                 .retain(|(from, _), _| *from != beacon.device);
         }
-        let info = PeerInfo::from_beacon(&beacon, addr);
-        self.links.insert(
-            beacon.device,
-            Link {
-                addr,
-                lanes: Lanes::spawn(&sender, addr),
-                sender: sender.clone(),
-                last_seen: Instant::now(),
-                conn,
-                dialer,
-                since: Instant::now(),
-                session: beacon.session,
-            },
-        );
+        let relayed = Arc::new(AtomicBool::new(
+            addr.is_relayed() && !self.punched.get(&addr).copied().unwrap_or(false),
+        ));
+        let link = Link {
+            addr,
+            lanes: Lanes::spawn(&sender, addr, &relayed),
+            sender: sender.clone(),
+            last_seen: Instant::now(),
+            conn,
+            dialer,
+            since: Instant::now(),
+            session: beacon.session,
+            relayed,
+        };
+        let info = link.info(&beacon);
+        self.links.insert(beacon.device, link);
         self.by_addr.insert(addr, beacon.device);
         if reply {
             Self::send_frame(
@@ -652,19 +729,139 @@ impl Node {
         public: [u8; 32],
         internal: &tmpsc::UnboundedSender<Internal>,
     ) {
-        if self.paused || self.by_addr.contains_key(&addr) || self.dials.contains_key(&addr) {
+        let key = PeerAddr::Direct(addr);
+        let Some(dial) = self.next_dial(key) else {
             return;
-        }
-        let dial = self.next_dial;
-        self.next_dial = self.next_dial.wrapping_add(1);
+        };
         let outbound = Outbound {
             keypair: self.config.key.keypair().clone(),
             addr,
             public,
             dial,
             timeout: self.config.connect_timeout,
+            punching: self.config.punching,
         };
         let abort = tokio::spawn(outbound.run(internal.clone())).abort_handle();
+        self.track_dial(key, public, dial, abort);
+    }
+
+    /// Reach the relay at `addr` from the listening socket, so it can
+    /// carry sessions both ways.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::lan::dial_relay"))]
+    fn dial_relay(
+        &mut self,
+        addr: SocketAddr,
+        public: [u8; 32],
+        internal: &tmpsc::UnboundedSender<Internal>,
+    ) {
+        let key = PeerAddr::Direct(addr);
+        let Some(dial) = self.next_dial(key) else {
+            return;
+        };
+        let sender = self.listen_sender.clone();
+        let timeout = self.config.connect_timeout;
+        let internal = internal.clone();
+        let abort = tokio::spawn(async move {
+            let event = match tokio::time::timeout(timeout, sender.connect(addr)).await {
+                Ok(Ok(peer)) => {
+                    sender.accept_relayed_from(addr);
+                    Internal::Outbound {
+                        addr: key,
+                        peer,
+                        dial,
+                        sender,
+                    }
+                }
+                Ok(Err(err)) => Internal::OutboundFailed {
+                    addr: key,
+                    dial: Some(dial),
+                    reason: err.to_string(),
+                },
+                Err(_) => Internal::OutboundFailed {
+                    addr: key,
+                    dial: Some(dial),
+                    reason: "handshake timed out".into(),
+                },
+            };
+            let _ = internal.send(event);
+        })
+        .abort_handle();
+        self.track_dial(key, public, dial, abort);
+    }
+
+    /// Open an end-to-end session to `public` through the connected
+    /// relay `relay`.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::lan::dial_via"))]
+    fn dial_via(
+        &mut self,
+        relay: DeviceId,
+        public: [u8; 32],
+        internal: &tmpsc::UnboundedSender<Internal>,
+    ) {
+        let Some(PeerAddr::Direct(relay_addr)) = self.links.get(&relay).map(|l| l.addr) else {
+            self.emit(NetEvent::ConnectFailed {
+                addr: SocketAddr::from(([0, 0, 0, 0], 0)),
+                reason: "relay not connected".into(),
+            });
+            return;
+        };
+        let key = PeerAddr::Relayed {
+            relay: relay_addr,
+            key: public,
+        };
+        if DeviceId::of_public_key(&public) == self.beacon.device {
+            return;
+        }
+        let Some(dial) = self.next_dial(key) else {
+            return;
+        };
+        let sender = self.listen_sender.clone();
+        let timeout = self.config.connect_timeout;
+        let internal = internal.clone();
+        let abort = tokio::spawn(async move {
+            let attempt = sender.connect_via(relay_addr, public);
+            let event = match tokio::time::timeout(timeout, attempt).await {
+                Ok(Ok(peer)) => Internal::Outbound {
+                    addr: key,
+                    peer,
+                    dial,
+                    sender,
+                },
+                Ok(Err(err)) => Internal::OutboundFailed {
+                    addr: key,
+                    dial: Some(dial),
+                    reason: err.to_string(),
+                },
+                Err(_) => Internal::OutboundFailed {
+                    addr: key,
+                    dial: Some(dial),
+                    reason: "handshake timed out".into(),
+                },
+            };
+            let _ = internal.send(event);
+        })
+        .abort_handle();
+        self.track_dial(key, public, dial, abort);
+    }
+
+    /// The id of a new dial to `addr`, or `None` when a channel to it is
+    /// open or on its way.
+    fn next_dial(&mut self, addr: PeerAddr) -> Option<u64> {
+        if self.paused || self.by_addr.contains_key(&addr) || self.dials.contains_key(&addr) {
+            return None;
+        }
+        let dial = self.next_dial;
+        self.next_dial = self.next_dial.wrapping_add(1);
+        Some(dial)
+    }
+
+    fn track_dial(
+        &mut self,
+        addr: PeerAddr,
+        public: [u8; 32],
+        dial: u64,
+        abort: tokio::task::AbortHandle,
+    ) {
         self.dials.insert(
             addr,
             Dial {
@@ -677,7 +874,7 @@ impl Node {
     }
 
     /// Whether `dial` is still the attempt in flight towards `addr`.
-    fn is_current(&self, addr: SocketAddr, dial: u64) -> bool {
+    fn is_current(&self, addr: PeerAddr, dial: u64) -> bool {
         self.dials.get(&addr).is_some_and(|d| d.task.dial == dial)
     }
 
@@ -697,7 +894,7 @@ impl Node {
                     };
                     let event = resolved.map_or_else(
                         || Internal::OutboundFailed {
-                            addr: SocketAddr::from(([0, 0, 0, 0], 0)),
+                            addr: PeerAddr::Direct(SocketAddr::from(([0, 0, 0, 0], 0))),
                             dial: None,
                             reason: format!("could not resolve {host}"),
                         },
@@ -707,6 +904,15 @@ impl Node {
                 });
             }
             Cmd::Connect { addr, public } => self.dial(addr, public, internal),
+            Cmd::ConnectVia { relay, public } => self.dial_via(relay, public, internal),
+            Cmd::Punch(device) => {
+                if let Some(link) = self.links.get(&device)
+                    && link.addr.is_relayed()
+                    && let Err(err) = self.listen_sender.punch(link.addr)
+                {
+                    tracing::debug!(target: "notin-sync", peer = %link.addr, "punch: {err}");
+                }
+            }
             Cmd::Send {
                 device,
                 lane,
@@ -750,19 +956,29 @@ impl Node {
         internal: &tmpsc::UnboundedSender<Internal>,
     ) -> bool {
         match event {
-            Internal::Resolved { addr, public } => self.dial(addr, public, internal),
-            Internal::Outbound { addr, dial, sender } => {
+            Internal::Resolved { addr, public } => self.dial_relay(addr, public, internal),
+            Internal::Outbound {
+                addr,
+                peer,
+                dial,
+                sender,
+            } => {
                 if !self.is_current(addr, dial) {
                     return true;
                 }
+                if peer != addr
+                    && let Some(pending) = self.dials.remove(&addr)
+                {
+                    self.dials.insert(peer, pending);
+                }
                 Self::send_frame(
                     &sender,
-                    addr,
+                    peer,
                     &Frame::Hello(self.beacon.clone()),
                     CONTROL_STREAM,
                 )
                 .await;
-                if let Some(pending) = self.dials.get_mut(&addr) {
+                if let Some(pending) = self.dials.get_mut(&peer) {
                     pending.sender = Some(sender);
                     pending.since = Instant::now();
                 }
@@ -774,13 +990,16 @@ impl Node {
                     }
                     self.dials.remove(&addr);
                 }
-                self.emit(NetEvent::ConnectFailed { addr, reason });
+                self.emit(NetEvent::ConnectFailed {
+                    addr: socket_addr(addr),
+                    reason,
+                });
             }
             Internal::OutboundClosed { addr, dial } => {
                 if self.is_current(addr, dial) {
                     self.dials.remove(&addr);
                     self.emit(NetEvent::ConnectFailed {
-                        addr,
+                        addr: socket_addr(addr),
                         reason: "channel closed".into(),
                     });
                 }
@@ -794,12 +1013,45 @@ impl Node {
                 }
             }
             Internal::Frame { addr, bytes, key } => self.on_frame(addr, bytes, key).await,
+            Internal::Peer(event) => self.on_peer(&event),
             Internal::ListenStopped(reason) => {
                 self.emit(NetEvent::Stopped(reason));
                 return false;
             }
         }
         true
+    }
+
+    /// A session of the listening socket changed.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::lan::on_peer"))]
+    fn on_peer(&mut self, event: &PeerEvent) {
+        match *event {
+            PeerEvent::PathChanged { addr, path } => {
+                let relayed = matches!(path, zudp::Path::Relayed(_));
+                self.punched.insert(addr, !relayed);
+                let Some(device) = self.by_addr.get(&addr).copied() else {
+                    return;
+                };
+                if let Some(link) = self.links.get(&device) {
+                    link.relayed.store(relayed, Ordering::Relaxed);
+                }
+                self.emit(NetEvent::PathChanged { device, relayed });
+            }
+            PeerEvent::Disconnected { addr, .. } => {
+                self.punched.remove(&addr);
+                // Only links on the listening socket: an outbound socket
+                // has a session of its own.
+                let device = self.by_addr.get(&addr).copied().filter(|d| {
+                    self.links
+                        .get(d)
+                        .is_some_and(|l| l.conn.is_none() || l.addr.is_relayed())
+                });
+                if let Some(device) = device {
+                    self.drop_link(device);
+                }
+            }
+            _ => {}
+        }
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("sync::lan::on_tick"))]
@@ -809,7 +1061,7 @@ impl Node {
             .retain(|_, assembly| now.duration_since(assembly.started) < ASSEMBLY_TIMEOUT);
         // A handshake that went through without a hello back: the far
         // side never saw our hello or chose to stay quiet.
-        let unanswered: Vec<SocketAddr> = self
+        let unanswered: Vec<PeerAddr> = self
             .dials
             .iter()
             .filter(|(_, dial)| {
@@ -821,7 +1073,7 @@ impl Node {
         for addr in unanswered {
             self.dials.remove(&addr);
             self.emit(NetEvent::ConnectFailed {
-                addr,
+                addr: socket_addr(addr),
                 reason: "no hello back".into(),
             });
         }
@@ -854,6 +1106,7 @@ struct Outbound {
     public: [u8; 32],
     dial: u64,
     timeout: Duration,
+    punching: bool,
 }
 
 impl Outbound {
@@ -864,19 +1117,22 @@ impl Outbound {
             public,
             dial,
             timeout,
+            punching,
         } = self;
+        let key = PeerAddr::Direct(addr);
         let conn = zudp::Zudp::default()
             .port(0)
             .rate_limit(MAX_PPS)
             .sent_buffer(SENT_BUFFER)
             .security(keypair)
+            .punching(punching)
             .pin_remote_key(public)
             .connect::<Vec<u8>>(addr);
         let mut conn = match tokio::time::timeout(timeout, conn).await {
             Ok(Ok(conn)) => conn,
             Ok(Err(err)) => {
                 let _ = internal.send(Internal::OutboundFailed {
-                    addr,
+                    addr: key,
                     dial: Some(dial),
                     reason: err.to_string(),
                 });
@@ -884,7 +1140,7 @@ impl Outbound {
             }
             Err(_) => {
                 let _ = internal.send(Internal::OutboundFailed {
-                    addr,
+                    addr: key,
                     dial: Some(dial),
                     reason: "handshake timed out".into(),
                 });
@@ -893,7 +1149,8 @@ impl Outbound {
         };
         if internal
             .send(Internal::Outbound {
-                addr,
+                addr: key,
+                peer: key,
                 dial,
                 sender: conn.sender(),
             })
@@ -906,7 +1163,7 @@ impl Outbound {
             sismo::instant!("sync::lan::outbound_packet");
             if internal
                 .send(Internal::Frame {
-                    addr,
+                    addr: key,
                     bytes: packet.msg,
                     key: Some(public),
                 })
@@ -915,11 +1172,20 @@ impl Outbound {
                 return;
             }
         }
-        let _ = internal.send(Internal::OutboundClosed { addr, dial });
+        let _ = internal.send(Internal::OutboundClosed { addr: key, dial });
     }
 }
 
 fn spawn_listener(mut socket: ZudpSocket<Vec<u8>>, internal: tmpsc::UnboundedSender<Internal>) {
+    let mut events = socket.events();
+    let peers = internal.clone();
+    tokio::spawn(async move {
+        while let Ok(event) = events.recv().await {
+            if peers.send(Internal::Peer(event)).is_err() {
+                return;
+            }
+        }
+    });
     tokio::spawn(async move {
         loop {
             match socket.recv().await {
@@ -959,6 +1225,28 @@ fn decode_beacon(bytes: &[u8]) -> Option<Beacon> {
         .map(|(beacon, _): (Beacon, usize)| beacon)
 }
 
+/// The listening socket, a relay node when the config says so.
+async fn listen(config: &LanConfig) -> Result<ZudpSocket<Vec<u8>>, zudp::Error> {
+    let mut builder = zudp::Zudp::default()
+        .port(config.port)
+        .rate_limit(MAX_PPS)
+        .sent_buffer(SENT_BUFFER)
+        .security(config.key.keypair().clone())
+        .punching(config.punching);
+    if let Some(role) = &config.relay {
+        let policy = Arc::clone(&role.policy);
+        builder = builder.max_peers(role.max_peers).relay_node(
+            role.limits.clone(),
+            move |from: &[u8; 32], to: &[u8; 32]| policy.allow(from, to),
+        );
+    }
+    let socket = builder.listen::<Vec<u8>>().await?;
+    if let Some(tap) = config.relay.as_ref().and_then(|r| r.tap.clone()) {
+        socket.set_relay_tap(Some(tap));
+    }
+    Ok(socket)
+}
+
 #[allow(clippy::too_many_lines)]
 async fn run(
     config: LanConfig,
@@ -966,14 +1254,7 @@ async fn run(
     events: flume::Sender<NetEvent>,
     ready: mpsc::SyncSender<Result<SocketAddr, NetError>>,
 ) {
-    let socket = zudp::Zudp::default()
-        .port(config.port)
-        .rate_limit(MAX_PPS)
-        .sent_buffer(SENT_BUFFER)
-        .security(config.key.keypair().clone())
-        .listen::<Vec<u8>>()
-        .await;
-    let socket = match socket {
+    let socket = match listen(&config).await {
         Ok(socket) => socket,
         Err(err) => {
             let _ = ready.send(Err(NetError::Bind(err)));
@@ -998,6 +1279,7 @@ async fn run(
         dials: HashMap::new(),
         next_dial: 0,
         listen_sender: socket.sender(),
+        punched: HashMap::new(),
         events,
         config,
         paused: false,

@@ -90,6 +90,9 @@ pub struct Handled {
 struct Heard {
     docs: HashMap<DocId, Version>,
     blobs: HashMap<BlobKey, u64>,
+    /// What we answered its announcement with, so a push of a later
+    /// edit builds on it. Not proof it arrived, so not part of status.
+    sent: HashMap<DocId, Version>,
 }
 
 /// One side of an exchange over one [`Scope`].
@@ -210,9 +213,25 @@ impl<R: Replica> SyncEngine<R> {
                     .iter()
                     .map(|h| (h.key(), h.updated_at))
                     .collect(),
+                sent: HashMap::new(),
             },
         );
-        self.push_for(peer)
+        let out = self.push_for(peer)?;
+        // What goes out now is what the peer holds next, so a push of a
+        // later edit builds on it instead of waiting for another round.
+        let sent: Vec<(DocId, Version)> = out
+            .iter()
+            .filter_map(|message| match message {
+                Message::DocUpdates { doc, .. } | Message::DocSnapshot { doc, .. } => {
+                    Some((*doc, self.replica.doc_version(*doc)?))
+                }
+                Message::Inventory { .. } | Message::Blobs(_) => None,
+            })
+            .collect();
+        if let Some(heard) = self.heard.get_mut(&peer) {
+            heard.sent.extend(sent);
+        }
+        Ok(out)
     }
 
     /// Everything `peer` lacks according to its last announcement.
@@ -290,7 +309,7 @@ impl<R: Replica> SyncEngine<R> {
         let Some(theirs) = self
             .heard
             .get(&peer)
-            .and_then(|h| h.docs.get(&doc))
+            .and_then(|h| h.sent.get(&doc).or_else(|| h.docs.get(&doc)))
             .cloned()
         else {
             return Ok(None);
@@ -310,6 +329,7 @@ impl<R: Replica> SyncEngine<R> {
             },
         };
         if let Some(heard) = self.heard.get_mut(&peer) {
+            heard.sent.remove(&doc);
             heard.docs.insert(doc, mine);
         }
         Ok(Some(message))

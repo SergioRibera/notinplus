@@ -50,6 +50,10 @@ impl Device {
                 Action::ConnectHost { host, public } => {
                     self.node.connect_host(host, public).unwrap();
                 }
+                Action::ConnectVia { relay, public } => {
+                    self.node.connect_via(relay, public).unwrap();
+                }
+                Action::Punch { device } => self.node.punch(device).unwrap(),
                 Action::Event(event) => self.events.push(event),
             }
         }
@@ -198,7 +202,6 @@ fn guest_joins_and_syncs_through_the_relay_only() {
 /// A temporary session between two devices that only share a relay:
 /// nothing is kept there, so everything rides live links.
 #[test]
-#[ignore = "sessions keep nothing on the relay and members only meet there over live links, which do not exist yet"]
 fn session_runs_live_through_the_relay_only() {
     let (_server, relay_addr) = relay();
     let mut owner = Device::new("Sergio");

@@ -80,6 +80,10 @@ impl Device {
                 Action::ConnectHost { host, public } => {
                     self.node.connect_host(host, public).unwrap();
                 }
+                Action::ConnectVia { relay, public } => {
+                    self.node.connect_via(relay, public).unwrap();
+                }
+                Action::Punch { device } => self.node.punch(device).unwrap(),
                 Action::Event(_) => {}
             }
         }
