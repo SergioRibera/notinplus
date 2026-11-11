@@ -959,6 +959,18 @@ impl<R: Replica> SyncDriver<R> {
     /// A member walks away from a share it does not own.
     #[cfg_attr(feature = "sismo", sismo::function("sync::driver::leave_share"))]
     pub fn leave_share(&mut self, id: ShareId) -> Vec<Action> {
+        // Also in the mailbox, for an owner away for longer than this
+        // device keeps it in mind.
+        let recorded = self.share(id).and_then(|share| {
+            let sealed =
+                ShareMessage::Left.seal_signed(share, RecordKind::Left, self.profile.key());
+            let publish = RelayMessage::Publish {
+                share: id,
+                kind: RecordKind::Left,
+                sealed,
+            };
+            self.relay_send(self.share_relay(id)?, &publish)
+        });
         let Some(link) = self.shares.remove(&id) else {
             return Vec::new();
         };
@@ -969,7 +981,7 @@ impl<R: Replica> SyncDriver<R> {
             .or_else(|| self.relay().map(ToString::to_string));
         self.left.insert(id, link.share.left(server, now_ms()));
         self.forget_held(id, None);
-        let mut out = Vec::new();
+        let mut out: Vec<Action> = recorded.into_iter().collect();
         out.extend(self.hold(
             link.share.owner.device,
             id,
@@ -3117,8 +3129,19 @@ impl<R: Replica> SyncDriver<R> {
                 }
                 return Ok(Taken::Applied(true));
             }
-            // Members only ever leave exchange records and the owner's view
-            // there; anything else came from somewhere it should not.
+            // Only for itself: the signature says who walked away.
+            (ShareMessage::Left, RecordKind::Left)
+                if link.share.is_owner(me) && link.share.remove_member(author) =>
+            {
+                link.share.touch(now_ms());
+                link.engine.forget_peer(author);
+                out.extend(self.broadcast_meta(id));
+                out.extend(self.relay_register(id));
+                return Ok(Taken::Applied(true));
+            }
+            // Members only ever leave exchange records, their departure and
+            // the owner's view there; anything else came from somewhere it
+            // should not.
             _ => {}
         }
         Ok(Taken::Applied(false))
@@ -4349,6 +4372,49 @@ mod tests {
         assert!(owner.share(id).unwrap().is_member(device));
         assert!(!owner.share(id).unwrap().was_expelled(device));
         assert!(guest.share(id).is_some());
+    }
+
+    #[test]
+    fn a_member_leaving_while_the_owner_is_away_is_told_through_the_mailbox() {
+        let (mut owner, mut guest, id) = joined_then_apart();
+        let at_guest = on_relay(&mut guest);
+        let at_owner = on_relay(&mut owner);
+        let out = guest.leave_share(id);
+        let sealed = out
+            .iter()
+            .find_map(|a| match a {
+                Action::Send { device, bytes, .. } if *device == at_guest => {
+                    match relay_message(bytes) {
+                        Some(RelayMessage::Publish {
+                            kind: RecordKind::Left,
+                            sealed,
+                            ..
+                        }) => Some(sealed),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .expect("the departure goes to the mailbox");
+        let guest_id = guest.profile.id();
+        // Someone else's departure cannot be filed in the guest's name.
+        let eve = driver("Eve");
+        let forged = ShareMessage::Left.seal_signed(
+            owner.share(id).unwrap(),
+            RecordKind::Left,
+            eve.profile.key(),
+        );
+        let records = vec![
+            record(1, guest_id, RecordKind::Left, forged),
+            record(2, guest_id, RecordKind::Left, sealed),
+        ];
+        owner
+            .on_event(from_relay(
+                at_owner,
+                &RelayMessage::Records { share: id, records },
+            ))
+            .unwrap();
+        assert!(!owner.share(id).unwrap().is_member(guest_id));
     }
 
     #[test]

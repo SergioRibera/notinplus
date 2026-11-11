@@ -131,6 +131,8 @@ pub enum RecordKind {
     Blob { key: BlobKey },
     /// The owner's view of the share; replaces the earlier one.
     Meta,
+    /// The sender walked away from the share.
+    Left,
 }
 
 /// One mailbox entry.
@@ -262,6 +264,9 @@ impl Mailbox {
                 RecordKind::Meta => self
                     .records
                     .retain(|r| r.from != from || !matches!(r.kind, RecordKind::Meta)),
+                RecordKind::Left => self
+                    .records
+                    .retain(|r| r.from != from || !matches!(r.kind, RecordKind::Left)),
                 RecordKind::Update { .. } => {}
             }
             self.records.push(record.clone());
