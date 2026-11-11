@@ -1,0 +1,36 @@
+name: fuzz
+
+# Coverage-guided fuzzing of the sync decoders: everything a device reads
+# from the LAN, a relay or a peer (see `fuzz/`). Runs weekly, on demand,
+# and on pull requests that touch notin-sync. A crash or an allocation
+# over 1 GiB fails the job and uploads the input that triggered it.
+
+on:
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds per target
+        default: "600"
+  pull_request:
+    paths:
+      - "crates/notin-sync/**"
+      - "fuzz/**"
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Build targets
+        run: fuzz/build.sh
+      - name: Fuzz
+        run: fuzz/run.sh "${{ github.event.inputs.seconds || '300' }}"
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
