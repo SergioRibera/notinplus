@@ -602,7 +602,7 @@ impl Share {
 
     /// What a member keeps after walking away, so it can come back.
     #[must_use]
-    pub fn left(&self, server: Option<String>, now: u64) -> LeftShare {
+    pub fn left(&self, server: Option<String>, joined_at: u64, now: u64) -> LeftShare {
         LeftShare {
             invite: Invite {
                 server,
@@ -611,6 +611,7 @@ impl Share {
             title: self.title.clone(),
             docs: self.docs.clone(),
             left_at: now,
+            joined_at,
         }
     }
 }
@@ -787,6 +788,9 @@ pub struct LeftShare {
     pub title: String,
     pub docs: Vec<DocId>,
     pub left_at: u64,
+    /// When the membership it ended began, so a departure the owner has
+    /// not heard of yet ends that one and no later.
+    pub joined_at: u64,
 }
 
 /// Every share a device takes part in, as persisted.
@@ -1194,7 +1198,7 @@ mod tests {
         share.docs.push(DocId([9; 16]));
         book.put(share.clone());
         book.put(share.clone());
-        book.left.push(share.left(Some("relay:1/k".into()), 5));
+        book.left.push(share.left(Some("relay:1/k".into()), 1, 5));
         book.ended.push(share.ended(6));
         assert_eq!(book.shares.len(), 1);
         let back = ShareBook::decode(&book.encode()).unwrap();

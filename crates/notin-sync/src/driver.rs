@@ -135,6 +135,9 @@ pub struct JoinAsk {
     pub proof: Vec<u8>,
     /// What the joiner signs its mailbox records with.
     pub sign: [u8; 32],
+    /// Back after leaving: when the membership it left began. The owner
+    /// ends that one now if the departure has not reached it.
+    pub ended: Option<u64>,
 }
 
 /// What the owner says to a joiner.
@@ -400,6 +403,8 @@ struct JoinIntent {
     since: Instant,
     /// The owner heard us and an organizer has to say yes.
     awaiting_approval: bool,
+    /// Back after leaving: when the membership it left began.
+    ended: Option<u64>,
 }
 
 /// An invitation accepted and not answered yet.
@@ -631,6 +636,7 @@ impl<R: Replica> SyncDriver<R> {
                         invite,
                         since: Instant::now(),
                         awaiting_approval: false,
+                        ended: None,
                     };
                     (intent.invite.share, intent)
                 })
@@ -1091,7 +1097,8 @@ impl<R: Replica> SyncDriver<R> {
             .server
             .clone()
             .or_else(|| self.relay().map(ToString::to_string));
-        self.left.insert(id, link.share.left(server, now_ms()));
+        self.left
+            .insert(id, link.share.left(server, joined_at, now_ms()));
         self.forget_held(id, None);
         let mut out: Vec<Action> = recorded.into_iter().collect();
         out.extend(self.hold(
@@ -1116,11 +1123,11 @@ impl<R: Replica> SyncDriver<R> {
     /// The invitation's relay serves that share only; it never becomes
     /// this device's own.
     pub fn join(&mut self, invite: Invite) -> Vec<Action> {
-        self.join_inner(invite)
+        self.join_inner(invite, None)
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("sync::driver::join_inner"))]
-    fn join_inner(&mut self, invite: Invite) -> Vec<Action> {
+    fn join_inner(&mut self, invite: Invite, ended: Option<u64>) -> Vec<Action> {
         let owner = invite.owner.device;
         let share = invite.share;
         self.known_keys.insert(owner, invite.owner.public);
@@ -1133,6 +1140,7 @@ impl<R: Replica> SyncDriver<R> {
                 invite,
                 since: Instant::now(),
                 awaiting_approval: false,
+                ended,
             },
         );
         // The invitation's relay may not be ours.
@@ -1159,6 +1167,7 @@ impl<R: Replica> SyncDriver<R> {
                         device_name: self.profile.name().to_owned(),
                         proof: intent.invite.proof(self.profile.key().public()),
                         sign: self.profile.key().sign_public(),
+                        ended: intent.ended,
                     },
                 },
             )];
@@ -1830,6 +1839,16 @@ impl<R: Replica> SyncDriver<R> {
             return Ok(());
         };
         let me = self.profile.id();
+        // Back after leaving before its departure reached us: the
+        // membership it left ends here, as if it had.
+        if let Some(ended) = ask.ended
+            && let Some(link) = self.shares.get_mut(&id)
+            && link.share.is_owner(me)
+            && link.share.depart(from, ended)
+        {
+            link.engine.forget_peer(from);
+            out.extend(self.rekey(id));
+        }
         // Answers go sealed with the key the joiner proved it holds.
         let key = self
             .shares
@@ -1837,6 +1856,15 @@ impl<R: Replica> SyncDriver<R> {
             .filter(|link| link.share.is_owner(me))
             .and_then(|link| proof_key(&link.share, &ask.proof, &public).cloned());
         let answer = match (self.shares.get_mut(&id), key) {
+            // Already in, back after a restart: it stays as it is, role and
+            // all, and only hears the share again.
+            (Some(link), Some(key)) if link.share.is_member(from) => {
+                let welcome = JoinAnswer::Welcome(Box::new(link.share.for_member()));
+                let sealed = seal_answer(&key, &welcome);
+                out.extend(self.route(from, &Payload::JoinReply { share: id, sealed }));
+                out.extend(self.share_round_for(id, from)?);
+                return Ok(());
+            }
             (Some(link), Some(key)) => {
                 let member = Member {
                     device: from,
@@ -1847,12 +1875,10 @@ impl<R: Replica> SyncDriver<R> {
                     role: link.share.entry_role,
                     joined_at: now_ms(),
                 };
-                // Someone already in (back after a restart) never waits; one
-                // back after leaving waits as any newcomer does now; one
+                // One back after leaving waits as any newcomer does now; one
                 // thrown out always does, whatever the invitation says, until
                 // an organizer lets it back in.
-                let waits = link.share.approve_entry || link.share.was_expelled(from);
-                if waits && !link.share.is_member(from) {
+                if link.share.approve_entry || link.share.was_expelled(from) {
                     link.share.remember_knock_key(from, key.clone());
                     let fresh = link.share.knock(member.clone());
                     let sealed = seal_answer(&key, &JoinAnswer::Pending);
@@ -2465,7 +2491,7 @@ impl<R: Replica> SyncDriver<R> {
         let Some(left) = self.left.remove(&id) else {
             return Vec::new();
         };
-        self.join(left.invite)
+        self.join_inner(left.invite, Some(left.joined_at))
     }
 
     /// Stop waiting on an invitation. Returns whether one was pending.
@@ -5536,6 +5562,29 @@ mod tests {
 
     /// Leaving keeps the invitation, so the member can ask back in; the
     /// owner keeps what it ended, so it can open it again under a new key.
+    #[test]
+    fn a_member_asking_in_again_keeps_its_role_and_membership() {
+        let (mut owner, mut guest, id) = joined_then_apart();
+        let device = guest.profile.id();
+        owner.edit_share(
+            id,
+            ShareEdit::SetRole {
+                device,
+                role: Role::Viewer,
+            },
+        );
+        let before = owner.share(id).unwrap().member(device).cloned().unwrap();
+        // The guest restarts with its join still pending, and asks again.
+        let invite = owner.share(id).unwrap().invite();
+        guest.shares.remove(&id);
+        std::thread::sleep(Duration::from_millis(3));
+        connect_both(&mut owner, &mut guest);
+        deliver(guest.join(invite), &mut guest, &mut owner);
+        let after = owner.share(id).unwrap().member(device).cloned().unwrap();
+        assert_eq!(after, before);
+        assert!(!guest.share(id).unwrap().can_edit(device));
+    }
+
     #[test]
     fn coming_back_waits_as_any_newcomer_and_can_be_closed() {
         // Left while newcomers had to be let in: it waits too.
