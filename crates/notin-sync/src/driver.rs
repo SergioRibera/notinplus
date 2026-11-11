@@ -1535,10 +1535,12 @@ impl<R: Replica> SyncDriver<R> {
             }
             Payload::Keys { share, sealed } => {
                 if self.take_keys(share, from, &sealed) {
-                    // What waited for this key opens now.
+                    // What waited for this key opens now, and what was held
+                    // back for it may go to the mailbox.
                     if self.take_records(share, Vec::new(), out)? {
                         out.push(Action::Event(DriverEvent::ShareChanged(share)));
                     }
+                    out.extend(self.relay_publish()?);
                 }
             }
             Payload::Relay(bytes) => {
@@ -3171,8 +3173,11 @@ impl<R: Replica> SyncDriver<R> {
                 out.extend(self.relay_publish()?);
             }
             RelayMessage::Behind { share, epoch } => {
+                // Nothing of what went out was taken: all of it goes again
+                // once the key is in.
                 if let Some(relay) = self.relays.get_mut(&from) {
                     relay.epochs.insert(share, epoch);
+                    relay.published.remove(&share);
                 }
                 // The owner hands the new key over once we meet.
                 if let Some(owner) = self.share(share).map(|s| s.owner.device) {
@@ -3192,7 +3197,11 @@ impl<R: Replica> SyncDriver<R> {
             }
             RelayMessage::Refused { share } => {
                 // Turned away from a mailbox: maybe thrown out while away,
-                // maybe the owner has not registered us yet. Its answer says.
+                // maybe the owner has not registered us yet. Its answer says,
+                // and what was handed in goes again once let in.
+                if let Some(relay) = self.relays.get_mut(&from) {
+                    relay.published.remove(&share);
+                }
                 let me = self.profile.id();
                 if let Some(owner) = self
                     .share(share)
@@ -4778,6 +4787,44 @@ mod tests {
         let new_key = owner.share(id).unwrap().key.clone();
         assert_ne!(eve.share(id).unwrap().key, new_key);
         assert!(!eve.share(id).unwrap().previous.contains(&new_key));
+    }
+
+    #[test]
+    fn what_the_relay_turned_away_goes_again_once_the_key_is_in() {
+        let (mut owner, mut guest, eve, id) = three_members();
+        for d in [guest.profile.id(), eve.profile.id()] {
+            owner.on_event(NetEvent::Disconnected(d)).unwrap();
+        }
+        guest
+            .on_event(NetEvent::Disconnected(owner.profile.id()))
+            .unwrap();
+        let at_guest = on_relay(&mut guest);
+        caught_up(&mut guest, at_guest, id);
+        mark(&guest, D1, 2, 9);
+        assert!(!published(&guest.push_doc(D1).unwrap(), at_guest).is_empty());
+        // Meanwhile the key changed; the relay turns those away.
+        owner.expel(id, eve.profile.id());
+        let behind = RelayMessage::Behind {
+            share: id,
+            epoch: 1,
+        };
+        let out = guest.on_event(from_relay(at_guest, &behind)).unwrap();
+        assert!(published(&out, at_guest).is_empty());
+        let Some(Action::Send { bytes, .. }) = owner.keys_for(id, guest.profile.id()) else {
+            panic!("the owner hands the key over");
+        };
+        let out = guest
+            .on_event(NetEvent::Message {
+                from: owner.profile.id(),
+                bytes,
+            })
+            .unwrap();
+        let again = published(&out, at_guest);
+        assert!(!again.is_empty(), "what was turned away never went again");
+        for (kind, sealed) in again {
+            assert!(ShareMessage::open_signed(owner.share(id).unwrap(), &sealed, kind).is_ok());
+            assert!(ShareMessage::open_signed(eve.share(id).unwrap(), &sealed, kind).is_err());
+        }
     }
 
     #[test]
