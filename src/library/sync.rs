@@ -120,17 +120,6 @@ const fn gone(kind: BlobKind, id: [u8; 16], at: u64) -> BlobHead {
     }
 }
 
-/// A cover from elsewhere is drawn on every card: never one too big to
-/// decode.
-fn drop_undrawable(cover: &mut Option<std::sync::Arc<[u8]>>) {
-    if cover
-        .as_deref()
-        .is_some_and(|bytes| !crate::editor::images::decodable(bytes))
-    {
-        *cover = None;
-    }
-}
-
 impl Library {
     /// Keep `record` if it is newer than what is held. Returns whether
     /// anything changed. Persists what it touched.
@@ -155,7 +144,7 @@ impl Library {
             SyncRecord::Item(mut item) => {
                 yard.revive(Buried::Item, item.id.0);
                 item.folder = self.data.landing_folder(&item);
-                drop_undrawable(&mut item.thumbnail);
+                super::drop_undrawable(&mut item.thumbnail);
                 super::keep_cover(item.id, item.thumbnail.as_deref());
                 upsert(&mut self.data.index.items, item, |i| i.id);
                 self.persist()?;
@@ -590,7 +579,7 @@ mod tests {
         let crc = crc32(&bomb[12..29]);
         bomb.extend_from_slice(&crc.to_be_bytes());
         let mut cover = Some(bomb.into());
-        super::drop_undrawable(&mut cover);
+        crate::library::drop_undrawable(&mut cover);
         assert!(cover.is_none());
     }
 

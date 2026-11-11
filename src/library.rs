@@ -1428,6 +1428,7 @@ impl Library {
             if !known_folders.contains(&i.folder) {
                 i.folder = ROOT_FOLDER;
             }
+            drop_undrawable(&mut i.thumbnail);
             keep_cover(i.id, i.thumbnail.as_deref());
             self.data.index.items.push(i);
         }
@@ -1543,12 +1544,25 @@ impl Library {
 fn read_covers(index: &mut LibraryIndex) {
     for item in &mut index.items {
         item.thumbnail = bodies::read_cover(item.id).map(Arc::from);
+        drop_undrawable(&mut item.thumbnail);
+    }
+}
+
+/// Covers come from elsewhere and are drawn on every card: never one too
+/// big to decode.
+pub(crate) fn drop_undrawable(cover: &mut Option<Arc<[u8]>>) {
+    if cover
+        .as_deref()
+        .is_some_and(|bytes| !crate::editor::images::decodable(bytes))
+    {
+        *cover = None;
     }
 }
 
 /// Store the cover a record arrived with; failures are logged.
 #[sismo::function("library::keep_cover")]
 fn keep_cover(id: ItemId, cover: Option<&[u8]>) {
+    let cover = cover.filter(|bytes| crate::editor::images::decodable(bytes));
     if let Err(err) = bodies::write_cover(id, cover) {
         log::error!("cover {id}: {err}");
     }

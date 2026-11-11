@@ -223,7 +223,11 @@ pub fn card(data: &LibraryData, item: &Item, shared: bool, now: u64) -> DocCardD
         meta,
         color: item.color,
         background: item.background,
-        thumbnail: item.thumbnail.as_ref().map(|cover| thumb(item.id, cover)),
+        thumbnail: item
+            .thumbnail
+            .as_ref()
+            .filter(|cover| crate::editor::images::decodable(cover))
+            .map(|cover| thumb(item.id, cover)),
         notebooks: data.live_notebooks_of(item.id).len(),
         pinned: data.is_pinned(item.id),
         shared,
@@ -272,5 +276,33 @@ fn thumb(id: ItemId, cover: &Arc<[u8]>) -> Thumb {
     Thumb {
         key: hasher.finish(),
         bytes: Bytes::from_owner(Arc::clone(cover)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::library::{DocKind, Item, ItemId, LibraryData, ROOT_FOLDER};
+
+    #[test]
+    fn a_cover_too_big_to_decode_never_reaches_a_card() {
+        // A PNG header claiming 60000 x 60000 pixels.
+        let mut bomb = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+        bomb.extend_from_slice(&60_000u32.to_be_bytes());
+        bomb.extend_from_slice(&60_000u32.to_be_bytes());
+        bomb.extend_from_slice(&[8, 6, 0, 0, 0]);
+        let item = Item {
+            id: ItemId::new_v4(),
+            folder: ROOT_FOLDER,
+            kind: DocKind::plugin("notin.notes"),
+            name: "bomb".to_owned(),
+            color: None,
+            background: crate::library::BackgroundStyle::default(),
+            created_at: 0,
+            updated_at: 0,
+            thumbnail: Some(bomb.into()),
+            trashed: None,
+        };
+        let card = super::card(&LibraryData::default(), &item, false, 0);
+        assert!(card.thumbnail.is_none());
     }
 }
