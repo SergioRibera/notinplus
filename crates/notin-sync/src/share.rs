@@ -612,10 +612,10 @@ impl ShareId {
 #[must_use]
 #[cfg_attr(feature = "sismo", sismo::function("sync::share::proof_is_valid"))]
 pub fn proof_is_valid(share: &Share, proof: &[u8], joiner: &[u8; 32]) -> bool {
-    share
-        .key
-        .open(proof)
-        .is_ok_and(|plain| plain == share.id.proof_plain(joiner))
+    share.key.open(proof).is_ok_and(|plain| {
+        subtle::ConstantTimeEq::ct_eq(plain.as_slice(), share.id.proof_plain(joiner).as_slice())
+            .into()
+    })
 }
 
 /// A share its owner closed, kept so a member that was away is told

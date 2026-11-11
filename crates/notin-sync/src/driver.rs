@@ -1812,11 +1812,12 @@ impl<R: Replica> SyncDriver<R> {
         match message {
             PairMessage::Request { code, name, proof } => {
                 let offer = self.offer.filter(|o| !o.expired());
-                let held = offer.is_some_and(|o| proof == Some(o.secret.proof(&peer.public)));
+                let held =
+                    offer.is_some_and(|o| proof.is_some_and(|p| o.secret.proves(&peer.public, &p)));
                 // Through a relay only the link pairs; on the network the
                 // typed code may, when no proof is claimed.
                 let shown = held || (!peer.relayed && proof.is_none());
-                let accepted = shown && offer.is_some_and(|o| o.code.value() == code);
+                let accepted = shown && offer.is_some_and(|o| o.code.matches(code));
                 // A guess from afar must not burn the offer for the device
                 // in front of the user.
                 if accepted || !peer.relayed {

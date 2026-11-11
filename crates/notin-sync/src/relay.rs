@@ -92,6 +92,12 @@ impl FromStr for RelayAddr {
 pub struct KnockToken(pub [u8; 32]);
 
 impl KnockToken {
+    /// Whether `other` is this token, in constant time.
+    #[must_use]
+    pub fn matches(&self, other: Self) -> bool {
+        subtle::ConstantTimeEq::ct_eq(self.0.as_slice(), other.0.as_slice()).into()
+    }
+
     /// What a device holding the invitation to `share` knocks with.
     #[must_use]
     pub fn share(key: &ShareKey, share: ShareId) -> Self {
@@ -718,7 +724,7 @@ impl Gate {
             ids.iter().any(|id| {
                 self.rosters
                     .get(id)
-                    .is_some_and(|r| r.owner == owner && r.knock == token)
+                    .is_some_and(|r| r.owner == owner && r.knock.matches(token))
             })
         })
     }
@@ -784,7 +790,13 @@ impl Serving {
             RelayMessage::Knock { to, token } => {
                 {
                     let mut gate = write(&self.gate);
-                    if gate.reach.expects.get(&to) == Some(&token) || gate.opens(to, token) {
+                    if gate
+                        .reach
+                        .expects
+                        .get(&to)
+                        .is_some_and(|e| e.matches(token))
+                        || gate.opens(to, token)
+                    {
                         gate.reach.grant(public, to, token, &self.limits);
                     }
                 }
@@ -1173,6 +1185,8 @@ mod tests {
 
     #[test]
     fn tokens_depend_on_the_secret() {
+        assert!(KNOCK.matches(KNOCK));
+        assert!(!KNOCK.matches(KnockToken([4; 32])));
         let key = ShareKey::generate();
         assert_eq!(KnockToken::share(&key, S), KnockToken::share(&key, S));
         assert_ne!(

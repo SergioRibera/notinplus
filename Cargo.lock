@@ -5578,6 +5578,7 @@ dependencies = [
  "hex",
  "rand 0.8.8",
  "sismo",
+ "subtle",
  "tokio",
  "tracing",
  "zudp 0.4.0",

@@ -40,6 +40,8 @@ tokio = { version = "1", features = ["rt", "time", "sync", "macros", "net"] }
 # Signs what members leave in a relay mailbox, which a share key alone
 # cannot attribute.
 ed25519-dalek = "3.0"
+# Compares secrets without telling how much of a guess was right.
+subtle = "2.6"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net"] }

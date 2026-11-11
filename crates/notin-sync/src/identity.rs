@@ -6,6 +6,7 @@ use std::fmt;
 use std::path::Path;
 
 use blake2::{Blake2s256, Digest};
+use subtle::ConstantTimeEq;
 
 use crate::error::IdentityError;
 
@@ -164,6 +165,12 @@ impl PairingCode {
     pub const fn value(self) -> u32 {
         self.0
     }
+
+    /// Whether `code` is this one, in constant time.
+    #[must_use]
+    pub fn matches(self, code: u32) -> bool {
+        self.0.to_be_bytes().ct_eq(&code.to_be_bytes()).into()
+    }
 }
 
 impl fmt::Display for PairingCode {
@@ -205,6 +212,13 @@ impl PairingSecret {
             .chain_update(requester)
             .finalize()
             .into()
+    }
+
+    /// Whether `proof` is [`Self::proof`] for `requester`, in constant
+    /// time.
+    #[must_use]
+    pub fn proves(&self, requester: &[u8; 32], proof: &[u8; 32]) -> bool {
+        self.proof(requester).ct_eq(proof).into()
     }
 }
 
@@ -449,6 +463,20 @@ impl DeviceProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secrets_are_checked_whole() {
+        let code = PairingCode::random();
+        assert!(code.matches(code.value()));
+        assert!(!code.matches(code.value() ^ 1));
+        let secret = PairingSecret::random();
+        let proof = secret.proof(&[1; 32]);
+        assert!(secret.proves(&[1; 32], &proof));
+        assert!(!secret.proves(&[2; 32], &proof));
+        let mut almost = proof;
+        almost[31] ^= 1;
+        assert!(!secret.proves(&[1; 32], &almost));
+    }
 
     #[test]
     fn id_is_stable_for_a_key() {
