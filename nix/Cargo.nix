@@ -17548,8 +17548,8 @@ rec {
           }
           {
             name = "zudp";
-            packageId = "zudp";
-            features = [ "security" "discovery" ];
+            packageId = "zudp 0.4.0";
+            features = [ "security" "discovery" "relay" ];
           }
         ];
         devDependencies = [
@@ -27299,7 +27299,7 @@ rec {
           }
           {
             name = "zudp";
-            packageId = "zudp";
+            packageId = "zudp 0.3.9";
             optional = true;
             usesDefaultFeatures = false;
             features = [ "security" "discovery" ];
@@ -38931,11 +38931,76 @@ rec {
         };
         resolvedDefaultFeatures = [ "legacy" "std" "zdict_builder" ];
       };
-      "zudp" = rec {
+      "zudp 0.3.9" = rec {
         crateName = "zudp";
         version = "0.3.9";
         edition = "2024";
         sha256 = "0fqrqg0i7dn57805agg5jj7ldr79c39n3pp401l29ff1874cf4s6";
+        dependencies = [
+          {
+            name = "bytes";
+            packageId = "bytes";
+          }
+          {
+            name = "dashmap";
+            packageId = "dashmap";
+          }
+          {
+            name = "parking_lot";
+            packageId = "parking_lot";
+          }
+          {
+            name = "snow";
+            packageId = "snow";
+            optional = true;
+            features = [ "default-resolver" ];
+          }
+          {
+            name = "socket2";
+            packageId = "socket2 0.5.10";
+            features = [ "all" ];
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "net" "sync" "rt-multi-thread" "macros" "time" "io-util" ];
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+          }
+          {
+            name = "windows-sys";
+            packageId = "windows-sys 0.60.2";
+            target = { target, features }: (target."windows" or false);
+            features = [ "Win32_Networking_WinSock" "Win32_System_IO" ];
+          }
+        ];
+        devDependencies = [
+          {
+            name = "snow";
+            packageId = "snow";
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "rt-multi-thread" "macros" "signal" "time" "net" ];
+          }
+        ];
+        features = {
+          "bitcode" = [ "dep:bitcode" ];
+          "default" = [ "rkyv" ];
+          "rkyv" = [ "dep:rkyv" ];
+          "security" = [ "dep:snow" ];
+          "serde" = [ "dep:serde" "dep:postcard" ];
+        };
+        resolvedDefaultFeatures = [ "discovery" "security" ];
+      };
+      "zudp 0.4.0" = rec {
+        crateName = "zudp";
+        version = "0.4.0";
+        edition = "2024";
+        sha256 = "0dnagw56cpmgl37achidvx35xfpgnpmfsagah4favvfh39m514vp";
         dependencies = [
           {
             name = "bytes";
@@ -38996,11 +39061,12 @@ rec {
         features = {
           "bitcode" = [ "dep:bitcode" ];
           "default" = [ "rkyv" ];
+          "relay" = [ "security" ];
           "rkyv" = [ "dep:rkyv" ];
           "security" = [ "dep:snow" ];
           "serde" = [ "dep:serde" "dep:postcard" ];
         };
-        resolvedDefaultFeatures = [ "default" "discovery" "rkyv" "security" ];
+        resolvedDefaultFeatures = [ "default" "discovery" "relay" "rkyv" "security" ];
       };
       "zune-core 0.4.12" = rec {
         crateName = "zune-core";
