@@ -199,6 +199,9 @@ pub struct Share {
     pub previous: Vec<ShareKey>,
     /// The owner's newest lease: what lets a member share with others.
     pub lease: Option<SignedLease>,
+    /// The latest wall time this device has seen, in Unix milliseconds,
+    /// so putting the clock back does not revive a lease.
+    pub clock_mark: u64,
 }
 
 impl bincode::Encode for ShareKey {
@@ -253,6 +256,7 @@ impl Share {
             epoch: 0,
             previous: Vec::new(),
             lease: None,
+            clock_mark: 0,
         }
     }
 
@@ -275,18 +279,19 @@ impl Share {
         hasher.finalize().into()
     }
 
-    /// Owner side: sign a lease on the share as it stands, at `now`, or
-    /// just after the last one, so a newer lease always tells apart.
+    /// Owner side: sign a lease on the share as it stands, dated `now` and
+    /// numbered one past the last.
     pub fn issue_lease(&mut self, owner: &DeviceKey, now: u64) {
-        let after = self
+        let seq = self
             .lease
             .as_ref()
-            .map_or(0, |l| l.lease.issued_at.saturating_add(1));
+            .map_or(0, |l| l.lease.seq.saturating_add(1));
         let lease = Lease {
             share: self.id,
             epoch: self.epoch,
             roster: self.roster_hash(),
-            issued_at: now.max(after),
+            seq,
+            issued_at: now,
         };
         self.lease = Some(lease.sign(owner));
     }
@@ -294,11 +299,14 @@ impl Share {
     /// Owner side: a new lease when the one held no longer matches the
     /// share or is a day old. Returns whether one was issued.
     pub fn renew_lease(&mut self, owner: &DeviceKey, now: u64) -> bool {
-        let current = self.lease_holds(now)
-            && self
-                .lease
-                .as_ref()
-                .is_some_and(|l| now.saturating_sub(l.lease.issued_at) < LEASE_RENEW_MS);
+        // Once per change of key or members, and once a day; a lease this
+        // clock dates in the future (it went back) is re-signed at once.
+        let current = self.lease.as_ref().is_some_and(|l| {
+            l.lease.epoch == self.epoch
+                && l.lease.roster == self.roster_hash()
+                && l.lease.issued_at <= now
+                && now - l.lease.issued_at < LEASE_RENEW_MS
+        });
         if !current {
             self.issue_lease(owner, now);
         }
@@ -317,14 +325,17 @@ impl Share {
         })
     }
 
-    /// Take `signed` when it is the owner's and newer than the one held.
+    /// Take `signed` when it is the owner's, fresh at `now` and newer than
+    /// the one held.
     /// Returns whether it was taken.
-    pub fn offer_lease(&mut self, signed: SignedLease) -> bool {
+    pub fn offer_lease(&mut self, signed: SignedLease, now: u64) -> bool {
+        // Ordered by the owner's count, not its clock; one already out
+        // of date at `now` is never taken.
         let newer = self
             .lease
             .as_ref()
-            .is_none_or(|held| signed.lease.issued_at > held.lease.issued_at);
-        if newer && signed.verifies(self.id, &self.owner.sign) {
+            .is_none_or(|held| signed.lease.seq > held.lease.seq);
+        if newer && signed.lease.fresh(now) && signed.verifies(self.id, &self.owner.sign) {
             self.lease = Some(signed);
             return true;
         }
@@ -657,6 +668,7 @@ impl Share {
     pub fn for_member(&self) -> Self {
         Self {
             relay_cursor: 0,
+            clock_mark: 0,
             held_back: Vec::new(),
             expelled: Vec::new(),
             departed: Vec::new(),
@@ -727,6 +739,8 @@ pub struct Lease {
     pub epoch: u32,
     /// [`Share::roster_hash`] of the participants the owner holds current.
     pub roster: [u8; 32],
+    /// Counts the owner's leases on the share, one up for each.
+    pub seq: u64,
     pub issued_at: u64,
 }
 
@@ -1510,13 +1524,13 @@ mod tests {
         // Signed by someone else than the owner: never taken.
         let mut forged = share.clone();
         let lease = forged.lease.take().unwrap().lease;
-        assert!(!forged.offer_lease(lease.clone().sign(&member)));
-        assert!(forged.offer_lease(lease.sign(&owner)));
+        assert!(!forged.offer_lease(lease.clone().sign(&member), now));
+        assert!(forged.offer_lease(lease.sign(&owner), now));
         // An older one never replaces a newer one, and each is newer.
         let held = share.lease.clone().unwrap();
         share.issue_lease(&owner, now);
-        assert!(share.lease.as_ref().unwrap().lease.issued_at > held.lease.issued_at);
-        assert!(!share.offer_lease(held));
+        assert!(share.lease.as_ref().unwrap().lease.seq > held.lease.seq);
+        assert!(!share.offer_lease(held, now));
     }
 
     #[test]
@@ -1539,5 +1553,28 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn leases_order_by_count_and_an_owner_clock_once_ahead_costs_nothing() {
+        let owner = DeviceKey::generate();
+        let mut held = Share::new(member_of(&owner, Role::Owner), "x", ShareMode::Permanent, 1);
+        let now = 10 * LEASE_MS;
+        let mut issuer = held.clone();
+        // The owner's clock ran ten days ahead once.
+        issuer.issue_lease(&owner, now + 10 * 24 * 60 * 60 * 1000);
+        let ahead = issuer.lease.clone().unwrap();
+        assert!(
+            !held.offer_lease(ahead, now),
+            "one not fresh here is never taken"
+        );
+        // Back on time, the next lease counts one more and is taken.
+        assert!(
+            issuer.renew_lease(&owner, now),
+            "dated ahead: re-signed at once"
+        );
+        assert!(!issuer.renew_lease(&owner, now), "then left alone");
+        assert!(held.offer_lease(issuer.lease.clone().unwrap(), now));
+        assert!(held.lease_holds(now));
     }
 }

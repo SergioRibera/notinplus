@@ -600,6 +600,9 @@ pub struct SyncDriver<R> {
     /// Whether the lease on each share held when last looked at, to tell
     /// the app when that changes.
     leases: HashMap<ShareId, bool>,
+    /// The lease each share holds and since when on this device's
+    /// monotonic clock.
+    lease_seen: HashMap<ShareId, (u64, Instant)>,
     /// Mailbox records by someone a share does not list yet, waiting
     /// for a newer view of it, with how often they were tried.
     parked: HashMap<ShareId, Parked>,
@@ -665,6 +668,7 @@ impl<R: Replica> SyncDriver<R> {
             outbox: HashMap::new(),
             parked: HashMap::new(),
             leases: HashMap::new(),
+            lease_seen: HashMap::new(),
             redials: HashMap::new(),
             ended: book.ended.into_iter().map(|e| (e.id, e)).collect(),
             left: book.left.into_iter().map(|l| (l.invite.share, l)).collect(),
@@ -1289,8 +1293,40 @@ impl<R: Replica> SyncDriver<R> {
     /// always as the owner, else only under the owner's lease.
     #[must_use]
     pub fn lease_holds(&self, id: ShareId) -> bool {
-        self.share(id)
-            .is_some_and(|share| share.is_owner(self.profile.id()) || share.lease_holds(now_ms()))
+        self.share(id).is_some_and(|share| {
+            if share.is_owner(self.profile.id()) {
+                return true;
+            }
+            // Neither a clock put back (the time seen before stays) nor a
+            // lease kept past its days since it arrived here.
+            let now = now_ms().max(share.clock_mark);
+            let held_for = share.lease.as_ref().and_then(|l| {
+                self.lease_seen
+                    .get(&id)
+                    .filter(|(seq, _)| *seq == l.lease.seq)
+                    .map(|(_, since)| since.elapsed())
+            });
+            share.lease_holds(now)
+                && held_for.is_none_or(|d| d <= Duration::from_millis(crate::share::LEASE_MS))
+        })
+    }
+
+    /// Note the time this device has seen and when the lease on `id`
+    /// arrived here, for [`Self::lease_holds`].
+    fn mark_lease_clock(&mut self, id: ShareId) {
+        let now = now_ms();
+        let Some(link) = self.shares.get_mut(&id) else {
+            return;
+        };
+        link.share.clock_mark = link.share.clock_mark.max(now);
+        if let Some(seq) = link.share.lease.as_ref().map(|l| l.lease.seq)
+            && self
+                .lease_seen
+                .get(&id)
+                .is_none_or(|(held, _)| *held != seq)
+        {
+            self.lease_seen.insert(id, (seq, Instant::now()));
+        }
     }
 
     /// Whether the share's content may go to `device`: its owner, or a
@@ -1372,13 +1408,28 @@ impl<R: Replica> SyncDriver<R> {
         let Some(link) = self.shares.get_mut(&id) else {
             return Ok(());
         };
-        let ahead = signed.lease.epoch > link.share.epoch;
-        if !link.share.offer_lease(signed) {
+        let now = now_ms().max(link.share.clock_mark);
+        if !link.share.offer_lease(signed, now) {
             return Ok(());
         }
-        if ahead {
-            let owner = link.share.owner.device;
-            out.extend(self.connect_to(owner));
+        self.mark_lease_clock(id);
+        // Whatever it says, everyone connected inside learns it now.
+        let peers: Vec<DeviceId> = self
+            .share(id)
+            .map(|s| s.participants().map(|m| m.device).collect())
+            .unwrap_or_default();
+        let peers: Vec<DeviceId> = peers
+            .into_iter()
+            .filter(|p| self.connected.contains_key(p))
+            .collect();
+        for peer in peers {
+            out.extend(self.lease_for(id, peer));
+        }
+        // A lease that does not hold here (newer key, other members): the
+        // owner brings this device up to date.
+        if !self.lease_holds(id) {
+            let owner = self.share(id).map(|s| s.owner.device);
+            out.extend(owner.and_then(|owner| self.connect_to(owner)));
         }
         self.lease_settled(id, out)
     }
@@ -1824,8 +1875,15 @@ impl<R: Replica> SyncDriver<R> {
             return Ok(());
         }
         // Without the owner's lease, rounds from other members are taken
-        // in but not answered with content.
+        // in but not answered with content. One still writing with an
+        // earlier key missed a change: it hears of the newest lease.
         let answers = self.may_share(id, from);
+        let behind = self
+            .share(id)
+            .is_some_and(|s| s.key_opening(sealed).is_some_and(|k| *k != s.key));
+        if behind {
+            out.extend(self.lease_for(id, from));
+        }
         let Some(link) = self.shares.get_mut(&id) else {
             return Ok(());
         };
@@ -1921,6 +1979,10 @@ impl<R: Replica> SyncDriver<R> {
             return Ok(());
         };
         let message = Message::from_bytes(bytes)?;
+        // An announcement left unanswered must not count as answered.
+        if !answers && matches!(message, Message::Inventory { .. }) {
+            return Ok(());
+        }
         let Some(message) = permitted(&link.share, from, message) else {
             return Ok(());
         };
@@ -2546,6 +2608,7 @@ impl<R: Replica> SyncDriver<R> {
         // The owner keeps its leases fresh; members learn when theirs ran out.
         let ids: Vec<ShareId> = self.shares.keys().copied().collect();
         for id in ids {
+            self.mark_lease_clock(id);
             if self.renew_lease(id) {
                 out.extend(self.spread_lease(id));
             }
@@ -3241,7 +3304,7 @@ impl<R: Replica> SyncDriver<R> {
         // The owner's lease is what says the key is still the current one;
         // the relay's epoch is only a hint, a relay may lie about it.
         share.is_owner(me)
-            || (share.lease_holds(now_ms())
+            || (self.lease_holds(id)
                 && self
                     .relays
                     .get(&relay)
@@ -3727,7 +3790,7 @@ fn fresh_meta(current: &Share, from: DeviceId, me: DeviceId, incoming: Share) ->
     // A newer lease of the owner's comes along; any other is ignored.
     let mut held = current.clone();
     if let Some(signed) = incoming.lease.clone() {
-        held.offer_lease(signed);
+        held.offer_lease(signed, now_ms().max(current.clock_mark));
     }
     let lease = held.lease;
     Some(Share {
@@ -3735,6 +3798,7 @@ fn fresh_meta(current: &Share, from: DeviceId, me: DeviceId, incoming: Share) ->
         epoch: current.epoch,
         previous: current.previous.clone(),
         lease,
+        clock_mark: current.clock_mark,
         owner: current.owner.clone(),
         relay_cursor,
         held_back,
@@ -5321,6 +5385,174 @@ mod tests {
             "{events:?}"
         );
         assert!(!guest.waiting_for_owner(id));
+    }
+
+    fn leases_to(out: &[Action], device: DeviceId) -> usize {
+        out.iter()
+            .filter(|a| match a {
+                Action::Send {
+                    device: d, bytes, ..
+                } if *d == device => {
+                    matches!(Payload::from_bytes(bytes), Some(Payload::Lease { .. }))
+                }
+                _ => false,
+            })
+            .count()
+    }
+
+    #[test]
+    fn a_newer_lease_goes_on_at_once_to_everyone_inside() {
+        let (owner, mut guest, carl, eve, id) = stale_member();
+        // Ana is with Eve when Carl's newer lease reaches her.
+        guest.on_event(NetEvent::Connected(info(&eve, 3))).unwrap();
+        guest.on_event(NetEvent::Connected(info(&carl, 4))).unwrap();
+        let lease = carl.share(id).unwrap().lease.clone().unwrap();
+        let out = guest
+            .on_event(NetEvent::Message {
+                from: carl.profile.id(),
+                bytes: Payload::Lease { share: id, lease }.to_bytes(),
+            })
+            .unwrap();
+        // It does not hold for her: nothing for Eve, and off to the owner.
+        assert!(!guest.lease_holds(id));
+        assert_eq!(leases_to(&out, eve.profile.id()), 0);
+        drop(owner);
+
+        // Carl, up to date, hears from someone still on the old key: it
+        // passes the newest lease straight back.
+        let (_owner, guest, mut carl, _eve, id) = stale_member();
+        carl.on_event(NetEvent::Connected(info(&guest, 4))).unwrap();
+        let old = ShareMessage::Live {
+            doc: D1,
+            bytes: b"ink".to_vec(),
+        }
+        .seal(&guest.share(id).unwrap().key);
+        let out = carl
+            .on_event(NetEvent::Message {
+                from: guest.profile.id(),
+                bytes: Payload::Share {
+                    share: id,
+                    sealed: old,
+                }
+                .to_bytes(),
+            })
+            .unwrap();
+        assert_eq!(leases_to(&out, guest.profile.id()), 1, "{out:?}");
+    }
+
+    #[test]
+    fn a_holding_lease_adopted_goes_to_everyone_connected() {
+        let (mut owner, mut guest, mut eve, id) = three_members();
+        for d in [guest.profile.id(), eve.profile.id()] {
+            owner.on_event(NetEvent::Disconnected(d)).unwrap();
+        }
+        connect_both(&mut guest, &mut eve);
+        // The owner's lease is renewed while Ana is away from it.
+        let share = &mut owner.shares.get_mut(&id).unwrap().share;
+        share.issue_lease(owner.profile.key(), now_ms());
+        let lease = share.lease.clone().unwrap();
+        let out = guest
+            .on_event(NetEvent::Message {
+                from: owner.profile.id(),
+                bytes: Payload::Lease { share: id, lease }.to_bytes(),
+            })
+            .unwrap();
+        assert!(guest.lease_holds(id));
+        assert_eq!(leases_to(&out, eve.profile.id()), 1, "{out:?}");
+    }
+
+    #[test]
+    fn a_lease_for_other_members_sends_for_the_owner() {
+        // The owner changed a role while Ana was away: same key, new roster.
+        let (mut owner, mut guest, eve, id) = three_members();
+        let mut carl = driver("Carl");
+        let invite = owner.share(id).unwrap().invite();
+        connect_both(&mut owner, &mut carl);
+        deliver(carl.join(invite), &mut carl, &mut owner);
+        connect_both(&mut guest, &mut owner);
+        let relay = on_relay(&mut guest);
+        for d in [guest.profile.id(), carl.profile.id(), eve.profile.id()] {
+            owner.on_event(NetEvent::Disconnected(d)).unwrap();
+        }
+        guest
+            .on_event(NetEvent::Disconnected(owner.profile.id()))
+            .unwrap();
+        owner.edit_share(
+            id,
+            ShareEdit::SetRole {
+                device: eve.profile.id(),
+                role: Role::Viewer,
+            },
+        );
+        connect_both(&mut carl, &mut owner);
+        let lease = carl.share(id).unwrap().lease.clone().unwrap();
+        assert_eq!(lease.lease.epoch, guest.share(id).unwrap().epoch);
+        let out = guest
+            .on_event(NetEvent::Message {
+                from: carl.profile.id(),
+                bytes: Payload::Lease { share: id, lease }.to_bytes(),
+            })
+            .unwrap();
+        assert!(!guest.lease_holds(id));
+        let owner_public = *owner.profile.key().public();
+        assert!(
+            out.contains(&Action::ConnectVia {
+                relay,
+                public: owner_public
+            }),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn a_clock_put_back_does_not_revive_a_lease() {
+        let (_owner, mut guest, id) = joined_then_apart();
+        assert!(guest.lease_holds(id));
+        // This device once saw a time past the lease's days.
+        guest.shares.get_mut(&id).unwrap().share.clock_mark = now_ms() + 2 * crate::share::LEASE_MS;
+        assert!(!guest.lease_holds(id));
+        // Nor one kept here longer than its days, whatever the clock says.
+        let (_owner, mut guest, id) = joined_then_apart();
+        let seq = guest.share(id).unwrap().lease.as_ref().unwrap().lease.seq;
+        if let Some(long_ago) =
+            Instant::now().checked_sub(Duration::from_millis(crate::share::LEASE_MS + 1000))
+        {
+            guest.lease_seen.insert(id, (seq, long_ago));
+            assert!(!guest.lease_holds(id));
+        }
+    }
+
+    #[test]
+    fn an_announcement_left_unanswered_is_not_counted_as_answered() {
+        let (owner, mut guest, carl, eve, id) = stale_member();
+        // Ana's lease ran out: she answers Carl with nothing.
+        guest.shares.get_mut(&id).unwrap().share.lease = Some(old_lease(&owner, &guest, id));
+        drop((owner, eve));
+        mark(&guest, D1, 2, 98);
+        guest.on_event(NetEvent::Connected(info(&carl, 4))).unwrap();
+        let inventory = carl.shares[&id].engine.inventory();
+        let sealed = ShareMessage::Sync(inventory.to_bytes::<std::convert::Infallible>().unwrap())
+            .seal(&guest.share(id).unwrap().key);
+        let out = guest
+            .on_event(NetEvent::Message {
+                from: carl.profile.id(),
+                bytes: Payload::Share { share: id, sealed }.to_bytes(),
+            })
+            .unwrap();
+        assert!(
+            !out.iter()
+                .any(|a| matches!(a, Action::Send { device, .. } if *device == carl.profile.id()))
+        );
+        // Nothing of it was kept: a later edit does not build on an answer
+        // never sent.
+        mark(&guest, D1, 2, 99);
+        let link = guest.shares.get_mut(&id).unwrap();
+        assert!(
+            link.engine
+                .push_doc(carl.profile.id(), D1)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
