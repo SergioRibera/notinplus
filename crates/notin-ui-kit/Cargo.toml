@@ -7,6 +7,7 @@ license = "MIT OR Apache-2.0"
 authors = ["Sergio Ribera <contact@sergioribera.rs>"]
 description = "Shared Freya widgets for notinplus plugins (theme, FormInput, ColorWheel)."
 repository = "https://github.com/SergioRibera/notinplus"
+publish = false
 keywords = ["notinplus", "freya", "widgets", "ui", "theme"]
 categories = ["gui"]
 

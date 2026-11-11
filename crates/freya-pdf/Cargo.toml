@@ -7,6 +7,7 @@ license     = "MIT OR Apache-2.0"
 authors     = ["Sergio Ribera <contact@sergioribera.rs>"]
 description = "PDF rendering backend for Freya canvases: async worker pool, LRU tile cache, virtualised page stack. Integrates via freya-canvas-bg."
 repository  = "https://github.com/SergioRibera/notinplus"
+publish = false
 keywords = ["freya", "pdf", "viewer", "gui"]
 categories = ["gui", "rendering"]
 

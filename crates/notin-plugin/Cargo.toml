@@ -7,6 +7,7 @@ license = "MIT OR Apache-2.0"
 authors = ["Sergio Ribera <contact@sergioribera.rs>"]
 description = "Plugin surface (Source / CanvasKind traits + config schema + creation entries) for notinplus."
 repository = "https://github.com/SergioRibera/notinplus"
+publish = false
 keywords = ["notinplus", "plugin", "freya", "notes"]
 categories = ["gui", "api-bindings"]
 

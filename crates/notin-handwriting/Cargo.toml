@@ -7,6 +7,7 @@ license = "MIT OR Apache-2.0"
 authors = ["Sergio Ribera <contact@sergioribera.rs>"]
 description = "Handwritten character recognition (DTW trace matcher with composed diacritics) and font glyph ink for notinplus."
 repository = "https://github.com/SergioRibera/notinplus"
+publish = false
 keywords = ["handwriting", "recognition", "dtw", "ink", "ocr"]
 categories = ["text-processing", "algorithms"]
 
