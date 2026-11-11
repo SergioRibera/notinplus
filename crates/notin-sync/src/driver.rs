@@ -17,7 +17,7 @@ use crate::engine::{Message, SyncEngine};
 use crate::error::SyncError;
 use crate::identity::{DeviceId, DeviceProfile, PairingCode, PairingSecret, TrustedDevice};
 use crate::net::{Lane, NetEvent, PeerInfo};
-use crate::relay::{KnockToken, RecordKind, RelayAddr, RelayMessage};
+use crate::relay::{KnockToken, RecordKind, Registration, RelayAddr, RelayMessage};
 use crate::replica::{BlobKey, BlobKind, DocId, Replica, Scope, Version};
 use crate::share::{
     EndedShare, Invite, LeftShare, Member, Role, Share, ShareBook, ShareEdit, ShareId,
@@ -543,6 +543,9 @@ struct RelayLink {
     device: DeviceId,
     connected: bool,
     published: HashMap<ShareId, Published>,
+    /// Key epoch the relay has each share at, learned from its answer to
+    /// our subscription: until it has answered, nothing is published.
+    epochs: HashMap<ShareId, u32>,
 }
 
 /// A share this device takes part in, with its own exchange.
@@ -982,6 +985,7 @@ impl<R: Replica> SyncDriver<R> {
                         share: id,
                         kind: RecordKind::Keys { to: member.public },
                         sealed,
+                        epoch: share.epoch,
                     },
                 )
             }));
@@ -1063,13 +1067,19 @@ impl<R: Replica> SyncDriver<R> {
             .map_or(0, |m| m.joined_at);
         let left = ShareMessage::Left { joined_at };
         let recorded = self.share(id).and_then(|share| {
+            let relay = self.share_relay(id)?;
+            // Not with a key the relay is past: that one may be out there.
+            if !self.mailbox_ready(id, relay) {
+                return None;
+            }
             let sealed = left.seal_signed(share, RecordKind::Left, self.profile.key());
             let publish = RelayMessage::Publish {
                 share: id,
                 kind: RecordKind::Left,
                 sealed,
+                epoch: share.epoch,
             };
-            self.relay_send(self.share_relay(id)?, &publish)
+            self.relay_send(relay, &publish)
         });
         let Some(link) = self.shares.remove(&id) else {
             return Vec::new();
@@ -1223,6 +1233,21 @@ impl<R: Replica> SyncDriver<R> {
             }
         }
         self.outbox.retain(|_, queue| !queue.is_empty());
+    }
+
+    /// Owner side: the share's keys for one member over its channel,
+    /// once the key changed at least once. A member that missed the
+    /// change, the mailbox not keeping it, catches up this way.
+    fn keys_for(&self, id: ShareId, device: DeviceId) -> Option<Action> {
+        let share = self
+            .share(id)
+            .filter(|s| s.is_owner(self.profile.id()) && s.epoch > 0)?;
+        let member = share.member(device)?;
+        let keys: Vec<ShareKey> = std::iter::once(share.key.clone())
+            .chain(share.previous.iter().cloned())
+            .collect();
+        let sealed = seal_keys(self.profile.key(), &member.public, id, share.epoch, &keys)?;
+        Some(send(device, &Payload::Keys { share: id, sealed }))
     }
 
     /// Owner's current view for one member, as [`Self::broadcast_meta`].
@@ -1422,7 +1447,9 @@ impl<R: Replica> SyncDriver<R> {
             out.extend(self.round_for(device)?);
         }
         for share in self.shares_with(device) {
-            // Policy, viewers or scope may have changed while it was away.
+            // Keys, policy, viewers or scope may have changed while it was
+            // away; keys first, or the rest does not open.
+            out.extend(self.keys_for(share, device));
             out.extend(self.meta_for(share, device));
             out.extend(self.share_round_for(share, device)?);
         }
@@ -1447,6 +1474,7 @@ impl<R: Replica> SyncDriver<R> {
         if let Some(relay) = self.relays.get_mut(&device) {
             relay.connected = false;
             relay.published.clear();
+            relay.epochs.clear();
             if self.own_relay == Some(device) {
                 out.push(Action::Event(DriverEvent::RelayOnline(false)));
             }
@@ -2711,6 +2739,7 @@ impl<R: Replica> SyncDriver<R> {
                 addr,
                 connected: false,
                 published: HashMap::new(),
+                epochs: HashMap::new(),
             });
     }
 
@@ -2928,9 +2957,12 @@ impl<R: Replica> SyncDriver<R> {
             relay,
             &RelayMessage::Register {
                 share: id,
-                members: share.members.iter().map(|m| m.public).collect(),
-                retain: share.mode == ShareMode::Permanent,
-                knock: KnockToken::share(&share.key, id),
+                registration: Registration {
+                    members: share.members.iter().map(|m| m.public).collect(),
+                    retain: share.mode == ShareMode::Permanent,
+                    knock: KnockToken::share(&share.key, id),
+                    epoch: share.epoch,
+                },
             },
         )
         .into_iter()
@@ -2946,6 +2978,22 @@ impl<R: Replica> SyncDriver<R> {
                 after: share.relay_cursor,
             },
         )
+    }
+
+    /// Whether this device may leave records for `id` at `relay`: the
+    /// owner always, a member once the relay answered its subscription
+    /// and only while it holds the key the relay has the share at.
+    fn mailbox_ready(&self, id: ShareId, relay: DeviceId) -> bool {
+        let me = self.profile.id();
+        let Some(share) = self.share(id) else {
+            return false;
+        };
+        share.is_owner(me)
+            || self
+                .relays
+                .get(&relay)
+                .and_then(|r| r.epochs.get(&id))
+                .is_some_and(|epoch| *epoch <= share.epoch)
     }
 
     /// Just connected to `relay`: register what we own there, subscribe
@@ -2995,6 +3043,15 @@ impl<R: Replica> SyncDriver<R> {
                 continue;
             }
             let share = link.share.clone();
+            // Never ahead of what the relay told us, or with a key it is
+            // past: what goes there must not open with a key someone thrown
+            // out still holds.
+            if !self
+                .share_relay(id)
+                .is_some_and(|relay| self.mailbox_ready(id, relay))
+            {
+                continue;
+            }
             let Some(relay) = self
                 .share_relay(id)
                 .and_then(|device| self.relays.get_mut(&device))
@@ -3024,6 +3081,7 @@ impl<R: Replica> SyncDriver<R> {
                         share: id,
                         kind,
                         sealed,
+                        epoch: share.epoch,
                     }),
                 });
             }
@@ -3040,6 +3098,7 @@ impl<R: Replica> SyncDriver<R> {
                             RecordKind::Meta,
                             self.profile.key(),
                         ),
+                        epoch: share.epoch,
                     }),
                 });
             }
@@ -3066,16 +3125,36 @@ impl<R: Replica> SyncDriver<R> {
             | RelayMessage::Refused { share }
             | RelayMessage::Registered { share }
             | RelayMessage::Full { share }
+            | RelayMessage::Behind { share, .. }
                 if self.share_relay(share) != Some(from) =>
             {
                 // What a relay says about a share counts only from the relay
                 // the share meets at.
             }
-            RelayMessage::Records { share, records } => {
+            RelayMessage::Records {
+                share,
+                records,
+                epoch,
+            } => {
                 #[cfg(feature = "sismo")]
                 sismo::counter!("sync.relay.records_in", records.len());
+                // Keys among these come first, so what this device holds is
+                // compared with the relay's once they are in.
                 if self.take_records(share, records, out)? {
                     out.push(Action::Event(DriverEvent::ShareChanged(share)));
+                }
+                if let Some(relay) = self.relays.get_mut(&from) {
+                    relay.epochs.insert(share, epoch);
+                }
+                out.extend(self.relay_publish()?);
+            }
+            RelayMessage::Behind { share, epoch } => {
+                if let Some(relay) = self.relays.get_mut(&from) {
+                    relay.epochs.insert(share, epoch);
+                }
+                // The owner hands the new key over once we meet.
+                if let Some(owner) = self.share(share).map(|s| s.owner.device) {
+                    out.extend(self.ask_owner(share, owner)?);
                 }
             }
             RelayMessage::Gone { share } => {
@@ -4066,6 +4145,16 @@ mod tests {
         key.id()
     }
 
+    /// The relay answered `driver`'s subscription to `id`, at epoch 0.
+    fn caught_up(driver: &mut SyncDriver<MemReplica>, relay: DeviceId, id: ShareId) {
+        let answer = RelayMessage::Records {
+            share: id,
+            records: Vec::new(),
+            epoch: 0,
+        };
+        driver.on_event(from_relay(relay, &answer)).unwrap();
+    }
+
     fn from_relay(relay: DeviceId, message: &RelayMessage) -> NetEvent {
         NetEvent::Message {
             from: relay,
@@ -4227,6 +4316,7 @@ mod tests {
             from,
             kind,
             sealed,
+            epoch: 0,
         }
     }
 
@@ -4630,6 +4720,7 @@ mod tests {
                     &RelayMessage::Records {
                         share: id,
                         records: records.clone(),
+                        epoch: 0,
                     },
                 ))
                 .unwrap();
@@ -4647,6 +4738,82 @@ mod tests {
         let new_key = owner.share(id).unwrap().key.clone();
         assert_ne!(eve.share(id).unwrap().key, new_key);
         assert!(!eve.share(id).unwrap().previous.contains(&new_key));
+    }
+
+    #[test]
+    fn a_member_that_missed_a_new_key_gets_it_when_it_meets_the_owner() {
+        let (mut owner, mut guest, eve, id) = three_members();
+        for d in [guest.profile.id(), eve.profile.id()] {
+            owner.on_event(NetEvent::Disconnected(d)).unwrap();
+        }
+        guest
+            .on_event(NetEvent::Disconnected(owner.profile.id()))
+            .unwrap();
+        owner.expel(id, eve.profile.id());
+        assert_eq!(guest.share(id).unwrap().epoch, 0);
+        connect_both(&mut guest, &mut owner);
+        assert_eq!(guest.share(id).unwrap().epoch, 1);
+        assert_eq!(guest.share(id).unwrap().key, owner.share(id).unwrap().key);
+    }
+
+    #[test]
+    fn a_member_behind_on_the_key_publishes_nothing_until_it_catches_up() {
+        let mut owner = driver("Sergio");
+        let mut carl = driver("Carl");
+        let mut eve = driver("Eve");
+        let share = shared_doc(&owner);
+        let id = share.id;
+        let invite = share.invite();
+        owner.create_share(share);
+        for member in [&mut carl, &mut eve] {
+            connect_both(&mut owner, member);
+            deliver(member.join(invite.clone()), member, &mut owner);
+            owner
+                .on_event(NetEvent::Disconnected(member.profile.id()))
+                .unwrap();
+            member
+                .on_event(NetEvent::Disconnected(owner.profile.id()))
+                .unwrap();
+        }
+        let at_owner = on_relay(&mut owner);
+        let keys: Vec<crate::relay::Record> =
+            published(&owner.expel(id, eve.profile.id()), at_owner)
+                .into_iter()
+                .map(|(kind, sealed)| crate::relay::Record {
+                    epoch: 1,
+                    ..record(1, owner.profile.id(), kind, sealed)
+                })
+                .collect();
+        // Carl comes back on the relay alone and writes at once.
+        let at_carl = on_relay(&mut carl);
+        mark(&carl, D1, 3, 1);
+        let out = carl.push_doc(D1).unwrap();
+        assert!(
+            published(&out, at_carl).is_empty(),
+            "published before the relay answered"
+        );
+        let answer = |records| RelayMessage::Records {
+            share: id,
+            records,
+            epoch: 1,
+        };
+        let out = carl
+            .on_event(from_relay(at_carl, &answer(Vec::new())))
+            .unwrap();
+        assert!(
+            published(&out, at_carl).is_empty(),
+            "published with the old key"
+        );
+        // With the key in, it publishes, sealed with it.
+        let out = carl.on_event(from_relay(at_carl, &answer(keys))).unwrap();
+        assert_eq!(carl.share(id).unwrap().epoch, 1);
+        let sent = published(&out, at_carl);
+        assert!(!sent.is_empty());
+        let eves = eve.share(id).unwrap();
+        for (kind, sealed) in sent {
+            assert!(ShareMessage::open_signed(eves, &sealed, kind).is_err());
+            assert!(ShareMessage::open_signed(owner.share(id).unwrap(), &sealed, kind).is_ok());
+        }
     }
 
     #[test]
@@ -4691,6 +4858,7 @@ mod tests {
     fn a_member_leaving_while_the_owner_is_away_is_told_through_the_mailbox() {
         let (mut owner, mut guest, id) = joined_then_apart();
         let at_guest = on_relay(&mut guest);
+        caught_up(&mut guest, at_guest, id);
         let at_owner = on_relay(&mut owner);
         let out = guest.leave_share(id);
         let sealed = out
@@ -4724,7 +4892,11 @@ mod tests {
         owner
             .on_event(from_relay(
                 at_owner,
-                &RelayMessage::Records { share: id, records },
+                &RelayMessage::Records {
+                    share: id,
+                    records,
+                    epoch: 0,
+                },
             ))
             .unwrap();
         assert!(!owner.share(id).unwrap().is_member(guest_id));
@@ -4740,6 +4912,7 @@ mod tests {
         for told_live in [false, true] {
             let (mut owner, mut guest, id) = joined_then_apart();
             let at_guest = on_relay(&mut guest);
+            caught_up(&mut guest, at_guest, id);
             let at_owner = on_relay(&mut owner);
             let sealed = published(&guest.leave_share(id), at_guest)
                 .into_iter()
@@ -4761,6 +4934,7 @@ mod tests {
             let records = RelayMessage::Records {
                 share: id,
                 records: vec![record(1, guest_id, RecordKind::Left, sealed)],
+                epoch: 0,
             };
             owner.on_event(from_relay(at_owner, &records)).unwrap();
             assert!(
@@ -4814,7 +4988,11 @@ mod tests {
                 guest
                     .on_event(from_relay(
                         relay,
-                        &RelayMessage::Records { share: id, records },
+                        &RelayMessage::Records {
+                            share: id,
+                            records,
+                            epoch: 0,
+                        },
                     ))
                     .unwrap();
             }
@@ -4849,7 +5027,11 @@ mod tests {
         guest
             .on_event(from_relay(
                 relay,
-                &RelayMessage::Records { share: id, records },
+                &RelayMessage::Records {
+                    share: id,
+                    records,
+                    epoch: 0,
+                },
             ))
             .unwrap();
         assert_eq!(guest.share(id).unwrap().title, "Segunda");
@@ -4877,6 +5059,7 @@ mod tests {
         let records = RelayMessage::Records {
             share: id,
             records: vec![record(3, owner.profile.id(), RecordKind::Meta, sealed)],
+            epoch: 0,
         };
         guest.on_event(from_relay(own, &records)).unwrap();
         assert_ne!(guest.share(id).unwrap().title, "Química");
@@ -4941,6 +5124,7 @@ mod tests {
         let records = RelayMessage::Records {
             share: id,
             records: vec![record(3, owner.profile.id(), RecordKind::Meta, sealed)],
+            epoch: 0,
         };
         let out = guest.on_event(from_relay(own, &records)).unwrap();
         assert_eq!(guest.share(id).unwrap(), &held, "{out:?}");
@@ -4990,7 +5174,11 @@ mod tests {
         let out = guest
             .on_event(from_relay(
                 relay,
-                &RelayMessage::Records { share: id, records },
+                &RelayMessage::Records {
+                    share: id,
+                    records,
+                    epoch: 0,
+                },
             ))
             .unwrap();
         assert!(
@@ -5020,6 +5208,7 @@ mod tests {
                 &RelayMessage::Records {
                     share: id,
                     records: vec![record(9, owner.profile.id(), RecordKind::Meta, sealed)],
+                    epoch: 0,
                 },
             ))
             .unwrap();
@@ -5029,6 +5218,7 @@ mod tests {
             let empty = RelayMessage::Records {
                 share: id,
                 records: Vec::new(),
+                epoch: 0,
             };
             guest.on_event(from_relay(relay, &empty)).unwrap();
         }

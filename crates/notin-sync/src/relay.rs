@@ -146,6 +146,22 @@ pub struct Record {
     pub kind: RecordKind,
     /// A [`crate::share::ShareMessage`] sealed with the share key.
     pub sealed: Vec<u8>,
+    /// The share's key epoch the sender sealed it at, as it declared.
+    pub epoch: u32,
+}
+
+/// What an owner tells the relay about its share.
+#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+pub struct Registration {
+    /// Who may use the mailbox besides the owner.
+    pub members: Vec<[u8; 32]>,
+    /// Whether the mailbox is kept.
+    pub retain: bool,
+    /// What joiners knock with.
+    pub knock: KnockToken,
+    /// How many times the owner changed the share's key: nothing sealed
+    /// with an older one is taken any more.
+    pub epoch: u32,
 }
 
 /// What clients and the relay say to each other.
@@ -155,9 +171,7 @@ pub enum RelayMessage {
     /// mailbox, whether it is kept, and what joiners knock with.
     Register {
         share: ShareId,
-        members: Vec<[u8; 32]>,
-        retain: bool,
-        knock: KnockToken,
+        registration: Registration,
     },
     /// Owner closes the share; the mailbox is deleted.
     Unregister { share: ShareId },
@@ -176,11 +190,12 @@ pub enum RelayMessage {
     Knocked { to: [u8; 32] },
     /// Member asks for everything after `after` and for live records.
     Subscribe { share: ShareId, after: u64 },
-    /// Member hands in a record.
+    /// Member hands in a record sealed at key `epoch`.
     Publish {
         share: ShareId,
         kind: RecordKind,
         sealed: Vec<u8>,
+        epoch: u32,
     },
     /// Relay accepted the registration.
     Registered { share: ShareId },
@@ -189,11 +204,15 @@ pub enum RelayMessage {
     /// The last record was handed on but not kept: the share's mailbox
     /// (or the relay) is full, or the record too big.
     Full { share: ShareId },
-    /// Backlog or live records.
+    /// Backlog or live records, and the key epoch the owner registered.
     Records {
         share: ShareId,
         records: Vec<Record>,
+        epoch: u32,
     },
+    /// The last record was sealed with a key older than the share's
+    /// `epoch` and was not taken: the sender must get the new key first.
+    Behind { share: ShareId, epoch: u32 },
     /// The share no longer exists on this relay.
     Gone { share: ShareId },
 }
@@ -221,6 +240,8 @@ pub struct Mailbox {
     pub members: Vec<[u8; 32]>,
     pub retain: bool,
     pub knock: KnockToken,
+    /// See [`Registration::epoch`].
+    pub epoch: u32,
     pub next_seq: u64,
     pub records: Vec<Record>,
 }
@@ -228,6 +249,12 @@ pub struct Mailbox {
 impl Mailbox {
     fn allows(&self, public: [u8; 32]) -> bool {
         self.owner == public || self.members.contains(&public)
+    }
+
+    /// Whether something sealed at key `epoch` is sealed with the share's
+    /// current key or a newer one.
+    const fn current(&self, epoch: u32) -> bool {
+        epoch >= self.epoch
     }
 
     /// Whether `public` may hand in a record of `kind`: any member, but
@@ -251,6 +278,7 @@ impl Mailbox {
             from,
             kind,
             sealed,
+            epoch: self.epoch,
         };
         self.next_seq += 1;
         if keep {
@@ -787,10 +815,8 @@ impl Serving {
         match message {
             RelayMessage::Register {
                 share,
-                members,
-                retain,
-                knock,
-            } => self.register(from, public, share, members, retain, knock),
+                registration,
+            } => self.register(from, public, share, registration),
             RelayMessage::Unregister { share } => self.unregister(from, public, share),
             RelayMessage::Trust { mut keys } => {
                 keys.truncate(self.limits.max_trusted);
@@ -824,18 +850,28 @@ impl Serving {
                     return;
                 }
                 let records = mailbox.since(after);
+                let epoch = mailbox.epoch;
                 self.subs.entry(share).or_default().insert(from);
-                self.reply(from, &RelayMessage::Records { share, records });
+                self.reply(
+                    from,
+                    &RelayMessage::Records {
+                        share,
+                        records,
+                        epoch,
+                    },
+                );
             }
             RelayMessage::Publish {
                 share,
                 kind,
                 sealed,
-            } => self.publish(from, public, share, kind, sealed),
+                epoch,
+            } => self.publish(from, public, share, kind, sealed, epoch),
             RelayMessage::Registered { .. }
             | RelayMessage::Refused { .. }
             | RelayMessage::Full { .. }
             | RelayMessage::Records { .. }
+            | RelayMessage::Behind { .. }
             | RelayMessage::Gone { .. }
             | RelayMessage::Knocked { .. } => {}
         }
@@ -848,10 +884,14 @@ impl Serving {
         from: DeviceId,
         public: [u8; 32],
         share: ShareId,
-        members: Vec<[u8; 32]>,
-        retain: bool,
-        knock: KnockToken,
+        registration: Registration,
     ) {
+        let Registration {
+            members,
+            retain,
+            knock,
+            epoch,
+        } = registration;
         let retain = retain && self.limits.retain;
         let accepted = members.len() <= self.limits.max_members
             && match self.store.boxes.get(&share) {
@@ -871,6 +911,7 @@ impl Serving {
             members: Vec::new(),
             retain,
             knock,
+            epoch,
             next_seq: 1,
             records: Vec::new(),
         });
@@ -887,6 +928,8 @@ impl Serving {
         mailbox.members = members;
         mailbox.retain = retain;
         mailbox.knock = knock;
+        // The owner only ever moves its key forward.
+        mailbox.epoch = mailbox.epoch.max(epoch);
         if !retain {
             mailbox.records.clear();
         }
@@ -927,11 +970,18 @@ impl Serving {
         share: ShareId,
         kind: RecordKind,
         sealed: Vec<u8>,
+        epoch: u32,
     ) {
         let Some(mailbox) = self.store.boxes.get(&share) else {
             self.reply(from, &RelayMessage::Gone { share });
             return;
         };
+        // Sealed with a key an expelled device may hold: not handed on.
+        if !mailbox.current(epoch) {
+            let epoch = mailbox.epoch;
+            self.reply(from, &RelayMessage::Behind { share, epoch });
+            return;
+        }
         if !mailbox.accepts(public, kind) {
             self.reply(from, &RelayMessage::Refused { share });
             return;
@@ -956,6 +1006,7 @@ impl Serving {
         } else if retains {
             self.reply(from, &RelayMessage::Full { share });
         }
+        let registered = self.store.boxes.get(&share).map_or(0, |m| m.epoch);
         let listeners: Vec<DeviceId> = self
             .subs
             .get(&share)
@@ -967,6 +1018,7 @@ impl Serving {
                 &RelayMessage::Records {
                     share,
                     records: vec![record.clone()],
+                    epoch: registered,
                 },
             );
         }
@@ -1037,6 +1089,7 @@ mod tests {
             members,
             retain,
             knock: KNOCK,
+            epoch: 0,
             next_seq: 1,
             records: Vec::new(),
         }
@@ -1081,6 +1134,9 @@ mod tests {
         assert_eq!(seqs, vec![1, 2, 3, 4, 5, 6]);
         // And only the owner may hand in a view of the share.
         assert!(mailbox.accepts([0; 32], RecordKind::Meta));
+        mailbox.epoch = 2;
+        assert!(!mailbox.current(1), "an old key is turned away");
+        assert!(mailbox.current(2));
         assert!(!mailbox.accepts([1; 32], RecordKind::Meta));
         assert!(!mailbox.accepts([1; 32], RecordKind::Keys { to: [2; 32] }));
         assert!(mailbox.accepts([0; 32], RecordKind::Keys { to: [2; 32] }));
@@ -1107,6 +1163,7 @@ mod tests {
             from: A,
             kind: RecordKind::Meta,
             sealed: vec![9],
+            epoch: 0,
         });
         store.insert(S, held);
         store.flush(S);
