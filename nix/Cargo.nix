@@ -17814,6 +17814,10 @@ rec {
             usesDefaultFeatures = false;
           }
           {
+            name = "subtle";
+            packageId = "subtle";
+          }
+          {
             name = "tokio";
             packageId = "tokio";
             features = [ "rt" "time" "sync" "macros" "net" ];
