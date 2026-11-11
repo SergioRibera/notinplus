@@ -577,19 +577,33 @@ impl Invite {
         })
     }
 
-    /// Proof that the joiner holds the key: the share id sealed with it.
+    /// Proof that the device holding `joiner` (its public key) holds the
+    /// share key: the share id and that key sealed with it. Bound to the
+    /// joiner so whoever sees it on the way cannot knock with it.
     #[must_use]
     #[cfg_attr(feature = "sismo", sismo::function("sync::share::proof"))]
-    pub fn proof(&self) -> Vec<u8> {
-        self.key.seal(&self.share.0).unwrap_or_default()
+    pub fn proof(&self, joiner: &[u8; 32]) -> Vec<u8> {
+        self.key
+            .seal(&self.share.proof_plain(joiner))
+            .unwrap_or_default()
     }
 }
 
-/// Check a joiner's proof against the share's key.
+impl ShareId {
+    fn proof_plain(self, joiner: &[u8; 32]) -> Vec<u8> {
+        [self.0.as_slice(), joiner.as_slice()].concat()
+    }
+}
+
+/// Check a joiner's proof against the share's key and the public key of
+/// the device that sent it.
 #[must_use]
 #[cfg_attr(feature = "sismo", sismo::function("sync::share::proof_is_valid"))]
-pub fn proof_is_valid(share: &Share, proof: &[u8]) -> bool {
-    share.key.open(proof).is_ok_and(|plain| plain == share.id.0)
+pub fn proof_is_valid(share: &Share, proof: &[u8], joiner: &[u8; 32]) -> bool {
+    share
+        .key
+        .open(proof)
+        .is_ok_and(|plain| plain == share.id.proof_plain(joiner))
 }
 
 /// A share its owner closed, kept so a member that was away is told
@@ -783,11 +797,15 @@ mod tests {
                 ..invite
             }
         );
-        assert!(proof_is_valid(&share, &parsed.proof()));
+        let joiner = [9; 32];
+        assert!(proof_is_valid(&share, &parsed.proof(&joiner), &joiner));
         assert!(!proof_is_valid(
             &Share::new(owner(), "otro", ShareMode::Session, 1),
-            &parsed.proof()
+            &parsed.proof(&joiner),
+            &joiner
         ));
+        // A proof seen on the way does not let another device in.
+        assert!(!proof_is_valid(&share, &parsed.proof(&joiner), &[8; 32]));
     }
 
     #[test]

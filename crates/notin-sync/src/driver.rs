@@ -835,7 +835,7 @@ impl<R: Replica> SyncDriver<R> {
                 share,
                 name: self.profile.display_name().to_owned(),
                 device_name: self.profile.name().to_owned(),
-                proof: intent.invite.proof(),
+                proof: intent.invite.proof(self.profile.key().public()),
             },
         )
     }
@@ -1399,7 +1399,9 @@ impl<R: Replica> SyncDriver<R> {
         };
         let me = self.profile.id();
         let answer = match self.shares.get_mut(&id) {
-            Some(link) if link.share.is_owner(me) && proof_is_valid(&link.share, proof) => {
+            Some(link)
+                if link.share.is_owner(me) && proof_is_valid(&link.share, proof, &public) =>
+            {
                 let member = Member {
                     device: from,
                     public,
