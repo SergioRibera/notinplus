@@ -494,10 +494,7 @@ impl Share {
         let removed = self.remove_member(device);
         if removed {
             self.forget_departed(device);
-            self.departed.push(Departed {
-                device,
-                straight_in: !self.approve_entry,
-            });
+            self.departed.push(Departed { device });
             if self.departed.len() > DEPARTED_MAX {
                 self.departed.remove(0);
             }
@@ -622,9 +619,6 @@ impl Share {
 #[derive(bincode::Encode, bincode::Decode, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Departed {
     pub device: DeviceId,
-    /// Nobody had to let newcomers in when it left, so coming back it
-    /// does not wait either.
-    pub straight_in: bool,
 }
 
 /// What travels in an invitation link or QR.

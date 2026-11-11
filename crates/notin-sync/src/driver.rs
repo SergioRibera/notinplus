@@ -1847,17 +1847,11 @@ impl<R: Replica> SyncDriver<R> {
                     role: link.share.entry_role,
                     joined_at: now_ms(),
                 };
-                // Someone already in (back after a restart) never waits, nor
-                // one back after leaving when nobody had to let it in then;
-                // one thrown out always does, whatever the invitation says,
-                // until an organizer lets it back in.
-                let returning = link
-                    .share
-                    .departed
-                    .iter()
-                    .any(|d| d.device == from && d.straight_in);
-                let waits =
-                    (link.share.approve_entry && !returning) || link.share.was_expelled(from);
+                // Someone already in (back after a restart) never waits; one
+                // back after leaving waits as any newcomer does now; one
+                // thrown out always does, whatever the invitation says, until
+                // an organizer lets it back in.
+                let waits = link.share.approve_entry || link.share.was_expelled(from);
                 if waits && !link.share.is_member(from) {
                     link.share.remember_knock_key(from, key.clone());
                     let fresh = link.share.knock(member.clone());
@@ -5543,7 +5537,7 @@ mod tests {
     /// Leaving keeps the invitation, so the member can ask back in; the
     /// owner keeps what it ended, so it can open it again under a new key.
     #[test]
-    fn coming_back_waits_as_entry_did_when_it_left_and_can_be_closed() {
+    fn coming_back_waits_as_any_newcomer_and_can_be_closed() {
         // Left while newcomers had to be let in: it waits too.
         let (mut owner, mut guest, id) = joined_then_apart();
         owner.shares.get_mut(&id).unwrap().share.approve_entry = true;
@@ -5553,8 +5547,8 @@ mod tests {
         assert!(events.contains(&DriverEvent::JoinPending(id)), "{events:?}");
         assert!(guest.share(id).is_none());
 
-        // Left while entry was open: straight back, unless the owner
-        // closed that way.
+        // Left while entry was open, but it is not any more: it waits as
+        // anyone would, unless the owner closed its way back.
         for closed in [false, true] {
             let (mut owner, mut guest, id) = joined_then_apart();
             connect_both(&mut owner, &mut guest);
@@ -5564,7 +5558,9 @@ mod tests {
                 assert!(!owner.forget_departed(id, guest.profile.id()).is_empty());
             }
             let events = deliver(guest.rejoin(id), &mut guest, &mut owner);
-            assert_eq!(guest.share(id).is_some(), !closed, "{events:?}");
+            assert!(guest.share(id).is_none());
+            let waits = events.contains(&DriverEvent::JoinPending(id));
+            assert_eq!(waits, !closed, "{events:?}");
         }
 
         // Thrown out after leaving: its way back closes too.
