@@ -286,6 +286,8 @@ pub struct RelayLimits {
     pub max_grants: usize,
     /// How long a knock lets a device through.
     pub grant_ttl: Duration,
+    /// Knocks let through toward one device at once.
+    pub max_grants_per_target: usize,
     /// Devices connected at once; past it the one heard from least
     /// recently is dropped.
     pub max_devices: usize,
@@ -304,6 +306,7 @@ impl Default for RelayLimits {
             max_retained_bytes: 8 << 30,
             max_grants: 100_000,
             grant_ttl: Duration::from_secs(10 * 60),
+            max_grants_per_target: 64,
             max_devices: 4096,
         }
     }
@@ -514,38 +517,111 @@ struct Reach {
     trusts: HashMap<[u8; 32], HashSet<[u8; 32]>>,
     /// Open pairing offer of each connected device.
     expects: HashMap<[u8; 32], KnockToken>,
-    /// Pairs let through by a knock, until when.
-    grants: HashMap<([u8; 32], [u8; 32]), Instant>,
+    /// Pairs let through by a knock.
+    grants: HashMap<Pair, Grant>,
+    /// Order of the grants, oldest first.
+    next_grant: u64,
+}
+
+/// Two device keys, the smaller first.
+type Pair = ([u8; 32], [u8; 32]);
+
+/// A knock let a pair through: until when, toward whom, with what.
+struct Grant {
+    order: u64,
+    until: Instant,
+    to: [u8; 32],
+    token: KnockToken,
 }
 
 impl Reach {
     /// A knock lets both ways through, so the pair is stored sorted.
-    fn pair(a: [u8; 32], b: [u8; 32]) -> ([u8; 32], [u8; 32]) {
+    fn pair(a: [u8; 32], b: [u8; 32]) -> Pair {
         if a <= b { (a, b) } else { (b, a) }
     }
 
     fn granted(&self, a: [u8; 32], b: [u8; 32]) -> bool {
         self.grants
             .get(&Self::pair(a, b))
-            .is_some_and(|until| *until > Instant::now())
+            .is_some_and(|g| g.until > Instant::now())
     }
 
-    fn grant(&mut self, a: [u8; 32], b: [u8; 32], limits: &RelayLimits) {
+    /// Let `from` and `to` reach each other for a while, `from` having
+    /// knocked on `to` with `token`. Keys cost nothing, so one target
+    /// holds only so many grants: the oldest goes first.
+    fn grant(&mut self, from: [u8; 32], to: [u8; 32], token: KnockToken, limits: &RelayLimits) {
         let now = Instant::now();
         if self.grants.len() >= limits.max_grants {
-            self.grants.retain(|_, until| *until > now);
+            self.grants.retain(|_, g| g.until > now);
         }
         if self.grants.len() >= limits.max_grants {
             tracing::warn!(target: "notin-relay", "knock table full");
             return;
         }
-        self.grants.insert(Self::pair(a, b), now + limits.grant_ttl);
+        let toward: Vec<(Pair, u64)> = self
+            .grants
+            .iter()
+            .filter(|(_, g)| g.to == to)
+            .map(|(pair, g)| (*pair, g.order))
+            .collect();
+        if toward.len() >= limits.max_grants_per_target
+            && let Some((oldest, _)) = toward.iter().min_by_key(|(_, order)| *order)
+        {
+            self.grants.remove(oldest);
+        }
+        self.next_grant += 1;
+        self.grants.insert(
+            Self::pair(from, to),
+            Grant {
+                order: self.next_grant,
+                until: now + limits.grant_ttl,
+                to,
+                token,
+            },
+        );
+    }
+
+    /// `token` no longer opens `to`: whoever it let through is out.
+    fn revoke_token(&mut self, to: [u8; 32], token: KnockToken) {
+        self.grants.retain(|_, g| g.to != to || g.token != token);
+    }
+
+    fn revoke_pair(&mut self, a: [u8; 32], b: [u8; 32]) {
+        self.grants.remove(&Self::pair(a, b));
+    }
+
+    /// `public` opened (or with `None` closed) its pairing offer; the
+    /// knocks the previous one let through end with it.
+    fn expect(&mut self, public: [u8; 32], token: Option<KnockToken>) {
+        let previous = match token {
+            Some(token) => self.expects.insert(public, token),
+            None => self.expects.remove(&public),
+        };
+        if let Some(previous) = previous.filter(|p| Some(*p) != token) {
+            self.revoke_token(public, previous);
+        }
+    }
+
+    /// `public` trusts `keys` now; one it stopped trusting loses any
+    /// grant toward it too.
+    fn trust(&mut self, public: [u8; 32], keys: HashSet<[u8; 32]>) {
+        let dropped: Vec<[u8; 32]> = self
+            .trusts
+            .get(&public)
+            .map(|old| old.difference(&keys).copied().collect())
+            .unwrap_or_default();
+        for key in dropped {
+            self.revoke_pair(public, key);
+        }
+        self.trusts.insert(public, keys);
     }
 
     /// `public` went away: what it declared goes with it.
     fn forget(&mut self, public: [u8; 32]) {
         self.trusts.remove(&public);
-        self.expects.remove(&public);
+        if let Some(token) = self.expects.remove(&public) {
+            self.revoke_token(public, token);
+        }
     }
 }
 
@@ -692,25 +768,14 @@ impl Serving {
                 keys.truncate(self.limits.max_trusted);
                 write(&self.gate)
                     .reach
-                    .trusts
-                    .insert(public, keys.into_iter().collect());
+                    .trust(public, keys.into_iter().collect());
             }
-            RelayMessage::Expect { token } => {
-                let mut gate = write(&self.gate);
-                match token {
-                    Some(token) => {
-                        gate.reach.expects.insert(public, token);
-                    }
-                    None => {
-                        gate.reach.expects.remove(&public);
-                    }
-                }
-            }
+            RelayMessage::Expect { token } => write(&self.gate).reach.expect(public, token),
             RelayMessage::Knock { to, token } => {
                 {
                     let mut gate = write(&self.gate);
                     if gate.reach.expects.get(&to) == Some(&token) || gate.opens(to, token) {
-                        gate.reach.grant(public, to, &self.limits);
+                        gate.reach.grant(public, to, token, &self.limits);
                     }
                 }
                 self.reply(from, &RelayMessage::Knocked { to });
@@ -775,6 +840,16 @@ impl Serving {
             next_seq: 1,
             records: Vec::new(),
         });
+        {
+            // Members dropped, or a new invitation, take their grants along.
+            let mut gate = write(&self.gate);
+            for gone in mailbox.members.iter().filter(|m| !members.contains(m)) {
+                gate.reach.revoke_pair(public, *gone);
+            }
+            if mailbox.knock != knock {
+                gate.reach.revoke_token(public, mailbox.knock);
+            }
+        }
         mailbox.members = members;
         mailbox.retain = retain;
         mailbox.knock = knock;
@@ -797,7 +872,9 @@ impl Serving {
         {
             return;
         }
-        self.remove(share);
+        if let Some(mailbox) = self.remove(share) {
+            write(&self.gate).reach.revoke_token(public, mailbox.knock);
+        }
         self.store.flush(share);
         for device in self.subs.remove(&share).into_iter().flatten() {
             if device != from {
@@ -1004,7 +1081,8 @@ mod tests {
         assert!(gate.allows([1; 32], [2; 32]));
         // Trust is one way: the trusted device has to trust back.
         assert!(!gate.allows([2; 32], [1; 32]));
-        gate.reach.grant([3; 32], [2; 32], &RelayLimits::default());
+        gate.reach
+            .grant([3; 32], [2; 32], KNOCK, &RelayLimits::default());
         assert!(gate.allows([2; 32], [3; 32]));
         gate.reach.forget([2; 32]);
         assert!(!gate.allows([1; 32], [2; 32]));
@@ -1017,10 +1095,47 @@ mod tests {
             grant_ttl: Duration::ZERO,
             ..RelayLimits::default()
         };
-        reach.grant([1; 32], [2; 32], &limits);
+        reach.grant([1; 32], [2; 32], KNOCK, &limits);
         assert!(!reach.granted([2; 32], [1; 32]));
-        reach.grant([1; 32], [2; 32], &RelayLimits::default());
+        reach.grant([1; 32], [2; 32], KNOCK, &RelayLimits::default());
         assert!(reach.granted([2; 32], [1; 32]));
+    }
+
+    #[test]
+    fn grants_end_with_what_let_them_through() {
+        let limits = RelayLimits::default();
+        let offer = KnockToken([4; 32]);
+        let mut reach = Reach::default();
+        // A closed or replaced pairing offer lets nobody through any more.
+        reach.expect([2; 32], Some(offer));
+        reach.grant([1; 32], [2; 32], offer, &limits);
+        reach.grant([5; 32], [2; 32], KNOCK, &limits);
+        reach.expect([2; 32], None);
+        assert!(!reach.granted([1; 32], [2; 32]));
+        assert!(reach.granted([5; 32], [2; 32]), "another token stays");
+        // Trust taken back takes the pair's grant with it.
+        reach.trust([2; 32], HashSet::from([[5; 32]]));
+        reach.trust([2; 32], HashSet::new());
+        assert!(!reach.granted([5; 32], [2; 32]));
+        // A share's token going away closes what it opened.
+        reach.grant([6; 32], [2; 32], KNOCK, &limits);
+        reach.revoke_token([2; 32], KNOCK);
+        assert!(!reach.granted([6; 32], [2; 32]));
+    }
+
+    #[test]
+    fn one_device_holds_only_so_many_knocks() {
+        let limits = RelayLimits {
+            max_grants_per_target: 3,
+            ..RelayLimits::default()
+        };
+        let mut reach = Reach::default();
+        for i in 0..10u8 {
+            reach.grant([i + 10; 32], [2; 32], KNOCK, &limits);
+        }
+        assert_eq!(reach.grants.len(), 3);
+        assert!(reach.granted([19; 32], [2; 32]), "the newest knock stays");
+        assert!(!reach.granted([10; 32], [2; 32]));
     }
 
     #[test]
