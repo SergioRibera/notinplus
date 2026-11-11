@@ -212,6 +212,9 @@ pub enum BundleError {
     MissingItem(ItemId),
     MissingFolder(FolderId),
     MissingWorkspace(WorkspaceId),
+    /// An entry, or the bundle as a whole, unpacks to more than a bundle
+    /// may hold.
+    TooBig(String),
 }
 
 impl core::fmt::Display for BundleError {
@@ -225,6 +228,7 @@ impl core::fmt::Display for BundleError {
             Self::MissingItem(id) => write!(f, "bundle references unknown item {id}"),
             Self::MissingFolder(id) => write!(f, "bundle references unknown folder {id}"),
             Self::MissingWorkspace(id) => write!(f, "bundle references unknown workspace {id}"),
+            Self::TooBig(name) => write!(f, "bundle entry {name} unpacks to too much"),
         }
     }
 }
@@ -249,7 +253,8 @@ impl UserMessage for BundleError {
             | Self::MissingManifest
             | Self::MissingItem(_)
             | Self::MissingFolder(_)
-            | Self::MissingWorkspace(_) => tr!("errors-bundle-damaged"),
+            | Self::MissingWorkspace(_)
+            | Self::TooBig(_) => tr!("errors-bundle-damaged"),
         }
     }
 }
@@ -382,6 +387,17 @@ pub struct ParsedBundle {
 /// Filesystem / codec / unknown-version failures.
 #[sismo::function("bundle::parse_bundle")]
 pub fn parse_bundle<R: Read>(src: R) -> Result<ParsedBundle> {
+    parse_bundle_within(src, ENTRY_MAX, BUNDLE_MAX)
+}
+
+/// What one entry of a bundle may unpack to: a large PDF fits.
+const ENTRY_MAX: u64 = 1 << 30;
+/// What a whole bundle may unpack to. Bundles come from other people, and
+/// a few compressed bytes can claim gigabytes.
+const BUNDLE_MAX: u64 = 4 << 30;
+
+/// [`parse_bundle`] with the given caps on one entry and on the whole.
+fn parse_bundle_within<R: Read>(src: R, entry_max: u64, bundle_max: u64) -> Result<ParsedBundle> {
     let decoder = zstd::stream::read::Decoder::new(src)?;
     let mut archive = tar::Archive::new(decoder);
 
@@ -390,6 +406,7 @@ pub fn parse_bundle<R: Read>(src: R) -> Result<ParsedBundle> {
     let mut pdfs: HashMap<ItemId, Vec<u8>> = HashMap::new();
     let mut snapshots: HashMap<ItemId, Vec<u8>> = HashMap::new();
     let mut assets: HashMap<ItemId, Vec<(String, Vec<u8>)>> = HashMap::new();
+    let mut unpacked: u64 = 0;
 
     for entry in archive.entries()? {
         sismo::scope!("bundle::read_entry");
@@ -399,11 +416,21 @@ pub fn parse_bundle<R: Read>(src: R) -> Result<ParsedBundle> {
             .to_str()
             .ok_or_else(|| BundleError::Codec("non-utf8 entry name".into()))?
             .to_owned();
+        // What the header says is checked first, what really unpacks after:
+        // neither may pass the caps.
+        let declared = entry.header().size()?;
+        if declared > entry_max || unpacked.saturating_add(declared) > bundle_max {
+            return Err(BundleError::TooBig(name));
+        }
         let mut buf = Vec::new();
-        entry.read_to_end(&mut buf)?;
+        (&mut entry).take(entry_max.saturating_add(1)).read_to_end(&mut buf)?;
+        unpacked = unpacked.saturating_add(buf.len() as u64);
+        if buf.len() as u64 > entry_max || unpacked > bundle_max {
+            return Err(BundleError::TooBig(name));
+        }
         sismo::counter!("bundle.entry_bytes", buf.len());
         if name == MANIFEST_ENTRY {
-            let (m, _) = bincode::decode_from_slice::<BundleManifest, _>(&buf, CODEC)
+            let m: BundleManifest = notin_plugin::decode_bounded(&buf, 64 << 20)
                 .map_err(|e| BundleError::Codec(e.to_string()))?;
             if m.version != BUNDLE_VERSION {
                 return Err(BundleError::UnknownVersion(m.version));
@@ -837,6 +864,28 @@ mod tests {
         assert_eq!(parsed.manifest, manifest);
         assert!(parsed.docs.is_empty());
         assert!(parsed.pdfs.is_empty());
+    }
+
+    #[test]
+    fn an_entry_unpacking_past_the_caps_is_refused() {
+        let mut buf = Vec::<u8>::new();
+        {
+            let encoder = zstd::stream::write::Encoder::new(&mut buf, ZSTD_LEVEL)
+                .expect("zstd encoder")
+                .auto_finish();
+            let mut tar = tar::Builder::new(encoder);
+            // Compresses to nearly nothing, unpacks to a megabyte.
+            let bomb = vec![0u8; 1 << 20];
+            let name = format!("{DOCS_PREFIX}{}.{DOC_EXT}", ItemId::new_v4());
+            super::append_file(&mut tar, &name, &bomb).expect("append");
+            super::append_file(&mut tar, &name, &bomb).expect("append");
+            tar.into_inner().expect("tar finish").flush().expect("flush");
+        }
+        assert!(buf.len() < 64 << 10);
+        let one = parse_bundle_within(Cursor::new(&buf), 1 << 10, 1 << 30);
+        assert!(matches!(one, Err(BundleError::TooBig(_))));
+        let all = parse_bundle_within(Cursor::new(&buf), 1 << 30, 3 << 19);
+        assert!(matches!(all, Err(BundleError::TooBig(_))));
     }
 }
 
