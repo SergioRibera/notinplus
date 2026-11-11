@@ -186,6 +186,9 @@ pub struct Share {
     /// Last relay record applied here; the mailbox is read from the
     /// next one.
     pub relay_cursor: u64,
+    /// Mailbox records past the cursor still waiting to open, with since
+    /// when (Unix milliseconds), so the wait survives a restart.
+    pub held_back: Vec<(u64, u64)>,
     /// The owner's relay, where members meet when no direct path
     /// exists: a [`crate::relay::RelayAddr`] as text.
     pub server: Option<String>,
@@ -243,6 +246,7 @@ impl Share {
             created_at: now,
             updated_at: now,
             relay_cursor: 0,
+            held_back: Vec::new(),
             server: None,
             epoch: 0,
             previous: Vec::new(),
@@ -575,6 +579,7 @@ impl Share {
     pub fn for_member(&self) -> Self {
         Self {
             relay_cursor: 0,
+            held_back: Vec::new(),
             expelled: Vec::new(),
             departed: Vec::new(),
             knocked_with: Vec::new(),

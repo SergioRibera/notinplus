@@ -38,8 +38,9 @@ const REDIAL_MAX: Duration = Duration::from_secs(30);
 const LARGER_WAITS: u32 = 2;
 /// Payloads held for one device until a channel to it opens.
 const OUTBOX_MAX: usize = 64;
-/// How many batches a mailbox record by an unlisted author waits.
-const PARK_TRIES: u8 = 5;
+/// How long a mailbox record that may still open waits: for a view
+/// listing its author, or a key the owner has yet to hand over.
+const PARK_FOR_MS: u64 = 10 * 60 * 1000;
 /// Such records kept per share.
 const PARKED_MAX: usize = 256;
 /// Bytes of such records kept per share.
@@ -3257,11 +3258,19 @@ impl<R: Replica> SyncDriver<R> {
         else {
             return Ok(false);
         };
+        let now = now_ms();
+        // Since when each record has waited, kept across restarts with the
+        // cursor, so a backlog fetched again is given up on in time.
+        let waited: HashMap<u64, u64> = self
+            .share(id)
+            .map(|s| s.held_back.iter().copied().collect())
+            .unwrap_or_default();
         let held = self.parked.remove(&id).unwrap_or_default();
         let mut batch = held.records;
         for record in records {
             if record.seq > start && !batch.iter().any(|(r, _)| r.seq == record.seq) {
-                batch.push((record, 0));
+                let since = waited.get(&record.seq).copied().unwrap_or(now);
+                batch.push((record, since));
             }
         }
         // Keys open the rest; a view says who may write.
@@ -3277,13 +3286,15 @@ impl<R: Replica> SyncDriver<R> {
         // What counted while the cursor waited on parked records.
         let mut top = start.max(held.top);
         let mut parked = Vec::new();
-        for (record, tries) in batch {
+        for (record, since) in batch {
             match self.apply_record(id, &record, out)? {
                 Taken::Applied(changed) => {
                     touched |= changed;
                     top = top.max(record.seq);
                 }
-                Taken::Parked if tries < PARK_TRIES => parked.push((record, tries + 1)),
+                Taken::Parked if now.saturating_sub(since) < PARK_FOR_MS => {
+                    parked.push((record, since));
+                }
                 Taken::Parked | Taken::Dropped => {}
             }
         }
@@ -3298,6 +3309,12 @@ impl<R: Replica> SyncDriver<R> {
             link.share.relay_cursor = before.map_or(top, |b| top.min(b)).max(start);
             touched |= link.share.relay_cursor != start;
         }
+        let mut held_back: Vec<(u64, u64)> =
+            parked.iter().map(|(r, since)| (r.seq, *since)).collect();
+        held_back.sort_unstable();
+        held_back.truncate(PARKED_MAX);
+        touched |= held_back != link.share.held_back;
+        link.share.held_back = held_back;
         if !parked.is_empty() {
             // The oldest are the ones holding the cursor back: keep them.
             parked.sort_by_key(|(r, _)| r.seq);
@@ -3361,7 +3378,11 @@ impl<R: Replica> SyncDriver<R> {
             match ShareMessage::open_signed(&link.share, &record.sealed, record.kind) {
                 Ok(opened) => opened,
                 Err(Unopened::Stranger) if !owner => return Ok(Taken::Parked),
-                Err(Unopened::NoKey) if !owner && record.epoch > link.share.epoch => {
+                Err(Unopened::NoKey)
+                    if !owner
+                        && record.epoch > link.share.epoch
+                        && record.epoch <= link.share.epoch.saturating_add(1) =>
+                {
                     return Ok(Taken::Parked);
                 }
                 Err(Unopened::Stranger | Unopened::NoKey | Unopened::Invalid) => {
@@ -3432,8 +3453,8 @@ impl<R: Replica> SyncDriver<R> {
 /// Mailbox records of one share waiting for a newer view of it.
 #[derive(Debug, Default)]
 struct Parked {
-    /// Each with how many batches it has been tried in.
-    records: Vec<(crate::relay::Record, u8)>,
+    /// Each with since when it waits, in Unix milliseconds.
+    records: Vec<(crate::relay::Record, u64)>,
     /// The last record that counted, past the cursor held back for these.
     top: u64,
 }
@@ -3461,10 +3482,10 @@ fn fresh_meta(current: &Share, from: DeviceId, me: DeviceId, incoming: Share) ->
     {
         return None;
     }
-    let relay_cursor = if incoming.server == current.server {
-        current.relay_cursor
+    let (relay_cursor, held_back) = if incoming.server == current.server {
+        (current.relay_cursor, current.held_back.clone())
     } else {
-        0
+        (0, Vec::new())
     };
     Some(Share {
         key: current.key.clone(),
@@ -3472,6 +3493,7 @@ fn fresh_meta(current: &Share, from: DeviceId, me: DeviceId, incoming: Share) ->
         previous: current.previous.clone(),
         owner: current.owner.clone(),
         relay_cursor,
+        held_back,
         ..incoming
     })
 }
@@ -4884,7 +4906,13 @@ mod tests {
         feed(
             &mut guest,
             at_guest,
-            vec![by_stranger(1), unknown_key(2, 0), unknown_key(3, 1)],
+            vec![
+                by_stranger(1),
+                unknown_key(2, 0),
+                unknown_key(3, 1),
+                // Further ahead than one key change: not the owner's.
+                unknown_key(4, 2),
+            ],
         );
         let waiting: Vec<u64> = guest.parked[&id]
             .records
@@ -4918,6 +4946,53 @@ mod tests {
         assert_eq!(kept.len(), PARKED_MAX);
         assert_eq!(kept[0].0.seq, 10);
         assert!(guest.share(id).unwrap().relay_cursor < 10);
+    }
+
+    #[test]
+    fn a_wait_outlives_a_restart_and_then_ends() {
+        let (owner, mut guest, id) = joined_then_apart();
+        let at_guest = on_relay(&mut guest);
+        let stranger = driver("Eve");
+        let sealed = ShareMessage::Ended.seal_signed(
+            owner.share(id).unwrap(),
+            RecordKind::Meta,
+            stranger.profile.key(),
+        );
+        let records = RelayMessage::Records {
+            share: id,
+            records: vec![
+                record(4, stranger.profile.id(), RecordKind::Meta, sealed),
+                record(
+                    5,
+                    owner.profile.id(),
+                    RecordKind::Meta,
+                    ShareMessage::Meta(Box::new(owner.share(id).unwrap().for_member()))
+                        .seal_signed(
+                            owner.share(id).unwrap(),
+                            RecordKind::Meta,
+                            owner.profile.key(),
+                        ),
+                ),
+            ],
+            epoch: 0,
+        };
+        guest.on_event(from_relay(at_guest, &records)).unwrap();
+        let share = guest.share(id).unwrap();
+        assert_eq!(share.relay_cursor, 3);
+        assert_eq!(share.held_back.len(), 1);
+        // Restarted, it fetches the record again, still within its wait.
+        let book = ShareBook::decode(&guest.book().encode()).unwrap();
+        assert_eq!(book.get(id).unwrap().held_back, share.held_back);
+        let mut again = SyncDriver::new(guest.profile.clone(), MemReplica::default(), book);
+        let at_guest = on_relay(&mut again);
+        again.on_event(from_relay(at_guest, &records)).unwrap();
+        assert_eq!(again.share(id).unwrap().relay_cursor, 3);
+        // Once the wait is over the cursor moves past it, restart or not.
+        again.shares.get_mut(&id).unwrap().share.held_back[0].1 = 0;
+        again.parked.clear();
+        again.on_event(from_relay(at_guest, &records)).unwrap();
+        assert_eq!(again.share(id).unwrap().relay_cursor, 5);
+        assert!(again.share(id).unwrap().held_back.is_empty());
     }
 
     #[test]
@@ -5377,15 +5452,16 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(guest.share(id).unwrap().title, "Química");
-        // What never opens is given up on, and the cursor catches up.
-        for _ in 0..=PARK_TRIES {
-            let empty = RelayMessage::Records {
-                share: id,
-                records: Vec::new(),
-                epoch: 0,
-            };
-            guest.on_event(from_relay(relay, &empty)).unwrap();
+        // What never opens is given up on in time, and the cursor catches up.
+        for (_, since) in &mut guest.parked.get_mut(&id).unwrap().records {
+            *since = 0;
         }
+        let empty = RelayMessage::Records {
+            share: id,
+            records: Vec::new(),
+            epoch: 0,
+        };
+        guest.on_event(from_relay(relay, &empty)).unwrap();
         assert_eq!(guest.share(id).unwrap().relay_cursor, 9);
     }
 
