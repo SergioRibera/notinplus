@@ -104,12 +104,15 @@ impl DeviceKey {
     }
 
     /// X25519 with the device whose transport key is `public`: the same
-    /// secret on both ends, known to nobody else.
+    /// secret on both ends, known to nobody else. `None` for a key of low
+    /// order, which gives everyone the same all-zero secret.
     #[must_use]
-    pub fn agree(&self, public: &[u8; 32]) -> [u8; 32] {
-        curve25519_dalek::montgomery::MontgomeryPoint(*public)
+    pub fn agree(&self, public: &[u8; 32]) -> Option<[u8; 32]> {
+        let shared = curve25519_dalek::montgomery::MontgomeryPoint(*public)
             .mul_clamped(self.keypair.private)
-            .to_bytes()
+            .to_bytes();
+        let zero: bool = shared.ct_eq(&[0; 32]).into();
+        (!zero).then_some(shared)
     }
 
     /// Public half of [`Self::signing`].
@@ -472,6 +475,18 @@ impl DeviceProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_secret_is_agreed_with_a_low_order_key() {
+        let a = DeviceKey::generate();
+        let b = DeviceKey::generate();
+        assert_eq!(a.agree(b.public()), b.agree(a.public()));
+        assert!(a.agree(b.public()).is_some());
+        let mut one = [0; 32];
+        one[0] = 1;
+        assert!(a.agree(&[0; 32]).is_none());
+        assert!(a.agree(&one).is_none());
+    }
 
     #[test]
     fn secrets_are_checked_whole() {

@@ -957,7 +957,11 @@ impl<R: Replica> SyncDriver<R> {
         let relay = self.share_relay(id);
         let mut out = Vec::new();
         for member in &share.members {
-            let sealed = seal_keys(self.profile.key(), &member.public, id, share.epoch, &keys);
+            let Some(sealed) =
+                seal_keys(self.profile.key(), &member.public, id, share.epoch, &keys)
+            else {
+                continue;
+            };
             if self.connected.contains_key(&member.device) {
                 out.push(send(
                     member.device,

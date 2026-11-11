@@ -932,7 +932,8 @@ pub enum Unopened {
 ///
 /// Sealed for the member whose transport key is `member` under what only
 /// the owner and that member can work out, so the relay and everyone
-/// else, an expelled member included, see nothing.
+/// else, an expelled member included, see nothing. `None` when `member`
+/// is not a key one can agree a secret with.
 #[must_use]
 pub fn seal_keys(
     owner: &DeviceKey,
@@ -940,12 +941,12 @@ pub fn seal_keys(
     share: ShareId,
     epoch: u32,
     keys: &[ShareKey],
-) -> Vec<u8> {
-    let plain = bincode::encode_to_vec(keys, bincode::config::standard()).unwrap_or_default();
-    let boxed = key_box(&owner.agree(member), share, epoch)
+) -> Option<Vec<u8>> {
+    let plain = bincode::encode_to_vec(keys, bincode::config::standard()).ok()?;
+    let boxed = key_box(&owner.agree(member)?, share, epoch)
         .seal(&plain)
-        .unwrap_or_default();
-    [epoch.to_be_bytes().as_slice(), &boxed].concat()
+        .ok()?;
+    Some([epoch.to_be_bytes().as_slice(), &boxed].concat())
 }
 
 /// Reverse of [`seal_keys`] on the member's side: the epoch and keys.
@@ -958,7 +959,7 @@ pub fn open_keys(
 ) -> Option<(u32, Vec<ShareKey>)> {
     let (epoch, boxed) = sealed.split_first_chunk::<4>()?;
     let epoch = u32::from_be_bytes(*epoch);
-    let plain = key_box(&me.agree(owner), share, epoch).open(boxed).ok()?;
+    let plain = key_box(&me.agree(owner)?, share, epoch).open(boxed).ok()?;
     let (keys, _): (Vec<ShareKey>, usize) =
         bincode::decode_from_slice(&plain, bincode::config::standard()).ok()?;
     Some((epoch, keys))
@@ -1214,7 +1215,7 @@ mod tests {
         let other = DeviceKey::generate();
         let share = ShareId([1; 16]);
         let keys = vec![ShareKey::generate(), ShareKey::generate()];
-        let sealed = seal_keys(&owner, member.public(), share, 3, &keys);
+        let sealed = seal_keys(&owner, member.public(), share, 3, &keys).unwrap();
         assert_eq!(
             open_keys(&member, owner.public(), share, &sealed),
             Some((3, keys))
