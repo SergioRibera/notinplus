@@ -1286,10 +1286,7 @@ impl Service {
                 self.last_failure = None;
                 self.driver.begin_pairing().1
             }
-            Cmd::CancelPairing => {
-                self.driver.cancel_pairing();
-                Vec::new()
-            }
+            Cmd::CancelPairing => self.driver.cancel_pairing(),
             Cmd::PairWith(offer) => {
                 self.last_failure = None;
                 self.driver.pair_with(&offer)
@@ -1322,15 +1319,16 @@ impl Service {
                 }
                 Vec::new()
             }
-            Cmd::Revoke(device) => {
-                if self.driver.profile_mut().revoke(device) {
+            Cmd::Revoke(device) => match self.driver.revoke(device) {
+                Some(actions) => {
                     self.save_profile();
                     if let Some(node) = &self.transport.node {
                         let _ = node.disconnect(device);
                     }
+                    actions
                 }
-                Vec::new()
-            }
+                None => Vec::new(),
+            },
             Cmd::CreateShare(request) => {
                 sismo::scope!("sync::cmd::create_share");
                 self.create_share(request)

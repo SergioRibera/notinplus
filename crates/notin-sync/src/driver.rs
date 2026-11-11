@@ -37,6 +37,8 @@ const REDIAL_MAX: Duration = Duration::from_secs(30);
 const LARGER_WAITS: u32 = 2;
 /// Payloads held for one device until a channel to it opens.
 const OUTBOX_MAX: usize = 64;
+/// How long a held message is worth delivering.
+const OUTBOX_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// When to dial a related device that is known but not connected.
 #[derive(Debug)]
@@ -494,6 +496,29 @@ impl Published {
     }
 }
 
+/// The one-shot messages held for a device that is away.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Held {
+    /// This device walked away from the share.
+    Left,
+    /// The share ended for the device, or it was thrown out.
+    Removal,
+    /// A change asked of the owner, as encoded: the same change asked
+    /// again waits once.
+    Edit(Vec<u8>),
+    /// An organizer's answer to the device's knock.
+    JoinReply,
+}
+
+/// A message held until a channel to its device opens.
+#[derive(Debug)]
+struct Waiting {
+    share: ShareId,
+    kind: Held,
+    payload: Payload,
+    since: Instant,
+}
+
 /// A relay this device meets others at.
 #[derive(Debug)]
 struct RelayLink {
@@ -529,7 +554,7 @@ pub struct SyncDriver<R> {
     /// through a relay when it is not on the network.
     known_keys: HashMap<DeviceId, [u8; 32]>,
     /// What waits for a channel to a device that is away.
-    outbox: HashMap<DeviceId, Vec<Payload>>,
+    outbox: HashMap<DeviceId, Vec<Waiting>>,
     redials: HashMap<DeviceId, Redial>,
     /// Shares this device owned and closed.
     ended: HashMap<ShareId, EndedShare>,
@@ -730,9 +755,23 @@ impl<R: Replica> SyncDriver<R> {
         (shown, self.relay_consent())
     }
 
-    pub fn cancel_pairing(&mut self) {
+    /// Close the offer and drop the pairing under way; the actions tell
+    /// the relay the link no longer lets anyone through.
+    pub fn cancel_pairing(&mut self) -> Vec<Action> {
         self.offer = None;
         self.intent = None;
+        self.relay_consent()
+    }
+
+    /// Stop trusting `device`: the relay stops letting it through and
+    /// nothing held for it goes out any more. `None` when it was not
+    /// trusted.
+    pub fn revoke(&mut self, device: DeviceId) -> Option<Vec<Action>> {
+        if !self.profile.revoke(device) {
+            return None;
+        }
+        self.outbox.remove(&device);
+        Some(self.relay_consent())
     }
 
     /// Pair with the device described by `offer` (scanned, pasted or
@@ -855,13 +894,15 @@ impl<R: Replica> SyncDriver<R> {
         }
         link.share.updated_at = now_ms();
         link.engine.forget_peer(device);
-        let mut out = vec![send(
-            device,
-            &Payload::Share {
-                share: id,
-                sealed: ShareMessage::Expelled.seal(&link.share.key),
-            },
-        )];
+        let payload = Payload::Share {
+            share: id,
+            sealed: ShareMessage::Expelled.seal(&link.share.key),
+        };
+        self.forget_held(id, Some(device));
+        let mut out: Vec<Action> = self
+            .hold(device, id, Held::Removal, payload)
+            .into_iter()
+            .collect();
         out.extend(self.broadcast_meta(id));
         out.extend(self.relay_register(id));
         out.push(Action::Event(DriverEvent::ShareChanged(id)));
@@ -875,6 +916,7 @@ impl<R: Replica> SyncDriver<R> {
         let Some(link) = self.shares.remove(&id) else {
             return Vec::new();
         };
+        self.forget_held(id, None);
         if link.share.is_owner(self.profile.id()) {
             self.ended.insert(id, link.share.ended(now_ms()));
         }
@@ -910,10 +952,13 @@ impl<R: Replica> SyncDriver<R> {
             .clone()
             .or_else(|| self.relay().map(ToString::to_string));
         self.left.insert(id, link.share.left(server, now_ms()));
+        self.forget_held(id, None);
         let mut out = Vec::new();
-        out.extend(self.route(
+        out.extend(self.hold(
             link.share.owner.device,
-            &Payload::Share {
+            id,
+            Held::Left,
+            Payload::Share {
                 share: id,
                 sealed: ShareMessage::Left.seal(&link.share.key),
             },
@@ -1006,18 +1051,50 @@ impl<R: Replica> SyncDriver<R> {
             .collect()
     }
 
-    /// Deliver `payload` to `device` down an open channel, or hold it
-    /// until one opens and try to open it now.
-    fn route(&mut self, device: DeviceId, payload: &Payload) -> Option<Action> {
+    /// Deliver `payload` to `device` down an open channel. Nothing is
+    /// held otherwise: rounds and announcements are made again once a
+    /// channel opens.
+    fn route(&self, device: DeviceId, payload: &Payload) -> Option<Action> {
+        self.connected
+            .contains_key(&device)
+            .then(|| send(device, payload))
+    }
+
+    /// Deliver a one-shot message about `share` to `device`, or hold it
+    /// until a channel opens and try to open one now. A newer message of
+    /// the same kind replaces the one held; different edits add up.
+    fn hold(
+        &mut self,
+        device: DeviceId,
+        share: ShareId,
+        kind: Held,
+        payload: Payload,
+    ) -> Option<Action> {
         if self.connected.contains_key(&device) {
-            return Some(send(device, payload));
+            return Some(send(device, &payload));
         }
         let queue = self.outbox.entry(device).or_default();
+        queue.retain(|w| w.share != share || w.kind != kind);
         if queue.len() >= OUTBOX_MAX {
             queue.remove(0);
         }
-        queue.push(payload.clone());
+        queue.push(Waiting {
+            share,
+            kind,
+            payload,
+            since: Instant::now(),
+        });
         self.connect_to(device)
+    }
+
+    /// Drop what is held about `share`, for `device` or for everyone.
+    fn forget_held(&mut self, share: ShareId, device: Option<DeviceId>) {
+        for (to, queue) in &mut self.outbox {
+            if device.is_none_or(|d| d == *to) {
+                queue.retain(|w| w.share != share);
+            }
+        }
+        self.outbox.retain(|_, queue| !queue.is_empty());
     }
 
     /// Owner's current view for one member, as [`Self::broadcast_meta`].
@@ -1223,8 +1300,10 @@ impl<R: Replica> SyncDriver<R> {
         for share in self.joins_to(device) {
             out.extend(self.join_request(share));
         }
-        for payload in self.outbox.remove(&device).unwrap_or_default() {
-            out.push(send(device, &payload));
+        for held in self.outbox.remove(&device).unwrap_or_default() {
+            if held.since.elapsed() < OUTBOX_TTL {
+                out.push(send(device, &held.payload));
+            }
         }
         Ok(())
     }
@@ -1495,7 +1574,12 @@ impl<R: Replica> SyncDriver<R> {
         };
         let sealed = seal_answer(&link.share, &answer);
         let mut out: Vec<Action> = self
-            .route(device, &Payload::JoinReply { share: id, sealed })
+            .hold(
+                device,
+                id,
+                Held::JoinReply,
+                Payload::JoinReply { share: id, sealed },
+            )
             .into_iter()
             .collect();
         if admitted {
@@ -1513,7 +1597,7 @@ impl<R: Replica> SyncDriver<R> {
     /// when `from` is still welcome or was never inside; empty when the
     /// answer has no way to it.
     #[cfg_attr(feature = "sismo", sismo::function("sync::driver::removal_for"))]
-    fn removal_for(&mut self, from: DeviceId, id: ShareId, sealed: &[u8]) -> Option<Vec<Action>> {
+    fn removal_for(&self, from: DeviceId, id: ShareId, sealed: &[u8]) -> Option<Vec<Action>> {
         let me = self.profile.id();
         let (key, message) = if let Some(link) = self.shares.get(&id) {
             let share = &link.share;
@@ -1794,10 +1878,24 @@ impl<R: Replica> SyncDriver<R> {
         Ok(out)
     }
 
+    /// A round with the owner of `share`, over a channel opened for it
+    /// when there is none: what it answers settles what the relay said.
+    fn ask_owner(
+        &self,
+        share: ShareId,
+        owner: DeviceId,
+    ) -> Result<Vec<Action>, SyncError<R::Error>> {
+        if self.connected.contains_key(&owner) {
+            return self.share_round_for(share, owner);
+        }
+        // The round goes out once the channel is there.
+        Ok(self.connect_to(owner).into_iter().collect())
+    }
+
     /// Same as [`Self::round_for`] inside one share.
     #[cfg_attr(feature = "sismo", sismo::function("sync::driver::share_round_for"))]
     fn share_round_for(
-        &mut self,
+        &self,
         id: ShareId,
         device: DeviceId,
     ) -> Result<Vec<Action>, SyncError<R::Error>> {
@@ -2072,6 +2170,10 @@ impl<R: Replica> SyncDriver<R> {
     #[cfg_attr(feature = "sismo", sismo::function("sync::driver::supervise"))]
     pub fn supervise(&mut self, now: Instant) -> Vec<Action> {
         let me = self.profile.id();
+        for queue in self.outbox.values_mut() {
+            queue.retain(|w| now.saturating_duration_since(w.since) < OUTBOX_TTL);
+        }
+        self.outbox.retain(|_, queue| !queue.is_empty());
         let mut wanted: Vec<(DeviceId, Action, bool)> = self
             .discovered
             .values()
@@ -2241,10 +2343,16 @@ impl<R: Replica> SyncDriver<R> {
             return Vec::new();
         }
         let owner = link.share.owner.device;
+        let asked = bincode::encode_to_vec(&edit, bincode::config::standard()).unwrap_or_default();
         let sealed = ShareMessage::Edit(edit).seal(&link.share.key);
-        self.route(owner, &Payload::Share { share: id, sealed })
-            .into_iter()
-            .collect()
+        self.hold(
+            owner,
+            id,
+            Held::Edit(asked),
+            Payload::Share { share: id, sealed },
+        )
+        .into_iter()
+        .collect()
     }
 
     /// Owner side: apply `edit` asked by `from` when its role allows,
@@ -2331,13 +2439,12 @@ impl<R: Replica> SyncDriver<R> {
             self.known_keys.insert(device, public);
         }
         for (device, message) in told {
-            out.extend(self.route(
-                device,
-                &Payload::Share {
-                    share: id,
-                    sealed: message.seal(&key),
-                },
-            ));
+            self.forget_held(id, Some(device));
+            let payload = Payload::Share {
+                share: id,
+                sealed: message.seal(&key),
+            };
+            out.extend(self.hold(device, id, Held::Removal, payload));
         }
         // The relay learns the new member before the welcome goes out,
         // so the member's first subscription is accepted.
@@ -2785,7 +2892,7 @@ impl<R: Replica> SyncDriver<R> {
                     // A relay that lost its mailboxes says the same as one
                     // whose owner closed the share: only the owner can tell
                     // which, so ask it.
-                    Some((false, owner)) => out.extend(self.share_round_for(share, owner)?),
+                    Some((false, owner)) => out.extend(self.ask_owner(share, owner)?),
                     None => {}
                 }
             }
@@ -2798,7 +2905,7 @@ impl<R: Replica> SyncDriver<R> {
                     .filter(|s| !s.is_owner(me))
                     .map(|s| s.owner.device)
                 {
-                    out.extend(self.share_round_for(share, owner)?);
+                    out.extend(self.ask_owner(share, owner)?);
                 }
             }
             RelayMessage::Registered { share } => {
@@ -3821,6 +3928,74 @@ mod tests {
         connect_both(&mut guest, &mut owner);
         assert!(guest.share(id).unwrap().is_member(eve.profile.id()));
         (owner, guest, eve, id)
+    }
+
+    fn held_for(driver: &SyncDriver<MemReplica>, device: DeviceId) -> Vec<Held> {
+        driver
+            .outbox
+            .get(&device)
+            .map(|q| q.iter().map(|w| w.kind.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn only_one_shot_messages_wait_for_a_device_away() {
+        let (mut owner, mut guest, id) = joined_then_apart();
+        let owner_id = owner.profile.id();
+        let guest_id = guest.profile.id();
+        // Rounds are made again on the next channel; nothing waits.
+        guest.share_round_for(id, owner_id).unwrap();
+        assert!(held_for(&guest, owner_id).is_empty());
+        // The same edit asked twice waits once, another edit adds up.
+        let rename = |t: &str| ShareEdit::Rename(t.into());
+        guest
+            .shares
+            .get_mut(&id)
+            .unwrap()
+            .share
+            .set_role(guest_id, Role::CoOrganizer);
+        guest.edit_share(id, rename("a"));
+        guest.edit_share(id, rename("a"));
+        guest.edit_share(id, rename("b"));
+        let held = held_for(&guest, owner_id);
+        assert_eq!(held.len(), 2);
+        assert!(held.iter().all(|k| matches!(k, Held::Edit(_))));
+        // Leaving makes them moot: only the departure waits.
+        guest.leave_share(id);
+        assert_eq!(held_for(&guest, owner_id), vec![Held::Left]);
+
+        // On the owner's side the share ending drops what waited for it.
+        owner.expel(id, guest_id);
+        assert_eq!(held_for(&owner, guest_id), vec![Held::Removal]);
+        owner.end_share(id);
+        assert!(held_for(&owner, guest_id).is_empty());
+    }
+
+    #[test]
+    fn what_waits_too_long_is_dropped() {
+        let (_owner, mut guest, id) = joined_then_apart();
+        let owner_id = guest.share(id).unwrap().owner.device;
+        guest.leave_share(id);
+        assert_eq!(held_for(&guest, owner_id), vec![Held::Left]);
+        guest.supervise(Instant::now() + OUTBOX_TTL + Duration::from_secs(1));
+        assert!(held_for(&guest, owner_id).is_empty());
+    }
+
+    #[test]
+    fn revoking_and_cancelling_tell_the_relay_at_once() {
+        let mut a = driver("Tablet");
+        let relay = on_relay(&mut a);
+        let b = driver("PC");
+        a.profile_mut()
+            .trust(TrustedDevice::new(*b.profile.key().public(), "PC", 1));
+        a.begin_pairing();
+        let out = a.cancel_pairing();
+        assert!(out.iter().any(|x| matches!(x, Action::Send { device, bytes, .. }
+            if *device == relay && relay_message(bytes) == Some(RelayMessage::Expect { token: None }))));
+        let out = a.revoke(b.profile.id()).expect("it was trusted");
+        assert!(out.iter().any(|x| matches!(x, Action::Send { device, bytes, .. }
+            if *device == relay && relay_message(bytes) == Some(RelayMessage::Trust { keys: Vec::new() }))));
+        assert!(a.revoke(b.profile.id()).is_none());
     }
 
     fn consent_sent(out: &[Action], relay: DeviceId) -> bool {
