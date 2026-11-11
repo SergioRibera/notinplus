@@ -423,7 +423,9 @@ fn parse_bundle_within<R: Read>(src: R, entry_max: u64, bundle_max: u64) -> Resu
             return Err(BundleError::TooBig(name));
         }
         let mut buf = Vec::new();
-        (&mut entry).take(entry_max.saturating_add(1)).read_to_end(&mut buf)?;
+        (&mut entry)
+            .take(entry_max.saturating_add(1))
+            .read_to_end(&mut buf)?;
         unpacked = unpacked.saturating_add(buf.len() as u64);
         if buf.len() as u64 > entry_max || unpacked > bundle_max {
             return Err(BundleError::TooBig(name));
@@ -879,7 +881,10 @@ mod tests {
             let name = format!("{DOCS_PREFIX}{}.{DOC_EXT}", ItemId::new_v4());
             super::append_file(&mut tar, &name, &bomb).expect("append");
             super::append_file(&mut tar, &name, &bomb).expect("append");
-            tar.into_inner().expect("tar finish").flush().expect("flush");
+            tar.into_inner()
+                .expect("tar finish")
+                .flush()
+                .expect("flush");
         }
         assert!(buf.len() < 64 << 10);
         let one = parse_bundle_within(Cursor::new(&buf), 1 << 10, 1 << 30);

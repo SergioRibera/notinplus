@@ -46,7 +46,15 @@ pub fn decode_bounded<T: Decode<()>>(
             )*
         };
     }
-    within!(1 << 12, 1 << 16, 1 << 18, 1 << 20, 1 << 22, 1 << 24, 1 << 26);
+    within!(
+        1 << 12,
+        1 << 16,
+        1 << 18,
+        1 << 20,
+        1 << 22,
+        1 << 24,
+        1 << 26
+    );
     bincode::decode_from_slice(bytes, WIRE).map(|(value, _)| value)
 }
 
@@ -101,7 +109,10 @@ mod tests {
         let claim = [252, 0, 0, 0, 0x10];
         assert!(super::decode_bounded::<Vec<u8>>(&claim, super::WIRE_LIMIT).is_err());
         let real = vec![9u8; 2 << 20].to_bytes();
-        assert_eq!(<Vec<u8> as Payload>::from_bytes(&real).map(|v| v.len()), Ok(2 << 20));
+        assert_eq!(
+            <Vec<u8> as Payload>::from_bytes(&real).map(|v| v.len()),
+            Ok(2 << 20)
+        );
     }
 
     #[test]

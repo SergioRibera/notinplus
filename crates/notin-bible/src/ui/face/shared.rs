@@ -27,9 +27,7 @@ pub(super) fn highlights(records: &dyn Records) -> Vec<BibleBookmark> {
     let mut out: Vec<BibleBookmark> = records
         .entries()
         .into_iter()
-        .filter_map(|(_, bytes)| {
-            notin_sdk::decode_bounded(&bytes, 1 << 20).ok()
-        })
+        .filter_map(|(_, bytes)| notin_sdk::decode_bounded(&bytes, 1 << 20).ok())
         .collect();
     out.sort_by(|a, b| {
         (&a.book_id, a.chapter, a.start_verse, a.id.0).cmp(&(
