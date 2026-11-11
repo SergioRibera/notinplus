@@ -193,3 +193,70 @@ fn guest_joins_and_syncs_through_the_relay_only() {
     );
     assert!(returning.driver.share(id).unwrap().relay_cursor > cursor_before);
 }
+
+/// A temporary session between two devices that only share a relay:
+/// nothing is kept there, so everything rides live links.
+#[test]
+#[ignore = "sessions keep nothing on the relay and members only meet there over live links, which do not exist yet"]
+fn session_runs_live_through_the_relay_only() {
+    let (_server, relay_addr) = relay();
+    let mut owner = Device::new("Sergio");
+    let mut guest = Device::new("Ana");
+
+    let actions = owner.driver.set_relay(Some(relay_addr));
+    owner.perform(actions);
+    owner.mark(D1, 1, 1);
+    let mut share = Share::new(owner.driver.me(), "Clase", ShareMode::Session, 1);
+    share.docs.push(D1);
+    let id = share.id;
+    let actions = owner.driver.create_share(share);
+    owner.perform(actions);
+    settle(&mut owner, &mut guest, Duration::from_secs(5), |o, _| {
+        o.driver.relay_online()
+    });
+    let invite = owner.driver.invite_for(id).unwrap();
+    let invite = Invite::parse_link(&invite.to_link()).unwrap();
+
+    let actions = guest.driver.join(invite);
+    guest.perform(actions);
+    settle(&mut owner, &mut guest, Duration::from_secs(8), |_, g| {
+        g.marks(D1) == vec![(1, 1)]
+    });
+    assert_eq!(
+        guest.marks(D1),
+        vec![(1, 1)],
+        "content made before the guest arrived never reached it: {:?}",
+        guest.events
+    );
+
+    for round in 2..5 {
+        owner.mark(D1, 1, round);
+        let actions = owner.driver.push_doc(D1).unwrap();
+        owner.perform(actions);
+        guest.mark(D1, 2, round);
+        let actions = guest.driver.push_doc(D1).unwrap();
+        guest.perform(actions);
+    }
+    let both = |d: &Device| d.marks(D1).len() == 7;
+    settle(&mut owner, &mut guest, Duration::from_secs(8), |o, g| {
+        both(o) && both(g)
+    });
+    assert_eq!(owner.marks(D1), guest.marks(D1));
+    assert_eq!(owner.marks(D1).len(), 7);
+
+    // Ephemera (ink under the pen, pointers) reach the other side too.
+    let actions = owner.driver.live(D1, b"ink");
+    owner.perform(actions);
+    settle(&mut owner, &mut guest, Duration::from_secs(3), |_, g| {
+        g.events
+            .iter()
+            .any(|e| matches!(e, DriverEvent::Live { bytes, .. } if bytes == b"ink"))
+    });
+    assert!(
+        guest
+            .events
+            .iter()
+            .any(|e| matches!(e, DriverEvent::Live { bytes, .. } if bytes == b"ink")),
+        "live state never crossed the relay"
+    );
+}
