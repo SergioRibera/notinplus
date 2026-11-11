@@ -35,6 +35,12 @@ pub fn decode_bounded<T: Decode<()>>(
     bytes: &[u8],
     cap: usize,
 ) -> Result<T, bincode::error::DecodeError> {
+    // Every cap is a power of two, and so is every limit below: none is
+    // rounded past the cap it stands for.
+    debug_assert!(cap.is_power_of_two());
+    if bytes.len() > cap {
+        return Err(bincode::error::DecodeError::LimitExceeded);
+    }
     let need = bytes.len().saturating_mul(64).max(1 << 16).min(cap);
     macro_rules! within {
         ($($limit:expr),*) => {
@@ -48,12 +54,23 @@ pub fn decode_bounded<T: Decode<()>>(
     }
     within!(
         1 << 12,
+        1 << 13,
+        1 << 14,
+        1 << 15,
         1 << 16,
+        1 << 17,
         1 << 18,
+        1 << 19,
         1 << 20,
+        1 << 21,
         1 << 22,
+        1 << 23,
         1 << 24,
-        1 << 26
+        1 << 25,
+        1 << 26,
+        1 << 27,
+        1 << 28,
+        1 << 29
     );
     bincode::decode_from_slice(bytes, WIRE).map(|(value, _)| value)
 }
@@ -113,6 +130,10 @@ mod tests {
             <Vec<u8> as Payload>::from_bytes(&real).map(|v| v.len()),
             Ok(2 << 20)
         );
+        // Past the cap given, by a little or a lot, it is refused.
+        let over = vec![9u8; 3 << 20].to_bytes();
+        assert!(super::decode_bounded::<Vec<u8>>(&over, 2 << 20).is_err());
+        assert!(super::decode_bounded::<Vec<u8>>(&real, 4 << 20).is_ok());
     }
 
     #[test]

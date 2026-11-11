@@ -55,6 +55,12 @@ pub(crate) fn decode<T: bincode::Decode<()>>(
     bytes: &[u8],
     cap: usize,
 ) -> Result<T, bincode::error::DecodeError> {
+    // Every cap is a power of two, and so is every limit below: none is
+    // rounded past the cap it stands for.
+    debug_assert!(cap.is_power_of_two());
+    if bytes.len() > cap {
+        return Err(bincode::error::DecodeError::LimitExceeded);
+    }
     let need = bytes.len().saturating_mul(64).max(1 << 16).min(cap);
     macro_rules! within {
         ($($limit:expr),*) => {
@@ -68,12 +74,21 @@ pub(crate) fn decode<T: bincode::Decode<()>>(
     }
     within!(
         1 << 12,
+        1 << 13,
+        1 << 14,
+        1 << 15,
         1 << 16,
+        1 << 17,
         1 << 18,
+        1 << 19,
         1 << 20,
+        1 << 21,
         1 << 22,
+        1 << 23,
         1 << 24,
+        1 << 25,
         1 << 26,
+        1 << 27,
         1 << 28,
         1 << 29
     );
@@ -118,5 +133,12 @@ mod tests {
         let name =
             bincode::encode_to_vec("x".repeat(8 << 10), bincode::config::standard()).unwrap();
         assert!(super::decode::<String>(&name, super::cap::BEACON).is_err());
+        // Nor a little past it, where the limits used to round up.
+        let frame =
+            bincode::encode_to_vec(vec![7u8; 3 << 20], bincode::config::standard()).unwrap();
+        assert!(super::decode::<Vec<u8>>(&frame, super::cap::FRAME).is_err());
+        let within =
+            bincode::encode_to_vec(vec![7u8; 1 << 20], bincode::config::standard()).unwrap();
+        assert!(super::decode::<Vec<u8>>(&within, super::cap::FRAME).is_ok());
     }
 }
