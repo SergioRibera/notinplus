@@ -21,6 +21,35 @@ pub const WIRE: Wire = config::standard().with_limit::<WIRE_LIMIT>();
 
 const CODEC: Wire = WIRE;
 
+/// Decode `bytes` that came from elsewhere, claiming at most `cap` bytes.
+///
+/// bincode allocates a length a value claims before reading it, up to
+/// the configured limit, so with one large limit a few forged bytes
+/// would make it allocate all of it. Here the limit follows the input:
+/// 64 times its size (at least 64 KiB), and never more than `cap`, what
+/// a value of this kind may ever take.
+///
+/// # Errors
+/// The bytes are not a valid encoding, or claim more than that.
+pub fn decode_bounded<T: Decode<()>>(
+    bytes: &[u8],
+    cap: usize,
+) -> Result<T, bincode::error::DecodeError> {
+    let need = bytes.len().saturating_mul(64).max(1 << 16).min(cap);
+    macro_rules! within {
+        ($($limit:expr),*) => {
+            $(
+                if need <= $limit {
+                    let config = config::standard().with_limit::<{ $limit }>();
+                    return bincode::decode_from_slice(bytes, config).map(|(value, _)| value);
+                }
+            )*
+        };
+    }
+    within!(1 << 12, 1 << 16, 1 << 18, 1 << 20, 1 << 22, 1 << 24, 1 << 26);
+    bincode::decode_from_slice(bytes, WIRE).map(|(value, _)| value)
+}
+
 /// A value that crosses the shell as bytes.
 pub trait Payload: Encode + Decode<()> + Clone + Send + Sync + 'static {
     /// Encode with the plugin codec.
@@ -34,9 +63,7 @@ pub trait Payload: Encode + Decode<()> + Clone + Send + Sync + 'static {
     /// # Errors
     /// [`PayloadError`] when the bytes are not a valid encoding.
     fn from_bytes(bytes: &[u8]) -> Result<Self, PayloadError> {
-        bincode::decode_from_slice(bytes, CODEC)
-            .map(|(value, _)| value)
-            .map_err(|e| PayloadError(e.to_string()))
+        decode_bounded(bytes, WIRE_LIMIT).map_err(|e| PayloadError(e.to_string()))
     }
 }
 
@@ -70,6 +97,11 @@ mod tests {
         let forged = [253, 255, 255, 255, 255, 255, 255, 255, 255];
         assert!(<String as Payload>::from_bytes(&forged).is_err());
         assert!(<Vec<Vec<u8>> as Payload>::from_bytes(&forged).is_err());
+        // Five bytes claiming 256 MiB: refused before anything is allocated.
+        let claim = [252, 0, 0, 0, 0x10];
+        assert!(super::decode_bounded::<Vec<u8>>(&claim, super::WIRE_LIMIT).is_err());
+        let real = vec![9u8; 2 << 20].to_bytes();
+        assert_eq!(<Vec<u8> as Payload>::from_bytes(&real).map(|v| v.len()), Ok(2 << 20));
     }
 
     #[test]

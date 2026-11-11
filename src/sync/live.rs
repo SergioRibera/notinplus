@@ -12,6 +12,10 @@ use crate::brush::{BrushPreset, InkPoint};
 use crate::ids::StrokeId;
 use crate::library::ItemId;
 
+/// What one live message may take once decoded: a burst of ink, a
+/// presence state.
+const LIVE_CAP: usize = 1 << 20;
+
 /// One ephemeral update of a document.
 #[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Debug)]
 pub enum LiveMessage {
@@ -44,9 +48,7 @@ impl LiveMessage {
     #[must_use]
     #[sismo::function("sync::live::decode")]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        bincode::decode_from_slice(bytes, notin_plugin::WIRE)
-            .ok()
-            .map(|(message, _)| message)
+        notin_plugin::decode_bounded(bytes, LIVE_CAP).ok()
     }
 }
 

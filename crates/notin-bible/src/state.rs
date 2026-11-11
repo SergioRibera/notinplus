@@ -132,9 +132,7 @@ impl BibleSnapshot {
     #[must_use]
     #[cfg_attr(feature = "sismo", sismo::function("bible::snapshot_decode"))]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        bincode::decode_from_slice(bytes, notin_sdk::WIRE)
-            .ok()
-            .map(|(v, _)| v)
+        notin_sdk::decode_bounded(bytes, notin_sdk::WIRE_LIMIT).ok()
     }
 }
 

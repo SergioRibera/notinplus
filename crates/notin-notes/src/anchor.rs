@@ -27,9 +27,7 @@ impl NoteAnchor {
     #[must_use]
     #[cfg_attr(feature = "sismo", sismo::function("notes::anchor_decode"))]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        bincode::decode_from_slice(bytes, notin_sdk::WIRE)
-            .ok()
-            .map(|(anchor, _)| anchor)
+        notin_sdk::decode_bounded(bytes, 64 << 10).ok()
     }
 }
 

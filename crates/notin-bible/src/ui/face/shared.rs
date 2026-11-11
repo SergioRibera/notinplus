@@ -28,9 +28,7 @@ pub(super) fn highlights(records: &dyn Records) -> Vec<BibleBookmark> {
         .entries()
         .into_iter()
         .filter_map(|(_, bytes)| {
-            bincode::decode_from_slice(&bytes, CODEC)
-                .ok()
-                .map(|(highlight, _)| highlight)
+            notin_sdk::decode_bounded(&bytes, 1 << 20).ok()
         })
         .collect();
     out.sort_by(|a, b| {

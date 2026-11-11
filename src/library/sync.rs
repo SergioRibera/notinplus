@@ -57,6 +57,9 @@ pub enum SyncRecord {
 /// Key of the one [`SyncRecord::Pins`] a library holds.
 const PINS_ID: [u8; 16] = [0; 16];
 
+/// What one record from another device may take once decoded.
+const RECORD_CAP: usize = 64 << 20;
+
 /// Freshness of every asset: they never change, so having one is enough.
 const ASSET_STAMP: u64 = 1;
 
@@ -70,9 +73,7 @@ impl SyncRecord {
     #[must_use]
     #[sismo::function("library::sync::record_decode")]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        bincode::decode_from_slice(bytes, notin_plugin::WIRE)
-            .ok()
-            .map(|(record, _): (Self, usize)| record)
+        notin_plugin::decode_bounded(bytes, RECORD_CAP).ok()
     }
 }
 

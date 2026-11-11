@@ -68,9 +68,7 @@ impl BibleAnchor {
     /// (chip ⚠) rather than propagating a hard failure.
     #[must_use]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        bincode::decode_from_slice(bytes, notin_sdk::WIRE)
-            .ok()
-            .map(|(v, _)| v)
+        notin_sdk::decode_bounded(bytes, 64 << 10).ok()
     }
 }
 

@@ -611,8 +611,7 @@ fn encode<T: bincode::Encode>(value: &T) -> Result<Vec<u8>, DocError> {
 
 fn decode<T: bincode::Decode<()>>(value: &LoroValue) -> Result<T, DocError> {
     let bytes = value.as_binary().ok_or(DocError::Shape("binary payload"))?;
-    bincode::decode_from_slice::<T, _>(bytes, CODEC)
-        .map(|(v, _)| v)
+    notin_plugin::decode_bounded::<T>(bytes, notin_plugin::WIRE_LIMIT)
         .map_err(|e| DocError::Codec(e.to_string()))
 }
 
