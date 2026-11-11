@@ -194,6 +194,18 @@ impl PairingSecret {
     pub const fn as_bytes(&self) -> &[u8; 16] {
         &self.0
     }
+
+    /// What a device holding the link shows to pair: the secret bound
+    /// to its own key, so a relay that saw it cannot pair as another.
+    #[must_use]
+    pub fn proof(&self, requester: &[u8; 32]) -> [u8; 32] {
+        Blake2s256::new()
+            .chain_update(b"notin-pair-proof")
+            .chain_update(self.0)
+            .chain_update(requester)
+            .finalize()
+            .into()
+    }
 }
 
 impl From<[u8; 16]> for PairingSecret {

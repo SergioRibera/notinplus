@@ -135,8 +135,17 @@ enum JoinAnswer {
 /// channel so both sides know exactly which key they are trusting.
 #[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
 pub enum PairMessage {
-    Request { code: u32, name: String },
-    Accept { name: String },
+    /// `proof` is the link's secret bound to the requester's key
+    /// ([`PairingSecret::proof`]); without it only a device on the same
+    /// network pairs, with the code alone.
+    Request {
+        code: u32,
+        name: String,
+        proof: Option<[u8; 32]>,
+    },
+    Accept {
+        name: String,
+    },
     Reject,
 }
 
@@ -760,11 +769,17 @@ impl<R: Replica> SyncDriver<R> {
     #[cfg_attr(feature = "sismo", sismo::function("sync::driver::pair_request"))]
     fn pair_request(&self, device: DeviceId) -> Action {
         let code = self.intent.as_ref().map_or(0, |i| i.code.value());
+        let proof = self
+            .intent
+            .as_ref()
+            .and_then(|i| i.secret)
+            .map(|secret| secret.proof(self.profile.key().public()));
         send(
             device,
             &Payload::Pair(PairMessage::Request {
                 code,
                 name: self.profile.name().to_owned(),
+                proof,
             }),
         )
     }
@@ -1694,11 +1709,18 @@ impl<R: Replica> SyncDriver<R> {
             return;
         };
         match message {
-            PairMessage::Request { code, name } => {
-                let accepted = self
-                    .offer
-                    .take_if(|o| !o.expired())
-                    .is_some_and(|o| o.code.value() == code);
+            PairMessage::Request { code, name, proof } => {
+                let offer = self.offer.filter(|o| !o.expired());
+                let held = offer.is_some_and(|o| proof == Some(o.secret.proof(&peer.public)));
+                // Through a relay only the link pairs; on the network the
+                // typed code may, when no proof is claimed.
+                let shown = held || (!peer.relayed && proof.is_none());
+                let accepted = shown && offer.is_some_and(|o| o.code.value() == code);
+                // A guess from afar must not burn the offer for the device
+                // in front of the user.
+                if accepted || !peer.relayed {
+                    self.offer = None;
+                }
                 if accepted {
                     let device = TrustedDevice::new(peer.public, name, now_ms());
                     self.profile.trust(device.clone());
@@ -1719,7 +1741,6 @@ impl<R: Replica> SyncDriver<R> {
                         out.extend(round);
                     }
                 } else {
-                    self.offer = None;
                     out.push(send(from, &Payload::Pair(PairMessage::Reject)));
                 }
             }
@@ -3079,6 +3100,71 @@ mod tests {
         assert_eq!(b.profile.trusted()[0].name, "Tablet");
         assert!(events.iter().any(|e| matches!(e, DriverEvent::Paired(_))));
         assert!(b.pairing_target().is_none());
+    }
+
+    fn pair_request_from(
+        b: &SyncDriver<MemReplica>,
+        code: u32,
+        proof: Option<[u8; 32]>,
+    ) -> NetEvent {
+        NetEvent::Message {
+            from: b.profile.id(),
+            bytes: Payload::Pair(PairMessage::Request {
+                code,
+                name: "PC".into(),
+                proof,
+            })
+            .to_bytes(),
+        }
+    }
+
+    #[test]
+    fn through_a_relay_only_the_link_pairs_and_guesses_keep_the_offer() {
+        let mut a = driver("Tablet");
+        let b = driver("PC");
+        let (offer, _) = a.begin_pairing();
+        let secret = offer.secret.unwrap();
+        let code = offer.code.value();
+        a.on_event(NetEvent::Connected(PeerInfo {
+            relayed: true,
+            ..info(&b, 2)
+        }))
+        .unwrap();
+        let b_public = *b.profile.key().public();
+        // The right code alone, a proof made for another key, a proof
+        // with the wrong code: none of them pairs, and the offer stays.
+        for (code, proof) in [
+            (code, None),
+            (code, Some(secret.proof(&[7; 32]))),
+            ((code + 1) % 1_000_000, Some(secret.proof(&b_public))),
+        ] {
+            let out = a.on_event(pair_request_from(&b, code, proof)).unwrap();
+            assert!(!a.profile.is_trusted(b.profile.id()));
+            assert!(
+                out.iter()
+                    .all(|x| !matches!(x, Action::Event(DriverEvent::Paired(_))))
+            );
+            assert!(
+                a.current_offer().is_some(),
+                "a guess from afar burnt the offer"
+            );
+        }
+        a.on_event(pair_request_from(&b, code, Some(secret.proof(&b_public))))
+            .unwrap();
+        assert!(a.profile.is_trusted(b.profile.id()));
+        assert!(a.current_offer().is_none());
+    }
+
+    #[test]
+    fn on_the_network_a_wrong_proof_still_fails() {
+        let mut a = driver("Tablet");
+        let b = driver("PC");
+        let (offer, _) = a.begin_pairing();
+        a.on_event(NetEvent::Connected(info(&b, 2))).unwrap();
+        let wrong = offer.secret.unwrap().proof(&[7; 32]);
+        a.on_event(pair_request_from(&b, offer.code.value(), Some(wrong)))
+            .unwrap();
+        assert!(!a.profile.is_trusted(b.profile.id()));
     }
 
     #[test]
