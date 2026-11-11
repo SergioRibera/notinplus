@@ -1006,6 +1006,11 @@ impl Service {
                         log::warn!("sync punch: {err}");
                     }
                 }
+                Action::Disconnect { device } => {
+                    if let Some(Err(err)) = node.map(|n| n.disconnect(device)) {
+                        log::warn!("sync disconnect: {err}");
+                    }
+                }
                 Action::Event(event) => self.on_driver_event(event),
             }
         }

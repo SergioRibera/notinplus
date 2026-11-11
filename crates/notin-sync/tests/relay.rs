@@ -66,6 +66,7 @@ impl Device {
                     self.node.connect_via(relay, public).unwrap();
                 }
                 Action::Punch { device } => self.node.punch(device).unwrap(),
+                Action::Disconnect { device } => self.node.disconnect(device).unwrap(),
                 Action::Event(event) => self.events.push(event),
             }
         }

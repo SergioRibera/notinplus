@@ -7,7 +7,7 @@
 //! be tested without a network and lives on whatever thread the app
 //! prefers.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -346,6 +346,10 @@ pub enum Action {
     Punch {
         device: DeviceId,
     },
+    /// Close the channel to `device`.
+    Disconnect {
+        device: DeviceId,
+    },
     Event(DriverEvent),
 }
 
@@ -550,6 +554,9 @@ pub struct SyncDriver<R> {
     relays: HashMap<DeviceId, RelayLink>,
     /// The profile's own relay, among [`Self::relays`].
     own_relay: Option<DeviceId>,
+    /// Relays no longer in use: one that shows up again is let go, never
+    /// taken for an ordinary device.
+    retired: HashSet<DeviceId>,
     /// Public keys of every device heard of, so a channel can be opened
     /// through a relay when it is not on the network.
     known_keys: HashMap<DeviceId, [u8; 32]>,
@@ -609,6 +616,7 @@ impl<R: Replica> SyncDriver<R> {
                 .collect(),
             relays: HashMap::new(),
             own_relay: None,
+            retired: HashSet::new(),
             known_keys: HashMap::new(),
             outbox: HashMap::new(),
             redials: HashMap::new(),
@@ -1254,6 +1262,10 @@ impl<R: Replica> SyncDriver<R> {
     ) -> Result<(), SyncError<R::Error>> {
         self.refresh_name(&peer, out);
         let device = peer.device;
+        if self.retired.contains(&device) {
+            out.push(Action::Disconnect { device });
+            return Ok(());
+        }
         self.known_keys.insert(device, peer.public);
         // A channel can replace another without a disconnect in between;
         // what the old one carried may never have arrived.
@@ -2584,16 +2596,42 @@ impl<R: Replica> SyncDriver<R> {
         wanted
     }
 
-    /// Keep a link to every wanted relay and no other.
+    /// Keep a link to every wanted relay and close the others, unless a
+    /// channel to some device still runs through one.
     #[cfg_attr(feature = "sismo", sismo::function("sync::driver::sync_relays"))]
     fn sync_relays(&mut self) -> Vec<Action> {
         let wanted = self.wanted_relays();
         for addr in &wanted {
+            self.retired.remove(&addr.device());
             self.add_relay(addr.clone());
         }
-        self.relays
-            .retain(|device, _| wanted.iter().any(|a| a.device() == *device));
-        self.relay_reconnect()
+        let dropped: Vec<DeviceId> = self
+            .relays
+            .keys()
+            .copied()
+            .filter(|device| !wanted.iter().any(|a| a.device() == *device))
+            .filter(|device| !self.carries(*device))
+            .collect();
+        let mut out = Vec::new();
+        for device in dropped {
+            self.relays.remove(&device);
+            self.retired.insert(device);
+            if self.connected.remove(&device).is_some() {
+                out.push(Action::Disconnect { device });
+            }
+        }
+        out.extend(self.relay_reconnect());
+        out
+    }
+
+    /// Whether a channel to some device runs through `relay` right now.
+    fn carries(&self, relay: DeviceId) -> bool {
+        let Some(at) = self.connected.get(&relay).map(|p| p.addr) else {
+            return false;
+        };
+        self.connected
+            .values()
+            .any(|p| p.relayed && p.addr == at && p.device != relay)
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("sync::driver::relay_reconnect"))]
@@ -3199,7 +3237,8 @@ mod tests {
                 Action::Connect { .. }
                 | Action::ConnectHost { .. }
                 | Action::ConnectVia { .. }
-                | Action::Punch { .. } => {}
+                | Action::Punch { .. }
+                | Action::Disconnect { .. } => {}
                 Action::Event(event) => events.push(event),
             }
         }
@@ -3979,6 +4018,47 @@ mod tests {
         assert_eq!(held_for(&guest, owner_id), vec![Held::Left]);
         guest.supervise(Instant::now() + OUTBOX_TTL + Duration::from_secs(1));
         assert!(held_for(&guest, owner_id).is_empty());
+    }
+
+    #[test]
+    fn a_relay_no_longer_used_is_let_go_and_stays_gone() {
+        let offering = driver("Tablet");
+        let mut a = driver("PC");
+        on_relay(&mut a);
+        let key = crate::identity::DeviceKey::generate();
+        let theirs = RelayAddr {
+            host: "theirs:7710".into(),
+            public: *key.public(),
+        };
+        let offer = PairingOffer {
+            device: offering.profile.id(),
+            public: *offering.profile.key().public(),
+            name: "Tablet".into(),
+            code: PairingCode::random(),
+            secret: Some(PairingSecret::random()),
+            relay: Some(theirs),
+        };
+        a.pair_with(&offer);
+        let at_theirs = PeerInfo {
+            device: key.id(),
+            public: *key.public(),
+            name: "theirs".into(),
+            addr: addr(10),
+            relayed: false,
+            session: 1,
+        };
+        a.on_event(NetEvent::Connected(at_theirs.clone())).unwrap();
+        a.cancel_pairing();
+        let out = a.tick().unwrap();
+        assert!(
+            out.contains(&Action::Disconnect { device: key.id() }),
+            "{out:?}"
+        );
+        assert!(!a.relays.contains_key(&key.id()));
+        // Back again on its own: let go, not taken for a device.
+        let out = a.on_event(NetEvent::Connected(at_theirs)).unwrap();
+        assert_eq!(out, vec![Action::Disconnect { device: key.id() }]);
+        assert!(a.connected().all(|p| p.device != key.id()));
     }
 
     #[test]
