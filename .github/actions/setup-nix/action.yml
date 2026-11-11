@@ -11,6 +11,13 @@ inputs:
       Reads still work because the public key is baked into nix config.
     required: false
     default: ""
+  watch-store:
+    description: >-
+      `true` → `attic watch-store` uploads every store path as soon as it
+      is built, so a job that fails halfway still caches what it finished
+      (one path per crate with the per-crate build).
+    required: false
+    default: "false"
 
 outputs:
   push-enabled:
@@ -46,3 +53,8 @@ runs:
         attic login main https://cache.sergioribera.rs "$ATTIC_TOKEN"
         attic use main:main
         echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+    - name: Upload builds to attic as they land
+      if: inputs.watch-store == 'true' && steps.login.outputs.enabled == 'true'
+      shell: bash
+      run: nohup attic watch-store main:main > "$RUNNER_TEMP/attic-watch-store.log" 2>&1 &

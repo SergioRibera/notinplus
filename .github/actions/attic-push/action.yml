@@ -15,7 +15,15 @@ inputs:
       get dereferenced; non-existent entries are silently skipped so
       callers can pass `result result-deps result-bundle-*` without
       juggling conditionals per workflow.
-    required: true
+    required: false
+    default: ""
+  closure-of:
+    description: >-
+      Space-separated flake installables whose build closure (every
+      already-built output it depends on, not only the runtime closure)
+      is pushed too: the per-crate build keeps each crate there.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -25,6 +33,7 @@ runs:
       shell: bash
       env:
         PUSH_PATHS: ${{ inputs.paths }}
+        CLOSURE_OF: ${{ inputs.closure-of }}
       # Never fail the calling job: a cache miss on Attic (network blip,
       # auth expiry, server 5xx) must not red-X a release that otherwise
       # produced valid artifacts. We log loudly and exit 0.
@@ -37,6 +46,13 @@ runs:
               resolved+=("$(readlink -f "$match")")
             fi
           done
+        done
+        for installable in $CLOSURE_OF; do
+          if drv=$(nix path-info --derivation "$installable" 2>/dev/null); then
+            while read -r path; do
+              resolved+=("$path")
+            done < <(nix-store -qR --include-outputs "$drv" | grep -v '\.drv$')
+          fi
         done
         if [ "${#resolved[@]}" -eq 0 ]; then
           echo "attic-push: no paths matched, nothing to upload"
